@@ -12,9 +12,14 @@ import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
 
-// 每个 fork 常驻约 3–5 GB（happy-dom 加上各自编一遍 Vuetify/SCSS），所以按内存算上限：每 6 GB 一个、封顶 16，VITEST_MAX_FORKS 可覆盖。
+// fork 数取「核数 - 1」和「每 3 GB 内存一个」中较小的那个，封顶 16，VITEST_MAX_FORKS 可覆盖。
+// 一个 fork 的内存峰值实测约 1.7–2.1 GB（happy-dom 加上各自编一遍 Vuetify/SCSS）。
+// CI 的 4 核 16 GB 机器上算出来是 3：fork 数和核数相同时，对时序敏感的组件测试会偶发失败。
 const envMaxForks = Number.parseInt(process.env.VITEST_MAX_FORKS ?? '', 10)
-const maxForks = envMaxForks > 0 ? envMaxForks : Math.max(1, Math.min(16, Math.floor(os.totalmem() / 6 / 1024 ** 3)))
+const maxForks =
+  envMaxForks > 0
+    ? envMaxForks
+    : Math.max(1, Math.min(16, os.availableParallelism() - 1, Math.floor(os.totalmem() / 3 / 1024 ** 3)))
 
 // https://vitejs.dev/config/
 // /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，

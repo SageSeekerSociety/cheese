@@ -53,6 +53,7 @@ from app.core.sentences import say
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.gateway_chat import Usage, response_cost
 from app.domain.identity.handles import names_a_person
+from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.service_keys import KeySpec, gateway_base, service_key
@@ -296,20 +297,7 @@ async def _material(session: AsyncSession, room: Topic, stage: str) -> str | Non
     lines = await _conversation(session, room.id)
     if not lines:
         return None
-    # The room's own living doc (not a thread's brief): the oldest doc block
-    # on the room's main line, as BlockRepository.doc_root reads it.
-    doc = (
-        await session.scalars(
-            select(Block)
-            .where(
-                Block.topic_id == room.id,
-                Block.task_id.is_(None),
-                Block.kind == BlockKind.doc,
-            )
-            .order_by(Block.created_at)
-            .limit(1)
-        )
-    ).first()
+    doc = await Documents(session).of_room(room.id)
     tasks = (
         await session.scalars(
             select(Task.title)

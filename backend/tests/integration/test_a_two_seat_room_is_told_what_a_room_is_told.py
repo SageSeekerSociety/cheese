@@ -11,13 +11,12 @@ import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import registered
+from tests.support.living_doc import write_doc
 
 pytestmark = pytest.mark.anyio
 
@@ -52,14 +51,7 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
                 project_id=project.id, title="Work", created_by="u"
             )
         topic_id = topic.id
-        await BlockRepository(session).add(
-            project_id=project.id,
-            topic_id=topic_id,
-            author="u",
-            author_type=AuthorType.participant,
-            content=DOC,
-            kind=BlockKind.doc,
-        )
+        await write_doc(session, topic_id, DOC, "u", quiet=True)
         await session.commit()
     async with factory() as session:
         _, seats = await TopicMemberService(session).list_for_topic(topic_id)

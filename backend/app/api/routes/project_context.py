@@ -28,6 +28,7 @@ from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
+from app.domain.living_doc import search as doc_search
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task
 from app.domain.search import bm25
@@ -41,25 +42,26 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 SEARCHED_BLOCKS = (
     BlockKind.message,
-    BlockKind.doc,
-    BlockKind.doc_node,
     BlockKind.comment,
     BlockKind.weekly,
 )
 
+#: Every kind of record, in the order the search lists them: blocks, and the
+#: two kinds of document hit (`app.domain.living_doc.search`).
+RECORD_KINDS = ("message", *doc_search.KINDS, "comment", "weekly")
 
-# Written out rather than bound: the blocks index is partial on exactly these
-# kinds (migration 2d2fc3a8ce36), and Postgres only uses it when it can prove
-# the query's predicate implies the index's — which it cannot do against bind
-# parameters once a prepared statement goes generic.
+
+# Written out rather than bound: the blocks index is partial on these kinds and
+# a few others (migration 2d2fc3a8ce36), and Postgres only uses it when it can
+# prove the query's predicate implies the index's — which it cannot do against
+# bind parameters once a prepared statement goes generic.
 _SEARCHED_BLOCKS_SQL = text(
     "blocks.kind IN (" + ", ".join(f"'{k.value}'" for k in SEARCHED_BLOCKS) + ")"
 )
 
 
-#: What `only` may name: a kind of block, or one of the two groups that are not
-#: blocks.
-ONLY_VALUES = {k.value for k in SEARCHED_BLOCKS} | {"tasks", "library"}
+#: What `only` may name: a kind of record, or one of the two other groups.
+ONLY_VALUES = set(RECORD_KINDS) | {"tasks", "library"}
 
 
 def _snippet(body: str, terms: list[str], width: int = 160) -> str:
@@ -197,18 +199,34 @@ async def _page(
 ) -> dict[str, list[dict]]:
     hits: dict[str, list[dict]] = {"records": [], "tasks": [], "library": []}
     in_readable = list(readable)
-    kinds = sorted(groups - {"tasks", "library"})
+    kinds = [k for k in RECORD_KINDS if k in groups]
     # One ranked list across the kinds asked for, not a slice of each: a page
-    # of 文档 is the best document paragraphs and comments together.
+    # of 文档 is the best document paragraphs and comments together. Each
+    # source gives its best `offset + limit`, and the page is cut from them
+    # merged by score.
     if kinds and in_readable:
-        blocks = await db.scalars(
-            select(Block)
-            .where(_blocks_matching(terms, in_readable, kinds), _SEARCHED_BLOCKS_SQL)
-            .order_by(func.paradedb.score(Block.id).desc(), Block.id)
-            .offset(offset)
-            .limit(limit)
-        )
-        hits["records"] = [_record(b, readable, terms) for b in blocks]
+        ranked: list[tuple[float, dict]] = []
+        block_kinds = [k for k in kinds if k not in doc_search.KINDS]
+        if block_kinds:
+            score = func.paradedb.score(Block.id)
+            rows = await db.execute(
+                select(Block, score)
+                .where(
+                    _blocks_matching(terms, in_readable, block_kinds),
+                    _SEARCHED_BLOCKS_SQL,
+                )
+                .order_by(score.desc(), Block.id)
+                .limit(offset + limit)
+            )
+            ranked += [
+                (float(value or 0), _record(b, readable, terms)) for b, value in rows
+            ]
+        docs = await doc_search.readable(db, in_readable)
+        for kind in (k for k in kinds if k in doc_search.KINDS):
+            found = await doc_search.find(db, kind, terms, docs, limit=offset + limit)
+            ranked += [(h.score, _doc_record(h, readable, terms)) for h in found]
+        ranked.sort(key=lambda pair: -pair[0])
+        hits["records"] = [record for _, record in ranked[offset : offset + limit]]
     if "tasks" in groups and in_readable:
         tasks = await db.scalars(
             select(Task)
@@ -245,6 +263,9 @@ async def _counts(
         )
         for kind, n in rows:
             counts[str(kind.value)] = n
+        docs = await doc_search.readable(db, in_readable)
+        for doc_kind in doc_search.KINDS:
+            counts[doc_kind] = await doc_search.count(db, doc_kind, terms, docs)
         counts["tasks"] = (
             await db.scalar(
                 select(func.count())
@@ -269,6 +290,24 @@ def _record(b: Block, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dic
         "created_at": b.created_at.isoformat(),
         "task_id": str(b.task_id) if b.task_id else None,
         "snippet": _snippet(b.content, terms),
+    }
+
+
+def _doc_record(
+    hit: doc_search.Hit, readable: dict[uuid.UUID, Topic], terms: list[str]
+) -> dict:
+    assert hit.document.room_id is not None
+    room = readable[hit.document.room_id]
+    return {
+        "room_id": str(room.id),
+        "room_title": room.title,
+        "room_title_source": str(room.title_source),
+        "id": str(hit.id),
+        "kind": hit.kind,
+        "author": hit.author,
+        "created_at": hit.created_at.isoformat(),
+        "task_id": None,
+        "snippet": _snippet(hit.content, terms),
     }
 
 
@@ -327,20 +366,26 @@ async def search_everything(
         # Each kind gets its own `limit`: a busy conversation would otherwise
         # fill every slot, and the decision or document paragraph that also
         # matches would never be listed.
-        blocks = [
-            block
-            for kind in SEARCHED_BLOCKS
-            for block in await db.scalars(
-                select(Block)
-                .where(
-                    _blocks_matching(terms, in_readable, [kind.value]),
-                    _SEARCHED_BLOCKS_SQL,
+        docs = await doc_search.readable(db, in_readable)
+        records: list[dict] = []
+        for kind in RECORD_KINDS:
+            if kind in doc_search.KINDS:
+                found = await doc_search.find(db, kind, terms, docs, limit=limit)
+                records += [_doc_record(h, readable, terms) for h in found]
+                continue
+            records += [
+                _record(b, readable, terms)
+                for b in await db.scalars(
+                    select(Block)
+                    .where(
+                        _blocks_matching(terms, in_readable, [kind]),
+                        _SEARCHED_BLOCKS_SQL,
+                    )
+                    .order_by(func.paradedb.score(Block.id).desc(), Block.id)
+                    .limit(limit)
                 )
-                .order_by(func.paradedb.score(Block.id).desc(), Block.id)
-                .limit(limit)
-            )
-        ]
-        hits["records"] = [_record(b, readable, terms) for b in blocks]
+            ]
+        hits["records"] = records
         tasks = await db.scalars(
             select(Task)
             .where(_tasks_matching(terms, in_readable))

@@ -11,12 +11,11 @@ import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import registered
+from tests.support.living_doc import write_doc
 
 pytestmark = pytest.mark.anyio
 
@@ -62,14 +61,7 @@ async def _three_turns(factory, tmp_path) -> list[tuple[str, str]]:
         await TopicService(session).create(
             project_id=project_id, title="新开的话题", created_by="u"
         )
-        await BlockRepository(session).add(
-            project_id=project_id,
-            topic_id=topic_id,
-            author="u",
-            author_type=AuthorType.participant,
-            content="## 目标\n\n改过的文档",
-            kind=BlockKind.doc,
-        )
+        await write_doc(session, topic_id, "## 目标\n\n改过的文档", "u", quiet=True)
         await session.commit()
     await turn("接着做")
     await turn("再接着做")

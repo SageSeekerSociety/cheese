@@ -42,17 +42,13 @@ CARD_KEYS = {
     "author_type",
     "content",
     "created_at",
-    "doc_version",
     "id",
     "kind",
     "meta",
     "mime_type",
-    "node_type",
     "reactions",
     "refs",
     "reply_to",
-    "struct_order",
-    "struct_parent",
     "task_id",
     "topic_id",
     "turn_id",
@@ -160,7 +156,6 @@ def test_shown_registers_lists_and_broadcasts_the_same_card(client):
     assert card["task_id"] is None
     assert card["meta"] is None and card["turn_id"] is None
     assert card["reactions"] == []
-    assert card["doc_version"] == 1
     assert card["created_at"]
     # 摆出来就是房间里说了一句话: the frame carries the very same card.
     assert frame == {"type": "assistant_block", "block": card}
