@@ -455,6 +455,14 @@ def sandbox_argv(argv, *, owner, home, claude, sockets):
         "--ro-bind",
         "/proc/sys/kernel/random/boot_id",
         "/proc/sys/kernel/random/boot_id",
+        # Before anything under the owner's home: a home kept under /tmp would
+        # otherwise be covered by the session's own /tmp.
+        "--bind",
+        str(tmp),
+        "/tmp",
+        "--bind",
+        str(tmp),
+        "/var/tmp",
         "--tmpfs",
         str(owner),
     ]
@@ -475,12 +483,6 @@ def sandbox_argv(argv, *, owner, home, claude, sockets):
     ):
         command += [option, str(path), str(path)]
     command += [
-        "--bind",
-        str(tmp),
-        "/tmp",
-        "--bind",
-        str(tmp),
-        "/var/tmp",
         "--bind",
         str(sockets),
         str(sockets),

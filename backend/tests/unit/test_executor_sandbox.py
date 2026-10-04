@@ -247,6 +247,15 @@ def test_the_install_writes_through_no_link_a_room_left_in_its_home(
     assert keys.read_text() == "ssh-ed25519 AAAA owner\n"
 
 
+def _configure(payload, home):
+    """The install, with the executor's own log in the failure if it fails."""
+    try:
+        bootstrap.configure(payload)
+    except RuntimeError:
+        log = home / ".cheese/executor-bootstrap.log"
+        pytest.fail(log.read_text() if log.exists() else "no executor log")
+
+
 def _run_git(*args, cwd):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
@@ -331,7 +340,7 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
         assert "error" not in answer, answer
         return answer["value"]
 
-    bootstrap.configure(payload)
+    _configure(payload, home)
     started = json.loads(capsys.readouterr().out)
     release = bootstrap.release_store(owner)
     try:
@@ -395,7 +404,7 @@ def test_a_sandboxed_executor_survives_its_own_room_rewriting_its_programs(
     )
     home = owner / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"
-    bootstrap.configure(payload)
+    _configure(payload, home)
     started = json.loads(capsys.readouterr().out)
     escaped = owner / "escaped"
     try:
