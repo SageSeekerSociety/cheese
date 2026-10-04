@@ -610,6 +610,17 @@ function isLive(index: number): boolean {
   font-size: 13px;
   line-height: 1.55;
   transition: background-color var(--dur-quick) var(--ease-standard);
+  /* 离屏的一步不渲染，但留在 DOM 里（Ctrl+F、读屏还找得到）。22px 是「一步一行」的
+     估计高度，只在这一行从未渲染过时用；`auto` 记住渲染过的真实高度。
+     为什么不给 .site-msg 也加：useSiteClamp 每次更新都要读每一条 .site-msg__body 的
+     scrollHeight（决定要不要夹），读离屏的就是强制把它铺开，加了也省不下来。
+     测量帧的关掉见 lib/contentVisibility 与下面的 .cv-measure。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22px;
+}
+/* 测量帧（向上翻页补偿）：按真实高度铺开。见 lib/contentVisibility。 */
+.cv-measure .site-act {
+  content-visibility: visible;
 }
 .site-act:hover {
   background: var(--fill);
