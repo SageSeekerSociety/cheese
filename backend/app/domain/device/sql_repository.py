@@ -171,6 +171,19 @@ class SqlDeviceRepository:
         ).all()
         return list(dict.fromkeys([*explicit, *team_bound]))
 
+    async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
+        """Whether this one machine is among ``list_devices_by_project``, asked
+        without building the rest: every tool call on a self-hosted machine
+        asks it, and a project can use dozens."""
+        if device_id not in await self.device_ids_by_project(project_id):
+            return False
+        hosted = await self._session.scalar(
+            select(HostedDeviceRow.device_id).where(
+                HostedDeviceRow.device_id == device_id
+            )
+        )
+        return hosted is not None
+
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
         """Human-hosted machines assigned directly or through the project's team."""
         out: list[Device] = []
