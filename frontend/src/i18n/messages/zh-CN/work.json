@@ -419,7 +419,11 @@
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
       "upgradedToTask": "已转为任务",
-      "upgradedToTopic": "已转为话题"
+      "upgradedToTopic": "已转为话题",
+      "showMore": "展开",
+      "showLess": "收起",
+      "wrapCode": "自动换行",
+      "unwrapCode": "不换行"
     },
     "outbox": {
       "failed": "发送失败：{reason}",

@@ -34,6 +34,6 @@ export function shownMessageHtml(blockId: string): string | null {
   const shown = document.querySelector(`[data-mid="${blockId}"] .im-text`)
   if (!shown) return null
   const copy = shown.cloneNode(true) as HTMLElement
-  copy.querySelectorAll('.md-copy, .im-edited').forEach((el) => el.remove())
+  copy.querySelectorAll('.md-code-btn, .md-pre-bar, .im-edited').forEach((el) => el.remove())
   return copy.innerHTML
 }
