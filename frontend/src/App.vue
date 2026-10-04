@@ -1,4 +1,15 @@
 <template>
+  <!-- 冷打开时「正在恢复登录状态 / 连不上、可以重试」那一层。放在最前面，因为它要
+       同时盖住外壳和公开页两条分支——弱网下恢复失败的人，以前就被送到公开页上，
+       会话明明还好好的。见 services/account.ts 的 RestorePhase。 -->
+  <SessionRestoreGate
+    :visible="restoreVisible"
+    :phase="restorePhase"
+    :retrying="restoreRetrying"
+    :navigation-failed="restoreNavigationFailed"
+    @retry="retryRestore"
+    @continue="continueAsGuest"
+  />
   <router-view v-if="currentRoute.meta.publicLanding" />
   <my-app v-else>
     <!-- Skip-to-content: the shell's first focusable element, so one Tab lands
@@ -261,6 +272,7 @@ import { pendingSudo } from '@/utils/sudo'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
@@ -282,6 +294,7 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
+import SessionRestoreGate from '@/components/common/SessionRestoreGate.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
@@ -443,6 +456,17 @@ onMounted(loadCxProjects)
 // 到的时候，项目侧栏也还没注册，内容区先按没有侧栏的宽度画出来，侧栏一到整块内容
 // 往右跳一个侧栏宽——每个项目页冷打开时最大的一次布局偏移。在那之前内容区不可见、
 // 也不做内边距过渡，露出来的时候已经在最终位置上。
+// 冷打开时「正在恢复登录状态 / 连不上、可以重试」那一层。逻辑在 composable 里
+// ——组件边界规则不允许子组件碰 services/router，而这里是视图那一层。
+const {
+  visible: restoreVisible,
+  phase: restorePhase,
+  retrying: restoreRetrying,
+  navigationFailed: restoreNavigationFailed,
+  retry: retryRestore,
+  continueAsGuest,
+} = useSessionRestore()
+
 const firstRoutePending = ref(true)
 const mainRef = ref<{ $el: Element } | null>(null)
 
