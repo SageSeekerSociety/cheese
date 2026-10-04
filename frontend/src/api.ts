@@ -955,16 +955,6 @@ export function markRead(alertId: number): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${alertId}/read`, { method: 'POST' })
 }
 
-// 全部标记已读（飞书那样）—— 一次收起一整队，而不是一条一条点。只标调用者自己的，
-// 而且没拍板的决策请求后端故意留着（`mark_all_read_in_project`），所以这一下清掉的
-// 是一整队变更提醒和读过就走的验收卡，不是还没答的问题。
-export function markAllAlertsRead(projectId: string, targetHandle: string): Promise<{ marked: number }> {
-  return request<{ marked: number }>(
-    `/projects/${encodeURIComponent(projectId)}/alerts/read-all?target_handle=${encodeURIComponent(targetHandle)}`,
-    { method: 'POST' }
-  )
-}
-
 // 拍板。答复之后这一条不再等人，收件箱里就没有它了。
 export function resolveAlert(alertId: number, chosen: string): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${alertId}/resolve`, {

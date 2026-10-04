@@ -25,10 +25,11 @@ import type { InboxItem } from '@/cx_types'
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { getInbox, markAllAlertsRead, markRead, resolveAlert, sendFeedback } from '@/api'
+import { getInbox, markRead, resolveAlert, sendFeedback } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { label, NOTIF_KIND } from '@/labels'
+import { markAllAlertsRead } from '@/lib/alerts'
 import { myHandle } from '@/me'
 
 const props = defineProps<{ projectId: string }>()
@@ -199,8 +200,9 @@ watch(
           <!-- 「1/3」：一叠摆出来的是一条，所以件数得连着位置一起说，光写 3 会读成
                「这张卡有三个选项」。只有一条的时候不写——那时候位置不是信息。 -->
           <span v-if="rows.length > 1" class="asked__count t-meta c-faint">{{ cursor + 1 }}/{{ rows.length }}</span>
-          <!-- 有第二件在等的时候，一队一百条不该还要点一百下「收起」：整队收起的入口
-               摆在这儿，和收件箱的「标记全部已读」同一条路（同一个词，同一把钥匙）。 -->
+          <!-- When a second item is waiting, a hundred-strong queue should not still cost
+               a hundred dismiss clicks: the batch action sits here, on the same route as
+               the inbox's mark-all-as-read (the same word, the same key). -->
           <div v-if="rows.length > 1" class="asked__actions">
             <BaseButton kind="ghost" size="sm" :loading="busyAll" @click="dismissAll">
               {{ t('notifications.common.markAllAsRead') }}

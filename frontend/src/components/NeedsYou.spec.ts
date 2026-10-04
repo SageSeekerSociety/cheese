@@ -26,14 +26,16 @@ import { setLocale } from '@/i18n'
 
 vi.mock('@/api', () => ({
   getInbox: vi.fn(),
-  markAllAlertsRead: vi.fn(),
   markRead: vi.fn(),
   resolveAlert: vi.fn(),
   sendFeedback: vi.fn(),
 }))
+// 整队收起走的是独立那一个 helper（`api.ts` 在上限之上，只能变短）。
+vi.mock('@/lib/alerts', () => ({ markAllAlertsRead: vi.fn() }))
 vi.mock('@/me', () => ({ myHandle: vi.fn(() => 'alice') }))
 
-const { getInbox, markAllAlertsRead, markRead, resolveAlert, sendFeedback } = await import('@/api')
+const { getInbox, markRead, resolveAlert, sendFeedback } = await import('@/api')
+const { markAllAlertsRead } = await import('@/lib/alerts')
 const { myHandle } = await import('@/me')
 
 const vuetify = createVuetify({ components, directives })
