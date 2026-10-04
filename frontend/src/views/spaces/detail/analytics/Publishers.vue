@@ -41,7 +41,14 @@
       />
     </AnalyticsStatStrip>
 
-    <div class="an-table">
+    <BaseLoadError
+      v-if="failed"
+      :title="t('spaces.analytics.publishers.loadFailed')"
+      :error="errorDetail"
+      @retry="load"
+    />
+
+    <div v-else class="an-table">
       <v-data-table :headers="headers" :items="publishers" :loading="loading" density="compact" items-per-page="10">
         <template #[`item.taskCount`]="{ item }">{{ formatCount(item.taskCount) }}</template>
         <template #[`item.participantCount`]="{ item }">{{ formatCount(item.participantCount) }}</template>
@@ -63,7 +70,6 @@ import type { SpaceAnalyticsPublisherMetrics } from '@/network/api/spaces/types'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
 import AnalyticsMetricCard from './components/AnalyticsMetricCard.vue'
@@ -73,6 +79,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
@@ -80,6 +87,9 @@ const options = useAnalyticsOptions()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
+// 读失败和「还没有出题人」是两件事：失败替换掉表格，空状态才交给表格自己说。
+const failed = ref(false)
+const errorDetail = ref<string | null>(null)
 const publishers = ref<SpaceAnalyticsPublisherMetrics[]>([])
 const sortByModel = ref(filters.value.sortBy || 'taskCount')
 const sortOrderModel = ref(filters.value.sortOrder || 'desc')
@@ -98,6 +108,8 @@ watch([sortByModel, sortOrderModel], async () => {
 
 const load = async () => {
   loading.value = true
+  failed.value = false
+  errorDetail.value = null
   try {
     const { data } = await SpacesApi.getAnalyticsPublishers(
       spaceId.value,
@@ -106,7 +118,8 @@ const load = async () => {
     publishers.value = data.publishers
   } catch (error) {
     console.error('load analytics publishers failed', error)
-    toast.error(t('spaces.analytics.publishers.loadFailed'))
+    failed.value = true
+    errorDetail.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loading.value = false
   }

@@ -11,11 +11,11 @@
 // 导出的是**工厂**：面板把两份输入作为回调递进来，扩展只读它们，不自己去取。
 import type { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import type { Transaction } from '@tiptap/pm/state'
+import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type { RefNames } from './refChip'
 
 import { Extension as TiptapExtension } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { ySyncPluginKey } from '@tiptap/y-tiptap'
 
@@ -231,6 +231,27 @@ function tokenDecorations(doc: PMNode, names: () => RefNames): DecorationSet {
   return DecorationSet.create(doc, decos)
 }
 
+/** Dispatch with this meta set to redraw the chips: the names they show
+ *  arrived (the roster loads after the document) or changed. */
+export const tokenChipsKey = new PluginKey('cheeseTokenChips')
+
+// A chip shows as one thing, so the caret treats it as one: Backspace after a
+// chip takes the whole reference, Delete before it likewise, and ← / → step
+// over it. Stepping through the hidden characters one at a time would stall the
+// caret on screen and leave half a token (`<@lix`) behind as text.
+function tokenAround(state: EditorState, side: 'before' | 'after'): { from: number; to: number } | null {
+  const { $from, empty } = state.selection
+  if (!empty || !$from.parent.isTextblock) return null
+  const start = $from.start()
+  const text = $from.parent.textBetween(0, $from.parent.content.size, undefined, '\uFFFC')
+  const at = $from.parentOffset
+  for (const ref of refTokens(text)) {
+    if (side === 'before' && ref.index + ref.length === at) return { from: start + ref.index, to: start + at }
+    if (side === 'after' && ref.index === at) return { from: start + at, to: start + at + ref.length }
+  }
+  return null
+}
+
 /** `names` says whom and which topic each token names; it is read when a chip is drawn. */
 export function createTokenChips(opts: { names: () => RefNames }): Extension {
   return TiptapExtension.create({
@@ -238,13 +259,35 @@ export function createTokenChips(opts: { names: () => RefNames }): Extension {
     addProseMirrorPlugins() {
       return [
         new Plugin({
+          key: tokenChipsKey,
           state: {
             init: (_cfg, state) => tokenDecorations(state.doc, opts.names),
-            apply: (tr, old) => (tr.docChanged ? tokenDecorations(tr.doc, opts.names) : old),
+            apply: (tr, old) =>
+              tr.docChanged || tr.getMeta(tokenChipsKey) ? tokenDecorations(tr.doc, opts.names) : old,
           },
           props: {
             decorations(state) {
               return this.getState(state)
+            },
+            handleKeyDown(view, event) {
+              if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false
+              const side =
+                event.key === 'Backspace' || event.key === 'ArrowLeft'
+                  ? 'before'
+                  : event.key === 'Delete' || event.key === 'ArrowRight'
+                    ? 'after'
+                    : null
+              const token = side && tokenAround(view.state, side)
+              if (!token) return false
+              const { tr } = view.state
+              if (event.key === 'Backspace' || event.key === 'Delete') {
+                if (!view.editable) return false
+                view.dispatch(tr.delete(token.from, token.to))
+              } else {
+                const to = event.key === 'ArrowLeft' ? token.from : token.to
+                view.dispatch(tr.setSelection(TextSelection.create(tr.doc, to)))
+              }
+              return true
             },
           },
         }),

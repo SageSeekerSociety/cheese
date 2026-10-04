@@ -166,6 +166,10 @@ defineExpose({
   z-index: var(--z-overlay-2);
   border: none;
   border-radius: 0;
+  /* 整屏铺开之后，顶上那条工具栏钻进刘海、正文最后几行压在 Home 横杠上。整块往里
+     让出安全区，两者各自让开。桌面和没有安全区的设备上 `env()` 是 0，形状不变。 */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .rt-editor.is-fullscreen .rt-editor__body {
   padding: 24px max(16px, calc((100% - 760px) / 2));

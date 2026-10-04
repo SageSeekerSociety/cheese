@@ -326,7 +326,7 @@ defineExpose({
 
 <template>
   <div
-    class="composer pa-2 px-3"
+    class="composer"
     :class="{ 'composer--drop': dragOver }"
     @dragenter.prevent="onDragOverFiles"
     @dragover.prevent="onDragOverFiles"
@@ -421,8 +421,11 @@ defineExpose({
   /* @ 菜单按它定位（见 MentionMenu.vue 的 .mention-menu）。 */
   position: relative;
   background: var(--surface);
-  /* 手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
-  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  /* 内边距写在这里，不用 Vuetify 的 `pa-2 px-3`：那两个工具类带 `!important`，会把
+     下面这一条安全区一起盖掉，手机上输入框于是照旧被 Home 横杠压住。上下 8px、左右
+     12px 就是那两个类本来给的值。
+     手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
 }
 /* 输入区是一个控件。原来输入框和几颗按钮各自浮在页面上，读起来是几个零件而不是
    一件东西——一个圆角描边就把它们收成一块，顺带替掉了上面那条 divider。 */
