@@ -66,7 +66,11 @@ CALLS = {
         "POST",
         "/documents/fixture-id/edits",
     ),
-    "cheese_task": ({"title": "数据清洗"}, "POST", "/topics/fixture/split"),
+    "cheese_task": (
+        {"title": "数据清洗"},
+        "POST",
+        "/topics/fixture/task-proposals",
+    ),
     "cheese_close_task": (
         {"task": TASK},
         "POST",
@@ -78,11 +82,6 @@ CALLS = {
         f"/topics/fixture/tasks/{TASK}/accept-card/describe",
     ),
     "cheese_ready": ({"task": TASK}, "POST", f"/topics/fixture/tasks/{TASK}/ready"),
-    "cheese_tell": (
-        {"target": TASK, "message": "口径改了"},
-        "POST",
-        f"/topics/fixture/tasks/{TASK}/messages",
-    ),
     "cheese_title": ({"text": "推荐原型"}, "POST", "/topics/fixture/title"),
     "cheese_notify": (
         {"title": "看一眼"},

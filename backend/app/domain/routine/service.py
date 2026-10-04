@@ -643,15 +643,6 @@ async def _fire_schedules(session: AsyncSession) -> int:
     return fired
 
 
-async def _routine_turn_ids(session: AsyncSession, project_id: uuid.UUID) -> set:
-    rows = await session.scalars(
-        select(RoutineRun.turn_id)
-        .join(Routine, Routine.id == RoutineRun.routine_id)
-        .where(Routine.project_id == project_id, RoutineRun.turn_id.is_not(None))
-    )
-    return set(rows)
-
-
 async def _events_for(
     session: AsyncSession, routine: Routine, since: datetime
 ) -> list[tuple[str, str, datetime]]:
@@ -678,14 +669,9 @@ async def _events_for(
         )
         if in_room:
             query = query.where(Task.room_id == routine.topic_id)
-        own_turns = await _routine_turn_ids(session, routine.project_id)
+        # A task is created by a person (an agent only proposes one), so a
+        # routine run never opens work that would fire it again.
         for task in await session.scalars(query):
-            # Work a routine run started does not start routine work again.
-            if (
-                task.execution_turn_id is not None
-                and task.execution_turn_id in own_turns
-            ):
-                continue
             assert task.closed_at is not None
             found.append(
                 (

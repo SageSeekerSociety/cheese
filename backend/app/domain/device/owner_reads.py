@@ -137,7 +137,11 @@ async def session_execution(
     """Read exactly the session named by the signed execution credential."""
     return (
         await session.execute(
-            select(AgentSession.runtime_location, AgentSession.work_lease)
+            select(
+                AgentSession.runtime_location,
+                AgentSession.work_lease,
+                AgentSession.conversation_id,
+            )
             .where(AgentSession.topic_id == place_id, AgentSession.id == session_id)
             .with_for_update()
         )

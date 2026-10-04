@@ -84,8 +84,8 @@ def _task(client, project_id: str, room: str) -> uuid.UUID:
             await s.execute(
                 text(
                     "INSERT INTO tasks (id, project_id, room_id, title, status,"
-                    " brief, created_at, updated_at) VALUES (:id, :project, :room,"
-                    " 'work', 'open', '', now(), now())"
+                    " created_at, updated_at) VALUES (:id, :project, :room,"
+                    " 'work', 'open', now(), now())"
                 ),
                 {
                     "id": task_id,

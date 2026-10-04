@@ -27,6 +27,7 @@ from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
+    open_task,
     post_project,
     room_text,
     session_auth_headers,
@@ -1255,7 +1256,7 @@ def test_a_pr_opened_at_accept_time_is_kept_but_not_merged_this_click(
     同一条约束。
 
     「人看的是同一条分支」不等于「同一个 commit」：浏览器从来没有声明过它渲染的
-    diff 是哪个 sha，而分身边干边推是常态，所以现开的 PR 的 head 照样可能是没人
+    diff 是哪个 sha，而 AI 边干边推是常态，所以现开的 PR 的 head 照样可能是没人
     看过的那个。开 PR 本身留着（有价值的副作用，下次采纳就有 head 可比），这一次
     不合。"""
     fake = app_world["fake"]
@@ -1840,7 +1841,6 @@ def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub
                 select(Delivery).where(Delivery.task_id == card.task_id)
             )
             assert row.state == "pending"
-            assert row.agent_instance_id is None  # parent has not been observed
             return row.payload["content"]
 
     prompt = asyncio.run(pending_instruction())
@@ -2631,7 +2631,7 @@ def test_remote_merge_records_acceptance(client, app_world):
 
 
 def _disk_branch(client, place_id: str) -> str:
-    """磁盘这一层说的「这个地方现在写哪条分支」——分身 commit 时用的就是它。"""
+    """磁盘这一层说的「这个地方现在写哪条分支」——AI commit 时用的就是它。"""
 
     return git_store.branch_for_task(delivery_task_id(client, place_id))
 
@@ -2907,7 +2907,7 @@ def test_ready_flips_the_draft_and_changes_nothing_else(client, sweeping):
 
 
 def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sweeping):
-    """本来就 ready 就是调用方想要的状态。为它抛异常只会教会分身别用这条命令。"""
+    """本来就 ready 就是调用方想要的状态。为它抛异常只会教会 AI 别用这条命令。"""
     pid, tid = _room_with_work(client)
     _sweep(client)
     assert _ready(client, tid).status_code == 200
@@ -3053,14 +3053,10 @@ def test_a_correction_leaves_a_trace_in_the_room(client, sweeping):
 
 
 def test_a_correction_never_touches_the_delivery_claim(client, sweeping):
-    """署名是对**事实**的断言（哪个分身写的代码），描述是对改动的**说明**。
+    """署名是对**事实**的断言（哪件任务写的代码），描述是对改动的**说明**。
     更正入口只有后者，前者连字段都不收。"""
     pid, tid = _room_with_work(client)
-    r = client.post(
-        f"/topics/{tid}/split",
-        json=dict(reviewer_handle="alice", **{"title": "另一条活"}),
-    )
-    other = r.json()["data"]["id"]
+    other = open_task(client, tid, "另一条活")["id"]
     _make_card(client, tid)
 
     sent = _describe(

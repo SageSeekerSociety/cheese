@@ -86,6 +86,7 @@ async def _task_actor(
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError()
+    resolver.require_task_scope(task_id)
     await TaskService(db).require_in_room(topic_id, task_id)
     return actor
 

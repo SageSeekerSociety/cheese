@@ -7,7 +7,7 @@ room stay open for the next piece of work, and for anything delivered into it
 later.
 """
 
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.integration.test_accept import _make_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -30,17 +30,8 @@ def _room(client, project_id: str, title: str = "运维") -> str:
 
 
 def _task(client, project_id: str, room_id: str, title: str) -> dict:
-    """One piece of work, dispatched into a room.
-
-    Through `/split`, because that is the only way to make one: `POST /topics`
-    under a room is refused now — a room's inside is work, not another room.
-    """
-    r = client.post(
-        f"/topics/{room_id}/split",
-        json=dict(reviewer_handle="alice", **{"title": title}),
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]
+    """One piece of work in a room, made the way a person makes one."""
+    return open_task(client, room_id, title)
 
 
 def _accept(client, topic_id: str) -> None:

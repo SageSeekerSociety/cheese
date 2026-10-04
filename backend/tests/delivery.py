@@ -1,6 +1,7 @@
 """Explicit task fixtures for tests of delivery and workspace consumers."""
 
 import uuid
+from datetime import UTC, datetime
 
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.room_task.services import TaskService
@@ -31,6 +32,10 @@ def delivery_task(client, room_id, *, new=False, commit=True):
                 created_by="alice",
                 reviewer_handle="alice",
             )
+            # A task with something to deliver is one its owner has started.
+            task.started_at = datetime.now(UTC)
+            task.started_by = "alice"
+            task.started_doc_version = 0
             await session.commit()
             return task
 

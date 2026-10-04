@@ -110,6 +110,12 @@ async def execute(
                 "An execution session is required"
             ) from None
         owned = await owner_reads.session_execution(db, topic_id, session_id)
+        # A task's session works its own task: a credential naming a task
+        # reaches only that task's session, and a task's session only with it.
+        if owned is not None and str(owned.conversation_id) != (
+            claims.get("k") or str(topic_id)
+        ):
+            raise ForbiddenError("This credential works another conversation")
     else:
         owned = await owner_reads.legacy_execution(db, topic_id)
         session_id = owned.id if owned is not None else None

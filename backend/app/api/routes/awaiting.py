@@ -22,7 +22,7 @@ from app.api.deps import get_chat_service
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.domain.agent.chat import ChatService
-from app.domain.agent.liveness import task_liveness
+from app.domain.agent.liveness import running_tasks
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.project.repositories import ProjectRepository
@@ -109,8 +109,8 @@ async def waiting_items(
     asked_tasks = {place: question[0] for place, question in task_questions.items()}
     asked_rooms = {place: question[0] for place, question in room_questions.items()}
     # 「运行中」也在这一页出现（一列里的每一格都是同一个函数算的），所以这一屏每行
-    # 要的两位当下事实也一次问完 —— 这批活的屏幕和分身（`agent.liveness`）。
-    live = await task_liveness(chat, db, tasks)
+    # 要的当下事实也一次问完 —— 这批任务有没有一轮在跑（`agent.liveness`）。
+    running = await running_tasks(chat, db, tasks)
     # 一次，给整份清单用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
 
@@ -120,9 +120,7 @@ async def waiting_items(
             presentation.facts_for_task(
                 task,
                 task_cards.get(task.id),
-                beats.get(task.id),
-                room_screen_live=live[task.id].screen,
-                worker_live=live[task.id].worker,
+                running=task.id in running,
                 awaiting_answer=task.id in asked_tasks,
             ),
             now=now,

@@ -144,20 +144,20 @@ def test_the_dev_credential_alone_cannot_sign_a_comment_as_someone(client):
     assert r.json()["data"]["author"] != B
 
 
-# --- POST /topics/{id}/split + /tasks/{task}/messages --------------------------
+# --- POST /topics/{id}/tasks + /tasks/{task}/messages --------------------------
 
 
-def test_split_work_and_a_message_on_it_belong_to_the_caller(client):
+def test_a_task_and_a_message_in_it_belong_to_the_caller(client):
     project = _project(client, A)
     room = project["root_topic_id"]
 
-    split = client.post(
-        f"/topics/{room}/split",
-        json={"title": "清洗数据", "reviewer_handle": A, "created_by": B},
+    made = client.post(
+        f"/topics/{room}/tasks",
+        json={"title": "清洗数据", "owner_handle": B, "created_by": B},
         headers=_as(A),
     )
-    assert split.status_code == 200, split.text
-    task = split.json()["data"]
+    assert made.status_code == 200, made.text
+    task = made.json()["data"]
     assert task["owner_handle"] == A
 
     said = client.post(

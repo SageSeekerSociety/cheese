@@ -89,9 +89,9 @@ async def topic_transcript(
     after the fact returns fewer rows than asked for and reports `has_more`
     against the wrong set, so the caller pages through holes.
 
-    The room's own line. What one of its 分身 did is on that card, and is read
-    through it (`GET /topics/{room}/tasks/{card}`) — interleaving every card's
-    actions here would bury what the room itself did."""
+    The room's own line. What a task's session did is in that task's own
+    conversation, read through it (`GET /topics/{room}/tasks/{task}`) —
+    interleaving every task's actions here would bury what the room did."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)

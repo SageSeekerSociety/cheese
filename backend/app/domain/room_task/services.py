@@ -19,7 +19,6 @@ from app.domain.room_task.models import (
     TaskTitleSource,
 )
 from app.domain.room_task.repositories import TaskRepository
-from app.domain.room_task.thread_label import task_of_thread_label
 from app.domain.topic.models import Topic, TopicStatus
 
 
@@ -167,71 +166,6 @@ class TaskService:
         """
         return await self._repo.list_by_ids(task_ids)
 
-    async def open_by_thread_label(
-        self, *, room_id: uuid.UUID, thread_label: str
-    ) -> Task | None:
-        """The open thread in *room_id* this label names, if any.
-
-        The label is this card's own (`thread_label.thread_label`), handed to
-        the agent when the card was opened and carried back on every event of
-        the sub-thread it spawned — so this reads an answer rather than looking
-        one up in something reported earlier.
-
-        `open` is part of the question, not a filter on the answer: a finished
-        thread that kept catching events would silently swallow whatever came
-        after it. A label naming another room's work is None for the same reason
-        an unknown one is — the events land on this room's own line, where the
-        room can see them, instead of on a card in a room nobody is watching.
-
-        Asked once per event a sub-thread produces, and it is a primary-key read.
-        """
-        task_id = task_of_thread_label(thread_label)
-        if task_id is None:
-            return None
-        task = await self._repo.get(task_id)
-        if (
-            task is None
-            or task.room_id != room_id
-            or task.status is not TaskStatus.open
-        ):
-            return None
-        return task
-
-    async def note_worker(self, task: Task, subagent_id: str) -> Task:
-        """记下这条活是哪个分身在做 —— 平台看见它开工，不是 agent 报上来的。
-
-        分身的 id 在容器里才诞生，所以开卡的时候没有任何东西能提前说出它；卡上
-        要写「谁在做、它还活着没有」，唯一说得出这个 id 的地方就是它开工那条事件。
-        归属不靠它（那是线程标识的事），所以重复一次、换一个 id 都不是冲突：一条
-        活重派一个分身，卡上换成新的那个就是对的答案。
-
-        没有 id 的开工记录在骨架那一层就整条丢掉了（`claude_code/events.py`：没有
-        task_id 的分身和会话本身分不开），所以这里收到的一定是个认得出人的 id。
-
-        A worker starting IS this work starting, and `last_turn_at` is the signal
-        the board falls back on before the worker has said anything: without it a
-        thread reads 失联 for the whole gap between starting and its first tool
-        call, which is the busiest moment it has.
-        """
-        task.subagent_id = subagent_id
-        task.last_turn_at = datetime.now(UTC)
-        await self._session.flush()
-        return task
-
-    async def record_conclusion(self, task: Task, conclusion: str) -> Task:
-        """分身交回来的那句话，落在卡上 —— overwriting whatever was there.
-
-        Called for every `SubagentStop` whose label names this card, and a
-        sub-thread stops more than once: parking a long command in its own
-        background reads as finishing, and it stops again when it resumes and
-        finishes for real. So
-        the last one is the only one worth keeping. Acceptance closes delivered
-        work; an explicit close abandons it. A stop notification does neither.
-        """
-        task.conclusion = conclusion
-        await self._session.flush()
-        return task
-
     async def set_credits(
         self,
         task: Task,
@@ -255,17 +189,8 @@ class TaskService:
         await self._session.flush()
 
     async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
-        """收卡 —— the room says this piece of work is over.
-
-        The room is the only thing that can say it. It read what the worker
-        handed back, folded the changes into its branch, and is the one place
-        holding both halves; the platform sees a worker stop and cannot tell
-        that from a worker pausing.
-
-        `conclusion` overrides what the worker's last stop left, for the case
-        where what came back was a fragment (a parked command's "running the
-        tests…") and the room knows the real answer. Absent, the worker keeps
-        the last word.
+        """关闭任务 —— its owner or its own session says it is over; with a
+        `conclusion` it is done, without one it was put down.
 
         Idempotent: closing a closed thread keeps the first `closed_at` — the
         moment it stopped being live is a fact, not a re-statement of intent.
@@ -278,6 +203,90 @@ class TaskService:
             after_close(self._session, task.room_id)
         await self._session.flush()
         return task
+
+    async def ensure_document(self, task: Task) -> uuid.UUID:
+        """The task's living document, created empty the first time it is
+        asked for. The row is locked so two first asks make one document."""
+        from app.domain.living_doc.services import Documents
+
+        locked = await self._session.scalar(
+            select(Task)
+            .where(Task.id == task.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        assert locked is not None
+        if locked.document_id is None:
+            doc = await Documents(self._session).create(project_id=locked.project_id)
+            locked.document_id = doc.id
+            await self._session.flush()
+        return locked.document_id
+
+    async def of_document(self, document_id: uuid.UUID) -> Task | None:
+        """The task whose living document this is."""
+        return await self._session.scalar(
+            select(Task).where(Task.document_id == document_id)
+        )
+
+    async def start(
+        self, task: Task, *, by: str, reviewer_handle: str | None = None
+    ) -> Task:
+        """「开始」：written once, with who reviews its changes and what its
+        document said at that moment.
+
+        The reviewer is the one named here, else the project's default. It is
+        written now rather than read back from the setting when changes are
+        submitted: the setting can change, and who a task was handed to for
+        review is a fact about the moment it started.
+        """
+        from app.domain.living_doc.services import Documents
+        from app.domain.project.models import Project
+        from app.domain.project.protection import branch_protection_of
+
+        if task.started_at is not None:
+            raise ValidationError(say("taskStartedAlready"))
+        project = await self._session.get(Project, task.project_id)
+        reviewer = (
+            (reviewer_handle or "").strip()
+            or task.reviewer_handle
+            or branch_protection_of(project).default_reviewer
+        )
+        if not reviewer:
+            raise ValidationError(say("reviewerRequired"))
+        doc = (
+            await Documents(self._session).get(task.document_id)
+            if task.document_id is not None
+            else None
+        )
+        task.reviewer_handle = reviewer
+        task.started_at = datetime.now(UTC)
+        task.started_by = by
+        task.started_doc_version = doc.version if doc is not None else 0
+        await self._session.flush()
+        return task
+
+    async def hand_over(self, task: Task, *, owner_handle: str) -> Task:
+        """Another member owns the task from now. A task working on its former
+        owner's own computer goes back to the room's choice: a person's
+        computer works only that person's tasks."""
+        if (task.compute_config or {}).get("profile") == "device":
+            task.compute_config = None
+        task.owner_handle = owner_handle
+        await self._session.flush()
+        return task
+
+    async def give_agent(self, task: Task, *, agent_handle: str | None) -> Task:
+        """Another AI teammate works the task from its next turn (None: the
+        project's default)."""
+        task.agent_handle = (agent_handle or "").strip() or None
+        await self._session.flush()
+        return task
+
+    @staticmethod
+    def require_open(task: Task) -> None:
+        """Refuse what only an open task takes: a message to its session."""
+        if task.status != TaskStatus.open:
+            raise ValidationError(say("taskClosedNoTurn"))
 
     async def open_thread(
         self,

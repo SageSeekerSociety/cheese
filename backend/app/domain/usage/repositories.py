@@ -4,12 +4,16 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import Uuid, case, column, func, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.platform_stats.windows import utc_day
 from app.domain.project.models import Project
 from app.domain.usage.models import ResourceUsage
+
+# Which room a task hangs in, read as a bare table: ``room_task`` depends on
+# this domain, so importing its model back would make the two a cycle.
+_tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
 
 
 def unpriced_tokens() -> Any:
@@ -74,13 +78,21 @@ class UsageRepository:
         Spend outside any project has no ``project_id`` and names, in
         ``user_id``, the person whose credits paid for it.
         """
-        # The ROOM's books. Every 分身 in a room spends through that room's one
-        # session, so there is no second meter to read: a per-card figure would
-        # be an invented split of one bill.
+        # `topic_id` names the conversation the spend happened in: a room's own
+        # line, or a task's, whose session is its own and so is its bill. The
+        # row keeps the room, with the task beside it.
+        task_id = None
+        if topic_id is not None:
+            room_id = await self._session.scalar(
+                select(_tasks.c.room_id).where(_tasks.c.id == topic_id)
+            )
+            if room_id is not None:
+                topic_id, task_id = room_id, topic_id
         row = ResourceUsage(
             project_id=project_id,
             user_id=user_id,
             topic_id=topic_id,
+            task_id=task_id,
             turn_id=turn_id,
             model=model,
             input_tokens=input_tokens,

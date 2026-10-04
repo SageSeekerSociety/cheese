@@ -62,7 +62,7 @@ async def set_title(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """给这个地方起/改标题 — used by both `cheese_title` (a person asked 芝士
-    for this name) and the frontend sidebar rename UI (dual-use, like doc/split).
+    for this name) and the frontend sidebar rename UI (dual-use, like doc).
     Either way a person chose it, so the platform's naming leaves it alone from
     now on (`topic/naming.py`).
 

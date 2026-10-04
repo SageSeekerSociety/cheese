@@ -82,7 +82,8 @@ from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task.place import PlaceResolver
+from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import naming
@@ -158,6 +159,9 @@ class _TurnContext:
 
     # Who is here and what they are working under.
     project_id: uuid.UUID
+    # Where: the room, and the task when the conversation is a task's own.
+    room_id: uuid.UUID
+    task_id: uuid.UUID | None
     acting_agent: str
     agent: ResolvedAgent
     agent_pool: tuple[MemoryScope, str] | None
@@ -212,6 +216,9 @@ class _TurnContext:
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
+    # A task's session only reads until its owner starts it: it discusses and
+    # writes the task's document, and changes nothing in the project.
+    reads_only: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,7 +271,6 @@ class RoomTurns:
             *,
             probe_unread: bool = False,
             fence_delivery: bool = False,
-            parent_session_id: str | None = None,
         ) -> InputRegistrar: ...
 
         async def _unconnected_mcp(
@@ -302,6 +308,10 @@ class RoomTurns:
 
         async def _resolved_agent(
             self, session: AsyncSession, topic: Topic
+        ) -> ResolvedAgent: ...
+
+        async def _agent_at(
+            self, session: AsyncSession, place: Place
         ) -> ResolvedAgent: ...
 
         async def _acting_handle(
@@ -395,23 +405,24 @@ class RoomTurns:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
 
-            # WHERE this turn runs. A room — the only thing a turn runs in.
-            place = await PlaceResolver(session).resolve(topic_id)
+            # WHERE this turn runs: a room's own line, or a task's conversation.
+            place = await PlaceResolver(session).conversation(topic_id)
             if place is None:
                 raise NotFoundError("Topic not found")
-            topic = place.room
+            topic, task = place.room, place.task
             if topic.status == TopicStatus.archived:
                 raise ValidationError(say("roomArchivedUnarchiveFirst"))
+            if task is not None and task.status == TaskStatus.closed:
+                raise ValidationError(say("taskClosedNoTurn"))
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on
             # the next summon (spec §7.1 所有消息 AI 都会收到), each tagged with
             # who said it so 芝士 can tell people apart in a group topic (§8.4).
             #
-            # The room's OWN line: its 分身 talk on their cards, and handing
-            # the room every card's chatter as its backlog would drown the
-            # messages actually addressed to it.
-            history = await blocks.turn_history(place.room_id)
+            # This conversation's OWN line: a room's history leaves out its
+            # tasks' conversations, and a task's is only its own.
+            history = await blocks.turn_history(place.room_id, place.task_id)
             phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_input_blocks(history)
             # Kept apart from `pending` on purpose: that list answers
@@ -430,13 +441,16 @@ class RoomTurns:
             pinned_seat = None
             if recipient_instance_id is not None:
                 recipient = {"instance_id": str(recipient_instance_id)}
-                pinned_seat = await require_pinned_seat(
-                    session, place.room_id, recipient_instance_id
-                )
+                # A seat on the room's roster: a task's agent works the task and
+                # sits on no roster.
+                if task is None:
+                    pinned_seat = await require_pinned_seat(
+                        session, place.room_id, recipient_instance_id
+                    )
             # 收件人是消息落库时记下来的。记的时候还没有实例行的那些旧消息，
             # 「收件人是项目的芝士」和今天的解析是同一个答案。
             if recipient is None or recipient.get("instance_id") is None:
-                agent = await self._resolved_agent(session, topic)
+                agent = await self._agent_at(session, place)
             else:
                 agent = agents.resolved(
                     await agents.get_in_project(
@@ -478,7 +492,7 @@ class RoomTurns:
             # 消息各盖一个 consumed_turn，而谁都没答它的话却被所有人收走。
             claims_backlog = (
                 user_block_id is not None
-                or agent.handle == (await self._resolved_agent(session, topic)).handle
+                or agent.handle == (await self._agent_at(session, place)).handle
             )
             pending_ids = [
                 b.id
@@ -490,7 +504,7 @@ class RoomTurns:
             # the prompt is built below, after the provider is picked. A file
             # that is gone is not offered (`offered_attachments`).
             turn_images, gone_files = await asyncio.to_thread(
-                offered_attachments, pending, topic.project_id, topic_id
+                offered_attachments, pending, topic.project_id, place.room_id
             )
 
             # 私聊是名册两席的房间（结论 19）。这一轮凡是「私聊要不一样」的地
@@ -504,7 +518,13 @@ class RoomTurns:
             acting_agent = pinned_seat or await self._acting_handle(
                 session, topic.id, agent
             )
-            doc_root = await Documents(session).of_room(place.room_id)
+            # A task's own document, or the room's.
+            if task is None:
+                doc_root = await Documents(session).of_room(place.room_id)
+            elif task.document_id is not None:
+                doc_root = await Documents(session).get(task.document_id)
+            else:
+                doc_root = None
             # 工作话题的文档还空着时是 `""`，不是 None：提示词据此告诉坐进来的
             # 队友「建第一版」（`build_system_prompt`）。私聊没有这份文档要维护。
             doc_text = doc_root.content if doc_root else None
@@ -557,7 +577,7 @@ class RoomTurns:
             # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
             # 各自解析一次就够把一条会话拆成两条。
             compute_id = resolve_compute_id(
-                project.settings if project else None, topic
+                project.settings if project else None, topic, task
             )
             wanted_harness, provider = self._compute.choose(
                 project.settings if project else None, compute_id
@@ -623,7 +643,7 @@ class RoomTurns:
             # conversation, which is the failure this whole path prevents.
             session_agent = agent
             resume_session_id = await AgentSessionService(session).resume_token(
-                place.room_id,
+                place.conversation_id,
                 session_agent.handle,
                 harness=wanted_harness,
             )
@@ -631,19 +651,22 @@ class RoomTurns:
             # cannot — no gateway to call — is the agent still asked to, and
             # never in a project that chose to name its rooms by hand.
             untitled = (
-                topic.title_source == TitleSource.placeholder
+                task is None
+                and topic.title_source == TitleSource.placeholder
                 and not naming.available()
                 and naming.naming_mode(project.settings if project else None) == "auto"
             )
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.
-            progress_row = await TopicProgressRepository(session).get(place.room_id)
+            progress_row = await TopicProgressRepository(session).get(
+                place.room_id, task_id=place.task_id
+            )
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
             earlier_messages = await blocks.count_messages(
-                place.room_id, excluding=prompt_pending_ids
+                place.room_id, excluding=prompt_pending_ids, task_id=place.task_id
             )
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
@@ -658,7 +681,7 @@ class RoomTurns:
                             "type": "event_block",
                             "block": await self._bail_notice(
                                 project_id=topic.project_id,
-                                topic_id=topic_id,
+                                topic_id=place.room_id,
                                 turn_id=turn_id,
                                 session=session,
                                 text=say("harnessNotDeployed", harness=wanted_harness),
@@ -676,15 +699,17 @@ class RoomTurns:
             # 里，不是 `PUT /topics/{id}/compute-profile`。那条路由是人主动去点的
             # 少数情形，它和这里问的是同一个闸门。
             if provider.deferred_work and project is not None and needs_place:
-                from app.domain.agent.compute_configs import room_choice
+                from app.domain.agent.compute_configs import place_choice
 
                 conversation = await AgentSessionService(session).ensure(
-                    topic_id, agent.handle, harness=wanted_harness
+                    place.conversation_id, agent.handle, harness=wanted_harness
                 )
                 if conversation.execution_request is None:
                     conversation.execution_request = {
                         "generation": str(uuid.uuid4()),
-                        "choice": room_choice(topic, project.settings).model_dump(),
+                        "choice": place_choice(
+                            topic, task, project.settings
+                        ).model_dump(),
                         "authorized_by": None,
                     }
                 if provision_actor is not None and provision_actor.via == "token":
@@ -710,17 +735,17 @@ class RoomTurns:
                 ):
                     from app.domain.agent.compute_configs import (
                         machine_policy_call,
-                        room_choice,
+                        place_choice,
                     )
 
                     proposed = await self._pass_policy_gate(
                         session,
-                        topic_id,
+                        place.room_id,
                         await machine_policy_call(
                             session,
                             project=project,
                             topic=topic,
-                            choice=room_choice(topic, project.settings),
+                            choice=place_choice(topic, task, project.settings),
                         ),
                         policy,
                         actor=actor_handle,
@@ -730,7 +755,7 @@ class RoomTurns:
                         return _TurnBail(_proposal_frames(proposed.landed))
                 proposed = await self._pass_policy_gate(
                     session,
-                    topic_id,
+                    place.room_id,
                     _model_policy_call(project, agent),
                     policy,
                     actor=actor_handle,
@@ -755,7 +780,7 @@ class RoomTurns:
             if needs_place and provider.provisions_machine:
                 ready, waiting_text = await provider.prepare_topic(
                     project_id=project_id,
-                    topic_id=topic_id,
+                    topic_id=place.room_id,
                     actor=provision_actor,
                 )
                 if topic.compute_config is None:
@@ -776,9 +801,10 @@ class RoomTurns:
                         or (cloud_events[-1].meta or {}).get("state") != "waiting"
                     ):
                         landed = landing(
-                            EventAbout.room,
+                            EventAbout.task if task is not None else EventAbout.room,
                             project_id=project_id,
-                            room_id=topic_id,
+                            room_id=place.room_id,
+                            task_id=place.task_id,
                         )
                         waiting_block = await blocks.add(
                             project_id=landed.project_id,
@@ -868,7 +894,7 @@ class RoomTurns:
             # "this one batch keeps failing" look identical, and the second one
             # is the diagnosis. Counting at prompt-build time is the only place
             # that sees a failed attempt at all.
-            if recipient_instance_id is not None:
+            if recipient_instance_id is not None and task is None:
                 await require_pinned_seat(session, place.room_id, recipient_instance_id)
             replay_n = await blocks.bump_prompt_attempts(prompt_pending_ids, turn_id)
             # Committed HERE and not left to ride the conditional commit further
@@ -887,6 +913,20 @@ class RoomTurns:
             # still kills at 900s.
             # 不租手的一轮身上不钉机器。钉了就是给一段永远不会用到机器的对话记上
             # 一台机器，而这一行本来是给「以后别换机器」用的。
+            if (
+                task is not None
+                and needs_place
+                and provider is not None
+                and task.compute_config is None
+            ):
+                # The same red line for a task: its choice is fixed on its first
+                # turn, so a later change to the room's does not move it.
+                from app.domain.agent.compute_configs import place_choice
+
+                task.compute_config = place_choice(
+                    topic, task, project.settings if project else None
+                ).model_dump()
+                await session.commit()
             if needs_place and provider is not None and topic.compute_config is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later project-default change must
@@ -902,7 +942,7 @@ class RoomTurns:
                     topic, project.settings if project else None
                 ).model_dump()
                 await session.commit()
-            if recipient_instance_id is not None:
+            if recipient_instance_id is not None and task is None:
                 await require_pinned_seat(session, place.room_id, recipient_instance_id)
             phases_ms["committed"] = (time.monotonic() - started) * 1000
         logger.info(
@@ -913,6 +953,9 @@ class RoomTurns:
             phases_ms,
         )
         return _TurnContext(
+            room_id=place.room_id,
+            task_id=place.task_id,
+            reads_only=task is not None and task.started_at is None,
             acting_agent=acting_agent,
             agent=agent,
             agent_pool=agent_pool,
@@ -1053,7 +1096,9 @@ class RoomTurns:
             teaching=teaching,
             environment=_session_opening_lines(
                 unconnected_mcp=(
-                    await self._unconnected_mcp(project_id, topic_id, acting_agent)
+                    await self._unconnected_mcp(
+                        project_id, prepared.room_id, acting_agent
+                    )
                     if needs_place
                     else ()
                 ),
@@ -1092,7 +1137,7 @@ class RoomTurns:
         model_kwargs, route = await self._model_kwargs(
             project_id,
             provider,
-            topic_id,
+            prepared.room_id,
             agent=prepared.agent,
             acting_agent=prepared.acting_agent,
         )
@@ -1153,7 +1198,9 @@ class RoomTurns:
         # enough. Both backends need it, and the hooks backend returns from this
         # function long before its turn ends — so it is started once here and
         # carried on the work state rather than read twice in two places.
-        known_commits = asyncio.ensure_future(self._known_commits(project_id, topic_id))
+        known_commits = asyncio.ensure_future(
+            self._known_commits(project_id, prepared.room_id)
+        )
         marked_work_ids: list[uuid.UUID] = []
 
         def _register_work(marked_work_id: uuid.UUID) -> None:
@@ -1237,9 +1284,10 @@ class RoomTurns:
             # built from anything else resolves somebody else's machine.
             session_ref = SessionRef(
                 project_id,
-                topic_id,
+                prepared.room_id,
                 prepared.agent.handle,
                 harness=prepared.harness,
+                task_id=prepared.task_id,
             )
             await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
@@ -1254,13 +1302,13 @@ class RoomTurns:
                 env=model_kwargs.get("env"),
                 acting=acting_agent,
                 needs_place=needs_place,
+                reads_only=prepared.reads_only,
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,
                 register_input=self._input_registrar(
                     effects,
                     fence_delivery=delivery_id is not None,
-                    parent_session_id=resume_session_id,
                 ),
                 owes_reply=summoned,
             )
@@ -1269,7 +1317,7 @@ class RoomTurns:
             if expected_session is None:
                 async with self._sessions() as session:
                     await AgentSessionService(session).remember_told(
-                        topic_id=topic_id,
+                        conversation_id=topic_id,
                         agent_handle=prepared.agent.handle,
                         harness=prepared.harness,
                         told=opening.digests(),
@@ -1325,7 +1373,7 @@ class RoomTurns:
             if status is not None:
                 from app.domain.project.environment_recovery import report_failure
 
-                await report_failure(self, project_id, topic_id, status)
+                await report_failure(self, project_id, prepared.room_id, status)
             # The write never reached the transport, so the Stop consumer's
             # close_one rightly refuses this interval (undelivered). Its own
             # coroutine retires it HERE, by exact id — the same end the
@@ -1357,7 +1405,7 @@ class RoomTurns:
             await turn_inputs.stamp_delivered(
                 session, turn_id=turn_id, at=datetime.now(UTC)
             )
-            await close_recovery(session, topic_id)
+            await close_recovery(session, prepared.room_id)
             await session.commit()
         yield {"type": "prompt_delivered"}
         if ready is False:

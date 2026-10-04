@@ -1,8 +1,11 @@
 """Who may reach a document, and whether it takes writes.
 
 A room's living document is the room's: whoever may enter the room may read it
-and write it. A document of the project's own, in no room, is the project's
-members'. Every document route asks here, so the two never disagree.
+and write it. A task's living document is read by whoever may enter the task's
+room, and written by the task's owner and the task's own session: what others
+have to say about a task they say in the room. A document of the project's own,
+in no room, is the project's members'. Every document route asks here, so they
+never disagree.
 """
 
 import uuid
@@ -11,13 +14,15 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place
+from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 
 
@@ -25,8 +30,13 @@ from app.domain.topic.services import TopicService
 class Reached:
     doc: Document
     actor: Actor
-    #: The room the document is the living document of; None for a project's own.
+    #: The room the document is the living document of — or the room of the task
+    #: it is the living document of; None for a project's own.
     place: Place | None
+    #: The task whose living document this is.
+    task: Task | None = None
+    #: The task the caller's credential works, when it is a task session's.
+    scope: uuid.UUID | None = None
 
 
 async def reach(
@@ -42,6 +52,16 @@ async def reach(
     doc = await Documents(db).get(document_id)
     if doc is None:
         raise NotFoundError(say("docNotFound"))
+    task = await TaskService(db).of_document(doc.id) if doc.room_id is None else None
+    if task is not None:
+        place = await TopicService(db).place_or_404(task.room_id)
+        actor = await resolver.resolve(
+            topic_id=place.room_id, project_id=place.project_id
+        )
+        await resolver.authorize_topic(
+            actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
+        )
+        return Reached(doc, actor, place, task, resolver.task_scope())
     if doc.room_id is None:
         actor = await resolver.resolve(project_id=doc.project_id)
         await resolver.authorize_project(actor, project_id=doc.project_id)
@@ -59,12 +79,20 @@ async def require_writable(db: AsyncSession, reached: Reached) -> None:
     takes no more writes."""
     if reached.place is not None:
         TopicService(db).require_doc_writable(reached.place)
+    if reached.task is not None:
+        if reached.task.status != TaskStatus.open:
+            raise ValidationError(say("taskClosedNoTurn"))
+        if (
+            reached.actor.handle != reached.task.owner_handle
+            and reached.scope != reached.task.id
+        ):
+            raise ForbiddenError(say("taskDocOwnerOnly"))
     await refuse_writes_if_archived(db, reached.doc.project_id)
 
 
 async def frozen(db: AsyncSession, reached: Reached) -> bool:
     try:
         await require_writable(db, reached)
-    except (ValidationError, ProjectArchivedError):
+    except (ValidationError, ProjectArchivedError, ForbiddenError):
         return True
     return False

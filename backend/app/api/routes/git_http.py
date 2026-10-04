@@ -12,7 +12,7 @@ from app.api.auth import require_seated_agent
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
-from app.core.sandbox_auth import token_agent_handle, verify_scoped_token
+from app.core.sandbox_auth import token_agent_handle, token_task, verify_scoped_token
 from app.core.sentences import say
 
 router = APIRouter(prefix="/projects", tags=["git"])
@@ -151,13 +151,22 @@ async def task_workspace(
     task = await TaskService(db).get(task_id)
     if task is None or task.project_id != project_id or task.branch_name is None:
         raise NotFoundError(say("workTaskNotInProject"))
+    # A task's session works its own task, and only once its owner started it.
+    scope = token_task(x_cheese_token)
+    if scope is not None and scope != str(task.id):
+        raise NotFoundError(say("workTaskNotInProject"))
     if not verify_scoped_token(
         x_cheese_token or "", project_id=str(project_id), topic_id=str(task.room_id)
     ):
         raise NotFoundError(say("workTaskNotInRoom"))
-    await require_seated_agent(
-        db, x_cheese_token, project_id=project_id, topic_id=task.room_id
-    )
+    # The task's own session is its task's agent, seated on no roster; any
+    # other credential acts for an agent seated in the room.
+    if scope is None:
+        await require_seated_agent(
+            db, x_cheese_token, project_id=project_id, topic_id=task.room_id
+        )
+    if task.started_at is None:
+        raise ValidationError(say("taskNotStarted"))
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError(say("projectHasNoRepo"))

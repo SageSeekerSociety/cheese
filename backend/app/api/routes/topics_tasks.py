@@ -61,26 +61,29 @@ from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.api.routes.topics import (
     AcceptCardRepository,
-    AuthorType,
-    BlockKind,
     BlockRepository,
     DbSession,
     ProjectRepository,
-    TaskRepository,
     UsageRepository,
     _actor_in_place,
 )
-from app.core.errors import NotFoundError, ValidationError
+from app.api.task_instructions import dispatch, tell_task
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.harness.prompt import thread_relay_prompt
-from app.domain.agent.liveness import task_liveness
-from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
+from app.domain.agent.liveness import running_tasks
+from app.domain.agent.runtime import announce_stale
 from app.domain.block.schemas import BlockOut
+from app.domain.idempotency import store as idem
+from app.domain.idempotency.keys import action_key
 from app.domain.mentions import canonicalize_refs
 from app.domain.room_task import binding, presentation
+from app.domain.room_task.proposals import ProposalState, TaskProposals
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
+from app.domain.topic import naming
 from app.domain.topic.schemas import ConclusionIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -130,7 +133,6 @@ async def list_room_tasks(
     # overview would have to ask per thread to tell them apart.
     thread_ids = [t.id for t, _ in threads]
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
-    beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
     asked = await BlockRepository(db).tasks_awaiting_an_answer(thread_ids)
     # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
     # `tasks` 上没有一列存它。
@@ -139,9 +141,7 @@ async def list_room_tasks(
     # 构造几百遍。
     project = await ProjectRepository(db).get(topic.project_id)
     choices = binding.catalog(project.settings if project else None)
-    # One answer for the whole room: every thread's worker lives in this room's
-    # one session, so the screen is alive for all of them or for none.
-    live = await task_liveness(chat, db, [t for t, _ in threads])
+    running = await running_tasks(chat, db, [t for t, _ in threads])
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
@@ -158,10 +158,7 @@ async def list_room_tasks(
                     presentation.facts_for_task(
                         task,
                         card,
-                        beats.get(task.id),
-                        room_screen_live=live[task.id].screen,
-                        # 每条活的分身是它自己的，所以逐条答；上面一次问完。
-                        worker_live=live[task.id].worker,
+                        running=task.id in running,
                         awaiting_answer=task.id in asked,
                     ),
                     now=now,
@@ -206,6 +203,7 @@ async def get_room_task(
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    resolver.require_task_scope(task_id)
     tasks = TaskService(db)
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
@@ -214,8 +212,7 @@ async def get_room_task(
     if blocks is None:
         raise NotFoundError(say("messageNotInTask"))
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
-    beats = await TaskRepository(db).last_block_at_for_tasks([task.id])
-    live = await task_liveness(chat, db, [task])
+    running = await running_tasks(chat, db, [task])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     # 看板那一格，和它在列表里显示的是同一句话——同一个函数算的，所以深链接进来
     # 和从看板点进来不可能给出两种说法。
@@ -223,10 +220,7 @@ async def get_room_task(
         presentation.facts_for_task(
             task,
             cards.get(task.id),
-            beats.get(task.id),
-            # 两位当下事实见 `agent.liveness`：屏幕先看，屏幕没了分身也没了。
-            room_screen_live=live[task.id].screen,
-            worker_live=live[task.id].worker,
+            running=task.id in running,
             awaiting_answer=bool(
                 await BlockRepository(db).tasks_awaiting_an_answer([task.id])
             ),
@@ -256,14 +250,12 @@ async def get_room_task(
     return ok(out)
 
 
-#: How long a note a room's agent leaves on one of its threads may be. A note
-#: adds a requirement; anything longer belongs in the living document, which
-#: both the room and the worker read.
-AGENT_NOTE_CHARS = 4000
-
-
 class TaskMessageIn(BaseModel):
     content: str = Field(min_length=1, max_length=100000)
+    #: The sender's own id for this send: a retry with the same id returns the
+    #: message already stored.
+    request_id: uuid.UUID | None = None
+    reply_to: uuid.UUID | None = None
 
 
 @router.post("/{topic_id}/tasks/{task_id}/messages")
@@ -274,21 +266,14 @@ async def say_on_task(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """在一张卡下面说话 —— 落在这条活的时间线上。人和房间的 AI 队友走这同一条路由
-    （`cheese_tell`）；谁在说，决定之后发生什么。
+    """在任务里说话 —— 任务自己的对话里只有负责人和做它的 AI 队友。
 
-    A person watching a card cannot reach the 分身 doing it: that worker lives
-    inside the room's session and only the room's 芝士 can pass it a message.
-    So a person's message lands WHERE THE WORK IS, and wakes the ROOM to act on
-    it. One of the room's agents writing here is that room already: its message
-    is recorded on the card and nobody is woken, because the worker is in its own
-    session and it reaches it directly. Nothing is woken on the card — there is
-    no session there to wake.
-
-    Through the room's id for the same reason `/conclude` and `/title` are: a card
-    is not a place, so it has no address of its own and no token scoped to it.
+    From the task's owner it is what the task's session answers: the message
+    lands in the task's conversation and the session is woken, or handed it
+    mid-turn. From the task's own session (its credential names this task) it is
+    a publication in its own turn. Anyone else is refused: what others have to
+    say about a task they say in the room.
     """
     place = await TopicService(db).place_or_404(topic_id)
     task = await TaskService(db).get(task_id)
@@ -301,59 +286,55 @@ async def say_on_task(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    members = TopicMemberService(db)
-    relay_to_parent = not await members.holds_an_agent_seat(place.room, actor.handle)
-    if not relay_to_parent and len(content) > AGENT_NOTE_CHARS:
-        raise ValidationError(
-            say("noteTooLong", length=len(content), limit=AGENT_NOTE_CHARS)
-        )
-    content = await project_refs_text(db, place.project_id, place.room_id, content)
-    block = await BlockRepository(db).add(
+    if actor.via == "cheese":
+        if resolver.task_scope() != task.id:
+            raise ForbiddenError(say("taskOwnerOnly"))
+        return ok(await _publish_in_task(chat, db, place, task, body, actor.handle))
+    if not actor.authenticated or actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
+    TaskService.require_open(task)
+    anchor_id = await get_broker().receive_message(
+        chat,
+        task.id,
+        author=actor.handle,
+        content=content,
+        reply_to=str(body.reply_to) if body.reply_to else None,
+        provision_actor=actor,
+        client_id=str(body.request_id) if body.request_id else None,
+    )
+    stored = await BlockRepository(db).get(anchor_id)
+    return ok(BlockOut.model_validate(stored).model_dump(mode="json"))
+
+
+async def _publish_in_task(
+    chat: ChatService, db, place, task, body, author
+) -> dict | None:
+    """The task's session speaking in its own conversation, inside its turn."""
+    content = await project_refs_text(
+        db, place.project_id, place.room_id, body.content.strip()
+    )
+    runner = get_work_runner()
+    work = runner.live_work_for_topic(task.id)
+    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
+    payload = await chat._persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
         task_id=task.id,
-        author=actor.handle,
-        author_type=AuthorType.participant,
-        content=content,
-        kind=BlockKind.message,
+        text=content,
+        turn_id=turn_id,
+        reply_to=body.reply_to,
+        roster=None,
+        topic_refs=[],
+        publish=True,
+        author=author,
+        publication_id=str(body.request_id) if body.request_id else None,
     )
-    payload = BlockOut.model_validate(block).model_dump(mode="json")
-    if relay_to_parent:
-        from app.domain.delivery.agent import record_task_instruction
-        from app.domain.delivery.ledger import DeliveryEvent
-        from app.domain.notification.models import NotificationType
-
-        await record_task_instruction(
-            db,
-            DeliveryEvent(
-                id=block.id,
-                type=NotificationType.ROOM_NOTICE,
-                payload={
-                    "projectId": str(place.project_id),
-                    "topicId": str(place.room_id),
-                },
-                occurred_at=block.created_at,
-            ),
-            task=task,
-            content=thread_relay_prompt(
-                task_id=task.id,
-                task_title=task.title,
-                author=actor.handle,
-                message=f"说：{content}",
-            ),
-        )
-    # Visible before the turn that reads it — same ordering as the doc comment.
-    await db.commit()
-    # 卡下的实时帧走这条活自己的频道，因为块落在这条活上：发给房间的话，看着房间
-    # 的人会看见一条刷新之后就搬走了的消息。
     await get_broker().publish(
         str(task.id), {"type": "assistant_block", "block": payload}
     )
-    if relay_to_parent:
-        from app.domain.delivery.agent import dispatch_pending
-
-        await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
-    return ok(payload)
+    if turn_id is not None:
+        runner.note_session_output(turn_id, tool=False)
+    return payload
 
 
 @router.post("/{topic_id}/tasks/{task_id}/title")
@@ -364,18 +345,19 @@ async def set_task_title(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """给房间里的一条活起/改标题, said by the ROOM.
-
-    Naming is the room's because nothing else is left to do it: a card
-    dispatched by /split is named by whoever dispatched it, but one upgraded
-    out of a message starts untitled, and the session that used to name itself
-    on its first turn is exactly what 任务=分身 removed.
-    """
+    """给任务起名或改名：its owner, or its own session (`cheese_title`), which
+    names a task that was created without a title."""
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
+    resolver.require_task_scope(task_id)
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
         raise NotFoundError(say("taskNotInRoom"))
+    if actor.via == "cheese":
+        if resolver.task_scope() != task.id:
+            raise ForbiddenError(say("taskOwnerOnly"))
+    elif actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError(say("titleRequired"))
@@ -393,31 +375,24 @@ async def conclude_task(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """收卡, said by the ROOM about one of its threads.
-
-    The worker's conclusion is already on the card: the platform writes it there
-    on every `SubagentStop` whose label names this card. This is the other half
-    — the room saying the work is over — and it is deliberately a separate act,
-    done by hand.
-
-    It has to be. A worker reports finished more than once (parking a long
-    command in its own background counts as finishing), and stops arrive from
-    sub-threads the harness started for its own purposes — measured on 2.1.224:
-    after the session's own Stop, with an unknown id, an empty label and a
-    fragment of a prompt as their closing message. Closing on either of those
-    would collapse work that is still going. The room decides when work has
-    ended; code acceptance merges the task's branch and closes it through the
-    separate acceptance flow.
-
-    `conclusion` is optional: given, it overwrites the worker's last word (which
-    is sometimes the fragment above); omitted, that last word stands.
+    """关闭任务：its owner or its own session says it is over. With a
+    conclusion it is done — the work did not end in a merge (research, a
+    decision); without one it was put down. Delivered work closes by itself
+    when its change is accepted.
     """
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
+    resolver.require_task_scope(task_id)
     tasks = TaskService(db)
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
         raise NotFoundError(say("taskNotInRoom"))
+    # The owner closes the task, or its own session (`cheese_close_task`).
+    if actor.via == "cheese":
+        if resolver.task_scope() != task.id:
+            raise ForbiddenError(say("taskOwnerOnly"))
+    elif actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -443,6 +418,273 @@ async def conclude_task(
             ),
         )
     task = await tasks.close_thread(task, conclusion=conclusion)
+    # The room hears how it ended: done with a conclusion, or put down.
+    await announce(
+        db,
+        place_id=place.room_id,
+        content=(
+            say("taskCompleted", title=task.title, conclusion=task.conclusion)
+            if task.conclusion
+            else say("taskClosed", title=task.title)
+        ),
+        meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
+    )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
+    return ok(out)
+
+
+# —— 创建、开始、转交 ——————————————————————————————————————————————————
+
+
+class TaskCreateIn(BaseModel):
+    title: str | None = Field(default=None, max_length=300)
+
+
+class TaskStartIn(BaseModel):
+    #: Who reviews the task's changes, when the project names nobody by default.
+    reviewer_handle: str | None = Field(default=None, max_length=64)
+
+
+class TaskUpdateIn(BaseModel):
+    owner_handle: str | None = Field(default=None, max_length=64)
+    agent_handle: str | None = Field(default=None, max_length=64)
+
+
+class TaskProposalIn(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    #: What the task is for, in the agent's words: the start of its document.
+    summary: str = Field(default="", max_length=20000)
+
+
+async def _task_in_room(db, resolver, topic_id: uuid.UUID, task_id: uuid.UUID):
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
+    task = await TaskService(db).get(task_id)
+    if task is None or task.room_id != place.room_id:
+        raise NotFoundError(say("taskNotInRoom"))
+    return place, actor, task
+
+
+@router.post("/{topic_id}/tasks")
+async def create_task(
+    topic_id: uuid.UUID,
+    body: TaskCreateIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """新建任务：a task owned by whoever creates it, empty until they say what
+    it is for. Its agent starts on the owner's first message."""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
+    if not actor.authenticated or actor.via == "cheese":
+        raise ForbiddenError(say("taskCreatedByPerson"))
+    task = await TopicService(db).create_task(
+        room_id=place.room_id, created_by=actor.handle, title=body.title
+    )
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(place.room_id, "topics")
+    # A task opened in a room is a sign of where the room is going.
+    naming.nudge(place.room_id, "signal")
+    return ok(out)
+
+
+@router.post("/{topic_id}/tasks/{task_id}/start")
+async def start_task(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: TaskStartIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """开始：the owner says the task is discussed enough. From here its agent may
+    change the project, and what the document says now is what its changes are
+    reviewed against."""
+    place, actor, task = await _task_in_room(db, resolver, topic_id, task_id)
+    if not actor.authenticated or actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
+    TaskService.require_open(task)
+    task = await TaskService(db).start(
+        task, by=actor.handle, reviewer_handle=body.reviewer_handle
+    )
+    await announce(
+        db,
+        place_id=place.room_id,
+        content=say("taskStarted", actor=f"<@{actor.handle}>", title=task.title),
+        meta={"platform": True, "action": "task_started", "task_id": str(task.id)},
+    )
+    await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(place.room_id, "topics")
+    await dispatch(chat)
+    return ok(out)
+
+
+@router.patch("/{topic_id}/tasks/{task_id}")
+async def update_task(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: TaskUpdateIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """转交：the owner hands the task to another member, or to another AI
+    teammate."""
+    place, actor, task = await _task_in_room(db, resolver, topic_id, task_id)
+    if not actor.authenticated or actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
+    TaskService.require_open(task)
+    tasks = TaskService(db)
+    if "owner_handle" in body.model_fields_set and body.owner_handle:
+        if body.owner_handle not in await TopicMemberService(db).people_handles(
+            place.room_id
+        ):
+            raise ValidationError(say("taskOwnerNotInRoom"))
+        await tasks.hand_over(task, owner_handle=body.owner_handle)
+    if "agent_handle" in body.model_fields_set:
+        await tasks.give_agent(task, agent_handle=body.agent_handle)
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(place.room_id, "topics")
+    return ok(out)
+
+
+def _proposal_out(proposal) -> dict:
+    return {
+        "id": str(proposal.id),
+        "room_id": str(proposal.room_id),
+        "title": proposal.title,
+        "summary": proposal.summary,
+        "proposed_by": proposal.proposed_by,
+        "state": proposal.state.value,
+        "task_id": str(proposal.task_id) if proposal.task_id else None,
+        "created_at": proposal.created_at.isoformat(),
+    }
+
+
+async def _room_actor(db, resolver, topic_id: uuid.UUID):
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
+    return place, actor
+
+
+@router.post("/{topic_id}/task-proposals")
+async def propose_task(
+    topic_id: uuid.UUID,
+    body: TaskProposalIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """An AI teammate proposes a task (`cheese_task`): a card in the room that a
+    person creates or puts aside. A teammate never creates one itself."""
+    place, actor = await _room_actor(db, resolver, topic_id)
+    # A turn sent again proposes the same task again: one card, not two.
+    continuation = get_work_runner().continuation_for(topic_id)
+    key = (
+        action_key(continuation, "task-proposal", body.title, body.summary)
+        if continuation
+        else None
+    )
+    if key is not None and not await idem.claim(
+        db, key, action="task-proposal", scope_id=str(topic_id)
+    ):
+        prior = await idem.stored_result(db, key)
+        return ok(prior or {"skipped": True})
+    proposal = await TaskProposals(db).propose(
+        project_id=place.project_id,
+        room_id=place.room_id,
+        title=body.title,
+        summary=body.summary,
+        proposed_by=actor.handle,
+    )
+    out = _proposal_out(proposal)
+    if key is not None:
+        await idem.record_result(db, key, out)
+    await db.commit()
+    await announce_stale(place.room_id, "task-proposals")
+    return ok(out)
+
+
+@router.get("/{topic_id}/task-proposals")
+async def list_task_proposals(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The proposals in this room still waiting for someone."""
+    place, _actor = await _room_actor(db, resolver, topic_id)
+    rows = await TaskProposals(db).open_in_room(place.room_id)
+    return ok([_proposal_out(p) for p in rows])
+
+
+async def _open_proposal(db, room_id: uuid.UUID, proposal_id: uuid.UUID):
+    proposal = await TaskProposals(db).lock(room_id, proposal_id)
+    if proposal is None:
+        raise NotFoundError(say("taskProposalNotFound"))
+    if proposal.state != ProposalState.open:
+        raise ValidationError(say("taskProposalDecided"))
+    return proposal
+
+
+@router.post("/{topic_id}/task-proposals/{proposal_id}/accept")
+async def accept_task_proposal(
+    topic_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """创建任务 from a teammate's proposal: the person who creates it owns it."""
+    place, actor = await _room_actor(db, resolver, topic_id)
+    if not actor.authenticated or actor.via == "cheese":
+        raise ForbiddenError(say("taskCreatedByPerson"))
+    proposal = await _open_proposal(db, place.room_id, proposal_id)
+    task = await TopicService(db).create_task(
+        room_id=place.room_id, created_by=actor.handle, title=proposal.title
+    )
+    TaskProposals.decide(
+        proposal, ProposalState.accepted, by=actor.handle, task_id=task.id
+    )
+    await tell_task(
+        db,
+        task,
+        task_opening_prompt(
+            title=task.title, owner=task.owner_handle, source=proposal.summary
+        ),
+    )
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(place.room_id, "task-proposals")
+    await announce_stale(place.room_id, "topics")
+    naming.nudge(place.room_id, "signal")
+    await dispatch(chat)
+    return ok(out)
+
+
+@router.post("/{topic_id}/task-proposals/{proposal_id}/dismiss")
+async def dismiss_task_proposal(
+    topic_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Put a teammate's proposal aside."""
+    place, actor = await _room_actor(db, resolver, topic_id)
+    if not actor.authenticated or actor.via == "cheese":
+        raise ForbiddenError(say("taskCreatedByPerson"))
+    proposal = await _open_proposal(db, place.room_id, proposal_id)
+    TaskProposals.decide(proposal, ProposalState.dismissed, by=actor.handle)
+    out = _proposal_out(proposal)
+    await db.commit()
+    await announce_stale(place.room_id, "task-proposals")
     return ok(out)

@@ -18,6 +18,7 @@ import pytest
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     join_project_team,
+    open_task,
     post_project,
     room_text,
     session_auth_headers,
@@ -175,10 +176,7 @@ def test_cascade_archive_closes_the_work_and_settles_the_card_delivering_it(clie
     """归档是级联的（房间带走里面的活），而收卡必须和它同一趟。"""
     pid = _make_project(client)
     room = _make_topic(client, pid, "房间")
-    thread = client.post(
-        f"/topics/{room}/split",
-        json=dict(reviewer_handle="alice", **{"title": "一件活"}),
-    ).json()["data"]["id"]
+    thread = open_task(client, room, "一件活", owner="bob", start=False)["id"]
     _make_card_response(client, room)
     assert _cards(client, room)[0]["status"] == "pending"
 

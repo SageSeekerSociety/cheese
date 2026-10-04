@@ -360,6 +360,36 @@ def session_auth_headers(handle: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {session_token(handle)}"}
 
 
+def open_task(
+    client,
+    room_id: str,
+    title: str = "一个任务",
+    *,
+    owner: str = "alice",
+    start: bool = True,
+    reviewer: str | None = "alice",
+) -> dict:
+    """A task in ``room_id``, created by ``owner`` (who owns it) and, unless
+    ``start`` is False, started by them with ``reviewer`` reviewing its changes
+    — the way a person makes one."""
+    r = client.post(
+        f"/topics/{room_id}/tasks",
+        json={"title": title},
+        headers=session_auth_headers(owner),
+    )
+    assert r.status_code == 200, r.text
+    task = r.json()["data"]
+    if start:
+        r = client.post(
+            f"/topics/{room_id}/tasks/{task['id']}/start",
+            json={"reviewer_handle": reviewer},
+            headers=session_auth_headers(owner),
+        )
+        assert r.status_code == 200, r.text
+        task = r.json()["data"]
+    return task
+
+
 def chat_ws_url(topic_id: str, handle: str) -> str:
     """The topic's chat WebSocket, authenticated as ``handle``.
 

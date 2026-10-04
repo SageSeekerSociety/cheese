@@ -6,7 +6,7 @@ from dataclasses import replace
 from sqlalchemy import or_, select
 
 from app.core.errors import ValidationError
-from app.domain.block.models import Block
+from app.domain.block.models import Block, conversation_of
 from app.domain.delivery.models import Delivery
 
 
@@ -24,7 +24,7 @@ async def guard_ask_inputs(session, identity, effects):
             continue
         if (
             block.project_id != identity.project_id
-            or block.topic_id != identity.topic_id
+            or conversation_of(block) != identity.topic_id
         ):
             raise ValidationError("Ask answer belongs to another room")
         try:

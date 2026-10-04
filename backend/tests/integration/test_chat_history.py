@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domain.block.models import AuthorType, Block, BlockKind
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.unit.test_platform_tool_runner import cheese as tools
 
 
@@ -173,18 +173,9 @@ def test_every_block_kind_can_be_read_with_its_complete_fields(client, kind):
     assert _history(client, room, kind=kind.value)["data"][0] == block
 
 
-def test_room_history_and_task_card_history_have_separate_scopes(client):
+def test_room_history_and_task_history_have_separate_scopes(client):
     project, room = _room(client)
-    result = client.post(
-        f"/topics/{room}/split",
-        json={
-            "title": "Investigate",
-            "brief": "Read the logs",
-            "reviewer_handle": "alice",
-        },
-    )
-    assert result.status_code == 200, result.text
-    task = result.json()["data"]["id"]
+    task = open_task(client, room, "Investigate", start=False)["id"]
     parent, child = uuid.uuid4(), uuid.uuid4()
     ids = _seed(
         client,

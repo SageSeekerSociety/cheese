@@ -64,6 +64,11 @@ class Documents:
         anyone needs to address it."""
         return await self._repo.ensure_for_room(room_id=room_id, project_id=project_id)
 
+    async def create(self, *, project_id: uuid.UUID) -> Document:
+        """A new empty document of the project's, in no room — one that
+        something else (a task) points at."""
+        return await self._repo.create(project_id=project_id)
+
     async def nodes(self, doc: Document) -> list[DocumentNode]:
         """The document's top-level blocks, in order."""
         return await self._repo.nodes(doc.id)

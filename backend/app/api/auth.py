@@ -126,6 +126,19 @@ class ActorResolver:
         self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
 
+    def task_scope(self) -> uuid.UUID | None:
+        """The one task the presented credential works, when it is a task's own
+        session's: such a credential acts on that task and on no other."""
+        claims = scoped_token_claims(self._cheese_token) if self._cheese_token else None
+        task = (claims or {}).get("k")
+        return uuid.UUID(task) if task else None
+
+    def require_task_scope(self, task_id: uuid.UUID) -> None:
+        """Refuse a task session's credential acting on a task not its own."""
+        scope = self.task_scope()
+        if scope is not None and scope != task_id:
+            raise ForbiddenError("This credential works another task")
+
     def delegation(self) -> DelegatedClaims | None:
         """The question the presented credential acts for, when it is a valid
         delegated one: who asked, which agent answers, under which work."""

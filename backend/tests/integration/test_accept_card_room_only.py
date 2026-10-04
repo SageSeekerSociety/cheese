@@ -16,7 +16,7 @@ import uuid
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.integration.test_accept_pr import app_world as app_world
 
 pytestmark = pytest.mark.usefixtures("app_world")
@@ -35,12 +35,7 @@ def _room(client) -> tuple[str, str]:
 
 
 def _thread(client, room_id: str, title: str = "一件活") -> str:
-    r = client.post(
-        f"/topics/{room_id}/split",
-        json=dict(reviewer_handle="alice", **{"title": title}),
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["id"]
+    return open_task(client, room_id, title)["id"]
 
 
 def _file_card(client, place_id: str, reviewer: str = "alice"):

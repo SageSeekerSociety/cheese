@@ -3,32 +3,39 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, exists, select
+from sqlalchemy import Uuid, column, delete, exists, select, table
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
 from app.domain.topic.models import Topic
 
+# The two columns of ``tasks`` the upsert reads — which room a task hangs in.
+# Named as a bare table rather than imported from ``room_task``, which depends
+# on this domain: importing back would make the two a cycle.
+_tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
+
 
 class AgentSessionRepository:
-    """Keyed by the ROOM a conversation happened in.
+    """Keyed by the conversation — a room or a task — a session is in.
 
-    One address and one only: a piece of work is a subagent inside a room's
-    session, not a second session of its own (结论 31、43), so every row here
-    belongs to a room and nothing narrower.
+    Each row also says which room the session works in (``topic_id``): every
+    room-wide question about sessions is asked of that column.
     """
 
     def __init__(self, session: AsyncSession):
         self._session = session
 
     async def ensure(
-        self, topic_id: uuid.UUID, agent_handle: str, harness: str
+        self, conversation_id: uuid.UUID, agent_handle: str, harness: str
     ) -> AgentSession:
         await self._upsert(
-            topic_id=topic_id, agent_handle=agent_handle, harness=harness, values={}
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            values={},
         )
-        row = await self.get(topic_id, agent_handle, harness)
+        row = await self.get(conversation_id, agent_handle, harness)
         assert row is not None
         return row
 
@@ -39,12 +46,12 @@ class AgentSessionRepository:
         return await self._session.scalar(query)
 
     async def resume_token(
-        self, topic_id: uuid.UUID, agent_handle: str, harness: str
+        self, conversation_id: uuid.UUID, agent_handle: str, harness: str
     ) -> str | None:
         """What this agent resumes its conversation in this place by."""
         result = await self._session.execute(
             select(AgentSession.resume_token).where(
-                AgentSession.topic_id == topic_id,
+                AgentSession.conversation_id == conversation_id,
                 AgentSession.agent_handle == agent_handle,
                 AgentSession.harness == harness,
             )
@@ -52,7 +59,12 @@ class AgentSessionRepository:
         return result.scalar_one_or_none()
 
     async def save(
-        self, *, topic_id: uuid.UUID, agent_handle: str, resume_token: str, harness: str
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        resume_token: str,
+        harness: str,
     ) -> None:
         """Record where this agent's conversation got to (upsert).
 
@@ -61,18 +73,18 @@ class AgentSessionRepository:
         does), and losing that race must overwrite, not raise.
         """
         await self._upsert(
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
             values={"resume_token": resume_token},
         )
 
     async def save_told(
-        self, *, topic_id: uuid.UUID, agent_handle: str, harness: str, told: dict
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str, told: dict
     ) -> None:
         """Record what project state this agent's conversation has been told."""
         await self._upsert(
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
             values={"told": told},
@@ -81,7 +93,7 @@ class AgentSessionRepository:
     async def save_place(
         self,
         *,
-        topic_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         agent_handle: str,
         harness: str,
         work_lease: dict | None,
@@ -99,7 +111,7 @@ class AgentSessionRepository:
         it「最后写过任何一列」, and every turn's resume token writes a column.
         """
         await self._upsert(
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
             values={
@@ -110,7 +122,12 @@ class AgentSessionRepository:
         )
 
     async def _upsert(
-        self, *, topic_id: uuid.UUID, agent_handle: str, harness: str, values: dict
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        values: dict,
     ) -> None:
         # `updated_at` is stamped here by hand: ON CONFLICT DO UPDATE writes
         # exactly the columns named in `set_`, so the mapper's `onupdate` never
@@ -118,8 +135,12 @@ class AgentSessionRepository:
         # created. It says exactly that and nothing more — which session opened
         # the room's pane is `placed_at`, written only by `save_place`.
         values = {**values, "updated_at": datetime.now(UTC)}
+        room_id = await self._session.scalar(
+            select(_tasks.c.room_id).where(_tasks.c.id == conversation_id)
+        )
         stmt = insert(AgentSession).values(
-            topic_id=topic_id,
+            conversation_id=conversation_id,
+            topic_id=room_id or conversation_id,
             agent_handle=agent_handle,
             harness=harness,
             **values,
@@ -127,7 +148,7 @@ class AgentSessionRepository:
         await self._session.execute(
             stmt.on_conflict_do_update(
                 index_elements=[
-                    AgentSession.topic_id,
+                    AgentSession.conversation_id,
                     AgentSession.agent_handle,
                     AgentSession.harness,
                 ],
@@ -137,12 +158,12 @@ class AgentSessionRepository:
         await self._session.flush()
 
     async def get(
-        self, topic_id: uuid.UUID, agent_handle: str, harness: str
+        self, conversation_id: uuid.UUID, agent_handle: str, harness: str
     ) -> AgentSession | None:
         """This agent's session row in this place, if it has one."""
         result = await self._session.execute(
             select(AgentSession).where(
-                AgentSession.topic_id == topic_id,
+                AgentSession.conversation_id == conversation_id,
                 AgentSession.agent_handle == agent_handle,
                 AgentSession.harness == harness,
             )
@@ -215,7 +236,8 @@ class AgentSessionRepository:
         return [(row[0], row[1]) for row in result.all()]
 
     async def has_any(self, topic_id: uuid.UUID) -> bool:
-        """Whether ANY agent has ever run here — i.e. whether the place has run.
+        """Whether ANY agent has ever run in this room's own conversation — i.e.
+        whether the room has run. Its tasks' sessions are their own.
 
         What froze on ``topics.session_id IS NOT NULL`` (the compute pin, the
         workspace's ``has_run``) freezes on this: the first turn is still the
@@ -228,7 +250,7 @@ class AgentSessionRepository:
         result = await self._session.execute(
             select(
                 exists().where(
-                    AgentSession.topic_id == topic_id,
+                    AgentSession.conversation_id == topic_id,
                     AgentSession.resume_token.is_not(None),
                 )
             )

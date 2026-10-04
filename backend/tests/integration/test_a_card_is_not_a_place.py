@@ -1,11 +1,11 @@
-"""一件活不是一个地点：卡的 id 不是地址。
+"""一件活不是一个地点：任务的 id 不是话题地址。
 
 一条活曾经是一个 `topics` 行，然后是一个 `tasks` 行**仍然被当地址用**——`/blocks`、
-`/doc`、`/usage` 全都认它，界面上点开它就跳到一个新页面。它不该是：做这条活的是房间
-会话里的一个分身，它没有名册、没有归档、没有自己的一轮，也没有自己的 token。
+`/doc`、`/usage` 全都认它，界面上点开它就跳到一个新页面。它不该是：任务有自己的
+对话，但它长在房间旁边，没有名册、没有归档。
 
-所以这里钉两件事：拿卡的 id 当话题地址一律 404；卡照常读得到、说得上话，走的是它
-所在的房间 —— 看卡的人本来就站在那儿。
+所以这里钉两件事：拿任务的 id 当话题地址一律 404；任务照常读得到、说得上话，走的是
+它所在的房间 —— 看任务的人本来就站在那儿。
 """
 
 import uuid
@@ -14,7 +14,13 @@ from datetime import UTC, datetime
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic, TopicKind
-from tests.integration.conftest import a_team, post_project, session_auth_headers
+from tests.conftest import wait_work_idle
+from tests.integration.conftest import (
+    a_team,
+    open_task,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client) -> str:
@@ -31,13 +37,8 @@ def _room(client, project_id: str, title: str = "运维") -> str:
     return r.json()["data"]["id"]
 
 
-def _card(client, room_id: str, title: str = "接口分页", brief: str = "") -> dict:
-    r = client.post(
-        f"/topics/{room_id}/split",
-        json=dict(reviewer_handle="alice", **{"title": title, "brief": brief}),
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]
+def _card(client, room_id: str, title: str = "接口分页") -> dict:
+    return open_task(client, room_id, title, start=False)
 
 
 def test_a_cards_id_is_not_a_topic_address(client):
@@ -59,14 +60,13 @@ def test_a_card_is_read_through_the_room_it_belongs_to(client):
     """卡本身、它的看板那一格、它的对话，一条请求全给。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
-    card = _card(client, room_id, title="接口分页", brief="加 cursor 参数")
+    card = _card(client, room_id, title="接口分页")
 
     r = client.get(f"/topics/{room_id}/tasks/{card['id']}")
     assert r.status_code == 200, r.text
     got = r.json()["data"]
     assert got["id"] == card["id"]
     assert got["title"] == "接口分页"
-    assert got["brief"] == "加 cursor 参数"
     # 状态词是后端算的那一句，和它在看板上显示的是同一句。
     assert got["presentation"]["phrase"]
     assert got["blocks"] == []
@@ -83,11 +83,8 @@ def test_another_rooms_card_is_not_readable_through_this_room(client):
 
 
 def test_saying_something_on_a_card_lands_on_the_card(client):
-    """人在卡下面说的话落在这条活的时间线上，不在房间主线上。
-
-    房间会被叫来转达（做这条活的分身住在房间的会话里，人够不着它），但那句话本身
-    留在它被说的地方——看这张卡的人下周打开还看得见。
-    """
+    """负责人在任务里说的话落在这条活的时间线上，不在房间主线上 —— 看这条活的
+    人下周打开还看得见。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
     card = _card(client, room_id)
@@ -98,9 +95,10 @@ def test_saying_something_on_a_card_lands_on_the_card(client):
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
+    wait_work_idle()
 
     said = client.get(f"/topics/{room_id}/tasks/{card['id']}").json()["data"]["blocks"]
-    assert [b["content"] for b in said] == ["这条先别动 routes"]
+    assert "这条先别动 routes" in [b["content"] for b in said]
     # 房间主线上没有这句话。
     room_line = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
     assert all("这条先别动 routes" not in b["content"] for b in room_line)

@@ -125,8 +125,10 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: Keys that only replay stored room/notification descriptors; new notices must
 #: not say them. Ordinary comments no longer schedule agent turns, and agents no
 #: longer record decisions or add milestones (the 「记录了决策」 and 「添加了里程碑」
-#: lines stay on old rooms). A comment naming the agent is answered in its
-#: thread, not by a turn of the room (「在文档评论里提到了」 stays on old rooms).
+#: lines stay on old rooms), and a task is created rather than dispatched to a
+#: room's worker (「派出一条活」 stays on old rooms). A comment naming the agent
+#: is answered in its thread, not by a turn of the room (「在文档评论里提到了」
+#: stays on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
         "docCommented",
@@ -134,6 +136,7 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "docCommentMentioned",
         "actionDecision",
         "actionMilestone",
+        "taskDispatched",
     }
 )
 

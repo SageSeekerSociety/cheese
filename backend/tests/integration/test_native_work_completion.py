@@ -103,7 +103,7 @@ def test_only_exact_clean_native_work_releases_its_registered_batch(client, case
                 cheese={"agent_handle": identity.recipient_handle, "interrupted": True},
             )
         chat = ChatService.__new__(ChatService)
-        chat._sessions, chat._gateway = factory, None
+        chat._sessions, chat._gateway, chat._conversation_rooms = factory, None, {}
         await chat._close_hook_work(state, result)
         await chat._close_hook_work(state, result)
         async with factory() as session:
@@ -164,7 +164,7 @@ def test_completion_commit_abort_rolls_back_release_and_consumption_together(cli
             )
             await session.commit()
         chat = ChatService.__new__(ChatService)
-        chat._sessions, chat._gateway = factory, None
+        chat._sessions, chat._gateway, chat._conversation_rooms = factory, None, {}
         state, result = _state(identity), _result(identity)
         aborted = []
 

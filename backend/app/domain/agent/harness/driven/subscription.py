@@ -413,7 +413,7 @@ class Subscription[B: Backlog]:
             return
         work_id = uuid.UUID(work)
         for event in reader.assemble(entry):
-            if not isinstance(event, AgentResult) or event.thread_label is not None:
+            if not isinstance(event, AgentResult):
                 continue
             await self.consume(
                 self.session.project_id,

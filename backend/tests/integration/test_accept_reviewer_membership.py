@@ -16,9 +16,11 @@ default ladder picks — because they meet the same rule at the same place.
 import itertools
 import uuid
 
+from tests.conftest import wait_work_idle
 from tests.delivery import delivery_artifact
 from tests.integration.conftest import (
     join_project_team,
+    open_task,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -59,13 +61,12 @@ def _room(client, pid: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _split(client, room: str, title: str, reviewer: str | None = None) -> dict:
-    body: dict = {"title": title}
-    if reviewer is not None:
-        body["reviewer_handle"] = reviewer
-    r = client.post(f"/topics/{room}/split", json=body)
-    assert r.status_code == 200, r.text
-    return r.json()["data"]
+def _task(client, room: str, title: str, reviewer: str | None = None) -> dict:
+    """A task the room's owner creates and starts; with no reviewer named the
+    project's default applies."""
+    task = open_task(client, room, title, owner=OWNER, reviewer=reviewer)
+    wait_work_idle()
+    return task
 
 
 def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
@@ -100,7 +101,7 @@ def _reassign(client, card_id: str, reviewer: str, *, by: str = OWNER):
 def test_a_card_cannot_be_routed_to_somebody_the_room_refuses(client):
     pid = _project(client)
     room = _room(client, pid)
-    task = _split(client, room, "一条活", reviewer=MEMBER)
+    task = _task(client, room, "一条活", reviewer=MEMBER)
 
     r = _file(
         client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=STRANGER
@@ -117,7 +118,7 @@ def test_a_card_can_be_routed_to_a_member_of_the_room(client):
     pid = _project(client)
     join_project_team(client, pid, MEMBER)
     room = _room(client, pid)
-    task = _split(client, room, "一条活", reviewer=MEMBER)
+    task = _task(client, room, "一条活", reviewer=MEMBER)
 
     r = _file(
         client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=MEMBER
@@ -133,7 +134,7 @@ def test_a_card_can_be_routed_to_the_rooms_own_agent_seat(client):
     pid = _project(client)
     room = _room(client, pid)
     seat = room_agent_seat(client, room)
-    task = _split(client, room, "一条活", reviewer=seat)
+    task = _task(client, room, "一条活", reviewer=seat)
 
     r = _file(
         client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=seat
@@ -150,7 +151,7 @@ def test_a_card_cannot_be_reassigned_to_somebody_the_room_refuses(client):
     pid = _project(client)
     join_project_team(client, pid, MEMBER)
     room = _room(client, pid)
-    task = _split(client, room, "一条活", reviewer=MEMBER)
+    task = _task(client, room, "一条活", reviewer=MEMBER)
     card = _file(
         client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=MEMBER
     ).json()["data"]
@@ -168,7 +169,7 @@ def test_a_card_can_be_reassigned_to_a_member_of_the_room(client):
     join_project_team(client, pid, MEMBER)
     join_project_team(client, pid, OTHER_MEMBER)
     room = _room(client, pid)
-    task = _split(client, room, "一条活", reviewer=MEMBER)
+    task = _task(client, room, "一条活", reviewer=MEMBER)
     card = _file(
         client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=MEMBER
     ).json()["data"]
@@ -184,13 +185,13 @@ def test_a_card_can_be_reassigned_to_a_member_of_the_room(client):
 
 
 def test_the_default_ladder_cannot_route_a_card_to_somebody_the_room_refuses(client):
-    """项目的默认验收人是一个设置，派活时写在 `Task.reviewer_handle` 上，递卡时
+    """项目的默认验收人是一个设置，开始任务时写在 `Task.reviewer_handle` 上，递卡时
     照抄下来 —— 它记的是「谁验收」，从不问「谁是成员」。这条不挡住的话，同一个
     死卡从另一条路照样进得来。"""
     pid = _project(client)
     _default_reviewer(client, pid, STRANGER)
     room = _room(client, pid)
-    task = _split(client, room, "一条活")
+    task = _task(client, room, "一条活")
     assert task["reviewer_handle"] == STRANGER
 
     r = _file(client, pid, room, task["id"], "feat(x): deliver it")
@@ -205,7 +206,7 @@ def test_a_card_the_default_ladder_routes_to_a_member_still_goes_through(client)
     join_project_team(client, pid, MEMBER)
     _default_reviewer(client, pid, MEMBER)
     room = _room(client, pid)
-    task = _split(client, room, "一条活")
+    task = _task(client, room, "一条活")
 
     r = _file(client, pid, room, task["id"], "feat(x): deliver it")
 

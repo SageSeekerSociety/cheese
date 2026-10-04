@@ -46,6 +46,13 @@ class DocumentRepository:
         assert doc is not None
         return doc
 
+    async def create(self, *, project_id: uuid.UUID) -> Document:
+        """A new empty document (version 0) of the project's, in no room."""
+        doc = Document(id=uuid.uuid4(), project_id=project_id)
+        self._session.add(doc)
+        await self._session.flush()
+        return doc
+
     async def set_content(
         self, doc: Document, content: str, *, author: str | None, expected_version: int
     ) -> Document | None:

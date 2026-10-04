@@ -3,10 +3,8 @@
 `seed()` deliberately refuses to make 芝士 the owner, and `create()` used to
 pass `created_by` straight through: a topic created BY the agent, or by a caller
 whose token didn't resolve, was born with 芝士 as its only member and NO owner —
-so nobody could manage its roster (`can_manage_roster` needs owner/admin). Worse,
-`split_to_subtopic` defaults a child's owner to the PARENT's owner, so one
-ownerless room made every sub-topic under it ownerless too. On the dogfood
-project this had reached 96 of 149 topics.
+so nobody could manage its roster (`can_manage_roster` needs owner/admin). On
+the dogfood project this had reached 96 of 149 topics.
 
 These tests pin the fallback ladder — real creator → parent room's owner →
 project owner → the owner of the project's team — and the escape hatch that
@@ -26,7 +24,6 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
-from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
     join_project_team,
     post_project,
@@ -198,27 +195,6 @@ def test_a_room_with_nobody_to_inherit_from_is_still_created(client):
     assert _agent_roles(client, topic["id"]) == ["member"]
 
 
-def test_work_dispatched_in_an_agent_created_room_is_not_ownerless(client):
-    """The cascade: an ownerless room used to make every piece of work in it
-    ownerless too, because the work's owner defaults to the room's.
-
-    A thread answers this with `owner_handle`, not a roster — 唯一的主 is the
-    whole difference between a piece of work and the room it happens in.
-    """
-    p = _project(client, owner="alice")
-    room = _create_topic(client, p["id"])
-
-    child = client.post(
-        f"/topics/{room['id']}/split",
-        json=dict(reviewer_handle="alice", **{"title": "分身拆出的子任务"}),
-        headers={
-            "X-Cheese-Token": mint_scoped_token(project_id=p["id"], topic_id=room["id"])
-        },
-    ).json()["data"]
-
-    assert child["owner_handle"] == "alice"
-
-
 def _insert_block(client, project_id: str, topic_id: str, content: str) -> str:
     """A message in the room, written straight to the DB — posting it through the
     API would kick a turn off and race the upgrade we are actually testing."""
@@ -244,41 +220,20 @@ def _insert_block(client, project_id: str, topic_id: str, content: str) -> str:
     return holder["id"]
 
 
-def test_upgraded_block_falls_back_to_project_owner(client):
-    """讨论升级 is normally the 分身's own suggestion, so the caller is the room's
-    agent — whose handle seed() drops. Without the ladder the upgraded room was
-    born ownerless, the last path still producing them after create()/split were
-    fixed.
-    """
+def test_an_ai_teammate_cannot_turn_a_message_into_a_task(client):
+    """Only a person turns a message into a task and owns it; the room's agent
+    proposes one instead."""
     p = _project(client, owner="alice")
     room = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
     token = mint_scoped_token(project_id=p["id"], topic_id=room["id"])
 
-    upgraded = client.post(
-        f"/blocks/{block_id}/upgrade",
-        json={"reviewer_handle": "alice"},
-        headers={"X-Cheese-Token": token},
-    ).json()["data"]
-    _wait_work_idle()  # kickoff runs in the background; don't race its writes
+    refused = client.post(
+        f"/blocks/{block_id}/upgrade", headers={"X-Cheese-Token": token}
+    )
 
-    # Upgrading inside a room dispatches WORK, and work names one owner.
-    assert upgraded["owner_handle"] == "alice"
-
-
-def test_upgraded_block_without_a_creator_is_not_ownerless(client):
-    """Only the trusted dev credential behind the call: it names nobody, so
-    there is no creator to own the card and the ladder has to answer."""
-    p = _project(client, owner="alice")
-    room = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
-    block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
-
-    upgraded = client.post(
-        f"/blocks/{block_id}/upgrade", json={"reviewer_handle": "alice"}
-    ).json()["data"]
-    _wait_work_idle()
-
-    assert upgraded["owner_handle"] == "alice"
+    assert refused.status_code == 403
+    assert client.get(f"/topics/{room['id']}/tasks").json()["data"]["data"] == []
 
 
 def test_owner_can_manage_roster_of_an_agent_created_topic(client):

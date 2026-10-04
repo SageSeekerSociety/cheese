@@ -37,6 +37,7 @@ from app.domain.living_doc import collab, work_edits
 from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn, document_snapshot
 from app.domain.living_doc.services import DocumentJournal
 from app.domain.mentions import canonicalize_refs
+from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
 from app.domain.topic.services import TopicService
 
@@ -56,6 +57,23 @@ async def room_document(
     doc = await topics.room_doc(place.room_id, place.project_id)
     await db.commit()
     return ok({"id": str(doc.id)})
+
+
+@rooms.get("/{topic_id}/tasks/{task_id}/document")
+async def task_document(
+    topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Which document is this task's living document. It is made, empty, the
+    first time anyone asks."""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    tasks = TaskService(db)
+    task = await tasks.get(task_id)
+    if task is None or task.room_id != place.room_id:
+        raise NotFoundError(say("taskNotInRoom"))
+    document_id = await tasks.ensure_document(task)
+    await db.commit()
+    return ok({"id": str(document_id)})
 
 
 @router.get("/{document_id}")
@@ -264,6 +282,38 @@ async def document_history(
         return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else None})
     rows = await journal.history(doc.id, after=after)
     return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else after})
+
+
+@router.get("/{document_id}/compare")
+async def compare_document_versions(
+    document_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    before: int = Query(ge=0),
+    after: int | None = Query(default=None, ge=1),
+) -> dict:
+    """Two versions of the document, for reading side by side: ``before``, and
+    ``after`` (the current one when omitted). Version 0 is the empty document
+    before anything was written — what a task started on an empty document
+    is compared against."""
+    doc = (await reach(db, resolver, document_id, enforce=True)).doc
+    journal = DocumentJournal(db)
+    newest = after or doc.version
+
+    async def text_of(version: int) -> str:
+        if version == 0:
+            return ""
+        content = await journal.version_content(doc.id, version)
+        if content is None:
+            raise NotFoundError(say("docVersionNotFound"))
+        return content
+
+    return ok(
+        {
+            "before": {"version": before, "content": await text_of(before)},
+            "after": {"version": newest, "content": await text_of(newest)},
+        }
+    )
 
 
 @router.get("/{document_id}/operations/{operation_id}")

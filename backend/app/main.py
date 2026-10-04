@@ -522,8 +522,8 @@ register_all_permissions()
 # over the network, so its write-surface must not be open like the browser API.
 # These paths are cheese-only writes (the frontend only reads them); the gate
 # verifies a per-turn token scoped to the URL's project/topic (review R5).
-# doc/split/title are dual-use (the doc panel saves, the sidebar splits and
-# renames) so they stay open like the rest of the app, protected by
+# doc/title are dual-use (the doc panel saves, the sidebar renames) so they
+# stay open like the rest of the app, protected by
 # ActorResolverDep + authorize_topic instead — closing those needs browser
 # user-auth first.
 # Each pattern captures the scoping id as group "topic" or "project".

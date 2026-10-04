@@ -122,6 +122,14 @@ def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
     return project_configs(project_settings).default
 
 
+def place_choice(topic, task, project_settings: dict | None) -> ComputeChoice:
+    """The work computer a conversation works on: a task's own choice when its
+    owner made one, else the room's (``room_choice``)."""
+    if task is not None and task.compute_config:
+        return ComputeChoice.model_validate(task.compute_config)
+    return room_choice(topic, project_settings)
+
+
 async def validate_choice(session: AsyncSession, project_id, choice: ComputeChoice):
     if choice.profile == "cloud":
         if not cloud_provisionable(settings):

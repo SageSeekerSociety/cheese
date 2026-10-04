@@ -29,7 +29,6 @@ from app.domain.agent.runtime import (
     AgentWorkRunner,
     InProcessBroker,
     addressed_to_agent,
-    announce_stale,
 )
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
@@ -54,12 +53,10 @@ from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
-from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import (
     RoomLockService,
     TaskService,
 )
-from app.domain.topic import naming
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.repositories import (
     SortOrder,
@@ -72,7 +69,6 @@ from app.domain.topic.schemas import (
     LockIn,
     MemberActivityOut,
     MemberWaitOut,
-    SplitIn,
     TopicCreate,
     TopicOut,
 )
@@ -665,9 +661,8 @@ async def topic_usage(
 ) -> dict:
     """资源用量 (spec §9.1): token/cost for this room.
 
-    The room's whole bill, cards included. There is no second meter to read:
-    every 分身 in the room spends through the room's one session, so a per-card
-    figure would be an invented split of one number.
+    The room's whole bill, its tasks included: a task's sessions spend under
+    the room as well as under the task.
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
@@ -789,7 +784,7 @@ async def get_topic_progress(
     """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
     touch it. Read on topic open — between turns there is no WS stream to carry
     it, and "做到哪了" has to be visible without summoning anyone. With ``task``,
-    that card's list — the one its 分身 wrote — instead of the room's."""
+    that task's list — the one its own session wrote — instead of the room's."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     items, updated_at = await TopicService(db).get_progress(topic_id, task_id=task)
@@ -813,9 +808,8 @@ class TodoIn(BaseModel):
 
 class ProgressIn(BaseModel):
     todos: list[TodoIn] = Field(min_length=1, max_length=30)
-    # The card whose 分身 is writing. A 分身 runs inside the room's session, on
-    # the room's credentials, so the call cannot tell it apart from the room's
-    # own agent: it says so, the way `cheese_lock` names its task.
+    # The task whose session is writing. Its credential names the task too, and
+    # a task session's credential may name no other.
     task: uuid.UUID | None = None
     # Post a new checklist message instead of editing the current one. Which
     # request a list belongs to is the agent's call: it sets this when someone
@@ -851,9 +845,9 @@ async def write_topic_progress(
     Only a writer seated as one of the room's agents also stores the list as
     the room's progress (进度层): that is the plan the room's next turn is
     handed back as its own, and what 总览 shows. A person's list stored there
-    would hand the agent somebody else's plan. With ``task`` a 分身 is writing
-    its card's list: stored under the card, pushed on the card's channel, and
-    nothing posted in the room — the worker's plan, so it takes the same seat.
+    would hand the agent somebody else's plan. With ``task`` a task's session
+    is writing its task's list: stored under the task, pushed on the task's
+    channel, and nothing posted in the room.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
@@ -1232,85 +1226,6 @@ async def unarchive_topic(
     await TopicMemberService(db).require_archive_manager(topic_id, actor.handle)
     topic = await TopicService(db).unarchive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
-
-
-@router.post("/{topic_id}/split")
-async def split_topic(
-    topic_id: uuid.UUID,
-    body: SplitIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """从上往下拆解：dispatch a todo as a card of work in this room (eval A2).
-
-    Writes the card and stops there. The WORKER is the caller's to start: it
-    spawns one inside its own session carrying this card's thread label, and the
-    platform reads whose work each event is off that label. The platform used to
-    raise a whole second container per piece of work — its own screen, its own
-    home, its own clone of the repository — to run something that is a second
-    worker in a session the room already has.
-
-    So a card returned from here has no worker yet, and that is a normal state
-    rather than a half-finished dispatch: nothing here reports a worker, because
-    the id it would carry does not exist until the worker does."""
-    service = TopicService(db)
-    parent_place = await service.place_or_404(topic_id)
-    # actor 在信任边界注入 (同 edit_topic_doc): the credential names the creator,
-    # and the caller must actually have access to the ROOM.
-    actor = await resolver.resolve(
-        topic_id=parent_place.room_id, project_id=parent_place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=parent_place.project_id, topic_id=parent_place.room_id
-    )
-    # 重发幂等 (④): a re-sent turn re-splitting would leave the room holding two
-    # threads on one brief, and whoever reads the room cannot tell which of them
-    # the work is actually happening in.
-    runner = get_work_runner()
-    continuation = runner.continuation_for(topic_id)
-    key = (
-        action_key(continuation, "split", topic_id, body.title)
-        if continuation
-        else None
-    )
-    if key is not None and not await idem.claim(
-        db, key, action="split", scope_id=str(topic_id)
-    ):
-        prior = await idem.stored_result(db, key)
-        return ok(prior or {"skipped": True})
-    task = await service.dispatch_task(
-        place_id=topic_id,
-        title=body.title,
-        created_by=actor.handle if actor.authenticated else None,
-        brief=body.brief,
-        base_task_id=body.base_task_id,
-        # 显式指定优先，没指定就用项目默认验收人 (#718 设置表)。The resolution is
-        # in the service because it needs the project row; the route only says
-        # whether anybody named somebody.
-        reviewer_handle=body.reviewer_handle,
-        reporter_handle=body.reporter_handle,
-        contributor_handles=body.contributor_handles,
-        # 归属跟推进者走: who is DRIVING this room right now. 芝士 splits under her
-        # own handle, so `created_by` names the robot and the person who asked for
-        # the split is nowhere in the request — the runner is the only place that
-        # answer exists. None whenever no person is identifiable (a
-        # platform-initiated turn, or one this room's agent started itself off a
-        # worker's completion notice), and the ladder in the service then
-        # behaves exactly as it did before.
-        triggered_by=runner.turn_author_for(topic_id),
-    )
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    if key is not None:
-        await idem.record_result(db, key, out)
-    # The thread and its idempotency key commit together, so a crash here cannot
-    # produce a second thread on resume — and the caller must see the row and
-    # its brief doc, and the thread label on it, before it can put a worker on
-    # them.
-    await db.commit()
-    await announce_stale(parent_place.room_id, "topics")
-    # Work split out of a room is a sign of where the room is going.
-    naming.nudge(parent_place.room_id, "signal")
-    return ok(out)
 
 
 @router.post("/{topic_id}/tasks/{task_id}/check-result")

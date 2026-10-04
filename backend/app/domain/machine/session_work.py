@@ -20,6 +20,7 @@ from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
     choice_label,
+    place_choice,
     room_choice,
 )
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
@@ -56,6 +57,7 @@ from app.domain.machine.services import (
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.services import ProjectService
+from app.domain.room_task.models import Task
 from app.domain.topic.models import TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
@@ -1034,7 +1036,13 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     # 为了让读的人（名册、算力分布、清理清单）看到这一行与会话此刻真正在用的东西一
     # 致，而不是让解析去问它——两处各存一份、解析时听谁的那个问题，就是这条决定要
     # 消掉的东西。
-    choice = room_choice(topic, project.settings)
+    # A task's session uses the task's own choice when it has one.
+    task = (
+        await db.get(Task, row.conversation_id)
+        if row.conversation_id != row.topic_id
+        else None
+    )
+    choice = place_choice(topic, task, project.settings)
     request = {**request, "choice": choice.model_dump()}
     row.execution_request = request
     generation = request["generation"]

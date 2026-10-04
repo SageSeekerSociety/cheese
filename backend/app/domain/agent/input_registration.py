@@ -21,19 +21,13 @@ def input_registrar(
     *,
     probe_unread: bool = False,
     fence_delivery: bool = False,
-    parent_session_id: str | None = None,
 ) -> InputRegistrar:
     async def persist(identity: InputIdentity) -> None:
         rejected: DeliveryTargetChanged | None = None
         async with session_factory() as session:
             if fence_delivery and effects.delivery_id is not None:
                 try:
-                    await fence_send(
-                        session,
-                        effects.delivery_id,
-                        effects.attempt_id,
-                        parent_session_id=parent_session_id,
-                    )
+                    await fence_send(session, effects.delivery_id, effects.attempt_id)
                 except DeliveryTargetChanged as exc:
                     rejected = exc
             if rejected is None:

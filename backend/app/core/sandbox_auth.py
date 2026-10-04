@@ -60,8 +60,12 @@ def mint_scoped_token(
     agent_handle: str | None = None,
     access_scope: Literal["topic", "project"] = "topic",
     resource_id: str | None = None,
+    task_id: str | None = None,
 ) -> str:
     """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
+
+    ``task_id`` (claim ``k``) narrows it to one task's conversation: the
+    credential of a task's own session, which works that task and no other.
 
     The token also names WHO acts with it (claim ``a``): ``agent_handle``, the
     handle of the agent this turn runs as. Without it a token said only "which
@@ -104,6 +108,8 @@ def mint_scoped_token(
         payload["a"] = actor
     if resource_id is not None:
         payload["r"] = resource_id
+    if task_id is not None:
+        payload["k"] = task_id
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{body}.{_sign(body)}"
@@ -140,6 +146,13 @@ def bind_resource_token(
         # The signed prefix cannot be stripped to obtain an older credential.
         body = "cxss_" + body
     return f"{body}.{_sign(body)}"
+
+
+def token_task(token: str) -> str | None:
+    """The task a valid scoped token is narrowed to (claim ``k``), if any."""
+    claims = scoped_token_claims(token) if token else None
+    task = (claims or {}).get("k")
+    return str(task) if task else None
 
 
 def token_agent_handle(token: str) -> str | None:

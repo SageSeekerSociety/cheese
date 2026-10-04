@@ -138,7 +138,6 @@ _TOOL_ARG = {
     "cheese_ask": "question",
     "cheese_accept_request": "subject",
     "cheese_describe": "subject",
-    "cheese_tell": "message",
     "cheese_milestone": "title",
     "cheese_serve": "note",
     "cheese_show": "path",

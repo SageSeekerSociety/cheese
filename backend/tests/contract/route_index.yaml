@@ -674,6 +674,8 @@ routes:
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/history", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/operations/{operation_id}", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/restore", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/compare", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks/{task_id}/document", auth: "actor.topic", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   # app.api.routes.llm_proxy
@@ -1047,7 +1049,6 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/split", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/check-result", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/lock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unlock", auth: "cheese.room.gate", owner: "room_task"}
@@ -1109,6 +1110,13 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/messages", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/title", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/start", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/tasks/{task_id}", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/accept", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_title
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title/undo", auth: "actor.topic.verified", owner: "topic"}

@@ -8,8 +8,6 @@ from app.domain.agent.service import (
     AgentSessionInfo,
     AgentStepFailed,
     AgentStepOutput,
-    AgentSubagentStart,
-    AgentSubagentStop,
     AgentToolUse,
 )
 
@@ -110,7 +108,7 @@ def test_child_events_do_not_replace_root_session_or_finish_its_turn():
                 },
             }
         )
-        assert start == [AgentSubagentStart(child, "explorer", parent)]
+        assert start == []
     assembler.accept(
         {
             "method": "item/agentMessage/delta",
@@ -137,7 +135,6 @@ def test_child_events_do_not_replace_root_session_or_finish_its_turn():
             }
         )[0]
         assert isinstance(tool, AgentToolUse)
-        assert tool.thread_label == "explorer"
         message = assembler.accept(
             {
                 "method": "item/completed",
@@ -152,7 +149,6 @@ def test_child_events_do_not_replace_root_session_or_finish_its_turn():
             }
         )[0]
         assert isinstance(message, AgentMessage)
-        assert message.thread_label == "explorer"
         stopped = assembler.accept(
             {
                 "method": "turn/completed",
@@ -166,10 +162,7 @@ def test_child_events_do_not_replace_root_session_or_finish_its_turn():
                 },
             }
         )
-        assert len(stopped) == 1
-        assert isinstance(stopped[0], AgentSubagentStop)
-        assert stopped[0].text == "found it"
-        assert stopped[0].agent_id == child
+        assert not [e for e in stopped if isinstance(e, AgentResult)]
     assert [message.text for message in assembler.give_up()] == ["root pending"]
 
 

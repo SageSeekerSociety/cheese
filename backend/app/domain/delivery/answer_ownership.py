@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import and_, select
 
-from app.domain.block.models import Block, consumed_turn
+from app.domain.block.models import Block, consumed_turn, in_conversation
 from app.domain.delivery.agent import work_interval_is_over
 from app.domain.delivery.models import Delivery, NativeInput
 
@@ -34,7 +34,7 @@ async def reconcile_answer(session, delivery_id, attempt_id):
     candidates = list(
         await session.scalars(
             select(Block).where(
-                Block.topic_id == delivery.topic_id,
+                in_conversation(delivery.topic_id),
                 Block.meta["delivery_event_id"].as_string() == str(delivery.event_id),
                 Block.meta["answer_to"].as_string() == delivery.payload["answer_to"],
             )

@@ -26,6 +26,7 @@ from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
+    open_task,
     post_message,
     post_project,
     session_auth_headers,
@@ -89,13 +90,8 @@ def test_writing_the_doc_refreshes_the_doc_panel(client, frames):
 
 
 def test_opening_a_piece_of_work_refreshes_the_rooms_work_list(client, frames):
-    pid, rid = _room(client)
-    r = client.post(
-        f"/topics/{rid}/split",
-        json={"title": "一件活", "reviewer_handle": "alice"},
-        headers=_agent(pid, rid),
-    )
-    assert r.status_code == 200, r.text
+    _pid, rid = _room(client)
+    open_task(client, rid, "一件活", start=False)
     assert _stale(frames, rid) == ["topics"]
 
 

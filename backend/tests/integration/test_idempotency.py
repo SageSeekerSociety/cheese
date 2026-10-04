@@ -11,14 +11,13 @@ and its re-send share (``AgentWorkRunner.continuation_for``). That is what makes
 "the re-sent 芝士 re-doing it" and "someone legitimately doing the same thing
 next week" distinguishable at all; see ``domain.idempotency.keys``.
 
-Four actions, four tests:
+Three actions, three tests:
 
   1. 发消息      — the resumed turn re-narrating must not post a second copy
-  2. 拆子话题    — must not spawn a second 分身 on the same brief
-  3. 记周报      — must not stack a second 周报 row
-  4. 开 PR       — must not open a second PR / file a second card
+  2. 记周报      — must not stack a second 周报 row
+  3. 开 PR       — must not open a second PR / file a second card
 
-Action 4 needs no new mechanism: 开 PR was ALREADY protected, by two guards that
+Action 3 needs no new mechanism: 开 PR was ALREADY protected, by two guards that
 predate this work (one non-terminal accept card per topic, and GitHub-side
 adoption of a PR already open on the same head branch). The test is here anyway,
 because "we believe it is covered" and "it is covered" are different claims.
@@ -33,7 +32,6 @@ from app.api.deps import get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block, BlockKind
 from app.domain.idempotency.keys import action_key
-from app.domain.room_task.models import Task
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import join_project_team, post_project
@@ -196,52 +194,7 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
     assert said == 2
 
 
-# --- 2. 拆子话题 -------------------------------------------------------------
-
-
-def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
-    """A re-sent turn re-splitting leaves the room holding two threads on one
-    brief, and nobody can tell which of them the work is happening in.
-
-    Dispatch starts no worker of its own any more — the caller does that, and
-    would do it once per row it was handed. So the row is the whole of what has
-    to not double.
-    """
-    kickoffs: list[uuid.UUID] = []
-    monkeypatch.setattr(
-        in_a_turn,
-        "submit",
-        lambda _chat, topic_id, **_kw: kickoffs.append(topic_id) or uuid.uuid4(),
-    )
-    pid = _project(client)
-    tid = _topic(client, pid)
-    body = {"title": "数据清洗", "brief": "把脏数据洗掉"}
-
-    first = client.post(
-        f"/topics/{tid}/split", json=dict(reviewer_handle="alice", **body)
-    )
-    second = client.post(
-        f"/topics/{tid}/split", json=dict(reviewer_handle="alice", **body)
-    )
-    assert first.status_code == 200, first.text
-    assert second.status_code == 200, second.text
-
-    children = client.portal.call(
-        lambda: _count(
-            client.test_request_factory,
-            select(func.count())
-            .select_from(Task)
-            .where(Task.room_id == uuid.UUID(tid)),
-        )
-    )
-    assert children == 1, "重发派出了第二条支线"
-    assert kickoffs == [], "派活不该起任何会话——分身是调用方在自己会话里起的"
-    # The replay gets the FIRST child back, not an error: a resumed 芝士 asking
-    # again should learn what already exists.
-    assert second.json()["data"]["id"] == first.json()["data"]["id"]
-
-
-# --- 3. 记周报 ---------------------------------------------------------------
+# --- 2. 记周报 ---------------------------------------------------------------
 
 
 def test_weekly_is_recorded_once(client, in_a_turn):
@@ -266,7 +219,7 @@ def test_weekly_is_recorded_once(client, in_a_turn):
     assert rows == 1, "重发把同一份周报记了两遍"
 
 
-# --- 4. 开 PR ----------------------------------------------------------------
+# --- 3. 开 PR ----------------------------------------------------------------
 
 
 def test_second_accept_card_is_refused_so_no_second_pr(client):
@@ -307,34 +260,18 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
 
 
 def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
-    """Proves the two endpoint tests above are not vacuous, and states the
-    rule deliberately: outside an automatic turn there is no continuation and
-    no dedup. A human pressing 记周报 twice means it twice — the risk this whole
+    """Proves the weekly test above is not vacuous, and states the rule
+    deliberately: outside an automatic turn there is no continuation and no
+    dedup. A human pressing 记周报 twice means it twice — the risk this whole
     mechanism exists for is created by 自动重发, not by people."""
     runner = get_work_runner()
     monkeypatch.setattr(runner, "continuation_for", lambda _topic_id: None)
-    kickoffs: list[uuid.UUID] = []
-    monkeypatch.setattr(
-        runner,
-        "submit",
-        lambda _chat, topic_id, **_kw: kickoffs.append(topic_id) or uuid.uuid4(),
-    )
     pid = _project(client)
     tid = _topic(client, pid)
 
     for _ in range(2):
         assert (
             client.post(f"/topics/{tid}/weekly", json={"body": "同一份"}).status_code
-            == 200
-        )
-        assert (
-            client.post(
-                f"/topics/{tid}/split",
-                json=dict(
-                    reviewer_handle="alice",
-                    **{"title": "同一个子话题"},
-                ),
-            ).status_code
             == 200
         )
 
@@ -346,15 +283,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
             .where(Block.topic_id == uuid.UUID(tid), Block.kind == BlockKind.weekly),
         )
     )
-    children = client.portal.call(
-        lambda: _count(
-            client.test_request_factory,
-            select(func.count())
-            .select_from(Task)
-            .where(Task.room_id == uuid.UUID(tid)),
-        )
-    )
-    assert (weeklies, children) == (2, 2)
+    assert weeklies == 2
 
 
 # --- the mechanism itself ----------------------------------------------------

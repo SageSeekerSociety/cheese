@@ -13,7 +13,6 @@ from app.domain.review.models import AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.presentation import (
-    LOST_SIGNAL_AFTER,
     Archived,
     Building,
     CardFacts,
@@ -21,6 +20,7 @@ from app.domain.room_task.presentation import (
     Delivering,
     Done,
     NeedsYou,
+    NotStarted,
     RoomFacts,
     TaskFacts,
     room_presentation,
@@ -30,16 +30,15 @@ from app.domain.topic.models import TopicStatus
 
 NOW = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 JUST_NOW = NOW - timedelta(minutes=1)
-LONG_AGO = NOW - LOST_SIGNAL_AFTER - timedelta(minutes=1)
 
 
 def task(**kw) -> TaskFacts:
-    """A thread that is doing nothing at all, plus whatever the case is about."""
+    """A started task doing nothing at all, plus whatever the case is about."""
     base = {
         "status": TaskStatus.open,
-        "last_signal_at": None,
         "accepted_at": None,
         "card": None,
+        "started": True,
     }
     return TaskFacts(**{**base, **kw})
 
@@ -68,132 +67,31 @@ def card(status: AcceptStatus, **kw) -> CardFacts:
 
 TASK_CASES = [
     # (名字, 事实, 列, 短语)
-    ("还没人做", task(), Column.building, Building.not_started),
-    # 主 agent 自己在任务目录里动手做的活没有分身，所以「有人在做」那一格永远轮不到
-    # 它；它有的只是留下的东西 —— 草稿 PR。做了一半停在原地，和「还没人碰过」是两
-    # 件事：前者的下一步多半是接着做，后者是决定要不要开。
+    # 负责人还没点「开始」：还在讨论，芝士只聊、只写文档。
+    ("还在讨论", task(started=False), Column.not_started, NotStarted.discussing),
+    # 讨论时芝士在回话，也还是讨论：「运行中」说的是它在改项目。
     (
-        "动过手，停在原地",
-        task(has_progress=True),
-        Column.building,
-        Building.started,
+        "讨论中，芝士正在回话",
+        task(started=False, running=True),
+        Column.not_started,
+        NotStarted.discussing,
     ),
-    # 一条活由房间会话里的一个分身做，所以「它还在不在」有两个答案，先问屏幕。
+    # 讨论中芝士问了一个问题，下一步在人手上。
     (
-        "分身在做，刚说过话",
-        task(has_worker=True, last_signal_at=JUST_NOW),
-        Column.building,
-        Building.running,
-    ),
-    # 屏幕没了，那个分身一定也没了 —— 它住在房间的会话里，而它不会来说一声。
-    (
-        "分身所在的屏幕没了",
-        task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False),
-        Column.building,
-        Building.lost,
-    ),
-    (
-        "屏幕还在，但分身早就没动静了",
-        task(has_worker=True, last_signal_at=LONG_AGO),
-        Column.building,
-        Building.lost,
-    ),
-    # 安静和死掉在时间戳上长得一模一样，所以知道答案的时候要听知道的：跑轮次的
-    # 进程说这个分身还在做，那它就是在做。一个埋头跑四十分钟长命令、一条 block
-    # 都不落的分身，本来就是这个样子（这不是假设，是实测出来的）。
-    (
-        "分身还在做，只是很久没说话",
-        task(has_worker=True, last_signal_at=LONG_AGO, worker_live=True),
-        Column.building,
-        Building.running,
-    ),
-    (
-        "分身还在做，连第一句话都还没说",
-        task(has_worker=True, last_signal_at=None, worker_live=True),
-        Column.building,
-        Building.running,
-    ),
-    # 交回了一次不是死：分身可以被再叫起来，所以「收工」只收回它的声明，
-    # 看板退回时间戳那条老规矩 —— 刚说过话就还是运行中。
-    (
-        "分身交回了一次，刚说过话",
-        task(has_worker=True, last_signal_at=JUST_NOW, worker_live=None),
-        Column.building,
-        Building.running,
-    ),
-    # 屏幕是更外面的一层：它没了，那个分身一定也没了，进程说什么都不作数。
-    (
-        "分身还在做，但房间的屏幕没了",
-        task(
-            has_worker=True,
-            last_signal_at=JUST_NOW,
-            room_screen_live=False,
-            worker_live=True,
-        ),
-        Column.building,
-        Building.lost,
-    ),
-    # 干完了在等房间收卡，不是断了 —— 这一条安静得理直气壮。
-    (
-        "分身交了结论，等房间收卡",
-        task(has_worker=True, last_signal_at=LONG_AGO, has_conclusion=True),
-        Column.building,
-        Building.returned,
-    ),
-    # 「已交回」压过「已动工」：东西已经交回来了，比「做了一半」说得更准。
-    (
-        "交了结论，分支上也已经有痕迹",
-        task(has_conclusion=True, has_progress=True),
-        Column.building,
-        Building.returned,
-    ),
-    # 「运行中」压过「已动工」：一个刚开出草稿 PR、又刚被叫起来接着做的活，此刻
-    # 在跑，不是在原地停着。
-    (
-        "分身在做，上面也已经有痕迹",
-        task(has_worker=True, last_signal_at=JUST_NOW, has_progress=True),
-        Column.building,
-        Building.running,
-    ),
-    # 交回来的那一版被驳回了：东西不算数，下一步是再动手。
-    (
-        "交了结论，卡被驳回",
-        task(
-            has_worker=True,
-            last_signal_at=LONG_AGO,
-            has_conclusion=True,
-            card=card(AcceptStatus.rejected),
-        ),
-        Column.building,
-        Building.not_started,
-    ),
-    # 驳回说的是那一版不算数，不是「没人碰过它」：分支上的痕迹还在，所以这一格是
-    # 「做了一半停着」，不是「待开工」。
-    (
-        "卡被驳回，分支上已经有痕迹",
-        task(has_progress=True, card=card(AcceptStatus.rejected)),
-        Column.building,
-        Building.started,
-    ),
-    # 同样安静得理直气壮的另一种：卡已经递出去了，在等人。分身干完活不会把
-    # `subagent_id` 抹掉，所以「失联」要是抢在卡前面说，每一条等验收的活都会
-    # 被误报成失联。
-    (
-        "分身递了卡，安静地等人验收",
-        task(has_worker=True, last_signal_at=LONG_AGO, card=card(AcceptStatus.pending)),
+        "讨论中，芝士在等回答",
+        task(started=False, awaiting_answer=True),
         Column.needs_you,
-        NeedsYou.awaiting_review,
+        NeedsYou.awaiting_answer,
     ),
+    ("开始了，在跑", task(running=True), Column.building, Building.running),
+    # 开始了，此刻没有在跑的一轮，也还没递出改动。
+    ("开始了，停着", task(), Column.building, Building.started),
+    # 递出去的那一版被退回：它不算数，下一步是再动手。
     (
-        "分身递了卡，检查还在跑",
-        task(
-            has_worker=True,
-            last_signal_at=LONG_AGO,
-            room_screen_live=False,
-            card=card(AcceptStatus.pending_gate),
-        ),
-        Column.delivering,
-        Delivering.gate_running,
+        "改动被退回",
+        task(card=card(AcceptStatus.rejected)),
+        Column.building,
+        Building.started,
     ),
     (
         "闸门在跑",
@@ -333,7 +231,15 @@ TASK_CASES = [
         NeedsYou.awaiting_answer,
     ),
     ("已交付", task(accepted_at=JUST_NOW), Column.done, Done.accepted),
-    ("收工了", task(status=TaskStatus.closed), Column.done, Done.closed),
+    # 关闭时写了结论：做成了，产出不是一次合并（调研、讨论出的结论）。
+    (
+        "带着结论关闭",
+        task(status=TaskStatus.closed, has_conclusion=True),
+        Column.done,
+        Done.completed,
+    ),
+    # 什么都没留下就关了：不做了。
+    ("没留结论就关了", task(status=TaskStatus.closed), Column.done, Done.closed),
 ]
 
 
@@ -351,26 +257,15 @@ def test_a_thread_lands_in_one_column_with_one_phrase(facts, column, phrase):
 # —— 事实是从行上读出来的 ————————————————————————————————————————
 
 
-def test_progress_is_read_off_the_row():
-    """「动过手」的两个来源都认，而且只有这两个。
-
-    判据必须从库里那两列读出来 —— 上面那张表测的是「给定事实算出哪一格」，它不会
-    发现这一位压根没接上，那样一来每条活都会是「待开工」，正是要修的那个 bug。
-    """
+def test_being_started_is_read_off_the_row():
+    """「开始」从库里那一列读出来 —— 上面那张表测的是「给定事实算出哪一格」，它不会
+    发现这一位压根没接上，那样一来每个任务都会停在「讨论中」。"""
     from app.domain.room_task.models import Task
     from app.domain.room_task.presentation import facts_for_task
 
-    # 平台为它开出了草稿 PR —— 那要等它的分支上真有提交才开得出来。
-    assert facts_for_task(Task(pr_number=1789)).has_progress is True
-    # 有人开过它的工作树。
-    opened = Task(author_handle="cheese-c82aeb40555a")
-    assert facts_for_task(opened).has_progress is True
-    # 一个刚建出来、什么都没做过的活。
-    assert facts_for_task(Task()).has_progress is False
-    # 接过活但还没留下任何东西的活：有分身，但没有痕迹。
-    fresh = facts_for_task(Task(subagent_id="agent-1"))
-    assert fresh.has_worker is True
-    assert fresh.has_progress is False
+    assert facts_for_task(Task()).started is False
+    assert facts_for_task(Task(started_at=JUST_NOW)).started is True
+    assert facts_for_task(Task(conclusion="查清了")).has_conclusion is True
 
 
 # —— 一个房间的每一格 ————————————————————————————————————————————
@@ -429,8 +324,8 @@ def test_delivery_beats_everything():
     shown = task_presentation(
         task(
             accepted_at=JUST_NOW,
-            has_worker=True,
-            last_signal_at=JUST_NOW,
+            running=True,
+            status=TaskStatus.closed,
             card=card(AcceptStatus.pending),
         ),
         now=NOW,
@@ -441,11 +336,7 @@ def test_delivery_beats_everything():
 def test_the_live_fact_beats_the_paperwork():
     """在跑压过卡：卡描述的是它可能马上就要顶掉的那一版。"""
     shown = task_presentation(
-        task(
-            has_worker=True,
-            last_signal_at=JUST_NOW,
-            card=card(AcceptStatus.pending),
-        ),
+        task(running=True, card=card(AcceptStatus.pending)),
         now=NOW,
     )
     assert (shown.column, shown.phrase) == (Column.building, Building.running)
@@ -458,12 +349,7 @@ def test_an_unanswered_question_beats_the_live_fact():
     自己往下走。而看板显示「运行中」，正是让人不来看的那一句。
     """
     shown = task_presentation(
-        task(
-            awaiting_answer=True,
-            has_worker=True,
-            last_signal_at=JUST_NOW,
-            card=card(AcceptStatus.pending),
-        ),
+        task(awaiting_answer=True, running=True, card=card(AcceptStatus.pending)),
         now=NOW,
     )
     assert (shown.column, shown.phrase) == (
@@ -522,12 +408,9 @@ SETTLED = [
 
 @pytest.mark.parametrize("status", SETTLED, ids=[str(s) for s in SETTLED])
 def test_a_settled_card_stops_answering(status):
-    """一张已经结算的卡不是这条活此刻的状态 —— 它被驳回之后，活回到施工中。"""
+    """一张已经结算的卡不是这个任务此刻的状态 —— 它被退回之后，任务回到进行中。"""
     shown = task_presentation(task(card=card(status)), now=NOW)
-    assert (shown.column, shown.phrase) == (
-        Column.building,
-        Building.not_started,
-    )
+    assert (shown.column, shown.phrase) == (Column.building, Building.started)
 
 
 # —— 列 × 短语 的约束 ————————————————————————————————————————————
@@ -572,58 +455,18 @@ def test_every_phrase_is_reachable():
     assert reached == every
 
 
-def test_a_worker_that_stopped_reporting_is_not_a_worker_that_finished():
-    """分身报完成不是活干完了 —— 一个分身可以报好几次完成（把长命令丢进自己的后台
-    再停下来等也算一次），所以看板绝不能因为它安静下来就把这条活翻成「已关闭」。
-    只有收工（`TaskStatus.closed`）或者已交付才是终态。"""
-    quiet = task(has_worker=True, last_signal_at=LONG_AGO)
-    shown = task_presentation(quiet, now=NOW)
-    assert shown.column is Column.building, "断了联系不等于干完了"
-    assert shown.phrase == Building.lost
-
-    gone = task_presentation(
-        task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False), now=NOW
+def test_a_task_not_started_shows_no_paperwork():
+    """还没开始的任务没有改动可审：即使有一张旧卡挂着，它也还在讨论。"""
+    shown = task_presentation(
+        task(started=False, card=card(AcceptStatus.pending)), now=NOW
     )
-    assert gone.column is Column.building
-
-
-def test_a_finished_thread_still_reads_as_finished_with_a_worker_on_it():
-    """反过来也得成立：绑过分身不能盖掉真正的终态。"""
-    closed = task(has_worker=True, status=TaskStatus.closed, last_signal_at=LONG_AGO)
-    assert task_presentation(closed, now=NOW).phrase == Done.closed
-    delivered = task(has_worker=True, accepted_at=JUST_NOW, last_signal_at=LONG_AGO)
-    assert task_presentation(delivered, now=NOW).phrase == Done.accepted
-
-
-def test_a_thread_waiting_on_a_person_is_not_out_of_contact():
-    """分身干完活不会把自己从这条活上摘掉，所以「等人」的每一格都要能压过失联 ——
-    否则整个 delivering / needs_you 两列会被一句「失联」抹平。"""
-    for status in (
-        AcceptStatus.pending,
-        AcceptStatus.pending_gate,
-        AcceptStatus.conflict,
-    ):
-        quiet = task(
-            has_worker=True,
-            last_signal_at=LONG_AGO,
-            room_screen_live=False,
-            card=card(status),
-        )
-        shown = task_presentation(quiet, now=NOW)
-        assert shown.phrase != "lost", f"{status} 的卡被失联抢答了"
-        assert shown.column in (Column.delivering, Column.needs_you)
+    assert (shown.column, shown.phrase) == (Column.not_started, NotStarted.discussing)
 
 
 def test_it_reads_nothing_but_the_facts_it_was_given():
-    """纯函数：同样的事实 + 同样的「现在几点」= 同样的答案，跑多少次都一样。"""
-    facts = task(has_worker=True, last_signal_at=LONG_AGO)
-    first = task_presentation(facts, now=NOW)
-    assert first == task_presentation(facts, now=NOW)
-    # 只有「现在几点」变了，同一行事实就换了一格 —— 时间是参数，不是它自己去读的。
-    assert (
-        task_presentation(facts, now=LONG_AGO + timedelta(minutes=1)).phrase
-        == Building.running
-    )
+    """纯函数：同样的事实 = 同样的答案，跑多少次都一样。"""
+    facts = task(running=True)
+    assert task_presentation(facts, now=NOW) == task_presentation(facts, now=NOW)
 
 
 def test_a_narrow_rail_card_folds_into_the_same_facts_as_the_orm_row():

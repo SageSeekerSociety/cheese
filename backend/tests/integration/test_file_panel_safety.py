@@ -59,7 +59,7 @@ def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
             from app.domain.agent_session.services import AgentSessionService
 
             await AgentSessionService(session).remember_place(
-                topic_id=room_id,
+                conversation_id=room_id,
                 agent_handle="cheese",
                 work_lease={"kind": "device"},
                 runtime_location={

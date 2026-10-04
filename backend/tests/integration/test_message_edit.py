@@ -9,19 +9,18 @@ import asyncio
 import uuid
 
 import pytest
-from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.prompt import _pending_platform_notices, _platform_preamble
 from app.domain.block.repositories import BlockRepository
-from app.domain.delivery.models import Delivery
 from app.main import app
 from tests.conftest import stub_compute, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
+    open_task,
     post_message,
     post_project,
     room_agent_seat,
@@ -364,20 +363,17 @@ def _visible(client, room: str) -> list[dict]:
     return [b for b in blocks if (b.get("meta") or {}).get("in_room") is not False]
 
 
-# ---- On a card ----
+# ---- In a task ----
 
 
-def _card(client, room: str) -> str:
-    task = client.post(
-        f"/topics/{room}/split", json={"title": "子活", "reviewer_handle": "alice"}
-    ).json()["data"]
-    wait_work_idle()
-    return task["id"]
+def _task(client, room: str) -> str:
+    """A task of alice's in ``room``."""
+    return open_task(client, room, "子活", owner="alice", start=False)["id"]
 
 
-def _say_on_card(client, room: str, card: str, author: str, content: str) -> str:
+def _say_in_task(client, room: str, task: str, author: str, content: str) -> str:
     response = client.post(
-        f"/topics/{room}/tasks/{card}/messages",
+        f"/topics/{room}/tasks/{task}/messages",
         json={"content": content},
         headers=session_auth_headers(author),
     )
@@ -385,41 +381,34 @@ def _say_on_card(client, room: str, card: str, author: str, content: str) -> str
     return response.json()["data"]["id"]
 
 
-def _relays(client, card: str) -> list[str]:
-    async def read() -> list[str]:
-        async with client.test_factory() as session:
-            rows = await session.scalars(
-                select(Delivery).where(Delivery.task_id == uuid.UUID(card))
-            )
-            return [row.payload["content"] for row in rows]
-
-    return asyncio.run(read())
-
-
-def test_a_card_message_is_edited_by_its_author_under_the_same_rules(client):
+def test_a_task_message_is_edited_by_its_author_under_the_same_rules(client):
     room, _ = _room(client)
-    card = _card(client, room)
-    said = _say_on_card(client, room, card, "alice", "接口先别动")
+    task = _task(client, room)
+    said = _say_in_task(client, room, task, "alice", "接口先别动")
     assert _edit(client, said, "改掉", session_auth_headers("bob")).status_code == 403
-    with client.websocket_connect(chat_ws_url(card, "bob")) as bob:
+    with client.websocket_connect(chat_ws_url(task, "bob")) as bob:
         response = _edit(client, said, "接口可以动了", session_auth_headers("alice"))
         assert response.status_code == 200, response.text
         seen = _next_update(bob)
     assert seen["id"] == said
     assert seen["content"] == "接口可以动了"
     assert seen["meta"]["edited_at"]
-    card_blocks = client.get(f"/topics/{room}/tasks/{card}").json()["data"]["blocks"]
-    assert [b["content"] for b in card_blocks if b["id"] == said] == ["接口可以动了"]
+    task_blocks = client.get(f"/topics/{room}/tasks/{task}").json()["data"]["blocks"]
+    assert [b["content"] for b in task_blocks if b["id"] == said] == ["接口可以动了"]
 
 
-def test_a_card_edit_reaches_the_agent_the_way_the_message_did(client):
+def test_a_task_edit_reaches_the_tasks_agent_the_way_the_message_did(
+    client, stub_hooks
+):
+    """A message in a task is said to the task's own session, and so is an edit
+    to it."""
     room, _ = _room(client)
-    card = _card(client, room)
-    said = _say_on_card(client, room, card, "alice", "接口先别动")
-    assert len(_relays(client, card)) == 1
+    task = _task(client, room)
+    said = _say_in_task(client, room, task, "alice", "接口先别动")
+    wait_work_idle()
+    assert "接口先别动" in stub_hooks.told
 
     _edit(client, said, "接口可以动了", session_auth_headers("alice"))
+    wait_work_idle()
 
-    relays = _relays(client, card)
-    assert len(relays) == 2
-    assert "改了之前说的一句" in relays[1] and "接口可以动了" in relays[1]
+    assert "接口可以动了" in stub_hooks.told
