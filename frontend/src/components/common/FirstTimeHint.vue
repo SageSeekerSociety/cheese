@@ -5,8 +5,9 @@
 // 放链接（比如「我的设备」页）。
 import type { FirstTimeHintId } from '@/composables/useFirstTimeHint'
 
-import BaseButton from '@/components/base/BaseButton.vue'
 import { useFirstTimeHint } from '@/composables/useFirstTimeHint'
+
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{ id: FirstTimeHintId }>()

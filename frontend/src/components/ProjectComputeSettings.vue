@@ -91,7 +91,9 @@ watch(editing, (open) => {
       <FirstTimeHint v-if="state.can_manage && !state.devices.length" id="own-device">
         <i18n-t keypath="global.firstHint.ownDevice" scope="global" tag="span">
           <template #devices>
-            <router-link :to="{ name: 'UserSettingsDevices' }">{{ t('global.firstHint.ownDeviceDevices') }}</router-link>
+            <router-link :to="{ name: 'UserSettingsDevices' }">{{
+              t('global.firstHint.ownDeviceDevices')
+            }}</router-link>
           </template>
           <template #teamCompute>
             <router-link v-if="teamHandle" :to="{ name: 'TeamsDetailCompute', params: { handle: teamHandle } }">{{

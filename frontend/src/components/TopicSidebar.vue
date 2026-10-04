@@ -20,7 +20,6 @@ import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
 import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
 import { topicTitle } from '../lib/topicState'
-import { downloadFile, projectExportUrl } from '../api'
 import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
 import { myHandle } from '../me'
@@ -42,7 +41,6 @@ import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
   projects: Project[]
@@ -79,6 +77,8 @@ const emit = defineEmits<{
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
+  /** 下载整个项目的存档：取数在上面的视图里做，这里只报意图。 */
+  (e: 'export-project'): void
   // 已归档那一组里行尾的「取消归档」。
   (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
@@ -270,7 +270,7 @@ const projectSheetActions = computed<MenuAction[]>(() => {
       key: 'export',
       label: t('navigation.project.export'),
       icon: 'mdi-download-outline',
-      onSelect: () => void exportProject(),
+      onSelect: () => emit('export-project'),
     },
   ]
   if (canTransfer.value)
@@ -290,18 +290,6 @@ const projectSheetActions = computed<MenuAction[]>(() => {
     })
   return actions
 })
-
-// 下载整个项目。存档在服务端现打，大项目要几秒；失败走工作区那条红条。
-const workspaceStore = useWorkspaceStore()
-async function exportProject() {
-  const pid = props.selectedProjectId
-  if (!pid) return
-  try {
-    await downloadFile(projectExportUrl(pid), `${currentProject.value?.name || 'project'}.tar`)
-  } catch (e) {
-    workspaceStore.reportError(e, t('global.unknownError'))
-  }
-}
 
 function switchProjectFromSheet(projectId: string) {
   projectSheetOpen.value = false
@@ -435,7 +423,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         @open-sheet="projectSheetOpen = true"
         @open-transfer="transferOpen = true"
         @open-leave="leaveOpen = true"
-        @export="exportProject"
+        @export="emit('export-project')"
       />
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />

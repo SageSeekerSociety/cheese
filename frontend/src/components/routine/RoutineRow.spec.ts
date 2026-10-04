@@ -12,6 +12,8 @@ import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import { resetFirstTimeHints } from '@/composables/useFirstTimeHint'
+
 import RoutineRow from './RoutineRow.vue'
 
 import i18n, { setLocale } from '@/i18n'
@@ -19,7 +21,12 @@ import i18n, { setLocale } from '@/i18n'
 const Row = RoutineRow as unknown as Component
 const vuetify = createVuetify({ components, directives })
 
-beforeEach(() => setLocale('zh-CN'))
+beforeEach(() => {
+  setLocale('zh-CN')
+  // 草稿上第一次出现的那句说明带一颗「知道了」；每条用例都从「没看过」开始。
+  localStorage.clear()
+  resetFirstTimeHints()
+})
 
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
@@ -85,7 +92,7 @@ describe('一条规则这一行', () => {
 
   it('等确认的草稿：把它要做什么摊开，动作是「确认启用」', () => {
     const { container } = mount({ ...base, state: 'draft', next_run_at: null })
-    expect(buttons(container)).toEqual(['确认启用', '修改', '不要了'])
+    expect(buttons(container)).toEqual(['知道了', '确认启用', '修改', '不要了'])
     expect(container.textContent).toContain('汇总本周完成的任务和进行中的事')
     expect(container.textContent).toContain('本项目所有房间的任务')
     expect(container.textContent).toContain('周报')
@@ -129,5 +136,21 @@ describe('一条规则这一行', () => {
     })
     expect(container.textContent).toContain('失败')
     expect(container.textContent).toContain('没有交回结果')
+  })
+
+  it('第一次看到草稿：说清确认之前它不会跑；看过就不再说', () => {
+    const draft = { ...base, state: 'draft' as const, next_run_at: null }
+    const { container, unmount } = mount(draft)
+    expect(container.textContent).toContain('点「确认启用」之前它不会跑')
+    unmount()
+    localStorage.setItem('cheese.hint.dismissed.routine-draft', '1')
+    resetFirstTimeHints()
+    expect(mount(draft).container.textContent).not.toContain('点「确认启用」之前它不会跑')
+  })
+
+  it('已经在跑的规则、或者确认不了的人：不说这句', () => {
+    expect(mount(base).container.textContent).not.toContain('之前它不会跑')
+    const notMine = mount({ ...base, state: 'draft', next_run_at: null, can_manage: false })
+    expect(notMine.container.textContent).not.toContain('之前它不会跑')
   })
 })

@@ -5,6 +5,7 @@ import { useDisplay } from 'vuetify'
 
 import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
+import { downloadFile, projectExportUrl } from '@/api'
 import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
@@ -70,6 +71,17 @@ function onPressTopic(topicId: string) {
 }
 
 const creatingTopic = ref(false)
+// 下载整个项目的存档。服务端现打包，大项目要几秒；失败走工作区那条红条。
+async function onExportProject() {
+  const pid = props.projectId
+  const name = store.projects.find((p) => p.id === pid)?.name || 'project'
+  try {
+    await downloadFile(projectExportUrl(pid), `${name}.tar`)
+  } catch (e) {
+    store.reportError(e, t('global.unknownError'))
+  }
+}
+
 async function onCreateTopic(title: string) {
   if (creatingTopic.value) return
   creatingTopic.value = true
@@ -139,6 +151,7 @@ useCommands(() => [
       @unarchive-topic="store.unarchive"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
       @create-topic="onCreateTopic"
+      @export-project="onExportProject"
     >
       <!-- 手机上进项目落在话题列表上而不是看板上，所以看板的一句话摘要放在列表最顶上，
            点下去是看板。桌面上项目名那一行就是看板的入口。 -->
