@@ -13,7 +13,7 @@ import pytest
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService, DeviceStatus
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 
 
 def _service(
@@ -28,10 +28,8 @@ def _service(
     return service, clock
 
 
-# These exercise approve mechanics (name / idempotency / token), where the device's
-# visibility is incidental — so they enrol with the honest self-hosted default
-# (isolated), the value the human connector door now records unless the approver
-# opts into whole-machine.
+# These exercise approve mechanics (name / idempotency / token), where supply is
+# incidental — so they enrol as the human connector door does, self-hosted.
 async def test_start_then_poll_pending_then_approved():
     service, _ = _service()
     owner = uuid.uuid4()
@@ -43,7 +41,6 @@ async def test_start_then_poll_pending_then_approved():
         code,
         owner_user_id=owner,
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
     )
     poll = await service.poll(code)
     assert poll["status"] == DeviceStatus.APPROVED
@@ -62,7 +59,6 @@ async def test_approve_name_override_else_keeps_cli_name():
         code1,
         owner_user_id=uuid.uuid4(),
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
     )
     assert d1.name == "Andys-MacBook-Pro-510"
     # ...a name from the approval page overrides it.
@@ -71,7 +67,6 @@ async def test_approve_name_override_else_keeps_cli_name():
         code2,
         owner_user_id=uuid.uuid4(),
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
         name="  andy-studio  ",
     )
     assert d2.name == "andy-studio"
@@ -87,7 +82,6 @@ async def test_start_generates_a_real_name_never_unnamed():
             code,
             owner_user_id=uuid.uuid4(),
             supply=Supply.self_hosted,
-            visibility=Visibility.isolated,
         )
         assert device.name and device.name != "unnamed"
 
@@ -99,7 +93,6 @@ async def test_verify_token_identifies_device_only_when_valid():
         code,
         owner_user_id=uuid.uuid4(),
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
     )
     assert (await service.verify_token(device.token)).device_id == device.device_id
     assert await service.verify_token("nope") is None
@@ -114,13 +107,11 @@ async def test_approve_is_idempotent_same_token():
         code,
         owner_user_id=owner,
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
     )
     d2 = await service.approve(
         code,
         owner_user_id=owner,
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
     )
     assert d1.device_id == d2.device_id
     assert d1.token == d2.token  # never mints a second credential
@@ -137,7 +128,6 @@ async def test_expired_code_is_rejected():
             code,
             owner_user_id=uuid.uuid4(),
             supply=Supply.self_hosted,
-            visibility=Visibility.isolated,
         )
 
 
@@ -150,7 +140,6 @@ async def test_project_binding_and_ownership_guard():
         code,
         owner_user_id=owner,
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
     )
 
     assert not await service.serves_project(device.device_id, project)
@@ -183,7 +172,6 @@ async def test_human_management_never_lists_or_mutates_a_cloud_endpoint():
             await service.start(supply.value),
             owner_user_id=owner,
             supply=supply,
-            visibility=Visibility.isolated,
         )
 
     hosted = await _enroll(Supply.self_hosted)
@@ -224,7 +212,6 @@ async def test_delete_owned_forgets_the_device():
         await service.start("laptop"),
         owner_user_id=owner,
         supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
     )
 
     await service.delete_owned(device.device_id, actor_user_id=owner)

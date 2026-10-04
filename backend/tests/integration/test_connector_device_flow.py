@@ -174,21 +174,15 @@ def test_the_human_door_creates_the_hosted_subtype(client):
     """Enrollment identifies human-owned supply; visibility is chosen per topic."""
     from app.api.routes.connector import DbSession, get_device_service
     from app.domain.device.service import DeviceService
-    from app.domain.device.supply import Supply, Visibility
+    from app.domain.device.supply import Supply
 
-    recorded: list[tuple[Supply, Visibility]] = []
+    recorded: list[Supply] = []
 
     class Recording(DeviceService):
-        async def approve(
-            self, code_value, *, owner_user_id, supply, visibility, name=None
-        ):
-            recorded.append((supply, visibility))
+        async def approve(self, code_value, *, owner_user_id, supply, name=None):
+            recorded.append(supply)
             return await super().approve(
-                code_value,
-                owner_user_id=owner_user_id,
-                supply=supply,
-                visibility=visibility,
-                name=name,
+                code_value, owner_user_id=owner_user_id, supply=supply, name=name
             )
 
     def _recording_service(db: DbSession) -> DeviceService:
@@ -212,7 +206,7 @@ def test_the_human_door_creates_the_hosted_subtype(client):
         client.app.dependency_overrides.pop(get_device_service, None)
 
     assert connect.status_code == 200, connect.text
-    assert recorded == [(Supply.self_hosted, Visibility.isolated)]
+    assert recorded == [Supply.self_hosted]
 
 
 def test_proposed_name_lets_approval_page_prefill_hostname(client):

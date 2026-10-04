@@ -16,7 +16,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.repositories import BlockRepository
 from app.domain.device.models import DeviceRow, DeviceTeamRow
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import owner_reads as machine_owner_reads
@@ -518,7 +518,6 @@ def warm_case(client, monkeypatch):
                 token="test-warm-token",
                 owner_user_id=owner.id,
                 supply=Supply.cloud,
-                visibility=Visibility.host,
                 created_at=datetime.now(UTC),
             )
             session.add(device)

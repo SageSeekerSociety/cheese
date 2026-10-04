@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.platform_notices import EVENT_POLICY_PROPOSAL
 from app.domain.block.models import Block, BlockKind
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.notification.models import Notification
 from app.domain.user.repositories import UserRepository
@@ -68,7 +68,6 @@ def _device_owned_by(client, pid: str, owner_user_id: int, name: str) -> str:
                 code,
                 owner_user_id=owner_user_id,
                 supply=Supply.self_hosted,
-                visibility=Visibility.isolated,
             )
             await service.assign_to_project(
                 device.device_id, uuid.UUID(pid), actor_user_id=owner_user_id

@@ -453,7 +453,7 @@ async def environment_status(
             'if [ -n "$release" ]; then set -- "$release/cheese-environment.py"; '
             f'else set -- {candidates}; fi; for candidate in "$@"; do '
             'if [ -f "$candidate" ]; then '
-            f"CHEESE_STATUS_WAIT={int(wait_ready)} "
+            f"CHEESE_STATUS_WAIT={int(wait_ready)} CHEESE_SANDBOXED=${{release:+1}} "
             f'python3 "$candidate" {action} || exit $?; '
             "CHEESE_ENVIRONMENT_RAN=1; break; fi; done; "
             'if [ -z "$CHEESE_ENVIRONMENT_RAN" ]; then '

@@ -30,16 +30,10 @@ async def _device_on_project(
     service: DeviceService,
     project_id: uuid.UUID,
     name: str,
-    visibility: Visibility = Visibility.host,
     supply: Supply = Supply.self_hosted,
 ) -> str:
-    # Affinity resolution only ever PINS a device the transport can run today, so
-    # these enrol as whole-machine (host) by default; a test that wants to prove an
-    # `isolated` device is skipped passes it explicitly.
     code = await service.start(name)
-    device = await service.approve(
-        code, owner_user_id=OWNER, supply=supply, visibility=visibility
-    )
+    device = await service.approve(code, owner_user_id=OWNER, supply=supply)
     await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
     return device.device_id
 
@@ -145,9 +139,7 @@ async def test_an_isolated_binding_refuses_rather_than_running_bare():
 
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
-    machine = await _device_on_project(
-        service, project, "machine", visibility=Visibility.host
-    )
+    machine = await _device_on_project(service, project, "machine")
     await service.bind_topic_device(topic, machine, Visibility.isolated)
 
     with pytest.raises(ScreenSetupError) as excinfo:

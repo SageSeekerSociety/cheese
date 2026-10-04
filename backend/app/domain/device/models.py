@@ -55,19 +55,12 @@ class DeviceRow(Base):
         DateTime(timezone=True), nullable=False
     )
 
-    # Additive #442 dual-read window. Supply remains the stored lifecycle fact.
-    # Device visibility is legacy-only now; hosted access is read from the topic
-    # binding, but the old column stays safe-by-default until final cutover.
+    # Supply is the stored lifecycle fact. Access is not a property of the machine:
+    # it is chosen per topic binding (``TopicDeviceRow.visibility``).
     supply: Mapped[Supply] = mapped_column(
         Enum(Supply, native_enum=False, length=16),
         default=Supply.self_hosted,
         server_default=Supply.self_hosted.value,
-        nullable=False,
-    )
-    visibility: Mapped[Visibility] = mapped_column(
-        Enum(Visibility, native_enum=False, length=16),
-        default=Visibility.isolated,
-        server_default=Visibility.isolated.value,
         nullable=False,
     )
 

@@ -2035,12 +2035,11 @@ def bridge(state, server, *, call=None):
 
 
 def terminate_unrequested(state, named):
-    """Stop an executor that refused `shutdown`: one started before stopping
-    was a request. Those only ever ran unsandboxed, so the pid one reports is a
-    pid this side can signal — but only once that pid is seen running this
-    state's service, because whatever answers on a room's socket is not proof
-    of who is behind it. `named` is the state as the caller spelled it, which
-    is how the service was started: resolving a link in it would miss."""
+    """Stop an executor that refused `shutdown`: one started before stopping was
+    a request. Those only ever ran unsandboxed, so the pid one reports is a pid
+    this side can signal, but only once it is seen running this state's service:
+    whatever answers on a room's socket is not proof of who is behind it. `named`
+    is the state as the caller spelled it, as the service was started with it."""
     try:
         pid = request(state, "ping")["pid"]
     except (OSError, RuntimeError):
@@ -2063,7 +2062,7 @@ def main():
     parser.add_argument("--state", required=True, type=Path)
     parser.add_argument("--server", default="native")
     args = parser.parse_args()
-    state = args.state.resolve()
+    state = args.state if args.state.match("/proc/self/fd/*") else args.state.resolve()
     if args.mode == "serve":
         serve(state)
     elif args.mode == "bridge":
@@ -2079,7 +2078,8 @@ def main():
                 return
         except RuntimeError:
             terminate_unrequested(state, args.state)
-        with (state / "service.lock").open("a") as lock_file:
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(state / "service.lock", flags, 0o600), "a") as lock_file:
             for _ in range(100):
                 try:
                     # The socket closes before handlers finish; the lock marks shutdown.
