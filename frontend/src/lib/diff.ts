@@ -42,6 +42,12 @@ export const DIFF_WINDOW = 400
 /** `@@ -oldStart[,oldCount] +newStart[,newCount] @@ optional context`. */
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
 
+/** Header lines git writes between the `diff --git` line and the first `@@`.
+ * They describe the change (mode, rename, binary) but are not content, so the
+ * gutter must leave them blank — rendered as context they showed up as "0 0". */
+const META_HEADER =
+  /^(old mode |new mode |Binary files |GIT binary patch|copy from |copy to |rename from |rename to |dissimilarity index )/
+
 /**
  * Walk one file's hunk text and carry the two running counters the gutter needs.
  * A diff line does not carry its own number: `@@` says where each side starts,
@@ -170,6 +176,11 @@ export function parseDiffLines(body: string): DiffLine[] {
       return { kind: 'meta' as const, text }
     }
     if (text.startsWith('similarity index') || text.startsWith('rename ')) return { kind: 'meta' as const, text }
+    // A line that is content on neither side: git's "\ No newline at end of
+    // file" marker — it annotates the line above, so it is not a line itself —
+    // and the mode/binary headers. As "context" they advanced both counters,
+    // shifting every number after them, and the gutter showed them as "0 0".
+    if (text.startsWith('\\') || META_HEADER.test(text)) return { kind: 'meta' as const, text }
     if (text.startsWith('+')) return { kind: 'add' as const, text }
     if (text.startsWith('-')) return { kind: 'del' as const, text }
     return { kind: 'context' as const, text }

@@ -128,6 +128,48 @@ describe('diff 行号', () => {
     expect(adds.map((r) => r.newNumber)).toEqual([1, 2])
     expect(adds.every((r) => r.oldNumber === null)).toBe(true)
   })
+
+  // 真实 git diff（文件最后一行原来没有换行符）：`\ No newline at end of file`
+  // 是给上一行做的注解，本身不是一行。当成 context 时旧号和新号都 +1，它后面每一
+  // 个号码都跟着错。
+  it('「\\ No newline at end of file」不编号，也不推进计数器', () => {
+    const body = [
+      'diff --git a/notes.txt b/notes.txt',
+      'index 3b18e51..a1b2c3d 100644',
+      '--- a/notes.txt',
+      '+++ b/notes.txt',
+      '@@ -1,2 +1,2 @@',
+      ' first',
+      '-second',
+      '\\ No newline at end of file',
+      '+second line',
+    ].join('\n')
+    expect(numberDiffLines(parseDiffLines(body)).map((r) => [r.kind, r.oldNumber, r.newNumber])).toEqual([
+      ['meta', null, null],
+      ['meta', null, null],
+      ['meta', null, null],
+      ['meta', null, null],
+      ['hunk', null, null],
+      ['context', 1, 1],
+      ['del', 2, null],
+      ['meta', null, null],
+      ['add', null, 2],
+    ])
+  })
+
+  // 二进制文件和纯 mode 改动没有内容行：它们该留空，不是显示成「0 0」。
+  it('Binary files / old mode 这类行留空', () => {
+    const body = [
+      'diff --git a/x.png b/x.png',
+      'index 1111111..2222222 100644',
+      'Binary files a/x.png and b/x.png differ',
+    ].join('\n')
+    expect(numberDiffLines(parseDiffLines(body)).map((r) => [r.oldNumber, r.newNumber])).toEqual([
+      [null, null],
+      [null, null],
+      [null, null],
+    ])
+  })
 })
 
 describe('大文件的窗口', () => {

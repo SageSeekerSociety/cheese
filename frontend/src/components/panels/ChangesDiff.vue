@@ -22,11 +22,12 @@ const rows = computed(() => numberDiffLines(props.lines))
 const visible = computed(() => (expanded.value ? rows.value : rows.value.slice(0, DIFF_WINDOW)))
 const hiddenCount = computed(() => rows.value.length - visible.value.length)
 
-// gutter 的宽度按当前画出来的行里最长的那个号码算：号码位数一变整列跟着变宽。
-// 用 ch 而不是 px，等宽字号改了它还是对的。
+// gutter 的宽度按整份文件里最长的那个号码算，不是按现在画出来的那一段：窗口化
+// 只画前 DIFF_WINDOW 行，按可见部分算的话，点开「显示剩余」露出第 1000 行时整列
+// 会当场变宽，行号栏跳一下。用 ch 而不是 px，等宽字号改了它还是对的。
 const gutterCh = computed(() => {
   let digits = 1
-  for (const r of visible.value) {
+  for (const r of rows.value) {
     digits = Math.max(digits, String(r.oldNumber ?? 0).length, String(r.newNumber ?? 0).length)
   }
   return digits + 1
