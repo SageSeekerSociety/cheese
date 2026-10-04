@@ -368,7 +368,6 @@
   "commentThreadUpdated": "评论线程已更新，请重新读取",
   "commentResolvedReopenFirst": "评论已解决，请先重开",
   "commentAlreadyInState": "评论已经处于目标状态",
-  "docSelectionUnprovable": "该文档结构不能证明原文坐标，请重新选择",
   "liveDocStale": "实况文档已经被改过了，你手上这份是旧的",
   "deliveryNoteEmpty": "便条不能是空的",
   "deliveryTimeNeedsZone": "投递时刻要带时区",

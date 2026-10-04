@@ -9,9 +9,8 @@ whole reason the table has a ``visitor_id`` string instead of leaning on
 racing each other must still leave one row.
 
 The database is a copy of the session's migrated template (see ``_pg_schema``)
-rather than a chain built from empty: the head cannot be walked down from the
-far end, and rebuilding 226 revisions to test one of them would cost minutes
-for nothing.
+rather than a chain built from empty: rebuilding 226 revisions to test one of
+them would cost minutes for nothing.
 """
 
 import asyncio
@@ -93,11 +92,15 @@ def db_at_the_previous_revision(_pg_schema):
     """A copy of the migrated template, walked one step back down.
 
     The template is at the head, which includes this migration — so the copy has
-    to be downgraded first for the upgrade below to be the thing under test.
+    to be downgraded first for the upgrade below to be the thing under test. It
+    is stamped at this revision first, so the downgrade runs this migration's
+    alone: the ones after it need not be reversible.
     """
     db_name = f"cheesex_visits_{uuid.uuid4().hex[:8]}"
     asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
     try:
+        step = _alembic(db_name, "stamp", _REVISION)
+        assert step.returncode == 0, step.stderr
         step = _alembic(db_name, "downgrade", _PREVIOUS)
         assert step.returncode == 0, step.stderr
         yield db_name
