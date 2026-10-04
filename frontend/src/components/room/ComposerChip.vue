@@ -27,7 +27,8 @@ const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void }>()
     <!-- 名字在标签边缘就截断了，全名得有地方看。不用 title：系统原生气泡要停约
          一秒才弹，又是屏幕上唯一不跟随主题的东西。 -->
     <v-tooltip activator="parent" location="top" :text="label" />
-    <!-- 失败那一枚的重试：上传没成，File 还在手里，按一下就再传一次。 -->
+    <!-- The failed chip's retry: the upload did not go through, the File is
+         still in hand, one press sends the same bytes again. -->
     <button
       v-if="retryLabel"
       type="button"

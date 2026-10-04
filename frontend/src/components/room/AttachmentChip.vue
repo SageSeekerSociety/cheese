@@ -42,9 +42,10 @@ const failed = computed(() => !!props.attachment.error)
     @retry="emit('retry')"
   >
     <template #face>
-      <!-- 图片和文档那两个组件的根元素自己就是记号格（它们要在加载中、成功、
-           失败三种状态下都占住它）；其余状态没有组件，记号格由这里画。
-           传完的那一刻转圈原地换成缩略图或图标：先淡出，新的再淡入。 -->
+      <!-- The image and document components are their own face box (they hold it
+           through loading, success and failure); the rest have no component, so
+           the face is drawn here. The moment an upload lands, the spinner swaps
+           in place for a thumbnail or an icon: the old fades out, the new fades in. -->
       <Transition name="face" mode="out-in">
         <AttachmentImage
           v-if="!failed && !attachment.uploading && isImage"

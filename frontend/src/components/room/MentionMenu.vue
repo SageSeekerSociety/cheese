@@ -117,9 +117,10 @@ defineExpose({ scrollActiveIntoView })
               <span v-else-if="i === activeIndex && enterSends" class="mention-menu-hint">Enter</span>
             </button>
           </template>
-          <!-- 一条候选都没有时菜单不消失，只是换成一句话：整块收起来看起来像那个
-               `@` 没生效，人会以为自己打错了。资料库里说的是「文件」那件事，一级
-               上人、话题、文件一起搜，所以说的是一句更笼统的话。 -->
+          <!-- No candidates at all: the menu does not disappear, it just says so.
+               Collapsing the whole box reads as if that @ did nothing. The library
+               level speaks of files; the root searches people, topics and files
+               together, so it says something broader. -->
           <div v-if="!matches.length" class="mention-menu-empty">
             {{ t(level === 'library' ? 'work.room.mention.noFiles' : 'work.room.mention.noMatch') }}
           </div>
