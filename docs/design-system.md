@@ -337,7 +337,7 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 
 ### 3.5 页面宽度
 
-宽度是页面的属性，不归每个页面各自写一个数字：骨架里的一整页套 `AppPage`（`src/components/common/AppPage.vue`），宽度由它的 `width` 档给，页面不再写 `max-width`。四档（默认 `read`），一档一个用途：
+宽度是页面的属性，不归每个页面各自写一个数字：骨架里的一整页套 `AppPage`（`src/components/common/AppPage.vue`），宽度由它的 `width` 档给，页面不再写 `max-width`。五档（默认 `read`），一档一个用途：
 
 | `AppPage` `width` | token | 值 | 用在哪 |
 |---|---|---|---|
