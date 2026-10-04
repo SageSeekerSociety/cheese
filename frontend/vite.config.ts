@@ -131,6 +131,96 @@ const PRISM_LANGUAGES = [
 ]
 const PRISM_PLUGINS = ['line-numbers', 'copy-to-clipboard']
 
+// The named chunks, a library before the ones built on it (see codeSplitting).
+const CHUNKS = [
+  'preload-helper',
+  'vue',
+  'dayjs',
+  'lodash',
+  'axios',
+  'zod',
+  'dompurify',
+  'marked',
+  'prismjs',
+  'prosemirror',
+  'vuetify',
+  'tiptap',
+  'viewerjs',
+  'editorjs',
+  'monaco',
+]
+
+// Which named chunk a module goes in; null leaves it to Rolldown, which places
+// a module by who imports it.
+function chunkName(id: string): string | null {
+  // Vite's dynamic-import helper (`\0vite/preload-helper.js`), which every
+  // chunk with an `import()` shares, in a chunk of its own.
+  if (id.includes('vite/preload-helper')) {
+    return 'preload-helper'
+  }
+  if (id.includes('node_modules')) {
+    // Monaco is the largest package in node_modules and only the code
+    // panels use it, yet the catch-all `vendor` at the bottom pulled it
+    // into the one chunk every page preloads (1.29 MB gzipped, most of
+    // it Monaco). In its own chunk it is reachable only from the lazy
+    // TopicView route, so first paint no longer pays for it.
+    if (id.includes('monaco-editor')) {
+      return 'monaco'
+    }
+    if (id.includes('prosemirror')) {
+      return 'prosemirror'
+    }
+    if (id.includes('dompurify')) {
+      return 'dompurify'
+    }
+    if (id.includes('marked')) {
+      return 'marked'
+    }
+    if (id.includes('zod')) {
+      return 'zod'
+    }
+    if (id.includes('viewerjs')) {
+      return 'viewerjs'
+    }
+    if (id.includes('tiptap')) {
+      return 'tiptap'
+    }
+    if (id.includes('vuetify')) {
+      return 'vuetify'
+    }
+    // Vue 及其相关
+    if (id.match(/(vue|vue-router)/)) {
+      return 'vue'
+    }
+    // lodash 单独一个 chunk
+    if (id.includes('lodash')) {
+      return 'lodash'
+    }
+    // Editor.js 相关依赖归为一组
+    if (id.includes('@editorjs')) {
+      return 'editorjs'
+    }
+    // dayjs 单独一个 chunk
+    if (id.includes('dayjs')) {
+      return 'dayjs'
+    }
+    // prismjs 单独一个 chunk
+    if (id.includes('prismjs')) {
+      return 'prismjs'
+    }
+    // axios 如果使用量较大，也可单独拆分
+    if (id.includes('axios')) {
+      return 'axios'
+    }
+    // Everything else is left to Rolldown, which places a package by who
+    // imports it. A catch-all `vendor` here once put exceljs, pdf.js,
+    // xterm, yjs and KaTeX on every first paint, although the code only
+    // reaches them through `import()`: a manual chunk ignores that and
+    // becomes a static import of the entry.
+  }
+  return null
+}
+
 export default defineConfig({
   plugins: [
     demoPages(),
@@ -477,76 +567,19 @@ export default defineConfig({
       },
       output: {
         minify: MINIFY,
-        manualChunks(id) {
-          // Vite's dynamic-import helper (`\0vite/preload-helper.js`) is a
-          // virtual module every chunk with a lazy import shares. Left
-          // unassigned, Rollup merged it into the first manual chunk that
-          // needed it, which after the split below was `monaco`, so the entry
-          // and every route chunk imported `monaco` just to reach the helper
-          // and Monaco was back on the first paint. Give it a chunk of its own.
-          if (id.includes('vite/preload-helper')) {
-            return 'preload-helper'
-          }
-          if (id.includes('node_modules')) {
-            // Monaco is the largest package in node_modules and only the code
-            // panels use it, yet the catch-all `vendor` at the bottom pulled it
-            // into the one chunk every page preloads (1.29 MB gzipped, most of
-            // it Monaco). In its own chunk it is reachable only from the lazy
-            // TopicView route, so first paint no longer pays for it.
-            if (id.includes('monaco-editor')) {
-              return 'monaco'
-            }
-            if (id.includes('prosemirror')) {
-              return 'prosemirror'
-            }
-            if (id.includes('dompurify')) {
-              return 'dompurify'
-            }
-            if (id.includes('marked')) {
-              return 'marked'
-            }
-            if (id.includes('zod')) {
-              return 'zod'
-            }
-            if (id.includes('viewerjs')) {
-              return 'viewerjs'
-            }
-            if (id.includes('tiptap')) {
-              return 'tiptap'
-            }
-            if (id.includes('vuetify')) {
-              return 'vuetify'
-            }
-            // Vue 及其相关
-            if (id.match(/(vue|vue-router)/)) {
-              return 'vue'
-            }
-            // lodash 单独一个 chunk
-            if (id.includes('lodash')) {
-              return 'lodash'
-            }
-            // Editor.js 相关依赖归为一组
-            if (id.includes('@editorjs')) {
-              return 'editorjs'
-            }
-            // dayjs 单独一个 chunk
-            if (id.includes('dayjs')) {
-              return 'dayjs'
-            }
-            // prismjs 单独一个 chunk
-            if (id.includes('prismjs')) {
-              return 'prismjs'
-            }
-            // axios 如果使用量较大，也可单独拆分
-            if (id.includes('axios')) {
-              return 'axios'
-            }
-            // Everything else is left to Rollup, which places a package by who
-            // imports it. A catch-all `vendor` here once put exceljs, pdf.js,
-            // xterm, yjs and KaTeX on every first paint, although the code only
-            // reaches them through `import()`: a manual chunk ignores that and
-            // becomes a static import of the entry.
-          }
+        codeSplitting: {
+          // A group also takes whatever its modules import, so the group that
+          // claims a shared module first decides where it lives. Each library
+          // is claimed before the libraries built on it: with the order left
+          // to chance, the Vue runtime went into `tiptap` (through
+          // @tiptap/vue-3) and Vite's dynamic-import helper into `monaco`
+          // (through its lazy imports), and the entry imported both chunks,
+          // putting Monaco and the editor back on the first paint.
+          groups: CHUNKS.map((name, i) => ({
+            name,
+            test: (id: string) => chunkName(id) === name,
+            priority: CHUNKS.length - i,
+          })),
         },
       },
     },
