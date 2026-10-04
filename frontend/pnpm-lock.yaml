@@ -260,6 +260,9 @@ importers:
       viewerjs:
         specifier: ^1.11.7
         version: 1.11.7
+      virtua:
+        specifier: ^0.52.10
+        version: 0.52.10(vue@3.5.18(typescript@5.9.2))
       vue:
         specifier: ^3.5.18
         version: 3.5.18(typescript@5.9.2)
@@ -3985,6 +3988,7 @@ packages:
   eslint@9.32.0:
     resolution: {integrity: sha512-LSehfdpgMeWcTZkWZVIJl+tkZ2nuSkyyB9C27MZqFWXuph7DvaowgcTvKqxvpLW1JZIk8PN7hFY3Rj9LQ7m7lg==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -6403,6 +6407,32 @@ packages:
 
   viewerjs@1.11.7:
     resolution: {integrity: sha512-0JuVqOmL5v1jmEAlG5EBDR3XquxY8DWFQbFMprOXgaBB0F7Q/X9xWdEaQc59D8xzwkdUgXEMSSknTpriq95igg==}
+
+  virtua@0.52.10:
+    resolution: {integrity: sha512-AbYcd+7Vk6HznogCw28yoT+am8wK67fMfaPjHIp3+CGhvSh31FOBuVm+eAN+p4y8azjEC8kC9O1AtmyKG6ithg==}
+    peerDependencies:
+      '@angular/common': '>=20.0.0'
+      '@angular/core': '>=20.0.0'
+      react: '>=16.14.0'
+      react-dom: '>=16.14.0'
+      solid-js: '>=1.0'
+      svelte: '>=5.0'
+      vue: '>=3.2'
+    peerDependenciesMeta:
+      '@angular/common':
+        optional: true
+      '@angular/core':
+        optional: true
+      react:
+        optional: true
+      react-dom:
+        optional: true
+      solid-js:
+        optional: true
+      svelte:
+        optional: true
+      vue:
+        optional: true
 
   vite-node@2.1.9:
     resolution: {integrity: sha512-AM9aQ/IPrW/6ENLQg3AGY4K1N2TGZdR5e4gu/MmmR2xR3Ll1+dib+nook92g4TV3PXVyeyxdWwtaCAiUL0hMxA==}
@@ -13287,6 +13317,10 @@ snapshots:
       vue: 3.5.18(typescript@5.9.2)
 
   viewerjs@1.11.7: {}
+
+  virtua@0.52.10(vue@3.5.18(typescript@5.9.2)):
+    optionalDependencies:
+      vue: 3.5.18(typescript@5.9.2)
 
   vite-node@2.1.9(@types/node@18.19.121)(sass@1.89.2)(terser@5.43.1):
     dependencies:

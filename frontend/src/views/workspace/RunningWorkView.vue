@@ -26,6 +26,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import VirtualList from '@/components/common/VirtualList.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
@@ -52,6 +53,10 @@ const errorMsg = ref<string | null>(null)
 // 已完成折起来。板面留给还需要人看的东西，但要说得出有多少件——悄悄不显示会让人
 // 以为这个项目从来没交付过什么。
 const showDone = ref(false)
+// 已完成那一列自己滚（`.board__done-list` 上写着 max-height）。行数过门槛时它交给
+// VirtualList，那一列得把自己的滚动容器递给它——长项目里 done 会越堆越多，而这块板
+// 只占视口底下一条。
+const doneScroll = ref<HTMLElement | null>(null)
 
 /** 板隔多久自己重拉一次。
  *
@@ -285,6 +290,12 @@ function openTask(task: RoomTask) {
     query: { tab: 'overview', card: task.id },
   })
 }
+
+// 已完成那一列交给虚拟列表时要的行身份（和 v-for 的 key 同义）。具名函数而不是模板里
+// 的箭头：模板里那个箭头参数没有类型来源，strict 下会报隐式 any。
+function taskRowKey(row: unknown): string {
+  return (row as { id: string }).id
+}
 </script>
 
 <template>
@@ -454,16 +465,33 @@ function openTask(task: RoomTask) {
             <span class="t-body">{{ columnLabel('done') }}</span>
             <span class="t-meta board-col__count">{{ countLabel('done') }}</span>
           </button>
-          <ul v-if="showDone" class="board__done-list">
+          <!-- This column scrolls itself (max-height on the class below), so it passes
+               itself in as the scroll parent: done piles up over a long project while the
+               board only gets a strip at the bottom. Past VIRTUAL_LIST_THRESHOLD
+               (lib/virtualList.ts) VirtualList keeps only the rows in view mounted; below
+               it this is the plain list it always was. The `ul`/`li` stay: VirtualList only
+               wraps each row (item-as), it never owns the container, so the list keeps its
+               semantics in both paths. -->
+          <ul v-if="showDone" ref="doneScroll" class="board__done-list" role="list">
             <li v-if="!doneRows.length" class="board-col__empty t-body">{{ t('work.board.noneMine') }}</li>
-            <li v-for="row in doneRows" :key="row.id">
-              <button type="button" class="done-row" @click="openTask(row)">
-                <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
-                <span class="done-row__title t-body">{{ taskTitle(row) }}</span>
-                <span class="done-row__room t-meta">{{ roomTitle(row.room_id) }}</span>
-                <span class="done-row__phrase t-meta">{{ phraseLabel(row.presentation.phrase) }}</span>
-              </button>
-            </li>
+            <VirtualList
+              :items="doneRows"
+              :item-key="taskRowKey"
+              :scroll-parent="doneScroll"
+              :estimated-size="34"
+              :buffer-size="240"
+              item-as="li"
+              item-role="listitem"
+            >
+              <template #item="{ item }">
+                <button type="button" class="done-row" @click="openTask(item)">
+                  <span class="board-dot" :style="columnDotStyle(item.presentation.column)" aria-hidden="true" />
+                  <span class="done-row__title t-body">{{ taskTitle(item) }}</span>
+                  <span class="done-row__room t-meta">{{ roomTitle(item.room_id) }}</span>
+                  <span class="done-row__phrase t-meta">{{ phraseLabel(item.presentation.phrase) }}</span>
+                </button>
+              </template>
+            </VirtualList>
           </ul>
         </div>
       </template>
