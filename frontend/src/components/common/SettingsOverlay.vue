@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 设置的外框：盖在整个窗口上的一层，个人设置、空间设置、项目设置三处共用。
 //
-// 桌面上左边灰底是目录（上面写这是谁的设置），右边白底是这一页，右上角一颗 × 关掉。
+// 桌面上左边灰底是目录（上面写这是谁的设置），右边白底是这一页，左上角一颗 ← 关掉：
+// 和全站的返回同款（无底无框、同一个箭头），只是这颗点了关掉整层，不下去别的页。
 // 手机上是整屏：先是目录，点进一项是那一页，左上角返回目录；在目录上返回就是关掉。
 //
 // 这一层不是弹窗：它有自己的地址，每一项是一条路由，刷新、分享链接都照旧。关掉去
@@ -16,6 +17,7 @@ import { useDisplay } from 'vuetify'
 
 import { useFocusReturn } from '@/composables/useFocusReturn'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
@@ -160,12 +162,16 @@ useFocusReturn(ref(true))
             </div>
           </nav>
         </div>
+        <BaseButton
+          class="so__close"
+          icon="mdi-arrow-left"
+          kind="ghost"
+          size="sm"
+          :aria-label="closeLabel"
+          :title="closeTitle"
+          @click="emit('close')"
+        />
         <main class="so__main">
-          <div class="so__close-layer">
-            <button type="button" class="so__close" :aria-label="closeLabel" :title="closeTitle" @click="emit('close')">
-              <v-icon icon="mdi-close" size="20" />
-            </button>
-          </div>
           <div class="so__content">
             <slot />
           </div>
@@ -342,20 +348,6 @@ useFocusReturn(ref(true))
   scrollbar-gutter: stable;
 }
 
-/* 关闭按钮单独一层：它得跟着内容列右缘走，又不能随内容滚走。这一层粘在滚动口顶上
-   （sticky，高 0 不占地方），和 `.so__content` 同宽同位置、一起居中，所以按钮右缘
-   始终贴着内容列右缘，往下滚一屏也钉在原处。pointer-events 关掉，只让按钮自己收点击，
-   别的一层空着的地方点击照旧落到底下。 */
-.so__close-layer {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-raised);
-  height: 0;
-  max-width: 720px;
-  margin-inline: auto;
-  pointer-events: none;
-}
-
 /* 设置各页共用的一条内容列：最宽 720、四边内距统一 24，正好容下一行设置（672 卡片宽，
    见 settings-card.css）。各页自己不再设宽度和水平内距，都交给这一条。在「窗口减目录」
    剩下的主区里 margin-inline:auto 居中（和 app 壳页面内容一样）；剩余宽度不够 720 时
@@ -366,36 +358,20 @@ useFocusReturn(ref(true))
   padding: 24px;
 }
 
+/* 关掉这一颗落在灰栏顶上那条空当里：灰栏的内距上是 48（`.so__side` 的 padding-top），
+   正好是 app 壳顶栏那一条，按钮在这里竖向居中、左缘对着灰栏的内容内距 24。长什么样交给
+   `BaseButton`（ghost + sm），和顶栏那颗返回同一款。它绝对定位在 `.so` 上（这一层整屏不
+   动），所以右边的目录和内容怎么滚它都不动；抬一层 z-index，免得被后面画的兄弟盖住。
+
+   竖向居中要算渲染出来的盒子，不是 `sm` 名义上的 28：图标按钮的尺寸是
+   `--v-btn-height + 12`（vuetify 的 VBtn.css），sm 的 28 落到这里是 40 高。所以
+   (48 - 40) / 2 = 4，按钮占 4..44，正好待在 48 那条空当里、碰不到下面的目录。
+   `e2e/tests/layout-invariants.spec.ts` 量的就是这件事（底边 <= 目录顶 + 1）。 */
 .so__close {
-  /* 落在内容列上方的内距里（页头从 48 开始：内容列 24 + 页面 24），右缘对齐内容列
-     右缘。放在 48 那一条会压住页头右边的主操作（我的设备页的「添加设备」）。 */
   position: absolute;
-  top: 6px;
-  right: 0;
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background-color var(--dur-quick) var(--ease-standard),
-    color var(--dur-quick) var(--ease-standard);
-}
-
-.so__close:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-
-.so__close:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  top: calc((48px - 40px) / 2);
+  left: 24px;
+  z-index: var(--z-raised);
 }
 
 /* 手机：整屏，一条顶栏加下面会滚的一块。 */
@@ -494,16 +470,11 @@ useFocusReturn(ref(true))
   }
 }
 
-/* 触屏上手指点得中（docs/design-system.md §4、§10.1）：目录项从 36px 提到 44px，
-   关闭按钮撑到 44×44。 */
+/* 触屏上手指点得中（docs/design-system.md §4、§10.1）：目录项从 36px 提到 44px。
+   关闭按钮那颗是 `BaseButton`，44×44 的触点它自己带（见 BaseButton 的 pointer: coarse）。 */
 @media (pointer: coarse) {
   .so__item {
     min-height: 44px;
-  }
-
-  .so__close {
-    width: 44px;
-    height: 44px;
   }
 }
 

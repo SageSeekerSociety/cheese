@@ -64,7 +64,7 @@ describe('修改记录', () => {
 
   it('最新那一版没有恢复', async () => {
     mount([version(3, 'bob', 1), version(2, 'alice', 60)])
-    await screen.findByText('第 3 版')
+    await screen.findAllByText('bob')
     expect(screen.queryByRole('button', { name: t('work.room.doc.restore') })).toBeNull()
   })
 
@@ -82,8 +82,40 @@ describe('修改记录', () => {
       version(2, 'alice', 4),
       version(1, 'bob', 5),
     ])
-    await screen.findByText('第 5 版')
+    await screen.findAllByText('alice')
     expect(screen.getAllByText('bob')).toHaveLength(2)
     expect(screen.getAllByText('alice')).toHaveLength(1)
+  })
+
+  it('右边默认是和上一条比的改动，能切到全文', async () => {
+    const { container } = mount([version(2, 'bob', 1, '标题\n新加的一段\n结尾'), version(1, 'alice', 60, '标题\n结尾')])
+    await screen.findAllByText('bob')
+    await waitFor(() =>
+      expect(container.ownerDocument.querySelector('.vdiff__row--add')?.textContent).toContain('新加的一段')
+    )
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.historyFull') }))
+    await waitFor(() => expect(container.ownerDocument.querySelector('.vdiff')).toBeNull())
+  })
+
+  it('第一版没有上一版：整篇算新加的', async () => {
+    const { container } = mount([version(1, 'alice', 60, '只有一段')])
+    await screen.findAllByText('alice')
+    await waitFor(() =>
+      expect(container.ownerDocument.querySelector('.vdiff__row--add')?.textContent).toContain('只有一段')
+    )
+  })
+
+  it('最新一页全是同一个人连着存的：自动再读一页找上一条', async () => {
+    const page1 = [version(30, 'bob', 1, '新'), version(29, 'bob', 2, '中')]
+    const page2 = [version(28, 'alice', 60, '旧')]
+    const load = vi.fn(async (before?: number) =>
+      before === undefined ? { versions: page1, cursor: 29 } : { versions: page2, cursor: null }
+    )
+    const { container } = render(DocHistory, {
+      props: { open: true, load, editable: true, nameOf: (h: string) => h, mentionNames: {} },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await waitFor(() => expect(load).toHaveBeenCalledWith(29))
+    await waitFor(() => expect(container.ownerDocument.querySelector('.vdiff')).not.toBeNull())
   })
 })
