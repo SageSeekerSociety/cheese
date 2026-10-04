@@ -55,7 +55,7 @@ import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnch
 import { announceComments } from '../lib/docCommentSignals'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
-import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
+import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
@@ -138,8 +138,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     { immediate: true, deep: true }
   )
 
-  // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline。
-  const timeline = useTimeline()
+  // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
+  const timeline = useTimeline({ renders: rendersInRoom })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
 
@@ -268,10 +268,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
       handleFrame(frame)
       noteFrame()
     },
-    onOpen: () => {
-      // State frames are transient. A doc saved while disconnected may have no
-      // remaining turn to replay it; refresh through the panel's conflict guard.
-      emit('state-changed', 'doc')
+    onOpen: (reconnect) => {
+      // State frames are transient, so a re-connect rather than the first open:
+      // a doc saved while we were away has no remaining turn left to replay it.
+      if (reconnect) emit('state-changed', 'doc')
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {

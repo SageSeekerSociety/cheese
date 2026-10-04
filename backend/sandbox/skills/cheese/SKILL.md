@@ -69,7 +69,7 @@ description: 在知是里交付工作时使用：改项目仓库里的文件之�
 | `cheese push-fix [--task <任务 id>] [--drop-dependency]` | 把任务的新提交推到它现有的 PR 并刷新验收卡；`--drop-dependency` 见上面「撤掉对父任务的依赖」 |
 | `cheese recover <任务 id>` | 把任务最近一次的文件备份恢复到另一个目录，原来的工作目录不动 |
 | `cheese show <路径> [--as <类型>] [--note <一句话>]` | 把工作区里的一份东西摆到房间的预览里给人看；改的是房间里已经有的一份时，用 `--note` 写一句改了什么 |
-| `cheese serve <端口> [<一句话说明>]` | 把这台机器上跑起来的应用设为当前预览。先在 `127.0.0.1` 上把服务起起来、放到后台，端口固定住（比如 `vite --strictPort`），再报端口；平台会当场敲一次，敲不通就拒绝 |
+| `cheese serve <端口> [<一句话说明>]` | 把这台机器上跑起来的应用设为当前预览。先在 `127.0.0.1` 上把服务起起来、放到后台，端口固定住（比如 `vite --strictPort`），再报端口；默认先探到应用应答才报，最多等 30 秒（`--wait <秒>`、`--no-wait`）。平台会当场再敲一次，敲不通就拒绝。前端怎么起最快见 `references/artifacts.md` |
 | `cheese pull <路径> [-o <路径>]` | 把房间里一份文件最新保存的那一版取到这台机器上。用户可能在编辑器里改过，接着改之前先 pull |
 | `cheese library get <名字> [--out <路径>]` | 把资料库里的一份文件取到 `~/attachments/library/<名字>`。用户提到一份你手上没有的文件，就用它取，不要让人重传 |
 | `cheese mail attachment <连接> <uid> <序号>` | 把一封邮件的附件取到 `~/attachments/mail/` 下，见 `references/mail-and-feishu.md` |

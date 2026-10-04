@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -51,6 +52,7 @@ import urllib.request
 import uuid
 from datetime import UTC, datetime, time
 from pathlib import Path
+from time import monotonic, sleep
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if sys.platform != "win32":
@@ -3392,6 +3394,74 @@ def _format_status(d: dict) -> str:
     return "\n".join(lines)
 
 
+# `cheese serve` 报端口之前先敲一次应用,敲通了才算「起来了」。
+#
+# 为什么:agent 习惯 `nohup vite &` 把 dev server 丢到后台,紧跟着就 `cheese serve`——
+# 这时 vite 常常还没开始监听。平台那边敲端口敲不通会当场拒绝,用户看到的是一闪而过
+# 的白框,agent 却以为报上去了。探一下就不会:应用已经在听的(常见情况)立刻返回;
+# 还在起的,等它应答再报,最多等这么久。
+_SERVE_WAIT_DEFAULT_S = 30.0
+# 单次探测的超时和两次探测的间隔。前者要短:每个探测都得在超时前自己结束,不然一个
+# 挂着不回的 socket 会把整段等待吃掉;后者别太密,免得对着还在启动的进程打满。
+_SERVE_PROBE_TIMEOUT_S = 2.0
+_SERVE_PROBE_INTERVAL_S = 0.5
+# 浏览器式的请求头。有的服务器对 curl 和浏览器的应答不一样(vite dev 给浏览器发 SPA
+# 外壳),探「应用起没起来」就得像浏览器那样问一次。
+_SERVE_PROBE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (cheese serve readiness probe)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+
+
+def _probe_app(port: int) -> int | None:
+    """对 127.0.0.1:port 敲一次。
+
+    通了就返回 HTTP 状态码(4xx/5xx 也算「在应答」,只是这个路径不对);连不上、
+    超时、收了半截,或端口上坐的是个不讲 HTTP 的服务(SSH/数据库这类先打招呼
+    的非 HTTP 监听)都返回 None。
+    """
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/", headers=_SERVE_PROBE_HEADERS, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=_SERVE_PROBE_TIMEOUT_S
+        ) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        # 收到应答了,只是不是 2xx/3xx——应用在跑,但这个路径不是它的家。
+        return exc.code
+    except (
+        urllib.error.URLError,
+        OSError,
+        ValueError,
+        # 端口上是个非 HTTP 的监听:首行不是状态行,http.client 抛 BadStatusLine
+        # (HTTPException,不是 OSError)。这类端口也是「敲不通」,不该把它抛给 caller
+        # 炸掉整个 serve。
+        http.client.HTTPException,
+    ):
+        return None
+
+
+def _wait_for_app(port: int, timeout_s: float) -> int | None:
+    """等应用应答,最多等 timeout_s 秒。
+
+    任何 HTTP 应答(2xx/3xx/4xx/5xx 都算)就立刻返回——端口有人在听、能应答,
+    平台那一敲就通,4xx/5xx 也只是根路径不对,再等下去纯属空等。返回最后看到的
+    状态码;返回 None 表示这段时间里一直没人应答(端口没人听)。
+    """
+    deadline = monotonic() + timeout_s
+    while True:
+        status = _probe_app(port)
+        if status is not None:
+            return status
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return None
+        sleep(min(_SERVE_PROBE_INTERVAL_S, remaining))
+
+
 def source_fingerprint() -> str:
     """A short digest of THIS file's bytes.
 
@@ -3481,17 +3551,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     psv = sub.add_parser(
         "serve",
-        help="把这台机器上跑起来的应用设为当前预览(先起服务,再报端口)",
+        help="把这台机器上跑起来的应用设为当前预览(先起服务,报端口前先探通)",
         description=(
             "把**已经跑起来的**应用设为当前预览。跑之前:\n"
-            "  1. 把 dev server 起在 127.0.0.1 上,后台跑(nohup ... &)\n"
+            "  1. 把应用起在 127.0.0.1 上,后台跑(nohup ... &)。前端项目优先\n"
+            "     「先 build、再按静态文件起服务」,别报 dev server——几百个模块\n"
+            "     请求会挤过预览隧道,首屏能拖到几十秒\n"
             "  2. 端口你自己挑,固定住(vite 要 --strictPort,否则端口被占时它会\n"
             "     静默跳到下一个,你以为起好了,报上来的那个却没人应答)\n"
             "  3. 把那个端口报给这条命令\n"
             "\n"
             "每个话题使用独立的预览地址，应用可直接从根路径运行，\n"
             "无需为了预览修改资源路径。例如:\n"
-            "  vite --strictPort --port <端口>\n"
+            "  vite build --outDir dist\n"
+            "  BACKEND_URL=<后端地址> vite preview --strictPort --port <端口>\n"
+            "\n"
+            "报之前,这条命令自己先敲一次 127.0.0.1:<端口>(浏览器式的 GET):应用已经\n"
+            "在听就立刻过;还在起的等它应答,最多 --wait 秒(默认 30,--no-wait 跳过)。\n"
+            "等超了也照样报,只是提醒你一声——平台那边那一敲仍是权威。\n"
             "\n"
             "平台会当场从自己这边敲一次那个端口;敲不通就直接拒绝,不会给用户留一个\n"
             "白框。这台机器不是平台的,预览走的是这台机器主动拨出去的一条隧道——所以\n"
@@ -3502,6 +3579,24 @@ def build_parser() -> argparse.ArgumentParser:
     psv.add_argument("port", type=int, help="应用监听的端口,如 5173")
     psv.add_argument(
         "note", nargs="?", default="app", help="一句话说明在跑什么,如 'Vue dev server'"
+    )
+    psv.add_argument(
+        "--wait",
+        type=float,
+        default=_SERVE_WAIT_DEFAULT_S,
+        metavar="秒",
+        help=(
+            "报端口前先探到应用应答(浏览器式的 GET,任何 HTTP 状态码都算)再报,"
+            "最多等这么久;"
+            f"默认 {_SERVE_WAIT_DEFAULT_S:g} 秒,0 表示探都不探。"
+        ),
+    )
+    psv.add_argument(
+        "--no-wait",
+        dest="wait",
+        action="store_const",
+        const=0.0,
+        help="不探,报完就走(和 --wait 0 一样)。",
     )
 
     plib = sub.add_parser(
@@ -3843,6 +3938,25 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
+        # 报之前先敲门:应用已经在听(常见情况)就立刻过;还在起的,等它应答再报——
+        # 不然平台那边敲不通会当场拒绝,用户看到的是一闪而过的白框。等超了仍然照报,
+        # 只是提醒一声,平台那一敲是权威。
+        if a.wait and a.wait > 0:
+            status = _wait_for_app(a.port, a.wait)
+            if status is None:
+                print(
+                    f"[cheese] 等了 {a.wait:g} 秒,127.0.0.1:{a.port} 还是没有应答。"
+                    "应用可能没起来、没监听这个端口,或者起来的是另一个端口"
+                    "(vite 没加 --strictPort 时会静默换端口)。仍然照报,"
+                    "平台那边敲不通还会退回来。",
+                    file=sys.stderr,
+                )
+            elif not 200 <= status < 400:
+                print(
+                    f"[cheese] 127.0.0.1:{a.port} 在应答,但返回 {status},不是 2xx/3xx。"
+                    "应用大概起来了,只是根路径 / 不是它的入口。仍然照报。",
+                    file=sys.stderr,
+                )
         # Declare the port and bring the tunnel up in one step. The port is
         # written on THIS machine and read from disk by the helper — it never
         # travels on the wire, which is what keeps the platform unable to point

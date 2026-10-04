@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 「这里没有东西」的那一块（docs/design-system.md §3.11，文案口径见 §8.1）。
+ * 「这里没有东西」的那一块（docs/design-system.md §3.12，文案口径见 §8.1）。
  *
  * 之前空态各页手写：`settings-empty`、`an-note`、`rs__note`、`empty-panel`、Vuetify 的
  * `text-center py-12` 卡片……同一件事十几种长相。这里只收三样：一句标题、一句为什么、

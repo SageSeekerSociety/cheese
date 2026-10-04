@@ -15,6 +15,10 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../api', () => api)
 
+// 一次性动作的结果走全局 toast（§3.11）：这里只验它说了什么。
+const sonner = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
+vi.mock('vuetify-sonner', () => ({ toast: { success: sonner.success, error: sonner.error } }))
+
 import i18n, { setLocale } from '../i18n'
 
 import ProjectMcpSettings from './ProjectMcpSettings.vue'
@@ -105,8 +109,8 @@ function failedLanding(key: string, params?: Record<string, unknown>) {
 }
 
 it('the result of an authorization is said once and taken off the address', async () => {
-  const { view, router } = await mount(failedLanding('mcpAuthIncomplete', { error: 'access_denied' }))
-  expect(await view.findByText('连接 tracker 失败：授权没有完成：access_denied')).toBeTruthy()
+  const { router } = await mount(failedLanding('mcpAuthIncomplete', { error: 'access_denied' }))
+  await waitFor(() => expect(sonner.error).toHaveBeenCalledWith('连接 tracker 失败：授权没有完成：access_denied'))
   await waitFor(() => expect(router.currentRoute.value.query).toEqual({}))
 })
 
@@ -148,16 +152,16 @@ it('labels each server with where it comes from: the .mcp.json, or the types tha
 
 it('in English the reason a connection failed is said in English', async () => {
   setLocale('en')
-  const { view } = await mount(failedLanding('mcpAuthIncomplete', { error: { key: 'mcpNoAuthCode', params: {} } }))
-  expect(
-    await view.findByText(
+  await mount(failedLanding('mcpAuthIncomplete', { error: { key: 'mcpNoAuthCode', params: {} } }))
+  await waitFor(() =>
+    expect(sonner.error).toHaveBeenCalledWith(
       "Failed to connect tracker: Authorization didn't complete: no authorization code was received"
     )
-  ).toBeTruthy()
+  )
 })
 
 it('a code this build does not know says only that connecting failed', async () => {
   setLocale('en')
-  const { view } = await mount(failedLanding('failed'))
-  expect(await view.findByText('Failed to connect tracker')).toBeTruthy()
+  await mount(failedLanding('failed'))
+  await waitFor(() => expect(sonner.error).toHaveBeenCalledWith('Failed to connect tracker'))
 })
