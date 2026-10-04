@@ -1,5 +1,8 @@
 import type { Block } from '../../cx_types'
 
+import { copyText } from '@/commands/copy'
+import { t } from '@/i18n'
+
 // 一条消息上能做的事，悬停条（桌面）和长按面板（触屏）共用这几样，免得两边对
 // 「复制出来的是什么」「能点哪几个表情」各有一套说法。
 
@@ -14,14 +17,12 @@ function copyTextOf(block: Block, isAgent: boolean): string {
   return shown?.textContent ?? block.content
 }
 
-/** 把整条消息放进剪贴板。浏览器不让写（没有权限、不是安全上下文）时返回 false。 */
-export async function copyMessage(block: Block, isAgent: boolean): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(copyTextOf(block, isAgent))
-    return true
-  } catch {
-    return false
-  }
+/**
+ * 把整条消息放进剪贴板，成功失败都弹一条 toast（走共享的复制助手，全站同一个说法）。
+ * 浏览器不让写（没有权限、不是安全上下文）时返回 false，交回给要额外反馈的地方。
+ */
+export function copyMessage(block: Block, isAgent: boolean): Promise<boolean> {
+  return copyText(copyTextOf(block, isAgent), t('work.room.message.copied'))
 }
 
 /**

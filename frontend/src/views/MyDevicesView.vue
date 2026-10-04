@@ -22,6 +22,7 @@ import {
 } from '../lib/desktop'
 
 import { useCommands } from '@/commands'
+import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
@@ -76,17 +77,11 @@ const installCommands = computed(() => [
   { os: t('account.devices.os.unix'), command: `curl -fsSL ${window.location.origin}/connector/install.sh | sh` },
   { os: t('account.devices.os.windows'), command: `irm ${window.location.origin}/connector/install.ps1 | iex` },
 ])
-const copied = ref<string | null>(null)
 
+// 复制成的说法交给共享的复制助手（一条 toast），按钮不再自己换成「已复制」——
+// 全站复制只有这一种反馈（docs/design-system.md §3.11）。
 async function copyInstall(command: string) {
-  try {
-    await navigator.clipboard.writeText(command)
-    copied.value = command
-    setTimeout(() => (copied.value = null), 1600)
-  } catch {
-    // Clipboard blocked (insecure context / permissions) — leave the command
-    // visible so the user can still select and copy it by hand.
-  }
+  await copyText(command, t('account.devices.copied'))
 }
 
 // Inside the desktop app (desktop/) this computer connects on its own at sign-in
@@ -367,13 +362,8 @@ useCommands(() =>
           <span class="srow__k">{{ c.os }}</span>
           <div class="install-cmd">
             <code class="install-cmd__code">{{ c.command }}</code>
-            <BaseButton
-              kind="ghost"
-              size="sm"
-              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-              @click="copyInstall(c.command)"
-            >
-              {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+            <BaseButton kind="ghost" size="sm" prepend-icon="mdi-content-copy" @click="copyInstall(c.command)">
+              {{ t('account.devices.copy') }}
             </BaseButton>
           </div>
         </div>
@@ -422,13 +412,8 @@ useCommands(() =>
         <div class="t-caption c-muted mb-1">{{ c.os }}</div>
         <div class="install-cmd">
           <code class="install-cmd__code">{{ c.command }}</code>
-          <BaseButton
-            kind="ghost"
-            size="sm"
-            :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-            @click="copyInstall(c.command)"
-          >
-            {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-content-copy" @click="copyInstall(c.command)">
+            {{ t('account.devices.copy') }}
           </BaseButton>
         </div>
       </div>
