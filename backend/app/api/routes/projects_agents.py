@@ -90,9 +90,27 @@ from app.domain.agent_instance.services import (
     ResolvedAgent,
 )
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+def _changes_an_advanced_setting(saved: dict, config: AgentConfiguration) -> bool:
+    """Whether this save touches what only a project manager may set.
+
+    The settings page keeps them under 「高级设置」: the highest effort, when the
+    context is compacted, and the skills a teammate carries. Each changes what
+    every turn of it costs or can do, as the project main model does, and that
+    one is a manager's too (``require_manager`` in ``projects_run_config``).
+    A save that leaves them as they were is anyone's, so a member renaming a
+    teammate or rewriting its role is not refused for what it did not touch.
+    """
+    return (
+        (config.effort == "max" and saved.get("effort") != "max")
+        or config.compact_percent != saved.get("compact_percent")
+        or config.skills != list(saved.get("skills") or [])
+    )
 
 
 # --- A project's agents: its roster, and its default for new rooms -----------
@@ -161,6 +179,13 @@ async def create_project_agent(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
+    chosen = body.configuration
+    if chosen is not None and (
+        chosen.effort == "max" or chosen.compact_percent is not None
+    ):
+        # A new teammate's skills come from the preset it starts from, so only
+        # the two settings a preset never carries ask for a manager here.
+        await MemberService(db).require_manager(project_id, actor)
     service = AgentInstanceService(db)
     instance = await service.create(
         project_id=project_id,
@@ -197,6 +222,10 @@ async def update_project_agent(
     service = AgentInstanceService(db)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     fields = body.model_fields_set
+    if body.configuration is not None and _changes_an_advanced_setting(
+        instance.configuration or {}, body.configuration
+    ):
+        await MemberService(db).require_manager(project_id, actor)
     if "display_name" in fields and body.display_name is not None:
         await service.rename(instance, body.display_name)
     if body.configuration is not None:

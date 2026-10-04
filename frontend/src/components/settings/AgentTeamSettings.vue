@@ -5,13 +5,13 @@
 // 没绑仓库的项目是空的，还写着「角色设定请到 AI 队友 中修改」，把人往外指。
 // 队友的角色设定本来就是这个项目的设置，所以它回到这里。
 //
-// 每一行除了名字和类型带两个数字 —— 记忆条数和现在有几个话题在用它 —— 有没有在
-// 干活，一眼就分得出来。用哪个模型不在这一行上：那是一条活的事，写在卡上。
+// 每一行除了名字和类型，还写着它跑在哪个模型上、思考强度是哪一档：两样合起来才
+// 说得出这个队友多快、多贵。记忆不在这里：它由平台统一管理，不是队友的一项设置。
 //
-// 页面读三处，只有第一处是必须的：队友名册。类型目录、记忆各自失败都不该让整页
-// 塌掉，它们只会让对应的那个数字消失，而不是让人看不到队友。
-import type { MemoryEntryOut } from '@/api'
+// 页面读三处，只有第一处是必须的：队友名册。类型目录、模型目录各自失败都不该让整
+// 页塌掉，它们只会让对应的那几个字退回成默认的说法，而不是让人看不到队友。
 import type { AgentType, ProjectAgent } from '@/cx_types'
+import type { AgentFieldChoice } from '@/lib/modelChoices'
 
 import { computed, ref } from 'vue'
 
@@ -19,9 +19,9 @@ import { useCachedResource } from '@/composables/useCachedResource'
 
 import {
   deactivateProjectAgent,
+  getProjectDefaultModel,
   isEndpointMissing,
   listAgentTypes,
-  listMemory,
   listProjectAgents,
   setProjectDefaultAgent,
 } from '@/api'
@@ -31,8 +31,7 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
 import { teammateName } from '@/lib/agentNames'
-import { memoryCountsByHandle, typeLabel } from '@/lib/projectAgents'
-import { relTime } from '@/lib/relTime'
+import { effortLabel, typeLabel } from '@/lib/projectAgents'
 
 defineOptions({ name: 'AgentTeamSettings' })
 
@@ -41,7 +40,7 @@ const props = defineProps<{ projectId: string }>()
 interface AgentsPayload {
   agents: ProjectAgent[]
   types: AgentType[]
-  memories: MemoryEntryOut[]
+  models: AgentFieldChoice[]
   // 后端那一半是单独上线的。没上线时这一页不能是白屏，也不能是一句看起来像
   // bug 的报错 —— 它得说清楚「功能还没到这个环境」。
   backendMissing: boolean
@@ -57,7 +56,7 @@ const { data, loading, refreshing, refresh } = useCachedResource(
     const payload: AgentsPayload = {
       agents: [],
       types: [],
-      memories: [],
+      models: [],
       backendMissing: false,
       loadError: null,
     }
@@ -69,25 +68,25 @@ const { data, loading, refreshing, refresh } = useCachedResource(
       return payload
     }
     // 两个补充数据，谁失败谁空着。
-    const [typeList, memoryList] = await Promise.all([
+    const [typeList, modelList] = await Promise.all([
       listAgentTypes().then(
         (r) => r.data,
         () => [] as AgentType[]
       ),
-      listMemory(props.projectId).then(
-        (r) => r.data,
-        () => [] as MemoryEntryOut[]
+      getProjectDefaultModel(props.projectId).then(
+        (r) => r.choices,
+        () => [] as AgentFieldChoice[]
       ),
     ])
     payload.types = typeList
-    payload.memories = memoryList
+    payload.models = modelList
     return payload
   }
 )
 
 const agents = computed<ProjectAgent[]>(() => data.value?.agents ?? [])
 const types = computed<AgentType[]>(() => data.value?.types ?? [])
-const memories = computed<MemoryEntryOut[]>(() => data.value?.memories ?? [])
+const models = computed<AgentFieldChoice[]>(() => data.value?.models ?? [])
 const backendMissing = computed<boolean>(() => data.value?.backendMissing ?? false)
 // 名册取不回来，和「设为默认 / 停用」那一下失败，都显示在同一条 alert 上。
 const actionError = ref<string | null>(null)
@@ -99,7 +98,20 @@ function dismissError() {
   if (data.value) data.value.loadError = null
 }
 
-const memoryCounts = computed(() => memoryCountsByHandle(memories.value, props.projectId))
+// 「跟随项目」时也把项目那个模型的名字写出来：否则这一行说不清它到底跑在哪。
+function modelOf(agent: ProjectAgent): string {
+  const chosen = agent.configuration.model
+  if (chosen) {
+    const label = models.value.find((m) => m.id === chosen)?.label ?? chosen
+    return t('work.projectSettings.agents.rowModel', { model: label })
+  }
+  const main = models.value.find((m) => m.default)
+  return t('work.projectSettings.agents.rowModel', {
+    model: main
+      ? t('work.projectSettings.agents.rowInherit', { model: main.label })
+      : t('work.projectSettings.agents.rowInheritPlain'),
+  })
+}
 
 const editing = ref<ProjectAgent | null>(null)
 const editorOpen = ref(false)
@@ -121,15 +133,6 @@ const deactivateTitle = computed(() =>
     : ''
 )
 const deactivating = ref(false)
-// 展开看记忆的那一行。一次只展开一个 —— 这一栏是用来「看这个队友学到了什么」，
-// 不是用来横向对比的。
-const expanded = ref<string | null>(null)
-
-function memoriesOf(agent: ProjectAgent): MemoryEntryOut[] {
-  const prefix = `${props.projectId}:`
-  return memories.value.filter((m) => m.scope === 'agent_project' && m.scope_id === `${prefix}${agent.handle}`)
-}
-
 function openCreate() {
   editing.value = null
   editorOpen.value = true
@@ -272,29 +275,10 @@ async function confirmDeactivate() {
           </div>
         </div>
 
-        <div class="d-flex align-center ga-4 mt-3 flex-wrap">
-          <button
-            type="button"
-            class="stat-link"
-            :aria-expanded="expanded === a.id"
-            @click="expanded = expanded === a.id ? null : a.id"
-          >
-            <v-icon size="14" class="mr-1">mdi-book-open-variant-outline</v-icon>
-            {{ t('work.projectSettings.agents.memories', { n: memoryCounts[a.handle] ?? 0 }) }}
-          </button>
+        <div class="agent-facts t-meta c-muted mt-3">
+          <span>{{ modelOf(a) }}</span>
+          <span>{{ t('work.projectSettings.agents.rowEffort', { effort: effortLabel(a.configuration.effort) }) }}</span>
         </div>
-
-        <v-expand-transition>
-          <div v-if="expanded === a.id" class="memory-list mt-3">
-            <div v-if="memoriesOf(a).length === 0" class="t-meta c-muted">
-              {{ t('work.projectSettings.agents.noMemories') }}
-            </div>
-            <div v-for="m in memoriesOf(a)" :key="m.id" class="memory-row">
-              <span class="t-body">{{ m.content }}</span>
-              <span class="t-meta c-muted ml-2">{{ relTime(m.created_at) }}</span>
-            </div>
-          </div>
-        </v-expand-transition>
       </v-card>
     </div>
 
@@ -342,31 +326,9 @@ async function confirmDeactivate() {
   margin-inline-start: auto;
 }
 
-/* 记忆条数是可以点开的，所以它长得像个链接而不像一段说明文字。 */
-.stat-link {
-  display: inline-flex;
-  align-items: center;
-  font-size: 13px;
-  color: var(--muted);
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-}
-.stat-link:hover {
-  color: var(--text);
-}
-
-.memory-list {
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-}
-.memory-row {
+.agent-facts {
   display: flex;
-  align-items: baseline;
-  padding: 6px 0;
-}
-.memory-row + .memory-row {
-  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+  gap: 4px 16px;
 }
 </style>

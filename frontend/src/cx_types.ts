@@ -1216,10 +1216,16 @@ export interface AgentType {
 
 // GET /projects/{id}/agents — one agent working in this project.
 // Saved teammate role and optional project-scoped model override.
+export type AgentEffort = 'low' | 'medium' | 'high' | 'max'
+
 export interface AgentConfiguration {
   body: string
   skills: string[]
   model?: string | null
+  /** 思考强度；null＝模型自己的默认 */
+  effort?: AgentEffort | null
+  /** 上下文用到百分之几时整理（50–90）；null＝骨架默认 */
+  compact_percent?: number | null
 }
 
 export interface ProjectAgent {

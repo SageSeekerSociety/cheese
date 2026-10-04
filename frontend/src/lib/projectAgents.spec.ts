@@ -1,47 +1,17 @@
-// 这一页上的那个数字是它存在的理由（见 projectAgents.ts 的开头），所以它
-// 单独被盯着：算错了不会渲染失败，只会安静地骗人 —— 一个攒了 25 条记忆的队友
-// 显示成 0。
-import type { MemoryEntryOut } from '../api'
-
+// 队友设置页上不放进组件里的那几样：显示名、表单校验、思考强度的叫法。
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { setLocale } from '../i18n'
 
-import { displayNameError, handleError, memoryCountsByHandle, typeLabel } from './projectAgents'
+import { displayNameError, effortLabel, handleError, typeLabel } from './projectAgents'
 
 beforeEach(() => setLocale('zh-CN'))
 
-const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
-const OTHER_PROJECT = '11111111-2222-3333-4444-555555555555'
-
-function memory(scope: string, scopeId: string): MemoryEntryOut {
-  return { id: `${scope}-${scopeId}-${Math.random()}`, scope, scope_id: scopeId, content: '一条', created_at: '' }
-}
-
-describe('记忆条数', () => {
-  it('按 handle 分开数，不同队友互不串味', () => {
-    const counts = memoryCountsByHandle(
-      [
-        memory('agent_project', `${PROJECT}:cheese`),
-        memory('agent_project', `${PROJECT}:cheese`),
-        memory('agent_project', `${PROJECT}:reviewer`),
-      ],
-      PROJECT
-    )
-    expect(counts).toEqual({ cheese: 2, reviewer: 1 })
-  })
-
-  it('项目共享池和个人记忆不算在任何队友头上', () => {
-    const counts = memoryCountsByHandle(
-      [memory('project', PROJECT), memory('user', 'wangchangxin'), memory('agent_project', `${PROJECT}:cheese`)],
-      PROJECT
-    )
-    expect(counts).toEqual({ cheese: 1 })
-  })
-
-  it('别的项目的池不算进来', () => {
-    const counts = memoryCountsByHandle([memory('agent_project', `${OTHER_PROJECT}:cheese`)], PROJECT)
-    expect(counts).toEqual({})
+describe('思考强度', () => {
+  it('没选就是自动，选了就是那一档', () => {
+    expect(effortLabel(null)).toBe('自动')
+    expect(effortLabel('medium')).toBe('中')
+    expect(effortLabel('max')).toBe('极高')
   })
 })
 
