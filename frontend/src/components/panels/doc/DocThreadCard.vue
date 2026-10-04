@@ -6,10 +6,11 @@ import type { DocThread, DocThreadActivity, ThreadPlace } from '../../../lib/doc
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { isAgentHandle } from '../../../lib/authorship'
+import { plainRefs } from '../../../lib/refChip'
 import { relTime } from '../../../lib/relTime'
-import { plainTokens, renderMarkdown } from '../../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../../utils/avatar'
 import CheeseAvatar from '../../CheeseAvatar.vue'
+import MarkdownView from '../../common/MarkdownView.vue'
 
 import { t } from '@/i18n'
 
@@ -55,12 +56,7 @@ const shown = computed(() =>
 )
 const resolved = computed(() => props.thread.state === 'resolved')
 
-function rendered(author: string, content: string): { html: boolean; text: string } {
-  const maps = { mentionNames: props.mentionNames, topicTitles: {} }
-  return isAgentHandle(author)
-    ? { html: true, text: renderMarkdown(content, maps) }
-    : { html: false, text: plainTokens(content, maps) }
-}
+const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
 
 // 芝士正在用的工具，说成它在做的事；没列出的就说在回答
 const TOOL_STEPS: Record<string, string> = {
@@ -176,14 +172,16 @@ function onCard(e: MouseEvent) {
             <span class="doc-thread-card__name">{{ nameOf(message.author ?? '') }}</span>
             <span class="doc-thread-card__time">{{ relTime(message.created_at) }}</span>
           </div>
-          <div
-            v-if="rendered(message.author ?? '', message.content).html"
+          <MarkdownView
+            v-if="isAgentHandle(message.author ?? '')"
             class="doc-thread-card__text md-content"
             dir="auto"
-            v-html="rendered(message.author ?? '', message.content).text"
+            :source="message.content"
+            as="chat"
+            :names="names"
           />
           <div v-else class="doc-thread-card__text doc-thread-card__text--plain" dir="auto">
-            {{ rendered(message.author ?? '', message.content).text }}
+            {{ plainRefs(message.content, names) }}
           </div>
         </div>
       </div>

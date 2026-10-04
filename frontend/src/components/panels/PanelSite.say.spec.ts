@@ -94,7 +94,7 @@ describe('现场里芝士说的话', () => {
   it('代码块成一个块，不是一段等宽正文', async () => {
     const { container } = await openSite([say('1', '跑这个：\n\n```bash\nmake test\n```\n')])
 
-    expect(container.querySelector('.site-msg__body pre code')?.textContent).toBe('make test\n')
+    expect(container.querySelector('.site-msg__body pre code')?.textContent?.trim()).toBe('make test')
   })
 
   it('@人 的 token 用名册上的名字，点了把 handle 报上去', async () => {

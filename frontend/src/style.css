@@ -90,9 +90,10 @@
      Its own small palette, because the neutral ramp has no name for "keyword"
      or "string": these are categories, not levels of emphasis, so --ink/--muted
      cannot express them. They live here rather than in a component because
-     THREE consumers have to agree or the same snippet looks different in each:
-     DocPanel/DocEditor (lowlight classes .hljs-*) and CodeEditor (Monaco,
-     which reads these back out through getComputedStyle).
+     both consumers have to agree or the same snippet looks different in each:
+     lowlight's .hljs-* classes (styles/docBlocks.css, for every document,
+     message and file) and CodeEditor (Monaco, which reads these back out
+     through getComputedStyle).
 
      Light values are the ones the tree has always used — unchanged. Dark is
      new; every value clears 4.9:1 against all three code grounds the app uses
@@ -1268,14 +1269,6 @@ button:not(.v-btn) {
   background: none;
   padding: 0;
 }
-/* 表格同理：窄屏上列压不下去就让它自己滚，不要把整页撑宽。 */
-.md-content table {
-  display: block;
-  width: max-content;
-  max-width: 100%;
-  overflow-x: auto;
-  border-collapse: collapse;
-}
 .md-content img {
   max-width: 100%;
   height: auto;
@@ -1288,7 +1281,7 @@ button:not(.v-btn) {
 }
 
 /* 引用 chip：`<@handle>` `<&path>` `<#话题id>` 展开出来的可点小方块。
-   定义放在这里而不是产出它的那一个组件里：这份 markup 由 lib/renderMessage 一处
+   定义放在这里而不是产出它的那一个组件里：这份 markup 由 lib/refChip 一处
    产出，用它的地方却早就不止一处——对话栏、现场、动作卡。以前它写在组件自己的
    scoped 样式里，于是换一个 panel 渲染同一段字，chip 就退化成一行普通文字：点得到，
    看不出来能点。文档编辑器里那几颗另有自己的色调（品牌主色，不是这里的琥珀墨色），

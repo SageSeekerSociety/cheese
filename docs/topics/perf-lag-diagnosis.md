@@ -114,8 +114,7 @@
 
 ## 当初的两条怀疑，后来的结论
 
-- **聊天消息的 markdown 每次重渲染都重新解析一遍**：`<&frontend/src/components/ChatPanel.vue:1620>` 是 `v-html="renderMarkdown(m.content)"`——模板里直接调函数，不是 computed，`<&frontend/src/lib/renderMessage.ts>` 里也没有任何记忆化。屏幕上 50 条消息、agent 流式输出时高频重渲染，这个开销是多少还没量。**这条是我的怀疑，未证实。**
-  - **一处自我更正**：上一版这里写的是「这条链路是 marked + Prism 高亮 + KaTeX + DOMPurify」，不对。聊天正文走的是 `<&frontend/src/lib/markdown.ts>`，它**只有** marked + CJK 扩展，注释里白纸黑字写着「chat code blocks are NOT highlighted and math is NOT rendered」。带 Prism 和 KaTeX 的那个是 `<&frontend/src/components/chat/services/markdownRenderer.ts>`，服务于 AI 建议那一路，不是聊天主链路。所以这条的量级比我原先说的小，仍值得量，但优先级降一档。
+- ~~**聊天消息的 markdown 每次重渲染都重新解析一遍**~~ **已不成立**：芝士的消息由 `<&frontend/src/components/common/MarkdownView.vue>` 画，只在原文变了时重新解析；图表和流程图滚到眼前才画。它和文档用同一套解析，代码有高亮、公式会显示。
 - ~~**后端中间件叠了 4 层**~~ **已推翻**：实测 4 层加起来只有 0.645 毫秒。原文： `BaseHTTPMiddleware`（`<&backend/app/main.py>`），Starlette 的这个基类每层都要把响应过一遍 memory stream。对几百 KB 的响应有多少额外延迟，在测。
 
 ## 进展 / 分工

@@ -381,6 +381,7 @@ defineExpose({
                 :title="topicTitle(topic)"
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
+                :mention-names="mentionNames"
                 :live-ref-index="liveRefIndex"
                 :can-comment="!readOnly"
                 :open-threads="openThreads"

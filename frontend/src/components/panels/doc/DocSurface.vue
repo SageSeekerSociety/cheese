@@ -65,6 +65,8 @@ const props = withDefaults(
     title?: string
     /** 项目话题表：支线徽章的标题与状态、`<#id>` 话题 chip 的标题都从这里查。 */
     topicList?: Topic[]
+    /** handle → 名字：`<@handle>` chip 上写的字。 */
+    mentionNames?: Record<string, string>
     /** 段落 index → 支线 id（装饰的原料，取数那一半算好的）。 */
     liveRefIndex?: Map<number, string>
     /** 能写评论（归档话题的文档不能）。 */
@@ -87,6 +89,7 @@ const props = withDefaults(
   }>(),
   {
     topicList: () => [],
+    mentionNames: () => ({}),
     liveRefIndex: () => new Map<number, string>(),
     canComment: true,
     openThreads: () => new Set<string>(),
@@ -349,7 +352,12 @@ function buildEditor(session: DocSession): DocEditor {
       // 几种装饰都只读递进来的输入（哪一段有装饰、装饰上写什么），扩展本身不认识
       // 面板 —— 见 lib/docDecorations.ts。
       createTitleEcho({ title: () => props.title }),
-      createTokenChips({ titleOf: (tid) => props.topicList.find((t) => t.id === tid)?.title }),
+      createTokenChips({
+        names: () => ({
+          mentionNames: props.mentionNames,
+          topicTitles: Object.fromEntries(props.topicList.map((t) => [t.id, t.title])),
+        }),
+      }),
       createLiveRefBadges({
         index: () => props.liveRefIndex,
         factsOf: (topicId) => {
@@ -679,24 +687,9 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   outline: none;
 }
 
-/* GFM tables (TableKit). tiptap emits div.tableWrapper > table; browsers give
-   tables no borders by default, so without this the table renders "naked". */
-.doc-editor :deep(.doc-prose .tableWrapper) {
-  overflow-x: auto;
-  margin: 12px 0;
-}
-.doc-editor :deep(.doc-prose table) {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 14px;
-}
-.doc-editor :deep(.doc-prose th),
-.doc-editor :deep(.doc-prose td) {
-  border: 1px solid var(--line);
-  padding: 6px 10px;
-  text-align: left;
-  vertical-align: top;
-  /* anchor for the .selectedCell::after overlay */
+/* Tables look as styles/docBlocks.css draws them; the cell is the anchor for
+   the .selectedCell::after overlay below. */
+.doc-editor :deep(.doc-prose :is(th, td)) {
   position: relative;
 }
 /* CellSelection feedback: prosemirror-tables marks selected cells with
@@ -709,10 +702,6 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   z-index: var(--z-raised-2);
   pointer-events: none;
   background: rgba(var(--v-theme-primary), 0.1);
-}
-.doc-editor :deep(.doc-prose th) {
-  background: var(--canvas);
-  font-weight: 600;
 }
 
 /* 有人评论的那几个字：浅琥珀底、下面一道琥珀线；正在看的那一串更重一些。 */
@@ -886,56 +875,6 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   padding: 0;
   font-size: inherit;
 }
-/* lowlight token colors — the --code-* palette from style.css, which is also
-   what CodeEditor's Monaco theme reads back out, so 文档里的代码和文件编辑器
-   一个气质 in BOTH themes. Never inline a literal here: the three consumers
-   have to move together or the same snippet looks different in each. */
-.doc-editor :deep(.hljs-comment),
-.doc-editor :deep(.hljs-quote) {
-  color: var(--code-comment);
-  font-style: italic;
-}
-.doc-editor :deep(.hljs-keyword),
-.doc-editor :deep(.hljs-selector-tag),
-.doc-editor :deep(.hljs-literal),
-.doc-editor :deep(.hljs-doctag),
-.doc-editor :deep(.hljs-meta) {
-  color: var(--code-keyword);
-}
-.doc-editor :deep(.hljs-string),
-.doc-editor :deep(.hljs-regexp),
-.doc-editor :deep(.hljs-addition) {
-  color: var(--code-string);
-}
-.doc-editor :deep(.hljs-number),
-.doc-editor :deep(.hljs-symbol),
-.doc-editor :deep(.hljs-bullet) {
-  color: var(--code-number);
-}
-.doc-editor :deep(.hljs-title),
-.doc-editor :deep(.hljs-section),
-.doc-editor :deep(.hljs-name),
-.doc-editor :deep(.hljs-function) {
-  color: var(--code-function);
-}
-.doc-editor :deep(.hljs-type),
-.doc-editor :deep(.hljs-class),
-.doc-editor :deep(.hljs-built_in),
-.doc-editor :deep(.hljs-attr),
-.doc-editor :deep(.hljs-attribute),
-.doc-editor :deep(.hljs-variable),
-.doc-editor :deep(.hljs-template-variable) {
-  color: var(--code-type);
-}
-.doc-editor :deep(.hljs-deletion) {
-  color: var(--code-deletion);
-}
-.doc-editor :deep(.hljs-emphasis) {
-  font-style: italic;
-}
-.doc-editor :deep(.hljs-strong) {
-  font-weight: 600;
-}
 .doc-editor :deep(hr) {
   border: none;
   border-top: 1px solid var(--line-2);
@@ -979,9 +918,6 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 }
 .doc-editor :deep(.doc-prose pre code) {
   white-space: pre;
-}
-.doc-editor :deep(.doc-prose table) {
-  line-height: 1.7;
 }
 .doc-editor :deep(img) {
   max-width: 100%;
