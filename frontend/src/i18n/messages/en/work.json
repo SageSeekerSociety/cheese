@@ -291,7 +291,13 @@
       "wholeProject": "Whole project",
       "usageLine": "{turns} runs · {tokens} tokens · {cost}",
       "usageSplit": "Input {input} · Output {output}",
-      "noUsage": "No data"
+      "noUsage": "No data",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "muted": "Muted",
+      "muteFailed": "Couldn't save the mute setting",
+      "markAllRead": "Mark all as read",
+      "markAllReadFailed": "Couldn't mark everything as read"
     },
     "archiveNotice": {
       "done": "Archived",
@@ -1192,7 +1198,10 @@
     "noAssignee": "No assignee",
     "queued": "Queued",
     "running": "Running",
-    "made": "What was made"
+    "made": "What was made",
+    "findPlaceholder": "Find by title (/)",
+    "findLabel": "Find tasks on the board by title",
+    "findNone": "No task titles in this column contain “{text}”"
   },
   "publishedSite": {
     "revisionChanged": "The project's accepted version changed. Check it, then publish",

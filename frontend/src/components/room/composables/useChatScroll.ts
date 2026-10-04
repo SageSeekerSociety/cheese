@@ -44,6 +44,8 @@ export interface ChatScroll {
   rememberScroll(topicId: string | undefined): void
   /** 还原这个话题上次停的地方。 */
   restoreScroll(topicId: string): void
+  /** 这个话题再打开时会不会停在底部。 */
+  restoresToBottom(topicId: string): boolean
 }
 
 export function useChatScroll(
@@ -176,6 +178,12 @@ export function useChatScroll(
     })
   }
 
+  /** 这个话题再打开时会不会停在底部：没记过，或者记下的就是底部。 */
+  function restoresToBottom(topicId: string): boolean {
+    const saved = scrollMemory.get(topicId)
+    return !saved || saved.atBottom
+  }
+
   onScopeDispose(() => {
     if (catchUpTimer) clearTimeout(catchUpTimer)
     catchUpTimer = null
@@ -193,5 +201,6 @@ export function useChatScroll(
     noteFrame,
     rememberScroll,
     restoreScroll,
+    restoresToBottom,
   }
 }

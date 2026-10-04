@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import (
@@ -77,6 +78,20 @@ def _order_by(sort: TopicSortField | None, order: SortOrder) -> UnaryExpression:
     else:
         column = Topic.created_at
     return column.desc() if order == "desc" else column.asc()
+
+
+def _readable_by(user_handle: str):
+    """Rooms a person's badge maps may name: every non-private room, and the
+    private rooms they still hold a seat in. One clause for both the unread map
+    and the notify-level map, so the two can never disagree about a room."""
+    return or_(
+        Topic.is_private.is_(False),
+        Topic.id.in_(
+            select(TopicMembership.topic_id).where(
+                TopicMembership.member_handle == user_handle
+            )
+        ),
+    )
 
 
 class TopicRepository:
@@ -375,14 +390,7 @@ class TopicRepository:
             )
             .where(
                 Topic.project_id == project_id,
-                or_(
-                    Topic.is_private.is_(False),
-                    Topic.id.in_(
-                        select(TopicMembership.topic_id).where(
-                            TopicMembership.member_handle == user_handle
-                        )
-                    ),
-                ),
+                _readable_by(user_handle),
                 Block.kind == BlockKind.message,
                 Block.task_id.is_(None),
                 Block.author != user_handle,
@@ -495,6 +503,79 @@ class TopicRepository:
                 key = other
             counts[key] = counts.get(key, 0) + int(count)
         return counts
+
+    async def notify_levels(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[uuid.UUID, str]:
+        """The user's non-default notification levels in a project:
+        {topic_id: level}. Rooms at the default (`all`) are omitted."""
+        stmt = (
+            select(TopicReadState.topic_id, TopicReadState.notify_level)
+            .join(Topic, Topic.id == TopicReadState.topic_id)
+            .where(
+                Topic.project_id == project_id,
+                # 同 unread_counts 的读权限：被请出去的私密房间，我当年的静音记录
+                # 还在，但它的 id 不能再告诉我。
+                _readable_by(user_handle),
+                TopicReadState.user_handle == user_handle,
+                TopicReadState.notify_level != "all",
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: level for topic_id, level in rows}
+
+    async def set_notify_level(
+        self, topic_id: uuid.UUID, user_handle: str, level: str
+    ) -> None:
+        """Set the user's notification level on a topic (upsert). A room the
+        user never opened gets a cursor at the epoch — the same as no cursor,
+        so muting a room does not mark it read."""
+        stmt = select(TopicReadState).where(
+            TopicReadState.topic_id == topic_id,
+            TopicReadState.user_handle == user_handle,
+        )
+        state = (await self._session.scalars(stmt)).first()
+        if state is None:
+            self._session.add(
+                TopicReadState(
+                    topic_id=topic_id,
+                    user_handle=user_handle,
+                    last_read_at=datetime(1970, 1, 1, tzinfo=UTC),
+                    notify_level=level,
+                )
+            )
+        else:
+            state.notify_level = level
+        await self._session.flush()
+
+    async def mark_read_many(
+        self, topic_ids: list[uuid.UUID], user_handle: str
+    ) -> None:
+        """Bump the user's read cursor on many topics to now, in one statement
+        (「全部标为已读」). Rows that exist keep their notify level."""
+        if not topic_ids:
+            return
+        now = datetime.now(UTC)
+        stmt = pg_insert(TopicReadState).values(
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "topic_id": topic_id,
+                    "user_handle": user_handle,
+                    "last_read_at": now,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for topic_id in topic_ids
+            ]
+        )
+        await self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[TopicReadState.topic_id, TopicReadState.user_handle],
+                set_={"last_read_at": now, "updated_at": now},
+            )
+        )
+        await self._session.flush()
 
     async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
         """Bump the user's read cursor on a topic to now (upsert)."""

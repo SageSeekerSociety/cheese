@@ -50,5 +50,16 @@
   },
   "unknownError": "Unknown error",
   "listItemQuoted": "“{item}”",
-  "confirm": "Confirm"
+  "confirm": "Confirm",
+  "table": {
+    "pager": "Pagination",
+    "range": "{from}–{to} of {total}",
+    "prev": "Previous page",
+    "next": "Next page"
+  },
+  "settingsSearch": {
+    "placeholder": "Search settings",
+    "label": "Search settings by name",
+    "none": "No settings named “{text}”"
+  }
 }

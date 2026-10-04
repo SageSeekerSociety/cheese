@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -23,27 +23,19 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 于是子页**不需要**再问一次「我是不是管理员」：子页只要被画出来，就一定过了这道门。
 // 各块自己的接口后面还会各自判一次（服务端不信客户端），那是服务端的事。
 //
-// 进了后台却落在一块自己进不去的分区上（`/admin` 默认去队列），就换到第一块能进的。
+// 进了后台却落在一块自己进不去的分区上（`/admin` 默认去队列），会换到第一块能进的 ——
+// 那件事现在在**路由**里（`router/feedback.ts` 里 `/admin` 的 `beforeEnter`），不藏在这
+// 一层的 `watch` 里：静悄悄改地址看不出是「按权限改道」，声明式的重定向读得到。
 defineOptions({ name: 'AdminLayout' })
 
 const store = useFeedbackStore()
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const { visibleSections, canEnter, isCurrent } = useAdminSections()
+const { canEnter } = useAdminSections()
 
 /** `?` 那一层（§8）。`Esc` 关闭由 Vuetify 的对话框自己管。 */
 const shortcutOpen = ref(false)
-
-watch(
-  () => [store.metaChecked, route.name, visibleSections.value] as const,
-  ([checked]) => {
-    if (!checked || !canEnter.value) return
-    if (visibleSections.value.some((section) => isCurrent(section.name))) return
-    void router.replace(visibleSections.value[0].to)
-  },
-  { immediate: true }
-)
 
 /** `G` 之后那一颗（§8 的序列键）。1s 内有效，超时就算没按过 —— 不然「按了 G 去泡咖啡、
  *  回来顺手按了个 D」会把人送去看板。 */
