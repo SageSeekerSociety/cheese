@@ -1,10 +1,10 @@
 """What a feature's tokens cost, priced at the gateway's own rates — an estimate.
 
 **Why an estimate and not the real spend.** The gateway does keep the real
-number, but the only endpoint that answers per window, ``/spend/logs``, is a
-full scan of LiteLLM's spend table with no usable index — measured at 24–102
-seconds per call (see ``domain/agent/gateway.py``). An admin page cannot wait
-for it, and firing it per day over a 90-day window would be worse. ``/key/info``
+number, but the only endpoint that answers per window, ``/spend/logs/v2``, hands
+back raw rows a page at a time (see ``domain/agent/gateway.py``). Summing them
+per day over a 90-day window would read every row the feature logged in those
+90 days on each page load. ``/key/info``
 is cheap but answers the wrong question: a lifetime cumulative, with no window
 to divide it by. So the page multiplies the tokens the feature already recorded
 by the rates the gateway would charge for them, and says on its face that the
