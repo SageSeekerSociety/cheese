@@ -1,4 +1,5 @@
 /** 确认框只有两颗按钮、没有 ✕、点遮罩不关：这几条是它和表单弹窗的分别，锁在这里。 */
+import { defineComponent, h, nextTick, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -54,5 +55,41 @@ describe('ConfirmDialog', () => {
     const view = mount({ loading: true })
     await fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
     expect(view.emitted('cancel')).toBeUndefined()
+  })
+
+  it('hands keyboard focus back to the element that opened it', async () => {
+    // 打开它的那一颗按钮留在 app 之外：卸载组件不会把它一起带走。
+    const trigger = document.createElement('button')
+    trigger.textContent = 'remove'
+    document.body.appendChild(trigger)
+    trigger.focus()
+
+    const open = ref(false)
+    const Harness = defineComponent({
+      setup() {
+        return () =>
+          h(ConfirmDialog, {
+            modelValue: open.value,
+            'onUpdate:modelValue': (value: boolean) => (open.value = value),
+            title: 'Remove Alice?',
+            confirmLabel: 'Remove',
+          })
+      },
+    })
+    render(Harness, { global: { plugins: [createVuetify({ components, directives })] } })
+
+    open.value = true
+    await nextTick()
+    // 焦点落进对话框里（jsdom 里 Vuetify 的焦点陷阱不一定自动跑，这里手动移进去，
+    // 好让后面「关掉时还回去」这一步真的有东西要还）。
+    const cancelButton = screen.getByRole('button', { name: 'Cancel' })
+    cancelButton.focus()
+    expect(document.activeElement).toBe(cancelButton)
+
+    open.value = false
+    await nextTick()
+    await nextTick()
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
   })
 })

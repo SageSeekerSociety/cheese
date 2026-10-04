@@ -23,10 +23,10 @@ async function settle(): Promise<void> {
 }
 
 /** 浮层组件：开着的时候画一块可聚焦的面板。 */
-function overlayOf(open: Ref<boolean>) {
+function overlayOf(open: Ref<boolean>, fallback?: () => HTMLElement | null) {
   return defineComponent({
     setup() {
-      useFocusReturn(open)
+      useFocusReturn(open, fallback)
       return () => (open.value ? h('div', { id: 'panel', tabindex: -1 }, 'panel') : null)
     },
   })
@@ -41,10 +41,10 @@ function makeTrigger(): HTMLButtonElement {
   return trigger
 }
 
-function mountOverlay(open: Ref<boolean>): void {
+function mountOverlay(open: Ref<boolean>, fallback?: () => HTMLElement | null): void {
   const container = document.createElement('div')
   document.body.appendChild(container)
-  app = createApp(overlayOf(open))
+  app = createApp(overlayOf(open, fallback))
   app.mount(container)
 }
 
@@ -79,6 +79,45 @@ describe('useFocusReturn', () => {
     open.value = false
     await settle()
 
+    expect(document.activeElement).not.toBe(trigger)
+  })
+
+  it('打开它的元素没了时退到兜底容器', async () => {
+    const open = ref(false)
+    const trigger = makeTrigger()
+    trigger.focus()
+    const fallback = document.createElement('main')
+    fallback.id = 'fallback'
+    fallback.tabIndex = -1
+    document.body.appendChild(fallback)
+    mountOverlay(open, () => document.getElementById('fallback'))
+
+    open.value = true
+    await nextTick()
+    panel()?.focus()
+
+    trigger.remove()
+    open.value = false
+    await settle()
+
+    expect(document.activeElement).toBe(fallback)
+  })
+
+  it('兜底容器也不在时不硬聚焦', async () => {
+    const open = ref(false)
+    const trigger = makeTrigger()
+    trigger.focus()
+    mountOverlay(open, () => document.getElementById('missing'))
+
+    open.value = true
+    await nextTick()
+    panel()?.focus()
+
+    trigger.remove()
+    open.value = false
+    await settle()
+
+    // 没有可去的地方：不掉到某个猜出来的元素上，也不抛错。
     expect(document.activeElement).not.toBe(trigger)
   })
 

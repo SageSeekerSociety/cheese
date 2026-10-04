@@ -15,8 +15,11 @@ import { nextTick, onBeforeUnmount, watch } from 'vue'
  * 菜单时才还。这些地方交给它自己，别用这个组合式函数去抢。
  *
  * @param open 浮层是否开着。挂载即开着（关掉就把整个组件卸载）的浮层传 `ref(true)`。
+ * @param fallback 打开它的那一处已经不在文档里时的兜底：一个返回可聚焦容器的函数。
+ *   省略就不还（焦点掉到 body 上）。只在「打开它的东西随这次操作一起没了」时才用
+ *   得到，比如弹窗是从某个列表行里的按钮开的、而那一行在弹窗关掉前已经被删掉。
  */
-export function useFocusReturn(open: Ref<boolean>): void {
+export function useFocusReturn(open: Ref<boolean>, fallback?: () => HTMLElement | null): void {
   let returnFocus: HTMLElement | null = null
 
   function restore(): void {
@@ -25,7 +28,13 @@ export function useFocusReturn(open: Ref<boolean>): void {
     // 等这一轮渲染跑完再还：Vuetify 的对话框在 isActive 变假的那一瞬间才摘掉自己的
     // 焦点陷阱（retainFocus），早一步还回去会被它一把抢回对话框里。
     nextTick(() => {
-      if (el?.isConnected) el.focus?.()
+      if (el?.isConnected) {
+        el.focus?.()
+        return
+      }
+      // 打开它的那一处没了：退到调用方给的兜底容器，别让焦点掉到 body 上。
+      const container = fallback?.()
+      if (container?.isConnected) container.focus?.()
     })
   }
 
