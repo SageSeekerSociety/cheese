@@ -32,6 +32,7 @@ from app.core.sandbox_auth import mint_delegated_credential
 from app.core.sentences import say
 from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.document.machine import machine_to_read
+from app.domain.agent.harness.prompt import WRITING
 from app.domain.agent.skills import load_skills
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
@@ -279,9 +280,13 @@ def system_prompt(
     machine = _MACHINE.format(workspace=workspace) if workspace else _NO_MACHINE
     parts = [
         _RULES.format(agent=agent_name, place=place, answer=answer, machine=machine),
-        # Every session here writes into a document, so the writing guide is
-        # always in the prompt rather than a skill the agent may not load.
-        load_skills(["doc-writing"]),
+        # Every session here writes into a document, so the writing rules and
+        # the whole document guide are in the prompt rather than a skill the
+        # agent may not load. The guide points at its blocks reference by the
+        # path it has as a skill; here that file follows under the same name.
+        WRITING,
+        load_skills(["cheese-docs"]),
+        "## references/blocks.md\n\n" + load_skills(["doc-blocks"]),
     ]
     if charter:
         parts.append(f"## 项目章程\n<章程>\n{charter}\n</章程>")

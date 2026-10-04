@@ -84,10 +84,7 @@ def load_skills(names: list[str]) -> str:
 
 # The room's chat guide is in every turn: nearly every turn speaks, so a guide
 # loaded on demand was loaded on 3% of the turns that sent a message.
-NATIVE_CHAT_GUIDANCE = (
-    "编写或更新话题文档时用 Skill 工具加载 cheese-docs；写方案、报告、纪要这类"
-    "给人读的文档时加载 cheese-writing。\n\n" + load_skills(["chat"])
-)
+NATIVE_CHAT_GUIDANCE = load_skills(["chat"])
 
 
 #: Skills that are already written as native Claude skills, shipped verbatim.
@@ -121,7 +118,6 @@ RESERVED_SKILL_NAMES = frozenset(
         *_SHIPPED_NATIVE_SKILLS,
         "cheese",
         "cheese-docs",
-        "cheese-writing",
         "cheese-chat",
     }
 )
@@ -139,23 +135,14 @@ def native_skill_files() -> dict[str, str]:
                 continue
             relative = source.relative_to(_NATIVE_SKILL_SRC).as_posix()
             files[f"skills/{relative}"] = source.read_text(encoding="utf-8")
-    for source, name in (
-        ("doc_form.md", "cheese-docs"),
-        ("doc_writing.md", "cheese-writing"),
-    ):
-        meta, body = _parse(_SKILL_DIR / source)
-        body = body.replace("doc-form", "cheese-docs").replace(
-            "doc-writing", "cheese-writing"
-        )
-        description = (
-            meta["description"]
-            .replace("doc-form", "cheese-docs")
-            .replace("doc-writing", "cheese-writing")
-        )
-        description = description.replace("chat 技能", "会话内的聊天说明")
-        files[f"skills/{name}/SKILL.md"] = (
-            f"---\nname: {name}\n"
-            f"description: {json.dumps(description, ensure_ascii=False)}\n"
-            f"---\n\n{body}\n"
-        )
+    # The document guide is written here rather than as a native skill folder
+    # because the document agent inlines the same files (`document/question.py`).
+    meta, body = _parse(_SKILL_DIR / "doc_writing.md")
+    files["skills/cheese-docs/SKILL.md"] = (
+        f"---\nname: cheese-docs\n"
+        f"description: {json.dumps(meta['description'], ensure_ascii=False)}\n"
+        f"---\n\n{body}\n"
+    )
+    _, blocks = _parse(_SKILL_DIR / "doc_blocks.md")
+    files["skills/cheese-docs/references/blocks.md"] = blocks + "\n"
     return files
