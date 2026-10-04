@@ -7,7 +7,6 @@ import pytest
 
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
-from app.domain.agent.harness.claude_code.legacy import LegacyEvidenceIncomplete
 from app.domain.agent.harness.claude_code.subscription import Subscription
 
 
@@ -84,8 +83,10 @@ async def test_retained_completion_requires_complete_exact_evidence(
     )
     try:
         if broken:
-            with pytest.raises((LegacyEvidenceIncomplete, ValueError)):
-                await reading.settle_completion(result)
+            # Unprovable is not retried: the journal holds no more on the next
+            # read, and a raise here stops the room reading the session at
+            # this result for good. Nothing is settled.
+            assert await reading.settle_completion(result) is None
             assert completions == []
             assert receipts == []
         else:
