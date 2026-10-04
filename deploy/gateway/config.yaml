@@ -257,9 +257,9 @@ general_settings:
     port: 6379
 
 litellm_settings:
-  # The whole point: a row per call, which is what /spend/logs reads back and
-  # what the backend drains into resource_usage. Without this the gateway would
-  # route traffic and still tell us nothing.
+  # The whole point: a row per call. LiteLLM sums those rows into daily totals
+  # per key and model, which the backend drains into resource_usage. Without
+  # this the gateway would route traffic and still tell us nothing.
   success_callback: ["postgres"]
   failure_callback: ["postgres"]
   # Requests routed to ChatGPT carry the Claude Code session as `session_id`,

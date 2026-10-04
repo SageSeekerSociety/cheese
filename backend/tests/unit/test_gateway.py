@@ -1,5 +1,6 @@
 """LiteLLM gateway admin client + exactly-once usage-drain math."""
 
+import hashlib
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -16,6 +17,39 @@ def _transport(handler):
     return httpx.MockTransport(handler)
 
 
+def _hash(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def _daily(date: str, shares: dict[str, dict[str, tuple]]) -> dict:
+    """A `/user/daily/activity` answer for one day, as LiteLLM shapes it:
+    {model: {key hash: (prompt, completion, usd)}}."""
+    return {
+        "results": [
+            {
+                "date": date,
+                "breakdown": {
+                    "models": {
+                        model: {
+                            "api_key_breakdown": {
+                                key: {
+                                    "metrics": {
+                                        "prompt_tokens": p,
+                                        "completion_tokens": c,
+                                        "spend": usd,
+                                    }
+                                }
+                                for key, (p, c, usd) in by_key.items()
+                            }
+                        }
+                        for model, by_key in shares.items()
+                    }
+                },
+            }
+        ]
+    }
+
+
 @pytest.mark.anyio
 async def test_mint_set_budget_and_daily_spend_roundtrip():
     calls: list[tuple[str, str]] = []
@@ -30,32 +64,28 @@ async def test_mint_set_budget_and_daily_spend_roundtrip():
         if request.url.path == "/key/update":
             assert json.loads(request.content)["max_budget"] == 1.5
             return httpx.Response(200, json={})
-        if request.url.path == "/spend/logs/v2":
-            import hashlib
-
-            expected = hashlib.sha256(b"sk-virtual").hexdigest()
-            assert request.url.params["api_key"] == expected
+        if request.url.path == "/user/daily/activity":
+            mine = _hash("sk-virtual")
+            assert request.url.params["api_key"] == mine
+            day = request.url.params["start_date"]
+            assert request.url.params["end_date"] == day
             return httpx.Response(
                 200,
-                json={
-                    "data": [
-                        {
-                            "model": "mimo-v2.6-pro",
-                            "prompt_tokens": 10,
-                            "completion_tokens": 2,
-                            "spend": 0.001,
+                json=_daily(
+                    day,
+                    {
+                        "mimo-v2.6-pro": {
+                            mine: (10, 2, 0.001),
+                            # Another key's share of the same model is not ours.
+                            _hash("sk-other"): (900, 90, 9.0),
                         },
-                        {
-                            "model": "claude-sonnet-5",
-                            "prompt_tokens": 5,
-                            "completion_tokens": 1,
-                            "spend": 0.0005,
-                        },
-                        # no model field → counted under the empty name
-                        {"prompt_tokens": 3, "completion_tokens": 0, "spend": 0.0},
-                        "not-a-dict",  # tolerated
-                    ]
-                },
+                        "claude-sonnet-5": {mine: (5, 1, 0.0005)},
+                        # Only another key used this model today.
+                        "glm-5.2": {_hash("sk-other"): (7, 7, 0.7)},
+                        # A call LiteLLM could not name a model for.
+                        "": {mine: (3, 0, 0.0)},
+                    },
+                ),
             )
         return httpx.Response(404)
 
@@ -78,49 +108,14 @@ async def test_mint_set_budget_and_daily_spend_roundtrip():
     assert by["mimo-v2.6-pro"].spend_usd == pytest.approx(0.001)
     assert by["claude-sonnet-5"].prompt_tokens == 5
     assert by[""].prompt_tokens == 3
-    # One spend-log read per public reader — `daily_spend` derives its total
-    # from `daily_spend_by_model`, so exercising both is two reads, not three.
+    # One read per public reader — `daily_spend` derives its total from
+    # `daily_spend_by_model`, so exercising both is two reads, not three.
     assert [p for _m, p in calls] == [
         "/key/generate",
         "/key/update",
-        "/spend/logs/v2",
-        "/spend/logs/v2",
+        "/user/daily/activity",
+        "/user/daily/activity",
     ]
-
-
-@pytest.mark.anyio
-async def test_a_day_longer_than_one_page_is_summed_whole():
-    """A busy key logs more rows in a day than one page holds. Every page is
-    read, and a row that two pages both return (a row logged mid-read shifts
-    the rest) counts once."""
-    rows = [
-        {
-            "request_id": f"r{i}",
-            "model": "glm-5.2",
-            "prompt_tokens": 1,
-            "completion_tokens": 1,
-            "spend": 0.001,
-        }
-        for i in range(2500)
-    ]
-
-    # Page two starts one row early, as if a row had been inserted before it
-    # between the two reads: r999 comes back again and everything after it
-    # moves one place along.
-    pages = {1: rows[:1000], 2: rows[999:1999], 3: rows[1999:]}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/spend/logs/v2"
-        assert request.url.params["page_size"] == "1000"
-        return httpx.Response(
-            200, json={"data": pages[int(request.url.params["page"])]}
-        )
-
-    g = gw.LlmGateway("http://gw", "mk", transport=_transport(handler))
-    by = await g.daily_spend_by_model("sk-virtual", gw.utc_today())
-
-    assert by["glm-5.2"].prompt_tokens == 2500
-    assert by["glm-5.2"].spend_usd == pytest.approx(2.5)
 
 
 @pytest.mark.anyio
@@ -146,16 +141,10 @@ async def test_failed_read_cannot_reset_checkpoint_and_rebill_prior_spend():
             return httpx.Response(500, text="temporary gateway failure")
         return httpx.Response(
             200,
-            json={
-                "data": [
-                    {
-                        "model": "mimo-v2.6-pro",
-                        "prompt_tokens": 150,
-                        "completion_tokens": 30,
-                        "spend": 0.015,
-                    }
-                ]
-            },
+            json=_daily(
+                request.url.params["start_date"],
+                {"mimo-v2.6-pro": {_hash("sk-virtual"): (150, 30, 0.015)}},
+            ),
         )
 
     gateway = gw.LlmGateway("http://gw", "mk", transport=_transport(handler))

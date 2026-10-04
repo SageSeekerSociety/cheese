@@ -340,9 +340,10 @@ class Settings(BaseSettings):
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
     # into the sandbox instead of the master key, so a sandbox never holds admin
     # credentials and spend is attributable per project — and read back REAL token
-    # usage from /spend/logs (fixes a provider-reported usage=0), and (L2) set a
-    # per-key max_budget from the project's compute grants so the gateway refuses
-    # further calls when the budget is exhausted (the mid-turn brake).
+    # usage from its daily totals per key (fixes a provider-reported usage=0), and
+    # (L2) set a per-key max_budget from the project's compute grants so the
+    # gateway refuses further calls when the budget is exhausted (the mid-turn
+    # brake).
     # Unset (default) =整层关闭: env injection, usage, credits all behave as before.
     llm_gateway_admin_base: str | None = None  # e.g. http://127.0.0.1:4000
     llm_gateway_admin_key: str | None = None  # the LiteLLM master key
