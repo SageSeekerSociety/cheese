@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
@@ -18,6 +19,9 @@ PERSON = session_auth_headers(OWNER)
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    # The storage backend is a module-level singleton fixed at first use.
+    monkeypatch.setattr(settings, "storage_local_path", str(tmp_path / "files"))
+    monkeypatch.setattr(storage_module, "_storage_backend", None)
 
 
 def _project(client) -> str:
@@ -40,9 +44,7 @@ METHOD = {
     "name": "weekly-report",
     "title": "项目周报",
     "description": "把一周的项目进展整理成一页周报",
-    "inputs": "本周的时间范围；要覆盖的房间",
-    "steps": "1. 列出本周完成的任务\n2. 数字只写有来源的，每条后面标来源",
-    "outputs": "一页 markdown，放在 周报/ 下",
+    "body": "1. 列出本周完成的任务\n2. 数字只写有来源的，每条后面标来源",
     "files": {"scripts/count.py": "print('count tasks')\n"},
 }
 
@@ -89,8 +91,8 @@ def test_an_edit_waits_for_confirmation_and_then_the_new_rule_ships(client):
     ]
     assert skill["state"] == "active"
 
-    new_steps = "1. 列出本周完成的任务\n2. 只统计已合并的 PR"
-    edited = client.patch(f"/skills/{skill['id']}", json={"steps": new_steps})
+    new_body = "1. 列出本周完成的任务\n2. 只统计已合并的 PR"
+    edited = client.patch(f"/skills/{skill['id']}", json={"body": new_body})
     assert edited.status_code == 200, edited.text
     assert edited.json()["data"]["state"] == "draft"
     still = _shipped(project)["skills/weekly-report/SKILL.md"]
@@ -107,16 +109,16 @@ def test_an_earlier_version_can_be_read_and_restored(client):
     skill = client.post(f"/topics/{room}/skills", json=METHOD, headers=PERSON).json()[
         "data"
     ]
-    client.patch(f"/skills/{skill['id']}", json={"outputs": "发到群里"}, headers=PERSON)
+    client.patch(f"/skills/{skill['id']}", json={"body": "发到群里"}, headers=PERSON)
 
     detail = client.get(f"/skills/{skill['id']}", headers=PERSON).json()["data"]
     assert [r["revision"] for r in detail["revisions"]] == [2, 1]
-    assert detail["revisions"][1]["content"]["outputs"] == METHOD["outputs"]
+    assert detail["revisions"][1]["content"]["body"] == METHOD["body"]
 
     restored = client.post(f"/skills/{skill['id']}/revisions/1/restore", headers=PERSON)
     assert restored.status_code == 200, restored.text
     text = _shipped(project)["skills/weekly-report/SKILL.md"]
-    assert METHOD["outputs"] in text and "发到群里" not in text
+    assert "每条后面标来源" in text and "发到群里" not in text
     detail = client.get(f"/skills/{skill['id']}", headers=PERSON).json()["data"]
     assert [r["revision"] for r in detail["revisions"]] == [3, 2, 1]
 

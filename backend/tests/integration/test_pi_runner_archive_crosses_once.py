@@ -6,7 +6,6 @@ archive follows only when the host says it does not hold that one.
 """
 
 import ast
-import base64
 import json
 
 import pytest
@@ -66,7 +65,13 @@ def pi_seat(client, monkeypatch) -> tuple[PiHost, RoomSessions]:
 
 
 def _carried_archive(program: str) -> bool:
-    return len(program) > len(base64.b64encode(pi_launch.build()))
+    # Read off the payload rather than the program's length: the launch also
+    # carries the platform's skills, which alone outgrew the archive.
+    line = next(line for line in program.splitlines() if line.startswith("payload="))
+    payload = json.loads(
+        ast.literal_eval(line.removeprefix("payload=json.loads(")[:-1])
+    )
+    return "archive" in payload
 
 
 @pytest.mark.anyio
