@@ -503,9 +503,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             />
           </div>
 
-          <!-- 话题清单没读到：就地换成错误 + 重试（docs/design-system.md §3.10），
-               不是弹一条几秒就走的红条——那条红条过去之后，这一块和「暂无话题」
-               长得一模一样，人分不出是坏了还是本来就没有。 -->
+          <!-- Topic list failed to load: replace this block in place with an error
+               and a retry (docs/design-system.md §3.10), not a toast that is gone in
+               seconds — once it is, this block looks exactly like "no topics" and
+               you cannot tell broken from empty. -->
           <BaseLoadError
             v-if="error"
             :title="t('shell.workspaceErrors.loadTopics')"

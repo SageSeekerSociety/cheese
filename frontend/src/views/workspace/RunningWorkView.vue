@@ -330,8 +330,9 @@ function taskRowKey(row: unknown): string {
             <span>{{ item.label }} {{ item.n }}</span>
           </template>
         </template>
-        <!-- 正文已经整屏说了「暂无任务」时，这里不再说第二遍；读失败时也不许把
-             「暂无任务」写进这句摘要——那正是失败退化成空状态。 -->
+        <!-- When the body already says "no tasks" full-screen, do not repeat it
+             here; and when loading failed, never print "no tasks" in this summary
+             either — that is exactly failure degrading into an empty state. -->
         <template v-else-if="!loading && !nothingYet && !failed">{{ t('work.room.noTasks') }}</template>
       </span>
     </template>
@@ -412,7 +413,8 @@ function taskRowKey(row: unknown): string {
               <!-- 空列自己说它空，到此为止（设计规范 §8.1）。 -->
               <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
                 <span>{{ emptyLine(col.key) }}</span>
-                <!-- 筛出来是空的：说清是「被搜索框筛掉了」，再给一键清掉它 -->
+                <!-- Empty because of the filter: say the search box filtered it
+                     out, then offer a one-click clear -->
                 <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
                   {{ t('work.board.clearFilter') }}
                 </BaseButton>

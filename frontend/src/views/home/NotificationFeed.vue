@@ -16,8 +16,9 @@
         </BaseButton>
       </div>
     </header>
-    <!-- 读不到动态：就地换成错误 + 重试（docs/design-system.md §3.10）。以前这一块
-         读失败只是 console.error，页面上留一片空白，和「暂无通知」分不出来。 -->
+    <!-- Activity failed to load: replace this block in place with an error and a
+         retry (docs/design-system.md §3.10). It used to only console.error and
+         leave a blank, indistinguishable from "no notifications". -->
     <BaseLoadError
       v-if="failed"
       class="notification-feed__load-error"
@@ -25,7 +26,8 @@
       :error="errorReason || null"
       @retry="reload"
     />
-    <!-- 首次加载行还在路上：行形状可预测，先画行的骨架，别留一片空白。 -->
+    <!-- First load still in flight: the row shape is predictable, so draw a row
+         skeleton instead of leaving a blank. -->
     <LoadingSkeleton v-else-if="loading && !notifications.length" variant="list" class="notification-feed__skel" />
     <div v-else-if="notifications.length > 0" class="notification-feed__list">
       <v-list density="compact" lines="three" class="py-0" bg-color="transparent">

@@ -214,8 +214,9 @@ function segments(item: PaletteItem): { text: string; hit: boolean }[] {
         </v-tab>
       </v-tabs>
 
-      <!-- 搜索没读到：就地换成错误 + 重试，替换的是结果那一块，不是整页——搜索框和
-           分栏还在原地（docs/design-system.md §3.10）。 -->
+      <!-- Search failed to load: replace the results block in place with an error
+           and a retry, not the whole page — the search box and tabs stay put
+           (docs/design-system.md §3.10). -->
       <BaseLoadError
         v-if="failed"
         class="search-page__load-error"
@@ -264,7 +265,8 @@ function segments(item: PaletteItem): { text: string; hit: boolean }[] {
           </li>
         </ul>
       </section>
-      <!-- 翻下一栏失败：到手的这一段留着，错误就接在它下面 + 重试，不把整页清空。 -->
+      <!-- Loading the next page failed: keep what we already have, append the
+           error and a retry under it, and do not blank the page. -->
       <BaseLoadError
         v-if="moreFailed"
         class="search-page__load-error"

@@ -403,7 +403,8 @@ function read(file: LibraryFile) {
       <!-- 列表：手机上看着一份文件时让出整页。 -->
       <section v-if="mdAndUp || !selected" ref="listEl" class="library__list">
         <p class="t-body c-muted library__intro" :title="t('work.library.dropHint')">{{ t('work.library.intro') }}</p>
-        <!-- 列表没读到：就地换成错误 + 重试，不退化成一个红色的空列表。 -->
+        <!-- The list failed to load: replace it in place with an error and a
+             retry, not a red empty list. -->
         <BaseLoadError
           v-if="loadFailed"
           class="library__load-error"
@@ -496,8 +497,8 @@ function read(file: LibraryFile) {
           </VirtualList>
         </ul>
 
-        <!-- 有资料但被搜索/类型筛掉了：说的是「筛掉了」，和「暂无资料」分开，
-             并给一键清除（§8.1）。 -->
+        <!-- Files exist but the search/type filter hid them: say "filtered out",
+             distinct from "no files yet", and offer one-click clear (§8.1). -->
         <BaseEmptyState
           v-else-if="files.length"
           size="inline"

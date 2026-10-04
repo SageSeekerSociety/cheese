@@ -131,8 +131,9 @@ function linkTo(item: WaitingItem) {
     <div v-if="loading" class="inbox__quiet">
       <v-progress-circular indeterminate size="18" width="2" />
     </div>
-    <!-- 读不到待处理事项：就地换成错误 + 重试（docs/design-system.md §3.10），统一
-         到全产品同一副失败长相，不再是这一页自制的裸字 + 按钮。 -->
+    <!-- Items waiting on you failed to load: replace this block in place with an
+         error and a retry (docs/design-system.md §3.10), the one failure look the
+         whole product shares, not this page's own bare text and button. -->
     <BaseLoadError
       v-else-if="failed"
       class="inbox__load-error"
