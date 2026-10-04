@@ -37,12 +37,10 @@ from app.core.config import settings
 from app.core.db import async_session_factory, release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
-    ForbiddenError,
     GatewayUnavailableError,
     NotFoundError,
     ValidationError,
 )
-from app.core.redis import get_redis_client
 from app.core.sandbox_auth import (
     PersonalClaims,
     is_global_sandbox_token,
@@ -53,7 +51,6 @@ from app.core.sentences import listing, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
-from app.domain.agent.personal.service import answering
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
 from app.domain.policy import gate
@@ -373,17 +370,10 @@ async def admission(
 
 
 async def _person_key(claims: PersonalClaims) -> str | None:
-    """The key a person's 芝士 calls the model on, while — and only while — a
-    question that person asked in that conversation is being answered.
-
-    Every call on the key is charged to the person, and they are charged only
-    for what they asked for (#2233): a session reaching for the model with no
-    question open, or after its question was answered, is refused here rather
-    than billed. Their own key, never the pool's credential or a project's.
-    """
-    redis = get_redis_client()
-    if redis is None or not await answering(redis, claims.conversation_id):
-        raise ForbiddenError("No question of this conversation is being answered")
+    """The key a person's 芝士 calls the model on: their own, never the pool's
+    credential or a project's. A call made with a person's credential is that
+    person's, and is charged to them; whether they may ask at all is judged
+    when they ask (``assistant.ask``)."""
     async with async_session_factory() as session:
         return await stored_key(session, claims.user_id)
 

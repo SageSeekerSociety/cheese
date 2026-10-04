@@ -39,7 +39,7 @@ covers:
 
 ## 凭据 {#credential}
 
-会话启动时拿的是个人凭据（`cxpu_`，`sandbox_auth.mint_personal_credential`），写着这个人和这段对话，不带任何项目、房间、队友的信息。它只开 `/llm/v1/*`：换上这个人自己的网关虚拟 key 转发给网关，前提是这段对话正有一个问题在回答。房间的凭据、项目凭据、平台密钥、人自己的登录都不能代替它；它也打不开任何房间或项目的接口，打不开人自己的 API。
+会话启动时拿的是个人凭据（`cxpu_`，`sandbox_auth.mint_personal_credential`），写着这个人和这段对话，不带任何项目、房间、队友的信息。它只开 `/llm/v1/*`：换上这个人自己的网关虚拟 key 转发给网关。带这张凭据调的模型都记在这个人头上；能不能问，在提问时的准入里判。房间的凭据、项目凭据、平台密钥、人自己的登录都不能代替它；它也打不开任何房间或项目的接口，打不开人自己的 API。
 
 工具用的是每次提问另签的代行凭据（`cxdg_`，`sandbox_auth.mint_delegated_credential`）：写着这个人和这次回答的编号，只读，有效期是回答上限再加一分钟。工具调的是平台工具表里的 `cheese_my_tasks`（`GET /tasks/joined`）、`cheese_docs_search` 和 `cheese_docs_read`（`/docs/agent/search`、`/docs/agent/read`，不带房间，只读人人能读的页），按这个人的权限判断；代行凭据只在 `api/auth.py` 的 `DELEGATED_ROUTES` 列出的接口上有效。
 
