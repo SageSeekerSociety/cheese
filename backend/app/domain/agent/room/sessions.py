@@ -229,6 +229,11 @@ class RoomSessions:
         self.tasks: dict[Seat, asyncio.Task] = {}
         # Each seat's reading caught up with what its session had written.
         self.caught: dict[Seat, asyncio.Event] = {}
+        # Messages sent while another turn held their seat, until the session
+        # says which turn read them; and, once it has, the messages each
+        # running turn took in. Those end when the turn that read them ends.
+        self.riding: dict[Seat, set[uuid.UUID]] = {}
+        self.taken: dict[uuid.UUID, list[tuple[Seat, uuid.UUID]]] = {}
         # The platform's own work (``reading``) reads its events here rather
         # than the room hearing them.
         self.queues: dict[uuid.UUID, asyncio.Queue[AgentEvent]] = {}
@@ -454,11 +459,52 @@ class RoomSessions:
                 ),
                 required=True,
             )
+        if isinstance(event, AgentResult) and event.thread_label is None:
+            await self._end_taken(project, topic, work, event)
+
+    def _took(self, seat: Seat, input_id: str, work: uuid.UUID) -> None:
+        """The session read an input inside the turn ``work`` was running."""
+        riding = self.riding.get(seat, set())
+        taken = next((sent for sent in riding if str(sent) == input_id), None)
+        if taken is None or taken == work:
+            return
+        riding.discard(taken)
+        self.taken.setdefault(work, []).append((seat, taken))
+
+    async def _end_taken(self, project, topic, work, result: AgentResult) -> None:
+        """End the messages ``work`` took in, the way ``work`` itself ended.
+
+        Nothing the session writes ever names them again: they were answered
+        inside this turn, and without an ending of their own the room would go
+        on treating them as running — reminding the agent about a person it
+        already answered, and leaving their turns open for good.
+        """
+        for seat, taken in self.taken.pop(work, ()):
+            await self._consume(
+                project,
+                topic,
+                taken,
+                AgentResult(
+                    text="",
+                    session_id=result.session_id,
+                    is_error=result.is_error,
+                    failure_code=result.failure_code,
+                    agent_handle=result.agent_handle,
+                    harness=result.harness,
+                    taken_into=work,
+                ),
+                f"{self.harness}:taken:{taken}",
+                False,
+                False,
+            )
+            await self._activity(project, seat, taken, False)
 
     async def _activity(self, project, seat: Seat, work, active):
         if work in self.closed:
             return
         if active:
+            # Read only after the turn it was sent into ended: a turn of its own.
+            self.riding.get(seat, set()).discard(work)
             self.work[seat] = work
             now = time.monotonic()
             self.clocks[seat] = Clock(opened=now, progressed=now)
@@ -598,6 +644,8 @@ class RoomSessions:
                 await self.reconcile_memory(topic)
         elif isinstance(event, Moved):
             self.pulse(seat, event.marks)
+            if event.took is not None and work is not None:
+                self._took(seat, event.took, work)
         elif isinstance(event, Received):
             await self._hear_receipt(event.receipt)
         elif isinstance(event, Completed):
@@ -891,6 +939,8 @@ class RoomSessions:
         # away is the only one it can get.
         if seat not in self.clocks or work_id in self.queues:
             self.work[seat] = work_id
+        else:
+            self.riding.setdefault(seat, set()).add(work_id)
         # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
         # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
         await self.reconcile_memory(session.topic_id)
@@ -1172,6 +1222,7 @@ class RoomSessions:
             if self.live.pop(seat, None) is not None:
                 attachments.note(seat, None)
         self.work.pop(seat, None)
+        self.riding.pop(seat, None)
         self.clocks.pop(seat, None)
         self.told_waiting.pop(seat, None)
         self.caught.pop(seat, None)

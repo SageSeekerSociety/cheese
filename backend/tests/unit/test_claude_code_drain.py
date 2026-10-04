@@ -129,7 +129,7 @@ async def test_a_refused_command_does_not_stop_the_room_reading_the_turn(tmp_pat
     async def announce():
         pass
 
-    async def moved(work_id, marks):
+    async def moved(work_id, marks, taken):
         pulses.append(marks)
 
     reading = Subscription(

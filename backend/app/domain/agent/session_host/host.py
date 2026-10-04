@@ -652,8 +652,8 @@ class SessionHost:
         async def terminations(termination):
             await hand(Read(str(termination.work_id), Terminated(termination)))
 
-        async def moved(work, marks):
-            await hand(Read(str(work), Moved(marks)))
+        async def moved(work, marks, took):
+            await hand(Read(str(work), Moved(marks, took)))
 
         async def announce():
             await hand(Read(None, ControlsMoved()))

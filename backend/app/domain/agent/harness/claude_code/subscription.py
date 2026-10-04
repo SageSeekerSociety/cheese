@@ -296,6 +296,14 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             reason,
         )
 
+    def taken(self, record: dict) -> str | None:
+        # The echo of an input that did not open a turn: the build read it at
+        # a tool boundary of the one running (the runner's ``observe``).
+        stamp = record.get("cheese") or {}
+        if stamp.get("receipt") and not stamp.get("turn_start"):
+            return str(record.get("uuid") or "") or None
+        return None
+
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         marks = subscription.marks_of(events)
         message = (

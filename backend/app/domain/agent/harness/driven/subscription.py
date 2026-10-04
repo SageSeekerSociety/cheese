@@ -75,8 +75,10 @@ TOOL_STARTED, TOOL_RETURNED = "tool_started:", "tool_returned:"
 #: 这里兑现它。
 Seat = tuple[uuid.UUID, str]
 
-#: What one record of a turn's work said about how it is going (``marks``).
-Moved = Callable[[uuid.UUID, frozenset[str]], Awaitable[None]]
+#: What one record of a turn's work said about how it is going (``marks``), and
+#: the input it says the session read inside that turn (``taken``), by the id
+#: it was written with.
+Moved = Callable[[uuid.UUID, frozenset[str], str | None], Awaitable[None]]
 
 #: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
 #: 不碰这个座位的「在跑的活」和它的钟。
@@ -292,6 +294,12 @@ class Subscription[B: Backlog]:
             await self.completions(completion)
         return completion
 
+    def taken(self, record: dict) -> str | None:
+        """The id of an input this record says the session read inside the
+        turn already running, rather than in a turn of its own. Only a harness
+        that reports reading inputs (``receipt``) can say."""
+        return None
+
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         """What this record says about the turn. The events answer most of it;
         a harness adds what its records say and the vocabulary does not (a tool
@@ -416,7 +424,11 @@ class Subscription[B: Backlog]:
             # a record the room may step over. Emitting it here as well would
             # deliver the same receipt twice.
             if self.moved is not None:
-                await self.moved(work_id, frozenset(self.marks(record, list(events))))
+                await self.moved(
+                    work_id,
+                    frozenset(self.marks(record, list(events))),
+                    self.taken(record),
+                )
             for event in events:
                 # Which seat's session produced this event. Events that
                 # declare the field keep what the record said (the
