@@ -49,12 +49,16 @@ const props = defineProps<{
   toggleTitle: string
   /** 这一行的 ⋯ 里有哪几项（要 router 才算得出链接，所以由父级给）。 */
   actions: (topic: Topic) => MenuCommand[]
+  /** 我静音了这间房：未读不计数（父级已经去掉了），行尾留一个静音标记说明为什么。 */
+  muted?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
   (e: 'hover', id: string): void
   (e: 'leave'): void
+  /** 按下去了（还没松开）：不必再等「停住」，直接预取。 */
+  (e: 'press', id: string): void
   (e: 'toggle-collapse', id: string): void
   /** 改名提交（回车或失焦）：值没变就不落盘，由父级比对原名字决定。 */
   (e: 'commit-rename', draft: string): void
@@ -125,6 +129,9 @@ function onMenuToggle(open: boolean) {
     @click="emit('select', row.topic.id)"
     @mouseenter="emit('hover', row.topic.id)"
     @mouseleave="emit('leave')"
+    @focusin="emit('hover', row.topic.id)"
+    @focusout="emit('leave')"
+    @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press', row.topic.id)"
     @contextmenu="openMenuAt"
   >
     <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），身份靠标题本身，
@@ -196,6 +203,14 @@ function onMenuToggle(open: boolean) {
     </v-list-item-title>
     <template #append>
       <TopicRailMembers v-if="marks?.length" :marks="marks" class="me-1" />
+      <v-icon
+        v-if="muted"
+        size="14"
+        class="row-muted me-1"
+        icon="mdi-bell-off-outline"
+        :aria-label="t('work.room.menu.muted')"
+        :title="t('work.room.menu.muted')"
+      />
       <!-- 折叠不能把「有新消息」吞掉：收起来的后代的未读加到本行上。 -->
       <TopicRailBadge
         v-if="row.unreadTotal > 0"
@@ -480,5 +495,9 @@ function onMenuToggle(open: boolean) {
 .topic-rail--page .rename-field :deep(.v-field__input) {
   min-height: 36px;
   font-size: 16px;
+}
+
+.row-muted {
+  color: var(--faint);
 }
 </style>

@@ -7,7 +7,6 @@
       "title": "Files in this room",
       "expand": "Expand",
       "collapse": "Collapse",
-      "expandAll": "Show all {count}",
       "openFile": "Open {path}",
       "newFromTemplate": "New from template",
       "readingTemplates": "Reading templates…",
@@ -339,7 +338,8 @@
     "deadlineFailed": "Couldn't set the deadline",
     "unknownUser": "Unknown user",
     "unknownTeam": "Unknown team",
-    "memberWithId": "{name} ({id})"
+    "memberWithId": "{name} ({id})",
+    "tableLabel": "Roster"
   },
   "edit": {
     "saveChanges": "Save changes",
@@ -347,8 +347,7 @@
     "resubmitted": "Resubmitted — waiting for an admin to review it"
   },
   "loadError": {
-    "title": "Couldn't load",
-    "retry": "Try again"
+    "title": "Couldn't load"
   },
   "loadFailed": "Couldn't load the challenge",
   "teamStatus": {
@@ -621,6 +620,9 @@
     "readingDocs": "Reading the docs…",
     "readingTasks": "Looking at your tasks…",
     "today": "Today",
+    "queued": "Queued. It starts when resources free up",
+    "stop": "Stop",
+    "stopped": "Stopped",
     "failed": "Cheese could not answer just now. Try again later.",
     "starters": {
       "basics": "What do I need to know first?",

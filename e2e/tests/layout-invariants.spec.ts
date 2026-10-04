@@ -1,6 +1,11 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { api, apiLogin, openFirstProject } from './helpers';
 
+// Parallel so CI shards split this file by test rather than handing one shard
+// all of it: no test depends on another, and one CI worker still runs them one
+// at a time.
+test.describe.configure({ mode: 'parallel' });
+
 // 表单字段的几何不变量。
 //
 // 起因是一类会静悄悄发出去的缺陷：outlined 字段的浮动 label 用 translateY(-50%)
@@ -370,6 +375,59 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await dialog.waitFor();
     await expect(dialog.getByLabel('模型名')).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
+  });
+
+  test('技能页：新建表单、导入的两步、打开一份的详情，桌面与手机', async ({ page }) => {
+    await apiLogin(page);
+    await openFirstProject(page);
+    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const skillMd = Buffer.from(
+      '---\nname: layout-check\ndescription: 量一量布局时\n---\n\n# 布局检查\n\n## 步骤与规则\n\n逐个打开\n'
+    );
+
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.goto(`/projects/${projectId}/skills`);
+      const at = `${size.width}px`;
+
+      // 新建：手机上「新建」是顶栏那一颗图标，桌面上是页头按钮，两处的可访问名字一样。
+      await page.getByRole('button', { name: '新建', exact: true }).last().click();
+      const form = page.locator('.v-overlay__content, .adaptive-dialog').filter({ hasText: '新建技能' }).last();
+      await expect(form.getByLabel('名称')).toBeVisible();
+      expect(await fieldDefects(form), `${at} · 新建`).toEqual([]);
+      const title = `布局检查 ${size.width}-${Date.now()}`;
+      await form.getByLabel('名称').fill(title);
+      await form.getByLabel('用途').fill('量一量布局时');
+      await form.getByRole('button', { name: '保存' }).click();
+
+      // 保存后详情从右边滑出来（手机上占满整屏）。
+      const drawer = page.locator('[data-skill-detail]');
+      await expect(drawer).toBeVisible();
+      await expect(drawer).toContainText(title);
+      expect(await textOverlaps(drawer), `${at} · 详情`).toEqual([]);
+      await drawer.getByRole('tab', { name: '历史版本' }).click();
+      await expect(drawer.locator('[data-revision]').first()).toBeVisible();
+      expect(await textOverlaps(drawer), `${at} · 历史版本`).toEqual([]);
+      await drawer.getByRole('button', { name: '关闭' }).click();
+      await expect(drawer).toBeHidden();
+
+      // 导入：项目所有者能导入。手机上它在顶栏的 ⋯ 里。
+      if (size.width < 600) await page.getByRole('button', { name: '更多' }).last().click();
+      await page.getByRole('button', { name: '导入', exact: true }).or(page.getByRole('menuitem', { name: '导入' })).last().click();
+      const importing = page.locator('.v-overlay__content, .adaptive-dialog').filter({ hasText: '上传文件' }).last();
+      await expect(importing.locator('input[type=file]')).toBeAttached();
+      expect(await fieldDefects(importing), `${at} · 导入`).toEqual([]);
+      await importing.locator('input[type=file]').setInputFiles({ name: 'SKILL.md', mimeType: 'text/markdown', buffer: skillMd });
+      await importing.getByRole('button', { name: '读取' }).click();
+      const preview = page.locator('.v-overlay__content, .adaptive-dialog').filter({ hasText: '添加「布局检查」' }).last();
+      await expect(preview.getByLabel('调用名')).toHaveValue('layout-check');
+      expect(await fieldDefects(preview), `${at} · 导入预览`).toEqual([]);
+      expect(await textOverlaps(preview), `${at} · 导入预览`).toEqual([]);
+      await page.keyboard.press('Escape');
+    }
   });
 
   test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
@@ -834,12 +892,12 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
   });
 });
 
-// 设置浮层（`SettingsOverlay`）的外壳几何：「目录 + 内容列」一组居中（灰栏宽 max(264, (窗口−720)/2)），内容列最宽 720，
-// 关闭按钮右缘贴内容列右缘。这几条以前全都不成立 —— 灰栏随窗口长到 440，内容列贴着灰栏
-// 靠左、右边空出一大片，关闭按钮钉在窗口最右边（1280 宽时离内容右缘 64px，1920 宽时
-// 700 余 px）。四类设置页（个人、资料、项目、空间）各写各的宽度，同一条内容列里对不齐。
-// 量的都是渲染出来的盒子：这种错 vitest、typecheck、stylelint 全看不见。
-test.describe('设置浮层：目录和内容一组居中、关闭按钮不随内容滚走', () => {
+// 设置浮层（`SettingsOverlay`）的外壳几何：目录灰栏钉窗口左缘、定宽 264，内容列最宽 720，
+// 在「窗口减目录」剩下的地方居中，关闭按钮落在灰栏顶上那一条空当里。这几条以前都不成立 —— 最早灰栏
+// 随窗口长到 440、内容列贴着灰栏靠左，右边空出一大片；改了一版又变成「目录 + 内容列」一组
+// 居中，目录和内容之间隔出 500 多 px。四类设置页（个人、资料、项目、空间）各写各的宽度，
+// 同一条内容列里对不齐。量的都是渲染出来的盒子：这种错 vitest、typecheck、stylelint 全看不见。
+test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中、关闭按钮不随内容滚走', () => {
   // 量当前打开的设置页：灰栏、内容列、关闭按钮三个盒子，外加内容列在主滚动区里两侧的
   // 留白。留白用 `clientWidth`（滚动条槽算在里面），居中的基准才是同一个宽度 —— 和
   // 「管理后台 · 队列页宽档」那条一个量法。
@@ -863,7 +921,7 @@ test.describe('设置浮层：目录和内容一组居中、关闭按钮不随�
     });
   }
 
-  test('桌面三档：目录和内容列一组居中、内容列 720、关闭按钮贴内容右缘且不压页头', async ({ page }) => {
+  test('桌面三档：目录定宽 264 贴左缘、内容列 720 居中、关闭按钮在灰栏顶上且不压目录', async ({ page }) => {
     await apiLogin(page);
     for (const width of [1280, 1440, 1920]) {
       await page.setViewportSize({ width, height: 900 });
@@ -872,33 +930,29 @@ test.describe('设置浮层：目录和内容一组居中、关闭按钮不随�
       const g = await overlayGeometry(page);
       const label = `${width}px`;
 
-      // 灰栏宽 max(264, (窗口 − 720) / 2)：够宽时「目录 + 内容列」一组居中，窄时守住 264。
+      // 目录灰栏定宽 264，钉在窗口左缘 —— 不再随窗口变宽。
       expect(g.side, `${label}：没落在桌面外壳里`).not.toBeNull();
-      const sideWant = Math.max(264, (width - 720) / 2);
-      expect(Math.abs(g.side!.width - sideWant), `${label}：灰栏宽`).toBeLessThanOrEqual(3);
+      expect(Math.abs(g.side!.width - 264), `${label}：目录灰栏宽`).toBeLessThanOrEqual(3);
+      expect(g.side!.left, `${label}：灰栏没贴窗口左缘`).toBeLessThanOrEqual(1);
 
       // 内容列最宽 720 —— 四类设置页共用同一条。
       expect(g.content, `${label}：没有内容列`).not.toBeNull();
       expect(Math.round(g.content!.width), `${label}：内容列宽`).toBe(720);
 
-      // 内容列贴着分界线，不再漂到主区中间和目录隔开一大段。
-      expect(Math.abs(g.content!.left - g.side!.right), `${label}：内容列没贴着分界线`).toBeLessThanOrEqual(3);
+      // 内容列在「窗口减目录」剩下的地方居中：两侧留白相等（右边扣掉滚动条槽，容差放到 8）。
+      expect(g.gaps, `${label}：量不到主区`).not.toBeNull();
+      expect(Math.abs(g.gaps!.left - g.gaps!.right), `${label}：内容列没在剩余空间里居中`).toBeLessThanOrEqual(8);
 
-      // 够宽时左边灰栏和右边留白一样宽（右边扣掉滚动条槽，容差放到 16）。
-      if (width >= 1440) {
-        expect(g.gaps, `${label}：量不到主区`).not.toBeNull();
-        expect(Math.abs(g.side!.width - g.gaps!.right), `${label}：目录和内容这一组没居中`).toBeLessThanOrEqual(16);
-      }
-
-      // 关闭按钮右缘贴内容列右缘，并且整颗落在内容上方的内距里，不压页头的按钮。
+      // 关闭按钮落在灰栏顶上那一条空当里（灰栏的 padding-top 48，正好是 app 壳顶栏那一条）：
+      // 左缘对着灰栏的内容内距 24，整颗不越出灰栏，也不压下面的目录。
       expect(g.close, `${label}：没有关闭按钮`).not.toBeNull();
-      expect(Math.abs(g.close!.right - g.content!.right), `${label}：关闭按钮没贴内容右缘`).toBeLessThanOrEqual(3);
-      const headTop = await page.evaluate(() => {
-        const first = document.querySelector('.so__content > *');
-        const kids = first ? [...first.querySelectorAll('h1, h2, button, a')] : [];
-        return kids.length ? Math.min(...kids.map((k) => k.getBoundingClientRect().top)) : Infinity;
+      expect(Math.abs(g.close!.left - g.side!.left - 24), `${label}：关闭按钮没落在灰栏的内容内距上`).toBeLessThanOrEqual(3);
+      expect(g.close!.right, `${label}：关闭按钮伸出了灰栏`).toBeLessThanOrEqual(g.side!.right);
+      const navTop = await page.evaluate(() => {
+        const first = document.querySelector('.so__nav > *');
+        return first ? first.getBoundingClientRect().top : Infinity;
       });
-      expect(g.close!.top + g.close!.height, `${label}：关闭按钮压到了页头`).toBeLessThanOrEqual(headTop + 1);
+      expect(g.close!.top + g.close!.height, `${label}：关闭按钮压到了目录`).toBeLessThanOrEqual(navTop + 1);
     }
   });
 

@@ -4,11 +4,12 @@ import type { ModelRow, ModelsListing } from '@/lib/adminModels'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
-import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
 import { MODEL_TIERS, TIER_KEY } from '@/lib/adminCredits'
 import { blockedReasonText, displayName, failRate, originKey, statusQuiet } from '@/lib/adminModels'
 import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
@@ -55,7 +56,7 @@ function rateTitle(row: ModelRow): string {
 
 <template>
   <div class="amd__gridwrap">
-    <AdminGrid
+    <BaseTable
       :label="t('models.table.label')"
       :cols="[null, '96px', '150px', '150px', '210px', '180px', '110px', '140px']"
       :bone-widths="['64%', '54%', '70%', '60%', '58%', '62%', '50%', '46%']"
@@ -82,18 +83,16 @@ function rateTitle(row: ModelRow): string {
        重试就在旁边。接口失败和「网关没配管理密钥」在这里合成**一处** —— 对读的人是同一个
        结果：这张表读不出来。原话当标题会被长句撑得不像标题。 -->
       <template #error>
-        <AdminEmptyState
-          compact
-          tone="error"
+        <BaseLoadError
           :title="t('models.table.loadFailed')"
-          :desc="props.error || props.gatewayDetail || undefined"
-          :action="t('models.page.retry')"
-          @action="emit('retry')"
+          :error="props.error || props.gatewayDetail || undefined"
+          :retry-label="t('models.page.retry')"
+          @retry="emit('retry')"
         />
       </template>
 
       <template #empty>
-        <AdminEmptyState compact :title="t('models.table.empty')" />
+        <BaseEmptyState size="compact" :title="t('models.table.empty')" />
       </template>
 
       <tr v-for="row in props.models?.models ?? []" :key="row.name" class="amd__row">
@@ -197,7 +196,7 @@ function rateTitle(row: ModelRow): string {
           </template>
         </td>
       </tr>
-    </AdminGrid>
+    </BaseTable>
   </div>
 </template>
 
@@ -231,6 +230,14 @@ function rateTitle(row: ModelRow): string {
 .amd__cell--actions {
   text-align: right;
   white-space: nowrap;
+}
+
+/* 这一格里的三颗图标按钮（编辑 / 封禁 / 删除）28px 一颗。触屏上每颗把能点的范围
+   撑到 44×44（BaseButton 的 ::before），挨着排的话靠右那两颗的撑开部分会盖住中间
+   那颗的右半边 —— 相邻中心要隔开 42px 才互不打架，28 + 16 = 44，所以留 16px（和
+   房间输入框那一行同一个数）。 */
+.amd__cell--actions :deep(.base-btn + .base-btn) {
+  margin-left: 16px;
 }
 
 /* 名字是按钮：清掉按钮外观，让它读起来像一行标题而不是一个控件 —— 但它在 Tab 顺序里，

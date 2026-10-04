@@ -47,7 +47,9 @@ async def main():
             )
             assert response is result
             assert fallback.call_args.kwargs['messages'] is payload
-            assert payload.conversions == (1 if level == logging.DEBUG else 0)
+            # Formatted only when debug output is on; how many times a logging
+            # filter formats it then is the logging library's business.
+            assert (payload.conversions > 0) == (level == logging.DEBUG)
     assert fallback.await_count == 2
     assert capture.messages == [
         "Inside ageneric_api_call_with_fallbacks() - model: synthetic-model; kwargs: "

@@ -5,7 +5,8 @@
  * 空白、项目名不显示，跟一个刚建好的空项目无法区分。
  *
  * 这里断言的是那两档被记住了，而且**只有**这两档被记住：一次网络抖动被写成
- * 「你没有权限」，比什么都不说更糟。
+ * 「你没有权限」，比什么都不说更糟。其余读失败（5xx／断网）写进 `topicsError`，
+ * 由侧栏就地显示 + 重试（docs/design-system.md §3.10）。
  */
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,6 +20,7 @@ vi.mock('@/api', async () => {
     listTopics: (...a: unknown[]) => listTopics(...a),
     listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
     listProjects: vi.fn().mockResolvedValue({ data: [] }),
+    getTopicNotifyLevels: vi.fn().mockResolvedValue({}),
     getTopicUnread: vi.fn().mockResolvedValue({}),
     getPrivateUnread: vi.fn().mockResolvedValue({}),
   }
@@ -58,14 +60,23 @@ describe('打不开一个项目的时候', () => {
   })
 
   // 500、断网、超时都不是「你没有权限」。写错了比不写更糟：它会让一个本来该重试
-  // 的人以为自己被拒之门外。
+  // 的人以为自己被拒之门外。这些是「话题清单没读到」，写进 `topicsError` 就地报错
+  // + 重试（不是那条会消失、之后和「暂无话题」分不出来的红条）。
   it.each([
     ['服务端出错', new ApiError(500, 'boom')],
     ['网络断了', new TypeError('Failed to fetch')],
-  ])('%s 不算没有权限，还是走红条', async (_what, failure) => {
+  ])('%s 不算没有权限，写成侧栏那块就地报错', async (_what, failure) => {
     const store = await open(failure)
     expect(store.accessDenied).toBeNull()
-    expect(store.error).not.toBeNull()
+    expect(store.topicsError).not.toBeNull()
+    expect(store.error).toBeNull()
+  })
+
+  // 「没权限」给的是整块说明，不是那条能重试的就地报错——拿重试当答案会把一个
+  // 根本不该重试的人一直按在同一处。
+  it('没权限时不给就地报错（也就没有重试）', async () => {
+    const store = await open(new ApiError(403, '你不是这个项目的成员，无权查看'))
+    expect(store.topicsError).toBeNull()
   })
 
   // 深链接被拦下 → 登录 → 回到同一个项目：这时的「重新进入」不是从首页回来，

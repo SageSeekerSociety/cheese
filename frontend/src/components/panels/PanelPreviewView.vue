@@ -32,12 +32,14 @@ import DesignRegionNote from './preview/DesignRegionNote.vue'
 import PreviewLocator from './preview/PreviewLocator.vue'
 import PreviewMarkdown from './preview/PreviewMarkdown.vue'
 import PreviewPages from './preview/PreviewPages.vue'
+import PreviewPickToggle from './preview/PreviewPickToggle.vue'
+import PreviewRegionPick from './preview/PreviewRegionPick.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
-import RoomOutputs from './preview/RoomOutputs.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 import { usePreviewPagePin } from './preview/usePreviewPagePin'
+import { usePreviewPick } from './preview/usePreviewPick'
 import { usePreviewQuote } from './preview/usePreviewQuote'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -122,8 +124,10 @@ const emit = defineEmits<{
   (e: 'document-changed'): void
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
   (e: 'locate', payload: PreviewLocate): void
-  /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
+  /** 编辑器打开了一份文件：开成自由区的一个页签。 */
   (e: 'open-file', path: string): void
+  /** 圈选开关变了：有桥的网页要把它递进帧（取数那一层把消息送过去）。 */
+  (e: 'pick-mode', on: boolean): void
 }>()
 
 const panelElement = ref<HTMLElement | null>(null)
@@ -208,6 +212,15 @@ const pageLocator = usePreviewPagePin(props, {
 })
 const quoted = usePreviewQuote(props, (context) => pageLocator.canUse(context))
 
+// 网页预览里的圈选（判据和开关在 usePreviewPick）：有桥的网页由帧报回一处，应用由遮罩报回一块。
+const pick = usePreviewPick({
+  frame: () => props.displayedFrame,
+  previewUrl: () => props.previewUrl,
+  onRuntime: (on) => emit('pick-mode', on),
+  open: (label, quote, address) => openLocator(label, quote, address),
+  quote: quoted,
+})
+
 function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
   imageRegion.clear()
   quoted.clear()
@@ -224,9 +237,9 @@ function clearLocator() {
   pagesRef.value?.clearMark()
   locatorNote.value = ''
 }
-// 帧里的 ESC 交给宿主：先收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
-const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value)
-defineExpose({ handleEscape })
+// 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
+const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
+defineExpose({ handleEscape, handlePick: pick.fromFrame })
 function onImageRegion(selection: RasterSelection) {
   const captured = imageRegion.capture(selection)
   if (!captured) return
@@ -239,6 +252,7 @@ function onPageContext(payload: SlidePageContext) {
   openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
   quoted.page.value = { ...payload, context: { ...payload.context } }
 }
+
 watch(
   [
     // markdown 没有下面那套文档身份，屏幕上换了一份文件时没人撤掉上一份的指认——
@@ -444,6 +458,7 @@ async function onAnnotate(payload: AnnotateDraft) {
             @click="emit('download')"
           />
         </template>
+        <PreviewPickToggle v-if="pick.target.value" :on="pick.on.value" @toggle="pick.toggle" />
       </div>
       <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
         <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
@@ -518,6 +533,8 @@ async function onAnnotate(payload: AnnotateDraft) {
           :title="t('work.room.preview.frameTitle')"
           sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
+        <!-- 应用那一档：没有桥，读不到页面，宿主在 iframe 上盖一层透明遮罩拖矩形。 -->
+        <PreviewRegionPick v-if="pick.target.value === 'region' && pick.on.value" @pick="pick.fromRegion" />
       </div>
     </div>
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
@@ -724,9 +741,6 @@ async function onAnnotate(payload: AnnotateDraft) {
       <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
-    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
-         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
-    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
@@ -798,12 +812,10 @@ async function onAnnotate(payload: AnnotateDraft) {
   padding: 2px 6px;
   border-bottom: 1px solid var(--line);
 }
-/* 填满剩下的空间，但**不许被下面那块挤没**：flex-shrink 是 0，不是 1。
-   这一格和「这个房间里的东西」同在一条纵向 flex 列里，而那一块按自己的内容长；
-   两下一挤，能缩到 0 的只有这一格。真缩到 0 的时候它的内容不会跟着消失——应用条
-   和 iframe 会溢出到下面的列表上：小标题和应用名叠在同一行，深色主题下还在列表头
-   上压出一块白的 iframe。shrink 归零之后高度由内容决定（应用条 + 预览自己的
-   240px 地板），再长就整块面板一起滚，谁也不盖谁。 */
+/* 填满剩下的空间，但**不许被挤没**：flex-shrink 是 0，不是 1。缩到 0 时内容不会
+   跟着消失，应用条和 iframe 会溢出去盖住同一列里的别的块（定位条、编辑器）。
+   shrink 归零之后高度由内容决定（应用条 + 预览自己的 240px 地板），再长就整块
+   面板一起滚，谁也不盖谁。 */
 .preview-wrap {
   flex: 1 0 auto;
   display: flex;

@@ -1148,8 +1148,8 @@ class FailingScreen(StubChannel):
         self._text = text
         self._code = failure_code
 
-    async def ensure(self, session, opening, live=None):
-        del session, opening
+    async def precheck(self, session, *, needs_place):
+        del session, needs_place
         raise ScreenSetupError(self._text, failure_code=self._code)
 
 
@@ -1221,8 +1221,8 @@ class StorageFullScreen(StubChannel):
         super().__init__()
         self.attempts = 0
 
-    async def ensure(self, session, opening, live=None):
-        del session, opening
+    async def precheck(self, session, *, needs_place):
+        del session, needs_place
         self.attempts += 1
         raise ScreenSetupError(
             "tmux 后端启动失败：[Errno 28] No space left on device: "
@@ -1571,7 +1571,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
         await release.wait()
         return True
 
-    monkeypatch.setattr(svc._compute, "deliver", slow_deliver)
+    monkeypatch.setattr(svc._compute, "steer", slow_deliver)
     svc._active_turn_ids[topic_id] = {uuid.uuid4()}
     merge = asyncio.create_task(
         svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
@@ -1652,7 +1652,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         owed.append(owes_reply)
         return True
 
-    monkeypatch.setattr(svc._compute, "deliver", fake_deliver)
+    monkeypatch.setattr(svc._compute, "steer", fake_deliver)
     turn_id = uuid.uuid4()
     svc._active_turn_ids[topic_id] = {turn_id}
 

@@ -250,7 +250,11 @@ async def test_two_simultaneous_summons_run_one_turn_not_two(
     await finish_turn(svc, topic_id)
 
     # 两句都到了，各一次；先后就是上面定的那个 —— u1 进了会话之后才说 u2。
-    assert [p.split("\n\n", 1)[0] for p in agent.prompts] == [
+    # 新会话的第一条消息前面带着项目现状，所以按说话人那一段取，不按第一段。
+    assert [
+        next(part for part in p.split("\n\n") if part.startswith("[u"))
+        for p in agent.prompts
+    ] == [
         "[u0]: 开工",
         "[u1]: A 怎么办",
         "[u2]: B 也一起",

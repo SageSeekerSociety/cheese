@@ -40,6 +40,11 @@ const getPreview = vi.fn()
 const readFile = vi.fn()
 const requestPreviewSession = vi.fn()
 
+vi.mock('../../api/docCollab', async () => ({
+  ...(await vi.importActual<typeof import('../../api/docCollab')>('../../api/docCollab')),
+  // 测试里房间的文档就用房间的 id 来认：fakeDocCollab 按它预置文档。
+  getRoomDocument: async (topicId: string) => ({ id: topicId }),
+}))
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))
@@ -73,6 +78,7 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { resetPreviewPointerCache, setPreviewPointer } from '../../lib/previewPointer'
 import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
@@ -85,6 +91,16 @@ function mountPanel(working = false) {
     props: { topic: topic('topic-A'), activityTick: 0, working },
     global: { plugins: [vuetify, i18n] },
   })
+}
+
+/** 拿到面板暴露出去的那几个方法（`defineExpose`）。根元素上就挂着它的实例。 */
+function panelApi(container: Element): { previewShown?: () => void } {
+  const inst = (
+    container.firstElementChild as HTMLElement & {
+      __vueParentComponent?: { exposed: { previewShown?: () => void } }
+    }
+  ).__vueParentComponent
+  return inst?.exposed ?? {}
 }
 
 async function flush() {
@@ -116,6 +132,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 指针缓存是模块级的：一个用例取过的答案不该流到下一个用例（下一个该自己问）。
+  resetPreviewPointerCache()
   getPreview.mockResolvedValue(null)
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
   requestPreviewSession.mockResolvedValue({
@@ -294,5 +312,62 @@ describe('预览面板：有新内容', () => {
     await flush()
 
     expect(previewButton(container).getAttribute('title')).toContain('有新内容')
+  })
+})
+
+describe('预览面板：芝士摆出来时立刻跟上', () => {
+  it('对话栏报了一声 → 不等轮询，马上重看一眼当前预览，提示就冒出来', async () => {
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container } = mountPanel(true)
+    await flush()
+    expect(previewButton(container).getAttribute('title')).toBe('预览')
+
+    // 芝士 `cheese show` 了一份新的：对话栏从 socket 上收到那块卡，往上报这一声。
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a2' })
+    panelApi(container).previewShown?.()
+    await flush()
+    expect(previewButton(container).getAttribute('title')).toContain('有新内容')
+  })
+
+  it('路由守卫已经问过的那一份，挂上来时先读它——不再多发一条请求', async () => {
+    // 守卫先起头的效果：面板挂上来时，答案已经在缓存里。
+    setPreviewPointer('topic-A', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container } = mountPanel()
+    await flush()
+    // 面板读到了缓存里那一份：没有为它再问一次。
+    expect(getPreview).not.toHaveBeenCalled()
+    // 有预览在，但它是「来之前就有的」——开场不该顶着提示。
+    expect(previewButton(container).getAttribute('title')).toBe('预览')
+  })
+
+  it('守卫先问过的那一份，开预览时直接拿来渲染——不再等一轮网络', async () => {
+    // 路由守卫已经替这个房间把指针取回来了（lib/previewPointer.ts）：答案在手边。
+    setPreviewPointer('topic-A', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    readFile.mockResolvedValue({ path: 'report.html', content: '<p>cached</p>' })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    // 渲染用的是那份现成的答案——没有为它再发一条 /preview（否则那轮网络又压回挂载
+    // 之后，守卫先起头就白起了）。
+    expect(getPreview).not.toHaveBeenCalled()
+    // 而且它真按缓存里那份指针去读了内容，不是空态。
+    expect(readFile).toHaveBeenCalledWith('topic-A')
+  })
+
+  it('同一份东西被重复摆一次：指针没换就不多取一次预览、不惊动别的格', async () => {
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container } = mountPanel(true)
+    await flush()
+    await openPreview(container)
+
+    const previewCalls = getPreview.mock.calls.length
+    // 指针还是 a1（同一份被又摆了一次）：再报一声。previewShown 只问一次才可能知道
+    // 它没换。
+    panelApi(container).previewShown?.()
+    await flush()
+
+    // 就多那一次「问一下指针」——指针没换，预览那一格不该被 refreshTick 叫去重取。
+    expect(getPreview.mock.calls.length).toBe(previewCalls + 1)
   })
 })

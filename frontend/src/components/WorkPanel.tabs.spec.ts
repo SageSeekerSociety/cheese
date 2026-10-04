@@ -139,3 +139,26 @@ describe('打开房间时开在哪一格', () => {
     expect(emitted()['update:tab']).toBeUndefined()
   })
 })
+
+// 平板横放（960–1180）：进房间时自动挑中的那一格，只是「你打开面板时看哪一格」，不能
+// 写进地址——地址里一有 ?tab，那一档的浮层就跟着被拉起来了，而这一刻并没有人打开它。
+// 宽档里没有浮层，地址照走（面板和地址永远一致）。
+describe('平板横放：进房间不自动把面板拉起来', () => {
+  it('芝士在干活：选中的是「现场」，但不告诉地址', async () => {
+    const { container, emitted } = mount({ compact: true, working: true, cardPhase: null })
+    await waitFor(() => expect(selected(container)).toBe('现场'))
+    expect(emitted()['update:tab']).toBeUndefined()
+  })
+
+  it('待验收、真有改动：选中的是「改动」，同样不告诉地址', async () => {
+    workSummary.mockResolvedValue({ has_run: true, changed_files: ['a.ts'] })
+    const { container, emitted } = mount({ compact: true, cardPhase: 'pending' })
+    await waitFor(() => expect(selected(container)).toMatch(/^改动/))
+    expect(emitted()['update:tab']).toBeUndefined()
+  })
+
+  it('宽档里同一个情形照旧告诉地址，面板和地址一致', async () => {
+    const { emitted } = mount({ working: true, cardPhase: null })
+    await waitFor(() => expect(emitted()['update:tab']).toContainEqual(['site']))
+  })
+})

@@ -102,70 +102,34 @@ async def test_an_unclassified_device_reads_as_self_hosted():
     assert device.supply is Supply.self_hosted
 
 
-def test_the_default_visibility_is_one_that_can_actually_run():
-    """The default must never name a 档 with no transport.
+def test_a_room_nobody_chose_for_runs_isolated():
+    """The default is the isolated environment on every machine (#2320): the
+    whole machine is something its owner gives a room, never what a room gets
+    by nobody choosing."""
+    from app.domain.device.supply import default_visibility
 
-    This is the shape of the bug it replaces: the market catalogue declared
-    `isolated` the default while `resolve_pinned_device` bound `host`, so the
-    picker told a person their topic was boxed and every topic in fact had
-    whole-machine access. Deriving the default from `has_runnable_transport`
-    makes that combination unrepresentable."""
-    from app.domain.device.supply import default_visibility, has_runnable_transport
-
-    assert has_runnable_transport(default_visibility(), Supply.self_hosted)
+    assert default_visibility() is Visibility.isolated
 
 
-def test_only_a_cloud_machine_runs_a_session_isolated():
-    """`isolated` runs where there is a sandbox for it: every session's executor
-    on a Cloud machine, nothing on a self-hosted one yet (#2320 step 2). `host`
-    runs anywhere."""
-    from app.domain.device.supply import has_runnable_transport
+@pytest.mark.parametrize(
+    ("target", "key"),
+    [
+        ("darwin-arm64", None),
+        ("darwin-amd64", None),
+        ("windows-amd64", "sandboxUnavailableWindows"),
+        ("linux-amd64", None),
+        ("linux-arm64", None),
+        # A machine this backend process has not heard from yet: the install
+        # on it decides (`bootstrap.sandbox_argv`).
+        ("", None),
+    ],
+)
+def test_which_machines_have_no_isolated_environment_yet(target, key):
+    from app.domain.device.supply import sandbox_unavailable
 
-    assert has_runnable_transport(Visibility.isolated, Supply.cloud)
-    assert not has_runnable_transport(Visibility.isolated, Supply.self_hosted)
-    assert has_runnable_transport(Visibility.host, Supply.cloud)
-    assert has_runnable_transport(Visibility.host, Supply.self_hosted)
+    reason = sandbox_unavailable(target)
 
-
-def test_the_default_is_the_most_conservative_runnable_visibility():
-    """Given a choice, the default is the SMALLEST blast radius that works —
-    so when #2320 step 2 gives `isolated` a transport, the default moves to it
-    without anyone editing a second place."""
-    from app.domain.device import supply as supply_mod
-    from app.domain.device.supply import Visibility, default_visibility
-
-    assert default_visibility() is Visibility.host  # today: isolated has no transport
-
-    original = supply_mod.has_runnable_transport
-    try:
-        supply_mod.has_runnable_transport = lambda _v, _s: True
-        assert default_visibility() is Visibility.isolated
-    finally:
-        supply_mod.has_runnable_transport = original
-
-
-def test_the_binding_visibility_follows_the_supply_and_nothing_else():
-    """一条新绑定的档由机器的供给决定，不由哪个调用点在绑决定。
-
-    平台开的机器上每条会话跑在自己的沙箱里，所以是 `isolated`。人接入的机器上，
-    档是「哪个档今天真有传输层」推出来的那一个，所以 #2320 第二步给那里的
-    `isolated` 接上传输层那天，它和市场目录一起移动，而不是留下四个各写一个字面
-    量的绑定点。
-    """
-    from app.domain.device.supply import binding_visibility, default_visibility
-
-    assert binding_visibility(Supply.cloud) is Visibility.isolated
-    assert binding_visibility(Supply.self_hosted) is default_visibility()
-
-    from app.domain.device import supply as supply_mod
-
-    original = supply_mod.has_runnable_transport
-    try:
-        supply_mod.has_runnable_transport = lambda _v, _s: True
-        assert binding_visibility(Supply.self_hosted) is Visibility.isolated
-        assert binding_visibility(Supply.cloud) is Visibility.isolated
-    finally:
-        supply_mod.has_runnable_transport = original
+    assert (reason.key if reason is not None else None) == key
 
 
 def test_no_binding_point_picks_a_visibility_of_its_own():

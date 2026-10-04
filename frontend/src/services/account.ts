@@ -4,10 +4,13 @@ import type { User } from '@/types/users'
 import { computed, ref } from 'vue'
 
 import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale } from '@/i18n'
+import { clearBlockCache } from '@/lib/blockCache'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { clearPageCache } from '@/lib/pageCache'
+import { resetPreviewPointerCache } from '@/lib/previewPointer'
 import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
+import { clearTopicPanelCache } from '@/lib/topicPanelCache'
 import { UserApi } from '@/network/api/users'
 import { disablePush } from '@/services/webPush'
 import { resetFeedbackCaches } from '@/stores/feedback'
@@ -72,9 +75,17 @@ function storedUserId(): number | undefined {
  * 认不出新身份时（OAuth 回调只给令牌，用户信息随后才拉）当作换了人：那条路径只在
  * 一次全新的登录里走到，宁可多清一次。
  */
+/** 话题里的几份内存缓存：消息窗口、工作面板的进度/成员/派出的活、预览指针，都是这个人的房间内容。 */
+function clearRoomCaches(): void {
+  clearBlockCache()
+  clearTopicPanelCache()
+  resetPreviewPointerCache()
+}
+
 export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next: number | undefined): boolean {
   if (previous !== undefined && next !== undefined && previous === next) return false
   clearPageCache()
+  clearRoomCaches()
   // 反馈那三份：不按人分，而且其中两份装的就是「按人」的东西。
   resetFeedbackCaches()
   // 输入框草稿也带着上一个人的话（lib/composerDrafts.ts），而且它的键里只有话题
@@ -88,10 +99,25 @@ export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next
   return true
 }
 
+/**
+ * 冷打开时这次会话恢复的处境，给界面用。
+ *
+ * - `restoring`：手里有一份本地会话，正在向服务端确认（访问令牌过期时先换一个）。
+ * - `unreachable`：确认不了（网络错误、超时、或者一个不是 401 的失败）。登录**没有**
+ *   被否掉，本地会话还在，可以重试。
+ *
+ * 恢复成功、被服务端明确拒掉（真登出）、或者本来就没登录过时都是 `idle`。
+ */
+export type RestorePhase = 'idle' | 'restoring' | 'unreachable'
+
 export class AccountService {
   _loggedIn = ref(false)
   _user = ref<User | null>(null)
   _accessToken: string | null = null
+  // 见 RestorePhase 的说明。界面据此决定要不要画「正在恢复登录状态 / 连不上、可以
+  // 重试」那一层。以前这个信息不存在：弱网冷打开时屏幕上除了空白什么都没有，恢复
+  // 失败更是直接把人当生人送走。
+  _restorePhase = ref<RestorePhase>('idle')
   // 冷打开时的「登没登录」答案。`init` 一发起就把它换成那次恢复的 promise：
   // 手里的访问令牌过期时，恢复要先去换一个（一次网络往返），在那之前 `loggedIn`
   // 是 false 而不是「还不知道」——根路径的守卫要是当场读，就会把回访用户当成
@@ -149,6 +175,11 @@ export class AccountService {
       return
     }
     if (user.language !== current) setLocale(user.language)
+  }
+
+  /** 界面据它决定要不要画「正在恢复登录状态 / 连不上、可以重试」那一层。 */
+  public get restorePhase(): RestorePhase {
+    return this._restorePhase.value
   }
 
   public get loggedIn() {
@@ -216,14 +247,26 @@ export class AccountService {
     // 令牌已过期就先续签再宣布登录：等 loggedIn 翻成 true 时手里一定是新令牌，
     // 消费方（useUnreadNotifications watch 了 loggedIn）自然会重新取一次数。
     if (isTokenExpired(accessToken)) {
+      this._restorePhase.value = 'restoring'
       // 续签成功才宣布登录——手里没有活令牌，宣布了也只是继续撒 401。
       const outcome = await this.resumeFromCookie()
       if (outcome === 'rejected') {
-        // 服务端明确拒了（登录已过期或被撤销）= 真的登出了。
+        // 服务端明确拒了（登录已过期或被撤销）= 真的登出了。先把处境置回去（那一层
+        // 立刻收起来），再清会话——退出登录里那几件清理（推送退订、缓存）不该拖着
+        // 那一层不放。
+        this._restorePhase.value = 'idle'
         await this.forget()
+        return
       }
-      // outcome === 'unreachable' 时故意留着 localStorage：这多半是网络抖动，
-      // 下次进页面再续一次就好，没必要逼用户重新登录。
+      if (outcome === 'unreachable') {
+        // 网络没能确认这次会话。这里不登出（localStorage 照旧保留：这多半是网络
+        // 抖动，refresh cookie 还有 30 天），但也不能就此打住——以前那样做的后果是
+        // 界面把人当生人送进推广页，会话明明还好好的。把处境记下来，让界面显式说
+        // 「连不上、可以重试」，网络回来时再续一次。
+        this._restorePhase.value = 'unreachable'
+        return
+      }
+      this._restorePhase.value = 'idle'
       return
     }
 
@@ -232,6 +275,32 @@ export class AccountService {
     this.loggedIn = true
     // 初始化完成后更新用户信息
     await this.updateUserInfo()
+  }
+
+  /**
+   * 再试一次确认本地会话。界面上的「重试」，以及网络回来 / 标签页回到前台时的
+   * 自动重试都走这里。返回这一次之后是不是登上了。
+   *
+   * 只在 `unreachable` 时有意义：`idle`（没有待恢复的会话）和 `restoring`（已经在
+   * 试了）都直接返回现在的登录态。
+   */
+  public async retryRestore(): Promise<boolean> {
+    if (this._restorePhase.value !== 'unreachable') return this.loggedIn
+    this._restorePhase.value = 'restoring'
+    const outcome = await this.resumeFromCookie()
+    if (outcome === 'rejected') {
+      // 这一下服务端明确说没有这个会话了——和冷打开那条路一样，真的登出。
+      this._restorePhase.value = 'idle'
+      await this.forget()
+      return false
+    }
+    this._restorePhase.value = outcome === 'ok' ? 'idle' : 'unreachable'
+    return outcome === 'ok'
+  }
+
+  /** 人选择先不恢复、以访客身份继续：收起那一层，但本地会话原样留着。 */
+  public dismissRestore(): void {
+    if (this._restorePhase.value === 'unreachable') this._restorePhase.value = 'idle'
   }
 
   /**
@@ -257,6 +326,8 @@ export class AccountService {
       localStorage.setItem('user', JSON.stringify(user))
     }
     this.loggedIn = true
+    // 手里有活令牌了，恢复这件事就完成了：界面那一层可以收起来。
+    this._restorePhase.value = 'idle'
     if (user) this.followLanguage(user)
   }
 
@@ -292,6 +363,8 @@ export class AccountService {
     this.loggedIn = false
     this.user = null
     this._accessToken = null
+    // 会话已经没了，没有「待恢复」可言。
+    this._restorePhase.value = 'idle'
     localStorage.removeItem('accessToken')
     localStorage.removeItem('user')
     // Remove the identity cache left by earlier frontend versions.
@@ -307,6 +380,8 @@ export class AccountService {
     // 同理，页面缓存住在内存里，退出登录不清就还在：下一个人打开总览会先看到上
     // 一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。
     clearPageCache()
+    // 话题里那几份同理。
+    clearRoomCaches()
     // 反馈那三份同理，而且它们更直接：「我的反馈」和详情装的就是这个人自己那几条。
     resetFeedbackCaches()
     // 输入框草稿同样：它是 localStorage 里的一句半句话，属于上一个人。

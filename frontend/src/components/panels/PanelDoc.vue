@@ -15,11 +15,12 @@
 // 这一只只负责把两边接起来：状态递下去、事件接回来。加取数动作在组合式函数里加，加画法
 // 在展示组件里加，这一只基本不再长。props 一次摊开而不是 v-bind 一整包：这二十来样东西
 // 就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
-import type { Topic } from '../../cx_types'
+import type { ProjectMemberRow, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
 import { ref } from 'vue'
 
+import { useDocPeople } from '../../composables/useDocPeople'
 import { useDocThreads } from '../../composables/useDocThreads'
 import { usePanelDoc } from '../../composables/usePanelDoc'
 
@@ -33,13 +34,14 @@ const props = withDefaults(
     // Bumped by the parent on AI activity (turn-done / update_doc tool) so the
     // panel reloads the doc 芝士 just wrote. See TopicView activityTick.
     activityTick: number
-    // Project topics (A2): resolve a doc node's upgraded_to_topic_id to the
-    // subtopic's title + live status for the in-place live-ref badge.
+    // Project topics: the titles `<#id>` chips in the document show.
     topicList?: Topic[]
     /** 项目 AI 队友的名字：文档被它改过时，提示里说的是它，不写死「芝士」。 */
     agentName?: string
     /** 项目 AI 队友的 handle：评论里 @ 它要写成它的点名，它才收得到。 */
     agentHandle?: string | null
+    /** 项目名册：正文里 @ 得到的人，`<@账号>` 标签上的名字。 */
+    members?: ProjectMemberRow[]
     /** 画在一整页里，见 PanelDocView。 */
     bare?: boolean
     /** 顶栏画到页面上的哪个位置，见 PanelDocView。 */
@@ -49,13 +51,14 @@ const props = withDefaults(
     topicList: () => [],
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    members: () => [],
     bare: false,
     barTo: undefined,
   }
 )
 
-// open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
-// subtopic. open-file: a <&path> chip was clicked — WorkPanel switches to the
+// open-topic: a `<#id>` chip was clicked — the parent navigates to that topic.
+// open-file: a <&path> chip was clicked — WorkPanel switches to the
 // 改动 tab and opens it there (the ONE cross-tab wire, and the only one).
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
@@ -67,7 +70,12 @@ const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
 
 const doc = usePanelDoc(props)
 
-const docThreads = useDocThreads(() => props.topic?.id ?? null)
+const docThreads = useDocThreads(() => doc.documentId.value)
+const people = useDocPeople({
+  members: () => props.members,
+  agentHandle: () => props.agentHandle,
+  agentName: () => props.agentName,
+})
 // 回复里 @ 的 AI 队友，和发评论一样写成点名。
 const threads = {
   state: docThreads.state,
@@ -107,6 +115,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :topic-list="props.topicList"
     :agent-name="props.agentName"
     :agent-handle="props.agentHandle"
+    :mention-names="people.names.value"
+    :mention-people="people.people.value"
     :bare="props.bare"
     :bar-to="props.barTo"
     :session="doc.session.value"
@@ -122,7 +132,6 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :refresh-threads="docThreads.refresh"
     :thread-state="threads.state"
     :thread-actions="threads.actions"
-    :live-ref-index="doc.liveRefIndex.value"
     :suggestion-reasons="doc.suggestionReasons.value"
     :fetch-suggestion-reasons="doc.fetchSuggestionReasons"
     :fetch-doc-nodes="doc.fetchDocNodes"

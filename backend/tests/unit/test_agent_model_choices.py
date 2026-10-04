@@ -15,9 +15,10 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent import gateway as gw
 from app.domain.agent import gateway_catalog
+from app.domain.agent.gateway_usage import launch_env
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESS_SETTING, PI
 from app.domain.agent.market import subscription_model_alias
-from app.domain.agent_instance.configuration import model_choices
+from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
 from tests.support.stand_in_harness import registered
 
 
@@ -225,8 +226,10 @@ def _gateway_answering(rows):
     )
 
 
-def _routes(name, *, offered=True, priced=True, label=None):
+def _routes(name, *, offered=True, priced=True, label=None, efforts=None):
     info = {}
+    if efforts is not None:
+        info["cheese_efforts"] = efforts
     if offered:
         info["cheese_selectable"] = True
     if label:
@@ -359,3 +362,63 @@ async def test_a_gateway_that_is_not_up_yet_is_asked_again_soon(monkeypatch):
         assert "arrived-late" in _pool_models()
     finally:
         task.cancel()
+
+
+def test_a_model_offers_the_efforts_the_gateway_declares_for_it(monkeypatch):
+    """思考强度按模型声明：网关写了哪几档就给哪几档，顺序按平台自己的，认不出的
+    词不给 —— 一个平台不认识的档位，它也传不下去。没写的模型一档都不给，队友在
+    它上面用模型自己的默认。"""
+    monkeypatch.setattr(settings, "agent_model", "glm-5.2")
+    _gateway_reports(
+        _routes("glm-5.2"),
+        _routes("kimi-k3", efforts=["max", "low", "high", "turbo"]),
+    )
+    efforts = {
+        item["id"]: item["efforts"]
+        for item in model_choices(None)
+        if item["supply"] == "gateway"
+    }
+    assert efforts == {"glm-5.2": [], "kimi-k3": ["low", "high", "max"]}
+
+
+def test_a_subscription_model_offers_every_effort():
+    subscription = [
+        item
+        for item in model_choices({"supply": "subscription"})
+        if item["supply"] == "subscription"
+    ]
+    assert subscription
+    assert all(
+        item["efforts"] == ["low", "medium", "high", "max"] for item in subscription
+    )
+
+
+def test_a_teammates_effort_reaches_claude_code_only_where_the_model_honours_it():
+    """模型不认的那一档不发：Claude Code 会把它原样交给一个不理它、或者干脆拒掉
+    这次请求的模型。整理阈值和模型无关，设了就发。"""
+    chosen = {"effort": "medium", "compact_percent": 70}
+    assert launch_env(chosen, ["low", "medium", "high"]) == {
+        "CLAUDE_CODE_EFFORT_LEVEL": "medium",
+        "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70",
+    }
+    assert launch_env(chosen, ["low", "high"]) == {
+        "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70"
+    }
+    assert launch_env({}, ["low"]) == {}
+
+
+@pytest.mark.parametrize(
+    "saved",
+    [{"effort": "xhigh"}, {"compact_percent": 95}, {"compact_percent": 40}],
+)
+def test_a_configuration_outside_what_the_platform_passes_on_is_refused(saved):
+    with pytest.raises(Exception):  # noqa: B017 — pydantic's own error type
+        AgentConfiguration(**saved)
+
+
+def test_a_teammate_and_the_gateway_name_the_same_efforts():
+    from typing import get_args
+
+    from app.domain.agent_instance.configuration import Effort
+
+    assert get_args(Effort) == gw.EFFORTS

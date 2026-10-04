@@ -3,10 +3,10 @@
 #
 #   tls-renew.sh ACTIVE_DIRECTORY FRONTEND_PROXY_PORT DOMAIN [DOMAIN...]
 #
-# The certificate lives on this box because TLS for the public names ends
-# here, not at the Hong Kong relay (see configure-frontend.sh). Hong Kong only
-# sees the encrypted stream, so the ACME challenge cannot be answered over
-# HTTP there either; it is answered through Cloudflare DNS instead.
+# The certificate serves the front door's TLS listener (see
+# configure-frontend.sh). This box has no public inbound, so the ACME
+# challenge cannot be answered over HTTP here; it is answered through
+# Cloudflare DNS instead.
 #
 # Box-local inputs, never committed:
 #   $TLS_STATE_DIR/cloudflare.ini   dns_cloudflare_api_token = <token scoped to

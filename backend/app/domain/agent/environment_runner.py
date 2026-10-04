@@ -89,13 +89,60 @@ def visible_pid(data):
 SANDBOX_CGROUP = "cheese-sandboxes"
 
 
+# Where the install records which rooms run in a sandbox, under the machine's
+# footprint (`bootstrap.record_sandbox`) — a copy of `place.SANDBOXES_DIR`,
+# held to it by test_footprint_root.py.
+SANDBOXES = "sandboxes"
+
+
+def parent_of(pid):
+    """The pid of `pid`'s parent, or 0 once it is gone (Linux)."""
+    try:
+        lines = Path(f"/proc/{pid}/status").read_text().splitlines()
+    except OSError:
+        return 0
+    for line in lines:
+        if line.startswith("PPid:"):
+            return int(line.split()[1])
+    return 0
+
+
+def sandbox_process(home):
+    """The first process inside the sandbox of the room whose home is `home`
+    (`bootstrap.record_sandbox_process`), as this process numbers it, or None
+    when the room has none running. Read from the machine's footprint, which
+    the room cannot see, and only while that process is still the one
+    recorded."""
+    home = Path(home)
+    record = home.parents[2] / SANDBOXES / home.parent.name / (home.name + ".process")
+    try:
+        data = json.loads(record.read_text())
+    except (OSError, ValueError):
+        return None
+    pid = data.get("pid") if isinstance(data, dict) else None
+    if not isinstance(pid, int) or pid <= 1:
+        return None
+    if not data.get("identity") or process_identity(pid) != data["identity"]:
+        return None
+    try:
+        # Exited and not yet reaped by whoever its parent is now: gone.
+        if Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z":
+            return None
+    except (OSError, IndexError):
+        return None
+    return pid
+
+
 def ours_to_signal(pid):
     """Whether the reset or cancel may signal `pid`, a status file's.
 
     A sandboxed room writes its status itself (`CHEESE_SANDBOXED`, set by
     `device_provider.environment_status`), so the pid it names could be any
-    process of the machine's connector user; only one in the room's own
-    sandbox, by its cgroup (`sandbox_host.py`), is the room's to signal."""
+    process of the machine's connector user. Only one in the room's own
+    sandbox is the room's to signal: in its cgroup, where the sandbox helper
+    made one (`sandbox_host.py`), or else descended from the sandbox's first
+    process, which every process the room starts is, on a machine a person
+    enrolled, which has no helper."""
     if os.environ.get("CHEESE_SANDBOXED") != "1":
         return True
     try:
@@ -103,10 +150,38 @@ def ours_to_signal(pid):
     except OSError:
         return False
     own = f"/{SANDBOX_CGROUP}/{Path.home().name}"
-    return any(
+    if any(
         line.startswith("0::") and (line[3:] == own or line[3:].startswith(own + "/"))
         for line in lines
-    )
+    ):
+        return True
+    sandbox = sandbox_process(Path.home())
+    if sandbox is None or pid == sandbox:
+        return False
+    while pid > 1:
+        pid = parent_of(pid)
+        if pid == sandbox:
+            return True
+    return False
+
+
+def end_sandbox(home):
+    """End every process of the room whose home is `home` that its sandbox
+    started. The sandbox's first process is their pid namespace's init, so
+    killing it takes all the others with it, wherever they have forked to.
+    Nothing to do for a room whose sandbox is not running."""
+    sandbox = sandbox_process(home)
+    if sandbox is None:
+        return
+    try:
+        os.kill(sandbox, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    for _ in range(100):
+        if sandbox_process(home) is None:
+            return
+        time.sleep(0.05)
+    raise RuntimeError("sandbox has not stopped")
 
 
 def process_identity(pid, *, reference=None):

@@ -17,13 +17,20 @@ async def main():
     first_chunk = datetime.now()
     iterator.completion_start_time = first_chunk
     callback = AsyncMock()
+    queued = []
     with patch(
         "litellm.proxy.pass_through_endpoints.streaming_handler."
         "PassThroughStreamingHandler._route_streaming_logging_to_handler",
         callback,
+    ), patch(
+        "litellm.llms.anthropic.experimental_pass_through.messages.streaming_iterator."
+        "GLOBAL_LOGGING_WORKER.ensure_initialized_and_enqueue",
+        lambda async_coroutine: queued.append(async_coroutine),
     ):
         await iterator._handle_streaming_logging([])
-        await asyncio.sleep(0)
+    # The logging call is handed to the logging worker's queue, not run inline.
+    assert len(queued) == 1
+    await queued[0]
     callback.assert_awaited_once()
     values = callback.call_args.kwargs
     assert values["start_time"] == request_start

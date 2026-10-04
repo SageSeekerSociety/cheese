@@ -10,7 +10,7 @@ import uuid
 
 from app.api.deps import get_chat_service
 from app.domain.agent.harness.channel import ScreenSetupError
-from tests.conftest import settle_turn
+from tests.conftest import settle_turn, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
     post_message,
@@ -119,6 +119,9 @@ def test_summon_after_someone_else_already_asked_starts_nothing(client, stub_hoo
     _wait_until_read(client, topic_id)
     service = client.app.dependency_overrides[get_chat_service]()
     client.portal.call(settle_turn, service, uuid.UUID(topic_id))
+    # The room counts as working until the turn's task lets go of its seat,
+    # which is after its books close: summon reads that, not the books.
+    wait_work_idle()
     before = client.get(f"/topics/{topic_id}/blocks").json()["data"]["total"]
 
     # 已读与本轮结束是两件事；本轮结束后再点，应报告没有待读消息。
@@ -168,10 +171,10 @@ def _say(client, topic_id: str, text: str, author: str = "alice") -> None:
 def _its_turns_die(channel, monkeypatch) -> None:
     """原生输入登记之前启动失败；这批话确认未送达，可以明确重试。"""
 
-    async def failed_launch(session, opening, live=None):
+    async def failed_launch(session, *, needs_place):
         raise ScreenSetupError("The executor could not be launched")
 
-    monkeypatch.setattr(channel, "ensure", failed_launch)
+    monkeypatch.setattr(channel, "precheck", failed_launch)
 
 
 def _handed_over(client, topic_id: str) -> list[str]:
@@ -207,6 +210,9 @@ def test_summon_hands_the_room_to_the_teammate_the_messages_named(
     _say(client, topic_id, f"<@{teammate}> 这个分页方案你看下")
     service = client.app.dependency_overrides[get_chat_service]()
     client.portal.call(settle_turn, service, uuid.UUID(topic_id))
+    # A launch that failed never opened books for settle_turn to wait on; the
+    # room is free once the failed turn's task has let go of its seat.
+    wait_work_idle()
     # 启动失败前没有送入原生输入，下面那一下才是明确安全的「重试」。
 
     r = client.post(

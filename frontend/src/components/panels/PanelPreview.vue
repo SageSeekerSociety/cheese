@@ -39,7 +39,7 @@ const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
   /** 读者指着文档里的一处提了一句话，交给房间的对话；图上画过东西时随行带那张图。 */
   (e: 'locate', payload: PreviewLocate): void
-  /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
+  /** 编辑器打开了一份文件：开成自由区的一个页签。 */
   (e: 'open-file', path: string): void
 }>()
 
@@ -87,11 +87,14 @@ const {
   downloadArtifact,
   refreshDocument,
   uploadAnnotation,
+  setPickMode,
 } = usePanelPreview(props, {
   frameName,
   // 元数据回来一次就报一次：房间拿它标「预览有新内容」。
   onLoaded: (artifactId) => emit('loaded', artifactId),
   onEscape: () => previewView.value?.handleEscape(),
+  // 帧里圈选了一处：标注条和引用都在展示组件里，取数这一层只把这一处递下去。
+  onPick: (pick) => previewView.value?.handlePick(pick),
 })
 
 // ⋯ 里的刷新和首屏那次加载走同一条路，只是不转圈：按了刷新就是要重取，不再比对
@@ -143,6 +146,7 @@ function refresh() {
     :doc-renderer-missing="docRendererMissing"
     @frame-load="frameLoaded"
     @frame-error="frameFailed"
+    @pick-mode="setPickMode"
     @refresh="refresh"
     @download="downloadArtifact"
     @document-changed="refreshDocument"

@@ -6,10 +6,12 @@
       :has-more="hasMore"
       :initial-loading="refreshing"
       :is-empty="tasks.length === 0"
+      :shown="tasks.length"
+      :total="total"
       @load-more="loadMore"
     >
       <template #empty>
-        <p class="audit__empty">{{ t('spaces.detail.auditTasks.noTasks') }}</p>
+        <BaseEmptyState size="inline" class="audit__empty" :title="t('spaces.detail.auditTasks.noTasks')" />
       </template>
       <AuditTaskRow
         v-for="task in tasks"
@@ -38,6 +40,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import AuditTaskRow from './AuditTaskRow.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TasksApi } from '@/network/api/tasks'
@@ -60,6 +63,7 @@ const {
   hasMore,
   refreshing,
   loadingMore,
+  total,
 } = usePaging<Task, void, string>(async (pageStart) => {
   if (!currentSpaceId.value) {
     return createEmptyResult<Task, string>()
@@ -138,15 +142,13 @@ watch(
 
 <style scoped>
 .audit {
+  /* 宽屏下封顶居中（和项目里的页面一样），不再左贴、右边空一条。 */
   max-width: 960px;
+  margin-inline: auto;
   padding: 8px 16px 48px;
 }
 
 .audit__empty {
-  margin: 0;
   padding: 32px 8px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: var(--lh-14);
 }
 </style>

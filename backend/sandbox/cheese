@@ -16,6 +16,7 @@
                  经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
   CHEESE_TOPIC   当前话题 id
+  CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用话题的实况文档）
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
   CHEESE_TOKEN   房间凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
   CHEESE_TURN    当前这一轮的 id，带回去让这一轮写出的块归在一起
@@ -38,6 +39,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -49,12 +51,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import UTC, datetime, time
+from datetime import datetime, time, timezone
 from pathlib import Path
+from time import monotonic, sleep
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if sys.platform != "win32":
     import fcntl
+
+# Not `datetime.UTC`: that name is 3.11+, and this script also runs on a Mac
+# whose only python3 is the command line tools' 3.9.
+UTC = timezone.utc  # noqa: UP017
 
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
@@ -214,7 +221,7 @@ _FEEDBACK_STATUS = {
 # compute catalog differ.
 MACHINE_PROFILES = ("cloud", "device")
 MACHINE_PROFILE_DESCRIPTION = (
-    "只有两个值：cloud 是为这个会话开一台平台的云端机器；"
+    "只有两个值：cloud 是平台的云端沙箱，每条会话一个；"
     "device 是项目已授权的自有设备，配合 device_id 指定哪一台，"
     "不填 device_id 就自动选一台在线的。"
 )
@@ -382,7 +389,8 @@ PLATFORM_TOOLS = ToolTable(
             "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
             "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
             "做完一件事顺手整理）设 suggest=true，只提建议，等人接受或拒绝；"
-            "改别人写的段落时平台也会把它转成建议。别重复提已经在待处理的建议。",
+            "这样的一轮里改了人写的段落，平台也会把它转成建议。"
+            "别重复提已经在待处理的建议。",
             {
                 "edits": {
                     "type": "array",
@@ -436,8 +444,11 @@ PLATFORM_TOOLS = ToolTable(
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
-            "交文件或地址时 artifact（清单上那一项的 id）与 new_artifact"
-            "（新名字，配 about）必给其一；交合并时两个都不给。",
+            "交文件或地址时 artifact（清单上那一项的 id，照抄，不写名字）与 "
+            "new_artifact（新名字，配 about）必给其一；交合并时两个都不给，"
+            "交的是项目那个仓库，平台自己认得出。about 说这样东西本身是什么、给谁的："
+            "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
+            "不抄 subject，抄了会被打回。",
             {
                 "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
@@ -690,6 +701,12 @@ PLATFORM_TOOLS = ToolTable(
             ["profile"],
         ),
         _tool(
+            "cheese_wait_machine",
+            "工作电脑还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
+            "要等机器就用它，别用 sleep：预热好的机器常常几秒就好，sleep 只会白等。"
+            "文件和命令工具本身也会等，所以只在你想先等好再做别的时候调它。",
+        ),
+        _tool(
             "cheese_note",
             "给同一个 handle 的另一条线程留一张便条。它直接进那条线程正在跑的"
             "那一轮，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
@@ -785,6 +802,70 @@ PLATFORM_TOOLS = ToolTable(
             ["run", "status"],
         ),
         _tool(
+            "cheese_skill_draft",
+            "提议把一套做法存成**项目技能**：确认后，这个项目以后每个会话都带着它，"
+            "用户说到这类事时照着做。房间里会出一张卡，人点「保存」才生效。\n"
+            "五条都满足才起草：①是一类会再来的事，一句话叫得出（周报、批改作业），不是"
+            "这一次的经过；②用户为这类事教过你不止一处：记忆里已有的相关规则加上这次的"
+            "纠正（用户明说「存下来」「以后都这样」时这条算满足）；③这一次做完了，用户接受"
+            "了结果，没找到可行办法时不提；④技能清单里没有已经管这类事的技能，有就改用 "
+            "cheese_skill_update 提议修改那一份；⑤它不是一条事实或偏好（写进记忆）、"
+            "不是代码库本身的知识（写进仓库文档）、不是某个人的习惯（写进他的个人记忆），"
+            "机械的必做步骤写成 files 里的脚本。\n"
+            "一个会话最多提一次。写成做法，不抄聊天记录：先写判断点和理由、踩过的坑、"
+            "产出格式，通用步骤少写；这次的具体文件名、数字、人名写成「用户给的某某」。",
+            {
+                "name": _text("文件夹名，小写字母、数字、连字符，如 weekly-report"),
+                "title": _text("名称"),
+                "description": _text(
+                    "什么情况下用它，一句话。决定以后会不会被想起来，写用户会怎么说"
+                ),
+                "body": _text(
+                    "正文，markdown。分三个小标题写：## 需要的输入（每次要用户给什么）、"
+                    "## 步骤与规则（判断点、规则、坑和理由；必要的步骤）、"
+                    "## 输出要求（交什么、什么格式、放哪）"
+                ),
+                "files": {
+                    "type": "object",
+                    "description": "要一起存的文本文件 {相对路径: 内容}，如脚本、模板",
+                },
+                "taught": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "用户为这类事教过你的地方，一处一条，尽量用原话",
+                },
+                "accepted": _text("这一次怎么算做成了：用户怎么接受的结果"),
+                "related": _text("最接近的已有技能和为什么不并进去；没有就写「没有」"),
+                "absorbs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "这项技能吸收掉的 team 记忆，如 team/weekly-report-order.md；"
+                        "保存后它们会被删掉，免得同一条规则存两份"
+                    ),
+                },
+            },
+            ["name", "title", "description", "body", "taught", "accepted"],
+        ),
+        _tool(
+            "cheese_skill_update",
+            "提议修改一项已有的项目技能：用的时候被用户纠正了、发现它哪里不对，或者一套"
+            "新做法该并进它。只发要改的那几项，每项是改后的全文。确认之前大家继续用原来"
+            "那一版。项目技能的 id 写在那份技能的末尾。",
+            {
+                "skill": _text("项目技能 id"),
+                "title": _text("改后的名称"),
+                "description": _text("改后的用途"),
+                "body": _text("改后的正文"),
+                "files": {
+                    "type": "object",
+                    "description": "改后的全部配套文件 {相对路径: 内容}",
+                },
+                "reason": _text("为什么改：用户纠正的原话，或者哪里不对"),
+            },
+            ["skill", "reason"],
+        ),
+        _tool(
             "platform_request",
             "平台 API 的其余部分：房间成员在网页上能做、其他平台工具又没有的事"
             "（给消息加表情、拉人进房间或改角色、回答问到你的选项问题、读自己的收件箱……）"
@@ -845,7 +926,12 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     "platform_request",
     "cheese_docs_search",
     "cheese_docs_read",
+    # 文档自己有编号（CHEESE_DOCUMENT）；只有话题时，从话题查出它的文档。
+    "cheese_doc_get",
+    "cheese_doc_set",
+    "cheese_doc_edit",
 } | {"cheese_attachment_read"}
+_NEEDS_DOCUMENT = frozenset({"cheese_doc_get", "cheese_doc_edit"})
 _NEEDS_PROJECT = frozenset(
     {
         "cheese_project_search",
@@ -1004,6 +1090,9 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     env = os.environ if environ is None else environ
     topic = env.get("CHEESE_TOPIC", "")
     project = env.get("CHEESE_PROJECT", "")
+    document = env.get("CHEESE_DOCUMENT", "")
+    if tool in _NEEDS_DOCUMENT and not document:
+        raise ValueError("Missing CHEESE_DOCUMENT")
     if tool in _NEEDS_TOPIC and not topic:
         raise ValueError("Missing CHEESE_TOPIC")
     if tool in _NEEDS_PROJECT and not project:
@@ -1056,11 +1145,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             },
         }
     if tool == "cheese_doc_get":
-        return {"method": "GET", "path": f"/topics/{topic}/doc"}
+        return {"method": "GET", "path": f"/documents/{document}"}
     if tool == "cheese_doc_edit":
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/doc/edits",
+            "path": f"/documents/{document}/edits",
             "body": {
                 "edits": [
                     {"old": str(e["old"]), "new": str(e.get("new") or "")}
@@ -1339,6 +1428,29 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "outputs": args.get("outputs") or [],
             },
         }
+    if tool == "cheese_skill_draft":
+        body = {
+            "name": args["name"],
+            "title": args["title"],
+            "description": args["description"],
+            "body": args["body"],
+            "taught": args.get("taught") or [],
+            "accepted": args.get("accepted") or "",
+            **_given(args, "files", "related", "absorbs"),
+        }
+        return {"method": "POST", "path": f"/topics/{topic}/skills", "body": body}
+    if tool == "cheese_skill_update":
+        where = urllib.parse.quote(topic)
+        skill = urllib.parse.quote(args["skill"], safe="")
+        body = {
+            "reason": args["reason"],
+            **_given(args, "title", "description", "body", "files"),
+        }
+        return {
+            "method": "PATCH",
+            "path": f"/skills/{skill}?topic={where}",
+            "body": body,
+        }
     if tool == "cheese_members":
         return {"method": "GET", "path": f"/topics/{topic}/members"}
     if tool == "cheese_status":
@@ -1544,12 +1656,13 @@ def _doc_get(args: dict, host) -> str:
     content over it claiming to be based on it, which is the exact overwrite the
     version exists to stop. So the version this read returned is kept by the
     host, and the write reads it back from there."""
-    plan = request_plan("cheese_doc_get", args, host.environ)
+    document = _document(host)
+    plan = request_plan("cheese_doc_get", args, {**host.environ, **document})
     doc = host.request(plan).get("data") or {}
     version = doc.get("doc_version", 0)
-    host.doc_versions[host.environ.get("CHEESE_TOPIC", "")] = version
+    host.doc_versions[document["CHEESE_DOCUMENT"]] = version
     if not doc.get("content"):
-        return "本话题还没有实况文档；cheese_doc_set 会新建它。"
+        return "这份文档还是空的；cheese_doc_set 会写下第一版。"
     pending = doc.get("pending_suggestions") or []
     if not pending:
         return doc["content"]
@@ -1565,8 +1678,21 @@ def _doc_get(args: dict, host) -> str:
     return "\n".join(lines)
 
 
+def _document(host) -> dict:
+    """本次要读写的文档：会话本来就是对着某份文档开的（CHEESE_DOCUMENT），
+    或者是话题里的会话，用话题的实况文档。"""
+    document = host.environ.get("CHEESE_DOCUMENT", "")
+    if document:
+        return {"CHEESE_DOCUMENT": document}
+    topic = host.environ.get("CHEESE_TOPIC", "")
+    if not topic:
+        raise PlatformToolError("Missing CHEESE_DOCUMENT or CHEESE_TOPIC")
+    found = host.request({"method": "GET", "path": f"/topics/{topic}/document"})
+    return {"CHEESE_DOCUMENT": (found.get("data") or {})["id"]}
+
+
 def _doc_edit(args: dict, host) -> str:
-    plan = request_plan("cheese_doc_edit", args, host.environ)
+    plan = request_plan("cheese_doc_edit", args, {**host.environ, **_document(host)})
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -1597,9 +1723,7 @@ def _doc_edit(args: dict, host) -> str:
 
 
 def _doc_set(args: dict, host) -> str:
-    topic = host.environ.get("CHEESE_TOPIC", "")
-    if not topic:
-        raise PlatformToolError("Missing CHEESE_TOPIC")
+    document = _document(host)["CHEESE_DOCUMENT"]
     raw = host.read_file(args["path"])
     try:
         content = raw.decode("utf-8")
@@ -1607,12 +1731,12 @@ def _doc_set(args: dict, host) -> str:
         raise PlatformToolError(f"{args['path']} 不是 UTF-8 文本: {exc}") from exc
     # 0 —— 「我没读过」—— 是没有读过时的值，也是唯一允许**新建**文档的版本：
     # 没读过一份已经存在的文档，正是写入必须被拒的时候。
-    based_on = host.doc_versions.get(topic, 0)
+    based_on = host.doc_versions.get(document, 0)
     try:
         result = host.request(
             {
                 "method": "PUT",
-                "path": f"/topics/{topic}/doc",
+                "path": f"/documents/{document}",
                 "body": {
                     "content": content,
                     "expected_version": based_on,
@@ -1646,7 +1770,7 @@ def _doc_set(args: dict, host) -> str:
             "cheese_doc_set。直接重试会原样被拒。"
         ) from exc
     version = (result.get("data") or {}).get("doc_version", 0)
-    host.doc_versions[topic] = version
+    host.doc_versions[document] = version
     lines = [f"已更新实况文档（第 {version} 版）。"]
     # 格式警告（#1889 第 3 条）：写入照样成功，但「哪里不像状态」要当场改。
     # 它跟着这次写入回来，不另发一条通知——改的机会就是现在，而此刻在写字的人
@@ -1688,6 +1812,11 @@ def _accept_request(args: dict, host) -> str:
         lines.append(f"这一版交出去的是 {args['deliver']}，已留存。")
     elif args.get("deliver_url"):
         lines.append(f"这一版交出去的是 {args['deliver_url']}。")
+    # 递卡之后的那一段（等采纳、PR 红了怎么修）在这一刻最有用，所以跟着返回说。
+    lines.append(
+        "接下来等验收人采纳。PR 的检查失败或和目标分支冲突时平台会叫你：在这条任务"
+        "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，不要为这条任务再递一张卡。"
+    )
     return "\n".join(lines)
 
 
@@ -2070,6 +2199,16 @@ def _feedback_release(args: dict, host) -> str:
     return f"{item.get('display_id') or args['feedback']} 现在没人领着，别人可以领了。"
 
 
+def _wait_machine(args: dict, host) -> str:
+    """Hands, once the room's machine is ready: one command that does nothing,
+    sent the way every file and command tool's is, so it waits exactly as they
+    do (`executor_transport.acquire`) and fails as they would."""
+    started = datetime.now(UTC)
+    host.wait_machine()
+    waited = round((datetime.now(UTC) - started).total_seconds())
+    return f"工作电脑已就绪（等了 {waited} 秒）。" if waited else "工作电脑已就绪。"
+
+
 _STEPS = {
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -2085,6 +2224,7 @@ _STEPS = {
     "cheese_feedback_get": _feedback_get,
     "cheese_feedback_claim": _feedback_claim,
     "cheese_feedback_release": _feedback_release,
+    "cheese_wait_machine": _wait_machine,
 }
 
 
@@ -2370,6 +2510,15 @@ _SAY = {
     "cheese_routine_update": _say_routine_update,
     "cheese_routine_pause": _say_routine_pause,
     "cheese_routine_report": _say_routine_report,
+    # 卡片由平台渲染：起草完只用一两句话告诉用户，别把整份再贴一遍。
+    "cheese_skill_draft": lambda a, d, e: (
+        f"已起草项目技能「{(d or {}).get('title')}」，房间里出了一张卡。用一两句话"
+        "告诉用户它管哪类事、为什么值得存，请他在卡上点「保存」；保存之前它不生效。"
+    ),
+    "cheese_skill_update": lambda a, d, e: (
+        f"已提议修改「{(d or {}).get('title')}」，等人在卡上确认；确认之前大家"
+        "继续用原来那一版。"
+    ),
 }
 
 
@@ -2412,6 +2561,9 @@ class LocalHost:
     def read_file(self, path: str) -> bytes:
         with open(os.path.join(self.cwd, path), "rb") as stream:
             return stream.read()
+
+    def wait_machine(self) -> None:
+        """This session runs on its machine: it is there."""
 
     def sync_task(self, task_id: str) -> None:
         result = subprocess.run(
@@ -2501,9 +2653,8 @@ def _environment_runner() -> Path | None:
     return None
 
 
-def _task_id(explicit: str | None = None) -> str:
-    if explicit:
-        return str(uuid.UUID(explicit))
+def _marked_task() -> str | None:
+    """The task whose worktree this is, or None in any other checkout."""
     result = subprocess.run(
         ["git", "rev-parse", "--git-path", "cheese-task.json"],
         capture_output=True,
@@ -2513,7 +2664,16 @@ def _task_id(explicit: str | None = None) -> str:
         marker = Path(result.stdout.strip())
         if marker.is_file():
             return str(uuid.UUID(json.loads(marker.read_text())["task_id"]))
-    raise SystemExit("[cheese] 请在任务工作目录内执行，或指定 --task <id>")
+    return None
+
+
+def _task_id(explicit: str | None = None) -> str:
+    if explicit:
+        return str(uuid.UUID(explicit))
+    task_id = _marked_task()
+    if task_id is None:
+        raise SystemExit("[cheese] 请在任务工作目录内执行，或指定 --task <id>")
+    return task_id
 
 
 def _git_task(
@@ -2595,7 +2755,12 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
 
 
 def _git_attribution(message_file: str) -> None:
-    task_id = _task_id()
+    # The hook belongs to the shared repository, so every worktree of it runs
+    # it, including one made with `git worktree add` beside a task's. Only a
+    # task's own worktree has someone to credit; any other commits as itself.
+    task_id = _marked_task()
+    if task_id is None:
+        return
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
     if data["room_id"] != TOPIC:
@@ -2737,7 +2902,13 @@ def _task_worktree(task_id: str) -> Path:
         prepare.write_text('#!/bin/sh\nexec cheese git-attribution "$1"\n')
         prepare.chmod(0o755)
         hook = hooks / "post-commit"
-        hook.write_text("#!/bin/sh\nexec cheese sync\n")
+        # Delivers the task whose worktree committed; another worktree of this
+        # repository has no task to deliver, and `cheese sync` there would fail.
+        hook.write_text(
+            "#!/bin/sh\n"
+            '[ -f "$(git rev-parse --git-path cheese-task.json)" ] || exit 0\n'
+            "exec cheese sync\n"
+        )
         hook.chmod(0o755)
     # The room has no checkout. Branch dependencies belong to this task and
     # must be prepared on every open, including after local branch changes.
@@ -3215,6 +3386,93 @@ def _sync_all_tasks() -> None:
         raise SystemExit(1)
 
 
+CHECK_DIR = os.path.expanduser("~/.cache/cheese-check")
+
+
+def _check_page(a: argparse.Namespace) -> None:
+    """`cheese check`: the platform's browser renders the page, this prints
+    what it saw and leaves the screenshots where the agent can open them."""
+    try:
+        html = open(a.path, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+    widths = (a.widths or [400, 1280])[:3]
+    if any(not 200 <= w <= 2000 for w in widths):
+        print("[cheese] --width 要在 200 到 2000 之间", file=sys.stderr)
+        sys.exit(2)
+    if a.pdf and not re.fullmatch(
+        r"[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?", a.margin
+    ):
+        print('[cheese] --margin 写一个或两个长度,如 "0" 或 "16mm 18mm"', file=sys.stderr)
+        sys.exit(2)
+    body = {
+        "html": html,
+        "widths": widths,
+        "color_scheme": "dark" if a.dark else "light",
+        "pdf_margin": a.margin if a.pdf else None,
+        "topic": TOPIC or None,
+        "project": PROJECT or None,
+    }
+    started = monotonic()
+    resp = _call("POST", "/page-check", body, tolerate=(503,), timeout=120)
+    if resp.get("ok") is False and resp.get("status"):
+        reason = (resp.get("error") or {}).get("message") or "渲染服务不可用"
+        print(f"[cheese] 平台现在渲染不了:{reason}", file=sys.stderr)
+        sys.exit(1)
+    data = resp.get("data") or {}
+    if not data.get("ok"):
+        print(f"[cheese] 渲染失败:{data.get('error') or '未知原因'}", file=sys.stderr)
+        sys.exit(1)
+    os.makedirs(CHECK_DIR, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(a.path))[0] or "page"
+    print(f"已渲染 {a.path}(用时 {monotonic() - started:.1f} 秒)")
+    problems = 0
+    errors: list[str] = []
+    for view in data.get("views") or []:
+        width = view["width"]
+        shot = os.path.join(CHECK_DIR, f"{stem}-{width}.png")
+        with open(shot, "wb") as out:
+            out.write(base64.b64decode(view["png_b64"]))
+        cut = f",只截了前 {view['cut_at']}px" if view.get("cut_at") else ""
+        print(f"\n{width}px:截图 {shot}(整页高 {view['page_height']}px{cut})")
+        if view["page_width"] > view["viewport_width"] + 1:
+            problems += 1
+            print(
+                f"  页面被撑宽到 {view['page_width']}px,读者要横向滚动整页。"
+                "撑宽它的元素:"
+            )
+            for item in view.get("overflowing") or []:
+                print(f"  - {item['element']}:右边缘在 {item['right']}px")
+        else:
+            print("  宽度正常,没有横向撑破。")
+        for item in view.get("clipped") or []:
+            problems += 1
+            print(f"  内容被裁掉 {item['hidden_px']}px:{item['element']}")
+        for src in view.get("broken_images") or []:
+            errors.append(f"图片没加载出来:{src}(页面只能用内联图片)")
+        for text in view.get("console_errors") or []:
+            errors.append(f"脚本报错:{text}")
+        for url in view.get("failed_requests") or []:
+            errors.append(f"请求失败:{url}")
+    if a.pdf and data.get("pdf_b64"):
+        pdf = base64.b64decode(data["pdf_b64"])
+        with open(a.pdf, "wb") as out:
+            out.write(pdf)
+        pages = len(re.findall(rb"/Type\s*/Page(?!s)", pdf))
+        print(f"\nPDF:{a.pdf}(A4,{pages} 页)")
+    if errors:
+        print()
+        for line in dict.fromkeys(errors):
+            problems += 1
+            print(f"- {line}")
+    print(
+        "\n没有发现问题。看一眼截图就可以摆出来。"
+        if not problems
+        else "\n按上面的问题改一轮,再看一眼截图;不需要反复跑。"
+    )
+
+
 def _need(name: str, value: str) -> str:
     if not value:
         print(f"[cheese] 缺少 {name}（环境变量未注入）", file=sys.stderr)
@@ -3363,6 +3621,74 @@ def _format_status(d: dict) -> str:
     return "\n".join(lines)
 
 
+# `cheese serve` 报端口之前先敲一次应用,敲通了才算「起来了」。
+#
+# 为什么:agent 习惯 `nohup vite &` 把 dev server 丢到后台,紧跟着就 `cheese serve`——
+# 这时 vite 常常还没开始监听。平台那边敲端口敲不通会当场拒绝,用户看到的是一闪而过
+# 的白框,agent 却以为报上去了。探一下就不会:应用已经在听的(常见情况)立刻返回;
+# 还在起的,等它应答再报,最多等这么久。
+_SERVE_WAIT_DEFAULT_S = 30.0
+# 单次探测的超时和两次探测的间隔。前者要短:每个探测都得在超时前自己结束,不然一个
+# 挂着不回的 socket 会把整段等待吃掉;后者别太密,免得对着还在启动的进程打满。
+_SERVE_PROBE_TIMEOUT_S = 2.0
+_SERVE_PROBE_INTERVAL_S = 0.5
+# 浏览器式的请求头。有的服务器对 curl 和浏览器的应答不一样(vite dev 给浏览器发 SPA
+# 外壳),探「应用起没起来」就得像浏览器那样问一次。
+_SERVE_PROBE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (cheese serve readiness probe)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+
+
+def _probe_app(port: int) -> int | None:
+    """对 127.0.0.1:port 敲一次。
+
+    通了就返回 HTTP 状态码(4xx/5xx 也算「在应答」,只是这个路径不对);连不上、
+    超时、收了半截,或端口上坐的是个不讲 HTTP 的服务(SSH/数据库这类先打招呼
+    的非 HTTP 监听)都返回 None。
+    """
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/", headers=_SERVE_PROBE_HEADERS, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=_SERVE_PROBE_TIMEOUT_S
+        ) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        # 收到应答了,只是不是 2xx/3xx——应用在跑,但这个路径不是它的家。
+        return exc.code
+    except (
+        urllib.error.URLError,
+        OSError,
+        ValueError,
+        # 端口上是个非 HTTP 的监听:首行不是状态行,http.client 抛 BadStatusLine
+        # (HTTPException,不是 OSError)。这类端口也是「敲不通」,不该把它抛给 caller
+        # 炸掉整个 serve。
+        http.client.HTTPException,
+    ):
+        return None
+
+
+def _wait_for_app(port: int, timeout_s: float) -> int | None:
+    """等应用应答,最多等 timeout_s 秒。
+
+    任何 HTTP 应答(2xx/3xx/4xx/5xx 都算)就立刻返回——端口有人在听、能应答,
+    平台那一敲就通,4xx/5xx 也只是根路径不对,再等下去纯属空等。返回最后看到的
+    状态码;返回 None 表示这段时间里一直没人应答(端口没人听)。
+    """
+    deadline = monotonic() + timeout_s
+    while True:
+        status = _probe_app(port)
+        if status is not None:
+            return status
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return None
+        sleep(min(_SERVE_PROBE_INTERVAL_S, remaining))
+
+
 def source_fingerprint() -> str:
     """A short digest of THIS file's bytes.
 
@@ -3452,17 +3778,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     psv = sub.add_parser(
         "serve",
-        help="把这台机器上跑起来的应用设为当前预览(先起服务,再报端口)",
+        help="把这台机器上跑起来的应用设为当前预览(先起服务,报端口前先探通)",
         description=(
             "把**已经跑起来的**应用设为当前预览。跑之前:\n"
-            "  1. 把 dev server 起在 127.0.0.1 上,后台跑(nohup ... &)\n"
+            "  1. 把应用起在 127.0.0.1 上,后台跑(nohup ... &)。前端项目优先\n"
+            "     「先 build、再按静态文件起服务」,别报 dev server——几百个模块\n"
+            "     请求会挤过预览隧道,首屏能拖到几十秒\n"
             "  2. 端口你自己挑,固定住(vite 要 --strictPort,否则端口被占时它会\n"
             "     静默跳到下一个,你以为起好了,报上来的那个却没人应答)\n"
             "  3. 把那个端口报给这条命令\n"
             "\n"
             "每个话题使用独立的预览地址，应用可直接从根路径运行，\n"
             "无需为了预览修改资源路径。例如:\n"
-            "  vite --strictPort --port <端口>\n"
+            "  vite build --outDir dist\n"
+            "  BACKEND_URL=<后端地址> vite preview --strictPort --port <端口>\n"
+            "\n"
+            "报之前,这条命令自己先敲一次 127.0.0.1:<端口>(浏览器式的 GET):应用已经\n"
+            "在听就立刻过;还在起的等它应答,最多 --wait 秒(默认 30,--no-wait 跳过)。\n"
+            "等超了也照样报,只是提醒你一声——平台那边那一敲仍是权威。\n"
             "\n"
             "平台会当场从自己这边敲一次那个端口;敲不通就直接拒绝,不会给用户留一个\n"
             "白框。这台机器不是平台的,预览走的是这台机器主动拨出去的一条隧道——所以\n"
@@ -3473,6 +3806,24 @@ def build_parser() -> argparse.ArgumentParser:
     psv.add_argument("port", type=int, help="应用监听的端口,如 5173")
     psv.add_argument(
         "note", nargs="?", default="app", help="一句话说明在跑什么,如 'Vue dev server'"
+    )
+    psv.add_argument(
+        "--wait",
+        type=float,
+        default=_SERVE_WAIT_DEFAULT_S,
+        metavar="秒",
+        help=(
+            "报端口前先探到应用应答(浏览器式的 GET,任何 HTTP 状态码都算)再报,"
+            "最多等这么久;"
+            f"默认 {_SERVE_WAIT_DEFAULT_S:g} 秒,0 表示探都不探。"
+        ),
+    )
+    psv.add_argument(
+        "--no-wait",
+        dest="wait",
+        action="store_const",
+        const=0.0,
+        help="不探,报完就走(和 --wait 0 一样)。",
     )
 
     plib = sub.add_parser(
@@ -3552,6 +3903,38 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=sorted(ARTIFACT_KINDS),
         help="渲染类型(默认按扩展名判断)",
+    )
+
+    pcheck = sub.add_parser(
+        "check",
+        help="让平台的浏览器看一眼一份 HTML:手机宽和桌面宽各截一张整页,报出撑破页面的元素和报错",
+        description=(
+            "摆出来之前(或改完之后)跑一次,不用自己装浏览器。默认按手机宽 400px 和"
+            "桌面宽 1280px 各渲染一次,截图存到本地,打印页面实际宽度、把页面撑宽的"
+            "元素、控制台报错和没加载出来的图。看截图、按报告改一轮就够了,不要反复跑。"
+        ),
+    )
+    pcheck.add_argument("path", help="工作区里的 HTML 文件")
+    pcheck.add_argument(
+        "--width",
+        dest="widths",
+        type=int,
+        action="append",
+        default=None,
+        help="改用这些宽度(可重复,最多 3 个;默认 400 和 1280)",
+    )
+    pcheck.add_argument(
+        "--dark", action="store_true", help="按深色模式渲染(默认浅色)"
+    )
+    pcheck.add_argument(
+        "--pdf",
+        default=None,
+        help="顺便按打印样式导出 A4 PDF 到这个路径(背景色保留)",
+    )
+    pcheck.add_argument(
+        "--margin",
+        default="0",
+        help="PDF 页边距,一个值四边相同,两个值是「上下 左右」,如 \"16mm 18mm\"(默认 0)",
     )
 
     ppull = sub.add_parser(
@@ -3814,6 +4197,25 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
+        # 报之前先敲门:应用已经在听(常见情况)就立刻过;还在起的,等它应答再报——
+        # 不然平台那边敲不通会当场拒绝,用户看到的是一闪而过的白框。等超了仍然照报,
+        # 只是提醒一声,平台那一敲是权威。
+        if a.wait and a.wait > 0:
+            status = _wait_for_app(a.port, a.wait)
+            if status is None:
+                print(
+                    f"[cheese] 等了 {a.wait:g} 秒,127.0.0.1:{a.port} 还是没有应答。"
+                    "应用可能没起来、没监听这个端口,或者起来的是另一个端口"
+                    "(vite 没加 --strictPort 时会静默换端口)。仍然照报,"
+                    "平台那边敲不通还会退回来。",
+                    file=sys.stderr,
+                )
+            elif not 200 <= status < 400:
+                print(
+                    f"[cheese] 127.0.0.1:{a.port} 在应答,但返回 {status},不是 2xx/3xx。"
+                    "应用大概起来了,只是根路径 / 不是它的入口。仍然照报。",
+                    file=sys.stderr,
+                )
         # Declare the port and bring the tunnel up in one step. The port is
         # written on THIS machine and read from disk by the helper — it never
         # travels on the wire, which is what keeps the platform unable to point
@@ -3905,6 +4307,8 @@ def main() -> None:
             f"已从模板 {a.template} 在房间里新建 {rel}，并取到本地 {a.path}。"
             "填好占位后 cheese show 它。"
         )
+    elif a.cmd == "check":
+        _check_page(a)
     elif a.cmd == "pull":
         topic = _need("CHEESE_TOPIC", TOPIC)
         rel = _worktree_relative(a.path)

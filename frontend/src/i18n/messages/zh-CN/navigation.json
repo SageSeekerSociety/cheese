@@ -10,7 +10,7 @@
     "settings": "项目设置",
     "general": "全局",
     "routines": "定时与触发",
-    "skills": "工作方法"
+    "skills": "技能"
   },
   "spaces": "空间",
   "teams": "团队",
@@ -70,6 +70,7 @@
     "all": "全部",
     "viewAll": "查看全部 {n} 条",
     "failed": "搜索失败，稍后重试",
+    "clear": "清空",
     "loading": "正在搜索"
   },
   "palette": {
@@ -112,7 +113,9 @@
     "weekly": "周报"
   },
   "sidebar": {
-    "resize": "拖动调整宽度"
+    "resize": "拖动调整宽度",
+    "expand": "展开侧栏",
+    "collapse": "收起侧栏"
   },
   "backTo": {
     "own": "你名下的项目"

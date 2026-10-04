@@ -3,6 +3,7 @@ import type { FeedbackDetail } from '@/cx_types'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 
 import { ApiError, getFeedback } from '@/api'
 import { claimFeedback, type FeedbackClaimFlags, releaseFeedback } from '@/api/feedbackClaim'
@@ -52,7 +53,6 @@ const supportable = computed(() => !!item.value && !isClosed(item.value.status))
 
 const commentDraft = ref('')
 const posting = ref(false)
-const showCopied = ref(false)
 
 /** 底部的评论框收起时只有一行，点开才变成多行框。收起不是图省事：这个框是
  *  `position: sticky` 挂在评论区底部的（理由写在 `.fb-composer` 那条注释里），
@@ -235,9 +235,9 @@ async function changeClaim(take: boolean) {
 async function share() {
   try {
     await navigator.clipboard.writeText(window.location.href)
-    showCopied.value = true
+    toast.success(t('feedback.detail.copied'))
   } catch {
-    showCopied.value = false
+    // 复制失败不弹 toast：剪贴板被拒是环境问题，右侧「已定位」的地址依然可见。
   }
 }
 </script>
@@ -529,8 +529,6 @@ async function share() {
       </div>
     </template>
   </FeedbackPageShell>
-
-  <v-snackbar v-model="showCopied" :timeout="2500">{{ t('feedback.detail.copied') }}</v-snackbar>
 </template>
 
 <style scoped>
@@ -717,6 +715,12 @@ async function share() {
   /* 下内边距就是这一页末尾的留白（`.fb-page` 那 48px 挪到这儿了）。 */
   padding: 8px 0 16px;
   background: var(--surface);
+}
+/* 操作栏不在的页面（私密 / 安全那条），评论框自己就是最底下那件东西，`bottom: 0`
+   贴在视口底 —— 让出 `safe-area-inset-bottom`，否则手机上是压着 Home 横杠的。操作
+   栏在的时候它已经抬到 64px 上去了，安全区由那条栏自己出，这里不再叠一次。 */
+.fb-composer:not(.fb-composer--raised) {
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 }
 /* 底下那条操作栏在的时候，评论框抬到它上面一栏高（64px，和 `.fb-actionbar` 的
    height 是同一个数，改一处必须改两处）。两条都黏在底边的话会叠在一起 ——

@@ -78,6 +78,7 @@
   "cheeseTemplateList": "List document templates",
   "cheeseTemplateNew": "New file from a template",
   "cheeseConvert": "Convert the document format",
+  "cheeseCheck": "Check how the page renders",
   "cheeseRecalc": "Recalculate spreadsheet formulas",
   "cheeseFeedbackPropose": "Submit a feedback proposal",
   "cheeseFeedbackList": "List feedback reports",
@@ -85,6 +86,7 @@
   "cheeseFeedbackClaim": "Claim a feedback report",
   "cheeseFeedbackRelease": "Release a claimed feedback report",
   "cheeseMachine": "Request a device",
+  "cheeseWaitMachine": "Wait for the work computer",
   "cheeseNote": "Leave a note",
   "cheeseRoutineDraft": "Draft a routine",
   "cheeseRoutineList": "List routines",
@@ -97,5 +99,7 @@
   "bashRead": "Read task output",
   "bashWrite": "Send input to the task",
   "bashKill": "Stop the background task",
-  "bashList": "List background tasks"
+  "bashList": "List background tasks",
+  "cheeseSkillDraft": "Draft a skill",
+  "cheeseSkillUpdate": "Propose a change to a skill"
 }

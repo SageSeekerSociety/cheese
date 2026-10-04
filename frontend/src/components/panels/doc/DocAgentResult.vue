@@ -19,6 +19,8 @@ const props = defineProps<{
   /** 这一次是要它改，还是只问。 */
   kind: 'edit' | 'ask'
   answer: string
+  /** 回答被停下了，`answer` 是停下时写出的部分。 */
+  stopped?: boolean
   /** 改了几处。 */
   changed: number
   busy: boolean
@@ -111,6 +113,7 @@ const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {
           {{ kind === 'edit' ? t('work.room.docAgent.noChange') : t('work.room.docAgent.noIssue') }}
         </div>
       </div>
+      <p v-if="stopped" class="doc-agent-result__stopped">{{ t('work.room.docAgent.stopped') }}</p>
       <div class="doc-agent-result__actions">
         <button v-if="commentable && answer" type="button" class="doc-agent-result__link" @click="emit('comment')">
           {{ t('work.room.docAgent.toComment') }}
@@ -134,6 +137,13 @@ const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {
 </template>
 
 <style scoped>
+.doc-agent-result__stopped {
+  margin: 4px 0 0 28px;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
 .doc-agent-result {
   box-sizing: border-box;
   width: 100%;

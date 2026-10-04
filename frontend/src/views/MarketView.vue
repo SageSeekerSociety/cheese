@@ -7,10 +7,19 @@ import { useI18n } from 'vue-i18n'
 import { getMarketPools } from '../api'
 import NodeBoard from '../components/NodeBoard.vue'
 
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import AppPage from '@/components/common/AppPage.vue'
+
 // 市场 has two faces (spec §13 阶段 6 + design v3):
 //   题目匹配 — Spaces publish 题目 (Task Templates), teams apply with a project.
 //   模型与工作电脑 — the catalog (AI models + work computers) a project can
 //   select from in its 设置. The compute tab also hosts the 节点状态 board.
+//
+// The page runs on AppPage. It used to draw its own header and cap itself at a
+// hand-written 1080px; `wide` (`--page-w-wide`, 1100) is the tier for this kind
+// of multi-column content — a live node board above card grids — and keeps that
+// same column while giving the page the shared header (docs/design-system.md
+// §3.5). `read` would be a narrower, single-column tier.
 const { t } = useI18n()
 
 const tab = ref<'tasks' | 'pools'>('tasks')
@@ -47,133 +56,107 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 1080px">
-      <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
-      <div v-if="$vuetify.display.mdAndUp" class="mb-4">
-        <div class="t-eyebrow mb-1">{{ t('market.eyebrow') }}</div>
-        <h1 class="t-page-title">{{ t('market.title') }}</h1>
-      </div>
+  <AppPage :title="t('market.title')" width="wide">
+    <v-tabs v-model="tab" density="comfortable" color="primary" class="mb-5">
+      <v-tab value="tasks">
+        <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>{{ t('market.tabs.tasks') }}
+      </v-tab>
+      <v-tab value="pools"> <v-icon size="18" class="me-2">mdi-server</v-icon>{{ t('market.tabs.pools') }} </v-tab>
+    </v-tabs>
 
-      <v-tabs v-model="tab" density="comfortable" color="primary" class="mb-5">
-        <v-tab value="tasks">
-          <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>{{ t('market.tabs.tasks') }}
-        </v-tab>
-        <v-tab value="pools"> <v-icon size="18" class="me-2">mdi-server</v-icon>{{ t('market.tabs.pools') }} </v-tab>
-      </v-tabs>
-
-      <v-window v-model="tab">
-        <!-- 题目匹配: Space 发布的题目 + 团队应征 (spec §13 阶段 6) -->
-        <v-window-item value="tasks">
-          <i18n-t
-            scope="global"
-            keypath="market.tasksIntro"
-            tag="p"
-            class="t-body c-muted mb-5"
-            style="max-width: 660px"
-          >
-            <template #challenges>
-              <strong>{{ t('market.tasksIntroChallenges') }}</strong>
-            </template>
-            <template #apply>
-              <strong>{{ t('market.tasksIntroApply') }}</strong>
-            </template>
-          </i18n-t>
-        </v-window-item>
-
-        <!-- 模型与工作电脑: the catalog of AI models and work computers. -->
-        <v-window-item value="pools">
-          <i18n-t
-            scope="global"
-            keypath="market.poolsIntro"
-            tag="p"
-            class="t-body c-muted mb-5"
-            style="max-width: 660px"
-          >
-            <template #models>
-              <strong>{{ t('market.aiModels') }}</strong>
-            </template>
-            <template #computers>
-              <strong>{{ t('market.workComputers') }}</strong>
-            </template>
-          </i18n-t>
-
-          <!-- 节点状态: live board of compute nodes (local + cheesed remote),
-               self-contained in components/NodeBoard.vue. -->
-          <NodeBoard />
-
-          <div v-if="loading" class="d-flex justify-center py-10">
-            <v-progress-circular indeterminate color="primary" />
-          </div>
-          <v-alert v-else-if="error" type="error" density="comfortable">
-            {{ error }}
-          </v-alert>
-
-          <template v-else>
-            <div class="market-group">
-              <div class="market-group__head">
-                <v-icon size="20" class="me-2 c-muted">mdi-brain</v-icon>
-                <h2 class="market-group__title">{{ t('market.aiModels') }}</h2>
-                <span class="market-group__hint c-faint">{{ t('market.aiModelsHint') }}</span>
-              </div>
-              <div class="market-grid">
-                <article
-                  v-for="p in aiPools"
-                  :key="p.id"
-                  class="pool-card"
-                  :class="{ 'pool-card--soon': !p.available }"
-                >
-                  <div class="pool-card__top">
-                    <span class="pool-card__tier">{{ tierLabel(p.tier) }}</span>
-                    <span v-if="p.default" class="pool-card__default">{{ t('market.default') }}</span>
-                  </div>
-                  <h3 class="pool-card__title">{{ p.label }}</h3>
-                  <div class="pool-card__price">{{ p.price }}</div>
-                  <p class="pool-card__desc c-muted">{{ p.description }}</p>
-                  <div class="pool-card__foot">
-                    <span v-if="p.available" class="pool-card__ok">
-                      <v-icon size="14">mdi-check-circle</v-icon> {{ t('market.available') }}
-                    </span>
-                    <span v-else class="pool-card__soon-tag">{{ t('market.unavailable') }}</span>
-                  </div>
-                </article>
-              </div>
-            </div>
-
-            <div class="market-group">
-              <div class="market-group__head">
-                <v-icon size="20" class="me-2 c-muted">mdi-server</v-icon>
-                <h2 class="market-group__title">{{ t('market.workComputers') }}</h2>
-                <span class="market-group__hint c-faint">{{ t('market.workComputersHint') }}</span>
-              </div>
-              <div class="market-grid">
-                <article
-                  v-for="p in computePools"
-                  :key="p.id"
-                  class="pool-card"
-                  :class="{ 'pool-card--soon': !p.available }"
-                >
-                  <div class="pool-card__top">
-                    <span class="pool-card__tier">{{ tierLabel(p.tier) }}</span>
-                    <span v-if="p.default" class="pool-card__default">{{ t('market.default') }}</span>
-                  </div>
-                  <h3 class="pool-card__title">{{ p.label }}</h3>
-                  <div class="pool-card__price">{{ p.price }}</div>
-                  <p class="pool-card__desc c-muted">{{ p.description }}</p>
-                  <div class="pool-card__foot">
-                    <span v-if="p.available" class="pool-card__ok">
-                      <v-icon size="14">mdi-check-circle</v-icon> {{ t('market.available') }}
-                    </span>
-                    <span v-else class="pool-card__soon-tag">{{ t('market.unavailable') }}</span>
-                  </div>
-                </article>
-              </div>
-            </div>
+    <v-window v-model="tab">
+      <!-- 题目匹配: Space 发布的题目 + 团队应征 (spec §13 阶段 6) -->
+      <v-window-item value="tasks">
+        <i18n-t scope="global" keypath="market.tasksIntro" tag="p" class="t-body c-muted mb-5" style="max-width: 660px">
+          <template #challenges>
+            <strong>{{ t('market.tasksIntroChallenges') }}</strong>
           </template>
-        </v-window-item>
-      </v-window>
-    </v-container>
-  </div>
+          <template #apply>
+            <strong>{{ t('market.tasksIntroApply') }}</strong>
+          </template>
+        </i18n-t>
+      </v-window-item>
+
+      <!-- 模型与工作电脑: the catalog of AI models and work computers. -->
+      <v-window-item value="pools">
+        <i18n-t scope="global" keypath="market.poolsIntro" tag="p" class="t-body c-muted mb-5" style="max-width: 660px">
+          <template #models>
+            <strong>{{ t('market.aiModels') }}</strong>
+          </template>
+          <template #computers>
+            <strong>{{ t('market.workComputers') }}</strong>
+          </template>
+        </i18n-t>
+
+        <!-- 节点状态: live board of compute nodes (local + cheesed remote),
+             self-contained in components/NodeBoard.vue. -->
+        <NodeBoard />
+
+        <div v-if="loading" class="d-flex justify-center py-10">
+          <v-progress-circular indeterminate color="primary" />
+        </div>
+        <!-- 读失败留在它读的那块地方，带一条重试的路（§3.10）。 -->
+        <BaseLoadError v-else-if="error" :title="t('market.loadFailed')" :error="error" @retry="load" />
+
+        <template v-else>
+          <div class="market-group">
+            <div class="market-group__head">
+              <v-icon size="20" class="me-2 c-muted">mdi-brain</v-icon>
+              <h2 class="market-group__title">{{ t('market.aiModels') }}</h2>
+              <span class="market-group__hint c-faint">{{ t('market.aiModelsHint') }}</span>
+            </div>
+            <div class="market-grid">
+              <article v-for="p in aiPools" :key="p.id" class="pool-card" :class="{ 'pool-card--soon': !p.available }">
+                <div class="pool-card__top">
+                  <span class="pool-card__tier">{{ tierLabel(p.tier) }}</span>
+                  <span v-if="p.default" class="pool-card__default">{{ t('market.default') }}</span>
+                </div>
+                <h3 class="pool-card__title">{{ p.label }}</h3>
+                <div class="pool-card__price">{{ p.price }}</div>
+                <p class="pool-card__desc c-muted">{{ p.description }}</p>
+                <div class="pool-card__foot">
+                  <span v-if="p.available" class="pool-card__ok">
+                    <v-icon size="14">mdi-check-circle</v-icon> {{ t('market.available') }}
+                  </span>
+                  <span v-else class="pool-card__soon-tag">{{ t('market.unavailable') }}</span>
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <div class="market-group">
+            <div class="market-group__head">
+              <v-icon size="20" class="me-2 c-muted">mdi-server</v-icon>
+              <h2 class="market-group__title">{{ t('market.workComputers') }}</h2>
+              <span class="market-group__hint c-faint">{{ t('market.workComputersHint') }}</span>
+            </div>
+            <div class="market-grid">
+              <article
+                v-for="p in computePools"
+                :key="p.id"
+                class="pool-card"
+                :class="{ 'pool-card--soon': !p.available }"
+              >
+                <div class="pool-card__top">
+                  <span class="pool-card__tier">{{ tierLabel(p.tier) }}</span>
+                  <span v-if="p.default" class="pool-card__default">{{ t('market.default') }}</span>
+                </div>
+                <h3 class="pool-card__title">{{ p.label }}</h3>
+                <div class="pool-card__price">{{ p.price }}</div>
+                <p class="pool-card__desc c-muted">{{ p.description }}</p>
+                <div class="pool-card__foot">
+                  <span v-if="p.available" class="pool-card__ok">
+                    <v-icon size="14">mdi-check-circle</v-icon> {{ t('market.available') }}
+                  </span>
+                  <span v-else class="pool-card__soon-tag">{{ t('market.unavailable') }}</span>
+                </div>
+              </article>
+            </div>
+          </div>
+        </template>
+      </v-window-item>
+    </v-window>
+  </AppPage>
 </template>
 
 <style scoped>

@@ -1,6 +1,7 @@
 """Device launcher: the isolated config, the pinned build, and the runner it starts."""
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -28,6 +29,7 @@ from app.domain.agent.harness.claude_code.session_launch import (
     session_settings,
 )
 from app.domain.agent.harness.launch import MachinePlace
+from app.domain.project_skill.service import session_skill_bundle
 
 PIN = device_launch.CLAUDE_PINNED_VERSION
 STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
@@ -578,8 +580,18 @@ def test_no_claude_anywhere_is_named_not_started(tmp_path):
     assert not (session / "command").exists()
 
 
-def _fetching_curl(log: Path, version: str = PIN) -> str:
-    """A `curl` that logs its URL and writes a stand-in claude to `-o`."""
+def _fetching_curl(log: Path, version: str = PIN, bundle: Path | None = None) -> str:
+    """A `curl` that logs its URL and writes what it was asked for to `-o`.
+
+    A claude download gets a stand-in binary. When ``bundle`` is given, the
+    skill-bundle URL a launch fetches gets the real bytes back, so the sha256
+    the launcher checks against the digest in its script matches."""
+    serve_bundle = (
+        f'case "$url" in *"/skill-bundles/"*) '
+        f'cat {shlex.quote(str(bundle))} > "$dest"; exit 0 ;; esac\n'
+        if bundle is not None
+        else ""
+    )
     return (
         "#!/bin/sh\n"
         'dest=""; url=""\n'
@@ -588,9 +600,10 @@ def _fetching_curl(log: Path, version: str = PIN) -> str:
         "  shift\n"
         "done\n"
         f'echo "$url" >> {shlex.quote(str(log))}\n'
-        "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
-        f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
-        "AGENT\n"
+        + serve_bundle
+        + "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
+        + f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
+        + "AGENT\n"
     )
 
 
@@ -681,6 +694,17 @@ def _machine(tmp_path, *, api: str = ""):
             (target / name).write_text("fixture")
             (target / name).chmod(0o755)
     return owner, session, work, claude, env
+
+
+def _seed_skill_cache(owner: Path) -> None:
+    """Put this project's skill bundle where a machine that already fetched it
+    keeps it (device_launch addresses the skills by content, and the cache is
+    the hit path). A launch then installs them with no platform to ask."""
+    bundle = session_skill_bundle(None)
+    digest = hashlib.sha256(bundle).hexdigest()
+    cache = owner / ".cheese/skill-bundles" / f"{digest}.json.gz"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(bundle)
 
 
 def _launch(tmp_path, env, **named):
@@ -796,10 +820,46 @@ def test_new_seat_leaves_busy_older_seats_shared_files_intact(tmp_path):
     ).resolve()
 
 
+@contextlib.contextmanager
+def _bundle_server(bundle: bytes | None):
+    """The platform's skill-bundle route, as far as a launch can tell: it serves
+    ``bundle`` at any ``/connector/skill-bundles/`` path (or 404s when None)
+    and records every path asked for. The launch fetches it with python, not
+    curl, so the curl stand-in cannot answer for it."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            hits.append(self.path)
+            if bundle is None or "/connector/skill-bundles/" not in self.path:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(bundle)))
+            self.end_headers()
+            self.wfile.write(bundle)
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", hits
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
-    owner, session, work, _claude, env = _machine(
-        tmp_path, api="https://fixture.invalid"
-    )
+    bundle = session_skill_bundle(None)
+    served = _bundle_server(bundle)
+    api, hits = served.__enter__()
+    owner, session, work, _claude, env = _machine(tmp_path, api=api)
     config = work / ".claude"
     config.mkdir(parents=True)
     protected = [
@@ -817,9 +877,52 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     before = {path: path.read_bytes() for path in protected}
     project_entries = set(work.rglob("*"))
     original_entries = set(owner.iterdir())
-    previous_chat_skill = seat_of(session) / ".claude/skills/cheese-chat/SKILL.md"
-    previous_chat_skill.parent.mkdir(parents=True)
-    previous_chat_skill.write_text("Previous generated chat guide\n")
+    # Skills the platform shipped before and no longer does.
+    retired = [
+        seat_of(session) / ".claude/skills" / name / "SKILL.md"
+        for name in ("cheese-chat", "chat-detail", "cheese-writing")
+    ]
+    for skill in retired:
+        skill.parent.mkdir(parents=True)
+        skill.write_text("A guide this session no longer gets\n")
+    log = tmp_path / "curl.log"
+    (tmp_path / "bin/curl").write_text(_fetching_curl(log))
+    (tmp_path / "bin/curl").chmod(0o755)
+
+    try:
+        result = _launch(tmp_path, env)
+    finally:
+        served.__exit__(None, None, None)
+
+    assert result.returncode == 0, result.stderr
+    # One fetch each: the pinned build (curl) and this project's skill bundle.
+    # The bundle is content-addressed, so this machine downloads it here and
+    # never again (device_launch), keyed by the digest this launch carried.
+    urls = log.read_text().splitlines()
+    assert len(urls) == 1 and f"/connector/claude/{PIN}/" in urls[0]
+    digest = hashlib.sha256(bundle).hexdigest()
+    assert hits == [f"/connector/skill-bundles/{digest}"]
+    assert {path: path.read_bytes() for path in protected} == before
+    assert set(owner.iterdir()) == original_entries | {owner / ".cheese"}
+    assert set(work.rglob("*")) == project_entries
+    assert (owner / ".cheese/claude/versions" / PIN).is_file()
+    for name in ("cheese", "cheese-docs"):
+        assert (seat_of(session) / ".claude/skills" / name / "SKILL.md").is_file()
+    assert not any(skill.exists() for skill in retired)
+
+
+def test_a_cached_skill_bundle_is_never_refetched(tmp_path):
+    """Content addressing is the point: a machine that already holds this
+    project's bundle fetches the pinned build and nothing else. The bytes are
+    the same for every room and project on the machine (the platform set), so
+    one launch here spares every later session the download."""
+    owner, session, _work, _claude, env = _machine(
+        tmp_path, api="https://fixture.invalid"
+    )
+    digest = hashlib.sha256(session_skill_bundle(None)).hexdigest()
+    cache = owner / ".cheese/skill-bundles" / f"{digest}.json.gz"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(session_skill_bundle(None))
     log = tmp_path / "curl.log"
     (tmp_path / "bin/curl").write_text(_fetching_curl(log))
     (tmp_path / "bin/curl").chmod(0o755)
@@ -827,14 +930,27 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     result = _launch(tmp_path, env)
 
     assert result.returncode == 0, result.stderr
-    assert len(log.read_text().splitlines()) == 1
-    assert {path: path.read_bytes() for path in protected} == before
-    assert set(owner.iterdir()) == original_entries | {owner / ".cheese"}
-    assert set(work.rglob("*")) == project_entries
-    assert (owner / ".cheese/claude/versions" / PIN).is_file()
-    for name in ("cheese-docs",):
-        assert (seat_of(session) / ".claude/skills" / name / "SKILL.md").is_file()
-    assert not previous_chat_skill.exists()
+    assert all("/skill-bundles/" not in url for url in log.read_text().splitlines())
+    assert (seat_of(session) / ".claude/skills/cheese/SKILL.md").is_file()
+
+
+def test_a_launch_whose_skills_cannot_be_fetched_starts_and_says_so(tmp_path):
+    """Like the pinned build above it: a machine that cannot get the bundle for
+    a moment must not become one where nothing starts. It starts without the
+    skills, says so in the launch log naming the digest, and caches nothing."""
+    with _bundle_server(None) as (api, hits):
+        owner, session, _work, _claude, env = _machine(tmp_path, api=api)
+        (tmp_path / "bin/curl").write_text("#!/bin/sh\nexit 1\n")
+        (tmp_path / "bin/curl").chmod(0o755)
+        result = _launch(tmp_path, env)
+
+    digest = hashlib.sha256(session_skill_bundle(None)).hexdigest()
+    assert result.returncode == 0, result.stderr
+    assert "STARTING WITHOUT THIS PROJECT'S SKILLS" in result.stderr
+    assert digest in result.stderr
+    assert len(hits) == 3, "three attempts before giving up"
+    assert not (owner / ".cheese/skill-bundles" / f"{digest}.json.gz").exists()
+    assert not (seat_of(session) / ".claude/skills/cheese/SKILL.md").exists()
 
 
 def test_the_session_the_runner_starts_holds_no_claude_credential(tmp_path):

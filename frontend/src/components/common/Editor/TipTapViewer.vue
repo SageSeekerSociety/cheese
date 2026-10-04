@@ -9,12 +9,16 @@ import { useEditor } from '@tiptap/vue-3'
 import { richTextExtensions, viewerContent } from './richText'
 import RichTextContent from './RichTextContent.vue'
 
+import { READING } from '@/components/panels/doc/blocks/shapes'
+
 const props = defineProps<{ value: string | JSONContent }>()
 
 const editor = useEditor({
   content: viewerContent(props.value),
   extensions: richTextExtensions(),
   editable: false,
+  // 读的人看到的样子和文档一样：脚注在引用处弹出，文末的脚注列表收起来。
+  editorProps: { attributes: { class: READING } },
 })
 
 watch(

@@ -67,13 +67,13 @@ def _card_blocks(client, room_id: str, task_id: str) -> list[dict]:
 def _record_screens(stub_hooks) -> list[str]:
     """Every topic a session screen was raised for: raising one is waking."""
     seen: list[str] = []
-    original = stub_hooks.ensure
+    original = stub_hooks.precheck
 
-    async def _spy(session, opening, live=None):
+    async def _spy(session, *, needs_place):
         seen.append(str(session.topic_id))
-        return await original(session, opening, live)
+        return await original(session, needs_place=needs_place)
 
-    stub_hooks.ensure = _spy
+    stub_hooks.precheck = _spy
     return seen
 
 

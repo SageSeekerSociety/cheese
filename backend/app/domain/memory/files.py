@@ -199,6 +199,17 @@ def parse_index(text: str) -> list[IndexEntry]:
     return entries
 
 
+def without_entries(text: str, paths: set[str]) -> str:
+    """`MEMORY.md` 去掉指向 ``paths`` 的那几行，其余原样。"""
+    kept = [
+        line
+        for line in text.splitlines()
+        if (match := _INDEX_LINE_RE.match(line)) is None
+        or match.group("path").strip() not in paths
+    ]
+    return "\n".join(kept) + ("\n" if text.endswith("\n") else "")
+
+
 def fit_index(text: str) -> tuple[str, str | None]:
     """把一份索引压进注入预算；没超就一个字节都不动。
 
@@ -268,6 +279,29 @@ def rejected_path(path: str) -> str:
     名字里带点，过不了 `check_path`，所以对账从不把它当成一条记忆收回去。
     """
     return f"{path[: -len('.md')]}.rejected.md"
+
+
+def conflict_path(path: str) -> str:
+    """被平台盖回去的那一版留在哪儿：同一个目录，`<名字>.conflict.md`。
+
+    也是带点的名字，同样过不了 `check_path`。写它的是会话机上的对账
+    （`claude_code/runner.py` 的 `_keep_refused`），叫 agent 去读它的是
+    `platform_notices.memory_conflict_notice`——同一个文件名两处要说对，所以
+    在这里只定义一次。
+    """
+    return f"{path[: -len('.md')]}.conflict.md"
+
+
+def prompt_path(path: str) -> str:
+    """这条记忆在 agent 手里怎么拼：`~/.cheese/memory/team/x.md`。
+
+    agent 的文件工具按路径里有没有 `.cheese/memory/` 这一段决定这次读写发给
+    会话机还是工作机（`remote_execution/proxy.js` 的 `memoryPath`），它的系统
+    提示词也是这么写的（`instructions.MEMORY_DIR`）。只说一个 `team/x.md`，
+    那次读写就在工作机上找一个相对路径——记忆树在会话机上，读回来是「文件不
+    存在」。
+    """
+    return f"~/{MEMORY_ROOT}/{path}"
 
 
 def prefix_of(scope: MemoryFileScope, owner_handle: str | None) -> str:

@@ -40,11 +40,12 @@ _PRICE_FIELDS = {
     "cache_creation": "cache_creation_input_token_cost",
 }
 
-# 能力位同理:网关用 supports_*/adaptive 一整套名字,页面只关心这三件。
+# 能力位同理:网关用 supports_*/adaptive 一整套名字,页面只关心这几件。
 _CAPABILITY_FIELDS = {
     "reasoning": "supports_reasoning",
     "vision": "supports_vision",
     "adaptive_thinking": "supports_adaptive_thinking",
+    "mid_conversation_system": "supports_mid_conversation_system",
 }
 
 
@@ -93,7 +94,7 @@ class AdminModel:
     api_base: str | None
     provider: str
     prices: dict[str, float]  # input/output/cache_read/cache_creation,缺的键不出现
-    capabilities: dict[str, bool]  # reasoning / vision / adaptive_thinking
+    capabilities: dict[str, bool]  # 键见 _CAPABILITY_FIELDS
     supports_notes: str | None  # 缺价的原因等人话,priced=False 时给出
 
 
@@ -641,7 +642,7 @@ def _capability_params(
     if not capabilities:
         return out
     for short, field in _CAPABILITY_FIELDS.items():
-        if short in capabilities:
+        if capabilities.get(short) is not None:
             out[field] = bool(capabilities[short])
     return out
 

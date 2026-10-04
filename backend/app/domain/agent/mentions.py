@@ -25,7 +25,7 @@
 搬出来时按原样搬，行为一格没动。`PersonMentions` 跟着走；`SentText` 与
 `text_as_sent` 留在 chat.py —— 它俩要 `_is_dm` 的那个答案，而它的调用点是
 `block/editing.py`，签名是对外约定，插不进一个「这间房是不是私聊」的参数。
-`person_mentions` 这一侧不需要：`_is_dm` 仍然只在 chat.py 里问，答案以 ``dm``
+`person_mentions` 这一侧不需要：`_is_dm` 仍然只在 `room/turn.py` 里问，答案以 ``dm``
 参数递进来，那个布尔因此在全仓仍然只有一个读点
 （`test_is_private_read_points.py`）—— 连名字也不带过来，因为它按文件统计读点，
 连形参与关键字实参都数。

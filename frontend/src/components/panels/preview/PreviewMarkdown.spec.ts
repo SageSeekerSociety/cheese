@@ -3,7 +3,7 @@
  * 剥掉文件里带进来的脚本）在面板那几条用例里（PanelPreview.media.spec.ts），这里只盯
  * 手势：mouseup 拿到的选区要变成一句话出去，没选中的点击不该出去。
  */
-import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, expect, it } from 'vitest'
 
 import PreviewMarkdown from './PreviewMarkdown.vue'
@@ -16,7 +16,8 @@ afterEach(() => {
 it('选中的一段原文，连同它所在的那一节报出去', async () => {
   const ui = render(PreviewMarkdown, { props: { source: '# 配置\n\n失败以后重试 3 次。\n' } })
   const md = ui.getByTestId('markdown')
-  const node = md.querySelector('p')!.firstChild!
+  // 正文的读法第一次用到才加载，画出来要等一下。
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!)
   const range = document.createRange()
   range.setStart(node, 4)
   range.setEnd(node, 10)

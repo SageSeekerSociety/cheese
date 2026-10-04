@@ -5,6 +5,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.domain.living_doc.models import Document, DocumentNode
+from app.domain.living_doc.services import content_hash
+
 
 class RestoreIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -23,7 +26,7 @@ class PassageEdit(BaseModel):
 
 
 class PassageEditsIn(BaseModel):
-    """Change passages of the living document (``POST /topics/{id}/doc/edits``)."""
+    """Change passages of the living document (``POST /documents/{id}/edits``)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -56,7 +59,7 @@ class SelectionIn(BaseModel):
 
 class AgentAskIn(BaseModel):
     """Ask the room's AI teammate from the document
-    (``POST /topics/{id}/doc/agent``): a shortcut by its id, or what the person
+    (``POST /documents/{id}/agent``): a shortcut by its id, or what the person
     wrote, about a selection or the whole document."""
 
     model_config = ConfigDict(extra="forbid")
@@ -73,3 +76,38 @@ class AgentAskIn(BaseModel):
         if not self.preset and not self.text:
             raise ValueError("nothing was asked")
         return self
+
+
+def document_snapshot(doc: Document) -> dict:
+    """What a reader of a document gets: its text and which version that is.
+    ``topic_id`` is the room it belongs to, if any."""
+    return {
+        "id": str(doc.id),
+        "project_id": str(doc.project_id),
+        "topic_id": str(doc.room_id) if doc.room_id else None,
+        "kind": doc.kind,
+        "title": doc.title,
+        "content": doc.content,
+        "doc_version": doc.version,
+        "content_hash": content_hash(doc.content),
+        "author": doc.author,
+        "created_at": doc.created_at.isoformat(),
+        "updated_at": doc.updated_at.isoformat(),
+    }
+
+
+def node_out(node: DocumentNode, doc: Document) -> dict:
+    """One top-level block of a document, in the shape the client reads a
+    block in (``kind`` "doc_node", its place in ``struct_order``)."""
+    return {
+        "id": str(node.id),
+        "kind": "doc_node",
+        "project_id": str(doc.project_id),
+        "topic_id": str(doc.room_id) if doc.room_id else None,
+        "struct_parent": str(doc.id),
+        "struct_order": node.position,
+        "node_type": node.node_type,
+        "content": node.content,
+        "author": node.author,
+        "created_at": node.created_at.isoformat(),
+    }

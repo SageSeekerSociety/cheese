@@ -170,7 +170,7 @@ def test_commit_requester_credit_does_not_replace_agent_author(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "PROJECT", "project")
     monkeypatch.setattr(cli, "TOPIC", "room")
-    monkeypatch.setattr(cli, "_task_id", lambda: "task")
+    monkeypatch.setattr(cli, "_marked_task", lambda: "task")
     monkeypatch.setattr(
         cli,
         "_call",

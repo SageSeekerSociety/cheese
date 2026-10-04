@@ -32,10 +32,9 @@ import uuid
 from pathlib import Path
 
 from app.domain.agent.executor_transport import PlatformHost, RemoteClient
-from app.domain.agent.harness import Opening
 from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
-from app.domain.agent.harness.driven.runner import socket_path
+from app.domain.agent.harness.driven.runner import SessionStart, socket_path
 from app.domain.agent.harness.pi import catalog, hooks
 from app.domain.agent.harness.pi.jobs import Jobs
 from app.domain.agent.harness.pi.journal import (
@@ -679,7 +678,7 @@ class Runner(runner.Runner[Journal]):
 
     async def start(
         self,
-        opening: Opening,
+        opening: SessionStart,
         *,
         binary: str,
         cwd: str,
@@ -783,7 +782,7 @@ class Runner(runner.Runner[Journal]):
         self.notice = notice
         return await self._run(binary, session_id, [*appended, *args], cwd, env)
 
-    def _session_id(self, opening: Opening) -> str:
+    def _session_id(self, opening: SessionStart) -> str:
         """The session this state directory holds, chosen once (see the module
         docstring) and kept; the owner every record is stamped with."""
         saved = self.journal.recall("session_id")
@@ -799,7 +798,7 @@ class Runner(runner.Runner[Journal]):
 
     async def _start_without_hands(
         self,
-        opening: Opening,
+        opening: SessionStart,
         binary: str,
         cwd: str,
         env: dict[str, str],

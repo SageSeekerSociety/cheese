@@ -192,6 +192,34 @@ def test_committing_in_one_task_pushes_only_its_branch(device):
     assert (b / "same.txt").read_text() == "base\n"
 
 
+def test_another_worktree_beside_a_task_commits_and_leaves_the_task_alone(
+    device, tmp_path
+):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    branch = tasks[task]["branch"]
+    delivered = git(remote, "rev-parse", branch)
+    extra = tmp_path / "experiment"
+    git(work, "worktree", "add", "-b", "experiment", str(extra), "main")
+    (extra / "same.txt").write_text("experiment\n")
+    git(extra, "add", "same.txt")
+
+    committed = subprocess.run(
+        ["git", "-C", str(extra), "commit", "-m", "test: experiment"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert committed.returncode == 0, committed.stderr
+    assert "[cheese]" not in committed.stderr
+    assert git(extra, "show", "HEAD:same.txt") == "experiment"
+    assert git(remote, "rev-parse", branch) == delivered
+    assert git(work, "rev-parse", "HEAD") == delivered
+    assert (work / "same.txt").read_text() == "base\n"
+    assert not git(remote, "branch", "--list", "experiment")
+
+
 def test_sync_backs_up_uncommitted_work_without_changing_index_or_pr_head(device):
     cli, tasks, remote, home = device
     task = next(iter(tasks))

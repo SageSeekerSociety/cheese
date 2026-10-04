@@ -1,14 +1,17 @@
 """Dependency injection wiring."""
 
 import uuid
+from collections.abc import Callable
 from functools import lru_cache
 
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.db import async_session_factory, engine, get_db
 from app.core.ownership import Ownership
+from app.core.redis import get_redis_client
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool, build_compute_pool
@@ -19,6 +22,7 @@ from app.domain.agent.runtime import (
     AgentWorkRunner,
     get_broker,
 )
+from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
@@ -39,6 +43,7 @@ from app.domain.user.services import UserAuthService
 __all__ = [
     "get_db",
     "get_chat_service",
+    "get_consumptions",
     "get_session_host",
     "get_profile_registry",
     "get_broker",
@@ -86,30 +91,53 @@ def get_llm_gateway() -> LlmGateway | None:
 
 @lru_cache
 def get_session_host() -> SessionHost:
-    """The sessions on the session host this process talks to — a person's
-    芝士, a document thread's. One per process, like the chat service: it
-    remembers which sessions are running and where each one was read to."""
+    """The sessions on the session host this process talks to — a room's, a
+    person's 芝士, a document thread's. One per process, like the chat
+    service: it remembers which sessions are running and where each is read."""
     return SessionHost(device_hub)
 
 
 @lru_cache
+def get_consumptions() -> Consumptions:
+    """The questions asked of sessions that this process reads to the end, and
+    takes over from a process that went away: a person's, a comment
+    thread's, a document box's. One per process, beside the session host."""
+    return consumptions_for(get_session_host(), get_chat_service())
+
+
+def consumptions_for(
+    host: SessionHost,
+    chat: ChatService,
+    *,
+    redis: Callable[[], Redis | None] = get_redis_client,
+    sessions: async_sessionmaker[AsyncSession] = async_session_factory,
+) -> Consumptions:
+    """The questions read on ``host``, each kind served by its consumer."""
+    from app.domain.agent.document import box, thread
+    from app.domain.agent.personal import service as personal
+
+    consumptions = Consumptions(host, redis)
+    consumptions.serve(personal.KIND, personal.Answers(sessions, consumptions, redis))
+    consumptions.serve(thread.KIND, thread.Replies(chat, chat.session_factory))
+    consumptions.serve(box.KIND, box.Answers(chat, consumptions))
+    return consumptions
+
+
+@lru_cache
 def get_compute_pool() -> ComputePool:
-    """The harness runtimes this process reads sessions with: the chat service's,
-    and the one a runner's ring wakes. Every runtime's attach checks the work
-    runner's ``owns_sessions`` flag inside its seat lock first (FB-56)."""
+    """The rooms' sessions this process reads, on every machine pool and
+    harness: the chat service's, and the ones a runner's ring wakes. Every
+    seat's attach checks the work runner's ``owns_sessions`` flag inside its
+    seat lock first (FB-56)."""
     cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
         ),
     )
-    pool = build_compute_pool(cloud_channel=cloud)
+    pool = build_compute_pool(cloud_channel=cloud, host=get_session_host())
     runner = get_work_runner()
     for runtime in pool._runtimes():
-        # Structural, like the pool's own probes: a runtime without the
-        # binder has no attach gate to arm (FB-56).
-        bind = getattr(runtime, "bind_owns_sessions", None)
-        if bind is not None:
-            bind(lambda: runner)
+        runtime.bind_owns_sessions(lambda: runner)
     return pool
 
 

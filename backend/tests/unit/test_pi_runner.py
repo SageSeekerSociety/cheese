@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.driven import runner as driven_runner
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.runner import Runner, socket_path
 from app.domain.agent.harness.pi.subscription import Subscription
 from app.domain.agent.nonce import new_nonce
@@ -58,7 +59,7 @@ def shim(tmp_path) -> str:
 async def running(tmp_path, resume=None, **options):
     runner = Runner(tmp_path / "state", **options)
     session_id = await runner.start(
-        Opening("system prompt", resume, agent_handle="teammate"),
+        SessionStart("system prompt", resume, agent_handle="teammate"),
         binary=shim(tmp_path),
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
@@ -322,7 +323,7 @@ async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
     binary.chmod(0o700)
     runner = Runner(tmp_path / "state")
     await runner.start(
-        Opening("system prompt", None, agent_handle="teammate"),
+        SessionStart("system prompt", None, agent_handle="teammate"),
         binary=str(binary),
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
@@ -418,7 +419,7 @@ async def test_a_record_of_the_runners_own_is_news_once(tmp_path):
     binary.chmod(0o700)
     runner = Runner(tmp_path / "state")
     await runner.start(
-        Opening("system prompt", None, agent_handle="teammate"),
+        SessionStart("system prompt", None, agent_handle="teammate"),
         binary=str(binary),
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
@@ -515,7 +516,7 @@ json.dump({"argv": sys.argv[1:], "cwd": os.getcwd()}, sys.stdout)
 async def with_tools(tmp_path, target=NO_MACHINE):
     runner = Runner(tmp_path / "state")
     await runner.start(
-        Opening("system prompt", None, agent_handle="teammate"),
+        SessionStart("system prompt", None, agent_handle="teammate"),
         binary=shim(tmp_path),
         cwd=str(tmp_path),
         env={"PATH": os.environ["PATH"]},

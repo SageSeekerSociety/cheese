@@ -255,14 +255,17 @@ const {
   gap: 16px;
 }
 
-@media (max-width: 1100px) {
+/* 后台页的断点挂在内容列上（§3.5），不用视口媒体查询：侧栏收起省出的宽度，视口
+   查询看不见。容器是 `.app-page__column--admin`（名字 `admin`）。
+   6 轨 KPI 正好要 1440（`--page-w-admin`：6×216 + 内距），容器窄于 1320 就掉到 3 轨。 */
+@container admin (max-width: 1319.98px) {
   .amd__kpis {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
-/* 窄屏 KPI 退成两列（同看板）：一排四张在手机上每张不到 150px，字会被压破。 */
-@media (max-width: 900px) {
+/* 窄容器 KPI 退成两列（同看板）：一排三张在手机上每张不到 150px，字会被压破。 */
+@container admin (max-width: 719.98px) {
   .amd__kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 修改记录：这篇文档的每一版，新的在上。点一版看它当时的全文，能改时可以恢复到那一版
-// （恢复是在最新一版上再记一版，原来的几版都还在）。
+// 修改记录：这篇文档的每一版，新的在上（左栏）。点一版，右边默认是它和上一条之间改了
+// 什么（DocVersionDiff），也能切到它当时的全文；能改时可以恢复到那一版（恢复是在最新
+// 一版上再记一版，原来的几版都还在）。
 //
 // 一个人连着打字，几秒就存一版；同一个人相隔不到十分钟连着存的几版在列表里算一条，
 // 看的、恢复的都是其中最后那一版。
@@ -9,10 +10,13 @@ import type { DocVersion, DocVersionPage } from '../../../lib/docHistory'
 import { computed, ref, watch } from 'vue'
 
 import { relTime } from '../../../lib/relTime'
+import { versionDiff } from '../../../lib/versionDiff'
 import MarkdownView from '../../common/MarkdownView.vue'
 
 import DocEditButton from './DocEditButton.vue'
+import DocVersionDiff from './DocVersionDiff.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -36,6 +40,8 @@ const cursor = ref<number | null>(null)
 const selected = ref<number | null>(null)
 const loading = ref(false)
 const restoring = ref(false)
+// 右边看哪一样：和上一条比改了什么（默认），还是这一版当时的全文。
+const view = ref<'diff' | 'full'>('diff')
 const error = ref<string | null>(null)
 // 每开一次换一个号：关掉之后才回来的那一页不认。
 let session = 0
@@ -67,6 +73,7 @@ watch(
     selected.value = null
     error.value = null
     restoring.value = false
+    view.value = 'diff'
     if (open) void more(true)
   },
   { immediate: true }
@@ -90,6 +97,31 @@ const entries = computed(() => {
 })
 
 const current = computed(() => versions.value.find((v) => v.version === selected.value) ?? null)
+
+/** 选中那一条的「上一版」：列表里它下面那一条（同一个人连着存的几版算一条）。 */
+const previous = computed<DocVersion | null | undefined>(() => {
+  const index = entries.value.findIndex((v) => v.version === selected.value)
+  if (index < 0) return undefined
+  const older = entries.value[index + 1]
+  if (older) return older
+  // 它是已经读回来的最后一条：后面还有就再读一页，没有了就是第一版。
+  return cursor.value !== null ? undefined : null
+})
+// 上一条还没读回来就再读一页。看的是「读完了没有」而不是 previous 本身：同一个人连着
+// 存了一整页时，读回第一页前后 previous 都是 undefined，只看它的变化就永远不会去读。
+// 读失败（error）就停下，不反复重试。
+watch(
+  [previous, loading],
+  ([prev, busy]) => {
+    if (prev === undefined && !busy && !error.value && current.value && cursor.value !== null) void more()
+  },
+  { immediate: true }
+)
+const diff = computed(() =>
+  current.value && previous.value !== undefined
+    ? versionDiff(previous.value?.content ?? null, current.value.content)
+    : null
+)
 const latest = computed(() => versions.value[0] ?? null)
 const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
 
@@ -152,10 +184,6 @@ async function restoreSelected() {
       </div>
       <div v-if="error" class="doc-history__error" role="alert">{{ error }}</div>
       <div class="doc-history__body">
-        <div class="doc-history__preview">
-          <MarkdownView v-if="current" class="md-content" :source="current.content" :names="names" />
-          <div v-else-if="!loading" class="doc-history__empty">{{ t('work.room.doc.historyEmpty') }}</div>
-        </div>
         <ol class="doc-history__list" :aria-label="t('work.room.doc.history')">
           <li v-for="(v, i) in entries" :key="v.version">
             <button
@@ -177,6 +205,22 @@ async function restoreSelected() {
             </button>
           </li>
         </ol>
+        <div class="doc-history__preview">
+          <div v-if="current" class="doc-history__view" role="group" :aria-label="t('work.room.doc.historyView')">
+            <button type="button" :aria-pressed="view === 'diff'" @click="view = 'diff'">
+              {{ t('work.room.doc.historyDiff') }}
+            </button>
+            <button type="button" :aria-pressed="view === 'full'" @click="view = 'full'">
+              {{ t('work.room.doc.historyFull') }}
+            </button>
+          </div>
+          <template v-if="current && view === 'diff'">
+            <DocVersionDiff v-if="diff" :diff="diff" />
+            <p v-else class="doc-history__wait t-meta">{{ t('work.room.doc.diffLoading') }}</p>
+          </template>
+          <MarkdownView v-else-if="current" class="md-content" :source="current.content" :names="names" />
+          <BaseEmptyState v-else-if="!loading" size="inline" :title="t('work.room.doc.historyEmpty')" />
+        </div>
       </div>
     </div>
   </v-dialog>
@@ -229,18 +273,35 @@ async function restoreSelected() {
   overflow-y: auto;
   color: var(--text);
 }
-.doc-history__empty {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: var(--lh-14);
-}
 .doc-history__list {
   flex: 0 0 260px;
   margin: 0;
   padding: 8px;
   overflow-y: auto;
-  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   list-style: none;
+}
+.doc-history__view {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+}
+.doc-history__view button {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.doc-history__view button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--ink);
+}
+.doc-history__wait {
+  color: var(--muted);
 }
 .doc-history__item {
   display: flex;
@@ -280,12 +341,12 @@ async function restoreSelected() {
 }
 @media (max-width: 640px) {
   .doc-history__body {
-    flex-direction: column-reverse;
+    flex-direction: column;
   }
   .doc-history__list {
     flex: 0 0 auto;
     max-height: 40%;
-    border-left: none;
+    border-right: none;
     border-bottom: 1px solid var(--line);
   }
 }

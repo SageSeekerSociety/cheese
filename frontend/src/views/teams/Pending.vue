@@ -11,6 +11,13 @@
       <p class="text-body-2 text-medium-emphasis">{{ t('teams.pending.loading') }}</p>
     </div>
 
+    <BaseLoadError
+      v-else-if="failedMyRequests"
+      :title="t('teams.pending.loadRequestsFailed')"
+      :error="myRequestsError"
+      @retry="fetchMyJoinRequests"
+    />
+
     <!-- 我发起的申请 - 空状态 -->
     <div v-else-if="!myRequests.length" class="d-flex flex-column align-center py-4">
       <v-avatar size="48" class="bg-surface-light mb-3">
@@ -68,14 +75,20 @@
       <p class="text-body-2 text-medium-emphasis">{{ t('teams.pending.loading') }}</p>
     </div>
 
-    <!-- 收到的邀请 - 空状态 -->
-    <div v-else-if="!myInvitations.length" class="d-flex flex-column align-center py-4">
-      <v-avatar size="48" class="bg-surface-light mb-3">
-        <v-icon icon="mdi-email-outline" size="large" color="on-surface-variant"></v-icon>
-      </v-avatar>
-      <p class="text-subtitle-2 font-weight-medium text-center mb-1">{{ t('teams.pending.noInvitations') }}</p>
-      <p class="text-caption text-center text-medium-emphasis">{{ t('teams.pending.noInvitationsHint') }}</p>
-    </div>
+    <BaseLoadError
+      v-else-if="failedMyInvitations"
+      :title="t('teams.pending.loadInvitationsFailed')"
+      :error="myInvitationsError"
+      @retry="fetchMyInvitations"
+    />
+
+    <BaseEmptyState
+      v-else-if="!myInvitations.length"
+      size="compact"
+      icon="mdi-email-outline"
+      :title="t('teams.pending.noInvitations')"
+      :desc="t('teams.pending.noInvitationsHint')"
+    />
 
     <!-- 收到的邀请列表 -->
     <v-list-item
@@ -106,7 +119,7 @@
             size="sm"
             icon="mdi-check"
             :title="t('teams.pending.accept')"
-            class="mr-1"
+            class="mr-4"
             @click="acceptInvitation(invitation.id)"
           />
           <BaseButton
@@ -135,6 +148,13 @@
       <v-progress-circular indeterminate color="primary" :size="40" :width="3" class="mb-3"></v-progress-circular>
       <p class="text-body-2 text-medium-emphasis">{{ t('teams.pending.loading') }}</p>
     </div>
+
+    <BaseLoadError
+      v-else-if="failedProjectInvitations"
+      :title="t('teams.pending.loadProjectInvitationsFailed')"
+      :error="projectInvitationsError"
+      @retry="fetchProjectInvitations"
+    />
 
     <div v-else-if="!projectInvitations.length" class="d-flex flex-column align-center py-4">
       <v-avatar size="48" class="bg-surface-light mb-3">
@@ -169,7 +189,7 @@
             size="sm"
             icon="mdi-check"
             :title="t('teams.pending.accept')"
-            class="mr-1"
+            class="mr-4"
             :disabled="answering === invitation.id"
             @click="answerProjectInvitation(invitation, true)"
           />
@@ -198,6 +218,8 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
@@ -209,19 +231,29 @@ const myRequests = ref<TeamMembershipApplication[]>([])
 const myInvitations = ref<TeamMembershipApplication[]>([])
 const loadingMyRequests = ref(false)
 const loadingMyInvitations = ref(false)
+// 读失败和「一条都没有」是两件事：失败留在各自那一段里，空状态才说「暂无」。
+const failedMyRequests = ref(false)
+const myRequestsError = ref<string | null>(null)
+const failedMyInvitations = ref(false)
+const myInvitationsError = ref<string | null>(null)
 
 // 项目邀请（cheesex 那一半）。和上面的小队邀请是两回事，只是同一种「等你答复」。
 const projectInvitations = ref<ProjectInvitation[]>([])
 const loadingProjectInvitations = ref(false)
+const failedProjectInvitations = ref(false)
+const projectInvitationsError = ref<string | null>(null)
 const answering = ref<string | null>(null)
 
 const fetchProjectInvitations = async () => {
   loadingProjectInvitations.value = true
+  failedProjectInvitations.value = false
+  projectInvitationsError.value = null
   try {
     projectInvitations.value = (await listMyInvitations()).data
-  } catch {
-    // 这一段拿不到就空着：小队那两段是这一页的主体，不该被它拖垮。
-    projectInvitations.value = []
+  } catch (error) {
+    // 这一段拿不到就在它自己那一格说清楚：小队那两段是这一页的主体，不该被它拖垮。
+    failedProjectInvitations.value = true
+    projectInvitationsError.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loadingProjectInvitations.value = false
   }
@@ -244,12 +276,15 @@ const answerProjectInvitation = async (invitation: ProjectInvitation, accept: bo
 // 获取我发起的申请
 const fetchMyJoinRequests = async () => {
   loadingMyRequests.value = true
+  failedMyRequests.value = false
+  myRequestsError.value = null
   try {
     const response = await TeamsApi.listMyJoinRequests()
     myRequests.value = response.data.requests
   } catch (error) {
     console.error('Failed to load join requests', error)
-    toast.error(t('teams.pending.loadRequestsFailed'))
+    failedMyRequests.value = true
+    myRequestsError.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loadingMyRequests.value = false
   }
@@ -258,12 +293,15 @@ const fetchMyJoinRequests = async () => {
 // 获取我收到的邀请
 const fetchMyInvitations = async () => {
   loadingMyInvitations.value = true
+  failedMyInvitations.value = false
+  myInvitationsError.value = null
   try {
     const response = await TeamsApi.listMyInvitations()
     myInvitations.value = response.data.invitations
   } catch (error) {
     console.error('Failed to load invitations', error)
-    toast.error(t('teams.pending.loadInvitationsFailed'))
+    failedMyInvitations.value = true
+    myInvitationsError.value = error instanceof Error && error.message ? error.message : null
   } finally {
     loadingMyInvitations.value = false
   }

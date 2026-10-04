@@ -3,7 +3,6 @@
 import type {
   AcceptCard,
   AgentConfiguration,
-  AgentControlState,
   AgentType,
   ApiEnvelope,
   Block,
@@ -65,301 +64,38 @@ import type {
   WaitingItem,
   WorkspaceFile,
 } from './cx_types'
+import type { DocComment } from './lib/docThreadTypes'
 import type { AgentFieldChoice } from './lib/modelChoices'
 import type { SitePage } from './types/site'
 
-import { desktopAppHeaders } from './lib/desktopApp'
-import { refusalText, refusalWords } from './lib/noticeText'
+import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
+import { shareInFlight } from './lib/inflight'
+import { refusalWords } from './lib/noticeText'
 import { createPreviewPdfReader } from './lib/previewPdf'
-import { rateLimitedText, rateLimitRetryMs } from './lib/rateLimit'
-import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, readJson, transportFailureMessage } from './lib/transportFailure'
+import { postFormWithProgress } from './lib/xhrUpload'
 import { t } from './i18n'
 
 export { TOPIC_TITLE_MAX_LENGTH }
-
-// The API base a BROWSER sends. One `/api`: the gateway's mount point, which
-// `location /api/ { proxy_pass …:8081/; }` strips on the way through.
-//
-// It was `/api/api` until #370 step 2. The 2.0 routers used to carry their own
-// `/api` — the only way to keep `topics`, `projects` and `tasks` from meaning
-// two different things at one URL — so a browser had to send the prefix twice
-// and the gateway ate one. Those words are now owned once each (1.0's tag is
-// `/tags` and 赛题 are merged), so the namespace that separated them has
-// nothing left to separate.
-export const BASE = '/api'
-
-// Chat requests use the same access token as AccountService.
-export function authToken(): string {
-  try {
-    return localStorage.getItem('accessToken') ?? ''
-  } catch {
-    return ''
-  }
-}
-
-function authHeaders(): Record<string, string> {
-  const token = authToken()
-  return { ...desktopAppHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) }
-}
-
-// Retried on GET: the edge's own statuses. nginx answers 502–504 for an app it
-// could not reach, Cloudflare answers 520–530 for an origin it could not (a
-// tunnel that flapped is 530, error 1033). Each is about the second it was
-// sent in, which is why the next attempt is worth making.
-const CLOUDFLARE_ORIGIN_STATUSES = Array.from({ length: 11 }, (_, i) => 520 + i)
-const RETRYABLE_GET_STATUSES = new Set([502, 503, 504, ...CLOUDFLARE_ORIGIN_STATUSES])
-const GET_RETRY_DELAYS_MS = [250, 750]
-
-// `errorPage`: the body was not JSON. That is the edge's page in place of an
-// answer whatever the status line says — a captive portal and the SPA fallback
-// both say 200 — and, like the statuses above, it is about this second.
-export function isRetryableGetFailure(method: string, status?: number, error?: unknown, errorPage = false): boolean {
-  if (method.toUpperCase() !== 'GET') return false
-  if (error instanceof ApiError && error.retryable === false) return false
-  if (errorPage) return true
-  if (status != null) return RETRYABLE_GET_STATUSES.has(status)
-  return !(error instanceof DOMException && error.name === 'AbortError')
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-// A failed request still carries its HTTP status. Callers that must tell one
-// failure from another — a save rejected as a conflict (409) vs. anything else —
-// would otherwise be left substring-matching the message.
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-    readonly code?: string,
-    readonly requestId?: string,
-    readonly retryable?: boolean
-  ) {
-    super(message)
-    this.name = 'ApiError'
-  }
-}
-
-export class RequestTimeoutError extends Error {
-  constructor() {
-    super(t('global.request.timeout'))
-    this.name = 'RequestTimeoutError'
-  }
-}
-
-export const READ_BUDGET_MS = 20_000
-
-async function withinBudget<T>(
-  work: (signal: AbortSignal) => Promise<T>,
-  ms: number,
-  outer?: AbortSignal | null
-): Promise<T> {
-  if (outer?.aborted) throw outer.reason ?? new DOMException(t('global.request.canceled'), 'AbortError')
-  const controller = new AbortController()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let onAbort: (() => void) | undefined
-  const cancelled = new Promise<never>((_, reject) => {
-    onAbort = () => {
-      controller.abort(outer?.reason)
-      reject(outer?.reason ?? new DOMException(t('global.request.canceled'), 'AbortError'))
-    }
-    if (outer?.aborted) onAbort()
-    else outer?.addEventListener('abort', onAbort, { once: true })
-    timer = setTimeout(() => {
-      const error = new RequestTimeoutError()
-      controller.abort(error)
-      reject(error)
-    }, ms)
-  })
-  try {
-    return await Promise.race([work(controller.signal), cancelled])
-  } finally {
-    clearTimeout(timer)
-    if (onAbort) outer?.removeEventListener('abort', onAbort)
-  }
-}
-
-// A page whose backend ships separately has to tell "this feature is not
-// deployed here yet" apart from "it is deployed and it failed" — otherwise the
-// first render of a not-yet-merged API is an error banner that reads like a bug.
-// 404/405 is the only honest signal for it: the route does not exist.
-export function isEndpointMissing(e: unknown): boolean {
-  return e instanceof ApiError && (e.status === 404 || e.status === 405)
-}
-
-// How close to expiry is "about to expire". The refresh below is what keeps a
-// request from going out as nobody; a token that dies in flight costs the same
-// as one that was already dead, so leave room for the round trip.
-const TOKEN_REFRESH_LEEWAY_MS = 60_000
-
-export function tokenExpiresWithin(token: string, ms: number): boolean {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as { exp?: number }
-    if (typeof payload.exp !== 'number') return false
-    return payload.exp * 1000 - Date.now() <= ms
-  } catch {
-    // Not a JWT we can read — leave it alone rather than refresh on every call.
-    return false
-  }
-}
-
-// 2.0 rides raw `fetch`, so it never passes through the axios response
-// interceptor that refreshes on 401 — and most 2.0 routes do not answer 401
-// anyway: they resolve the actor from the token and fall back to "nobody" when
-// it does not verify. Both halves fail silently, which is how an expired token
-// turned into 「左边栏冒出一堆不是我的项目」: the request went out as an anonymous
-// caller, and the sidebar listing used to answer an anonymous caller with every
-// project on the platform. The listing is scoped now (that is the security
-// half), but a signed-in user whose token lapsed would still see an empty
-// sidebar. So refresh it here, before the request, rather than react to a
-// failure the transport cannot see.
-//
-// `GET /projects` is no longer one of the silent ones — it 401s on a bearer
-// that failed to verify, so `request()`'s retry can heal it. Do not read that
-// as "the transport can see it now": it holds for that one route, and this
-// pre-request refresh is still what covers the rest.
-export async function ensureFreshToken(): Promise<void> {
-  const token = authToken()
-  if (!token || !tokenExpiresWithin(token, TOKEN_REFRESH_LEEWAY_MS)) return
-  await refreshNow()
-}
-
-/**
- * Refresh regardless of what the token's own `exp` claims.
- *
- * `ensureFreshToken` trusts `exp`, and `exp` is not the only way a token dies.
- * Measured on dev: a token minted 443s earlier, with 457s of its 900s life
- * left, was rejected 24 times out of 24 by BOTH api layers, while one minted
- * seconds later worked — the signing secret had changed under us (a backend
- * restart). Trusting `exp` alone means a signed-in user then 401s on every
- * request for up to 14 minutes, until the token nears the expiry that would
- * finally trigger a refresh. That is the 「通知铃铛必 401」 shape.
- *
- * Goes through `refreshSession`, so a burst of 401s costs one refresh, not one
- * each, and never races a refresh in another tab.
- */
-export async function refreshNow(): Promise<void> {
-  // A failed refresh leaves the stored token as it was; the caller still sees
-  // its own request's result.
-  await refreshSession()
-}
-
-// Room chrome, chat and the work panel request the same roster/task summary
-// on mount. Share only pending reads; the next refresh always goes to the server.
-const pendingRoomReads = new Map<string, Promise<unknown>>()
-function roomRead<T>(path: string): Promise<T> {
-  const key = `${authToken()}:${path}`
-  const pending = pendingRoomReads.get(key)
-  if (pending) return pending as Promise<T>
-  const started = request<T>(path).finally(() => {
-    if (pendingRoomReads.get(key) === started) pendingRoomReads.delete(key)
-  })
-  pendingRoomReads.set(key, started)
-  return started
-}
-
-/** 这个文件里的每个端点都过它。飞书那一块在 `api/feishu.ts`，也用这一个（见那儿的说明）。 */
-export function request<T>(path: string, init?: RequestInit): Promise<T> {
-  if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
-  return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
-}
-
-async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const method = (init?.method ?? 'GET').toUpperCase()
-  if (method !== 'GET') pendingRoomReads.clear()
-  await ensureFreshToken()
-  // A 401 is retried once, for ANY method, after forcing a refresh — see
-  // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
-  // the door, so nothing happened that a retry could duplicate. Only retried
-  // when the refresh actually produced a different token, or a server that 401s
-  // for some other reason would make every call fire twice.
-  let authRetried = false
-  let rateRetried = false
-  for (let attempt = 0; ; attempt += 1) {
-    init?.signal?.throwIfAborted()
-    let res: Response
-    try {
-      res = await fetch(`${BASE}${path}`, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(),
-          ...(init?.headers ?? {}),
-        },
-      })
-    } catch (error) {
-      if (attempt >= GET_RETRY_DELAYS_MS.length || !isRetryableGetFailure(method, undefined, error)) {
-        throw error
-      }
-      await wait(GET_RETRY_DELAYS_MS[attempt])
-      continue
-    }
-    if (res.status === 401 && !authRetried) {
-      authRetried = true
-      const before = authToken()
-      await refreshNow()
-      // `attempt` is deliberately not advanced: this retry is not one of the
-      // transport's backoff attempts, and spending one here would cost a real
-      // 502 its retry budget.
-      if (authToken() !== before) {
-        attempt -= 1
-        continue
-      }
-    }
-    // A read refused for coming too fast waits as long as it was told, once.
-    const backoff = rateRetried ? null : rateLimitRetryMs(method, res)
-    if (backoff != null) {
-      rateRetried = true
-      await wait(backoff)
-      attempt -= 1
-      continue
-    }
-    // Before asking what the app said, ask whether it was the app that spoke.
-    // `HTTP 530 for /topics` and a raw `SyntaxError: Unexpected token '<'` were
-    // what a hackathon room read while Cloudflare's tunnel flapped for a few
-    // seconds, and they asked whether the backend was broken. It was not.
-    const body = await readJson(res)
-    if (isTransportFailure(body)) {
-      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status, undefined, true)) {
-        await wait(GET_RETRY_DELAYS_MS[attempt])
-        continue
-      }
-      throw new ApiError(res.status, transportFailureMessage(method, res.status))
-    }
-    if (!res.ok) {
-      const details = body as { message?: string; error?: { name?: string; message?: string; retryable?: boolean } }
-      if (
-        details.error?.retryable !== false &&
-        attempt < GET_RETRY_DELAYS_MS.length &&
-        isRetryableGetFailure(method, res.status)
-      ) {
-        await wait(GET_RETRY_DELAYS_MS[attempt])
-        continue
-      }
-      // #450 rule 2 (frontend edition): the backend's errors carry a human
-      // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
-      // sends the room hunting a mystery the server had already explained.
-      const serverSaid =
-        rateLimitedText(res, body) ?? refusalText(body, details.error?.message || details.message || '')
-      throw new ApiError(
-        res.status,
-        serverSaid || t('global.request.failed', { status: res.status }),
-        details.error?.name,
-        res.headers?.get('X-Request-ID') ?? undefined,
-        details.error?.retryable
-      )
-    }
-    const envelope = body as ApiEnvelope<T>
-    if (envelope.code !== 200) {
-      throw new Error(envelope.message || `API error code ${envelope.code}`)
-    }
-    if (method !== 'GET') pendingRoomReads.clear()
-    return envelope.data
-  }
-}
+// The transport's public surface, re-exported so every existing importer of
+// `api` keeps resolving it here — the split is an internal one.
+export type { ConditionalResult } from './api/http'
+export {
+  ApiError,
+  authToken,
+  BASE,
+  ensureFreshToken,
+  isEndpointMissing,
+  isRetryableGetFailure,
+  NotModified,
+  READ_BUDGET_MS,
+  refreshNow,
+  request,
+  requestConditional,
+  RequestTimeoutError,
+  tokenExpiresWithin,
+} from './api/http'
 
 // The connector lives at the origin root (`/connector/*`), not under `/api`, and its
 // responses are plain JSON (no ApiEnvelope). This mirrors `request` but skips the
@@ -686,6 +422,12 @@ export function deleteUnderstanding(id: string): Promise<{ deleted: string }> {
 export type TopicSortField = 'last_activity_at' | 'updated_at' | 'title'
 export type TopicSortOrder = 'asc' | 'desc'
 
+// 上一次读到的话题清单和它的 ETag，按请求路径记着。侧栏每 30s 轮询一次，一份 448
+// 个话题的清单有近 300KB：服务端答「没变」（304）时把手里这同一个 payload 原样交回，
+// 调用方的 `topics.value = payload.data` 就是一次同引用的赋值 —— Vue 的 ref setter
+// 见到同一个对象会跳过触发（不解析、不换数组、不重画）。变了才落新的一份。
+const topicListCache = new Map<string, { etag: string | null; payload: ListPayload<Topic> }>()
+
 export function listTopics(
   projectId: string,
   opts?: { sort?: TopicSortField; order?: TopicSortOrder }
@@ -693,7 +435,19 @@ export function listTopics(
   const q = new URLSearchParams({ project_id: projectId })
   if (opts?.sort) q.set('sort', opts.sort)
   if (opts?.order) q.set('order', opts.order)
-  return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
+  const path = `/topics?${q.toString()}`
+  const cached = topicListCache.get(path)
+  // 带上上一次那版 ETag 去问。服务端算出的一模一样就回 304（见后端 list_topics）。
+  return requestConditional<ListPayload<Topic>>(path, cached?.etag ?? null).then((result) => {
+    if (result.notModified) {
+      if (cached) return cached.payload
+      // 304 但手里没留底（比如刚重启、缓存已清）：退回一次无条件读，别把空手当没变。
+      return request<ListPayload<Topic>>(path)
+    }
+    if (!result.data) throw new Error('empty topic list response')
+    topicListCache.set(path, { etag: result.etag, payload: result.data })
+    return result.data
+  })
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
@@ -797,31 +551,8 @@ export function createTopic(projectId: string, title?: string, parentId?: string
   })
 }
 
-// ---- 话题级未读 (Feishu-style badges) ----
-
-// {topic_id: unread_count} for one user; topics with zero unread are omitted.
-export function getTopicUnread(projectId: string, handle: string): Promise<Record<string, number>> {
-  return request<Record<string, number>>(
-    `/projects/${encodeURIComponent(projectId)}/topic-unread?handle=${encodeURIComponent(handle)}`
-  )
-}
-
-// {peer_handle: unread_count} for one user's 私聊; `cheese` is the 芝士 DM.
-// Keyed by peer, not topic id: DM rows come from the member roster, which
-// carries no topic id, so getTopicUnread's map cannot address them.
-export function getPrivateUnread(projectId: string, handle: string): Promise<Record<string, number>> {
-  return request<Record<string, number>>(
-    `/projects/${encodeURIComponent(projectId)}/private-unread?handle=${encodeURIComponent(handle)}`
-  )
-}
-
-// Opening a topic bumps the user's read cursor (clears its badge).
-export function markTopicRead(topicId: string, handle: string): Promise<Record<string, string>> {
-  return request<Record<string, string>>(`/topics/${encodeURIComponent(topicId)}/read`, {
-    method: 'POST',
-    body: JSON.stringify({ handle }),
-  })
-}
+// ---- 话题级未读 (Feishu-style badges) —— 见 api/topicReads.ts ----
+export * from './api/topicReads'
 
 /** A person names the room. The platform stops renaming it on its own from then on. */
 export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
@@ -949,14 +680,13 @@ export interface ComputeProposal {
   content: string
 }
 
-// 一个话题一个容器：改的是整个房间，房间里每一条会话都跟着搬。平台先在各自离开
-// 的那台上把改动推上去，推不上去就整个不换。`abandonUnpushed` 只在原来那台够不着
-// 时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409
-// SessionWorking）。
+// 一个话题一个容器：改的是整个房间，每条会话都跟着搬，先推送，推不上去就整个不换。`abandonUnpushed` 只在原来那台
+// 够不着时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409 SessionWorking）；`visibility` 是房间在
+// 点名那台上能看到什么，不给就保持原样，新绑上的是隔离环境。
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice,
-  options: { abandonUnpushed?: boolean; ifIdle?: boolean } = {}
+  options: { abandonUnpushed?: boolean; ifIdle?: boolean; visibility?: 'host' | 'isolated' } = {}
 ): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
@@ -964,6 +694,7 @@ export function setTopicComputeChoice(
       choice,
       ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
       ...(options.ifIdle ? { if_idle: true } : {}),
+      ...(options.visibility ? { visibility: options.visibility } : {}),
     }),
   })
 }
@@ -1195,7 +926,15 @@ export function listBlocks(
   if (opts?.around) q.set('around', opts.around)
   const qs = q.toString()
   const query = qs ? `?${qs}` : ''
-  return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)
+  const path = `/topics/${encodeURIComponent(topicId)}/blocks${query}`
+  // 最新那一页会被两条路同时要：切话题的预取（lib/blockCache 的 refreshBlockCache，
+  // 由 router 起头）和对话面板自己那一条（useChatPanel 一进房间就拉）。第二条跟着在
+  // 飞的那条走，省下一次重复的 GET。
+  //
+  // 只合并最新页（不带游标）：带 before/after/around 的那些是用户翻页翻出来的、每一次
+  // 都对应当下那一段窗口，合并它们没有好处，还会让两个调用方共享同一份数组。
+  const newestPage = !opts?.before && !opts?.after && !opts?.around
+  return newestPage ? shareInFlight(`blocks:${path}`, () => request<BlockPage>(path)) : request<BlockPage>(path)
 }
 
 // Emoji reactions (Slack semantics): toggles (emoji, caller) on a block and
@@ -1314,71 +1053,6 @@ export function sendMailDraft(id: string): Promise<{ draft: MailDraft; refused: 
 
 export function discardMailDraft(id: string): Promise<MailDraft> {
   return request<MailDraft>(`/me/mail-drafts/${encodeURIComponent(id)}/discard`, { method: 'POST' })
-}
-
-export interface ProjectSkillContent {
-  title: string
-  description: string
-  inputs: string
-  steps: string
-  outputs: string
-  files: Record<string, string>
-}
-
-export interface ProjectSkill extends ProjectSkillContent {
-  id: string
-  project_id: string
-  name: string
-  state: 'draft' | 'active'
-  shipped_revision: number
-  proposed_by: string
-  confirmed_by: string | null
-  confirmed_at: string | null
-  source_topic_id: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface ProjectSkillRevision {
-  revision: number
-  content: ProjectSkillContent
-  confirmed_by: string
-  note: string
-  created_at: string
-}
-
-export function listProjectSkills(projectId: string): Promise<ListPayload<ProjectSkill>> {
-  return request<ListPayload<ProjectSkill>>(`/projects/${encodeURIComponent(projectId)}/skills`)
-}
-
-export function getProjectSkill(id: string): Promise<ProjectSkill & { revisions: ProjectSkillRevision[] }> {
-  return request<ProjectSkill & { revisions: ProjectSkillRevision[] }>(`/skills/${encodeURIComponent(id)}`)
-}
-
-export function createProjectSkill(
-  topicId: string,
-  body: ProjectSkillContent & { name: string }
-): Promise<ProjectSkill> {
-  return request<ProjectSkill>(`/topics/${encodeURIComponent(topicId)}/skills`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function updateProjectSkill(id: string, body: Partial<ProjectSkillContent>): Promise<ProjectSkill> {
-  return request<ProjectSkill>(`/skills/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) })
-}
-
-export function confirmProjectSkill(id: string): Promise<ProjectSkill> {
-  return request<ProjectSkill>(`/skills/${encodeURIComponent(id)}/confirm`, { method: 'POST' })
-}
-
-export function restoreProjectSkill(id: string, revision: number): Promise<ProjectSkill> {
-  return request<ProjectSkill>(`/skills/${encodeURIComponent(id)}/revisions/${revision}/restore`, { method: 'POST' })
-}
-
-export function deleteProjectSkill(id: string): Promise<{ deleted: string }> {
-  return request<{ deleted: string }>(`/skills/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function deleteLibraryFile(projectId: string, path: string): Promise<{ deleted: boolean }> {
@@ -1559,29 +1233,27 @@ export async function attachLibraryFile(topicId: string, libraryPath: string): P
   return envelope.data
 }
 
-// Upload a file into the project's 资料库, with a copy in this room. NOTE: raw
-// fetch, not request() — multipart needs the browser to set the boundary itself.
+// Upload a file into the project's 资料库, with a copy in this room.
+//
+// The body goes up over XHR so the composer can draw a determinate bar from its
+// progress — `fetch` has no upload-progress event (see lib/xhrUpload.ts).
 //
 // `origin: 'clipboard'` 的那一份只留在这个房间：贴进来的截图没有名字（`image.png`
-// 是浏览器编的），而资料库是按名字寻址的。
+// 是浏览器编的），而资料库是按名字寻址的 —— 见 attachments.ts 里给它现起的名字。
 export async function uploadAttachment(
   topicId: string,
   file: File,
-  origin: 'file' | 'clipboard' = 'file'
+  origin: 'file' | 'clipboard' = 'file',
+  onProgress?: (fraction: number) => void
 ): Promise<ChatAttachment> {
   const form = new FormData()
   form.append('file', file)
   form.append('origin', origin)
-  const res = await fetch(`${BASE}/topics/${encodeURIComponent(topicId)}/attachments`, {
-    method: 'POST',
-    body: form,
-    headers: authHeaders(),
-  })
-  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
-  if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(refusalWords(envelope) || t('global.request.uploadFailed', { status: res.status }))
-  }
-  return envelope.data
+  const url = `${BASE}/topics/${encodeURIComponent(topicId)}/attachments`
+  const { status, body } = await postFormWithProgress<ApiEnvelope<ChatAttachment>>(url, form, authHeaders(), onProgress)
+  if (status < 200 || status >= 300 || !body || body.code !== 200)
+    throw new Error(refusalWords(body) || t('global.request.uploadFailed', { status }))
+  return body.data
 }
 
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
@@ -1716,17 +1388,15 @@ export function getProgress(topicId: string, taskId?: string): Promise<TopicProg
   return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
 }
 
-// B1: the living doc's structured node tree (heading/paragraph/list/…), in order.
-// Each node has a stable id + the turn_id that produced it — used for cross-view
-// highlight (B1 P2) and comment anchoring (B4).
-export function getDocNodes(topicId: string): Promise<{ data: Block[]; total: number }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/docs`)
+// A document's top-level blocks (heading/paragraph/list/…), in order: which
+// passage each comment is aligned to.
+export function getDocNodes(documentId: string): Promise<{ data: Block[]; total: number }> {
+  return request<{ data: Block[]; total: number }>(`/documents/${encodeURIComponent(documentId)}/nodes`)
 }
 
-// 段落评论 (eval B4): inline comments, each anchored to a doc node via reply_to.
 /** Start a comment thread on the words `quote` (or on the whole document without them). */
-export function addComment(topicId: string, content: string, quote?: string): Promise<Block> {
-  return request<Block>(`/topics/${encodeURIComponent(topicId)}/comments`, {
+export function addComment(documentId: string, content: string, quote?: string): Promise<DocComment> {
+  return request<DocComment>(`/documents/${encodeURIComponent(documentId)}/comments`, {
     method: 'POST',
     body: JSON.stringify({ content, quote: quote || undefined }),
   })
@@ -1798,32 +1468,10 @@ export function getStepOutput(topicId: string, blockId: string): Promise<{ outpu
   )
 }
 
+export type { AgentControlResult, AgentControlState } from './api/agentControl'
+export { getAgentControl, sendAgentControl } from './api/agentControl'
 export { requestPreviewSession } from './api/preview'
 export type { PreviewSelection, PreviewSession } from './types/preview'
-
-export interface AgentControlResult {
-  request_id: string
-  status: string
-  result: { response: { subtype: string; error?: string; response?: Record<string, unknown> } } | null
-}
-
-export type { AgentControlState }
-
-export function getAgentControl(topicId: string) {
-  return request<AgentControlState>(`/topics/${encodeURIComponent(topicId)}/agent/control`)
-}
-
-export function sendAgentControl(
-  topicId: string,
-  sessionId: string,
-  control: Record<string, unknown>,
-  requestId = crypto.randomUUID()
-) {
-  return request<AgentControlResult>(`/topics/${encodeURIComponent(topicId)}/agent/control`, {
-    method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, request_id: requestId, request: control }),
-  })
-}
 
 export function getGitLog(
   projectId: string,
@@ -2946,11 +2594,9 @@ export interface GatewayPrices {
   cache_creation?: number | null
 }
 
-export interface GatewayCapabilities {
-  reasoning?: boolean
-  vision?: boolean
-  adaptive_thinking?: boolean
-}
+export type GatewayCapabilities = Partial<
+  Record<'reasoning' | 'vision' | 'adaptive_thinking' | 'mid_conversation_system', boolean>
+>
 
 export interface GatewayUpstream {
   model: string

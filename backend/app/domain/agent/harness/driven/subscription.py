@@ -11,8 +11,11 @@ one: a commit per record is a sync per record, and a backlog can run to a
 million records.
 
 A record that waited too long to be read is stepped over, not landed
-(``STALE_S``): the cursor moves past it and the room never hears it. So is one
-the room went on refusing (``REFUSED_TIMES``), with its id in the error log.
+(``STALE_S``): the cursor moves past it and the room never hears it. One that
+ends a turn still ends it, and the turns of what was read inside it, without a
+word to the room: nothing else would, while the session goes on answering. So
+is one the room went on refusing (``REFUSED_TIMES``), with its id in the error
+log.
 
 What a harness supplies is what its protocol decides: how to pull from its
 runner, how to read its mirror, which records open and close a turn, what to do
@@ -30,6 +33,7 @@ awaited before the next is asked for.
 """
 
 import asyncio
+import dataclasses
 import functools
 import logging
 import time
@@ -63,7 +67,7 @@ from app.domain.delivery.input_identity import (
 )
 
 #: What a record says about a working session, for the liveness rules
-#: (``DrivenRuntime.verdict``): it said something, work moved. A tool starting
+#: (``RoomSessions.verdict``): it said something, work moved. A tool starting
 #: or coming back is ``started(call)`` / ``returned(call)``, by the harness's id
 #: for the call, so tools that run side by side are counted one by one.
 OUTPUT, PROGRESS = "output", "progress"
@@ -75,11 +79,8 @@ TOOL_STARTED, TOOL_RETURNED = "tool_started:", "tool_returned:"
 #: 这里兑现它。
 Seat = tuple[uuid.UUID, str]
 
-Pulse = Callable[[Seat, frozenset[str]], None]
-
-#: An input (by the id it was written with) the session read inside the turn
-#: already running, and that turn's work.
-Took = Callable[[Seat, str, uuid.UUID], None]
+#: What one record of a turn's work said about how it is going (``marks``).
+Moved = Callable[[uuid.UUID, frozenset[str]], Awaitable[None]]
 
 #: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
 #: 不碰这个座位的「在跑的活」和它的钟。
@@ -95,12 +96,14 @@ RETENTION_EVERY_S = 3600
 #: How old an unlanded record may be and still reach the room. A record gets
 #: this old only while nothing read the journal: the backend was gone, the
 #: machine was, or every drain stopped at a record it could not take. By then
-#: the room has gone on without it — the turn was ended for it, its prompt
-#: re-sent or the person told — so landing it would answer, hours late, what has
-#: been answered since, and open the books again for turns the session started
-#: by itself. Two hours is the orphan sweep's own line between a deploy and an
-#: outage (``ORPHAN_STALE_S``): past it, the platform stops acting for the
-#: person on its own.
+#: the room has gone on without it — its prompt re-sent or the person told — so
+#: landing it would answer, hours late, what has been answered since, and open
+#: the books again for turns the session started by itself. A record that ends
+#: a turn is the exception in part: the turn is still open, and a session that
+#: still answers is one the orphan sweep leaves alone, so it ends the turn
+#: (``_end_late``) and lands nothing. Two hours is the orphan sweep's own line
+#: between a deploy and an outage (``ORPHAN_STALE_S``): past it, the platform
+#: stops acting for the person on its own.
 #:
 #: Age is by the time the journal gives a record: when the session machine
 #: recorded it for Claude Code and Codex, when the backend mirrored it for pi.
@@ -145,11 +148,6 @@ def marks_of(events: list[AgentEvent]) -> set[str]:
 
 
 class Subscription[B: Backlog]:
-    #: The attachment instance this subscription IS (FB-56): minted by the
-    #: runtime under the seat lock at attach time; events stamp it back so a
-    #: drain from a superseded subscription is refused.
-    attachment_id: str | None = None
-
     def __init__(
         self,
         session: SessionRef,
@@ -161,19 +159,14 @@ class Subscription[B: Backlog]:
         receipts: ReceiptConsumer | None = None,
         completions: CompletionConsumer | None = None,
         terminations: TerminationConsumer | None = None,
-        pulse: Pulse | None = None,
-        memory: Callable[[], Awaitable[None]] | None = None,
-        took: Took | None = None,
+        moved: Moved | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
-        self.receipts, self.pulse = receipts, pulse
+        self.receipts = receipts
         self.completions = completions
         self.terminations = terminations
-        self.took = took
-        # 一轮结束时问一次记忆（见 `MemoryConsumer`）：agent 该写的记忆按规矩写
-        # 在回复之前，所以一轮读完就是它写完的时刻。
-        self.memory = memory
+        self.moved = moved
         self.lock = asyncio.Lock()
         self.forgotten_at = 0.0
         self.disk = ThreadPoolExecutor(
@@ -229,7 +222,12 @@ class Subscription[B: Backlog]:
         asks the runner to hold it until there is news (``driven.runner``),
         and what else that answer says is kept in ``heard``."""
         asking, self.asking = self.asking, None
-        if asking is None or self.hurry:
+        if asking is None:
+            return await self.call(method, params)
+        if self.hurry:
+            # Asked to land now before this read was held: read at once, this
+            # once; the next drain holds its read again.
+            self.hurry = False
             return await self.call(method, params)
         self.parked = asyncio.ensure_future(self.call(method, {**params, **asking}))
         try:
@@ -300,12 +298,6 @@ class Subscription[B: Backlog]:
             await self.completions(completion)
         return completion
 
-    def taken(self, record: dict) -> str | None:
-        """The id of an input this record says the session read inside the
-        turn already running, rather than in a turn of its own. Only a harness
-        that reports reading inputs (``receipt``) can say."""
-        return None
-
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         """What this record says about the turn. The events answer most of it;
         a harness adds what its records say and the vocabulary does not (a tool
@@ -356,6 +348,8 @@ class Subscription[B: Backlog]:
                         completion = await self.settle_completion(entry.record)
                         if entry.age_s >= STALE_S:
                             stale += 1
+                            if self.ends_turn(entry.record, reader):
+                                await self._end_late(entry, reader)
                         else:
                             try:
                                 delivered += await self._deliver(entry, reader)
@@ -406,6 +400,37 @@ class Subscription[B: Backlog]:
                 await self.on_disk(reader.forget, older_than_s=RETENTION_S)
             return delivered
 
+    async def _end_late(self, entry: HarnessEvent, reader: B) -> None:
+        """End the turn a record too old to land closes, saying nothing.
+
+        The ending is the same as a fresh one's — the turn's interval closed,
+        the turns of inputs read inside it ended with its outcome — but neither
+        its closing text nor its failure reaches the room.
+        """
+        assert isinstance(entry.record, dict)
+        work = (entry.record.get("cheese") or {}).get("work_id")
+        if work is None:
+            return
+        work_id = uuid.UUID(work)
+        for event in reader.assemble(entry):
+            if not isinstance(event, AgentResult) or event.thread_label is not None:
+                continue
+            await self.consume(
+                self.session.project_id,
+                self.session.topic_id,
+                work_id,
+                dataclasses.replace(
+                    event,
+                    text="",
+                    late=True,
+                    agent_handle=event.agent_handle or self.session.agent_handle,
+                ),
+                getattr(event, "eid", None) or entry.eid,
+                False,
+                False,
+            )
+        await self.activity(self.session.project_id, self.seat, work_id, False)
+
     async def _deliver(self, entry: HarnessEvent, reader: B) -> int:
         """Hand one record to the room; how many events it came out as."""
         assert isinstance(entry.record, dict)
@@ -425,18 +450,12 @@ class Subscription[B: Backlog]:
                     work_id,
                     True,
                 )
-            if self.pulse is not None:
-                self.pulse(
-                    self.seat,
-                    frozenset(self.marks(record, list(events))),
-                )
             # The input receipt is not emitted here: the drain loop emits it
             # before the age/poison checks, so that a settlement never rides on
             # a record the room may step over. Emitting it here as well would
             # deliver the same receipt twice.
-            taken = self.taken(record)
-            if taken is not None and self.took is not None:
-                self.took(self.seat, taken, work_id)
+            if self.moved is not None:
+                await self.moved(work_id, frozenset(self.marks(record, list(events))))
             for event in events:
                 # Which seat's session produced this event. Events that
                 # declare the field keep what the record said (the
@@ -472,6 +491,4 @@ class Subscription[B: Backlog]:
                     work_id,
                     False,
                 )
-                if self.memory is not None:
-                    await self.memory()
         return delivered

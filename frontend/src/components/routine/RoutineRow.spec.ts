@@ -9,7 +9,7 @@ import type { Routine } from '@/lib/routine'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import RoutineRow from './RoutineRow.vue'
@@ -28,6 +28,21 @@ beforeAll(() => {
       unobserve() {}
       disconnect() {}
     }
+  }
+  // 右键弹出的菜单是 VOverlay，定位要读这两样，happy-dom 没有。
+  if (!globalThis.visualViewport) {
+    ;(globalThis as unknown as { visualViewport: unknown }).visualViewport = {
+      width: 1280,
+      height: 800,
+      offsetLeft: 0,
+      offsetTop: 0,
+      scale: 1,
+      addEventListener() {},
+      removeEventListener() {},
+    }
+  }
+  if (!('devicePixelRatio' in globalThis)) {
+    ;(globalThis as unknown as { devicePixelRatio: number }).devicePixelRatio = 1
   }
 })
 
@@ -69,6 +84,16 @@ function buttons(container: Element): string[] {
 }
 
 describe('一条规则这一行', () => {
+  it('右键这一行：弹出行里那几样操作', async () => {
+    const { container } = mount(base)
+    await fireEvent.contextMenu(container.querySelector('.routine-row')!, { clientX: 20, clientY: 40 })
+    await waitFor(() =>
+      expect(
+        Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim())
+      ).toEqual(['暂停', '立即执行一次', '修改', '执行记录', '删除'])
+    )
+  })
+
   it('已经在跑的：暂停、立即执行一次、修改、执行记录、删除都在', () => {
     const { container } = mount(base)
     expect(buttons(container)).toEqual(['暂停', '立即执行一次', '修改', '执行记录', '删除'])

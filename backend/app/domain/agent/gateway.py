@@ -8,19 +8,19 @@ cannot get locally:
 
 - **L1 attribution + metering**: mint a per-project VIRTUAL key (the sandbox
   gets that instead of the master key — a sandbox never holds admin credentials)
-  and read real token usage back from ``/spend/logs/v2``.
+  and read real token usage back from the gateway's daily totals per key.
 - **L2 budget brake**: set the key's ``max_budget`` from the project's compute
   grants so the gateway refuses further calls once the budget is spent.
 
 Metering model: per-project usage is drained as a **daily cumulative delta per
-model** — sum today's spend-log rows for the project's virtual KEY (rows are
-filtered by ``api_key`` = sha256 of the key; verified live — a key's
-``user_id`` does not reach the rows), grouped by the row's ``model``, and
-consume each difference against the stored checkpoint. Cumulative sums are
-monotone, so a delta is consumed exactly once even when LiteLLM logs rows late
-(they simply enlarge a later drain). Each drain finalizes every day since its
-checkpoint once per model, then starts today. **The per-model split is not
-optional**: summing the rows and stamping one name attributes a mixed day to
+model** — read today's totals for the project's virtual KEY (LiteLLM keeps
+them per key, keyed by ``api_key`` = sha256 of the key, and per model under the
+name its spend-log rows carry), and consume each difference against the stored
+checkpoint. Cumulative sums are monotone, so a delta is consumed exactly once
+even when LiteLLM records a call late (it simply enlarges a later drain).
+Each drain finalizes every day since its checkpoint once per model, then
+starts today. **The per-model split is not
+optional**: summing the models and stamping one name attributes a mixed day to
 whatever model the caller happened to hold, which is how mimo went uncounted
 on the dashboard.
 
@@ -40,14 +40,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# A spend-log page is served from the (api_key, startTime) index that
-# deploy/release-gateway.sh builds. Without it every page full-scans LiteLLM's
-# spend table — measured 24-102 s on 2026-09-23. The old 8 s timed out every
-# drain, which silently billed zeros (a caught exception returns None, and the
-# caller writes an unmetered row).
 _TIMEOUT = 60.0
-# The most rows /spend/logs/v2 serves in one page.
-_SPEND_PAGE_SIZE = 1000
 
 
 @dataclass(frozen=True)
@@ -63,6 +56,29 @@ class GatewayModel:
     priced: bool
     # The model's tier (``cheese_tier``): which plans may use it.
     tier: str = "included"
+    # False when the route loses the system-role messages Claude Code puts in
+    # the middle of a conversation (``supports_mid_conversation_system: false``,
+    # set by hand after measuring). Unmarked routes keep Claude Code's default.
+    mid_conversation_system: bool = True
+    # The thinking efforts this model honours (``cheese_efforts``), in the
+    # platform's own words (``EFFORTS``). Empty: it takes none, and a teammate
+    # on it runs at the model's own default.
+    efforts: tuple[str, ...] = ()
+
+
+#: The thinking efforts a teammate can ask for, lowest first. Claude Code
+#: passes the one chosen to the model as ``output_config.effort``; whether the
+#: model honours it, and which of them, is the gateway's to declare per model.
+EFFORTS = ("low", "medium", "high", "max")
+
+
+def declared_efforts(value: object) -> tuple[str, ...]:
+    """The efforts a ``cheese_efforts`` entry declares, in ``EFFORTS`` order.
+    Anything else in it is ignored rather than offered: a word the platform
+    does not know is one it cannot pass on."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(effort for effort in EFFORTS if effort in value)
 
 
 def price_is_set(*sources: object) -> bool:
@@ -141,14 +157,19 @@ class LlmGateway:
 
         Reads the response LiteLLM documents at ``/model/info``: ``data`` rows of
         ``model_name`` + ``model_info`` + ``litellm_params`` (credentials already
-        stripped gateway-side). Two keys under ``model_info`` are cheese's, and
-        both are optional metadata LiteLLM passes through untouched:
+        stripped gateway-side). These keys under ``model_info`` are cheese's,
+        all optional metadata LiteLLM passes through untouched:
 
           - ``cheese_selectable``: offer this to people. Opt-in, because the
             gateway also routes models that are NOT menu items — ``glm-4.5``
             is where the subagent alias points, and listing it would invite
             someone to pick a model we route to on their behalf.
           - ``cheese_label``: what to call it; the id when absent.
+          - ``cheese_efforts``: the thinking efforts it honours (``EFFORTS``).
+
+        One LiteLLM key is read as well: ``supports_mid_conversation_system``
+        set to ``false`` marks a route that loses mid-conversation system
+        messages, and Claude Code is launched without them on it.
 
         A model the gateway reports as ``blocked`` is never selectable, however
         ``cheese_selectable`` is set: the gateway refuses to route it, so
@@ -190,6 +211,10 @@ class LlmGateway:
                     ),
                     priced=price_is_set(params, info),
                     tier=tier if isinstance(tier, str) and tier else "included",
+                    mid_conversation_system=(
+                        info.get("supports_mid_conversation_system") is not False
+                    ),
+                    efforts=declared_efforts(info.get("cheese_efforts")),
                 )
             )
         return out
@@ -287,62 +312,53 @@ class LlmGateway:
         """Cumulative tokens/spend for one virtual KEY on one UTC day, **split
         by model**.
 
-        Grouping on the spend-log row's ``model`` field is what makes 「钱花在
-        哪个模型上」 answerable. The previous implementation summed every row
-        and threw the name away, so a project that mixed mimo and claude in one
-        day landed a single lump stamped with whatever ``settings.agent_model``
-        happened to be — mimo (and every non-default model) literally never
-        appeared in the dashboard's ``by_model``.
+        Read from LiteLLM's daily totals (`/user/daily/activity`), which it
+        keeps per key, model and UTC day from the same rows as its spend log.
+        ``breakdown.models`` names models the way a spend-log row does, which
+        is what checkpoints already carry; ``model_groups`` uses other names.
+        Only this key's share of each model is counted, so a gateway that
+        ignored the ``api_key`` filter could not bill the project for another
+        key's spend.
 
-        Rows with no ``model`` (or non-dict rows) fall under the empty name:
-        still counted, just not attributed. Returns ``None`` when the gateway
-        cannot be asked — NOT an empty dict. An unreachable gateway is unknown
-        spend, not zero spend, and the caller must preserve its checkpoint.
+        Summing the spend log row by row instead downloaded every row of the
+        day at each read: on dev on 2026-10-04 the busiest key had 25,045
+        rows, 238 MB that took 54 s, decoded on the event loop at the end of
+        every turn. The daily totals were 18.5 kB, read in 66 ms, and equal to
+        that sum for every model.
+
+        Returns ``None`` when the gateway cannot be asked — NOT an empty dict.
+        An unreachable gateway is unknown spend, not zero spend, and the
+        caller must preserve its checkpoint.
         """
+        hashed = hashlib.sha256(key.encode()).hexdigest()
         by: dict[str, ModelSpend] = {}
         try:
-            day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=UTC)
-            # Every row of the day, page by page. /spend/logs answers in one
-            # response but LiteLLM 1.103.3 cuts it to the newest 10,000 rows,
-            # and a busy key logs more than that in a day; a short sum would
-            # read as spend going backwards. Oldest first, so a row logged while
-            # the pages are read lands after them instead of shifting rows
-            # already read out of reach; a row a shift repeats is dropped by
-            # its request_id.
-            seen: set[str] = set()
             async with self._client() as client:
-                page = 1
-                while True:
-                    r = await client.get(
-                        f"{self._base}/spend/logs/v2",
-                        headers=self._headers,
-                        params={
-                            "api_key": hashlib.sha256(key.encode()).hexdigest(),
-                            "start_date": date,
-                            "end_date": (day + timedelta(days=1)).strftime("%Y-%m-%d"),
-                            "sort_by": "startTime",
-                            "sort_order": "asc",
-                            "page": page,
-                            "page_size": _SPEND_PAGE_SIZE,
-                        },
-                    )
-                    r.raise_for_status()
-                    body = r.json()
-                    rows = body.get("data") if isinstance(body, dict) else None
-                    if not isinstance(rows, list):
-                        raise ValueError("gateway spend response has no data list")
-                    for row in rows:
-                        if not isinstance(row, dict):
-                            continue
-                        request_id = row.get("request_id")
-                        if isinstance(request_id, str):
-                            if request_id in seen:
-                                continue
-                            seen.add(request_id)
-                        _add_row(by, row)
-                    if len(rows) < _SPEND_PAGE_SIZE:
-                        break
-                    page += 1
+                r = await client.get(
+                    f"{self._base}/user/daily/activity",
+                    headers=self._headers,
+                    params={
+                        "api_key": hashed,
+                        "start_date": date,
+                        "end_date": date,
+                        "page_size": 1000,
+                    },
+                )
+                r.raise_for_status()
+                body = r.json()
+            results = body.get("results") if isinstance(body, dict) else None
+            if not isinstance(results, list):
+                raise ValueError("gateway daily activity has no results list")
+            for day in results:
+                if not isinstance(day, dict) or day.get("date") != date:
+                    continue
+                models = (day.get("breakdown") or {}).get("models") or {}
+                for name, entry in models.items():
+                    mine = ((entry or {}).get("api_key_breakdown") or {}).get(hashed)
+                    if not isinstance(mine, dict):
+                        continue
+                    metrics = mine.get("metrics") or {}
+                    _add_row(by, {**metrics, "model": name})
         except Exception:  # noqa: BLE001
             logger.warning("gateway daily_spend_by_model failed", exc_info=True)
             return None
@@ -379,7 +395,7 @@ class ModelSpend:
 
 
 def _add_row(by: dict[str, ModelSpend], row: dict) -> None:
-    """Add one spend-log row to its model's running total."""
+    """Add one model's tokens and spend to its running total."""
     name = str(row.get("model") or "")
     prev = by.get(name) or ModelSpend(name, 0, 0, 0.0)
     by[name] = ModelSpend(
@@ -464,6 +480,15 @@ def _deltas(
     return out
 
 
+#: How far a model's day of spend may read below its checkpoint and still be
+#: the same total. Tokens are integers and compared exactly; spend is a float
+#: that LiteLLM sums in its own order, and a checkpoint summed in another order
+#: differs from it in the last bits (dev, 2026-10-04: 9.4626364 read against a
+#: checkpoint of 9.462636400000003). Compared exactly, that held back every
+#: charge of the project. A millionth of a cent is far below any real charge.
+_SPEND_EPSILON_USD = 1e-9
+
+
 def _regressed(cur: dict[str, ModelSpend], prev: dict[str, ModelSpend]) -> bool:
     """Has the cumulative read gone backwards — or lost a model we had?
 
@@ -485,7 +510,7 @@ def _regressed(cur: dict[str, ModelSpend], prev: dict[str, ModelSpend]) -> bool:
         if (
             c.prompt_tokens < p.prompt_tokens
             or c.completion_tokens < p.completion_tokens
-            or c.spend_usd < p.spend_usd
+            or c.spend_usd < p.spend_usd - _SPEND_EPSILON_USD
         ):
             return True
     return False

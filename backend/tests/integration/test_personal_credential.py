@@ -6,8 +6,7 @@ tool route (its tools act with the credential minted for each question,
 `test_delegated_credential`) — and nothing that opens a room or a project opens
 the model on a person's key.
 
-* the model route swaps in the person's own key, only while a question of that
-  conversation is being answered;
+* the model route swaps in the person's own key;
 * a room's endpoints, the admission route, a person's own API and the routes a
   question's tools use refuse it.
 """
@@ -15,18 +14,14 @@ the model on a person's key.
 import asyncio
 
 import pytest
-import redis as sync_redis
-from redis.asyncio import from_url
 
 from app.api.routes import assistant as assistant_route
 from app.api.routes import llm_proxy
-from app.core.config import settings
 from app.core.sandbox_auth import (
     SANDBOX_TOKEN,
     mint_personal_credential,
     mint_scoped_token,
 )
-from app.domain.agent.personal.service import busy_key
 from app.domain.assistant.models import AssistantGatewayKey
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project
@@ -40,18 +35,11 @@ def wired(client, monkeypatch):
         assistant_route, "async_session_factory", client.test_request_factory
     )
     monkeypatch.setattr(llm_proxy, "async_session_factory", client.test_request_factory)
-    monkeypatch.setattr(
-        llm_proxy, "get_redis_client", lambda: from_url(settings.redis_url)
-    )
     monkeypatch.setattr(llm_proxy.settings, "anthropic_base_url", "http://pool:4000")
     monkeypatch.setattr(llm_proxy.httpx, "AsyncClient", _FakeClient)
     # The test client sends the platform's secret on every request; a session
     # has no such thing.
     monkeypatch.delitem(client.headers, "X-Cheese-Token")
-    store = sync_redis.Redis.from_url(settings.redis_url)
-    for key in store.scan_iter("assistant:busy:*"):
-        store.delete(key)
-    return store
 
 
 def _person(client, handle: str) -> tuple[int, dict, str]:
@@ -71,27 +59,17 @@ def _remember_key(client, user_id: int, key: str) -> None:
     asyncio.run(save())
 
 
-def test_the_model_is_reached_on_the_persons_key_only_while_they_are_answered(
-    client, wired
-):
+def test_the_model_is_reached_on_the_persons_own_key(client, wired):
     me, _, conversation = _person(client, "asker")
     _remember_key(client, me, "sk-person")
     token = mint_personal_credential(user_id=me, conversation_id=conversation)
 
-    def ask():
-        _FakeClient.seen = {}
-        return client.post(
-            "/llm/v1/chat/completions",
-            headers={"Authorization": f"Bearer {token}"},
-            content=b'{"model":"m","messages":[]}',
-        )
-
-    # No question of the conversation is being answered: nothing to charge.
-    assert ask().status_code == 403
-    assert _FakeClient.seen == {}
-
-    wired.set(busy_key(conversation), "1", ex=60)
-    r = ask()
+    _FakeClient.seen = {}
+    r = client.post(
+        "/llm/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        content=b'{"model":"m","messages":[]}',
+    )
 
     assert r.status_code == 200, r.text
     sent = _FakeClient.seen["headers"]
@@ -108,7 +86,6 @@ def test_a_room_and_a_person_do_not_open_each_others_doors(client, wired):
         json={"project_id": project, "title": "Work"},
         headers={"X-Cheese-Token": SANDBOX_TOKEN},
     ).json()["data"]["id"]
-    wired.set(busy_key(conversation), "1", ex=60)
 
     # A room's endpoint, as the agent in that room would call it.
     note = client.post(

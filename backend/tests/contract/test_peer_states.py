@@ -444,17 +444,13 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
         def work_in_flight(self, topic_id, agent_handle=None):
             return None
 
-        async def replay(self, session, known_texts):
+        async def replay(self, session):
             if session is sessions[0]:
                 raise DeviceCallError(SOCKET_GONE)
             replayed.append(session)
 
-    async def _said():
-        return set()
-
     chat = ChatService.__new__(ChatService)
     chat._compute = Compute()
-    chat._said = lambda session: _said()
     chat._replays = {}
     chat._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
 

@@ -140,3 +140,47 @@ it('认不出的 kind 不当作页码算：画得出一句「一份引用」，�
   expect(container.textContent).toContain('clip.mp4')
   expect(container.textContent).not.toContain('undefined')
 })
+
+it('网页元素：报出选择器、标签文字和文件身份', () => {
+  const { container } = render(MessageQuote, {
+    props: {
+      quote: {
+        kind: 'web-element' as const,
+        path: 'report.html',
+        source: 'committed' as const,
+        version: 'v7',
+        task_id: null,
+        selector: 'body > main > p:nth-of-type(2)',
+        tag: 'p',
+        text: '这一句说错了',
+        rect: { x: 12, y: 40, w: 300, h: 24 },
+        viewport: { w: 1024, h: 768 },
+      },
+    },
+  })
+
+  expect(container.textContent).toContain('引用了页面上的一处')
+  expect(container.textContent).toContain('report.html')
+  expect(container.textContent).toContain('body > main > p:nth-of-type(2)')
+  expect(container.textContent).toContain('这一句说错了')
+})
+
+it('网页框选：只报网址，不装作有文件身份', () => {
+  const { container } = render(MessageQuote, {
+    props: {
+      quote: {
+        kind: 'web-region' as const,
+        url: 'https://app.tunnel.example/dashboard',
+        rect: { x: 0, y: 0, w: 200, h: 100 },
+        viewport: { w: 800, h: 600 },
+      },
+    },
+  })
+
+  expect(container.textContent).toContain('圈出了页面上的一块区域')
+  expect(container.textContent).toContain('https://app.tunnel.example/dashboard')
+  // 应用没有版本：不写文件身份那一行，也不冒出 undefined。
+  expect(container.querySelector('.message-quote__path')).toBeNull()
+  expect(container.querySelector('.message-quote__identity')).toBeNull()
+  expect(container.textContent).not.toContain('undefined')
+})

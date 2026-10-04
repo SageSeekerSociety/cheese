@@ -1,6 +1,6 @@
 """Where the live document lands: the collaboration service's store.
 
-Every new version of a room's living document arrives here, whoever made it —
+Every new version of a document arrives here, whoever made it —
 people typing in an editor, or a backend writer the service applied for it
 (``living_doc.collab.replace``). One transaction records the Yjs state, the
 Markdown exported from it, the version and its conversation event, and, for an
@@ -21,13 +21,14 @@ from app.api.response import ok
 from app.domain.agent.chat import ChatService
 from app.domain.block.documents import DocumentWriter, persisted_notice
 from app.domain.block.models import Block
-from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.living_doc.services import DocumentJournal, content_hash
+from app.domain.living_doc import collab
+from app.domain.living_doc.models import Document
+from app.domain.living_doc.schemas import document_snapshot
+from app.domain.living_doc.services import DocumentJournal
 from app.domain.topic import naming
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.doc_checks import living_doc_warnings
-from app.domain.topic.services import TopicService
 
 
 @dataclass
@@ -41,16 +42,15 @@ class Stored:
     merged: bool = False
 
 
-def snapshot(doc: Block, operation_id: uuid.UUID | None) -> dict:
-    out = BlockOut.model_validate(doc).model_dump(mode="json")
-    out["content_hash"] = content_hash(doc.content)
+def snapshot(doc: Document, operation_id: uuid.UUID | None) -> dict:
+    out = document_snapshot(doc)
     out["operation_id"] = str(operation_id) if operation_id else None
     return ok(out, warnings=living_doc_warnings(doc.content))
 
 
 async def store(
     db: AsyncSession,
-    room_id: uuid.UUID,
+    doc: Document,
     *,
     state: bytes,
     content: str | None,
@@ -73,15 +73,14 @@ async def store(
     ``suggestion_id``) without changing the text: no version, only the line
     that says so. ``requested_by`` is who an edit was made for.
     """
-    place = await TopicService(db).place_or_404(room_id)
     journal = DocumentJournal(db)
-    await journal.lock(room_id)
+    await journal.lock(doc.id)
     claim = None
     operation_id = None
     if operation is not None:
         operation_id = uuid.UUID(operation["operation_id"])
         claim = await journal.claim(
-            room_id=room_id,
+            document_id=doc.id,
             actor=operation["actor"],
             action=operation["action"],
             operation_id=operation_id,
@@ -89,7 +88,7 @@ async def store(
         )
     proposed = [e["suggestion_id"] for e in edits or [] if e.get("suggestion_id")]
     await journal.put_state(
-        room_id,
+        doc.id,
         state,
         suggestions,
         reasons={sid: reason for sid in proposed} if reason else None,
@@ -98,28 +97,18 @@ async def store(
         # A replayed operation: its version is already recorded. The state the
         # service sent still holds it, so keeping that state loses nothing.
         return Stored(answer=claim.receipt)
-    blocks = BlockRepository(db)
     writer = DocumentWriter(db, summarize_doc_change)
     if suggested:
         notice = await writer.suggest(
-            room_id=room_id,
-            project_id=place.project_id,
-            actor=actors[0],
-            suggestion_ids=proposed,
-            reason=reason,
+            doc, actor=actors[0], suggestion_ids=proposed, reason=reason
         )
-        doc = await blocks.doc_root(room_id)
         return Stored(
-            answer=snapshot(doc, None) if doc else {"doc_version": 0},
-            notice=notice,
-            merged=writer.notice_merged,
+            answer=snapshot(doc, None), notice=notice, merged=writer.notice_merged
         )
     if content is None:
-        doc = await blocks.doc_root(room_id)
-        return Stored(answer={"doc_version": doc.doc_version if doc else 0})
-    doc, notice = await writer.record(
-        room_id=room_id,
-        project_id=place.project_id,
+        return Stored(answer={"doc_version": doc.version})
+    recorded, notice = await writer.record(
+        doc,
         content=content,
         actors=actors,
         operation_id=operation_id,
@@ -127,29 +116,32 @@ async def store(
         requested_by=requested_by,
         edits=edits,
     )
-    changed = doc is not None
-    if doc is None:
-        doc = await blocks.doc_root(room_id)
+    changed = recorded is not None
     if claim is None or operation is None or operation_id is None:
         return Stored(
-            answer=snapshot(doc, None) if doc else {"doc_version": 0},
+            answer=snapshot(doc, None),
             notice=notice,
             changed=changed,
             merged=writer.notice_merged,
         )
-    if doc is None:
-        # An operation that wrote an empty document into a room that has none.
-        receipt = {"doc_version": 0, "operation_id": str(operation_id)}
-    else:
-        receipt = snapshot(doc, operation_id)
+    receipt = snapshot(doc, operation_id)
     await journal.finish(claim, receipt)
     return Stored(
         answer=receipt, notice=notice, changed=changed, merged=writer.notice_merged
     )
 
 
-async def announce(room_id: uuid.UUID, stored: Stored, chat: ChatService) -> None:
-    """After the commit: tell the room what the store changed."""
+async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
+    """After the commit: tell the document's open editors what the store
+    changed, and, for a room's document, the room."""
+    if stored.changed:
+        # The editors already hold the text; what refreshes on this frame is
+        # everything derived from the stored version: comment anchors, the
+        # last edit, the history.
+        await collab.tell(doc.id, {"type": "state", "resource": "doc"})
+    room_id = doc.room_id
+    if room_id is None:
+        return
     broker = get_broker()
     if stored.notice is not None:
         # An extended line is replaced where it stands on every open page.
@@ -163,8 +155,6 @@ async def announce(room_id: uuid.UUID, stored: Stored, chat: ChatService) -> Non
         if line := persisted_notice(stored.notice):
             await chat.notify_running_turn(room_id, line, blocks=[stored.notice.id])
     if stored.changed:
-        # The editors already hold the text; what refreshes on this frame is
-        # everything derived from the stored version — comment anchors and the
-        # overview.
+        # The room's overview shows what the document says.
         await broker.publish(str(room_id), {"type": "state", "resource": "doc"})
         naming.nudge(room_id, "signal")

@@ -21,6 +21,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'remove-att', index: number): void
+  (e: 'retry-att', index: number): void
   (e: 'clear-reply'): void
 }>()
 
@@ -57,6 +58,7 @@ function pinLeaving(el: Element) {
           :topic-id="topicId"
           :attachment="a"
           @remove="emit('remove-att', i)"
+          @retry="emit('retry-att', i)"
         />
       </TransitionGroup>
     </div>

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -11,6 +12,7 @@ from functools import partial
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
@@ -37,20 +39,21 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import (
     Supply,
     Visibility,
-    binding_visibility,
-    has_runnable_transport,
+    default_visibility,
+    sandbox_unavailable,
 )
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxLifecycle
-from app.domain.machine.models import (
-    GONE,
-    MAX_ENROLL_ATTEMPTS,
-    CloudHost,
-    CloudHostHome,
-    MachineStatus,
-)
 from app.domain.machine.progress import publish_line
+from app.domain.machine.sandbox_wait import (
+    SANDBOX_PREPARING,
+    SANDBOX_RESTORE_FAILED,
+    SANDBOX_WAKING,
+    _cloud_progress,
+    _home_moved,
+    _home_settled,
+)
 from app.domain.machine.services import (
     CloudKeepsFailing,
     CloudPoolFull,
@@ -63,6 +66,8 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.models import TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
+
+logger = logging.getLogger(__name__)
 
 
 def presentation(row):
@@ -88,19 +93,17 @@ def presentation(row):
     }
 
 
-async def _visibility_of(devices, device_id: str | None) -> Visibility | None:
-    """What an agent on this machine can see of it (``device.supply.
-    binding_visibility``): the whole machine, or its own sandbox. ``None`` for a
-    device id stands for an enrolled machine the platform picks when the
-    session leases, which is still one; ``None`` back is a machine that is gone.
-    """
-    supply = Supply.self_hosted
-    if device_id is not None:
-        device = await devices.get_device(device_id)
-        if device is None:
-            return None
-        supply = device.supply
-    return binding_visibility(supply)
+async def _visibility_of(devices, topic_id, device_id: str | None) -> Visibility | None:
+    """What an agent of room ``topic_id`` on this machine can see of it
+    (``DeviceService.room_visibility``): the whole machine, or its own sandbox.
+    ``None`` for a device id stands for an enrolled machine the platform picks
+    when the session leases, which binds nothing and so gets the default;
+    ``None`` back is a machine that is gone."""
+    if device_id is None:
+        return default_visibility()
+    if await devices.get_device(device_id) is None:
+        return None
+    return await devices.room_visibility(topic_id, device_id)
 
 
 async def session_machines(db, topic) -> list[dict]:
@@ -123,9 +126,13 @@ async def session_machines(db, topic) -> list[dict]:
         choice = (row.execution_request or {}).get("choice")
         visibility = None
         if row.work_lease:
-            visibility = await _visibility_of(devices, row.work_lease.get("device_id"))
+            visibility = await _visibility_of(
+                devices, topic.id, row.work_lease.get("device_id")
+            )
         elif choice and choice.get("profile") == "device":
-            visibility = await _visibility_of(devices, choice.get("device_id"))
+            visibility = await _visibility_of(
+                devices, topic.id, choice.get("device_id")
+            )
         out.append(
             {
                 **presentation(row),
@@ -174,7 +181,8 @@ async def project_distribution(db, project_id) -> dict:
     """
     cloud = 0
     on_devices: dict[str | None, dict] = {}
-    for _row, _topic, choice, device_id in await _placed_sessions(db, project_id):
+    devices = sql_device_service(db)
+    for _row, topic, choice, device_id in await _placed_sessions(db, project_id):
         if choice.get("profile") == "cloud":
             cloud += 1
             continue
@@ -186,18 +194,21 @@ async def project_distribution(db, project_id) -> dict:
                 "device_id": device_id,
                 "name": choice.get("name") if device_id else None,
                 "agents": 0,
+                "machine_access": False,
             },
         )
         entry["agents"] += 1
-    devices = sql_device_service(db)
+        # The machine is open to its agents when any room there was given it
+        # whole: access is chosen per room, not per machine.
+        visibility = await _visibility_of(devices, topic.id, device_id)
+        entry["machine_access"] |= visibility is Visibility.host
     listed = []
     for entry in on_devices.values():
         if entry["device_id"] is not None:
             device = await devices.get_device(entry["device_id"])
             if device is not None:
                 entry["name"] = device.name
-        visibility = await _visibility_of(devices, entry["device_id"])
-        listed.append({**entry, "machine_access": visibility is Visibility.host})
+        listed.append(entry)
     listed.sort(key=lambda entry: (-entry["agents"], entry["name"] or ""))
     return {"cloud": cloud, "devices": listed}
 
@@ -294,7 +305,7 @@ async def room_machine_visibility(db, topic, project_settings) -> Visibility | N
     device_id = choice.device_id or await _roommates_device(
         db, topic, str(topic.resource_id or topic.id)
     )
-    return await _visibility_of(sql_device_service(db), device_id)
+    return await _visibility_of(sql_device_service(db), topic.id, device_id)
 
 
 async def _session_teammate(db, project, handle: str):
@@ -400,7 +411,9 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     team = await db.get(Team, project.team_id)
     named = await _agent_name(db, project, topic, row.agent_handle)
     agent = named["agent_name"]
-    visibility = await _visibility_of(sql_device_service(db), device.device_id)
+    visibility = await _visibility_of(
+        sql_device_service(db), topic.id, device.device_id
+    )
     access = visibility is Visibility.host
     await deliver(
         db,
@@ -583,14 +596,26 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
 
 
 async def _start_executor(
-    hub, lease, *, device_id, project_id, work_resource, setup, sandbox
+    hub,
+    lease,
+    *,
+    device_id,
+    project_id,
+    work_resource,
+    setup,
+    sandbox,
+    platform_machine,
 ):
     """Bring a session's executor up on ``device_id`` and answer what it
-    reports: a running one on this release is prepared in place, anything else
-    (none running, another release) is installed, which starts it.
+    reports: a running one on this release, in a sandbox exactly when asked,
+    is prepared in place; anything else (none running, another release, the
+    room's access to the machine changed) is installed, which starts it.
 
-    ``sandbox``: whether it runs in a sandbox of its own, which is what an
-    ``isolated`` machine gives a session (`_sandboxed`)."""
+    ``sandbox``: whether it runs in a sandbox of its own, which is what a room
+    ``isolated`` on the machine gets (`_sandboxed`). ``platform_machine``: a
+    Cloud machine, where the install may add what a sandbox needs. Raises
+    ``launch.SandboxRefused`` when the machine cannot give the room its
+    sandbox."""
     if lease and lease.get("state"):
         try:
             running = await execution.call(lease, "ping", {}, hub=hub)
@@ -601,38 +626,58 @@ async def _start_executor(
         except RuntimeError:
             # Installation resumes the same resource, never a tool call.
             running = {}
-        if launch.can_prepare(running):
+        if launch.can_prepare(running, sandbox):
             return await execution.call(
                 lease,
                 "prepare",
-                launch.payload_for(
+                # Built in a thread: it reads the project's skills off disk and
+                # encodes them, on every tool call, and the event loop it would
+                # otherwise hold is the one answering every other request.
+                await asyncio.to_thread(
+                    launch.payload_for,
                     project_id,
                     uuid.UUID(work_resource),
                     setup,
                     running.get("files"),
                     sandbox=sandbox,
+                    platform_machine=platform_machine,
                 ),
                 hub=hub,
             )
     installed = await hub.exec(
         device_id,
         ["python3", "-"],
-        stdin=launch.script(
-            project_id, uuid.UUID(work_resource), setup, sandbox=sandbox
+        stdin=await asyncio.to_thread(
+            launch.script,
+            project_id,
+            uuid.UUID(work_resource),
+            setup,
+            sandbox=sandbox,
+            platform_machine=platform_machine,
         ),
         timeout=660,
     )
+    if (refusal := launch.refused(installed)) is not None:
+        raise refusal
     if installed.get("exit") != 0 or installed.get("truncated"):
         raise RuntimeError(installed.get("stderr") or "Executor setup failed")
     return json.loads(installed["stdout"])
 
 
-async def _sandboxed(db, device_id: str) -> bool:
-    """Whether a session's executor on ``device_id`` runs in a sandbox of its
-    own: on every machine whose sessions are ``isolated``, which the machine's
-    supply decides (``device.supply.binding_visibility``)."""
-    visibility = await sql_device_service(db).binding_visibility(device_id)
+async def _sandboxed(db, topic_id, device_id: str) -> bool:
+    """Whether a session of room ``topic_id``'s executor on ``device_id`` runs
+    in a sandbox of its own: whenever the room's access to that machine is
+    ``isolated`` (``DeviceService.room_visibility``), on Cloud machines and
+    enrolled ones alike."""
+    visibility = await sql_device_service(db).room_visibility(topic_id, device_id)
     return visibility is Visibility.isolated
+
+
+async def _platform_machine(db, device_id: str) -> bool:
+    """Whether the platform provisioned ``device_id`` (a Cloud machine), so
+    the install may add what a sandbox needs there."""
+    device = await sql_device_service(db).get_device(device_id)
+    return device is not None and device.supply is Supply.cloud
 
 
 async def _restart_executor(db, row, lease):
@@ -671,7 +716,8 @@ async def _restart_executor(db, row, lease):
         device_id=lease["device_id"],
         project_id=project.id,
         work_resource=work_resource,
-        sandbox=await _sandboxed(db, lease["device_id"]),
+        sandbox=await _sandboxed(db, topic.id, lease["device_id"]),
+        platform_machine=await _platform_machine(db, lease["device_id"]),
         setup=_executor_env(
             {"CHEESE_ENVIRONMENT": json.dumps(environment)},
             api=api,
@@ -872,12 +918,6 @@ async def _move_session(
     return warnings
 
 
-# What a tool waiting on its cloud sandbox is told.
-SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
-SANDBOX_WAKING = "沙箱正在唤醒；对话和平台工具仍可用。"
-SANDBOX_ERROR = "云端沙箱出错：供应方报告错误。对话和平台工具仍可用。"
-SANDBOX_RESTORE_FAILED = "沙箱没能从归档恢复，稍后会再试；对话和平台工具仍可用。"
-
 # The room names a machine whose owner has since unbound it. It cannot come back
 # under that id (a re-bind enrols a new one), so the room needs another choice.
 UNBOUND = "这个房间选的工作电脑已经解绑，需要重新选择工作电脑；对话和平台工具仍可用。"
@@ -1060,10 +1100,17 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             raise ForbiddenError("Device no longer serves this project")
         if await devices.get_hosted_device(selected.device_id) is None:
             raise ForbiddenError("Device is not hosted")
-        if not has_runnable_transport(
-            await devices.binding_visibility(selected.device_id), selected.supply
+        # A room meant to be isolated never runs over the whole machine
+        # instead: a machine whose system has no isolated environment yet
+        # refuses it here, saying what to do, and the install on the machine
+        # refuses the same way (`bootstrap.sandbox_argv`) for one this process
+        # has not heard from. The conversation and platform tools go on.
+        unavailable = sandbox_unavailable(hub.target(selected.device_id))
+        if unavailable is not None and await _sandboxed(
+            db, topic_id, selected.device_id
         ):
-            raise ForbiddenError("Device has no supported execution isolation")
+            await db.commit()
+            return {"unavailable": str(unavailable)}
     approver = project.owner_handle or ""
     if selected is not None:
         from app.domain.user.models import User
@@ -1151,7 +1198,8 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)
     api = await device_api_base(db, device_id, settings.connector_public_base)
-    sandbox = await _sandboxed(db, device_id)
+    sandbox = await _sandboxed(db, topic_id, device_id)
+    platform_machine = await _platform_machine(db, device_id)
     # Existing leases can outlive a deploy that changes the host's API address.
     # Ping/prepare must dial the current configured base, just like a new lease.
     if lease:
@@ -1193,104 +1241,207 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     actor_handle = actor.username
     project_id = topic.project_id
     await db.commit()
-    execution_token = bind_resource_token(
-        token, resource, session_id=str(session_id), lease_generation=generation
-    )
-    setup = _executor_env(
-        env,
-        api=api,
-        token=execution_token,
-        project_id=project_id,
-        topic_id=topic_id,
-        author=actor_handle,
-        work_resource=work_resource,
-    )
-    try:
-        if choice.profile == "cloud" and restoring is not None:
-            restored = await SandboxLifecycle(db, hub=hub).restore(restoring, device_id)
-            await publish_line(topic_id, restored)
-        info = await _start_executor(
-            hub,
-            lease,
-            device_id=device_id,
+    # The claim is taken; what installs under it runs as this process's own
+    # task on its own session, and the request only waits for it. A request
+    # that stops waiting — its time ran out (the route answers "preparing"),
+    # its caller left — leaves the installation running, and the claim ends
+    # with it: handed over as ready, or lapsed when it fails. Cancelled with
+    # the request instead, it left the claim standing for its full 660s with
+    # nobody installing, and every start of the session failed until then.
+    work = asyncio.ensure_future(
+        _install(
+            db.bind,
+            token=token,
+            resource=resource,
+            session_id=session_id,
+            generation=generation,
+            env=env,
+            api=api,
+            host_api=host_api,
             project_id=project_id,
+            topic_id=topic_id,
+            actor_handle=actor_handle,
             work_resource=work_resource,
-            setup=setup,
+            hub=hub,
+            lease=lease,
+            device_id=device_id,
             sandbox=sandbox,
+            platform_machine=platform_machine,
+            reservation=reservation,
+            holding=holding,
+            claim=claim,
+            now=now,
+            cloud_host_id=cloud_host.id if choice.profile == "cloud" else None,
+            restoring=restoring,
+            owner_device=selected is not None,
         )
-        target = {
-            **reservation,
-            "status": "ready",
-            "home": device_home_dir(project_id, uuid.UUID(work_resource)),
-            "state": info["state"],
-            "release": info.get("release"),
-            "upgrade_pending": info.get("upgrade_pending", False),
-            "desired_release": info.get("desired_release"),
-            "workspace": info["workspace"],
-            "mcp_servers": info["mcp_servers"],
-            "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
-        }
-        target.pop("claim")
-        target.pop("claim_until")
-        if setup.get("CHEESE_ENVIRONMENT"):
-            status = await environment_status(
-                hub, device_id, project_id, uuid.UUID(work_resource)
-            )
-            if status["state"] != "ready":
-                target["status"] = "preparing"
-                target["environment_status"] = status
-        if target["status"] == "ready":
-            await execution.call(target, "ping", {}, hub=hub)
-    except Exception as exc:
-        # Setup is resumable at the same physical allocation; it is not a
-        # dispatched model operation and must not create a replacement lease.
-        row = await sessions.by_id(session_id, lock=True)
-        if row and (row.work_lease or {}).get("claim") == claim:
-            row.work_lease = {**holding, "claim_until": now.isoformat()}
-        await db.commit()
-        if isinstance(exc, SandboxHomeError):
-            # The archive is still there; the next tool call tries again.
-            return {"unavailable": SANDBOX_RESTORE_FAILED}
-        if isinstance(exc, SandboxBusy):
-            # Another call of the session is restoring it: wait for that one.
-            return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
-        if isinstance(exc, DeviceOffline):
-            # The machine went away while its executor was being set up: the
-            # same answer as when it is away before setup starts (above).
-            if choice.profile == "cloud":
-                return _Preparing(
-                    SANDBOX_PREPARING,
-                    partial(_cloud_progress, db, hub, cloud_host.id),
-                )
-            return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
-        raise
-    current = await TopicService(db).lock_for_execution(topic_id)
-    row = await sessions.by_id(session_id, lock=True)
-    if (
-        row is None
-        or (row.work_lease or {}).get("claim") != claim
-        or str(current.resource_id or current.id) != resource
-    ):
-        raise ConflictError("Execution allocation changed while preparing")
-    row.work_lease = target
-    if selected is not None:
-        await tell_device_owner(
-            db, topic=current, row=row, device=selected, lease=target
-        )
-    ready_line = None
-    if choice.profile == "cloud" and target["status"] == "ready":
-        ready_line = await HostPool(db, hub=hub).tell_ready(session_id)
-    await db.commit()
-    await publish_line(topic_id, ready_line)
-    if target["status"] != "ready":
-        message = "项目环境尚未就绪；对话和平台工具仍可用。"
-        detail = {"environment_status": target.get("environment_status")}
-        if (detail["environment_status"] or {}).get("state") in ENVIRONMENT_SETTLED:
-            return {"unavailable": message, **detail}
+    )
+    _INSTALLS.add(work)
+    work.add_done_callback(_installed)
+    outcome = await asyncio.shield(work)
+    if outcome is _CLOUD_PREPARING:
         return _Preparing(
-            message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
+            SANDBOX_PREPARING, partial(_cloud_progress, db, hub, cloud_host.id)
         )
-    return {"target": target, "token": execution_token}
+    if outcome is _SANDBOX_BUSY:
+        # Another call of the session is restoring it: wait for that one.
+        return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
+    return outcome
+
+
+#: Installations a request started and may have stopped waiting for. Held
+#: here so the event loop keeps them until they end.
+_INSTALLS: set[asyncio.Future] = set()
+#: What `_install` answers when a Cloud machine dropped during setup; the
+#: request turns it into a wait on its own session.
+_CLOUD_PREPARING = object()
+#: What it answers when another call of the session is restoring its sandbox.
+_SANDBOX_BUSY = object()
+
+
+def _installed(work: asyncio.Future) -> None:
+    _INSTALLS.discard(work)
+    if not work.cancelled() and work.exception() is not None:
+        # Whoever asked may have stopped waiting; the claim has already lapsed
+        # (`_install`), so the next attempt starts over.
+        logger.warning("executor installation failed", exc_info=work.exception())
+
+
+async def _install(
+    bind,
+    *,
+    token,
+    resource,
+    session_id,
+    generation,
+    env,
+    api,
+    host_api,
+    project_id,
+    topic_id,
+    actor_handle,
+    work_resource,
+    hub,
+    lease,
+    device_id,
+    sandbox,
+    platform_machine,
+    reservation,
+    holding,
+    claim,
+    now,
+    cloud_host_id,
+    restoring,
+    owner_device,
+):
+    """Bring the session's executor up under ``claim`` and record the outcome."""
+    async with AsyncSession(bind, expire_on_commit=False) as db:
+        sessions = AgentSessionService(db)
+        execution_token = bind_resource_token(
+            token, resource, session_id=str(session_id), lease_generation=generation
+        )
+        setup = _executor_env(
+            env,
+            api=api,
+            token=execution_token,
+            project_id=project_id,
+            topic_id=topic_id,
+            author=actor_handle,
+            work_resource=work_resource,
+        )
+        try:
+            if restoring is not None:
+                # An archived sandbox comes back to its new host before the
+                # executor starts in it.
+                restored = await SandboxLifecycle(db, hub=hub).restore(
+                    restoring, device_id
+                )
+                await publish_line(topic_id, restored)
+            info = await _start_executor(
+                hub,
+                lease,
+                device_id=device_id,
+                project_id=project_id,
+                work_resource=work_resource,
+                setup=setup,
+                sandbox=sandbox,
+                platform_machine=platform_machine,
+            )
+            target = {
+                **reservation,
+                "status": "ready",
+                "home": device_home_dir(project_id, uuid.UUID(work_resource)),
+                "state": info["state"],
+                "release": info.get("release"),
+                "upgrade_pending": info.get("upgrade_pending", False),
+                "desired_release": info.get("desired_release"),
+                "workspace": info["workspace"],
+                "mcp_servers": info["mcp_servers"],
+                "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
+            }
+            target.pop("claim")
+            target.pop("claim_until")
+            if setup.get("CHEESE_ENVIRONMENT"):
+                status = await environment_status(
+                    hub, device_id, project_id, uuid.UUID(work_resource)
+                )
+                if status["state"] != "ready":
+                    target["status"] = "preparing"
+                    target["environment_status"] = status
+            if target["status"] == "ready":
+                await execution.call(target, "ping", {}, hub=hub)
+        except Exception as exc:
+            # Setup is resumable at the same physical allocation; it is not a
+            # dispatched model operation and must not create a replacement lease.
+            row = await sessions.by_id(session_id, lock=True)
+            if row and (row.work_lease or {}).get("claim") == claim:
+                row.work_lease = {**holding, "claim_until": now.isoformat()}
+            await db.commit()
+            if isinstance(exc, launch.SandboxRefused):
+                # The machine cannot make the room's sandbox, and said why.
+                return {"unavailable": str(exc)}
+            if isinstance(exc, SandboxHomeError):
+                # The archive is still there; the next tool call tries again.
+                return {"unavailable": SANDBOX_RESTORE_FAILED}
+            if isinstance(exc, SandboxBusy):
+                return _SANDBOX_BUSY
+            if isinstance(exc, DeviceOffline):
+                # The machine went away while its executor was being set up: the
+                # same answer as when it is away before setup starts (above).
+                if cloud_host_id is not None:
+                    return _CLOUD_PREPARING
+                return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
+            raise
+        current = await TopicService(db).lock_for_execution(topic_id)
+        row = await sessions.by_id(session_id, lock=True)
+        if (
+            row is None
+            or (row.work_lease or {}).get("claim") != claim
+            or str(current.resource_id or current.id) != resource
+        ):
+            raise ConflictError("Execution allocation changed while preparing")
+        row.work_lease = target
+        device = (
+            await sql_device_service(db).get_device(device_id) if owner_device else None
+        )
+        if device is not None:
+            await tell_device_owner(
+                db, topic=current, row=row, device=device, lease=target
+            )
+        ready_line = None
+        if cloud_host_id is not None and target["status"] == "ready":
+            ready_line = await HostPool(db, hub=hub).tell_ready(session_id)
+        await db.commit()
+        await publish_line(topic_id, ready_line)
+        if target["status"] != "ready":
+            message = "项目环境尚未就绪；对话和平台工具仍可用。"
+            detail = {"environment_status": target.get("environment_status")}
+            if (detail["environment_status"] or {}).get("state") in ENVIRONMENT_SETTLED:
+                return {"unavailable": message, **detail}
+            return _Preparing(
+                message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
+            )
+        return {"target": target, "token": execution_token}
 
 
 async def _another_attempt() -> bool:
@@ -1307,58 +1458,3 @@ async def _claim_moved(db, session_id, claim) -> bool:
         return True
     until = lease.get("claim_until")
     return not until or datetime.fromisoformat(until) <= datetime.now(UTC)
-
-
-async def _home_settled(db, session_id) -> bool:
-    """Whatever was moving the session's home has finished, or given up."""
-    busy = await db.scalar(
-        select(CloudHostHome.busy_until).where(
-            CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
-        )
-    )
-    return busy is None or busy <= datetime.now(UTC)
-
-
-async def _home_moved(db, session_id) -> bool:
-    """The sleeping home has left the host that had no slot for it, or was
-    woken there after all."""
-    home = (
-        await db.execute(
-            select(CloudHostHome.host_id, CloudHostHome.stopped_at).where(
-                CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
-            )
-        )
-    ).one_or_none()
-    return home is None or home.host_id is None or home.stopped_at is None
-
-
-async def _cloud_progress(db, hub, host_id) -> str | bool:
-    """Where the host of the session's sandbox is on its way to being usable."""
-    host = (
-        await db.execute(
-            select(
-                CloudHost.status,
-                CloudHost.device_id,
-                CloudHost.enroll_attempts,
-                CloudHost.released_at,
-            ).where(CloudHost.id == host_id)
-        )
-    ).one_or_none()
-    if host is None or host.released_at:
-        # The pool let go of it; the next attempt places the session again.
-        return True
-    if host.device_id is None:
-        if host.status == MachineStatus.error or (
-            (host.enroll_attempts or 0) >= MAX_ENROLL_ATTEMPTS
-        ):
-            # Failed while being built: the next attempt places the session on
-            # another host.
-            return True
-        return False
-    if host.status == MachineStatus.error:
-        # Enrolled, so the session's work may be on it: it is not replaced.
-        return SANDBOX_ERROR
-    if host.status in GONE:
-        # Gone upstream: the next attempt forgets it and places the session.
-        return True
-    return hub.is_online(host.device_id)

@@ -34,27 +34,22 @@ def test_market_lists_ai_and_compute_pools(client):
 
 
 def test_market_surfaces_the_whole_machine_visibility_choice_with_its_warning(client):
-    """#282 §四 / #358: visibility is a catalog choice the platform SPEAKS, not a
+    """#282 §四: visibility is a catalog choice the platform SPEAKS, not a
     silent behaviour — a picker reads the warning straight from the catalog rather
     than the platform granting whole-machine access quietly.
 
-    The default is whichever 档 can actually run. This test used to assert that
-    `isolated` was the default AND undeployed, which is the contradiction #358's
-    step-1 comment describes: the picker said a topic was boxed while
-    `resolve_pinned_device` bound it to the whole machine. `host` is honestly the
-    default until step 2 ships `isolated`'s transport, at which point both this
-    catalogue and the resolver move together — they read one function."""
+    Both run; the isolated one is the default (#2320), and the whole machine is
+    what a machine's owner gives a room."""
     data = client.get("/market/pools").json()["data"]
     vis = {v["id"]: v for v in data["visibility"]}
     assert {v["kind"] for v in data["visibility"]} == {"visibility"}
 
-    assert vis["isolated"]["available"] is False  # transport is #358 step 2
-    assert vis["isolated"]["default"] is False  # ...so it cannot be the default
-
+    assert vis["isolated"]["available"] is True
+    assert vis["isolated"]["default"] is True
     assert vis["host"]["available"] is True
-    assert vis["host"]["default"] is True  # the only 档 with a transport today
+    assert vis["host"]["default"] is False
 
-    # The invariant that outlives today's answer: exactly one default, and it runs.
+    # Exactly one default, and it runs.
     defaults = [v for v in data["visibility"] if v["default"]]
     assert len(defaults) == 1 and defaults[0]["available"] is True
     # The exact honest UI line #282 drafted, so the badge/tooltip copy is one source.

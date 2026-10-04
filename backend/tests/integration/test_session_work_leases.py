@@ -121,6 +121,7 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         }
 
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda device: True,
         reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),
@@ -142,6 +143,8 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
 
             return {
                 "capabilities": ["prepare"],
+                # Installed isolated, as a room nobody gave the machine is.
+                "sandbox": True,
                 "protocol_version": runtime.PROTOCOL_VERSION,
                 "files": {
                     name: hashlib.sha256(value.encode()).hexdigest()
@@ -595,6 +598,7 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
         "mcp_servers": [],
     }
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -615,6 +619,8 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
                 return {"capabilities": ["prepare"], "files": {}}
             return {
                 "capabilities": ["prepare"],
+                # Installed isolated, as a room nobody gave the machine is.
+                "sandbox": True,
                 "protocol_version": runtime.PROTOCOL_VERSION,
                 "files": {
                     name: hashlib.sha256(value.encode()).hexdigest()
@@ -672,8 +678,9 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             assert time.monotonic() < deadline, "the preview helper never started"
             time.sleep(0.01)
         assert args[args.index("--url") + 1] == launch_env["CHEESE_PREVIEW_URL"]
-    # A self-hosted machine's sessions see it whole: no sandbox yet (#2320).
-    assert launch_options == {"sandbox": False}
+    # A room nobody gave the machine runs isolated there (#2320), and the
+    # machine is a person's: nothing is installed on it for the sandbox.
+    assert launch_options == {"sandbox": True, "platform_machine": False}
     assert launch_env["CHEESE_AUTHOR"] == actor_handle
     assert launch_env["GIT_AUTHOR_NAME"] == actor_handle
     assert launch_env["GIT_AUTHOR_EMAIL"] == f"{actor_handle}@agent.cheese.local"
@@ -968,6 +975,7 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     monkeypatch.setattr(executor_launch, "script", capture_script)
     info = {"state": "/w/state", "workspace": "/w/work", "mcp_servers": []}
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -1055,6 +1063,7 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
 
     info = {"state": "/executor/state", "workspace": "/work", "mcp_servers": []}
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -1071,6 +1080,8 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
                     await asyncio.sleep(0.01)
             return {
                 "capabilities": ["prepare"],
+                # Installed isolated, as a room nobody gave the machine is.
+                "sandbox": True,
                 "protocol_version": runtime.PROTOCOL_VERSION,
                 "files": {
                     name: hashlib.sha256(value.encode()).hexdigest()
@@ -1104,6 +1115,138 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
         assert recheck.result(10).status_code == 200
     assert during.status_code == 200, during.text
     assert during.json() == {"ran": "control"}
+
+
+async def test_a_recheck_that_outlasts_its_request_leaves_the_session_startable(
+    client, monkeypatch
+):
+    """A re-check of held hands can take longer than the request asking for
+    it, which then answers "still preparing". Only one preparation runs at a
+    time, and once it is over a session starting with no wait at all — how a
+    session takes its leased machine at start — gets the hands, instead of
+    being refused as "being prepared" until the claim runs out by the clock."""
+    import asyncio
+    import hashlib
+    import threading
+    import time
+
+    from app.domain.agent.harness.claude_code import executor_launch
+    from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+    project = post_project(
+        client, json={"name": "Session hands"}, owner="alice"
+    ).json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("ada"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        topic.compute_config = {
+            "name": "ada",
+            "profile": "device",
+            "device_id": device.device_id,
+        }
+        session = await AgentSessionService(db).ensure(
+            topic_id, "cheese", harness="claude-code"
+        )
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session.id),
+        )
+        session_id = session.id
+        await db.commit()
+
+    info = {"state": "/executor/state", "workspace": "/work", "mcp_servers": []}
+    # One request waits this long; the slow preparation below outlasts it.
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 0.5)
+    slow, release = threading.Event(), threading.Event()
+    preparing = {"now": 0, "most": 0}
+
+    async def held(answer):
+        # A preparation of the executor, in place or by installing it again:
+        # slow while `slow` is set, and counted while it runs.
+        preparing["now"] += 1
+        preparing["most"] = max(preparing["most"], preparing["now"])
+        try:
+            while slow.is_set() and not release.is_set():
+                await asyncio.sleep(0.01)
+        finally:
+            preparing["now"] -= 1
+        return answer
+
+    async def install(*_args, **_kwargs):
+        return await held({"exit": 0, "stdout": json.dumps(info)})
+
+    hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
+        is_online=lambda _: True,
+        exec=AsyncMock(side_effect=install),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+
+    async def execute(target, method, params, **kwargs):
+        if method == "ping":
+            return {
+                "capabilities": ["prepare"],
+                "protocol_version": runtime.PROTOCOL_VERSION,
+                "files": {
+                    name: hashlib.sha256(value.encode()).hexdigest()
+                    for name, value in executor_launch.file_sources().items()
+                },
+            }
+        if method == "prepare":
+            return await held(info)
+        return {"ran": method}
+
+    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=execute))
+    lease_path = f"/topics/{topic_id}/sessions/{session_id}/work-lease"
+
+    def ask(**body):
+        response = client.post(lease_path, headers={"X-Cheese-Token": token}, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    assert "target" in ask()
+    slow.set()
+    assert ask(timeout=0.001).get("preparing") is True
+    # Still being prepared: a second request does not prepare alongside it.
+    assert ask(timeout=0.001).get("preparing") is True
+    release.set()
+
+    started = None
+    give_up = time.monotonic() + 10
+    while started is None and time.monotonic() < give_up:
+        answer = ask(timeout=0.001)
+        started = answer if "target" in answer else None
+        if started is None:
+            await asyncio.sleep(0.1)
+    assert started is not None, answer
+    assert preparing["most"] == 1
 
 
 async def test_an_own_machine_that_just_dropped_is_called_not_refused(
@@ -1170,6 +1313,7 @@ async def test_an_own_machine_that_just_dropped_is_called_not_refused(
         }
 
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda _device: False,
         reconnecting=lambda _device: True,
         exec=AsyncMock(side_effect=DeviceOffline(device_id)),

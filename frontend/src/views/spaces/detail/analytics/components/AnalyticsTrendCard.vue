@@ -20,7 +20,7 @@
       </div>
     </div>
 
-    <p v-else class="chart-empty">{{ t('spaces.analytics.chart.noTrend') }}</p>
+    <BaseEmptyState v-else size="inline" :title="t('spaces.analytics.chart.noTrend')" />
   </v-card>
 </template>
 
@@ -29,6 +29,8 @@ import type { AnalyticsTimeSeriesPoint } from '@/network/api/spaces/types'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 
 const props = defineProps<{
   title: string
@@ -126,12 +128,5 @@ h3 {
   display: flex;
   justify-content: space-between;
   margin-top: 8px;
-}
-
-.chart-empty {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
 }
 </style>

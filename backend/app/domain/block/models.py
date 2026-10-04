@@ -1,13 +1,9 @@
-"""Block model — 万物皆块 (spec §5).
+"""Block model: what is said and shown in a room.
 
-Every piece of content (a message, a doc node, an attachment) is a
-Block. Blocks live in one pool per project and are organized by two trees:
-
-- reply_to     → conversation tree ("how it was discussed")
-- struct_parent → document tree ("how it was organized")
-
-plus refs[] (citations) and a timeline (created_at). One block can appear in
-both trees at once. Phase 0 stores the structure; richer views come later.
+Every message, attachment, event, comment and preview pointer is a Block.
+Blocks live in one pool per project; ``reply_to`` makes the conversation tree,
+``refs`` cite other things, and ``created_at`` is the timeline. Documents are
+not blocks: they live in ``app.domain.living_doc``.
 """
 
 import enum
@@ -18,10 +14,8 @@ from sqlalchemy import (
     JSON,
     DateTime,
     Enum,
-    Float,
     ForeignKey,
     Index,
-    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -41,16 +35,6 @@ from app.domain.common import Timestamps, UuidPk
 
 class BlockKind(enum.StrEnum):
     message = "message"
-    doc = "doc"
-    # B1: a structured node inside the living doc's block tree (heading/paragraph/
-    # list/code/quote). The `doc` block stays the canonical markdown; doc_node
-    # blocks are its struct_parent children, carrying stable ids for downstream
-    # anchoring (cross-view highlight, comments, live refs). Excluded from the
-    # conversation timeline.
-    doc_node = "doc_node"
-    # B4: an inline comment anchored to a doc node (reply_to = the doc_node id).
-    # Shown in the document margin, not the conversation timeline.
-    comment = "comment"
     attachment = "attachment"
     event = "event"
     # A renderable product 芝士 explicitly points at (spec §9.1): content = the
@@ -296,20 +280,6 @@ class Block(UuidPk, Timestamps, Base):
     reply_to: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("blocks.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    # Document tree: position in the structured document.
-    struct_parent: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("blocks.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    # B1 doc-as-block-tree: structural node type (heading/paragraph/list/code/
-    # quote) and sibling order under struct_parent. Only set on kind=doc nodes.
-    node_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    struct_order: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    # B4 段落评论: the exact text a comment was selected on (Feishu-style). The
-    # comment still anchors to its paragraph via reply_to; this preserves the quoted
-    # span for display. Only set on kind=comment blocks.
-    anchor_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     # Render-by-type (spec §9.1): the mimeType of an artifact block — the host
     # picks a renderer from this, never from parsing the AI's text. Only set on
     # kind=artifact blocks (e.g. text/html, image/svg+xml).
@@ -319,21 +289,6 @@ class Block(UuidPk, Timestamps, Base):
     # the whole message after the upload had already returned 200. RFC 6838 caps
     # the type and subtype names at 127 each.
     mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    # How many times the living doc has been written (kind=doc only; every other
-    # block sits at 1 and never moves). A writer sends the version it read and
-    # the update is conditional on it, so 芝士 overwriting the whole doc from a
-    # copy it took ten minutes ago is refused instead of erasing what a person
-    # wrote in between — 整块覆盖 is the only way this doc is ever written, which
-    # makes every stale write a total loss.
-    #
-    # A counter rather than a content hash (the version workspace files carry):
-    # this one is said out loud. A person's edit pushes 「文档已更新到第 7 版」
-    # into the running session, and 第 7 版 is a thing 芝士 can compare against
-    # what it holds; a hash is not.
-    doc_version: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="1", default=1
-    )
 
     # The agent turn that produced this block (review R4): groups a turn's blocks
     # for traceability / recovery / the collaboration-trajectory dataset. Null for

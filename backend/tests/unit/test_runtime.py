@@ -763,6 +763,9 @@ async def test_orphan_turns_resume_after_restart(db_factory, monkeypatch):
         def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
+        def retire_unheard(self, turn_ids):
+            pass
+
         async def turns_that_produced_something(self, turn_ids):
             return set()
 
@@ -823,6 +826,9 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
 
         def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
+
+        def retire_unheard(self, turn_ids):
+            pass
 
         async def turns_that_produced_something(self, turn_ids):
             return set()
@@ -896,6 +902,9 @@ async def test_stale_orphan_is_dropped_loudly(db_factory, monkeypatch):
 
         def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
+
+        def retire_unheard(self, turn_ids):
+            pass
 
         async def turns_that_produced_something(self, turn_ids):
             return set()
@@ -1637,6 +1646,9 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(
         def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
+        def retire_unheard(self, turn_ids):
+            pass
+
         async def turns_that_produced_something(self, turn_ids):
             return set()
 
@@ -1737,6 +1749,9 @@ async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
         def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
+        def retire_unheard(self, turn_ids):
+            pass
+
         async def turns_that_produced_something(self, turn_ids):
             return set()
 
@@ -1778,6 +1793,9 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
 
         def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
+
+        def retire_unheard(self, turn_ids):
+            pass
 
         async def turns_that_produced_something(self, turn_ids):
             return set()

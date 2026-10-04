@@ -9,6 +9,7 @@ import { computed, ref } from 'vue'
 import { ApiError, setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
 import { choiceDetail, choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
+import { renderNoticeMessage } from '../lib/noticeText'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 
@@ -32,13 +33,36 @@ function online(choice: ComputeChoice): string {
   if (!device) return t('work.roomMachine.removed')
   return device.online ? t('work.roomMachine.online') : t('work.roomMachine.offline')
 }
-async function pick(choice: ComputeChoice, abandonUnpushed = false) {
+// 房间在自己登记的那台机器上能看到什么：隔离环境（默认），或者整台机器——只有
+// 机主本人能给。说的是房间点了名、或者第一轮已经钉下的那一台。
+const machine = computed(() => {
+  if (props.profile.current !== 'device') return null
+  const id = props.profile.device_id ?? props.profile.choice.device_id
+  return props.profile.devices.find((d) => d.device_id === id) ?? null
+})
+const access = computed(() => props.profile.visibility.effective)
+const isolationUnavailable = computed(() =>
+  machine.value?.sandbox_unavailable ? renderNoticeMessage(machine.value.sandbox_unavailable, '') : ''
+)
+function setAccess(visibility: 'host' | 'isolated') {
+  const device = machine.value
+  if (!device || visibility === access.value) return
+  // Naming the machine is part of giving a room access to it.
+  const choice: ComputeChoice = props.profile.choice.device_id
+    ? props.profile.choice
+    : { ...props.profile.choice, profile: 'device', name: device.name, device_id: device.device_id }
+  void pick(choice, false, visibility)
+}
+async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?: 'host' | 'isolated') {
   saving.value = true
   error.value = ''
   proposal.value = ''
   unreachable.value = null
   try {
-    const saved = await setTopicComputeChoice(props.topicId, choice, abandonUnpushed ? { abandonUnpushed } : {})
+    const saved = await setTopicComputeChoice(props.topicId, choice, {
+      ...(abandonUnpushed ? { abandonUnpushed } : {}),
+      ...(visibility ? { visibility } : {}),
+    })
     // 变提议时房间这一项没有变 —— 不说话就等于这次点击石沉大海。菜单留着不收，
     // 那句话就在他刚按下的那个控件上。
     if (saved.proposal) {
@@ -88,6 +112,37 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false) {
           </div>
         </div>
       </button>
+      <template v-if="machine">
+        <div class="cp-heading cp-access">{{ t('work.roomMachine.accessHeading', { name: machine.name }) }}</div>
+        <button
+          type="button"
+          class="cp-row"
+          data-testid="room-machine-isolated"
+          :disabled="saving || !!isolationUnavailable"
+          @click="setAccess('isolated')"
+        >
+          <v-icon size="18">{{ access === 'isolated' ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank' }}</v-icon>
+          <div class="cp-body">
+            <div class="cp-label">{{ t('work.roomMachine.isolated') }}</div>
+            <div class="cp-hint">{{ isolationUnavailable || t('work.roomMachine.isolatedHint') }}</div>
+          </div>
+        </button>
+        <button
+          type="button"
+          class="cp-row"
+          data-testid="room-machine-host"
+          :disabled="saving || !machine.owned"
+          @click="setAccess('host')"
+        >
+          <v-icon size="18">{{ access === 'host' ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank' }}</v-icon>
+          <div class="cp-body">
+            <div class="cp-label">{{ t('work.roomMachine.host') }}</div>
+            <div class="cp-hint">
+              {{ machine.owned ? t('work.roomMachine.wholeMachineNotice') : t('work.roomMachine.hostOwnerOnly') }}
+            </div>
+          </div>
+        </button>
+      </template>
       <button type="button" class="cp-row" :disabled="saving" @click="more = !more">
         <v-icon size="18">{{ more ? 'mdi-chevron-up' : 'mdi-chevron-right' }}</v-icon>
         {{ t('work.roomMachine.more') }}
@@ -167,6 +222,11 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false) {
 }
 .cp-row:disabled {
   cursor: wait;
+}
+.cp-access {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
 }
 .cp-body {
   flex: 1;

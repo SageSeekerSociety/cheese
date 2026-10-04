@@ -3,7 +3,7 @@ import type { ProjectMemberRow, TopicMemberRow } from '@/cx_types'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { setLocale } from '@/i18n'
-import { agentNames, memberName, teammateName } from '@/lib/agentNames'
+import { agentIdentities, agentNames, memberName, teammateName } from '@/lib/agentNames'
 
 afterEach(() => setLocale('zh-CN'))
 
@@ -36,5 +36,20 @@ describe('a teammate nobody has named', () => {
       'Cheese',
       'Cheese',
     ])
+  })
+})
+
+describe('a teammate’s two handles', () => {
+  const project = [
+    { user_handle: 'cheese-a1', instance_handle: 'cheese', agent: true, name: '小知', name_source: 'human' },
+    { user_handle: 'cheese-b2', instance_handle: 'cheese-kimi', agent: true, name: '芝士K', name_source: 'human' },
+  ] as ProjectMemberRow[]
+
+  it('name one person, so neither is drawn as two', () => {
+    const identities = agentIdentities([], project)
+
+    expect(identities.get('cheese')).toBe('cheese-a1')
+    expect(identities.get('cheese-kimi')).toBe('cheese-b2')
+    expect(identities.get('cheese-a1')).toBe('cheese-a1')
   })
 })

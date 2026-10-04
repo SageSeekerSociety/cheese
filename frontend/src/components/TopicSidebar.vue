@@ -40,6 +40,7 @@ import TransferProjectDialog from './TransferProjectDialog.vue'
 import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -48,13 +49,18 @@ const props = defineProps<{
   topics: Topic[]
   selectedTopicId: string | null
   loadingTopics: boolean
+  /** 话题清单没读到时服务端给的原因；有值就地显示失败 + 重试，不画骨架。 */
+  error?: string | null
   creatingTopic?: boolean
   // Which 项目文档 is open in the main area ('charter'|'weeklies'|'memory'),
   // or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
   activeDocs?: string | null
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
+  // 静音的房间已经被调用处去掉了（store.badgeUnreadMap）。
   unreadMap?: Record<string, number>
+  /** 这间房我静音了没有：行上画一个静音标记。 */
+  mutedOf?: (topicId: string) => boolean
   // 私聊未读: {peerHandle: count}, `cheese` = 和芝士那一间。侧栏只用它的**总数**，
   // 挂在「成员」那一行上；是谁找你在成员页里说（每个人的私聊按钮上各带各的）。
   // 和 unreadMap 分开是因为私聊是按对方 handle 编址的，没有话题 id。
@@ -71,8 +77,11 @@ const emit = defineEmits<{
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
+  (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
+  // 话题清单读失败后那颗「重试」：让拥有这份数据的父级再读一次。
+  (e: 'retry'): void
   // 已归档那一组里行尾的「取消归档」。
   (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
@@ -467,8 +476,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :private-unread-total="privateUnreadTotal"
             :page="page === true"
             :unread-of="unreadOf"
+            :muted-of="mutedOf"
+            :root-actions="rootTopic ? actionsFor(rootTopic).map(menuActionOf) : []"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
+            @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
             @open-page="openProjectPage"
             @hover-page="hoverProjectPage"
@@ -492,7 +504,19 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             />
           </div>
 
-          <LoadingSkeleton v-if="loadingTopics" variant="list" class="rail-skel" />
+          <!-- Topic list failed to load: replace this block in place with an error
+               and a retry (docs/design-system.md §3.10), not a toast that is gone in
+               seconds — once it is, this block looks exactly like "no topics" and
+               you cannot tell broken from empty. -->
+          <BaseLoadError
+            v-if="error"
+            :title="t('shell.workspaceErrors.loadTopics')"
+            :error="error"
+            class="rail-error"
+            @retry="emit('retry')"
+          />
+
+          <LoadingSkeleton v-else-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
@@ -557,11 +581,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                       :renaming="renamingTopicId === item.topic.id"
                       :menu-open="actionsMenuFor === item.topic.id"
                       :stalled="stalledOf(item.topic.id)"
+                      :muted="mutedOf?.(item.topic.id) ?? false"
                       :marks="memberMarks(item.topic)"
                       :toggle-title="toggleTitle(item)"
                       :actions="actionsFor"
                       @select="emit('select-topic', $event)"
                       @hover="emit('hover-topic', $event)"
+                      @press="emit('press-topic', $event)"
                       @leave="emit('leave-topic')"
                       @toggle-collapse="toggleCollapse"
                       @commit-rename="(draft: string) => commitRename(item.topic, draft)"
@@ -588,8 +614,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :page="page === true"
             :unread="archivedUnread > 0"
             :unread-of="unreadOf"
+            :muted-of="mutedOf"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
+            @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
             @unarchive-topic="emit('unarchive-topic', $event)"
           />
@@ -625,6 +653,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
    这条 rail 上「再离底一档」的那个值（选中行用的也是它），在两个主题下都看得见。 */
 .rail-skel {
   --skel-bone: var(--line-2);
+}
+
+/* 就地报错和上面那一列话题对齐（subhead 的内距是 16px），右边留出一点收口。 */
+.rail-error {
+  padding: 8px 16px 4px;
 }
 
 /* 行换位置、进出（见模板里 TransitionGroup 那段）。走掉的那一行脱离文档流，否则

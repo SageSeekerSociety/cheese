@@ -8,7 +8,7 @@ import type { Block } from '../cx_types'
 
 import { describe, expect, it } from 'vitest'
 
-import { collapseNotices } from './platformNotice'
+import { collapseNotices, rendersInRoom } from './platformNotice'
 
 function msg(id: string, content: string, meta: Record<string, unknown> | null = null): Block {
   return {
@@ -46,5 +46,18 @@ describe('聊天区里不露面的消息', () => {
     const rows = collapseNotices([msg('a', '这条要露面', { in_room: true })])
 
     expect(rows).toHaveLength(1)
+  })
+})
+
+// 时间线窗口（`useTimeline`）只装画得出来的块，靠的就是 `rendersInRoom`。它必须和
+// `collapseNotices` 是同一条判据，否则窗口里会混进占额度却不画的块。
+describe('rendersInRoom 说的是「这一块画得出来吗」', () => {
+  it('露面的消息画得出来，不露面的画不出来', () => {
+    expect(rendersInRoom(msg('a', '一条正常消息'))).toBe(true)
+    expect(rendersInRoom(msg('b', '藏起来的', { in_room: false }))).toBe(false)
+  })
+
+  it('不在白名单里的块画不出来', () => {
+    expect(rendersInRoom({ id: 'x', kind: 'unknown_kind' } as unknown as Block)).toBe(false)
   })
 })

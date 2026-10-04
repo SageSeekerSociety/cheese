@@ -3,7 +3,6 @@
     "waiting": "Waiting on you",
     "waitingEmpty": "Nothing is waiting on you",
     "loadFailed": "Couldn't load what's waiting on you",
-    "retry": "Retry",
     "feed": "Activity",
     "reason": {
       "reviewer": "Waiting for your review",
@@ -22,6 +21,23 @@
     "expand": "Expand {name}",
     "collapse": "Collapse {name}",
     "unreadActivity": "new activity",
-    "teamCredits": "Credits"
+    "teamCredits": "Credits",
+    "leaveTeam": "Leave team",
+    "leaveTeamTitle": "Leave “{name}”?",
+    "leaveTeamBody": "You will no longer be a member of this team or see its projects. To come back you have to join again.",
+    "leaveTeamDone": "Left “{name}”",
+    "leaveTeamFailed": "Couldn't leave the team",
+    "transferTeam": "Transfer team",
+    "transferTeamTitle": "Transfer “{name}”",
+    "transferTeamBody": "Pick a member to take over this team. They become the owner and you become an admin.",
+    "transferTeamNoOne": "There is no other member who can take over yet.",
+    "transferTeamLoadFailed": "Couldn't load the team's members",
+    "transferTeamFailed": "Couldn't transfer the team",
+    "disbandTeam": "Disband team",
+    "disbandTeamTitle": "Disband “{name}”?",
+    "disbandTeamBody": "Every member leaves the team and this can't be undone. Archive all of the team's projects first; after the team is disbanded, only their owners and external members can still see them.",
+    "disbandTeamDone": "Disbanded “{name}”",
+    "disbandTeamFailed": "Couldn't disband the team",
+    "disbandTeamTypeName": "Type the team name “{name}” to confirm"
   }
 }

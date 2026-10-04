@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex import AppServerError, Session
+from app.domain.agent.harness.driven.runner import SessionStart
 
 
 class Peer:
@@ -50,7 +50,7 @@ async def test_ack_before_started_routes_next_input_to_the_running_turn():
     peer = Peer()
     peer.start_before_ack = False
     session = peer.adapter
-    await session.open(Opening("instructions"), cwd="/fixture", tools=[])
+    await session.open(SessionStart("instructions"), cwd="/fixture", tools=[])
     await session.send("first")
     assert session.turn_id == "turn"
     await session.send("steering")
@@ -64,7 +64,7 @@ async def test_completed_before_ack_does_not_leave_a_running_turn():
     peer.complete_before_ack = True
     session = peer.adapter
     await session.open(
-        Opening("instructions", model="fixture-model"), cwd="/fixture", tools=[]
+        SessionStart("instructions", model="fixture-model"), cwd="/fixture", tools=[]
     )
     assert peer.requests[0][1]["developerInstructions"] == "instructions"
     assert peer.requests[0][1]["model"] == "fixture-model"
@@ -82,7 +82,7 @@ async def test_completed_before_ack_does_not_leave_a_running_turn():
 async def test_stale_steer_is_not_retried_as_a_new_turn():
     peer = Peer()
     session = peer.adapter
-    await session.open(Opening("instructions"), cwd="/fixture", tools=[])
+    await session.open(SessionStart("instructions"), cwd="/fixture", tools=[])
     await session.send("first")
     peer.reject_steer = True
     with pytest.raises(AppServerError, match="turn changed"):
@@ -101,7 +101,7 @@ async def test_interrupt_keeps_thread_and_next_input_starts_a_turn():
     session = peer.adapter
     assert await session.interrupt() is False
     await session.open(
-        Opening("instructions", resume_token="thread"), cwd="/fixture", tools=[]
+        SessionStart("instructions", resume_token="thread"), cwd="/fixture", tools=[]
     )
     assert peer.requests[0][0] == "thread/resume"
     assert "dynamicTools" not in peer.requests[0][1]

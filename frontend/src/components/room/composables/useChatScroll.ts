@@ -44,6 +44,8 @@ export interface ChatScroll {
   rememberScroll(topicId: string | undefined): void
   /** 还原这个话题上次停的地方。 */
   restoreScroll(topicId: string): void
+  /** 这个话题再打开时会不会停在底部。 */
+  restoresToBottom(topicId: string): boolean
 }
 
 export function useChatScroll(
@@ -64,6 +66,25 @@ export function useChatScroll(
 
   function isAtBottom(el: HTMLElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD
+  }
+
+  // Where this pane last was, as far as this composable knows: what the last scroll
+  // event reported, or what it last wrote itself. Leaving the bottom means scrolling
+  // UP; a scroll event that did not move up was not the reader leaving.
+  //
+  // The browser fires such events on its own. A topic opened pinned to the bottom grows
+  // after that first pin: rows that were never on screen count at their
+  // content-visibility estimate (room-row.css) until they render, and replies fill in
+  // after first paint. Scroll anchoring then moves scrollTop down by part of the growth
+  // and fires a scroll event that can arrive before the resize observer has followed
+  // the growth. Judged by distance alone, that event read as "the reader scrolled up":
+  // atBottom went false, the observer stopped following, and the topic was left a
+  // screen or more above its newest message.
+  let lastTop = 0
+
+  function place(el: HTMLElement, top: number) {
+    el.scrollTop = top
+    lastTop = el.scrollTop
   }
 
   // 把这一栏钉在底部——在用户停在那儿的时候。时间线的高度会在切话题的第一帧**之后**
@@ -91,7 +112,7 @@ export function useChatScroll(
       if (!sc) return
       if (pendingTop !== null) {
         if (!sc.clientHeight) return
-        sc.scrollTop = pendingTop
+        place(sc, pendingTop)
         pendingTop = null
         atBottom.value = isAtBottom(sc)
         return
@@ -100,7 +121,7 @@ export function useChatScroll(
       // 只回答「他算不算停在底部」；拿它当重钉的门槛的话，要攒够 80px 才跳一次，
       // 流式输出和展开的卡片都是一格一格地往上蹦，攒的那一截一直藏在视口下面。
       if (atBottom.value && showingNewest() && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 1)
-        sc.scrollTop = sc.scrollHeight
+        place(sc, sc.scrollHeight)
     })
     if (content) contentObserver.observe(content)
     if (pane) contentObserver.observe(pane)
@@ -130,7 +151,7 @@ export function useChatScroll(
     void nextTick(() => {
       const el = scrollRef.value
       if (el) {
-        el.scrollTop = el.scrollHeight
+        place(el, el.scrollHeight)
         atBottom.value = true
       }
     })
@@ -147,7 +168,11 @@ export function useChatScroll(
     const el = scrollRef.value
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
-    atBottom.value = isAtBottom(el)
+    const movedUp = el.scrollTop < lastTop
+    lastTop = el.scrollTop
+    // Pinned and not scrolled up: still pinned, however far the content grew below
+    // (see `lastTop`). The resize observer follows it to the new bottom.
+    atBottom.value = isAtBottom(el) || (atBottom.value && !movedUp)
     if (!showingNewest()) return
     scrollMemory.set(topicId, { top: el.scrollTop, atBottom: atBottom.value })
   }
@@ -167,13 +192,19 @@ export function useChatScroll(
           atBottom.value = false
           return
         }
-        el.scrollTop = saved.top
+        place(el, saved.top)
         atBottom.value = isAtBottom(el)
       } else {
-        el.scrollTop = el.scrollHeight
+        place(el, el.scrollHeight)
         atBottom.value = true
       }
     })
+  }
+
+  /** 这个话题再打开时会不会停在底部：没记过，或者记下的就是底部。 */
+  function restoresToBottom(topicId: string): boolean {
+    const saved = scrollMemory.get(topicId)
+    return !saved || saved.atBottom
   }
 
   onScopeDispose(() => {
@@ -193,5 +224,6 @@ export function useChatScroll(
     noteFrame,
     rememberScroll,
     restoreScroll,
+    restoresToBottom,
   }
 }

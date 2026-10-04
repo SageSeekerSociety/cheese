@@ -166,12 +166,12 @@ async def _seed(session) -> dict[str, object]:
     await session.execute(
         text(
             "INSERT INTO blocks (project_id,topic_id,task_id,kind,author_type,author,"
-            "content,refs,meta,id,created_at,updated_at,doc_version) "
+            "content,refs,meta,id,created_at,updated_at) "
             "SELECT :pid, (ARRAY[CAST(:a AS uuid),CAST(:b AS uuid),CAST(:c AS uuid)])"
             "[g%3+1], CASE WHEN g%4=0 THEN CAST(:t AS uuid) END,"
             "CASE WHEN g%2=0 THEN 'message' ELSE 'event' END,'participant','cheese',"
             "'x','[]',json_build_object('tool','Bash'),gen_random_uuid(),"
-            "now()-interval '30 days'-(g||' minutes')::interval,now(),1 "
+            "now()-interval '30 days'-(g||' minutes')::interval,now() "
             "FROM generate_series(1,4000) g"
         ),
         {
@@ -193,6 +193,8 @@ def _literal(value: object) -> str:
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, list | tuple):
+        return "'{" + ",".join(f'"{item}"' for item in value) + "}'"
     return "'" + str(value).replace("'", "''") + "'"
 
 

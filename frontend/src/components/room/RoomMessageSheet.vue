@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 触屏上一条消息的操作：长按消息，从底部升起这块面板。它和桌面的悬停条是同一组操作
-// （表情、回复、编辑、复制、转为话题），只是换了一种摆法：表情排成顶上一行，其余
-// 一行一项。触屏上没有悬停，悬停条不出现，所以悬停条上有的这里一样都不能少。
+// （表情、回复、编辑、复制、复制链接、转为话题），只是换了一种摆法：表情排成顶上一
+// 行，其余一行一项。触屏上没有悬停，悬停条不出现，所以悬停条上有的这里一样都不能少。
 //
 // 长按已经拿来开这块面板，在消息上就没法再长按选字。要复制其中一段，走「选择文字」：
 // 把这条消息单独放到一整页上，在那里按系统的方式选。
@@ -9,7 +9,8 @@ import type { Block } from '../../cx_types'
 import type { MenuAction } from '../common/menuAction'
 
 import { computed, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
+
+import { useMessageLink } from '@/composables/useMessageLink'
 
 import AdaptiveDialog from '../common/AdaptiveDialog.vue'
 import MobileActionSheet from '../common/MobileActionSheet.vue'
@@ -35,8 +36,16 @@ const emit = defineEmits<{
   (e: 'edit', block: Block): void
 }>()
 
+// 复制成没成由共享的复制助子弹 toast，这里只管发起。
 async function copy(block: Block) {
-  if (await copyMessage(block, props.isAgent)) toast(t('work.room.message.copied'))
+  await copyMessage(block, props.isAgent)
+}
+
+// 这条消息的站内链接（组件不碰路由，走 composable）。宿主没有路由时给不出链接，
+// 这一项就不出现。复制成的说法同样由助手里那一条 toast 给。
+const { hrefOf, copy: copyHref } = useMessageLink()
+async function copyLink(block: Block) {
+  await copyHref(block)
 }
 
 // 「选择文字」那一页：打开的那一刻照着屏幕上的这一条取一份，之后消息再变也不跟着
@@ -62,13 +71,20 @@ const actions = computed<MenuAction[]>(() => {
       onSelect: () => emit('reply', block),
     },
     { key: 'copy', label: t('work.room.message.copy'), icon: 'mdi-content-copy', onSelect: () => void copy(block) },
-    {
-      key: 'select',
-      label: t('work.room.message.selectText'),
-      icon: 'mdi-format-text',
-      onSelect: () => openSelect(block),
-    },
   ]
+  if (hrefOf(block) !== null)
+    list.push({
+      key: 'link',
+      label: t('work.room.message.copyLink'),
+      icon: 'mdi-link-variant',
+      onSelect: () => void copyLink(block),
+    })
+  list.push({
+    key: 'select',
+    label: t('work.room.message.selectText'),
+    icon: 'mdi-format-text',
+    onSelect: () => openSelect(block),
+  })
   if (props.editable) {
     list.push({
       key: 'edit',

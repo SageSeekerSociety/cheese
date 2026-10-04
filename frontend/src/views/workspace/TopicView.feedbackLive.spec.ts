@@ -36,6 +36,12 @@ function proposal(blockId: string, title: string): FeedbackProposal {
 // What the server lists as live right now; the test changes it between frames.
 const server = vi.hoisted(() => ({ live: [] as unknown[] }))
 
+// 聊天栏底部的技能提议卡也会读一次；这里没有提议。
+vi.mock('@/api/projectSkills', () => ({
+  listProjectSkills: vi.fn(() => Promise.resolve({ data: [], total: 0 })),
+  confirmProjectSkill: vi.fn(),
+  declineProjectSkill: vi.fn(),
+}))
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
