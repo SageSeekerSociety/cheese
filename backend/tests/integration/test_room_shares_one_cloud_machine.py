@@ -132,6 +132,7 @@ def cloud_room(client, monkeypatch):
         }
 
     hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda device: device in online,
         reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),
@@ -370,7 +371,9 @@ async def test_the_rooms_machine_goes_only_after_every_session_on_it_pushed(
         work_lease,
         "device_hub",
         SimpleNamespace(
-            is_online=lambda device: reachable, reconnecting=lambda device: False
+            target=lambda _device: "linux-amd64",
+            is_online=lambda device: reachable,
+            reconnecting=lambda device: False,
         ),
     )
     person = {

@@ -43,19 +43,20 @@ def _online(*ids: str):
     return lambda device_id: device_id in live
 
 
-async def test_system_choice_pins_the_first_healthy_device_on_the_first_turn():
+async def test_system_choice_refuses_rather_than_run_an_isolated_room_bare():
+    """A room nobody gave a machine to is isolated there (#2320), and this
+    channel starts its agent on the machine itself: it refuses, and pins
+    nothing."""
+    from app.domain.agent.device_provider import DEVICE_ISOLATED_UNSUPPORTED_MESSAGE
+
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
     first = await _device_on_project(service, project, "first")
-    second = await _device_on_project(service, project, "second")
 
-    picked = await resolve_pinned_device(
-        service, _online(first, second), project, topic
-    )
-    assert picked == first
-    # the pin is now durable — recorded on the topic
-    assert await service.topic_device(topic) == first
-    assert (await service.topic_binding(topic)).visibility is Visibility.host
+    with pytest.raises(ScreenSetupError) as excinfo:
+        await resolve_pinned_device(service, _online(first), project, topic)
+    assert str(excinfo.value) == DEVICE_ISOLATED_UNSUPPORTED_MESSAGE
+    assert await service.topic_device(topic) is None
 
 
 async def test_later_turns_return_to_the_pinned_device_never_drift():
@@ -63,8 +64,8 @@ async def test_later_turns_return_to_the_pinned_device_never_drift():
     project, topic = uuid.uuid4(), uuid.uuid4()
     dev_a = await _device_on_project(service, project, "A")
     dev_b = await _device_on_project(service, project, "B")
+    await service.bind_topic_device(topic, dev_a, Visibility.host)
 
-    # first turn: only A online → pins to A
     assert await resolve_pinned_device(service, _online(dev_a), project, topic) == dev_a
     # next turn: B ALSO online, A still online → still A (pinned), never drifts to B
     assert (
@@ -115,7 +116,7 @@ async def test_pinned_device_offline_raises_and_does_not_drift():
     dev_a = await _device_on_project(service, project, "A")
     dev_b = await _device_on_project(service, project, "B")
 
-    await resolve_pinned_device(service, _online(dev_a), project, topic)  # pin A
+    await service.bind_topic_device(topic, dev_a, Visibility.host)  # pin A
 
     # A offline, B online → must RAISE (queue/retry), never silently run on B
     with pytest.raises(ScreenSetupError):

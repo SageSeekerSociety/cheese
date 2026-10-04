@@ -69,6 +69,7 @@ async def _start(hub, lease):
         work_resource=str(uuid.uuid4()),
         setup={},
         sandbox=False,
+        platform_machine=False,
     )
 
 

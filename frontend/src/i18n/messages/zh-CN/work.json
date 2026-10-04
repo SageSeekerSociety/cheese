@@ -80,7 +80,12 @@
     "saveFailed": "选择工作电脑失败",
     "retry": "重试",
     "here": "本话题运行在：{name}",
-    "abandon": "原来那台连不上：不推送，直接更换"
+    "abandon": "原来那台连不上：不推送，直接更换",
+    "accessHeading": "这个房间在 {name} 上能看到什么",
+    "isolated": "隔离环境",
+    "isolatedHint": "只有自己的工作目录和本项目的包缓存；看不到机器主人的文件、装在主人用户目录里的工具，也看不到别的房间。",
+    "host": "整台机器",
+    "hostOwnerOnly": "只有这台机器的主人能开启"
   },
   "deviceInUse": {
     "line": "正在用：{project} · {room} · {agent}",

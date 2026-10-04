@@ -58,6 +58,16 @@ def process_servers(config):
     ]
 
 
+class SandboxUnavailable(RuntimeError):
+    """This machine cannot give the room the isolated environment it runs in,
+    and the message says what would let it."""
+
+
+# How the install exits when it refuses a room for `SandboxUnavailable`, with
+# the message alone on stderr: the backend tells the room that, not a trace.
+SANDBOX_UNAVAILABLE_EXIT = 78
+
+
 class UpgradeDeferred(Exception):
     def __init__(self, info):
         self.info = info
@@ -174,23 +184,48 @@ def write_beneath(root, relative, text):
         os.close(directory)
 
 
+def remove_beneath(directory, name):
+    """Remove `name` in the directory open as `directory`, and everything
+    under it, without following a link anywhere: a link is removed, never
+    what it names. Walked by descriptor so a directory the room swaps for a
+    link halfway through is not entered either. Missing is already removed.
+
+    By hand rather than `shutil.rmtree(dir_fd=...)`, which needs Python 3.11:
+    this runs on whatever Python 3 the machine has."""
+    try:
+        child = os.open(
+            name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+        )
+    except FileNotFoundError:
+        return
+    except OSError:
+        # Not a directory, or a link to one: the entry itself goes.
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(name, dir_fd=directory)
+        return
+    try:
+        for entry in os.listdir(child):
+            remove_beneath(child, entry)
+    finally:
+        os.close(child)
+    with contextlib.suppress(FileNotFoundError):
+        os.rmdir(name, dir_fd=directory)
+
+
 def _remove_skill(home, name):
-    """Remove one skill folder from the room's Claude config directory."""
+    """Remove one skill folder from the room's Claude config directory, links
+    in it as links (`remove_beneath`)."""
     if not isinstance(name, str) or not name or "/" in name or name in (".", ".."):
         return
     try:
         skills = beneath(home, Path(CONFIG_DIR) / "skills")
     except OSError:
         return
-    if skills is None or sys.version_info < (3, 11):
-        # Before 3.11 rmtree cannot work under an open directory. Such a
-        # Python is macOS's own, and no room is sandboxed there.
-        if skills is not None:
-            os.close(skills)
+    if skills is None:
         shutil.rmtree(Path(home) / CONFIG_DIR / "skills" / name, ignore_errors=True)
         return
     try:
-        shutil.rmtree(name, dir_fd=skills, ignore_errors=True)
+        remove_beneath(skills, name)
     finally:
         os.close(skills)
 
@@ -352,6 +387,15 @@ def executor_state(home, stack, sandboxed):
         return state
     descriptor = beneath(home, Path(PLATFORM_DIR) / "executor", create=True)
     stack.callback(os.close, descriptor)
+    if sys.platform == "darwin":
+        # No /proc on macOS: the directory the descriptor holds, by the path
+        # the kernel resolved when it was opened. A room that turns a
+        # directory above it into a link afterwards is not stopped here as it
+        # is on Linux; on a person's own Mac the other rooms are theirs too.
+        import fcntl
+
+        named = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
+        return Path(named.split(b"\0", 1)[0].decode())
     return Path(f"/proc/self/fd/{descriptor}")
 
 
@@ -541,12 +585,52 @@ def sudo(command, failure):
     return result.stdout
 
 
-def sandbox_tools(release):
-    """Where `bwrap` is, once the machine has everything a sandbox needs:
-    bubblewrap, `ip` and iptables, and this release's `sandbox_host.py` as
-    `SANDBOX_HOST`. A machine enrolled before the platform needed one of
-    them gets it here. Without them the room does not start: a room meant to
-    be boxed never runs over the whole machine instead."""
+# What an install is told when this machine's system has no isolated
+# environment for a room. The backend refuses such a room before it gets here
+# (`device.supply.sandbox_unavailable`, the same sentences) for a machine it
+# has heard from; these are for one it has not. A system gains an environment
+# by leaving this table in the same change that teaches `sandbox_tools` and
+# `sandbox_argv` to build it.
+NO_SANDBOX = {
+    "win32": (
+        "This room runs in an isolated environment, which Windows machines do "
+        "not have. Install WSL, enroll the WSL environment as a machine and "
+        "choose it for this room, or have the machine's owner give this room "
+        "full machine access."
+    ),
+}
+FULL_ACCESS_INSTEAD = (
+    "Or have the machine's owner give this room full machine access, which "
+    "runs it without isolation."
+)
+
+
+def sandbox_tools(release, platform_machine):
+    """Where `bwrap` is, once the machine has what a sandbox needs; asked
+    before anything of the room's is touched. On macOS, `sandbox-exec`
+    instead (`confinement.start_seatbelt`).
+
+    Other systems have no isolated environment yet (`NO_SANDBOX`). A machine
+    the platform provisioned (`platform_machine`) needs bubblewrap, `ip` and
+    iptables, and this release's `sandbox_host.py` as `SANDBOX_HOST`; one
+    enrolled before the platform needed them gets them here. A machine a
+    person enrolled is theirs: nothing is installed there, its sandbox has no
+    network or limits of its own (that takes root), and it needs only a
+    bubblewrap that can make a user namespace, or the room is refused with
+    what to install or change. Either way a room meant to be isolated never
+    runs over the whole machine instead."""
+    if sys.platform == "darwin":
+        return seatbelt()
+    if not sys.platform.startswith("linux"):
+        raise SandboxUnavailable(
+            NO_SANDBOX.get(
+                sys.platform,
+                "This room runs in an isolated environment, which this "
+                "machine's system does not have. " + FULL_ACCESS_INSTEAD,
+            )
+        )
+    if not platform_machine:
+        return enrolled_bubblewrap()
     missing = [
         package
         for program, package in SANDBOX_PACKAGES.items()
@@ -578,97 +662,84 @@ def sandbox_tools(release):
     return shutil.which("bwrap", path=SYSTEM_PATH)
 
 
-# The syscalls a sandbox is refused (`seccomp_filter`), by architecture:
-# (AUDIT_ARCH, {name: number}, clone, unshare).
-SYSCALLS = {
-    "x86_64": (
-        0xC000003E,
-        {
-            "ptrace": 101,
-            "process_vm_readv": 310,
-            "process_vm_writev": 311,
-            "add_key": 248,
-            "request_key": 249,
-            "keyctl": 250,
-            "io_uring_setup": 425,
-            "io_uring_enter": 426,
-            "io_uring_register": 427,
-        },
-        56,
-        272,
-    ),
-    "aarch64": (
-        0xC00000B7,
-        {
-            "ptrace": 117,
-            "process_vm_readv": 270,
-            "process_vm_writev": 271,
-            "add_key": 217,
-            "request_key": 218,
-            "keyctl": 219,
-            "io_uring_setup": 425,
-            "io_uring_enter": 426,
-            "io_uring_register": 427,
-        },
-        220,
-        97,
-    ),
-}
-CLONE3 = 435
-CLONE_NEWUSER = 0x10000000
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
 
-def seccomp_filter(machine=None):
-    """The seccomp program a sandbox runs under, as bubblewrap's `--seccomp`
-    reads it: classic BPF over `struct seccomp_data`.
+def seatbelt():
+    """Where `sandbox-exec` is: every macOS has it, so a Mac that lacks it is
+    one the room is refused on, not one it runs over whole."""
+    if not os.access(SANDBOX_EXEC, os.X_OK):
+        raise SandboxUnavailable(
+            "This room runs in an isolated environment, which on macOS needs "
+            "/usr/bin/sandbox-exec, and this Mac does not have it. "
+            + FULL_ACCESS_INSTEAD
+        )
+    return SANDBOX_EXEC
 
-    It refuses what lets one process read or steer another, or that has been
-    the way into the kernel more often than it is needed for development
-    work: `ptrace` and `process_vm_readv`/`writev`; io_uring, refused as
-    absent so a runtime falls back to ordinary I/O as it does on an old
-    kernel; the kernel keyring; and a further user namespace, which is what
-    makes most of the kernel's privileged interfaces reachable to an
-    unprivileged process. The namespace one is refused by its flag on
-    `clone` and `unshare`, and `clone3`, whose flags this cannot read, is
-    refused as absent so the C library falls back to `clone`. bubblewrap's
-    own `--disable-userns` does this with a sysctl an LXC container cannot
-    write. Any other architecture's calls, x32's and i386's on an x86_64
-    machine, end the process: the numbers above are only the native ones'."""
-    import struct
 
-    arch, denied, clone, unshare = SYSCALLS[machine or os.uname().machine]
-    load, equal, above, test, ret = 0x20, 0x15, 0x35, 0x45, 0x06
-    allow, kill = 0x7FFF0000, 0x80000000
-    eperm, enosys = 0x00050000 | 1, 0x00050000 | 38
-    # (code, jump-if-true label, jump-if-false label, k); labels resolve below.
-    program = [
-        (None, load, None, None, 4),
-        (None, equal, "native", "kill", arch),
-        ("native", load, None, None, 0),
-    ]
-    if arch == SYSCALLS["x86_64"][0]:
-        program.append((None, above, "eperm", None, 0x40000000))
-    for number in sorted(denied.values()):
-        target = "enosys" if number in (425, 426, 427) else "eperm"
-        program.append((None, equal, target, None, number))
-    program += [
-        (None, equal, "enosys", None, CLONE3),
-        (None, equal, "flags", None, clone),
-        (None, equal, "flags", None, unshare),
-        (None, ret, None, None, allow),
-        ("flags", load, None, None, 16),
-        (None, test, "eperm", None, CLONE_NEWUSER),
-        (None, ret, None, None, allow),
-        ("eperm", ret, None, None, eperm),
-        ("enosys", ret, None, None, enosys),
-        ("kill", ret, None, None, kill),
-    ]
-    labels = {entry[0]: index for index, entry in enumerate(program) if entry[0]}
-    code = b""
-    for index, (_, operation, true, false, k) in enumerate(program):
-        jumps = [labels[name] - index - 1 if name else 0 for name in (true, false)]
-        code += struct.pack("<HBBI", operation, *jumps, k)
-    return code
+def enrolled_bubblewrap():
+    """Where `bwrap` is on a machine a person enrolled, once it is known to
+    make a sandbox there, as the person and not as root."""
+    found = shutil.which("bwrap")
+    if not found:
+        raise SandboxUnavailable(
+            "This room runs in an isolated environment, which needs "
+            "bubblewrap, and bubblewrap is not installed on this machine. "
+            "Install it (Debian and Ubuntu: sudo apt install bubblewrap; "
+            "Fedora: sudo dnf install bubblewrap; Arch: sudo pacman -S "
+            "bubblewrap) and try again. " + FULL_ACCESS_INSTEAD
+        )
+    probe = subprocess.run(
+        [found, "--unshare-user", "--unshare-pid", "--ro-bind", "/", "/"]
+        + ["--proc", "/proc", "--dev", "/dev", "true"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if probe.returncode:
+        raise SandboxUnavailable(
+            "This room runs in an isolated environment, and bubblewrap cannot "
+            "make one on this machine ("
+            + probe.stderr.strip()[-300:]
+            + "). "
+            + user_namespaces_advice()
+            + " "
+            + FULL_ACCESS_INSTEAD
+        )
+    return found
+
+
+def user_namespaces_advice():
+    """What to change on this machine for bubblewrap to make a sandbox, which
+    it does in a user namespace of its own, as the user and not as root."""
+
+    def setting(path):
+        try:
+            return Path(path).read_text().strip()
+        except OSError:
+            return None
+
+    keep = (
+        " (put the same line in a file under /etc/sysctl.d/ to keep it after a reboot)"
+    )
+    if setting("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") == "1":
+        return (
+            "AppArmor here restricts unprivileged user namespaces, as Ubuntu "
+            "does from 23.10 on. Allow them for bubblewrap with an AppArmor "
+            "profile for it, or for every program with: sudo sysctl -w "
+            "kernel.apparmor_restrict_unprivileged_userns=0" + keep + "."
+        )
+    if setting("/proc/sys/kernel/unprivileged_userns_clone") == "0":
+        return (
+            "Unprivileged user namespaces are turned off here. Turn them on "
+            "with: sudo sysctl -w kernel.unprivileged_userns_clone=1" + keep + "."
+        )
+    if setting("/proc/sys/user/max_user_namespaces") == "0":
+        return (
+            "User namespaces are turned off here. Turn them on with: sudo "
+            "sysctl -w user.max_user_namespaces=15000" + keep + "."
+        )
+    return "It needs unprivileged user namespaces, which this machine does not allow."
 
 
 def record_sandbox(owner, home, release):
@@ -683,7 +754,46 @@ def record_sandbox(owner, home, release):
     temporary.replace(marker)
 
 
-def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds):
+def record_sandbox_process(owner, home, pid):
+    """Record, beside `record_sandbox`'s marker, which process is the room's
+    sandbox, by pid and start time: its first process inside, the init of its
+    pid namespace, which bubblewrap reports on its info descriptor. Every
+    process the room starts descends from it and outlives the executor with
+    it, while bubblewrap itself exits with the executor. That is how the
+    environment reset and the teardown, outside the sandbox, tell the room's
+    processes from every other process of the machine's user on a machine
+    without the sandbox helper's cgroups (`environment_runner.
+    sandbox_process`): a pid the room wrote down itself names nothing they
+    can trust. Its start time is the one the runner records
+    (`environment_runner.process_identity`)."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return
+    record = owner / ".cheese" / SANDBOXES / home.parent.name / (home.name + ".process")
+    temporary = record.with_name(record.name + "." + uuid.uuid4().hex)
+    temporary.write_text(
+        json.dumps({"pid": pid, "identity": f"linux:{boot_id}:{fields[19]}"})
+    )
+    temporary.replace(record)
+
+
+def forget_sandbox(owner, home):
+    """Remove `record_sandbox`'s and `record_sandbox_process`'s records."""
+    marker = owner / ".cheese" / SANDBOXES / home.parent.name / home.name
+    marker.unlink(missing_ok=True)
+    marker.with_name(home.name + ".process").unlink(missing_ok=True)
+
+
+# Where the machine keeps what is not the system's: mounted disks, and on WSL
+# the Windows drives and the socket that runs Windows programs. Hidden in a
+# sandbox like the owner's home: they hold the owner's files, and a Windows
+# program would run outside it.
+HIDDEN_MOUNTS = ("/mnt", "/media", "/run/media", "/run/WSL")
+
+
+def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True):
     """`argv` run in a bubblewrap sandbox: the room's processes see the machine
     read-only, and of the owner's home only what is bound back below.
 
@@ -701,13 +811,17 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds):
     reach a filesystem through via /proc. That makes the pid an executor
     reports meaningless outside it, which is why it is stopped by request.
 
-    And its own network namespace, empty until `start_sandbox` has the
-    machine connect it (`sandbox_host.py`): bubblewrap reports the sandbox's
-    first process on `fds["info"]` and waits on `fds["block"]` before running
-    `argv`, under the seccomp program on `fds["seccomp"]`.
+    And, with `network`, its own network namespace, empty until
+    `start_sandbox` has the machine connect it (`sandbox_host.py`). Without
+    it, on a machine a person enrolled, the sandbox shares the machine's
+    network. Bubblewrap reports the sandbox's first process on `fds["info"]`
+    and waits on `fds["block"]` before running `argv`, under the seccomp
+    program on `fds["seccomp"]`.
+
+    On a machine a person enrolled the owner's home holds everything they
+    installed there too (nvm, `~/.cargo/bin`, `~/.local/bin`), which a
+    session does not see; mounted disks are hidden as well (`HIDDEN_MOUNTS`).
     """
-    if not sys.platform.startswith("linux"):
-        raise RuntimeError("This room runs in a sandbox, which needs Linux")
     store = owner / ".cheese/store" / home.parent.name
     toolchain = owner / ".cheese/toolchain"
     tmp = home / PLATFORM_DIR / "tmp"
@@ -724,7 +838,7 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds):
         # starts, before `SANDBOX_HOST` moves it into its limited cgroup, and
         # would leave a runtime that sizes itself by its limit (Node, the JVM)
         # reading a path it cannot resolve.
-        "--unshare-net",
+        *(["--unshare-net"] if network else []),
         "--info-fd",
         str(fds["info"]),
         "--block-fd",
@@ -753,11 +867,14 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds):
         "--bind",
         str(tmp),
         "/var/tmp",
-        "--tmpfs",
-        str(owner),
     ]
+    # Before the owner's home too, which may be kept on one of them.
+    for mount in HIDDEN_MOUNTS:
+        if Path(mount).is_dir():
+            command += ["--tmpfs", mount]
+    command += ["--tmpfs", str(owner)]
     names = resolv_conf()
-    if names != "/etc/resolv.conf":
+    if network and names != "/etc/resolv.conf":
         command += ["--ro-bind", names, "/etc/resolv.conf"]
     runtime_dir = Path(f"/run/user/{os.getuid()}")
     if runtime_dir.is_dir():
@@ -767,6 +884,13 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds):
     # mount as well, since connecting to a socket is not a write to the mount.
     if Path("/run/docker.sock").exists():
         command += ["--ro-bind", "/dev/null", "/run/docker.sock"]
+    # The Python the executor runs on, when the person keeps it in their home
+    # (pyenv, uv, conda): shown read-only, as the machine's own would be, at
+    # the path it is run by as well as where a link there leads.
+    prefixes = {Path(sys.base_prefix), Path(sys.prefix)}
+    for prefix in sorted(prefixes | {path.resolve() for path in prefixes}):
+        if owner in prefix.parents:
+            command += ["--ro-bind", str(prefix), str(prefix)]
     for option, path in (
         ("--bind", home),
         ("--bind", store),
@@ -827,14 +951,50 @@ def loopback_ports(env):
     return ports
 
 
-def start_sandbox(argv, *, bwrap, owner, home, claude, sockets, limits, env, **options):
-    """Start `argv` in a sandbox (`sandbox_argv`) and give it, before it runs
-    anything, its network and its limits (`SANDBOX_HOST up`). A sandbox the
-    machine cannot connect or limit is killed, never left to run without."""
+def start_sandbox(
+    argv,
+    *,
+    bwrap,
+    owner,
+    home,
+    claude,
+    sockets,
+    limits,
+    env,
+    connect,
+    release,
+    **options,
+):
+    """Start `argv` in a sandbox (`sandbox_argv`) and, with `connect`, give
+    it, before it runs anything, its network and its limits (`SANDBOX_HOST
+    up`). A sandbox the machine cannot connect or limit is killed, never left
+    to run without. Without `connect` (a machine a person enrolled, where
+    there is no root to do either) it shares the machine's network. Answers
+    the process and what the helper said, with the sandbox's first process
+    as `first`.
+
+    On macOS `bwrap` is `sandbox-exec`, run by this release's `confinement.py`:
+    the process it starts is the first, and there is no network or limit of
+    the sandbox's own to give it."""
+    if sys.platform == "darwin":
+        confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
+        return confinement["start_seatbelt"](
+            argv,
+            sandbox_exec=bwrap,
+            owner=owner,
+            home=home,
+            store=owner / ".cheese/store" / home.parent.name,
+            tmp=home / PLATFORM_DIR / "tmp",
+            readable=[owner / ".cheese/toolchain", release_store(owner), claude.parent],
+            sockets=sockets,
+            env=env,
+            **options,
+        )
     info, report = os.pipe()
     wait, go = os.pipe()
     seccomp, program = os.pipe()
-    os.write(program, seccomp_filter())
+    confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
+    os.write(program, confinement["seccomp_filter"]())
     os.close(program)
     fds = {"info": report, "block": wait, "seccomp": seccomp}
     try:
@@ -847,6 +1007,7 @@ def start_sandbox(argv, *, bwrap, owner, home, claude, sockets, limits, env, **o
                 claude=claude,
                 sockets=sockets,
                 fds=fds,
+                network=connect,
             ),
             start_new_session=True,
             pass_fds=tuple(fds.values()),
@@ -865,12 +1026,17 @@ def start_sandbox(argv, *, bwrap, owner, home, claude, sockets, limits, env, **o
             first = json.loads(stream.read() or b"{}").get("child-pid")
         if not first:
             raise RuntimeError("The sandbox did not start; see executor-bootstrap.log")
-        command = [SANDBOX_HOST, "up", home.name, str(first)]
-        for name in ("memory_mb", "swap_mb", "cpus", "pids"):
-            command += ["--" + name.replace("_", "-"), str(limits[name])]
-        for port in loopback_ports(env):
-            command += ["--forward", str(port)]
-        answer = json.loads(sudo(command, "The sandbox's network could not be set up"))
+        answer = {}
+        if connect:
+            command = [SANDBOX_HOST, "up", home.name, str(first)]
+            for name in ("memory_mb", "swap_mb", "cpus", "pids"):
+                command += ["--" + name.replace("_", "-"), str(limits[name])]
+            for port in loopback_ports(env):
+                command += ["--forward", str(port)]
+            answer = json.loads(
+                sudo(command, "The sandbox's network could not be set up")
+            )
+        answer["first"] = first
     except BaseException:
         os.close(go)
         process.kill()
@@ -1121,9 +1287,19 @@ def configure(payload):
         configure_idle(payload)
     except UpgradeDeferred as deferred:
         print(json.dumps(deferred.info))
+    except SandboxUnavailable as refused:
+        print(refused, file=sys.stderr)
+        raise SystemExit(SANDBOX_UNAVAILABLE_EXIT) from None
 
 
 def configure_idle(payload):
+    platform_machine = bool(payload.get("platform_machine"))
+    # Refused before anything of the room's is touched where the machine
+    # cannot make the sandbox; a Cloud machine is given what it lacks below,
+    # from the release staged for it.
+    bwrap = None
+    if payload.get("sandbox") and not platform_machine:
+        bwrap = sandbox_tools(None, platform_machine=False)
     with prepared(payload, Path.home(), refresh_runtime=True) as (
         home,
         config,
@@ -1180,8 +1356,12 @@ def configure_idle(payload):
                 "stderr": output,
             }
             if config["sandbox"]:
+                if bwrap is None:
+                    bwrap = sandbox_tools(release, platform_machine=True)
                 record_sandbox(Path.home(), home, release)
-                bwrap = sandbox_tools(release)
+                # WSL runs a Windows program through this socket, outside every
+                # sandbox; the directory it is in is hidden too (`HIDDEN_MOUNTS`).
+                env = {k: v for k, v in env.items() if k != "WSL_INTEROP"}
                 directory = Path(runtime["socket_directory"](state))
                 # The service makes this link in the /tmp it is shown, which is
                 # its own; clients outside dial the machine's.
@@ -1198,20 +1378,31 @@ def configure_idle(payload):
                     sockets=directory,
                     limits=config["sandbox"],
                     env=env,
+                    connect=platform_machine,
+                    release=release,
                     **options,
                 )
-                output.write(
-                    f"sandbox {network['link']} {network['address']} up in "
-                    f"{round((time.monotonic() - started) * 1000)} ms "
-                    f"(helper {network['ms']} ms)\n"
-                )
-                output.flush()
-            elif sys.platform == "win32":
-                process = portable(release)["popen_daemon"](argv, env=env, **options)
+                record_sandbox_process(Path.home(), home, network["first"])
+                if platform_machine:
+                    output.write(
+                        f"sandbox {network['link']} {network['address']} up in "
+                        f"{round((time.monotonic() - started) * 1000)} ms "
+                        f"(helper {network['ms']} ms)\n"
+                    )
+                    output.flush()
             else:
-                process = subprocess.Popen(
-                    argv, start_new_session=True, env=env, **options
-                )
+                # A room given full machine access after running isolated:
+                # what the teardown and the reset read to treat it as
+                # sandboxed would now hide the processes it starts out here.
+                forget_sandbox(Path.home(), home)
+                if sys.platform == "win32":
+                    process = portable(release)["popen_daemon"](
+                        argv, env=env, **options
+                    )
+                else:
+                    process = subprocess.Popen(
+                        argv, start_new_session=True, env=env, **options
+                    )
         deadline = time.monotonic() + 600
         while True:
             if process.poll() is not None:

@@ -967,12 +967,9 @@ export interface ProjectMachine {
   created_at: string
 }
 
-// #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
-// `effective` is the widest visibility any agent session here has on the enrolled
-// machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
-// is the one flag the room's 「能访问整台机器」 notice keys on (its tooltip, the honest
-// #282 line, is `work.roomMachine.wholeMachineNotice`). `options` carries the two 档 with
-// their capability copy (isolated = boxed default, host = whole-machine, 申请制).
+// #282 §四 · whether an agent in this room can see a whole enrolled machine. `effective`: 'host' | 'isolated' | null
+// (no agent on one); `machine_access` is the flag the room's 「能访问整台机器」 notice keys on (tooltip:
+// `work.roomMachine.wholeMachineNotice`). `options`: the two 档 (isolated = default, host = the owner gives it).
 export interface TopicComputeVisibility {
   options: PoolListing[]
   effective: 'host' | 'isolated' | null
@@ -983,6 +980,8 @@ export interface TopicComputeDevice {
   device_id: string
   name: string
   online: boolean
+  owned?: boolean // the reader enrolled it, signed in: only they may give a room the whole machine
+  sandbox_unavailable?: import('./lib/noticeText').NoticeMessage | null // why it cannot isolate a room
 }
 
 // GET /topics/{id}/compute-profile — the room's one work computer (一个话题一个容器, 2026-09-28).

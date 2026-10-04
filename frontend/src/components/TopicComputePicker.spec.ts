@@ -218,6 +218,66 @@ describe('room work computer choice', () => {
   })
 })
 
+describe('what the room sees of its machine', () => {
+  const onLab = (device: Partial<TopicComputeProfile['devices'][number]>, effective: 'host' | 'isolated') =>
+    profile({
+      current: 'device',
+      choice: lab,
+      device_id: 'office',
+      devices: [{ device_id: 'office', name: '办公室 Mac mini', online: true, owned: false, ...device }],
+      visibility: { options: [], effective, machine_access: effective === 'host' },
+    })
+
+  it('lets the machine owner give the room the whole machine', async () => {
+    setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
+    const { emitted } = mountPicker(onLab({ owned: true, sandbox_unavailable: null }, 'isolated'))
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    expect(screen.getByText('这个房间在 办公室 Mac mini 上能看到什么')).toBeTruthy()
+    await fireEvent.click(screen.getByTestId('room-machine-host'))
+    await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab, { visibility: 'host' }))
+    expect(emitted().changed).toHaveLength(1)
+  })
+  it('keeps the whole machine out of reach for anyone but its owner', async () => {
+    mountPicker(onLab({ owned: false, sandbox_unavailable: null }, 'isolated'))
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    const host = screen.getByTestId('room-machine-host') as HTMLButtonElement
+    expect(host.disabled).toBe(true)
+    expect(host.textContent).toContain('只有这台机器的主人能开启')
+  })
+  it('says why a machine has no isolated environment, in the reader language', async () => {
+    setLocale('en')
+    mountPicker(onLab({ owned: true, sandbox_unavailable: { key: 'sandboxUnavailableWindows' } }, 'isolated'))
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    const isolated = screen.getByTestId('room-machine-isolated') as HTMLButtonElement
+    expect(isolated.disabled).toBe(true)
+    expect(isolated.textContent).toContain('which Windows machines do not have')
+    expect((screen.getByTestId('room-machine-host') as HTMLButtonElement).disabled).toBe(false)
+  })
+  it('names the machine an automatic room is on when access is chosen for it', async () => {
+    setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
+    const automatic: ComputeChoice = { ...lab, name: null, device_id: null }
+    mountPicker({
+      ...onLab({ owned: true, sandbox_unavailable: null }, 'host'),
+      choice: automatic,
+      device_id: 'office',
+    })
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    await fireEvent.click(screen.getByTestId('room-machine-isolated'))
+    await waitFor(() =>
+      expect(setTopicComputeChoice).toHaveBeenCalledWith(
+        'topic-1',
+        { ...automatic, name: '办公室 Mac mini', device_id: 'office' },
+        { visibility: 'isolated' }
+      )
+    )
+  })
+  it('shows no access choice for a room on cloud', async () => {
+    mountPicker(profile())
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    expect(screen.queryByTestId('room-machine-host')).toBeNull()
+  })
+})
+
 describe('custom cloud spec against the current supply', () => {
   // MicroCloud's offering met with the platform's own limits: memory starts at
   // 512 MB even though the provider would build 128 MB.

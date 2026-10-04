@@ -39,7 +39,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_session.models import AgentSession
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.device.supply import binding_visibility, has_runnable_transport
 from app.domain.project.models import Project, ProjectMember
 from app.domain.topic.models import TopicMembership
 
@@ -69,12 +68,9 @@ async def execution_device_authorized(
         .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
         .where(DeviceRow.device_id == device_id)
     )
-    return (
-        supply is not None
-        and has_runnable_transport(binding_visibility(supply), supply)
-        and device_id
-        in await SqlDeviceRepository(session).device_ids_by_project(project_id)
-    )
+    return supply is not None and device_id in await SqlDeviceRepository(
+        session
+    ).device_ids_by_project(project_id)
 
 
 async def project_member(

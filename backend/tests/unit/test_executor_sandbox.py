@@ -244,6 +244,7 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
         release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
         (release / "remote-execution").mkdir(parents=True)
         shutil.copy(RUNTIME, release / "remote-execution/runtime.py")
+        shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
         marker = tmp_path / ".cheese/sandboxes" / project / resource
         marker.parent.mkdir(parents=True)
         marker.write_text(str(release))
@@ -274,6 +275,7 @@ def test_the_install_writes_through_no_link_a_room_left_in_its_home(
         resource,
         {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
         sandbox=False,
+        platform_machine=False,
     )
 
     with pytest.raises(OSError):
@@ -362,6 +364,7 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
             "CHEESE_ENVIRONMENT": json.dumps(environment),
         },
         sandbox=True,
+        platform_machine=True,
     )
     state = home / ".cheese/executor"
     store = owner / ".cheese/store" / str(project)
@@ -436,6 +439,7 @@ def test_a_sandboxed_executor_survives_its_own_room_rewriting_its_programs(
         resource,
         {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
         sandbox=True,
+        platform_machine=True,
     )
     home = owner / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"
