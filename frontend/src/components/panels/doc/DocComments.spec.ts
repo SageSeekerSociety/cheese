@@ -2,6 +2,7 @@
 // 评论栏里的内容：写到一半的评论不丢、回车才发、输入法的回车不算；一串评论一张卡，
 // 点卡片是看它（正文跟着滚过去），拖着选字不算；长的对话中间先收起来；AI 队友在答时
 // 卡上说它到了哪一步；回复发出去了才清空，失败了字还在。
+import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocThread, DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
@@ -44,7 +45,7 @@ function reply(n: number, author = 'bob') {
 
 function mount(
   options: {
-    send?: ReturnType<typeof vi.fn>
+    send?: SendDocComment | null
     threads?: DocThread[]
     actions?: Partial<DocThreadActions>
     place?: ThreadPlace

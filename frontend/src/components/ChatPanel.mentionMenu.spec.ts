@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+/// <reference types="node" />
 /** `@` 候选菜单没有高度上限那条。
  *
  * 它最多 7 项（`mentionMatches` 里 `slice(0, 7)`），每项 `min-height: 36px`，展开

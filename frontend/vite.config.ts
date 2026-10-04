@@ -90,6 +90,47 @@ function mdiFont(): Plugin {
   }
 }
 
+// The browsers the bundle runs in: Vite 6's default list. Vite 7 raised its
+// default to newer browsers (Safari 16, Chrome 107); moving the floor is a
+// product decision, not part of changing the build tool.
+const TARGET = ['es2020', 'edge88', 'firefox78', 'chrome87', 'safari14']
+
+// Oxc minifies (Vite's default). It is what keeps the build small enough to
+// run: terser needed a 6 GB heap and 2½ minutes on four cores, Oxc needs under
+// 2 GB and a quarter of a minute for the same bundle size. Its own target
+// defaults to the newest syntax, so it is held to the same floor. The web
+// workers (Monaco's) are bundled on their own and take the same setting.
+const MINIFY = {
+  compress: { target: 'es2020', dropConsole: true, dropDebugger: true },
+  mangle: true,
+  codegen: true,
+}
+
+// What Prism highlights (see the prismjsPlugin call for why these). The plugin
+// adds their imports while transforming, which the dev server's dependency scan
+// cannot see; optimizeDeps.include lists them for the reason it lists
+// Vuetify's components.
+const PRISM_LANGUAGES = [
+  'markup',
+  'css',
+  'javascript',
+  'typescript',
+  'jsx',
+  'tsx',
+  'python',
+  'go',
+  'rust',
+  'bash',
+  'json',
+  'yaml',
+  'toml',
+  'sql',
+  'markdown',
+  'diff',
+  'docker',
+]
+const PRISM_PLUGINS = ['line-numbers', 'copy-to-clipboard']
+
 export default defineConfig({
   plugins: [
     demoPages(),
@@ -120,27 +161,9 @@ export default defineConfig({
       // covers html/xml/svg, `bash` covers sh/shell, `typescript` covers ts.
       // `vue` is not a Prism grammar at all — a ```vue block degrades to plain
       // text and there is nothing to add for it.
-      languages: [
-        'markup',
-        'css',
-        'javascript',
-        'typescript',
-        'jsx',
-        'tsx',
-        'python',
-        'go',
-        'rust',
-        'bash',
-        'json',
-        'yaml',
-        'toml',
-        'sql',
-        'markdown',
-        'diff',
-        'docker',
-      ],
+      languages: PRISM_LANGUAGES,
       // 配置行号插件
-      plugins: ['line-numbers', 'copy-to-clipboard'],
+      plugins: PRISM_PLUGINS,
       // 主题名
       theme: 'solarizedlight',
       css: true,
@@ -442,22 +465,18 @@ export default defineConfig({
       },
     },
   },
+  worker: { rolldownOptions: { output: { minify: MINIFY } } },
   build: {
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        drop_console: true,
-        drop_debugger: true,
-      },
-    },
+    target: TARGET,
     sourcemap: false,
-    rollupOptions: {
+    rolldownOptions: {
       // 两个页面：应用本体，和文档里嵌的动态演示（demo.html，见 src/demo-main.ts）。
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         demo: fileURLToPath(new URL('./demo.html', import.meta.url)),
       },
       output: {
+        minify: MINIFY,
         manualChunks(id) {
           // Vite's dynamic-import helper (`\0vite/preload-helper.js`) is a
           // virtual module every chunk with a lazy import shares. Left
@@ -556,17 +575,10 @@ export default defineConfig({
     // CPU，还和机器上别人的活抢。实测一轮里 transform 累计 367 秒、collect 累计
     // 1907 秒，而墙上时间只有 24 秒，绝大部分花在编译上而不是跑断言，超时也从这里
     // 来。这个上限对小机器无害（它本来就开不到 8 个），对大机器是实打实的提速。
-    // 上下限必须一起给：两个下限都默认跟着核数走，只压上限的话 vitest 会拿
-    // min=383 / max=8 去构造 worker 池，Tinypool 直接抛 RangeError，一个用例都跑
-    // 不起来。`forks` 是 vitest 2 的默认池，`threads` 一并写上，免得哪天换池子
-    // 这条静默失效。
     // 16 是量出来的：这台机器上 8 / 16 / 32 / 不限分别是 37.4 / 29.1 / 25.3 /
     // 24.5 秒，而 collect 累计是 142 / 257 / 461 / 1908 秒。过了 16 再加只换回来
     // 几秒墙上时间，代价是成倍的总开销，不限则会超时。
-    poolOptions: {
-      forks: { minForks: 1, maxForks },
-      threads: { minThreads: 1, maxThreads: 16 },
-    },
+    maxWorkers: maxForks,
   },
   optimizeDeps: {
     // **每一个新组件第一次上屏时都会被现学现卖**：`vite-plugin-vuetify` 的 autoImport
@@ -661,6 +673,13 @@ export default defineConfig({
       'vuetify/iconsets/mdi',
       'vuetify/labs/VDateInput',
       'vuetify/locale',
+      // vite-plugin-prismjs 加的那几行 import，同样只在 transform 之后才看得见。漏了会在
+      // 冷启动时整体重新预打包，正在加载的依赖全部 504。
+      'prismjs/components/prism-core',
+      'prismjs/components/prism-clike',
+      ...PRISM_LANGUAGES.map((name) => `prismjs/components/prism-${name}`),
+      'prismjs/plugins/toolbar/prism-toolbar',
+      ...PRISM_PLUGINS.map((name) => `prismjs/plugins/${name}/prism-${name}`),
     ],
   },
 })

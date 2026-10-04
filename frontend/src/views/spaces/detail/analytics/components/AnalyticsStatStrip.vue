@@ -11,7 +11,7 @@
   border-bottom: 1px solid var(--line);
 }
 
-.strip > :slotted(* + *) {
+.strip > :slotted(:not(:first-child)) {
   border-left: 1px solid var(--line);
 }
 </style>
