@@ -355,11 +355,12 @@ function onKeydown(e: KeyboardEvent) {
   line-height: var(--lh-13);
 }
 
-/* 窄屏（≤700，和 `AdminQueueRow` 那条同一条线）：列头撤掉、骨架改成同一张卡片的
+/* 内容列窄于 700（容器查询挂在后台内容列上，§3.5，不是视口；和 `AdminQueueRow`
+   那条同一条线）：列头撤掉、骨架改成同一张卡片的
    形状。列头说的是「哪一列是什么」，可卡片里没有列了 —— 留着它只会让人对着四个
    名字找一个不存在的表格。骨架必须跟着真行一起变，否则数据到货那一刻整条队列
    重排一次，而骨架的全部意义就是那个不重排。 */
-@media (max-width: 700px) {
+@container admin (max-width: 700px) {
   .qlist__head {
     display: none;
   }

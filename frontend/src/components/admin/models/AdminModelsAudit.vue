@@ -203,9 +203,10 @@ function auditActionLabel(action: string): string {
   color: var(--danger-ink);
 }
 
-/* 窄屏：审计行收成三列，把「改的是什么」那一格让给正文。操作人和时间都还在
+/* 内容列窄于 900（容器查询挂在后台内容列上，§3.5，不是视口）：审计行收成三列，
+   把「改的是什么」那一格让给正文。操作人和时间都还在
    （它们是这一行「谁改了什么」的一半），只让说明那一格换行到下面。 */
-@media (max-width: 900px) {
+@container admin (max-width: 900px) {
   .amd__auditLine {
     grid-template-columns: 64px 92px minmax(0, 1fr) 48px auto;
     gap: 8px;
@@ -216,10 +217,10 @@ function auditActionLabel(action: string): string {
   }
 }
 
-/* 手机（≤700）：网格换成折行的 flex。五列到了 390px 上，「改的是什么」那一格只剩
+/* 内容列窄于 700（容器查询，§3.5）：网格换成折行的 flex。五列到了 390px 上，「改的是什么」那一格只剩
    六十来像素 —— 而它是这一行的正文。让它独占一行，时间 / 谁 / 结果挤在上面那一行，
    「谁在什么时候改了什么」还是按那个顺序读。 */
-@media (max-width: 700px) {
+@container admin (max-width: 700px) {
   .amd__auditLine {
     display: flex;
     flex-wrap: wrap;
