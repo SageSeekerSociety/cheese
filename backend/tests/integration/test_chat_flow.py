@@ -13,6 +13,12 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.living_doc import document_of
+
+
+def _doc(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
@@ -150,7 +156,7 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
     for version, content in ((0, doc), (1, doc.replace("0.15", "0.25"))):
         assert (
             client.put(
-                f"/topics/{topic_id}/doc",
+                _doc(client, topic_id),
                 json={
                     "content": content,
                     "expected_version": version,

@@ -37,7 +37,6 @@ from tests.integration.test_file_panel_safety import (  # noqa: F401
 #: The exact card an artifact block serialises to. A move that changed the wire
 #: would add or drop a key here, which is the first thing this pins.
 CARD_KEYS = {
-    "anchor_quote",
     "author",
     "author_type",
     "content",

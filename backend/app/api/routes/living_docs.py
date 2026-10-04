@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
+from app.api.doc_access import frozen, reach, require_writable
 from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store
@@ -27,7 +28,6 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
-    ValidationError,
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
@@ -37,74 +37,67 @@ from app.domain.living_doc import collab, work_edits
 from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn, document_snapshot
 from app.domain.living_doc.services import DocumentJournal
 from app.domain.mentions import canonicalize_refs
-from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
-from app.domain.room_task.place import Place
 from app.domain.topic.schemas import DocEditIn
 from app.domain.topic.services import TopicService
 
-router = APIRouter(prefix="/topics", tags=["topics"])
+router = APIRouter(prefix="/documents", tags=["documents"])
+rooms = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.get("/{topic_id}/doc")
-async def get_topic_doc(
+@rooms.get("/{topic_id}/document")
+async def room_document(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
+    """Which document is this room's living document. It is made, empty, the
+    first time anyone asks."""
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    doc = await topics.get_doc(topic_id)
-    if doc is None or doc.version == 0:
+    doc = await topics.room_doc(place.room_id, place.project_id)
+    await db.commit()
+    return ok({"id": str(doc.id)})
+
+
+@router.get("/{document_id}")
+async def get_document(
+    document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The document as last stored, with what is proposed and not yet
+    decided; None while nothing has been written."""
+    doc = (await reach(db, resolver, document_id)).doc
+    if doc.version == 0:
         return ok(None)
     snapshot = document_snapshot(doc)
-    # What is proposed and not yet decided: not part of `content`.
     snapshot["pending_suggestions"] = await DocumentJournal(db).suggestions(doc.id)
     return ok(snapshot)
 
 
-@router.get("/{topic_id}/doc/ticket")
+@router.get("/{document_id}/ticket")
 async def document_ticket(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """A short-lived ticket that opens this room's live document.
+    """A short-lived ticket that opens the live document.
 
     Whoever may read the document may open it; who may change it is decided
     here and carried in the ticket, because the service trusts nothing a
     browser says about itself. Read-only: a caller without a verified
     credential, an archived room, an archived project.
     """
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    read_only = not actor.authenticated or await _frozen(db, place)
-    doc = await topics.room_doc(place.room_id, place.project_id)
-    agent = await IdentityService(db).is_agent(actor.handle)
-    # The document may have just been created: it has to exist before the
-    # service asks for it.
-    await db.commit()
+    reached = await reach(db, resolver, document_id)
+    read_only = not reached.actor.authenticated or await frozen(db, reached)
+    agent = await IdentityService(db).is_agent(reached.actor.handle)
     return ok(
         {
-            "document": collab.document_name(doc.id),
+            "document": collab.document_name(reached.doc.id),
             "ticket": collab.sign_ticket(
-                document_id=doc.id,
-                handle=actor.handle,
+                document_id=reached.doc.id,
+                handle=reached.actor.handle,
                 agent=agent,
                 read_only=read_only,
             ),
             "read_only": read_only,
         }
     )
-
-
-async def _frozen(db, place: Place) -> bool:
-    try:
-        TopicService(db).require_doc_writable(place)
-    except ValidationError:
-        return True
-    try:
-        await refuse_writes_if_archived(db, place.project_id)
-    except ProjectArchivedError:
-        return True
-    return False
 
 
 async def _base(db, doc, expected_version: int) -> str | None:
@@ -134,26 +127,20 @@ async def _base(db, doc, expected_version: int) -> str | None:
     )
 
 
-@router.put("/{topic_id}/doc")
-async def edit_topic_doc(
-    topic_id: uuid.UUID,
+@router.put("/{document_id}")
+async def replace_document(
+    document_id: uuid.UUID,
     body: DocEditIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
+    reached = await reach(
+        db, resolver, document_id, enforce=body.operation_id is not None
     )
-    topics.require_doc_writable(place)
-    doc = await topics.room_doc(place.room_id, place.project_id)
+    await require_writable(db, reached)
+    doc, actor = reached.doc, reached.actor
     operation = None
     if body.operation_id is not None:
-        await resolver.authorize_topic(
-            actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
-        )
         operation = {
             "actor": await operation_actor(db, actor),
             "action": "replace",
@@ -166,7 +153,7 @@ async def edit_topic_doc(
         if receipt := await _replayed(db, doc, operation):
             return receipt
     content = await canonicalize_refs(
-        db, place.project_id, body.content, exclude_topic_id=place.room_id
+        db, doc.project_id, body.content, exclude_topic_id=doc.room_id
     )
     base = await _base(db, doc, body.expected_version)
     # Nothing of this request may stay open across the call: the service's
@@ -184,9 +171,9 @@ async def edit_topic_doc(
     )
 
 
-@router.post("/{topic_id}/doc/edits")
+@router.post("/{document_id}/edits")
 async def edit_doc_passages(
-    topic_id: uuid.UUID,
+    document_id: uuid.UUID,
     body: PassageEditsIn,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -197,17 +184,12 @@ async def edit_doc_passages(
     For the room's agent and for people alike: a person restoring one change
     edits directly, as themselves. Nothing is applied unless every edit can
     be; a refusal names the edit (``data.index``)."""
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
-    if not actor.authenticated:
+    reached = await reach(db, resolver, document_id, enforce=True)
+    if not reached.actor.authenticated:
         raise AuthenticationRequiredError(say("docEditNeedsWriter"))
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
-    )
-    topics.require_doc_writable(place)
-    doc = await topics.doc_of_room(place.room_id)
-    if doc is None or doc.version == 0:
+    await require_writable(db, reached)
+    doc, actor = reached.doc, reached.actor
+    if doc.version == 0:
         raise NotFoundError(say("topicHasNoLivingDoc"))
     edits = [edit.model_dump() for edit in body.edits]
     # A 芝士 answering someone's question edits as itself, for that person,
@@ -222,7 +204,6 @@ async def edit_doc_passages(
         author = actor.handle
         decision = await decide(
             db,
-            room_id=place.room_id,
             doc=doc,
             actor=actor.handle,
             content=doc.content,
@@ -263,9 +244,9 @@ async def _replayed(db, doc, operation: dict) -> dict | None:
     )
 
 
-@router.get("/{topic_id}/doc/history")
+@router.get("/{document_id}/history")
 async def document_history(
-    topic_id: uuid.UUID,
+    document_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
     after: int = Query(default=0, ge=0),
@@ -276,68 +257,49 @@ async def document_history(
     """The document's versions: oldest first from ``after``, or with ``newest``
     the latest ``limit`` first, those below ``before`` (the page's ``cursor``)
     when given."""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
-    )
-    doc = await TopicService(db).doc_of_room(place.room_id)
+    doc = (await reach(db, resolver, document_id, enforce=True)).doc
     journal = DocumentJournal(db)
     if newest:
-        rows = await journal.recent(doc.id, before=before, limit=limit) if doc else []
+        rows = await journal.recent(doc.id, before=before, limit=limit)
         return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else None})
-    rows = await journal.history(doc.id, after=after) if doc else []
+    rows = await journal.history(doc.id, after=after)
     return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else after})
 
 
-@router.get("/{topic_id}/doc/operations/{operation_id}")
+@router.get("/{document_id}/operations/{operation_id}")
 async def document_receipt(
-    topic_id: uuid.UUID,
+    document_id: uuid.UUID,
     operation_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
     action: str = Query(default="replace", pattern="^(replace|restore)$"),
 ) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    if not actor.authenticated:
+    reached = await reach(db, resolver, document_id, enforce=True)
+    if not reached.actor.authenticated:
         raise AuthenticationRequiredError(say("docReceiptNeedsWriter"))
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
-    )
-    doc = await TopicService(db).doc_of_room(place.room_id)
-    receipt = (
-        await DocumentJournal(db).receipt(
-            document_id=doc.id,
-            actor=await operation_actor(db, actor),
-            action=action,
-            operation_id=operation_id,
-        )
-        if doc is not None
-        else None
+    receipt = await DocumentJournal(db).receipt(
+        document_id=reached.doc.id,
+        actor=await operation_actor(db, reached.actor),
+        action=action,
+        operation_id=operation_id,
     )
     if receipt is None:
         raise NotFoundError(say("docReceiptNotFound"))
     return receipt
 
 
-@router.post("/{topic_id}/doc/restore")
+@router.post("/{document_id}/restore")
 async def restore_document(
-    topic_id: uuid.UUID,
+    document_id: uuid.UUID,
     body: RestoreIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    if not actor.authenticated:
+    reached = await reach(db, resolver, document_id, enforce=True)
+    if not reached.actor.authenticated:
         raise AuthenticationRequiredError(say("docRestoreNeedsWriter"))
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
-    )
-    topics.require_doc_writable(place)
-    doc = await topics.room_doc(place.room_id, place.project_id)
+    await require_writable(db, reached)
+    doc, actor = reached.doc, reached.actor
     operation = {
         "actor": await operation_actor(db, actor),
         "action": "restore",

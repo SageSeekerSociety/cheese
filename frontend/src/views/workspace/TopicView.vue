@@ -22,7 +22,6 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
-import { announceComments } from '@/lib/docCommentSignals'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { cachedTopicPanel, fetchTopicMembers } from '@/lib/topicPanelCache'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
@@ -335,8 +334,6 @@ function handleTurnDone() {
 // sent the frame) — refresh the affected panel live (§3.1.1).
 function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
-  // 文档的评论变了：这个房间的文档那一格自己重读评论，不重读整篇。
-  else if (resource === 'comments') announceComments(props.topicId, { kind: 'changed' })
   // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。

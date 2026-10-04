@@ -9,6 +9,7 @@ from tests.integration.conftest import (
     create_approved_space,
     unique_int,
 )
+from tests.support.living_doc import document_of
 
 
 class TestTaskIntegration:
@@ -100,9 +101,10 @@ class TestTaskIntegration:
             response = api_client.get(f"/projects/{project['id']}", headers=headers)
             assert response.status_code == 200, response.text
             assert response.json()["data"]["external_task_id"] == task_id
-            response = api_client.get(
-                f"/topics/{project['root_topic_id']}/doc", headers=headers
+            document = document_of(
+                api_client, project["root_topic_id"], headers=headers
             )
+            response = api_client.get(f"/documents/{document}", headers=headers)
             assert response.status_code == 200, response.text
             assert "三个需要改善的路口" in response.text
             assert (
@@ -116,7 +118,7 @@ class TestTaskIntegration:
         if as_team:
             doc = response.json()["data"]
             response = api_client.put(
-                f"/topics/{project['root_topic_id']}/doc",
+                f"/documents/{document}",
                 headers=teammate_headers,
                 json={
                     "content": "我们补充了实地观察",
@@ -124,9 +126,7 @@ class TestTaskIntegration:
                 },
             )
             assert response.status_code == 200, response.text
-            response = api_client.get(
-                f"/topics/{project['root_topic_id']}/doc", headers=student_headers
-            )
+            response = api_client.get(f"/documents/{document}", headers=student_headers)
             assert response.json()["data"]["content"] == "我们补充了实地观察"
         # Approval releases the pack once; repeated approval cannot mint it again.
         for _ in range(2):

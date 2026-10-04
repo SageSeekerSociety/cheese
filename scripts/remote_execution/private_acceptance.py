@@ -215,8 +215,12 @@ def main():
                 )
 
             class Host:
-                environ = {"CHEESE_TOPIC": config["topic"], "CHEESE_AUTHOR": "cheese"}
-                doc_versions = {config["topic"]: 1}
+                environ = {
+                    "CHEESE_TOPIC": config["topic"],
+                    "CHEESE_DOCUMENT": "acceptance-document",
+                    "CHEESE_AUTHOR": "cheese",
+                }
+                doc_versions = {"acceptance-document": 1}
 
                 def request(self, plan):
                     sent.append(plan)
