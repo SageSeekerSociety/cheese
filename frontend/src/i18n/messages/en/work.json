@@ -1007,6 +1007,7 @@
       "nameJoiner": ", ",
       "library": "Library",
       "noFiles": "No matching files",
+      "noMatch": "No matches",
       "all": "Everyone",
       "allSub": "{'@'}all · notifies everyone in the topic",
       "here": "Online members",
