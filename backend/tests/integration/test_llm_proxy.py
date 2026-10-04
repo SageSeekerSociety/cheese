@@ -144,8 +144,9 @@ def _project_key(monkeypatch):
 
 
 def test_scoped_token_is_swapped_for_the_project_key(client, _pool, _project_key):
-    pid = _make_project(client)
-    token = mint_scoped_token(project_id=pid, topic_id=str(uuid.uuid4()))
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    pid = project["id"]
+    token = mint_scoped_token(project_id=pid, topic_id=project["root_topic_id"])
 
     r = client.post(
         "/llm/v1/messages",

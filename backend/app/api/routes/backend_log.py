@@ -19,6 +19,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import require_seated_agent
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import BadRequestError, NotFoundError, UnauthorizedError
@@ -65,6 +66,12 @@ async def report_backend_errors(
     the intake — a silently dropped report still returns 200, so a reporter in a
     crash loop never retries and never amplifies."""
     project_id, topic_id = _room(x_cheese_token, body)
+    if project_id is not None and not is_global_sandbox_token(x_cheese_token):
+        # A report becomes a block in the room, which an agent taken off it may
+        # no longer write.
+        await require_seated_agent(
+            db, x_cheese_token, project_id=project_id, topic_id=topic_id
+        )
     result = await backend_log.record(
         db, project_id=project_id, topic_id=topic_id, errors=body.errors
     )

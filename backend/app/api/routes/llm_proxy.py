@@ -31,12 +31,14 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import async_session_factory, release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
+    ForbiddenError,
     GatewayUnavailableError,
     NotFoundError,
     ValidationError,
@@ -206,6 +208,23 @@ async def admission(
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
     project = await ProjectRepository(db).get(project_uuid)
+    if project is not None:
+        try:
+            await require_seated_in_its_room(db, token, project_id=project_uuid)
+        except (AuthenticationRequiredError, ForbiddenError) as exc:
+            # Answered, not raised: the metering proxy reads any non-200 as the
+            # backend being unreachable and lets the request through (fail-open).
+            # `binding` is the kind it renders as a 400 that is not retried, with
+            # this reason; a `budget` refusal would tell the agent to wait for
+            # credits that are not what is missing.
+            return ok(
+                {
+                    "allow": False,
+                    "reason": str(exc),
+                    "reason_kind": "binding",
+                    "supply": {},
+                }
+            )
     refused = None
     if project is not None:
         refused = await UsageService(db).admit_project(project_uuid)
@@ -382,6 +401,7 @@ async def _person_key(claims: PersonalClaims) -> str | None:
 async def proxy(
     path: str,
     request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> StreamingResponse:
     token = _caller_token(request)
@@ -402,6 +422,9 @@ async def proxy(
             project_uuid = uuid.UUID(project_id)
         except ValueError as exc:
             raise NotFoundError("Unknown project") from exc
+        await require_seated_in_its_room(db, token, project_id=project_uuid)
+        # The stream below can hold this request for minutes.
+        await release_read_session(db)
         key = await chat.project_gateway_key(project_uuid)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
