@@ -177,7 +177,7 @@ useFocusReturn(ref(true))
      here live in body > .v-overlay-container, which page-load tooltips create
      before this layer mounts, so on a tie this layer paints over every one of
      them and a dropdown opens invisible. */
-  z-index: 1999;
+  z-index: var(--z-overlay-below-vuetify);
   display: flex;
   background: var(--surface);
   animation: so-in var(--dur-base) var(--ease-out);
@@ -290,7 +290,7 @@ useFocusReturn(ref(true))
 .so__close-layer {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   height: 0;
   max-width: 720px;
   pointer-events: none;

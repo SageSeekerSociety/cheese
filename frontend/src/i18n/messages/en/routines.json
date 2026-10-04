@@ -95,7 +95,6 @@
   "archivedStopped": "Stopped with the archived room",
   "readonly": "Owned by {owner} — only they and project admins can change it",
   "refreshAria": "Refresh rules",
-  "cancel": "Cancel",
   "save": "Save",
   "weekday": {
     "mon": "Mon",

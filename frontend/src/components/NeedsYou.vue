@@ -66,6 +66,15 @@ const heading = computed(() =>
   deck.value[0]?.kind === 'change_alert' ? t('work.needsYou.changeAlert') : t('work.needsYou.waiting')
 )
 
+/** 卡里那一行 kind 标签还要不要写。
+ *
+ *  这一叠的标题说的是最上面那条是什么，而一条变更提醒的标题就是「变更提醒」——卡里
+ *  再写一遍是同一句话说两次。决策请求不同：标题写的是「等你回答」，标签「决策请求」
+ *  是它才有的信息，留着。 */
+function showKind(row: InboxItem): boolean {
+  return label(NOTIF_KIND, row.kind) !== heading.value
+}
+
 /** 这一条要「点进去看」的地方 —— 它的房间。
  *
  *  通知只是实时提醒，ground truth 在文档和对话框里（spec §8.5），所以一条通知
@@ -191,7 +200,11 @@ watch(
                  答案。 -->
             <template v-if="depth === 0">
               <div class="asked-card__head">
-                <span class="asked-card__kind t-meta c-faint">{{ label(NOTIF_KIND, row.kind) }}</span>
+                <!-- The heading above already names a change alert, so the card does not
+                     repeat it; a decision request is headed 「等你回答」 and keeps its tag. -->
+                <span v-if="showKind(row)" class="asked-card__kind t-meta c-faint">{{
+                  label(NOTIF_KIND, row.kind)
+                }}</span>
                 <span class="asked-card__title t-body">{{ row.title }}</span>
               </div>
               <!-- 两行，短的也占两行：一叠卡的高度必须是常数，否则答完一条、下一条
@@ -311,16 +324,16 @@ watch(
 /* 后面那两张往下挪、缩一点、淡一点：露出来的那道边就是「后面还有」。它们不接事件
    ——点在那道边上要答的还是最上面那一条。 */
 .asked-card--d0 {
-  z-index: 3;
+  z-index: var(--z-raised-3);
 }
 .asked-card--d1 {
-  z-index: 2;
+  z-index: var(--z-raised-2);
   transform: translateY(6px) scale(0.985);
   opacity: 0.6;
   pointer-events: none;
 }
 .asked-card--d2 {
-  z-index: 1;
+  z-index: var(--z-raised);
   transform: translateY(12px) scale(0.97);
   opacity: 0.35;
   pointer-events: none;
@@ -367,7 +380,7 @@ watch(
 /* 答掉的那一条在原地淡出，后面那张同时顶上来。淡出期间它盖在最上面（不然它是在新
    的第一张后面消失的，看着像下一张先冒出来），也不再接事件。 */
 .asked-card-leave-active {
-  z-index: 4;
+  z-index: var(--z-raised-4);
   pointer-events: none;
 }
 .asked-card-enter-from,

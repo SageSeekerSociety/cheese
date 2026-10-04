@@ -455,7 +455,7 @@ onBeforeUnmount(() => {
   position: sticky;
   top: 0;
   align-self: flex-end;
-  z-index: 2;
+  z-index: var(--z-raised-2);
   display: flex;
   gap: 8px;
   margin-bottom: -8px;

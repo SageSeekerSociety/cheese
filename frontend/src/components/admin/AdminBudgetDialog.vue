@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { fmtCost } from '@/lib/usageFormat'
 
 // 给一个项目的网关 key 设「刹车值」（`max_budget`，契约 §3.4）。
@@ -73,10 +74,6 @@ const derivedText = computed(() => {
   return fmtCost(p.budget_derived_usd)
 })
 
-function close() {
-  emit('update:modelValue', false)
-}
-
 function submit() {
   if (invalid.value || props.saving) return
   emit('submit', parsed.value)
@@ -84,50 +81,48 @@ function submit() {
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="480" :persistent="saving" @update:model-value="!$event && close()">
-    <v-card rounded="lg">
-      <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('models.budget.dialog.title') }}</v-card-title>
+  <AdaptiveDialog
+    :model-value="modelValue"
+    :title="t('models.budget.dialog.title')"
+    :primary-label="t('models.dialog.save')"
+    :primary-loading="saving"
+    :primary-disabled="invalid || saving"
+    :close-disabled="saving"
+    @update:model-value="$emit('update:modelValue', $event)"
+    @primary="submit"
+  >
+    <p class="amb__who t-body">{{ project?.name }}</p>
+    <p class="amb__meta t-meta-read">{{ project?.key_alias }}</p>
 
-      <v-card-text class="px-4">
-        <p class="amb__who t-body">{{ project?.name }}</p>
-        <p class="amb__meta t-meta-read">{{ project?.key_alias }}</p>
+    <v-text-field
+      v-model="text"
+      autocomplete="off"
+      type="number"
+      variant="outlined"
+      density="comfortable"
+      :label="t('models.budget.dialog.field')"
+      :hint="t('models.budget.dialog.hint', { derived: derivedText })"
+      :error="invalid"
+      hide-details="auto"
+      class="mt-3"
+    />
 
-        <v-text-field
-          v-model="text"
-          autocomplete="off"
-          type="number"
-          variant="outlined"
-          density="comfortable"
-          :label="t('models.budget.dialog.field')"
-          :hint="t('models.budget.dialog.hint', { derived: derivedText })"
-          :error="invalid"
-          hide-details="auto"
-          class="mt-3"
-        />
+    <v-alert v-if="error" type="error" density="compact" variant="tonal" class="amb__alert" role="alert">
+      {{ error }}
+    </v-alert>
 
-        <v-alert v-if="error" type="error" density="compact" variant="tonal" class="amb__alert" role="alert">
-          {{ error }}
-        </v-alert>
-      </v-card-text>
-
-      <v-card-actions class="pa-4 pt-0">
-        <!-- 清除只在一个值确实存在时才有意义（没有覆盖值时它是个空操作）。 -->
-        <BaseButton
-          v-if="project?.max_budget_usd !== null && project?.max_budget_usd !== undefined"
-          kind="ghost"
-          :disabled="saving"
-          @click="emit('submit', null)"
-        >
-          {{ t('models.budget.dialog.clear') }}
-        </BaseButton>
-        <v-spacer />
-        <BaseButton kind="ghost" :disabled="saving" @click="close">{{ t('models.dialog.cancel') }}</BaseButton>
-        <BaseButton kind="primary" :loading="saving" :disabled="invalid || saving" @click="submit">
-          {{ t('models.dialog.save') }}
-        </BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <template #actions>
+      <!-- Clear only makes sense when an override actually exists (otherwise it is a no-op). -->
+      <BaseButton
+        v-if="project?.max_budget_usd !== null && project?.max_budget_usd !== undefined"
+        kind="ghost"
+        :disabled="saving"
+        @click="emit('submit', null)"
+      >
+        {{ t('models.budget.dialog.clear') }}
+      </BaseButton>
+    </template>
+  </AdaptiveDialog>
 </template>
 
 <style scoped>

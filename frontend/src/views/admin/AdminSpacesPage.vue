@@ -11,6 +11,7 @@ import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -249,42 +250,30 @@ onMounted(load)
     </AdminPage>
 
     <!-- 驳回：要一句理由 —— 申请的人看不到这句话之外的任何解释。 -->
-    <v-dialog
+    <AdaptiveDialog
       :model-value="!!selected"
-      max-width="520"
-      :persistent="saving"
+      :title="t('spaces.review.reject')"
+      :cancel-label="t('spaces.create.cancel')"
+      :primary-label="t('spaces.review.reject')"
+      primary-danger
+      :primary-loading="saving"
+      :primary-disabled="!reason.trim()"
+      :close-disabled="saving"
       @update:model-value="!$event && (selected = null)"
+      @primary="selected && decide(selected, false)"
     >
-      <v-card rounded="lg">
-        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('spaces.review.reject') }}</v-card-title>
-        <v-card-text class="px-4">
-          <p class="asp__who t-body">{{ selected?.name }}</p>
-          <AdminFlash v-if="writeError" tone="error" :text="writeError" />
-          <v-textarea
-            v-model="reason"
-            autocomplete="off"
-            :label="t('spaces.review.reason')"
-            :disabled="saving"
-            rows="3"
-            variant="outlined"
-            hide-details
-          />
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <BaseButton :disabled="saving" @click="selected = null">{{ t('spaces.create.cancel') }}</BaseButton>
-          <BaseButton
-            kind="danger"
-            solid
-            :loading="saving"
-            :disabled="!reason.trim() || saving"
-            @click="selected && decide(selected, false)"
-          >
-            {{ t('spaces.review.reject') }}
-          </BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      <p class="asp__who t-body">{{ selected?.name }}</p>
+      <AdminFlash v-if="writeError" tone="error" :text="writeError" />
+      <v-textarea
+        v-model="reason"
+        autocomplete="off"
+        :label="t('spaces.review.reason')"
+        :disabled="saving"
+        rows="3"
+        variant="outlined"
+        hide-details
+      />
+    </AdaptiveDialog>
   </div>
 </template>
 

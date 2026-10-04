@@ -11,7 +11,7 @@ import { computed, ref } from 'vue'
 
 import RoutineRow from './RoutineRow.vue'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { routineRoomTarget } from '@/lib/routine'
 
@@ -137,17 +137,17 @@ function confirmDelete() {
       </div>
     </template>
 
-    <v-dialog :model-value="!!confirming" max-width="420" @update:model-value="confirming = null">
-      <v-card v-if="confirming">
-        <v-card-title class="t-dialog-title">{{ t('routines.deleteTitle', { title: confirming.title }) }}</v-card-title>
-        <v-card-text class="t-body">{{ t('routines.deleteBody') }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton kind="ghost" @click="confirming = null">{{ t('routines.cancel') }}</BaseButton>
-          <BaseButton kind="danger" solid @click="confirmDelete">{{ t('routines.action.delete') }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Deleting a rule is not reversible (its run history goes too): ask before it happens. -->
+    <ConfirmDialog
+      :model-value="!!confirming"
+      :title="t('routines.deleteTitle', { title: confirming?.title ?? '' })"
+      :confirm-label="t('routines.action.delete')"
+      danger
+      @update:model-value="confirming = null"
+      @confirm="confirmDelete"
+    >
+      {{ t('routines.deleteBody') }}
+    </ConfirmDialog>
   </div>
 </template>
 

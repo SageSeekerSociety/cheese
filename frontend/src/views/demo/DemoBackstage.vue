@@ -257,7 +257,7 @@ const STATUS: Record<DeviceStatus, string> = {
 }
 
 .pipe-dot {
-  z-index: 1;
+  z-index: var(--z-raised);
   flex: none;
   width: 12px;
   height: 12px;

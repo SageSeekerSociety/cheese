@@ -27,6 +27,7 @@ import {
 } from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
 import { teammateName } from '@/lib/agentNames'
@@ -103,6 +104,22 @@ const memoryCounts = computed(() => memoryCountsByHandle(memories.value, props.p
 const editing = ref<ProjectAgent | null>(null)
 const editorOpen = ref(false)
 const deactivateTarget = ref<ProjectAgent | null>(null)
+// 确认框的开关跟着「选中的那个队友」走：有目标就是开着，关掉就把目标清掉。
+const deactivateOpen = computed({
+  get: () => deactivateTarget.value !== null,
+  set: (value) => {
+    if (!value) deactivateTarget.value = null
+  },
+})
+const deactivateTitle = computed(() =>
+  deactivateTarget.value
+    ? t('work.projectSettings.agents.deactivateTitle', {
+        name:
+          teammateName(deactivateTarget.value.display_name, deactivateTarget.value.name_source) ||
+          deactivateTarget.value.handle,
+      })
+    : ''
+)
 const deactivating = ref(false)
 // 展开看记忆的那一行。一次只展开一个 —— 这一栏是用来「看这个队友学到了什么」，
 // 不是用来横向对比的。
@@ -283,28 +300,16 @@ async function confirmDeactivate() {
 
     <AgentEditorDialog v-model="editorOpen" :project-id="projectId" :agent="editing" :types="types" @saved="refresh" />
 
-    <v-dialog :model-value="deactivateTarget !== null" max-width="440" @update:model-value="deactivateTarget = null">
-      <v-card v-if="deactivateTarget" class="pa-5">
-        <div class="d-flex align-center mb-3">
-          <v-icon color="error" class="mr-2">mdi-account-off-outline</v-icon>
-          <span class="t-title">{{
-            t('work.projectSettings.agents.deactivateTitle', {
-              name:
-                teammateName(deactivateTarget.display_name, deactivateTarget.name_source) || deactivateTarget.handle,
-            })
-          }}</span>
-        </div>
-        <div class="t-caption c-muted mb-5">{{ t('work.projectSettings.agents.deactivateHint') }}</div>
-        <div class="d-flex justify-end">
-          <BaseButton class="mr-2" @click="deactivateTarget = null">{{
-            t('work.projectSettings.agents.cancel')
-          }}</BaseButton>
-          <BaseButton kind="danger" solid :loading="deactivating" @click="confirmDeactivate">{{
-            t('work.projectSettings.agents.deactivate')
-          }}</BaseButton>
-        </div>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deactivateOpen"
+      :title="deactivateTitle"
+      :confirm-label="t('work.projectSettings.agents.deactivate')"
+      danger
+      :loading="deactivating"
+      @confirm="confirmDeactivate"
+    >
+      {{ t('work.projectSettings.agents.deactivateHint') }}
+    </ConfirmDialog>
   </section>
 </template>
 

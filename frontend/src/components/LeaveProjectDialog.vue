@@ -5,7 +5,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { leaveProject } from '@/api'
-import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -54,22 +54,17 @@ async function confirmLeave() {
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="420">
-    <v-card>
-      <v-card-title class="t-dialog-title pt-4">{{ t('project.leave.title') }}</v-card-title>
-      <v-card-text class="t-body c-muted">
-        {{ t(viaTeam ? 'project.leave.bodyTeam' : 'project.leave.body') }}
-        <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
-          {{ error }}
-        </v-alert>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <BaseButton kind="ghost" @click="open = false">{{ t('global.cancel') }}</BaseButton>
-        <BaseButton kind="danger" solid :loading="leaving" @click="confirmLeave">{{
-          t('project.leave.confirm')
-        }}</BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <ConfirmDialog
+    v-model="open"
+    :title="t('project.leave.title')"
+    :confirm-label="t('project.leave.confirm')"
+    danger
+    :loading="leaving"
+    @confirm="confirmLeave"
+  >
+    {{ t(viaTeam ? 'project.leave.bodyTeam' : 'project.leave.body') }}
+    <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
+      {{ error }}
+    </v-alert>
+  </ConfirmDialog>
 </template>

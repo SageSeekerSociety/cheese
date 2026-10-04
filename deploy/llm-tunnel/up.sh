@@ -32,6 +32,13 @@ fi
 if [ ! -f "$ACTIVE_DIR/frontend.conf" ]; then
   printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "${FRONTEND_PORT:-8080}" > "$ACTIVE_DIR/frontend.conf"
 fi
+# api-front's nginx.conf includes this file and reads $preview_tunnel_upstream
+# from it. Seed it pointing the preview tunnel at the active backend (the
+# pre-cutover path); a later deploy rewrites it from configure-preview.sh for
+# the effective mode. Its absence fails nginx -t, which is the point.
+if [ ! -f "$ACTIVE_DIR/preview-routing.conf" ]; then
+  bash ./configure-preview.sh legacy "$ACTIVE_DIR" >/dev/null
+fi
 cp app-router.conf "$ACTIVE_DIR/app-router.conf"
 export ACTIVE_BACKEND_DIR="$ACTIVE_DIR"
 exec docker compose -p cheese-dataplane --env-file .env -f compose.yml -f app-router-compose.yml up -d "$@"

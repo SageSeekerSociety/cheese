@@ -42,13 +42,11 @@
     "searchPlaceholder": "输入 handle 或昵称",
     "alreadyAdmin": "已经是管理员",
     "hint": "加进来的人马上就能看到私密反馈和安全问题，也能自己在这里加人。",
-    "cancel": "取消",
     "submit": "添加"
   },
   "confirm": {
     "title": "移出管理员",
     "body": "把 {handle} 移出名单？他马上看不到私密反馈和安全问题，也不能再进来加人。",
-    "cancel": "取消",
     "submit": "移出"
   },
   "notice": {

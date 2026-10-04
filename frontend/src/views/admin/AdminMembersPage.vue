@@ -12,7 +12,9 @@ import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -530,84 +532,70 @@ onMounted(load)
          查成了 `pengwenbo` 并回了一行，组件再拿「彭文博」去比 `pengwenbo`，不匹配，
          当场筛掉。表现是「输入 handle 搜得到、输入中文名搜不到」，而接口、fixture、
          服务端用例三处各自看都对。 -->
-    <v-dialog v-model="dialogOpen" max-width="520" persistent>
-      <v-card rounded="lg">
-        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('members.addDialog.title') }}</v-card-title>
-        <v-card-text class="px-4">
-          <v-autocomplete
-            v-model="selected"
-            v-model:search="search"
-            autocomplete="off"
-            :label="t('members.addDialog.searchLabel')"
-            :placeholder="t('members.addDialog.searchPlaceholder')"
-            variant="outlined"
-            density="comfortable"
-            :items="candidates"
-            :loading="searching"
-            :no-filter="true"
-            item-title="handle"
-            item-value="handle"
-            return-object
-            multiple
-            chips
-            closable-chips
-            hide-no-data
-          >
-            <template #item="{ item, props }">
-              <v-list-item v-bind="props" :disabled="item.raw.already_admin">
-                <template #prepend>
-                  <UserAvatar :name="item.raw.handle" :avatar="avatarUrl(item.raw.avatar_id)" :size="30" />
-                </template>
-                <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
-                <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
-                <template #append>
-                  <span v-if="item.raw.already_admin" class="chip-neutral">{{
-                    t('members.addDialog.alreadyAdmin')
-                  }}</span>
-                </template>
-              </v-list-item>
+    <AdaptiveDialog
+      v-model="dialogOpen"
+      :title="t('members.addDialog.title')"
+      :primary-label="t('members.addDialog.submit')"
+      :primary-loading="adding"
+      :primary-disabled="!selected.length"
+      persistent
+      @primary="addSelected"
+    >
+      <v-autocomplete
+        v-model="selected"
+        v-model:search="search"
+        autocomplete="off"
+        :label="t('members.addDialog.searchLabel')"
+        :placeholder="t('members.addDialog.searchPlaceholder')"
+        variant="outlined"
+        density="comfortable"
+        :items="candidates"
+        :loading="searching"
+        :no-filter="true"
+        item-title="handle"
+        item-value="handle"
+        return-object
+        multiple
+        chips
+        closable-chips
+        hide-no-data
+      >
+        <template #item="{ item, props }">
+          <v-list-item v-bind="props" :disabled="item.raw.already_admin">
+            <template #prepend>
+              <UserAvatar :name="item.raw.handle" :avatar="avatarUrl(item.raw.avatar_id)" :size="30" />
             </template>
-          </v-autocomplete>
-          <div class="t-meta mt-2">{{ t('members.addDialog.hint') }}</div>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <BaseButton @click="dialogOpen = false">{{ t('members.addDialog.cancel') }}</BaseButton>
-          <BaseButton kind="primary" :loading="adding" :disabled="!selected.length" @click="addSelected">
-            {{ t('members.addDialog.submit') }}
-          </BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+            <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
+            <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
+            <template #append>
+              <span v-if="item.raw.already_admin" class="chip-neutral">{{ t('members.addDialog.alreadyAdmin') }}</span>
+            </template>
+          </v-list-item>
+        </template>
+      </v-autocomplete>
+      <div class="t-meta mt-2">{{ t('members.addDialog.hint') }}</div>
+    </AdaptiveDialog>
 
     <!-- 移出要问一句：这个动作当场改的是**谁能看别人的私密反馈**，而且按钮就在一行
          名字旁边，点错了没有任何东西拦着。 -->
-    <v-dialog :model-value="!!confirmHandle" max-width="420" @update:model-value="confirmHandle = null">
-      <v-card rounded="lg">
-        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('members.confirm.title') }}</v-card-title>
-        <v-card-text class="px-4">
-          <!-- 正文是全仓第一处 `<i18n-t>`：handle 回显**加粗**（按按钮的人要看得见
-               删的是谁），而英文语序和中文不同 —— 句子碎片键被 i18n.md §3 禁掉，
-               插槽是唯一合规的写法。 -->
-          <i18n-t keypath="members.confirm.body" tag="span">
-            <template #handle>
-              <strong>{{ confirmHandle }}</strong>
-            </template>
-          </i18n-t>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <BaseButton @click="confirmHandle = null">{{ t('members.confirm.cancel') }}</BaseButton>
-          <!-- `kind="danger" solid`（原 `color="error"` 默认实心）：琥珀按设计系统只给一屏唯一的主操作，
-               而这一页的主操作是「添加管理员」（工具条里那颗）。移出是不可逆的破坏性
-               动作，红是它该有的颜色；本仓先例：MyDevicesView、ProjectLibraryView、
-               teams/detail/Members 的删除按钮。 -->
-          <BaseButton kind="danger" solid :loading="!!removing" @click="remove">{{
-            t('members.confirm.submit')
-          }}</BaseButton>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      :model-value="!!confirmHandle"
+      :title="t('members.confirm.title')"
+      :confirm-label="t('members.confirm.submit')"
+      :loading="!!removing"
+      danger
+      @update:model-value="confirmHandle = null"
+      @confirm="remove"
+    >
+      <!-- The body echoes the handle in bold (the person pressing must see who is being
+           removed), and English word order differs, so the i18n-t slot is the only
+           compliant phrasing. -->
+      <i18n-t keypath="members.confirm.body" tag="span">
+        <template #handle>
+          <strong>{{ confirmHandle }}</strong>
+        </template>
+      </i18n-t>
+    </ConfirmDialog>
   </div>
 </template>
 

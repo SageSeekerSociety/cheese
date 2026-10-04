@@ -10,14 +10,14 @@
       <notification-avatar :notification="notification" class="me-3 mt-1" />
 
       <div class="flex-grow-1 d-flex flex-column">
-        <div class="d-flex flex-row justify-space-between align-center">
+        <div class="d-flex flex-row justify-space-between align-center notification-item__top">
           <component
             :is="contentComponent"
             ref="contentRef"
             :notification="notification"
             @update-notification="onUpdateNotification"
           />
-          <span class="text-caption text-medium-emphasis ms-2">{{ formattedTime }}</span>
+          <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
         </div>
 
         <div class="d-flex justify-end align-center mt-2">
@@ -70,14 +70,14 @@
       <notification-avatar :notification="notification" class="me-3 mt-1" />
 
       <div class="flex-grow-1 d-flex flex-column">
-        <div class="d-flex flex-row justify-space-between align-center">
+        <div class="d-flex flex-row justify-space-between align-center notification-item__top">
           <component
             :is="contentComponent"
             ref="contentRef"
             :notification="notification"
             @update-notification="onUpdateNotification"
           />
-          <span class="text-caption text-medium-emphasis ms-2">{{ formattedTime }}</span>
+          <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
         </div>
 
         <div class="d-flex justify-end align-center mt-2">
@@ -242,5 +242,26 @@ const onUpdateNotification = (notificationId: number) => {
 
 .unread-notification {
   background-color: var(--accent-wash);
+}
+
+/* 时间戳不许被挤：内容那一列可以收窄换行，它按原样待着。不这么写时，窄屏上
+   「1 小时前」会被正文压成一列一个字，竖着排下来。 */
+.notification-item__time {
+  flex: none;
+  margin-inline-start: 8px;
+  white-space: nowrap;
+}
+
+/* 窄屏上正文占满一行，时间挪到它下面一行右对齐；上面那条留出的 8px 换成行距。 */
+@media (max-width: 599.98px) {
+  .notification-item__top {
+    flex-wrap: wrap;
+  }
+
+  .notification-item__time {
+    flex-basis: 100%;
+    margin-inline-start: 0;
+    text-align: right;
+  }
 }
 </style>

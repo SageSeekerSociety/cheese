@@ -22,6 +22,18 @@
 # being committed it survives the runner's per-run re-checkout (which is what
 # forced a box-side heal hack before this existed).
 services:
+  # The preview owner serves static previews and room files straight off the
+  # workspace tree, at the SAME absolute path the shared env file names in
+  # WORKSPACE_ROOT. That value is a HOST path (a sandbox sibling resolves its
+  # own `-v <src>` against the host daemon, so the backend mirrors it — see the
+  # header above). The base file mounts the tree only at /app/.workspaces, so
+  # without this mirror the owner's settings.workspace_root points at an
+  # unmounted path: every static preview and room-file read fails, and only on
+  # a subscription box, which is exactly where nobody looks.
+  preview-connection:
+    volumes:
+      - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}
+
   backend:
     group_add:
       - "${DOCKER_GID:-989}"

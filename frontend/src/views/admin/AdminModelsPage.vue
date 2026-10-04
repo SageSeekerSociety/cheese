@@ -212,6 +212,7 @@ const {
       :body="t('models.confirm.delete.body', { name: deleteTarget?.name ?? '' })"
       :confirm-label="t('models.confirm.delete.confirm')"
       :busy="deleting"
+      danger
       @update:model-value="closeDelete"
       @confirm="confirmDelete"
     />
@@ -227,6 +228,7 @@ const {
       "
       :confirm-label="t(blockTarget?.blocked ? 'models.confirm.unblock.confirm' : 'models.confirm.block.confirm')"
       :busy="blocking"
+      :danger="!blockTarget?.blocked"
       @update:model-value="closeBlock"
       @confirm="confirmBlock"
     />

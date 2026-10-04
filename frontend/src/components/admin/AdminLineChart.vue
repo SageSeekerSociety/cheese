@@ -463,7 +463,7 @@ const tooltipLeft = computed(() => {
 .alc__tooltip {
   position: absolute;
   top: 8px;
-  z-index: 1;
+  z-index: var(--z-raised);
   display: flex;
   flex-direction: column;
   gap: 4px;

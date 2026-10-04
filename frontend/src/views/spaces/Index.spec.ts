@@ -130,7 +130,7 @@ describe('space creation', () => {
     await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Practice')
     const file = new File(['image'], 'avatar.png', { type: 'image/png' })
     await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
-    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.submit' }))
     await waitFor(() => expect(spacesCreate).toHaveBeenCalledWith({ name: 'Practice', intro: '', avatarId: 77 }))
     expect(uploadAvatar).toHaveBeenCalledWith(file)
   })
@@ -145,7 +145,7 @@ describe('space creation', () => {
     await fireEvent.change(document.querySelector('input[type="file"]')!, {
       target: { files: [new File(['image'], 'avatar.png', { type: 'image/png' })] },
     })
-    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.submit' }))
     await waitFor(() => expect(page.getByText('spaces.create.failed')).toBeTruthy())
     expect(spacesCreate).not.toHaveBeenCalled()
     expect((page.getByLabelText('spaces.create.name') as HTMLInputElement).value).toBe('Practice')
@@ -161,7 +161,7 @@ describe('space creation', () => {
     expect(submit.hasAttribute('disabled')).toBe(true)
     await fireEvent.update(page.getByLabelText('spaces.create.name'), '  Programming course  ')
     await fireEvent.update(page.getByLabelText('spaces.create.intro'), 'Weekly exercises')
-    await fireEvent.submit(submit.closest('form')!)
+    await fireEvent.click(submit)
     await waitFor(() => expect(spacesCreate).toHaveBeenCalledTimes(1))
     expect(spacesCreate).toHaveBeenCalledWith({ name: 'Programming course', intro: 'Weekly exercises' })
   })
@@ -174,10 +174,10 @@ describe('space creation', () => {
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
     await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Course')
-    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.submit' }))
     await waitFor(() => expect(page.getByText('spaces.create.failed')).toBeTruthy())
     expect((page.getByLabelText('spaces.create.name') as HTMLInputElement).value).toBe('Course')
-    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.submit' }))
     await waitFor(() => expect(spacesCreate).toHaveBeenCalledTimes(2))
   })
 
@@ -188,7 +188,7 @@ describe('space creation', () => {
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
     await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Programming course')
-    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.submit' }))
 
     await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetailTasksList'))
     expect(page.router.currentRoute.value.params.spaceId).toBe('42')
@@ -214,7 +214,7 @@ describe('space creation', () => {
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
     await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Course')
-    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.submit' }))
 
     // 码先给他看，人还留在原地。
     await waitFor(() => expect(page.getByText('9F3A-2C71-B8E4')).toBeTruthy())

@@ -327,7 +327,6 @@
     },
     "deadlineTitle": "Set deadline",
     "deadlineFor": "Submission deadline for {name}",
-    "cancel": "Cancel",
     "save": "Save",
     "rejectTitle": "Decline claim",
     "rejectLead": "Decline {name}'s claim on this challenge",

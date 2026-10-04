@@ -8,6 +8,7 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
@@ -185,6 +186,31 @@ export const BASE_ENTRIES: CatalogEntry[] = [
         note: 'loading 原样透传给 v-btn：转圈时按钮宽度不变、不可再点。',
         props: { kind: 'primary', loading: true },
         slot: '保存',
+      },
+    ],
+  },
+  {
+    id: 'confirm-dialog',
+    title: 'ConfirmDialog',
+    about: '确认框：一句话、两颗按钮，桌面和手机都是居中的 420px 小框，没有 ✕，点遮罩不关。',
+    file: 'src/components/base/ConfirmDialog.vue',
+    component: ConfirmDialog,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    states: [
+      {
+        name: '可撤销',
+        note: '确认键是琥珀主操作，字写动作本身。',
+        props: { modelValue: true, title: '用新版本替换这份文件？', confirmLabel: '替换' },
+        slot: '旧版本会留在历史记录里。',
+        expect: '替换',
+      },
+      {
+        name: '不可撤销',
+        note: '确认键实心红。标题用问句说清对谁做什么，正文只写后果。',
+        props: { modelValue: true, title: '把爱丽丝移出项目？', confirmLabel: '移出', danger: true },
+        slot: '她将看不到这个项目的话题和资料。',
+        expect: '移出',
       },
     ],
   },

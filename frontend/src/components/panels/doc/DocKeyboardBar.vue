@@ -65,7 +65,7 @@ onBeforeUnmount(() => {
   position: fixed;
   right: 0;
   left: 0;
-  z-index: 2400;
+  z-index: var(--z-overlay);
   display: flex;
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface);

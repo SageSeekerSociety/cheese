@@ -712,7 +712,7 @@ async function share() {
 .fb-composer {
   position: sticky;
   bottom: 0;
-  z-index: 2;
+  z-index: var(--z-raised-2);
   margin-top: 12px;
   /* 下内边距就是这一页末尾的留白（`.fb-page` 那 48px 挪到这儿了）。 */
   padding: 8px 0 16px;
@@ -777,7 +777,7 @@ async function share() {
 .fb-actionbar {
   position: sticky;
   bottom: 0;
-  z-index: 3;
+  z-index: var(--z-raised-3);
   display: flex;
   align-items: center;
   box-sizing: border-box;

@@ -26,6 +26,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import VirtualList from '@/components/common/VirtualList.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
@@ -52,6 +53,10 @@ const errorMsg = ref<string | null>(null)
 // 已完成折起来。板面留给还需要人看的东西，但要说得出有多少件——悄悄不显示会让人
 // 以为这个项目从来没交付过什么。
 const showDone = ref(false)
+// 已完成那一列自己滚（`.board__done-list` 上写着 max-height）。行数过门槛时它交给
+// VirtualList，那一列得把自己的滚动容器递给它——长项目里 done 会越堆越多，而这块板
+// 只占视口底下一条。
+const doneScroll = ref<HTMLElement | null>(null)
 
 /** 板隔多久自己重拉一次。
  *
@@ -285,6 +290,12 @@ function openTask(task: RoomTask) {
     query: { tab: 'overview', card: task.id },
   })
 }
+
+// 已完成那一列交给虚拟列表时要的行身份（和 v-for 的 key 同义）。具名函数而不是模板里
+// 的箭头：模板里那个箭头参数没有类型来源，strict 下会报隐式 any。
+function taskRowKey(row: unknown): string {
+  return (row as { id: string }).id
+}
 </script>
 
 <template>
@@ -454,16 +465,33 @@ function openTask(task: RoomTask) {
             <span class="t-body">{{ columnLabel('done') }}</span>
             <span class="t-meta board-col__count">{{ countLabel('done') }}</span>
           </button>
-          <ul v-if="showDone" class="board__done-list">
+          <!-- This column scrolls itself (max-height on the class below), so it passes
+               itself in as the scroll parent: done piles up over a long project while the
+               board only gets a strip at the bottom. Past VIRTUAL_LIST_THRESHOLD
+               (lib/virtualList.ts) VirtualList keeps only the rows in view mounted; below
+               it this is the plain list it always was. The `ul`/`li` stay: VirtualList only
+               wraps each row (item-as), it never owns the container, so the list keeps its
+               semantics in both paths. -->
+          <ul v-if="showDone" ref="doneScroll" class="board__done-list" role="list">
             <li v-if="!doneRows.length" class="board-col__empty t-body">{{ t('work.board.noneMine') }}</li>
-            <li v-for="row in doneRows" :key="row.id">
-              <button type="button" class="done-row" @click="openTask(row)">
-                <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
-                <span class="done-row__title t-body">{{ taskTitle(row) }}</span>
-                <span class="done-row__room t-meta">{{ roomTitle(row.room_id) }}</span>
-                <span class="done-row__phrase t-meta">{{ phraseLabel(row.presentation.phrase) }}</span>
-              </button>
-            </li>
+            <VirtualList
+              :items="doneRows"
+              :item-key="taskRowKey"
+              :scroll-parent="doneScroll"
+              :estimated-size="34"
+              :buffer-size="240"
+              item-as="li"
+              item-role="listitem"
+            >
+              <template #item="{ item }">
+                <button type="button" class="done-row" @click="openTask(item)">
+                  <span class="board-dot" :style="columnDotStyle(item.presentation.column)" aria-hidden="true" />
+                  <span class="done-row__title t-body">{{ taskTitle(item) }}</span>
+                  <span class="done-row__room t-meta">{{ roomTitle(item.room_id) }}</span>
+                  <span class="done-row__phrase t-meta">{{ phraseLabel(item.presentation.phrase) }}</span>
+                </button>
+              </template>
+            </VirtualList>
           </ul>
         </div>
       </template>
@@ -607,7 +635,9 @@ function openTask(task: RoomTask) {
   }
 }
 /* 三列「该谁动」是 --fill 的泳道，卡片白底描边：卡比泳道亮，列和卡一眼分得开。
-   内容区本身是 surface，所以列不能再是白框。 */
+   内容区本身是 surface，所以列不能再是白框。
+   「做出了什么」也是同一种泳道（它原来只有一条分隔线、没有底色，四列并排时最右边
+   那列看着像没画完）；它装的不是卡片而是名字 + 版本，列头那一行的语法仍和三列共用。 */
 .board-col {
   display: flex;
   flex-direction: column;
@@ -616,20 +646,6 @@ function openTask(task: RoomTask) {
   min-width: 0;
   border-radius: var(--radius-lg);
   background: var(--fill);
-}
-/* 「做出了什么」不是一列状态，是那三列干完吐出来的东西，所以它不是泳道：没有底色，
-   靠一条线和三列隔开。窄屏上它摞在板的最上面，线就画在它底下。 */
-.board-col--made {
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  background: none;
-}
-@container (min-width: 1000px) {
-  .board-col--made {
-    padding-left: 10px;
-    border-bottom: 0;
-    border-left: 1px solid var(--line);
-  }
 }
 .board-col__head {
   flex: 0 0 auto;
@@ -657,6 +673,11 @@ function openTask(task: RoomTask) {
   list-style: none;
   margin: 0;
   padding: 8px;
+  /* 底下那条「已完成」约 38 高（8+8 的上下内边距 + 一行字 + 1px 上边线），它紧贴在
+     板下面：清单滚到底时，最后一张卡要是正好落在这一格的下沿，看上去就是被那条压
+     住了。留出和它一样高的一截，滚到底的那张卡才停在它上面。32 是间距梯级里最靠
+     近 38 的一档。 */
+  padding-bottom: 32px;
 }
 /* 骨架顶掉的是 ul，所以它得自己补上 ul 那圈 8px。卡本身的边框、圆角和 10px 内
    边距由骨架那边的 .skel__card 出 —— 它画的就是一张 .board-card。 */
@@ -730,15 +751,22 @@ function openTask(task: RoomTask) {
   color: var(--muted);
 }
 .board-card__room {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .board-card__sep {
+  flex: none;
   color: var(--faint);
 }
+/* 谁在做这一条不比它在哪个房间次要：房间名那一列吃掉整行、把人名挤成一个字的时
+   候，卡上「谁在做」就没法读了。房间名收（flex:1 + min-width:0，超出打点），人名
+   按原样待着。 */
 .board-card__who {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 4px;
   min-width: 0;

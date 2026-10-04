@@ -9,6 +9,7 @@
 // 折叠记不记得住、红灯会不会自己亮这些事能离开「画」单独测。
 import type { Project, Topic } from '../cx_types'
 import type { MenuAction } from './common/menuAction'
+import type { VirtualListHandle } from './common/VirtualList.vue'
 
 import { computed, ref, watch } from 'vue'
 
@@ -27,6 +28,7 @@ import { avatarColor, avatarInitial } from '../utils/avatar'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+import VirtualList from './common/VirtualList.vue'
 import TopicRailArchivedGroup from './topic-sidebar/TopicRailArchivedGroup.vue'
 import TopicRailGroupToggle from './topic-sidebar/TopicRailGroupToggle.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
@@ -84,6 +86,18 @@ const emit = defineEmits<{
 // ---- 数据那一半 ----
 // 直接把 props 递进去：composable 里每个 computed 都在读它，而 props 本身是响应式
 // 的，所以父级换一份 topics，树跟着重算。
+//
+// 一张表也要递进去：一组话题行如果太长了会交给虚拟列表（lib/virtualList.ts 那个门槛），
+// 那些行就不在 DOM 里了——「选中了就把它带进视口」那一条只能按序号让那一组自己滚。这张
+// 表是那一半的落点：组 key → 那一组露出来的手。置顶行、组头各是一个独立的 `<v-list>`，
+// 不在这张表里（它们永远整列渲染）；已归档那一组在 TopicRailArchivedGroup 里自己虚拟化
+// （它拿滚动容器自己算窗口，选中行也由它自己留），所以也不在这张表里。
+const railLists = new Map<string, VirtualListHandle>()
+function setRailList(key: string, handle: unknown) {
+  if (handle) railLists.set(key, handle as VirtualListHandle)
+  else railLists.delete(key)
+}
+
 const {
   rootTopic,
   activeTree,
@@ -100,7 +114,7 @@ const {
   memberMarks,
   toggleTitle,
   topicById,
-} = useTopicRail(props)
+} = useTopicRail(props, { scrollToIndex: (key, index) => railLists.get(key)?.scrollToIndex(index) })
 
 // ---- 路由那一半 ----
 // 这个文件里一行 vue-router 都没有：换页、预热、行菜单那几项都从这一道取。
@@ -342,6 +356,28 @@ const rowSheetActions = computed<MenuAction[]>(() =>
 // 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
 // 这一行在任何一种文档打开时都是选中态。
 const onDocs = computed(() => !!props.activeDocs)
+
+// ---- 交给虚拟列表的那两组要的两件小事 ----
+// 行的身份（和 v-for 的 key 同义）。写成具名函数而不是模板里的箭头：模板里那个箭头
+// 参数没有类型来源，strict 下会报隐式 any。
+function topicRowKey(row: unknown): string {
+  return (row as { topic: Topic }).topic.id
+}
+
+// 有几行即使滚出窗口也得留在 DOM 里——它们各自的锚点就在那一行本身：
+//   - 选中的那一行：光标可能正停在它上面，人也正要看它；
+//   - ⋯ 菜单正开着的那一行：那颗 ⋯ 是菜单的 activator，跟着窗口一起消失菜单会塌；
+//   - 正在原地改名的那一行：输入框和光标都在行里。
+// 一行的锚点不在窗口上，就是「这一行被摘掉、锚点也跟着没」的那一类。一个都不占就返回
+// undefined（等于告诉 virtua「不用特别留谁」）。
+function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | undefined {
+  const keep: number[] = []
+  section.rows.forEach((row, index) => {
+    const id = row.topic.id
+    if (id === props.selectedTopicId || id === actionsMenuFor.value || id === renamingTopicId.value) keep.push(index)
+  })
+  return keep.length ? keep : undefined
+}
 </script>
 
 <template>
@@ -484,32 +520,56 @@ const onDocs = computed(() => !!props.activeDocs)
               />
 
               <v-list v-if="section.rows.length" density="compact" nav class="py-0" tabindex="-1">
-                <!-- 顺序按最近动静排，一条新消息会把一个房间顶到上面。换位置时让行滑过
-                     去（FLIP），而不是整列瞬间重排——人找的那一行刚才在哪、现在去了
-                     哪，要看得见。按项目换 key：切项目是换了一整份列表，不是这份列表
-                     在重排，不演。 -->
-                <TransitionGroup :key="selectedProjectId" name="rail-row">
-                  <TopicRailRow
-                    v-for="row in section.rows"
-                    :key="row.topic.id"
-                    :row="row"
-                    :selected="row.topic.id === selectedTopicId"
-                    :page="page === true"
-                    :renaming="renamingTopicId === row.topic.id"
-                    :menu-open="actionsMenuFor === row.topic.id"
-                    :stalled="stalledOf(row.topic.id)"
-                    :marks="memberMarks(row.topic)"
-                    :toggle-title="toggleTitle(row)"
-                    :actions="actionsFor"
-                    @select="emit('select-topic', $event)"
-                    @hover="emit('hover-topic', $event)"
-                    @leave="emit('leave-topic')"
-                    @toggle-collapse="toggleCollapse"
-                    @commit-rename="(draft: string) => commitRename(row.topic, draft)"
-                    @cancel-rename="cancelRename()"
-                    @update:menu-open="(open: boolean) => setActionsMenu(row.topic.id, open)"
-                  />
-                </TransitionGroup>
+                <!-- Rows are ordered by most recent activity, so a new message pushes a room
+                     to the top. Below the threshold the whole column is in the DOM and
+                     TransitionGroup slides the row there (FLIP) instead of snapping the
+                     list: where the row was and where it went has to stay visible. Past
+                     VIRTUAL_LIST_THRESHOLD (lib/virtualList.ts) the column goes to
+                     VirtualList — those rows could never fit on screen together anyway, so
+                     the saving is nodes, not behaviour. Keyed by project: switching projects
+                     swaps the whole list, it is not this list reordering, so nothing plays.
+
+                     No `shift`: virtua's `shift` only acts when the row COUNT changes, and it
+                     then anchors the view to the tail (= assumes the change was at the head).
+                     Measured in headless chromium (150 rows, viewing r100-r108): moving a
+                     middle row to the head changes nothing (same count), a new row at the head
+                     holds the view with shift and slides it by one row without — but dropping
+                     5 rows BELOW the view (archiving, collapsing a subtree, the hidden-stalled
+                     filter — all of which happen away from the head here) yanks the view up 5
+                     rows with shift and leaves it alone without. The rail's count changes are
+                     mostly not at the head, so the anchor is left at the start. -->
+                <VirtualList
+                  :ref="(handle: unknown) => setRailList(section.key, handle)"
+                  :items="section.rows"
+                  :item-key="topicRowKey"
+                  :scroll-parent="railScroll"
+                  :estimated-size="36"
+                  :buffer-size="320"
+                  :keep-mounted="keepFor(section)"
+                  transition="rail-row"
+                  :transition-key="selectedProjectId ?? undefined"
+                >
+                  <template #item="{ item }">
+                    <TopicRailRow
+                      :row="item"
+                      :selected="item.topic.id === selectedTopicId"
+                      :page="page === true"
+                      :renaming="renamingTopicId === item.topic.id"
+                      :menu-open="actionsMenuFor === item.topic.id"
+                      :stalled="stalledOf(item.topic.id)"
+                      :marks="memberMarks(item.topic)"
+                      :toggle-title="toggleTitle(item)"
+                      :actions="actionsFor"
+                      @select="emit('select-topic', $event)"
+                      @hover="emit('hover-topic', $event)"
+                      @leave="emit('leave-topic')"
+                      @toggle-collapse="toggleCollapse"
+                      @commit-rename="(draft: string) => commitRename(item.topic, draft)"
+                      @cancel-rename="cancelRename()"
+                      @update:menu-open="(open: boolean) => setActionsMenu(item.topic.id, open)"
+                    />
+                  </template>
+                </VirtualList>
               </v-list>
             </template>
 
@@ -524,6 +584,7 @@ const onDocs = computed(() => !!props.activeDocs)
           <TopicRailArchivedGroup
             :rows="archivedRows"
             :selected-topic-id="selectedTopicId"
+            :scroll-parent="railScroll"
             :page="page === true"
             :unread="archivedUnread > 0"
             :unread-of="unreadOf"

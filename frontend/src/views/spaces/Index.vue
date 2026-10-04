@@ -147,60 +147,53 @@
       </v-col>
     </v-row>
   </v-container>
-  <v-dialog v-model="createDialog" max-width="520" :persistent="creating">
-    <v-card>
-      <v-card-title class="d-flex align-center ga-2">
-        <span>{{ resubmittingId === null ? t('spaces.create.open') : t('spaces.review.resubmit') }}</span>
-      </v-card-title>
-      <v-form @submit.prevent="createSpace">
-        <v-card-text>
-          <p class="text-body-2 mb-2">{{ t('spaces.create.ownership') }}</p>
-          <p class="text-body-2 text-medium-emphasis mb-4">{{ t('spaces.create.visibility') }}</p>
-          <p class="text-body-2 mb-2">{{ t('spaces.create.avatar') }}</p>
-          <AvatarUploader
-            v-if="createDialog"
-            v-model="selectedAvatar"
-            :src="existingAvatarId ? getAvatarUrl(existingAvatarId) : undefined"
-            :disabled="creating"
-            class="mb-4 board-avatar-picker"
-          />
-          <v-text-field
-            v-model="spaceName"
-            autocomplete="off"
-            maxlength="255"
-            :counter="255"
-            persistent-counter
-            :label="t('spaces.create.name')"
-            :placeholder="t('spaces.create.placeholder')"
-            :disabled="creating"
-            autofocus
-            variant="outlined"
-          />
-          <v-textarea
-            v-model="spaceIntro"
-            autocomplete="off"
-            :label="t('spaces.create.intro')"
-            :disabled="creating"
-            rows="3"
-            variant="outlined"
-          />
-          <v-alert v-if="createError" type="error" variant="tonal" role="alert">{{ createError }}</v-alert>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <BaseButton kind="ghost" :disabled="creating" @click="createDialog = false">{{
-            t('spaces.create.cancel')
-          }}</BaseButton>
-          <BaseButton kind="primary" type="submit" :loading="creating" :disabled="!spaceName.trim() || creating">
-            {{ t('spaces.create.submit') }}
-          </BaseButton>
-        </v-card-actions>
-      </v-form>
-    </v-card>
-  </v-dialog>
+  <AdaptiveDialog
+    v-model="createDialog"
+    :title="resubmittingId === null ? t('spaces.create.open') : t('spaces.review.resubmit')"
+    :primary-label="t('spaces.create.submit')"
+    :primary-loading="creating"
+    :primary-disabled="!spaceName.trim() || creating"
+    :close-disabled="creating"
+    @primary="createSpace"
+  >
+    <v-form @submit.prevent="createSpace">
+      <p class="text-body-2 mb-2">{{ t('spaces.create.ownership') }}</p>
+      <p class="text-body-2 text-medium-emphasis mb-4">{{ t('spaces.create.visibility') }}</p>
+      <p class="text-body-2 mb-2">{{ t('spaces.create.avatar') }}</p>
+      <AvatarUploader
+        v-if="createDialog"
+        v-model="selectedAvatar"
+        :src="existingAvatarId ? getAvatarUrl(existingAvatarId) : undefined"
+        :disabled="creating"
+        class="mb-4 board-avatar-picker"
+      />
+      <v-text-field
+        v-model="spaceName"
+        autocomplete="off"
+        maxlength="255"
+        :counter="255"
+        persistent-counter
+        :label="t('spaces.create.name')"
+        :placeholder="t('spaces.create.placeholder')"
+        :disabled="creating"
+        autofocus
+        variant="outlined"
+      />
+      <v-textarea
+        v-model="spaceIntro"
+        autocomplete="off"
+        :label="t('spaces.create.intro')"
+        :disabled="creating"
+        rows="3"
+        variant="outlined"
+      />
+      <v-alert v-if="createError" type="error" variant="tonal" role="alert">{{ createError }}</v-alert>
+    </v-form>
+  </AdaptiveDialog>
 
-  <!-- 建完版当场把邀请码给他：码是后端建版时就发好的，创建者不看着它就没处知道。 -->
-  <v-dialog v-model="codeDialog" max-width="460">
+  <!-- Hand the invite code over the moment the board is created: the backend issues it at
+       creation, so the creator has nowhere else to see it. -->
+  <v-dialog v-model="codeDialog" :max-width="DIALOG_WIDTH.sm">
     <v-card :title="t('spaces.inviteCodes.createdTitle')">
       <v-card-text>
         <p class="text-body-2 mb-3">{{ t('spaces.inviteCodes.createdBody') }}</p>
@@ -217,7 +210,7 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <!-- 建完不停在名录页：收起这张卡就进这个空间。 -->
+        <!-- Don't stop back on the list after creating: dismissing this card enters the space. -->
         <BaseButton kind="primary" @click="enterCreatedSpace">
           {{ t('spaces.inviteCodes.openSpace') }}
         </BaseButton>
@@ -243,6 +236,8 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'

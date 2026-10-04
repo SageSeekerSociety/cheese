@@ -164,7 +164,7 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
 .agrid__head :deep(th) {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   padding: 12px 16px;
   /* sticky 时**不能透明**，否则行会从表头文字底下穿过去。 */
   background: var(--surface);

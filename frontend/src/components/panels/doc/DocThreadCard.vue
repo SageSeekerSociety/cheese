@@ -246,15 +246,17 @@ function onCard(e: MouseEvent) {
   background: var(--surface);
   cursor: pointer;
   transition:
-    border-color var(--dur-quick) var(--ease-standard),
-    box-shadow var(--dur-quick) var(--ease-standard);
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
 }
 .doc-thread-card:hover {
   border-color: var(--line-2);
 }
+/* The card carries no shadow (§3.4), so the active thread is marked by the fill
+   a selected row uses, not by a border the hover state already shows. */
 .doc-thread-card.is-active {
   border-color: var(--line-2);
-  box-shadow: var(--shadow-1);
+  background: var(--fill);
   cursor: default;
 }
 .doc-thread-card.is-resolved:not(.is-active) {

@@ -131,10 +131,12 @@ function mount() {
 
 type View = ReturnType<typeof mount>
 
-/** 对话框那一层。关掉之后 Vuetify 还留着节点（过渡），所以看的是「还亮着吗」。 */
+/** 对话框那一层。关掉之后 Vuetify 还留着节点（过渡），所以看的是「还亮着吗」。
+ *  迁移到 AdaptiveDialog 后那张卡不再挂 `.upload-dialog`，桌面上是 overlay 里的
+ *  `.v-card`（AdaptiveDialog 渲染 `<v-dialog><v-card rounded="lg">…`）。 */
 function dialog(view: View) {
   const overlay = view.baseElement.querySelector('.v-overlay--active')
-  return (overlay?.querySelector('.upload-dialog') ?? null) as HTMLElement | null
+  return (overlay?.querySelector('.v-card') ?? null) as HTMLElement | null
 }
 
 async function openUpload(view: View) {
