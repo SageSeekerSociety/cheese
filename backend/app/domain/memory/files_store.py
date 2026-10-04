@@ -11,6 +11,7 @@
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select
@@ -26,6 +27,7 @@ from app.domain.memory.files import (
     fit_index,
     limit_breach,
     prefix_of,
+    without_entries,
 )
 from app.domain.memory.models import MemoryFileRecord
 
@@ -231,6 +233,51 @@ class MemoryFileStore:
             delete(MemoryFileRecord).where(MemoryFileRecord.id == row.id)
         )
         await self._session.flush()
+
+    async def forget(
+        self,
+        *,
+        project_id: uuid.UUID,
+        scope: MemoryFileScope,
+        owner_handle: str | None,
+        paths: Sequence[str],
+        updated_by: str,
+    ) -> tuple[str, ...]:
+        """删掉几条记忆，连同索引里指向它们的那几行。返回真删掉的路径。
+
+        已经不在的跳过：把它们并进别处的人只关心它们最后不在了。
+        """
+        gone: tuple[str, ...] = ()
+        for path in dict.fromkeys(paths):
+            check_path(path)
+            if path == INDEX_NAME:
+                continue
+            if await self.get(project_id, scope, owner_handle, path) is None:
+                continue
+            await self.delete(
+                project_id=project_id,
+                scope=scope,
+                owner_handle=owner_handle,
+                path=path,
+                expected_version=None,
+            )
+            gone = (*gone, path)
+        index = await self.get(
+            project_id, scope, owner_handle, INDEX_NAME, for_update=True
+        )
+        if index is not None:
+            trimmed = without_entries(index.content, set(paths))
+            if trimmed != index.content:
+                await self.write(
+                    project_id=project_id,
+                    scope=scope,
+                    owner_handle=owner_handle,
+                    path=INDEX_NAME,
+                    content=trimmed,
+                    updated_by=updated_by,
+                    expected_version=index.version,
+                )
+        return gone
 
     async def index_text(
         self,

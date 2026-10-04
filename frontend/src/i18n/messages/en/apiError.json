@@ -955,5 +955,11 @@
   "serverInternalError": "Something went wrong on the server",
   "clientDisconnected": "The client disconnected",
   "deviceOffline": "Device {device} is offline",
-  "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown"
+  "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown",
+  "skillProposalDeclined": "A person declined the method \"{name}\". Do not propose it again; they will ask if they want it",
+  "skillProposalWaiting": "A method you proposed in this room is still waiting for a person. Wait for that one before proposing another",
+  "skillProposalLimit": "This project already has {limit} methods. Do not add another; fold this into the closest one and propose the change with cheese_method_update",
+  "skillNothingToDecline": "This method has no change waiting to be confirmed",
+  "skillAbsorbsTeamOnly": "Only team memories can be absorbed (like team/xxx.md): a method is shared by the whole project, so personal preferences stay out: {path}",
+  "skillDecline": "decline a skill a teammate proposed"
 }

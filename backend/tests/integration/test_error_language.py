@@ -102,7 +102,9 @@ def test_a_refusal_with_parameters_carries_them(client, bearer, tmp_path, monkey
     }
     assert client.post(f"/topics/{room}/skills", json=method).status_code == 200
 
-    again = client.post(f"/topics/{room}/skills", json=method)
+    again = client.post(
+        f"/topics/{room}/skills", json=method, headers=session_auth_headers(OWNER)
+    )
 
     assert again.status_code == 422
     error = again.json()["error"]

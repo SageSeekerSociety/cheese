@@ -746,6 +746,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "PATCH", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "POST", path: "/skills/{skill_id}/confirm", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "POST", path: "/skills/{skill_id}/decline", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "POST", path: "/skills/{skill_id}/revisions/{revision}/restore", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "DELETE", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
   # app.api.routes.projects

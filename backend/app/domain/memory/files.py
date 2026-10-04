@@ -199,6 +199,17 @@ def parse_index(text: str) -> list[IndexEntry]:
     return entries
 
 
+def without_entries(text: str, paths: set[str]) -> str:
+    """`MEMORY.md` 去掉指向 ``paths`` 的那几行，其余原样。"""
+    kept = [
+        line
+        for line in text.splitlines()
+        if (match := _INDEX_LINE_RE.match(line)) is None
+        or match.group("path").strip() not in paths
+    ]
+    return "\n".join(kept) + ("\n" if text.endswith("\n") else "")
+
+
 def fit_index(text: str) -> tuple[str, str | None]:
     """把一份索引压进注入预算；没超就一个字节都不动。
 

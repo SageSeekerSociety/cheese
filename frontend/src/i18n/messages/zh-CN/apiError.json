@@ -955,5 +955,11 @@
   "serverInternalError": "服务器内部错误",
   "clientDisconnected": "客户端已断开",
   "deviceOffline": "设备 {device} 离线",
-  "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知"
+  "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知",
+  "skillProposalDeclined": "「{name}」这份工作方法用户拒绝过，不要再提议；用户要的话会自己说",
+  "skillProposalWaiting": "这个房间还有一份你提议的工作方法在等人确认，先等那份有结果，再提下一份",
+  "skillProposalLimit": "这个项目的工作方法已经有 {limit} 份了。不再新建；把这套做法并进最接近的那一份，用 cheese_method_update 提议修改它",
+  "skillNothingToDecline": "这份工作方法没有在等确认的改动",
+  "skillAbsorbsTeamOnly": "只能吸收 team 下的记忆（形如 team/xxx.md）：工作方法是全项目共用的，个人的偏好不并进去：{path}",
+  "skillDecline": "拒绝芝士提议的工作方法"
 }
