@@ -15,6 +15,13 @@ import i18n, { setLocale } from '@/i18n'
 const routeQuery: Record<string, string> = {}
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }))
 
+// 确认框回什么由这一格决定：`wait` 解出真就是人点了确定。
+const dialog = vi.hoisted(() => ({ confirm: vi.fn() }))
+vi.mock('@/plugins/dialog', async () => ({
+  ...(await vi.importActual<typeof import('@/plugins/dialog')>('@/plugins/dialog')),
+  useDialog: () => ({ confirm: dialog.confirm }),
+}))
+
 vi.mock('../api', () => ({
   listProjectSkills: vi.fn(),
   listTopics: vi.fn(),
@@ -73,6 +80,8 @@ const base = {
 beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
+  // 默认「点了确定」：取消那一格在下面的用例里单独摆。
+  dialog.confirm.mockImplementation(() => ({ wait: async () => true }))
   for (const k of Object.keys(routeQuery)) delete routeQuery[k]
   vi.mocked(listTopics).mockResolvedValue({
     data: [{ id: 'room-1', title: '周报房间', status: 'active' }],
@@ -130,7 +139,25 @@ describe('工作方法', () => {
 
     await fireEvent.click(buttonIn(row(container, 'edit-1'), '放弃改动')!)
 
+    // 改动丢了找不回来：行里的入口是灰的，这一下确认才是红的。
+    expect(dialog.confirm).toHaveBeenCalledWith('改动作废，回到正在用的那一版；这一版改动找不回来。', {
+      title: '放弃对「被芝士改过的周报」的改动？',
+      confirmLabel: '放弃改动',
+      danger: true,
+    })
     expect(restoreProjectSkill).toHaveBeenCalledWith('edit-1', 2)
+  })
+
+  it('放弃要人点过确认才动：说取消，那一版改动还在', async () => {
+    dialog.confirm.mockImplementation(() => ({ wait: async () => false }))
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('被芝士改过的周报'))
+
+    await fireEvent.click(buttonIn(row(container, 'edit-1'), '放弃改动')!)
+
+    expect(dialog.confirm).toHaveBeenCalledTimes(1)
+    expect(restoreProjectSkill).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('被芝士改过的周报')
   })
 
   it('历史版本里能把旧的一版恢复回来', async () => {

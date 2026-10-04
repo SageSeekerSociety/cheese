@@ -287,7 +287,10 @@ async function submitUpload() {
   padding: 8px 16px;
   border-radius: 12px;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   background-color: var(--fill);
   border: 1px solid transparent;
 
@@ -321,12 +324,16 @@ async function submitUpload() {
   height: 36px;
   border-radius: 50%;
   background-color: var(--fill-2);
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .type-label {
   font-size: 0.875rem;
-  transition: all 0.2s ease;
+  transition:
+    color 0.2s ease,
+    font-weight 0.2s ease;
 }
 
 // 响应式调整

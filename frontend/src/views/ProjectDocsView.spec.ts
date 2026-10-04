@@ -1,9 +1,16 @@
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
-import { render, waitFor } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/i18n'
+
+// 确认框回什么由这一格决定：`wait` 解出真就是人点了确定。
+const dialogMock = vi.hoisted(() => ({ confirm: vi.fn() }))
+vi.mock('@/plugins/dialog', async () => ({
+  ...(await vi.importActual<typeof import('@/plugins/dialog')>('@/plugins/dialog')),
+  useDialog: () => ({ confirm: dialogMock.confirm }),
+}))
 
 // The document's version history: the last edit is read on open; none here.
 vi.mock('../api/docThreads', () => ({
@@ -37,6 +44,7 @@ vi.mock('../api', async () => {
   return {
     ...actual,
     getDocNodes: async () => ({ data: [] }),
+    deleteMemory: vi.fn(),
   }
 })
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
@@ -44,12 +52,19 @@ vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
+import { deleteMemory } from '../api'
 import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
 
 import ProjectDocsView from './ProjectDocsView.vue'
 
 // These assertions read the Chinese copy; the English rendering is checked in its own case.
-beforeEach(() => setLocale('zh-CN'))
+beforeEach(() => {
+  setLocale('zh-CN')
+  vi.mocked(deleteMemory).mockReset()
+  dialogMock.confirm.mockReset()
+  // 默认「点了确定」：取消那一格在下面的用例里单独摆。
+  dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
+})
 
 describe('周报集', () => {
   it('按窗口列出一份真周报，并指得回它写在哪间房', async () => {
@@ -128,6 +143,48 @@ describe('章程', () => {
     remoteEdit('root', '我们给高中生做算法课。\n\n每周二上课。')
 
     await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('每周二上课'))
+    view.unmount()
+  })
+})
+
+describe('记忆', () => {
+  const one = { id: 'm1', scope: 'user', content: '喜欢用 pnpm', created_at: '2026-09-25T00:00:00Z' }
+
+  function mountMemory() {
+    state.payload = { memoryEntries: [one] }
+    return render(ProjectDocsView, {
+      props: { projectId: 'p', kind: 'memory' },
+      global: { plugins: [createVuetify()] },
+    })
+  }
+
+  it('删一条记忆要先确认，点了确定才删', async () => {
+    const view = mountMemory()
+    await waitFor(() => expect(view.getByText('喜欢用 pnpm')).toBeTruthy())
+
+    await fireEvent.click(view.container.querySelector('.memory-card__del') as Element)
+
+    // 删掉找不回来：行里的入口是灰的，这一下确认才是红的。
+    expect(dialogMock.confirm).toHaveBeenCalledWith('删除后找不回来，芝士也不再记得它。', {
+      title: '删除这条记忆？',
+      confirmLabel: '删除这条记忆',
+      danger: true,
+    })
+    await waitFor(() => expect(deleteMemory).toHaveBeenCalledWith('m1'))
+    await waitFor(() => expect(view.queryByText('喜欢用 pnpm')).toBeNull())
+    view.unmount()
+  })
+
+  it('说取消就不删，那条记忆还在', async () => {
+    dialogMock.confirm.mockImplementation(() => ({ wait: async () => false }))
+    const view = mountMemory()
+    await waitFor(() => expect(view.getByText('喜欢用 pnpm')).toBeTruthy())
+
+    await fireEvent.click(view.container.querySelector('.memory-card__del') as Element)
+
+    expect(dialogMock.confirm).toHaveBeenCalledTimes(1)
+    expect(deleteMemory).not.toHaveBeenCalled()
+    expect(view.getByText('喜欢用 pnpm')).toBeTruthy()
     view.unmount()
   })
 })

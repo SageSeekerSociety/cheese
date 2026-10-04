@@ -430,7 +430,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                   </span>
                   <BaseButton
                     icon="mdi-close"
-                    kind="danger"
+                    kind="ghost"
                     size="sm"
                     :aria-label="t('users.profile.notes.delete')"
                     :title="t('users.profile.notes.delete')"

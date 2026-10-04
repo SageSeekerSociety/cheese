@@ -45,7 +45,7 @@
       <template #append>
         <BaseButton
           v-if="request.status === 'PENDING'"
-          kind="danger"
+          kind="ghost"
           size="sm"
           icon="mdi-close"
           :aria-label="t('global.cancel')"
@@ -362,7 +362,9 @@ onMounted(async () => {
 
 <style scoped>
 .application-item {
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
   border: 1px solid transparent;
 }
 
