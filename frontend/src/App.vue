@@ -260,7 +260,7 @@ import { avatarColor } from '@/utils/avatar'
 import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
-import { useAwaitingCount } from '@/composables/useAwaitingCount'
+import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
@@ -552,6 +552,8 @@ const workspaceProjectId = computed<string | null>(() =>
 
 // 待我处理的件数：桌面画在首页那一格上，手机画在底栏「待办」上。
 const awaitingCount = useAwaitingCount(computed(() => AccountService._loggedIn.value))
+// 同一个数按项目拆开：桌面 rail 的每个项目格子画自己那几件。
+const awaitingByProject = awaitingCountByProject()
 // 没读的动态（提到你、回复你……）：没有待处理的事时，同一格上画一颗小点。
 const { count: unreadActivity } = useUnreadNotifications()
 // The same number on the desktop app's icon, whenever this page has read it.
@@ -598,6 +600,8 @@ const navSources = computed<NavSources>(() => ({
   createProject: createNewProject,
   projectMenu,
   awaitingCount: awaitingCount.value,
+  projectAwaitingCount: (id) => awaitingByProject.value[id] ?? 0,
+  projectLastTopic: (id) => workspace.lastTopicIdFor(id),
   unreadActivity: unreadActivity.value > 0,
 }))
 

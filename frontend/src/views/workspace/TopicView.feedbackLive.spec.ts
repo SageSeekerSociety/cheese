@@ -82,6 +82,7 @@ function setup() {
     members: [],
     unreadMap: {},
     chatPct: 50,
+    rememberTopic: vi.fn(),
     loadingTopics: false,
     accessDenied: null,
     error: null,
