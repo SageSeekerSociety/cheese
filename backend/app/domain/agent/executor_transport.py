@@ -94,6 +94,11 @@ MACHINE_PREPARING = (
 )
 
 
+# What the wait gives up with when the last answer it had was a timed-out
+# request rather than the platform's own word on the machine.
+MACHINE_STILL_PREPARING = "工作电脑仍在准备，对话和平台工具仍可用"
+
+
 class MachineOutOfReach(RuntimeError):
     """够不着这件事，判得出来的那一种。
 
@@ -245,6 +250,12 @@ class PlatformHost:
         if workspace and not machine.startswith("/"):
             machine = f"{workspace.rstrip('/')}/{machine}"
         return read_file_on_the_machine(self.invoke, machine, f"{self.call_id}-read")
+
+    def wait_machine(self):
+        # A command that does nothing, so the wait is the one every tool call
+        # makes for its hands: up to the operation deadline while the machine
+        # is prepared, out of reach at once when it is gone.
+        on_the_machine(self.invoke, "true", f"{self.call_id}-wait", timeout_ms=60000)
 
     def sync_task(self, task_id):
         # Pushing can include uploading a backup bundle; the CLI's own ceiling for
@@ -630,17 +641,26 @@ class RemoteClient:
         told = preparing is None
         while True:
             remaining = deadline - time.monotonic()
-            response = self.platform_request(
-                {
-                    "method": "POST",
-                    "path": self.config["lease_path"],
-                    "body": {
-                        "env": self.config.get("setup_env", {}),
-                        "timeout": max(0.001, remaining) if told else 0.001,
-                    },
-                }
-            )
-            result = json.loads(response["value"]["stdout"])["data"]
+            try:
+                response = self.platform_request(
+                    {
+                        "method": "POST",
+                        "path": self.config["lease_path"],
+                        "body": {
+                            "env": self.config.get("setup_env", {}),
+                            "timeout": max(0.001, remaining) if told else 0.001,
+                        },
+                    }
+                )
+                result = json.loads(response["value"]["stdout"])["data"]
+            except PlatformHTTPError as error:
+                # A front that gave up on the request before the platform
+                # answered says nothing about the machine: it is still being
+                # prepared as far as anyone knows, so this asks again. Handed
+                # to the agent, it read as a final failure and the agent slept.
+                if error.status != 504:
+                    raise
+                result = {"unavailable": MACHINE_STILL_PREPARING, "preparing": True}
             if abandoned is not None and abandoned():
                 raise RuntimeError("Tool call was cancelled")
             if not told:
