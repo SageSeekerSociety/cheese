@@ -241,7 +241,7 @@ const lagText = computed(() => {
             <td class="ad__perf-where">
               <button
                 type="button"
-                class="ad__perf-toggle"
+                class="ad__perf-toggle tap-target"
                 :aria-expanded="expandedRoute === `${row.method} ${row.route}`"
                 :disabled="sparkDead(row.spark)"
                 :aria-label="`${row.method} ${row.route}`"
@@ -506,6 +506,8 @@ const lagText = computed(() => {
    同一列的图标有有无无，比「有的行窄一截」好读。 */
 
 .ad__perf-toggle {
+  /* 相对定位给 .tap-target：20px 的展开箭头，手指要点得中（§3.6）。 */
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;

@@ -4,8 +4,8 @@ import type { NavTarget } from '@/lib/navTarget'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
 
 // 「等你处理 / 卡住了」那一列。有 `to` 的行整行是一个目的地 —— 这一块的全部用处
@@ -64,7 +64,7 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
 
     <!-- 空态是共用那块（图标 + 一句邀请），`compact` 档：它落在一张已经有 16px
          内边距的卡里，用整档的顶距会把这半张卡撑成一块空地。 -->
-    <AdminEmptyState v-else-if="!rows.length" compact :title="empty" />
+    <BaseEmptyState v-else-if="!rows.length" size="compact" :title="empty" />
 
     <ol v-else class="aal__rows">
       <li v-for="row in shown" :key="row.id" class="aal__row">

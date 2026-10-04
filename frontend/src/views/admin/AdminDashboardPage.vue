@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 
 import { useAdminDashboard } from '@/composables/useAdminDashboard'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminDashboardFeedback from '@/components/admin/dashboard/AdminDashboardFeedback.vue'
 import AdminDashboardHeader from '@/components/admin/dashboard/AdminDashboardHeader.vue'
@@ -15,6 +14,7 @@ import AdminDashboardPipeline from '@/components/admin/dashboard/AdminDashboardP
 import AdminDashboardPlatform from '@/components/admin/dashboard/AdminDashboardPlatform.vue'
 import AdminDashboardProduct from '@/components/admin/dashboard/AdminDashboardProduct.vue'
 import AdminDashboardUsage from '@/components/admin/dashboard/AdminDashboardUsage.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { queue } from '@/lib/adminStats'
 
 // 管理后台的看板（§4.2）。**它读的是整个平台，不只是反馈。**
@@ -115,15 +115,14 @@ function onSelectDay(date: string | null) {
     <div class="ad__body admin-page__body">
       <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
              正文是**服务端原话**（不改写），重试是唯一主操作，而且真重拉 —— 不是把
-             错误状态清掉装没事。块换成了共用的 `AdminEmptyState`（和队列、模型页的
+             错误状态清掉装没事。块换成了共用的 `BaseEmptyState`（和队列、模型页的
              出错态同一个形状），这一页不再自己画一套 `ad__none-*`。 -->
-      <AdminEmptyState
+      <BaseLoadError
         v-if="failed"
-        tone="error"
         :title="t('feedback.dashboard.error.title')"
-        :desc="error ?? undefined"
-        :action="t('feedback.dashboard.retry')"
-        @action="retry"
+        :error="error ?? undefined"
+        :retry-label="t('feedback.dashboard.retry')"
+        @retry="retry"
       />
 
       <!-- 一屏一类。取数在上面那一半，画法在各屏自己那里。 -->
