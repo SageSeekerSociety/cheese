@@ -260,9 +260,12 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                             assert len(rows) == 1
                             row = rows[0]
                             assert row.native_session_id == native_b
-                            assert row.execution_work_id == uuid.UUID(work_b)
                             assert not row.completed_at
+                            # Registered before the send, owned at the echo:
+                            # the executing work is stamped only once the
+                            # session's echo has been read.
                             if row.echoed_at and row.settled_at:
+                                assert row.execution_work_id == uuid.UUID(work_b)
                                 return (
                                     row.id,
                                     row.input_id,

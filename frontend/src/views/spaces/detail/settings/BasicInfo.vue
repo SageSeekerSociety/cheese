@@ -72,6 +72,8 @@ const confirmDelete = async () => {
   const confirmed = await dialog
     .confirm(t('spaces.detail.confirmDeleteSpace', { name: space.value.name ?? '' }), {
       title: t('spaces.detail.deleteSpace'),
+      confirmLabel: t('spaces.detail.deleteSpace'),
+      danger: true,
     })
     .wait()
   if (!confirmed) return

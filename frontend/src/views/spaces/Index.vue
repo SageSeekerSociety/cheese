@@ -92,6 +92,8 @@
               :loading="loadingMore"
               :initial-loading="refreshing"
               :is-empty="spaces.length === 0"
+              :shown="spaces.length"
+              :total="total"
               @load-more="loadMore"
             >
               <template #empty>
@@ -198,7 +200,7 @@
           <span class="invite-code-text">{{ createdInviteCode }}</span>
           <BaseButton
             kind="ghost"
-            :icon="codeCopied ? 'mdi-check' : 'mdi-content-copy'"
+            icon="mdi-content-copy"
             size="sm"
             :title="t('spaces.inviteCodes.copy')"
             @click="copyCreatedCode"
@@ -232,6 +234,7 @@ import { usePaging } from '@/utils/paging'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
@@ -286,7 +289,6 @@ const createError = ref('')
 // 把整个响应丢掉，于是创建者根本不知道自己的码是什么。留住它，建完当场给他看。
 const createdInviteCode = ref<string | null>(null)
 const codeDialog = ref(false)
-const codeCopied = ref(false)
 // 刚建出来的版：建完要落到这块板上，不是回到名录页干看着一个空版。
 const createdSpace = ref<Space | null>(null)
 
@@ -298,15 +300,10 @@ function enterCreatedSpace() {
   void router.push(spaceEntryRoute(space))
 }
 
+// 复制成的说法交给共享的复制助手（一条 toast），按钮不再自己换成「已复制」。
 async function copyCreatedCode() {
   if (!createdInviteCode.value) return
-  try {
-    await navigator.clipboard.writeText(createdInviteCode.value)
-    codeCopied.value = true
-    setTimeout(() => (codeCopied.value = false), 1600)
-  } catch {
-    // 剪贴板被拒（非安全上下文 / 没授权）——码还留在框里，手工选中复制即可。
-  }
+  await copyText(createdInviteCode.value, t('navigation.copy.done'))
 }
 
 function openCreateSpace() {
@@ -336,7 +333,6 @@ async function createSpace() {
       const { data } = await SpacesApi.create(payload)
       createdInviteCode.value = data.inviteCode?.code ?? null
       createdSpace.value = data.space ?? null
-      codeCopied.value = false
       // 有码先把码给他（建版时就发好了），收起那张卡再进这门课；
       // 没码就直接进。
       if (createdInviteCode.value) codeDialog.value = true
@@ -367,6 +363,7 @@ const {
   refresh,
   refreshing,
   loadingMore,
+  total,
 } = usePaging(async (pageStart) => {
   const { data } = await SpacesApi.list({
     sort_by: 'createdAt',

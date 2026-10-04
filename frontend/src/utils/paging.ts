@@ -34,6 +34,8 @@ export function usePaging<T, P = void, C = number>(
   const firstPageStart = ref(initialPageStart)
   const nextPageStart = ref(initialPageStart)
   const hasMore = ref(true)
+  // 服务端说一共几条；接口不给就是 0（调用方据此决定「已显示 X / 共 Y 条」画不画）。
+  const total = ref(0)
 
   const refreshing = ref(false)
   const loadingMore = ref(false)
@@ -51,6 +53,7 @@ export function usePaging<T, P = void, C = number>(
       pageCount.value++
       nextPageStart.value = page.nextStart
       hasMore.value = page.hasMore
+      total.value = page.total ?? 0
     } catch (e) {
       if (e instanceof Error) {
         error.value = e
@@ -73,6 +76,7 @@ export function usePaging<T, P = void, C = number>(
       pageCount.value = 1
       nextPageStart.value = page.nextStart
       hasMore.value = page.hasMore
+      total.value = page.total ?? 0
     } catch (e) {
       if (e instanceof Error) {
         error.value = e
@@ -92,6 +96,7 @@ export function usePaging<T, P = void, C = number>(
     data.value = []
     pageCount.value = 0
     hasMore.value = true
+    total.value = 0
 
     refreshing.value = false
     loadingMore.value = false
@@ -121,6 +126,7 @@ export function usePaging<T, P = void, C = number>(
     loadingMore,
     error,
     hasMore,
+    total,
     pageCount,
     nextPageStart,
     customParams,

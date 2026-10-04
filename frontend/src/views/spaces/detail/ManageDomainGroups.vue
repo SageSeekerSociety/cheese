@@ -240,7 +240,10 @@ const submitForm = handleSubmit(async (values) => {
 })
 
 async function deleteGroup(group: DomainGroup) {
-  const confirmed = await confirm(t('spaces.domainGroups.confirmDelete', { name: group.name })).wait()
+  const confirmed = await confirm(t('spaces.domainGroups.confirmDelete', { name: group.name }), {
+    confirmLabel: t('spaces.domainGroups.deleteGroup'),
+    danger: true,
+  }).wait()
   if (!confirmed) return
 
   try {
