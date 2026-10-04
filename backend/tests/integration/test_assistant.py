@@ -288,11 +288,9 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
         monkeypatch.setattr(
             module, "async_session_factory", client.test_request_factory
         )
-        # TestClient runs each request on its own loop; a cached client cannot
-        # follow.
-        monkeypatch.setattr(
-            module, "get_redis_client", lambda: from_url(settings.redis_url)
-        )
+    # TestClient runs each request on its own loop; a cached client cannot
+    # follow.
+    monkeypatch.setattr(route, "get_redis_client", lambda: from_url(settings.redis_url))
     import redis
 
     r = redis.Redis.from_url(settings.redis_url)
