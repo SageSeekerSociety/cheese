@@ -162,8 +162,14 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         expect: '图片',
       },
       {
+        name: '一级一份都没匹配上',
+        note: '菜单不消失：说一句「暂无匹配」比整块收起来诚实——不然看起来像那个 @ 没生效。空态顶替的是一列候选，所以内边距和字号跟着候选行走。',
+        props: { open: true, matches: [], activeIndex: 0, level: 'root', enterSends: false },
+        expect: '暂无匹配',
+      },
+      {
         name: '资料库里一份都没匹配上',
-        note: '菜单不消失：人在这一层里，说一句「暂无匹配的文件」比整块收起来诚实。',
+        note: '菜单不消失，说的是文件那一件事：「暂无匹配的文件」。空态和一级上那个同一副骨架。',
         props: { open: true, matches: [], activeIndex: 0, level: 'library', enterSends: false },
         expect: '暂无匹配的文件',
       },
