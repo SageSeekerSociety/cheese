@@ -455,6 +455,7 @@
     "confirmRevoke": "Remove {name} as an admin?",
     "confirmTransfer": "Transfer ownership to {name}? You will become an admin.",
     "empty": "No members",
+    "loadMembersFailed": "Couldn't load members",
     "role": {
       "owner": "Owner",
       "admin": "Admin",

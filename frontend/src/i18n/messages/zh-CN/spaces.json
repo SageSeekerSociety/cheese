@@ -455,6 +455,7 @@
     "confirmRevoke": "取消 {name} 的管理员身份？",
     "confirmTransfer": "把所有者转让给 {name}？转让后你会成为管理员。",
     "empty": "暂无成员",
+    "loadMembersFailed": "加载成员失败",
     "role": {
       "owner": "所有者",
       "admin": "管理员",
