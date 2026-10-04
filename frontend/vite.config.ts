@@ -385,7 +385,8 @@ export default defineConfig({
         // 这两行**故意不写**（原来写着 clientsClaim/skipWaiting，都是 true）。
         // 它们是「新 worker 立刻接管」的开关，留着就等于绕过 registerType: 'prompt'
         // 的等待——开着的页面会在人眼皮底下被新代码接管。删掉之后新 worker 停在
-        // waiting，直到下一次应用内跳转（pwa.ts 的路由守卫 → messageSkipWaiting）。
+        // waiting，由 pwa.ts 决定什么时候接管：这一页跑的已经是新版就立刻接管，
+        // 否则等下一次应用内跳转（路由守卫 → messageSkipWaiting）。
         //
         // 下面那条 NetworkOnly 规则去网上取当前 HTML，但网络一失败就退回**这个
         // worker 自己**预缓存的 index.html。所以旧 worker 还接着时，一次整页加载
