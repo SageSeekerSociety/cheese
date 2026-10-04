@@ -648,6 +648,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock })
             @review="emit('review')"
             @mention-click="emit('mention-click', $event)"
             @open-file="openFile"
+            @open-output="openFileTab"
           />
           <PanelSite
             v-if="mounted.has('site')"
