@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><!-- SLOT: TITLE — 页面名字，2–4 个词的专名，如「预览用时实测记录」；同一个名字也填进下面的 h1 -->数据表格</title>
+<style>
+:root {
+  color-scheme: light;
+
+  /* 中性色阶（暖冷灰）：每档按「信息离读者多远」选，不跳档 */
+  --cx-ink: #191a1c;      /* 标题 */
+  --cx-text: #36383c;     /* 正文 */
+  --cx-muted: #5a5e66;    /* 次要：副标题、说明、轴标签、表头 */
+  --cx-faint: #747a82;    /* 元信息：时间戳、ID、计数 */
+
+  --cx-line: #ecedef;     /* 发丝分隔线 */
+  --cx-line-2: #e2e3e6;   /* 更明显的分隔线，也是选中行底色 */
+  --cx-fill: #f4f5f7;     /* 悬停、内嵌区块 */
+  --cx-fill-2: #eeeff1;   /* 比 fill 重一档 */
+
+  --cx-canvas: #f7f8fa;   /* 页面底色 */
+  --cx-surface: #ffffff;  /* 内容区、卡片 */
+  --cx-raised: #ffffff;   /* 浮层：菜单、弹窗、抽屉 */
+
+  /* 琥珀：全页只给一处 */
+  --cx-accent: #f57f17;
+  --cx-accent-press: #d96e0a;
+  --cx-accent-ink: #9a5413;   /* 琥珀色文字（--cx-accent 写字对比度不够） */
+  --cx-accent-wash: #fdf1e2;  /* 极浅琥珀底，罕用 */
+  --cx-on-accent: #ffffff;    /* 琥珀实心上的字 */
+
+  /* 状态三件套：记号 / 文字 / 底，不可换用 */
+  --cx-ok: #1f9d55;     --cx-ok-ink: #12703a;     --cx-ok-wash: #e8f6ee;
+  --cx-warn: #e8901c;   --cx-warn-ink: #8f5406;   --cx-warn-wash: #faf0dc;
+  --cx-danger: #dc2626; --cx-danger-ink: #b91c1c; --cx-danger-wash: #fdecec;
+
+  /* 图表系列：分类用，最多六条。两条以内优先用 --cx-text / --cx-muted 加线型 */
+  --cx-chart-1: #3d6bb3;
+  --cx-chart-2: #2a9d8f;
+  --cx-chart-3: #d9822b;
+  --cx-chart-4: #8a63c2;
+  --cx-chart-5: #c9506f;
+  --cx-chart-6: #6b7b8c;
+
+  /* 代码块：两套主题下都反色 */
+  --cx-code-bg: #212121;
+  --cx-code-ink: #e0e0e0;
+
+  /* 圆角：三档加胶囊 */
+  --cx-radius-sm: 6px;     /* 标签、chip、小徽章 */
+  --cx-radius-md: 8px;     /* 按钮、输入框、卡片内的小块 */
+  --cx-radius-lg: 12px;    /* 卡片、面板、callout、图 */
+  --cx-radius-pill: 999px; /* 胶囊、状态标签、圆点 */
+
+  /* 投影：只给浮层，卡片只描边 */
+  --cx-shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
+  --cx-shadow-2: 0 4px 12px rgba(25, 26, 28, 0.1), 0 12px 32px rgba(25, 26, 28, 0.1);
+  --cx-focus-ring: #c2570a; /* 键盘焦点环，别移除 */
+
+  /* 字体：只用系统中文字体栈，不引外部字体（CJK 网络字体每字重好几兆，也连不上） */
+  --cx-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --cx-font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 前四个 Windows 上没有，落到裸 monospace 会被映射成宋体；垫上自带的 Cascadia Mono / Consolas */
+  --cx-font-mono: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas,
+    "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --cx-ink: #f3f4f6;
+    --cx-text: #d3d6db;
+    --cx-muted: #aeb4bd;
+    --cx-faint: #888ea0;
+
+    --cx-line: #2b2e33;
+    --cx-line-2: #3a3e45;
+    --cx-fill: #212429;
+    --cx-fill-2: #282c31;
+
+    --cx-canvas: #141517;   /* 不用纯黑：纯黑之下没有更暗的一档，卡片浮不起来 */
+    --cx-surface: #1b1d20;
+    --cx-raised: #212429;   /* 比 surface 亮一档，浮层靠亮度而非投影分开 */
+
+    --cx-accent: #ffa733;   /* 深色下必须提亮，否则按钮上的字读不出 */
+    --cx-accent-press: #ffbc5e; /* 深色下按下变亮，不像亮色那样变深 */
+    --cx-accent-ink: #ffc670;
+    --cx-accent-wash: #2e2216;
+    --cx-on-accent: #191a1c; /* 浅琥珀上的字要用深色 */
+
+    --cx-ok: #3fbf7f;     --cx-ok-ink: #6fd9a0;     --cx-ok-wash: #14261d;
+    --cx-warn: #f0a94a;   --cx-warn-ink: #f7c078;   --cx-warn-wash: #2a2114;
+    --cx-danger: #f0625c; --cx-danger-ink: #f79490; --cx-danger-wash: #2e1a1a;
+
+    --cx-chart-1: #7aa2e3;
+    --cx-chart-2: #4fb8aa;
+    --cx-chart-3: #eba25a;
+    --cx-chart-4: #ad8fe2;
+    --cx-chart-5: #e57f99;
+    --cx-chart-6: #9eacba;
+
+    --cx-code-bg: #282c31;  /* 反色块在深色下改用 fill-2，否则和卡片糊在一起 */
+    --cx-code-ink: #d3d6db;
+
+    --cx-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --cx-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+    --cx-focus-ring: rgba(255, 167, 51, 0.65);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --cx-ink: #f3f4f6;
+  --cx-text: #d3d6db;
+  --cx-muted: #aeb4bd;
+  --cx-faint: #888ea0;
+
+  --cx-line: #2b2e33;
+  --cx-line-2: #3a3e45;
+  --cx-fill: #212429;
+  --cx-fill-2: #282c31;
+
+  --cx-canvas: #141517;
+  --cx-surface: #1b1d20;
+  --cx-raised: #212429;
+
+  --cx-accent: #ffa733;
+  --cx-accent-press: #ffbc5e;
+  --cx-accent-ink: #ffc670;
+  --cx-accent-wash: #2e2216;
+  --cx-on-accent: #191a1c;
+
+  --cx-ok: #3fbf7f;     --cx-ok-ink: #6fd9a0;     --cx-ok-wash: #14261d;
+  --cx-warn: #f0a94a;   --cx-warn-ink: #f7c078;   --cx-warn-wash: #2a2114;
+  --cx-danger: #f0625c; --cx-danger-ink: #f79490; --cx-danger-wash: #2e1a1a;
+
+  --cx-chart-1: #7aa2e3;
+  --cx-chart-2: #4fb8aa;
+  --cx-chart-3: #eba25a;
+  --cx-chart-4: #ad8fe2;
+  --cx-chart-5: #e57f99;
+  --cx-chart-6: #9eacba;
+
+  --cx-code-bg: #282c31;
+  --cx-code-ink: #d3d6db;
+
+  --cx-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --cx-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+  --cx-focus-ring: rgba(255, 167, 51, 0.65);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--cx-canvas); /* body 必须显式设背景，透明会露出宿主底色还不报警 */
+  color: var(--cx-text);
+  font-family: var(--cx-font-sans);
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible { outline: 2px solid var(--cx-focus-ring); outline-offset: 2px; border-radius: var(--cx-radius-sm); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---- 页面骨架：数据表浏览页走全文宽 ---- */
+.page {
+  max-width: 1100px;             /* 数据表浏览页用宽栏；纯文字页改成 660px */
+  margin-inline: auto;
+  padding-block: 48px 64px;      /* 竖向；不用会清零左右的 padding 简写 */
+  padding-inline: 20px;          /* 左右至少 16px */
+  display: flex;
+  flex-direction: column;
+  gap: 40px;                     /* 区块之间统一 40（32–48 之间） */
+}
+@media (max-width: 480px) {
+  .page { padding-inline: 16px; padding-block: 32px 48px; gap: 32px; }
+}
+
+.masthead {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--cx-line);
+}
+.eyebrow { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+.title { margin: 0; font-size: 34px; line-height: 1.2; font-weight: 650; color: var(--cx-ink); text-wrap: balance; }
+.subtitle { margin: 0; font-size: 18px; line-height: 27px; color: var(--cx-muted); }
+
+/* lede：靠底纹 + 描边立起来，不用「圆角卡片左边加一条竖条」那一版 */
+.lede {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 16px 20px;
+  background: var(--cx-fill);
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-lg);
+}
+.lede__label { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--cx-muted); }
+.lede p { margin: 0; font-size: 15px; line-height: 26px; color: var(--cx-text); }
+
+/* ---- readout（全页那一个大数字，也是全页唯一用到琥珀的地方）---- */
+.readout { display: flex; flex-direction: column; gap: 2px; }
+.readout__label { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--cx-muted); }
+.readout__value {
+  margin: 0; font-size: 44px; line-height: 1.05; font-weight: 650;
+  color: var(--cx-accent-ink); font-variant-numeric: tabular-nums;
+}
+.readout__note { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+
+
+.section { display: flex; flex-direction: column; gap: 12px; }
+.section > h2 { margin: 0; font-size: 22px; line-height: 30px; font-weight: 650; color: var(--cx-ink); text-wrap: balance; }
+.section > h3 { margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; color: var(--cx-ink); }
+
+.footnote { border-top: 1px solid var(--cx-line); padding-top: 16px; }
+.footnote p { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+
+/* ---- 筛选行 ---- */
+.table-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.filter {
+  flex: 1 1 220px; min-width: 0; max-width: 360px;
+  padding: 7px 12px;
+  font: inherit; font-size: 15px; line-height: 22px;
+  color: var(--cx-text); background: var(--cx-surface);
+  border: 1px solid var(--cx-line-2); border-radius: var(--cx-radius-md);
+}
+.filter::placeholder { color: var(--cx-faint); }
+.filter:focus-visible { outline: 2px solid var(--cx-focus-ring); outline-offset: 1px; }
+.count { font-size: 13px; line-height: 20px; color: var(--cx-faint); font-variant-numeric: tabular-nums; }
+
+/* ---- 数据表：外层横向滚动，右缘渐隐提示还有列 ---- */
+.table-outer { position: relative; }
+.table-wrap {
+  overflow: auto;       /* 列多时横向滚动 */
+  max-height: 70vh;     /* 行多时表内纵向滚动，sticky 表头才定得住 */
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-md);
+  background: var(--cx-surface);
+}
+.table-wrap table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 20px; }
+.table-wrap th, .table-wrap td {
+  padding: 10px 14px; text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--cx-line);
+}
+.table-wrap thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--cx-surface);
+  font-size: 13px; font-weight: 600; color: var(--cx-muted);
+  cursor: pointer; user-select: none;
+}
+.table-wrap thead th:hover { color: var(--cx-text); }
+.table-wrap thead th .arrow { margin-left: 4px; font-size: 11px; color: var(--cx-faint); opacity: 0; }
+.table-wrap thead th:hover .arrow { opacity: 1; }
+.table-wrap thead th.sorted { color: var(--cx-text); }
+.table-wrap thead th.sorted .arrow { opacity: 1; color: var(--cx-text); }   /* 当前排序列，用中性色，不占琥珀 */ /* 全页唯一的琥珀：当前排序列 */
+.table-wrap tbody tr:last-child td { border-bottom: 0; }
+.table-wrap tbody tr:hover { background: var(--cx-fill); }
+.table-wrap .num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-wrap td.empty { text-align: center; color: var(--cx-muted); padding: 28px 14px; }
+
+/* 窄屏右缘渐隐 + 一行小字，提示还有列没显示；scroll-hint 表格和图共用 */
+.scroll-hint { display: none; margin: 6px 0 0; font-size: 12px; line-height: 18px; color: var(--cx-faint); }
+@media (max-width: 720px) {
+  .table-outer::after {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 32px; z-index: 2;
+    background: linear-gradient(to right, transparent, var(--cx-surface));
+    pointer-events: none;
+    border-top-right-radius: var(--cx-radius-md); border-bottom-right-radius: var(--cx-radius-md);
+  }
+  .figure-outer::after {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 32px;
+    background: linear-gradient(to right, transparent, var(--cx-canvas));
+    pointer-events: none;
+  }
+  .scroll-hint { display: block; }
+}
+
+/* ---- 图 + 图注 ---- */
+.figure { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.figure-outer { position: relative; }
+.figure-scroll { overflow-x: auto; }
+/* 图内文字要 ≥11px：给 svg 一个 min-width 配 overflow，再给 max-width 免得宽屏上文字被放大到离谱 */
+.figure svg { display: block; width: 100%; height: auto; min-width: 560px; max-width: 680px; }
+.figcaption { font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+
+/* ---- callout（风险 / 说明） ---- */
+.callout {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 14px 18px;
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-lg);
+}
+.callout__title { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; }
+.callout__body { margin: 0; font-size: 15px; line-height: 26px; color: var(--cx-text); }
+.callout--note   { background: var(--cx-fill); }
+.callout--note   .callout__title { color: var(--cx-muted); }
+.callout--warn   { background: var(--cx-warn-wash);   border-color: transparent; }
+.callout--warn   .callout__title { color: var(--cx-warn-ink); }
+.callout--danger { background: var(--cx-danger-wash); border-color: transparent; }
+.callout--danger .callout__title { color: var(--cx-danger-ink); }
+.callout-stack { display: flex; flex-direction: column; gap: 12px; }
+
+/* ---- 打印：固定亮色，展开滚动区，藏掉只对屏幕有意义的控件 ---- */
+@media print {
+  :root, :root[data-theme="dark"] {
+    color-scheme: light;
+    --cx-ink: #191a1c; --cx-text: #36383c; --cx-muted: #5a5e66; --cx-faint: #747a82;
+    --cx-line: #ecedef; --cx-line-2: #e2e3e6; --cx-fill: #f4f5f7; --cx-fill-2: #eeeff1;
+    --cx-canvas: #f7f8fa; --cx-surface: #ffffff; --cx-raised: #ffffff;
+    --cx-accent: #f57f17; --cx-accent-press: #d96e0a; --cx-accent-ink: #9a5413;
+    --cx-accent-wash: #fdf1e2; --cx-on-accent: #ffffff;
+    --cx-ok: #1f9d55; --cx-ok-ink: #12703a; --cx-ok-wash: #e8f6ee;
+    --cx-warn: #e8901c; --cx-warn-ink: #8f5406; --cx-warn-wash: #faf0dc;
+    --cx-danger: #dc2626; --cx-danger-ink: #b91c1c; --cx-danger-wash: #fdecec;
+    --cx-chart-1: #3d6bb3; --cx-chart-2: #2a9d8f; --cx-chart-3: #d9822b;
+    --cx-chart-4: #8a63c2; --cx-chart-5: #c9506f; --cx-chart-6: #6b7b8c;
+    --cx-code-bg: #212121; --cx-code-ink: #e0e0e0;
+  }
+  .page { max-width: none; padding-block: 0; gap: 24px; }
+  .table-toolbar, .scroll-hint { display: none; }
+  .table-wrap { overflow: visible; max-height: none; border-radius: 0; border: 0; }
+  .table-wrap thead th { position: static; }
+  .table-outer::after, .figure-outer::after { display: none; }
+  .table-wrap tbody tr { break-inside: avoid; }
+}
+
+/* ---- 窄屏（≤480px）：图不横向滚动，数值靠展开的数据表读 ----
+   手写 SVG 带 min-width，窄屏会横向滚动、图内文字缩到读不清。这里让图缩到一栏宽
+   （不再横滑），并由页尾的脚本把它的数据表孪生体展开——数值不只活在图形里。 */
+@media screen and (max-width: 480px) {
+  .figure svg { min-width: 0; }
+  .figure-scroll { overflow-x: visible; }
+  /* 图不再横滑，那行「左右滑动看图」的提示和右缘渐隐都不成立了，去掉 */
+  .figure > .scroll-hint { display: none; }
+  .figure-outer::after { display: none; }
+}
+</style>
+</head>
+<body>
+<!-- CONTENT:START -->
+<main class="page">
+
+  <header class="masthead">
+    <p class="eyebrow"><!-- SLOT: EYEBROW — 一句话的范围与日期，如「渲染实测 · 2026 年 10 月 4 日」 -->范围与日期</p>
+    <h1 class="title"><!-- SLOT: TITLE — 与 <title> 相同的页面名字，2–4 个词的专名 -->表格标题</h1>
+    <p class="subtitle"><!-- SLOT: SUBTITLE — 一句话说清这张表是什么、给谁看 -->一句话说明这张表是什么。</p>
+  </header>
+
+  <!-- SLOT: LEDE — 可选。结论先说的一段摘要，靠底纹 + 描边立起来。不用就整块删掉。 -->
+  <div class="lede">
+    <p class="lede__label">摘要</p>
+    <p>这里写这张表要说清的那件事：最要紧的一两个数、跟谁比、结论是什么。</p>
+  </div>
+
+  <!-- SLOT: READOUT（可选）— 全页最要紧的一个数，琥珀只出现在这里。重点不止一个数就用 .stat-row，别并排放两个 readout。 -->
+  <div class="readout">
+    <p class="readout__label">这一页最要紧的那个数</p>
+    <p class="readout__value">0</p>
+    <p class="readout__note">一句话说明它从哪来、跟什么比。</p>
+  </div>
+
+  <section class="section">
+    <h2><!-- SLOT: TABLE_TITLE -->全部记录</h2>
+
+    <!-- SLOT: CHART - 可选。有图表才留这一块；图必须和它的数据表在同一个 <section> 里，
+         所以放过表格标题之后、筛选行之前，下面那张可排序表就是它的数据表。手写内联 SVG，
+         单系列用 style="fill:var(--cx-text)"（var() 在 SVG 呈现属性里不生效）；三条以上才依次取 --cx-chart-1…6。不用就整块删掉。 -->
+    <figure class="figure">
+      <div class="figure-outer">
+        <div class="figure-scroll">
+          <svg viewBox="0 0 560 150" role="img" aria-label="示例横条图：三条实测值，最长 60.4 秒">
+            <g style="stroke:var(--cx-line)" stroke-width="1">
+              <line x1="140" y1="8" x2="140" y2="120"/>
+              <line x1="256.9" y1="8" x2="256.9" y2="120"/>
+              <line x1="373.8" y1="8" x2="373.8" y2="120"/>
+              <line x1="490.8" y1="8" x2="490.8" y2="120"/>
+            </g>
+            <line x1="140" y1="120" x2="520" y2="120" style="stroke:var(--cx-line-2)" stroke-width="1"/>
+            <g style="fill:var(--cx-text)">
+              <rect x="140" y="14" width="353" height="11" rx="2"/>
+              <rect x="140" y="42" width="245" height="11" rx="2"/>
+              <rect x="140" y="70" width="63" height="11" rx="2"/>
+            </g>
+            <g style="fill:var(--cx-muted)" font-size="12" font-family="var(--cx-font-sans)" text-anchor="end">
+              <text x="128" y="23">甲</text>
+              <text x="128" y="51">乙</text>
+              <text x="128" y="79">丙</text>
+            </g>
+            <g style="fill:var(--cx-muted)" font-size="12" font-family="var(--cx-font-sans)">
+              <text x="499" y="23">60.4</text>
+              <text x="391" y="51">41.9</text>
+              <text x="209" y="79">10.8</text>
+            </g>
+            <g style="fill:var(--cx-muted)" font-size="12" font-family="var(--cx-font-sans)" text-anchor="middle">
+              <text x="140" y="137">0</text>
+              <text x="256.9" y="137">20</text>
+              <text x="373.8" y="137">40</text>
+              <text x="490.8" y="137">60</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <p class="scroll-hint">窄屏可左右滑动看图</p>
+      <figcaption class="figcaption">图 1 · 说明这张图画的是什么、单位、数值出处。数据见下方表格。</figcaption>
+    </figure>
+
+    <div class="table-toolbar">
+      <label for="dt-filter" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">筛选行</label>
+      <input class="filter" id="dt-filter" type="search" placeholder="筛选行&hellip;" autocomplete="off">
+      <span class="count" id="dt-count" aria-live="polite">0 行</span>
+    </div>
+    <div class="table-outer">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="数据表">
+        <table id="dt">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <p class="scroll-hint">左右滑动看全部列</p>
+  </section>
+
+  <!-- SLOT: CALLOUTS — 可选。要提示或要解释的地方；没有就整节删掉。 -->
+  <section class="section">
+    <div class="callout-stack">
+      <div class="callout callout--note">
+        <p class="callout__title">说明</p>
+        <p class="callout__body">这里写读表前要知道的一件事：口径、缺测的格子为什么空着、数字来自哪一段。</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footnote">
+    <p><!-- SLOT: FOOTER_NOTE — 数据来源与快照时间 -->数据来源与快照时间。</p>
+  </footer>
+
+</main>
+
+<!-- SLOT: COLUMNS
+     列定义的 JSON 数组。这里的顺序 = 显示顺序。
+       key   - 每个行对象上的属性名
+       label - 表头文字
+       type  - "text"（默认）或 "num"（右对齐、按数值排序）
+       decimals - 数值列的小数位（可选），如 0 显示整数、1 显示一位小数；不填则最多保留 6 位
+     数值列里只放 JSON 数字，不要 "1,234.50" 这种字符串；缺的值给 null，别用 0 或 "-"。 -->
+<script type="application/json" id="dt-columns">
+[
+  { "key": "name",  "label": "名称", "type": "text" },
+  { "key": "count", "label": "数量", "type": "num" }
+]
+</script>
+
+<!-- SLOT: ROWS
+     行对象的 JSON 数组，按上面的列 key 组织。把整个数据集嵌进来（几千行以内）。
+     字符串里的 "<\/" 和 "<!--" 要转义，否则会提前结束这个 script 块。 -->
+<script type="application/json" id="dt-rows">
+[
+  { "name": "占位一行", "count": 0 }
+]
+</script>
+<!-- CONTENT:END -->
+
+<script>
+/* 可排序 / 可筛选的表格渲染器。原样保留；填上面的 COLUMNS 和 ROWS 槽位。 */
+(function () {
+  const tbody = document.querySelector('#dt tbody');
+  const esc = s => String(s).replace(/[&<>"']/g, ch =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+  let cols, allRows;
+  try {
+    cols = JSON.parse(document.getElementById('dt-columns').textContent);
+    allRows = JSON.parse(document.getElementById('dt-rows').textContent);
+    // 合法 JSON 但形状不对（对象而不是数组，或数组里夹 null）会在这里抛异常，
+    // 不拦的话下面会静默把表格清空。
+    if (!Array.isArray(cols) || !cols.every(c => c && typeof c === 'object' && typeof c.key === 'string') ||
+        !Array.isArray(allRows) || !allRows.every(r => r && typeof r === 'object')) {
+      throw new Error('dt-columns 必须是带字符串 "key" 的列对象数组；dt-rows 必须是行对象数组');
+    }
+  } catch (e) {
+    // 填错要看得见 - 静默的空表会被当成数据丢了。
+    tbody.innerHTML = '<tr><td class="empty">数据加载失败 - 内嵌的 JSON 不合法（' + esc(e.message) + '）</td></tr>';
+    return;
+  }
+  const thead = document.querySelector('#dt thead tr');
+  const filterEl = document.getElementById('dt-filter');
+  const countEl = document.getElementById('dt-count');
+  let sortKey = null, sortDir = 1;
+  // 读自有属性：像 "constructor" 这样的 key 不能走到原型链上。
+  const cell = (r, k) => Object.hasOwn(r, k) ? r[k] : null;
+
+  // 缺失值无论方向都排最后 - null 是未知，不是零。null/空白的判断必须在数值转换之前，
+  // 因为 Number(null)、Number('')、Number('  ') 都是 0。
+  const isMissing = (v, type) => v == null || String(v).trim() === '' ||
+    (type === 'num' && (typeof v === 'boolean' ||
+      !Number.isFinite(typeof v === 'number' ? v : Number(v))));
+
+  cols.forEach(c => {
+    const th = document.createElement('th');
+    if (c.type === 'num') th.classList.add('num');
+    th.dataset.key = c.key;
+    th.scope = 'col';
+    th.tabIndex = 0;
+    th.textContent = c.label;
+    th.insertAdjacentHTML('beforeend', '<span class="arrow" aria-hidden="true">▲</span>');
+    const toggle = () => {
+      if (sortKey === c.key) sortDir = -sortDir; else { sortKey = c.key; sortDir = 1; }
+      render();
+    };
+    th.addEventListener('click', toggle);
+    th.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+    thead.appendChild(th);
+  });
+
+  function render() {
+    const rawQ = filterEl.value.trim();
+    const q = rawQ.toLowerCase();
+    const textKeys = cols.filter(c => c.type !== 'num').map(c => c.key);
+    let rows = !q ? allRows.slice() : allRows.filter(r =>
+      textKeys.some(k => String(cell(r, k) ?? '').toLowerCase().includes(q))
+    );
+    if (sortKey) {
+      const col = cols.find(c => c.key === sortKey);
+      rows.sort((a, b) => {
+        const av = cell(a, sortKey), bv = cell(b, sortKey);
+        const am = isMissing(av, col.type), bm = isMissing(bv, col.type);
+        if (am || bm) return am - bm;
+        if (col.type === 'num') return (Number(av) - Number(bv)) * sortDir;
+        return String(av).localeCompare(String(bv)) * sortDir;
+      });
+    }
+    thead.querySelectorAll('th').forEach(th => {
+      const on = th.dataset.key === sortKey;
+      th.classList.toggle('sorted', on);
+      th.setAttribute('aria-sort', on ? (sortDir < 0 ? 'descending' : 'ascending') : 'none');
+      th.querySelector('.arrow').textContent = on && sortDir < 0 ? '▼' : '▲';
+    });
+    tbody.innerHTML = rows.length ? rows.map(r =>
+      '<tr>' + cols.map(c => {
+        const cls = c.type === 'num' ? ' class="num"' : '';
+        const v = cell(r, c.key);
+        const txt = c.type === 'num' && typeof v === 'number'
+          ? (c.decimals != null
+              ? v.toLocaleString(undefined, { minimumFractionDigits: c.decimals, maximumFractionDigits: c.decimals })
+              : v.toLocaleString(undefined, { maximumFractionDigits: 6 }))
+          : (v ?? '');
+        return '<td' + cls + '>' + esc(txt) + '</td>';
+      }).join('') + '</tr>'
+    ).join('') : '<tr><td class="empty" colspan="' + cols.length + '">' +
+      (rawQ ? '没有匹配「' + esc(rawQ) + '」的行' : '暂无数据') + '</td></tr>';
+    countEl.textContent = rows.length.toLocaleString() + ' 行'
+      + (q || rows.length !== allRows.length ? '，共 ' + allRows.length.toLocaleString() + ' 行' : '');
+  }
+
+  filterEl.addEventListener('input', render);
+  render();
+})();
+</script>
+
+
+<script>
+  // 窄屏（≤480px）：把手写 SVG 图的 data twin（数据表）展开，数值不只活在图形里；
+  // 图本身在窄屏由样式缩到一栏宽、不再横向滚动（见样式里的 480px 块）。
+  (() => {
+    const mq = window.matchMedia('(max-width: 480px)');
+    const sync = () => {
+      document.querySelectorAll('.figure').forEach((fig) => {
+        const twin = fig.querySelector('details.data-twin');
+        if (!twin) return;
+        if (mq.matches) {
+          if (!twin.open) { twin.open = true; twin.dataset.autoOpen = '1'; }
+        } else if (twin.dataset.autoOpen) {
+          twin.open = false;
+          delete twin.dataset.autoOpen;
+        }
+      });
+    };
+    sync();
+    mq.addEventListener('change', sync);
+  })();
+</script>
+</body>
+</html>

@@ -55,7 +55,7 @@ NATIVE_CHAT_GUIDANCE = load_skills(["chat"])
 #: container and stale on a device is exactly the kind of split nobody notices,
 #: because both machines run and only one of them is right.
 _NATIVE_SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
-_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "wolfram")
+_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram")
 
 #: What can travel. A skill is not one markdown file: `documents` ships the
 #: scripts that do the editing and the reference files they are explained in,
@@ -68,7 +68,7 @@ _SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "wolfram")
 #: rather than fail. Anything added to a skill outside this list is caught by
 #: `tests/unit/test_native_skill_files.py` at build time instead of silently
 #: not being shipped.
-SKILL_FILE_SUFFIXES = (".md", ".py", ".sh", ".txt", ".json", ".typ")
+SKILL_FILE_SUFFIXES = (".md", ".html", ".py", ".sh", ".txt", ".json", ".typ")
 
 
 #: Folder names a project's own skill may not take: the platform ships these.
