@@ -1190,7 +1190,10 @@
     "noAssignee": "No assignee",
     "queued": "Queued",
     "running": "Running",
-    "made": "What was made"
+    "made": "What was made",
+    "findPlaceholder": "Find by title (/)",
+    "findLabel": "Find tasks on the board by title",
+    "findNone": "No task titles in this column contain “{text}”"
   },
   "publishedSite": {
     "revisionChanged": "The project's accepted version changed. Check it, then publish",

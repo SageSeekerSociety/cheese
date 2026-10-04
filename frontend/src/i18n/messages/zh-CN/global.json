@@ -56,5 +56,10 @@
     "range": "{from}–{to} / {total}",
     "prev": "上一页",
     "next": "下一页"
+  },
+  "settingsSearch": {
+    "placeholder": "搜索设置",
+    "label": "按名字搜索设置",
+    "none": "没有名字含「{text}」的设置"
   }
 }
