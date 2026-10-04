@@ -944,7 +944,16 @@
           "diagram": "流程图",
           "image": "图片"
         }
-      }
+      },
+      "historyView": "右边显示",
+      "historyDiff": "与上一版比较",
+      "historyFull": "这一版全文",
+      "diffSummary": "新增 {added} 段 · 删除 {removed} 段 · 修改 {changed} 段",
+      "diffNone": "和上一版相比没有改动",
+      "diffSkipped": "{count} 段未改",
+      "diffAdded": "新增：",
+      "diffRemoved": "删除：",
+      "diffLoading": "正在读取上一版"
     },
     "comments": {
       "comment": "评论",
@@ -1441,7 +1450,20 @@
     "backToList": "返回资料库",
     "previewLoading": "正在读取文件",
     "previewError": "无法预览这份文件",
-    "downloadOnly": "此格式暂不支持预览，可下载查看"
+    "downloadOnly": "此格式暂不支持预览，可下载查看",
+    "versions": "版本…",
+    "versionsTitle": "「{name}」的版本",
+    "versionsClose": "关闭",
+    "versionsLoading": "正在读取版本",
+    "versionsEmpty": "暂无版本记录",
+    "versionsFailed": "版本列表没读出来",
+    "versionNumber": "第 {n} 版",
+    "versionCurrent": "当前",
+    "restoreVersion": "恢复为当前",
+    "restoreTitle": "把第 {n} 版恢复为当前？",
+    "restoreBody": "会把这一版复制成新的一版，之前的各版都保留。引用这份文件的消息之后读到的是它。",
+    "restoreFailed": "没能恢复这一版",
+    "restoredDone": "已把第 {n} 版恢复为当前"
   },
   "projectSettings": {
     "title": "项目设置",

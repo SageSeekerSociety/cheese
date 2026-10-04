@@ -284,6 +284,13 @@ onMounted(async () => {
 
 <template>
   <div class="settings-page">
+    <!-- Deliberately not an AppPage: this view is one page of the user settings
+         overlay (layouts/user/Settings.vue, meta.settingsOverlay). The overlay
+         already owns the content column (components/common/SettingsOverlay,
+         `.so__content` — 720 centred, 24 in), so a page frame here would nest a
+         second header and a second column; the shared settings-card shell
+         (styles/settings-card.css) is this kind of page's frame
+         (docs/design-system.md §3.5). -->
     <header class="conn__head">
       <div>
         <h1 class="t-page-title">{{ t('account.settings.connections') }}</h1>

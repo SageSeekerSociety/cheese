@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
 from app.domain.library import service
 from app.domain.library.models import LibraryFileRecord
@@ -187,3 +189,80 @@ async def describe(
         }
 
     return [one(f) for f in files]
+
+
+async def versions(
+    session: AsyncSession, project_id: uuid.UUID, name: str
+) -> list[dict]:
+    """一份资料的每一版，新的在前。版本号按放进来的先后从 1 数。
+
+    记录表之前就在、从没被替换过的文件没有行：给它一版，来源不详。"""
+    rows = list(
+        await session.scalars(
+            select(LibraryFileRecord)
+            .where(
+                LibraryFileRecord.project_id == project_id,
+                LibraryFileRecord.name == name,
+            )
+            .order_by(LibraryFileRecord.created_at, LibraryFileRecord.id)
+        )
+    )
+    if not rows:
+        data = await asyncio.to_thread(service.read_library_file, project_id, name)
+        return [
+            {
+                "id": None,
+                "version": 1,
+                "bytes": len(data),
+                "added_by": None,
+                "created_at": None,
+                "current": True,
+            }
+        ]
+    return [
+        {
+            "id": str(row.id),
+            "version": number,
+            "bytes": row.bytes,
+            "added_by": row.added_by,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "current": row.superseded_at is None,
+        }
+        for number, row in reversed(list(enumerate(rows, start=1)))
+    ]
+
+
+async def _version_row(
+    session: AsyncSession, project_id: uuid.UUID, name: str, version_id: uuid.UUID
+) -> LibraryFileRecord:
+    row = await session.get(LibraryFileRecord, version_id)
+    if row is None or row.project_id != project_id or row.name != name:
+        raise NotFoundError(say("libraryVersionNotFound"))
+    return row
+
+
+async def version_bytes(
+    session: AsyncSession, project_id: uuid.UUID, name: str, version_id: uuid.UUID
+) -> bytes:
+    """某一版的字节：现在这一版在资料库里，被替换下来的在历史目录里。"""
+    row = await _version_row(session, project_id, name, version_id)
+    if row.superseded_at is None:
+        return await asyncio.to_thread(service.read_library_file, project_id, name)
+    return await asyncio.to_thread(service.read_replaced, project_id, name, row.id)
+
+
+async def restore(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    name: str,
+    version_id: uuid.UUID,
+    by: str,
+) -> None:
+    """把旧的一版恢复成现在这一份：**复制**成新的一版，和替换走同一条路。历史只增不
+    减，被恢复的那一版和它之后的几版都还在。"""
+    row = await _version_row(session, project_id, name, version_id)
+    if row.superseded_at is None:
+        raise ValidationError(say("libraryVersionIsCurrent"))
+    data = await asyncio.to_thread(service.read_replaced, project_id, name, row.id)
+    await replace(session, project_id=project_id, name=name, data=data, by=by)
