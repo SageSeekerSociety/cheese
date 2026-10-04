@@ -80,13 +80,30 @@ describe('全部标为已读', () => {
     expect(store.unreadMap).toEqual({})
   })
 
-  it('失败了把角标还回来', async () => {
+  it('失败了按服务器此刻的数把角标拉回来', async () => {
     const store = useWorkspaceStore()
     store.projectId = 'p1'
     await store.refreshUnread()
     await flush()
     vi.mocked(markAllTopicsRead).mockRejectedValueOnce(new Error('boom'))
+    vi.mocked(getTopicUnread).mockResolvedValue({ t1: 4 })
     await store.markAllRead()
-    expect(store.unreadMap).toEqual({ t1: 3, t2: 5 })
+    await flush()
+    expect(store.unreadMap).toEqual({ t1: 4 })
+  })
+
+  it('点之前已经在飞的那次轮询回来，不把清掉的角标盖回去', async () => {
+    const store = useWorkspaceStore()
+    store.projectId = 'p1'
+    let answer!: (v: Record<string, number>) => void
+    vi.mocked(getTopicUnread).mockReturnValueOnce(new Promise((r) => (answer = r)))
+    const polling = store.refreshUnread()
+    vi.mocked(markAllTopicsRead).mockResolvedValueOnce({ topic_ids: ['t1', 't2'] })
+    vi.mocked(getTopicUnread).mockResolvedValue({})
+    await store.markAllRead()
+    answer({ t1: 3, t2: 5 })
+    await polling
+    await flush()
+    expect(store.unreadMap).toEqual({})
   })
 })

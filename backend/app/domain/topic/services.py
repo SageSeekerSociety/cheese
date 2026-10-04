@@ -611,8 +611,7 @@ class TopicService:
         unread messages for this user — the same rooms the badge map lists, so
         nothing the user cannot see is touched. Returns those room ids."""
         counts = await self.unread_counts(project_id, user_handle)
-        for topic_id in counts:
-            await self._repo.mark_read(topic_id, user_handle)
+        await self._repo.mark_read_many(list(counts), user_handle)
         return list(counts)
 
     NOTIFY_LEVELS = ("all", "mute")

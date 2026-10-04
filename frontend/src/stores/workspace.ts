@@ -152,6 +152,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   function isMuted(topicId: string): boolean {
     return notifyLevels.value[topicId] === 'mute'
   }
+  // 本地刚改过（静音、全部已读）就 +1：那一刻已经在飞的轮询回来时认得出自己是改之前
+  // 发出去的，不把旧答案盖回来。
+  let levelsWrite = 0
+  let unreadWrite = 0
 
   // What the URL says is open. Set by the shell from the route, read here so a
   // background unread refresh never lights a badge on the thing you're reading.
@@ -431,9 +435,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (!pid || !me) return
     void refreshPrivateUnread(pid, me)
     void refreshNotifyLevels(pid)
+    const write = unreadWrite
     try {
       const map = await readLatest(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
-      if (epoch !== projectEpoch || projectId.value !== pid) return
+      if (epoch !== projectEpoch || projectId.value !== pid || write !== unreadWrite) return
       // The open topic is being read right now — its badge never shows.
       if (activeTopicId.value) delete map[activeTopicId.value]
       // Background-refresh the timeline cache of topics whose unread grew: by
@@ -456,9 +461,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   async function refreshNotifyLevels(pid: string) {
     const epoch = projectEpoch
+    const write = levelsWrite
     try {
       const levels = await readLatest(`notify-levels:${pid}`, () => getTopicNotifyLevels(pid))
-      if (epoch !== projectEpoch || projectId.value !== pid) return
+      if (epoch !== projectEpoch || projectId.value !== pid || write !== levelsWrite) return
       notifyLevels.value = levels
     } catch {
       // Best-effort: without it every room simply counts, as before.
@@ -467,15 +473,19 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   /** 静音 / 取消静音一间房。先改本地，失败了改回去并说一声。 */
   async function setMuted(topicId: string, muted: boolean) {
-    const before = notifyLevels.value
-    const next = { ...before }
-    if (muted) next[topicId] = 'mute'
-    else delete next[topicId]
-    notifyLevels.value = next
+    // 只改、只还原这一间：别的房间这期间被轮询或另一次静音改过的，不跟着回滚。
+    const put = (on: boolean) => {
+      const next = { ...notifyLevels.value }
+      if (on) next[topicId] = 'mute'
+      else delete next[topicId]
+      notifyLevels.value = next
+    }
+    levelsWrite += 1
+    put(muted)
     try {
       await setTopicNotifyLevel(topicId, muted ? 'mute' : 'all')
     } catch (e) {
-      notifyLevels.value = before
+      put(!muted)
       reportError(e, t('work.room.menu.muteFailed'))
     }
   }
@@ -484,14 +494,15 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   async function markAllRead() {
     const pid = projectId.value
     if (!pid) return
-    const before = unreadMap.value
+    unreadWrite += 1
     unreadMap.value = {}
     try {
       await markAllTopicsRead(pid)
     } catch (e) {
-      unreadMap.value = before
       reportError(e, t('work.room.menu.markAllReadFailed'))
     }
+    // 成功失败都以服务器为准再拉一次：失败了角标回来的是此刻真实的数，不是点之前那一份。
+    void refreshUnread()
   }
 
   async function refreshPrivateUnread(pid: string, me: string) {

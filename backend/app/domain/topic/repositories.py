@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import (
@@ -506,6 +507,16 @@ class TopicRepository:
             .join(Topic, Topic.id == TopicReadState.topic_id)
             .where(
                 Topic.project_id == project_id,
+                # 同 unread_counts 的读权限：私密房间只列我还坐在里面的那几间。
+                # 被请出去的私密房间，我当年的静音记录还在，但它的 id 不能再告诉我。
+                or_(
+                    Topic.is_private.is_(False),
+                    Topic.id.in_(
+                        select(TopicMembership.topic_id).where(
+                            TopicMembership.member_handle == user_handle
+                        )
+                    ),
+                ),
                 TopicReadState.user_handle == user_handle,
                 TopicReadState.notify_level != "all",
             )
@@ -535,6 +546,35 @@ class TopicRepository:
             )
         else:
             state.notify_level = level
+        await self._session.flush()
+
+    async def mark_read_many(
+        self, topic_ids: list[uuid.UUID], user_handle: str
+    ) -> None:
+        """Bump the user's read cursor on many topics to now, in one statement
+        (「全部标为已读」). Rows that exist keep their notify level."""
+        if not topic_ids:
+            return
+        now = datetime.now(UTC)
+        stmt = pg_insert(TopicReadState).values(
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "topic_id": topic_id,
+                    "user_handle": user_handle,
+                    "last_read_at": now,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for topic_id in topic_ids
+            ]
+        )
+        await self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[TopicReadState.topic_id, TopicReadState.user_handle],
+                set_={"last_read_at": now, "updated_at": now},
+            )
+        )
         await self._session.flush()
 
     async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
