@@ -18,7 +18,22 @@
  * the 2026-09-30 releases did reload onto the old build and could not open a
  * topic. So the new worker takes over first (`takeWaitingWorker`), then the
  * tab reloads.
+ *
+ * Two callers handle a missing chunk themselves, and Vite still announces
+ * their failures as `vite:preloadError`, so the global listener must stay out
+ * of their way:
+ * - a prefetch (lib/routePrefetch.ts) failing means nothing was prefetched.
+ *   Reloading for it reloaded the tab under a hovering pointer, and on a
+ *   pointerdown it cancelled the click's own navigation and reloaded the page
+ *   the click was leaving.
+ * - a navigation fails through `router.onError`, which knows where the click
+ *   was going (`recoverNavigations`). The global listener would reload the
+ *   current page instead, and its one-shot guard would then stop the router
+ *   from loading the target.
  */
+import type { Router } from 'vue-router'
+
+import { prefetchingChunks } from '@/lib/routePrefetch'
 import { takeWaitingWorker } from '@/pwa'
 
 // Set before the reload and cleared once the app mounts again, so a failure
@@ -37,8 +52,11 @@ function describes(reason: unknown): string {
   return String(reason ?? '')
 }
 
-/** Reload once when `reason` is a chunk this build no longer serves. */
-export function reloadForNewBuild(reason: unknown): boolean {
+/**
+ * Reload once when `reason` is a chunk this build no longer serves: onto
+ * `target` when the failure belongs to a navigation, otherwise this page.
+ */
+export function reloadForNewBuild(reason: unknown, target?: string): boolean {
   if (!MISSING_CHUNK.test(describes(reason))) return false
   try {
     if (sessionStorage.getItem(RELOADED_KEY)) return false
@@ -48,8 +66,32 @@ export function reloadForNewBuild(reason: unknown): boolean {
     // without the guard beats leaving the tab dead: looping needs the failure
     // to outlive the reload, and a deploy's does not.
   }
-  void takeWaitingWorker({ check: true }).finally(() => window.location.reload())
+  void takeWaitingWorker({ check: true }).finally(() =>
+    target === undefined ? window.location.reload() : window.location.assign(target)
+  )
   return true
+}
+
+// The navigation in progress, if any; its chunk failures go to `onError`.
+let navigating: unknown = null
+
+/**
+ * A navigation whose route chunk is gone loads the page it was going to.
+ * Claimed from a beforeEach: the chunks load while the route's components
+ * resolve, which is after every beforeEach.
+ */
+export function recoverNavigations(router: Router): void {
+  router.beforeEach((to) => {
+    navigating = to
+  })
+  const settle = (to: unknown) => {
+    if (navigating === to) navigating = null
+  }
+  router.afterEach((to) => settle(to))
+  router.onError((error, to) => {
+    settle(to)
+    reloadForNewBuild(error, router.resolve(to).href)
+  })
 }
 
 /** Called once the app has mounted, which proves the reload worked. */
@@ -68,6 +110,7 @@ export function clearStaleBuildGuard(): void {
  */
 export function watchForStaleBuild(): void {
   window.addEventListener('vite:preloadError', (event) => {
+    if (navigating !== null || prefetchingChunks()) return
     const reason = (event as Event & { payload?: unknown }).payload
     if (reloadForNewBuild(reason)) event.preventDefault()
   })
