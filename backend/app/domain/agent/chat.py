@@ -69,8 +69,11 @@ from app.domain.agent.harness import (
     runtime_for,
 )
 from app.domain.agent.harness.prompt import (
+    UNTITLED_FIRST,
+    build_session_opening,
     build_system_prompt,
     live_input_lines,
+    opening_changes,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -3817,23 +3820,30 @@ class ChatService(SessionRecovery):
             if needs_place
             else "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
         )
+        # 规矩进系统提示词，现状进开场快照：系统提示词在一个会话里一字不变，前缀
+        # 缓存才接得上（`build_system_prompt` 的说明）。
         system_prompt = build_system_prompt(
             self._base_prompt,
             skills,
-            doc_text,
-            memory,
-            role,
+            has_doc=doc_text is not None,
+            role=role,
+            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
+            # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
+            keeps_memory=runtime.keeps_memory,
+        )
+        opening = build_session_opening(
+            doc=doc_text,
+            memory=memory,
             # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前
             # 加 @」，而一个停用了的实例没有人在驱动它——@ 它等于把活扔进一个没人
             # 接的地方。@ 解析和通知那几路照旧走全量的 `roster`：老房间里已经在的
             # 它仍要 @ 得到，停用挡的是新的活，不是已经接手的。
-            [m for m in roster if m["active"]],
-            topic_refs_for_prompt,
-            untitled,
+            roster=[m for m in roster if m["active"]],
+            topics=topic_refs_for_prompt,
             artifacts=artifact_refs,
             overview_doc=overview_doc_text,
             teaching=teaching,
-            session_opening=_session_opening_lines(
+            environment=_session_opening_lines(
                 unconnected_mcp=(
                     await self._unconnected_mcp(project_id, topic_id, acting_agent)
                     if needs_place
@@ -3846,10 +3856,15 @@ class ChatService(SessionRecovery):
                     prepared.earlier_messages if resume_session_id is None else 0
                 ),
             ),
-            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
-            # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
             keeps_memory=runtime.keeps_memory,
         )
+        async with self._sessions() as session:
+            told = await AgentSessionService(session).told(
+                topic_id, prepared.agent.handle, harness=prepared.harness
+            )
+        if untitled:
+            # 起名是这一轮的第一件事，所以排在最前；起完名下一轮就不再说。
+            prompt_text = f"{platform_prompt(UNTITLED_FIRST)}\n\n{prompt_text}"
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
         prompt_text = publication_prompt(prompt_text)
@@ -4025,6 +4040,8 @@ class ChatService(SessionRecovery):
                 Opening(
                     system_prompt=system_prompt,
                     resume_token=resume_session_id,
+                    session_opening=opening.text,
+                    opening_changes=opening_changes(opening, told),
                     expected_native_session=expected_session,
                     memory_scope="personal" if private_owner else None,
                     owner=private_owner,
@@ -4043,6 +4060,17 @@ class ChatService(SessionRecovery):
                 ),
                 owes_reply=summoned,
             )
+            # 这一轮把现状说到了：下一轮只补在这之后变了的。回答一道 Ask 的那一轮
+            # 接着原来的对话，runtime 不往里放现状（`DrivenRuntime.send`），所以不算。
+            if expected_session is None:
+                async with self._sessions() as session:
+                    await AgentSessionService(session).remember_told(
+                        topic_id=topic_id,
+                        agent_handle=prepared.agent.handle,
+                        harness=prepared.harness,
+                        told=opening.digests(),
+                    )
+                    await session.commit()
         except InputOutcomeUnconfirmed as exc:
             # The session still owns this work. Its structured echo can settle
             # the committed identity even after this ChatService is replaced.

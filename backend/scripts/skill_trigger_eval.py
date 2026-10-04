@@ -255,24 +255,31 @@ def skill_listing() -> str:
 
 
 def room(empty_doc: bool) -> tuple[str, str]:
-    """The system prompt and the turn's preamble for a room in this checkout.
+    """The system prompt and the project state a new session in this checkout
+    starts with.
 
     The one function to change when the platform moves things between the
     system prompt and the conversation."""
     from app.core.config import settings
-    from app.domain.agent.harness.prompt import build_system_prompt
+    from app.domain.agent.harness.prompt import (
+        build_session_opening,
+        build_system_prompt,
+    )
     from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
 
     system = build_system_prompt(
         settings.agent_system_prompt,
         NATIVE_CHAT_GUIDANCE,
-        "" if empty_doc else DOC,
-        None,
+        has_doc=True,
+        keeps_memory=True,
+    )
+    opening = build_session_opening(
+        doc="" if empty_doc else DOC,
         roster=ROSTER,
         topics=TOPICS,
         keeps_memory=True,
     )
-    return system, ""
+    return system, opening.text
 
 
 def build() -> None:
@@ -281,9 +288,11 @@ def build() -> None:
     tools = platform_tools() + CLAUDE_TOOLS
     listing = skill_listing()
     for case_id, who, text, expect, empty in CASES:
-        system, preamble = room(empty)
+        system, state = room(empty)
         said = platform_prompt(text) if who == "platform" else f"[{who}]: {text}"
-        turn = publication_prompt("\n\n".join(filter(None, [preamble, said])))
+        # A new session's first message: the project state, then the turn
+        # (`DrivenRuntime._with_project_state`).
+        turn = "\n\n".join(filter(None, [state, publication_prompt(said)]))
         print(
             json.dumps(
                 {
@@ -415,9 +424,10 @@ def run(models: list[str]) -> None:
 
 
 def verdict(row: dict) -> str:
-    """'pass', 'miss' (expected a skill, none loaded before writing), 'extra'
-    (loaded a watched skill the case did not need — another skill, such as the
-    chat guide, is not counted) or 'error'."""
+    """'pass', 'miss' (expected a skill, wrote or loaded another without it),
+    'undecided' (expected a skill, ran out of steps before writing anything),
+    'extra' (loaded a watched skill the case did not need — another skill, such
+    as the chat guide, is not counted) or 'error'."""
     if "error" in row:
         return "error"
     loaded = []
@@ -433,7 +443,12 @@ def verdict(row: dict) -> str:
     if row["expect"] is None:
         watched = set().union(*EXPECT.values())
         return "extra" if set(loaded) & watched else "pass"
-    return "pass" if set(loaded) & EXPECT[row["expect"]] else "miss"
+    if set(loaded) & EXPECT[row["expect"]]:
+        return "pass"
+    wrote = any(action["tool"] in WRITES for action in row["actions"])
+    # Ran out of steps still looking around: it never reached the point where a
+    # skill would be loaded, so this run says nothing either way.
+    return "miss" if wrote or loaded else "undecided"
 
 
 def summary() -> None:
@@ -447,21 +462,25 @@ def summary() -> None:
         group = "should load" if row["expect"] else "should not"
         by_model[row["model"]][(group, v)] += 1
         by_case[(row["case"], row["model"])][v] += 1
-    print("| model | should load: loaded | should not: stayed out | errors |")
-    print("|---|---|---|---|")
+    print(
+        "| model | should load: loaded | undecided | should not: stayed out | errors |"
+    )
+    print("|---|---|---|---|---|")
     for model, c in by_model.items():
         load_total = sum(n for (g, _), n in c.items() if g == "should load")
         not_total = sum(n for (g, _), n in c.items() if g == "should not")
         errors = sum(n for (_, v), n in c.items() if v == "error")
+        undecided = c[("should load", "undecided")]
         print(
-            f"| {model} | {c[('should load', 'pass')]}/{load_total} | {c[('should not', 'pass')]}/{not_total} | {errors} |"
+            f"| {model} | {c[('should load', 'pass')]}/{load_total - undecided} | {undecided} | "
+            f"{c[('should not', 'pass')]}/{not_total} | {errors} |"
         )
     print()
-    print("| case | model | pass | miss | extra | error |")
-    print("|---|---|---|---|---|---|")
+    print("| case | model | pass | miss | undecided | extra | error |")
+    print("|---|---|---|---|---|---|---|")
     for (case_id, model), c in sorted(by_case.items()):
         print(
-            f"| {case_id} | {model} | {c['pass']} | {c['miss']} | {c['extra']} | {c['error']} |"
+            f"| {case_id} | {model} | {c['pass']} | {c['miss']} | {c['undecided']} | {c['extra']} | {c['error']} |"
         )
 
 

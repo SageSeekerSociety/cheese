@@ -224,6 +224,8 @@ class DrivenRuntime[H: Handle]:
         # Work a verdict already ended. What the session goes on saying still
         # lands; a second ending for it does not.
         self.closed: set[uuid.UUID] = set()
+        # Conversations this process has already handed their opening state.
+        self.opened: set[str] = set()
         self.unreachable: dict[Seat, float] = {}
         # The open work each seat was last told is waiting on its machine.
         self.told_waiting: dict[Seat, uuid.UUID] = {}
@@ -924,6 +926,7 @@ class DrivenRuntime[H: Handle]:
                 )
         else:
             handle = await self.ensure(session, opening, work_id=work_id)
+            message = self._with_project_state(handle, opening, message)
         await self.check_input_protocol(handle)
         payload = await self.channel.images(handle, images or [])
         on_mark(work_id)
@@ -985,6 +988,20 @@ class DrivenRuntime[H: Handle]:
             # A lost acknowledgement does not mean the session stopped working.
             self._listen(self._seat_of(session))
         return True
+
+    def _with_project_state(self, handle: H, opening: Opening, message: str) -> str:
+        """The message with the project state this conversation has not heard.
+
+        A conversation is new when it is not the one the caller asked to resume:
+        no token, or a resume that failed and started afresh. A new one gets the
+        whole opening; one that goes on gets what changed since it last heard.
+        A conversation is opened once per process: a second message before its
+        token is recorded must not hand it the opening again."""
+        conversation = self.conversation(handle)
+        fresh = conversation != opening.resume_token and conversation not in self.opened
+        self.opened.add(conversation)
+        state = opening.session_opening if fresh else opening.opening_changes
+        return f"{state}\n\n{message}" if state else message
 
     async def deliver(
         self,

@@ -19,7 +19,7 @@ def _shipped() -> set[str]:
 
 def test_every_skill_the_room_prompt_names_is_shipped():
     prompt = build_system_prompt(
-        "base", NATIVE_CHAT_GUIDANCE, "## 目标\n\n做事。", None
+        "base", NATIVE_CHAT_GUIDANCE, has_doc=True, keeps_memory=True
     )
     named = set(_LOAD.findall(prompt))
 
@@ -28,6 +28,6 @@ def test_every_skill_the_room_prompt_names_is_shipped():
 
 
 def test_the_room_prompt_says_how_to_publish():
-    prompt = build_system_prompt("base", NATIVE_CHAT_GUIDANCE, None, None)
+    prompt = build_system_prompt("base", NATIVE_CHAT_GUIDANCE)
 
     assert "chat_send" in prompt

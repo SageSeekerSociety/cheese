@@ -15,11 +15,12 @@
 它起个名字」，清单于是长成一份改动列表。
 """
 
-from app.domain.agent.harness.prompt import build_system_prompt
+from app.domain.agent.harness.prompt import build_session_opening
 
 
 def _prompt(artifacts: list[dict] | None) -> str:
-    return build_system_prompt("底稿", "", None, None, artifacts=artifacts)
+    """新会话开场时听到的项目现状：清单是现状，在开场快照里。"""
+    return build_session_opening(artifacts=artifacts).text
 
 
 REPORT = {

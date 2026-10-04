@@ -236,6 +236,6 @@ def test_a_retired_teammate_is_not_offered_as_someone_to_hand_work_to(
             if frame["type"] in {"done", "error"}:
                 break
 
-    prompt = stub_hooks.last_system_prompt or ""
+    prompt = stub_hooks.told
     assert "评审" in prompt, prompt
     assert "退休" not in prompt, prompt

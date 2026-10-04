@@ -5,11 +5,11 @@
 去的骨架（codex、pi）读到的是一条做不到的说明：它照着写，文件留在会话机上，下一轮
 什么都不在，而它一个字都不知道为什么。
 
-所以这一段不由 `build_system_prompt` 自己猜，由调用方按 runtime 的能力传进来
+所以这一段不由提示词自己猜，由调用方按 runtime 的能力传进来
 （`AgentRuntime.keeps_memory`，见 `harness/__init__.py`）。
 """
 
-from app.domain.agent.harness.prompt import build_system_prompt
+from app.domain.agent.harness.prompt import build_session_opening, build_system_prompt
 from app.domain.memory.files_store import IndexSection, MemoryIndex
 from app.domain.memory.instructions import MEMORY_INSTRUCTIONS
 
@@ -23,8 +23,19 @@ INSTRUCTIONS_HEAD = "## 记忆（memory）"
 INDEX_HEAD = "## 你的记忆（索引"
 
 
+def _told(index: MemoryIndex | None, *, keeps_memory: bool = False) -> str:
+    """一条新会话开场听到的全部：系统提示词（说明书）加开场快照（索引）。"""
+    system = build_system_prompt(
+        "底稿", "技能", has_doc=True, keeps_memory=keeps_memory
+    )
+    opening = build_session_opening(
+        doc="## 目标\n\n做一件事。", memory=index, keeps_memory=keeps_memory
+    )
+    return system + "\n\n" + opening.text
+
+
 def _prompt(**kwargs) -> str:
-    return build_system_prompt("底稿", "技能", "## 目标\n\n做一件事。", INDEX, **kwargs)
+    return _told(INDEX, **kwargs)
 
 
 def test_a_harness_that_keeps_no_memory_is_not_told_about_it():
@@ -49,7 +60,7 @@ def test_a_harness_that_keeps_memory_is_told_how_it_works():
 def test_the_instructions_do_not_need_an_index_to_be_there():
     """新项目第一个回合：一条记忆都还没有，索引是空的，而说明书正在最有用的时候
     ——第一条记忆该写成什么样，只有它说了。"""
-    prompt = build_system_prompt("底稿", "技能", "文档", None, keeps_memory=True)
+    prompt = _told(None, keeps_memory=True)
 
     assert MEMORY_INSTRUCTIONS in prompt
     assert INDEX_HEAD not in prompt
@@ -57,7 +68,7 @@ def test_the_instructions_do_not_need_an_index_to_be_there():
 
 def test_an_empty_index_is_not_a_block():
     empty = MemoryIndex(sections=[], warnings=[])
-    prompt = build_system_prompt("底稿", "技能", "文档", empty, keeps_memory=True)
+    prompt = _told(empty, keeps_memory=True)
 
     assert MEMORY_INSTRUCTIONS in prompt
     assert INDEX_HEAD not in prompt

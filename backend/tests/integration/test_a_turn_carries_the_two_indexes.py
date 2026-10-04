@@ -98,7 +98,7 @@ async def _turn_in(
         pass
     await settle_turn(svc, topic_id)
     assert screen.last_system_prompt is not None
-    return screen.last_system_prompt
+    return screen.told
 
 
 async def test_a_room_carries_the_projects_index_and_the_speakers(client, tmp_path):

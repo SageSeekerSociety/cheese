@@ -22,8 +22,10 @@
 它只走 system prompt 这一条路，没有第二条路能让它在会话中途变脸。
 """
 
+import hashlib
 import re
 import uuid
+from dataclasses import dataclass
 
 from app.domain.agent.skills import load_skills
 from app.domain.block.models import BlockKind
@@ -286,59 +288,143 @@ DOC_SKILL = (
 )
 
 
+#: 话题还没名字、平台自己又起不了名时，这一轮的第一件事。它跟着这一轮的消息走，
+#: 不进系统提示词：起完名下一轮就不该再说，而系统提示词在会话里是不变的。
+UNTITLED_FIRST = (
+    "本话题还叫「新话题」（未命名）。本轮的第一个动作，在说开场白、回复任何内容、"
+    "调用任何其他工具之前，先根据用户的需求执行 `cheese_title` 起个不超过 12 字的"
+    "简短标题，然后再照常回应、干活。起标题只是一次工具调用，几乎不花时间。只起一次，"
+    "定了别反复改。"
+)
+
+#: 实况文档那一节里，和文档现在写了什么无关的那几句。文档的内容在会话的开场快照里。
+DOC_SECTION = (
+    "## 当前话题的实况文档\n"
+    + DOC_FORM
+    + "\n\n文档现在的内容在会话开头「本话题现在的情况」里；之后被人改过时平台会"
+    "提醒你，改之前先用 `cheese_doc_get` 读最新一版。还没有文档时，由在这个话题里"
+    "干活的 AI 队友来建，不论你是哪个队友：等话题的目标或第一条结论清楚了（通常就在"
+    "当轮），先 `cheese_doc_get`，再用 `cheese_doc_set` 建第一版。只是寒暄或一句话"
+    "就答完的问题不用建。"
+)
+
+
 def build_system_prompt(
     base: str,
     skills: str,
-    doc: str | None,
-    memory: MemoryIndex | None,
+    *,
+    has_doc: bool = False,
     role: str | None = None,
-    roster: list[dict] | None = None,
-    topics: list[dict] | None = None,
-    untitled: bool = False,
-    artifacts: list[dict] | None = None,
-    overview_doc: str | None = None,
-    session_opening: list[str] | None = None,
-    teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
 ) -> str:
-    """拼这一轮的 system prompt。
+    """拼一个会话的系统提示词：只有规矩，没有项目现状。
+
+    骨架在进程启动时读它，进程空闲退出后用 ``--resume`` 接着原来的对话重新拉起时
+    再读一次。所以它在一个会话里必须一字不变：变了，从变的那个字往后、连同整段
+    对话历史，前缀缓存全部作废。会变的现状在 :func:`build_session_opening` 里，作为
+    新会话的第一条消息送进去；之后变了什么，用平台提醒补（:func:`opening_changes`）。
 
     ``keeps_memory`` 说的是**这一轮跑的 harness 会不会把记忆文件对账回平台**
     （``AgentRuntime.keeps_memory``，调用方按当前 runtime 传入）。默认不注：记忆
-    那一段（说明书 + L1 索引）讲的是「写进 `~/.cheese/memory/`，下一轮平台的
-    那一份里有它」，而 codex、pi 没有这条回路——照说明书写下的文件永远同步不回
-    来，agent 却以为自己在写项目记忆。索引同理：正文铺不下去，注入的也就只是一
-    串指向不存在的文件的指针。
+    那一段讲的是「写进 `~/.cheese/memory/`，下一轮平台的那一份里有它」，而 codex、
+    pi 没有这条回路——照说明书写下的文件永远同步不回来，agent 却以为自己在写项目
+    记忆。
     """
-    parts = [base]
-    if untitled:
-        # First in the prompt on purpose: naming the topic is the FIRST action
-        # of the session — before the opening reply, before any other tool —
-        # so the rail never shows a working-but-unnamed 「新话题」.
-        parts.append(
-            "## 本轮第一件事：先给本话题起名（先于一切）\n"
-            "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
-            "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            "`cheese_title` 起个 ≤12 字简短标题，"
-            "然后再照常回应、干活。"
-            "这条优先于「先回应，再干活」：起标题只是一次工具调用，几乎不花时间。"
-            "（只起一次，定了别反复改。）"
-        )
-    parts.append(PLATFORM_RULES)
-    parts.append(ALWAYS_PUSH)
-    parts.append(TODO_WRITE)
-    parts.append(ASK_ONLY_CHEESE_ASK)
-    parts.append(WRITING)
-    parts.append(DOC_SKILL)
-    if role:
-        parts.append(f"## 你的专家角色\n{role}")
-    if teaching is not None and (section := teaching_section(teaching)):
-        parts.append(section)
+    parts = [
+        base,
+        PLATFORM_RULES,
+        ALWAYS_PUSH,
+        TODO_WRITE,
+        ASK_ONLY_CHEESE_ASK,
+        WRITING,
+        DOC_SKILL,
+    ]
     if skills:
         parts.append(skills)
+    if has_doc:
+        parts.append(DOC_SECTION)
+    if keeps_memory:
+        # 记忆这一段是有意整份在场的（照搬 CC）：四类记忆是什么、什么不该写、写前
+        # 查重、用前核对——它是这个机制的说明书，而 agent 只有读了它才知道第一条
+        # 记忆该写成什么样，什么时候该记又可能出现在任何一轮。
+        parts.append(MEMORY_INSTRUCTIONS)
+    if role:
+        parts.append(f"## 你的专家角色\n{role}")
+    return "\n\n".join(parts)
+
+
+#: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
+#: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
+#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
+TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory")
+
+
+@dataclass(frozen=True)
+class SessionOpening:
+    """一个新会话开场时项目的样子，按段存着，好在之后比对哪一段变了。"""
+
+    sections: dict[str, str]
+
+    @property
+    def text(self) -> str:
+        if not self.sections:
+            return ""
+        return platform_prompt(
+            "## 本话题现在的情况\n"
+            "下面是这个会话开始时本话题和项目的情况，是平台给的，不是谁说的话。"
+            "之后变了的部分，平台会在后面的消息里再告诉你。\n\n"
+            + "\n\n".join(self.sections.values())
+        )
+
+    def digests(self) -> dict[str, str]:
+        return {
+            key: hashlib.sha256(self.sections[key].encode()).hexdigest()
+            for key in TRACKED_SECTIONS
+            if key in self.sections
+        }
+
+
+def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str:
+    """一条接着跑的对话在这一轮要补听的现状；什么都没变就是空字符串。
+
+    ``told`` 是上次告诉它时每一段的摘要（:meth:`SessionOpening.digests`），只补
+    和它不一样的那几段。没有记录（``None``）时整份都说：那是一条在系统提示词还
+    带着现状时开的老对话，或者记录丢了，它手上的现状不知道是哪一刻的。一条新开的
+    对话用不上这一段，它的第一条消息带着整份快照（``Opening.session_opening``）。"""
+    if told is None:
+        return opening.text
+    changed = [
+        text
+        for key, text in opening.sections.items()
+        if key in TRACKED_SECTIONS
+        and told.get(key) != hashlib.sha256(text.encode()).hexdigest()
+    ]
+    if not changed:
+        return ""
+    return platform_prompt(
+        "这个会话开始以后，下面这几项变了，以这里为准：\n\n" + "\n\n".join(changed)
+    )
+
+
+def build_session_opening(
+    *,
+    doc: str | None = None,
+    memory: MemoryIndex | None = None,
+    roster: list[dict] | None = None,
+    topics: list[dict] | None = None,
+    artifacts: list[dict] | None = None,
+    overview_doc: str | None = None,
+    environment: list[str] | None = None,
+    teaching: TeachingContext | None = None,
+    keeps_memory: bool = False,
+) -> SessionOpening:
+    """新会话第一条消息前面的那份现状：话题、产物、成员、总览、文档、记忆索引。"""
+    sections: dict[str, str] = {}
+    if teaching is not None and (section := teaching_section(teaching)):
+        sections["teaching"] = section
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
-        parts.append(
+        sections["topics"] = (
             "## 项目话题（交叉引用某个话题/它的文档时，在标题前加 @，如 "
             "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n"
             "下面**只列当前活跃的话题**。项目里还有已归档的话题，它们照常存在、"
@@ -364,7 +450,7 @@ def build_system_prompt(
                 + f"　id={a['id']}"
                 for a in artifacts
             )
-            parts.append(
+            sections["artifacts"] = (
                 head + "交出文件或地址时，交的是下面某一项的新一版就用 "
                 "`artifact=<那一行的 id>`，是一样新东西就用 `new_artifact` 加 "
                 "`about`；交合并的不用声明产物，交的是项目那个仓库。细则看 "
@@ -372,7 +458,7 @@ def build_system_prompt(
                 "\n\n" + lines
             )
         else:
-            parts.append(
+            sections["artifacts"] = (
                 head + "清单还空着。第一次交出文件或地址时，用 `new_artifact=<真名>` "
                 "加 `about=<一句话>` 声明它；交合并的不用声明产物，交的是项目那个"
                 "仓库。细则看 `cheese_accept_request` 的说明。"
@@ -381,7 +467,7 @@ def build_system_prompt(
         lines = "\n".join(
             f"- {m['name']}（{_standing(m)}，handle: {m['handle']}）" for m in roster
         )
-        parts.append(
+        sections["roster"] = (
             "## 项目成员 & 怎么点名\n"
             "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
             "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
@@ -399,7 +485,7 @@ def build_system_prompt(
         # 传进来的那一段已经按这个结构拼好了（`chat._project_overview`）：① 从总览
         # 文档里取，②③ 只在总览房间拼。帽子仍然戴在整段上，防的是一份还没按新
         # 结构写过的老总览——那时 ① 取不到，注入的就是全文。
-        parts.append(
+        sections["overview"] = (
             "## 项目总览（全项目共看的那一份，不是本话题的）\n"
             "项目所有人和所有芝士共同看的就是它：项目是什么、现在在做什么、定了"
             "什么、谁在负责。它分三块，**只有第一块是写的**：\n"
@@ -417,56 +503,26 @@ def build_system_prompt(
             )
         )
     if doc:
-        # 话题文档的模板（#1889 第 2 条）。这五块不是格式洁癖：读者是**没参与过
-        # 讨论的人**和下一轮的自己，「现在是什么情况」得一眼看得到。流水账、追加
-        # 的「更正」、粘贴的原文，都要后来的人自己推断哪一版有效——那不叫文档，
-        # 叫过程。
-        #
-        # 写入时的检查（`doc_checks`）只提醒不拦，所以这里说一次就够；两处说的是
-        # 同一套要求，不另立一份声明。
-        parts.append(
-            "## 当前话题的实况文档\n"
-            + DOC_FORM
-            + "\n\n下面是它现在的内容。用户可能改过它，按它继续工作，"
-            "状态变了就用 `cheese_doc_edit` 改变了的那几处。\n\n"
-            + fit_doc_to_budget(
-                doc,
-                TOPIC_DOC_CHAR_BUDGET,
-                full_read_hint="用 `cheese_doc_get` 读全文",
-            )
+        sections["doc"] = "## 实况文档现在的内容\n\n" + fit_doc_to_budget(
+            doc,
+            TOPIC_DOC_CHAR_BUDGET,
+            full_read_hint="用 `cheese_doc_get` 读全文",
         )
     elif doc is not None:
-        # 房间有文档位、只是还空着（`""`，区别于没有文档这回事的 None）。只在
-        # 上面那一支里说「维护它」，等于把第一版留给模型自己悟：Claude 会悟，
-        # Kimi / MiMo 近 30 天在本项目里一篇都没建过——文档谁来维护就取决于
-        # 坐进房间的是哪个模型。所以空的时候也说，而且说清「什么时候」。
-        parts.append(
-            "## 当前话题的实况文档（还没有）\n"
-            "本话题还没有实况文档。它由在这个话题里干活的 AI 队友维护，不论你是"
-            "哪个队友。等话题的目标或第一条结论清楚了（通常就在本轮），先 "
-            "`cheese_doc_get`，再用 `cheese_doc_set` 建第一版；之后状态变化时改它。"
-            "只是寒暄或一句话就答完的问题不用建。\n\n" + DOC_FORM
+        sections["doc"] = "## 实况文档现在的内容\n\n本话题还没有实况文档。"
+    if keeps_memory and memory is not None and not memory.is_empty():
+        index_text = "\n\n".join(
+            f"### {section.label}（`{section.prefix}/`）\n{section.text}"
+            for section in memory.sections
         )
-    if keeps_memory:
-        # 记忆这一段是有意整份在场的（照搬 CC）：四类记忆是什么、什么不该写、写前
-        # 查重、用前核对——它是这个机制的说明书，而 agent 只有读了它才知道第一条
-        # 记忆该写成什么样。索引（L1）跟着它走，正文留在会话目录里让它自己读。
-        parts.append(MEMORY_INSTRUCTIONS)
-        if memory is not None and not memory.is_empty():
-            index_text = "\n\n".join(
-                f"### {section.label}（`{section.prefix}/`）\n{section.text}"
-                for section in memory.sections
-            )
-            parts.append(memory_block(index_text, memory.warnings))
-    if session_opening:
-        # 会话开场，不是本轮：这两条一次写对就一直对（机器多大不会变；上次的清单
-        # 是给「不在场的那一轮」看的，会话活着的时候它自己的历史就是答案）。会变的
-        # 东西不在这里 —— 它们在变的那一刻写成平台提醒，跟着下一轮的消息进来。
-        parts.append(
-            "## 这个会话开场时的运行环境（平台元信息，非用户输入）\n"
-            + "\n".join(session_opening)
+        sections["memory"] = memory_block(index_text, memory.warnings)
+    if environment:
+        # 会话开场，不是本轮：机器多大不会变；上次的清单是给「不在场的那一轮」看
+        # 的，会话活着的时候它自己的历史就是答案。
+        sections["environment"] = "## 这个会话开场时的运行环境\n" + "\n".join(
+            environment
         )
-    return "\n\n".join(parts)
+    return SessionOpening(sections)
 
 
 def thread_relay_prompt(

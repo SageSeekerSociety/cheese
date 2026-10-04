@@ -269,6 +269,12 @@ class Opening:
 
     system_prompt: str
     resume_token: str | None = None
+    # 项目现状不在系统提示词里（它在会话里必须不变）。一条新开的对话，第一条消息
+    # 前面带上整份 ``session_opening``；一条接着跑的对话，带上 ``opening_changes``，
+    # 也就是它上次听到之后变了的那几段。哪一条是新开的，只有 ensure 之后才知道
+    # （续跑可能失败、改开一条新的），所以两份都随每次 send 送进来，由 runtime 挑。
+    session_opening: str = ""
+    opening_changes: str = ""
     # An Ask answer may use only this existing conversation, never a cold one.
     expected_native_session: str | None = None
     model: str | None = None
