@@ -27,22 +27,28 @@ const resources = computed(() => [
 
 // The visitor's own system first; the files are served by this site (lib/desktop.ts).
 
-// The hero finishes its sentence with one concrete job after another, typed out
-// and erased a character at a time the way dot.net's hero did, so a visitor sees
-// what the product is for before scrolling. It holds still on the first job under
-// reduced motion, and waits out a background tab.
-const jobs = computed(() => [
-  t('publicSite.heroJob1'),
-  t('publicSite.heroJob2'),
-  t('publicSite.heroJob3'),
-  t('publicSite.heroJob4'),
-  t('publicSite.heroJob5'),
-  t('publicSite.heroJob6'),
+// The line under the slogan keeps its one sentence, and shows what 真项目 covers:
+// the word lifts into a small label over its own place, the kinds of project the
+// team's vision and product brief name (research, courses, company briefs,
+// competitions, startups) are typed under it one after another, a character at a time behind a
+// caret the way dot.net's hero did, and then the label settles back as the word.
+// Every frame reads as the whole sentence, and it rests on the original. It stays
+// on the original under reduced motion, and waits out a background tab.
+const examples = computed(() => [
+  t('publicSite.heroProject1'),
+  t('publicSite.heroProject2'),
+  t('publicSite.heroProject3'),
+  t('publicSite.heroProject4'),
+  t('publicSite.heroProject5'),
 ])
-const TYPE_MS = 90
-const ERASE_MS = 50
-const HOLD_MS = 1600
-const typed = ref(jobs.value[0])
+const TYPE_MS = 140
+const ERASE_MS = 70
+const HOLD_MS = 1800
+const HOME_HOLD_MS = 3500
+// Matches the label's transition in landing.css.
+const FOLD_MS = 450
+const branched = ref(false)
+const typed = ref('')
 // A caret blinks only while it waits; while it types or erases it stays lit.
 const idle = ref(true)
 const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
@@ -52,24 +58,40 @@ function after(ms: number, next: () => void) {
   typingTimer = setTimeout(next, ms)
 }
 
-function erase(index: number) {
-  if (document.hidden) return after(HOLD_MS, () => erase(index))
-  idle.value = false
-  if (typed.value) {
-    typed.value = typed.value.slice(0, -1)
-    after(ERASE_MS, () => erase(index))
-  } else {
-    type((index + 1) % jobs.value.length, 1)
-  }
+function rest() {
+  after(HOME_HOLD_MS, branchOut)
+}
+
+function branchOut() {
+  if (document.hidden) return rest()
+  branched.value = true
+  after(FOLD_MS, () => type(0, 1))
 }
 
 function type(index: number, length: number) {
-  const job = jobs.value[index]
-  typed.value = job.slice(0, length)
-  if (length < job.length) after(TYPE_MS, () => type(index, length + 1))
-  else {
-    idle.value = true
-    after(HOLD_MS, () => erase(index))
+  const example = examples.value[index]
+  typed.value = example.slice(0, length)
+  idle.value = length === example.length
+  if (!idle.value) after(TYPE_MS, () => type(index, length + 1))
+  else after(HOLD_MS, () => erase(index))
+}
+
+function erase(index: number) {
+  if (document.hidden) return after(HOLD_MS, () => erase(index))
+  idle.value = false
+  if (typed.value.length > 1) {
+    typed.value = typed.value.slice(0, -1)
+    after(ERASE_MS, () => erase(index))
+    return
+  }
+  // The last character gives way straight to the next example's first, so the
+  // slot is never empty between them and the rest of the sentence holds still.
+  if (index + 1 < examples.value.length) {
+    after(ERASE_MS, () => type(index + 1, 1))
+  } else {
+    typed.value = ''
+    branched.value = false
+    after(FOLD_MS, rest)
   }
 }
 
@@ -88,7 +110,7 @@ onMounted(() => {
     { rootMargin: '-45% 0px -45% 0px' }
   )
   for (const el of stepEls.value) observer.observe(el)
-  if (!reducedMotion) after(HOLD_MS, () => erase(0))
+  if (!reducedMotion) rest()
 })
 
 onBeforeUnmount(() => {
@@ -104,19 +126,21 @@ onBeforeUnmount(() => {
         <BrandScene scene="neuro" />
       </div>
       <div class="hero-copy">
-        <h1 class="hero-title">
-          <span class="hero-lead">{{ t('publicSite.heroLead') }}</span>
-          <span class="visually-hidden">{{ jobs.join(' / ') }}</span>
-          <!-- Every job sits in the same grid cell, the hidden copies included, so
-               the line is as wide and tall as its longest job and never jumps. -->
-          <span class="hero-jobs" aria-hidden="true">
-            <span v-for="item in jobs" :key="item" class="hero-job-size">{{ item }}</span>
-            <span class="hero-job-word"
-              >{{ typed }}<span v-if="!reducedMotion" class="hero-job-caret" :class="{ 'hero-job-caret-idle': idle }"
-            /></span>
-          </span>
-        </h1>
-        <p class="hero-position">{{ t('publicSite.positioning') }}</p>
+        <h1 class="hero-title">{{ t('publicSite.slogan') }}</h1>
+        <p class="hero-position">
+          <span class="visually-hidden">{{ t('publicSite.positioning') }}</span>
+          <!-- The slot keeps the width of whatever stands in the sentence: 真项目 at
+               rest, the typed example while branched. The label is laid over it. -->
+          <span aria-hidden="true"
+            >{{ t('publicSite.heroBefore')
+            }}<span class="hero-slot" :class="{ 'hero-slot-branched': branched }"
+              ><span class="hero-slot-label">{{ t('publicSite.heroHome') }}</span
+              ><span v-if="branched && typed" class="hero-example"
+                >{{ typed }}<span class="hero-caret" :class="{ 'hero-caret-idle': idle }" /></span
+              ><span v-else class="hero-slot-space" :data-text="t('publicSite.heroHome')" /></span
+            >{{ t('publicSite.heroAfter') }}</span
+          >
+        </p>
         <div class="hero-actions">
           <BaseButton :to="entryHref" kind="primary" size="lg" append-icon="mdi-arrow-top-right">
             {{ entryLabel }}

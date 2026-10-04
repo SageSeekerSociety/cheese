@@ -131,23 +131,31 @@ describe('公开首页', () => {
     expect(solutions.getByRole('link', { name: '方案' }).getAttribute('aria-current')).toBe('page')
   })
 
-  it('types out one job after another after the lead, and reads every job out at once', async () => {
+  it('shows the kinds of project the sentence covers, and always comes back to the sentence', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
+      const t = (key: string) => i18n.global.t(`publicSite.${key}`)
+      const sentence = t('positioning')
       const home = await mount()
-      const title = home.getByRole('heading', { level: 1 })
-      expect(title.textContent).toContain('和队友、AI 一起')
-      for (const job of ['读文献', '写代码', '跑实验', '做产品原型', '写调研报告', '准备答辩']) {
-        expect(title.textContent).toContain(job)
+      const line = home.getByText(sentence).closest('p')!
+      const visible = () => line.querySelector('[aria-hidden="true"]')!.textContent!
+      expect(visible()).toBe(sentence)
+
+      const frames: string[] = []
+      for (let ms = 0; ms < 45000; ms += 100) {
+        await vi.advanceTimersByTimeAsync(100)
+        frames.push(visible())
       }
-      expect(home.getByText('做真项目，学真本事。')).toBeTruthy()
-      const shown = () => title.querySelector('.hero-job-word')!.textContent
-      expect(shown()).toBe('读文献')
-      await vi.advanceTimersByTimeAsync(1700)
-      expect('读文献'.startsWith(shown()!)).toBe(true)
-      expect(shown()!.length).toBeLessThan(3)
-      await vi.advanceTimersByTimeAsync(1300)
-      expect(shown()).toBe('写代码')
+      // Every frame is the whole sentence, with the general word kept over the example.
+      for (const frame of frames) {
+        expect(frame.startsWith(t('heroBefore') + t('heroHome'))).toBe(true)
+        expect(frame.endsWith(t('heroAfter'))).toBe(true)
+      }
+      const shown = [1, 2, 3, 4, 5].map((i) =>
+        frames.indexOf(t('heroBefore') + t('heroHome') + t(`heroProject${i}`) + t('heroAfter'))
+      )
+      expect(shown.every((at) => at >= 0)).toBe(true)
+      expect(frames.indexOf(sentence, Math.max(...shown))).toBeGreaterThan(Math.max(...shown))
     } finally {
       vi.useRealTimers()
     }
