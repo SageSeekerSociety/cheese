@@ -840,22 +840,6 @@ async def _consume_hook_event(
         if event.taken_into is not None:
             # The room was told when the turn that read it ended.
             return
-        if event.thread_label is None:
-            await _end_inputs_answered_inside(
-                service,
-                sessions,
-                hook_work,
-                retry_notes,
-                waiting_notes,
-                compact_notes,
-                room_session_agents,
-                active_turn_ids,
-                work_runner,
-                project_id,
-                topic_id,
-                turn_id,
-                event,
-            )
         if event.is_error:
             frame_out = error_frame(
                 error_line or event.text, type="error", persisted=True
