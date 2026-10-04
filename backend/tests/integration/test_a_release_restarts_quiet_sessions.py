@@ -59,7 +59,7 @@ def _backend(client, hub, tmp_path, *, owns: bool = True):
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
     claude = sessions(central)
-    claude.bind_owns_sessions(lambda: SimpleNamespace(owns_sessions=lambda: owns))
+    claude.bind_owns_sessions(lambda: SimpleNamespace(owns_sessions=owns))
     service = ChatService(
         session_factory=client.test_request_factory,
         base_system_prompt="System",
