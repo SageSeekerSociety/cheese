@@ -193,6 +193,8 @@ def _literal(value: object) -> str:
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, list | tuple):
+        return "'{" + ",".join(f'"{item}"' for item in value) + "}'"
     return "'" + str(value).replace("'", "''") + "'"
 
 
