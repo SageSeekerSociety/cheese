@@ -180,12 +180,13 @@ async function toComment() {
 <style scoped>
 .doc-top-bar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  min-width: 0;
   min-height: 44px;
   padding: 0 8px 0 16px;
-  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
+
 .doc-top-bar__state {
   display: flex;
   flex: 1 1 auto;
@@ -193,60 +194,68 @@ async function toComment() {
   gap: 8px;
   min-width: 0;
 }
+
 .doc-top-bar__actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
 }
+
 .doc-top-bar__note {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
   overflow: hidden;
-  color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
-  white-space: nowrap;
+  color: var(--muted);
   text-overflow: ellipsis;
+  white-space: nowrap;
+  align-items: center;
+  gap: 6px;
 }
+
 .doc-top-bar__note--warn {
   color: var(--warn-ink);
 }
+
 .doc-top-bar__btn {
   display: inline-flex;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  min-width: 30px;
   justify-content: center;
-  padding: 0 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  white-space: nowrap;
-  cursor: pointer;
   transition:
     background var(--dur-quick) var(--ease-standard),
     color var(--dur-quick) var(--ease-standard);
 }
+
 .doc-top-bar__btn:hover:not(:disabled),
 .doc-top-bar__btn[aria-pressed='true'],
 .doc-top-bar__btn[aria-expanded='true'] {
-  background: var(--fill);
   color: var(--ink);
+  background: var(--fill);
 }
+
 .doc-top-bar__btn:disabled {
   cursor: default;
 }
+
 .doc-top-bar__btn:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+
 /* 最近编辑那一行：是一句状态，点得开，所以只在悬停时像按钮；字和正文的左边对齐。 */
 .doc-top-bar__btn--quiet {
   flex: 0 1 auto;
@@ -256,15 +265,45 @@ async function toComment() {
   color: var(--faint);
   text-overflow: ellipsis;
 }
+
 .doc-top-bar__btn--chip {
-  background: var(--fill);
   color: var(--text);
+  background: var(--fill);
 }
+
 .doc-top-bar__btn--agent {
-  color: var(--ink);
   font-weight: 600;
+  color: var(--ink);
 }
+
 .doc-top-bar__agent {
   width: min(420px, calc(100vw - 32px));
+}
+
+/* 手指点得中（设计系统 §10.1）：这几颗只有 30px 高，触屏上把能点的范围撑到 44×44，
+   画出来的样子不变。撑开的部分会互相盖住，所以并排的几颗之间先拉开——一次只点中
+   一颗。 */
+@media (pointer: coarse) {
+  .doc-top-bar__state {
+    gap: 14px;
+  }
+
+  .doc-top-bar__actions {
+    gap: 14px;
+  }
+
+  .doc-top-bar__btn {
+    position: relative;
+  }
+
+  .doc-top-bar__btn::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    content: '';
+    transform: translate(-50%, -50%);
+  }
 }
 </style>

@@ -3,6 +3,8 @@
     "justNow": "Just now",
     "markAsRead": "Mark as read",
     "delete": "Delete",
+    "deleteTitle": "Delete this notification?",
+    "deleteHint": "It will disappear from your inbox and can’t be brought back.",
     "noNotifications": "No notifications",
     "noUnread": "No unread notifications",
     "markAllAsRead": "Mark all as read",

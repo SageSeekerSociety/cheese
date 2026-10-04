@@ -73,7 +73,7 @@ describe('输入框下面那一行', () => {
 
     await fireEvent.click(screen.getByLabelText('更多操作'))
     const items = (await screen.findAllByRole('menuitem')).map((el) => el.textContent?.trim())
-    expect(items).toEqual(['发清单', '提醒我'])
+    expect(items).toEqual(['发清单', '提醒我', '键盘快捷键（?）'])
     await fireEvent.click(screen.getByRole('menuitem', { name: '发清单' }))
 
     expect(emitted().checklist).toHaveLength(1)

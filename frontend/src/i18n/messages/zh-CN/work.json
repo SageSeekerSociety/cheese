@@ -560,7 +560,9 @@
       "site": "现场",
       "changes": "改动",
       "preview": "预览",
-      "routines": "定时与触发"
+      "routines": "定时与触发",
+      "scrollLeft": "向左滚动页签",
+      "scrollRight": "向右滚动页签"
     },
     "preview": {
       "fullscreenFailed": "无法进入全屏，请在新标签页打开",
@@ -982,6 +984,7 @@
       "today": "今天",
       "yesterday": "昨天",
       "topicFallback": "话题",
+      "timelineLabel": "对话记录",
       "liveNew": "{name}：{text}"
     },
     "header": {
