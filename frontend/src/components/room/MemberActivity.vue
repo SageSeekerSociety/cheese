@@ -119,7 +119,12 @@ const workingAria = computed(() =>
 
 <style scoped>
 /* 一行小字，不是一块面板：没有底色、没有边框，和输入框下沿之间只隔一点点。 */
+/* flex: none 和下面每一行的 flex: none 都不能省。放它的那一列（ChatPanel）是 flex 列，
+   时间线 flex-grow-1 但不禁收缩，内容一长，列里每一块按自己的高度比例往回收；
+   这里的 min-height（reserve）又顶掉了 min-height: auto，于是整块被压到一行高，
+   而每一行 overflow: hidden，最小高度是 0，两三位队友的行就挤成一行叠在一起。 */
 .member-activity {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -132,6 +137,7 @@ const workingAria = computed(() =>
   min-height: calc(var(--lh-13) + 6px);
 }
 .member-activity__line {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
