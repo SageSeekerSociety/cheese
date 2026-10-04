@@ -635,3 +635,101 @@ assert.equal(messages.length, 1);
         [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_pick_selector_stays_anchored_when_the_element_is_nested_deep():
+    """深嵌套时选择器要锚在 body（或某个 id）上，不能半路停成一条相对路径。
+
+    一条相对的 `div > div > p` 会被 `querySelector` 解成文档里第一个对上的子树；页面
+    结构一重复，受话人就被指到别处。这里搭一条十层深、中途没有 id 的链，选择器必须
+    一路走到 body 为止——旧的上限 6 层会在这里停在半路。
+    """
+    node = _node()
+    script = RUNTIME_SCRIPT.replace(
+        "__PLATFORM_ORIGIN__", json.dumps("https://platform.example")
+    )
+    harness = r"""
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const messages = [];
+const windowListeners = {};
+const docListeners = {};
+const parent = { postMessage: (data, origin) => messages.push({data, origin}) };
+function el(tag, opts) {
+  const node = {
+    nodeType: 1,
+    tagName: tag.toUpperCase(),
+    id: (opts && opts.id) || '',
+    innerText: (opts && opts.text) || '',
+    parentElement: (opts && opts.parent) || null,
+    children: (opts && opts.children) || [],
+    getBoundingClientRect: () => (opts && opts.rect) ||
+      {left: 0, top: 0, width: 10, height: 20},
+    appendChild(child) { child.parentNode = node; node.children.push(child); },
+    removeChild(child) { child.parentNode = null; },
+    style: {},
+  };
+  return node;
+}
+const root = el('html');
+const body = el('body', {parent: root});
+root.children = [body];
+// 十层深、中途没有任何 id：从 p 到 body 要跨过 9 层。
+let cursor = body;
+const deepTags = ['div', 'div', 'div', 'div', 'div', 'div', 'section', 'article', 'p'];
+let deep = null;
+for (const tag of deepTags) {
+  const node = el(tag, {parent: cursor, text: tag === 'p' ? 'deep' : '',
+    rect: {left: 0, top: 0, width: 10, height: 20}});
+  cursor.children = [node];
+  cursor = node;
+  deep = node;
+}
+const doc = {
+  documentElement: root,
+  body,
+  addEventListener: (type, handler) => { docListeners[type] = handler; },
+  removeEventListener: (type, handler) => {
+    if (docListeners[type] === handler) delete docListeners[type];
+  },
+  createElement: () => ({
+    style: {},
+    attrs: {},
+    setAttribute(name) { this.attrs[name] = ''; },
+    hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name);
+    },
+    parentNode: null,
+  }),
+};
+const window = {
+  parent,
+  innerWidth: 1024,
+  innerHeight: 768,
+  addEventListener: (type, handler) => { windowListeners[type] = handler; },
+  getSelection: () => null,
+};
+vm.runInNewContext(fs.readFileSync(0, 'utf8'), {
+  window, document: doc, setTimeout: () => {},
+});
+const receive = (data) => windowListeners.message({
+  source: parent, origin: 'https://platform.example',
+  data: {channel: 'cheese-preview-runtime', version: 1, ...data},
+});
+receive({type: 'hello', sessionId: 's'});
+messages.length = 0;
+receive({type: 'pick-mode', sessionId: 's', on: true});
+docListeners.click({target: deep, preventDefault() {}, stopPropagation() {}});
+assert.equal(messages.length, 1);
+const picked = messages[0].data;
+// 锚在 body 上的完整路径；这条链每层独子，所以不补 nth-of-type。
+assert.equal(picked.selector,
+  'body > div > div > div > div > div > div > section > article > p');
+assert.equal(picked.selector.indexOf('body'), 0,
+  'the selector must anchor at body, not start mid-tree');
+"""
+    result = subprocess.run(
+        [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr

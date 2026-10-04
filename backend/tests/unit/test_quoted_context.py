@@ -343,12 +343,18 @@ class QuotedContextTest(unittest.TestCase):
         }
         parsed = ChatMessageIn.model_validate(body)
         self.assertEqual(parsed.quoted_context.model_dump(mode="json"), element)
+        # 左上角可以是负的：被滚到视口左上角之外的元素就是这么报的，这是它有部分在
+        # 视口外的事实，不是坏数据。运行时和前端都原样带着它。
+        rolled = {**element, "rect": {"x": -8, "y": -8, "w": 10, "h": 10}}
+        parsed = ChatMessageIn.model_validate({**body, "quoted_context": rolled})
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), rolled)
         for quote in (
             {k: v for k, v in element.items() if k != "selector"},
             {**element, "selector": ""},
             {**element, "selector": "甲" * 257},
             {k: v for k, v in element.items() if k != "rect"},
-            {**element, "rect": {"x": -1, "y": 0, "w": 1, "h": 1}},
+            # 宽高才是非负的：负的宽高不是一处位置。
+            {**element, "rect": {"x": 0, "y": 0, "w": -1, "h": 1}},
             {**element, "rect": {"x": 0, "y": 0, "w": 1, "h": 1, "z": 2}},
             {**element, "viewport": {"w": 0, "h": 768}},
             # 网页引用没有页码；extra="forbid" 也不许夹带别的形状的字段。

@@ -136,8 +136,11 @@ RUNTIME_SCRIPT = r"""(() => {
   let pickBox = null;
   let swallowClick = false;
   function pickDoc() { return frameDocument(); }
-  // 到最近一个有 id 的祖先为止，每层带 tag；同级同名时补 nth-of-type。最多往上 6 层、
-  // 总长 256：够定位，又不会被一串类名撑爆。
+  // 走到最近一个有 id 的祖先、或文档根为止，每层带 tag；同级同名时补 nth-of-type。
+  // 不能半路停在某个层数上限：停在半路的 `div > div > p` 是条相对选择器，querySelector
+  // 会拿它匹配文档里第一个对上的子树，页面结构一重复就指到别处去了。走到 body 或某个
+  // id 才算落在一处唯一的地方。总长封顶 256（后端字段的上限），超了从里层往外丢、留住
+  // 锚点那一头，绝不截断半个层级。
   function escapeIdent(name) {
     try {
       if (window.CSS && typeof window.CSS.escape === 'function') {
@@ -151,8 +154,9 @@ RUNTIME_SCRIPT = r"""(() => {
     const root = doc && doc.documentElement;
     const parts = [];
     let current = node;
-    let depth = 0;
-    while (current && current.nodeType === 1 && current !== root && depth < 6) {
+    // 层级兜底只为防一条坏链（parentElement 成环）走不完；正常链走到 body 就停。
+    let guard = 0;
+    while (current && current.nodeType === 1 && current !== root && guard < 64) {
       if (current.id) { parts.unshift('#' + escapeIdent(current.id)); break; }
       const tag = current.tagName ? current.tagName.toLowerCase() : '';
       if (!tag) break;
@@ -176,8 +180,10 @@ RUNTIME_SCRIPT = r"""(() => {
       }
       parts.unshift(part);
       current = parent;
-      depth++;
+      guard++;
     }
+    // 长度封顶：保住锚点（最外层）那一头，从里层往外丢，别把选择器截成半个层级。
+    while (parts.length > 1 && parts.join(' > ').length > 256) parts.pop();
     return parts.join(' > ').slice(0, 256);
   }
   function boxOf(node) {

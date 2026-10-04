@@ -185,9 +185,16 @@ function isCoordinate(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-/** 一个尺寸：非负的有限数。 */
+/** 一个尺寸：非负的有限数。矩形宽高可以是 0（空元素），但不该是负的。 */
 function isLength(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+/** 一个正的尺寸：视口大小用。窗口量出来总是大于 0，0 说明这一处没法还原成「哪一版的
+ *  版面」——后端也不收（`gt=0`），这里先拦下，好让它落回普通那句话，而不是发出去吃
+ *  一个 422。 */
+function isPositiveLength(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 /** 量出来的一块地方。 */
@@ -197,11 +204,11 @@ function isWebRect(value: unknown): boolean {
   return isCoordinate(r.x) && isCoordinate(r.y) && isLength(r.w) && isLength(r.h)
 }
 
-/** 视口大小。 */
+/** 视口大小：两个都必须是正的（后端 `gt=0`）。 */
 function isWebViewport(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
-  return isLength(v.w) && isLength(v.h)
+  return isPositiveLength(v.w) && isPositiveLength(v.h)
 }
 
 export function isQuotedContext(value: unknown): value is QuotedContext {

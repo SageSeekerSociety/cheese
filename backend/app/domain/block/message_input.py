@@ -100,13 +100,17 @@ class WebRectIn(BaseModel):
 
     像素而不是比例，是因为网页没有稳定的「页面」可以归一到哪儿去 —— 视口宽度随
     窗口变，两者一起记下来才说得清这块区域当时指的是哪一段版面。数值不设死上限，
-    但要求有限且非负：`inf`/`nan` 穿过 JSON 会变成读不懂的东西。
+    但要求有限：`inf`/`nan` 穿过 JSON 会变成读不懂的东西。
+
+    左上角 `x`/`y` 可以是负的：运行时直接量元素的 `getBoundingClientRect()`，被滚到
+    视口左边、上边的元素就是负数，这也正是「它有一部分在视口外」的意思，钳成 0 反而
+    把位置说错了。宽高才要求非负。
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    x: float = Field(ge=0, allow_inf_nan=False)
-    y: float = Field(ge=0, allow_inf_nan=False)
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
     w: float = Field(ge=0, allow_inf_nan=False)
     h: float = Field(ge=0, allow_inf_nan=False)
 
