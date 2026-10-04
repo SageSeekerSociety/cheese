@@ -67,6 +67,25 @@ class GatewayModel:
     # the middle of a conversation (``supports_mid_conversation_system: false``,
     # set by hand after measuring). Unmarked routes keep Claude Code's default.
     mid_conversation_system: bool = True
+    # The thinking efforts this model honours (``cheese_efforts``), in the
+    # platform's own words (``EFFORTS``). Empty: it takes none, and a teammate
+    # on it runs at the model's own default.
+    efforts: tuple[str, ...] = ()
+
+
+#: The thinking efforts a teammate can ask for, lowest first. Claude Code
+#: passes the one chosen to the model as ``output_config.effort``; whether the
+#: model honours it, and which of them, is the gateway's to declare per model.
+EFFORTS = ("low", "medium", "high", "max")
+
+
+def declared_efforts(value: object) -> tuple[str, ...]:
+    """The efforts a ``cheese_efforts`` entry declares, in ``EFFORTS`` order.
+    Anything else in it is ignored rather than offered: a word the platform
+    does not know is one it cannot pass on."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(effort for effort in EFFORTS if effort in value)
 
 
 def price_is_set(*sources: object) -> bool:
@@ -145,14 +164,15 @@ class LlmGateway:
 
         Reads the response LiteLLM documents at ``/model/info``: ``data`` rows of
         ``model_name`` + ``model_info`` + ``litellm_params`` (credentials already
-        stripped gateway-side). Two keys under ``model_info`` are cheese's, and
-        both are optional metadata LiteLLM passes through untouched:
+        stripped gateway-side). These keys under ``model_info`` are cheese's,
+        all optional metadata LiteLLM passes through untouched:
 
           - ``cheese_selectable``: offer this to people. Opt-in, because the
             gateway also routes models that are NOT menu items — ``glm-4.5``
             is where the subagent alias points, and listing it would invite
             someone to pick a model we route to on their behalf.
           - ``cheese_label``: what to call it; the id when absent.
+          - ``cheese_efforts``: the thinking efforts it honours (``EFFORTS``).
 
         One LiteLLM key is read as well: ``supports_mid_conversation_system``
         set to ``false`` marks a route that loses mid-conversation system
@@ -201,6 +221,7 @@ class LlmGateway:
                     mid_conversation_system=(
                         info.get("supports_mid_conversation_system") is not False
                     ),
+                    efforts=declared_efforts(info.get("cheese_efforts")),
                 )
             )
         return out

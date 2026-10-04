@@ -117,6 +117,24 @@ def model_capabilities(*models: str | None) -> str:
     )
 
 
+def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dict:
+    """The environment that carries a teammate's thinking effort and compaction
+    share into its Claude Code session.
+
+    ``efforts`` are the ones the turn's model honours. An effort it does not is
+    left out rather than sent: Claude Code would pass it to a model that either
+    ignores it or refuses the request.
+    """
+    env: dict[str, str] = {}
+    effort = configuration.get("effort")
+    if isinstance(effort, str) and effort in efforts:
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
+    percent = configuration.get("compact_percent")
+    if isinstance(percent, int) and not isinstance(percent, bool):
+        env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(percent)
+    return env
+
+
 async def _model_kwargs(
     service: _GatewayUsage,
     sessions: async_sessionmaker,
@@ -175,9 +193,10 @@ async def _model_kwargs(
                 else await agents.for_project(project)
             )
     # A saved teammate may override the project main model.
+    choices = binding.catalog(project.settings)
     bound = binding.resolve(
         None,
-        binding.catalog(project.settings),
+        choices,
         agent_model=agent.configuration.get("model"),
         default_model=(project.settings or {}).get("default_model"),
     )
@@ -258,6 +277,13 @@ async def _model_kwargs(
             # self-description for the model the turn actually runs on.
             "ANTHROPIC_MODEL": model,
             "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
+            # The teammate's thinking effort and compaction share. Both are in
+            # `agent.configuration`, and so in the hash above: changing either
+            # restarts the session at the next task boundary, which is when
+            # Claude Code reads its environment.
+            **launch_env(
+                agent.configuration, choices.get(bound.model, {}).get("efforts", [])
+            ),
         },
         # Which conversation the turn belongs to, and so which session's
         # machines it runs on. Separate from `agent_handle` below, which is
