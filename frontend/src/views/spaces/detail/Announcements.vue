@@ -237,7 +237,10 @@ async function remove(a: SpaceAnnouncement) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* 宽屏下封顶居中了，不再左贴：以前 max-width 之外没有 auto，右边会空出一条
+     随窗口变宽的边。 */
   max-width: 880px;
+  margin-inline: auto;
   padding: 16px;
 }
 

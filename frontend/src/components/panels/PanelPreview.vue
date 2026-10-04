@@ -39,7 +39,7 @@ const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
   /** 读者指着文档里的一处提了一句话，交给房间的对话；图上画过东西时随行带那张图。 */
   (e: 'locate', payload: PreviewLocate): void
-  /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
+  /** 编辑器打开了一份文件：开成自由区的一个页签。 */
   (e: 'open-file', path: string): void
 }>()
 

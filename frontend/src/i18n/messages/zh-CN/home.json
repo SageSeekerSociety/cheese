@@ -22,6 +22,11 @@
     "expand": "展开 {name}",
     "collapse": "收起 {name}",
     "unreadActivity": "有新动态",
-    "teamCredits": "额度"
+    "teamCredits": "额度",
+    "leaveTeam": "退出团队",
+    "leaveTeamTitle": "退出「{name}」？",
+    "leaveTeamBody": "退出后你不再是这个团队的成员，也看不到它的项目了。要回来得重新加入。",
+    "leaveTeamDone": "已退出「{name}」",
+    "leaveTeamFailed": "退出团队失败"
   }
 }

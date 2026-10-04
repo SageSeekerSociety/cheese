@@ -21,18 +21,18 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
     codex.holds = lambda topic_id, agent_handle=None: True
     native.interrupt = AsyncMock(side_effect=lambda ref: calls.append("interrupt"))
     native.close = AsyncMock(side_effect=lambda ref: calls.append("close"))
-    native.deliver = AsyncMock(return_value=True)
-    codex.deliver = AsyncMock(return_value=True)
+    native.steer = AsyncMock(return_value=True)
+    codex.steer = AsyncMock(return_value=True)
     pool = ComputePool([native, codex], "device")
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
     await pool.activate(session, codex)
     assert calls == ["interrupt", "close"]
     register_input = AsyncMock()
-    assert await pool.deliver(
+    assert await pool.steer(
         session.topic_id, "follow up", register_input=register_input
     )
-    native.deliver.assert_not_awaited()
-    codex.deliver.assert_awaited_once_with(
+    native.steer.assert_not_awaited()
+    codex.steer.assert_awaited_once_with(
         session.topic_id,
         "follow up",
         images=None,
@@ -93,54 +93,26 @@ async def test_a_seat_whose_previous_runner_is_gone_is_taken_anyway(gone):
     native.holds = lambda topic_id, agent_handle=None: True
     native.interrupt = AsyncMock(side_effect=gone)
     native.close = AsyncMock()
-    native.deliver = AsyncMock(return_value=True)
-    pi.deliver = AsyncMock(return_value=True)
+    native.steer = AsyncMock(return_value=True)
+    pi.steer = AsyncMock(return_value=True)
     pool = ComputePool([native, pi], "device")
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="pi")
 
     await pool.activate(session, pi)
 
     native.close.assert_awaited_once()
-    assert await pool.deliver(session.topic_id, "follow up", register_input=AsyncMock())
-    native.deliver.assert_not_awaited()
-    pi.deliver.assert_awaited_once()
-
-
-class _EmptyBacklog:
-    """A session that said nothing while nobody was listening."""
-
-    def unread(self):
-        return []
-
-    def assemble(self, entry):
-        return []
-
-    def unfinished(self):
-        return set()
-
-    def give_up(self):
-        return []
-
-    def landed(self, *, through):
-        return None
-
-    def forget(self, *, older_than_s):
-        return None
+    assert await pool.steer(session.topic_id, "follow up", register_input=AsyncMock())
+    native.steer.assert_not_awaited()
+    pi.steer.assert_awaited_once()
 
 
 class _FakeBackend:
-    """Minimal backend stand-in for routing tests (v4 会话级选择).
-
-    Answers the whole ``AgentRuntime`` contract because the pool checks for it
-    at construction: a backend that runs no harness cannot be registered, so a
-    double that skipped half the contract would be testing a pool nobody can
-    build.
-    """
+    """Minimal backend stand-in for routing tests (v4 会话级选择): what the
+    pool asks of a room's sessions on one machine pool."""
 
     embeds_images = True
     provisions_machine = False
-    # 会话不存记忆文件（下面的 `memory()` 答 None），和它答的那条契约一致。
-    keeps_memory = False
+    controls: tuple[str, ...] = ()
 
     def __init__(self, name: str, harness: str = "claude-code"):
         self.name = name
@@ -149,26 +121,10 @@ class _FakeBackend:
     def available(self) -> bool:
         return True
 
-    async def ensure(self, session, opening, *, work_id=None):
-        return None
-
-    async def send(
-        self,
-        session,
-        message,
-        opening,
-        *,
-        work_id,
-        on_mark,
-        register_input: InputRegistrar,
-        **kwargs,
-    ):
+    async def send(self, session, message, *, register_input: InputRegistrar, **_):
         return True
 
-    def backlog(self, session):
-        return _EmptyBacklog()
-
-    async def deliver(
+    async def steer(
         self, topic_id, text, images=None, *, register_input: InputRegistrar, **kwargs
     ):
         return False
@@ -179,17 +135,8 @@ class _FakeBackend:
     async def close(self, session):
         return None
 
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        return None
-
-    def bind_reader(self, reader) -> None:
-        return None
-
-    def bind_unread_probe(self, probe) -> None:
-        self.unread_probe = probe
-
-    def bind_memory(self, consumer) -> None:
-        return None
+    def report_to(self, reader, *, unread, memory) -> None:
+        self.unread_probe = unread
 
     async def memory(self, topic_id, request):
         # 这个 double 的会话不存记忆文件：「这里没有」而不是「失败了」。
@@ -211,34 +158,15 @@ class _FakeBackend:
     async def stop_listening(self) -> None:
         return None
 
-    async def replay(self, session, *, known_texts):
+    async def replay(self, session):
         return None
 
     hard_ceiling_s = 900.0
-
-    async def run_turn(self, **kwargs):
-        return
-        yield  # pragma: no cover — an async generator that yields nothing
 
 
 def test_pool_rejects_unknown_default():
     with pytest.raises(ValueError):
         ComputePool([], "missing")
-
-
-def test_pool_rejects_a_backend_that_runs_no_harness():
-    """Caught at wiring time, not at turn time. A provider missing half the
-    contract used to be discovered by a turn that quietly did nothing."""
-
-    class _NotARuntime:
-        name = "hollow"
-        embeds_images = True
-
-        def available(self) -> bool:
-            return True
-
-    with pytest.raises(TypeError):
-        ComputePool([_NotARuntime()], "hollow")
 
 
 def _two_machine_pool() -> ComputePool:
@@ -363,7 +291,7 @@ def test_build_pool_registers_the_concrete_cloud_channel():
 
     backend = pool.select(provider_id="cloud")
     assert pool.has("cloud")
-    assert backend.channel.channel.executor is cloud
+    assert backend.channel.executor is cloud
     # Registration is independent of readiness. Chat needs its session host;
     # Cloud hands are acquired by a tool, never by turn admission.
     assert backend.available() is False
@@ -375,8 +303,8 @@ def test_the_pool_runs_only_the_harnesses_the_registry_lists():
     """答不出四条的骨架不在注册表里，也就不在池子里（结论 43）。
 
     「不在注册表里」如果只是功能矩阵上少一列，它在运行时就还是活的：挂进池子的
-    backend 会被 `recover_sessions` 恢复、被 `bind_reader` 交上房间的耳朵、在
-    没有 owner 的时候被 `deliver` 按 `holds()` 找到。所以这条收缩要在装配那一步
+    backend 会被 `recover_sessions` 恢复、被 `report_to` 交上房间的耳朵、在
+    没有 owner 的时候被 `steer` 按 `holds()` 找到。所以这条收缩要在装配那一步
     可判。
     """
     from app.domain.agent.compute import build_compute_pool

@@ -147,13 +147,17 @@ defineExpose({
 .archived-chip {
   font-size: 12px;
 }
-/* 和对话同一栏：ChatPanel 在手机外壳里把时间线和输入框收到 --page-w 居中，贴在输
-   入框上的这一条跟着收，不然它比上下两块都宽。 */
+/* 和对话同一栏：时间线（ChatTimeline）、输入框（ChatPanel）各把自己收成一栏居中，
+   贴在输入框上的这一条（验收卡）跟着收同一个值，不然它比上下两块都宽。桌面上是读
+   的一栏 --page-w-read，手机外壳里是 --page-w，三块始终对齐。 */
+.chat-dock {
+  width: 100%;
+  max-width: var(--page-w-read);
+  margin-inline: auto;
+}
 @media (max-width: 959.98px) {
   .chat-dock {
-    width: 100%;
     max-width: var(--page-w);
-    margin-inline: auto;
   }
 }
 .chat-col {

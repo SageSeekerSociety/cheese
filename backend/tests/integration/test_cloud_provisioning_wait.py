@@ -9,7 +9,9 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.compute_configs import standard_choice
-from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
+from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.models import BlockKind, consumed_turn, prompt_attempts
 from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
@@ -53,7 +55,9 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(tmp_path / "workspace"),
-            compute=ComputePool([ClaudeCodeRuntime(cloud)], "cloud"),
+            compute=ComputePool(
+                [RoomSessions(cloud, CLAUDE_CODE, SessionHost())], "cloud"
+            ),
         )
 
     # Restored in a finally: this override outlives the test otherwise, and every

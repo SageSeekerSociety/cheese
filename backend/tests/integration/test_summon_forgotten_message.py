@@ -168,10 +168,10 @@ def _say(client, topic_id: str, text: str, author: str = "alice") -> None:
 def _its_turns_die(channel, monkeypatch) -> None:
     """原生输入登记之前启动失败；这批话确认未送达，可以明确重试。"""
 
-    async def failed_launch(session, opening, live=None):
+    async def failed_launch(session, *, needs_place):
         raise ScreenSetupError("The executor could not be launched")
 
-    monkeypatch.setattr(channel, "ensure", failed_launch)
+    monkeypatch.setattr(channel, "precheck", failed_launch)
 
 
 def _handed_over(client, topic_id: str) -> list[str]:

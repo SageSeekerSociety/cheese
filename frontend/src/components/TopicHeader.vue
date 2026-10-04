@@ -19,6 +19,8 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
+
 import { getProjectUsage, getTopicUsage } from '@/api'
 import { menuActionOf, useCommands } from '@/commands'
 import { topicActions } from '@/commands/topicActions'
@@ -39,16 +41,22 @@ const props = defineProps<{
   connected: boolean
   /** 专注模式 (spec §7.1): the panel spans the workspace, the chat is hidden. */
   focus: boolean
+  /** 平板横放那一档里工作面板是不是开着——这颗开关的 aria-expanded 读它。 */
+  panelOpen?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
   (e: 'rename', title: string): void
+  (e: 'toggle-panel'): void
   // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
 }>()
 
 const { mdAndUp } = useDisplay()
+// 平板横放（960–1180）：工作面板是一只从右边拉出来的浮层，页头这里放它的开关。
+// 宽档里面板就在旁边常驻、手机上它又是 tab 栏的第一格，这颗都不出现。
+const compact = useCompactDesktop()
 
 // 房间自己的生命周期只在不寻常时说一句（已归档 / 草稿），和侧栏那一行同一个规矩。
 // 房间没有「在干活 / 待审阅」这种状态：干活的是成员（输入框下面那一行），待审阅
@@ -187,6 +195,21 @@ useCommands(roomCommands)
         @click="emit('toggle-focus')"
       />
 
+      <!-- 平板横放：工作面板的开关。开着时再点一次收起它，Esc 也关（焦点回到这颗）。
+           宽档里这栏就在旁边常驻、手机上是 tab 栏第一格，都不需要这颗。 -->
+      <BaseButton
+        v-if="compact"
+        data-panel-toggle
+        icon="mdi-page-layout-sidebar-right"
+        size="sm"
+        class="tap-target"
+        :aria-expanded="panelOpen ? 'true' : 'false'"
+        aria-controls="topic-panel"
+        :aria-label="panelOpen ? t('work.room.panel.close') : t('work.room.panel.open')"
+        :title="panelOpen ? t('work.room.panel.close') : t('work.room.panel.open')"
+        @click="emit('toggle-panel')"
+      />
+
       <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
            看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
            连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
@@ -204,8 +227,14 @@ useCommands(roomCommands)
         </template>
         <v-card min-width="300" class="room-menu">
           <!-- 专注模式：面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
-               永远只有一个窗格，没有第二栏可以让开。 -->
-          <button v-if="mdAndUp" type="button" class="room-menu__row room-menu__row--action" @click="toggleFocus">
+               永远只有一个窗格，没有第二栏可以让开；平板横放那一档里对话永远占满
+               整宽、面板才是那只浮层，所以专注在这里也没有位置。 -->
+          <button
+            v-if="mdAndUp && !compact"
+            type="button"
+            class="room-menu__row room-menu__row--action"
+            @click="toggleFocus"
+          >
             <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
             <span>{{ focus ? t('work.room.menu.exitFocus') : t('work.room.menu.focus') }}</span>
           </button>

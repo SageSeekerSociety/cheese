@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.runner import Runner
 from tests.support.room_machine import room_machine
 from tests.unit.test_pi_runner import call, shim
@@ -22,7 +22,7 @@ def _with_runner(tmp_path: Path, work, *, before=None):
         runner = Runner(tmp_path / "state")
         with room_machine(tmp_path / "machine") as target:
             await runner.start(
-                Opening("system prompt", None, agent_handle="teammate"),
+                SessionStart("system prompt", None, agent_handle="teammate"),
                 binary=shim(tmp_path),
                 cwd=str(tmp_path),
                 env={"PATH": "/usr/bin:/bin"},

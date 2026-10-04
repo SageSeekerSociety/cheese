@@ -355,7 +355,8 @@ def test_the_owner_still_cannot_leave_the_project(client, bearer):
 def test_the_last_owner_of_a_room_still_cannot_leave_and_nothing_is_written(
     client, bearer
 ):
-    """某间房唯一的 owner 仍然退不掉，理由点名那间房，而且一个字节都不写。
+    """某间房唯一的 owner、房里还有别人时仍然退不掉，理由点名那间房，而且一个字节
+    都不写。
 
     这是既有行为（``revoke_project_seats`` 那条例外），退项目这条路现在也要过它：
     席位先撤，那位唯一的 owner 撤不得，于是这条事实、名册行、席位三类写一个都不该发
@@ -364,23 +365,23 @@ def test_the_last_owner_of_a_room_still_cannot_leave_and_nothing_is_written(
     tid = team_of(client, owner="cap", members=("mate",))
     pid = project_in(client, tid, owner="cap")
     root = root_topic(client, pid, who="cap")
-    mine = new_room(client, pid, created_by="mate", title="他一个人的房")
-    assert room_handles(client, mine, who="cap") == {"mate"}
+    mine = new_room(client, pid, created_by="mate", title="他管的房")
+    seat(client, mine, "cap", by="mate")
+    assert room_handles(client, mine, who="cap") == {"mate", "cap"}
     assert reads(client, pid, root, "mate")
 
     r = leave(client, pid, "mate")
     assert r.status_code == 422, r.text
     # ``ValidationError`` 属于 cheesex 那一族（``app/core/errors.py``），响应是
     # ``{"code", "message", "data"}``，没有 BaseError 那层的 ``error``。
-    assert "他一个人的房" in r.json()["message"]
+    assert "他管的房" in r.json()["message"]
 
     # 一个字节都没动：名册上还有他（source 照旧是小队），席位还在，他也读得到。
     assert roster(client, pid, who="cap")["mate"]["source"] == "team"
-    assert room_handles(client, mine, who="cap") == {"mate"}
+    assert room_handles(client, mine, who="cap") == {"mate", "cap"}
     assert reads(client, pid, root, "mate")
 
-    # 而且这不是死结：把房间交给别人之后，他就走得掉了。
-    seat(client, mine, "cap", by="mate")
+    # 而且这不是死结：把房间交给那位室友之后，他就走得掉了。
     handed_over = client.put(
         f"/topics/{mine}/members/cap",
         json={"role": "owner"},

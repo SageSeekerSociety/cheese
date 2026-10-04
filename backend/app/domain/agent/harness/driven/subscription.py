@@ -63,7 +63,7 @@ from app.domain.delivery.input_identity import (
 )
 
 #: What a record says about a working session, for the liveness rules
-#: (``DrivenRuntime.verdict``): it said something, work moved. A tool starting
+#: (``RoomSessions.verdict``): it said something, work moved. A tool starting
 #: or coming back is ``started(call)`` / ``returned(call)``, by the harness's id
 #: for the call, so tools that run side by side are counted one by one.
 OUTPUT, PROGRESS = "output", "progress"
@@ -75,7 +75,8 @@ TOOL_STARTED, TOOL_RETURNED = "tool_started:", "tool_returned:"
 #: 这里兑现它。
 Seat = tuple[uuid.UUID, str]
 
-Pulse = Callable[[Seat, frozenset[str]], None]
+#: What one record of a turn's work said about how it is going (``marks``).
+Moved = Callable[[uuid.UUID, frozenset[str]], Awaitable[None]]
 
 #: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
 #: 不碰这个座位的「在跑的活」和它的钟。
@@ -141,11 +142,6 @@ def marks_of(events: list[AgentEvent]) -> set[str]:
 
 
 class Subscription[B: Backlog]:
-    #: The attachment instance this subscription IS (FB-56): minted by the
-    #: runtime under the seat lock at attach time; events stamp it back so a
-    #: drain from a superseded subscription is refused.
-    attachment_id: str | None = None
-
     def __init__(
         self,
         session: SessionRef,
@@ -157,17 +153,14 @@ class Subscription[B: Backlog]:
         receipts: ReceiptConsumer | None = None,
         completions: CompletionConsumer | None = None,
         terminations: TerminationConsumer | None = None,
-        pulse: Pulse | None = None,
-        memory: Callable[[], Awaitable[None]] | None = None,
+        moved: Moved | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
-        self.receipts, self.pulse = receipts, pulse
+        self.receipts = receipts
         self.completions = completions
         self.terminations = terminations
-        # 一轮结束时问一次记忆（见 `MemoryConsumer`）：agent 该写的记忆按规矩写
-        # 在回复之前，所以一轮读完就是它写完的时刻。
-        self.memory = memory
+        self.moved = moved
         self.lock = asyncio.Lock()
         self.forgotten_at = 0.0
         self.disk = ThreadPoolExecutor(
@@ -223,7 +216,12 @@ class Subscription[B: Backlog]:
         asks the runner to hold it until there is news (``driven.runner``),
         and what else that answer says is kept in ``heard``."""
         asking, self.asking = self.asking, None
-        if asking is None or self.hurry:
+        if asking is None:
+            return await self.call(method, params)
+        if self.hurry:
+            # Asked to land now before this read was held: read at once, this
+            # once; the next drain holds its read again.
+            self.hurry = False
             return await self.call(method, params)
         self.parked = asyncio.ensure_future(self.call(method, {**params, **asking}))
         try:
@@ -413,15 +411,12 @@ class Subscription[B: Backlog]:
                     work_id,
                     True,
                 )
-            if self.pulse is not None:
-                self.pulse(
-                    self.seat,
-                    frozenset(self.marks(record, list(events))),
-                )
             # The input receipt is not emitted here: the drain loop emits it
             # before the age/poison checks, so that a settlement never rides on
             # a record the room may step over. Emitting it here as well would
             # deliver the same receipt twice.
+            if self.moved is not None:
+                await self.moved(work_id, frozenset(self.marks(record, list(events))))
             for event in events:
                 # Which seat's session produced this event. Events that
                 # declare the field keep what the record said (the
@@ -457,6 +452,4 @@ class Subscription[B: Backlog]:
                     work_id,
                     False,
                 )
-                if self.memory is not None:
-                    await self.memory()
         return delivered

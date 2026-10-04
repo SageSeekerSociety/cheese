@@ -10,9 +10,10 @@
 // 页头右边的按钮不由页面写在模板里：页面用 useCommands 登记标了 `header` 的命令，
 // 这里把它们画成按钮。手机上这一行不画，同一批命令由顶栏画（MobileAppBar）。
 //
-// 宽度也归这里：`read` 是读和填表的那一栏（--page-w），`full` 给多列的工作面（看
-// 板），`admin` 是管理后台的工作台（--page-w-admin）。页面不再各自写一个数字。
-// `read` 和 `admin` 的页头标题和正文列从同一条左沿开始。
+// 宽度也归这里：`read` 是读和填表的那一栏（--page-w），`prose` 是整页连续正文的
+// 阅读栏（--page-w-read，比 read 窄——正文铺满 920 一行排到六十多个字），`full` 给
+// 多列的工作面（看板），`admin` 是管理后台的工作台（--page-w-admin）。页面不再各自
+// 写一个数字。`read`、`prose` 和 `admin` 的页头标题和正文列从同一条左沿开始。
 import type { NavTarget } from '@/lib/navTarget'
 
 import { useDisplay } from 'vuetify'
@@ -24,7 +25,7 @@ import NavLink from '@/components/common/NavLink.vue'
 withDefaults(
   defineProps<{
     title: string
-    width?: 'read' | 'full' | 'admin'
+    width?: 'read' | 'prose' | 'full' | 'admin'
     // 这一页是另一页里的一项（成员名册里的一个人）：页头写成「成员 / 名字」，前
     // 一段点回去。
     parent?: { label: string; to: NavTarget }
@@ -121,23 +122,28 @@ const { mdAndUp } = useDisplay()
 .app-page__head-row {
   display: contents;
 }
-/* 读的那一档（--page-w）和后台那一档（--page-w-admin）的内容列封顶、居中。页头那一行
-   跟着它一起封顶居中，标题和正文在任何宽度下都从同一条竖线开始。正文滚动时右边有滚动
-   条，页头和正文都留出同样宽的滚动条槽位（`scrollbar-gutter`），两边居中的基准才是同
-   一个宽度。满宽那一档见下面。 */
+/* 读的那一档（--page-w）、连续正文那一档（--page-w-read）和后台那一档
+   （--page-w-admin）的内容列封顶、居中。页头那一行跟着它一起封顶居中，标题和正文
+   在任何宽度下都从同一条竖线开始。正文滚动时右边有滚动条，页头和正文都留出同样宽
+   的滚动条槽位（`scrollbar-gutter`），两边居中的基准才是同一个宽度。满宽那一档见
+   下面。 */
 .app-page__head--read,
 .app-page__body--read,
+.app-page__head--prose,
+.app-page__body--prose,
 .app-page__head--admin,
 .app-page__body--admin {
   scrollbar-gutter: stable;
 }
 .app-page__head--read,
+.app-page__head--prose,
 .app-page__head--admin {
   display: block;
   overflow: hidden;
   padding: 0;
 }
 .app-page__head--read .app-page__head-row,
+.app-page__head--prose .app-page__head-row,
 .app-page__head--admin .app-page__head-row {
   display: flex;
   align-items: center;
@@ -149,6 +155,9 @@ const { mdAndUp } = useDisplay()
 }
 .app-page__head--read .app-page__head-row {
   max-width: calc(var(--page-w) + 32px);
+}
+.app-page__head--prose .app-page__head-row {
+  max-width: calc(var(--page-w-read) + 32px);
 }
 .app-page__head--admin .app-page__head-row {
   max-width: var(--page-w-admin);
@@ -240,6 +249,10 @@ const { mdAndUp } = useDisplay()
 }
 .app-page__column--read {
   max-width: calc(var(--page-w) + 32px);
+}
+/* 连续正文那一档比 read 窄：正文铺满 920 一行会排到六十多个字。 */
+.app-page__column--prose {
+  max-width: calc(var(--page-w-read) + 32px);
 }
 /* 后台那一档也自己管内边距（表格、卡片各有各的内缩）。断点都是容器查询，所以这一列
    是查询容器；`container-type` 做了行内尺寸包含，宽度推不出来，必须写 `width: 100%`。
