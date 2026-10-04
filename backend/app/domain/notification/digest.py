@@ -63,10 +63,8 @@ def compose_digest(items: list[dict[str, Any]]) -> tuple[str, str]:
     subject = f"[芝士] 你不在时的 {len(items)} 条通知"
     body = ["<p>你不在的时候，芝士上有这些事：</p><ul>"]
     for item in items:
-        raw = item.get("payload")
-        payload: dict[str, Any] = raw if isinstance(raw, dict) else {}
-        headline = html.escape(headline_for(str(payload.get("type") or "")))
-        link = html.escape(email_link(payload), quote=True)
+        headline = html.escape(headline_for(str(item.get("type") or "")))
+        link = html.escape(email_link(item.get("payload")), quote=True)
         body.append(f'<li><a href="{link}">{headline}</a></li>')
     body.append("</ul>")
     return subject, "".join(body)
