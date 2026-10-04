@@ -30,15 +30,27 @@
  *   was going (`recoverNavigations`). The global listener would reload the
  *   current page instead, and its one-shot guard would then stop the router
  *   from loading the target.
+ *
+ * A weak network fails a chunk the same way a deploy does, and in WebKit (iOS
+ * Safari, and the WeChat in-app browser on iPhone) a module that failed to
+ * load stays failed for the life of the page: importing it again rejects at
+ * once without asking the server. So nothing short of a full load opens that
+ * page again, and when one full load did not help, the person is told and
+ * given the retry instead of tapping a row that silently does nothing.
  */
 import type { Router } from 'vue-router'
 
+import { toast } from 'vuetify-sonner'
+
+import { t } from '@/i18n'
 import { prefetchingChunks } from '@/lib/routePrefetch'
 import { takeWaitingWorker } from '@/pwa'
 
-// Set before the reload and cleared once the app mounts again, so a failure
+// Set before the reload and cleared once a navigation lands, so a failure
 // that survives a reload — a chunk genuinely missing from the current build,
-// an offline tab — stops after one attempt instead of looping.
+// an offline tab — stops after one attempt instead of looping. Not cleared
+// when the app mounts: the first route's chunk loads after that, so a page
+// whose own chunk keeps failing reloaded itself several times a second.
 const RELOADED_KEY = 'cheese:stale-build-reloaded'
 
 // The three shapes a missing chunk arrives in: the dynamic import itself, the
@@ -74,6 +86,8 @@ export function reloadForNewBuild(reason: unknown, target?: string): boolean {
 
 // The navigation in progress, if any; its chunk failures go to `onError`.
 let navigating: unknown = null
+// The "page didn't open" notice on screen, put away once a page does open.
+let notice: string | number | null = null
 
 /**
  * A navigation whose route chunk is gone loads the page it was going to.
@@ -87,15 +101,34 @@ export function recoverNavigations(router: Router): void {
   const settle = (to: unknown) => {
     if (navigating === to) navigating = null
   }
-  router.afterEach((to) => settle(to))
+  router.afterEach((to, _from, failure) => {
+    settle(to)
+    if (failure) return
+    // A page opened, so its chunks load: the next missing one gets its own full load.
+    clearStaleBuildGuard()
+    if (notice !== null) toast.dismiss(notice)
+    notice = null
+  })
   router.onError((error, to) => {
     settle(to)
-    reloadForNewBuild(error, router.resolve(to).href)
+    const target = router.resolve(to).href
+    if (reloadForNewBuild(error, target) || !MISSING_CHUNK.test(describes(error))) return
+    if (notice !== null) toast.dismiss(notice)
+    notice = toast.warning(t('global.loadError.page'), {
+      // The page it was going to is not on screen and will not be; the retry stays until used.
+      duration: Number.POSITIVE_INFINITY,
+      action: {
+        label: t('global.loadError.retry'),
+        onClick: () => {
+          clearStaleBuildGuard()
+          reloadForNewBuild(error, target)
+        },
+      },
+    })
   })
 }
 
-/** Called once the app has mounted, which proves the reload worked. */
-export function clearStaleBuildGuard(): void {
+function clearStaleBuildGuard(): void {
   try {
     sessionStorage.removeItem(RELOADED_KEY)
   } catch {
