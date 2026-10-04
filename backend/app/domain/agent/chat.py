@@ -64,8 +64,11 @@ from app.domain.agent.gateway_usage import (
 )
 from app.domain.agent.harness import SessionRef, harness_for
 from app.domain.agent.harness.prompt import (
+    UNTITLED_FIRST,
+    build_session_opening,
     build_system_prompt,
     live_input_lines,
+    opening_changes,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -215,8 +218,7 @@ from app.domain.agent.service import (
     AgentUsage,
 )
 from app.domain.agent.session_host.host import keeps_memory
-from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
-from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_skills
 from app.domain.agent.turn_speakers import turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id, work_policy
 from app.domain.agent_instance.services import (
@@ -264,8 +266,6 @@ from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.models import AcceptStatus
-from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
@@ -339,7 +339,6 @@ class _TurnContext:
     prior_progress: list[dict]
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
-    topic_stage: TopicStage
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
     # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
@@ -479,18 +478,6 @@ def _parse_uuid(raw: str | None) -> uuid.UUID | None:
         return uuid.UUID(raw)
     except ValueError:
         return None
-
-
-# Open (non-final) accept-card statuses, worth telling the agent about at turn
-# start — a card in one of these states usually implies "there is follow-up
-# work or a wait the agent should know it's in".
-_OPEN_CARD_STATUSES = (
-    AcceptStatus.pending,
-    AcceptStatus.pending_gate,
-    AcceptStatus.gate_failed,
-    AcceptStatus.gate_blocked,
-    AcceptStatus.conflict,
-)
 
 
 def _is_dm(topic: Topic) -> bool:
@@ -3419,21 +3406,6 @@ class ChatService(SessionRecovery):
             earlier_messages = await blocks.count_messages(
                 place.room_id, excluding=prompt_pending_ids
             )
-            # Read for the stage derivation below, and for nothing else: what
-            # the cards SAY is `cheese_status`'s answer, and restating it in a
-            # prompt only froze one turn's copy of it into the whole session.
-            open_cards = [
-                c
-                for c in await AcceptCardRepository(session).list_for_topic(topic_id)
-                if c.status in _OPEN_CARD_STATUSES
-            ]
-            # 按阶段渐进式披露: which段 of the flow this topic is in. Derived
-            # entirely from facts already in hand (kind/status + the open cards
-            # just queried above for 盲飞防护) — no extra query.
-            topic_stage = resolve_stage(
-                finished=topic.status == TopicStatus.archived,
-                card_statuses=[c.status for c in open_cards],
-            )
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
             # 先问这台机器上有没有可用的骨架，再过档位策略：策略那一步要解析模型，
@@ -3725,7 +3697,6 @@ class ChatService(SessionRecovery):
             topic_refs_for_prompt=topic_refs_for_prompt,
             artifacts=artifact_refs,
             teaching=teaching,
-            topic_stage=topic_stage,
             turn_images=turn_images,
             untitled=untitled,
         )
@@ -3798,7 +3769,6 @@ class ChatService(SessionRecovery):
         topic_refs_for_prompt = prepared.topic_refs_for_prompt
         artifact_refs = prepared.artifacts
         teaching = prepared.teaching
-        topic_stage = prepared.topic_stage
         turn_images = prepared.turn_images
         untitled = prepared.untitled
 
@@ -3819,23 +3789,30 @@ class ChatService(SessionRecovery):
             if needs_place
             else "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
         )
+        # 规矩进系统提示词，现状进开场快照：系统提示词在一个会话里一字不变，前缀
+        # 缓存才接得上（`build_system_prompt` 的说明）。
         system_prompt = build_system_prompt(
             self._base_prompt,
             skills,
-            doc_text,
-            memory,
-            role,
+            has_doc=doc_text is not None,
+            role=role,
+            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
+            # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
+            keeps_memory=keeps_memory(runtime.harness),
+        )
+        opening = build_session_opening(
+            doc=doc_text,
+            memory=memory,
             # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前
             # 加 @」，而一个停用了的实例没有人在驱动它——@ 它等于把活扔进一个没人
             # 接的地方。@ 解析和通知那几路照旧走全量的 `roster`：老房间里已经在的
             # 它仍要 @ 得到，停用挡的是新的活，不是已经接手的。
-            [m for m in roster if m["active"]],
-            topic_refs_for_prompt,
-            untitled,
+            roster=[m for m in roster if m["active"]],
+            topics=topic_refs_for_prompt,
             artifacts=artifact_refs,
             overview_doc=overview_doc_text,
             teaching=teaching,
-            session_opening=_session_opening_lines(
+            environment=_session_opening_lines(
                 unconnected_mcp=(
                     await self._unconnected_mcp(project_id, topic_id, acting_agent)
                     if needs_place
@@ -3848,11 +3825,15 @@ class ChatService(SessionRecovery):
                     prepared.earlier_messages if resume_session_id is None else 0
                 ),
             ),
-            stage_guide=load_scenario(stage_scenario(topic_stage)),
-            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
-            # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
             keeps_memory=keeps_memory(runtime.harness),
         )
+        async with self._sessions() as session:
+            told = await AgentSessionService(session).told(
+                topic_id, prepared.agent.handle, harness=prepared.harness
+            )
+        if untitled:
+            # 起名是这一轮的第一件事，所以排在最前；起完名下一轮就不再说。
+            prompt_text = f"{platform_prompt(UNTITLED_FIRST)}\n\n{prompt_text}"
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
         prompt_text = publication_prompt(prompt_text)
@@ -4027,6 +4008,8 @@ class ChatService(SessionRecovery):
                 prompt_text,
                 system_prompt=system_prompt,
                 resume_token=resume_session_id,
+                session_opening=opening.text,
+                opening_changes=opening_changes(opening, told),
                 expected_native_session=expected_session,
                 model=model_kwargs.get("model"),
                 env=model_kwargs.get("env"),
@@ -4042,6 +4025,17 @@ class ChatService(SessionRecovery):
                 ),
                 owes_reply=summoned,
             )
+            # 这一轮把现状说到了：下一轮只补在这之后变了的。回答一道 Ask 的那一轮
+            # 接着原来的对话，runtime 不往里放现状（`RoomSessions.send`），所以不算。
+            if expected_session is None:
+                async with self._sessions() as session:
+                    await AgentSessionService(session).remember_told(
+                        topic_id=topic_id,
+                        agent_handle=prepared.agent.handle,
+                        harness=prepared.harness,
+                        told=opening.digests(),
+                    )
+                    await session.commit()
         except InputOutcomeUnconfirmed as exc:
             # The session still owns this work. Its structured echo can settle
             # the committed identity even after this ChatService is replaced.

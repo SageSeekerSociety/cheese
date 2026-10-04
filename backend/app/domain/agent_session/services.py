@@ -52,6 +52,21 @@ class AgentSessionService:
             harness=harness,
         )
 
+    async def told(
+        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
+    ) -> dict | None:
+        """The project state this agent's conversation was last told, by section."""
+        row = await self._repo.get(topic_id, agent_handle, harness)
+        return row.told if row is not None else None
+
+    async def remember_told(
+        self, *, topic_id: uuid.UUID, agent_handle: str, harness: str, told: dict
+    ) -> None:
+        """Record the project state this agent's conversation now knows."""
+        await self._repo.save_told(
+            topic_id=topic_id, agent_handle=agent_handle, harness=harness, told=told
+        )
+
     async def place(
         self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> SessionPlace | None:

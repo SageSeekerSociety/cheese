@@ -402,6 +402,13 @@ class StubChannel(SeatChannel):
         _CHANNELS.add(self)
 
     @property
+    def told(self) -> str:
+        """What the session last heard: its system prompt and the message it was
+        sent. Project state rides the message (a new conversation's first one
+        carries it whole), so the system prompt alone is not what it knows."""
+        return f"{self.last_system_prompt or ''}\n\n{self.last_prompt or ''}"
+
+    @property
     def alive(self) -> bool:
         """Whether the scripted sessions' agent processes are still there."""
         return self._alive

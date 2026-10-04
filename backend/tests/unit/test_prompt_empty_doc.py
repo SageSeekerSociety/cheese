@@ -5,34 +5,37 @@
 巡检、总览房间自己那一轮），两者必须说不一样的话。
 """
 
-from app.domain.agent.harness.prompt import build_system_prompt
+from app.domain.agent.harness.prompt import build_session_opening, build_system_prompt
 
 
-def _prompt(doc: str | None) -> str:
-    return build_system_prompt("base", "", doc, [])
+def _told(doc: str | None) -> str:
+    """一条新会话开场听到的全部：规矩加现状。"""
+    system = build_system_prompt("base", "", has_doc=doc is not None)
+    return system + "\n\n" + build_session_opening(doc=doc).text
 
 
 def test_an_empty_room_doc_asks_for_the_first_version():
-    prompt = _prompt("")
+    told = _told("")
 
-    assert "## 当前话题的实况文档（还没有）" in prompt
-    assert "`cheese_doc_set` 建第一版" in prompt
-    assert "不论你是哪个队友" in prompt
+    assert "本话题还没有实况文档" in told
+    assert "`cheese_doc_set` 建第一版" in told
+    assert "不论你是哪个队友" in told
     # 五块模板和有文档时是同一份。
-    assert "- **现状**" in prompt
+    assert "- **现状**" in told
 
 
 def test_an_existing_doc_keeps_the_maintain_section_and_the_same_form():
-    prompt = _prompt("## 目标\n\n做一件事。\n")
+    told = _told("## 目标\n\n做一件事。\n")
 
-    assert "请按它继续工作，并在状态变化时用 `cheese_doc_set` 更新它" in prompt
-    assert "（还没有）" not in prompt
-    assert "- **现状**" in prompt
-    assert "做一件事。" in prompt
+    # 改已有文档用 doc_edit：doc_set 整份覆盖，会盖掉别人的段落和正在打的字。
+    assert "`cheese_doc_edit`" in told
+    assert "本话题还没有实况文档" not in told
+    assert "- **现状**" in told
+    assert "做一件事。" in told
 
 
 def test_no_doc_at_all_says_nothing_about_the_room_doc():
-    prompt = _prompt(None)
+    told = _told(None)
 
-    assert "当前话题的实况文档" not in prompt
-    assert "建第一版" not in prompt
+    assert "当前话题的实况文档" not in told
+    assert "建第一版" not in told

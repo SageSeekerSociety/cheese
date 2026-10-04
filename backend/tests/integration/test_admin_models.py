@@ -345,6 +345,30 @@ def test_a_patch_leaves_extra_headers_already_on_the_gateway_alone(
     assert "extra_headers" not in sent[0].get("litellm_params", {})
 
 
+def test_mid_conversation_system_is_marked_only_by_hand(
+    client, as_admin, runtime_gateway
+):
+    """A save that does not mention mid-conversation system messages leaves the
+    model unmarked, since nobody measured it. Marking it and clearing the mark
+    each reach the gateway, so a route that gains the feature can be cleared."""
+    for capabilities in (
+        {"reasoning": True},
+        {"reasoning": True, "mid_conversation_system": False},
+        {"reasoning": True, "mid_conversation_system": True},
+    ):
+        r = client.patch(
+            "/admin/gateway/models/runtime-x",
+            json={"capabilities": capabilities},
+            headers=session_auth_headers(as_admin),
+        )
+        assert r.status_code == 200, r.text
+    marks = [
+        sent.get("model_info", {}).get("supports_mid_conversation_system", "unset")
+        for sent in _patches(runtime_gateway.calls)
+    ]
+    assert marks == ["unset", False, True]
+
+
 def test_the_audit_endpoint_answers_what_changed(client, as_admin, gateway):
     """审计读回 before/after：审计区从「谁改了」升级成「改了什么」就靠这两个
     字段。写入时已 `_redact`，所以这里也不该见到凭据。"""

@@ -29,6 +29,7 @@ export interface ModelFormPayload {
     reasoning: boolean
     vision: boolean
     adaptive_thinking: boolean
+    mid_conversation_system?: boolean
   }
 }
 </script>
@@ -72,7 +73,12 @@ interface ModelSeed {
     cache_read?: number | null
     cache_creation?: number | null
   }
-  capabilities: { reasoning?: boolean; vision?: boolean; adaptive_thinking?: boolean }
+  capabilities: {
+    reasoning?: boolean
+    vision?: boolean
+    adaptive_thinking?: boolean
+    mid_conversation_system?: boolean
+  }
 }
 
 const props = withDefaults(
@@ -113,6 +119,10 @@ const priceCacheCreation = ref('')
 const reasoning = ref(false)
 const vision = ref(false)
 const adaptiveThinking = ref(false)
+// 能否收 Claude Code 插在对话中间的 system 消息。没标过就是照常发，开关默认开；
+// 只有标过、或这次关掉，才写回网关。
+const midConversationSystem = ref(true)
+const midConversationSystemMarked = ref(false)
 
 /** 每百万 → 每 token，空串给 null。 */
 function toPerToken(text: string): number | null {
@@ -150,6 +160,8 @@ watch(
     reasoning.value = s?.capabilities.reasoning ?? false
     vision.value = s?.capabilities.vision ?? false
     adaptiveThinking.value = s?.capabilities.adaptive_thinking ?? false
+    midConversationSystem.value = s?.capabilities.mid_conversation_system ?? true
+    midConversationSystemMarked.value = s?.capabilities.mid_conversation_system !== undefined
   },
   { immediate: true }
 )
@@ -193,6 +205,9 @@ function submit() {
       vision: vision.value,
       adaptive_thinking: adaptiveThinking.value,
     },
+  }
+  if (midConversationSystemMarked.value || !midConversationSystem.value) {
+    payload.capabilities.mid_conversation_system = midConversationSystem.value
   }
   if (props.mode === 'add') payload.name = name.value.trim()
   // api_base / api_key 只在**填了**的时候发出去：编辑时留空表示「不动」
@@ -345,6 +360,13 @@ function submit() {
           color="primary"
           density="compact"
           :label="t('models.capability.adaptiveThinking')"
+          hide-details
+        />
+        <v-switch
+          v-model="midConversationSystem"
+          color="primary"
+          density="compact"
+          :label="t('models.capability.midConversationSystem')"
           hide-details
         />
       </div>

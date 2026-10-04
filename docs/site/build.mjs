@@ -174,9 +174,9 @@ for (const f of fs.readdirSync(path.join(MANUAL, 'dev'))) {
 }
 
 // ---------- system prompt reference: the blocks, from the code that builds them ----------
-// gen/prompt.py runs `build_system_prompt` with one sample per switch and splits
-// what comes back; this only lays it out, so a block that is added or renamed
-// shows up here by itself.
+// gen/prompt.py runs `build_system_prompt` and `build_session_opening` with one
+// sample per switch and splits what comes back; this only lays it out, so a
+// block that is added or renamed shows up here by itself.
 const PROMPT_SRC = 'backend/app/domain/agent/harness/prompt.py'
 const GITHUB = 'https://github.com/SageSeekerSociety/cheese'
 const blob = (path, line) => `${GITHUB}/blob/main/${path}${line ? `#L${line}` : ''}`
@@ -204,12 +204,12 @@ function promptReference() {
   const out = []
 
   if (p.mode !== 'exec') out.push(`> 这一页这次是**静态解析**出来的：${p.note}。下面标着「动态生成」的块是源码里的表达式，不是渲染后的文本。`)
-  if (p.unknown_params?.length) out.push(`> \`build_system_prompt\` 有了生成器还不认识的参数：${p.unknown_params.map((name) => inline(name)).join('、')}——它们的样本值是按类型补的，见[样本参数](#samples)。` + `参数是自己加的，就把 \`docs/site/gen/prompt.py\` 里对应的一组样本补上。`)
+  if (p.unknown_params?.length) out.push(`> \`build_system_prompt\` 或 \`build_session_opening\` 有了生成器还不认识的参数：${p.unknown_params.map((name) => inline(name)).join('、')}——它们的样本值是按类型补的，见[样本参数](#samples)。` + `参数是自己加的，就把 \`docs/site/gen/prompt.py\` 里对应的一组样本补上。`)
   if (p.failed_samples?.length) out.push(`> 有样本跑不出来，它们没有出现在下面的表里：${p.failed_samples.map((f) => `${inline(f.name)}（${inline(f.error)}）`).join('、')}。`)
 
   out.push(`## 装配顺序 {#blocks}
 
-每一轮的系统提示词都由这些块拼起来，顺序就是这个顺序，块之间空一行（\`"\\n\\n".join(parts)\`）。「出现条件」是这一块的开关：不满足就整块不出现，一个字都不加。
+一个新会话开场时芝士读到的就是这些块，顺序就是这个顺序。到「你的专家角色」为止是系统提示词（\`build_system_prompt\`），只有规矩，整个会话里一字不变；从「本话题现在的情况」起是第一条消息前面的开场快照（\`build_session_opening\`），会话接着跑时只把变了的那几段再说一次。「出现条件」是这一块的开关：不满足就整块不出现，一个字都不加。
 
 | # | 块 | 出现条件 | 预算 |
 |---|---|---|---|
@@ -229,46 +229,23 @@ ${p.blocks.map((b) => fold(`${inline(blockLabel(b))} · ${b.chars} 字符`, [
 
   if (p.samples.length) out.push(`## 样本参数 {#samples}
 
-原文不是「大概长这样」写的：它是用下面这些参数真跑一遍 \`build_system_prompt\` 得到的输出。「最小」是除底稿外什么都不传的样子，「全部打开」是每个开关都给值。
+原文不是「大概长这样」写的：它是用下面这些参数真跑一遍 \`build_system_prompt\` 和 \`build_session_opening\` 得到的输出。「最小」是除底稿外什么都不传的样子，「全部打开」是每个开关都给值。
 
 | 样本 | 参数 | 说明 |
 |---|---|---|
 ${p.samples.map((s) => `| ${s.name} | ${s.params.map((x) => inline(x)).join('<br>')} | ${cell(s.about)} |`).join('\n')}`)
 
-  const st = p.stages
-  out.push(`## 阶段的操作说明 {#stages}
+  out.push(`## 平台说明库 {#library}
 
-一个话题在任一时刻处在流程的某一段。\`stages.py\` 把「现在在哪一段」算成一个 \`TopicStage\`，平台据此**只注入这一段**的说明。渐进的是「平台注入哪一段」，不是「模型决定读哪一段」——说明是静态拼进系统提示词的，模型没有「要不要读」的选择权。
+\`skill_library/\` 里是平台自己的几份说明。\`chat.md\` 就是上面「在房间里说话」那一块（\`skills\` 参数），\`doc_form.md\` 拼进「当前话题的实况文档」；\`doc_writing.md\` 和 \`doc_blocks.md\` 不进系统提示词，作为 \`cheese-docs\` 技能发给会话，用到才读。
 
-### 卡状态算成哪一段 {#stage-cards}
-
-| 验收卡的状态 | 算作哪一阶段 |
-|---|---|
-${st.card_map.map(([card, stage]) => `| \`${card}\` | \`${stage}\` |`).join('\n')}
-
-同时有多张 open 卡时取第一个命中的（\`_CARD_PRECEDENCE\`）：${st.precedence.map((x) => `\`${x}\``).join(' → ')}。没有活卡时才看话题本身：已结束是 \`archived\`，否则是 \`delegating\`。
-
-### 每一段注入什么 {#stage-guides}
-
-| 阶段 | 什么时候是这一段 | 注入的说明 |
+| 文件 | 名称 | 说明 |
 |---|---|---|
-${st.members.map((m) => `| \`${m.value}\` | ${cell(m.note)} | ${m.skills.length ? m.skills.map((k) => `[\`${k.file.split('/').pop()}\`](${blob(k.file)})`).join('<br>') : '（还没有写）'} |`).join('\n')}
+${p.library.files.map((f) => `| [\`${f.file}\`](${blob(f.file)}) | ${cell(f.title)} | ${cell(f.description)} |`).join('\n')}
 
-每一段的说明原文（\`skill_library/\` 里带 \`stage:\` 标签的文件，标签怎么写见[技能库](#library)）：
+正文：
 
-${st.members.map((m) => m.skills.map((k) => fold(`${m.value} · ${inline(k.title)}`, `${inline(k.description)}\n\n${code(k.body)}`)).join('\n\n')).filter(Boolean).join('\n\n')}`)
-
-  out.push(`## 技能库 {#library}
-
-\`skills\` 参数是一段拼接：\`skill_library/\` 里 \`scenarios:\` 命中本场景的文件，按文件名顺序，正文之间用 \`\\n\\n---\\n\\n\` 连起来（\`skills.load_scenario\`）。系统提示词里的「场景技能」那一块就是它；\`stage:\` 前缀的标签不是场景，由话题所处的阶段决定（见上一节）。
-
-| 文件 | 名称 | 场景标签 | 说明 |
-|---|---|---|---|
-${p.library.files.map((f) => `| [\`${f.file}\`](${blob(f.file)}) | ${cell(f.title)} | ${f.scenarios.map((t) => `\`${t}\``).join(' ')} | ${cell(f.description)} |`).join('\n')}
-
-正文（\`name\` 是技能系统里的名字，\`scenarios\` 是它出现的场景。只带 \`stage:\` 标签的文件不在下面重复一遍，它们的正文在上一节）：
-
-${p.library.files.filter((f) => f.scenarios.some((t) => !t.startsWith('stage:'))).map((f) => fold(`${inline(f.title)} · ${f.chars} 字符`, code(f.body))).join('\n\n')}`)
+${p.library.files.map((f) => fold(`${inline(f.title)} · ${f.chars} 字符`, code(f.body))).join('\n\n')}`)
 
   out.push(`## 相关常量 {#constants}
 
