@@ -22,8 +22,14 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.integration.test_message_edit import _room
+from tests.support.living_doc import document_of
 
 ALICE_PARAGRAPH = "李老师写的第二段，讲范围。"
+
+
+def _path(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 def _document(client) -> tuple[str, str]:
@@ -63,7 +69,7 @@ def _turn_started_by(client, room: str, seat: str, author: str) -> None:
 
 def _edit(client, room: str, headers: dict, *edits: tuple[str, str], **extra):
     return client.post(
-        f"/topics/{room}/doc/edits",
+        f"{_path(client, room)}/edits",
         json={"edits": [{"old": o, "new": n} for o, n in edits], **extra},
         headers=headers,
     )
@@ -71,7 +77,7 @@ def _edit(client, room: str, headers: dict, *edits: tuple[str, str], **extra):
 
 def _doc(client, room: str) -> dict:
     return client.get(
-        f"/topics/{room}/doc", headers=session_auth_headers("alice")
+        f"{_path(client, room)}", headers=session_auth_headers("alice")
     ).json()["data"]
 
 
@@ -84,7 +90,8 @@ def _doc_lines(client, room: str) -> list[dict]:
 
 def _history(client, room: str) -> list[dict]:
     return client.get(
-        f"/topics/{room}/doc/history", headers=session_auth_headers("alice")
+        f"{_path(client, room)}/history",
+        headers=session_auth_headers("alice"),
     ).json()["data"]["versions"]
 
 

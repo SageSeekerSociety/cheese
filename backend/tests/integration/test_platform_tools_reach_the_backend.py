@@ -119,7 +119,7 @@ def test_a_stale_write_to_the_living_doc_is_refused_with_the_way_out(client, roo
     """两条会话都读过第 N 版；先写的赢，后写的被拒并被告知怎么办。"""
     first = BackendHost(client, *room, files={"d.md": "# 第一版\n"})
     second = BackendHost(client, *room, files={"d.md": "# 另一个人的版本\n"})
-    assert "还没有实况文档" in cheese.run_platform_tool("cheese_doc_get", {}, first)
+    assert "还是空的" in cheese.run_platform_tool("cheese_doc_get", {}, first)
     cheese.run_platform_tool("cheese_doc_get", {}, second)
 
     cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, first)

@@ -27,6 +27,7 @@ from tests.conftest import seed_user
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_assistant import _ledger_user, _task
 from tests.integration.test_doc_edits import ALICE_PARAGRAPH, _doc, _document
+from tests.support.living_doc import document_of
 
 
 def _credential(
@@ -54,6 +55,11 @@ def _credential(
     )
 
 
+def _path(client, room: str) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
+
+
 def _as(token: str) -> dict:
     # In place of the platform's secret the test client otherwise sends: a
     # session answering a question has no such thing.
@@ -62,7 +68,7 @@ def _as(token: str) -> dict:
 
 def _edit(client, room: str, token: str):
     return client.post(
-        f"/topics/{room}/doc/edits",
+        f"{_path(client, room)}/edits",
         json={"edits": [{"old": "讲范围", "new": "讲边界"}]},
         headers=_as(token),
     )
@@ -71,9 +77,9 @@ def _edit(client, room: str, token: str):
 def test_it_reads_what_the_asker_may_read(client):
     room, seat = _document(client)
 
-    own = client.get(f"/topics/{room}/doc", headers=_as(_credential(client, room)))
+    own = client.get(_path(client, room), headers=_as(_credential(client, room)))
     stranger = client.get(
-        f"/topics/{room}/doc",
+        _path(client, room),
         headers=_as(_credential(client, room, asker="mallory")),
     )
 
@@ -140,9 +146,9 @@ def test_it_acts_only_where_it_was_minted(client):
     )
 
     other_room = client.get(
-        f"/topics/{elsewhere}/doc", headers=_as(_credential(client, room))
+        _path(client, elsewhere), headers=_as(_credential(client, room))
     )
-    no_room = client.get(f"/topics/{room}/doc", headers=_as(nowhere))
+    no_room = client.get(_path(client, room), headers=_as(nowhere))
     unbound = client.get("/tasks/joined", headers=_as(_credential(client, room)))
 
     assert other_room.status_code == 403
@@ -174,7 +180,7 @@ def test_an_edit_is_the_agents_at_the_askers_request_and_noted_under_the_answer(
     assert r.status_code == 200, r.text
     assert "李老师写的第二段，讲边界。" in _doc(client, room)["content"]
     latest = client.get(
-        f"/topics/{room}/doc/history", headers=session_auth_headers("alice")
+        f"{_path(client, room)}/history", headers=session_auth_headers("alice")
     ).json()["data"]["versions"][-1]
     assert latest["actor"] == seat and latest["requested_by"] == "bob"
 
@@ -196,7 +202,7 @@ def test_an_expired_or_forged_credential_is_none(client):
     forged = f"{body}.{signature[::-1]}"
 
     for token in (expired, forged):
-        r = client.get(f"/topics/{room}/doc", headers=_as(token))
+        r = client.get(_path(client, room), headers=_as(token))
         assert r.status_code == 401, token
     model = client.post(
         "/llm/v1/chat/completions",

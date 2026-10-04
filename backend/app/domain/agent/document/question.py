@@ -1,5 +1,9 @@
-"""What every question to a room's agent in its document is asked with, the
-comment thread's (``thread``) and the selection box's (``box``) alike.
+"""What every question to an agent in a document is asked with, the comment
+thread's (``thread``) and the selection box's (``box``) alike.
+
+A room's living document is answered by the agents seated in the room, with the
+room's recent messages and its machine. A document of the project's own, in no
+room, is answered by the project's own agent, with neither.
 
 * **Its turn.** One question of a conversation is answered at a time, and at
   most ``ANSWERING_PER_PROJECT`` of a project's conversations are being answered
@@ -40,6 +44,8 @@ from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.living_doc.services import Documents
 from app.domain.memory.files_store import memory_index
 from app.domain.policy import gate
 from app.domain.project.services import ProjectService
@@ -141,27 +147,54 @@ async def take_turn(
     )
 
 
+@dataclass(frozen=True)
+class Asked:
+    """The document a question is about, and the room it is the living
+    document of (None for a document of the project's own)."""
+
+    project_id: uuid.UUID
+    document_id: uuid.UUID
+    room_id: uuid.UUID | None
+
+    def data(self) -> dict:
+        """What a question read to its end keeps of it (``Consumption.data``)."""
+        return {
+            "project": str(self.project_id),
+            "document": str(self.document_id),
+            "room": str(self.room_id) if self.room_id is not None else None,
+        }
+
+    @classmethod
+    def of(cls, data: dict) -> "Asked":
+        room = data.get("room")
+        return cls(
+            project_id=uuid.UUID(data["project"]),
+            document_id=uuid.UUID(data["document"]),
+            room_id=uuid.UUID(room) if room else None,
+        )
+
+
 async def credential(
     db: AsyncSession,
     *,
-    project_id: uuid.UUID,
-    room_id: uuid.UUID,
+    asked: Asked,
     agent: str,
     asker: str,
     work: uuid.UUID,
     may_edit: bool,
 ) -> str:
     """What the session's tools act with while answering ``asker``'s question:
-    that person's permissions, in this room, for no longer than the answer may
-    take; edits authored by ``agent`` at the asker's request, and only when the
-    question may change the document."""
+    that person's permissions, in the document's room (in its project, for a
+    document in none), for no longer than the answer may take; edits authored
+    by ``agent`` at the asker's request, and only when the question may change
+    the document."""
     person = await user_by_handle(db, asker)
     return mint_delegated_credential(
         user_id=person.id if person is not None else None,
         handle=asker,
         agent=agent,
-        project_id=str(project_id),
-        topic_id=str(room_id),
+        project_id=str(asked.project_id),
+        topic_id=str(asked.room_id) if asked.room_id is not None else None,
         work=str(work),
         read_only=not may_edit,
         ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
@@ -198,18 +231,35 @@ class Bound:
     supply: str
 
 
-async def bind(
-    session: AsyncSession, room_id: uuid.UUID, seat: str | None = None
-) -> Bound:
-    """The agent seated as ``seat`` in the room (the room's own seat when None)
-    and the model its turns use — the same binding, never a substitute."""
-    topic = await TopicService(session).get_or_404(room_id)
-    project = await ProjectService(session).get_or_404(topic.project_id)
+async def seats(session: AsyncSession, asked: Asked) -> set[str]:
+    """The agents a question in this document can be put to: the room's
+    seated agents, or the project's own agent for a document in no room."""
+    if asked.room_id is not None:
+        return set(await TopicMemberService(session).agent_handles(asked.room_id))
+    project = await ProjectService(session).get_or_404(asked.project_id)
+    agent = await AgentInstanceService(session).for_project(project)
+    return {agent_instance_handle(agent.instance_id)}
+
+
+async def bind(session: AsyncSession, asked: Asked, seat: str | None = None) -> Bound:
+    """The agent seated as ``seat`` (the room's own seat, or the project's own
+    agent, when None) and the model its turns use — the same binding, never a
+    substitute."""
+    project = await ProjectService(session).get_or_404(asked.project_id)
     agents = AgentInstanceService(session)
-    seat = seat or await TopicMemberService(session).addressable_agent_handle(room_id)
-    agent = await agents.for_seat_handle(project, seat) or await agents.for_topic(
-        topic, project
-    )
+    if asked.room_id is not None:
+        topic = await TopicService(session).get_or_404(asked.room_id)
+        seat = seat or await TopicMemberService(session).addressable_agent_handle(
+            asked.room_id
+        )
+        agent = await agents.for_seat_handle(project, seat) or await agents.for_topic(
+            topic, project
+        )
+    else:
+        agent = (
+            await agents.for_seat_handle(project, seat) if seat else None
+        ) or await agents.for_project(project)
+        seat = seat or agent_instance_handle(agent.instance_id)
     bound = binding.resolve(
         None,
         binding.catalog(project.settings),
@@ -257,11 +307,11 @@ async def admit(session: AsyncSession, project_id: uuid.UUID, bound: Bound) -> N
 #: Where the answer is read: a comment thread, or the card beside a selection.
 _WHERE = {
     "thread": (
-        "有人在这个话题的实况文档里评论并点了你的名，你在这个评论串里回答。",
+        "有人在文档里评论并点了你的名，你在这个评论串里回答。",
         "你最后写的文字会原样成为你在评论串里的回复。直接写回复本身",
     ),
     "box": (
-        "有人在这个话题的实况文档里选中文字（或者对整篇）找你，要你改或者问你。",
+        "有人在文档里选中文字（或者对整篇）找你，要你改或者问你。",
         "你最后写的文字显示在提问人旁边的小卡上，只有他看得到。改了文档时只用一句话"
         "说改了什么；没改时直接回答",
     ),
@@ -294,7 +344,7 @@ _MACHINE = (
     "房间里的队友。"
 )
 _NO_MACHINE = (
-    "房间现在没有在用的工作电脑，你读不到代码，也不能运行命令。问题要看代码时，"
+    "这次没有可读的工作电脑，你读不到代码，也不能运行命令。问题要看代码时，"
     "如实说这次没有看代码。"
 )
 
@@ -364,7 +414,7 @@ def section_of(content: str, quote: str) -> str | None:
 
 @dataclass(frozen=True)
 class Surroundings:
-    """What every question of a room's document is asked with, read now."""
+    """What every question of a document is asked with, read now."""
 
     content: str
     messages: str
@@ -392,29 +442,34 @@ class Surroundings:
         return parts
 
 
-async def surroundings(
-    db: AsyncSession, *, project_id: uuid.UUID, room_id: uuid.UUID, seat: str
-) -> Surroundings:
-    doc = await TopicService(db).doc_of_room(room_id)
-    recent = await BlockRepository(db).page_for_topic(
-        room_id, limit=RECENT_MESSAGES, kinds=[BlockKind.message]
-    )
-    messages = "\n".join(
-        f"<@{block.author}>：{block.content}" for block in recent.items
-    )
-    project = await ProjectService(db).get_or_404(project_id)
+async def surroundings(db: AsyncSession, asked: Asked, *, seat: str) -> Surroundings:
+    doc = await Documents(db).get(asked.document_id)
+    messages, machine = "", None
+    if asked.room_id is not None:
+        recent = await BlockRepository(db).page_for_topic(
+            asked.room_id, limit=RECENT_MESSAGES, kinds=[BlockKind.message]
+        )
+        messages = "\n".join(
+            f"<@{block.author}>：{block.content}" for block in recent.items
+        )
+        machine = await machine_to_read(
+            db,
+            project_id=asked.project_id,
+            room_id=asked.room_id,
+            seat=seat,
+            ttl_s=TOKEN_TTL_S,
+        )
+    project = await ProjectService(db).get_or_404(asked.project_id)
     charter = None
-    if project.root_topic_id is not None and project.root_topic_id != room_id:
+    if project.root_topic_id is not None:
         overview = await TopicService(db).doc_of_room(project.root_topic_id)
-        charter = overview.content if overview is not None else None
-    index = await memory_index(db, project_id, speaker_handles=[])
+        if overview is not None and overview.id != asked.document_id:
+            charter = overview.content
+    index = await memory_index(db, asked.project_id, speaker_handles=[])
     memory = (
         "\n\n".join(section.text for section in index.sections)
         if not index.is_empty()
         else None
-    )
-    machine = await machine_to_read(
-        db, project_id=project_id, room_id=room_id, seat=seat, ttl_s=TOKEN_TTL_S
     )
     return Surroundings(
         doc.content if doc is not None else "", messages, charter, memory, machine

@@ -1,11 +1,15 @@
-// The living document's way in: a ticket for the collaboration service, and
-// where the browser reaches it.
+// A document's way in: which document a room's is, a ticket for the
+// collaboration service, and where the browser reaches it.
 
 import { request } from '../api'
 import { DOC_SCHEMA_PARAM, DOC_SCHEMA_VERSION } from '../lib/docSchema/version'
 
-// A short-lived ticket that opens this room's living document in the
-// collaboration service. Whether it may be changed is decided by the backend and
+/** The room's living document: made, empty, the first time anyone asks. */
+export function getRoomDocument(topicId: string): Promise<{ id: string }> {
+  return request<{ id: string }>(`/topics/${encodeURIComponent(topicId)}/document`)
+}
+
+// A short-lived ticket that opens a document in the collaboration service. Whether it may be changed is decided by the backend and
 // carried in the ticket; `read_only` says the same thing to the screen.
 export interface DocTicket {
   document: string
@@ -13,8 +17,8 @@ export interface DocTicket {
   read_only: boolean
 }
 
-export function getDocTicket(topicId: string): Promise<DocTicket> {
-  return request<DocTicket>(`/topics/${encodeURIComponent(topicId)}/doc/ticket`)
+export function getDocTicket(documentId: string): Promise<DocTicket> {
+  return request<DocTicket>(`/documents/${encodeURIComponent(documentId)}/ticket`)
 }
 
 // Where the browser reaches the collaboration service: the frontend's own

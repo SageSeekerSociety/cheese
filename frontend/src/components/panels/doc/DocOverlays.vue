@@ -642,10 +642,6 @@ defineExpose({ onHover, onEdited })
       </v-icon>
     </button>
   </div>
-  <!-- A2 in-place live-refs are ProseMirror widget decorations now — rendered in
-     the document flow at the end of their paragraph by the LiveRefBadges
-     extension (no overlay, no cursor dead zone). Clicks are delegated through
-     the doc surface's onDocClick. -->
   <!-- Real block handles: 拆出子话题、拖动重排、在下方插入一块。
      Only in edit mode. -->
   <DragHandle v-if="editor && editable" :editor="editor" :on-node-change="onDocNodeChange" class="doc-handle">

@@ -852,7 +852,6 @@ const DOC_BASE = {
     recover: async () => undefined,
     stopAgent: noopAsync,
   } as DocThreadActions,
-  liveRefIndex: new Map<number, string>(),
   fetchDocNodes: async () => [],
   imageSrc: (src: string) => src,
   toggleEditable: noop,
