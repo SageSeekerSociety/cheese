@@ -2,7 +2,15 @@
   <v-container>
     <v-row>
       <v-col>
-        <v-card v-if="questionData" rounded="lg" flat>
+        <!-- A failed (re)load must replace the card, not leave the previous question standing under the new URL (docs/design-system.md §3.10). -->
+        <BaseLoadError
+          v-if="loadFailed"
+          :title="t('questions.detail.loadFailed')"
+          :error="loadError"
+          @retry="retryLoad"
+        />
+
+        <v-card v-else-if="questionData" rounded="lg" flat>
           <v-card-item>
             <v-card-title class="text-h5" data-user-content>{{ questionData.title }}</v-card-title>
             <v-card-subtitle class="d-flex align-center question-info">
@@ -172,13 +180,6 @@
             </BaseButton>
           </v-card-actions>
         </v-card>
-
-        <BaseLoadError
-          v-else-if="loadFailed"
-          :title="t('questions.detail.loadFailed')"
-          :error="loadError"
-          @retry="retryLoad"
-        />
 
         <v-skeleton-loader v-else type="list-item-avatar, paragraph, button@2" />
       </v-col>

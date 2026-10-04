@@ -54,7 +54,15 @@
 
     <v-progress-linear v-if="loading && !participants" indeterminate color="primary" />
 
-    <template v-if="participants">
+    <!-- A failed reload must replace the block, not leave the previous filter's numbers standing (docs/design-system.md §3.10). -->
+    <BaseLoadError
+      v-if="failed"
+      :title="t('spaces.analytics.participants.loadFailed')"
+      :error="errorDetail"
+      @retry="load"
+    />
+
+    <template v-else-if="participants">
       <AnalyticsStatStrip>
         <AnalyticsMetricCard
           v-for="item in metrics"
@@ -89,13 +97,6 @@
         />
       </div>
     </template>
-
-    <BaseLoadError
-      v-else-if="failed"
-      :title="t('spaces.analytics.participants.loadFailed')"
-      :error="errorDetail"
-      @retry="load"
-    />
 
     <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.participants.empty') }}</p>
   </div>

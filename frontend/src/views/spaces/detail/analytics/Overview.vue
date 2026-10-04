@@ -16,7 +16,15 @@
 
     <v-progress-linear v-if="loading && !overview" indeterminate color="primary" />
 
-    <template v-if="overview">
+    <!-- A failed reload must replace the block, not leave the previous filter's numbers standing (docs/design-system.md §3.10). -->
+    <BaseLoadError
+      v-if="failed"
+      :title="t('spaces.analytics.overview.loadFailed')"
+      :error="errorDetail"
+      @retry="load"
+    />
+
+    <template v-else-if="overview">
       <AnalyticsStatStrip>
         <AnalyticsMetricCard
           v-for="item in metricCards"
@@ -58,13 +66,6 @@
         <AnalyticsAlertGrid :alerts="alerts" @open="openTasks" />
       </section>
     </template>
-
-    <BaseLoadError
-      v-else-if="failed"
-      :title="t('spaces.analytics.overview.loadFailed')"
-      :error="errorDetail"
-      @retry="load"
-    />
 
     <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.overview.empty') }}</p>
   </div>

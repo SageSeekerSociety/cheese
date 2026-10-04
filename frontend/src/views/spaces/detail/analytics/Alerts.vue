@@ -1,13 +1,9 @@
 <template>
   <div class="an-section">
     <v-progress-linear v-if="loading && !alerts" indeterminate color="primary" />
-    <AnalyticsAlertGrid v-if="alerts" :alerts="alerts" @open="openTasks" />
-    <BaseLoadError
-      v-else-if="failed"
-      :title="t('spaces.analytics.alerts.loadFailed')"
-      :error="errorDetail"
-      @retry="load"
-    />
+    <!-- A failed reload must replace the block, not leave the previous filter's alerts standing (docs/design-system.md §3.10). -->
+    <BaseLoadError v-if="failed" :title="t('spaces.analytics.alerts.loadFailed')" :error="errorDetail" @retry="load" />
+    <AnalyticsAlertGrid v-else-if="alerts" :alerts="alerts" @open="openTasks" />
     <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.alerts.empty') }}</p>
   </div>
 </template>
