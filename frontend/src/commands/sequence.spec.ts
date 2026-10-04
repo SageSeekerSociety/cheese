@@ -2,8 +2,8 @@
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { defineCommands } from '.'
 import { installShortcuts } from './shortcuts'
+import { defineCommands } from '.'
 
 function press(code: string, init: KeyboardEventInit & { target?: EventTarget } = {}) {
   const event = new KeyboardEvent('keydown', { code, bubbles: true, cancelable: true, ...init })
