@@ -1,6 +1,11 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { api, apiLogin, openFirstProject } from './helpers';
 
+// Parallel so CI shards split this file by test rather than handing one shard
+// all of it: no test depends on another, and one CI worker still runs them one
+// at a time.
+test.describe.configure({ mode: 'parallel' });
+
 // 表单字段的几何不变量。
 //
 // 起因是一类会静悄悄发出去的缺陷：outlined 字段的浮动 label 用 translateY(-50%)

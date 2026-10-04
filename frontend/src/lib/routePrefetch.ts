@@ -10,6 +10,7 @@
 import type { RouteLocationRaw, Router } from 'vue-router'
 
 import { refreshBlockCache } from './blockCache'
+import { whenIdle } from './idle'
 
 /**
  * 指针进来之后要停这么久才算「想点」。
@@ -131,6 +132,30 @@ export function prefetchNow(target: HoverTarget): void {
   if (!connectionAllows()) return
   if (target.router && target.to !== undefined) warmRoute(target.router, target.to)
   if (target.topicId) void warmTopic(target.topicId)
+}
+
+/**
+ * 首屏画完之后，趁浏览器空着把「下一步多半会去的那几页」的 chunk 先下下来。
+ *
+ * 和 hover 预取同一个纪律：慢网和省流量不做；一次空闲只热一个目标，不在一帧里连发
+ * 一串 import 把主线程占住；人在这期间离开了（返回的取消函数被调用）就停下。
+ * 只下代码，不取数据。
+ */
+export function warmRoutesWhenIdle(router: Router, targets: RouteLocationRaw[]): () => void {
+  if (!connectionAllows()) return () => {}
+  const queue = [...targets]
+  let cancel: () => void = () => {}
+  const next = () => {
+    const target = queue.shift()
+    if (target === undefined) return
+    warmRoute(router, target)
+    cancel = whenIdle(next)
+  }
+  cancel = whenIdle(next)
+  return () => {
+    queue.length = 0
+    cancel()
+  }
 }
 
 /** 指针在停住之前就走了：那不是意图，什么都不该发生。 */

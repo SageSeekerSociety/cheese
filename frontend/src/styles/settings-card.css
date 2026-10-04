@@ -123,12 +123,11 @@
   padding-inline: 16px 8px;
 }
 
+/* 卡片里「暂无 X」那一行的内距。长相（灰字、字号）由 BaseEmptyState size="inline" 给，
+   这里只让它和卡片标题、设置行对齐。 */
 .settings-empty {
   padding: 16px 24px;
   margin: 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
 }
 
 /* 手机外壳（窄于 768 —— 共享 token，解释见 `styles/breakpoints.scss`）：这一页自己的

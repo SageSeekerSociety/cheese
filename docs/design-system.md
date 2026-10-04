@@ -509,6 +509,21 @@ const { saving, saved, dirty, error, run } = useSaveState({
 - 一次保存只出现一种样子，且都**在原地淡入淡出**（§9.3 的时长 token），不弹窗、不挤动布局：保存中 `保存中…`（`--muted`）；已保存 `已保存`（`--ok-ink`，`role=status`）；失败 `保存失败`（`--danger-ink`，`role=alert`，按 §8.9 用冒号接服务端原因）。
 - **不要再自己写 `saving = ref(false)`**，也不要给一次性动作硬套 `SaveStatus`：那会把「保存失败」的前缀安到「发送失败」上面。一个说法只配一种动作。
 
+### 3.12 空状态：一个组件、三档大小
+
+「这里本来就没有」只用 `BaseEmptyState`（`src/components/base/BaseEmptyState.vue`），不再手写 `<p class="xxx__empty">`、不用 Vuetify 的 `v-empty-state`。文案照 §8.1。
+
+| `size` | 用在哪 | 长相 |
+|---|---|---|
+| `page` | 整页或整块区域就是空的 | 40px 图标 + 标题 + 说明 + 动作，居中，上下 64px |
+| `compact` | 卡片、表格、抽屉里 | 同上，图标 28px，上下 32px |
+| `inline` | 设置卡片里、列表下面、筛选后的一句话 | 一行 13px `--muted` 灰字，无图标，默认靠左 |
+
+- 属性：`title`、`desc`、`icon`（给空字符串不画图标）、`action`（一颗 `secondary` 小按钮，点了发 `@action`）、`tone`（`error` 只换图标色）、`align`（`center` / `start`）。动作要别的角色或带图标，放默认插槽。
+- `inline` 不带外边距，由所在那块决定：设置卡片里加 `class="settings-empty"`（只管 16px 24px 内距）。
+- 读失败不是空状态，用 §3.10 的 `BaseLoadError`。
+- `AdminEmptyState` 是它的别名（`compact` 布尔值映射成 `size="compact"`），新代码直接用 `BaseEmptyState`。
+
 ### 3.13 数据表格：BaseTable
 
 一张有表头、多列的数据表只用 `BaseTable`（`src/components/base/BaseTable.vue`，原来叫 `AdminGrid`，旧名字仍是它的别名），不再用 `v-data-table`，也不再手写 `<table>`。

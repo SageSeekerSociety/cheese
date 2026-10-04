@@ -1,4 +1,10 @@
-"""Transactional journal for raw living-document snapshots and write receipts."""
+"""Documents: what they say now, their collaborative state, their history and
+their write receipts.
+
+A document belongs to a project. A room's living document is one with
+``room_id`` set: each room has at most one, and it goes when the room goes.
+Every other table here hangs off ``documents.id``.
+"""
 
 import uuid
 from datetime import UTC, datetime
@@ -6,6 +12,7 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     JSON,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     LargeBinary,
@@ -19,25 +26,78 @@ from app.core.db import Base
 from app.domain.common import UuidPk
 
 
-class DocumentLock(Base):
-    __tablename__ = "living_doc_locks"
+class Document(UuidPk, Base):
+    __tablename__ = "documents"
 
-    room_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    #: The room this is the living document of; None for one of the project's
+    #: own documents.
+    room_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE"), unique=True, nullable=True
+    )
+    #: What kind of document: only "doc" (Markdown and blocks) so far.
+    kind: Mapped[str] = mapped_column(String(16), default="doc", server_default="doc")
+    #: None for a room's document, which goes by the room's title.
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    #: The Markdown exported from the collaborative state at its last store.
+    content: Mapped[str] = mapped_column(Text, default="", server_default="")
+    #: 0 until the first version is recorded.
+    version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    #: Who made the latest version.
+    author: Mapped[str] = mapped_column(String(128), default="system")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class DocumentNode(UuidPk, Base):
+    """One top-level block of a document's Markdown (a heading, a paragraph, a
+    list…), in order. Derived from ``Document.content`` at every store, but a
+    node whose text did not change keeps its id and its author: search hits,
+    the paragraph a hit points at, and who wrote which passage
+    (``app.api.doc_edits``) all read them."""
+
+    __tablename__ = "document_nodes"
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    node_type: Mapped[str] = mapped_column(String(32))
+    content: Mapped[str] = mapped_column(Text)
+    position: Mapped[float] = mapped_column(Float)
+    #: Who last changed this block's text.
+    author: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class DocumentLock(Base):
+    """A durable per-document mutex: whoever writes the document, or its
+    comment threads, holds this row first."""
+
+    __tablename__ = "document_locks"
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
     )
 
 
 class DocumentVersion(UuidPk, Base):
-    __tablename__ = "living_doc_versions"
+    __tablename__ = "document_versions"
     __table_args__ = (
-        UniqueConstraint("document_id", "version", name="uq_living_doc_version"),
+        UniqueConstraint("document_id", "version", name="uq_document_version"),
     )
 
-    room_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
-    )
     document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("blocks.id", ondelete="CASCADE")
+        ForeignKey("documents.id", ondelete="CASCADE")
     )
     version: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
@@ -56,14 +116,14 @@ class DocumentVersion(UuidPk, Base):
 
 
 class DocumentState(Base):
-    """The room document's collaborative (Yjs) state, as the collaboration
-    service last stored it. The root block's content is the Markdown exported
-    from this same state."""
+    """The document's collaborative (Yjs) state, as the collaboration service
+    last stored it. ``Document.content`` is the Markdown exported from this
+    same state."""
 
-    __tablename__ = "living_doc_states"
+    __tablename__ = "document_states"
 
-    room_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
     )
     state: Mapped[bytes] = mapped_column(LargeBinary)
     #: The suggestions pending in this state: ``{id, author, old, new,
@@ -76,15 +136,19 @@ class DocumentState(Base):
 
 
 class DocumentOperation(UuidPk, Base):
-    __tablename__ = "living_doc_operations"
+    __tablename__ = "document_operations"
     __table_args__ = (
         UniqueConstraint(
-            "room_id", "actor", "action", "operation_id", name="uq_living_doc_operation"
+            "document_id",
+            "actor",
+            "action",
+            "operation_id",
+            name="uq_document_operation",
         ),
     )
 
-    room_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
     )
     actor: Mapped[str] = mapped_column(String(128))
     action: Mapped[str] = mapped_column(String(32))

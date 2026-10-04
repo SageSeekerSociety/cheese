@@ -11,18 +11,13 @@ import type { ProjectMemberRow, TopicComputeProfile, TopicMemberRow } from '../c
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import {
-  addTopicMember,
-  getTopicComputeProfile,
-  listTopicMembers,
-  removeTopicMember,
-  updateTopicMemberRole,
-} from '../api'
+import { addTopicMember, getTopicComputeProfile, removeTopicMember, updateTopicMemberRole } from '../api'
 import { t } from '../i18n'
 import { memberName } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { whenIdle } from '../lib/idle'
+import { cachedTopicPanel, fetchTopicMembers } from '../lib/topicPanelCache'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
@@ -45,7 +40,8 @@ const emit = defineEmits<{
   (e: 'machine-access', notice: string | null): void
 }>()
 
-const members = ref<TopicMemberRow[]>([])
+// 切回来过的房间先画上次那份名册，背后再重取（lib/topicPanelCache.ts）。
+const members = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
@@ -59,7 +55,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const payload = await listTopicMembers(props.topicId)
+    const payload = await fetchTopicMembers(props.topicId)
     members.value = payload.data
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('work.room.roster.loadFailed')

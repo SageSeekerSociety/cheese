@@ -34,6 +34,7 @@ from app.domain.agent.runtime import announce_stale
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.block.schemas import BlockOut
+from app.domain.living_doc.schemas import node_out
 from app.domain.living_doc.services import DocumentJournal
 from app.domain.topic.services import TopicService
 
@@ -46,12 +47,12 @@ async def list_topic_docs(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Document-tree view of a topic: the living doc's structured node tree
-    (B1, spec §5) in document order."""
-    place = await TopicService(db).place_or_404(topic_id)
+    """The room document's top-level blocks, in document order."""
+    topics = TopicService(db)
+    place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    nodes = await BlockRepository(db).list_doc_nodes(place.room_id)
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in nodes]
+    doc = await topics.doc_of_room(place.room_id)
+    items = [node_out(n, doc) for n in await topics.doc_nodes(doc)] if doc else []
     return ok(page(items, len(items)))
 
 
@@ -72,7 +73,8 @@ async def add_comment(
     place = await TopicService(db).place_or_404(topic_id)
     if await _frozen(db, place):
         raise ValidationError(say("commentDocFrozen"))
-    await DocumentJournal(db).lock(place.room_id)
+    doc = await TopicService(db).room_doc(place.room_id, place.project_id)
+    await DocumentJournal(db).lock(doc.id)
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError(say("commentEmpty"))

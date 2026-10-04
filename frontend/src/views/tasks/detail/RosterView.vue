@@ -25,9 +25,12 @@
 
     <p v-if="loading" class="rs__note">{{ t('tasks.roster.loading') }}</p>
     <p v-else-if="denied" class="rs__note">{{ t('tasks.roster.denied') }}</p>
-    <p v-else-if="!visible.length" class="rs__note">
-      {{ rows.length ? t('tasks.roster.noMatch') : t('tasks.roster.empty') }}
-    </p>
+    <BaseEmptyState
+      v-else-if="!visible.length"
+      size="inline"
+      class="rs__note"
+      :title="rows.length ? t('tasks.roster.noMatch') : t('tasks.roster.empty')"
+    />
 
     <BaseTable v-else class="rs__grid" :cols="ROSTER_COLS" :label="t('tasks.roster.tableLabel')" min-width="760px">
       <template #head>
@@ -212,6 +215,7 @@ import dayjs from 'dayjs'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
@@ -494,7 +498,8 @@ function saveDeadline() {
 .rs__note {
   margin: 24px 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
 /* 表格壳是 BaseTable；这里只留名册自己的：不换行、正文色。 */

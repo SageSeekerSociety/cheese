@@ -27,6 +27,7 @@ import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -454,8 +455,20 @@ function read(file: LibraryFile) {
           </VirtualList>
         </ul>
 
-        <p v-else-if="files.length" class="t-body c-muted library__empty">{{ t('work.library.noMatch') }}</p>
-        <p v-else-if="!loadError && !loading" class="t-body c-muted library__empty">{{ t('work.library.empty') }}</p>
+        <BaseEmptyState
+          v-else-if="files.length"
+          size="inline"
+          align="center"
+          class="library__empty"
+          :title="t('work.library.noMatch')"
+        />
+        <BaseEmptyState
+          v-else-if="!loadError && !loading"
+          size="inline"
+          align="center"
+          class="library__empty"
+          :title="t('work.library.empty')"
+        />
       </section>
 
       <!-- 这一份：桌面上在右边一栏，手机上是整一页。 -->
