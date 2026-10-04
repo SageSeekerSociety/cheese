@@ -480,6 +480,15 @@ def _deltas(
     return out
 
 
+#: How far a model's day of spend may read below its checkpoint and still be
+#: the same total. Tokens are integers and compared exactly; spend is a float
+#: that LiteLLM sums in its own order, and a checkpoint summed in another order
+#: differs from it in the last bits (dev, 2026-10-04: 9.4626364 read against a
+#: checkpoint of 9.462636400000003). Compared exactly, that held back every
+#: charge of the project. A millionth of a cent is far below any real charge.
+_SPEND_EPSILON_USD = 1e-9
+
+
 def _regressed(cur: dict[str, ModelSpend], prev: dict[str, ModelSpend]) -> bool:
     """Has the cumulative read gone backwards — or lost a model we had?
 
@@ -501,7 +510,7 @@ def _regressed(cur: dict[str, ModelSpend], prev: dict[str, ModelSpend]) -> bool:
         if (
             c.prompt_tokens < p.prompt_tokens
             or c.completion_tokens < p.completion_tokens
-            or c.spend_usd < p.spend_usd
+            or c.spend_usd < p.spend_usd - _SPEND_EPSILON_USD
         ):
             return True
     return False
