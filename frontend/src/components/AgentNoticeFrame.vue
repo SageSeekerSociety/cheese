@@ -89,6 +89,20 @@ const liveName = computed(() =>
   gap: 10px;
   padding: 2px 16px 2px 20px;
   margin-top: 8px;
+  /* 平台自己的那一行也是时间线里的行，和消息行（room-row.css 的 .im-row）一样：
+     离屏的不渲染，但留在 DOM 里 —— Ctrl+F、读屏、选中都还找得到它，这是「不虚拟化」。
+     `auto 28px` 是「一行事件」的估计高度，只在这一行**从未渲染过**时用来占位；`auto`
+     让渲染过的行记住真实高度，于是常态滚动和向上翻页都不因估计值漂。向上翻页补偿、
+     scrollIntoView 这类「必须按真实高度量」的地方，由 lib/contentVisibility 挂
+     .cv-measure 临时关掉它。深色的底色块（RoomNotice 的 sys-row--warn/danger）不受
+     影响：它是这一行内部的绘制，跳过这一行时整行一起跳过。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
+/* 测量帧（向上翻页补偿、scrollIntoView）：这一窗里的行按真实高度铺开。选择器带
+   .cv-measure 前缀，胜过上面没带的那条。见 lib/contentVisibility。 */
+.cv-measure .notice-row {
+  content-visibility: visible;
 }
 /* 连着几件事贴在一起，和同一个人连着说的几句话一样。 */
 .notice-row + .notice-row {
