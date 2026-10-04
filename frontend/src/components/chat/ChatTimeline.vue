@@ -14,6 +14,7 @@ import type { AskAction, AskFormState } from '../../lib/askPresentation'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
+import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
@@ -104,7 +105,7 @@ const emit = defineEmits<{
   (e: 'open-file', path: string, taskId: string | null): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
-  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-action', block: Block, action: AskAction): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
@@ -238,8 +239,8 @@ function emitChecklist(block: Block, items: TodoItem[]) {
 function emitOpenFile(path: string, taskId: string | null) {
   emit('open-file', path, taskId)
 }
-function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest) {
-  emit('open-resource', resource, turnId, review)
+function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
+  emit('open-resource', resource, turnId, review, document)
 }
 // 只有正在改的那一行会存。
 function emitSaveEdit(text: string) {

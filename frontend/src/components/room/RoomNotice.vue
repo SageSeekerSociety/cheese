@@ -12,6 +12,7 @@
 import type { Block } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 import type { DocReviewRequest } from '../../lib/docReview'
+import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -60,7 +61,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'open-card', taskId: string): void
   (e: 'retry'): void
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
@@ -134,6 +135,25 @@ function reviewDoc() {
   emit('open-resource', 'doc', props.block.turn_id ?? undefined, { requester, edits: req.edits })
 }
 const docSuggestions = computed(() => (props.notice.mode === 'action' ? props.notice.docSuggestions ?? 0 : 0))
+
+// 项目资料库里的一份文档：AI 队友在这里新建了它或改了它。卡片一点，文档在对话旁边打开；
+// 改过的，打开时一处处标出来。
+const libraryDoc = computed(() => (props.notice.mode === 'action' ? props.notice.libraryDoc ?? null : null))
+// 卡上那一句：新建的、提了建议的、改了几处的，整篇重写的只说「已更新」。
+const libraryDocState = computed(() => {
+  const doc = libraryDoc.value
+  if (!doc) return ''
+  if (doc.created) return t('work.room.notice.docCard.created')
+  if (doc.suggestions) return t('work.room.notice.docCard.suggested', { n: doc.suggestions })
+  if (doc.edits.length) return t('work.room.notice.docEditCount', { n: doc.edits.length })
+  return t('work.room.notice.docCard.updated')
+})
+function openLibraryDoc() {
+  const doc = libraryDoc.value
+  if (!doc) return
+  const review = !doc.created && !doc.suggestions && doc.edits.length ? { requester: '', edits: doc.edits } : undefined
+  emit('open-resource', 'doc', props.block.turn_id ?? undefined, review, { id: doc.id, title: doc.title })
+}
 
 // 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么（目录里的键）。
 const ACTION_META: Record<string, { btn: string }> = {
@@ -233,6 +253,26 @@ const ACTION_META: Record<string, { btn: string }> = {
       <div v-else-if="hiddenFiles > 0" class="sys-files-rest">
         {{ t('work.room.notice.moreFiles', { n: hiddenFiles }) }}
       </div>
+    </div>
+    <!-- 芝士在这个对话里新建或改了资料库里的一份文档：一张卡，点开在旁边看。 -->
+    <div v-else-if="libraryDoc && notice.mode === 'action'" class="sys-row action-card">
+      <div class="sys-line">
+        <span class="sys-text" v-html="renderPlain(notice.text)" />
+      </div>
+      <button type="button" class="doc-card" @click="openLibraryDoc">
+        <v-icon icon="mdi-file-document-edit-outline" size="20" class="doc-card__icon" />
+        <span class="doc-card__id">
+          <span class="t-body doc-card__name">{{ libraryDoc.title || t('work.room.doc.untitled') }}</span>
+          <span class="t-meta c-faint">{{ libraryDocState }}</span>
+        </span>
+        <span class="t-meta c-muted doc-card__action">{{
+          libraryDoc.suggestions
+            ? t('work.room.notice.viewSuggestions')
+            : libraryDoc.created || !libraryDoc.edits.length
+              ? t('work.room.notice.docCard.open')
+              : t('work.room.notice.viewChanges')
+        }}</span>
+      </button>
     </div>
     <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
     <div v-else-if="notice.mode === 'action'" class="sys-row action-card">
@@ -502,6 +542,44 @@ details[open]::details-content {
   color: var(--faint);
   margin-top: 4px;
 }
+.doc-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(380px, 100%);
+  margin-top: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.doc-card:hover {
+  background: var(--fill);
+}
+.doc-card__icon {
+  flex: none;
+  color: var(--muted);
+}
+.doc-card__id {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.doc-card__name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-card__action {
+  flex: none;
+}
+
 .doc-edit-diff {
   margin-top: 8px;
   border: 1px solid var(--line);

@@ -7,6 +7,7 @@
 // 在协同文档（`session`）上，没有一个「保存」要这一层去管。
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
+import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, Topic } from '../../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
@@ -45,6 +46,10 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    /** 项目资料库里的一份文档：大标题是它自己的，在页上就能改。 */
+    document?: PanelDocument | null
+    /** 打开着的时候被人删了。 */
+    deleted?: boolean
     /** 父层在 AI 动过之后加一：总览那一块据此重读。 */
     activityTick: number
     /** 项目 AI 队友的名字。 */
@@ -113,6 +118,8 @@ const props = withDefaults(
     restoreVersion?: (version: number, expected: number) => Promise<unknown>
   }>(),
   {
+    document: null,
+    deleted: false,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     mentionNames: undefined,
@@ -141,7 +148,15 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
+  /** 资料库文档的标题改成了这样。 */
+  (e: 'rename', title: string): void
+  (e: 'delete'): void
 }>()
+
+/** 大标题：对话的名字，或者资料库文档自己的名字（没起名时是「未命名文档」）。 */
+const docTitle = computed(() =>
+  props.document ? props.document.title || t('work.room.doc.untitled') : props.topic ? topicTitle(props.topic) : ''
+)
 
 // 评论区自己是一个组件：列表、折叠、写评论的输入框都在里面。这一层只负责把它开出来 ——
 // 抛上去的那两件事（锚点 + 引文）它自己接，因为 ref 就在这一层。
@@ -264,7 +279,7 @@ function exportDoc() {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `${(props.topic && topicTitle(props.topic)) || 'document'}.md`
+  link.download = `${docTitle.value || 'document'}.md`
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -287,7 +302,7 @@ function reviewEdits(request: DocReviewRequest) {
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
-watch([() => props.topic?.id, () => props.commentAuthor], () => {
+watch([() => props.topic?.id, () => props.document?.id, () => props.commentAuthor], () => {
   openId.value = null
   rewrite.close()
   review.close()
@@ -311,11 +326,15 @@ defineExpose({
        `.d-flex` 是 display: flex !important，会盖掉 v-show 写进去的 inline
        display: none（见 src/vShowDisplayUtilities.spec.ts）。 -->
   <div class="doc">
-    <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
+    <div v-if="!topic && !document" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-file-document-outline</v-icon>
         <div>{{ t('work.room.doc.pickTopic') }}</div>
       </div>
+    </div>
+
+    <div v-else-if="deleted" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
+      <div class="t-body">{{ t('work.room.doc.deleted') }}</div>
     </div>
 
     <div v-else-if="outdated" class="flex-grow-1 d-flex align-center justify-center">
@@ -348,6 +367,8 @@ defineExpose({
             :mention-names="mentionNames"
             :headings="outlineHeadings"
             :find-open="findOpen"
+            :deletable="!!document && !readOnly"
+            @delete="emit('delete')"
             @toggle-suggestions="toggleSuggestions"
             @toggle-comments="commentsRef?.toggle()"
             @toggle-editable="toggleEditable"
@@ -410,15 +431,27 @@ defineExpose({
             @scroll.passive="onBodyScroll"
           >
             <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
-              <!-- Large document title (Feishu Docs), = the topic title -->
-              <h1 v-if="!bare" class="doc-page__title">{{ topicTitle(topic) }}</h1>
+              <!-- Large document title (Feishu Docs): the topic's, or the library document's own. -->
+              <input
+                v-if="document && !bare"
+                :value="document.title"
+                class="doc-page__title doc-page__title--input"
+                autocomplete="off"
+                :placeholder="t('work.room.doc.titlePlaceholder')"
+                :aria-label="t('work.room.doc.titleLabel')"
+                :readonly="!editable"
+                maxlength="200"
+                @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
+                @blur="emit('rename', ($event.target as HTMLInputElement).value.trim())"
+              />
+              <h1 v-else-if="!bare" class="doc-page__title">{{ docTitle }}</h1>
               <!-- 正文本身。 -->
               <DocSurface
                 ref="surfaceRef"
                 :editable="editable"
                 :loading="loading"
                 :session="session"
-                :title="topicTitle(topic)"
+                :title="docTitle"
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
                 :mention-names="mentionNames"
@@ -559,6 +592,18 @@ defineExpose({
   line-height: 1.5;
   letter-spacing: -0.02em;
   color: var(--ink);
+}
+/* A library document's title is typed in place. */
+.doc-page__title--input {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+}
+.doc-page__title--input::placeholder {
+  color: var(--faint);
 }
 
 /* B1 Phase 2: a brief highlight when a chat action points at the doc. */
