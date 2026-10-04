@@ -9,7 +9,7 @@
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import PanelPreviewView from './PanelPreviewView.vue'
@@ -74,10 +74,15 @@ function mount(overrides: Record<string, unknown> = {}) {
   })
 }
 
+/** 正文第一段的字。正文的读法第一次用到才加载，画出来要等一下。 */
+function firstLine(md: HTMLElement): Promise<ChildNode> {
+  return waitFor(() => md.querySelector('p')!.firstChild!)
+}
+
 it('选中一段原文，定位条上写的是它在哪一节、原文是什么', async () => {
   const ui = mount()
   const md = ui.getByTestId('markdown')
-  const node = md.querySelector('p')!.firstChild!
+  const node = await firstLine(md)
   const range = document.createRange()
   range.setStart(node, 4)
   range.setEnd(node, 10)
@@ -95,9 +100,10 @@ it('选中一段原文，定位条上写的是它在哪一节、原文是什么'
 it('屏幕上换成另一份文件时，这条指认自己撤掉', async () => {
   const ui = mount()
   const md = ui.getByTestId('markdown')
+  const node = await firstLine(md)
   const range = document.createRange()
-  range.setStart(md.querySelector('p')!.firstChild!, 4)
-  range.setEnd(md.querySelector('p')!.firstChild!, 10)
+  range.setStart(node, 4)
+  range.setEnd(node, 10)
   const selection = window.getSelection()!
   selection.removeAllRanges()
   selection.addRange(range)
@@ -113,7 +119,7 @@ it('屏幕上换成另一份文件时，这条指认自己撤掉', async () => {
 /** 在「配置」那一节里选中「重试 3 次」这一段，和上面两条一样。 */
 async function selectPassage(ui: ReturnType<typeof mount>) {
   const md = ui.getByTestId('markdown')
-  const node = md.querySelector('p')!.firstChild!
+  const node = await firstLine(md)
   const range = document.createRange()
   range.setStart(node, 4)
   range.setEnd(node, 10)
