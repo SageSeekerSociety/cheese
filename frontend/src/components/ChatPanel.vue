@@ -452,6 +452,17 @@ defineExpose({ send, connected, submitQuestion })
   height: 100%;
   background: var(--surface);
 }
+/* 这一列最后一行永远是「谁在工作」那一行（MemberActivity，showComposer 时一直画着，
+   用 reserve 占住高度）。手机底部的安全区（Home 横杠 / 圆角）由它一个人出：它上面
+   那两块 —— 输入区，以及接管输入框的提问面板 —— 都把自己那份让掉。两边各留一份的话，
+   横杠上方会叠出两倍的空。 */
+.chat .composer,
+.chat :deep(.ask-group--composer) {
+  padding-bottom: 8px;
+}
+.chat .composer-activity {
+  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+}
 /* 手机外壳里输入框收成和对话同一栏（时间线那一份在 ChatTimeline）。 */
 @media (max-width: 959.98px) {
   .composer,
