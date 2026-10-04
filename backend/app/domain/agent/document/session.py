@@ -22,6 +22,7 @@ import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.document.question import (
+    HOST_WAIT_S,
     TOKEN_TTL_S,
     Bound,
     Surroundings,
@@ -86,6 +87,7 @@ def session_for(
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PROJECT),
         idle_exit_s=IDLE_EXIT_S,
         gone_after_s=GONE_AFTER_S,
+        host_wait_s=HOST_WAIT_S,
         resume_token=str(key),
         env={"CHEESE_PROJECT": str(project_id), "CHEESE_TOPIC": str(room_id)},
     )

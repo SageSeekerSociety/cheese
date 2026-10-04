@@ -202,6 +202,7 @@ const panelRef = ref<{
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
   reviewDoc?: (request: DocReviewRequest) => void
+  previewShown?: () => void
   // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
   activeTab: () => string
 } | null>(null)
@@ -257,6 +258,9 @@ const chatEvents = {
   'site-block': (block: Block) => panelRef.value?.siteBlock?.(block),
   'site-turns': (turns: Record<string, number>) => (siteTurns.value = turns),
   'state-changed': handleStateChanged,
+  // 芝士摆出来一份东西：面板立刻看一眼当前预览，不等轮询。
+  'preview-shown': () => panelRef.value?.previewShown?.(),
+
   'mention-click': handleMentionClick,
   'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
   'open-resource': handleOpenResource,

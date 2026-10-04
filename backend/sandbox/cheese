@@ -384,7 +384,8 @@ PLATFORM_TOOLS = ToolTable(
             "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
             "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
             "做完一件事顺手整理）设 suggest=true，只提建议，等人接受或拒绝；"
-            "改别人写的段落时平台也会把它转成建议。别重复提已经在待处理的建议。",
+            "这样的一轮里改了人写的段落，平台也会把它转成建议。"
+            "别重复提已经在待处理的建议。",
             {
                 "edits": {
                     "type": "array",
@@ -438,8 +439,11 @@ PLATFORM_TOOLS = ToolTable(
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
-            "交文件或地址时 artifact（清单上那一项的 id）与 new_artifact"
-            "（新名字，配 about）必给其一；交合并时两个都不给。",
+            "交文件或地址时 artifact（清单上那一项的 id，照抄，不写名字）与 "
+            "new_artifact（新名字，配 about）必给其一；交合并时两个都不给，"
+            "交的是项目那个仓库，平台自己认得出。about 说这样东西本身是什么、给谁的："
+            "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
+            "不抄 subject，抄了会被打回。",
             {
                 "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
@@ -690,6 +694,12 @@ PLATFORM_TOOLS = ToolTable(
                 "device_id": _text("自有设备的 id，只有 device 能指定"),
             },
             ["profile"],
+        ),
+        _tool(
+            "cheese_wait_machine",
+            "工作电脑还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
+            "要等机器就用它，别用 sleep：预热好的机器常常几秒就好，sleep 只会白等。"
+            "文件和命令工具本身也会等，所以只在你想先等好再做别的时候调它。",
         ),
         _tool(
             "cheese_note",
@@ -1690,6 +1700,11 @@ def _accept_request(args: dict, host) -> str:
         lines.append(f"这一版交出去的是 {args['deliver']}，已留存。")
     elif args.get("deliver_url"):
         lines.append(f"这一版交出去的是 {args['deliver_url']}。")
+    # 递卡之后的那一段（等采纳、PR 红了怎么修）在这一刻最有用，所以跟着返回说。
+    lines.append(
+        "接下来等验收人采纳。PR 的检查失败或和目标分支冲突时平台会叫你：在这条任务"
+        "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，不要为这条任务再递一张卡。"
+    )
     return "\n".join(lines)
 
 
@@ -2072,6 +2087,16 @@ def _feedback_release(args: dict, host) -> str:
     return f"{item.get('display_id') or args['feedback']} 现在没人领着，别人可以领了。"
 
 
+def _wait_machine(args: dict, host) -> str:
+    """Hands, once the room's machine is ready: one command that does nothing,
+    sent the way every file and command tool's is, so it waits exactly as they
+    do (`executor_transport.acquire`) and fails as they would."""
+    started = datetime.now(UTC)
+    host.wait_machine()
+    waited = round((datetime.now(UTC) - started).total_seconds())
+    return f"工作电脑已就绪（等了 {waited} 秒）。" if waited else "工作电脑已就绪。"
+
+
 _STEPS = {
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -2087,6 +2112,7 @@ _STEPS = {
     "cheese_feedback_get": _feedback_get,
     "cheese_feedback_claim": _feedback_claim,
     "cheese_feedback_release": _feedback_release,
+    "cheese_wait_machine": _wait_machine,
 }
 
 
@@ -2414,6 +2440,9 @@ class LocalHost:
     def read_file(self, path: str) -> bytes:
         with open(os.path.join(self.cwd, path), "rb") as stream:
             return stream.read()
+
+    def wait_machine(self) -> None:
+        """This session runs on its machine: it is there."""
 
     def sync_task(self, task_id: str) -> None:
         result = subprocess.run(

@@ -415,6 +415,20 @@ def _turn(client, room: str, text: str) -> None:
             pass
 
 
+def _new_conversation(client, room: str) -> None:
+    """The room's conversation is gone (a deploy, a recycled machine)."""
+    import uuid
+
+    from app.domain.agent_session.services import AgentSessionService
+
+    async def forget() -> None:
+        async with client.test_factory() as session:
+            await AgentSessionService(session).forget_room(uuid.UUID(room))
+            await session.commit()
+
+    client.portal.call(forget)
+
+
 def _notices(client, room: str) -> list[str]:
     blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
     return [
@@ -431,7 +445,7 @@ def test_an_unconnected_server_is_a_capability_line_and_one_room_notice(
     tid = _topic(client, pid)
 
     _turn(client, tid, "@芝士 看一下任务")
-    prompt = stub_hooks.last_system_prompt or ""
+    prompt = stub_hooks.told
     assert "tracker、search 需要项目成员在项目设置里连接" in prompt
     _turn(client, tid, "@芝士 再看一下")
     assert sorted(_notices(client, tid)) == [
@@ -440,12 +454,10 @@ def test_an_unconnected_server_is_a_capability_line_and_one_room_notice(
     ], "said once per server, not once per turn"
 
     _connect(client, pid)
+    # 没连上的服务器是会话开场时说的事：下一条新开的会话听到的是现在还没连的那些。
+    _new_conversation(client, tid)
     _turn(client, tid, "@芝士 现在呢")
-    lines = [
-        line
-        for line in (stub_hooks.last_system_prompt or "").splitlines()
-        if "远程 MCP 服务器" in line
-    ]
+    lines = [line for line in stub_hooks.told.splitlines() if "远程 MCP 服务器" in line]
     assert lines == [
         "- 项目的远程 MCP 服务器 search 需要项目成员在项目设置里连接，"
         "这个会话里用不了它们的工具。"

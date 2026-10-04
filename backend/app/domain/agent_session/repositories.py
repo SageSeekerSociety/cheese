@@ -67,6 +67,17 @@ class AgentSessionRepository:
             values={"resume_token": resume_token},
         )
 
+    async def save_told(
+        self, *, topic_id: uuid.UUID, agent_handle: str, harness: str, told: dict
+    ) -> None:
+        """Record what project state this agent's conversation has been told."""
+        await self._upsert(
+            topic_id=topic_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            values={"told": told},
+        )
+
     async def save_place(
         self,
         *,

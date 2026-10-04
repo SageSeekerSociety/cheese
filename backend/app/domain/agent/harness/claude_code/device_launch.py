@@ -31,6 +31,7 @@ from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.place import SEATS_DIR, seat_name
+from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
 from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # --- the version this session is pinned to ----------------------------------
@@ -132,20 +133,44 @@ echo down
 """
 
 
-def project_skill_prune(shipped: list[str]) -> str:
+def platform_skill_prune(shipped: list[str], project: list[str]) -> str:
+    """Shell that removes the platform skills this seat got last time and is no
+    longer shipped, then records what ships now.
+
+    A seat's config directory is the platform's, but files are only ever
+    written into it, so a retired skill would stay listed to the agent for good.
+    A seat with no list yet is taken to have the skills shipped before there was
+    one. A project skill of the same name is the project's and stays."""
+    listed = '"$CLAUDE_CONFIG_DIR/skills/.cheese-platform-skills"'
+    return (
+        f"ship={shlex.quote(' '.join(shipped))}\n"
+        f"own={shlex.quote(' '.join(project))}\n"
+        'mkdir -p "$CLAUDE_CONFIG_DIR/skills"\n'
+        f"[ -f {listed} ] || printf '%s\\n' "
+        f"{shlex.join(SKILLS_SHIPPED_BEFORE_THE_LIST)} > {listed}\n"
+        "while IFS= read -r stale; do\n"
+        '  case "$stale" in ""|*/*|.|..) continue ;; esac\n'
+        '  case " $ship $own " in *" $stale "*) ;; '
+        '*) rm -rf "$CLAUDE_CONFIG_DIR/skills/$stale" ;; esac\n'
+        f"done < {listed}\n"
+        f"printf '%s\\n' {shlex.join(shipped)} > {listed}"
+    )
+
+
+def project_skill_prune(shipped: list[str], platform: list[str]) -> str:
     """Shell that removes the project skills a machine got last time and no
     longer ships, then records what ships now. Nothing at all for a project
-    that never had one."""
+    that never had one. The platform's own folders are never touched here."""
     listed = '"$CLAUDE_CONFIG_DIR/skills/.cheese-project-skills"'
     return (
         f"keep={shlex.quote(' '.join(shipped))}\n"
+        f"platform={shlex.quote(' '.join(platform))}\n"
         f'if [ -n "$keep" ] || [ -f {listed} ]; then\n'
         '  mkdir -p "$CLAUDE_CONFIG_DIR/skills"\n'
         f"  touch {listed}\n"
         "  while IFS= read -r stale; do\n"
-        '    case "$stale" in ""|*/*|.|..|documents|cheese|cheese-docs|chat-detail)'
-        " continue ;; esac\n"
-        '    case " $keep " in *" $stale "*) ;; '
+        '    case "$stale" in ""|*/*|.|..) continue ;; esac\n'
+        '    case " $keep $platform " in *" $stale "*) ;; '
         '*) rm -rf "$CLAUDE_CONFIG_DIR/skills/$stale" ;; esac\n'
         f"  done < {listed}\n"
         f"  printf '%s\\n' {shlex.join(shipped)} > {listed}\n"
@@ -216,7 +241,13 @@ def launch_holes(
 export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
-    prune = project_skill_prune(project_skill_names(project_id))
+    platform = shipped_skill_names()
+    project = project_skill_names(project_id)
+    prune = (
+        platform_skill_prune(platform, project)
+        + "\n"
+        + project_skill_prune(project, platform)
+    )
     # Compressed: written out as heredocs the skills alone outgrew what one
     # shell argument may hold, and they only grow. Base64 has no quote in it.
     skills = base64.b64encode(
@@ -301,8 +332,6 @@ WEBFETCH_PRELOAD="$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"
 # Quote the whole first option: Bun skips quoted paths after another option
 # and rejects quotes after the equals sign in --preload="path".
 export BUN_OPTIONS="\\"--preload=$WEBFETCH_PRELOAD\\"${{BUN_OPTIONS:+ $BUN_OPTIONS}}"
-# Chat guidance is now in the system prompt. Retire the generated skill on reuse.
-rm -f "$CLAUDE_CONFIG_DIR/skills/cheese-chat/SKILL.md"
 {skill_setup}
 {ca_block}
 # This seat's own directory, and everything below that belongs to one session

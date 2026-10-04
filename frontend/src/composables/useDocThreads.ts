@@ -16,7 +16,7 @@ import type {
 import { onBeforeUnmount, reactive, watch } from 'vue'
 
 import { ApiError } from '../api'
-import { listDocThreads, writeDocThread } from '../api/docThreads'
+import { listDocThreads, stopDocThreadAgent, writeDocThread } from '../api/docThreads'
 import { listenToComments } from '../lib/docCommentSignals'
 import { myId } from '../me'
 
@@ -120,6 +120,9 @@ export function useDocThreads(topic: () => string | null) {
       }
       await refresh()
       return undefined
+    },
+    stopAgent: async (id) => {
+      if (room) await stopDocThreadAgent(room, id)
     },
   }
   function reset() {

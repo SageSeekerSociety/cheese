@@ -6,7 +6,7 @@ the doc and the decision log all survive, but the half-finished checklist does
 not — and once a session is running, its own history is the answer.
 """
 
-from app.domain.agent.chat import _progress_lines, _session_opening_lines
+from app.domain.agent.prompt import _progress_lines, _session_opening_lines
 
 ITEMS = [
     {"id": "1", "subject": "核实 issue 论断", "status": "completed"},

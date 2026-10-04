@@ -63,6 +63,10 @@ class GatewayModel:
     priced: bool
     # The model's tier (``cheese_tier``): which plans may use it.
     tier: str = "included"
+    # False when the route loses the system-role messages Claude Code puts in
+    # the middle of a conversation (``supports_mid_conversation_system: false``,
+    # set by hand after measuring). Unmarked routes keep Claude Code's default.
+    mid_conversation_system: bool = True
 
 
 def price_is_set(*sources: object) -> bool:
@@ -150,6 +154,10 @@ class LlmGateway:
             someone to pick a model we route to on their behalf.
           - ``cheese_label``: what to call it; the id when absent.
 
+        One LiteLLM key is read as well: ``supports_mid_conversation_system``
+        set to ``false`` marks a route that loses mid-conversation system
+        messages, and Claude Code is launched without them on it.
+
         A model the gateway reports as ``blocked`` is never selectable, however
         ``cheese_selectable`` is set: the gateway refuses to route it, so
         offering it would hand someone a route that cannot be called.
@@ -190,6 +198,9 @@ class LlmGateway:
                     ),
                     priced=price_is_set(params, info),
                     tier=tier if isinstance(tier, str) and tier else "included",
+                    mid_conversation_system=(
+                        info.get("supports_mid_conversation_system") is not False
+                    ),
                 )
             )
         return out

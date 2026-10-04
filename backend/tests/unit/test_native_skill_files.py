@@ -99,7 +99,8 @@ def test_skill_md_only_points_at_files_that_travel():
 def test_the_specialist_files_are_named_from_the_index():
     """参考文件是按需读的，索引里没有的那份永远不会被读到。"""
     shipped = _shipped()
-    index = shipped["skills/documents/SKILL.md"]
     for name in shipped:
         if "/references/" in name:
+            skill = name.split("/references/")[0]
+            index = shipped[f"{skill}/SKILL.md"]
             assert Path(name).name in index, f"{name} 在 SKILL.md 里没有入口"

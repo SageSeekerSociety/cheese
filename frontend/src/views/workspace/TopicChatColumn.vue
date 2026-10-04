@@ -45,6 +45,9 @@ const emit = defineEmits<{
   // 谁在这个房间里忙：现场那一格画同一份。
   (e: 'activity', lines: MemberActivityLine[]): void
   (e: 'state-changed', payload: unknown): void
+  // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
+  // 那一格又回到等轮询。
+  (e: 'preview-shown'): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string, taskId?: string | null): void
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
@@ -99,6 +102,7 @@ defineExpose({
       @site-turns="emit('site-turns', $event)"
       @activity="emit('activity', $event)"
       @state-changed="emit('state-changed', $event)"
+      @preview-shown="emit('preview-shown')"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path, taskId) => emit('open-file', path, taskId)"
       @open-resource="

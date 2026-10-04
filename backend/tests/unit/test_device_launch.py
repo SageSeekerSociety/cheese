@@ -817,9 +817,14 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     before = {path: path.read_bytes() for path in protected}
     project_entries = set(work.rglob("*"))
     original_entries = set(owner.iterdir())
-    previous_chat_skill = seat_of(session) / ".claude/skills/cheese-chat/SKILL.md"
-    previous_chat_skill.parent.mkdir(parents=True)
-    previous_chat_skill.write_text("Previous generated chat guide\n")
+    # Skills the platform shipped before and no longer does.
+    retired = [
+        seat_of(session) / ".claude/skills" / name / "SKILL.md"
+        for name in ("cheese-chat", "chat-detail", "cheese-writing")
+    ]
+    for skill in retired:
+        skill.parent.mkdir(parents=True)
+        skill.write_text("A guide this session no longer gets\n")
     log = tmp_path / "curl.log"
     (tmp_path / "bin/curl").write_text(_fetching_curl(log))
     (tmp_path / "bin/curl").chmod(0o755)
@@ -832,9 +837,9 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     assert set(owner.iterdir()) == original_entries | {owner / ".cheese"}
     assert set(work.rglob("*")) == project_entries
     assert (owner / ".cheese/claude/versions" / PIN).is_file()
-    for name in ("cheese-docs",):
+    for name in ("cheese", "cheese-docs"):
         assert (seat_of(session) / ".claude/skills" / name / "SKILL.md").is_file()
-    assert not previous_chat_skill.exists()
+    assert not any(skill.exists() for skill in retired)
 
 
 def test_the_session_the_runner_starts_holds_no_claude_credential(tmp_path):

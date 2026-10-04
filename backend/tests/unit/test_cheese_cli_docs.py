@@ -1,18 +1,14 @@
-"""Drift guard: the platform skill's two tables vs. what actually exists.
+"""Drift guard: what the platform skill names vs. what actually exists.
 
-芝士 can only act on what the injected skill tells it exists. When the two
-disagree the agent walks into a wall it cannot diagnose — observed 2026-08-10,
-where SKILL.md documented a command in mandatory terms while no such subcommand
-existed yet, and conversely `gh-token` was implemented but documented nowhere.
+芝士 can only act on what it is told exists. When the two disagree the agent
+walks into a wall it cannot diagnose — observed 2026-08-10, where SKILL.md
+documented a command in mandatory terms while no such subcommand existed yet,
+and conversely `gh-token` was implemented but documented nowhere.
 
-SKILL.md's tools section has two tables, one per way of calling:
-
-- the MCP table writes each tool's signature — `| \\`cheese_note(thread, content)\\`
-  | … |` — and must name exactly the session-side table (`PLATFORM_TOOLS`);
-- the CLI table writes the command line itself — `| \\`cheese sync [--task …]\\` |`
-  — and must name exactly the CLI's subcommands.
-
-A tool or subcommand added without a row (or a row without one) fails here.
+The platform tools describe themselves: each carries its own description into
+the session, so the skill does not list them. A command-line subcommand has no
+such description, so the skill's command table must name exactly the CLI's
+subcommands, and every tool the skill or its references mention must exist.
 """
 
 import argparse
@@ -24,9 +20,9 @@ from pathlib import Path
 _SANDBOX = Path(__file__).resolve().parents[2] / "sandbox"
 _CHEESE = _SANDBOX / "cheese"
 _SKILL = _SANDBOX / "skills" / "cheese" / "SKILL.md"
+_REFERENCES = _SANDBOX / "skills" / "cheese" / "references"
 
-#: One row may document a pair of tools (`cheese_lock(…)` / `cheese_unlock(…)`).
-_TOOL = re.compile(r"`(cheese_[a-z_]+|chat_[a-z]+|todo_write|platform_request)\(")
+_TOOL = re.compile(r"`(cheese_[a-z_]+)")
 _COMMAND_ROW = re.compile(r"^\|\s*`cheese ([a-z][a-z-]*)")
 
 
@@ -47,12 +43,10 @@ def _rows():
     ]
 
 
-def _documented_tools() -> set[str]:
-    names = set()
-    for line in _rows():
-        first_cell = line.split("|")[1]
-        names.update(_TOOL.findall(first_cell))
-    return names
+def _mentioned_tools() -> set[str]:
+    texts = [_SKILL.read_text(encoding="utf-8")]
+    texts += [p.read_text(encoding="utf-8") for p in sorted(_REFERENCES.glob("*.md"))]
+    return {name for text in texts for name in _TOOL.findall(text)}
 
 
 def _documented_commands() -> set[str]:
@@ -66,15 +60,12 @@ def _implemented_commands() -> set[str]:
     return {name for name in groups[0].choices if not name.startswith("_")}
 
 
-def test_the_mcp_table_is_the_session_side_tool_table():
+def test_every_tool_the_skill_mentions_is_served():
     served = set(_load_cli().PLATFORM_TOOLS.names())
-    documented = _documented_tools()
-    assert documented - served == set(), (
-        f"SKILL.md promises tools nobody serves: {sorted(documented - served)}"
-    )
-    assert served - documented == set(), (
-        f"tools SKILL.md never mentions, which 芝士 will never use: "
-        f"{sorted(served - documented)}"
+    mentioned = _mentioned_tools()
+    assert mentioned, "the skill names no platform tool"
+    assert mentioned - served == set(), (
+        f"the skill names tools nobody serves: {sorted(mentioned - served)}"
     )
 
 

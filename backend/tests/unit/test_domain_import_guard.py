@@ -65,9 +65,16 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
-        ("app.domain.agent.chat", "app.domain.review.repositories"),
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
+        # agent.room.turn 是从 agent.chat 里拆出来的那一块（一轮的组装与执行：
+        # `_assemble_turn`、`_converse_impl`）。它摸的三个 repository 正是原先
+        # chat.py 那一组里跟着它走的：读写 block、读项目表、读话题表。拆模块没有
+        # 新增跨包的边，只是发起方从 chat.py 换成了 room/turn.py，所以按同一笔债
+        # 入账。
+        ("app.domain.agent.room.turn", "app.domain.block.repositories"),
+        ("app.domain.agent.room.turn", "app.domain.project.repositories"),
+        ("app.domain.agent.room.turn", "app.domain.topic.repositories"),
         # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
         # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
         # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`

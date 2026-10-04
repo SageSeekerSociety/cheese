@@ -32,6 +32,9 @@ from app.core.sandbox_auth import mint_delegated_credential
 from app.core.sentences import say
 from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.document.machine import machine_to_read
+from app.domain.agent.harness.prompt import WRITING
+from app.domain.agent.session_host.contract import SessionRef
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent.skills import load_skills
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
@@ -50,6 +53,10 @@ from app.domain.user.services import user_by_handle
 ANSWERING_PER_PROJECT = 4
 #: How long a question waits for its turn before it is given up on.
 WAIT_S = 600.0
+#: How long a question waits for the session host to have memory for its
+#: session. Sessions that finish answering exit within a few minutes, which
+#: is what frees the memory; a host still full after that is overloaded.
+HOST_WAIT_S = 180.0
 #: How long one answer may take.
 ANSWER_S = 300.0
 #: How much longer than that a question's credential lasts, so a tool call
@@ -75,6 +82,35 @@ def _pool(project_id: uuid.UUID) -> Pool:
 async def asked(redis: Redis, key: uuid.UUID | str) -> bool:
     """Is a question of this conversation waiting or being answered now?"""
     return bool(await redis.exists(_hold_key(key)))
+
+
+def _stop_key(key: uuid.UUID | str) -> str:
+    return f"doc-agent:stop:{key}"
+
+
+async def stop(
+    redis: Redis, sessions: SessionHost, key: uuid.UUID, ref: SessionRef
+) -> None:
+    """Stop the conversation's question: its wait for a turn or for the
+    session host, or the answer being written (its session is ``ref``)."""
+    await redis.set(_stop_key(key), "1", ex=int(WAIT_S + HOST_WAIT_S))
+    if await asked(redis, key):
+        await sessions.stop(ref)
+
+
+def stopped(redis: Redis, key: uuid.UUID) -> Callable[[], Awaitable[bool]]:
+    """Whether the conversation's question was stopped, for whoever waits on
+    it. A question ends by clearing it (``unstop``), so the next one starts
+    unstopped and a stop said while one runs is not cleared by the next."""
+
+    async def asked_to_stop() -> bool:
+        return bool(await redis.exists(_stop_key(key)))
+
+    return asked_to_stop
+
+
+async def unstop(redis: Redis, key: uuid.UUID) -> None:
+    await redis.delete(_stop_key(key))
 
 
 async def take_turn(
@@ -279,9 +315,13 @@ def system_prompt(
     machine = _MACHINE.format(workspace=workspace) if workspace else _NO_MACHINE
     parts = [
         _RULES.format(agent=agent_name, place=place, answer=answer, machine=machine),
-        # Every session here writes into a document, so the writing guide is
-        # always in the prompt rather than a skill the agent may not load.
-        load_skills(["doc-writing"]),
+        # Every session here writes into a document, so the writing rules and
+        # the whole document guide are in the prompt rather than a skill the
+        # agent may not load. The guide points at its blocks reference by the
+        # path it has as a skill; here that file follows under the same name.
+        WRITING,
+        load_skills(["cheese-docs"]),
+        "## references/blocks.md\n\n" + load_skills(["doc-blocks"]),
     ]
     if charter:
         parts.append(f"## 项目章程\n<章程>\n{charter}\n</章程>")

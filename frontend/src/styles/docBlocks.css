@@ -625,7 +625,11 @@ div[data-footnote]::before {
    borders, so without this it reads as loose words. */
 
 :is(.doc-prose, .doc-reading) .tableWrapper {
+  max-width: 100%;
   margin: 12px 0;
+  /* A wide table scrolls inside its own box instead of pushing the column wider
+     than the reading width. The chat column is --page-w-read; without this the
+     row would stretch and take the reader's line width with it. */
   overflow-x: auto;
 }
 
