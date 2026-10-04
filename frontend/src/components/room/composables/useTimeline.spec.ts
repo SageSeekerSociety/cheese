@@ -140,3 +140,43 @@ describe('窗口涨过上限', () => {
     expect(ids(timeline.newest().blocks)).toEqual(['n0', 'n1', 'n2'])
   })
 })
+
+// 房间里事件常比消息多：一串不露面的块（`in_room:false` 的事件、前端错误、不在白名单
+// 里的块）画不出任何一行，却和消息一样占窗口额度。`renders` 把画不出来的挡在窗口外，
+// 上限数的就是画得出来的那些，封顶裁下的「最新的一截」也不会再是一屏空的。
+describe('不露面的块不占窗口', () => {
+  const inRoom = (x: Block) => (x as { meta?: { in_room?: boolean } }).meta?.in_room !== false
+  const hidden = (id: string): Block => ({ id, meta: { in_room: false } }) as unknown as Block
+
+  it('不露面的块根本不进窗口', () => {
+    const timeline = useTimeline({ renders: inRoom })
+    timeline.show({ blocks: [b('v0'), hidden('h0'), hidden('h1'), b('v1')], hasMore: true })
+
+    expect(ids(timeline.messages.value)).toEqual(['v0', 'v1'])
+  })
+
+  it('实时推来的不露面事件不收进窗口，也不落进背后那一段', () => {
+    const timeline = useTimeline({ renders: inRoom })
+    timeline.show({ blocks: [b('v0')], hasMore: true })
+
+    expect(timeline.append(hidden('h0'))).toBe('known')
+    expect(ids(timeline.messages.value)).toEqual(['v0'])
+  })
+
+  it('回到最新落回最新那条看得见的，不被一串不露面的事件挤掉', () => {
+    // 最新那条看得见的消息（v0）后面跟着一页不露面的事件。
+    const timeline = useTimeline({ renders: inRoom })
+    timeline.show({ blocks: [b('v0'), ...run(50, 'h').map((x) => hidden(x.id))], hasMore: true })
+
+    // 往上翻：可见的历史一页页补到顶上。差这么一点，使裁下的「最新的一截」正好是
+    // 不露面那 50 条——不挡的话，v0 会落在留下的一截里，被挪到背后那截顶掉。
+    timeline.prepend(run(599, 'k'), true)
+    timeline.capNewest()
+
+    timeline.backToNewest()
+
+    // 回来时最新那条看得见的（v0）必须还在，且排在末位。
+    expect(ids(timeline.messages.value)).toContain('v0')
+    expect(ids(timeline.messages.value).at(-1)).toBe('v0')
+  })
+})

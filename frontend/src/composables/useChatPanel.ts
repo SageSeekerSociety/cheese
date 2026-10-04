@@ -55,7 +55,7 @@ import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnch
 import { announceComments } from '../lib/docCommentSignals'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
-import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
+import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
@@ -139,7 +139,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
   )
 
   // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline。
-  const timeline = useTimeline()
+  // 只装画得出来的块：房间里事件常比消息多，不露面的块要是也占窗口额度，封顶时会
+  // 挤满「最新的一截」，让「回到最新」换上一屏空的。见 rendersInRoom。
+  const timeline = useTimeline({ renders: rendersInRoom })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
 

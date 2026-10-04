@@ -26,7 +26,19 @@ import { capWindow, joinNewest, placeBlock, prependOlder } from '../../../lib/bl
  */
 export type Landing = 'shown' | 'held' | 'known' | 'above'
 
-export function useTimeline() {
+/**
+ * `renders` 说一块落进这段时画不画得出来。房间里那些不露面的块（`in_room:false` 的
+ * 事件、前端错误、不在白名单里的）画不出任何一行，却和消息一样占窗口额度：上限一满，
+ * 它们会被当成「最新的一截」收进背后，让「回到最新」换上一屏什么都看不见的块，把最新
+ * 那条看得见的消息挤丢。所以只把画得出来的块装进窗口，上限数的就是画得出来的那些。
+ * 缺省是都画（站内转录等自己带块的地方不受影响）。
+ */
+export interface TimelineOptions {
+  renders?: (block: Block) => boolean
+}
+
+export function useTimeline(options: TimelineOptions = {}) {
+  const renders = options.renders ?? (() => true)
   /** 显示着的块，从旧到新。 */
   const messages = ref<Block[]>([])
   /** 显示的这一段上面还有更早的块。 */
@@ -40,7 +52,7 @@ export function useTimeline() {
   function show(window: BlockWindow) {
     newestHeld = null
     hasNewer.value = false
-    messages.value = window.blocks
+    messages.value = window.blocks.filter(renders)
     hasMore.value = window.hasMore
   }
 
@@ -60,6 +72,7 @@ export function useTimeline() {
 
   /** 新来的一块按时间落进最新一段。停在中间时它收在背后，不显示。 */
   function append(block: Block): Landing {
+    if (!renders(block)) return 'known'
     if (newestHeld) {
       if (newestHeld.blocks.some((m) => m.id === block.id)) return 'known'
       const placed = placeBlock(newestHeld, block)
@@ -95,7 +108,7 @@ export function useTimeline() {
 
   /** 往上翻到的那一页拼到显示的这一段顶上。 */
   function prepend(older: Block[], more: boolean) {
-    const next = prependOlder(current(), older, more)
+    const next = prependOlder(current(), older.filter(renders), more)
     messages.value = next.blocks
     hasMore.value = next.hasMore
   }
@@ -129,15 +142,16 @@ export function useTimeline() {
    * 接上了，就直接合成一段最新的。
    */
   function showMiddle(middle: BlockWindow, reachedNewest: boolean) {
+    const fresh: BlockWindow = { blocks: middle.blocks.filter(renders), hasMore: middle.hasMore }
     const held = newest()
-    const joined = joinNewest(middle, held, reachedNewest)
+    const joined = joinNewest(fresh, held, reachedNewest)
     if (joined) {
       show(joined)
       return
     }
     newestHeld = held
-    messages.value = middle.blocks
-    hasMore.value = middle.hasMore
+    messages.value = fresh.blocks
+    hasMore.value = fresh.hasMore
     hasNewer.value = true
   }
 
@@ -145,7 +159,10 @@ export function useTimeline() {
   function appendNewer(page: Block[], reachedNewest: boolean) {
     if (!newestHeld) return
     const known = new Set(messages.value.map((m) => m.id))
-    const grown = { blocks: [...messages.value, ...page.filter((m) => !known.has(m.id))], hasMore: hasMore.value }
+    const grown = {
+      blocks: [...messages.value, ...page.filter((m) => !known.has(m.id) && renders(m))],
+      hasMore: hasMore.value,
+    }
     const joined = joinNewest(grown, newestHeld, reachedNewest)
     if (joined) show(joined)
     else messages.value = grown.blocks
