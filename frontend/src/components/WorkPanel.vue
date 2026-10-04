@@ -35,6 +35,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
+import { whenIdle } from '../lib/idle'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
@@ -447,7 +448,13 @@ const panelTabs = computed<PanelTab[]>(() =>
   markPreviewSeen(null)
   if (id) {
     void pollPreviewPointer({ seen: true })
-    void pollWorkSummary({ seen: true })
+    // 这一条要等服务端算（几秒），而它只决定「改动」那一格的深浅、以及该开在哪一格。
+    // 推到首屏画完、浏览器空下来再问：它不该和真正要把内容画出来的那些请求抢同一条
+    // 网络和主线程。角标随后补上，逻辑不受影响（`summaryLoaded` 那只看的是有没有回过）。
+    const openedId = id
+    whenIdle(() => {
+      if (props.topic?.id === openedId) void pollWorkSummary({ seen: true })
+    })
     void pollThreads()
   }
 }
