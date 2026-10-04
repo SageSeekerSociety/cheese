@@ -15,6 +15,7 @@ import { nextTick, ref, watch } from 'vue'
 import { ApiError, listBlocks } from '../api'
 import { setCachedWindow } from '../lib/blockCache'
 import { PAGE_SIZE, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
+import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
 
 import { t } from '@/i18n'
 
@@ -33,6 +34,8 @@ export interface ChatPagingDeps {
   rememberScroll: (topicId: string | undefined) => void
   scrollToMessage: (id: string, behavior?: 'smooth' | 'auto') => void
   scrollToBottom: () => void
+  /** 首屏分批挂行还没挂完（useRowBatch）：顶上还有没挂的行，滚到那儿不是真的到顶。 */
+  rowsPending?: () => boolean
 }
 
 export function useChatPaging(deps: ChatPagingDeps) {
@@ -49,6 +52,7 @@ export function useChatPaging(deps: ChatPagingDeps) {
     scrollToMessage,
     scrollToBottom,
   } = deps
+  const rowsPending = deps.rowsPending ?? (() => false)
   const { messages, hasMore, hasNewer } = timeline
 
   // --- paging back through history --------------------------------------------
@@ -63,7 +67,7 @@ export function useChatPaging(deps: ChatPagingDeps) {
   async function fillViewportIfNeeded() {
     await nextTick()
     const el = scrollRef.value
-    if (!el || !hasMore.value || loadingOlder.value) return
+    if (!el || !hasMore.value || loadingOlder.value || rowsPending()) return
     if (el.scrollHeight > el.clientHeight) return
     await loadOlder()
   }
@@ -88,11 +92,20 @@ export function useChatPaging(deps: ChatPagingDeps) {
       // the timeline jumps out from under the reader (and re-triggers this
       // loader). Not when the request left: a flick keeps scrolling while it is
       // in flight, and the position from back then would pull the reader back.
+      //
+      // The rows carry content-visibility (room-row.css), so an off-screen row
+      // reports its ESTIMATED height, not its real one — measuring in that state
+      // would compensate by the wrong amount and the timeline would jump. The
+      // measure frame lays the window out at real heights (including the page we
+      // are about to add) for exactly this read-and-compensate; see
+      // lib/contentVisibility.
+      beginMeasuredLayout(el)
       const before = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight }
       timeline.prepend(payload.data, payload.has_more)
       await nextTick()
       const sc = scrollRef.value
       if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
+      endMeasuredLayout(el)
       // Trim AFTER the compensation, never before: the rows this drops are below
       // the viewport, so removing them moves nothing on screen — but they shrink
       // scrollHeight, and compensating with a scrollHeight that already excludes
@@ -144,7 +157,11 @@ export function useChatPaging(deps: ChatPagingDeps) {
     atBottom.value = false
     await nextTick()
     if (timeline.find(id)) {
+      // scrollIntoView 落点也算在真实高度上：这一行和它中间那些行带着
+      // content-visibility，报的是估计高度，不铺开的话落点会差（见 lib/contentVisibility）。
+      beginMeasuredLayout(scrollRef.value)
       scrollToMessage(id)
+      endMeasuredLayout(scrollRef.value)
       return
     }
     const tid = topic()?.id
@@ -156,8 +173,10 @@ export function useChatPaging(deps: ChatPagingDeps) {
       timeline.showMiddle({ blocks: payload.data, hasMore: !!payload.has_more }, !payload.has_newer)
       if (!hasNewer.value) setCachedWindow(tid, timeline.newest())
       await nextTick()
-      // 整段换过，没有「从哪滑过去」可言：直接落到那一行。
+      // 整段换过，没有「从哪滑过去」可言：直接落到那一行。落点同样按真实高度量。
+      beginMeasuredLayout(scrollRef.value)
       scrollToMessage(id, 'auto')
+      endMeasuredLayout(scrollRef.value)
       void fillViewportIfNeeded()
     } catch (e) {
       errorMsg.value =
@@ -184,7 +203,8 @@ export function useChatPaging(deps: ChatPagingDeps) {
   function onTimelineScroll() {
     rememberScroll(topic()?.id)
     const el = scrollRef.value
-    if (el && shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value })) void loadOlder()
+    if (el && !rowsPending() && shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value }))
+      void loadOlder()
     const fromBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight : Infinity
     if (shouldLoadNewer(fromBottom, { hasNewer: hasNewer.value, loading: loadingNewer.value })) void loadNewer()
   }

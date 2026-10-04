@@ -734,7 +734,9 @@
         "pendingReviewCount": "To review",
         "submissionConversionRate": "Submit rate",
         "successRate": "Success rate"
-      }
+      },
+      "empty": "No tasks",
+      "tableLabel": "Task list"
     },
     "publishers": {
       "export": "Export publisher data",
@@ -763,7 +765,9 @@
         "bestRate": "Best success rate",
         "mostClaims": "Most claims",
         "claims": "{n} claims"
-      }
+      },
+      "empty": "No publishers",
+      "tableLabel": "Publisher list"
     },
     "participants": {
       "approval": "Claim review",

@@ -46,7 +46,7 @@
         :error="publishedError"
         @retry="loadPublishedTasks"
       />
-      <v-empty-state
+      <BaseEmptyState
         v-else-if="!visiblePublishedTasks.length"
         icon="mdi-pencil-box-multiple-outline"
         :title="t('spaces.detail.tasks.noTasks')"
@@ -66,10 +66,12 @@
         :has-more="hasMore"
         :initial-loading="refreshing"
         :is-empty="tasks.length === 0"
+        :shown="tasks.length"
+        :total="total"
         @load-more="loadMore"
       >
         <template #empty>
-          <v-empty-state icon="mdi-trophy" :title="t('spaces.detail.tasks.noTasks')"></v-empty-state>
+          <BaseEmptyState icon="mdi-trophy" :title="t('spaces.detail.tasks.noTasks')" />
         </template>
         <TaskRow v-for="task in tasks" :key="task.id" :task="task" :query="route.query" />
       </infinite-scroll>
@@ -96,6 +98,7 @@ import TaskListToolbar from './TaskListToolbar.vue'
 import TaskRow from './TaskRow.vue'
 
 import { useCommands } from '@/commands'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
@@ -223,6 +226,7 @@ const {
   hasMore,
   refreshing,
   loadingMore,
+  total,
 } = usePaging<Task, QueryOptions, string>(
   async (pageStart, queryOptions) => {
     if (!queryOptions || !queryOptions.space) return createEmptyResult<Task, string>()

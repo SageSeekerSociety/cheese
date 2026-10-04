@@ -208,7 +208,8 @@
     "noTasks": "No tasks",
     "site": {
       "agents": {
-        "all": "All"
+        "all": "All",
+        "label": "View by teammate"
       },
       "output": {
         "show": "Output ({size})",
@@ -290,7 +291,13 @@
       "wholeProject": "Whole project",
       "usageLine": "{turns} runs · {tokens} tokens · {cost}",
       "usageSplit": "Input {input} · Output {output}",
-      "noUsage": "No data"
+      "noUsage": "No data",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "muted": "Muted",
+      "muteFailed": "Couldn't save the mute setting",
+      "markAllRead": "Mark all as read",
+      "markAllReadFailed": "Couldn't mark everything as read"
     },
     "archiveNotice": {
       "done": "Archived",
@@ -974,7 +981,8 @@
       "waitingConnection": "Waiting for connection",
       "today": "Today",
       "yesterday": "Yesterday",
-      "topicFallback": "Topic"
+      "topicFallback": "Topic",
+      "liveNew": "{name}: {text}"
     },
     "header": {
       "disconnected": "Disconnected",
@@ -1182,7 +1190,10 @@
     "noAssignee": "No assignee",
     "queued": "Queued",
     "running": "Running",
-    "made": "What was made"
+    "made": "What was made",
+    "findPlaceholder": "Find by title (/)",
+    "findLabel": "Find tasks on the board by title",
+    "findNone": "No task titles in this column contain “{text}”"
   },
   "publishedSite": {
     "revisionChanged": "The project's accepted version changed. Check it, then publish",
@@ -1757,20 +1768,20 @@
     "drop": "Discard",
     "history": "Version history",
     "delete": "Delete",
-    "loadFailed": "Couldn't load methods",
+    "loadFailed": "Couldn't load",
     "confirmFailed": "Couldn't confirm",
     "discardFailed": "Couldn't discard the changes",
     "historyFailed": "Couldn't load the version history",
     "restoreFailed": "Couldn't restore",
     "deleteFailed": "Couldn't delete",
-    "newTitle": "New method",
+    "newTitle": "New skill",
     "editTitle": "Edit \"{title}\"",
-    "roomRequired": "Choose a room first. The method is filed under it and the whole project can use it",
+    "roomRequired": "Choose a room first",
     "saveFailed": "Couldn't save",
     "refresh": "Refresh",
     "create": "New",
-    "intro": "When a piece of work turns out well, Cheese can write it up as a method: what inputs it needs, which steps and rules to follow, and what to deliver. The confirmed version goes into every later room in this project, and you can use it by saying \"do one with the weekly report method\" in a room",
-    "loading": "Loading methods",
+    "intro": "When a piece of work turns out well, Cheese can write it up as a skill: what inputs it needs, which steps and rules to follow, and what to deliver. The confirmed version goes into every later room in this project, and you can use it by saying \"do one with the weekly report skill\" in a room",
+    "loading": "Loading skills",
     "awaiting": "Awaiting your confirmation",
     "proposedBy": "{name} · Written up by {user}",
     "changeOf": "· Changes to version {revision}, which is in use",
@@ -1786,8 +1797,8 @@
     "listSeparator": ", ",
     "confirm": "Confirm and save",
     "confirmedBy": "{name} · Version {revision} · Confirmed by {user} on {time}",
-    "empty": "No saved methods yet",
-    "emptyHint": "After a piece of work goes well, say \"save how we did this as a method\" in the room",
+    "empty": "No skills",
+    "emptyHint": "After a piece of work goes well, say \"save how we did this as a skill\" in the room",
     "save": "Save",
     "form": {
       "room": "Room to file it under",
@@ -1810,7 +1821,21 @@
     "restore": "Restore this version",
     "close": "Close",
     "deleteTitle": "Delete \"{title}\"",
-    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too"
+    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
+    "proposal": {
+      "byline": "{name} proposes a new skill",
+      "bylineEdit": "{name} proposes a change to a skill",
+      "reason": "Reason for the change",
+      "taught": "Based on",
+      "accepted": "This time",
+      "related": "How it differs from existing skills",
+      "absorbs": "Saving deletes these memories: {memories}",
+      "expand": "Show full text",
+      "collapse": "Hide full text",
+      "decline": "Don't save",
+      "saved": "Saved \"{title}\"",
+      "open": "View"
+    }
   },
   "nodeBoard": {
     "loadFailed": "Couldn't load machine status",

@@ -20,6 +20,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 
 const props = defineProps<{
   /** 现在勾着的编号。顺序照旧，新勾的接在后面 —— 勾一下不该把已有的顺序洗一遍。 */
@@ -143,9 +144,13 @@ function toggle(id: number, on: boolean) {
 
       <div v-if="open" class="material-picker__menu">
         <div class="material-picker__subhead">{{ t('spaces.teaching.fields.materialsLibrary') }}</div>
-        <p v-if="selectable.length === 0" class="material-picker__empty" data-testid="teaching-materials-empty">
-          {{ t('spaces.teaching.fields.materialsEmpty') }}
-        </p>
+        <BaseEmptyState
+          v-if="selectable.length === 0"
+          size="inline"
+          class="material-picker__empty"
+          data-testid="teaching-materials-empty"
+          :title="t('spaces.teaching.fields.materialsEmpty')"
+        />
         <div v-else class="material-picker__list" data-testid="teaching-materials">
           <v-checkbox
             v-for="item in selectable"

@@ -3,6 +3,7 @@ import type { McpDeclaringType, McpServer, McpServerList } from '../api'
 
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 
 import { holdRevealGate } from '@/composables/useRevealGate'
 
@@ -25,7 +26,6 @@ const route = useRoute()
 const router = useRouter()
 const list = ref<McpServerList | null>(null)
 const error = ref('')
-const notice = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 const busy = ref('')
 const values = reactive<Record<string, string>>({})
 
@@ -38,13 +38,13 @@ async function load() {
   }
 }
 
+// 连接、断开、填密钥这些都是一次性动作：结果跟这一次点击走，用全局 toast 说一声。
 function fail(e: unknown, fallback: string) {
-  notice.value = { type: 'error', text: e instanceof Error ? e.message : fallback }
+  toast.error(e instanceof Error ? e.message : fallback)
 }
 
 async function connect(server: McpServer) {
   busy.value = server.name
-  notice.value = null
   try {
     const { authorization_url } = await connectMcpServer(props.projectId, server.name)
     if (goAuthorize(authorization_url)) busy.value = ''
@@ -56,7 +56,6 @@ async function connect(server: McpServer) {
 
 async function disconnect(server: McpServer) {
   busy.value = server.name
-  notice.value = null
   try {
     await disconnectMcpServer(props.projectId, server.name)
     await load()
@@ -71,7 +70,6 @@ async function save(name: string) {
   const value = values[name]?.trim()
   if (!value) return
   busy.value = name
-  notice.value = null
   try {
     await setMcpSecret(props.projectId, name, value)
     values[name] = ''
@@ -85,7 +83,6 @@ async function save(name: string) {
 
 async function clear(name: string) {
   busy.value = name
-  notice.value = null
   try {
     await clearMcpSecret(props.projectId, name)
     await load()
@@ -151,9 +148,8 @@ function takeCallbackResult() {
   const { mcp, mcp_result: result, mcp_error: failure, mcp_error_params: failureParams, ...rest } = route.query
   if (!result && !failure) return
   const name = String(mcp ?? '')
-  notice.value = failure
-    ? { type: 'error', text: failureText(name, failure, failureParams) }
-    : { type: 'success', text: t('work.mcp.connectedNotice', { name }) }
+  if (failure) toast.error(failureText(name, failure, failureParams))
+  else toast.success(t('work.mcp.connectedNotice', { name }))
   void router.replace({ query: rest, hash: route.hash })
 }
 
@@ -174,17 +170,6 @@ watch(() => props.projectId, load)
     <div class="page-section-body">
       <p class="t-body c-faint settings-hint mb-3">{{ t('work.mcp.hint') }}</p>
       <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-3">{{ error }}</v-alert>
-      <v-alert
-        v-if="notice"
-        :type="notice.type"
-        variant="tonal"
-        density="comfortable"
-        closable
-        class="mb-3"
-        @click:close="notice = null"
-      >
-        {{ notice.text }}
-      </v-alert>
       <template v-if="list">
         <p v-if="list.problem === 'invalid'" class="t-body c-muted">{{ t('work.mcp.problem.invalid') }}</p>
         <p v-else-if="list.problem === 'unreadable'" class="t-body c-muted">{{ t('work.mcp.problem.unreadable') }}</p>

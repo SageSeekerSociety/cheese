@@ -52,8 +52,8 @@ from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
+from app.domain.living_doc.services import Documents
 from app.domain.memory import dream
 from app.domain.memory.dream_prompt import dream_prompt
 from app.domain.memory.files import MemoryFileScope
@@ -567,14 +567,13 @@ async def _dream_rooms(
             .limit(dream.ROOMS_LIMIT)
         )
     ).all()
-    blocks = BlockRepository(session)
     out: list[str] = []
     for topic_id, _newest in rows:
         topic = await TopicRepository(session).get(topic_id)
         if topic is None:
             continue
         lines = [f"### <#{topic_id}> {topic.title}"]
-        doc = await blocks.doc_root(topic_id)
+        doc = await Documents(session).of_room(topic_id)
         if doc is not None and doc.content.strip():
             lines.append("实况文档：\n" + dream.clip(doc.content, dream.ROOM_DOC_MAX))
         spoken = list(

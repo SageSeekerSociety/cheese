@@ -5,7 +5,7 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -15,7 +15,6 @@ import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
 import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
 
-import { listTopicMembers } from '@/api'
 import { useCommands } from '@/commands'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
@@ -24,6 +23,8 @@ import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { announceComments } from '@/lib/docCommentSignals'
+import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
+import { cachedTopicPanel, fetchTopicMembers } from '@/lib/topicPanelCache'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
@@ -146,6 +147,20 @@ watch(
   { immediate: true }
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
+
+// 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：看板、资料库、
+// 项目文档、搜索。点过去时就只剩取数据那一段等待（lib/routePrefetch.ts）。
+let cancelRouteWarm: (() => void) | null = null
+onMounted(() => {
+  const params = { projectId: props.projectId }
+  cancelRouteWarm = warmRoutesWhenIdle(router, [
+    { name: 'workspace-running', params },
+    { name: 'project-library', params },
+    { name: 'project-docs', params: { ...params, kind: 'charter' } },
+    { name: 'project-search', params },
+  ])
+})
+onUnmounted(() => cancelRouteWarm?.())
 // The list is still on its way, so "not found" is not yet a fact. Neither is it
 // one while this id is being asked about directly — the path a deep link takes.
 const resolving = computed(
@@ -210,6 +225,7 @@ const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
   reloadFeedback: () => void
+  reloadSkills: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
@@ -273,6 +289,13 @@ const chatEvents = {
 
 // 有没有队友正在这个话题里跑一轮 —— 工作面板的「现场」那一格和推送提示读它。
 const working = ref(false)
+
+// 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
+// `composerReady` 是 socket 的那一帧，而 socket 会在连接打嗝时闪断：那一瞬它说
+// 未连接，可这一轮还在跑（工作条写着「正在工作 · 重试中」，因为重试就是靠它自己
+// 接着干）。一轮没跑完，这个房间就是连着的 —— 断了它没法把这一轮干完。所以两个
+// 一起看：只要工作条在说「正在工作」，页头就不能同时说「未连接」。
+const roomConnected = computed(() => composerReady.value || working.value)
 // 此刻谁在这个房间里忙，对话栏从 socket 上学来：现场那一格画其中在干活的队友。
 const activity = ref<MemberActivityLine[]>([])
 // 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
@@ -318,6 +341,8 @@ function handleStateChanged(resource: string) {
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
+  // 技能的提议落下、被保存或被拒：那张卡跟着变。
+  else if (resource === 'skills') chatColumn.value?.reloadSkills()
   else activityTick.value += 1 // doc / notify → reload
 }
 
@@ -370,14 +395,14 @@ const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
 // 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
 // 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
-const roomMembers = ref<TopicMemberRow[]>([])
+const roomMembers = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
 const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
 }))
 async function loadMemberNames() {
   try {
-    roomMembers.value = (await listTopicMembers(props.topicId)).data
+    roomMembers.value = (await fetchTopicMembers(props.topicId)).data
   } catch {
     // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
   }
@@ -422,7 +447,7 @@ void openPlace()
         :topic="selectedTopic"
         :members="store.members"
         :me="AUTHOR"
-        :connected="composerReady"
+        :connected="roomConnected"
         :focus="focusMode"
         :panel-open="panelOpen"
         @toggle-focus="focusMode = !focusMode"
@@ -536,6 +561,8 @@ void openPlace()
      这条视图以前不画底、直接透出 body 的 --canvas，于是侧栏和正文同色，两者
      之间只剩一条边线在撑。 */
   background: var(--surface);
+  /* Switching topics on a wide screen cross-fades this view only (lib/viewTransition.ts). */
+  view-transition-name: topic-view;
 }
 .col {
   min-width: 0;

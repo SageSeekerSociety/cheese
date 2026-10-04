@@ -88,11 +88,13 @@
         :loading="loadingMore"
         :initial-loading="refreshing"
         :is-empty="submissions.length <= 1"
+        :shown="submissions.length"
+        :total="total"
         force-manual
         @load-more="loadMore"
       >
         <template #empty>
-          <v-empty-state :title="emptyText || t('tasks.submissionHistory.empty')" />
+          <BaseEmptyState size="compact" icon="" :title="emptyText || t('tasks.submissionHistory.empty')" />
         </template>
         <v-expansion-panels>
           <template v-for="submission in submissions.slice(1)" :key="submission.id">
@@ -154,6 +156,7 @@ import SubmissionContentCard from './SubmissionContentCard.vue'
 import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { TasksApi } from '@/network/api/tasks'
 
@@ -194,6 +197,7 @@ const {
   hasMore,
   refreshing,
   loadingMore,
+  total,
 } = usePaging(async (pageStart) => {
   const { data } = await TasksApi.listSubmissions(props.taskId, props.participantId, {
     allVersions: true,

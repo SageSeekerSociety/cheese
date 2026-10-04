@@ -28,9 +28,11 @@
 
     <v-progress-linear v-if="loading && !queues" indeterminate color="primary" />
 
-    <p v-if="learningFilters && learningFilters.projectCount === 0" class="an-note">
-      {{ t('spaces.analytics.learning.noProjects') }}
-    </p>
+    <BaseEmptyState
+      v-if="learningFilters && learningFilters.projectCount === 0"
+      size="inline"
+      :title="t('spaces.analytics.learning.noProjects')"
+    />
 
     <!-- The queues and messages are this block's whole content; if they failed to load, replace them with the reason and a way to retry. -->
     <BaseLoadError
@@ -50,9 +52,12 @@
 
           <template v-if="queues.reviewFlag.available">
             <LearningQuoteItem v-for="item in queues.reviewFlag.items" :key="item.blockId" :excerpt="item" />
-            <p v-if="!queues.reviewFlag.items.length" class="an-note lr__gap">
-              {{ t('spaces.analytics.learning.queue.noFlagged') }}
-            </p>
+            <BaseEmptyState
+              v-if="!queues.reviewFlag.items.length"
+              size="inline"
+              class="lr__gap"
+              :title="t('spaces.analytics.learning.queue.noFlagged')"
+            />
           </template>
 
           <template v-else>
@@ -70,7 +75,7 @@
             @update:checked="(value) => setSelected(point.example.blockId, value)"
           />
         </div>
-        <p v-else-if="queues" class="an-note">{{ t('spaces.analytics.learning.queue.noStuck') }}</p>
+        <BaseEmptyState v-else-if="queues" size="inline" :title="t('spaces.analytics.learning.queue.noStuck')" />
       </section>
 
       <section class="lr__block">
@@ -87,7 +92,7 @@
             @update:checked="(value) => setSelected(question.blockId, value)"
           />
         </div>
-        <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.learning.questions.empty') }}</p>
+        <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.learning.questions.empty')" />
       </section>
 
       <div class="an-card lr__actions">
@@ -131,6 +136,7 @@ import { dedupeBlockIds, formatCount } from './helpers'
 import { buildAnalyticsApiParams, buildLearningQueueParams } from './utils'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/network/api/spaces'
 

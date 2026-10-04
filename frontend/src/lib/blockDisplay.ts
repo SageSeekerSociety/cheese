@@ -30,13 +30,13 @@ export function isImageBlock(block: Block): boolean {
  * 加载完之前先引原文，加载完自己换掉。人说的话原样显示，所以也原样引用。@ 人、提话题、
  * 指文件的 token 两边都一样读成名字，和正文里 chip 上写的字一致。
  */
-export function replySnippet(block: Block, maps: RefNames): string {
+export function replySnippet(block: Block, maps: RefNames, max = 24): string {
   if (block.kind === 'attachment')
     return isImageBlock(block) ? t('work.room.attachments.imageSnippet') : t('work.room.attachments.fileSnippet')
   const read = isAgentBlock(block) ? docReadNow() : null
   const source = read ? read.plainText(block.content, 'chat') : block.content
   const text = plainRefs(source, maps).replace(/\s+/g, ' ').trim()
-  return text.length > 24 ? text.slice(0, 24) + '…' : text
+  return text.length > max ? text.slice(0, max) + '…' : text
 }
 
 /** 芝士摆出来那份东西的文件名（`cheese show` 写下的是完整路径）。 */

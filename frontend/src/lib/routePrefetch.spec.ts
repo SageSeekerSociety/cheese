@@ -18,6 +18,7 @@ vi.mock('@/api', () => ({
   createTopic: vi.fn(),
   getPrivateUnread: vi.fn().mockResolvedValue({}),
   getTopic: vi.fn(),
+  getTopicNotifyLevels: vi.fn().mockResolvedValue({}),
   getTopicUnread: vi.fn().mockResolvedValue({}),
   listBlocks: vi.fn(),
   listProjectMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -309,5 +310,87 @@ describe('hover 预取', () => {
     expect(cachedWindow('t1')?.blocks).toHaveLength(1) // 确实取回来了
     expect(markTopicRead).not.toHaveBeenCalled() // 但没有动读游标
     expect(store.unreadMap).toEqual({ t1: 3 }) // 红点还在
+  })
+})
+
+describe('首屏之后空闲预取路由', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    desktop()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('首屏之后不立刻下，空闲时把目标都下完', async () => {
+    const { warmRoutesWhenIdle } = await fresh()
+    const { router, load } = lazyRouter()
+
+    warmRoutesWhenIdle(router, [
+      { name: 'topic', params: { id: 't1' } },
+      { name: 'project', params: { id: 'p1' } },
+    ])
+    expect(load).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('省流量时一个都不下', async () => {
+    connection({ saveData: true })
+    const { warmRoutesWhenIdle } = await fresh()
+    const { router, load } = lazyRouter()
+
+    warmRoutesWhenIdle(router, [{ name: 'topic', params: { id: 't1' } }])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it('人在这期间离开了：取消之后剩下的不再下', async () => {
+    const { warmRoutesWhenIdle } = await fresh()
+    const { router, load } = lazyRouter()
+
+    const cancel = warmRoutesWhenIdle(router, [
+      { name: 'topic', params: { id: 't1' } },
+      { name: 'project', params: { id: 'p1' } },
+    ])
+    await vi.advanceTimersByTimeAsync(0)
+    cancel()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('按下去就预取', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('不等停住，也不问是不是精确指针', async () => {
+    pointer('(hover: none)')
+    Reflect.deleteProperty(navigator, 'connection')
+    const { prefetchNow } = await fresh()
+    const { router, load } = lazyRouter()
+
+    prefetchNow({ router, to: { name: 'topic', params: { id: 't1' } } })
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('省流量时照样让开', async () => {
+    desktop()
+    connection({ saveData: true })
+    const { prefetchNow } = await fresh()
+    const { router, load } = lazyRouter()
+
+    prefetchNow({ router, to: { name: 'topic', params: { id: 't1' } } })
+    expect(load).not.toHaveBeenCalled()
   })
 })

@@ -11,7 +11,11 @@ from app.api.doc_store import store
 from app.core.errors import ConflictError
 from app.domain.block.documents import DocumentWriter
 from app.domain.block.models import Block, BlockKind
-from app.domain.living_doc.models import DocumentOperation, DocumentVersion
+from app.domain.living_doc.models import (
+    DocumentNode,
+    DocumentOperation,
+    DocumentVersion,
+)
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.project.services import ProjectService
 from app.domain.topic.doc_change import summarize_doc_change
@@ -28,12 +32,23 @@ async def seed(factory):
         return project.root_topic_id
 
 
+async def room_doc(session, room):
+    """The room's document, made the way an editor's ticket makes it."""
+    topics = TopicService(session)
+    return await topics.room_doc(room, (await topics.get(room)).project_id)
+
+
+async def history(session, room):
+    doc = await TopicService(session).get_doc(room)
+    return await DocumentJournal(session).history(doc.id) if doc else []
+
+
 async def stored(factory, room, content, *actors, operation=None):
     """One store from the collaboration service, as its own transaction."""
     async with factory() as session:
         result = await store(
             session,
-            room,
+            await room_doc(session, room),
             state=b"yjs",
             content=content,
             actors=list(actors) or ["alice"],
@@ -59,9 +74,9 @@ async def test_concurrent_stores_each_record_a_version_in_order(business_db_fact
     await asyncio.gather(*tasks)
     async with factory() as session:
         doc = await TopicService(session).get_doc(room)
-        versions = await DocumentJournal(session).history(room)
+        versions = await history(session, room)
         assert [row["version"] for row in versions] == [1, 2, 3]
-        assert doc.doc_version == 3
+        assert doc.version == 3
         assert doc.content == versions[-1]["content"]
         assert versions[-1]["content_hash"] == content_hash(doc.content)
         assert {row["content"] for row in versions[1:]} == {"第二版", "第三版"}
@@ -75,9 +90,10 @@ async def test_a_store_that_changes_no_text_records_no_version(business_db_facto
     await stored(factory, room, "同一句")
     await stored(factory, room, "同一句", "bob")
     async with factory() as session:
-        versions = await DocumentJournal(session).history(room)
+        versions = await history(session, room)
         assert [row["content"] for row in versions] == ["同一句"]
-        assert await DocumentJournal(session).state(room) == b"yjs"
+        doc = await TopicService(session).get_doc(room)
+        assert await DocumentJournal(session).state(doc.id) == b"yjs"
 
 
 @pytest.mark.anyio
@@ -87,7 +103,7 @@ async def test_a_store_names_everyone_whose_changes_it_holds(business_db_factory
     await stored(factory, room, "第一句", "alice")
     await stored(factory, room, "第一句\n\n第二句", "bob", "alice")
     async with factory() as session:
-        versions = await DocumentJournal(session).history(room)
+        versions = await history(session, room)
         assert versions[-1]["actor"] == "bob"
         events = [
             block
@@ -192,31 +208,23 @@ async def test_rollback_leaves_no_document_nodes_event_history_or_claim(
     room = await seed(factory)
     operation_id = uuid.uuid4()
     async with factory() as session:
+        doc = await room_doc(session, room)
         journal = DocumentJournal(session)
         await journal.claim(
-            room_id=room,
+            document_id=doc.id,
             actor="alice",
             action="replace",
             operation_id=operation_id,
             payload={"content": "未提交", "expected_version": 0},
         )
         await DocumentWriter(session, summarize_doc_change).record(
-            room_id=room,
-            project_id=(await TopicService(session).get(room)).project_id,
-            content="未提交",
-            actors=["alice"],
-            operation_id=operation_id,
+            doc, content="未提交", actors=["alice"], operation_id=operation_id
         )
         await session.rollback()
     async with factory() as session:
         assert await TopicService(session).get_doc(room) is None
-        assert await DocumentJournal(session).history(room) == []
-        assert (
-            await DocumentJournal(session).receipt(
-                room_id=room, actor="alice", action="replace", operation_id=operation_id
-            )
-            is None
-        )
+        for table in (DocumentVersion, DocumentOperation, DocumentNode):
+            assert await session.scalar(select(func.count()).select_from(table)) == 0
         assert (
             await session.scalar(
                 select(func.count()).select_from(Block).where(Block.topic_id == room)
@@ -240,7 +248,7 @@ async def test_platform_brief_seed_has_raw_history_without_contribution_event(
     async with factory() as session:
         doc = await TopicService(session).get_doc(room)
         assert doc.content == raw
-        versions = await DocumentJournal(session).history(room)
+        versions = await history(session, room)
         assert len(versions) == 1
         assert versions[0]["content"] == raw
         assert versions[0]["actor"] == "system"
@@ -265,29 +273,30 @@ async def test_database_rejects_history_mutation_and_incomplete_receipts(
     ]:
         async with factory() as session:
             with pytest.raises(IntegrityError, match="history is immutable"):
-                await session.execute(mutation.where(DocumentVersion.room_id == room))
+                doc = await TopicService(session).get_doc(room)
+                await session.execute(
+                    mutation.where(DocumentVersion.document_id == doc.id)
+                )
             await session.rollback()
     operation_id = uuid.uuid4()
     async with factory() as session:
+        doc = await room_doc(session, room)
         await DocumentJournal(session).claim(
-            room_id=room,
+            document_id=doc.id,
             actor="alice",
             action="replace",
             operation_id=operation_id,
             payload={"content": "不能提交", "expected_version": 1},
         )
         await DocumentWriter(session, summarize_doc_change).record(
-            room_id=room,
-            project_id=(await TopicService(session).get(room)).project_id,
-            content="不能提交",
-            actors=["alice"],
+            doc, content="不能提交", actors=["alice"]
         )
         with pytest.raises(IntegrityError, match="must commit its receipt"):
             await session.commit()
         await session.rollback()
     async with factory() as session:
-        assert (await TopicService(session).get_doc(room)).doc_version == 1
-        assert len(await DocumentJournal(session).history(room)) == 1
+        assert (await TopicService(session).get_doc(room)).version == 1
+        assert len(await history(session, room)) == 1
         assert (
             await session.scalar(select(func.count()).select_from(DocumentOperation))
             == 0
@@ -330,8 +339,8 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
     else:
         assert results[0] == results[1]
     async with factory() as session:
-        assert (await TopicService(session).get_doc(room)).doc_version == 1
-        assert len(await DocumentJournal(session).history(room)) == 1
+        assert (await TopicService(session).get_doc(room)).version == 1
+        assert len(await history(session, room)) == 1
         assert (
             await session.scalar(select(func.count()).select_from(DocumentOperation))
             == 1
@@ -340,7 +349,8 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
             await session.scalars(select(Block).where(Block.topic_id == room))
         )
         assert sum((block.meta or {}).get("action") == "doc" for block in blocks) == 1
-        assert sum(block.kind == BlockKind.doc_node for block in blocks) == 1
+        doc = await TopicService(session).get_doc(room)
+        assert len(await TopicService(session).doc_nodes(doc)) == 1
 
 
 @pytest.mark.anyio
@@ -351,9 +361,10 @@ async def test_completed_receipt_and_claim_identity_cannot_be_rewritten(
     room = await seed(factory)
     operation_id = uuid.uuid4()
     async with factory() as session:
+        doc = await room_doc(session, room)
         journal = DocumentJournal(session)
         operation = await journal.claim(
-            room_id=room,
+            document_id=doc.id,
             actor="alice",
             action="replace",
             operation_id=operation_id,
@@ -376,7 +387,10 @@ async def test_completed_receipt_and_claim_identity_cannot_be_rewritten(
             await session.rollback()
     async with factory() as session:
         assert await DocumentJournal(session).receipt(
-            room_id=room, actor="alice", action="replace", operation_id=operation_id
+            document_id=doc.id,
+            actor="alice",
+            action="replace",
+            operation_id=operation_id,
         ) == {"version": 1, "content": "原回执"}
 
 

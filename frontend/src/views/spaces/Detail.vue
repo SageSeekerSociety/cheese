@@ -1,5 +1,11 @@
 <template>
-  <router-view />
+  <!-- 空间下每一页都在这里。外面套一层兜底：某页在渲染里抛错时，Vue 会把它整棵子树
+       换成空注释、那一块直接白掉（「待审核」曾经就是这样：模块求值时抛错，整页连同
+       侧栏一起没了）。ErrorBoundary 把这一块换成一句提示加一颗「重试」，别的部分照旧；
+       reset-key 用当前路由，换一页或换一个空间时那层自己活过来。 -->
+  <ErrorBoundary :reset-key="route.path">
+    <router-view />
+  </ErrorBoundary>
 </template>
 
 <script lang="ts" setup>
@@ -10,6 +16,7 @@ import { storeToRefs } from 'pinia'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import { useSpaceStore } from '@/stores/space'
 
 const route = useRoute()

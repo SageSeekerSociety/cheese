@@ -226,7 +226,9 @@ describe('chat recovery after history errors', () => {
     sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
     answer(block)
     await flushPromises()
-    expect(view.container.textContent?.split('echo first')).toHaveLength(2)
+    // Count the rendered rows, not the screen-reader live line that repeats the newest message.
+    const rowsText = Array.from(view.container.querySelectorAll('[data-mid]'), (row) => row.textContent).join('')
+    expect(rowsText.split('echo first')).toHaveLength(2)
     expect(view.container.querySelector('.im-row--pending')).toBeNull()
   })
 

@@ -135,7 +135,8 @@ describe('已经配过的应用', () => {
     await fireEvent.update(field('App ID'), 'cli_renamed')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    expect(await screen.findByText('App Secret 不能为空')).toBeTruthy()
+    // 这块表单还在屏幕上，失败就地说一声，服务端原话接在冒号后（§8.9、§3.11）。
+    expect(await screen.findByText('保存失败：App Secret 不能为空')).toBeTruthy()
     expect(field('App ID').value).toBe('cli_renamed')
   })
 })

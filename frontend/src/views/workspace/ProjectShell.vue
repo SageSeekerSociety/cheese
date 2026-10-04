@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 
 import { provideTopicMemory } from '@/composables/useTopicMemory'
 
@@ -75,13 +76,16 @@ onUnmounted(() => {
   if (pollTimer !== undefined) window.clearInterval(pollTimer)
 })
 
-// Snackbar v-model bridge: visible while there's an error; writing false clears.
-const hasError = computed<boolean>({
-  get: () => store.error !== null,
-  set: (v) => {
-    if (!v) store.error = null
-  },
-})
+// 工作台报错统一走全局 toast：store.error 一旦有值就弹一条并清空，避免同一条
+// 错误在后续渲染里重复弹出。
+watch(
+  () => store.error,
+  (message) => {
+    if (!message) return
+    toast.error(message)
+    store.error = null
+  }
+)
 </script>
 
 <template>
@@ -101,10 +105,6 @@ const hasError = computed<boolean>({
     <router-view v-else v-slot="{ Component, route: current }">
       <component :is="Component" :key="current.params.topicId" />
     </router-view>
-
-    <v-snackbar v-model="hasError" timeout="4000" location="bottom">
-      {{ store.error }}
-    </v-snackbar>
   </div>
 </template>
 

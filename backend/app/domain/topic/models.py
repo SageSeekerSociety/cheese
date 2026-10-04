@@ -291,6 +291,12 @@ class TopicReadState(UuidPk, Timestamps, Base):
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # 这个人对这间房的通知级别：`all`（默认）或 `mute`。静音的房间自己那一行照样记
+    # 未读数，但不计入任何总数（侧栏分组角标、桌面角标、标签页标题）。用字符串不用
+    # 布尔，以后加「只提到我」是多一个值，不是多一列。
+    notify_level: Mapped[str] = mapped_column(
+        String(16), default="all", server_default="all"
+    )
 
 
 class TopicProgress(UuidPk, Timestamps, Base):

@@ -54,7 +54,10 @@ const props = defineProps<{
   // any of them, because which document is open is the page's business now.
   activeDocs?: string | null
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
+  // 静音的房间已经被调用处去掉了（store.badgeUnreadMap）。
   unreadMap?: Record<string, number>
+  /** 这间房我静音了没有：行上画一个静音标记。 */
+  mutedOf?: (topicId: string) => boolean
   // 私聊未读: {peerHandle: count}, `cheese` = 和芝士那一间。侧栏只用它的**总数**，
   // 挂在「成员」那一行上；是谁找你在成员页里说（每个人的私聊按钮上各带各的）。
   // 和 unreadMap 分开是因为私聊是按对方 handle 编址的，没有话题 id。
@@ -71,6 +74,7 @@ const emit = defineEmits<{
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
+  (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
   // 已归档那一组里行尾的「取消归档」。
@@ -467,8 +471,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :private-unread-total="privateUnreadTotal"
             :page="page === true"
             :unread-of="unreadOf"
+            :muted-of="mutedOf"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
+            @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
             @open-page="openProjectPage"
             @hover-page="hoverProjectPage"
@@ -557,11 +563,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                       :renaming="renamingTopicId === item.topic.id"
                       :menu-open="actionsMenuFor === item.topic.id"
                       :stalled="stalledOf(item.topic.id)"
+                      :muted="mutedOf?.(item.topic.id) ?? false"
                       :marks="memberMarks(item.topic)"
                       :toggle-title="toggleTitle(item)"
                       :actions="actionsFor"
                       @select="emit('select-topic', $event)"
                       @hover="emit('hover-topic', $event)"
+                      @press="emit('press-topic', $event)"
                       @leave="emit('leave-topic')"
                       @toggle-collapse="toggleCollapse"
                       @commit-rename="(draft: string) => commitRename(item.topic, draft)"
@@ -588,8 +596,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :page="page === true"
             :unread="archivedUnread > 0"
             :unread-of="unreadOf"
+            :muted-of="mutedOf"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
+            @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
             @unarchive-topic="emit('unarchive-topic', $event)"
           />

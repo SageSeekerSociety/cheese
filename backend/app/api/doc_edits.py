@@ -20,8 +20,9 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.block.repositories import BlockRepository
 from app.domain.identity.services import IdentityService
+from app.domain.living_doc.models import Document
+from app.domain.living_doc.services import Documents
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ def changed_span(old: str, new: str) -> tuple[int, int]:
 
 
 async def _touches_someone_elses_text(
-    db: AsyncSession, room_id: uuid.UUID, content: str, edits: list[dict]
+    db: AsyncSession, doc: Document, content: str, edits: list[dict]
 ) -> bool:
     """Whether any edit replaces text a person wrote.
 
@@ -58,7 +59,7 @@ async def _touches_someone_elses_text(
     # Where each node's text sits in the stored Markdown, in document order.
     spans: list[tuple[int, int, str]] = []
     cursor = 0
-    for node in await BlockRepository(db).list_doc_nodes(room_id):
+    for node in await Documents(db).nodes(doc):
         at = content.find(node.content, cursor)
         if at < 0:
             continue
@@ -82,13 +83,15 @@ async def decide(
     db: AsyncSession,
     *,
     room_id: uuid.UUID,
+    doc: Document,
     actor: str,
     content: str,
     edits: list[dict],
     asked: str | None,
 ) -> Decision:
-    """How ``actor``'s edits are applied. ``asked`` is the mode the caller
-    asked for, if any; ``content`` the document as stored."""
+    """How ``actor``'s edits are applied to the room's document ``doc``.
+    ``asked`` is the mode the caller asked for, if any; ``content`` the
+    document as stored."""
     if not await IdentityService(db).is_agent(actor):
         return Decision(mode="direct", requested_by=None)
     author = await AgentTurnRepository(db).open_turn_author_for_topic(
@@ -96,8 +99,6 @@ async def decide(
     )
     if author and author != "system" and not await IdentityService(db).is_agent(author):
         return Decision(mode=asked or "direct", requested_by=author)
-    if asked == "suggest" or await _touches_someone_elses_text(
-        db, room_id, content, edits
-    ):
+    if asked == "suggest" or await _touches_someone_elses_text(db, doc, content, edits):
         return Decision(mode="suggest", requested_by=None)
     return Decision(mode="direct", requested_by=None)

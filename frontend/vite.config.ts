@@ -6,15 +6,19 @@ import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 // Utilities
 import { defineConfig, type Plugin } from 'vite'
-import { prismjsPlugin } from 'vite-plugin-prismjs'
 import { VitePWA } from 'vite-plugin-pwa'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
 
-// 每个 fork 常驻约 3–5 GB（happy-dom 加上各自编一遍 Vuetify/SCSS），所以按内存算上限：每 6 GB 一个、封顶 16，VITEST_MAX_FORKS 可覆盖。
+// fork 数取「核数 - 1」和「每 3 GB 内存一个」中较小的那个，封顶 16，VITEST_MAX_FORKS 可覆盖。
+// 一个 fork 的内存峰值实测约 1.7–2.1 GB（happy-dom 加上各自编一遍 Vuetify/SCSS）。
+// CI 的 4 核 16 GB 机器上算出来是 3：fork 数和核数相同时，对时序敏感的组件测试会偶发失败。
 const envMaxForks = Number.parseInt(process.env.VITEST_MAX_FORKS ?? '', 10)
-const maxForks = envMaxForks > 0 ? envMaxForks : Math.max(1, Math.min(16, Math.floor(os.totalmem() / 6 / 1024 ** 3)))
+const maxForks =
+  envMaxForks > 0
+    ? envMaxForks
+    : Math.max(1, Math.min(16, os.availableParallelism() - 1, Math.floor(os.totalmem() / 3 / 1024 ** 3)))
 
 // https://vitejs.dev/config/
 // /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，
@@ -106,10 +110,9 @@ const MINIFY = {
   codegen: true,
 }
 
-// What Prism highlights (see the prismjsPlugin call for why these). The plugin
-// adds their imports while transforming, which the dev server's dependency scan
-// cannot see; optimizeDeps.include lists them for the reason it lists
-// Vuetify's components.
+// What Prism highlights. The application imports these grammars/plugins itself
+// (src/utils/prism.ts — keep the two in sync); they are listed again in
+// optimizeDeps.include for the reason it lists Vuetify's components.
 const PRISM_LANGUAGES = [
   'markup',
   'css',
@@ -148,7 +151,6 @@ const CHUNKS = [
   'zod',
   'dompurify',
   'marked',
-  'prismjs',
   'prosemirror',
   'vuetify',
   'tiptap',
@@ -220,10 +222,6 @@ function chunkName(id: string): string | null {
     if (id.includes('dayjs')) {
       return 'dayjs'
     }
-    // prismjs 单独一个 chunk
-    if (id.includes('prismjs')) {
-      return 'prismjs'
-    }
     // axios 如果使用量较大，也可单独拆分
     if (id.includes('axios')) {
       return 'axios'
@@ -253,27 +251,12 @@ export default defineConfig({
       // class. This file points both at the app's own font stack.
       styles: { configFile: 'src/styles/vuetify-settings.scss' },
     }),
-    prismjsPlugin({
-      // The list is what this product's code blocks actually contain — agent
-      // output and repository snippets — not what Prism offers. **Adding a
-      // grammar is a bundle decision**: `'all'` meant 297 grammars in a 569 KB
-      // chunk that every service-worker install downloaded, for languages no
-      // session here will ever emit. Anything not listed renders as
-      // unhighlighted plain text, which is the accepted trade — do not add a
-      // fallback loader; add the grammar and take the bytes knowingly.
-      //
-      // Dependencies resolve themselves (babel-plugin-prismjs runs Prism's own
-      // dependency loader), so this is top-level languages only: `markup`
-      // covers html/xml/svg, `bash` covers sh/shell, `typescript` covers ts.
-      // `vue` is not a Prism grammar at all — a ```vue block degrades to plain
-      // text and there is nothing to add for it.
-      languages: PRISM_LANGUAGES,
-      // 配置行号插件
-      plugins: PRISM_PLUGINS,
-      // 主题名
-      theme: 'solarizedlight',
-      css: true,
-    }),
+    // Prism 不用 vite-plugin-prismjs 注入。该插件把 `import Prism from 'prismjs'`
+    // 展开成一串「引用全局 Prism」的脚本导入，而 prism-core 是 CJS、在 Rolldown 下被
+    // 包成惰性求值 —— 脚本先求值、core 还没跑，于是整块抛 `Prism is not defined`，凡是
+    // 加载 Prism 的路由（空间待审核、题目答案、Markdown 渲染）都会白屏。改由应用自己按
+    // 「先 core、后语法/插件」的顺序导入，见 src/utils/prism.ts（其中的语法/插件清单要与
+    // 下面的 PRISM_LANGUAGES / PRISM_PLUGINS 保持一致）。
     // PWA / offline support. Goal (owner spec): the app shell + already-seen
     // content load offline; live features (WS chat, notifications)
     // degrade gracefully and auto-recover when the network returns. NO offline
@@ -725,8 +708,8 @@ export default defineConfig({
       'vuetify/iconsets/mdi',
       'vuetify/labs/VDateInput',
       'vuetify/locale',
-      // vite-plugin-prismjs 加的那几行 import，同样只在 transform 之后才看得见。漏了会在
-      // 冷启动时整体重新预打包，正在加载的依赖全部 504。
+      // Prism 的语法/插件（src/utils/prism.ts 导入）。它们是深层路径，按需预打包，先列出来
+      // 免得冷启动时整体重新预打包、正在加载的依赖全部 504。
       'prismjs/components/prism-core',
       'prismjs/components/prism-clike',
       ...PRISM_LANGUAGES.map((name) => `prismjs/components/prism-${name}`),

@@ -23,6 +23,7 @@ import {
   unregisterDeviceFromTeam,
 } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import { t } from '@/i18n'
@@ -30,9 +31,11 @@ import { teamDataInjectionKey } from '@/keys'
 import { teammateName } from '@/lib/agentNames'
 import { renderNoticeMessage } from '@/lib/noticeText'
 import { topicTitle } from '@/lib/topicState'
+import { useDialog } from '@/plugins/dialog'
 
 type CloudMachine = ProjectMachine & { projectName: string }
 
+const { confirm } = useDialog()
 const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
 const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
@@ -229,7 +232,11 @@ async function addMachine(device: MyDevice) {
 }
 
 async function removeMachine(device: MyDevice) {
-  if (!window.confirm(t(`teams.compute.${scope.value}.removeDeviceConfirm`, { name: device.name }))) return
+  const ok = await confirm(t(`teams.compute.${scope.value}.removeDeviceConfirm`, { name: device.name }), {
+    danger: true,
+    confirmLabel: t(`teams.compute.${scope.value}.remove`),
+  }).wait()
+  if (!ok) return
   busy.value = device.device_id
   error.value = null
   try {
@@ -243,7 +250,11 @@ async function removeMachine(device: MyDevice) {
 }
 
 async function destroyCloud(machine: CloudMachine) {
-  if (!window.confirm(t('teams.compute.destroyConfirm', { hostname: machine.hostname }))) return
+  const ok = await confirm(t('teams.compute.destroyConfirm', { hostname: machine.hostname }), {
+    danger: true,
+    confirmLabel: t('teams.compute.release'),
+  }).wait()
+  if (!ok) return
   busy.value = machine.id
   error.value = null
   try {
@@ -257,8 +268,13 @@ async function destroyCloud(machine: CloudMachine) {
 }
 
 async function changePower(machine: CloudMachine, operation: 'suspend' | 'resume') {
-  if (operation === 'suspend' && !window.confirm(t('teams.compute.suspendConfirm', { hostname: machine.hostname })))
-    return
+  if (operation === 'suspend') {
+    const ok = await confirm(t('teams.compute.suspendConfirm', { hostname: machine.hostname }), {
+      danger: true,
+      confirmLabel: t('teams.compute.suspend'),
+    }).wait()
+    if (!ok) return
+  }
   busy.value = machine.id
   error.value = null
   try {
@@ -344,10 +360,7 @@ onBeforeUnmount(stopResync)
           {{ t('teams.compute.cloudNotConfigured') }}
         </v-alert>
         <div v-else-if="!cloudMachines.length" class="empty-panel">
-          <v-icon size="38" class="empty-panel-icon">mdi-cloud-outline</v-icon>
-          <div>
-            <div class="text-body-2 font-weight-medium">{{ t('teams.compute.cloudEmpty') }}</div>
-          </div>
+          <BaseEmptyState size="compact" icon="mdi-cloud-outline" :title="t('teams.compute.cloudEmpty')" />
         </div>
         <v-row v-else>
           <v-col v-for="machine in cloudMachines" :key="machine.id" cols="12" md="6" xl="4">
@@ -383,7 +396,10 @@ onBeforeUnmount(stopResync)
               <div class="text-caption text-medium-emphasis mt-2">
                 {{ t('teams.compute.billedTo', { project: machine.projectName }) }}
               </div>
-              <div v-if="machine.ip" class="text-caption text-medium-emphasis mt-1">
+              <!-- 私网地址只给所有者/管理员看：`192.168.x.x` 这类地址是机器在网络里的
+                   位置，普通成员用不到它（卡片其余部分成员照看）。`machine.ip` 为空时
+                   本来就不画。 -->
+              <div v-if="canManage && machine.ip" class="text-caption text-medium-emphasis mt-1">
                 {{ t('teams.compute.address', { ip: machine.ip }) }}
               </div>
               <div class="text-caption mt-1" :class="machine.device_id ? 'text-success' : 'text-medium-emphasis'">
@@ -465,11 +481,12 @@ onBeforeUnmount(stopResync)
         </div>
 
         <div v-if="!selfHostedDevices.length" class="empty-panel">
-          <v-icon size="38" class="empty-panel-icon">mdi-laptop-off</v-icon>
-          <div>
-            <div class="text-body-2 font-weight-medium">{{ t('teams.compute.selfHostedEmptyTitle') }}</div>
-            <div class="text-caption text-medium-emphasis">{{ t(`teams.compute.${scope}.selfHostedEmptyHint`) }}</div>
-          </div>
+          <BaseEmptyState
+            size="compact"
+            icon="mdi-laptop-off"
+            :title="t('teams.compute.selfHostedEmptyTitle')"
+            :desc="t(`teams.compute.${scope}.selfHostedEmptyHint`)"
+          />
         </div>
         <template v-else>
           <div class="text-caption text-medium-emphasis mb-3">
@@ -604,17 +621,8 @@ onBeforeUnmount(stopResync)
   line-height: 1.4;
 }
 .empty-panel {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 94px;
-  padding: 18px;
   border: 1px dashed rgba(var(--v-border-color), 0.24);
   border-radius: var(--radius-lg);
-}
-/* 空面板里陪着文字的图标属于元信息一档（§1.3），不是插图 */
-.empty-panel-icon {
-  color: var(--faint);
 }
 .machine-meta {
   display: flex;

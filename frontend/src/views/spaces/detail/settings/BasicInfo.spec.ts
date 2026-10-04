@@ -116,6 +116,14 @@ function buttonWith(text: string, base: HTMLElement | Document = document) {
   return button as HTMLButtonElement
 }
 
+// 确认框里的按钮：浮层挂在 body 末尾，页面里那张「删除空间」的卡片先出现在 DOM 里，
+// `buttonWith` 取到的是那张卡。确认框那颗得单独在 `.v-dialog` 里按同一句文案找。
+function dialogButtonWith(text: string) {
+  const button = Array.from(document.querySelectorAll('.v-dialog button')).find((b) => b.textContent?.trim() === text)
+  expect(button, `确认框里没找到写着「${text}」的按钮`).toBeTruthy()
+  return button as HTMLButtonElement
+}
+
 describe('题目板删除入口', () => {
   beforeEach(() => {
     // Vuetify 的浮层（v-dialog）会去读 `visualViewport`，测试环境里没有这个对象，
@@ -174,8 +182,8 @@ describe('题目板删除入口', () => {
     await fireEvent.click(await waitFor(() => buttonWith('spaces.detail.deleteSpace')))
     await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.confirmDeleteSpace'))
 
-    // 「确定」只有确认框那一颗：Detail 自己那几个弹窗的按钮文案都是 key，撞不上。
-    await fireEvent.click(buttonWith('确定'))
+    // 确认键写着「删除空间」（动词），和页面里那张卡同句，所以按确认框那一层来找。
+    await fireEvent.click(dialogButtonWith('spaces.detail.deleteSpace'))
     await waitFor(() => expect(delSpace).toHaveBeenCalledWith(SPACE_ID))
 
     await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaces'))

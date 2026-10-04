@@ -2,9 +2,10 @@
 
 A person who may comment on the document may ask; whether the answer may change
 the document is the document's to say (an archived room or project is read-only),
-not the browser's. The answer streams back as server-sent events, and runs in a
-task of its own: a reader who leaves mid-answer loses the reading, and what the
-teammate changed stays changed.
+not the browser's. The answer streams back as server-sent events. Once asked, it
+is read to its end by whichever backend is up (``session_host.consumptions``):
+a reader who loses the stream reads the rest of it from where it was, and what
+the teammate changed stays changed.
 """
 
 import asyncio
@@ -17,17 +18,23 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_session_host
+from app.api.deps import get_chat_service, get_consumptions, get_session_host
 from app.api.doc_identity import human_operation_actor
 from app.api.response import ok
 from app.api.routes.living_docs import _frozen
 from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.background import spawn
-from app.core.errors import ForbiddenError, SystemBusyError, ValidationError
+from app.core.errors import (
+    ForbiddenError,
+    NotFoundError,
+    SystemBusyError,
+    ValidationError,
+)
 from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import box, question, thread
+from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.block.comment_threads import CommentThreads
 from app.domain.living_doc.schemas import AgentAskIn
@@ -38,10 +45,13 @@ router = APIRouter(prefix="/topics", tags=["doc-agent"])
 
 Chat = Annotated[ChatService, Depends(get_chat_service)]
 Sessions = Annotated[SessionHost, Depends(get_session_host)]
+Questions = Annotated[Consumptions, Depends(get_consumptions)]
 
 
-def _sse(event: str, data: dict) -> bytes:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
+def _sse(event: str, data: dict, position: str | None = None) -> bytes:
+    head = f"id: {position}\n" if position is not None else ""
+    body = json.dumps(data, ensure_ascii=False)
+    return f"{head}event: {event}\ndata: {body}\n\n".encode()
 
 
 async def _asker(db, resolver, topic_id: uuid.UUID):
@@ -64,11 +74,13 @@ async def ask_agent(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Chat,
-    sessions: Sessions,
+    questions: Questions,
 ):
     """Ask, streamed as server-sent events: ``conversation`` (its id, first),
-    ``queued``, ``working``, ``delta``, ``tool``, then ``done`` (``answer``,
-    ``edits``, ``stopped``) or ``error``."""
+    ``queued``, ``working``, then once asked ``answering`` (the question's id,
+    to read on from elsewhere), ``delta``, ``tool``, then ``done`` (``answer``,
+    ``edits``, ``stopped``) or ``error``. Each event from ``answering`` on
+    carries its place in the question's stream (``id``)."""
     place, actor, redis = await _asker(db, resolver, topic_id)
     preset = box.PRESETS.get(body.preset or "") if body.preset else None
     if body.preset and preset is None:
@@ -98,9 +110,9 @@ async def ask_agent(
 
     async def run() -> None:
         try:
-            await box.ask(
+            asked = await box.ask(
                 chat,
-                sessions,
+                questions,
                 redis,
                 emit,
                 project_id=place.project_id,
@@ -112,6 +124,9 @@ async def ask_agent(
                 selection=selection,
                 may_edit=may_edit,
             )
+            if asked is not None:
+                async for chunk in _answer(questions, asked.work_id):
+                    queue.put_nowait(chunk)
         except Exception:  # noqa: BLE001 — the box is told; the log keeps why
             logger.warning("doc agent box failed", exc_info=True)
             await emit("error", error_frame(say("docAgentCantAnswer")))
@@ -129,6 +144,39 @@ async def ask_agent(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/{topic_id}/doc/agent/{conversation}/answers/{work}")
+async def read_answer(
+    topic_id: uuid.UUID,
+    conversation: uuid.UUID,
+    work: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    questions: Questions,
+    after: str = "0",
+):
+    """The stream of a question asked in the box's conversation, from ``after``
+    (the ``id`` of the last event read) to its end, as ``ask_agent`` streams
+    it."""
+    place, actor, redis = await _asker(db, resolver, topic_id)
+    await box.owned(redis, conversation, asker=actor.handle, room_id=place.room_id)
+    await db.commit()
+    asked = await questions.get(str(work))
+    if asked is None or asked.kind != box.KIND or asked.key != str(conversation):
+        raise NotFoundError.for_resource("answer", str(work))
+    return StreamingResponse(
+        _answer(questions, asked.work_id, after),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _answer(questions: Consumptions, work: str, after: str = "0"):
+    if after == "0":
+        yield _sse("answering", {"id": work})
+    async for position, event, data in questions.watch(work, after):
+        yield _sse(event, data, position)
 
 
 @router.post("/{topic_id}/doc/agent/{conversation}/stop")

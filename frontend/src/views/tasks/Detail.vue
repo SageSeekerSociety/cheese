@@ -22,12 +22,13 @@ import TaskSide from './components/TaskSide.vue'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import { splitOrigin } from '@/views/spaces/model'
-import { LoadingErrorContainer, TaskDialogs } from '@/views/tasks/components'
+import { TaskDialogs } from '@/views/tasks/components'
 import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
 import { useAssistant } from '@/views/tasks/composables/useAssistant'
 import { useEvents } from '@/views/tasks/events'
@@ -298,7 +299,12 @@ onMounted(() => {
     </template>
   </PageHeader>
 
-  <LoadingErrorContainer v-if="loading || error" :loading="loading" :error="error" @retry="load" />
+  <div v-if="loading" class="py-12 text-center">
+    <v-progress-circular indeterminate color="primary" />
+  </div>
+
+  <!-- A failed read trades this block for the error (docs/design-system.md §3.10) instead of degrading to an empty state. -->
+  <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="load" />
 
   <div v-else-if="taskData" class="td">
     <header class="td__head">

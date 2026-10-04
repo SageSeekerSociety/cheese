@@ -9,7 +9,6 @@ import type { Block } from '../../cx_types'
 import type { MenuAction } from '../common/menuAction'
 
 import { computed, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { useMessageLink } from '@/composables/useMessageLink'
 
@@ -37,15 +36,16 @@ const emit = defineEmits<{
   (e: 'edit', block: Block): void
 }>()
 
+// 复制成没成由共享的复制助子弹 toast，这里只管发起。
 async function copy(block: Block) {
-  if (await copyMessage(block, props.isAgent)) toast(t('work.room.message.copied'))
+  await copyMessage(block, props.isAgent)
 }
 
 // 这条消息的站内链接（组件不碰路由，走 composable）。宿主没有路由时给不出链接，
-// 这一项就不出现。
+// 这一项就不出现。复制成的说法同样由助手里那一条 toast 给。
 const { hrefOf, copy: copyHref } = useMessageLink()
 async function copyLink(block: Block) {
-  if (await copyHref(block)) toast(t('work.room.message.linkCopied'))
+  await copyHref(block)
 }
 
 // 「选择文字」那一页：打开的那一刻照着屏幕上的这一条取一份，之后消息再变也不跟着

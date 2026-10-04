@@ -5,7 +5,12 @@ import uuid
 
 import pytest
 
-from app.api.deps import get_session_host
+from app.api.deps import (
+    consumptions_for,
+    get_chat_service,
+    get_consumptions,
+    get_session_host,
+)
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.topic.models import Topic, TopicStatus
 from app.main import app
@@ -16,14 +21,22 @@ from tests.integration.conftest import (
 )
 
 
+def _chat():
+    """The chat service the app is serving this test with."""
+    return app.dependency_overrides.get(get_chat_service, get_chat_service)()
+
+
 @pytest.fixture
 def sessions():
     from tests.integration.test_doc_agent import FakeSessions
 
     fake = FakeSessions()
+    questions = consumptions_for(fake, _chat())  # type: ignore[arg-type]
     app.dependency_overrides[get_session_host] = lambda: fake
+    app.dependency_overrides[get_consumptions] = lambda: questions
     yield fake
     app.dependency_overrides.pop(get_session_host, None)
+    app.dependency_overrides.pop(get_consumptions, None)
 
 
 def _topic(client) -> str:

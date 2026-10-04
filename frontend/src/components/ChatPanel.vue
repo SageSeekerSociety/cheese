@@ -108,6 +108,7 @@ const {
   prState,
   composerHint,
   rows,
+  hiddenRows,
   refMaps,
   hasMore,
   hasNewer,
@@ -269,6 +270,7 @@ defineExpose({ send, connected, submitQuestion })
         <ChatTimeline
           :topic="topic"
           :rows="rows"
+          :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
           :unread-anchor-id="unreadAnchorId"
           :split-markers="splitMarkers"

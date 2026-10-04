@@ -1,5 +1,5 @@
 /**
- * 工作方法：芝士整理或改过的要人确认；芝士的改动可以整个放弃，回到正在用的那一版；
+ * 技能：芝士整理或改过的要人确认；芝士的改动可以整个放弃，回到正在用的那一版；
  * 旧版本能恢复。
  */
 import { createVuetify } from 'vuetify'
@@ -22,19 +22,21 @@ vi.mock('@/plugins/dialog', async () => ({
   useDialog: () => ({ confirm: dialog.confirm }),
 }))
 
-vi.mock('../api', () => ({
+vi.mock('../api', () => ({ listTopics: vi.fn() }))
+vi.mock('../api/projectSkills', () => ({
   listProjectSkills: vi.fn(),
-  listTopics: vi.fn(),
   getProjectSkill: vi.fn(),
   createProjectSkill: vi.fn(),
   updateProjectSkill: vi.fn(),
   confirmProjectSkill: vi.fn(),
+  declineProjectSkill: vi.fn(),
   restoreProjectSkill: vi.fn(),
   deleteProjectSkill: vi.fn(),
 }))
 
-const { confirmProjectSkill, getProjectSkill, listProjectSkills, listTopics, restoreProjectSkill } = await import(
-  '../api'
+const { listTopics } = await import('../api')
+const { confirmProjectSkill, getProjectSkill, listProjectSkills, restoreProjectSkill } = await import(
+  '../api/projectSkills'
 )
 
 const vuetify = createVuetify({ components, directives })
@@ -73,6 +75,7 @@ const base = {
   confirmed_by: 'u1',
   confirmed_at: '2026-09-25T00:00:00Z',
   source_topic_id: 'room-1',
+  proposal: null,
   created_at: '2026-09-25T00:00:00Z',
   updated_at: '2026-09-25T00:00:00Z',
 }
@@ -107,7 +110,7 @@ function buttonIn(scope: Element, label: string): HTMLElement | undefined {
 
 const row = (c: Element, id: string) => c.querySelector(`[data-skill="${id}"]`)!
 
-describe('工作方法', () => {
+describe('技能', () => {
   it('从房间的「去确认」点进来，那一条被指出来', async () => {
     routeQuery.skill = 'new-1'
     const { container } = mount()
