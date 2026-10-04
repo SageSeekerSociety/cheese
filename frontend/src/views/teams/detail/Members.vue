@@ -319,6 +319,7 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { TeamsApi } from '@/network/api/teams'
+import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 
@@ -327,6 +328,7 @@ const route = useRoute()
 const isInviteDialogActive = ref(false)
 const teamMembers = ref<TeamMember[]>([])
 const teamData = inject(teamDataInjectionKey, ref())
+const dialog = useDialog()
 
 const activeTab = ref('members')
 
@@ -519,6 +521,20 @@ const demoteToMember = async (userId: number) => {
 
 const removeMember = async (userId: number) => {
   if (!teamData.value) {
+    return
+  }
+
+  // 移出后他不再能进这个团队，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
+  const name = teamMembers.value.find((member) => member.user.id === userId)?.user.nickname ?? ''
+  const confirmed = await dialog
+    .confirm(t('teams.members.removeBody'), {
+      title: t('teams.members.removeTitle', { name }),
+      confirmLabel: t('teams.members.remove'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) {
     return
   }
 

@@ -30,6 +30,7 @@ import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
+import { useDialog } from '@/plugins/dialog'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
@@ -43,6 +44,7 @@ const busy = ref('')
 const history = ref<{ skill: ProjectSkill; revisions: ProjectSkillRevision[] } | null>(null)
 const viewing = ref<ProjectSkillRevision | null>(null)
 const confirmingDelete = ref<ProjectSkill | null>(null)
+const dialog = useDialog()
 // 删除确认框的开关跟着「选中的那一条」走：有目标就是开着，关掉就把目标清掉。
 const deleteOpen = computed({
   get: () => confirmingDelete.value !== null,
@@ -144,8 +146,18 @@ async function confirm(s: ProjectSkill) {
   }
 }
 
-// 芝士改过的那一份不要了：回到正在用的那一版，改动作废。
+// 芝士改过的那一份不要了：回到正在用的那一版，改动作废。改动丢了找不回来，先确认
+// （§3.7）：行里的入口是灰的，红只出现在这一下确认上。
 async function discard(s: ProjectSkill) {
+  const confirmed = await dialog
+    .confirm(t('work.skills.discardHint'), {
+      title: t('work.skills.discardTitle', { title: s.title }),
+      confirmLabel: t('work.skills.discard'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
   busy.value = `${s.id}:discard`
   actionError.value = ''
   try {

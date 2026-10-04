@@ -17,6 +17,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import i18n, { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
+import { useDialog } from '@/plugins/dialog'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目级文档 (spec §7.1): 章程 / 周报集 / 记忆 — one address each
@@ -128,8 +129,20 @@ function weeklyWindow(w: Block): string {
 }
 
 // ---- 记忆 (spec §8.4 记忆可见): entries 芝士 remembered, human-prunable ----
+const dialog = useDialog()
+
 // 删一条要写回缓存里的那份，不然离开这一页再回来它又出现了。
+// 删掉找不回，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
 async function removeMemory(id: string) {
+  const confirmed = await dialog
+    .confirm(t('project.docs.memoryDeleteBody'), {
+      title: t('project.docs.memoryDeleteTitle'),
+      confirmLabel: t('project.docs.memoryDelete'),
+      danger: true,
+    })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
   await deleteMemory(id)
   if (data.value) data.value.memoryEntries = data.value.memoryEntries.filter((e) => e.id !== id)
 }
