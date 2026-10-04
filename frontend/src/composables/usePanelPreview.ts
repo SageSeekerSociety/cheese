@@ -25,6 +25,7 @@ import {
 } from '../api'
 import { sameDocumentIdentity, useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
+import { warmPreviewPointer } from '../lib/previewPointer'
 import { roomFileDestination } from '../lib/previewSession'
 
 import { APP_NAVIGATION_BUDGET_MS, usePreviewFrames } from './usePreviewFrames'
@@ -218,7 +219,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     try {
       let art: PreviewInfo | null
       try {
-        art = await getPreview(tid)
+        // 首屏这一次（非 silent）先要那份「已经在手边的答案」：路由守卫可能已经替这个
+        // 房间先问过指针（lib/previewPointer.ts），或者那一条还在飞——别把又一轮网络
+        // 压在「面板挂载之后」的临界路径上。手边没有才自己问。轮询 / 收工重取
+        // （silent）要的是最新，一律现问。
+        const warm = opts.silent ? undefined : warmPreviewPointer(tid)
+        art = warm ? await warm : await getPreview(tid)
       } catch (e) {
         if (!stillCurrent()) return
         previewUrl.value = null

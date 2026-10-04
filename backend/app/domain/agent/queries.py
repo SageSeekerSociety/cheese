@@ -1,10 +1,10 @@
 """不碰实例状态的问答：只拿一个 session，答案从行里来。
 
-ChatService 上的这一族方法问的都是同一类问题——**这一轮该由谁答、这个项目的
-key 该带多少额度、这条记忆改动该说进哪间房**——入参是 session 和已经读好的对象，
-出参是答案，既读也不写 `self` 上的任何东西（只调用同族的纯函数）。散在
-``chat.py`` 里时它们和轮次状态混在一起：一个 `self._x()` 到底动不动这台进程的
-内存，读的人得翻回定义才知道。
+ChatService 上的这一族方法问的都是同一类问题——**这一轮该由谁答、用的模型
+过不过闸门、这个项目的 key 该带多少额度、这条记忆改动该说进哪间房**——入参
+是 session 和已经读好的对象，出参是答案，既读也不写 `self` 上的任何东西（只
+调用同族的纯函数）。散在 ``chat.py`` 里时它们和轮次状态混在一起：一个
+`self._x()` 到底动不动这台进程的内存，读的人得翻回定义才知道。
 
 搬出来时按原样搬——入参出参就是它们与调用方之间全部的约定，行为一格没动。唯一
 改了形状的是去掉 `self`：它们本来就是模块级函数，`ChatService` 上留一行同名委托，
@@ -39,6 +39,7 @@ from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.room_task import binding
 from app.domain.room_task.place import Place
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -343,3 +344,29 @@ async def _say_memory_change(
             rejected=part.rejected,
         )
         await announce(session, place_id=room, content=content, meta=meta)
+
+
+def _model_policy_call(project, agent=None) -> gate.Call:
+    """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
+
+    两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
+    起的那几轮不经过组装）。构造写在这里一处，所以两处问的确实是同一次调用。
+
+    模型花的是项目的额度，所以点头的是项目的主人。空 handle（建库早期留下的项目）
+    在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
+    给一个猜出来的人。
+    """
+    choices = binding.catalog(project.settings)
+    bound = binding.resolve(
+        None,
+        choices,
+        agent_model=agent.configuration.get("model") if agent else None,
+        default_model=(project.settings or {}).get("default_model"),
+    )
+    return gate.Call(
+        resource=gate.Resource.model,
+        subject=bound.model,
+        label=choices[bound.model]["label"],
+        tier=choices[bound.model]["tier"],
+        approver=project.owner_handle or "",
+    )

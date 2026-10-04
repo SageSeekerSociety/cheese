@@ -35,6 +35,7 @@ async def finish_deferred_message(
     take_recovery,
 ):
     import app.domain.agent.chat as chat_module
+    import app.domain.agent.room.turn as turn_module
     from app.domain.agent import pending_messages
 
     monkeypatch.setattr(pending_messages, "_runner", get_work_runner())
@@ -112,7 +113,7 @@ async def finish_deferred_message(
 
             assemble = chat._assemble_turn
             lookup = AgentInstanceService.get_in_project
-            held_blocks = chat_module.held_blocks
+            held_blocks = turn_module.held_blocks
             held_seats = []
             preparing = None
 
@@ -140,7 +141,7 @@ async def finish_deferred_message(
 
             monkeypatch.setattr(chat, "_assemble_turn", tracked_assembly)
             monkeypatch.setattr(AgentInstanceService, "get_in_project", paused_lookup)
-            monkeypatch.setattr(chat_module, "held_blocks", observed_holds)
+            monkeypatch.setattr(turn_module, "held_blocks", observed_holds)
         allow.set()
         async with asyncio.timeout(30):
             while not queued.is_set():

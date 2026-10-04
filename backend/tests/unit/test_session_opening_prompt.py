@@ -9,8 +9,8 @@ commit 造的 `cheese_status` 一次调用的事，而抬头只是把某一轮�
 会变的东西不在这里——它们在变的那一刻写成平台提醒，跟着下一轮的消息进来。
 """
 
-from app.domain.agent.chat import _resume_notice, _session_opening_lines
 from app.domain.agent.harness.prompt import build_session_opening
+from app.domain.agent.prompt import _resume_notice, _session_opening_lines
 
 
 def test_the_machines_size_is_stated_when_the_backend_knows_it() -> None:
@@ -44,8 +44,8 @@ def test_a_fractional_gigabyte_is_not_rounded_to_a_lie() -> None:
 def test_a_machine_that_is_not_ours_states_no_size() -> None:
     """Asked of the backend the pool hands the turn, not of a class — the answer
     has to survive every layer between the machine and the prompt."""
-    from app.domain.agent.chat import _sandbox_limits
     from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.prompt import _sandbox_limits
 
     pool = build_compute_pool()
 
