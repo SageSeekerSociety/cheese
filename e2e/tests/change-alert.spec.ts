@@ -100,4 +100,33 @@ test.describe('变更提醒', () => {
     // 满足（还在读得到 / 元素已经没了），会红在一个跟被测行为无关的时机上。
     await expect(page.getByText(title)).toHaveCount(0);
   });
+
+  test('一队不止一条时，一下「全部标记已读」收走整队', async ({ page }) => {
+    const stamp = Date.now();
+    const first = `整队提醒甲 ${stamp}`;
+    const second = `整队提醒乙 ${stamp}`;
+    for (const title of [first, second]) {
+      await api(page, 'post', `/projects/${projectId}/alerts`, {
+        level: 'light',
+        kind: 'change_alert',
+        title,
+        body: '一起收',
+        target_handle: 'alice',
+      });
+    }
+
+    await page.goto(`/projects/${projectId}/running`);
+    const asked = page.locator('.asked');
+    await expect(asked).toBeVisible();
+    // 新的在前：第二条压在叠顶读得到，第一条在叠里读不到 —— 但整队入口在。
+    await expect(asked).toContainText(second);
+    const readAll = asked.getByRole('button', { name: '标记全部已读' });
+    await expect(readAll).toBeVisible();
+
+    await readAll.click();
+
+    // 一百条不该要一百下：这一下把两条一起收掉。
+    await expect(page.getByText(first)).toHaveCount(0);
+    await expect(page.getByText(second)).toHaveCount(0);
+  });
 });

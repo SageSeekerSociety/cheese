@@ -1,7 +1,14 @@
 import type { Notification } from '@/network/api/notifications/types'
 
-import { render } from '@testing-library/vue'
-import { beforeAll, expect, it } from 'vitest'
+import { defineComponent, h } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { createVuetify } from 'vuetify'
+import * as components from 'vuetify/components'
+import * as directives from 'vuetify/directives'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { beforeAll, expect, it, vi } from 'vitest'
+
+import NotificationItem from '../NotificationItem.vue'
 
 import RenderCheeseQuestionNotification from './RenderCheeseQuestionNotification.vue'
 
@@ -44,4 +51,40 @@ it('an answered question says what was chosen, not that it is still waiting', ()
 
   expect(view.getByText('在「预算复核」，已回答：按项目')).toBeTruthy()
   expect(view.queryByText(/待你回答/)).toBeNull()
+})
+
+// 收件箱「动态」里点一条提问：落到的不是房间最新那几条，而是问题本身 —— 地址里带上
+// `?block=`，房间页拿它把人停在提问那条消息上（`TopicView` 读 route.query.block，对话
+// 栏按它把窗口开到那儿）。这条钉的是「那个 id 真的走到了地址里」——一个查询串名字写
+// 错，链接照样"看起来像个链接"，点开却落在房间末尾。
+it('clicking a question in the inbox opens the room at the question itself', async () => {
+  const Blank = defineComponent({ render: () => h('div') })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: Blank },
+      { path: '/p/:projectId/t/:topicId', name: 'workspace-topic', component: Blank },
+    ],
+  })
+  await router.push('/')
+  await router.isReady()
+  const onMarkAsRead = vi.fn()
+
+  const view = render(NotificationItem, {
+    props: {
+      notification: question({ blockId: 'block-42' }),
+      onMarkAsRead,
+      onDelete: vi.fn(),
+    },
+    global: { plugins: [createVuetify({ components, directives }), router, i18n] },
+  })
+
+  // 带链接的那一版要等渲染器把内容交上来才出现。
+  await waitFor(() => expect(view.container.querySelector('.v-list-item--link')).not.toBeNull())
+  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+
+  await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-topic'))
+  expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', topicId: 't1' })
+  expect(router.currentRoute.value.query.block).toBe('block-42')
+  expect(onMarkAsRead).toHaveBeenCalledWith(1)
 })
