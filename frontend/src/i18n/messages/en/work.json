@@ -47,7 +47,8 @@
     "confirm": "Push and change",
     "unavailable": "{name} · Unavailable",
     "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
-    "abandon": "Change without pushing"
+    "abandon": "Change without pushing",
+    "abandonTitle": "Change without pushing?"
   },
   "roomMachine": {
     "edit": "Edit",
@@ -181,7 +182,8 @@
   },
   "resourceLimits": {
     "projects": "Projects: no limit is set",
-    "concurrent": "Work computers are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
+    "concurrent": "A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue",
+    "detail": "Resource limits",
     "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
     "machinesOwn": "Cloud machines: projects under your name share {count} by default; see Work computers under your name for credits and usage",
     "failed": "Could not load resource limits",
@@ -292,6 +294,10 @@
       "usageLine": "{turns} runs · {tokens} tokens · {cost}",
       "usageSplit": "Input {input} · Output {output}",
       "noUsage": "No data"
+    },
+    "archiveNotice": {
+      "done": "Archived",
+      "undo": "Undo"
     },
     "progress": {
       "title": "Progress",
@@ -1698,6 +1704,8 @@
   "skills": {
     "edit": "Edit",
     "discard": "Discard changes",
+    "discardTitle": "Discard the changes to \"{title}\"?",
+    "discardHint": "The changes are dropped and the shipped version comes back. They can't be recovered.",
     "drop": "Discard",
     "history": "Version history",
     "delete": "Delete",

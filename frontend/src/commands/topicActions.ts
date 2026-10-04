@@ -8,6 +8,8 @@ import type { Router } from 'vue-router'
 import type { Topic } from '@/cx_types'
 import type { MenuCommand } from '.'
 
+import { toast } from 'vuetify-sonner'
+
 import { copyLink, linkOf } from './copy'
 
 import { t } from '@/i18n'
@@ -65,8 +67,15 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
 export async function archiveTopic(topic: Topic, router: Router): Promise<void> {
   const store = useWorkspaceStore()
   await store.archive(topic.id)
+  // 归档可能失败（store 只记下错误、不抛）：本地这一行没变成 archived 就什么都不做。
+  if (store.topics.find((row) => row.id === topic.id)?.status !== 'archived') return
   const here = router.currentRoute.value
-  if (here.name !== 'workspace-topic' || here.params.topicId !== topic.id) return
-  if (store.topics.find((row) => row.id === topic.id)?.status === 'archived')
+  if (here.name === 'workspace-topic' && here.params.topicId === topic.id)
     void router.replace({ name: 'workspace-project', params: { projectId: topic.project_id } })
+  // 归档是就地发生的一件事：不说一声，人就以为菜单点错了、房间凭空没了。撤销把刚
+  // 才那一下退回去——时间给够，因为它要人读一句再决定是不是点。
+  toast(t('work.room.archiveNotice.done'), {
+    duration: 6000,
+    action: { label: t('work.room.archiveNotice.undo'), onClick: () => void store.unarchive(topic.id) },
+  })
 }

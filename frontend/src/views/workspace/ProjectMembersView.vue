@@ -444,7 +444,7 @@ useCommands(() => [
               </i18n-t>
             </div>
             <v-spacer />
-            <BaseButton v-if="canManage" kind="danger" size="sm" :loading="revoking === inv.id" @click="takeBack(inv)">
+            <BaseButton v-if="canManage" kind="ghost" size="sm" :loading="revoking === inv.id" @click="takeBack(inv)">
               {{ t('work.members.revoke') }}
             </BaseButton>
           </div>

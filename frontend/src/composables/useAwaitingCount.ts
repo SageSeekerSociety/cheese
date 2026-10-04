@@ -10,9 +10,18 @@ const MIN_INTERVAL_MS = 30_000
 // 全站一份：首页那一格和首页侧栏的「待办」那一行读的是同一个数。
 const count = ref(0)
 
+// 同一个数按项目拆开：桌面 rail 上每个项目格子画自己那几件。和总数同一次读算出来，
+// 不再多打一个请求——待我处理的每一件都带着 projectId。
+const byProject = ref<Record<string, number>>({})
+
 /** 只读这个数，不负责去取——取数由 App 里那一处 `useAwaitingCount` 管。 */
 export function awaitingCount(): Readonly<Ref<number>> {
   return readonly(count)
+}
+
+/** 每个项目待我处理的件数；没有的项目不在表里。rail 上项目格子的角标读它。 */
+export function awaitingCountByProject(): Readonly<Ref<Record<string, number>>> {
+  return readonly(byProject)
 }
 
 /**
@@ -33,7 +42,11 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
     if (!force && now - lastAt < MIN_INTERVAL_MS) return
     lastAt = now
     try {
-      count.value = (await listAwaitingMe()).data.length
+      const items = (await listAwaitingMe()).data
+      count.value = items.length
+      const perProject: Record<string, number> = {}
+      for (const item of items) perProject[item.projectId] = (perProject[item.projectId] ?? 0) + 1
+      byProject.value = perProject
     } catch {
       // 保持原数。
     }
@@ -43,7 +56,10 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
     enabled,
     (on) => {
       if (on) void refresh(true)
-      else count.value = 0
+      else {
+        count.value = 0
+        byProject.value = {}
+      }
     },
     { immediate: true }
   )

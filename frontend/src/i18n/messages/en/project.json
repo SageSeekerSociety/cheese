@@ -83,6 +83,8 @@
     "memoryUser": "Personal memory",
     "memoryProject": "Project memory",
     "memoryDelete": "Delete this memory",
+    "memoryDeleteTitle": "Delete this memory?",
+    "memoryDeleteBody": "It can't be recovered, and Cheese will no longer remember it.",
     "noCharter": "This project has no editable charter yet",
     "fromTopic": "From topic",
     "weekliesEmpty": "No weekly reports",

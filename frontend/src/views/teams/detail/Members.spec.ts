@@ -21,7 +21,16 @@ vi.mock('@/network/api/teams', () => ({
     listTeamJoinRequests: vi.fn(async () => ({ data: { applications: [] } })),
     listTeamInvitations: vi.fn(async () => ({ data: { invitations: [] } })),
     approveJoinRequest: vi.fn(),
+    removeMember: vi.fn(),
   },
+}))
+vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+
+// 确认框回什么由这一格决定：`wait` 解出真就是人点了确定。
+const dialogMock = vi.hoisted(() => ({ confirm: vi.fn() }))
+vi.mock('@/plugins/dialog', async () => ({
+  ...(await vi.importActual<typeof import('@/plugins/dialog')>('@/plugins/dialog')),
+  useDialog: () => ({ confirm: dialogMock.confirm }),
 }))
 
 import Members from './Members.vue'
@@ -44,6 +53,9 @@ beforeAll(() => {
 afterEach(() => {
   cleanup()
   route.query = {}
+  vi.clearAllMocks()
+  // 默认「点了确定」：取消那一格在下面的用例里单独摆。
+  dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
 })
 
 function mount(overrides: Partial<Team>) {
@@ -99,6 +111,37 @@ describe('under your own name', () => {
       expect(replace).toHaveBeenCalledWith({ name: 'TeamsDetailDefault', params: { handle: 'linxia' } })
     )
     expect(screen.queryByRole('button', { name: /邀请成员/ })).toBeNull()
+  })
+})
+
+describe('moving someone out', () => {
+  const qinmo = { user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER' }
+
+  it('an admin is asked first, and a yes takes them off the team', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ data: { members: [qinmo] } } as never)
+    vi.mocked(TeamsApi.removeMember).mockResolvedValue({ data: {} } as never)
+    mount({ role: 'ADMIN' })
+
+    await fireEvent.click(await screen.findByRole('button', { name: '移除成员' }))
+
+    // 移出后他不再能进这个团队：行里的入口是灰的，这一下确认才是红的。
+    expect(dialogMock.confirm).toHaveBeenCalledWith('移出后他不再是团队成员，也不再能访问团队的项目。', {
+      title: '把「qinmo」移出团队？',
+      confirmLabel: '移除成员',
+      danger: true,
+    })
+    await waitFor(() => expect(TeamsApi.removeMember).toHaveBeenCalledWith(7, 9))
+  })
+
+  it('a no leaves them where they are', async () => {
+    dialogMock.confirm.mockImplementation(() => ({ wait: async () => false }))
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ data: { members: [qinmo] } } as never)
+    mount({ role: 'ADMIN' })
+
+    await fireEvent.click(await screen.findByRole('button', { name: '移除成员' }))
+
+    expect(dialogMock.confirm).toHaveBeenCalledTimes(1)
+    expect(TeamsApi.removeMember).not.toHaveBeenCalled()
   })
 })
 

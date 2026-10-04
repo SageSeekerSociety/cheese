@@ -4,9 +4,17 @@
   <section class="notification-feed">
     <header class="notification-feed__head">
       <h2 class="notification-feed__title">{{ t('home.inbox.feed') }}</h2>
-      <BaseButton v-if="hasUnread" size="sm" @click="markAllAsRead">
-        {{ t('notifications.common.markAllAsRead') }}
-      </BaseButton>
+      <div class="notification-feed__controls">
+        <SegmentedControl
+          v-model="filter"
+          :options="filterOptions"
+          :label="t('notifications.common.filterLabel')"
+          size="md"
+        />
+        <BaseButton v-if="hasUnread" size="sm" @click="markAllAsRead">
+          {{ t('notifications.common.markAllAsRead') }}
+        </BaseButton>
+      </div>
     </header>
     <div v-if="notifications.length > 0" class="notification-feed__list">
       <v-list density="compact" lines="three" class="py-0" bg-color="transparent">
@@ -24,25 +32,44 @@
         </BaseButton>
       </div>
     </div>
-    <p v-else-if="!loading" class="notification-feed__quiet t-body">{{ t('notifications.common.noNotifications') }}</p>
+    <p v-else-if="!loading" class="notification-feed__quiet t-body">
+      {{ filter === 'unread' ? t('notifications.common.noUnread') : t('notifications.common.noNotifications') }}
+    </p>
   </section>
 </template>
 
 <script setup lang="ts">
 import type { Notification } from '@/network/api/notifications/types'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { NotificationsApi } from '@/network/api/notifications'
 
 const { t } = useI18n()
 
 const unread = useUnreadNotifications()
+
+// 「全部 / 未读」这个筛选记在这台浏览器上，下次打开还是上次那样。
+const FILTER_KEY = 'cheesex.notificationFeed.filter'
+type FeedFilter = 'all' | 'unread'
+function readFilter(): FeedFilter {
+  try {
+    return localStorage.getItem(FILTER_KEY) === 'unread' ? 'unread' : 'all'
+  } catch {
+    return 'all'
+  }
+}
+const filter = ref<FeedFilter>(readFilter())
+const filterOptions = computed<ReadonlyArray<{ value: FeedFilter; label: string }>>(() => [
+  { value: 'all', label: t('notifications.common.filterAll') },
+  { value: 'unread', label: t('notifications.common.filterUnread') },
+])
 
 const notifications = ref<Notification[]>([])
 const loading = ref(false)
@@ -53,26 +80,51 @@ const hasMore = ref(false)
 // 判断是否有未读通知
 const hasUnread = computed(() => notifications.value.some((notification) => !notification.read))
 
-// 获取通知列表
+// 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页
+// 属于上一种筛选，丢掉，不然「未读」那一栏会混进已读的。
+let generation = 0
 const fetchNotifications = async () => {
   if (loading.value) return
 
+  const mine = generation
   loading.value = true
   try {
     const { data } = await NotificationsApi.list({
+      // 未读筛选只问服务端要没读的；「全部」不传这一位，行为和从前一样。
+      read: filter.value === 'unread' ? false : undefined,
       pageStart: cursorStart.value,
       pageSize: pageSize.value,
     })
 
+    if (mine !== generation) return
     notifications.value = [...notifications.value, ...data.notifications]
     hasMore.value = data.page.hasMore
     cursorStart.value = data.page.nextStart
   } catch (error) {
     console.error('获取通知失败:', error)
   } finally {
-    loading.value = false
+    if (mine === generation) loading.value = false
   }
 }
+
+// 换筛选就是从第一页重新问一遍：游标是跟着上一种筛选走的，接着往下翻会漏。
+function reload() {
+  generation += 1
+  loading.value = false
+  cursorStart.value = undefined
+  notifications.value = []
+  hasMore.value = false
+  void fetchNotifications()
+}
+
+watch(filter, (value) => {
+  try {
+    localStorage.setItem(FILTER_KEY, value)
+  } catch {
+    // 存不进去就这一次有效。
+  }
+  reload()
+})
 
 // 加载更多通知
 const loadMore = () => {
@@ -88,6 +140,8 @@ const markAsRead = async (notificationId: number) => {
     const notification = notifications.value.find((n) => n.id === notificationId)
     if (notification) {
       notification.read = true
+      // 正在看未读那一栏：读掉的那条不该再占着一格。
+      if (filter.value === 'unread') notifications.value = notifications.value.filter((n) => n.id !== notificationId)
     }
 
     // 更新未读数量
@@ -106,6 +160,9 @@ const markAllAsRead = async () => {
     notifications.value.forEach((notification) => {
       notification.read = true
     })
+
+    // 未读那一栏被清空了：从服务端再问一遍，而不是留一列刚读掉的行。
+    if (filter.value === 'unread') reload()
 
     // 更新未读数量
     fetchUnreadCount()
@@ -141,6 +198,7 @@ onMounted(() => {
 <style scoped>
 .notification-feed__head {
   display: flex;
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
   margin: 24px 0 8px;
@@ -150,6 +208,12 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 600;
   color: var(--ink);
+}
+/* 筛选在左、批量动作在右：两个都是这一屏的次要动作，贴着标题那一条线。 */
+.notification-feed__controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 .notification-feed__list {
   border: 1px solid var(--line);

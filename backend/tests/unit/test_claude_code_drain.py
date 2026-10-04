@@ -370,6 +370,102 @@ async def test_what_nobody_read_for_hours_never_reaches_the_room(tmp_path):
     assert opened == [fresh, later]
 
 
+@pytest.mark.anyio
+async def test_a_turn_whose_inputs_cannot_be_proven_still_ends_in_the_room(tmp_path):
+    """A session on a runner older than the input protocol: its turns settle
+    from what the journal retained. One that read an input without the exact
+    receipt identity can never be settled that way, and the room still has to
+    hear the turn end and everything the session says after it."""
+    now = datetime.now(UTC)
+    work, later = str(uuid.uuid4()), str(uuid.uuid4())
+    stamp = {"work_id": work, "agent_handle": "cheese-a"}
+    turn = [
+        {
+            "type": "user",
+            "uuid": str(uuid.uuid4()),
+            "isReplay": True,
+            # The echo itself does not say which session read it.
+            "message": {"role": "user", "content": "check the build"},
+            "cheese": {
+                **stamp,
+                "turn_start": True,
+                "receipt": True,
+                "receipt_work_id": work,
+                "receipt_session_id": "native-session",
+            },
+        },
+        {
+            "type": "assistant",
+            "uuid": "reply",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "The build is green."}],
+            },
+            "cheese": stamp,
+        },
+        {
+            "type": "result",
+            "uuid": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "The build is green.",
+            "session_id": "native-session",
+            "cheese": stamp,
+        },
+    ]
+    journal = [
+        {"sequence": number, "at": now.isoformat(), "record": record}
+        for number, record in enumerate(turn, start=1)
+    ]
+    journal.extend(_said_turn(later, "said next", first=4, at=now))
+    ended: list[str] = []
+    said: list[str] = []
+    settled: list[object] = []
+
+    async def call(method: str, params: dict) -> dict:
+        return {"events": [e for e in journal if e["sequence"] > params["after"]]}
+
+    async def consume(project, topic, work_id, event, eid, seen, unsolicited):
+        if isinstance(event, AgentResult):
+            ended.append(str(work_id))
+        elif isinstance(event, AgentMessage):
+            said.append(event.text)
+
+    async def activity(project, seat, work_id, active):
+        pass
+
+    async def announce():
+        pass
+
+    async def completion(value):
+        settled.append(value)
+
+    reading = Subscription(
+        SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code"),
+        tmp_path / "records.sqlite",
+        call,
+        consume,
+        activity,
+        session_id="native-session",
+        recipient_handle="cheese-a",
+        announce=announce,
+        receipts=_settle_receipt,
+        completions=completion,
+        input_protocol=None,
+    )
+    try:
+        await reading.drain()
+        assert ended == [work, later]
+        assert said == ["The build is green.", "said next"]
+        assert settled == []
+
+        # Landed once: the next drain has nothing to repeat.
+        await reading.drain()
+        assert ended == [work, later]
+    finally:
+        await reading.release()
+
+
 class _Clock:
     """The backend's clock, moved on by hand."""
 

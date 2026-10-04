@@ -28,10 +28,13 @@ provideTopicMemory()
 // The route is the single source of truth for "what am I looking at" — the
 // store only mirrors it so background refreshes know which badge not to light.
 watch(
-  () => [route.params.topicId, route.params.peer],
-  ([topicId, peer]) => {
+  () => [route.params.topicId, route.params.peer, props.projectId] as const,
+  ([topicId, peer, projectId]) => {
     store.activeTopicId = typeof topicId === 'string' ? topicId : null
     store.activeDmPeer = typeof peer === 'string' ? peer : null
+    // 正待着的这个房间记在这个项目名下：下次从 rail 点回来，直接落回它。带上
+    // projectId 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
+    if (typeof topicId === 'string' && projectId) store.rememberTopic(projectId, topicId)
   },
   { immediate: true }
 )
