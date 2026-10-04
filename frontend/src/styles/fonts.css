@@ -1,82 +1,54 @@
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: italic;
-  font-weight: 700;
-  src:
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff2/JetBrainsMono-Bold-Italic.woff2') format('woff2'),
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Bold-Italic.woff') format('woff');
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 700;
-  src:
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff2/JetBrainsMono-Bold.woff2') format('woff2'),
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Bold.woff') format('woff');
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: italic;
-  font-weight: 800;
-  src:
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff2/JetBrainsMono-ExtraBold-Italic.woff2')
-      format('woff2'),
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-ExtraBold-Italic.woff')
-      format('woff');
-  font-display: swap;
-}
-
+/*
+ * JetBrains Mono，随包自托管，不引第三方 CDN（大陆访问慢、有时整个被挡掉，字体一挂
+ * 全页等宽文字就掉进兜底栈）。文件在 src/assets/fonts/jetbrains-mono/（SIL OFL 1.1，
+ * 见同目录 OFL.txt），Vite 给它们带哈希，也进 Service Worker 的预缓存
+ * （vite.config.ts 的 workbox.globPatterns 收 woff2）。
+ *
+ * 只留实际在用的四个面：正体 400/500/700，加 400 斜体。斜体给代码高亮里的注释用
+ * （RichTextContent、DocSurface 的 .hljs-comment），没有它浏览器会自己把正体斜着
+ * 拉。全仓没有 font-weight 800（rg 过），600 这类中间值按 CSS 取字算法落到 700。`local()` 排在最前：本机装过 JetBrains Mono
+ * 的人直接用本地那份，不必再下一遍。
+ */
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
-  font-weight: 800;
-  src:
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff2/JetBrainsMono-ExtraBold.woff2') format('woff2'),
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-ExtraBold.woff') format('woff');
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: italic;
   font-weight: 400;
-  src:
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff2/JetBrainsMono-Italic.woff2') format('woff2'),
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Italic.woff') format('woff');
   font-display: swap;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: italic;
-  font-weight: 500;
   src:
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff2/JetBrainsMono-Medium-Italic.woff2')
-      format('woff2'),
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Medium-Italic.woff') format('woff');
-  font-display: swap;
+    local('JetBrains Mono Regular'),
+    local('JetBrainsMono-Regular'),
+    url('../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.woff2') format('woff2');
 }
 
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
   font-weight: 500;
-  src:
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff2/JetBrainsMono-Medium.woff2') format('woff2'),
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Medium.woff') format('woff');
   font-display: swap;
+  src:
+    local('JetBrains Mono Medium'),
+    local('JetBrainsMono-Medium'),
+    url('../assets/fonts/jetbrains-mono/JetBrainsMono-Medium.woff2') format('woff2');
 }
 
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
-  font-weight: 400;
-  src:
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff2/JetBrainsMono-Regular.woff2') format('woff2'),
-    url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/web/woff/JetBrainsMono-Regular.woff') format('woff');
+  font-weight: 700;
   font-display: swap;
+  src:
+    local('JetBrains Mono Bold'),
+    local('JetBrainsMono-Bold'),
+    url('../assets/fonts/jetbrains-mono/JetBrainsMono-Bold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local('JetBrains Mono Italic'),
+    local('JetBrainsMono-Italic'),
+    url('../assets/fonts/jetbrains-mono/JetBrainsMono-Italic.woff2') format('woff2');
 }
