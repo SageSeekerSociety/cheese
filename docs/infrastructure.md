@@ -830,6 +830,39 @@ on etrip names that process; killing it releases the port.
 To check the public path from anywhere, run
 [`scripts/ops/probe-okcheese.sh`](../scripts/ops/probe-okcheese.sh).
 
+### Static assets are answered in Hong Kong
+
+The page's built files under `/assets/` are hashed: a name never changes its
+content. Once TLS ends on etrip, Caddy answers them from a copy on etrip
+instead of sending each one through a tunnel, so a cold page load no longer
+waits on the tunnels for about a megabyte of script, and a fresh service
+worker's precache (about 6 MB gzipped, most of it again after every deploy)
+stops competing with API calls inside them.
+
+- `cheese-edge-asset-sync.service` runs
+  [`scripts/ops/edge-asset-sync.py`](../scripts/ops/edge-asset-sync.py) as
+  user `cheese-edge`. Every 15 s it reads the live `index.html` and `sw.js`
+  through the same tunnel ports Caddy uses, and fetches every `/assets/` file
+  they name that is missing from `/srv/okcheese-edge/assets/`. A file appears
+  under its name only after its size matched the origin's `Content-Length`,
+  with a `.gz` twin beside the compressible ones.
+- [`scripts/ops/okcheese-edge-assets.caddy`](../scripts/ops/okcheese-edge-assets.caddy),
+  installed as `/etc/caddy/okcheese-edge-assets.caddy` and imported inside the
+  okcheese.com site, serves a file only when the copy has it. Anything else,
+  including a file from a deploy the job has not caught up with yet, goes
+  through the tunnels as before, so the job being down costs speed and nothing
+  else.
+- The job never deletes a file that is still referenced, and keeps every
+  other one for 14 days, so a tab still running an older build finds its lazy
+  chunks here after the dev box has replaced them.
+
+Rollback: delete the `import` line from the okcheese.com site and
+`systemctl reload caddy`; then `systemctl disable --now cheese-edge-asset-sync`.
+
+A reload of this Caddy closes every WebSocket it proxies unless the
+`reverse_proxy` carries `stream_close_delay`; with it, open sockets stay up
+for that long after the reload, and clients reconnect on their own schedule.
+
 ## Access
 
 - **ghg private net (dev/prod boxes)**: reachable via the OpenVPN split-tunnel
