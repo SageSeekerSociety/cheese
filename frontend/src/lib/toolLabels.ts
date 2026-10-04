@@ -101,6 +101,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_template_list: 'toolLabels.cheeseTemplateList',
   cheese_template_new: 'toolLabels.cheeseTemplateNew',
   cheese_convert: 'toolLabels.cheeseConvert',
+  cheese_check: 'toolLabels.cheeseCheck',
   cheese_recalc: 'toolLabels.cheeseRecalc',
   cheese_feedback_propose: 'toolLabels.cheeseFeedbackPropose',
   cheese_feedback_list: 'toolLabels.cheeseFeedbackList',

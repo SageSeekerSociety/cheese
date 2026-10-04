@@ -630,7 +630,7 @@ body {
 代码块反色：亮色下一块深底浅字，深色下改用 `--cx-code-bg`（= fill-2），不翻回亮色卡片。
 
 ```html
-<pre class="code"><code>cheese show /var/tmp/sc/gallery/report.html --note "首版"</code></pre>
+<pre class="code"><code>cheese show out/report.html --note "首版"</code></pre>
 <p>行内代码：把 <code>--cx-accent</code> 只用于主操作。</p>
 ```
 

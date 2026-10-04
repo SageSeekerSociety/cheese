@@ -78,6 +78,7 @@
   "cheeseTemplateList": "List document templates",
   "cheeseTemplateNew": "New file from a template",
   "cheeseConvert": "Convert the document format",
+  "cheeseCheck": "Check how the page renders",
   "cheeseRecalc": "Recalculate spreadsheet formulas",
   "cheeseFeedbackPropose": "Submit a feedback proposal",
   "cheeseFeedbackList": "List feedback reports",

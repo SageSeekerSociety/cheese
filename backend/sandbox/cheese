@@ -3363,6 +3363,93 @@ def _sync_all_tasks() -> None:
         raise SystemExit(1)
 
 
+CHECK_DIR = os.path.expanduser("~/.cache/cheese-check")
+
+
+def _check_page(a: argparse.Namespace) -> None:
+    """`cheese check`: the platform's browser renders the page, this prints
+    what it saw and leaves the screenshots where the agent can open them."""
+    try:
+        html = open(a.path, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+    widths = (a.widths or [400, 1280])[:3]
+    if any(not 200 <= w <= 2000 for w in widths):
+        print("[cheese] --width 要在 200 到 2000 之间", file=sys.stderr)
+        sys.exit(2)
+    if a.pdf and not re.fullmatch(
+        r"[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?", a.margin
+    ):
+        print('[cheese] --margin 写一个或两个长度,如 "0" 或 "16mm 18mm"', file=sys.stderr)
+        sys.exit(2)
+    body = {
+        "html": html,
+        "widths": widths,
+        "color_scheme": "dark" if a.dark else "light",
+        "pdf_margin": a.margin if a.pdf else None,
+        "topic": TOPIC or None,
+        "project": PROJECT or None,
+    }
+    started = monotonic()
+    resp = _call("POST", "/page-check", body, tolerate=(503,), timeout=120)
+    if resp.get("ok") is False and resp.get("status"):
+        reason = (resp.get("error") or {}).get("message") or "渲染服务不可用"
+        print(f"[cheese] 平台现在渲染不了:{reason}", file=sys.stderr)
+        sys.exit(1)
+    data = resp.get("data") or {}
+    if not data.get("ok"):
+        print(f"[cheese] 渲染失败:{data.get('error') or '未知原因'}", file=sys.stderr)
+        sys.exit(1)
+    os.makedirs(CHECK_DIR, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(a.path))[0] or "page"
+    print(f"已渲染 {a.path}(用时 {monotonic() - started:.1f} 秒)")
+    problems = 0
+    errors: list[str] = []
+    for view in data.get("views") or []:
+        width = view["width"]
+        shot = os.path.join(CHECK_DIR, f"{stem}-{width}.png")
+        with open(shot, "wb") as out:
+            out.write(base64.b64decode(view["png_b64"]))
+        cut = f",只截了前 {view['cut_at']}px" if view.get("cut_at") else ""
+        print(f"\n{width}px:截图 {shot}(整页高 {view['page_height']}px{cut})")
+        if view["page_width"] > view["viewport_width"] + 1:
+            problems += 1
+            print(
+                f"  页面被撑宽到 {view['page_width']}px,读者要横向滚动整页。"
+                "撑宽它的元素:"
+            )
+            for item in view.get("overflowing") or []:
+                print(f"  - {item['element']}:右边缘在 {item['right']}px")
+        else:
+            print("  宽度正常,没有横向撑破。")
+        for item in view.get("clipped") or []:
+            problems += 1
+            print(f"  内容被裁掉 {item['hidden_px']}px:{item['element']}")
+        for src in view.get("broken_images") or []:
+            errors.append(f"图片没加载出来:{src}(页面只能用内联图片)")
+        for text in view.get("console_errors") or []:
+            errors.append(f"脚本报错:{text}")
+        for url in view.get("failed_requests") or []:
+            errors.append(f"请求失败:{url}")
+    if a.pdf and data.get("pdf_b64"):
+        pdf = base64.b64decode(data["pdf_b64"])
+        with open(a.pdf, "wb") as out:
+            out.write(pdf)
+        pages = len(re.findall(rb"/Type\s*/Page(?!s)", pdf))
+        print(f"\nPDF:{a.pdf}(A4,{pages} 页)")
+    if errors:
+        print()
+        for line in dict.fromkeys(errors):
+            problems += 1
+            print(f"- {line}")
+    print(
+        "\n没有发现问题。看一眼截图就可以摆出来。"
+        if not problems
+        else "\n按上面的问题改一轮,再看一眼截图;不需要反复跑。"
+    )
+
+
 def _need(name: str, value: str) -> str:
     if not value:
         print(f"[cheese] 缺少 {name}（环境变量未注入）", file=sys.stderr)
@@ -3795,6 +3882,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="渲染类型(默认按扩展名判断)",
     )
 
+    pcheck = sub.add_parser(
+        "check",
+        help="让平台的浏览器看一眼一份 HTML:手机宽和桌面宽各截一张整页,报出撑破页面的元素和报错",
+        description=(
+            "摆出来之前(或改完之后)跑一次,不用自己装浏览器。默认按手机宽 400px 和"
+            "桌面宽 1280px 各渲染一次,截图存到本地,打印页面实际宽度、把页面撑宽的"
+            "元素、控制台报错和没加载出来的图。看截图、按报告改一轮就够了,不要反复跑。"
+        ),
+    )
+    pcheck.add_argument("path", help="工作区里的 HTML 文件")
+    pcheck.add_argument(
+        "--width",
+        dest="widths",
+        type=int,
+        action="append",
+        default=None,
+        help="改用这些宽度(可重复,最多 3 个;默认 400 和 1280)",
+    )
+    pcheck.add_argument(
+        "--dark", action="store_true", help="按深色模式渲染(默认浅色)"
+    )
+    pcheck.add_argument(
+        "--pdf",
+        default=None,
+        help="顺便按打印样式导出 A4 PDF 到这个路径(背景色保留)",
+    )
+    pcheck.add_argument(
+        "--margin",
+        default="0",
+        help="PDF 页边距,一个值四边相同,两个值是「上下 左右」,如 \"16mm 18mm\"(默认 0)",
+    )
+
     ppull = sub.add_parser(
         "pull",
         help="把房间里一份文件的最新保存取到这台机器上(用户可能在编辑器里改过)",
@@ -4165,6 +4284,8 @@ def main() -> None:
             f"已从模板 {a.template} 在房间里新建 {rel}，并取到本地 {a.path}。"
             "填好占位后 cheese show 它。"
         )
+    elif a.cmd == "check":
+        _check_page(a)
     elif a.cmd == "pull":
         topic = _need("CHEESE_TOPIC", TOPIC)
         rel = _worktree_relative(a.path)
