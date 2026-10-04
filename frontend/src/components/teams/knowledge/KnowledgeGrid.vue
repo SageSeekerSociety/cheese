@@ -112,15 +112,12 @@ const emit = defineEmits<{
 
 <style scoped lang="scss">
 .resource-card {
-  transition:
-    transform 0.3s ease,
-    box-shadow 0.3s ease;
   border: 1px solid var(--line);
   overflow: hidden;
+  transition: border-color var(--dur-quick) var(--ease-standard);
 
   &.card-hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-1);
+    border-color: var(--line-2);
   }
 }
 

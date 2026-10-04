@@ -134,7 +134,7 @@ defineExpose({ scrollActiveIntoView })
   right: 12px;
   bottom: 100%;
   left: 12px;
-  z-index: 5;
+  z-index: var(--z-raised-5);
   display: flex;
   flex-direction: column;
   margin-bottom: 4px;

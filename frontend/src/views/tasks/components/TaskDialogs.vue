@@ -388,23 +388,20 @@ const directShowPrivacy = () => {
 <style scoped>
 .info-alert-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
 
 .info-avatar {
   background: linear-gradient(135deg, rgb(var(--v-theme-info)), rgb(var(--v-theme-info)));
-  box-shadow: 0 2px 4px rgba(var(--v-theme-info), 0.2);
 }
 
 .warning-avatar {
   background: linear-gradient(135deg, rgb(var(--v-theme-warning)), rgb(var(--v-theme-warning)));
-  box-shadow: 0 2px 4px rgba(var(--v-theme-warning), 0.2);
 }
 
 .privacy-link {
   cursor: pointer;
-  transition:
-    border-bottom-color 0.2s ease,
-    opacity 0.2s ease;
+  transition: color var(--dur-quick) var(--ease-standard);
   border-bottom: 1px dashed rgba(var(--v-theme-primary), 0.5);
 }
 

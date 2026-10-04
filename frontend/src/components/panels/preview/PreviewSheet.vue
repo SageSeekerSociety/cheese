@@ -494,17 +494,17 @@ watch(
 }
 .ps__col {
   top: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
 }
 .ps__row {
   left: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   min-width: 44px;
 }
 .ps__corner {
   top: 0;
   left: 0;
-  z-index: 2;
+  z-index: var(--z-raised-2);
 }
 
 .ps__cell {

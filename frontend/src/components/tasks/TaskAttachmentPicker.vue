@@ -161,15 +161,10 @@ defineExpose({ uploaded, uploading })
 .form-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
   background-color: rgb(var(--v-theme-surface));
-  transition:
-    border-color 0.2s ease,
-    transform 0.2s ease,
-    box-shadow 0.2s ease;
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
 
 .form-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.15);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.05);
 }
 </style>

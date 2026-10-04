@@ -269,7 +269,7 @@ function onFocusOut(event: FocusEvent) {
      738）。它是绝对定位的装饰，不参与内容排版，排除出锚点选取没有代价；内容自己的
      锚定照旧，「往上翻拼进一页」那一下的补偿还靠它。 */
   overflow-anchor: none;
-  z-index: 4;
+  z-index: var(--z-raised-4);
   display: flex;
   gap: 2px;
   padding: 0;
@@ -361,7 +361,7 @@ function onFocusOut(event: FocusEvent) {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 5;
+  z-index: var(--z-raised-5);
   display: flex;
   gap: 2px;
   padding: 4px;

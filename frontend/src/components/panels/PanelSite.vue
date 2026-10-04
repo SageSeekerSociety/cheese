@@ -573,7 +573,7 @@ function isLive(index: number): boolean {
 .site-activity {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   padding-block: 8px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
@@ -583,7 +583,7 @@ function isLive(index: number): boolean {
 .site-agents {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: var(--z-raised-2);
   display: flex;
   flex-wrap: wrap;
   gap: 4px;

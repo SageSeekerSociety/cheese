@@ -495,7 +495,7 @@ void openPlace()
    比屏幕上任何一条线都粗，悬停还变琥珀——琥珀留给主操作。 */
 .pane-resizer {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-raised);
   flex: 0 0 1px;
   cursor: col-resize;
   background: var(--line);

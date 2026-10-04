@@ -234,7 +234,6 @@ defineExpose({ open, locate })
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-1);
 }
 .doc-comments__quote {
   display: -webkit-box;

@@ -28,7 +28,7 @@ const online = useOnline()
   position: fixed;
   top: 0;
   left: 50%;
-  z-index: 3000; /* above the app bar and drawers */
+  z-index: var(--z-banner); /* above the app bar and drawers */
   display: flex;
   gap: 8px;
   align-items: center;

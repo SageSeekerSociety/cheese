@@ -248,10 +248,8 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
 .team-card {
   position: relative;
   transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease,
-    transform 0.2s ease,
-    box-shadow 0.2s ease;
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
   border: 1px solid rgba(var(--v-border-color), 0.15);
   background-color: rgb(var(--v-theme-surface));
   cursor: pointer;
@@ -261,8 +259,6 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
 .team-card:not(.team-card-disabled):hover {
   border-color: rgba(var(--v-theme-primary), 0.5);
   background-color: rgba(var(--v-theme-primary), 0.04);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.05);
 }
 
 .team-card-disabled {
@@ -291,7 +287,7 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
   right: 0;
   bottom: 0;
   left: 0;
-  z-index: 3;
+  z-index: var(--z-raised-3);
   background: rgba(var(--v-theme-surface), 0.7);
   display: flex;
   align-items: center;
@@ -309,15 +305,10 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
   color: rgb(var(--v-theme-error));
   font-weight: 500;
   font-size: 14px;
-  box-shadow: 0 2px 8px rgba(var(--v-theme-error), 0.1);
 }
 
 .member-chip {
-  transition: transform 0.15s ease;
-}
-
-.member-chip:hover {
-  transform: translateY(-1px);
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
 .team-members-container {
@@ -339,11 +330,11 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
 
 .info-avatar {
   background: linear-gradient(135deg, rgb(var(--v-theme-info)), rgb(var(--v-theme-info)));
-  box-shadow: 0 2px 4px rgba(var(--v-theme-info), 0.2);
 }
 
 .info-alert-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
 
 .cursor-pointer {
