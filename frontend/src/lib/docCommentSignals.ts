@@ -1,11 +1,10 @@
-// What the room's socket says about the document's comments, passed to the
-// document panel of the same room.
+// What the document's live connection hears about its comments, passed to
+// whatever shows the document's threads.
 //
-// The socket belongs to the chat column (useChatPanel); the comments belong to
-// the document panel, several components away on another branch of the page.
-// Rather than thread a counter through every layer between them, the page that
-// hears a frame announces it here under the room's id, and the panel showing
-// that room's document listens.
+// The connection belongs to the editor (useDocCollab); the threads belong to
+// their own composable (useDocThreads). Rather than thread a counter between
+// them, the connection announces each frame here under the document's id, and
+// whoever shows that document's threads listens.
 import type { DocThreadActivity } from './docThreadTypes'
 
 export type DocCommentSignal =
@@ -17,17 +16,17 @@ export type DocCommentSignal =
 type Listener = (signal: DocCommentSignal) => void
 const listeners = new Map<string, Set<Listener>>()
 
-export function announceComments(room: string, signal: DocCommentSignal): void {
-  listeners.get(room)?.forEach((listener) => listener(signal))
+export function announceComments(document: string, signal: DocCommentSignal): void {
+  listeners.get(document)?.forEach((listener) => listener(signal))
 }
 
-/** Hear the room's comment signals until the returned function is called. */
-export function listenToComments(room: string, listener: Listener): () => void {
-  const set = listeners.get(room) ?? new Set()
+/** Hear the document's comment signals until the returned function is called. */
+export function listenToComments(document: string, listener: Listener): () => void {
+  const set = listeners.get(document) ?? new Set()
   set.add(listener)
-  listeners.set(room, set)
+  listeners.set(document, set)
   return () => {
     set.delete(listener)
-    if (!set.size) listeners.delete(room)
+    if (!set.size) listeners.delete(document)
   }
 }

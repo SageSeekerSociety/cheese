@@ -512,7 +512,7 @@ async def charge_turn_spend(
     gateway: LlmGateway | None,
     gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
-    topic_id: uuid.UUID,
+    topic_id: uuid.UUID | None,
     turn_id: uuid.UUID,
 ) -> list[AgentUsage] | None:
     """Charge what the project's key spent for a turn, one row per model,
@@ -538,7 +538,7 @@ def _schedule_deferred_drain(
     gateway_lock: asyncio.Lock,
     background_tasks: set[asyncio.Task],
     project_id: uuid.UUID,
-    topic_id: uuid.UUID,
+    topic_id: uuid.UUID | None,
     turn_id: uuid.UUID,
 ) -> None:
     """Late-landing spend rows: charge again in the background. Strong-ref'd so

@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { getDocVersions } from './api/docHistory'
-import { getDocNodes, listBlocks, listTopics } from './api'
+import { listBlocks, listTopics } from './api'
 
 function json(data: unknown, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify({ code: 200, data }), {
@@ -13,25 +13,7 @@ afterEach(() => {
   localStorage.clear()
 })
 
-it('opening a topic reads the doc node tree once for the badge and the anchor', async () => {
-  let resolve!: (value: Response) => void
-  const fetcher = vi
-    .fn()
-    .mockReturnValueOnce(new Promise((yes) => (resolve = yes)))
-    .mockImplementation(() => Promise.resolve(json({ data: [], total: 0 })))
-  vi.stubGlobal('fetch', fetcher)
-  // usePanelDoc.loadNodes and DocSurface.fetchDocNodes race on mount.
-  const reads = [getDocNodes('room'), getDocNodes('room')]
-  await Promise.resolve()
-  expect(fetcher).toHaveBeenCalledTimes(1)
-  resolve(json({ data: [{ id: 'b1' }], total: 1 }))
-  expect((await Promise.all(reads)).map((r) => r.data[0].id)).toEqual(['b1', 'b1'])
-  // A later explicit refresh (after a write) must still hit the server.
-  await getDocNodes('room')
-  expect(fetcher).toHaveBeenCalledTimes(2)
-})
-
-it('opening a topic reads the doc history once for "latest edit" and the changes panel', async () => {
+it('opening a document reads its history once for "latest edit" and the history list', async () => {
   let resolve!: (value: Response) => void
   const fetcher = vi
     .fn()

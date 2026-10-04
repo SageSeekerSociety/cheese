@@ -42,13 +42,12 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 SEARCHED_BLOCKS = (
     BlockKind.message,
-    BlockKind.comment,
     BlockKind.weekly,
 )
 
 #: Every kind of record, in the order the search lists them: blocks, and the
-#: two kinds of document hit (`app.domain.living_doc.search`).
-RECORD_KINDS = ("message", *doc_search.KINDS, "comment", "weekly")
+#: kinds of document hit (`app.domain.living_doc.search`).
+RECORD_KINDS = ("message", *doc_search.KINDS, "weekly")
 
 
 # Written out rather than bound: the blocks index is partial on these kinds and

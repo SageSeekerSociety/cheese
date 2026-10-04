@@ -1,0 +1,14 @@
+[Unit]
+Description=Restart the GitHub Actions runner when it stops talking to GitHub
+ConditionPathExists=/usr/local/lib/cheese/runner-watchdog.sh
+
+[Service]
+Type=oneshot
+Environment=RUNNER_WATCHDOG_ROOT=@RUNNER_ROOT@
+Environment=RUNNER_WATCHDOG_UNIT=@RUNNER_UNIT@
+ExecStart=/usr/local/lib/cheese/runner-watchdog.sh
+StateDirectory=cheese-runner-watchdog
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict

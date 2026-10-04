@@ -31,6 +31,12 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.integration.test_accept_pr import app_world as app_world
+from tests.support.living_doc import document_of
+
+
+def _doc(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 @pytest.fixture
@@ -74,7 +80,7 @@ def _stale(frames: list[tuple[str, dict]], room: str) -> list[str]:
 def test_writing_the_doc_refreshes_the_doc_panel(client, frames):
     pid, rid = _room(client)
     r = client.put(
-        f"/topics/{rid}/doc",
+        _doc(client, rid),
         json={"content": "调查安排", "expected_version": 0},
         headers=_agent(pid, rid),
     )

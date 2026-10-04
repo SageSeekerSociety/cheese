@@ -491,13 +491,11 @@ async def list_topic_blocks(
         # An unknown cursor must not silently degrade into "newest N" — that
         # would hand the caller a duplicate page it can't distinguish. A cursor
         # from one of this room's CARDS is just as wrong as one from another
-        # room: the card's timeline is read through the card. A document node
-        # or margin comment is not on the timeline at all.
+        # room: the card's timeline is read through the card.
         if (
             cursor is None
             or cursor.topic_id != place.room_id
             or cursor.task_id is not None
-            or cursor.kind in BlockRepository.NON_TIMELINE
         ):
             raise NotFoundError(say("cursorMessageNotFound"))
         return cursor

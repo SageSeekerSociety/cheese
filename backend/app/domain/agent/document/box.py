@@ -1,5 +1,5 @@
-"""Asking the room's AI teammate from the document: a person selects text (or
-nothing, for the whole document), and asks it to change it or asks about it.
+"""Asking the AI teammate from a document: a person selects text (or nothing,
+for the whole document), and asks it to change it or asks about it.
 
 The question goes to a session of its own, like a comment thread's
 (``thread``), keyed by the conversation the box holds: the person's
@@ -14,8 +14,8 @@ change only what was selected, keep the formatting, add no facts — is in the
 session's rules, once.
 
 The box's conversation is the asker's: its record in Valkey (``_box_key``) says
-whose and in which room, and only that person may go on with it, stop it, or
-put its answer into a comment thread.
+whose and on which document, and only that person may go on with it, stop it,
+or put its answer into a comment thread.
 """
 
 import json
@@ -32,6 +32,7 @@ from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, exception_text, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question, session
+from app.domain.agent.document.question import Asked
 from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import HostFull, Prompt, StartAbandoned
@@ -155,7 +156,7 @@ class Box:
     """Whose a box's conversation is, and what it last answered."""
 
     asker: str
-    room_id: uuid.UUID
+    document_id: uuid.UUID
     answer: str = ""
 
 
@@ -164,14 +165,18 @@ async def box_of(redis: Redis, conversation: uuid.UUID) -> Box | None:
     if not raw:
         return None
     held = json.loads(raw)
-    return Box(held["asker"], uuid.UUID(held["room"]), held.get("answer", ""))
+    return Box(held["asker"], uuid.UUID(held["document"]), held.get("answer", ""))
 
 
 async def _keep(redis: Redis, conversation: uuid.UUID, box: Box) -> None:
     await redis.set(
         _box_key(conversation),
         json.dumps(
-            {"asker": box.asker, "room": str(box.room_id), "answer": box.answer},
+            {
+                "asker": box.asker,
+                "document": str(box.document_id),
+                "answer": box.answer,
+            },
             ensure_ascii=False,
         ),
         ex=BOX_TTL_S,
@@ -179,12 +184,12 @@ async def _keep(redis: Redis, conversation: uuid.UUID, box: Box) -> None:
 
 
 async def owned(
-    redis: Redis, conversation: uuid.UUID, *, asker: str, room_id: uuid.UUID
+    redis: Redis, conversation: uuid.UUID, *, asker: str, document_id: uuid.UUID
 ) -> Box:
-    """The box's conversation, when it is ``asker``'s in this room; one that is
-    nobody's and one that is someone else's are the same refusal."""
+    """The box's conversation, when it is ``asker``'s on this document; one
+    that is nobody's and one that is someone else's are the same refusal."""
     box = await box_of(redis, conversation)
-    if box is None or box.asker != asker or box.room_id != room_id:
+    if box is None or box.asker != asker or box.document_id != document_id:
         raise ForbiddenError("This conversation is not yours")
     return box
 
@@ -241,8 +246,7 @@ async def ask(
     redis: Redis,
     emit: Callable[[str, dict], Awaitable[None]],
     *,
-    project_id: uuid.UUID,
-    room_id: uuid.UUID,
+    asked: Asked,
     asker: str,
     conversation: uuid.UUID,
     preset: str | None,
@@ -260,8 +264,8 @@ async def ask(
     chosen = PRESETS.get(preset or "")
     allowed = may_edit and (chosen is None or chosen.kind == "edit")
     async with factory() as db:
-        bound = await question.bind(db, room_id)
-    await _keep(redis, conversation, Box(asker, room_id))
+        bound = await question.bind(db, asked)
+    await _keep(redis, conversation, Box(asker, asked.document_id))
     work = uuid.uuid4()
 
     async def queued() -> None:
@@ -271,7 +275,7 @@ async def ask(
 
     slot = await question.take_turn(
         redis,
-        project_id,
+        asked.project_id,
         conversation,
         on_wait=queued,
         stopped=stopped,
@@ -289,10 +293,8 @@ async def ask(
     await emit("working", {})
     try:
         async with factory() as db:
-            await question.admit(db, project_id, bound)
-            around = await question.surroundings(
-                db, project_id=project_id, room_id=room_id, seat=bound.agent_handle
-            )
+            await question.admit(db, asked.project_id, bound)
+            around = await question.surroundings(db, asked, seat=bound.agent_handle)
     except ValidationError as exc:
         # Refused before anything was asked: the refusal is what the box says.
         await slot.release()
@@ -311,8 +313,7 @@ async def ask(
         async with factory() as db:
             acting = await question.credential(
                 db,
-                project_id=project_id,
-                room_id=room_id,
+                asked=asked,
                 agent=bound.agent_handle,
                 asker=asker,
                 work=work,
@@ -323,16 +324,10 @@ async def ask(
     return await consumptions.begin(
         kind=KIND,
         key=str(conversation),
-        data={
-            "project": str(project_id),
-            "room": str(room_id),
-            "asker": asker,
-            "agent": bound.agent_name,
-        },
+        data={**asked.data(), "asker": asker, "agent": bound.agent_name},
         work_id=work,
         session=session.session_for(
-            project_id=project_id,
-            room_id=room_id,
+            asked=asked,
             key=conversation,
             bound=bound,
             around=around,
@@ -385,8 +380,7 @@ class Answers:
         stopped: bool,
         failure: BaseException | None,
     ) -> list[tuple[str, dict]]:
-        project_id = uuid.UUID(consumption.data["project"])
-        room_id = uuid.UUID(consumption.data["room"])
+        asked = Asked.of(consumption.data)
         conversation = uuid.UUID(consumption.key)
         agent = consumption.data["agent"]
         text, refused = answer.text.strip(), None
@@ -412,7 +406,9 @@ class Answers:
         if stopped:
             # What it had written when it was stopped stays, marked as stopped.
             text, refused = written.strip(), None
-        await self._chat.charge_turn_spend(project_id, room_id, consumption.work)
+        await self._chat.charge_turn_spend(
+            asked.project_id, asked.room_id, consumption.work
+        )
         if refused is not None and not edits:
             return [("error", error_frame(refused))]
         # What was changed was changed, answer or not: the box shows it and can
@@ -422,6 +418,6 @@ class Answers:
             await _keep(
                 redis,
                 conversation,
-                Box(consumption.data["asker"], room_id, text),
+                Box(consumption.data["asker"], asked.document_id, text),
             )
         return [("done", {"answer": text, "edits": edits, "stopped": stopped})]
