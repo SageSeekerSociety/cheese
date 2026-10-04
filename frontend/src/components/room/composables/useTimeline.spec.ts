@@ -192,4 +192,21 @@ describe('不露面的块不占窗口', () => {
     expect(ids(timeline.messages.value)).toEqual(['v0'])
     expect(timeline.oldestLoaded(), '翻过一页，游标跟着往前挪').toBe('x0')
   })
+
+  it('prepend 回「这一页多画出来了几行」：整页不露面回 0，接上可见的才 >0', () => {
+    // 翻页的人据此知道该不该接着往回读：整页一行都画不出来（回 0）时，这一页没让任何
+    // 东西长高，就没有下一次滚动事件，翻页会停在原地。
+    const timeline = useTimeline({ renders: inRoom })
+    timeline.show({ blocks: [b('v0')], hasMore: true })
+
+    expect(
+      timeline.prepend(
+        run(50, 'h').map((x) => hidden(x.id)),
+        true
+      ),
+      '整页不露面'
+    ).toBe(0)
+    expect(timeline.prepend([hidden('j0'), b('j1')], true), '接上一条看得见的').toBe(1)
+    expect(timeline.prepend([b('j1')], true), '已经有的不算多出来').toBe(0)
+  })
 })
