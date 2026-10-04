@@ -186,13 +186,9 @@ const projectRows = computed<ProjectRow[]>(() =>
       id: row.project_id,
       name: row.name || row.project_id.slice(0, 8),
       entries: fmtNum(row.entries),
-      personal: row.personal.entries
-        ? `${fmtNum(row.personal.entries)}（${fmtNum(row.personal.owners)}）`
-        : '',
+      personal: row.personal.entries ? `${fmtNum(row.personal.entries)}（${fmtNum(row.personal.owners)}）` : '',
       index:
-        row.index.lines === null
-          ? ''
-          : `${fmtNum(row.index.lines)} / ${Math.round((row.index.bytes ?? 0) / 1024)}K`,
+        row.index.lines === null ? '' : `${fmtNum(row.index.lines)} / ${Math.round((row.index.bytes ?? 0) / 1024)}K`,
       indexWarn: over,
       pending: hygiene ? fmtNum(hygiene) : '',
       pendingTitle: t('featureStats.memory.table.pendingTitle', {
@@ -213,10 +209,7 @@ const projectRows = computed<ProjectRow[]>(() =>
 </script>
 
 <template>
-  <AdminPage
-    :title="t('featureStats.features.memory.title')"
-    :sub="t('featureStats.features.memory.summary')"
-  >
+  <AdminPage :title="t('featureStats.features.memory.title')" :sub="t('featureStats.features.memory.summary')">
     <template #tools>
       <AdminTabs
         size="sm"
@@ -273,7 +266,11 @@ const projectRows = computed<ProjectRow[]>(() =>
           />
           <AdminKpiCard
             :label="t('featureStats.memory.kpi.hygiene')"
-            :value="count((numbers?.hygiene.orphan ?? 0) + (numbers?.hygiene.dangling ?? 0) + (numbers?.hygiene.over_body ?? 0))"
+            :value="
+              count(
+                (numbers?.hygiene.orphan ?? 0) + (numbers?.hygiene.dangling ?? 0) + (numbers?.hygiene.over_body ?? 0)
+              )
+            "
             :loading="loading"
             :note="t('featureStats.memory.kpi.hygieneNote')"
             :delta="hygieneOf"
@@ -438,11 +435,11 @@ const projectRows = computed<ProjectRow[]>(() =>
 
 /* 索引撑破注入预算、或者有整理挂着没回音时的那一个记号。 */
 .amem__warn {
-  color: var(--warn, #b26a00);
   font-weight: 700;
+  color: var(--warn-ink);
 }
 
 .amem__warn-text {
-  color: var(--warn, #b26a00);
+  color: var(--warn-ink);
 }
 </style>
