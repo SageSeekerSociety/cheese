@@ -75,8 +75,6 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
     async def settled(expected):
         async with asyncio.timeout(90):
             while True:
-                for subscription in channel.runtime.subscriptions.values():
-                    await subscription.drain()
                 async with factory() as session:
                     rows = list(
                         await session.scalars(
@@ -92,14 +90,13 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
         # HTTP commits intent before the background runner performs the RPC.
         # Establish its durable receipt before measuring retry/correction effects.
         # Under this ClaudeCode harness an input's acceptance *is* its native
-        # echo: receipts.py stamps accepted_at only for DrivenRuntime's
-        # "accepted" evidence, which ClaudeCode never produces. So "accepted"
+        # echo: receipts.py stamps accepted_at only for the "accepted" evidence
+        # a harness whose runner taking an input is its reading produces,
+        # which ClaudeCode never does. So "accepted"
         # means echoed_at, and the echo must be drained to be observed.
         async with asyncio.timeout(90):
             while True:
                 await retry_due()
-                for subscription in channel.runtime.subscriptions.values():
-                    await subscription.drain()
                 async with factory() as session:
                     deliveries = list(
                         await session.scalars(

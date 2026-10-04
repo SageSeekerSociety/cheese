@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner
@@ -186,7 +186,9 @@ async def pi(tmp_path: Path, route, *, default: str = "child-default"):
     with room_machine(tmp_path / "machine") as target:
         try:
             await runner.start(
-                Opening(system_prompt="FIXTURE", model=PARENT, agent_handle="cheese"),
+                SessionStart(
+                    system_prompt="FIXTURE", model=PARENT, agent_handle="cheese"
+                ),
                 binary=pi_binary(),
                 cwd=str(work),
                 env=env,

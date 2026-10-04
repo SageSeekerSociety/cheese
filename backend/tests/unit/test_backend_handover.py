@@ -20,6 +20,7 @@ import dataclasses
 import time
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import text
@@ -28,8 +29,7 @@ from app.core.ownership import OWNER_LOCK, Ownership
 from app.domain.agent import attachments
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceOffline
-from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.runtime import (
     AgentWorkRunner,
     InProcessBroker,
@@ -247,13 +247,12 @@ def _said(events) -> list[str]:
 @pytest.mark.anyio
 async def test_session_output_lands_once_through_the_backend_that_took_over():
     room = Room(Scripted(_works_on_it))
-    incoming = ClaudeCodeRuntime(room.channel)
     landed_by_incoming: list = []
 
     async def consume(_project, _topic, work, event, _eid, _seen, _unsolicited):
         landed_by_incoming.append((work, event))
 
-    incoming.bind_reader(room_reader(events=consume))
+    incoming = None
     try:
         await room.send("fix the login page")
         await _until(lambda: room.receipts == ["fix the login page"])
@@ -264,9 +263,16 @@ async def test_session_output_lands_once_through_the_backend_that_took_over():
         await asyncio.sleep(1.5)
         assert "the login page is fixed" not in _said(room.events)
 
+        # The next backend: a session core that has read nothing yet.
+        incoming = room.channel.next_process()
+        incoming.report_to(
+            room_reader(events=consume),
+            unread=lambda _topic: None,
+            memory=AsyncMock(),
+        )
         recovered = await incoming.recover()
         assert [ref.topic_id for ref in recovered] == [room.topic]
-        await incoming.replay(recovered[0], known_texts=set())
+        await incoming.replay(recovered[0])
         await _until(lambda: "the login page is fixed" in _said(landed_by_incoming))
         await asyncio.sleep(0.3)
 
@@ -274,7 +280,8 @@ async def test_session_output_lands_once_through_the_backend_that_took_over():
         assert "the login page is fixed" not in _said(room.events)
     finally:
         await room.close()
-        await incoming.stop_listening()
+        if incoming is not None:
+            await incoming.stop_listening()
 
 
 class _GatedLock:
@@ -302,17 +309,15 @@ class _GatedLock:
 @pytest.mark.anyio
 async def test_a_stop_whose_seat_was_won_keeps_the_new_source_and_finishes_its_own():
     """真实 stop 门闩（FB-56 attachment）：旧 stop 快照后，新 attach 先完成整个
-    swap——不同 handle、同一 seat——旧 stop 再进锁。新 registry、新 maps、新
-    poll 必须全在；旧实例的旧 poll 被等完才 release（release 不抢 drain 的先），
-    旧 subscription 被正确收尾。另一个无干扰座位走正常身份相同路径。"""
+    swap——不同会话、同一 seat——旧 stop 再进锁。新 registry、新 maps、新读取
+    必须全在；另一个无干扰座位的旧读取被等完，stop 才返回，它的登记被清掉。"""
     room = Room(Scripted(_works_on_it))
     runtime = room.runtime
     try:
         await room.send("fix the login page")
         await _until(lambda: room.receipts == ["fix the login page"])
         seat_a = (room.topic, "cheese")
-        old_a = runtime.subscriptions[seat_a]
-        handle_a = runtime.live[seat_a]
+        live_a = runtime.live[seat_a]
 
         # 第二个座位（无干扰对照）：同一 runtime 上的另一个房间。
         session_b = SessionRef(
@@ -322,37 +327,23 @@ async def test_a_stop_whose_seat_was_won_keeps_the_new_source_and_finishes_its_o
         await runtime.send(
             session_b,
             "write the docs",
-            Opening(system_prompt=""),
+            system_prompt="",
             work_id=uuid.uuid4(),
             on_mark=lambda _: None,
             register_input=room.register_input("write the docs"),
         )
-        await _until(lambda: seat_b in runtime.subscriptions)
-        old_b = runtime.subscriptions[seat_b]
+        await _until(lambda: seat_b in runtime.tasks)
 
         order: list[str] = []
+        # 座位 B 的旧读取还在读：stop 必须等它读完。
+        reading_b = runtime.tasks[seat_b]
+        reading_b.cancel()
 
-        orig_release_a = old_a.release
-
-        async def release_a() -> None:
-            order.append("releaseA")
-            await orig_release_a()
-
-        old_a.release = release_a  # type: ignore[method-assign]
-
-        # 座位 B 的旧 reader 还在 drain：stop 必须等它做完才 release。
         async def drain_b() -> None:
             await asyncio.sleep(0.05)
             order.append("pollB-done")
 
         runtime.tasks[seat_b] = asyncio.create_task(drain_b())
-        orig_release_b = old_b.release
-
-        async def release_b() -> None:
-            order.append("releaseB")
-            await orig_release_b()
-
-        old_b.release = release_b  # type: ignore[method-assign]
 
         hold = asyncio.Event()
         real_lock_fn = attachments.lock
@@ -364,32 +355,28 @@ async def test_a_stop_whose_seat_was_won_keeps_the_new_source_and_finishes_its_o
             await asyncio.sleep(0)  # stop 快照（含旧 A/旧 B），在 seat A 锁前等待
             assert gated.acquisitions == 1
 
-            # 新 attach 完成整个 swap：不同 handle、同一 seat。
-            new_handle = dataclasses.replace(handle_a, state="resumed")
-            await runtime._attach(new_handle)
-            new_a = runtime.subscriptions[seat_a]
-            assert new_a is not old_a
-            # 恢复后 _listen 起的新 poll。
+            # 新 attach 完成整个 swap：不同会话、同一 seat。
+            resumed = dataclasses.replace(live_a, conversation="resumed")
+            attached = await runtime._attach(resumed)
+            assert attached.attachment != live_a.attachment
+            # 恢复后 _listen 起的新读取。
             new_poll = asyncio.create_task(asyncio.sleep(30))
             runtime.tasks[seat_a] = new_poll
 
             hold.set()
             await stop
+            order.append("stopped")
 
-            assert attachments.current(seat_a) == new_a.attachment_id, (
+            assert attachments.current(seat_a) == attached.attachment, (
                 "旧 stop 清新 registry"
             )
-            assert runtime.subscriptions[seat_a] is new_a, "新 maps 被旧 stop 清了"
-            assert runtime.live[seat_a] == new_handle
-            assert not new_poll.done(), "旧 stop 等/取消了新 poll"
+            assert runtime.live[seat_a] is attached, "新 maps 被旧 stop 清了"
+            assert not new_poll.done(), "旧 stop 等/取消了新读取"
 
-            # 身份相同的座位 B：旧 poll 被等完才 release。
-            assert order.index("pollB-done") < order.index("releaseB"), (
-                "release 抢在 drain 前"
-            )
-            assert seat_b not in runtime.subscriptions
+            # 身份相同的座位 B：旧读取被等完，stop 才算完。
+            assert order.index("pollB-done") < order.index("stopped")
+            assert seat_b not in runtime.live
             assert attachments.current(seat_b) is None
-            assert "releaseA" in order, "旧实例没被收尾"
         finally:
             attachments.lock = real_lock_fn
             if new_poll is not None:
@@ -411,21 +398,22 @@ async def test_a_same_handle_attach_is_refused_when_ownership_is_closed():
         await room.send("fix the login page")
         await _until(lambda: room.receipts == ["fix the login page"])
         seat = (room.topic, "cheese")
-        old = runtime.subscriptions[seat]
-        handle = runtime.live[seat]
+        old = runtime.live[seat]
+        reading = runtime.tasks[seat]
 
         runtime.bind_owns_sessions(lambda: SimpleNamespace(owns_sessions=False))
         try:
             with pytest.raises(DeviceOffline):
-                await runtime._attach(handle)
-            assert runtime.subscriptions[seat] is old, "拒绝动了已注册的东西"
-            assert attachments.current(seat) == old.attachment_id
+                await runtime._attach(old)
+            assert runtime.live[seat] is old, "拒绝动了已注册的东西"
+            assert runtime.tasks[seat] is reading
+            assert attachments.current(seat) == old.attachment
         finally:
             runtime.bind_owns_sessions(None)
 
-        # 窗口过后：同 handle 幂等返回，不 detach、不换注册。
-        await runtime._attach(handle)
-        assert runtime.subscriptions[seat] is old
-        assert attachments.current(seat) == old.attachment_id
+        # 窗口过后：同一会话幂等返回，不 detach、不换注册。
+        assert await runtime._attach(old) is old
+        assert runtime.tasks[seat] is reading
+        assert attachments.current(seat) == old.attachment
     finally:
         await room.close()

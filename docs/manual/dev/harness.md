@@ -4,6 +4,8 @@ kind: 参考
 summary: 平台驱动 Claude Code、Codex、pi 三种骨架的统一抽象和各自差异。
 covers:
   - backend/app/domain/agent/harness/
+  - backend/app/domain/agent/session_host/
+  - backend/app/domain/agent/room/
   - backend/app/domain/agent/capability/
   - backend/app/domain/room_task/binding.py
   - backend/app/domain/machine/pi_dist.py
@@ -50,9 +52,11 @@ pi 核心没有子 agent，四条由平台给它的 extension 和 runner 答：`
 
 ## 平台只认这几个动词 {#contract}
 
-`AgentRuntime`（Protocol）是平台对一个骨架的全部要求：`ensure`、`send`、`backlog`、`deliver`、`interrupt`、`close`，加上 `holds`、`memory()`、`keeps_memory` 这几个事实，以及三条回路：`bind_reader` 把会话说的、做的一条条交给房间（说了什么、开始和停下干活、读到了哪条输入、活怎么结束、机器够不够得着、正在写什么，都是 `agent/reads.py` 的 `Read`，由 `room_reads.py` 分给房间各自的账），`bind_memory` 在输入之前和一轮之后对记忆，`bind_unread_probe` 问房间还有没有输入没被读。四条硬性要求不在这里当第七个动词：平台不起子 agent，它们是骨架的事实，各写一句「怎么做到的」落在 `HARNESSES[harness].subagents` 上。
+骨架之上是会话核心（`agent/session_host/`，`SessionHost`）。它不认识房间、文档和人，对三种骨架都一样：`start` 照一份 `SessionSpec` 起一条会话，`attach` 接上已经在跑的，`send` 交一个输入、`steer` 在干活时插一句、`stop` 停下，`status` 问它在不在干活，`memory` 和 `control` 转给会话的 runner，`read` 把会话说的、做的一条条交出来（说了什么、开始和停下干活、读到了哪条输入、活怎么结束、机器够不够得着、正在写什么，都是 `session_host/reads.py` 的一种）。各骨架只回答自己协议写法不同的地方：怎么起、怎么读、停用哪个调用、收下输入算不算读到，这些写在各自的驱动里（`session_host/driver.py` 的 `Driver`，实现是同目录的 `pi.py`、`claude_code.py`、`codex.py`）。会不会把记忆对账回平台是注册表上的事实（`Harness.keeps_memory`），只经 `session_host.host.keeps_memory` 一处读。
 
-旁边几个小协议：`Backlog`（`unread` / `assemble` / `unfinished` / `landed` / `forget`）、`SessionControls`、`Opening`（一轮开场给会话的那些东西，含「这一轮要不要一双手」的 `needs_place`）、`SessionRef`（`(topic, agent_handle, harness)`，`agent_sessions` 的键）。
+房间、文档里的芝士、个人芝士各自从核心装起来。房间的那一份是 `agent/room/sessions.py` 的 `RoomSessions`：`ensure`、`send`、`backlog`、`steer`、`interrupt`、`close` 这几个动词，加上 `holds` 这类事实；它记房间自己的账（每个座位在干哪件活、干活时插进来的话被哪件活读到、存活规则看的几只钟），再经 `report_to` 交给房间：读到的每一条交给 `room/reads.py` 分到房间各自的账，输入之前和一轮之后对记忆，问房间还有没有输入没被读。四条硬性要求不在这里当动词：平台不起子 agent，它们是骨架的事实，各写一句「怎么做到的」落在 `HARNESSES[harness].subagents` 上。
+
+旁边几个小协议：`Backlog`（`unread` / `assemble` / `unfinished` / `landed` / `forget`）、`SessionRef`（`(topic, agent_handle, harness)`，`agent_sessions` 的键）。
 
 ## 能力矩阵：一格都不许空 {#matrix}
 
@@ -73,7 +77,7 @@ pi 核心没有子 agent，四条由平台给它的 extension 和 runner 答：`
 
 ## 驱动层不是第四个骨架 {#driven}
 
-Codex 和 pi 的驱动方式一样：会话机上一个 runner 拥有 agent 进程、说它的协议、把它产出的东西按稳定序号记进本地 journal，并且**每个输入至多接受一次**；后端从一个游标镜像那份 journal，每条会话一个 poller 把镜像到的东西交给房间。poller 一读完就接着读；runner 收到读，要等到游标之后有了新记录、或者 agent 正在写的内容变了才回答，最长等 `READ_WAIT_S`（25 秒），所以安静的会话每 25 秒才读一次，写下的东西又当场就到。agent 正在写的内容是它此刻生成的那一块：一段文字，或者一个工具调用和流到这里的参数原文（Claude Code 靠 `--include-partial-messages` 的 `stream_event`，pi 靠 `message_update`），只在 runner 内存里，不进 journal；跟着读的回答到后端，作为一帧 `live` 发到房间，不落库，那一块写完、它的记录进 journal 时清空（`driven/runner.py`、`live_frames.py`）。runner 在 `ping` 里声明 `long_poll`（和 `live`），后端在接上 runner 时核对；不声明 `long_poll` 的 runner 不受支持，接上时就被拒绝。只有协议不同，所以只有协议住在 `codex/` 和 `pi/` 里；journal、runner 的 socket 和输入账、drain 循环、poller 都在 `harness/driven/`。它是**共用的一层**，不是第四个骨架。
+Codex 和 pi 的驱动方式一样：会话机上一个 runner 拥有 agent 进程、说它的协议、把它产出的东西按稳定序号记进本地 journal，并且**每个输入至多接受一次**；后端从一个游标镜像那份 journal（`driven/subscription.py`），会话核心的 `read` 把镜像到的东西交给听它的那一方。它一读完就接着读；runner 收到读，要等到游标之后有了新记录、或者 agent 正在写的内容变了才回答，最长等 `READ_WAIT_S`（25 秒），所以安静的会话每 25 秒才读一次，写下的东西又当场就到。agent 正在写的内容是它此刻生成的那一块：一段文字，或者一个工具调用和流到这里的参数原文（Claude Code 靠 `--include-partial-messages` 的 `stream_event`，pi 靠 `message_update`），只在 runner 内存里，不进 journal；跟着读的回答到后端，作为一帧 `live` 发到房间，不落库，那一块写完、它的记录进 journal 时清空（`driven/runner.py`、`live_frames.py`）。runner 在 `ping` 里声明 `long_poll`（和 `live`），后端在接上 runner 时核对；不声明 `long_poll` 的 runner 不受支持，接上时就被拒绝。只有协议不同，所以只有协议住在 `codex/`、`pi/` 和核心里各自的驱动里；journal、runner 的 socket 和输入账、drain 循环、镜像都在 `harness/driven/`。它是**共用的一层**，不是第四个骨架。
 
 三种骨架的会话都在中心会话机上，手在房间的执行机上，用到才领（`CentralChannel`）。pi 的工具是 pi 自己的 read、write、edit、bash、ls、find、grep，平台的扩展换掉的只是它们底下的文件与进程操作（pi 的 `Operations` 注入点），经 runner（`pi/machine.py`）、走另外两个骨架同一个 `RemoteClient` 到执行机：一个文件操作是执行器自己答的一次调用（`control` 的 `files`，`remote_execution/machine_files.py`，路径不限于工作区，和 Claude Code 的 Read、Write 一样），bash 是一条命令，和 Codex 的一样在用户的 shell 里、先载入 profile 的快照。grep 的搜索本身不经注入的操作（pi 在自己那台机器上起 ripgrep），扩展把它整个换成执行器上的一次搜索（用平台装在执行机上的 ripgrep，见 `agent/toolchain.py`；还没装好时用机器自己 PATH 上的，都没有才按 git 不忽略的文件自己找），输出照 pi 的格式。执行器在 ping 里声明 `machine_files`；还没升级的旧执行器上，这些操作明说执行服务是旧版本，等它空闲升级。后台任务在执行机上有自己的终端（`pi/relay.py`），runner 把它的输出抄回中心机（`pi/jobs.py`）。仓库自己的说明和技能在会话到了机器上时读（`pi/repository.py`、`pi/project_skills.py`）；会话还在占位工作区时第一次领到机器，那次操作不执行，先把仓库的说明交给它，和另外两个骨架一样。
 

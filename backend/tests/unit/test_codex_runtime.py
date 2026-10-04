@@ -11,18 +11,24 @@ import pytest
 
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
-from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent.harness.codex.channel import CodexChannel
+from app.domain.agent.harness import CODEX, SessionRef
+from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.codex.journal import Journal
-from app.domain.agent.harness.codex.runtime import CodexRuntime, Handle
 from app.domain.agent.harness.driven.runner import LONG_POLL
-from app.domain.agent.harness.launch import ExecutorLaunch
+from app.domain.agent.room import sessions as room_sessions
+from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentMessage, AgentResult
+from app.domain.agent.session_host.contract import StartRefused
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.models import SessionPlace
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from tests.support.room_reader import room_reader
+from tests.support.seat_channel import SeatChannel
+
+
+def hear(runtime, reader) -> None:
+    runtime.report_to(reader, unread=lambda _topic: None, memory=AsyncMock())
 
 
 @pytest.mark.anyio
@@ -44,7 +50,7 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
                 lease=None,
             ),
         )
-        for state in ("/dead", "/alive")
+        for state in ("$HOME/.cheese/harness/dead", "$HOME/.cheese/harness/alive")
     ]
     database_open = False
 
@@ -60,22 +66,24 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
     async def ping(device, state, method, params, **kwargs):
         assert not database_open
         assert kwargs["timeout"] == 15
-        if state == "/dead":
+        if state.endswith("/dead"):
             raise failure("center")
-        return {"alive": True, "thread_id": "retained"}
+        return {"alive": True, "thread_id": "retained", "capabilities": [LONG_POLL]}
 
     source = Mock(spec=CentralChannel)
     source.name = "central"
     source.provisions_machine = True
     source._session_factory = factory
-    source._hub = Mock(
+    source.placed = CentralChannel.placed.__get__(source)
+    hub = Mock(
         is_online=Mock(return_value=True), call_executor=AsyncMock(side_effect=ping)
     )
-    channel = CodexChannel(source, Mock(spec=ExecutorLaunch))
+    runtime = RoomSessions(source, CODEX, SessionHost(hub))
     with patch.object(AgentSessionService, "placed_sessions", return_value=sessions):
-        found = await channel.discover("center")
-    assert [handle.session.topic_id for handle in found] == [sessions[1][1]]
-    assert found[0].thread_id == "retained"
+        found = await runtime.recover("center")
+    assert [session.topic_id for session in found] == [sessions[1][1]]
+    (live,) = runtime.live.values()
+    assert live.conversation == "retained"
 
 
 @pytest.mark.anyio
@@ -84,51 +92,47 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
     tmp_path, failure
 ):
     project = uuid.uuid4()
-    handles = [
-        Handle(
-            SessionRef(project, uuid.uuid4(), harness="codex"),
-            "center",
-            state,
-            "thread",
-            "a",
-            tmp_path / state[1:],
-            frozenset({LONG_POLL}),
-        )
-        for state in ("/dead", "/alive")
-    ]
-
-    async def call(handle, method, params):
-        assert method in {"ping", "events"}, "recovery must not send a prompt"
-        if handle == handles[0]:
-            raise failure("center")
-        if method == "events" and params.get("wait"):
-            # Held, as a runner holds a read with nothing to answer it with.
-            await asyncio.sleep(params["wait"])
-        return {"turn_id": None} if method == "ping" else {"events": []}
-
-    channel = AsyncMock(
-        discover=AsyncMock(return_value=handles), call=AsyncMock(side_effect=call)
+    dead, alive = (
+        SessionRef(project, uuid.uuid4(), "a", harness=CODEX) for _ in range(2)
     )
-    runtime = CodexRuntime(channel)
-    assert await runtime.recover("center") == [handles[1].session]
-    assert not runtime.holds(handles[0].session.topic_id)
-    assert runtime.holds(handles[1].session.topic_id)
-    await runtime.close(handles[1].session)
+
+    class Seats(SeatChannel):
+        async def open(self, session, agent, launch):
+            raise AssertionError("recovery must not start a session")
+
+        async def call(self, handle, method, params):
+            assert method in {"ping", "events"}, "recovery must not send a prompt"
+            if handle.session == dead:
+                raise failure("center")
+            if method == "events" and params.get("wait"):
+                # Held, as a runner holds a read with nothing to answer it with.
+                await asyncio.sleep(params["wait"])
+            if method == "ping":
+                return {
+                    "alive": True,
+                    "thread_id": "thread",
+                    "capabilities": [LONG_POLL],
+                    "turn_id": None,
+                }
+            return {"events": []}
+
+    channel = Seats(harness=CODEX)
+    for session in (dead, alive):
+        channel.seats[(session.topic_id, "a")] = (
+            session,
+            f"$HOME/.cheese/harness/{session.topic_id}/a",
+        )
+    runtime = channel.runtime
+    assert await runtime.recover("center") == [alive]
+    assert not runtime.holds(dead.topic_id)
+    assert runtime.holds(alive.topic_id)
+    await runtime.close(alive)
 
 
 @pytest.mark.anyio
 async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "agent", harness="codex")
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "agent", harness=CODEX)
     work = uuid.uuid4()
-    handle = Handle(
-        session,
-        "center",
-        "/state",
-        "thread",
-        "agent",
-        tmp_path / "mirror",
-        frozenset({LONG_POLL}),
-    )
     journal = Journal(tmp_path / "remote")
     inputs = []
     active = False
@@ -145,7 +149,12 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
                 await asyncio.sleep(0.01)
             return {"events": journal.read(params["after"])}
         if method == "ping":
-            return {"turn_id": "turn" if active else None}
+            return {
+                "alive": True,
+                "thread_id": "thread",
+                "capabilities": [LONG_POLL],
+                "turn_id": "turn" if active else None,
+            }
         if method == "interrupt":
             active = False
             return {"interrupted": True}
@@ -161,33 +170,38 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
         )
         return {"turn_id": "turn"}
 
-    channel = AsyncMock()
-    channel.ensure.return_value = handle
-    channel.images.return_value = ["data:image/png;base64,fixture"]
-    channel.call.side_effect = call
-    channel.discover.return_value = [handle]
-    runtime = CodexRuntime(channel)
-    assert isinstance(runtime, AgentRuntime)
+    class Seats(SeatChannel):
+        async def open(self, session, agent, launch):
+            pass
+
+        async def call(self, handle, method, params):
+            return await call(handle, method, params)
+
+    channel = Seats(harness=CODEX)
+    runtime = channel.runtime
     consumer = AsyncMock()
     receipts = AsyncMock()
     register_input = AsyncMock()
-    runtime.bind_reader(room_reader(events=consumer, receipts=receipts))
+    hear(runtime, room_reader(events=consumer, receipts=receipts))
     marks = []
     replacement = None
     try:
-        assert await runtime.send(
-            session,
-            "first",
-            Opening("system"),
-            work_id=work,
-            on_mark=marks.append,
-            register_input=register_input,
-            images=[{"path": "uploads/image.png"}],
-        )
+        with patch.object(
+            room_sessions.library, "read_attachment", return_value=b"fixture"
+        ):
+            assert await runtime.send(
+                session,
+                "first",
+                system_prompt="system",
+                work_id=work,
+                on_mark=marks.append,
+                register_input=register_input,
+                images=[{"path": "uploads/image.png", "media_type": "image/png"}],
+            )
         assert marks == [work]
         assert inputs[0]["input_id"] == str(work)
-        assert inputs[0]["images"] == ["data:image/png;base64,fixture"]
-        assert await runtime.deliver(
+        assert inputs[0]["images"] == ["data:image/png;base64,Zml4dHVyZQ=="]
+        assert await runtime.steer(
             session.topic_id, "steer", register_input=register_input
         )
         assert inputs[1]["work_id"] == str(work)
@@ -249,12 +263,12 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
                     "cheese": {"work_id": str(work), "agent_handle": "agent"},
                 }
             )
-        replacement = CodexRuntime(channel)
-        replacement.bind_reader(room_reader(events=consumer))
+        replacement = channel.next_process()
+        hear(replacement, room_reader(events=consumer))
         assert await replacement.recover() == [session]
         assert not replacement.tasks
-        await replacement.replay(session, known_texts=set())
-        await replacement.replay(session, known_texts={"answer"})
+        await replacement.replay(session)
+        await replacement.replay(session)
         events = [entry.args[3] for entry in consumer.await_args_list]
         assert len([event for event in events if isinstance(event, AgentMessage)]) == 1
         assert len([event for event in events if isinstance(event, AgentResult)]) == 1
@@ -283,6 +297,8 @@ async def test_a_codex_that_did_not_start_says_one_sentence_and_keeps_its_stderr
         runtime_factory(uuid.uuid4())
         yield SimpleNamespace(
             device_id="center",
+            agent_user_id=1,
+            agent_handle="a",
             token="t",
             env={
                 "CHEESE_EXECUTION_TARGET": json.dumps(
@@ -301,16 +317,18 @@ async def test_a_codex_that_did_not_start_says_one_sentence_and_keeps_its_stderr
     source = Mock(spec=CentralChannel)
     source.precheck = precheck
     source.prepare_session = prepare_session
-    source._device_api_base = api_base
-    source._hub = Mock(
-        exec=AsyncMock(return_value={"exit": 1, "stdout": "", "stderr": stderr})
+    hub = Mock(
+        is_online=Mock(return_value=True),
+        exec=AsyncMock(return_value={"exit": 1, "stdout": "", "stderr": stderr}),
     )
-    channel = CodexChannel(source, Mock(spec=ExecutorLaunch))
+    host = SessionHost(hub)
+    host._api = api_base
+    runtime = RoomSessions(source, CODEX, host)
 
-    with pytest.raises(ScreenSetupError) as refused:
-        await channel.ensure(
-            SessionRef(uuid.uuid4(), uuid.uuid4(), "a", harness="codex"),
-            Opening(system_prompt=""),
+    with pytest.raises(StartRefused) as refused:
+        await runtime.ensure(
+            SessionRef(uuid.uuid4(), uuid.uuid4(), "a", harness=CODEX),
+            system_prompt="",
         )
 
     assert str(refused.value) == "Codex 启动失败：机器上缺少 codex"

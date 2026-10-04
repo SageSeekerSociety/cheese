@@ -35,7 +35,6 @@ import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
-import RoomOutputs from './preview/RoomOutputs.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 import { usePreviewPagePin } from './preview/usePreviewPagePin'
 import { usePreviewQuote } from './preview/usePreviewQuote'
@@ -122,7 +121,7 @@ const emit = defineEmits<{
   (e: 'document-changed'): void
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
   (e: 'locate', payload: PreviewLocate): void
-  /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
+  /** 编辑器打开了一份文件：开成自由区的一个页签。 */
   (e: 'open-file', path: string): void
 }>()
 
@@ -724,9 +723,6 @@ async function onAnnotate(payload: AnnotateDraft) {
       <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
-    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
-         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
-    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
@@ -798,12 +794,10 @@ async function onAnnotate(payload: AnnotateDraft) {
   padding: 2px 6px;
   border-bottom: 1px solid var(--line);
 }
-/* 填满剩下的空间，但**不许被下面那块挤没**：flex-shrink 是 0，不是 1。
-   这一格和「这个房间里的东西」同在一条纵向 flex 列里，而那一块按自己的内容长；
-   两下一挤，能缩到 0 的只有这一格。真缩到 0 的时候它的内容不会跟着消失——应用条
-   和 iframe 会溢出到下面的列表上：小标题和应用名叠在同一行，深色主题下还在列表头
-   上压出一块白的 iframe。shrink 归零之后高度由内容决定（应用条 + 预览自己的
-   240px 地板），再长就整块面板一起滚，谁也不盖谁。 */
+/* 填满剩下的空间，但**不许被挤没**：flex-shrink 是 0，不是 1。缩到 0 时内容不会
+   跟着消失，应用条和 iframe 会溢出去盖住同一列里的别的块（定位条、编辑器）。
+   shrink 归零之后高度由内容决定（应用条 + 预览自己的 240px 地板），再长就整块
+   面板一起滚，谁也不盖谁。 */
 .preview-wrap {
   flex: 1 0 auto;
   display: flex;

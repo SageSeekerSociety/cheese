@@ -2,15 +2,17 @@
 
 Two things live here.
 
-``ContractHarness`` is the smallest thing that is an ``AgentRuntime``: it
-declares no capability at all — no pane, no partial output, no gateway — and
-does nothing but keep the six verbs' promises, plus the four hard requirements
-every harness owes (``harness.SubagentRequirement``, 结论 43). Subagents are on
+``ContractHarness`` is the smallest thing that keeps a room's six verbs (the
+ones ``room.sessions.RoomSessions`` answers, and the ``Backlog`` the session
+core reads with): it declares no capability at all — no pane, no partial
+output, no gateway — and does nothing but keep the six verbs' promises, plus
+the four hard requirements every harness owes (``harness.SubagentRequirement``,
+结论 43). Subagents are on
 the second list rather than the first: they are not a capability a harness may
 decline, so the minimal runtime has them too, and what it declines is only what
 a difference code can still name. It exists because
-those promises are today only prose in ``harness/__init__.py``'s docstrings
-("reading never consumes", "interrupt is weaker than close"), and prose is not
+those promises are otherwise only prose in docstrings ("reading never
+consumes", "interrupt is weaker than close"), and prose is not
 something a new harness can be held to. A scenario in
 ``backend/tests/fixtures/harness-contract/`` is played against this, so what a
 harness has to do is written down as steps rather than as adjectives.
@@ -30,12 +32,12 @@ was doing, and why this set replaces it.
 
 import json
 import uuid
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.domain.agent.harness import HarnessEvent, Opening, SessionRef
+from app.domain.agent.harness import HarnessEvent, SessionRef
 from app.domain.agent.service import AgentEvent, AgentMessage
 from app.domain.delivery.input_identity import InputRegistrar
 from tests.support.fake_subagent import FakeSubagent
@@ -149,7 +151,7 @@ class ContractBacklog:
 
 
 class ContractHarness:
-    """An ``AgentRuntime`` that declares nothing and keeps the six verbs."""
+    """A room's sessions that declare nothing and keep the six verbs."""
 
     harness = "contract"
     # 它的会话不存记忆文件（`memory()` 答 None），所以系统提示词里那一段记忆也
@@ -161,9 +163,7 @@ class ContractHarness:
 
     # --- the six verbs ------------------------------------------------------
 
-    async def ensure(
-        self, session: SessionRef, opening: Opening, *, work_id: uuid.UUID | None = None
-    ) -> object:
+    async def ensure(self, session: SessionRef, **_: Any) -> object:
         held = self._held.get(session.topic_id)
         if held is None:
             held = self._held[session.topic_id] = _Held(session)
@@ -173,15 +173,15 @@ class ContractHarness:
         self,
         session: SessionRef,
         message: str,
-        opening: Opening,
         *,
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
         register_input: InputRegistrar,
         images: list[dict] | None = None,
         owes_reply: bool = False,
+        **_: Any,
     ) -> bool | None:
-        held = await self.ensure(session, opening)
+        held = await self.ensure(session)
         assert isinstance(held, _Held)
         held.say(message)
         return True
@@ -190,7 +190,7 @@ class ContractHarness:
         held = self._held.get(session.topic_id) or _Held(session)
         return ContractBacklog(held)
 
-    async def deliver(
+    async def steer(
         self,
         topic_id: uuid.UUID,
         text: str,
@@ -237,7 +237,7 @@ class ContractHarness:
         """起一条子线程。
 
         演的是 **agent 的那次工具调用**，不是契约上的第七个动词：平台这一侧没有
-        「派活」的路径（结论 43），所以这个方法不在 ``AgentRuntime`` 上。
+        「派活」的路径（结论 43），所以这个方法不在房间的会话上。
         """
         held = self._held.get(session.topic_id)
         if held is None:
@@ -263,25 +263,6 @@ class ContractHarness:
     @property
     def hard_ceiling_s(self) -> float:
         return 600.0
-
-    async def run_turn(self, **_: Any) -> AsyncIterator[AgentEvent]:
-        # Declared because the protocol declares it. A runtime with no model
-        # behind it has no turn to iterate, and saying so is the honest answer.
-        raise NotImplementedError("the contract harness runs no model")
-        yield  # pragma: no cover - makes this an async generator
-
-    # The protocol asks a runtime to accept the room's reader and hooks; it does
-    # not ask it to keep them. Nothing here ever produces anything for the room
-    # to hear, asks for an unread count or reconciles memory. Holding them would
-    # be state with no reader — the kind of thing this set exists to delete.
-    def bind_reader(self, reader: Any) -> None:
-        return None
-
-    def bind_unread_probe(self, probe: Any) -> None:
-        return None
-
-    def bind_memory(self, consumer: Any) -> None:
-        return None
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         return None
@@ -311,5 +292,5 @@ class ContractHarness:
     async def stop_listening(self) -> None:
         return None
 
-    async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
+    async def replay(self, session: SessionRef) -> None:
         return None

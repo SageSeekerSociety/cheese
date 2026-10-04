@@ -54,9 +54,9 @@ function send(event: KeyboardEvent | MouseEvent) {
 </template>
 
 <style scoped>
-/* 跟着面板一起排版，再贴住可见区的底边。原来用 absolute 钉在面板底边：面板自己
-   在滚，钉住的是内容的那一处，于是它永远压着下面「这个房间里的东西」那几行，滚也
-   滚不开。sticky 时滚到底它就落回列表后面。 */
+/* 跟着面板一起排版，再贴住可见区的底边。用 absolute 钉在面板底边时，面板自己在
+   滚，钉住的是内容的那一处，会压着它下面的内容、滚也滚不开。sticky 时滚到底它就
+   落回内容后面。 */
 .locator {
   position: sticky;
   bottom: 12px;

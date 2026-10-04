@@ -8,7 +8,6 @@ from sqlalchemy import select
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn, prompt_attempts
 from app.domain.delivery.models import NativeInput
@@ -82,7 +81,7 @@ async def finish_deferred_message(
             ordinary = await session.get(Block, ordinary_id)
             ordinary.created_at = datetime.now(UTC) - timedelta(hours=3)
             await session.commit()
-        runtime = ClaudeCodeRuntime(channel)
+        runtime = channel.next_process()
         take_recovery(chat, runtime)
         chat = ChatService(
             session_factory=client.test_request_factory,
@@ -145,8 +144,6 @@ async def finish_deferred_message(
         allow.set()
         async with asyncio.timeout(30):
             while not queued.is_set():
-                for subscription in runtime.subscriptions.values():
-                    await subscription.drain()
                 await asyncio.sleep(0.01)
         try:
             from tests.integration.conftest import session_auth_headers
@@ -187,8 +184,6 @@ async def finish_deferred_message(
 
     async with asyncio.timeout(60):
         while operations.count("send") == sends:
-            for subscription in runtime.subscriptions.values():
-                await subscription.drain()
             await asyncio.sleep(0.01)
         # Concurrent recovery scans must not send the deferred block again.
         await asyncio.gather(

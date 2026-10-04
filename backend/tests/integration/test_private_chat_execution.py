@@ -34,23 +34,22 @@ class PrivateScreen(StubChannel):
         self.prompts = []
         self.openings = []
 
-    async def ensure(self, session, opening, live=None):
-        # What the channel is started with, and the scoped credential it hands
-        # the session's `cheese` CLI: the room's place, signed for the agent
-        # acting in it (`claude_code/channel.py` mints the same shape).
+    async def open(self, session, agent, launch):
+        # The scoped credential the session's `cheese` CLI is handed: the
+        # room's place, signed for the agent acting in it (the room mints the
+        # same shape, `mint_session_token`).
         self.openings.append(
             {
-                "memory_scope": opening.memory_scope,
                 "token": mint_scoped_token(
                     project_id=str(session.project_id),
                     topic_id=str(session.topic_id),
                     ttl_s=SESSION_TOKEN_TTL_S,
                     access_scope="project",
-                    agent_handle=opening.agent_handle or session.agent_handle,
+                    agent_handle=agent,
                 ),
             }
         )
-        return await super().ensure(session, opening, live)
+        return await super().open(session, agent, launch)
 
     def emit_turn(
         self,
@@ -126,7 +125,6 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # 工具表里 `cheese_remember` 那一行——工具没了，换这段。
         assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         assert not central.prompts
-        assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
         async with factory() as session:
             blocks = await BlockRepository(session).list_for_topic(topic_id)
         assert any(

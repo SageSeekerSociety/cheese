@@ -199,17 +199,16 @@ useFocusReturn(ref(true))
   }
 }
 
-/* 桌面：「目录 + 内容列」作为一组在窗口里居中。灰栏从窗口左缘铺到分界线，目录（216）
-   贴着分界线靠右；内容列（border-box 720，内距已含在内）贴着分界线靠左。灰栏宽取
-   max(264, (窗口 − 720) / 2)：窗口够宽时左边灰栏和右边留白一样宽，这一组正好居中；
-   窄到 1248 以下就守住 264（目录 216 + 两侧各 24）。
-   以前灰栏封顶 440、内容列再贴左，1920 宽时右边空出 660px；第一版改成灰栏定宽 264、
-   内容列在剩下的地方居中，又让目录和内容之间隔出 500 多 px，两边看着不是一页。 */
+/* 桌面：目录灰栏钉在窗口左缘、定宽 264（目录 216 + 两侧内距各 24），不随窗口变宽；
+   内容列（border-box 720，内距已含在内）在「窗口减目录」剩下的地方居中（见 .so__content）。
+   于是目录与内容之间的留白 = 内容列右侧留白 = (窗口 − 984) / 2，天然对称。
+   和 app 壳是同一条规则：左轨（LeftAppRail，64）钉窗口左缘，页面内容在主区居中。
+   以前灰栏随窗口长到 440、内容列贴着灰栏靠左，1920 宽时右边空出一大片；后来改成
+   「目录 + 内容列」一组居中，又让目录和内容之间隔出 500 多 px，两边看着不是一页。 */
 .so__side {
   display: flex;
   flex: 0 0 auto;
-  justify-content: flex-end;
-  width: max(264px, calc((100% - 720px) / 2));
+  width: 264px;
   padding: 48px 24px 24px;
   overflow-y: auto;
   border-right: 1px solid var(--line);
@@ -284,23 +283,26 @@ useFocusReturn(ref(true))
 }
 
 /* 关闭按钮单独一层：它得跟着内容列右缘走，又不能随内容滚走。这一层粘在滚动口顶上
-   （sticky，高 0 不占地方），和 `.so__content` 同宽同位置，所以按钮右缘始终贴着内容
-   列右缘，往下滚一屏也钉在原处。pointer-events 关掉，只让按钮自己收点击，别的一层
-   空着的地方点击照旧落到底下。 */
+   （sticky，高 0 不占地方），和 `.so__content` 同宽同位置、一起居中，所以按钮右缘
+   始终贴着内容列右缘，往下滚一屏也钉在原处。pointer-events 关掉，只让按钮自己收点击，
+   别的一层空着的地方点击照旧落到底下。 */
 .so__close-layer {
   position: sticky;
   top: 0;
   z-index: var(--z-raised);
   height: 0;
   max-width: 720px;
+  margin-inline: auto;
   pointer-events: none;
 }
 
-/* 设置各页共用的一条内容列：最宽 720、贴着分界线、四边内距统一 24，正好容下一行设置
-   （672 卡片宽，见 settings-card.css）。各页自己不再设宽度和水平内距，都交给这一条。
-   居中由灰栏的宽度负责（见 .so__side）。 */
+/* 设置各页共用的一条内容列：最宽 720、四边内距统一 24，正好容下一行设置（672 卡片宽，
+   见 settings-card.css）。各页自己不再设宽度和水平内距，都交给这一条。在「窗口减目录」
+   剩下的主区里 margin-inline:auto 居中（和 app 壳页面内容一样）；剩余宽度不够 720 时
+   先收窄，两侧各留 24。 */
 .so__content {
   max-width: 720px;
+  margin-inline: auto;
   padding: 24px;
 }
 
@@ -423,10 +425,10 @@ useFocusReturn(ref(true))
 }
 
 /* 手机外壳（窄于 960，和 mdAndUp 同一条线）：进到某一页时内容列照旧最宽 720 居中，
-   水平内距由这一层给，页面自己只留竖向的。平板 768–959 因此不再贴着左边。 */
+   水平内距由这一层给，页面自己只留竖向的。平板 768–959 因此不再贴着左边。
+   居中沿用上面那条 margin-inline:auto，这里只改水平内距。 */
 @media (max-width: 959.98px) {
   .so__content {
-    margin-inline: auto;
     /* 底部让出安全区，最后一行设置不会被 Home 横杠压住。 */
     padding: 0 16px env(safe-area-inset-bottom, 0px);
   }
