@@ -311,3 +311,35 @@ describe('hover 预取', () => {
     expect(store.unreadMap).toEqual({ t1: 3 }) // 红点还在
   })
 })
+
+describe('按下去就预取', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('不等停住，触屏上也做', async () => {
+    pointer('(hover: none)')
+    Reflect.deleteProperty(navigator, 'connection')
+    const { prefetchNow } = await fresh()
+    const { router, load } = lazyRouter()
+
+    prefetchNow({ router, to: { name: 'topic', params: { id: 't1' } } })
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('省流量时照样让开', async () => {
+    desktop()
+    connection({ saveData: true })
+    const { prefetchNow } = await fresh()
+    const { router, load } = lazyRouter()
+
+    prefetchNow({ router, to: { name: 'topic', params: { id: 't1' } } })
+    expect(load).not.toHaveBeenCalled()
+  })
+})
