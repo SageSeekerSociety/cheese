@@ -60,7 +60,27 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  document.querySelectorAll('script[data-test-entry]').forEach((s) => s.remove())
 })
+
+/** 这一页是哪一版：index.html 里那颗带内容哈希的入口脚本。 */
+function pageRuns(entry: string) {
+  // 按 HTML 插进去：和 index.html 里那一颗一样，只是个标签，不会被拿去执行。
+  document.head.insertAdjacentHTML(
+    'beforeend',
+    `<script type="module" crossorigin src="${entry}" data-test-entry></script>`
+  )
+}
+
+/** 服务器现在发的 index.html 里写的是哪一版；null 表示问不到服务器。 */
+function serverServes(entry: string | null) {
+  const fetch = vi.fn(async () => {
+    if (entry === null) throw new TypeError('Failed to fetch')
+    return new Response(`<!doctype html><script type="module" crossorigin src="${entry}"></script>`)
+  })
+  vi.stubGlobal('fetch', fetch)
+  return fetch
+}
 
 describe('新版本怎么换上', () => {
   it('没有新版本时，跳转照常在页面里完成', async () => {
@@ -110,5 +130,50 @@ describe('新版本怎么换上', () => {
     sw.options!.onNeedRefresh!()
     await router.push('/a?tab=2')
     expect(assign).not.toHaveBeenCalled()
+  })
+
+  // 部署之后才打开的页面，HTML 是现取的、跑的已经是新版；浏览器顺手装下的新 worker
+  // 和它是同一版，没有理由再整页加载一次。
+  it('页面跑的已经是服务器上那一版：跳转照常在页面里完成，新 worker 直接接管', async () => {
+    pageRuns('/assets/main-new.js')
+    serverServes('/assets/main-new.js')
+    const browser = fakeBrowser({ waiting: true })
+    const router = await start()
+    sw.options!.onNeedRefresh!()
+    await router.push('/b')
+    expect(router.currentRoute.value.path).toBe('/b')
+    expect(assign).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(browser.messages).toEqual([{ type: 'SKIP_WAITING' }]))
+  })
+
+  it('页面落后于服务器上那一版：下一次跳转整页加载', async () => {
+    pageRuns('/assets/main-old.js')
+    serverServes('/assets/main-new.js')
+    fakeBrowser({ waiting: true })
+    const router = await start()
+    sw.options!.onNeedRefresh!()
+    await router.push('/b')
+    expect(assign).toHaveBeenCalledWith('/b')
+  })
+
+  it('别的标签页换上了新版本，而这一页本来就是新版：不整页加载', async () => {
+    pageRuns('/assets/main-new.js')
+    serverServes('/assets/main-new.js')
+    fakeBrowser({ waiting: false })
+    const router = await start()
+    sw.options!.onNeedReload!()
+    await router.push('/b')
+    expect(router.currentRoute.value.path).toBe('/b')
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('问不到服务器现在是哪一版：照旧整页加载', async () => {
+    pageRuns('/assets/main-new.js')
+    serverServes(null)
+    fakeBrowser({ waiting: true })
+    const router = await start()
+    sw.options!.onNeedRefresh!()
+    await router.push('/b')
+    expect(assign).toHaveBeenCalledWith('/b')
   })
 })

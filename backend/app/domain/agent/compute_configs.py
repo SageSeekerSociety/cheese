@@ -122,6 +122,16 @@ def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
     return project_configs(project_settings).default
 
 
+def fix_task_choice(topic, task, project_settings: dict | None) -> bool:
+    """Fix a task's work computer on its first turn that needs one, so a later
+    change to the room's does not move it. False when there is nothing to fix:
+    a room's own turn, or a task that already has its choice."""
+    if task is None or task.compute_config is not None:
+        return False
+    task.compute_config = place_choice(topic, task, project_settings).model_dump()
+    return True
+
+
 def place_choice(topic, task, project_settings: dict | None) -> ComputeChoice:
     """The work computer a conversation works on: a task's own choice when its
     owner made one, else the room's (``room_choice``)."""

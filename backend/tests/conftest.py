@@ -1128,8 +1128,13 @@ def stub_project_forge(monkeypatch, tmp_path):
             )
         if route.startswith("/git/trees/"):
             revision = route.removeprefix("/git/trees/")
+            # As GitHub: `recursive` lists every entry below, trees included,
+            # by its full path.
+            recursive = ["-rt"] if "recursive" in parse_qs(urlsplit(path).query) else []
             tree = []
-            for row in git_store.git(repo, "ls-tree", "-zl", revision).split("\0"):
+            for row in git_store.git(
+                repo, "ls-tree", "-zl", *recursive, revision
+            ).split("\0"):
                 if not row:
                     continue
                 metadata, name = row.split("\t", 1)

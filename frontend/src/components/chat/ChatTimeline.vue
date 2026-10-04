@@ -51,7 +51,7 @@ const props = defineProps<{
   sentNow: Set<string>
   flashId: string | null
   timeShownId: string | null
-  bar: { id: string | null; shown: boolean; top: number; jump: boolean }
+  bar: { id: string | null; shown: boolean; top: number; jump: boolean; menuAt?: { x: number; y: number } | null }
   barBlock: Block | null
   barEditable: boolean
   reactionPickerFor: string | null
@@ -282,6 +282,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :shown="bar.shown"
         :top="bar.top"
         :jump="bar.jump"
+        :menu-at="bar.menuAt ?? null"
         :is-agent="!!barBlock && isAgentBlock(barBlock)"
         :picker-open="!!barBlock && reactionPickerFor === barBlock.id"
         :editable="barEditable"

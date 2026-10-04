@@ -268,10 +268,7 @@ class DeviceService:
 
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
         """Whether a project or its team currently shares this device."""
-        return any(
-            device.device_id == device_id
-            for device in await self.list_devices_for_project(project_id)
-        )
+        return await self._repo.serves_project(device_id, project_id)
 
     async def list_devices_for_project(self, project_id: uuid.UUID) -> list[Device]:
         return await self._repo.list_devices_by_project(project_id)

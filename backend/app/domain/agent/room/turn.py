@@ -83,7 +83,7 @@ from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.models import TaskStatus
-from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.room_task.place import Place, PlaceResolver, doc_text_of
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import naming
@@ -144,6 +144,21 @@ def _is_dm(topic: Topic) -> bool:
     谁」，退路是项目默认的芝士；答错「这间房有没有名册」，正文就出了房间。
     """
     return topic.is_private
+
+
+@dataclass(frozen=True, slots=True)
+class _Launch:
+    """What a seat's session is started with, read without opening a turn
+    (``RoomTurns._launch_inputs``): the same inputs a turn hands its session,
+    so a session started from them is the one the next turn would start."""
+
+    session: SessionRef
+    runtime: RoomSessions
+    system_prompt: str
+    resume_token: str | None
+    model: str | None
+    env: dict[str, str] | None
+    needs_place: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +334,14 @@ class RoomTurns:
         ) -> str: ...
 
         @staticmethod
+        async def _session_agent(
+            agents: AgentInstanceService,
+            topic: Topic,
+            project: Project,
+            agent_handle: str | None,
+        ) -> ResolvedAgent: ...
+
+        @staticmethod
         async def _private_owner(session: AsyncSession, topic: Topic) -> str | None: ...
 
         async def _known_commits(
@@ -380,6 +403,88 @@ class RoomTurns:
             )
         if agent is not None:
             await self._compute.dismiss(topic_id, agent.handle)
+
+    def _session_system_prompt(
+        self, *, needs_place: bool, has_doc: bool, role: str | None, harness: str
+    ) -> str:
+        """The system prompt a session in this room starts with.
+
+        规矩进系统提示词，现状进开场快照：系统提示词在一个会话里一字不变，前缀缓存
+        才接得上（`build_system_prompt` 的说明）。
+
+        私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，private-chat
+        只补私聊独有的那几条。替换会让私聊成为全仓唯一一间系统提示词里没有
+        chat_send 的房间：终端里答完而没有发布，房间是空的。补的那几条说的正是
+        「这一轮没有地点，只有会话自己那块草稿区」，所以它跟着 `needs_place` 走，
+        而不是再问一遍这间房是不是私聊。
+        """
+        skills = (
+            self._skills
+            if needs_place
+            else "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
+        )
+        return build_system_prompt(
+            self._base_prompt,
+            skills,
+            has_doc=has_doc,
+            role=role,
+            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
+            # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
+            keeps_memory=keeps_memory(harness),
+        )
+
+    async def _launch_inputs(
+        self, topic_id: uuid.UUID, agent_handle: str, *, acting: str
+    ) -> _Launch | None:
+        """What this seat's session would be started with if a turn started it
+        now, read without opening one — no backlog claimed, no policy gate
+        passed, nothing written. None when the room has nowhere to run.
+
+        Every input is the one `_assemble_turn` and `_converse_impl` hand
+        `RoomSessions.send`, from the same helpers, so a session started from
+        these is the one the next turn would compare equal and keep."""
+        async with self._sessions() as session:
+            place = await PlaceResolver(session).resolve(topic_id)
+            if place is None or place.room.status == TopicStatus.archived:
+                return None
+            topic = place.room
+            project = await ProjectRepository(session).get(topic.project_id)
+            if project is None:
+                return None
+            agents = AgentInstanceService(session)
+            agent = await self._session_agent(agents, topic, project, agent_handle)
+            needs_place = not _is_dm(topic)
+            doc_text = await doc_text_of(session, place, needs_place=needs_place)
+            if project.root_topic_id == place.room_id:
+                # The overview room's document is the project overview it is
+                # handed instead (`_assemble_turn`).
+                doc_text = None
+            role = await agents.system_prompt(agent)
+            harness, provider = self._compute.choose(
+                project.settings, resolve_compute_id(project.settings, topic)
+            )
+            if provider is None:
+                return None
+            resume_token = await AgentSessionService(session).resume_token(
+                place.room_id, agent.handle, harness=harness
+            )
+        model_kwargs, _route = await self._model_kwargs(
+            project.id, provider, topic_id, agent=agent, acting_agent=acting
+        )
+        return _Launch(
+            session=SessionRef(project.id, topic_id, agent.handle, harness=harness),
+            runtime=provider,
+            system_prompt=self._session_system_prompt(
+                needs_place=needs_place,
+                has_doc=doc_text is not None,
+                role=role,
+                harness=provider.harness,
+            ),
+            resume_token=resume_token,
+            model=model_kwargs.get("model"),
+            env=model_kwargs.get("env"),
+            needs_place=needs_place,
+        )
 
     async def _assemble_turn(
         self,
@@ -518,18 +623,7 @@ class RoomTurns:
             acting_agent = pinned_seat or await self._acting_handle(
                 session, topic.id, agent
             )
-            # A task's own document, or the room's.
-            if task is None:
-                doc_root = await Documents(session).of_room(place.room_id)
-            elif task.document_id is not None:
-                doc_root = await Documents(session).get(task.document_id)
-            else:
-                doc_root = None
-            # 工作话题的文档还空着时是 `""`，不是 None：提示词据此告诉坐进来的
-            # 队友「建第一版」（`build_system_prompt`）。私聊没有这份文档要维护。
-            doc_text = doc_root.content if doc_root else None
-            if needs_place and not (doc_text or "").strip():
-                doc_text = ""
+            doc_text = await doc_text_of(session, place, needs_place=needs_place)
             phases_ms["identity"] = (time.monotonic() - started) * 1000
             # 只加载「本轮发言人」的那一份 private 索引（team 那一份每间房都
             # 有）：一个项目里的人可以很多，而注入是每一轮都要付的。
@@ -913,20 +1007,12 @@ class RoomTurns:
             # still kills at 900s.
             # 不租手的一轮身上不钉机器。钉了就是给一段永远不会用到机器的对话记上
             # 一台机器，而这一行本来是给「以后别换机器」用的。
-            if (
-                task is not None
-                and needs_place
-                and provider is not None
-                and task.compute_config is None
-            ):
-                # The same red line for a task: its choice is fixed on its first
-                # turn, so a later change to the room's does not move it.
-                from app.domain.agent.compute_configs import place_choice
+            settings_ = project.settings if project else None
+            if needs_place and provider is not None:
+                from app.domain.agent.compute_configs import fix_task_choice
 
-                task.compute_config = place_choice(
-                    topic, task, project.settings if project else None
-                ).model_dump()
-                await session.commit()
+                if fix_task_choice(topic, task, settings_):
+                    await session.commit()
             if needs_place and provider is not None and topic.compute_config is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later project-default change must
@@ -1061,26 +1147,11 @@ class RoomTurns:
         # on what is producing the output, not on the machine underneath it.
         runtime = provider
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
-        # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，
-        # private-chat 只补私聊独有的那几条。替换会让私聊成为全仓唯一一间
-        # 系统提示词里没有 chat_send 的房间：终端里答完而没有发布，房间是空的。
-        # 补的那几条说的正是「这一轮没有地点，只有会话自己那块草稿区」，所以
-        # 它跟着 `needs_place` 走，而不是再问一遍这间房是不是私聊。
-        skills = (
-            self._skills
-            if needs_place
-            else "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
-        )
-        # 规矩进系统提示词，现状进开场快照：系统提示词在一个会话里一字不变，前缀
-        # 缓存才接得上（`build_system_prompt` 的说明）。
-        system_prompt = build_system_prompt(
-            self._base_prompt,
-            skills,
+        system_prompt = self._session_system_prompt(
+            needs_place=needs_place,
             has_doc=doc_text is not None,
             role=role,
-            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
-            # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
-            keeps_memory=keeps_memory(runtime.harness),
+            harness=runtime.harness,
         )
         opening = build_session_opening(
             doc=doc_text,

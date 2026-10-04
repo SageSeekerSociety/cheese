@@ -63,3 +63,31 @@ class PlaceResolver:
             return None
         room = await self._session.get(Topic, task.room_id)
         return Place(room=room, task=task) if room is not None else None
+
+
+async def living_doc_of(session: AsyncSession, place: Place):
+    """The conversation's living document: a task's own, or its room's. None
+    for a task whose document was never asked for."""
+    from app.domain.living_doc.services import Documents
+
+    if place.task is None:
+        return await Documents(session).of_room(place.room_id)
+    if place.task.document_id is None:
+        return None
+    return await Documents(session).get(place.task.document_id)
+
+
+async def doc_text_of(
+    session: AsyncSession, place: Place, *, needs_place: bool
+) -> str | None:
+    """The conversation's living document as the system prompt is told about it.
+
+    A conversation that works on a machine and whose document is still empty
+    answers `""`, not None: the prompt then tells the teammate to write the
+    first version (`build_system_prompt`). A private chat has no such document.
+    """
+    doc = await living_doc_of(session, place)
+    text = doc.content if doc else None
+    if needs_place and not (text or "").strip():
+        text = ""
+    return text

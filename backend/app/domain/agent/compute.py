@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.domain.agent.room.reads import RoomReader
     from app.domain.agent.room.sessions import (
         MemoryConsumer,
+        QuietListener,
         RoomSessions,
         UnreadProbe,
     )
@@ -232,14 +233,22 @@ class ComputePool:
         *,
         unread: "UnreadProbe",
         memory: "MemoryConsumer",
+        quiet: "QuietListener | None" = None,
     ) -> None:
         """Hand every harness's sessions the room's books: where the room hears
         what its sessions say and do (``RoomReader``), where it says what it
-        sent that is still unread, and where 「记忆该对账了」 goes — before an
+        sent that is still unread, where 「记忆该对账了」 goes — before an
         input and after a turn, for every harness: one whose sessions keep no
-        memory files answers ``memory`` with None."""
+        memory files answers ``memory`` with None — and who brings a seat that
+        went quiet up to date."""
         for runtime in self._runtimes():
-            runtime.report_to(reader, unread=unread, memory=memory)
+            runtime.report_to(reader, unread=unread, memory=memory, quiet=quiet)
+
+    def seat_runtime(
+        self, topic_id: uuid.UUID, agent_handle: str
+    ) -> "RoomSessions | None":
+        """The backend holding this seat's session, if this process holds it."""
+        return self._owners.get((topic_id, agent_handle))
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         """Relay a memory reconciliation to whichever runtime owns this room.

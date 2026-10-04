@@ -260,6 +260,8 @@
         "label": "Session details",
         "connected": "Session connected",
         "none": "No session running",
+        "several": "{count} sessions are running in this room; pick a teammate to view one",
+        "teammate": "Teammate",
         "expand": "Show details",
         "collapse": "Hide details",
         "view": "View",
@@ -1046,7 +1048,8 @@
       "add": "Add",
       "readOnly": "Only owners and admins can change members",
       "listSeparator": ", ",
-      "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete"
+      "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
+      "setRole": "Make {role}"
     },
     "mail": {
       "noSubject": "(No subject)",

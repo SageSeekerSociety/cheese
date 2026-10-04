@@ -993,5 +993,5 @@
   "personalTeamCannotDisband": "Your personal team belongs to your account and can't be disbanded",
   "personalTeamCannotTransfer": "Your personal team belongs to your account and can't be transferred",
   "teamTransferToSelf": "You already own this team",
-  "teamHasProjects": "This team still has projects. Move or delete them before disbanding it"
+  "teamHasProjects": "This team still has projects that aren't archived. Archive them all before disbanding it"
 }

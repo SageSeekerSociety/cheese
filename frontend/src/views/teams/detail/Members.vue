@@ -94,7 +94,20 @@
 
         <v-card v-if="!failedMembers" flat rounded="lg">
           <v-list>
-            <v-list-item v-for="member in teamMembers" :key="member.user.id" class="member-item">
+            <v-list-item
+              v-for="member in teamMembers"
+              :key="member.user.id"
+              class="member-item"
+              @contextmenu="memberActions(member).length && rowMenu.open(member.user.id, $event)"
+            >
+              <AdaptiveMenu
+                v-if="memberActions(member).length"
+                v-bind="rowMenu.bind(member.user.id)"
+                :actions="memberActions(member)"
+                :title="member.user.nickname"
+              >
+                <template #activator />
+              </AdaptiveMenu>
               <template #prepend>
                 <v-avatar size="40" rounded="circle" color="surface-variant" class="mr-3">
                   <v-img :src="getAvatarUrl(member.user.avatarId)" />
@@ -327,6 +340,7 @@
 </template>
 
 <script setup lang="ts">
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Team, TeamMember, TeamMembershipApplication } from '@/types'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
@@ -335,11 +349,14 @@ import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
@@ -369,6 +386,36 @@ const isSelfOwner = computed(() => {
 
 // 看服务端给的 role，不看 admins.examples：那份名单最多只有 3 个人，第 4 个管理员会被当成普通成员。
 const isSelfAdmin = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
+
+// 右键一位成员：行尾那几颗（升管理员、降成员、移出）收成一份，弹在鼠标那一点上。
+// 谁看得见哪一项和那几颗按钮同一套判据。
+const rowMenu = useRowMenu<number>()
+function memberActions(member: TeamMember): MenuAction[] {
+  const actions: MenuAction[] = []
+  if (isSelfOwner.value && member.role === 'MEMBER')
+    actions.push({
+      key: 'promote',
+      label: t('teams.members.promote'),
+      icon: 'mdi-account-arrow-up',
+      onSelect: () => void promoteToAdmin(member.user.id),
+    })
+  if (isSelfOwner.value && member.role === 'ADMIN')
+    actions.push({
+      key: 'demote',
+      label: t('teams.members.demote'),
+      icon: 'mdi-account-arrow-down',
+      onSelect: () => void demoteToMember(member.user.id),
+    })
+  if (isSelfAdmin.value && member.role !== 'OWNER')
+    actions.push({
+      key: 'remove',
+      label: t('teams.members.remove'),
+      icon: 'mdi-delete',
+      danger: true,
+      onSelect: () => void removeMember(member.user.id),
+    })
+  return actions
+}
 // 邀请、加入链接、加入申请：把人带进团队的几样。移出成员不在其内：那是往外走，不是往里进。
 const canBringPeopleIn = computed(() => isSelfAdmin.value && !teamData.value?.personal)
 

@@ -2,7 +2,8 @@
 
 所有者退不掉团队（后端要他先转让或解散），所以这两条路一条走不通，他就困在自己的
 团队里。这里钉的是它们走得通，以及各自拦下的那几种处境：个人团队跟着账号走，交不
-出去也解散不了；还有项目的团队不能解散，否则那些项目挂在一个不存在的团队上。
+出去也解散不了；还在用的项目没归档之前团队不能解散，否则队友手上的工作就这样
+断了；全部归档之后可以，归档的项目留给它的所有者。
 """
 
 from tests.conftest import seed_user
@@ -82,7 +83,7 @@ def test_a_personal_team_cannot_be_handed_over_or_disbanded(client):
     assert any(t["id"] == personal["id"] for t in again.json()["data"]["teams"])
 
 
-def test_a_team_that_still_has_projects_cannot_be_disbanded(client):
+def test_a_team_with_a_project_still_in_use_cannot_be_disbanded(client):
     tid = team_of(client, owner="cap")
     project_in(client, tid, owner="cap")
 
@@ -92,6 +93,35 @@ def test_a_team_that_still_has_projects_cannot_be_disbanded(client):
     assert r.json()["error"]["i18n"]["key"] == "teamHasProjects"
     still = client.get(f"/teams/{tid}", headers=auth(seed_user(client, "cap")))
     assert still.status_code == 200, still.text
+
+
+def test_a_team_whose_projects_are_all_archived_is_disbanded(client):
+    """项目全部归档后可以解散：归档的项目留着，所有者照样读得到、在归档列表里找得到，
+    队友读不到了。"""
+    tid = team_of(client, owner="cap", members=("mate",))
+    pid = project_in(client, tid, owner="cap")
+    archived = client.post(
+        f"/projects/{pid}/archive", headers=auth(seed_user(client, "cap"))
+    )
+    assert archived.status_code == 200, archived.text
+    assert (
+        client.get(
+            f"/projects/{pid}", headers=auth(seed_user(client, "mate"))
+        ).status_code
+        == 200
+    )
+
+    r = client.delete(f"/teams/{tid}", headers=auth(seed_user(client, "cap")))
+
+    assert r.status_code == 204, r.text
+    mine = client.get(f"/projects/{pid}", headers=auth(seed_user(client, "cap")))
+    assert mine.status_code == 200, mine.text
+    listed = client.get(
+        "/projects?archived=true", headers=auth(seed_user(client, "cap"))
+    )
+    assert pid in [p["id"] for p in listed.json()["data"]["data"]]
+    gone = client.get(f"/projects/{pid}", headers=auth(seed_user(client, "mate")))
+    assert gone.status_code in (403, 404), gone.text
 
 
 def test_an_empty_team_is_disbanded(client):

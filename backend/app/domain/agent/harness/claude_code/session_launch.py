@@ -64,6 +64,13 @@ def session_settings() -> dict:
             # number here is a ceiling for the CLI, not a second opinion on how
             # long a turn may run.
             "CLAUDE_STREAM_IDLE_TIMEOUT_MS": "900000",
+            # A stream that breaks mid-response — the watchdog above aborting
+            # it, an error event, a dropped connection — is otherwise sent
+            # again WITHOUT streaming, and a model route that only streams (a
+            # ChatGPT-subscription deployment behind the gateway) refuses that
+            # with 400 "Stream must be set to true", ending the turn. Set, the
+            # stream's own error goes to the CLI's retry layer instead.
+            "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
         },
         # Previews belong in Cheese, not on claude.ai via the Artifact tool.
         "enableArtifact": False,
