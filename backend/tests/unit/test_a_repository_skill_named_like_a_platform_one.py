@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 
 from app.domain.agent.harness.claude_code.remote_execution import release
-from tests.unit.test_device_launch import _launch, _machine
+from tests.unit.test_device_launch import _launch, _machine, _seed_skill_cache
 
 
 def _tree(*names):
@@ -75,7 +75,8 @@ def test_a_launch_writes_its_skills_over_a_link_an_earlier_session_left(tmp_path
     """An earlier session linked the repository's skill of this name into the
     config dir; the platform now ships one by that name. The launch writes the
     platform's in place of the link and never through it into the project."""
-    _owner, session, _work, _claude, env = _machine(tmp_path)
+    owner, session, _work, _claude, env = _machine(tmp_path)
+    _seed_skill_cache(owner)
     repository = tmp_path / "view/.claude/skills/cheese-docs"
     repository.mkdir(parents=True)
     (repository / "SKILL.md").write_text("THE REPOSITORY'S\n")

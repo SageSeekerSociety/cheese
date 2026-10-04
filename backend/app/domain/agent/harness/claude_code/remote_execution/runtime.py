@@ -100,6 +100,11 @@ NATIVE_TOOLS = {
 # link drop a deploy of the device connection causes, which the prefix waits
 # out and then reattaches.
 COMMAND_ABANDONED_S = 600.0
+# The stops a session's host sends, by their POSIX numbers: SIGHUP, SIGINT,
+# SIGKILL, SIGTERM. Not spelled through `signal`: Windows has no SIGHUP or
+# SIGKILL, so there every stop failed on the name before `signal_command`,
+# which stops the whole tree on Windows whatever the number.
+STOP_SIGNALS = frozenset({1, 2, 9, 15})
 # The longest one `shell` read waits for output before answering with none.
 COMMAND_READ_WAIT_S = 25.0
 # The most one `shell` read answers with per stream, before base64.
@@ -1005,12 +1010,7 @@ class Executor:
             )
         if operation == "signal":
             number = int(params["signal"])
-            if number not in (
-                signal.SIGTERM,
-                signal.SIGINT,
-                signal.SIGHUP,
-                signal.SIGKILL,
-            ):
+            if number not in STOP_SIGNALS:
                 raise ValueError("Unsupported signal")
             return self.signal_command(command_id, number)
         if operation == "forget":

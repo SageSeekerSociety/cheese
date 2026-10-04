@@ -1,5 +1,6 @@
 """Product guidance for native Claude skills and API-only conversations."""
 
+import functools
 import json
 from pathlib import Path
 
@@ -105,6 +106,14 @@ def shipped_skill_names() -> list[str]:
 
 def native_skill_files() -> dict[str, str]:
     """Files relative to the session's CLAUDE_CONFIG_DIR, never its worktree."""
+    return dict(_native_skill_files())
+
+
+# Read once per process: these files ship inside the image and cannot change
+# while it runs, and every tool call a session makes asks for them again
+# (`machine.session_work`), each time on the event loop every request shares.
+@functools.cache
+def _native_skill_files() -> dict[str, str]:
     files: dict[str, str] = {}
     for name in _SHIPPED_NATIVE_SKILLS:
         root = _NATIVE_SKILL_SRC / name

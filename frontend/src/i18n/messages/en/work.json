@@ -1476,7 +1476,8 @@
     "groups": {
       "ai": "AI",
       "run": "Running",
-      "code": "Code"
+      "code": "Code",
+      "data": "Data"
     },
     "sections": {
       "agents": "AI teammates",
@@ -1486,6 +1487,7 @@
       "merge": "Merge rules",
       "repository": "Repository and credit",
       "mcp": "MCP servers",
+      "export": "Export project",
       "archive": "Archive project"
     },
     "archive": {
@@ -1499,6 +1501,12 @@
         "body": "The project leaves every member's project list, can no longer be changed, and its running tasks stop. Everything in it is kept, and you can unarchive it from Archived projects",
         "confirmLabel": "Type the project name \"{name}\" to confirm"
       }
+    },
+    "export": {
+      "title": "Export project",
+      "hint": "Package the whole project: the code repository, library files, each room's files and artifacts, and every document. Bigger projects take longer",
+      "action": "Export project",
+      "failed": "Couldn't export the project"
     },
     "forge": {
       "title": "Code repository",
