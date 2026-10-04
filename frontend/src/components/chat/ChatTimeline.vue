@@ -19,6 +19,7 @@ import type { SplitMarker } from '../../lib/splitMarkers'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
@@ -210,6 +211,25 @@ function emitReact(block: Block, emoji: string) {
 function emitAskAction(block: Block, action: AskAction) {
   emit('ask-action', block, action)
 }
+// ---- 读屏播报：新到的一整条消息念一句「谁：开头一段」 ----
+// 整条时间线不做 aria-live：历史加载、翻页、流式输出都会让读屏一直念。只在一条别人
+// 发的消息「刚到、并且出现在屏幕上」（`arrived`）时换一句话；正在写的那条（typing
+// 预览）不在 rows 里，不会被念。
+const liveAnnouncement = ref('')
+watch(
+  () => props.rows.at(-1)?.block.id,
+  (id) => {
+    const row = props.rows.at(-1)
+    if (!id || !row || row.notice || !props.arrived.has(id)) return
+    const block = row.block
+    if (props.isMine(block) || (block.kind !== 'message' && block.kind !== 'attachment')) return
+    liveAnnouncement.value = t('work.room.chat.liveNew', {
+      name: props.displayName(block),
+      text: replySnippet(block, props.refs, 140),
+    })
+  }
+)
+
 function emitChecklist(block: Block, items: TodoItem[]) {
   emit('checklist', block, items)
 }
@@ -248,6 +268,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
     role="region"
     :aria-label="t('work.room.chat.timelineLabel')"
   >
+    <!-- Screen readers hear one line per newly arrived message (who + the start of it), never the streaming text. -->
+    <p class="visually-hidden" role="status" aria-live="polite" data-testid="chat-live">{{ liveAnnouncement }}</p>
     <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
     <div :ref="contentRef" class="tl-content">

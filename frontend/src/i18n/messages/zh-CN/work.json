@@ -208,7 +208,8 @@
     "noTasks": "暂无任务",
     "site": {
       "agents": {
-        "all": "全部"
+        "all": "全部",
+        "label": "按队友查看"
       },
       "output": {
         "show": "输出（{size}）",
@@ -975,7 +976,8 @@
       "today": "今天",
       "yesterday": "昨天",
       "topicFallback": "话题",
-      "timelineLabel": "对话记录"
+      "timelineLabel": "对话记录",
+      "liveNew": "{name}：{text}"
     },
     "header": {
       "disconnected": "未连接",

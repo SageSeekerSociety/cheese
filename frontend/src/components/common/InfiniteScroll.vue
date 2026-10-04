@@ -27,6 +27,8 @@
       <slot v-if="manualMode && hasMore && !loading" name="manual-load">
         <div class="manual-load-button">
           <BaseButton kind="secondary" size="sm" @click="manualLoadMore">{{ t('shell.list.loadMore') }}</BaseButton>
+          <!-- Same counter as the feedback list: how many are in hand out of the server's total. Hidden when the API reports no total. -->
+          <span v-if="total > 0" class="t-meta-read t-num">{{ t('shell.list.showing', { shown, total }) }}</span>
         </div>
       </slot>
       <slot v-if="!hasMore && !isEmpty" name="no-more">
@@ -53,6 +55,10 @@ interface Props {
   threshold?: number
   scrollEnabled?: boolean
   forceManual?: boolean
+  /** 手上几条；配合 total 画「已显示 X / 共 Y 条」。 */
+  shown?: number
+  /** 服务端一共几条；接口不给就是 0，这时不画计数。 */
+  total?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -61,6 +67,8 @@ const props = withDefaults(defineProps<Props>(), {
   forceManual: false,
   initialLoading: false,
   isEmpty: false,
+  shown: 0,
+  total: 0,
 })
 
 const emit = defineEmits<{
@@ -189,7 +197,10 @@ watch(
 }
 
 .manual-load-button {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   width: 100%;
   background-color: var(--fill);
   border: none;

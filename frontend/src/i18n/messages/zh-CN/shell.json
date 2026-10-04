@@ -20,6 +20,7 @@
     "loading": "加载中...",
     "empty": "暂无数据",
     "loadMore": "加载更多",
+    "showing": "已显示 {shown} / 共 {total} 条",
     "end": "没有更多了"
   },
   "loading": "加载中",

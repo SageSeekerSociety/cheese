@@ -208,7 +208,8 @@
     "noTasks": "No tasks",
     "site": {
       "agents": {
-        "all": "All"
+        "all": "All",
+        "label": "View by teammate"
       },
       "output": {
         "show": "Output ({size})",
@@ -975,7 +976,8 @@
       "today": "Today",
       "yesterday": "Yesterday",
       "topicFallback": "Topic",
-      "timelineLabel": "Conversation"
+      "timelineLabel": "Conversation",
+      "liveNew": "{name}: {text}"
     },
     "header": {
       "disconnected": "Disconnected",

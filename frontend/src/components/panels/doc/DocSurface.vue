@@ -694,6 +694,13 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-prose:focus) {
   outline: none;
 }
+/* 正文自己把 outline 去掉了（上面两条），键盘焦点就没有可见的落点。环改画在外面的
+   编辑器盒子上：`:focus-visible` 只在键盘进来时才亮，鼠标点进正文不亮，光标在一行
+   行里走的时候环也不跟着跳。用的是和别处一样的焦点令牌。 */
+.doc-editor:has(.doc-prose:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
 /* Tables look as styles/docBlocks.css draws them; the cell is the anchor for
    the .selectedCell::after overlay below. */

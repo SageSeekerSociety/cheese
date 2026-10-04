@@ -255,7 +255,10 @@ const submitForm = handleSubmit(async (values) => {
 })
 
 const deleteCategory = async (categoryId: number) => {
-  const confirmed = await confirm(t('spaces.detail.manageCategories.confirmDelete')).wait()
+  const confirmed = await confirm(t('spaces.detail.manageCategories.confirmDelete'), {
+    confirmLabel: t('spaces.detail.manageCategories.deleteCategory'),
+    danger: true,
+  }).wait()
   if (!confirmed) return
 
   try {

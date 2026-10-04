@@ -108,3 +108,27 @@ describe('a row tells the panel which row it is', () => {
     expect(saved.map(([block, text]) => [block.id, text])).toEqual([['b', 'second, reworded']])
   })
 })
+
+describe('screen readers hear newly arrived messages, once each', () => {
+  it('announces who and the start of a message from someone else that just arrived', async () => {
+    const view = mount({ isMine: () => false })
+    const live = view.container.querySelector('[data-testid="chat-live"]')!
+    expect(live.getAttribute('aria-live')).toBe('polite')
+    expect(live.textContent).toBe('')
+    const next = [...BLOCKS, { ...said('d', 'the build is green'), author: 'cheese' }]
+    await view.rerender({ rows: collapseNotices(next), arrived: new Set(['d']) })
+    expect(live.textContent).toContain('cheese')
+    expect(live.textContent).toContain('the build is green')
+  })
+
+  it('stays quiet for history that loaded and for my own messages', async () => {
+    const view = mount({ isMine: () => true })
+    const live = view.container.querySelector('[data-testid="chat-live"]')!
+    await view.rerender({ rows: collapseNotices([...BLOCKS, said('d', 'mine')]), arrived: new Set(['d']) })
+    expect(live.textContent).toBe('')
+    const other = mount({ isMine: () => false })
+    const quiet = other.container.querySelector('[data-testid="chat-live"]')!
+    await other.rerender({ rows: collapseNotices([...BLOCKS, said('e', 'old')]), arrived: new Set() })
+    expect(quiet.textContent).toBe('')
+  })
+})

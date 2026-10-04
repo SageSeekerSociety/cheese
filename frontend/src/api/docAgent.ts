@@ -4,17 +4,35 @@ import type { DocAgentRequest } from '../lib/docAgent'
 
 import { request } from '../api'
 
-import { postEventStream } from './eventStream'
+import { followEventStream, postEventStream } from './eventStream'
 
 const root = (topic: string) => `/topics/${encodeURIComponent(topic)}/doc/agent`
 
+/** Ask, and read the answer to its end: a stream that breaks before it is read
+ *  on from where it broke, in the box's conversation. */
 export function askDocAgent(
   topic: string,
   body: DocAgentRequest,
   onEvent: (event: string, data: Record<string, unknown>) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  return postEventStream(root(topic), body, onEvent, { signal })
+  let conversation = body.conversation ?? ''
+  return followEventStream(
+    (seen) =>
+      postEventStream(
+        root(topic),
+        body,
+        (event, data, id) => {
+          if (event === 'conversation' && typeof data.id === 'string') conversation = data.id
+          seen(event, data, id)
+        },
+        { signal }
+      ),
+    (question, after) =>
+      `${root(topic)}/${encodeURIComponent(conversation)}/answers/${encodeURIComponent(question)}?after=${encodeURIComponent(after)}`,
+    onEvent,
+    { signal }
+  )
 }
 
 export function stopDocAgent(topic: string, conversation: string): Promise<unknown> {

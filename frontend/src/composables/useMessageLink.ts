@@ -10,6 +10,9 @@ import type { Block } from '../cx_types'
 
 import { useNavigation } from './useNavigation'
 
+import { copyText } from '@/commands/copy'
+import { t } from '@/i18n'
+
 export function useMessageLink() {
   // 宿主没装路由就是 null：演示页和一整类单测里没有路由，那时没有链接可给，
   // 调用方据此不画这一颗按钮。
@@ -30,16 +33,11 @@ export function useMessageLink() {
     return path ? new URL(path, window.location.origin).href : null
   }
 
-  /** 复制这一条的链接。浏览器不让写（没有权限、不是安全上下文）时返回 false。 */
+  /** 复制这一条的链接，成功失败都弹一条 toast（走共享的复制助手）。 */
   async function copy(block: Block): Promise<boolean> {
     const href = hrefOf(block)
     if (!href) return false
-    try {
-      await navigator.clipboard.writeText(href)
-      return true
-    } catch {
-      return false
-    }
+    return copyText(href, t('work.room.message.linkCopied'))
   }
 
   return { hrefOf, copy }

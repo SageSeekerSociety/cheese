@@ -31,6 +31,8 @@ export function useTaskManagement(taskDataModule: ReturnType<typeof useTaskData>
     const confirmed = await dialogs
       .confirm(t('tasks.manage.deleteConfirm'), {
         title: t('tasks.manage.deleteConfirmTitle'),
+        confirmLabel: t('tasks.page.delete'),
+        danger: true,
       })
       .wait()
 
