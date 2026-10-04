@@ -35,7 +35,11 @@ def _configure(home, system_prompt: str) -> None:
     session's home by then."""
     holes = device_launch.launch_holes(state=STATE, system_prompt=system_prompt)
     subprocess.run(
-        ["sh", "-c", "set -e\n" + holes.configure],
+        ["sh"],
+        # On stdin, the way the device gets it (`_ship_launcher` writes a file):
+        # the skills alone are past what one argv string may hold.
+        input="set -e\n" + holes.configure,
+        text=True,
         env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
         check=True,
         capture_output=True,
