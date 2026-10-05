@@ -73,6 +73,11 @@ class UpgradeDeferred(Exception):
         self.info = info
 
 
+def predecessor(release):
+    """The executor that already owns a room's state, as an install sees it."""
+    return runpy.run_path(str(Path(release) / "remote-execution/predecessor.py"))
+
+
 def lock(file):
     """flock(LOCK_EX). This file arrives on stdin before any release is on disk,
     so it cannot load portable.py for the Windows lock; this is the same one."""
@@ -1270,12 +1275,12 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
                                 home / ".cheese-environment"
                             )["state"]
                         raise UpgradeDeferred(info)
-                    subprocess.run(
-                        [sys.executable, str(source), "stop", "--state", str(state)],
-                        check=True,
-                        timeout=30,
-                        pass_fds=held(state),
-                    )
+                    predecessor(release)["stop_predecessor"](state)
+            elif not refresh_runtime:
+                raise RuntimeError("Executor release changed; prepare an idle upgrade")
+            else:
+                # Owns the state and does not answer: what a stop is for.
+                predecessor(release)["stop_predecessor"](state)
         activate_release(platform_dir, release, contents)
         toolchain_options = {
             "env": env,
@@ -1342,6 +1347,9 @@ def configure_idle(payload):
                 info = runtime["request"](state, "ping")
             except (ConnectionError, FileNotFoundError):
                 info = None
+            if info is None and predecessor(release)["occupied"](state, runtime):
+                # Held: a predecessor is coming up, and one started over it dies.
+                info = predecessor(release)["await_predecessor"](state, runtime)
             if info:
                 runtime["request"](state, "configure", {"env": scoped_env})
                 if payload.get("environment"):
@@ -1434,6 +1442,8 @@ def configure_idle(payload):
                     if status["state"] == "failed":
                         info = {"environment_status": "failed"}
                         break
+                # Before the failed start this would otherwise read as.
+                predecessor(release)["refuse_if_served"](state, runtime)
                 raise RuntimeError(
                     "Executor startup failed; inspect executor-bootstrap.log"
                 )
