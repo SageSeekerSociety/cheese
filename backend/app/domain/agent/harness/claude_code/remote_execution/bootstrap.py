@@ -817,7 +817,9 @@ def forget_sandbox(owner, home):
 HIDDEN_MOUNTS = ("/mnt", "/media", "/run/media", "/run/WSL")
 
 
-def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True):
+def sandbox_argv(
+    argv, *, bwrap, owner, home, claude, sockets, fds, network=True, hosts=None
+):
     """`argv` run in a bubblewrap sandbox: the room's processes see the machine
     read-only, and of the owner's home only what is bound back below.
 
@@ -838,7 +840,8 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True
     And, with `network`, its own network namespace, empty until
     `start_sandbox` has the machine connect it (`sandbox_host.py`). Without
     it, on a machine a person enrolled, the sandbox shares the machine's
-    network. Bubblewrap reports the sandbox's first process on `fds["info"]`
+    network. `hosts`, when given, is the file it reads as /etc/hosts.
+    Bubblewrap reports the sandbox's first process on `fds["info"]`
     and waits on `fds["block"]` before running `argv`, under the seccomp
     program on `fds["seccomp"]`.
 
@@ -900,6 +903,8 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True
     names = resolv_conf()
     if network and names != "/etc/resolv.conf":
         command += ["--ro-bind", names, "/etc/resolv.conf"]
+    if hosts is not None:
+        command += ["--ro-bind", str(hosts), "/etc/hosts"]
     runtime_dir = Path(f"/run/user/{os.getuid()}")
     if runtime_dir.is_dir():
         command += ["--tmpfs", str(runtime_dir)]
@@ -1021,6 +1026,11 @@ def start_sandbox(
     os.write(program, confinement["seccomp_filter"]())
     os.close(program)
     fds = {"info": report, "block": wait, "seccomp": seccomp}
+    # The site's name and its forward (`machine_address.site_forward`).
+    host, _, site = env.get("CHEESE_SITE_FORWARD", "").rpartition(":")
+    hosts = Path(PLATFORM_DIR) / "hosts" if connect and host else None
+    if hosts:
+        write_beneath(home, hosts, confinement["site_hosts"](host))
     try:
         process = subprocess.Popen(
             sandbox_argv(
@@ -1032,6 +1042,7 @@ def start_sandbox(
                 sockets=sockets,
                 fds=fds,
                 network=connect,
+                hosts=hosts and home / hosts,
             ),
             start_new_session=True,
             pass_fds=tuple(fds.values()),
@@ -1057,6 +1068,8 @@ def start_sandbox(
                 command += ["--" + name.replace("_", "-"), str(limits[name])]
             for port in loopback_ports(env):
                 command += ["--forward", str(port)]
+            if hosts:
+                command += ["--site", site]
             answer = json.loads(
                 sudo(command, "The sandbox's network could not be set up")
             )

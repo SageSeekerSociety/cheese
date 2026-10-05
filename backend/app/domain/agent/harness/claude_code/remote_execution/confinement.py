@@ -12,6 +12,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Where a sandbox dials the deployment's site when its machine forwards it
+# (`site_hosts`). A copy of `sandbox_host.SITE_ADDRESS`, held to it by
+# test_footprint_root.py.
+SITE_ADDRESS = "127.0.0.2"
+
+
+def site_hosts(host, machine="/etc/hosts"):
+    """The /etc/hosts a sandbox reads when its machine forwards the site
+    (`CHEESE_SITE_FORWARD`): the machine's, with `host` at `SITE_ADDRESS`,
+    whose port 443 the sandbox helper passes to the forward. The machine's
+    resolver answers the public address, which leaves the private network
+    for the public relay and comes back through its tunnels."""
+    return Path(machine).read_text().rstrip("\n") + f"\n{SITE_ADDRESS} {host}\n"
+
+
 # The syscalls a sandbox is refused (`seccomp_filter`), by architecture:
 # (AUDIT_ARCH, {name: number}, clone, unshare).
 SYSCALLS = {

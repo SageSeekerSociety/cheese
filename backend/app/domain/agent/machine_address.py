@@ -4,6 +4,8 @@ An address belongs to the dialer: which one a machine is handed depends on how
 it reaches the backend, never on where the backend happens to listen.
 """
 
+from urllib.parse import urlsplit
+
 from app.core.config import settings
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
@@ -12,6 +14,9 @@ from app.domain.device.supply import Supply
 # `deploy/cloud-control.py` opens onto the machine's own loopback. It lands on
 # api-front, which routes the model tunnel as well as the backend.
 CLOUD_LOOPBACK_BASE = "http://127.0.0.1:18080"
+# The site itself over TLS, on the same machine's loopback: the forward
+# `deploy/cloud-control.py` opens onto api-front's listener for it.
+CLOUD_SITE_TLS_PORT = 18445
 
 
 async def device_api_base(session, device_id: str, public_base: str) -> str:
@@ -61,3 +66,18 @@ def tunnel_url(api_base: str) -> str:
     if configured and api_base == CLOUD_LOOPBACK_BASE:
         return ws_url(api_base, "/llm/tunnel")
     return configured
+
+
+def site_forward(api_base: str) -> str:
+    """``host:port`` when a machine that dials ``api_base`` reaches the site
+    (``frontend_url``) over TLS on that loopback port; empty otherwise.
+
+    A private-control cloud machine's default route reaches the public name
+    only through the Hong Kong relay, which sends the request straight back
+    to this deployment through a tunnel. Its sessions' sandboxes resolve the
+    name to the forward instead (``bootstrap.start_sandbox``); the origin,
+    and so its certificate and cookies, stay the public one."""
+    host = urlsplit(settings.frontend_url).hostname
+    if api_base != CLOUD_LOOPBACK_BASE or not host:
+        return ""
+    return f"{host}:{CLOUD_SITE_TLS_PORT}"
