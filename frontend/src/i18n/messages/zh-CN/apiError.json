@@ -10,6 +10,8 @@
   "invitePending": "已经邀请过这个人，正在等他答复",
   "inviteAnswered": "这张邀请已经答复过了",
   "inviteNotYours": "只有被邀请的人能答复这张邀请",
+  "teamAlreadyMember": "这个人已经是这个团队的成员了",
+  "teamApplicationPending": "这个人已经有一条加入这个团队的邀请或申请在等处理",
   "cursorMessageNotFound": "游标消息不存在",
   "titleUndoStale": "标题之后又改过了，这一次改名已经不能撤销",
   "roomArchiveManagerOnly": "只有房间的 owner / admin 能归档或取消归档",

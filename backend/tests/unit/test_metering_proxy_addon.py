@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import types
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -140,6 +141,7 @@ def _make_flow(*, path="/v1/messages", caller_bearer=SESSION_CREDENTIAL):
         headers={"authorization": f"Bearer {caller_bearer}"},
     )
     return SimpleNamespace(
+        id=str(uuid.uuid4()),
         request=request,
         client_conn=SimpleNamespace(
             sni="api.anthropic.com", tls_established=True, id="client-1"
@@ -2151,6 +2153,7 @@ def _gateway_request(
                 type_name="reverse", address=("chatgpt.com", 443)
             ),
         ),
+        id=str(uuid.uuid4()),
         server_conn=server_conn or SimpleNamespace(via=None),
         metadata={},
         response=None,

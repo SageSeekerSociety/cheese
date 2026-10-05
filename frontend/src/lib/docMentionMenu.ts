@@ -35,7 +35,7 @@ export function peopleItems(pool: MentionPoolEntry[], query: string): RefItem[] 
     label: p.label,
     kind: 'member',
     insert: p.handle,
-    sub: `@${p.handle}`,
+    sub: p.handle,
     agent: p.agent,
     external: !!p.external,
     handle: p.handle,

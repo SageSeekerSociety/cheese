@@ -2,6 +2,7 @@
 // per part of the docs, then the common questions and what changed last.
 import { esc, shell, ic, REPO } from './render.mjs'
 import { TAG } from './content.js'
+import { BASE } from './where.mjs'
 
 // One line per card: what that part of the docs is for.
 const DOORS = {
@@ -26,18 +27,18 @@ export function homePage(ctx, { releases, faq, doors }) {
   <section class="home-sec" aria-label="文档分区">
    <div class="home-cards">
     ${doors.map((d) => card(d.items[0].url, d.icon, d.label, DOORS[d.key] || '')).join('')}
-    ${card('/docs/download', 'download', '桌面端与连接器', '在自己的电脑上用知是，或把一台服务器接进来给芝士干活。')}
-    ${card('/docs/changelog', 'tag', '更新日志', '每一版改了什么，写成人话，每条都链到对应的改动。')}
+    ${card(`${BASE}/download`, 'download', '桌面端与连接器', '在自己的电脑上用知是，或把一台服务器接进来给芝士干活。')}
+    ${card(`${BASE}/changelog`, 'tag', '更新日志', '每一版改了什么，写成人话，每条都链到对应的改动。')}
    </div>
   </section>
 
   <section class="home-sec">
    <h2>常见问题</h2>
-   <div class="home-faq">${faq.map((f) => `<details><summary>${esc(f.q)}${ic('down')}</summary><div>${f.a} <a class="link" href="/docs/troubleshooting#${f.id}">详细说明</a></div></details>`).join('')}</div>
+   <div class="home-faq">${faq.map((f) => `<details><summary>${esc(f.q)}${ic('down')}</summary><div>${f.a} <a class="link" href="${BASE}/troubleshooting#${f.id}">详细说明</a></div></details>`).join('')}</div>
   </section>
 
   <section class="home-sec">
-   <div class="home-sec-head"><h2>最近更新</h2><a class="link" href="/docs/changelog">完整更新日志</a></div>
+   <div class="home-sec-head"><h2>最近更新</h2><a class="link" href="${BASE}/changelog">完整更新日志</a></div>
    <p class="home-news-ver">${esc(latest.ver)} · ${esc(latest.env)}</p>
    <ul class="home-news">${news.map(([t, h, pr]) => `<li><span class="badge">${TAG[t]}</span><span>${esc(h)}</span>${pr ? `<a class="pr" href="${REPO}/pull/${pr}" rel="noopener">#${pr}</a>` : ''}</li>`).join('')}</ul>
   </section>

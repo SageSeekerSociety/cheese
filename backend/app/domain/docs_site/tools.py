@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.domain.docs_site import library
+from app.domain.docs_site import library, site
 from app.domain.docs_site.retrieval import DocsIndex, Hit
 
 logger = logging.getLogger(__name__)
@@ -33,9 +33,9 @@ SUMMARY_CHARS = 140
 HEADINGS = re.compile(r"(?m)^(?=## )")
 # A section's own id, as the docs build writes it on the heading line.
 SECTION_ID = re.compile(r"^## .*?\{#([a-z0-9-]+)\}")
-# The fragment on a link the model was handed, e.g. /docs/accept#is-merge.
+# The fragment on a link the model was handed, e.g. /accept#is-merge.
 FRAGMENT = re.compile(r"#([a-z0-9-]+)$")
-LINK = re.compile(r"\[([^\]\n]*)\]\((/docs/[^)\s]*)\)")
+LINK = re.compile(r"\[([^\]\n]*)\]\((/[^)\s]*)\)")
 
 SEARCH_DOCS = {
     "type": "function",
@@ -64,15 +64,14 @@ FETCH_DOC = {
         "name": "fetch_doc",
         "description": (
             "读一页文档的全文（Markdown）。链接可以带 #小节，例如 "
-            "/docs/teams#invite-member，这时只返回那一节和它前后的相邻小节。"
+            "/teams#invite-member，这时只返回那一节和它前后的相邻小节。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "页面的地址或页名，如 accept、"
-                    "/docs/accept#is-merge。",
+                    "description": "页面的地址或页名，如 accept、/accept#is-merge。",
                 }
             },
             "required": ["url"],
@@ -181,8 +180,12 @@ class Docs:
         if text is None:
             return f"没有这一页：{slug}。"
         self.read.setdefault(
-            f"/docs/{slug}",
-            {"title": self.page_title(slug), "heading": "", "url": f"/docs/{slug}"},
+            site.page_path(slug),
+            {
+                "title": self.page_title(slug),
+                "heading": "",
+                "url": site.page_path(slug),
+            },
         )
         return self._section(text, target)
 
@@ -211,12 +214,12 @@ class Docs:
             return {
                 "kind": "fetch",
                 "title": self.page_title(slug) if slug else asked[:120],
-                "url": f"/docs/{slug}" if slug else asked[:200],
+                "url": site.page_path(slug) if slug else asked[:200],
             }
         return {"kind": "list"}
 
     def page_title(self, slug: str) -> str:
-        page = f"/docs/{slug}".split("#")[0]
+        page = site.page_path(slug).split("#")[0]
         for section in self.index.sections:
             if section.url.split("#")[0] == page:
                 return section.title

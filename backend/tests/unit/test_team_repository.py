@@ -339,7 +339,7 @@ class TestTeamRepository:
         session.execute.side_effect = [_mock_scalar(_team()), _mock_scalar(existing)]
         repo = TeamRepository(session)
 
-        with pytest.raises(ConflictError, match="already a member"):
+        with pytest.raises(ConflictError, match="已经是这个团队的成员"):
             await repo.add_member(1, 10, TeamMemberRole.MEMBER)
 
     @pytest.mark.anyio

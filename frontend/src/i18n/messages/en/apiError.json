@@ -10,6 +10,8 @@
   "invitePending": "This person has already been invited and hasn't answered yet",
   "inviteAnswered": "This invitation has already been answered",
   "inviteNotYours": "Only the invited person can answer this invitation",
+  "teamAlreadyMember": "This person is already a member of this team",
+  "teamApplicationPending": "This person already has an invitation or join request for this team waiting to be answered",
   "cursorMessageNotFound": "That message doesn't exist",
   "titleUndoStale": "The title has been changed since, so this rename can no longer be undone",
   "roomArchiveManagerOnly": "Only the room's owner or an admin can archive or unarchive it",

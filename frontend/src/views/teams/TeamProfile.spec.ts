@@ -49,7 +49,7 @@ afterEach(cleanup)
 describe('a team profile', () => {
   it('says the handle the team goes by', async () => {
     await mount(team())
-    screen.getByText('@zhishi')
+    screen.getByText('zhishi')
   })
 
   it('takes a member to the team at its address', async () => {

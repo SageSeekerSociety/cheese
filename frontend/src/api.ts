@@ -1745,14 +1745,13 @@ export function inviteExternalMember(projectId: string, handle: string): Promise
 }
 
 export interface LookedUpUser {
+  id: number // what a team invitation names the person by
   handle: string
   name: string
   avatar_id: number | null
 }
 
-// 按用户名或邮箱**精确**找一个人（像飞书加外部联系人那样）：只认完整的用户名或邮箱，
-// 不做模糊搜索——邀请是把人放进项目的动作，「搜出来一串相似的名字再挑」正是加错人
-// 的来路。找不到是 404。
+// 按完整的用户名或邮箱**精确**找一个人，不做模糊搜索（为什么见 useAccountLookup）。找不到是 404。
 export function lookupUser(q: string): Promise<LookedUpUser> {
   return request<LookedUpUser>(`/users/lookup?q=${encodeURIComponent(q)}`)
 }

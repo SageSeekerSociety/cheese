@@ -31,7 +31,10 @@
   },
   "members": {
     "invite": "Invite member",
-    "inviteUidHint": "Invitations work by UID only for now. The UID is in that person's avatar menu.",
+    "inviteLabel": "Username or email",
+    "invitePlaceholder": "Enter the full username or email",
+    "inviteNotFound": "No one has this username or email",
+    "inviteLookupFailed": "Could not look them up. Try again",
     "roleLabel": "Role",
     "inviteMessageLabel": "Invitation message (optional)",
     "inviteMessagePlaceholder": "Add a note to the invitation…",

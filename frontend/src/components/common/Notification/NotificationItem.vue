@@ -149,7 +149,7 @@ import type { MenuAction } from '@/components/common/menuAction'
 import type { Notification } from '@/network/api/notifications/types'
 import type { RenderedNotificationContent } from './renders/NotificationRenderUtils'
 
-import { computed, markRaw, onMounted, onUpdated, ref, shallowRef } from 'vue'
+import { computed, markRaw, onMounted, onUpdated, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
@@ -254,6 +254,9 @@ const checkContentUpdate = () => {
 
 onMounted(checkContentUpdate)
 onUpdated(checkContentUpdate)
+// A renderer can change what it offers without this row re-rendering: an
+// invitation answered from its own buttons takes them away. Follow its content too.
+watch(() => contentRef.value?.content, checkContentUpdate)
 
 const markAsRead = (event: Event) => {
   event.stopPropagation()

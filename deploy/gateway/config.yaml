@@ -137,6 +137,13 @@ model_list:
       supports_vision: true
       supports_adaptive_thinking: true
       supports_output_config: true
+      # Claude Code compacts by the max_input_tokens that /v1/models reports,
+      # and LiteLLM's own figure for this model is 1,000,000. DeepSeek counts
+      # the request's max_tokens against its 1,048,576 window, and Claude Code
+      # asks for 128,000 on every request, so a conversation past ~920k tokens
+      # was refused before Claude Code thought it was time to compact.
+      # 1,048,576 - 128,000, rounded down.
+      max_input_tokens: 920000
 
   # Price-only entries: the Claude models served through the platform's
   # subscription (the metering proxy), never through this gateway. Their tokens

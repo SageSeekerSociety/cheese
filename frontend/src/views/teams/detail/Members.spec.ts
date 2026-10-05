@@ -22,7 +22,13 @@ vi.mock('@/network/api/teams', () => ({
     listTeamInvitations: vi.fn(async () => ({ data: { invitations: [] } })),
     approveJoinRequest: vi.fn(),
     removeMember: vi.fn(),
+    createInvitation: vi.fn(),
   },
+}))
+const lookupUser = vi.fn()
+vi.mock('@/api', async () => ({
+  ...(await vi.importActual<typeof import('@/api')>('@/api')),
+  lookupUser: (...a: unknown[]) => lookupUser(...a),
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -35,12 +41,15 @@ vi.mock('@/plugins/dialog', async () => ({
 
 import Members from './Members.vue'
 
+import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { TeamsApi } from '@/network/api/teams'
 
 beforeAll(() => {
   vi.stubGlobal('devicePixelRatio', 1)
+  // The invite dialog is an overlay, and Vuetify positions overlays against it.
+  vi.stubGlobal('visualViewport', new EventTarget())
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -182,5 +191,65 @@ describe('answering a join request', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /批准/ })).toBeNull())
     expect(TeamsApi.approveJoinRequest).toHaveBeenCalledTimes(1)
     expect(TeamsApi.approveJoinRequest).toHaveBeenCalledWith(7, 31)
+  })
+})
+
+describe('inviting someone by name', () => {
+  async function openInvite() {
+    mount({ role: 'OWNER' })
+    await fireEvent.click(await screen.findByRole('button', { name: /邀请成员/ }))
+    return screen.findByLabelText('用户名或邮箱')
+  }
+
+  it('invites the person the username belongs to', async () => {
+    lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
+    vi.mocked(TeamsApi.createInvitation).mockResolvedValue({ data: {} } as never)
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'zhangheng')
+    await screen.findByText('张衡', {}, { timeout: 2000 })
+    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+
+    expect(lookupUser).toHaveBeenCalledWith('zhangheng')
+    await waitFor(() =>
+      expect(TeamsApi.createInvitation).toHaveBeenCalledWith(7, { userId: 31, role: 'MEMBER', message: undefined })
+    )
+  })
+
+  it('a username that begins with digits still means that person, not a user id', async () => {
+    lookupUser.mockResolvedValue({ id: 58, handle: '2024zhang', name: '张三', avatar_id: null })
+    vi.mocked(TeamsApi.createInvitation).mockResolvedValue({ data: {} } as never)
+    const field = await openInvite()
+
+    await fireEvent.update(field, '2024zhang')
+    await screen.findByText('张三', {}, { timeout: 2000 })
+    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+
+    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(TeamsApi.createInvitation).mock.calls[0][1]).toMatchObject({ userId: 58 })
+  })
+
+  it('editing the name drops the person found for the old one at once', async () => {
+    lookupUser.mockResolvedValue({ id: 31, handle: 'zhang', name: '张', avatar_id: null })
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'zhang')
+    await screen.findByTestId('found-user', {}, { timeout: 2000 })
+    await fireEvent.update(field, 'zhangsan@example.com')
+    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+
+    expect(screen.queryByTestId('found-user')).toBeNull()
+    expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
+  })
+
+  it('a name nobody has is said in Chinese, and nothing is sent', async () => {
+    lookupUser.mockRejectedValue(new ApiError(404, 'No account with that username or email'))
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'nobody-here')
+    await screen.findByText('找不到这个用户名或邮箱', {}, { timeout: 2000 })
+    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+
+    expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
   })
 })

@@ -127,7 +127,7 @@ beforeEach(() => {
 describe('成员名册', () => {
   it('右键一位成员：改角色和移出，弹在鼠标那一点上', async () => {
     await openRoster()
-    const bob = Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('@bob'))!
+    const bob = Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('Bob'))!
     await fireEvent.contextMenu(bob, { clientX: 20, clientY: 40 })
     await waitFor(() =>
       expect(
@@ -210,8 +210,8 @@ describe('外部成员在房间里', () => {
   it('名册上团队以外的人挂「外部」，团队里的人不挂', async () => {
     await openRoster()
     const rows = Array.from(document.querySelectorAll('.roster__item'))
-    const carol = rows.find((r) => r.textContent?.includes('@carol'))!
-    const bob = rows.find((r) => r.textContent?.includes('@bob'))!
+    const carol = rows.find((r) => r.textContent?.includes('Carol'))!
+    const bob = rows.find((r) => r.textContent?.includes('Bob'))!
     expect(carol.textContent).toContain('外部')
     expect(bob.textContent).not.toContain('外部')
   })

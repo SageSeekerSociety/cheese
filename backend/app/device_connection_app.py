@@ -135,6 +135,7 @@ async def snapshot(
             "online": device_hub.is_online(device_id),
             "reconnecting": device_hub.reconnecting(device_id),
             "name": device_hub.device_name(device_id),
+            "target": device_hub.target(device_id),
             "last_seen_age": device_hub.last_seen_age(device_id),
             "connection_generation": device_hub._devices[
                 device_id

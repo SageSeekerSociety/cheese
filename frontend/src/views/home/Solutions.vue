@@ -128,17 +128,12 @@ const growth = computed(() => [
   },
   {
     icon: 'mdi-book-open-page-variant-outline',
-    title: t('publicSite.solutionsPage.unitsTitle'),
-    body: t('publicSite.solutionsPage.unitsBody'),
+    title: t('publicSite.solutionsPage.guidanceTitle'),
+    body: t('publicSite.solutionsPage.guidanceBody'),
   },
 ])
 
 const trust = computed(() => [
-  {
-    icon: 'mdi-map-marker-outline',
-    title: t('publicSite.solutionsPage.residencyTitle'),
-    body: t('publicSite.solutionsPage.residencyBody'),
-  },
   {
     icon: 'mdi-server-outline',
     title: t('publicSite.solutionsPage.deployTitle'),

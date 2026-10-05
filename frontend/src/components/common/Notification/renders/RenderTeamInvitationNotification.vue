@@ -16,10 +16,19 @@
   </div>
 </template>
 
+<script lang="ts">
+import { reactive } from 'vue'
+
+// 在这儿答过的邀请。记在组件之外：答完这一行会换成带链接的那一种，渲染器跟着重建，
+// 而列表要到下次重拉才拿到新状态；记在实例里的话，重建之后按钮又回来了，再点只会
+// 报「找不到」。
+const answeredHere = reactive(new Set<string>())
+</script>
+
 <script setup lang="ts">
 import type { NotificationRenderProps, RenderedNotificationContent } from './NotificationRenderUtils'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
@@ -39,7 +48,11 @@ const inviter = computed(() => getEntity(props.notification, 'inviter'))
 const team = computed(() => getEntity(props.notification, 'team'))
 const role = computed(() => getStringMetadata(props.notification, 'role', t('notifications.common.member')))
 const message = computed(() => getStringMetadata(props.notification, 'message', ''))
-const applicationId = computed(() => getStringMetadata(props.notification, 'applicationId', ''))
+// 这条邀请本身：后端把它解析成 entities.application，状态是此刻的，不是发通知那一刻的。
+const application = computed(() => getEntity(props.notification, 'application'))
+const waiting = computed(() => application.value?.status === 'PENDING' && !answeredHere.has(application.value.id))
+// 请求还没回来时再点不算数：连点或者点完接受又点拒绝，只发第一下。
+const sending = ref(false)
 
 // 通知标题
 const title = computed(() => {
@@ -55,71 +68,53 @@ const body = computed(() => {
   })
 })
 
-// 构建路由链接
+// 还在等回答的时候整行不跳走，用下面的两颗按钮答；答过了点进去看这个团队。
 const routerLink = computed(() => {
-  // 如果有applicationId且状态为PENDING，则不提供路由链接，强制使用按钮操作
-  if (applicationId.value && getStringMetadata(props.notification, 'status', '') === 'PENDING') {
-    return undefined
+  if (waiting.value || !team.value) return undefined
+  return {
+    name: 'TeamsDetailMembers',
+    params: { handle: teamHandle(team.value) },
+    query: {
+      tab: 'invitations',
+      applicationId: application.value?.id,
+      type: 'invitation',
+    },
   }
-
-  // 否则才提供路由链接
-  if (team.value) {
-    return {
-      name: 'TeamsDetailMembers',
-      params: { handle: teamHandle(team.value) },
-      query: {
-        tab: 'invitations',
-        applicationId: applicationId.value || undefined,
-        type: 'invitation',
-      },
-    }
-  }
-  return undefined
 })
 
-// 自定义操作按钮
-const actions = computed(() => {
-  if (applicationId.value) {
-    const actionButtons = [
-      {
-        text: t('notifications.TEAM_INVITATION.action.accept'),
-        color: 'success',
-        handler: async () => {
-          try {
-            await TeamsApi.acceptInvitation(Number(applicationId.value))
-            toast.success(t('notifications.TEAM_INVITATION.toast.accepted'))
-            // 通知父组件更新通知状态
-            if (props.notification && props.notification.id) {
-              emit('update-notification', props.notification.id)
-            }
-          } catch (error) {
-            console.error('接受邀请失败:', error)
-            toast.error(t('notifications.TEAM_INVITATION.toast.acceptFailed'))
-          }
-        },
-      },
-      {
-        text: t('notifications.TEAM_INVITATION.action.decline'),
-        color: 'error',
-        handler: async () => {
-          try {
-            await TeamsApi.declineInvitation(Number(applicationId.value))
-            toast.success(t('notifications.TEAM_INVITATION.toast.declined'))
-            // 通知父组件更新通知状态
-            if (props.notification && props.notification.id) {
-              emit('update-notification', props.notification.id)
-            }
-          } catch (error) {
-            console.error('拒绝邀请失败:', error)
-            toast.error(t('notifications.TEAM_INVITATION.toast.declineFailed'))
-          }
-        },
-      },
-    ]
-    return actionButtons
+async function answer(accept: boolean) {
+  if (sending.value) return
+  sending.value = true
+  const id = application.value!.id
+  try {
+    await (accept ? TeamsApi.acceptInvitation(Number(id)) : TeamsApi.declineInvitation(Number(id)))
+    answeredHere.add(id)
+    toast.success(
+      t(accept ? 'notifications.TEAM_INVITATION.toast.accepted' : 'notifications.TEAM_INVITATION.toast.declined')
+    )
+    emit('update-notification', props.notification.id)
+  } catch (error) {
+    console.error('Failed to answer team invitation', error)
+    toast.error(
+      t(
+        accept
+          ? 'notifications.TEAM_INVITATION.toast.acceptFailed'
+          : 'notifications.TEAM_INVITATION.toast.declineFailed'
+      )
+    )
+  } finally {
+    sending.value = false
   }
-  return []
-})
+}
+
+const actions = computed(() =>
+  waiting.value
+    ? [
+        { text: t('notifications.TEAM_INVITATION.action.accept'), color: 'success', handler: () => answer(true) },
+        { text: t('notifications.TEAM_INVITATION.action.decline'), color: 'error', handler: () => answer(false) },
+      ]
+    : []
+)
 
 const content = computed<RenderedNotificationContent>(() => ({
   title: title.value,
