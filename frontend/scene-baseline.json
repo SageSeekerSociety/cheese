@@ -65,6 +65,8 @@
     "src/views/teams/ExploreView.vue",
     "src/views/teams/MineView.vue",
     "src/views/teams/detail/CreditsView.vue",
+    "src/views/teams/detail/KnowledgeView.vue",
+    "src/views/teams/detail/TeamProjectsView.vue",
     "src/views/user/settings/General.vue",
     "src/views/user/settings/UsageView.vue"
   ],
@@ -167,9 +169,7 @@
     "src/views/teams/Index.vue",
     "src/views/teams/Pending.vue",
     "src/views/teams/detail/Compute.vue",
-    "src/views/teams/detail/Knowledge.vue",
     "src/views/teams/detail/Members.vue",
-    "src/views/teams/detail/TeamProjects.vue",
     "src/views/user/settings/Profile.vue",
     "src/views/user/settings/RealName.vue",
     "src/views/user/settings/Security.vue",

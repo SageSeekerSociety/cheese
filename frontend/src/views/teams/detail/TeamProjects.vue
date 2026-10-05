@@ -1,9 +1,25 @@
+<template>
+  <TeamProjectsView
+    :projects="projects"
+    :loading="loading"
+    :error="error"
+    :personal="personal"
+    :project-menu="projectMenu"
+    @new-project="newProject"
+    @open="open"
+    @clear-error="error = null"
+  />
+</template>
+
 <script setup lang="ts">
 // 小队的项目 (项目归团队, v4): every project this team owns — the default tab of
 // the team page, a person's own projects included (they sit in a team of one). 新建项目
 // opens the app-wide dialog with this team preselected: a project cannot be
 // renamed once made, so it has to get its name here, and it has to land in
 // THIS team or the rest of the team never sees it.
+//
+// 这里只留取数和去处：`listProjects`、`useRouter`、右键菜单、新建项目对话框。
+// 画的那一半在 `TeamProjectsView.vue`。
 import type { Project } from '@/cx_types'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
@@ -11,23 +27,20 @@ import { useRouter } from 'vue-router'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { useProjectMenu } from '@/composables/useProjectMenu'
-import { useRowMenu } from '@/composables/useRowMenu'
+
+import TeamProjectsView from './TeamProjectsView.vue'
 
 import { listProjects } from '@/api'
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import i18n, { t } from '@/i18n'
+import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
-const { locale } = i18n.global
 const router = useRouter()
 // 右键一张项目卡片，弹的是 rail 上右键那一格的同一份菜单。
 const { projectMenu } = useProjectMenu(router)
-const rowMenu = useRowMenu<string>()
 // The URL names the team by handle; its id comes from the team the page loaded.
 const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
+const personal = computed(() => !!teamData.value?.personal)
 
 const projects = ref<Project[]>([])
 const loading = ref(false)
@@ -54,81 +67,6 @@ function open(p: Project) {
   router.push(`/project/${p.id}`)
 }
 
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(locale.value, { year: 'numeric', month: '2-digit', day: '2-digit' })
-}
-
 onMounted(load)
 watch(teamId, load)
 </script>
-
-<template>
-  <v-container class="px-6 py-4" fluid>
-    <div class="mb-4 d-flex align-start">
-      <div>
-        <p class="text-body-2 text-medium-emphasis mb-0">
-          {{ t(teamData?.personal ? 'teams.projects.ownSubtitle' : 'teams.projects.subtitle') }}
-        </p>
-      </div>
-      <v-spacer />
-      <BaseButton kind="primary" prepend-icon="mdi-plus" @click="newProject">{{
-        t('teams.projects.newProject')
-      }}</BaseButton>
-    </div>
-
-    <div v-if="loading" class="py-10 text-center">
-      <v-progress-circular indeterminate color="primary" />
-    </div>
-
-    <v-alert v-else-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
-      {{ error }}
-    </v-alert>
-
-    <BaseEmptyState
-      v-else-if="projects.length === 0"
-      icon="mdi-rocket-launch-outline"
-      :title="t('teams.projects.emptyTitle')"
-      :desc="t('teams.projects.emptyHint')"
-    >
-      <BaseButton kind="secondary" size="sm" prepend-icon="mdi-plus" class="mt-4" @click="newProject">{{
-        t('teams.projects.newProject')
-      }}</BaseButton>
-    </BaseEmptyState>
-
-    <v-row v-else>
-      <v-col v-for="p in projects" :key="p.id" cols="12" sm="6" lg="4">
-        <v-card
-          variant="outlined"
-          rounded="lg"
-          class="pa-4 fill-height project-card"
-          @click="open(p)"
-          @contextmenu="rowMenu.open(p.id, $event)"
-        >
-          <AdaptiveMenu v-bind="rowMenu.bind(p.id)" :actions="projectMenu(p)" :title="p.name">
-            <template #activator />
-          </AdaptiveMenu>
-          <div class="d-flex align-center mb-1">
-            <v-icon size="20" color="primary" class="mr-2">mdi-robot-happy-outline</v-icon>
-            <span class="text-subtitle-2 font-weight-medium text-truncate">{{ p.name }}</span>
-          </div>
-          <div class="text-caption text-medium-emphasis">
-            {{ t('teams.projects.createdAt', { date: fmtDate(p.created_at) }) }}
-          </div>
-        </v-card>
-      </v-col>
-    </v-row>
-  </v-container>
-</template>
-
-<style scoped>
-.project-card {
-  cursor: pointer;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-}
-.project-card:hover {
-  border-color: rgba(var(--v-theme-primary), 0.5);
-  background: rgba(var(--v-theme-primary), 0.03);
-}
-</style>
