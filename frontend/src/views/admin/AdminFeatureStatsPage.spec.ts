@@ -44,7 +44,9 @@ function mountPage() {
   return render(AdminFeatureStatsPage, {
     global: {
       plugins: [createVuetify({ components, directives })],
-      stubs: { RouterLink: { template: '<a :href="to"><slot /></a>', props: ['to'] } },
+      // 画面那一半用 `NavLink` 画去处（组件边界的写法）：这里把这一层换成一个只读
+      // `to` 画真 `<a>` 的替身，断言仍落在渲染出来的 href 上。
+      stubs: { NavLink: { template: '<a :href="to"><slot /></a>', props: ['to'] } },
     },
   })
 }
