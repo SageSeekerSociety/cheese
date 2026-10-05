@@ -112,4 +112,8 @@ async def post_questions(
                 own_output=True,
             )
         )
+    # The call's one notice is keyed by its first question; each question
+    # names it, so the notice is settled once all of them are answered.
+    for row in rows:
+        row.meta = {**(row.meta or {}), "notice_id": str(rows[0].id)}
     return rows

@@ -21,7 +21,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.main import app
-from tests.ask_fixtures import active_ask, wait_turn_idle
+from tests.ask_fixtures import active_ask, question_row, wait_turn_idle
 from tests.conftest import StubChannel, seed_user, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
@@ -30,6 +30,7 @@ from tests.integration.conftest import (
     post_project,
     room_agent_headers,
     room_agent_seat,
+    session_auth_headers,
 )
 
 QUESTION = {
@@ -274,3 +275,124 @@ def test_an_answer_reaches_the_agent_after_the_conversation_that_asked_is_gone(
     _say(client, room, "alice", {"content": "按项目", "reply_to": question["id"]})
 
     assert len(prompts) == 1 and "按项目" in prompts[0]
+
+
+def _teammate(client, pid, room) -> str:
+    """A second AI teammate, seated in ``room``."""
+    made = client.post(f"/projects/{pid}/agents", json={"handle": "opus"})
+    assert made.status_code == 200, made.text
+    seat = made.json()["data"]["seat_handle"]
+    joined = client.post(
+        f"/topics/{room}/members",
+        json={"handle": seat, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert joined.status_code == 200, joined.text
+    return seat
+
+
+def test_a_question_whose_options_are_plain_strings_never_breaks_posting(
+    client, stub_hooks, monkeypatch
+):
+    """A person's question from before options carried explanations stores them
+    as plain strings; talking in that room, or replying to it, still works."""
+    pid, room = _room(client)
+    seed_user(client, "bob")
+    join_project_team(client, pid, "bob")
+    old = question_row(
+        client,
+        room,
+        author="alice",
+        question="周会挪到周四行吗",
+        options=["行", "不行"],
+    )
+    _prompts(stub_hooks, monkeypatch)
+
+    _say(client, room, "bob", {"content": "我先看看日程"})
+    _say(client, room, "bob", {"content": "行", "reply_to": old["id"]})
+
+    (answer,) = _block(client, room, old["id"])["meta"]["answer_log"]
+    assert (answer["by"], answer["kind"], answer["option"]) == ("bob", "option", "行")
+
+
+def test_a_typed_reply_goes_to_the_teammate_who_asked_last_only(
+    client, stub_hooks, monkeypatch
+):
+    pid, room = _room(client)
+    first = room_agent_seat(client, room)
+    second = _teammate(client, pid, room)
+    earlier = question_row(
+        client, room, seat=first, question="用哪份数据？", asked="alice"
+    )
+    later = question_row(
+        client, room, seat=second, question="图用什么颜色？", asked="alice"
+    )
+    agents: list = []
+    emit = stub_hooks.emit_turn
+
+    def recording(topic_id, prompt, reply, *, agent=None):
+        agents.append(agent)
+        emit(topic_id, prompt, reply, agent=agent)
+
+    monkeypatch.setattr(stub_hooks, "emit_turn", recording)
+
+    _say(client, room, "alice", {"content": "蓝色"})
+
+    assert _block(client, room, earlier["id"])["meta"]["answer_log"] == []
+    (answer,) = _block(client, room, later["id"])["meta"]["answer_log"]
+    assert answer["note"] == "蓝色"
+    assert agents == [second]
+
+
+def test_people_talking_is_no_answer_to_a_question_that_waits_on_nobody(
+    client, stub_hooks, monkeypatch
+):
+    """A question asked in a turn the platform started waits on nobody in
+    particular. A message that names nobody is people talking, not its answer;
+    one addressed to the asker is."""
+    _, room = _room(client)
+    seat = room_agent_seat(client, room)
+    question = question_row(client, room, question="周报发给谁？", asked=None)
+    prompts = _prompts(stub_hooks, monkeypatch)
+
+    _say(client, room, "alice", {"content": "今天谁值班？"})
+    assert prompts == []
+    assert _block(client, room, question["id"])["meta"]["answer_log"] == []
+
+    _say(client, room, "alice", {"content": f"<@{seat}> 发给全组"})
+    assert len(prompts) == 1
+    (answer,) = _block(client, room, question["id"])["meta"]["answer_log"]
+    assert answer["note"] == "发给全组"
+
+
+def test_the_notice_stays_open_until_every_question_of_the_call_is_answered(
+    client, stub_hooks, monkeypatch
+):
+    token = seed_user(client, "alice")
+    data = post_project(client, {"name": "Ask"}, owner="alice").json()["data"]
+    room = data["root_topic_id"]
+    two = {
+        "questions": [
+            {"question": "口径？", "options": [{"text": "按部门"}, {"text": "按项目"}]},
+            {"question": "格式？", "options": [{"text": "表格"}, {"text": "图"}]},
+        ]
+    }
+    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
+        response = client.post(f"/topics/{room}/asks", json=two, headers=headers)
+        assert response.status_code == 200, response.text
+    wait_turn_idle(client, room)
+    first, second = response.json()["data"]["blocks"]
+
+    def notice() -> dict:
+        r = client.get(
+            "/notifications",
+            params={"type": "CHEESE_QUESTION"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        (row,) = r.json()["data"]["notifications"]
+        return row
+
+    _say(client, room, "alice", {"content": "图", "reply_to": second["id"]})
+    assert notice()["read"] is False
+    _say(client, room, "alice", {"content": "按部门", "reply_to": first["id"]})
+    assert notice()["read"] is True

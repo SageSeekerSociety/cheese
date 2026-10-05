@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, overload
 
-from sqlalchemy import Text, and_, cast, func, or_, select, tuple_
+from sqlalchemy import Text, and_, cast, func, or_, select, true, tuple_
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -588,7 +588,9 @@ class BlockRepository:
             return {place: (asked, selected[place]) for place, asked in waiting.items()}
         return waiting
 
-    async def questions_a_reply_answers(self, reply: Block) -> list[Block]:
+    async def questions_a_reply_answers(
+        self, reply: Block, *, first_word_only: bool = True
+    ) -> list[Block]:
         """The questions a person's ``reply`` answers, locked for the caller to
         record the answer on.
 
@@ -601,7 +603,9 @@ class BlockRepository:
         that nobody has answered yet, but only when it is his first word since
         they were asked: what he says after that is talk, not his answer. It is
         the same reading as `_awaiting_an_answer`'s "spoke after it was asked".
-        Whom the message names is the caller's to weigh.
+        ``first_word_only=False`` drops that last condition, for a message the
+        caller knows is addressed to an asker. Whom it names is the caller's to
+        weigh.
         """
         if reply.reply_to is not None:
             parent = await self._session.scalar(
@@ -639,7 +643,9 @@ class BlockRepository:
                 Block.meta["answered"].as_string().is_(None),
                 Block.id != reply.id,
                 Block.created_at <= reply.created_at,
-                or_(spoke_before.is_(None), Block.created_at > spoke_before),
+                or_(spoke_before.is_(None), Block.created_at > spoke_before)
+                if first_word_only
+                else true(),
             )
             .order_by(Block.created_at, Block.id)
             .with_for_update()

@@ -212,25 +212,18 @@ async def answer_questions(
     就是那位的下一轮 —— 和人 @ 它一模一样。提问的那一轮早就结束了也没关系，这里
     不找任何一轮。提问的那位已经不在房间里，答案照样记下，只是没人可送。
     """
-    questions = await BlockRepository(session).questions_a_reply_answers(reply)
     named = set(_MENTION_RE.findall(reply.content or ""))
-    if reply.reply_to is None and named:
-        # Typed to someone else, it is talk; typed to the one who asked, it is
-        # the answer.
-        questions = [question for question in questions if named == {question.author}]
+    questions = await BlockRepository(session).questions_a_reply_answers(
+        reply, first_word_only=not named
+    )
+    if reply.reply_to is None:
+        questions = _typed_answers(reply, questions)
     if not questions:
         return []
     said = " ".join(_MENTION_RE.sub("", reply.content or "").split())
     for question in questions:
         meta = dict(question.meta or {})
-        # A click sends the option as shown, without the model's own
-        # " (Recommended)" mark; either spelling is that option.
-        offered = {
-            text.removesuffix(" (Recommended)"): text
-            for text in (option.get("text") for option in meta.get("options") or [])
-            if isinstance(text, str)
-        }
-        picked = offered.get(said) or (said if said in offered.values() else None)
+        picked = _offered(meta).get(said)
         meta["answer_log"] = [
             *(meta.get("answer_log") or []),
             {
@@ -244,10 +237,11 @@ async def answer_questions(
             },
         ]
         question.meta = meta
-        excerpt = said[:ANSWER_EXCERPT_CHARS] + (
-            "…" if len(said) > ANSWER_EXCERPT_CHARS else ""
-        )
-        await settle(session, question.id, {"answered": excerpt})
+    excerpt = said[:ANSWER_EXCERPT_CHARS] + (
+        "…" if len(said) > ANSWER_EXCERPT_CHARS else ""
+    )
+    for notice in await _notices_now_answered(session, questions):
+        await settle(session, notice, {"answered": excerpt})
     seat = questions[-1].author
     if not recipient.get("mentioned") and seat in await TopicMemberService(
         session
@@ -261,6 +255,66 @@ async def answer_questions(
         recipient["mentioned"] = True
         reply.meta = {**(reply.meta or {}), "agent_recipient": dict(recipient)}
     return questions
+
+
+def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
+    """Which open questions a message that replies to nothing answers.
+
+    It is said to one asker: the one it @-mentions, or else whoever asked most
+    recently. A question that waits on nobody in particular (asked in a turn the
+    platform started) is answered only by a message that names its asker:
+    people talking to each other in the room is not an answer to it.
+    """
+    named = set(_MENTION_RE.findall(reply.content or ""))
+    if named:
+        # Addressed to the one who asked, it answers whatever is open of his.
+        return [q for q in questions if named == {q.author}]
+    questions = [q for q in questions if (q.meta or {}).get("asked") == reply.author]
+    if not questions:
+        return []
+    seat = questions[-1].author
+    return [q for q in questions if q.author == seat]
+
+
+def _offered(meta: dict) -> dict[str, str]:
+    """A question's options by what a click sends (the text without the model's
+    " (Recommended)" mark) and by their own text. A question a person asked
+    before options carried explanations stores them as plain strings."""
+    offered: dict[str, str] = {}
+    for option in meta.get("options") or []:
+        text = option.get("text") if isinstance(option, dict) else option
+        if isinstance(text, str):
+            offered[text] = text
+            offered.setdefault(text.removesuffix(" (Recommended)"), text)
+    return offered
+
+
+async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
+    """The question notices every question of which now has an answer.
+
+    One `cheese_ask` call sends one notice for all its questions (keyed by the
+    first, `meta.notice_id`); it is settled only once none of them is open.
+    """
+    from sqlalchemy import select
+
+    done = []
+    for notice in {(q.meta or {}).get("notice_id") or str(q.id) for q in questions}:
+        siblings = list(
+            await session.scalars(
+                select(Block).where(
+                    Block.topic_id == questions[0].topic_id,
+                    Block.meta["notice_id"].as_string() == notice,
+                )
+            )
+        )
+        pending = [
+            q
+            for q in siblings
+            if q not in questions and not (q.meta or {}).get("answer_log")
+        ]
+        if not pending:
+            done.append(uuid.UUID(notice))
+    return done
 
 
 async def instance_of_seat(session: AsyncSession, project_id, seat: str):
