@@ -501,6 +501,8 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 ```
 
 - 写法照 `views/spaces/detail/analytics/*`：`load` 开头清掉 `failed` 与 `errorDetail`，`catch` 里 `failed = true`、`errorDetail = error instanceof Error ? error.message : null`，**不再** `toast.error`——同一件事不说两遍。
+- **401/403 是「不给你看」，不是「这次没读到」**：传 `:forbidden="isForbidden(error)"`（`src/lib/loadFailure.ts`）。块换成「你没有权限查看」这句标题，并且**不给重试**——再试一次还是同一个 401/403，摆一颗按了没用的按钮只会让人以为是自己点得不对。服务端那句原话照旧显示在标题下面。这一条同样不许退回「暂无」：那是「本来就没有」，和「不给你看」是两回事。
+- 列表用的是 `usePaging` 时，它已经把 `error` 交出来了（失败时 `data` 为空，`is-empty` 就成了 `true`）：把 `error` 接进模板，失败时用它替换列表区，别让 `is-empty` 一个人说话。
 - 只有「一整块内容没读到」才替换内容。列表里某一行、某一次操作（保存、删除）失败仍用 toast：那一行的内容没有消失，也没有整块可替。
 
 ### 3.11 保存反馈：设置就地留痕，临时动作弹条

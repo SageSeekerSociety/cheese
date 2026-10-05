@@ -47,6 +47,7 @@
     "auditTasks": {
       "title": "Challenges awaiting review",
       "noTasks": "No challenges awaiting review",
+      "loadFailed": "Couldn't load the challenges awaiting review",
       "description": "Challenge description",
       "submissionRequirements": "Submission requirements",
       "noRequirements": "No submission requirements",
@@ -426,7 +427,8 @@
       "browse": "Or browse the spaces below to see what others are working on"
     },
     "explore": "Explore spaces",
-    "noSpaces": "No spaces"
+    "noSpaces": "No spaces",
+    "loadFailed": "Couldn't load the spaces"
   },
   "sidebar": {
     "back": "Back to home",

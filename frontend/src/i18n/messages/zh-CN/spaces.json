@@ -47,6 +47,7 @@
     "auditTasks": {
       "title": "待审核题目",
       "noTasks": "暂无待审核的题目",
+      "loadFailed": "加载待审核题目失败",
       "description": "题目描述",
       "submissionRequirements": "提交要求",
       "noRequirements": "暂无提交要求",
@@ -426,7 +427,8 @@
       "newProject": "新建项目",
       "browse": "或者浏览下面的空间，看看别人在做什么"
     },
-    "explore": "探索空间"
+    "explore": "探索空间",
+    "loadFailed": "加载空间列表失败"
   },
   "sidebar": {
     "back": "回到首页",

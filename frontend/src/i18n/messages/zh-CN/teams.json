@@ -171,6 +171,7 @@
     "resourceTypeLabel": "资料类型",
     "tagLabel": "标签",
     "upload": "上传资料",
+    "loadFailed": "加载知识库失败",
     "emptyTitle": "知识库暂无内容",
     "emptyFiltered": "没有找到匹配当前筛选条件的资料，请尝试调整筛选条件",
     "emptyHint": "在对话中把有价值的内容加入知识库，之后随时可以查阅",

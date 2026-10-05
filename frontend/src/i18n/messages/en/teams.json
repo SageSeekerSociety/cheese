@@ -171,6 +171,7 @@
     "resourceTypeLabel": "Resource type",
     "tagLabel": "Tag",
     "upload": "Upload resource",
+    "loadFailed": "Couldn't load the knowledge base",
     "emptyTitle": "No resources",
     "emptyFiltered": "No resources match these filters. Try changing them.",
     "emptyHint": "Add useful content from conversations to the knowledge base to find it again later.",
