@@ -172,84 +172,58 @@
   font-weight: 500;
   line-height: 1.3;
   color: var(--ink);
+
   /* Chinese breaks only at its punctuation, so on a phone the sentence folds at
      its comma, wherever the typing has got to. */
   word-break: keep-all;
 }
 
-/* 真项目 and the kinds of project it covers share one place in the sentence. At
-   rest the word stands there in the sentence's own type. While branched it lifts
-   into a small muted label over that place, and the example typed under it is
-   bold, so that even at the phone size it counts as large text, in the one
-   gradient in the hero, from the deeper amber to amber ink. --accent itself is
-   under 3:1 on the light canvas. */
-.hero-slot {
+/* The word in front of 项目 is the only thing that moves: it is selected, then
+   typed over. A kind of project is bold amber; --accent itself is under 3:1 on
+   the light canvas, so the deeper --accent-press carries it. */
+.hero-mod {
   display: inline-block;
   position: relative;
   white-space: nowrap;
+  transition: width 260ms var(--ease-out);
 }
 
-.hero-slot-label {
+.hero-mod-sizer {
   position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: left top;
-  transition:
-    transform 450ms var(--ease-out),
-    color 450ms var(--ease-out);
-}
-
-.hero-slot-branched .hero-slot-label {
-  color: var(--muted);
-  transform: translateY(-0.6em) scale(var(--label-scale, 0.5));
-}
-
-/* Where the sentence can fold, a short example would pull it onto one line and
-   the hero, anchored at its foot, would jump; two lines stay reserved. The phone
-   label is scaled less, to stay readable. */
-.landing:lang(en) .hero-position {
-  min-height: 2lh;
-}
-
-@media (max-width: 900px) {
-  .hero-position {
-    --label-scale: 0.6;
-
-    min-height: 2lh;
-  }
-}
-
-/* Holds the slot open at the width of 真项目 while nothing has been typed. */
-.hero-slot-space::before {
-  content: attr(data-text);
   visibility: hidden;
 }
 
-.hero-example {
+.hero-mod-text {
+  display: inline-block;
+}
+
+.hero-kind {
   font-weight: 700;
-  background: linear-gradient(90deg, var(--accent-press), var(--accent-ink));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--accent-press);
+}
+
+.hero-selected {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: var(--radius-sm);
 }
 
 .hero-caret {
   display: inline-block;
-  width: 0.08em;
+  width: 0.07em;
   height: 1em;
-  margin-left: 0.06em;
+  margin-left: 0.05em;
+
   /* Down to where Chinese glyphs end, a little below the Latin baseline. */
   vertical-align: -0.12em;
   background: var(--accent-press);
 }
 
-.hero-caret-idle {
-  animation: hero-caret 1s steps(1) infinite;
-}
-
-@keyframes hero-caret {
-  50% {
-    opacity: 0;
+/* Where the sentence can fold (phones, and English below), a short word would
+   pull it onto one line and the hero, anchored at its foot, would jump; two
+   lines stay reserved. */
+@media (width <= 900px) {
+  .hero-position {
+    min-height: 2lh;
   }
 }
 
@@ -268,6 +242,7 @@
 
 .landing:lang(en) .hero-position {
   max-width: 44ch;
+  min-height: 2lh;
   font-size: clamp(18px, 1.8vw, 26px);
   line-height: 1.4;
   text-wrap: balance;
@@ -303,31 +278,45 @@
   gap: 12px 32px;
 }
 
-/* ---- Manifesto: clauses light up as they cross the viewport ---- */
+/* ---- Manifesto: clauses light up as they cross the viewport, beside the film ---- */
 
+/* The film runs off the right edge of the screen, so the section keeps a gutter
+   on the left only. */
 .manifesto {
-  display: flex;
+  display: grid;
   min-height: 100dvh;
-  padding: 64px var(--gutter);
+  padding: 64px 0 64px var(--gutter);
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   align-items: center;
+  gap: 64px;
 }
 
 .manifesto-text {
   display: flex;
-  max-width: 1280px;
   flex-direction: column;
   gap: 0.6em;
-  font-size: clamp(28px, 3.6vw, 56px);
+  font-size: clamp(28px, 3.2vw, 48px);
   font-weight: 600;
   line-height: 1.35;
   color: var(--ink);
 }
 
+/* The English page has no film, so the clauses take the row at their full size. */
+.manifesto:not(:has(.film)) {
+  padding-right: var(--gutter);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.manifesto:not(:has(.film)) .manifesto-text {
+  font-size: clamp(28px, 3.6vw, 56px);
+}
+
 @supports (animation-timeline: view()) {
+  /* Fully lit by the time the section fills the screen. */
   .manifesto-clause {
     animation: clause-light linear both;
     animation-timeline: view();
-    animation-range: cover 20% cover 45%;
+    animation-range: cover 10% cover 32%;
   }
 }
 
@@ -338,6 +327,14 @@
 
   to {
     color: var(--ink);
+  }
+}
+
+@media (width <= 900px) {
+  .manifesto {
+    padding-right: var(--gutter);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
   }
 }
 
@@ -1007,7 +1004,7 @@
 
   .solution-swap-enter-active,
   .solution-swap-leave-active,
-  .hero-slot-label {
+  .hero-mod {
     transition: none;
   }
 }

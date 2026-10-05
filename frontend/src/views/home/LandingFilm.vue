@@ -3,18 +3,19 @@ import { ref } from 'vue'
 
 import film from '@/assets/landing/zhongzhi-film.mp4'
 import poster from '@/assets/landing/zhongzhi-film-poster.jpg'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 // The film tells one course project from first week to last, so it waits on its
 // poster and, when asked, plays from the top with sound: a silent loop dropped
 // visitors into the middle of the story with nothing to tell them where they were.
+// At rest it is feathered into the page over a blurred glow of itself; playing
+// takes the feathering off, so the whole picture and its controls show.
 const video = ref<HTMLVideoElement>()
 const playing = ref(false)
 
 function play() {
   const el = video.value
-  if (!el) return
+  if (!el || playing.value) return
   playing.value = true
   el.muted = false
   el.currentTime = 0
@@ -23,9 +24,14 @@ function play() {
 </script>
 
 <template>
-  <section class="film" :aria-label="t('publicSite.filmLabel')">
-    <p class="film-caption">{{ t('publicSite.filmCaption') }}</p>
-    <div class="film-frame">
+  <figure class="film" :class="{ 'film-playing': playing }" :aria-label="t('publicSite.filmLabel')">
+    <figcaption class="film-caption">
+      <button v-if="!playing" type="button" class="film-caption-play" @click="play">
+        {{ t('publicSite.filmCaption') }}<v-icon class="film-caption-arrow" icon="mdi-chevron-right" size="1.2em" />
+      </button>
+      <template v-else>{{ t('publicSite.filmCaption') }}</template>
+    </figcaption>
+    <div class="film-frame" :style="{ '--film-poster': `url(${poster})` }">
       <video
         ref="video"
         class="film-video"
@@ -35,62 +41,109 @@ function play() {
         muted
         playsinline
         preload="metadata"
+        @click="play"
       />
-      <div v-if="!playing" class="film-play">
-        <BaseButton kind="primary" size="lg" prepend-icon="mdi-play" @click="play">
-          {{ t('publicSite.filmPlay') }} · {{ t('publicSite.filmLength') }}
-        </BaseButton>
-      </div>
     </div>
-  </section>
+  </figure>
 </template>
 
 <style scoped>
 .film {
-  max-width: calc(960px + 2 * var(--gutter));
-  padding: 64px var(--gutter);
-  margin: 0 auto;
+  display: flex;
+  margin: 0;
+  flex-direction: column;
+  gap: 16px;
 }
 
+/* The caption is the film's way in: the line says what it shows, and the arrow
+   says it plays. */
 .film-caption {
-  margin: 0 0 16px;
-  font-size: clamp(18px, 1.6vw, 24px);
-  line-height: 1.5;
-  color: var(--text);
+  font-size: clamp(18px, 1.5vw, 22px);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.film-caption-play {
+  display: inline-flex;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.film-caption-play:hover {
+  color: var(--ink);
+}
+
+.film-caption-arrow {
+  color: var(--accent-press);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+
+.film-caption-play:hover .film-caption-arrow {
+  transform: translateX(3px);
 }
 
 .film-frame {
   position: relative;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+  isolation: isolate;
   aspect-ratio: 16 / 9;
+}
+
+/* The glow: the poster itself, blurred and spread past the frame. */
+.film-frame::before {
+  position: absolute;
+  z-index: -1;
+  background: var(--film-poster) center / cover;
+  content: '';
+  inset: -6%;
+  opacity: var(--film-glow, 0.5);
+  filter: blur(48px) saturate(1.2);
+  transition: opacity var(--dur-slow) var(--ease-out);
 }
 
 .film-video {
   display: block;
   width: 100%;
   height: 100%;
+  cursor: pointer;
   object-fit: cover;
+  filter: var(--film-dim, none);
+
+  /* Feathered all round, widest on the left where it meets the words, so no
+     edge of the frame ever shows. */
+  mask-image: linear-gradient(to right, transparent, var(--ink) 22%, var(--ink) 90%, transparent),
+    linear-gradient(to bottom, transparent, var(--ink) 20%, var(--ink) 80%, transparent);
+  mask-composite: intersect;
+  transition: filter var(--dur-slow) var(--ease-out);
 }
 
-/* The poster is a fixed warm white in both themes; a solid button is the one
-   control that reads on it whichever theme the page is in.
-   It sits in a corner, so it leaves the poster's subject in view. */
-.film-play {
-  position: absolute;
-  left: 24px;
-  bottom: 24px;
+/* The poster is a fixed warm white. On the dark page a bright glow turns to
+   smoke around a lit slab, so the glow nearly goes and the picture is dimmed. */
+:root[data-theme='dark'] .film {
+  --film-glow: 0.14;
+  --film-dim: brightness(0.62) saturate(0.9);
 }
 
-@media (max-width: 900px) {
-  .film {
-    padding: 32px var(--gutter);
-  }
+.film-playing .film-frame::before {
+  opacity: 0;
+}
 
-  .film-play {
-    left: 12px;
-    bottom: 12px;
+.film-playing .film-video {
+  cursor: auto;
+  filter: none;
+  mask-image: none;
+}
+
+@media (width <= 900px) {
+  .film-video {
+    mask-image: linear-gradient(to right, transparent, var(--ink) 16%, var(--ink) 84%, transparent),
+      linear-gradient(to bottom, transparent, var(--ink) 20%, var(--ink) 80%, transparent);
   }
 }
 </style>

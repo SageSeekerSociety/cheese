@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import LandingFilm from './LandingFilm.vue'
 import LandingRoom from './LandingRoom.vue'
@@ -9,7 +9,8 @@ import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
 
-// The manifesto lights up clause by clause as it scrolls through the viewport.
+// The manifesto lights up clause by clause as it scrolls through the viewport,
+// beside the film that shows it happening.
 const manifesto = computed(() => [t('publicSite.manifesto1'), t('publicSite.manifesto2'), t('publicSite.manifesto3')])
 
 const steps = computed(() => [
@@ -27,73 +28,102 @@ const resources = computed(() => [
 
 // The visitor's own system first; the files are served by this site (lib/desktop.ts).
 
-// The line under the slogan keeps its one sentence, and shows what 真项目 covers:
-// the word lifts into a small label over its own place, the kinds of project the
-// team's vision and product brief name (research, courses, company briefs,
-// competitions, startups) are typed under it one after another, a character at a time behind a
-// caret the way dot.net's hero did, and then the label settles back as the word.
-// Every frame reads as the whole sentence, and it rests on the original. It stays
-// on the original under reduced motion, and waits out a background tab.
-const examples = computed(() => [
-  t('publicSite.heroProject1'),
-  t('publicSite.heroProject2'),
-  t('publicSite.heroProject3'),
-  t('publicSite.heroProject4'),
-  t('publicSite.heroProject5'),
+// The line under the slogan keeps its one sentence. 项目 stays put, and the word
+// in front of it is selected and typed over, one kind of project after another
+// (research, course, company, competition, startup, open source) and back to 真, so every
+// frame reads as the whole sentence and each kind reads as a kind of project.
+// The kinds are the ones the team's vision and product brief name. It stays on
+// the original under reduced motion, and waits out a background tab.
+const kinds = computed(() => [
+  t('publicSite.heroKind1'),
+  t('publicSite.heroKind2'),
+  t('publicSite.heroKind3'),
+  t('publicSite.heroKind4'),
+  t('publicSite.heroKind5'),
+  t('publicSite.heroKind6'),
 ])
-const TYPE_MS = 140
-const ERASE_MS = 70
-const HOLD_MS = 1800
-const HOME_HOLD_MS = 3500
-// Matches the label's transition in landing.css.
-const FOLD_MS = 450
-const branched = ref(false)
-const typed = ref('')
-// A caret blinks only while it waits; while it types or erases it stays lit.
-const idle = ref(true)
+const HOME_HOLD_MS = 2800
+const HOLD_MS = 1500
+const SELECT_MS = 520
+const TYPE_MS = 130
+const SETTLE_MS = 240
+// null shows the home word, so a language switch at rest follows the locale.
+const typed = ref<string | null>(null)
+const isKind = ref(false)
+const selected = ref(false)
+const typing = ref(false)
+const modBox = ref<HTMLElement>()
+const sizer = ref<HTMLElement>()
+const sizerText = ref('')
 const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 let typingTimer: ReturnType<typeof setTimeout> | undefined
+// Each run of the cycle holds a number; a newer run, or leaving the page, retires it.
+let run = 0
 
-function after(ms: number, next: () => void) {
-  typingTimer = setTimeout(next, ms)
+class Retired extends Error {}
+
+// Sizes the box to `text` before it is typed, so 项目 glides aside once and the
+// letters fill a gap that is already open instead of drawing over it.
+async function openFor(text: string, my: number, caret: boolean) {
+  sizerText.value = text
+  await nextTick()
+  if (my !== run) throw new Retired()
+  if (!modBox.value || !sizer.value) return
+  const extra = caret ? parseFloat(getComputedStyle(modBox.value).fontSize) * 0.12 : 0
+  modBox.value.style.width = `${sizer.value.getBoundingClientRect().width + extra}px`
 }
 
-function rest() {
-  after(HOME_HOLD_MS, branchOut)
-}
-
-function branchOut() {
-  if (document.hidden) return rest()
-  branched.value = true
-  after(FOLD_MS, () => type(0, 1))
-}
-
-function type(index: number, length: number) {
-  const example = examples.value[index]
-  typed.value = example.slice(0, length)
-  idle.value = length === example.length
-  if (!idle.value) after(TYPE_MS, () => type(index, length + 1))
-  else after(HOLD_MS, () => erase(index))
-}
-
-function erase(index: number) {
-  if (document.hidden) return after(HOLD_MS, () => erase(index))
-  idle.value = false
-  if (typed.value.length > 1) {
-    typed.value = typed.value.slice(0, -1)
-    after(ERASE_MS, () => erase(index))
-    return
-  }
-  // The last character gives way straight to the next example's first, so the
-  // slot is never empty between them and the rest of the sentence holds still.
-  if (index + 1 < examples.value.length) {
-    after(ERASE_MS, () => type(index + 1, 1))
-  } else {
+async function cycle(my: number) {
+  const wait = (ms: number) =>
+    new Promise<void>((resolve, reject) => {
+      typingTimer = setTimeout(() => (my === run ? resolve() : reject(new Retired())), ms)
+    })
+  const retype = async (word: string | null) => {
+    const target = word ?? t('publicSite.heroHome')
+    await openFor(typed.value ?? t('publicSite.heroHome'), my, false)
+    selected.value = true
+    await wait(SELECT_MS)
+    selected.value = false
+    isKind.value = word !== null
+    typing.value = true
     typed.value = ''
-    branched.value = false
-    after(FOLD_MS, rest)
+    await openFor(target, my, true)
+    for (let i = 1; i <= target.length; i++) {
+      typed.value = target.slice(0, i)
+      await wait(TYPE_MS)
+    }
+    await wait(SETTLE_MS)
+    typing.value = false
+    typed.value = word
+    await openFor(target, my, false)
+  }
+  for (;;) {
+    await wait(HOME_HOLD_MS)
+    while (document.hidden) await wait(HOLD_MS)
+    for (const kind of kinds.value) {
+      await retype(kind)
+      await wait(HOLD_MS)
+    }
+    await retype(null)
   }
 }
+
+// Back to the original sentence and a fresh cycle, e.g. after a language switch.
+function restartTyping() {
+  run += 1
+  clearTimeout(typingTimer)
+  typed.value = null
+  isKind.value = false
+  selected.value = false
+  typing.value = false
+  if (modBox.value) modBox.value.style.width = ''
+  if (reducedMotion) return
+  cycle(run).catch((error) => {
+    if (!(error instanceof Retired)) throw error
+  })
+}
+
+watch(() => i18n.global.locale.value, restartTyping)
 
 // Which step of the story is in the middle of the screen drives the room.
 const step = ref(0)
@@ -110,11 +140,12 @@ onMounted(() => {
     { rootMargin: '-45% 0px -45% 0px' }
   )
   for (const el of stepEls.value) observer.observe(el)
-  if (!reducedMotion) rest()
+  restartTyping()
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
+  run += 1
   clearTimeout(typingTimer)
 })
 </script>
@@ -129,15 +160,17 @@ onBeforeUnmount(() => {
         <h1 class="hero-title">{{ t('publicSite.slogan') }}</h1>
         <p class="hero-position">
           <span class="visually-hidden">{{ t('publicSite.positioning') }}</span>
-          <!-- The slot keeps the width of whatever stands in the sentence: 真项目 at
-               rest, the typed example while branched. The label is laid over it. -->
+          <span ref="sizer" class="hero-mod-sizer" :class="{ 'hero-kind': isKind }" aria-hidden="true">{{
+            sizerText
+          }}</span>
           <span aria-hidden="true"
             >{{ t('publicSite.heroBefore')
-            }}<span class="hero-slot" :class="{ 'hero-slot-branched': branched }"
-              ><span class="hero-slot-label">{{ t('publicSite.heroHome') }}</span
-              ><span v-if="branched && typed" class="hero-example"
-                >{{ typed }}<span class="hero-caret" :class="{ 'hero-caret-idle': idle }" /></span
-              ><span v-else class="hero-slot-space" :data-text="t('publicSite.heroHome')" /></span
+            }}<span ref="modBox" class="hero-mod"
+              ><span class="hero-mod-text"
+                ><span :class="{ 'hero-kind': isKind, 'hero-selected': selected }">{{
+                  typed ?? t('publicSite.heroHome')
+                }}</span
+                ><span v-if="typing" class="hero-caret" /></span></span
             >{{ t('publicSite.heroAfter') }}</span
           >
         </p>
@@ -153,13 +186,12 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <!-- The film is in Chinese, with no subtitles yet. -->
-    <LandingFilm v-if="i18n.global.locale.value === 'zh-CN'" />
-
     <section class="manifesto" :aria-label="t('publicSite.manifestoLabel')">
       <p class="manifesto-text">
         <span v-for="(clause, i) in manifesto" :key="i" class="manifesto-clause">{{ clause }}</span>
       </p>
+      <!-- The film is in Chinese, with no subtitles yet. -->
+      <LandingFilm v-if="i18n.global.locale.value === 'zh-CN'" />
     </section>
 
     <section id="story" class="story">
