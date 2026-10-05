@@ -186,8 +186,10 @@ CELL_PRIORITY_ORDER: tuple[str, ...] = (
 )
 
 PROBE_PRESETS: dict[str, tuple[int, int]] = {
-    # (cell_count, samples_per_cell)
-    "quick": (4, 15),
+    # (cell_count, samples_per_cell). Every preset uses the paper's 25
+    # samples/cell -- only the cell count differs; a preset that also moved the
+    # sample count would make its fingerprints incomparable with the rest.
+    "quick": (4, 25),
     "standard": (8, 25),
     "strict": (16, 25),
 }

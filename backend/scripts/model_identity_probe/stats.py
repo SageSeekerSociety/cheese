@@ -12,12 +12,17 @@ Baselines from the paper, kept here for interpreting a result:
   equal error rate                             10.6% at 8 cells, 7.3% at 40
 
 Thresholds are heuristics sitting between those medians, not proofs.
+
+The equal-error-rate figure is a *paper* baseline (arXiv:2607.10252), quoted
+here only so a reader can interpret a band; it is NOT reproduced by this
+package (reproducing it needs the paper's labelled sample set, which the
+platform's models are absent from). Do not cite it as a measured property of
+this tool.
 """
 
 from __future__ import annotations
 
 import math
-import random
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -32,13 +37,26 @@ MIN_COMPARABLE_CELLS = 4
 MIN_SPLIT_HALF_SAMPLES = 5
 SPLIT_HALF_WARN_THRESHOLD = 0.25
 
-# --- probe protocol ----------------------------------------------------------
+# --- probe protocol (llm-fingerprint-detector constants.ts) ------------------
+#: The paper's protocol sends temperature 1.0 *explicitly* -- some gateway
+#: routes silently clamp a missing temperature to a different value, and a
+#: sample drawn at a different temperature is a different distribution.
 PROBE_TEMPERATURE = 1.0
-PROBE_MAX_TOKENS = 256
-DEFAULT_SAMPLES_PER_CELL = 12
+#: Paper protocol truncates the answer to one token's worth of budget. Reasoning
+#: must be off (see ``ReasoningAdapter``) or the hidden thinking consumes this
+#: budget before any visible answer and every sample is empty.
+PROBE_MAX_TOKENS = 16
+#: Fallback when reasoning cannot be disabled: raise the budget so a visible
+#: answer survives after the hidden reasoning, and flag lower confidence.
+POST_REASONING_MAX_TOKENS = 1024
+#: One cell count for every preset, the default and the references -- the paper
+#: calibrates at 25 samples/cell, and a reference collected at a different count
+#: is not comparable. ``MIN_VALID_SAMPLES_PER_CELL`` (10) is what actually gates
+#: a cell; 25 gives a cell room to lose samples to refusals and still qualify.
+DEFAULT_SAMPLES_PER_CELL = 25
 DEFAULT_CONCURRENCY = 4
-DEFAULT_TIMEOUT_S = 90.0
-DEFAULT_MAX_RETRIES = 3
+DEFAULT_TIMEOUT_S = 30.0
+DEFAULT_MAX_RETRIES = 2
 
 FINGERPRINT_FORMAT_VERSION = 1
 PROBE_PROTOCOL = "one-token/v1"
@@ -93,7 +111,13 @@ def median(values: list[float]) -> float | None:
 
 @dataclass
 class CellSamples:
-    """Every answer collected for one cell, normalised."""
+    """Every answer collected for one cell, normalised.
+
+    ``order`` keeps the valid answers in the order they *arrived*, which is what
+    the split-half self-check needs (see ``split_half_jsd``). It is deliberately
+    not serialised: a reference is compared through its counts, and arrival
+    order is meaningless for a fingerprint read back off disk.
+    """
 
     counts: Counter[str] = field(default_factory=Counter)
     valid: int = 0
@@ -103,6 +127,7 @@ class CellSamples:
     error: int = 0
     input_tokens: list[int] = field(default_factory=list)
     output_tokens: list[int] = field(default_factory=list)
+    order: list[str] = field(default_factory=list)
 
     def add(
         self, category: str, normalized: str | None, usage: dict | None = None
@@ -116,6 +141,7 @@ class CellSamples:
             self.valid += 1
             if normalized is not None:
                 self.counts[normalized] += 1
+                self.order.append(normalized)
         elif category == "invalid":
             self.invalid += 1
         elif category == "refusal":
@@ -161,7 +187,10 @@ def compare_cells(
     b: dict[str, CellSamples],
     min_valid: int = MIN_VALID_SAMPLES_PER_CELL,
 ) -> list[CellJsd]:
-    """Per-cell JSD over the cells both sides filled with enough valid answers."""
+    """Per-cell JSD over the cells both sides filled with enough valid answers.
+
+    Sorted by descending JSD, like the upstream ``compareCellSets``: the worst
+    cells are the ones a reader looks at first."""
     entries: list[CellJsd] = []
     for cell_id in a:
         other = b.get(cell_id)
@@ -179,6 +208,7 @@ def compare_cells(
                 valid_b=other.valid,
             )
         )
+    entries.sort(key=lambda entry: entry.jsd, reverse=True)
     return entries
 
 
@@ -188,27 +218,50 @@ def mean_jsd(entries: list[CellJsd]) -> float | None:
     return sum(e.jsd for e in entries) / len(entries)
 
 
-def split_half_jsd(samples: CellSamples, seed: int = 1) -> float | None:
-    """JSD of a cell's own two halves. A high value means the endpoint is not
-    one distribution -- a multi-backend aggregator, or routing that varies.
+def split_half_jsd(
+    answers: list[str], min_per_half: int = MIN_SPLIT_HALF_SAMPLES
+) -> float | None:
+    """JSD between one cell's two arrival-parity halves.
 
-    The samples are shuffled before the split: the cell here is a bag of
-    counts, and splitting a bag by insertion order would put every ``a`` in one
-    half and every ``b`` in the other, reporting 1.0 for a perfectly stable
-    cell. The reference implementation splits the raw sample list, whose order
-    is already the (effectively random) order the answers arrived in."""
-    items: list[str] = []
-    for value, count in samples.counts.items():
-        items.extend([value] * count)
-    if len(items) < 2 * MIN_SPLIT_HALF_SAMPLES:
+    This is the upstream ``splitHalfJsd``: the valid answers are laid out in the
+    order they arrived and split by ``index % 2`` -- even positions against odd
+    positions. A *stable* cell answers with the same handful of values in a
+    randomised order, so the two halves hold the same distribution and JSD is
+    near zero. An endpoint that is really two backends behind one name (an
+    aggregator, or a route that alternates) tends to alternate its answers
+    ``a, b, a, b, ...``; the even half is then almost all ``a`` and the odd half
+    almost all ``b``, so JSD approaches 1.0 -- the instability the *mean* JSD
+    against a reference cannot see.
+
+    The split must be by arrival order, NOT a shuffle: shuffling a bag of counts
+    destroys exactly the signal this check exists to catch (it puts every ``a``
+    and every ``b`` in both halves and reports ~0 for the alternating case the
+    upstream tool reports as ~1.0)."""
+    even: Counter[str] = Counter()
+    odd: Counter[str] = Counter()
+    even_n = odd_n = 0
+    for index, answer in enumerate(answers):
+        if index % 2 == 0:
+            even[answer] += 1
+            even_n += 1
+        else:
+            odd[answer] += 1
+            odd_n += 1
+    if even_n < min_per_half or odd_n < min_per_half:
         return None
-    random.Random(seed).shuffle(items)
-    half = len(items) // 2
-    left = Counter(items[:half])
-    right = Counter(items[half:])
-    if (
-        sum(left.values()) < MIN_SPLIT_HALF_SAMPLES
-        or sum(right.values()) < MIN_SPLIT_HALF_SAMPLES
-    ):
+    return jensen_shannon_divergence(dict(even), dict(odd))
+
+
+def split_half_mean(cells: dict[str, CellSamples]) -> float | None:
+    """The mean of the per-cell split-half JSDs over the cells with enough
+    samples in each half -- the single number the upstream check returns (it
+    averages across cells; the earlier port took the max). ``None`` when no cell
+    qualified."""
+    values = [
+        value
+        for value in (split_half_jsd(samples.order) for samples in cells.values())
+        if value is not None
+    ]
+    if not values:
         return None
-    return jensen_shannon_divergence(dict(left), dict(right))
+    return sum(values) / len(values)

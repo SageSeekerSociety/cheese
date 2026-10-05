@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import battery
 from .normalize import normalize_answer
@@ -12,14 +12,23 @@ from .stats import (
     DEFAULT_SAMPLES_PER_CELL,
     CellSamples,
 )
-from .transport import Endpoint
+from .transport import Endpoint, ReasoningAdapter
 
 
-def probe_once(endpoint: Endpoint, cell_id: str, rng: random.Random) -> CellSamples:
+def probe_once(
+    endpoint: Endpoint,
+    cell_id: str,
+    rng: random.Random,
+    adapter: ReasoningAdapter | None = None,
+) -> CellSamples:
     """One request against one cell, normalised into a single sample."""
     prompt = battery.pick_paraphrase(cell_id, rng)
     system = battery.system_prompt(cell_id)
-    completion = endpoint.complete(system, prompt)
+    kwargs: dict = {}
+    if adapter is not None:
+        kwargs["max_tokens"] = adapter.max_tokens
+        kwargs["extra_body"] = adapter.extra_body
+    completion = endpoint.complete(system, prompt, **kwargs)
     samples = CellSamples()
     if completion.error is not None:
         samples.add("error", None)
@@ -36,12 +45,15 @@ def collect(
     concurrency: int = DEFAULT_CONCURRENCY,
     seed: int = 20261005,
     progress=None,
+    adapter: ReasoningAdapter | None = None,
 ) -> dict[str, CellSamples]:
     """Fill every cell with ``samples_per_cell`` samples.
 
     Requests are issued concurrently but each cell's samples are gathered
     independently, so a rate-limited cell degrades to fewer valid samples
-    instead of poisoning the run.
+    instead of poisoning the run. Results are merged in *completion* order
+    (``as_completed``), which is what keeps each cell's ``order`` list -- the
+    arrival order ``split_half_jsd`` reads -- honest.
     """
     jobs: list[tuple[str, int]] = [
         (cell, i) for cell in cells for i in range(samples_per_cell)
@@ -53,11 +65,12 @@ def collect(
     out: dict[str, CellSamples] = {cell: CellSamples() for cell in cells}
     done = 0
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        futures = [
-            (pool.submit(probe_once, endpoint, cell, per_job[(cell, i)]), cell)
+        futures = {
+            pool.submit(probe_once, endpoint, cell, per_job[(cell, i)], adapter): cell
             for cell, i in jobs
-        ]
-        for future, cell in futures:
+        }
+        for future in as_completed(futures):
+            cell = futures[future]
             try:
                 _merge(out[cell], future.result())
             except Exception:  # a crashed probe is a lost sample, not a lost run
@@ -77,6 +90,7 @@ def _merge(target: CellSamples, source: CellSamples) -> None:
     target.error += source.error
     target.input_tokens.extend(source.input_tokens)
     target.output_tokens.extend(source.output_tokens)
+    target.order.extend(source.order)
 
 
 def collect_sequential(
@@ -84,10 +98,11 @@ def collect_sequential(
     cells,
     samples_per_cell: int = DEFAULT_SAMPLES_PER_CELL,
     seed: int = 20261005,
+    adapter: ReasoningAdapter | None = None,
 ) -> dict[str, CellSamples]:
     rng = random.Random(seed)
     out = {cell: CellSamples() for cell in cells}
     for cell in cells:
         for _ in range(samples_per_cell):
-            _merge(out[cell], probe_once(endpoint, cell, rng))
+            _merge(out[cell], probe_once(endpoint, cell, rng, adapter))
     return out

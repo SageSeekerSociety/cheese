@@ -36,16 +36,27 @@ from scripts.model_identity_probe.collect import collect  # noqa: E402
 from scripts.model_identity_probe.stats import (  # noqa: E402
     DEFAULT_CONCURRENCY,
     DEFAULT_SAMPLES_PER_CELL,
+    PROBE_PROTOCOL,
+    PROBE_TEMPERATURE,
 )
 from scripts.model_identity_probe.tokenizer_fp import (  # noqa: E402
     measure,
     to_reference,
 )
-from scripts.model_identity_probe.transport import Endpoint  # noqa: E402
+from scripts.model_identity_probe.transport import (  # noqa: E402
+    Endpoint,
+    detect_adapter,
+)
 
 
 def _backend() -> str:
-    return os.environ.get("CHEESE_BACKEND", "http://172.17.0.1:8081")
+    # CHEESE_API is what the platform injects for the harness's own calls.
+    # CHEESE_BACKEND is not a variable the platform ever sets.
+    return (
+        os.environ.get("CHEESE_API")
+        or os.environ.get("CHEESE_BACKEND")
+        or "http://172.17.0.1:8081"
+    )
 
 
 def _token() -> str:
@@ -55,6 +66,39 @@ def _token() -> str:
             "CHEESE_TOKEN is not set; run this from a seat's own environment"
         )
     return token
+
+
+def read_binding(args: argparse.Namespace) -> dict:
+    """What the platform says this seat's credential resolves to.
+
+    This is the declaration the card and ``agent_turns.route`` are supposed to
+    match: admission resolves the seat named in the credential and answers with
+    the pool and the wire model the turn will actually run on (``supply``). The
+    probe compares that answer -- not the caller's claim -- against what comes
+    back from the wire. It is read, never trusted blindly: the whole point is
+    that this declaration and the wire can disagree (FB-73).
+    """
+    headers = {"authorization": f"Bearer {_token()}"}
+    seat = getattr(args, "seat", "") or ""
+    if seat:
+        headers["x-cheese-subagent"] = "1"
+        headers["x-cheese-child-model"] = seat
+    with httpx.Client(timeout=60, trust_env=False) as client:
+        response = client.post(
+            f"{_backend().rstrip('/')}/llm/admission", headers=headers, json={}
+        )
+    if response.status_code != 200:
+        raise SystemExit(
+            f"admission refused: HTTP {response.status_code} {response.text[:200]}"
+        )
+    data = response.json().get("data", {})
+    supply = data.get("supply") or {}
+    return {
+        "allow": data.get("allow"),
+        "model": supply.get("model"),
+        "pool": supply.get("pool"),
+        "reason": data.get("reason"),
+    }
 
 
 def cmd_catalog(args: argparse.Namespace) -> int:
@@ -80,7 +124,16 @@ def cmd_catalog(args: argparse.Namespace) -> int:
 def _endpoints(models: list[str], args: argparse.Namespace) -> list[Endpoint]:
     endpoints = []
     for model in models:
-        if args.mode == "proxy":
+        if args.mode == "seat":
+            endpoints.append(
+                Endpoint.seat(
+                    model,
+                    proxy_url=args.proxy_url,
+                    connect_host=args.connect_host,
+                    ca_path=args.ca,
+                )
+            )
+        elif args.mode == "proxy":
             endpoints.append(
                 Endpoint.proxy(model, proxy_url=args.proxy_url, ca_path=args.ca)
             )
@@ -100,18 +153,30 @@ def cmd_enroll(args: argparse.Namespace) -> int:
             f"[enroll] {endpoint.model}: {len(cells)} cells x {args.samples} samples",
             file=sys.stderr,
         )
+        # Discover the reasoning-disable field once; both the behaviour samples
+        # and the tokenizer probes must use it, and its name goes in the notes
+        # so a later reader can compare two fingerprints' conditions.
+        adapter = detect_adapter(endpoint, next(iter(cells)))
         reference = reference_mod.new_reference(
             endpoint.model,
             source=f"{endpoint.mode}:{endpoint.model}",
             samples_per_cell=args.samples,
             notes=(
-                f"preset={args.preset} protocol={battery.SYSTEM_PROMPTS['en'][:24]}..."
+                f"protocol={PROBE_PROTOCOL} preset={args.preset} "
+                f"temperature={PROBE_TEMPERATURE} max_tokens={adapter.max_tokens} "
+                f"reasoning={adapter.strategy}"
+                + (" post_reasoning" if adapter.post_reasoning else "")
             ),
         )
         reference.cells = collect(
-            endpoint, cells, args.samples, args.concurrency, args.seed
+            endpoint,
+            cells,
+            args.samples,
+            args.concurrency,
+            args.seed,
+            adapter=adapter,
         )
-        sample = measure(endpoint)
+        sample = measure(endpoint, adapter=adapter)
         reference.tokenizer = to_reference(sample)
         target = reference_mod.save(reference, out_dir)
         valid = sum(s.valid for s in reference.cells.values())
@@ -133,12 +198,33 @@ def cmd_enroll(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
+    # The pool/model the platform declares for this credential. On the seat
+    # road this is the whole comparison: admission rewrites the request body to
+    # ``supply.model`` on the way out, so a response that comes back from the
+    # other pool, or under another model, is the FB-73 disagreement -- caught
+    # with no reference fingerprint at all.
+    expected_pool = args.expected_pool
+    expected_model = args.expected_model
+    if args.mode == "seat" and (not expected_pool or not expected_model):
+        binding = read_binding(args)
+        expected_pool = expected_pool or binding.get("pool")
+        expected_model = expected_model or binding.get("model")
+        if not args.models and expected_model:
+            # No --models given: verify the model the binding names.
+            args.models = [expected_model]
+    if args.mode == "seat" and not args.models:
+        raise SystemExit(
+            "seat mode needs a model: pass --models, or a binding admission "
+            "can resolve (the credential's seat)"
+        )
+
     references = {}
     for model in args.models:
         loaded = reference_mod.load(model, Path(args.reference_dir))
         if loaded is None:
             print(
-                f"[verify] no reference for {model}; behaviour will be insufficient",
+                f"[verify] no reference for {model}; verdict rests on the "
+                "deterministic wire signals only",
                 file=sys.stderr,
             )
         references[model] = loaded
@@ -151,6 +237,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
             samples_per_cell=args.samples,
             concurrency=args.concurrency,
             seed=args.seed,
+            expected_pool=expected_pool,
+            expected_model=expected_model,
         ).to_json()
         results.append(result)
         print(
@@ -162,41 +250,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_explain(args: argparse.Namespace) -> int:
-    """Ask the control point itself which pool/model this seat resolves to.
+    """Print what the platform declares for this credential's seat.
 
-    This is the cheap, deterministic half of the check, and it is the one that
-    catches FB-73 directly: admission resolves the seat named in a credential
-    and answers with the pool and the wire model, which is what the turn will
-    actually run on. Cross-checking that answer against the card's route is
-    what closes the seam.
+    This is only the *declaration*: admission resolves the seat named in the
+    credential and answers with the pool and the wire model it will run. It is
+    NOT a verification -- the declaration is exactly what can be wrong (FB-73),
+    and admission reads the same credential that may have been mis-issued. To
+    check the declaration against the wire, use ``verify --mode seat``, which
+    samples over the seat's own CONNECT road and compares the response against
+    this answer.
     """
-    headers = {"authorization": f"Bearer {_token()}"}
-    if args.seat is not None and args.seat != "":
-        headers["x-cheese-subagent"] = "1"
-        headers["x-cheese-child-model"] = args.seat
-    with httpx.Client(timeout=60, trust_env=False) as client:
-        response = client.post(
-            f"{_backend().rstrip('/')}/llm/admission", headers=headers, json={}
-        )
-    if response.status_code != 200:
-        print(
-            f"admission refused: HTTP {response.status_code} {response.text[:200]}",
-            file=sys.stderr,
-        )
-        return 1
-    data = response.json().get("data", {})
-    print(
-        json.dumps(
-            {
-                "allow": data.get("allow"),
-                "supply": data.get("supply"),
-                "reason": data.get("reason"),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
-    return 0
+    binding = read_binding(args)
+    print(json.dumps(binding, ensure_ascii=False, indent=2))
+    return 0 if binding.get("allow") else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -208,13 +274,32 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--models", default="", help="comma-separated catalog ids")
     common.add_argument(
-        "--mode", choices=["gateway", "proxy", "direct"], default="gateway"
+        "--mode",
+        choices=["seat", "gateway", "proxy", "direct"],
+        default="seat",
+        help=(
+            "seat (default) samples over the seat's own CONNECT road, where the "
+            "metering proxy writes the binding's model into the body -- the road "
+            "a real turn takes; gateway samples the gateway pool directly"
+        ),
     )
     common.add_argument("--backend", default=_backend())
     common.add_argument("--proxy-url", default=os.environ.get("HTTPS_PROXY", ""))
+    common.add_argument("--connect-host", default="")
     common.add_argument("--ca", default=os.environ.get("CHEESE_PROXY_CA", ""))
     common.add_argument("--base-url", default="")
     common.add_argument("--api-key-env", default="")
+    common.add_argument(
+        "--expected-pool",
+        default="",
+        choices=["", "subscription", "gateway"],
+        help="override the pool the binding names (seat mode reads it by default)",
+    )
+    common.add_argument(
+        "--expected-model",
+        default="",
+        help="override the model the binding names (seat mode reads it by default)",
+    )
     common.add_argument(
         "--preset", choices=sorted(battery.PROBE_PRESETS), default="quick"
     )
@@ -241,7 +326,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command in ("enroll", "verify"):
         args.models = [m.strip() for m in args.models.split(",") if m.strip()]
-        if not args.models:
+        # Seat mode may leave --models empty and take the model from the
+        # binding admission resolves; every other mode needs it named.
+        if not args.models and getattr(args, "mode", "") != "seat":
             raise SystemExit("--models is required")
     return {
         "catalog": cmd_catalog,

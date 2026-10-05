@@ -29,6 +29,7 @@ from .stats import (
     JSD_MATCH_THRESHOLD,
     JSD_MISMATCH_THRESHOLD,
     MIN_COMPARABLE_CELLS,
+    SPLIT_HALF_WARN_THRESHOLD,
     CellJsd,
 )
 
@@ -57,7 +58,7 @@ class BehaviourEvidence:
     comparable_cells: int
     verdict: str
     cells: list[CellJsd] = field(default_factory=list)
-    split_half_max: float | None = None
+    split_half_mean: float | None = None
     unstable_routing: bool = False
 
     def to_json(self) -> dict:
@@ -65,8 +66,8 @@ class BehaviourEvidence:
             "mean_jsd": None if self.mean_jsd is None else round(self.mean_jsd, 4),
             "comparable_cells": self.comparable_cells,
             "verdict": self.verdict,
-            "split_half_max": (
-                None if self.split_half_max is None else round(self.split_half_max, 4)
+            "split_half_mean": (
+                None if self.split_half_mean is None else round(self.split_half_mean, 4)
             ),
             "unstable_routing": self.unstable_routing,
             "cells": [
@@ -123,15 +124,66 @@ def combine(
     provenance: ProvenanceEvidence | None,
     behaviour: BehaviourEvidence | None,
     tokenizer: TokenizerEvidence | None,
+    *,
+    expected_pool: str | None = None,
 ) -> tuple[str, str]:
-    """Return (verdict, reason). Deterministic disagreements win outright."""
+    """Return (verdict, reason).
+
+    Precedence, weakest-to-strongest evidence, and the one rule each corner
+    enforces:
+
+      * a deterministic disagreement (the wire named a different model, or the
+        request came back from the *other* pool than the seat is bound to) is a
+        mismatch on its own -- no statistical story explains it;
+      * an unstable route (split-half above ``SPLIT_HALF_WARN_THRESHOLD``)
+        cannot be a clean match even when its mean JSD looks fine: one name
+        answering from two distributions is the aggregator case, so it is
+        downgraded to uncertain;
+      * otherwise the behavioural and tokenizer signals decide, as before.
+
+    ``expected_pool`` is the pool the *binding* names (subscription/gateway). A
+    response whose headers say a different pool is the FB-73 shape caught
+    without any reference fingerprint.
+    """
     if provenance is not None and provenance.verdict == MISMATCH:
         return MISMATCH, "the upstream named a different model than the one claimed"
-    if behaviour is not None and behaviour.verdict == MISMATCH:
-        return MISMATCH, "the answer distribution differs from the reference"
     if (
-        behaviour is not None
-        and behaviour.verdict == MATCH
+        provenance is not None
+        and expected_pool
+        and provenance.pool
+        and provenance.pool != expected_pool
+    ):
+        return MISMATCH, (
+            f"the seat is bound to the {expected_pool} pool but the response "
+            f"came back from the {provenance.pool} pool"
+        )
+    if behaviour is None:
+        # No reference: the deterministic signals still decide. The wire model
+        # and pool agreeing is weaker than a behavioural match, but it is a
+        # real fact the card cannot see, and it is what a subscription seat
+        # (which has no reference here) can be checked against at all.
+        if provenance is None:
+            return INSUFFICIENT, "no signal was available"
+        if provenance.verdict == MATCH:
+            return MATCH, (
+                "the wire named the claimed model and the pool matches "
+                "(no behavioural reference was available)"
+            )
+        return UNCERTAIN, (
+            "no behavioural reference; the wire signals neither confirm nor "
+            "contradict the claim"
+        )
+    if behaviour.verdict == MISMATCH:
+        return MISMATCH, "the answer distribution differs from the reference"
+    if behaviour.verdict == MATCH and behaviour.unstable_routing:
+        return UNCERTAIN, (
+            "the answer distribution matches on average, but the split-half "
+            "self-check is above the instability threshold "
+            f"({behaviour.split_half_mean:.4f} > {SPLIT_HALF_WARN_THRESHOLD}); "
+            "the endpoint may be rotating between backends"
+        )
+    if (
+        behaviour.verdict == MATCH
         and tokenizer is not None
         and tokenizer.verdict == MISMATCH
     ):
@@ -139,11 +191,9 @@ def combine(
             "the answer distribution matches but the tokenizer fingerprint does not; "
             "routing may be mixed"
         )
-    if behaviour is not None and behaviour.verdict == MATCH:
+    if behaviour.verdict == MATCH:
         if tokenizer is None or tokenizer.verdict in (MATCH, INSUFFICIENT):
             return MATCH, "the answer distribution matches the reference"
-    if behaviour is not None and behaviour.verdict == UNCERTAIN:
+    if behaviour.verdict == UNCERTAIN:
         return UNCERTAIN, "the answer distribution sits in the uncertainty band"
-    if behaviour is None:
-        return INSUFFICIENT, "no behavioural comparison was made"
     return INSUFFICIENT, "too few comparable cells to decide"

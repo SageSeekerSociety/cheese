@@ -1,33 +1,44 @@
 """Talking to a seat's model, over the same road a real turn takes.
 
-Three modes, and the point of the distinction is that a probe is only evidence
+Four modes, and the point of the distinction is that a probe is only evidence
 about a turn when it goes where the turn goes:
 
+  seat     the seat's OWN road, discovered from its environment. A Claude Code
+           seat reaches Anthropic through the metering proxy's CONNECT listener
+           (``HTTPS_PROXY``, ``provider_env.subscription_provider``); the proxy
+           asks ``/llm/admission`` per request and writes the resolved
+           ``supply.model`` into the request body. That rewrite is the whole
+           point: the model that runs is the *binding's*, not the caller's, so
+           a probe on this road exercises exactly what a real turn does. The
+           credential is the CONNECT scoped token -- ``HTTPS_PROXY``'s password
+           in direct mode, or the tunnel's ``cheese-tunnel.token`` /
+           ``CHEESE_CONNECT_TOKEN`` when the transport rides the tunnel helper.
   gateway  ``POST {backend}/llm/v1/messages`` with the seat's own scoped cheese
            token as the Bearer. This is the platform's machine path for
            harnesses that cannot be steered by HTTPS_PROXY (``llm_proxy.py``):
            the backend swaps in the project's virtual gateway key and streams
-           the upstream response back. The model is the request body's, so any
-           gateway-pool model can be sampled.
-  proxy    ``HTTPS_PROXY`` pointing at the metering proxy's CONNECT listener,
-           with the seat's scoped token as the proxy password -- Claude Code's
-           own road (``provider_env.subscription_provider``). The proxy rewrites
-           the model in the body from the admission verdict, so the model here
-           is the one the *binding* names, not the caller.
+           the upstream response back. The model is the request body's -- this
+           road proves nothing about the *binding*, since its catch-all never
+           consults admission, so it is only for sampling the gateway pool.
+  proxy    ``HTTPS_PROXY`` given explicitly, token as the proxy password. The
+           lower-level form seat mode drives; kept for a hand-set proxy.
   direct   an explicit base URL and key. Only for a trusted endpoint outside
            the platform.
 
 Nothing here reads or prints a credential: the token is taken from the
-environment variable the harness already holds and is never echoed.
+environment or the tunnel's token file the harness already holds, and is never
+echoed.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import random
 import ssl
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -35,7 +46,9 @@ import httpx
 from .stats import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_TIMEOUT_S,
+    POST_REASONING_MAX_TOKENS,
     PROBE_MAX_TOKENS,
+    PROBE_TEMPERATURE,
 )
 
 ANTHROPIC_VERSION = "2023-06-01"
@@ -87,7 +100,7 @@ class Completion:
 
 @dataclass
 class Endpoint:
-    mode: str  # gateway | proxy | direct
+    mode: str  # seat | gateway | proxy | direct
     model: str
     backend: str = ""
     connector_token_env: str = "CHEESE_TOKEN"
@@ -97,15 +110,24 @@ class Endpoint:
     proxy_url: str = ""
     protocol: str = "anthropic-messages"  # or openai-chat
     extra_headers: dict[str, str] = field(default_factory=dict)
+    #: Where the seat's CONNECT credential came from, and the address the
+    #: listener is at when the token came from a file rather than the proxy URL.
+    credential_source: str = ""
+    connect_host: str = ""
 
     # ---- construction helpers ------------------------------------------------
     @classmethod
     def gateway(cls, model: str, backend: str | None = None) -> Endpoint:
+        # CHEESE_API is the address the platform injects for the harness's own
+        # calls; CHEESE_BACKEND is not a variable the platform ever sets, and
+        # reading it made every default run dial a box-local address that only
+        # exists on the backend's host.
         return cls(
             mode="gateway",
             model=model,
             backend=backend
-            or os.environ.get("CHEESE_BACKEND", "http://172.17.0.1:8081"),
+            or os.environ.get("CHEESE_API")
+            or "http://172.17.0.1:8081",
         )
 
     @classmethod
@@ -120,22 +142,53 @@ class Endpoint:
         )
 
     @classmethod
+    def seat(
+        cls,
+        model: str,
+        *,
+        proxy_url: str | None = None,
+        connect_host: str | None = None,
+        ca_path: str | None = None,
+    ) -> Endpoint:
+        """The seat's own road, discovered from its environment.
+
+        Credential, in the order a real turn would have it:
+
+          1. the password embedded in ``HTTPS_PROXY`` (the direct listener);
+          2. ``CHEESE_CONNECT_TOKEN`` (what the launch script writes for the
+             tunnel helper);
+          3. ``$HOME/.cheese/cheese-tunnel.token`` (where that helper reads it).
+
+        A URL is built from the credential and the listener address only when
+        the proxy URL itself carries none -- the tunnel's ``HTTPS_PROXY`` is the
+        helper's loopback port with no userinfo, and only the helper knows the
+        token, but its token file is right here. Nothing is printed.
+        """
+        resolved = _discover_connect(proxy_url, connect_host)
+        return cls(
+            mode="seat",
+            model=model,
+            proxy_url=resolved.url,
+            connect_host=resolved.host,
+            ca_path=ca_path or _discover_ca(),
+            credential_source=resolved.source,
+        )
+
+    @classmethod
     def direct(cls, model: str, base_url: str, api_key_env: str) -> Endpoint:
         return cls(
             mode="direct", model=model, base_url=base_url, api_key_env=api_key_env
         )
 
     # ---- requests ------------------------------------------------------------
-    def _client(self) -> httpx.Client:
-        if self.mode == "proxy":
+    def _client(self, *, stream: bool = False) -> httpx.Client:
+        if self.mode in ("proxy", "seat"):
             return httpx.Client(
                 proxy=self.proxy_url,
                 verify=self.ca_path or True,
                 timeout=DEFAULT_TIMEOUT_S,
                 trust_env=False,
             )
-        if self.mode == "direct":
-            return httpx.Client(timeout=DEFAULT_TIMEOUT_S, trust_env=False)
         return httpx.Client(timeout=DEFAULT_TIMEOUT_S, trust_env=False)
 
     def _url(self) -> str:
@@ -161,7 +214,7 @@ class Endpoint:
         }
         if self.protocol == "openai-chat":
             headers = {"content-type": "application/json"}
-        if self.mode in ("gateway", "proxy"):
+        if self.mode in ("gateway", "proxy", "seat"):
             token = os.environ.get(self.connector_token_env, "")
             headers["authorization"] = f"Bearer {token}"
         elif self.mode == "direct":
@@ -176,15 +229,25 @@ class Endpoint:
         prompt: str,
         *,
         max_tokens: int = PROBE_MAX_TOKENS,
-        temperature: float | None = None,
+        temperature: float = PROBE_TEMPERATURE,
+        extra_body: dict | None = None,
         stream: bool = True,
     ) -> Completion:
         """One probe. Streams by default: some gateway routes refuse a
-        non-streamed request outright, and streaming is what a real turn does."""
+        non-streamed request outright, and streaming is what a real turn does.
+
+        ``temperature`` is sent *explicitly* (the paper protocol's 1.0, not
+        omitted): a route that silently defaults a missing temperature to
+        something else would change the distribution under test. ``extra_body``
+        carries the reasoning-disable field (see ``detect_adapter``); without
+        it a reasoning model spends ``max_tokens`` on hidden thinking and every
+        sample normalises to empty.
+        """
         if self.protocol == "openai-chat":
             body: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": max_tokens,
+                "temperature": temperature,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
@@ -194,13 +257,12 @@ class Endpoint:
             body = {
                 "model": self.model,
                 "max_tokens": max_tokens,
+                "temperature": temperature,
                 "system": system,
                 "messages": [{"role": "user", "content": prompt}],
             }
-        if temperature is not None:
-            # Omitted rather than sent as 1.0: some routes reject the parameter
-            # outright, and 1.0 is every provider's own default anyway.
-            body["temperature"] = temperature
+        if extra_body:
+            body.update(extra_body)
         if stream:
             body["stream"] = True
 
@@ -208,7 +270,7 @@ class Endpoint:
         for attempt in range(DEFAULT_MAX_RETRIES + 1):
             started = time.monotonic()
             try:
-                with self._client() as client:
+                with self._client(stream=stream) as client:
                     if stream:
                         result = self._stream(client, body)
                     else:
@@ -251,9 +313,14 @@ class Endpoint:
                     event = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
-                text_parts, model_echo, usage = _absorb(
-                    event, text_parts, model_echo, usage
-                )
+                if self.protocol == "openai-chat":
+                    text_parts, model_echo, usage = _absorb_openai(
+                        event, text_parts, model_echo, usage
+                    )
+                else:
+                    text_parts, model_echo, usage = _absorb(
+                        event, text_parts, model_echo, usage
+                    )
         return Completion("".join(text_parts), model_echo, usage, evidence, 0.0)
 
     def _once(self, client: httpx.Client, body: dict) -> Completion:
@@ -309,12 +376,133 @@ def _absorb(
     return text_parts, model_echo, usage
 
 
+def _absorb_openai(
+    event: dict, text_parts: list[str], model_echo: str | None, usage: dict
+) -> tuple[list[str], str | None, dict]:
+    """One OpenAI-compatible SSE chunk: ``choices[].delta.content`` for the
+    text, a top-level ``model``, and the ``usage`` block that (with
+    ``stream_options.include_usage``) arrives on the final chunk."""
+    if event.get("model"):
+        model_echo = event["model"]
+    for choice in event.get("choices") or []:
+        delta = choice.get("delta") or {}
+        piece = delta.get("content")
+        if isinstance(piece, str) and piece:
+            text_parts.append(piece)
+    if event.get("usage"):
+        usage = {**(usage or {}), **event["usage"]}
+    return text_parts, model_echo, usage
+
+
 def proxy_ca_candidates() -> list[str]:
     """Where a metering proxy's CA is likely to be on a box that runs one."""
     return [
         os.environ.get("CHEESE_PROXY_CA", ""),
-        "/home/nictheboy/cheese-proxy/certs/mitmproxy-ca-cert.pem",
+        os.environ.get("NODE_EXTRA_CA_CERTS", ""),
+        os.path.join(os.path.expanduser("~"), ".claude", "proxy-ca.pem"),
     ]
+
+
+def _discover_ca() -> str:
+    for candidate in proxy_ca_candidates():
+        if candidate and Path(candidate).exists():
+            return candidate
+    return ""
+
+
+@dataclass(frozen=True)
+class ConnectTarget:
+    """Where a seat's CONNECT credential lives and what the listener is at."""
+
+    url: str
+    host: str
+    source: str
+
+
+def _discover_connect(proxy_url: str | None, connect_host: str | None) -> ConnectTarget:
+    """Find the seat's own CONNECT road without ever printing the credential.
+
+    Order follows what a real turn has: the proxy URL (direct listener, token
+    as its password) first; then the tunnel's token file / ``CHEESE_CONNECT_TOKEN``
+    (tunnel mode, URL is the helper's loopback port with no userinfo). A token
+    found in a file is folded back into a proxy URL here -- it is used only to
+    authenticate the probe's own CONNECT, which is the one thing a proxy
+    credential is for.
+    """
+    given = (proxy_url or os.environ.get("HTTPS_PROXY", "")).strip()
+    if given:
+        return ConnectTarget(url=given, host="", source="HTTPS_PROXY")
+    token = os.environ.get("CHEESE_CONNECT_TOKEN", "").strip()
+    source = "CHEESE_CONNECT_TOKEN"
+    if not token:
+        token_file = Path(
+            os.environ.get(
+                "CHEESE_CONNECT_TOKEN_FILE",
+                os.path.join(os.path.expanduser("~"), ".cheese", "cheese-tunnel.token"),
+            )
+        )
+        if token_file.exists():
+            token = token_file.read_text(encoding="utf-8").strip()
+            source = str(token_file)
+    host = (
+        connect_host
+        or os.environ.get("CHEESE_CONNECT_HOST", "")
+        or "172.17.0.1:8444"
+    )
+    if not token:
+        # No credential: still return the address, so the failure names the
+        # missing piece rather than silently dialling nothing.
+        return ConnectTarget(url=f"http://{host}", host=host, source="none")
+    return ConnectTarget(url=f"http://cheese:{token}@{host}", host=host, source=source)
+
+
+# --- reasoning disable (adapter) --------------------------------------------
+#
+# Hidden thinking must be off: it burns the max_tokens budget before any visible
+# answer appears and shifts the sampled distribution. Ported from the upstream
+# ``adapter.ts``; the field that works differs by protocol, and the gateway's
+# Anthropic-shaped route takes ``thinking: {type: disabled}`` while the
+# OpenAI-shaped one takes ``reasoning_effort: none``. Each is probed once; the
+# first that returns a non-empty visible answer wins. If none works we raise the
+# budget to ``POST_REASONING_MAX_TOKENS`` and flag the run as lower confidence.
+
+REASONING_DISABLE_BODIES: dict[str, list[tuple[str, dict]]] = {
+    "anthropic-messages": [("anthropic-thinking", {"thinking": {"type": "disabled"}})],
+    "openai-chat": [
+        ("openai-effort", {"reasoning_effort": "none"}),
+        ("zhipu-thinking", {"thinking": {"type": "disabled"}}),
+        ("openrouter-reasoning", {"reasoning": {"enabled": False}}),
+    ],
+}
+
+
+@dataclass
+class ReasoningAdapter:
+    strategy: str
+    extra_body: dict = field(default_factory=dict)
+    max_tokens: int = PROBE_MAX_TOKENS
+    post_reasoning: bool = False
+
+
+def detect_adapter(
+    endpoint: Endpoint, cell_id: str = "random-number-1-100:en"
+) -> ReasoningAdapter:
+    """Find the reasoning-disable field the endpoint accepts. One probe each,
+    bare request as fallback, post-reasoning budget as the last resort."""
+    from . import battery  # local import: battery imports stats, not transport
+
+    system = battery.system_prompt(cell_id)
+    prompt = battery.pick_paraphrase(cell_id, random.Random(0))
+    for strategy, body in REASONING_DISABLE_BODIES.get(endpoint.protocol, []):
+        completion = endpoint.complete(system, prompt, extra_body=body)
+        if completion.error is None and completion.text.strip():
+            return ReasoningAdapter(strategy, body, PROBE_MAX_TOKENS, False)
+    bare = endpoint.complete(system, prompt)
+    if bare.error is None and bare.text.strip():
+        return ReasoningAdapter("none", {}, PROBE_MAX_TOKENS, False)
+    return ReasoningAdapter(
+        "none", {}, POST_REASONING_MAX_TOKENS, post_reasoning=True
+    )
 
 
 def ssl_context(ca_path: str) -> ssl.SSLContext:

@@ -72,12 +72,12 @@ class TokenizerSample:
 
 
 def measure(
-    endpoint: Endpoint, probes: dict[str, str] | None = None
+    endpoint: Endpoint, probes: dict[str, str] | None = None, adapter=None
 ) -> TokenizerSample:
     """One call per probe plus one for BASE, all tiny."""
     probes = probes or PROBES
     sample = TokenizerSample()
-    sample.base = _count(endpoint, BASE)
+    sample.base = _count(endpoint, BASE, adapter)
     if sample.base is None or sample.base <= 0:
         # A route that reports no input_tokens (or reports 0) has no countable
         # baseline; every delta off it would be noise. Say so rather than write
@@ -86,7 +86,7 @@ def measure(
         sample.errors.update({name: reason for name in probes})
         return sample
     for name, text in probes.items():
-        counted = _count(endpoint, f"{BASE}{text}")
+        counted = _count(endpoint, f"{BASE}{text}", adapter)
         if counted is None or counted <= 0:
             sample.errors[name] = "no positive usage.input_tokens in the response"
             continue
@@ -104,18 +104,44 @@ def measure(
     return sample
 
 
-def _count(endpoint: Endpoint, text: str) -> int | None:
+def _effective_input_tokens(usage: dict) -> int | None:
+    """The server's full input count for a request.
+
+    ``input_tokens`` is only the *uncached* part. A provider that serves the
+    BASE prefix from its prompt cache reports most of it under
+    ``cache_read_input_tokens`` (and writes new cache under
+    ``cache_creation_input_tokens``); reading only ``input_tokens`` would make
+    the BASE and the BASE+probe count differ by a caching artefact rather than
+    by the probe's own tokens. Sum them so the delta is the probe's bytes under
+    the model's vocabulary, cached or not. A response with none of the three
+    fields returns None (no countable value).
+    """
+    total = 0
+    seen = False
+    fields = (
+        "input_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    )
+    for key in fields:
+        value = usage.get(key)
+        if isinstance(value, int):
+            total += value
+            seen = True
+    return total if seen else None
+
+
+def _count(endpoint: Endpoint, text: str, adapter=None) -> int | None:
     completion = endpoint.complete(
         "Reply with the single word ok.",
         text,
         max_tokens=8,
-        temperature=None,
+        extra_body=adapter.extra_body if adapter else None,
         stream=True,
     )
     if completion.error is not None:
         return None
-    value = completion.usage.get("input_tokens")
-    return value if isinstance(value, int) else None
+    return _effective_input_tokens(completion.usage or {})
 
 
 def to_reference(sample: TokenizerSample) -> TokenizerReference:
@@ -127,17 +153,22 @@ def compare(
 ) -> TokenizerEvidence:
     if reference is None or sample.base is None:
         return TokenizerEvidence(INSUFFICIENT, deltas=dict(sample.deltas))
-    agreed = 0
     compared = 0
     disagreements: list[str] = []
+    # The BASE count is itself a fingerprint of the fixed prefix's tokenisation
+    # under this vocabulary; compare it too, not just the deltas.
+    if reference.base_input_tokens is not None:
+        compared += 1
+        if abs(sample.base - reference.base_input_tokens) > TOLERANCE:
+            disagreements.append(
+                f"base: {sample.base} vs {reference.base_input_tokens}"
+            )
     for name, expected in reference.deltas.items():
         got = sample.deltas.get(name)
         if got is None:
             continue
         compared += 1
-        if abs(got - expected) <= TOLERANCE:
-            agreed += 1
-        else:
+        if abs(got - expected) > TOLERANCE:
             disagreements.append(f"{name}: {got} vs {expected}")
     if compared == 0:
         return TokenizerEvidence(

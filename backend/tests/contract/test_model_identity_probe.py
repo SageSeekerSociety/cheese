@@ -19,6 +19,7 @@ from scripts.model_identity_probe.normalize import (
     parse_chinese_numeral,
     parse_english_number_word,
 )
+from scripts.model_identity_probe.report import build_provenance
 from scripts.model_identity_probe.stats import (
     JSD_MATCH_THRESHOLD,
     JSD_MISMATCH_THRESHOLD,
@@ -28,6 +29,7 @@ from scripts.model_identity_probe.stats import (
     mean_jsd,
     shannon_entropy_bits,
     split_half_jsd,
+    split_half_mean,
 )
 from scripts.model_identity_probe.tokenizer_fp import (
     BASE as TOKENIZER_BASE,
@@ -41,7 +43,11 @@ from scripts.model_identity_probe.tokenizer_fp import (
     measure as measure_tokens,
 )
 from scripts.model_identity_probe.transport import (
+    REASONING_DISABLE_BODIES,
     Completion,
+    Endpoint,
+    _absorb_openai,
+    detect_adapter,
     evidence_headers,
     pool_from_headers,
 )
@@ -180,12 +186,41 @@ def test_compare_cells_only_sees_cells_the_reference_covers() -> None:
     assert entries == []
 
 
-def test_split_half_flags_a_cell_that_is_two_distributions() -> None:
-    stable = _cell({"a": 10, "b": 10})
-    mixed = _cell({"a": 10, "b": 0})
-    assert split_half_jsd(stable) == pytest.approx(0.0, abs=1e-9)
-    assert split_half_jsd(mixed) is not None
-    assert split_half_jsd(_cell({"a": 3})) is None  # too few for two halves
+def test_compare_cells_sorts_by_descending_jsd() -> None:
+    # Upstream compareCellSets sorts; the worst cell must come first so the
+    # report leads with the evidence that moved the verdict.
+    reference = {"c1": _cell({"a": 12}), "c2": _cell({"a": 6, "b": 6})}
+    target = {"c1": _cell({"a": 12}), "c2": _cell({"b": 12})}
+    entries = compare_cells(reference, target)
+    assert [entry.cell_id for entry in entries] == ["c2", "c1"]
+    assert entries[0].jsd >= entries[1].jsd
+
+
+def test_split_half_catches_an_alternating_endpoint() -> None:
+    # Two backends behind one name answer a, b, a, b, ...; splitting by arrival
+    # parity puts every ``a`` in one half and every ``b`` in the other, so JSD
+    # is 1.0. The old port shuffled the bag of counts before halving, which
+    # reported ~0.03 for exactly this endpoint where the upstream reports 1.0.
+    assert split_half_jsd(["a", "b"] * 10) == pytest.approx(1.0)
+    # An endpoint that is genuinely one distribution answers the same mixture in
+    # a randomised order -- the two halves agree up to sampling noise and JSD
+    # stays well inside the match band, unlike the alternating case's 1.0.
+    stable = ["a", "b"] * 10
+    random.Random(3).shuffle(stable)
+    assert split_half_jsd(stable) < JSD_MATCH_THRESHOLD
+
+
+def test_split_half_needs_samples_in_both_halves() -> None:
+    assert split_half_jsd(["a", "b", "a"]) is None
+    assert split_half_jsd([]) is None
+
+
+def test_split_half_mean_averages_over_cells_not_the_max() -> None:
+    cells = {
+        "c1": _ordered(["a", "b"] * 6),  # alternating: JSD 1.0
+        "c2": _ordered(["a"] * 12),  # stable: JSD 0.0
+    }
+    assert split_half_mean(cells) == pytest.approx(0.5)
 
 
 # --- verdict -----------------------------------------------------------------
@@ -235,9 +270,46 @@ def test_matching_behaviour_and_tokenizer_is_a_match() -> None:
     assert verdict == MATCH
 
 
-def test_no_reference_leaves_the_verdict_insufficient() -> None:
-    verdict, _ = combine(_provenance(MATCH), None, None)
+def test_no_reference_but_a_clean_wire_is_a_match() -> None:
+    # A subscription seat has no behavioural reference, but the deterministic
+    # wire facts (upstream model echo, pool) still decide: agreement is a match.
+    verdict, reason = combine(_provenance(MATCH), None, None)
+    assert verdict == MATCH
+    assert "no behavioural reference" in reason
+
+
+def test_no_signal_at_all_is_insufficient() -> None:
+    verdict, _ = combine(None, None, None)
     assert verdict == INSUFFICIENT
+
+
+def test_no_reference_and_a_wrong_pool_is_a_mismatch() -> None:
+    verdict, reason = combine(
+        _provenance(MATCH), None, None, expected_pool="subscription"
+    )
+    assert verdict == MISMATCH
+    assert "pool" in reason
+
+
+def test_a_wrong_pool_outweighs_matching_behaviour() -> None:
+    verdict, _ = combine(
+        _provenance(MATCH),
+        _behaviour(MATCH, 8),
+        TokenizerEvidence(MATCH),
+        expected_pool="subscription",
+    )
+    assert verdict == MISMATCH
+
+
+def test_unstable_routing_downgrades_a_behavioural_match() -> None:
+    behaviour = _behaviour(MATCH, 8)
+    behaviour.unstable_routing = True
+    behaviour.split_half_mean = 0.9
+    verdict, reason = combine(
+        _provenance(MATCH), behaviour, TokenizerEvidence(MATCH)
+    )
+    assert verdict == UNCERTAIN
+    assert "split-half" in reason
 
 
 def test_uncertainty_band_is_reported_as_uncertain() -> None:
@@ -322,6 +394,269 @@ def test_tokenizer_without_a_reference_is_insufficient() -> None:
     )
 
 
+# --- protocol constants ------------------------------------------------------
+
+
+def test_protocol_constants_match_the_reference_implementation() -> None:
+    from scripts.model_identity_probe.stats import (
+        DEFAULT_MAX_RETRIES,
+        DEFAULT_SAMPLES_PER_CELL,
+        DEFAULT_TIMEOUT_S,
+        PROBE_MAX_TOKENS,
+        PROBE_TEMPERATURE,
+    )
+
+    assert PROBE_TEMPERATURE == 1.0
+    assert PROBE_MAX_TOKENS == 16
+    assert DEFAULT_SAMPLES_PER_CELL == 25
+    assert DEFAULT_MAX_RETRIES == 2
+    assert DEFAULT_TIMEOUT_S == 30.0
+
+
+def test_every_preset_samples_25_per_cell() -> None:
+    assert all(spc == 25 for _, spc in battery.PROBE_PRESETS.values())
+
+
+def test_the_probe_sends_temperature_and_a_16_token_budget(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_stream(self, client, body):  # noqa: ANN001
+        seen.update(body)
+        return Completion("42", "m", {}, {}, 0.0)
+
+    monkeypatch.setattr(Endpoint, "_stream", fake_stream)
+    Endpoint.gateway("m").complete("sys", "hi")
+    assert seen["temperature"] == 1.0
+    assert seen["max_tokens"] == 16
+    assert seen["stream"] is True
+    assert seen["model"] == "m"
+
+
+def test_the_reasoning_disable_field_reaches_the_body(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_stream(self, client, body):  # noqa: ANN001
+        seen.update(body)
+        return Completion("1", "m", {}, {}, 0.0)
+
+    monkeypatch.setattr(Endpoint, "_stream", fake_stream)
+    Endpoint.gateway("m").complete(
+        "sys", "hi", extra_body={"thinking": {"type": "disabled"}}
+    )
+    assert seen["thinking"] == {"type": "disabled"}
+
+
+def test_the_openai_reasoning_field_is_offered_first() -> None:
+    assert REASONING_DISABLE_BODIES["openai-chat"][0] == (
+        "openai-effort",
+        {"reasoning_effort": "none"},
+    )
+    assert REASONING_DISABLE_BODIES["anthropic-messages"][0] == (
+        "anthropic-thinking",
+        {"thinking": {"type": "disabled"}},
+    )
+
+
+def test_detect_adapter_picks_the_first_field_that_works(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_complete(self, system, prompt, **kwargs):  # noqa: ANN001
+        body = kwargs.get("extra_body") or {}
+        calls.append(body)
+        if body.get("reasoning_effort") == "none":
+            return Completion("7", "m", {}, {}, 0.0)
+        return Completion("", "m", {}, {}, 0.0, "HTTP 400")
+
+    monkeypatch.setattr(Endpoint, "complete", fake_complete)
+    endpoint = Endpoint(mode="gateway", model="m", protocol="openai-chat")
+    adapter = detect_adapter(endpoint)
+    assert adapter.strategy == "openai-effort"
+    assert adapter.extra_body == {"reasoning_effort": "none"}
+    assert calls[0] == {"reasoning_effort": "none"}
+
+
+# --- transport shell ---------------------------------------------------------
+
+
+def test_openai_stream_chunks_are_parsed() -> None:
+    text, model, usage = _absorb_openai(
+        {"model": "gpt-6-astra", "choices": [{"delta": {"content": "4"}}]},
+        [],
+        None,
+        {},
+    )
+    text, model, usage = _absorb_openai(
+        {"choices": [{"delta": {"content": "2"}}], "usage": {"prompt_tokens": 5}},
+        text,
+        model,
+        usage,
+    )
+    assert "".join(text) == "42"
+    assert model == "gpt-6-astra"
+    assert usage["prompt_tokens"] == 5
+
+
+def test_seat_mode_reads_the_connect_token_from_the_environment(monkeypatch) -> None:
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.setenv("CHEESE_CONNECT_TOKEN", "tok-not-printed")
+    endpoint = Endpoint.seat("m", connect_host="host:8444")
+    assert "cheese:tok-not-printed@host:8444" in endpoint.proxy_url
+    assert endpoint.credential_source == "CHEESE_CONNECT_TOKEN"
+    assert endpoint.connect_host == "host:8444"
+
+
+def test_seat_mode_without_a_credential_names_the_missing_piece(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("CHEESE_CONNECT_TOKEN", raising=False)
+    monkeypatch.setenv("CHEESE_CONNECT_TOKEN_FILE", str(tmp_path / "absent.token"))
+    endpoint = Endpoint.seat("m", connect_host="host:8444")
+    assert endpoint.credential_source == "none"
+    assert endpoint.proxy_url == "http://host:8444"
+
+
+# --- provenance (wire facts, not self-report) --------------------------------
+
+
+def _completion(echo: str | None = None, headers: dict | None = None) -> Completion:
+    return Completion("", echo, {}, headers or {}, 0.0)
+
+
+def test_a_dated_snapshot_of_the_claim_is_a_match() -> None:
+    provenance = build_provenance(
+        "claude-opus-5-5",
+        _completion(
+            "claude-opus-5-5-20250915",
+            {"x-litellm-model-name": "anthropic/claude-opus-5-5-20250915"},
+        ),
+    )
+    assert provenance.verdict == MATCH
+
+
+def test_a_provider_prefix_is_folded() -> None:
+    provenance = build_provenance(
+        "gpt-6-astra",
+        _completion(
+            "openai/gpt-6-astra",
+            {"x-litellm-model-name": "openai/gpt-6-astra"},
+        ),
+    )
+    assert provenance.verdict == MATCH
+
+
+def test_an_alias_a_human_must_settle_is_uncertain() -> None:
+    provenance = build_provenance(
+        "claude-opus-5-5",
+        _completion(
+            "claude-opus-5-5-preview",
+            {"x-litellm-model-name": "anthropic/claude-opus-5-5-preview"},
+        ),
+    )
+    assert provenance.verdict == UNCERTAIN
+
+
+def test_a_genuinely_different_model_on_the_wire_is_a_mismatch() -> None:
+    provenance = build_provenance(
+        "claude-opus-5-5",
+        _completion(
+            "deepseek-flash", {"x-litellm-model-name": "deepseek/deepseek-flash"}
+        ),
+    )
+    assert provenance.verdict == MISMATCH
+
+
+def test_a_body_echo_that_disagrees_is_a_mismatch_not_a_hedge() -> None:
+    provenance = build_provenance("claude-opus-5-5", _completion("deepseek-flash"))
+    assert provenance.verdict == MISMATCH
+
+
+# --- seat mode: the no-reference verdict -------------------------------------
+
+
+def test_verify_without_a_reference_still_reports_a_verdict(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+    from scripts.model_identity_probe import transport as transport_mod
+
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "42",
+            "claude-opus-5-5",
+            {"input_tokens": 5},
+            {"anthropic-ratelimit-requests-limit": "50"},
+            0.0,
+        ),
+    )
+    endpoint = transport_mod.Endpoint(mode="seat", model="claude-opus-5-5")
+    verification = report_mod.verify(
+        endpoint,
+        "claude-opus-5-5",
+        None,
+        sample_tokenizer=False,
+        expected_pool="subscription",
+    )
+    assert verification.provenance is not None
+    assert verification.provenance.pool == "subscription"
+    assert verification.behaviour is None
+    assert verification.verdict == MATCH
+
+
+def test_verify_without_a_reference_flags_a_pool_mismatch(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+    from scripts.model_identity_probe import transport as transport_mod
+
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "42",
+            "claude-opus-5-5",
+            {"input_tokens": 5},
+            {
+                "x-litellm-call-id": "abc",
+                "x-litellm-model-name": "anthropic/claude-opus-5-5",
+            },
+            0.0,
+        ),
+    )
+    endpoint = transport_mod.Endpoint(mode="seat", model="claude-opus-5-5")
+    verification = report_mod.verify(
+        endpoint,
+        "claude-opus-5-5",
+        None,
+        sample_tokenizer=False,
+        expected_pool="subscription",
+    )
+    assert verification.verdict == MISMATCH
+    assert "pool" in verification.reason
+
+
+# --- tokenizer: cached input tokens ------------------------------------------
+
+
+def test_tokenizer_counts_cached_input_tokens_not_just_input_tokens() -> None:
+    class _Stub:
+        def complete(self, system: str, prompt: str, **kwargs: object) -> Completion:
+            usage = (
+                {"input_tokens": 5, "cache_read_input_tokens": 10}
+                if prompt == TOKENIZER_BASE
+                else {"input_tokens": 5, "cache_read_input_tokens": 12}
+            )
+            return Completion("ok", "stub", usage, {}, 0.0)
+
+    sample = measure_tokens(_Stub(), probes={"latin": "x"})  # type: ignore[arg-type]
+    assert sample.base == 15
+    assert sample.deltas["latin"] == 2
+
+
+def test_tokenizer_reports_a_base_count_that_disagrees() -> None:
+    reference = reference_mod.TokenizerReference(base_input_tokens=10, deltas={})
+    evidence = compare_tokens(TokenizerSample(base=12, deltas={}), reference)
+    assert evidence.verdict == MISMATCH
+
+
 # --- battery and reference store --------------------------------------------
 
 
@@ -377,6 +712,14 @@ def _cell(counts: dict[str, int]) -> CellSamples:
     for value, count in counts.items():
         for _ in range(count):
             samples.add("valid", value)
+    return samples
+
+
+def _ordered(answers: list[str]) -> CellSamples:
+    """A cell that keeps the arrival order, which split-half depends on."""
+    samples = CellSamples()
+    for answer in answers:
+        samples.add("valid", answer)
     return samples
 
 
