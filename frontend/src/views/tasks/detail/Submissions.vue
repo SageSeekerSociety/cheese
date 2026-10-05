@@ -1,43 +1,35 @@
 <template>
-  <!-- 「我的提交」页签：我这一份的逐版提交和评审结果。交新一版的按钮在题目名那一行。 -->
-  <div class="sm">
-    <v-select
-      v-if="showIdentitySelect && identityOptions.length > 1"
-      v-model="selectedIdentity"
-      autocomplete="off"
-      :items="identityOptions"
-      :label="t('tasks.submissions.identity')"
-      hide-details
-      variant="outlined"
-      density="compact"
-      class="sm__identity"
-    ></v-select>
-    <TaskSubmissionHistory
-      v-if="taskData && currentParticipantId"
-      :task-id="taskData.id"
-      :participant-id="currentParticipantId"
-      :reviewable="false"
-      hide-title
-      :highlight-latest="true"
-      :outlined="false"
-      :empty-text="t('tasks.submissions.empty')"
-    />
-  </div>
+  <SubmissionsView
+    v-model:selected-identity="selectedIdentity"
+    :show-identity-select="showIdentitySelect"
+    :identity-options="identityOptions"
+    :current-participant-id="currentParticipantId"
+    :submissions="submissions"
+    :has-more="hasMore"
+    :loading-more="loadingMore"
+    :refreshing="refreshing"
+    :total="total"
+    @load-more="loadMore"
+  />
 </template>
 
 <script setup lang="ts">
-import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/network/api/tasks/types'
+// 容器：算身份、按身份拉提交记录、翻页都在这儿；画面交给 SubmissionsView。
+import type { TaskParticipationInfo } from '@/network/api/tasks/types'
+import type { TaskSubmission } from '@/types'
 import type { Task } from '@/types'
 
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import { createEmptyResult, usePaging } from '@/utils/paging'
+
+import SubmissionsView from './SubmissionsView.vue'
 
 import { TasksApi } from '@/network/api/tasks'
 import AccountService from '@/services/account'
 
 const { t } = useI18n()
-
-const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
 
 const props = defineProps<{
   taskData: Task | null
@@ -48,7 +40,6 @@ const props = defineProps<{
 
 // 状态
 const selectedIdentity = ref<number | null>(null)
-const participants = ref<any[]>([])
 
 // 计算属性
 const isCreator = computed(() => props.isCreator || AccountService.user?.id === props.taskData?.creator.id)
@@ -111,6 +102,28 @@ const currentParticipantId = computed(() => {
   return null
 })
 
+// 逐版提交记录
+const {
+  data: submissions,
+  refresh,
+  loadMore,
+  hasMore,
+  refreshing,
+  loadingMore,
+  total,
+} = usePaging(async (pageStart) => {
+  if (!props.taskData || currentParticipantId.value === null) return createEmptyResult<TaskSubmission>()
+  const { data } = await TasksApi.listSubmissions(props.taskData.id, currentParticipantId.value, {
+    allVersions: true,
+    sort_by: 'createdAt',
+    sort_order: 'desc',
+    pageStart: pageStart,
+    pageSize: 10,
+    queryReview: true,
+  })
+  return { data: data.submissions, page: data.page }
+})
+
 // 监听和生命周期
 watch(
   () => props.participationInfo,
@@ -128,22 +141,7 @@ watch(
   { immediate: true }
 )
 
-onMounted(() => {
-  if (props.participationInfo?.identities.length) {
-    // 默认选择第一个已批准的身份
-    const approvedIdentity = props.participationInfo.identities.find((i) => i.approved === 'APPROVED')
-    if (approvedIdentity) {
-      selectedIdentity.value = approvedIdentity.id
-    } else {
-      selectedIdentity.value = props.participationInfo.identities[0].id
-    }
-  }
-})
-</script>
+watch(() => [props.taskData?.id, currentParticipantId.value], refresh)
 
-<style scoped>
-.sm__identity {
-  max-width: 240px;
-  margin-bottom: 16px;
-}
-</style>
+onMounted(refresh)
+</script>
