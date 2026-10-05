@@ -116,6 +116,7 @@ const {
   refMaps,
   hasMore,
   hasNewer,
+  atBottom,
   loadingHistory,
   loadingOlder,
   openAt,
@@ -385,7 +386,7 @@ defineExpose({ send, connected, submitQuestion })
         @upgrade="emit('upgrade-message', $event)"
         @edit="startEdit"
       />
-      <ChatNewMessagesPill :count="unseen.length" :has-newer="hasNewer" @jump="jumpToUnseen" />
+      <ChatNewMessagesPill :count="unseen.length" :has-newer="hasNewer" :at-bottom="atBottom" @jump="jumpToUnseen" />
 
       <ChatErrorToast :message="errorMsg" @close="errorMsg = null" />
 

@@ -14,6 +14,7 @@
 import type { MenuAction } from '@/components/common/menuAction'
 
 import { computed, ref } from 'vue'
+import { useEventListener } from '@vueuse/core'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -94,10 +95,28 @@ const extras = computed<MenuAction[]>(() => {
   return list
 })
 const extrasCollapsed = computed(() => !!props.collapseExtras && extras.value.length > 1)
-// 收进 ⋯ 时，键盘快捷键那颗也跟进去（平板接了键盘照样用得上），但不算进「要不要收」。
+
+// 触屏上没有键盘，「键盘快捷键」那一项在那儿是一句空话：手机上它本来收在 ⋯ 里，
+// 点开是一整页用不上的按键表。按输入方式判断，不按视口宽度（和 useChatRowActions
+// 同一条判据）：插上鼠标或触控板的平板，两种都不匹配 `hover: none`，它自己回来。
+const touchQuery = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none)') : undefined
+const touchOnly = ref(!!touchQuery?.matches)
+useEventListener(touchQuery, 'change', (e: MediaQueryListEvent) => (touchOnly.value = e.matches))
+
+// 收进 ⋯ 时，键盘快捷键那颗也跟进去（桌面上那儿用得上），但不算进「要不要收」：
+// 触屏上收不收都只有 extras 那几项，一颗 ⋯ 里只剩一行的话比那一颗本身还多点一下。
 const menuExtras = computed<MenuAction[]>(() => [
   ...extras.value,
-  { key: 'shortcuts', label: t('global.shortcuts.open'), icon: 'mdi-keyboard-outline', onSelect: openShortcutSheet },
+  ...(touchOnly.value
+    ? []
+    : [
+        {
+          key: 'shortcuts',
+          label: t('global.shortcuts.open'),
+          icon: 'mdi-keyboard-outline',
+          onSelect: openShortcutSheet,
+        },
+      ]),
 ])
 
 // 那颗按钮上的字。窄屏收掉名字，只留「交给」；读屏读的一直是全名。
@@ -186,9 +205,10 @@ const summonText = computed(() => ({
       :aria-label="t('work.room.reminder.open')"
       @click="emit('remind')"
     />
-    <!-- The visible way into the shortcut sheet: Enter / Shift+Enter / Cmd+Enter used to live only in a title tooltip. -->
+    <!-- The visible way into the shortcut sheet: Enter / Shift+Enter / Cmd+Enter used
+         to live only in a title tooltip. Not on touch — there is no keyboard to press. -->
     <BaseButton
-      v-if="!extrasCollapsed"
+      v-if="!extrasCollapsed && !touchOnly"
       kind="ghost"
       class="composer-icon"
       icon="mdi-keyboard-outline"

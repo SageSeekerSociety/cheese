@@ -1,7 +1,10 @@
 <script setup lang="ts">
-// 「来了几条新的」那颗药丸：浮在时间线底部，从下面升上来。点它回到最新。
-// 往上翻着的时候它同时在数数和提示位置；停在历史中间时它写「回到最新」——
-// 那时候底部只是这一段的底部。
+// 「回到最新」那颗药丸：浮在时间线底部，从下面升上来。点它回到最新。
+//
+// 只要读者不在底部它就挂着 —— 往上翻看历史的时候也必须有一条回去的路，
+// 而「来了几条新的」只是它顺便说的话：往上翻着又来了新消息时报条数，
+// 只是翻上去看、没有新消息时写「回到最新」（那会儿底部只是这一段的底部）。
+// 到不到底部由 `atBottom` 说（useChatScroll，阈值 80px），这里不自己量。
 import RollingNumber from '../room/RollingNumber.vue'
 
 import { t } from '@/i18n'
@@ -9,6 +12,8 @@ import { t } from '@/i18n'
 defineProps<{
   count: number
   hasNewer: boolean
+  /** 读者此刻停在（或接近）时间线底部。底部不挂药丸：最新本来就在眼前。 */
+  atBottom: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,10 +22,10 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <!-- 往上翻着的时候来了新消息。 -->
+  <!-- 不在底部的时候（往上翻着 / 停在历史中间 / 来了新消息）。 -->
   <div class="new-pill-anchor">
     <Transition name="new-pill">
-      <button v-if="count || hasNewer" type="button" class="new-pill" @click="emit('jump')">
+      <button v-if="count || hasNewer || !atBottom" type="button" class="new-pill" @click="emit('jump')">
         <v-icon size="14">mdi-arrow-down</v-icon>
         <template v-if="count">
           <RollingNumber :value="count" />
