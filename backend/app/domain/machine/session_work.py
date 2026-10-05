@@ -43,6 +43,8 @@ from app.domain.device.supply import (
 )
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
+from app.domain.machine import lease_claim
+from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxLifecycle
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
@@ -830,18 +832,6 @@ async def _tell_room_what_stayed_behind(db, topic_id, warnings: list[str]) -> No
     )
 
 
-def still_preparing(lease: dict | None) -> bool:
-    """Whether a request is installing this lease right now.
-
-    Only a live claim says so. A lease left ``preparing`` after its install
-    failed or was abandoned, or waiting on a project environment, has nobody
-    finishing it; treating it as busy refused every switch of its room for
-    good, the way back to a machine that works included.
-    """
-    until = (lease or {}).get("claim_until")
-    return bool(until) and datetime.fromisoformat(until) > datetime.now(UTC)
-
-
 async def _move_session(
     db,
     *,
@@ -1084,7 +1074,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             await db.commit()
             return _Preparing(
                 "工作电脑正在准备；对话和平台工具仍可用。",
-                partial(_claim_moved, db, session_id, lease.get("claim")),
+                partial(lease_claim.moved, db, session_id, lease.get("claim")),
             )
     devices = sql_device_service(db)
     selected = None
@@ -1242,7 +1232,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         "device_id": device_id,
         "status": "preparing",
         "claim": claim,
-        "claim_until": (now + timedelta(seconds=660)).isoformat(),
+        "claim_until": (now + timedelta(seconds=lease_claim.CLAIM_TTL_S)).isoformat(),
     }
     # Every command start and file tool of the session comes through here, so
     # hands it already holds are re-checked many times a turn, while its other
@@ -1270,9 +1260,10 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     # task on its own session, and the request only waits for it. A request
     # that stops waiting — its time ran out (the route answers "preparing"),
     # its caller left — leaves the installation running, and the claim ends
-    # with it: handed over as ready, or lapsed when it fails. Cancelled with
-    # the request instead, it left the claim standing for its full 660s with
-    # nobody installing, and every start of the session failed until then.
+    # with it: handed over as ready, lapsed when it fails, or left to lapse
+    # unrenewed when this process goes. Cancelled with the request instead, it
+    # left the claim standing for its full 660s with nobody installing, and
+    # every start of the session failed until then.
     work = asyncio.ensure_future(
         _install(
             db.bind,
@@ -1376,46 +1367,47 @@ async def _install(
             work_resource=work_resource,
         )
         try:
-            if restoring is not None:
-                # An archived sandbox comes back to its new host before the
-                # executor starts in it.
-                restored = await SandboxLifecycle(db, hub=hub).restore(
-                    restoring, device_id
+            async with lease_claim.kept(bind, session_id, claim, since=now):
+                if restoring is not None:
+                    # An archived sandbox comes back to its new host before the
+                    # executor starts in it.
+                    restored = await SandboxLifecycle(db, hub=hub).restore(
+                        restoring, device_id
+                    )
+                    await publish_line(topic_id, restored)
+                info = await _start_executor(
+                    hub,
+                    lease,
+                    device_id=device_id,
+                    project_id=project_id,
+                    work_resource=work_resource,
+                    setup=setup,
+                    sandbox=sandbox,
+                    platform_machine=platform_machine,
                 )
-                await publish_line(topic_id, restored)
-            info = await _start_executor(
-                hub,
-                lease,
-                device_id=device_id,
-                project_id=project_id,
-                work_resource=work_resource,
-                setup=setup,
-                sandbox=sandbox,
-                platform_machine=platform_machine,
-            )
-            target = {
-                **reservation,
-                "status": "ready",
-                "home": device_home_dir(project_id, uuid.UUID(work_resource)),
-                "state": info["state"],
-                "release": info.get("release"),
-                "upgrade_pending": info.get("upgrade_pending", False),
-                "desired_release": info.get("desired_release"),
-                "workspace": info["workspace"],
-                "mcp_servers": info["mcp_servers"],
-                "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
-            }
-            target.pop("claim")
-            target.pop("claim_until")
-            if setup.get("CHEESE_ENVIRONMENT"):
-                status = await environment_status(
-                    hub, device_id, project_id, uuid.UUID(work_resource)
-                )
-                if status["state"] != "ready":
-                    target["status"] = "preparing"
-                    target["environment_status"] = status
-            if target["status"] == "ready":
-                await execution.call(target, "ping", {}, hub=hub)
+                target = {
+                    **reservation,
+                    "status": "ready",
+                    "home": device_home_dir(project_id, uuid.UUID(work_resource)),
+                    "state": info["state"],
+                    "release": info.get("release"),
+                    "upgrade_pending": info.get("upgrade_pending", False),
+                    "desired_release": info.get("desired_release"),
+                    "workspace": info["workspace"],
+                    "mcp_servers": info["mcp_servers"],
+                    "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
+                }
+                target.pop("claim")
+                target.pop("claim_until")
+                if setup.get("CHEESE_ENVIRONMENT"):
+                    status = await environment_status(
+                        hub, device_id, project_id, uuid.UUID(work_resource)
+                    )
+                    if status["state"] != "ready":
+                        target["status"] = "preparing"
+                        target["environment_status"] = status
+                if target["status"] == "ready":
+                    await execution.call(target, "ping", {}, hub=hub)
         except Exception as exc:
             # Setup is resumable at the same physical allocation; it is not a
             # dispatched model operation and must not create a replacement lease.
@@ -1472,15 +1464,3 @@ async def _install(
 
 async def _another_attempt() -> bool:
     return True
-
-
-async def _claim_moved(db, session_id, claim) -> bool:
-    """Another request of this session holds the installation; it has moved
-    on once its claim is gone or has lapsed."""
-    lease = await db.scalar(
-        select(AgentSession.work_lease).where(AgentSession.id == session_id)
-    )
-    if (lease or {}).get("claim") != claim:
-        return True
-    until = lease.get("claim_until")
-    return not until or datetime.fromisoformat(until) <= datetime.now(UTC)
