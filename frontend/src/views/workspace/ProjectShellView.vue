@@ -26,8 +26,9 @@ defineEmits<{ restore: [] }>()
          drift. Hidden: on desktop the project name lives in the sidebar's top
          row, on mobile in the top bar; neither is a heading. -->
     <h1 v-if="projectName" class="visually-hidden">{{ projectName }}</h1>
-    <!-- 进不来的时候，整块内容区换成说明，而不是让人对着一个空壳猜。侧栏和顶栏
-         留着，因为「离开这里」的路都在那上面。 -->
+    <!-- When the project cannot be opened the whole content area becomes an
+         explanation rather than a shell to guess at. The sidebar and top bar
+         stay, because the ways out of here live on them. -->
     <ProjectAccessNotice
       v-if="accessDenied"
       :reason="accessDenied"
@@ -36,10 +37,11 @@ defineEmits<{ restore: [] }>()
       :restoring="restoring"
       @restore="$emit('restore')"
     />
-    <!-- 一个话题一个实例：换话题就换一整棵组件树。复用同一个实例的话，每个挂在话题
-         下面的组件都得自己记得在换话题时清空、并丢掉上一个话题迟到的响应——漏一处，
-         上一个话题的东西就会在下一个话题里露出来。只有话题页带 topicId，别的页
-         不受影响。 -->
+    <!-- One instance per topic: changing topic swaps the whole component tree.
+         Reusing one instance would leave every component under a topic to
+         remember to clear itself and drop the previous topic's late responses —
+         miss one spot and the old topic shows through in the new one. Only the
+         topic page carries a topicId; other pages are unaffected. -->
     <router-view v-else v-slot="{ Component, route: current }">
       <component :is="Component" :key="current.params.topicId" />
     </router-view>

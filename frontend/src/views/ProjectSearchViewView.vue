@@ -147,7 +147,8 @@ function segments(item: PaletteItem): { text: string; hit: boolean }[] {
         @action="clearQuery"
       />
 
-      <!-- 「全部」每类一段，段头带「查看全部」；某一栏就是一段，没有段头。 -->
+      <!-- In "all" mode each kind gets its own section with a "see all" head; a
+           single-kind query is one section with no head. -->
       <section v-for="group in sections" :key="group.kind.id" class="search-group">
         <div v-if="!kind" class="search-group__head">
           <h2 class="t-eyebrow-read">{{ t(group.kind.label) }}</h2>
