@@ -43,6 +43,7 @@ from app.domain.agent.harness.driven.subscription import (
     Seat,
 )
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.agent.place import seat_key
 from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_CODE,
     PROMPT_UNDELIVERED_MESSAGE,
@@ -790,8 +791,9 @@ class RoomSessions:
         placed: dict = {}
 
         # A task's session is a conversation of its own beside the room's, for
-        # the same agent: its state lives apart from the room seat's.
-        state_key = agent if session.task_id is None else f"{agent}@{session.task_id}"
+        # the same agent: its state and every file it starts from live apart
+        # from the room seat's.
+        state_key = seat_key(agent, session.task_id)
 
         def place(resource) -> dict:
             placed.update(
@@ -850,6 +852,7 @@ class RoomSessions:
                     session.agent_handle,
                     prepared.agent_handle,
                     prepared.agent_user_id,
+                    seat=state_key,
                 ),
             )
             status = await self.host.start(ref, spec, access)

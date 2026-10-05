@@ -46,6 +46,7 @@ channel which class it is (结论 24).
 """
 
 import hashlib
+import uuid
 
 _ROOT = ".cheese"
 
@@ -86,19 +87,48 @@ def session_platform_dirs() -> tuple[str, ...]:
 SEATS_DIR = "seats"
 
 
-def seat_name(agent_handle: str) -> str:
-    """One seat's name under `SEATS_DIR`, derived from its handle alone.
+def seat_key(agent_handle: str, task_id: object = None) -> str:
+    """Which seat a session takes: the agent's in its room, or that agent's
+    in one task of the room.
+
+    A task's session is a conversation of its own beside the room's, for the
+    same agent on the same machine, and it writes everything a seat writes —
+    its launcher, its state, its credential, its prompt. Keyed by the handle
+    alone, a task starting wrote the room session's credential with its own,
+    and the room's agent was refused everywhere as working another
+    conversation, while the task's launcher came up on the room's state and
+    never answered.
+    """
+    return agent_handle if task_id is None else f"{agent_handle}@{task_id}"
+
+
+def seat_name(seat: str) -> str:
+    """One seat's name under `SEATS_DIR`, derived from its key (`seat_key`).
 
     The same sha256 the launcher file and the runner's state directory are
-    named by (`device_provider.launcher_path`,
-    `machine_launcher.state_dir`): one handle, one name, everywhere. An empty
-    handle is the room's own seat — a screen from before seats, a probe, a
+    named by (`launcher_path`,
+    `machine_launcher.state_dir`): one key, one name, everywhere. An empty
+    key is the room's own seat — a screen from before seats, a probe, a
     fixture — and hashes to a name of its own rather than to any teammate's.
     """
-    return hashlib.sha256(agent_handle.encode()).hexdigest()[:12]
+    return hashlib.sha256(seat.encode()).hexdigest()[:12]
 
 
-def seat_dir(home: str, agent_handle: str = "") -> str:
+def launcher_path(topic_id: uuid.UUID, seat: str = "") -> str:
+    """The launcher file a screen runs, where `_ship_launcher` writes it.
+
+    One per SEAT (`seat_key`), not one per room. The file says where that
+    seat's runner keeps its state (``CLAUDE_STATE``); a screen reads it exactly
+    once, at birth, and another seat's turn writing it in between leaves the
+    first one coming up on the wrong state — its own socket, the one every
+    later call dials, never bound. ``seat`` empty is the room's own file: a
+    caller that has no seat (recovery of a screen from before seats) asks for
+    the room's.
+    """
+    return f"$HOME/{_ROOT}/launch/{topic_id}-{seat_name(seat)}.sh"
+
+
+def seat_dir(home: str, seat: str = "") -> str:
     """Where one seat's own files go inside the room's home.
 
     ``home`` is the room's home as the backend names it — a path whose literal
@@ -106,7 +136,7 @@ def seat_dir(home: str, agent_handle: str = "") -> str:
     — so the answer keeps that placeholder and stays a path the device's own
     shell is the one to expand.
     """
-    return f"{home}/{_ROOT}/{SEATS_DIR}/{seat_name(agent_handle)}"
+    return f"{home}/{_ROOT}/{SEATS_DIR}/{seat_name(seat)}"
 
 
 # The directory inside a session's home that files fetched for the agent go
