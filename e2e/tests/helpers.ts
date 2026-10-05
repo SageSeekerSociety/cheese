@@ -150,7 +150,7 @@ export async function openFirstProject(page: Page) {
   // `.app-rail-item:not(--add)` also matches the 首页/cheese home icon, which
   // sits first in the rail — clicking it lands on /spaces, not a project.
   await page.locator(".app-rail-item--tile").first().click();
-  await page.locator('[title="新建话题"]').waitFor();
+  await page.locator('[title="新建频道"]').waitFor();
   const rows = page.locator(".topic-row");
   // The + button renders before the topics do, so returning here would let a
   // caller count zero rows and then watch the seeded ones arrive — a

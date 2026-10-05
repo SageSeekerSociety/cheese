@@ -31,7 +31,7 @@ const topics: Topic[] = [
     id: 'root',
     project_id: 'p1',
     parent_id: null,
-    title: '全局',
+    title: '综合',
     kind: 'root',
     status: 'active',
     created_by: 'u',
@@ -166,7 +166,7 @@ beforeEach(() => {
 describe('侧栏画哪几页由壳说了算', () => {
   it('壳收起来的页不在侧栏上，但在项目名旁边那个菜单里', async () => {
     const { container, baseElement } = mount()
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档'])
+    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '成员', '项目文档'])
 
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes(t('navigation.project.routines')))).toBe(true)
@@ -185,7 +185,7 @@ describe('侧栏画哪几页由壳说了算', () => {
     const shell = { ...COURSE_SHELL, nav: { ...COURSE_SHELL.nav, project: ['project-library', 'project-future'] } }
     const { container, baseElement } = mount({ projects: [project(shell)] })
     // 这份壳只点名了资料库；成员没被点名，于是它落进「更多」（菜单里那一格）。
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '项目文档'])
+    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '项目文档'])
 
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes('project-future'))).toBe(false)
@@ -198,7 +198,7 @@ describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
     const { container, baseElement } = mount()
     await clickMenuItem(container, baseElement, t('navigation.project.routines'))
 
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '定时与触发', '项目文档'])
+    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '成员', '定时与触发', '项目文档'])
     expect(localStorage.getItem('cheesex.shellRevealed.v1:me')).toContain('project-routines')
   })
 
@@ -209,7 +209,7 @@ describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
 
     localStorage.setItem('user', JSON.stringify({ id: 2, username: 'someone-else', nickname: '别人' }))
     const { container } = mount()
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档'])
+    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '成员', '项目文档'])
   })
 
   it('重新挂载之后仍然是展开的', async () => {

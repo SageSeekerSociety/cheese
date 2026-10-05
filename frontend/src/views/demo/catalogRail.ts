@@ -164,7 +164,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           page: false,
           unreadOf: () => 0,
         },
-        expect: '全局',
+        expect: '综合',
       },
       {
         name: '打开的是项目文档',
@@ -196,7 +196,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           page: true,
           unreadOf: () => 0,
         },
-        expect: '全局',
+        expect: '综合',
       },
     ],
   },
@@ -313,13 +313,13 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       {
         name: '收着，里面还有新消息',
         note: '收起来时未读聚成一个点（不是数字）：别人话题里有几条与我无关，但那边有动静值得知道。',
-        props: { label: '其他话题', count: 12, open: false, unread: true, unreadTitle: '其他话题里有新消息' },
-        expect: '其他话题',
+        props: { label: '其他频道', count: 12, open: false, unread: true, unreadTitle: '其他话题里有新消息' },
+        expect: '其他频道',
       },
       {
         name: '展开着',
         note: '展开着就没有那颗点：里面的事本来就在眼前。',
-        props: { label: '其他话题', count: 12, open: true, unread: false, unreadTitle: '其他话题里有新消息' },
+        props: { label: '其他频道', count: 12, open: true, unread: false, unreadTitle: '其他话题里有新消息' },
         expect: '12',
       },
       {

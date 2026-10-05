@@ -145,7 +145,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 每次真的改了东西，说进那棵树自己的房间，**不点任何人的名**（`memory_changed`，`platform_notices.memory_changed_notice`）：
 
-- `team/` 的改动 → **项目总览房间**；
+- `team/` 的改动 → **项目的根房间「综合」**；
 - `private/<handle>/` 的改动 → **那个人的私聊**（没有就现开一间）。
 
 一条记忆是 agent 写下的一份观察，没有人欠它一个动作，所以它是一条灰字事件，事件本身收进 `meta.detail`（统一 diff，按路径分段、每段上限 200 行）。两棵树分开说，因为读它们的人不是一批：把某个人的 private diff 说进总览，等于把一个人的偏好广播给整个项目。
@@ -204,7 +204,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 | 动作 | 命令 | 做了什么 |
 |---|---|---|
-| `dry-run` | `uv run python -m scripts.memory_migration --project <项目名或 id>` | 读旧记忆、问模型、存一份计划，**新树一个字都不写**；报告发进项目总览房间 |
+| `dry-run` | `uv run python -m scripts.memory_migration --project <项目名或 id>` | 读旧记忆、问模型、存一份计划，**新树一个字都不写**；报告发进项目的根房间「综合」 |
 | `approve` | 同一个脚本 `--plan <id> --approve` | 复核人（`settings.memory_migration_reviewer`，一个人）点头 |
 | `apply` | 同一个脚本 `--plan <id> --apply` | 按那份计划写进 `memory_files`，一次事务，一条冲突就整次不写 |
 

@@ -43,14 +43,14 @@ async function mount(room: ArtifactVersion['room']) {
 
 afterEach(() => setLocale('zh-CN'))
 
-it('in English the room is quoted the English way, and an unnamed one is New topic', async () => {
+it('in English the room is quoted the English way, and an unnamed one is New channel', async () => {
   setLocale('en')
   const named = await mount({ id: 'r1', title: 'Pricing', title_source: 'human' })
   expect(named.getByText('“Pricing”')).toBeTruthy()
   named.unmount()
 
-  const unnamed = await mount({ id: 'r1', title: '新话题', title_source: 'placeholder' })
-  expect(unnamed.getByText('“New topic”')).toBeTruthy()
+  const unnamed = await mount({ id: 'r1', title: '新频道', title_source: 'placeholder' })
+  expect(unnamed.getByText('“New channel”')).toBeTruthy()
 })
 
 it('in Chinese the room keeps its 《》', async () => {

@@ -61,7 +61,7 @@ const OUTSIDER: MentionItem = {
 
 /** 群播：两个 fixed-literal token，`expandMentions` 把它们变成 `<@all>` / `<@here>`。 */
 const BROADCAST: MentionItem[] = [
-  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
+  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知频道全体成员', agent: false },
   { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
 ]
 
@@ -127,7 +127,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '有人不在这个话题里',
-        note: '项目里的人都 @ 得到，但话题里的人排在前面；不在话题里的跟在后面，右边挂「不在话题中」——他读不到这段对话。',
+        note: '项目里的人都 @ 得到，但话题里的人排在前面；不在话题里的跟在后面，右边挂「不在频道中」——他读不到这段对话。',
         props: {
           open: true,
           matches: [PEOPLE[0], ...BROADCAST, PEOPLE[1], OUTSIDER],
@@ -135,7 +135,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
           level: 'root',
           enterSends: true,
         },
-        expect: '不在话题中',
+        expect: '不在频道中',
       },
       {
         name: '高亮移到别人身上',
@@ -185,15 +185,15 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '能管名册的人',
-        note: '话题的 owner / admin 看到「拉进话题」：走的是名册抽屉「添加成员」那一条接口，加完 @ 候选立刻跟上。',
+        note: '话题的 owner / admin 看到「拉进频道」：走的是名册抽屉「添加成员」那一条接口，加完 @ 候选立刻跟上。',
         props: { names: '陈卡、波比', canAdd: true, busy: false, error: '' },
-        expect: '拉进话题',
+        expect: '拉进频道',
       },
       {
         name: '普通成员',
         note: '只有那句话，没有按钮——按下去后端也会拒。',
         props: { names: '陈卡', canAdd: false, busy: false, error: '' },
-        expect: '不在话题中',
+        expect: '不在频道中',
       },
     ],
   },

@@ -240,7 +240,7 @@ describe('project settings', () => {
       const entries = Array.from(nav.querySelectorAll('.so__item'), (a) => a.textContent?.trim())
       expect(entries).toEqual([
         'AI 队友',
-        '话题命名',
+        '频道命名',
         '工作电脑',
         '运行环境',
         '合并规则',

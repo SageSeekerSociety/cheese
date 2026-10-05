@@ -12,7 +12,7 @@ import { apiLogin } from './helpers';
 // 此刻每个人打开项目看到的。改这一条等于改「老项目长什么样」，要单独想清楚。
 //
 // Membership stays visible so joining, transferring and leaving are discoverable.
-const PINNED = ['全局', '资料库', '成员', '项目文档'];
+const PINNED = ['综合', '资料库', '成员', '项目文档'];
 
 // 项目名旁边那个 ⋯ 菜单里的页：不占竖线，但一次点击可达。看板不在这里——项目名
 // 那一行就是它的入口。

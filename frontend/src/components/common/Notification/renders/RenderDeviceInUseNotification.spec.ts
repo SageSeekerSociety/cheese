@@ -40,16 +40,16 @@ it('tells the owner which agent works on their device, where, and what it can se
   expect(view.getByText('Orchard · Pricing · 能访问整台机器')).toBeTruthy()
 })
 
-it('in English an unnamed room is named New topic, not the stored placeholder', () => {
+it('in English an unnamed room is named New channel, not the stored placeholder', () => {
   setLocale('en')
   const unnamed = notice(false)
-  unnamed.contextMetadata = { ...unnamed.contextMetadata, topicTitle: '新话题', topicTitleSource: 'placeholder' }
+  unnamed.contextMetadata = { ...unnamed.contextMetadata, topicTitle: '新频道', topicTitleSource: 'placeholder' }
   try {
     const view = render(RenderDeviceInUseNotification, {
       props: { notification: unnamed },
       global: { plugins: [i18n] },
     })
-    expect(view.getByText('Orchard · New topic')).toBeTruthy()
+    expect(view.getByText('Orchard · New channel')).toBeTruthy()
   } finally {
     setLocale('zh-CN')
   }

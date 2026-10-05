@@ -24,7 +24,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 
 const Sidebar = TopicSidebar as unknown as Component
 
-function topic(id: string, parentId: string | null, kind = 'topic'): Topic {
+function topic(id: string, parentId: string | null, kind = 'channel'): Topic {
   return {
     id,
     project_id: 'p1',
@@ -151,7 +151,7 @@ describe('C1 置顶导航组', () => {
     // 项目名旁边那个菜单。成员留在外面不是因为它天天用，而是因为「退出项目」长在
     // 成员页上——名册一收进 ⋯，没注意到那个 ⋯ 的人就连怎么退出都找不到了。项目
     // 文档和它们排在一起，不压在话题列表底下：话题一多，那个位置就看不见了。
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档'])
+    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '成员', '项目文档'])
   })
 
   it('点项目名回项目首页，不打开任何房间', async () => {

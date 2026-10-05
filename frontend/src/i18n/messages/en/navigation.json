@@ -16,7 +16,7 @@
   "teams": "Teams",
   "term": {
     "project": "project",
-    "topic": "topic"
+    "topic": "channel"
   },
   "workspace": "Workspace",
   "feedback": {
@@ -81,7 +81,7 @@
     "archived": "Archived",
     "recent": "Recent",
     "best": "Best match",
-    "topics": "Topics",
+    "topics": "Channels",
     "projects": "Projects",
     "members": "Members",
     "pages": "Pages",
@@ -89,7 +89,7 @@
     "close": "Close",
     "theme": "Appearance: {mode}",
     "showTab": "Show {tab}",
-    "newTopic": "New topic",
+    "newTopic": "New channel",
     "messages": "Messages",
     "tasks": "Tasks",
     "docs": "Documents",
@@ -105,7 +105,7 @@
     "save": "Save",
     "back": "Back",
     "dm": "Message",
-    "openRoom": "Open topic",
+    "openRoom": "Open channel",
     "copyHandle": "Copy {'@'}{handle}",
     "searchIn": "Search in project",
     "leaveScope": "Remove project scope and search names across projects",

@@ -11,8 +11,8 @@ import { api, apiLogin, openFirstProject } from './helpers';
 const activeTitle = (page: Page) => page.locator('.topic-row.is-active .topic-title .text-truncate');
 
 async function newRoom(page: Page) {
-  await page.locator('[title="新建话题"]').click();
-  await expect(activeTitle(page)).toHaveText('新话题');
+  await page.locator('[title="新建频道"]').click();
+  await expect(activeTitle(page)).toHaveText('新频道');
   const composer = page.locator('.composer-input textarea').first();
   await expect(composer).toBeEnabled({ timeout: 15_000 });
   return composer;
@@ -126,7 +126,7 @@ test.describe('Topic naming', () => {
       await say(page, '帮我排查 dev 机器外网访问很慢');
       // Nothing to wait for but time: give naming the chance it would have had.
       await page.waitForTimeout(5_000);
-      await expect(activeTitle(page)).toHaveText('新话题');
+      await expect(activeTitle(page)).toHaveText('新频道');
     } finally {
       await api(page, 'put', `/projects/${projectId}/topic-naming`, { mode: 'auto' });
     }

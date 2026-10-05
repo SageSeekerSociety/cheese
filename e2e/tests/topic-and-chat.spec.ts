@@ -14,7 +14,7 @@ test.describe('Topics and chat', () => {
     // default teammate is already seated, and any other teammate is invited
     // from the roster afterwards, the way a person is — there is no "whose
     // room is this" question to answer up front.
-    await page.locator('[title="新建话题"]').click();
+    await page.locator('[title="新建频道"]').click();
 
     await expect(rows).toHaveCount(before + 1);
     await expect(page.locator('.topic-row.is-active')).toHaveCount(1);
