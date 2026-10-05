@@ -61,18 +61,14 @@ function rewind() {
 <style scoped>
 .film {
   display: flex;
-  position: relative;
   margin: 0;
   flex-direction: column;
+  gap: 16px;
 }
 
 /* The caption is the film's way in: the line says what it shows, and the arrow
-   says it plays. It sits above the picture, outside the row, so the picture
-   alone spans the manifesto beside it, top to foot. */
+   says it plays. */
 .film-caption {
-  position: absolute;
-  bottom: calc(100% + 16px);
-  left: 0;
   font-size: clamp(18px, 1.5vw, 22px);
   font-weight: 500;
   line-height: 1.4;
@@ -104,13 +100,14 @@ function rewind() {
   transform: translateX(3px);
 }
 
-/* Exactly as tall as the manifesto beside it, which sets the row, and as wide
-   as its column; whatever does not fit is cropped, more off the left, where the
-   picture is empty and feathered anyway. */
+/* The picture takes the rest of the row under the caption, down to the
+   manifesto's last line, and the width of its column; whatever does not fit is
+   cropped, more off the left, where the picture is empty and feathered anyway. */
 .film-frame {
-  position: absolute;
+  position: relative;
   isolation: isolate;
-  inset: 0;
+  flex: 1;
+  min-height: 0;
 }
 
 /* The glow: the poster itself, blurred and spread past the frame. */
@@ -158,17 +155,8 @@ function rewind() {
 
 /* Below the text on a phone, the picture keeps its own shape. */
 @media (width <= 900px) {
-  .film {
-    gap: 16px;
-  }
-
-  .film-caption {
-    position: static;
-  }
-
   .film-frame {
-    position: relative;
-    inset: auto;
+    flex: none;
     aspect-ratio: 16 / 9;
   }
 

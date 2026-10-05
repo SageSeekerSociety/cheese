@@ -281,20 +281,21 @@
 /* ---- Manifesto: clauses light up one by one on arrival, beside the film ---- */
 
 /* The film runs off the right edge of the screen, so the section keeps a gutter
-   on the left only. */
+   on the left only, and clips sideways so the film's glow past that edge does
+   not make the page scroll. The columns are in the proportion that leaves the
+   picture close to 16:9 beside text of its height. */
 .manifesto {
   display: grid;
   min-height: 100dvh;
   padding: 64px 0 64px var(--gutter);
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  overflow-x: clip;
+  grid-template-columns: minmax(0, 9fr) minmax(0, 5fr);
   align-content: center;
   gap: 64px;
 }
 
-/* The text sets the row's height and the film's picture fills it, so their
-   tops and feet line up. The size keeps growing with the screen, with no
-   cap, so the text and the picture beside it keep their proportions at
-   every width and the picture is never cropped by much. */
+/* The text sets the row's height, and the film beside it starts on its first
+   line and ends on its last. */
 .manifesto-text {
   display: flex;
   flex-direction: column;
@@ -303,6 +304,26 @@
   font-weight: 600;
   line-height: 1.35;
   color: var(--ink);
+}
+
+/* Beside the film the type is sized to its column: the second clause, the
+   longest that keeps to one line, fills it exactly, the first sits on one
+   line too, and the third folds into two even lines at its comma, with a
+   clear space between the clauses. */
+.manifesto:has(.film) .manifesto-text {
+  container-type: inline-size;
+  gap: 4cqi;
+  word-break: keep-all;
+}
+
+.manifesto:has(.film) .manifesto-clause {
+  font-size: 4.4cqi;
+  white-space: nowrap;
+}
+
+.manifesto:has(.film) .manifesto-clause:nth-child(3) {
+  white-space: normal;
+  text-wrap: balance;
 }
 
 /* The English page has no film, so the clauses take the row at their full size. */
@@ -344,6 +365,15 @@
 
   .manifesto-text {
     font-size: 28px;
+  }
+
+  .manifesto:has(.film) .manifesto-text {
+    gap: 0.6em;
+  }
+
+  .manifesto:has(.film) .manifesto-clause {
+    font-size: inherit;
+    white-space: normal;
   }
 }
 
