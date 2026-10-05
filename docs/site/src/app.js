@@ -1,6 +1,5 @@
 // Behaviour for the prerendered docs pages. Every page is complete HTML without
-// this script; it adds search, 问芝士, theme, and the home page's motion.
-import { build, stageFor, BUBBLE } from 'virtual:motion'
+// this script; it adds search, 问芝士, the theme switch and the interactive demos.
 import { ic } from './content.js'
 import { freshToken, signInUrl } from './session.js'
 import { mountDemos } from './demo-dom.mjs'
@@ -9,95 +8,36 @@ import { recordVisit } from './visit.js'
 
 const $ = (s, r = document) => r.querySelector(s)
 const $$ = (s, r = document) => [...r.querySelectorAll(s)]
-const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
-const isDark = () => document.documentElement.classList.contains('dark')
+const isDark = () => document.documentElement.dataset.theme === 'dark'
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 const PAGE = JSON.parse($('#page-data')?.textContent || '{}')
 
 let toastTimer
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1900) }
 
-// ---------- header, sidebar, table of contents ----------
-function moveTabs() {
-  const ind = $('#tabInd'), on = $('.tab.on')
-  if (!ind) return
-  if (!on) { ind.classList.remove('on'); return }
-  ind.style.left = on.offsetLeft + 'px'; ind.style.width = on.offsetWidth + 'px'; ind.classList.add('on')
-}
-function moveSidePill(target) {
-  const pill = $('#sidePill'); if (!pill) return
-  const on = target || $('.side a.on')
-  if (!on) { pill.style.opacity = 0; return }
-  $$('.side a[data-slug]').forEach((a) => a.classList.toggle('on', a === on))
-  pill.style.top = on.offsetTop + 'px'; pill.style.height = on.offsetHeight + 'px'; pill.style.opacity = 1
-}
+// ---------- table of contents: the section being read ----------
 let tocSpy = null
 function setupToc() {
-  const links = $$('[data-toc]'), ind = $('#tocInd')
+  const links = $$('[data-toc]')
   const targets = links.map((l) => document.getElementById(l.dataset.toc)).filter(Boolean)
   if (!targets.length) return
-  const set = (id) => { links.forEach((l) => l.classList.toggle('on', l.dataset.toc === id)); const on = links.find((l) => l.dataset.toc === id); if (on && ind) { ind.style.top = on.offsetTop + 'px'; ind.style.height = on.offsetHeight + 'px' } }
+  const set = (id) => links.forEach((l) => l.classList.toggle('on', l.dataset.toc === id))
   set(targets[0].id)
-  tocSpy = () => { let best = targets[0]; for (const t of targets) if (t.getBoundingClientRect().top < 170) best = t; set(best.id) }
+  tocSpy = () => { let best = targets[0]; for (const t of targets) if (t.getBoundingClientRect().top < 120) best = t; set(best.id) }
 }
 
-// ---------- motion helpers ----------
-function setupReveal() {
-  if (reduced || !('IntersectionObserver' in window)) { $$('[data-reveal]').forEach((el) => el.classList.add('in')); return }
-  const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target) } }), { threshold: 0.12, rootMargin: '0px 0px -40px 0px' })
-  $$('[data-reveal]').forEach((el) => io.observe(el))
-}
-function splitChars() {
-  let i = 0
-  $$('[data-split]').forEach((el) => { el.innerHTML = [...el.textContent].map((c) => (c === ' ' ? ' ' : `<span class="ch" style="--i:${i++}">${esc(c)}</span>`)).join('') })
-}
-function setupSpot(root = document) {
-  $$('.spot', root).forEach((el) => {
-    if (el.dataset.sp) return
-    el.dataset.sp = 1
-    el.addEventListener('pointermove', (e) => {
-      const r = el.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top
-      el.style.setProperty('--sx', x + 'px'); el.style.setProperty('--sy', y + 'px')
-      if (el.classList.contains('tilt')) { el.style.setProperty('--ry', ((x / r.width) - 0.5) * 12 + 'deg'); el.style.setProperty('--rx', -((y / r.height) - 0.5) * 10 + 'deg') }
-    })
-    el.addEventListener('pointerleave', () => { el.style.setProperty('--rx', '0deg'); el.style.setProperty('--ry', '0deg') })
-  })
-}
-function setupMagnetic() {
-  if (reduced || matchMedia('(pointer: coarse)').matches) return
-  $$('.magnetic').forEach((el) => {
-    el.addEventListener('pointermove', (e) => { const r = el.getBoundingClientRect(); el.style.transform = `translate(${(e.clientX - r.left - r.width / 2) * 0.22}px,${(e.clientY - r.top - r.height / 2) * 0.3}px)` })
-    el.addEventListener('pointerleave', () => { el.style.transform = '' })
-  })
-}
-
-function onScroll() {
-  const h = document.documentElement.scrollHeight - innerHeight
-  $('#progress').style.transform = `scaleX(${h > 0 ? scrollY / h : 0})`
-  $('#hdr').classList.toggle('solid', PAGE.kind !== 'home' || scrollY > 20)
-  tocSpy?.()
-  const tl = $('#timeline')
-  if (tl) {
-    const r = tl.getBoundingClientRect(), mid = innerHeight * 0.55
-    $('#tlFill').style.setProperty('--p', Math.max(0, Math.min(1, (mid - r.top) / r.height)))
-    $$('.item', tl).forEach((it) => it.classList.toggle('lit', it.getBoundingClientRect().top < mid))
-  }
-}
-
-// ---------- theme: a circle of night spreading from where you clicked ----------
-function applyTheme(dark) {
-  document.documentElement.classList.toggle('dark', dark)
-  try { localStorage.setItem('docs-dark', dark ? '1' : '0') } catch { /* private mode */ }
+// ---------- theme ----------
+// Stored the way the app stores it (`cheesex.theme`, a preference, not a
+// result): picking the side the system is already on goes back to following
+// the system. The demo scenes embedded from the app read the same key, so they
+// are reloaded to pick the new one up; they come back on the step they were at.
+function toggleTheme() {
+  const dark = !isDark()
+  const system = matchMedia('(prefers-color-scheme: dark)').matches
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+  try { localStorage.setItem('cheesex.theme', dark === system ? 'system' : dark ? 'dark' : 'light') } catch { /* private mode */ }
   loadDiagrams()
-}
-function toggleTheme(x, y) {
-  const to = !isDark()
-  if (!document.startViewTransition || reduced) { applyTheme(to); return }
-  const t = document.startViewTransition(() => applyTheme(to))
-  t.ready.then(() => {
-    const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))
-    document.documentElement.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] }, { duration: 900, easing: 'cubic-bezier(.7,0,.2,1)', pseudoElement: '::view-transition-new(root)' })
-  })
+  $$('iframe[data-dm-embed]').forEach((f) => { f.src = f.src })
 }
 
 // ---------- search ----------
@@ -137,8 +77,8 @@ async function doSearch() {
   }
   sel = 0
   $('#res').innerHTML = hits.length
-    ? hits.map((h, n) => `<a class="hit${n === 0 ? ' on' : ''}" href="${h.u}" data-i="${n}" style="--k:${n}"><span class="hi">${ic(h.u.startsWith('/docs/dev/') ? 'code' : 'doc')}</span><div style="min-width:0"><b>${mark(h.t, terms)}${h.h ? ` <span class="sub-h">› ${mark(h.h, terms)}</span>` : ''}</b><small>${terms.length ? mark(snippet(h.x, terms), terms) : esc(h.g)}</small></div><span class="go">${ic('arrow')}</span></a>`).join('')
-    : `<div class="none">文档里没找到「${esc(q)}」——按 ⌘↵ 问问芝士？</div>`
+    ? hits.map((h, n) => `<a class="hit${n === 0 ? ' on' : ''}" href="${h.u}" data-i="${n}"><span class="hi">${ic(h.u.startsWith('/docs/dev/') ? 'code' : 'doc')}</span><div style="min-width:0"><b>${mark(h.t, terms)}${h.h ? ` <span class="sub-h">› ${mark(h.h, terms)}</span>` : ''}</b><small>${terms.length ? mark(snippet(h.x, terms), terms) : esc(h.g)}</small></div><span class="go">${ic('arrow')}</span></a>`).join('')
+    : `<div class="none">文档里没找到「${esc(q)}」，按 ⌘↵ 问问芝士</div>`
   $('#askTxt').textContent = q ? `问芝士：「${q}」` : '没找到？直接问芝士'
 }
 function openSearch(v = '') {
@@ -203,7 +143,7 @@ async function ask(q) {
   chat.scrollTop = chat.scrollHeight
   const token = await freshToken()
   if (!token) {
-    body.innerHTML = `<p>问芝士需要先登录知是：答案按你的账号限额，防止被滥用。</p><a class="pill" href="${signInUrl()}">登录后再问 ${ic('arrow')}</a>`
+    body.innerHTML = `<p>问芝士需要先登录知是：答案按你的账号限额，防止被滥用。</p><a class="btn btn-primary" href="${signInUrl()}">登录后再问</a>`
     return
   }
   asking = new AbortController()
@@ -340,172 +280,24 @@ function loadDiagrams() {
   $$('iframe[data-diagram]').forEach((f) => { const src = `${f.dataset.diagram}?embed=1&theme=${isDark() ? 'dark' : 'light'}`; if (f.getAttribute('src') !== src) f.setAttribute('src', src) })
 }
 
-// ---------- home: logo ----------
-let heroVisible = true
-function mountHero() {
-  const host = $('#heroLogo'); if (!host) return
-  host.innerHTML = build('hero')
-  const svg = $('svg', host), S = stageFor(svg)
-  let clock = 0, last = 0
-  const tick = (now) => {
-    if (!svg.isConnected) return
-    if (heroVisible) {
-      const dt = last ? Math.min(now - last, 64) : 0; clock += dt
-      S.reset(); if (!reduced) BUBBLE.frame(S, Math.min(clock, BUBBLE.D), clock >= BUBBLE.D ? clock - BUBBLE.D : null)
-    }
-    last = heroVisible ? now : 0
-    requestAnimationFrame(tick)
-  }
-  requestAnimationFrame(tick)
-  new IntersectionObserver((es) => { heroVisible = es[0].isIntersecting }).observe(host)
-  host.addEventListener('click', () => { clock = 0 })
-}
-
-// ---------- home: 问芝士 walks through the kinds of docs ----------
-// The section plays the site with 问芝士 open: the panel (#tourDock, dressed as
-// the real .drawer) docks on the right — a bottom sheet on phones — and the page
-// fills the rest. Each screen of scroll is one question: it is typed and sent,
-// 芝士's answer streams with its citation, then the page turns to it (and on
-// phones the sheet folds down so the page shows). Scrolling back takes messages
-// off; jumping ahead plays the skipped ones instantly and animates the last.
-const TOUR = { steps: [], shown: -1, gen: 0, busy: false, top: null }
-const phone = () => matchMedia('(max-width: 820px)').matches
-const wait = (ms, gen) => new Promise((r) => setTimeout(() => r(gen === TOUR.gen), ms))
-const ICON_DOC = '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>'
-function tourPage(n) {
-  $$('#tour .tb-page').forEach((el) => { const i = +el.dataset.i; el.classList.toggle('on', i === n); el.classList.toggle('past', i < n) })
-  const step = TOUR.steps[n], url = $('#tourUrl')
-  if (url) { url.textContent = step ? step.url : '/docs/'; url.classList.add('flash'); setTimeout(() => url.classList.remove('flash'), 600) }
-  const ctx = $('#tourCtx'); if (ctx) ctx.textContent = step ? step.title : '文档首页'
-  const load = $('#tourLoad'); if (load) { load.classList.remove('run'); load.classList.add('done') }
-}
-function tourKinds(n) {
-  $$('#tourKinds button').forEach((b) => { const i = +b.dataset.tour; b.classList.toggle('on', i === n); b.classList.toggle('seen', i < n) })
-  const c = $('#tourCount'); if (c) c.textContent = n >= 0 ? `${n + 1} / ${TOUR.steps.length}` : ''
-  const last = $('#tourLast'); if (last) last.textContent = n >= 0 ? `你问：${TOUR.steps[n].q}` : ''
-}
-function tourFold(mini) { $('#tourDock')?.classList.toggle('mini', mini && phone()) }
-function tourBubble(i) {
-  const s = TOUR.steps[i], log = $('#tourLog')
-  const q = document.createElement('div'); q.className = 'q'; q.dataset.i = i; q.textContent = s.q
-  const a = document.createElement('div'); a.className = 'a'; a.dataset.i = i
-  a.innerHTML = `<span class="brand-mark sm"><img src="${$('#tourDock .brand-mark img').getAttribute('src')}" alt=""></span><div class="body"><p></p></div>`
-  log.append(q, a)
-  return a
-}
-function tourCite(a, i) {
-  const s = TOUR.steps[i]
-  const c = document.createElement('a'); c.className = 'tc-cite'; c.href = s.url
-  c.innerHTML = `${ICON_DOC}${esc(s.label)} · ${esc(s.title)}`
-  $('.body', a).append(c)
-}
-function tourInstant(i) { const a = tourBubble(i); $('p', a).textContent = TOUR.steps[i].a; tourCite(a, i) }
-function tourScrollLog() { const log = $('#tourLog'); if (log) log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' }) }
-async function tourPlay(i, gen) {
-  const s = TOUR.steps[i], input = $('#tourTyping'), box = input.closest('.tour-input')
-  tourFold(false)
-  // type the question into the box, then send it
-  box.classList.add('typing'); input.textContent = ''
-  for (let k = 1; k <= s.q.length; k++) { input.textContent = s.q.slice(0, k); if (!(await wait(45, gen))) return false }
-  if (!(await wait(250, gen))) return false
-  $('.send', box).classList.add('hit'); setTimeout(() => $('.send', box)?.classList.remove('hit'), 180)
-  box.classList.remove('typing'); input.textContent = input.dataset.placeholder
-  const a = tourBubble(i), p = $('p', a); tourScrollLog()
-  const load = $('#tourLoad'); if (load) { load.classList.remove('done'); void load.offsetWidth; load.classList.add('run') }
-  // thinking, then the answer streams
-  p.innerHTML = '<span class="tc-dots"><i></i><i></i><i></i></span>'
-  if (!(await wait(700, gen))) return false
-  p.textContent = ''; p.classList.add('streaming')
-  for (let k = 2; k < s.a.length + 2; k += 2) { p.textContent = s.a.slice(0, k); if (k % 16 === 0) tourScrollLog(); if (!(await wait(24, gen))) return false }
-  p.classList.remove('streaming'); tourCite(a, i); tourScrollLog()
-  if (!(await wait(phone() ? 900 : 350, gen))) return false
-  tourPage(i); tourFold(true)
-  return true
-}
-async function tourGo(n) {
-  if (n === TOUR.shown && !TOUR.busy) return
-  const gen = ++TOUR.gen
-  const log = $('#tourLog'); if (!log) return
-  // settle whatever was half played, then drop messages past n
-  const box = $('#tourTyping'); box.closest('.tour-input').classList.remove('typing'); box.textContent = box.dataset.placeholder
-  $$('#tourLog [data-i]').forEach((el) => { if (+el.dataset.i > n || (TOUR.busy && +el.dataset.i === TOUR.shown)) el.remove() })
-  if (TOUR.busy) { TOUR.busy = false; TOUR.shown-- }
-  if (n <= TOUR.shown) { TOUR.shown = n; tourKinds(n); tourPage(n); tourFold(true); return }
-  for (let i = TOUR.shown + 1; i < n; i++) tourInstant(i)
-  if (TOUR.shown + 1 < n) { tourPage(n - 1); tourScrollLog() }
-  TOUR.shown = n; tourKinds(n)
-  if (reduced) { tourInstant(n); tourPage(n); tourFold(true); tourScrollLog(); return }
-  TOUR.busy = true
-  const done = await tourPlay(n, gen)
-  if (done && gen === TOUR.gen) TOUR.busy = false
-}
-// Where the pinned stage starts sticking, and how much scroll one question
-// takes. Measured at .tour-anchor, the empty element just before the stage: a
-// sticky element's own offsetTop moves while it is stuck.
-function tourGeometry(sec) {
-  const hdr = $('#hdr')?.offsetHeight || 64, step = innerHeight * 0.86, top = $('.tour-anchor', sec).offsetTop - hdr
-  return { hdr, step, top, start: sec.offsetTop + top }
-}
-// The section is as tall as the questions need; each has a snap point.
-function tourLayout(sec) {
-  if (!sec.classList.contains('pinned')) { sec.style.height = ''; return }
-  const { hdr, step, top } = tourGeometry(sec), n = TOUR.steps.length
-  sec.style.height = `${top + hdr + (n - 1) * step + innerHeight + step * 0.4}px`
-  // html's scroll-padding-top (header + 20px) applies to snapping too
-  $$('.tour-snap', sec).forEach((el, i) => { el.style.top = `${top + hdr + 20 + i * step}px` })
-}
-function onTourScroll() {
-  const sec = $('#tour'); if (!sec || !sec.classList.contains('pinned')) return
-  const { start, step, top } = tourGeometry(sec)
-  if (top !== TOUR.top) { TOUR.top = top; tourLayout(sec) }   // the heading's font arrived, say
-  const y = scrollY - start, n = TOUR.steps.length
-  // the panel is out while the stage is on screen, unless the real one is open
-  const on = y > -innerHeight * 0.25 && y < (n - 1) * step + step * 0.55 && !$('#drawer').classList.contains('open')
-  $('#tourDock').classList.toggle('open', on)
-  if (y < -innerHeight * 0.35) { if (TOUR.shown !== -1) tourGo(-1); return }
-  tourGo(Math.max(0, Math.min(n - 1, Math.floor((y + step * 0.5) / step))))
-}
-function mountTour() {
-  const sec = $('#tour'); if (!sec) return
-  try { TOUR.steps = JSON.parse($('#tourData').textContent) } catch { return }
-  const apply = () => { sec.classList.add('pinned'); tourLayout(sec); onTourScroll() }
-  apply()
-  addEventListener('resize', () => { tourLayout(sec); onTourScroll() }, { passive: true })
-  addEventListener('scroll', onTourScroll, { passive: true })
-  // a kind picked directly scrolls to its screen
-  $('#tourKinds')?.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-tour]'); if (!b) return
-    const { start, step } = tourGeometry(sec)
-    scrollTo({ top: start + +b.dataset.tour * step, behavior: 'smooth' })
-  })
-  // tapping the folded sheet on a phone opens it back up
-  $('#tourDock .drawer-h')?.addEventListener('click', () => $('#tourDock').classList.remove('mini'))
-}
-
-// ---------- home: role tabs ----------
-function showRole(i) {
-  $$('[data-role-tab]').forEach((b) => b.setAttribute('aria-selected', String(+b.dataset.roleTab === i)))
-  $$('.role-panel').forEach((p) => { const on = +p.dataset.role === i; p.classList.toggle('on', on); p.hidden = !on })
-}
-
 // ---------- developer docs: the admin check ----------
 async function devGate() {
   const msg = $('#gateMsg'), actions = $('#gateActions')
   const token = await freshToken()
   if (!token) {
     msg.textContent = '请先用平台管理员账号登录知是。'
-    actions.innerHTML = `<a class="pill" href="${signInUrl()}">登录 ${ic('arrow')}</a><a class="pill alt" href="/docs/">回到使用文档</a>`
+    actions.innerHTML = `<a class="btn btn-primary" href="${signInUrl()}">登录</a><a class="btn btn-secondary" href="/docs/">回到使用文档</a>`
     return
   }
   const res = await fetch('/api/docs/dev-access', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, credentials: 'same-origin' }).catch(() => null)
   if (res?.ok) { location.reload(); return }
   msg.textContent = res?.status === 403 ? '你的账号不是平台管理员。开发文档写给维护这个平台的人；需要访问请联系平台管理员。' : '暂时无法确认你的身份，稍后再试。'
-  actions.innerHTML = `<a class="pill" href="/docs/">回到使用文档</a>`
+  actions.innerHTML = `<a class="btn btn-secondary" href="/docs/">回到使用文档</a>`
 }
 
 // ---------- events ----------
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-menu],[data-copy-page],[data-copy],[data-f],[data-sug],[data-role-tab],[data-quote-clear],.code-tab,.side a[href^="#"]')
+  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-menu],[data-copy-page],[data-copy],[data-f],[data-sug],[data-quote-clear],.side a[href^="#"]')
   if (!t) { if (!e.target.closest('.menu')) $('#menu')?.classList.remove('open'); return }
   if (t.matches('[data-open-search]')) { e.preventDefault(); openSearch() }
   else if (t.matches('[data-open-ask]')) { e.preventDefault(); $('#menu')?.classList.remove('open'); if (t.closest('.hdr') && $('#drawer').classList.contains('open')) closeDock(); else openAsk() }
@@ -519,19 +311,12 @@ document.addEventListener('click', (e) => {
     navigator.clipboard?.writeText(pre.innerText).then(() => { t.classList.add('done'); t.innerHTML = ic('check'); setTimeout(() => { t.classList.remove('done'); t.innerHTML = ic('copy') }, 1400) }).catch(() => toast('复制失败'))
   } else if (t.matches('[data-f]')) {
     const f = t.dataset.f
-    $$('[data-f]').forEach((b) => b.classList.toggle('on', b === t)); moveFilter()
+    $$('[data-f]').forEach((b) => b.classList.toggle('on', b === t))
     $$('.item').forEach((i) => i.classList.toggle('hide', f !== 'all' && i.dataset.t !== f))
     $$('.day').forEach((d) => d.classList.toggle('hide', !d.querySelector('.item:not(.hide)')))
-    onScroll()
-  } else if (t.matches('[data-role-tab]')) showRole(+t.dataset.roleTab)
-  else if (t.matches('[data-quote-clear]')) { setQuote(''); $('#askInput')?.focus() }
-  else if (t.matches('.code-tab')) t.parentElement.querySelectorAll('.code-tab').forEach((x) => x.classList.toggle('on', x === t))
-  else if (t.matches('.side a[href^="#"]')) moveSidePill(t)
+  } else if (t.matches('[data-quote-clear]')) { setQuote(''); $('#askInput')?.focus() }
+  else if (t.matches('.side a[href^="#"]')) { $$('.side a[href^="#"]').forEach((a) => a.classList.toggle('on', a === t)); closeAll() }
 })
-function moveFilter() {
-  const on = $('#filters button.on'), ind = $('#fInd')
-  if (on && ind) { ind.style.left = on.offsetLeft + 'px'; ind.style.width = on.offsetWidth + 'px' }
-}
 
 $('#q').addEventListener('input', doSearch)
 $('#q').addEventListener('keydown', (e) => {
@@ -544,7 +329,7 @@ $('#askRow').addEventListener('click', () => openAsk($('#q').value))
 $('#askForm').addEventListener('submit', (e) => { e.preventDefault(); const v = $('#askInput').value.trim(); if (v) { ask(v); $('#askInput').value = '' } })
 $('#scrim').addEventListener('click', () => { closeAll(); closeDock() })
 $('#menuBtn').addEventListener('click', () => { $('#side')?.classList.add('open'); $('#scrim').classList.add('open') })
-$('#themeBtn').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); toggleTheme(r.left + r.width / 2, r.top + r.height / 2) })
+$('#themeBtn').addEventListener('click', toggleTheme)
 document.addEventListener('keydown', (e) => {
   const typing = /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openSearch() }
@@ -558,21 +343,15 @@ $('#dockResize').addEventListener('pointerdown', (e) => {
   const up = () => { document.body.classList.remove('dragging'); removeEventListener('pointermove', move); removeEventListener('pointerup', up) }
   addEventListener('pointermove', move); addEventListener('pointerup', up)
 })
-addEventListener('scroll', onScroll, { passive: true })
-addEventListener('resize', () => { moveTabs(); moveFilter(); moveSidePill() })
+addEventListener('scroll', () => tocSpy?.(), { passive: true })
 
 // ---------- start ----------
-splitChars()
-setupReveal(); setupSpot(); setupMagnetic(); setupToc()
+setupToc(); tocSpy?.()
 mountDemos()
 // One beacon per page load, and nothing else: 「有人来过」 is the only thing the
 // docs can report that the server cannot see for itself. See src/visit.js for
 // what is sent (two fields) and what is deliberately not.
 recordVisit(PAGE)
-moveTabs(); moveSidePill(); moveFilter(); onScroll()
-document.fonts?.ready.then(() => { moveTabs(); moveSidePill() })
 loadDiagrams()
-if (PAGE.kind === 'home') { mountHero(); mountTour() }
 mountSelAsk()
 if (PAGE.kind === 'dev-gate') devGate()
-if (location.hash) { const el = document.getElementById(location.hash.slice(1)); el?.classList.add('flash') }

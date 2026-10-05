@@ -23,8 +23,3 @@ tasks:
     desc: Regenerate the archify diagrams under diagrams/ (needs a local archify checkout)
     cmds:
       - npm run diagrams
-
-  font:
-    desc: Re-cut the home page's display font to the characters its headings use (needs uv)
-    cmds:
-      - bash gen/font.sh

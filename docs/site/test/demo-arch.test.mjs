@@ -326,7 +326,8 @@ eq(mcFigs.length, 1, 'machines.md renders one architecture figure')
   has(css, '.demo-arch.ar-live .ar-fallback{display:none}', 'the readable list is hidden only once the script is up')
   ok(!/\.demo-arch \.ar-fallback\{display:none/.test(css), 'and it is never hidden before that')
   has(css, '.demo-arch.ar-live .ar-ctl-wrap{display:block}', 'the controls are reserved for the live version')
-  const narrow = css.slice(css.lastIndexOf('@media (max-width:760px)'))
+  // The minifier may or may not keep the space after the colon.
+  const narrow = css.slice(Math.max(css.lastIndexOf('@media (max-width:760px)'), css.lastIndexOf('@media (max-width: 760px)')))
   has(narrow, '.demo-arch .ar-fallback', 'a narrow screen gets the list back')
   has(narrow, '.demo-arch .ar-board', 'and drops the map it cannot draw')
 }

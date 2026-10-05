@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import * as esbuild from 'esbuild'
 import { marked } from 'marked'
-import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS, WHO } from './src/structure.mjs'
+import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS } from './src/structure.mjs'
 import { esc, docHref, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
 import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed, registerSource, registerArchFacts, ciSelections } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
@@ -37,18 +37,31 @@ const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1) }
 const rel = (p) => path.relative(REPO, p).split(path.sep).join('/')
 const hash = (buf) => crypto.createHash('sha256').update(buf).digest('hex').slice(0, 10)
 
-// ---------- logo: the 「冒孔」 motion ----------
-const LOGO_DIR = path.join(HERE, 'logo')
-const tpl = fs.readFileSync(path.join(LOGO_DIR, 'template.html'), 'utf8')
-const parts = JSON.parse(fs.readFileSync(path.join(LOGO_DIR, 'parts.json'), 'utf8'))
-const cut = (a, b) => { const i = tpl.indexOf(a), j = tpl.indexOf(b, i); if (i < 0 || j < 0) fail(`logo template marker ${a}`); return tpl.slice(i, j) }
-const motionCore = cut('const P = __PARTS__;', '// ---------- 把 frame 的调用').replace('__PARTS__', JSON.stringify(parts))
-const stage = cut('function stageFor(svg){', '// 调试用')
-const motionModule = `${motionCore}\n${stage}\nexport { build, stageFor, BUBBLE };`
-const LOGO_SVG = new Function(motionCore + '\nreturn build;')()('lg').replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')
-// The 知是 wordmark, inlined so it takes the text colour of whatever holds it.
-const WORDMARK = fs.readFileSync(path.join(REPO, 'frontend/src/assets/brand/wordmark-zh.svg'), 'utf8').trim()
-  .replace('<svg xmlns="http://www.w3.org/2000/svg" ', '<svg class="brand-wordmark" aria-hidden="true" ').replace(/ role="img" aria-label="[^"]*"/, '')
+// ---------- brand ----------
+// The product's own files (docs/brand.md): the brand-colour mark for the tab icon
+// and 芝士's avatar, and the in-product lockup — the single-colour mark and the
+// 知是 wordmark, both in the text colour of whatever holds them, so one copy is
+// right on either theme. Proportions are brand.md §4's, set in the stylesheet.
+const BRAND = path.join(REPO, 'frontend/src/assets')
+const LOGO_SVG = fs.readFileSync(path.join(BRAND, 'logo.svg'), 'utf8')
+const inlineSvg = (file, cls) => fs.readFileSync(path.join(BRAND, file), 'utf8').trim()
+  .replace('<svg xmlns="http://www.w3.org/2000/svg" ', `<svg class="${cls}" aria-hidden="true" fill="currentColor" `).replace(/ role="img" aria-label="[^"]*"/, '')
+const LOCKUP = `<span class="brand-lockup">${inlineSvg('logo-plain.svg', 'brand-lockup-mark')}${inlineSvg('brand/wordmark-zh.svg', 'brand-lockup-word')}</span>`
+
+// ---------- design tokens ----------
+// Colours, radii, shadows, type and motion are the product's: the `:root` block
+// and the dark block of frontend/src/style.css, copied in front of the docs
+// stylesheet at build time, so a value lives in one place.
+const TOKEN_BLOCKS = [':root {', ":root[data-theme='dark'] {"]
+function productTokens() {
+  const css = fs.readFileSync(path.join(REPO, 'frontend/src/style.css'), 'utf8')
+  return TOKEN_BLOCKS.map((opener) => {
+    const at = css.indexOf(`\n${opener}\n`)
+    const end = css.indexOf('\n}\n', at)
+    if (at < 0 || end < 0) fail(`frontend/src/style.css has no top-level «${opener} … }» block — the docs take their tokens from it`)
+    return css.slice(at + 1, end + 2)
+  }).join('\n')
+}
 
 // ---------- markdown ----------
 const FM = /^---\n([\s\S]*?)\n---\n/
@@ -107,7 +120,7 @@ function renderMarkdown(md, { file }) {
     // A demo fence is expanded here and nowhere else: the prerendered component
     // is what a browser gets, and the prose below is what a model gets.
     if (DEMO_FENCES.includes(lang)) return renderDemo(lang, text, `${file}: demo ${++demos}`)
-    return `<div class="code"><div class="code-bar"><span class="code-tab on">${esc(lang || 'text')}</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><code>${esc(text)}</code></pre></div>`
+    return `<div class="code"><div class="code-bar"><span class="code-lang">${esc(lang || 'text')}</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><code>${esc(text)}</code></pre></div>`
   }
   renderer.table = function (token) { return `<div class="table-wrap">${marked.Renderer.prototype.table.call(this, token)}</div>` }
   let html
@@ -636,21 +649,12 @@ fs.mkdirSync(path.join(OUT, 'assets'), { recursive: true })
 const write = (p, content) => { fs.mkdirSync(path.dirname(path.join(OUT, p)), { recursive: true }); fs.writeFileSync(path.join(OUT, p), content) }
 const asset = (name, ext, content) => { const file = `assets/${name}-${hash(content)}.${ext}`; write(file, content); return `/docs/${file}` }
 
-const virtual = {
-  name: 'virtual',
-  setup(b) {
-    b.onResolve({ filter: /^virtual:motion$/ }, (a) => ({ path: a.path, namespace: 'virtual' }))
-    b.onLoad({ filter: /.*/, namespace: 'virtual' }, () => ({ contents: motionModule, loader: 'js' }))
-  },
-}
-const js = (await esbuild.build({ entryPoints: [path.join(HERE, 'src/app.js')], bundle: true, format: 'esm', minify: true, target: 'es2022', write: false, plugins: [virtual], legalComments: 'none' })).outputFiles[0].text
-const css = (await esbuild.build({ entryPoints: [path.join(HERE, 'src/style.css')], bundle: true, minify: true, write: false })).outputFiles[0].text
+const js = (await esbuild.build({ entryPoints: [path.join(HERE, 'src/app.js')], bundle: true, format: 'esm', minify: true, target: 'es2022', write: false, legalComments: 'none' })).outputFiles[0].text
+const css = (await esbuild.build({ stdin: { contents: `${productTokens()}\n${fs.readFileSync(path.join(HERE, 'src/style.css'), 'utf8')}`, loader: 'css', resolveDir: path.join(HERE, 'src') }, bundle: true, minify: true, write: false })).outputFiles[0].text
 const assets = {
   js: asset('app', 'js', js),
   css: asset('app', 'css', css),
   logo: asset('logo', 'svg', LOGO_SVG),
-  // 三极行楷简体-粗 (三极字库, free for commercial use), subset to the home page's display headings by gen/font.sh.
-  display: asset('display', 'woff2', fs.readFileSync(path.join(HERE, 'src/fonts/display.woff2'))),
 }
 for (const p of Object.values(pages)) if (p.diagram) write(p.diagram.url.replace(/^\/docs\//, ''), fs.readFileSync(p.diagram.file))
 const images = path.join(MANUAL, 'public')
@@ -667,7 +671,7 @@ const site = {
   ],
   userSections: SECTIONS.map(([key, label]) => ({ label, href: firstUrl(key) })),
 }
-const ctx = { site, assets, wordmark: WORDMARK }
+const ctx = { site, assets, lockup: LOCKUP }
 
 const flatNav = (nav) => nav.flatMap(([, items]) => items)
 for (const [key] of SECTIONS) {
@@ -678,13 +682,8 @@ const devList = flatNav(devNav)
 devList.forEach((p, i) => write(`dev/${p.slug}.html`, docPage(ctx, p, devNav, devList[i - 1], devList[i + 1])))
 write('dev/index.html', redirectPage('/docs/dev/overview'))
 
-// The first picture on a page, for the home page's cards.
-const firstImage = (md) => { const m = /!\[([^\]]*)\]\((\/images\/[^)\s]+)\)/.exec(md); return m ? { src: `/docs${m[2]}`, alt: m[1] } : null }
-const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel, group: p.group, summary: p.summary, image: firstImage(p.source) }]))
-const devRefs = Object.fromEntries(devList.map((p) => [p.slug, { url: p.url, title: p.title, summary: p.summary }]))
-pageRefs.__logo = assets.logo
 const doors = SECTIONS.map(([key, label, icon]) => ({ key, label, icon, items: userNav[key].flatMap(([, items]) => items) }))
-write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs, dev: devRefs, full: pages, nav: userNav }))
+write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, doors }))
 write('changelog.html', changelogPage(ctx, RELEASES))
 write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))
@@ -694,7 +693,6 @@ for (const [from, to] of Object.entries(REDIRECTS)) {
   if (!pages[to]) fail(`redirect ${from} → ${to}: no such page`)
   write(`${from}.html`, redirectPage(`/docs/${to}`))
 }
-// The home page's interactive parts need a small map of page links and the role data.
 
 // ---------- search indexes: public and developer, kept apart ----------
 const searchIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.map((c) => ({
