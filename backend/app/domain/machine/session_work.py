@@ -26,13 +26,12 @@ from app.domain.agent.compute_configs import (
 )
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
-    _preview_ws_url,
-    device_api_base,
     device_home_dir,
     environment_status,
 )
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
+from app.domain.agent.machine_address import device_api_base, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
@@ -45,11 +44,13 @@ from app.domain.device.supply import (
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxLifecycle
+from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
     SANDBOX_PREPARING,
     SANDBOX_RESTORE_FAILED,
     SANDBOX_WAKING,
+    VM_PREPARING,
     _cloud_progress,
     _home_moved,
     _home_settled,
@@ -94,17 +95,31 @@ def presentation(row):
     }
 
 
-async def _visibility_of(devices, topic_id, device_id: str | None) -> Visibility | None:
+async def _visibility_of(
+    db, devices, topic_id, device_id: str | None
+) -> Visibility | None:
     """What an agent of room ``topic_id`` on this machine can see of it
     (``DeviceService.room_visibility``): the whole machine, or its own sandbox.
     ``None`` for a device id stands for an enrolled machine the platform picks
     when the session leases, which binds nothing and so gets the default;
-    ``None`` back is a machine that is gone."""
+    ``None`` back is a machine that is gone. A session's whole cloud VM is its
+    own machine, all of it."""
     if device_id is None:
         return default_visibility()
     if await devices.get_device(device_id) is None:
         return None
+    if await _whole_vm(db, device_id):
+        return Visibility.host
     return await devices.room_visibility(topic_id, device_id)
+
+
+async def _whole_vm(db, device_id: str) -> bool:
+    """Whether this device is a session's whole cloud VM."""
+    return bool(
+        await db.scalar(
+            select(CloudHost.whole_machine).where(CloudHost.device_id == device_id)
+        )
+    )
 
 
 async def session_machines(db, topic) -> list[dict]:
@@ -128,11 +143,11 @@ async def session_machines(db, topic) -> list[dict]:
         visibility = None
         if row.work_lease:
             visibility = await _visibility_of(
-                devices, topic.id, row.work_lease.get("device_id")
+                db, devices, topic.id, row.work_lease.get("device_id")
             )
         elif choice and choice.get("profile") == "device":
             visibility = await _visibility_of(
-                devices, topic.id, choice.get("device_id")
+                db, devices, topic.id, choice.get("device_id")
             )
         out.append(
             {
@@ -176,16 +191,19 @@ async def _placed_sessions(db, project_id):
 async def project_distribution(db, project_id) -> dict:
     """Where the project's agents that have started work are, right now.
 
-    Counted per agent session in the project's open rooms: how many are on
-    cloud, and how many on each self-hosted device, with whether an agent there
-    can see the whole machine.
+    Counted per agent session in the project's open rooms: how many are in
+    cloud sandboxes, how many on whole cloud VMs, and how many on each
+    self-hosted device, with whether an agent there can see the whole machine.
     """
-    cloud = 0
+    cloud = cloud_vm = 0
     on_devices: dict[str | None, dict] = {}
     devices = sql_device_service(db)
     for _row, topic, choice, device_id in await _placed_sessions(db, project_id):
         if choice.get("profile") == "cloud":
-            cloud += 1
+            if choice.get("whole_machine"):
+                cloud_vm += 1
+            else:
+                cloud += 1
             continue
         entry = on_devices.setdefault(
             device_id,
@@ -201,7 +219,7 @@ async def project_distribution(db, project_id) -> dict:
         entry["agents"] += 1
         # The machine is open to its agents when any room there was given it
         # whole: access is chosen per room, not per machine.
-        visibility = await _visibility_of(devices, topic.id, device_id)
+        visibility = await _visibility_of(db, devices, topic.id, device_id)
         entry["machine_access"] |= visibility is Visibility.host
     listed = []
     for entry in on_devices.values():
@@ -211,7 +229,7 @@ async def project_distribution(db, project_id) -> dict:
                 entry["name"] = device.name
         listed.append(entry)
     listed.sort(key=lambda entry: (-entry["agents"], entry["name"] or ""))
-    return {"cloud": cloud, "devices": listed}
+    return {"cloud": cloud, "cloud_vm": cloud_vm, "devices": listed}
 
 
 async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
@@ -306,7 +324,7 @@ async def room_machine_visibility(db, topic, project_settings) -> Visibility | N
     device_id = choice.device_id or await _roommates_device(
         db, topic, str(topic.resource_id or topic.id)
     )
-    return await _visibility_of(sql_device_service(db), topic.id, device_id)
+    return await _visibility_of(db, sql_device_service(db), topic.id, device_id)
 
 
 async def _session_teammate(db, project, handle: str):
@@ -413,7 +431,7 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     named = await _agent_name(db, project, topic, row.agent_handle)
     agent = named["agent_name"]
     visibility = await _visibility_of(
-        sql_device_service(db), topic.id, device.device_id
+        db, sql_device_service(db), topic.id, device.device_id
     )
     access = visibility is Visibility.host
     await deliver(
@@ -589,7 +607,7 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         "CHEESE_PROJECT": str(project_id),
         "CHEESE_TOPIC": str(topic_id),
         "CHEESE_AUTHOR": author,
-        "CHEESE_PREVIEW_URL": _preview_ws_url(api),
+        "CHEESE_PREVIEW_URL": ws_url(api, "/preview/tunnel"),
         "CHEESE_RESOURCE_ID": work_resource,
         "GIT_AUTHOR_NAME": author,
         "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",
@@ -669,7 +687,10 @@ async def _sandboxed(db, topic_id, device_id: str) -> bool:
     """Whether a session of room ``topic_id``'s executor on ``device_id`` runs
     in a sandbox of its own: whenever the room's access to that machine is
     ``isolated`` (``DeviceService.room_visibility``), on Cloud machines and
-    enrolled ones alike."""
+    enrolled ones alike. Not on a session's whole cloud VM: the machine is the
+    session's, and so are root and Docker."""
+    if await _whole_vm(db, device_id):
+        return False
     visibility = await sql_device_service(db).room_visibility(topic_id, device_id)
     return visibility is Visibility.isolated
 
@@ -681,7 +702,7 @@ async def _platform_machine(db, device_id: str) -> bool:
     return device is not None and device.supply is Supply.cloud
 
 
-async def _restart_executor(db, row, lease):
+async def restart_executor(db, row, lease):
     """How to start again the executor of the session ``row`` on the machine
     its ``lease`` is on, as a tool call there would: with the credential a
     session launches with, minted now, since the one it last ran with may have
@@ -810,7 +831,7 @@ async def _tell_room_what_stayed_behind(db, topic_id, warnings: list[str]) -> No
     )
 
 
-def _still_preparing(lease: dict | None) -> bool:
+def still_preparing(lease: dict | None) -> bool:
     """Whether a request is installing this lease right now.
 
     Only a live claim says so. A lease left ``preparing`` after its install
@@ -859,7 +880,7 @@ async def _move_session(
             row.execution_request = {**request, "authorized_by": asdict(actor)}
             await db.commit()
         return []
-    if _still_preparing(old):
+    if still_preparing(old):
         raise ConflictError(say("machineAllocationInProgress"))
     if if_idle and await _room_is_working(db, topic_id):
         raise SessionWorking(WORKING)
@@ -876,7 +897,7 @@ async def _move_session(
     archived = await HostPool(db).archived(session_id)
     if old and not archived:
         generation = request.get("generation")
-        start = await _restart_executor(db, row, old)
+        start = await restart_executor(db, row, old)
         await db.commit()
         try:
             # A cloud sandbox's home goes once left; any other machine keeps its
@@ -897,7 +918,7 @@ async def _move_session(
         old = row.work_lease
         if request.get("generation") != generation or not old:
             raise ConflictError(say("workComputerJustSwitched"))
-        if _still_preparing(old):
+        if still_preparing(old):
             raise ConflictError(say("machineAllocationInProgress"))
     on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
     if on_cloud:
@@ -1153,7 +1174,10 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         )
         try:
             cloud_host = await pool.place(
-                session_id, actor=allocation_actor, resource_id=work_resource
+                session_id,
+                actor=allocation_actor,
+                resource_id=work_resource,
+                whole_machine=choice.whole_machine,
             )
         except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
             await db.commit()
@@ -1180,7 +1204,8 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             await db.commit()
             await publish_line(topic_id, line)
             return _Preparing(
-                SANDBOX_PREPARING, partial(_cloud_progress, db, hub, cloud_host.id)
+                VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
+                partial(_cloud_progress, db, hub, cloud_host.id),
             )
         device_id = cloud_host.device_id
         # Provisioning releases its transaction around external calls.
@@ -1282,7 +1307,8 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     outcome = await asyncio.shield(work)
     if outcome is _CLOUD_PREPARING:
         return _Preparing(
-            SANDBOX_PREPARING, partial(_cloud_progress, db, hub, cloud_host.id)
+            VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
+            partial(_cloud_progress, db, hub, cloud_host.id),
         )
     if outcome is _SANDBOX_BUSY:
         # Another call of the session is restoring it: wait for that one.

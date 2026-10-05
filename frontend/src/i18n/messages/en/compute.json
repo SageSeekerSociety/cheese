@@ -3,7 +3,9 @@
     "device": "Own device",
     "deviceOnFirstRun": "An online device, picked on the first run",
     "sandbox": "A sandbox of its own for each session · prepared on the first run",
+    "vm": "A virtual machine of its own for each session, with Docker and sudo · prepared on first run",
     "cloud": "Cloud sandbox",
+    "cloudVm": "Whole cloud VM",
     "anyDevice": "Own device · Picked automatically"
   },
   "startup": {

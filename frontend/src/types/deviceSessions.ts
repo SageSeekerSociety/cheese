@@ -1,4 +1,4 @@
-import type { ComputeChoice } from '../cx_types'
+import type { ComputeChoice } from './compute'
 
 // One agent session on a self-hosted device, as the bulk switch lists it; `working` = mid-turn, left alone.
 export interface DeviceSession {

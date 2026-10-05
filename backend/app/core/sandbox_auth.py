@@ -60,6 +60,7 @@ def mint_scoped_token(
     agent_handle: str | None = None,
     access_scope: Literal["topic", "project"] = "topic",
     resource_id: str | None = None,
+    document_id: str | None = None,
 ) -> str:
     """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
 
@@ -104,6 +105,10 @@ def mint_scoped_token(
         payload["a"] = actor
     if resource_id is not None:
         payload["r"] = resource_id
+    # A document question's session: the project's own agent may answer it in a
+    # room it does not sit in (`llm_proxy`).
+    if document_id is not None:
+        payload["d"] = document_id
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{body}.{_sign(body)}"

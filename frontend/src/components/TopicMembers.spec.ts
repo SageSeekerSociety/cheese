@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -111,6 +111,7 @@ function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComput
     device_id: null,
     devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],
     sessions: [],
+    cloud_vm_available: false,
     profiles: [],
     visibility: { options: [], effective: null, machine_access: false },
     ...overrides,

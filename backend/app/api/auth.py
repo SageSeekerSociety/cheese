@@ -470,12 +470,42 @@ class ActorResolver:
         """
         actor = await self.resolve(project_id=project_id, topic_id=topic_id)
         if actor.authenticated:
+            if project_id is None and topic_id is not None:
+                project_id = await self.project_of_topic(topic_id)
+            await self.refuse_unseated_agent(actor, project_id=project_id)
             return actor
         if self._bearer:
             raise AuthenticationRequiredError(say("sessionExpired"))
         if is_global_sandbox_token(self._cheese_token):
             return actor
         raise AuthenticationRequiredError(say("sandboxTokenRequired"))
+
+    async def refuse_unseated_agent(
+        self, actor: Actor, *, project_id: uuid.UUID | None
+    ) -> None:
+        """Refuse an agent's scoped credential once the agent is off the room it
+        was minted in (``require_seated_in_its_room``). ``resolve`` checks only
+        the signature, and a session credential outlives the agent's seat."""
+        if (
+            actor.via != "cheese"
+            or project_id is None
+            or scoped_token_claims(self._cheese_token) is None
+        ):
+            return
+        await require_seated_in_its_room(
+            self._session, self._cheese_token, project_id=project_id
+        )
+
+    def origin_room(self) -> uuid.UUID | None:
+        """The room the presenting agent's session runs in, from its scoped
+        token: where what it does elsewhere in the project is told. None for a
+        person, a project credential, a delegated one, or a token naming no
+        room. Only meaningful once the request resolved to that agent."""
+        if not self._cheese_token:
+            return None
+        claims = scoped_token_claims(self._cheese_token)
+        room = claims.get("t") if claims else None
+        return uuid.UUID(room) if room else None
 
     def speaks_for_this_rooms_turn(self, topic_id: uuid.UUID) -> bool:
         """这张凭据就是**这个房间这一轮**的那张令牌吗。
@@ -880,3 +910,21 @@ async def require_seated_agent(
         )
     elif not await resolver._is_project_member(project_id, actor.handle):
         raise ForbiddenError(say("projectMemberOnly"))
+
+
+async def require_seated_in_its_room(
+    session: AsyncSession, token: str, *, project_id: uuid.UUID
+) -> None:
+    """``require_seated_agent`` for the routes that name no room, asked of the
+    room the credential was minted in.
+
+    A credential that names no room has no roster to be taken off: the
+    platform's own project capability, or the credential of a document that
+    sits in no room, which its project's agent answers. Those pass, where
+    ``require_seated_agent`` would ask the project roster, which seats no agent.
+    """
+    claims = scoped_token_claims(token)
+    if claims is None:
+        raise AuthenticationRequiredError("Agent credential is invalid or expired")
+    if claims.get("t"):
+        await require_seated_agent(session, token, project_id=project_id, topic_id=None)

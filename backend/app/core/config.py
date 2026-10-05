@@ -587,12 +587,12 @@ class Settings(BaseSettings):
     # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
     # cannot reach the CONNECT listener directly. On the ghg network it cannot:
     # measured 2026-08-14, packets to the box's listener port never reach its NIC,
-    # dropped at a hypervisor bridge the box can neither see nor change — while
-    # the gateway path those machines already use for the connector works and
-    # carries websockets. Set this to that path and device subscription turns ride
-    # it instead. Empty = no tunnel, and a device falls back to dialling
-    # `subscription_device_proxy_host` directly (right for a flat network, and the
-    # behaviour every deployment has today).
+    # dropped at a hypervisor bridge the box can neither see nor change. Set, every
+    # device's subscription turns ride the tunnel: a private-control cloud machine
+    # dials it through its loopback forward to the backend
+    # (`machine_address.tunnel_url`), every other device dials this URL. Empty =
+    # no tunnel, and a device dials `subscription_device_proxy_host` directly
+    # (right for a flat network).
     subscription_tunnel_url: str = ""
     # Where the proxy's own CA is mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
@@ -721,13 +721,30 @@ class Settings(BaseSettings):
     # protects the MicroCloud cluster; a session that finds the pool full is told
     # capacity is tight and to try later.
     cloud_pool_max_hosts: int = Field(default=20, ge=1, le=500)
+    # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
+    # The offering a session that asks for a whole machine gets its VM from
+    # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
+    # the choice. Each VM counts against `cloud_pool_max_hosts` like a host.
+    microcloud_vm_offering_id: int = 0
+    # The size every whole cloud VM is created with, clamped into the offering's
+    # own range. One size: what a session is charged is spec × time, and the
+    # spec is recorded on the VM's row.
+    cloud_vm_cores: int = Field(default=4, ge=1)
+    cloud_vm_memory_mb: int = Field(default=8192, ge=1024)
+    cloud_vm_disk_gb: int = Field(default=40, ge=10)
+    # A session's VM is released once its room has run no turn and the session
+    # has asked for no tool for this long, after its work is pushed. The next
+    # tool call prepares a new one, which takes minutes, so this is longer
+    # than a sandbox's idle stop.
+    cloud_vm_idle_release_s: int = Field(default=1800, ge=60, le=7 * 86400)
     # Credits one cloud sandbox costs per hour it runs, from start to idle stop
     # (usage/compute.py). Unset on purpose: the price is the product owner's to
     # set, and with none set no cloud sandbox starts, so cloud compute never
     # runs free by accident. 0 is an explicit "free".
     cloud_sandbox_credits_per_hour: float | None = Field(default=None, ge=0)
-    # Credits per hour of a whole cloud VM, by spec name, e.g.
-    # `{"4c8g": 30}`. A spec not named here cannot be started.
+    # Credits per hour of a whole cloud VM, by its size as cores and GiB of
+    # memory, e.g. `{"4c8g": 30}` (usage.compute.vm_spec). A size not named
+    # here cannot be started.
     cloud_vm_credits_per_hour: dict[str, float] = Field(default_factory=dict)
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud by the sweep. Never would let a machine destroyed upstream sit

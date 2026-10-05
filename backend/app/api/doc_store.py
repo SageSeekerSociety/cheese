@@ -19,7 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_broker
 from app.api.response import ok
 from app.domain.agent.chat import ChatService
-from app.domain.block.documents import DocumentWriter, persisted_notice
+from app.domain.block.documents import (
+    DocumentWriter,
+    persisted_notice,
+    tell_room_of_document,
+)
 from app.domain.block.models import Block
 from app.domain.block.schemas import BlockOut
 from app.domain.living_doc import collab
@@ -158,3 +162,39 @@ async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
         # The room's overview shows what the document says.
         await broker.publish(str(room_id), {"type": "state", "resource": "doc"})
         naming.nudge(room_id, "signal")
+
+
+async def tell_origin_room(
+    db: AsyncSession,
+    room_id: uuid.UUID | None,
+    doc: Document,
+    actor: str,
+    *,
+    created: bool = False,
+    edits: list[dict] | None = None,
+    suggested: list[str] | None = None,
+) -> None:
+    """芝士 made or changed ``doc``, a document of the project's own, while
+    working in ``room_id``: the room gets a line with the document on it. A
+    room's own document is told by its store (`announce`); a change made from
+    no room (a person's, or 芝士 answering on the document itself) is in the
+    document's history and nowhere else."""
+    if room_id is None or doc.room_id is not None:
+        return
+    line, merged = await tell_room_of_document(
+        db,
+        room_id=room_id,
+        doc=doc,
+        actor=actor,
+        created=created,
+        edits=edits,
+        suggested=suggested,
+    )
+    await db.commit()
+    await get_broker().publish(
+        str(room_id),
+        {
+            "type": "block_updated" if merged else "event_block",
+            "block": BlockOut.model_validate(line).model_dump(mode="json"),
+        },
+    )

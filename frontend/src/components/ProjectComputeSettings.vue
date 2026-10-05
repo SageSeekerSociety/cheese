@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 项目只给默认：新 agent 开工时用哪台工作电脑。已经在干活的 agent 各有各的机器，
 // 改默认不搬它们；它们现在在哪，写在「现在的分布」里。
-import type { ComputeChoice, ProjectComputeConfigs } from '../cx_types'
+import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
 
 import { onMounted, ref, watch } from 'vue'
 
@@ -79,19 +79,28 @@ watch(() => props.projectId, load)
         v-if="editing && state.can_manage"
         :devices="state.devices"
         :cloud-available="state.cloud_available"
+        :cloud-vm-available="state.cloud_vm_available"
         :busy="busy"
         @select="save"
       />
 
       <div class="distribution" data-testid="project-distribution">
         <div class="distribution-title">{{ t('work.projectMachine.distribution') }}</div>
-        <p v-if="!state.distribution.cloud && !state.distribution.devices.length" class="c-muted mb-0">
+        <p
+          v-if="!state.distribution.cloud && !state.distribution.cloud_vm && !state.distribution.devices.length"
+          class="c-muted mb-0"
+        >
           {{ t('work.projectMachine.noneStarted') }}
         </p>
         <ul v-else class="distribution-list">
           <li v-if="state.distribution.cloud">
             <span class="status-dot" />{{
               t('work.projectMachine.onCloud', { agents: agents(state.distribution.cloud) })
+            }}
+          </li>
+          <li v-if="state.distribution.cloud_vm">
+            <span class="status-dot" />{{
+              t('work.projectMachine.onCloudVm', { agents: agents(state.distribution.cloud_vm) })
             }}
           </li>
           <li v-for="device in state.distribution.devices" :key="device.device_id ?? ''">

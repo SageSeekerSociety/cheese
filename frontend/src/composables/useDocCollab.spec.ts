@@ -104,3 +104,17 @@ describe('opening a room’s document', () => {
     stop()
   })
 })
+
+describe('a document deleted while it is open', () => {
+  it('lets go of it and says so: nothing typed afterwards would be kept', async () => {
+    const { collab, provider, stop } = await opened()
+    provider.emit('authenticated', { scope: 'read-write' })
+    await nextTick()
+    provider.emit('stateless', { payload: JSON.stringify({ type: 'state', resource: 'deleted' }) })
+    await nextTick()
+    expect(collab.deleted.value).toBe(true)
+    expect(collab.session.value).toBeNull()
+    expect(provider.destroyed).toBe(true)
+    stop()
+  })
+})

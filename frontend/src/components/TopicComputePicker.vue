@@ -2,7 +2,7 @@
 // 房间这一项：这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻结论
 // 60）：改它就是整个房间一起搬，房间里的每个 AI 队友都换过去。挂在成员名册里房间
 // 那一行上。
-import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { computed, ref } from 'vue'
 
@@ -151,6 +151,7 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?:
         v-if="more"
         :devices="profile.devices"
         :cloud-available="cloudAvailable"
+        :cloud-vm-available="profile.cloud_vm_available"
         :busy="saving"
         @select="pick"
       />

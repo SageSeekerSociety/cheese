@@ -21,10 +21,10 @@ There is no default price. With none set, ``admit_start`` refuses every start
 and nothing is metered: cloud compute never runs free because nobody set a
 price.
 
-Which sandboxes are running is the machine domain's to say
-(``machine.metering`` opens and closes their runs). A whole cloud VM opens its
-run with ``ComputeMeter.open(kind=VM, spec=…)`` when it starts and closes it
-with ``ComputeMeter.close`` when it stops, after ``admit_start`` let it start.
+Which sandboxes and VMs run is the machine domain's to say
+(``machine.metering`` opens and closes their runs). A whole cloud VM runs
+from its creation to its release, priced by its size (``vm_spec``); its
+creation is admitted by ``admit_start(kind=VM, spec=…)``.
 """
 
 import logging
@@ -57,6 +57,12 @@ class ComputeRefused(Exception):
     """Cloud compute may not start; the message is the sentence that says why."""
 
 
+def vm_spec(cores: int, memory_mb: int) -> str:
+    """The price list name of a whole VM's size: ``4c8g`` for four cores
+    and 8 GiB."""
+    return f"{cores}c{memory_mb // 1024}g"
+
+
 def hourly_price(kind: str, spec: str) -> float | None:
     """Credits per running hour of ``spec``; None when no price is set."""
     if kind == SANDBOX:
@@ -81,7 +87,9 @@ async def admit_start(
             kind,
             spec,
         )
-        raise ComputeRefused(say("cloudComputeUnpriced"))
+        raise ComputeRefused(
+            say("cloudComputeUnpriced" if kind == SANDBOX else "cloudVmUnpriced")
+        )
     payer = await payer_for_project(session, project_id)
     refusal = await Ledger(session).admit(payer)
     if refusal is not None:

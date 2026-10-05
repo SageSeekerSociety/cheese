@@ -3,7 +3,8 @@
 // 名册里的东西有一样不能跟着藏：有 AI 队友能访问整台机器。那是权限，不是设置——
 // 名册合着的时候它也得在这一行上。
 import type { Component } from 'vue'
-import type { Topic, TopicComputeProfile } from '@/cx_types'
+import type { Topic } from '@/cx_types'
+import type { TopicComputeProfile } from '@/types/compute'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -60,6 +61,7 @@ function profile(machineAccess: boolean): TopicComputeProfile {
     devices: [],
     sessions: [],
     profiles: [],
+    cloud_vm_available: false,
     visibility: {
       options: [],
       effective: 'host',

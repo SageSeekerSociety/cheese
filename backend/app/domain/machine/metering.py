@@ -12,12 +12,15 @@ the lifecycle recorded is closed at the moment it recorded.
 A sandbox **runs** while its home is on a host the pool still holds, enrolled,
 and is neither asleep (``stopped_at``) nor waiting for its sandbox to be
 prepared, woken or restored (``waiting_since``): the room is not charged while
-it waits for a host.
+it waits for a host. A whole cloud VM runs from its creation to its release,
+since the platform pays for it all that time, priced by its size and charged
+to the project it was created for.
 
 When a project's payer has run out of credits, its running sandboxes are
 stopped as soon as their room runs no turn: the turn that was running when the
-credits ran out finishes, as a model turn does, and no new sandbox starts
-(``usage.compute.admit_start``, asked by ``HostPool.place``).
+credits ran out finishes, as a model turn does, and no new sandbox or VM
+starts (``usage.compute.admit_start``, asked by ``HostPool.place``). A whole
+VM is not stopped for it; the VM sweep releases it once it is idle.
 
 With no price set nothing is metered, and no sandbox starts either.
 """
@@ -29,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.machine.models import CloudHost, CloudHostHome
+from app.domain.machine.models import GONE, CloudHost, CloudHostHome
 from app.domain.usage.compute import SANDBOX, ComputeMeter, hourly_price
 
 logger = logging.getLogger("cheese.machine.metering")
@@ -54,8 +57,58 @@ def _running():
             CloudHostHome.waiting_since.is_(None),
             CloudHost.device_id.is_not(None),
             CloudHost.released_at.is_(None),
+            CloudHost.whole_machine.is_(False),
         )
     )
+
+
+def vm_subject(host_id: uuid.UUID) -> str:
+    return f"vm-{host_id}"
+
+
+async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int, int]:
+    """A whole VM runs from its creation to its release, billed to the
+    project it was created for."""
+    from app.domain.usage.compute import VM, vm_spec
+
+    hosts = list(
+        await session.scalars(
+            select(CloudHost).where(
+                CloudHost.whole_machine.is_(True),
+                CloudHost.project_id.is_not(None),
+            )
+        )
+    )
+    runs = {run.subject: run for run in await meter.open_runs(VM)}
+    opened = closed = 0
+    live = set()
+    for host in hosts:
+        subject = vm_subject(host.id)
+        if host.released_at is not None or host.status in GONE:
+            continue
+        live.add(subject)
+        if subject in runs:
+            continue
+        assert host.project_id is not None
+        home = await session.scalar(
+            select(CloudHostHome).where(CloudHostHome.host_id == host.id)
+        )
+        await meter.open(
+            kind=VM,
+            spec=vm_spec(int(host.cores), int(host.memory_mb)),
+            subject=subject,
+            project_id=host.project_id,
+            topic_id=home.topic_id if home else None,
+            session_id=home.session_id if home else None,
+            at=host.created_at,
+        )
+        opened += 1
+    released = {vm_subject(h.id): h.released_at for h in hosts}
+    for subject in runs:
+        if subject not in live:
+            await meter.close(subject, released.get(subject) or datetime.now(UTC))
+            closed += 1
+    return opened, closed
 
 
 async def observe(session: AsyncSession) -> dict[str, int]:
@@ -103,8 +156,9 @@ async def observe(session: AsyncSession) -> dict[str, int]:
         stopped_at = stops.get(uuid.UUID(subject))
         await meter.close(subject, stopped_at or now)
         closed += 1
+    vms_opened, vms_closed = await _observe_vms(session, meter)
     await session.commit()
-    return {"opened": opened, "closed": closed}
+    return {"opened": opened + vms_opened, "closed": closed + vms_closed}
 
 
 async def unpaid_sandboxes(session: AsyncSession) -> list:

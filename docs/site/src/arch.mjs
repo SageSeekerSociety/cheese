@@ -18,15 +18,15 @@
 
 // ---------- llm: one model request, session process to vendor ----------
 const LLM_STATIONS = [
-  { key: 'session', label: '会话进程', sub: '沙盒容器 / 裸进程 / 云机器 / Codex·Pi', col: 0, row: 2, tone: '--info' },
-  { key: 'helper', label: '隧道助手', sub: '云机器上的回环口', col: 1, row: 4, tone: '--sec' },
-  { key: 'llmv1', label: '/llm/v1', sub: '主 API 的另一条入口', col: 2, row: 0, tone: '--accent-3' },
-  { key: 'proxy443', label: ':443 反向代理', sub: '容器路径', col: 2, row: 1, tone: '--sec' },
-  { key: 'proxy8444', label: ':8444 CONNECT', sub: '裸进程路径', col: 2, row: 3, tone: '--sec' },
-  { key: 'meter', label: '计量代理', sub: '唯一的拦截点', col: 3, row: 2, tone: '--accent' },
-  { key: 'admission', label: '准入', sub: 'POST /llm/admission', col: 3, row: 4, tone: '--ok' },
-  { key: 'gateway', label: '网关路', sub: 'LiteLLM + 虚拟 key', col: 4, row: 1, tone: '--accent-3' },
-  { key: 'subscription', label: '订阅路', sub: '平台的订阅凭证', col: 4, row: 3, tone: '--warn' },
+  { key: 'session', label: '会话进程', sub: '沙盒容器 / 裸进程 / 云机器 / Codex·Pi', col: 0, row: 2, tone: '--chart-1' },
+  { key: 'helper', label: '隧道助手', sub: '云机器上的回环口', col: 1, row: 4, tone: '--chart-4' },
+  { key: 'llmv1', label: '/llm/v1', sub: '主 API 的另一条入口', col: 2, row: 0, tone: '--chart-5' },
+  { key: 'proxy443', label: ':443 反向代理', sub: '容器路径', col: 2, row: 1, tone: '--chart-4' },
+  { key: 'proxy8444', label: ':8444 CONNECT', sub: '裸进程路径', col: 2, row: 3, tone: '--chart-4' },
+  { key: 'meter', label: '计量代理', sub: '唯一的拦截点', col: 3, row: 2, tone: '--chart-3' },
+  { key: 'admission', label: '准入', sub: 'POST /llm/admission', col: 3, row: 4, tone: '--chart-2' },
+  { key: 'gateway', label: '网关路', sub: 'LiteLLM + 虚拟 key', col: 4, row: 1, tone: '--chart-5' },
+  { key: 'subscription', label: '订阅路', sub: '平台的订阅凭证', col: 4, row: 3, tone: '--chart-6' },
   { key: 'vendor', label: '模型厂商', sub: '流式 token 回来', col: 5, row: 2, tone: '--faint' },
 ]
 
@@ -55,8 +55,8 @@ const LLM_SCENES = [
   { key: 'ok', label: '正常放行', tone: '--ok' },
   { key: 'budget', label: '额度用完', tone: '--warn' },
   { key: 'binding', label: '绑定解析不出', tone: '--warn' },
-  { key: 'failopen', label: '问不到主 API', tone: '--sec' },
-  { key: 'subagent', label: '分身指定模型', tone: '--info' },
+  { key: 'failopen', label: '问不到主 API', tone: '--chart-4' },
+  { key: 'subagent', label: '分身指定模型', tone: '--chart-1' },
 ]
 
 const LLM_MATRIX = {
@@ -324,15 +324,15 @@ const llmWalks = {
 
 // ---------- machines: one tool call out, and the model traffic back ----------
 const MC_STATIONS = [
-  { key: 'call', label: '会话里的工具调用', sub: '芝士调一个工具', col: 0, row: 2, tone: '--info' },
-  { key: 'result', label: '结果回到现场', sub: '对话里多一行', col: 0, row: 4, tone: '--ok' },
-  { key: 'api', label: '主 API', sub: '发请求的那一侧', col: 1, row: 2, tone: '--accent' },
-  { key: 'hub', label: '机器连接服务', sub: '一条长连接', col: 2, row: 2, tone: '--accent-3' },
-  { key: 'screen', label: '屏幕里的 runner', sub: '骨架进程', col: 3, row: 2, tone: '--sec' },
-  { key: 'exec', label: '执行器 / CLI', sub: '同一个目录', col: 4, row: 2, tone: '--warn' },
-  { key: 'helper', label: '隧道助手', sub: 'HTTPS_PROXY 指向它', col: 3, row: 3, tone: '--sec' },
-  { key: 'tunnel', label: '模型隧道', sub: 'WebSocket', col: 4, row: 3, tone: '--accent-3' },
-  { key: 'meter', label: '计量代理', sub: '主机上', col: 5, row: 3, tone: '--accent' },
+  { key: 'call', label: '会话里的工具调用', sub: '芝士调一个工具', col: 0, row: 2, tone: '--chart-1' },
+  { key: 'result', label: '结果回到现场', sub: '对话里多一行', col: 0, row: 4, tone: '--chart-2' },
+  { key: 'api', label: '主 API', sub: '发请求的那一侧', col: 1, row: 2, tone: '--chart-3' },
+  { key: 'hub', label: '机器连接服务', sub: '一条长连接', col: 2, row: 2, tone: '--chart-5' },
+  { key: 'screen', label: '屏幕里的 runner', sub: '骨架进程', col: 3, row: 2, tone: '--chart-4' },
+  { key: 'exec', label: '执行器 / CLI', sub: '同一个目录', col: 4, row: 2, tone: '--chart-6' },
+  { key: 'helper', label: '隧道助手', sub: 'HTTPS_PROXY 指向它', col: 3, row: 3, tone: '--chart-4' },
+  { key: 'tunnel', label: '模型隧道', sub: 'WebSocket', col: 4, row: 3, tone: '--chart-5' },
+  { key: 'meter', label: '计量代理', sub: '主机上', col: 5, row: 3, tone: '--chart-3' },
   { key: 'vendor', label: '模型厂商', sub: '', col: 5, row: 4, tone: '--faint' },
 ]
 

@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
-from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep, require_seated_agent
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
@@ -55,6 +55,8 @@ async def member(
         raise AuthenticationRequiredError("Login required")
     if not any(m.handle == actor.handle for m in await roster(db, project_id)):
         raise ForbiddenError(say("mcpManageMembersOnly"))
+    # The project roster lists every teammate the project has, seated or not.
+    await resolver.refuse_unseated_agent(actor, project_id=project_id)
     return actor.handle
 
 
@@ -184,6 +186,12 @@ async def proxy(
         raise NotFoundError("Topic not found")
     if claims.get("p") != str(project_id):
         raise ForbiddenError("This room belongs to another project")
+    await require_seated_agent(
+        db,
+        request.headers.get("x-cheese-token", ""),
+        project_id=project_id,
+        topic_id=topic_id,
+    )
     try:
         result = await service.call(
             db,

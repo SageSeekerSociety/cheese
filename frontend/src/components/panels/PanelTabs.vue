@@ -57,6 +57,11 @@ function fileName(path: string): string {
   return path.split('/').pop() || path
 }
 
+/** 页签上写什么：文件写文件名，资料库文档写它的标题。 */
+function tabName(f: OpenFileTab): string {
+  return f.document ? f.document.title || t('work.room.doc.untitled') : fileName(f.path)
+}
+
 // 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
 // 件事：阶段自动选中的那一格（比如开工时的现场）可能整个在屏幕外，屏幕上什么都
 // 没发生。选中态一变就把它带回视野里。
@@ -202,18 +207,18 @@ const inkStyle = computed(() =>
           :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
           :aria-selected="active === fileKey(f.path)"
           :aria-controls="panelId"
-          :title="f.pinned ? f.path : t('work.room.tabs.pinHint', { path: f.path })"
+          :title="f.pinned ? tabName(f) : t('work.room.tabs.pinHint', { path: tabName(f) })"
           @click="emit('select', fileKey(f.path))"
           @dblclick="emit('pin-file', f.path)"
         >
-          <v-icon size="16">{{ fileIcon(f.path) }}</v-icon>
-          <span class="tabbar__name">{{ fileName(f.path) }}</span>
+          <v-icon size="16">{{ f.document ? 'mdi-file-document-edit-outline' : fileIcon(f.path) }}</v-icon>
+          <span class="tabbar__name">{{ tabName(f) }}</span>
         </button>
         <button
           type="button"
           class="tabbar__close"
-          :aria-label="t('work.room.tabs.close', { name: fileName(f.path) })"
-          :title="t('work.room.tabs.close', { name: fileName(f.path) })"
+          :aria-label="t('work.room.tabs.close', { name: tabName(f) })"
+          :title="t('work.room.tabs.close', { name: tabName(f) })"
           @click="emit('close-file', f.path)"
         >
           <v-icon size="14">mdi-close</v-icon>

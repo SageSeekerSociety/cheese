@@ -343,8 +343,6 @@ def request(state, method, params=None):
 class Executor:
     def __init__(self, state):
         self.state = Path(state).resolve()
-        # Bootstrap is reloaded each turn; successful checks belong to this process.
-        self.verified_binaries = {}
         self.config = json.loads((self.state / "config.json").read_text())
         self.programs = Path(self.config.get("release", self.state.parent))
         self.admission_lock = threading.Lock()
@@ -1756,7 +1754,6 @@ class Executor:
         with bootstrap["prepared"](
             payload,
             owner,
-            self.verified_binaries,
             # Read-only in a sandbox: only the install, outside it, fetches it.
             fetch_toolchain=not self.config.get("sandbox"),
         ) as (

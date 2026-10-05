@@ -31,12 +31,14 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import async_session_factory, release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
+    ForbiddenError,
     GatewayUnavailableError,
     NotFoundError,
     ValidationError,
@@ -53,6 +55,8 @@ from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -178,6 +182,37 @@ async def _bind_requested_subagent_model(
     return binding.resolve(None, choices, agent_model=requested_id)
 
 
+async def _require_model_caller(
+    db: AsyncSession, token: str, project_id: uuid.UUID
+) -> None:
+    """Refuse a credential whose agent is no longer seated where it acts.
+
+    A document question's session is the one exception: one asked in a room
+    that seats no agent is answered by the project's own agent, which sits in
+    no room for it (``document.question.bind``). Its credential names the
+    document (``d``) and the project's own agent, and is let through on that.
+    A room session's credential names no document, so the project's own agent
+    taken off a room is refused like any other.
+    """
+    claims = scoped_token_claims(token) or {}
+    if claims.get("d") and await _projects_own_agent(db, project_id, claims.get("a")):
+        return
+    await require_seated_in_its_room(db, token, project_id=project_id)
+
+
+async def _projects_own_agent(
+    db: AsyncSession, project_id: uuid.UUID, handle: object
+) -> bool:
+    project = await ProjectRepository(db).get(project_id)
+    if project is None or project.default_agent_instance_id is None:
+        return False
+    return any(
+        handle in (agent.handle, agent_instance_handle(agent.id))
+        for agent in await AgentInstanceService(db).list_for_project(project_id)
+        if agent.id == project.default_agent_instance_id
+    )
+
+
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
 @router.post("/admission", include_in_schema=False)
@@ -206,6 +241,23 @@ async def admission(
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
     project = await ProjectRepository(db).get(project_uuid)
+    if project is not None:
+        try:
+            await _require_model_caller(db, token, project_uuid)
+        except (AuthenticationRequiredError, ForbiddenError) as exc:
+            # Answered, not raised: the metering proxy reads any non-200 as the
+            # backend being unreachable and lets the request through (fail-open).
+            # `binding` is the kind it renders as a 400 that is not retried, with
+            # this reason; a `budget` refusal would tell the agent to wait for
+            # credits that are not what is missing.
+            return ok(
+                {
+                    "allow": False,
+                    "reason": str(exc),
+                    "reason_kind": "binding",
+                    "supply": {},
+                }
+            )
     refused = None
     if project is not None:
         refused = await UsageService(db).admit_project(project_uuid)
@@ -227,8 +279,6 @@ async def admission(
     # model for this project has no second pool to quietly serve the request
     # from — that silent swap is what one control point exists to remove — so
     # the refusal carries the resolver's own words and the turn stops here.
-    from app.domain.agent_instance.services import AgentInstanceService
-
     is_subagent = request.headers.get("x-cheese-subagent") == "1"
     # 主 agent 开分身时指定的模型：CC 把它写进分身请求体的顶层 model 成员，计量
     # 代理解析出来随本调用带上来。只在分身路径上读 —— 主对话的模型从来由绑定
@@ -382,6 +432,7 @@ async def _person_key(claims: PersonalClaims) -> str | None:
 async def proxy(
     path: str,
     request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> StreamingResponse:
     token = _caller_token(request)
@@ -402,6 +453,9 @@ async def proxy(
             project_uuid = uuid.UUID(project_id)
         except ValueError as exc:
             raise NotFoundError("Unknown project") from exc
+        await _require_model_caller(db, token, project_uuid)
+        # The stream below can hold this request for minutes.
+        await release_read_session(db)
         key = await chat.project_gateway_key(project_uuid)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's

@@ -108,6 +108,10 @@ okcheese.com, www.okcheese.com, hk.okcheese.com {
 	@alias host www.okcheese.com hk.okcheese.com
 	redir @alias https://okcheese.com{uri} permanent
 
+	# Built /assets/ from the copy on this box (cheese-edge-asset-sync); a
+	# file not there yet falls through to the tunnels below.
+	import /etc/caddy/okcheese-edge-assets.caddy
+
 	reverse_proxy 127.0.0.1:18453 127.0.0.1:18454 {
 		# Neither line is reliably the faster one: tunnel A (dorm Unicom line)
 		# answered in 47 ms one minute and 0.3-1.5 s the next, while tunnel B
@@ -129,6 +133,8 @@ okcheese.com, www.okcheese.com, hk.okcheese.com {
 		health_interval 3s
 		health_timeout 2s
 		flush_interval -1
+		# A reload otherwise closes every proxied WebSocket at once.
+		stream_close_delay 10m
 		transport http {
 			# Under nginx's 75 s keepalive_timeout, so Caddy never reuses a
 			# connection the front door has just closed.

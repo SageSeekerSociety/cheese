@@ -13,6 +13,7 @@
 // 页，← 回到列表。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { LibraryFile } from '../api'
+import type { ProjectDocument } from '../api/projectDocuments'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -22,6 +23,11 @@ import { toast } from 'vuetify-sonner'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
+import LibraryDocumentHits from '../components/library/LibraryDocumentHits.vue'
+import LibraryDocumentPage from '../components/library/LibraryDocumentPage.vue'
+import { useLibraryDocuments } from '../composables/useLibraryDocuments'
+import { useOpenLibraryDocument } from '../composables/useOpenLibraryDocument'
+import { isAgentHandle } from '../lib/authorship'
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
 import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
 
@@ -36,10 +42,12 @@ import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import VirtualList from '@/components/common/VirtualList.vue'
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { closeOverlay } from '@/lib/backOut'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { usePageTitleStore } from '@/stores/title'
+import { useWorkspaceStore } from '@/stores/workspace'
 import LibraryVersionsDialog from '@/views/library/LibraryVersionsDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
@@ -148,6 +156,75 @@ const shown = computed(() => {
   )
 })
 
+// ---- 文档：和文件摆进同一张列表，最近改过的在前 ------------------------------------
+
+const docs = useLibraryDocuments(
+  () => props.projectId,
+  () => query.value
+)
+const workspace = useWorkspaceStore()
+type Entry = { key: string; at: number } & ({ doc: ProjectDocument; file?: never } | { file: LibraryFile; doc?: never })
+const searching = computed(() => !!query.value.trim())
+const entries = computed<Entry[]>(() => {
+  // 找的时候文档按正文找，结果在上面那两组里；这张表只剩文件名对得上的文件。
+  const withDocs = !searching.value && (kind.value === 'all' || kind.value === 'doc')
+  const rows: Entry[] = shown.value.map((file) => ({ key: `file:${file.path}`, at: file.modified * 1000, file }))
+  if (withDocs)
+    rows.push(...docs.documents.value.map((doc) => ({ key: `doc:${doc.id}`, at: Date.parse(doc.updated_at), doc })))
+  return rows.sort((a, b) => b.at - a.at)
+})
+const anything = computed(() => files.value.length > 0 || docs.documents.value.length > 0)
+
+function docName(doc: { title: string | null }): string {
+  return doc.title || t('work.room.doc.untitled')
+}
+function docMeta(doc: ProjectDocument): string {
+  const row = workspace.members.find((m) => m.user_handle === doc.author)
+  const who = isAgentHandle(doc.author) ? workspace.agentName : memberName(row) || doc.author
+  return t('work.library.docMeta', { who, when: relTime(doc.updated_at) })
+}
+
+const { selectedDocId, openDocument, openRoom, openDoc, closeDoc, titled } = useOpenLibraryDocument(
+  () => props.projectId,
+  docs,
+  (message) => (actionError.value = message)
+)
+
+// 新建一份空的（`copyOf` 不给），或者另存对话里那一份；建好就打开。
+async function make(copyOf?: string) {
+  actionError.value = ''
+  try {
+    openDoc(await docs.make(copyOf))
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : t('work.library.newDocFailed')
+  }
+}
+
+const confirmingDoc = ref<{ id: string; title: string | null } | null>(null)
+async function removeDoc() {
+  const doc = confirmingDoc.value
+  confirmingDoc.value = null
+  if (!doc) return
+  actionError.value = ''
+  try {
+    await docs.remove(doc.id)
+    if (selectedDocId.value === doc.id) void router.replace({ query: {} })
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : t('work.library.deleteFailed')
+  }
+}
+function docActions(doc: ProjectDocument): MenuAction[] {
+  return [
+    {
+      key: 'delete',
+      label: t('work.library.delete'),
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (confirmingDoc.value = doc),
+    },
+  ]
+}
+
 // ---- 看哪一份 ----------------------------------------------------------------
 
 const selectedPath = computed(() => (typeof route.query.file === 'string' ? route.query.file : ''))
@@ -169,13 +246,22 @@ function close() {
 }
 
 useTopBarBack(() =>
-  !mdAndUp.value && selectedPath.value ? { label: t('work.library.backToList'), onBack: close } : null
+  !mdAndUp.value && selectedDocId.value
+    ? { label: t('work.library.backToList'), onBack: closeDoc }
+    : !mdAndUp.value && selectedPath.value
+      ? { label: t('work.library.backToList'), onBack: close }
+      : null
 )
 
 // 手机顶栏写的是正看着的那一份的名字。
 const titles = usePageTitleStore()
 watch(
-  () => (selected.value && !mdAndUp.value ? selected.value.path : t('navigation.project.library')),
+  () =>
+    openDocument.value
+      ? docName(openDocument.value)
+      : selected.value && !mdAndUp.value
+        ? selected.value.path
+        : t('navigation.project.library'),
   (title) => titles.setDynamicTitle(title, 'project-library'),
   { immediate: true }
 )
@@ -348,6 +434,8 @@ useCommands(() => {
       },
     ]
   }
+  // 一份文档开着时，它的操作在文档自己的顶栏上。
+  if (selectedDocId.value) return []
   return [
     {
       id: 'library.upload',
@@ -355,8 +443,17 @@ useCommands(() => {
       icon: 'mdi-upload',
       palette: false as const,
       loading: uploading.value,
-      header: { primary: true, accent: true },
+      header: {},
       run: () => picker.value?.click(),
+    },
+    {
+      id: 'library.newDoc',
+      title: t('work.library.newDoc'),
+      icon: 'mdi-plus',
+      palette: false as const,
+      loading: docs.making.value === '',
+      header: { primary: true, accent: true },
+      run: () => void make(),
     },
   ]
 })
@@ -379,8 +476,8 @@ function rowMeta(file: LibraryFile): string {
 
 // 行的身份（和 v-for 的 key 同义）：路径。同名不覆盖，所以路径唯一。写成具名函数而
 // 不是模板里的箭头：模板里那个箭头参数没有类型来源，strict 下会报隐式 any。
-function fileRowKey(row: unknown): string {
-  return (row as LibraryFile).path
+function entryKey(row: unknown): string {
+  return (row as Entry).key
 }
 
 function read(file: LibraryFile) {
@@ -389,7 +486,20 @@ function read(file: LibraryFile) {
 </script>
 
 <template>
-  <AppPage :title="selected && !mdAndUp ? selected.path : t('navigation.project.library')" width="full">
+  <LibraryDocumentPage
+    v-if="selectedDocId"
+    :project-id="projectId"
+    :document="openDocument"
+    :error="actionError"
+    :agent-name="workspace.agentName"
+    :agent-handle="workspace.agentHandle"
+    :members="workspace.members"
+    :topic-list="workspace.topics"
+    @titled="titled"
+    @delete="confirmingDoc = openDocument"
+    @open-topic="openRoom"
+  />
+  <AppPage v-else :title="selected && !mdAndUp ? selected.path : t('navigation.project.library')" width="full">
     <div
       class="library"
       :class="{ 'library--dragging': dragging }"
@@ -414,7 +524,7 @@ function read(file: LibraryFile) {
         />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
 
-        <div v-if="files.length" class="library__tools">
+        <div v-if="anything" class="library__tools">
           <v-text-field
             v-model="query"
             type="search"
@@ -441,16 +551,21 @@ function read(file: LibraryFile) {
           </div>
         </div>
 
-        <div
-          v-if="loading && !files.length"
-          class="py-8 text-center"
-          role="status"
-          :aria-label="t('work.library.loading')"
-        >
+        <div v-if="loading && !anything" class="py-8 text-center" role="status" :aria-label="t('work.library.loading')">
           <v-progress-circular indeterminate size="28" color="primary" />
         </div>
 
-        <ul v-else-if="shown.length" class="library__rows">
+        <LibraryDocumentHits
+          v-if="searching && docs.found.value"
+          :library="docs.found.value.library"
+          :rooms="docs.found.value.rooms"
+          :keeping="docs.making.value"
+          @open="openDoc"
+          @open-room="openRoom"
+          @keep="make"
+        />
+
+        <ul v-if="entries.length && !(loading && !anything)" class="library__rows">
           <!-- Long libraries go through VirtualList: past VIRTUAL_LIST_CONTENT_THRESHOLD
                (lib/virtualList.ts) only the rows in view stay mounted, below it this is
                the plain list it always was. `item-as="li"` keeps the ul > li structure
@@ -459,36 +574,61 @@ function read(file: LibraryFile) {
                ⋯ menu work exactly as before. virtua owns the li, so the right-click
                handler sits on the row div it wraps. -->
           <VirtualList
-            :items="shown"
-            :item-key="fileRowKey"
+            :items="entries"
+            :item-key="entryKey"
             :scroll-parent="listEl"
             :threshold="VIRTUAL_LIST_CONTENT_THRESHOLD"
             :estimated-size="58"
             item-as="li"
             item-role="listitem"
           >
-            <template #item="{ item: file }">
-              <div
-                class="library-row"
-                :class="{ 'library-row--on': file.path === selectedPath }"
-                @contextmenu="rowMenu.open(file.path, $event)"
-              >
-                <button type="button" class="library-row__open" @click="open(file)">
-                  <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="library-row__icon" />
+            <template #item="{ item }">
+              <div v-if="item.doc" class="library-row" @contextmenu="rowMenu.open(item.key, $event)">
+                <button type="button" class="library-row__open" @click="openDoc(item.doc.id)">
+                  <v-icon icon="mdi-file-document-edit-outline" size="20" class="library-row__icon" />
                   <span class="library-row__id">
-                    <span class="library-row__name t-body">{{ file.path }}</span>
-                    <span class="t-meta c-faint">{{ rowMeta(file) }}</span>
+                    <span class="library-row__name t-body">{{ docName(item.doc) }}</span>
+                    <span class="t-meta c-faint">{{ docMeta(item.doc) }}</span>
                   </span>
                 </button>
-                <AdaptiveMenu v-bind="rowMenu.bind(file.path)" :actions="fileActions(file)" :title="file.path">
+                <AdaptiveMenu
+                  v-bind="rowMenu.bind(item.key)"
+                  :actions="docActions(item.doc)"
+                  :title="docName(item.doc)"
+                >
                   <template #activator="{ props: menuProps }">
                     <BaseButton
                       v-bind="menuProps"
                       icon="mdi-dots-horizontal"
                       size="sm"
                       class="tap-target"
-                      :loading="busy === file.path"
-                      :aria-label="t('work.library.actionsOf', { name: file.path })"
+                      :aria-label="t('work.library.actionsOf', { name: docName(item.doc) })"
+                    />
+                  </template>
+                </AdaptiveMenu>
+              </div>
+              <div
+                v-else-if="item.file"
+                class="library-row"
+                :class="{ 'library-row--on': item.file.path === selectedPath }"
+                @contextmenu="rowMenu.open(item.key, $event)"
+              >
+                <button type="button" class="library-row__open" @click="open(item.file)">
+                  <v-icon :icon="KIND_ICONS[kindOf(item.file.path)]" size="20" class="library-row__icon" />
+                  <span class="library-row__id">
+                    <span class="library-row__name t-body">{{ item.file.path }}</span>
+                    <span class="t-meta c-faint">{{ rowMeta(item.file) }}</span>
+                  </span>
+                </button>
+                <AdaptiveMenu v-bind="rowMenu.bind(item.key)" :actions="fileActions(item.file)" :title="item.file.path">
+                  <template #activator="{ props: menuProps }">
+                    <BaseButton
+                      v-bind="menuProps"
+                      icon="mdi-dots-horizontal"
+                      size="sm"
+                      class="tap-target"
+                      :loading="busy === item.file.path"
+                      :aria-label="t('work.library.actionsOf', { name: item.file.path })"
                     />
                   </template>
                 </AdaptiveMenu>
@@ -500,7 +640,11 @@ function read(file: LibraryFile) {
         <!-- Files exist but the search/type filter hid them: say "filtered out",
              distinct from "no files yet", and offer one-click clear (§8.1). -->
         <BaseEmptyState
-          v-else-if="files.length"
+          v-else-if="
+            anything &&
+            !(searching && docs.searching.value) &&
+            !(searching && (docs.found.value?.library.length || docs.found.value?.rooms.length))
+          "
           size="inline"
           align="center"
           class="library__empty"
@@ -600,6 +744,16 @@ function read(file: LibraryFile) {
       {{ t('work.library.deleteBody') }}
     </ConfirmDialog>
   </AppPage>
+  <ConfirmDialog
+    :model-value="!!confirmingDoc"
+    :title="t('work.library.deleteTitle', { name: confirmingDoc ? docName(confirmingDoc) : '' })"
+    :confirm-label="t('work.library.delete')"
+    danger
+    @update:model-value="confirmingDoc = null"
+    @confirm="removeDoc"
+  >
+    {{ t('work.library.deleteDocBody') }}
+  </ConfirmDialog>
 </template>
 
 <style scoped>

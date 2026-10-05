@@ -44,6 +44,8 @@
   "cheeseDocSet": "Update the doc",
   "cheeseDocGet": "Read the doc",
   "cheeseDocEdit": "Edit the doc",
+  "cheeseDocNew": "Create a doc",
+  "cheeseDocList": "List library docs",
   "cheeseDocCommentReply": "Reply to a doc comment",
   "cheeseTask": "Create a task",
   "cheeseWorktree": "Prepare the working directory",

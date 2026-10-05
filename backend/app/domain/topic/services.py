@@ -219,6 +219,12 @@ class TopicService:
         """Return one topic for cross-domain service callers."""
         return await self._repo.get(topic_id)
 
+    async def lock(self, topic_id: uuid.UUID) -> Topic | None:
+        """Hold the room's row lock for the rest of the transaction, whatever
+        state the room is in: for work that orders itself against the room's
+        own, such as putting an archived room's sandbox to sleep."""
+        return await self._repo.lock(topic_id)
+
     async def lock_for_execution(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.lock(topic_id)
         if topic is None:

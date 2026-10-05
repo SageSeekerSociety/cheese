@@ -1,5 +1,5 @@
-"""What a tool call waiting on its session's cloud sandbox watches, and what
-it is told meanwhile (``session_work._attempt``)."""
+"""What a tool call waiting on its session's cloud sandbox, or its whole cloud
+VM, watches, and what it is told meanwhile (``session_work._attempt``)."""
 
 from datetime import UTC, datetime
 
@@ -18,6 +18,8 @@ SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
 SANDBOX_WAKING = "沙箱正在唤醒；对话和平台工具仍可用。"
 SANDBOX_ERROR = "云端沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 SANDBOX_RESTORE_FAILED = "沙箱没能从归档恢复，稍后会再试；对话和平台工具仍可用。"
+VM_PREPARING = "云虚拟机正在准备；对话和平台工具仍可用。"
+VM_ERROR = "云虚拟机出错：供应方报告错误。对话和平台工具仍可用。"
 
 
 async def _home_settled(db, session_id) -> bool:
@@ -52,6 +54,7 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
                 CloudHost.device_id,
                 CloudHost.enroll_attempts,
                 CloudHost.released_at,
+                CloudHost.whole_machine,
             ).where(CloudHost.id == host_id)
         )
     ).one_or_none()
@@ -68,7 +71,7 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
         return False
     if host.status == MachineStatus.error:
         # Enrolled, so the session's work may be on it: it is not replaced.
-        return SANDBOX_ERROR
+        return VM_ERROR if host.whole_machine else SANDBOX_ERROR
     if host.status in GONE:
         # Gone upstream: the next attempt forgets it and places the session.
         return True

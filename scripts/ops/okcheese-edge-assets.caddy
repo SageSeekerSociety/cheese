@@ -1,0 +1,18 @@
+# okcheese.com's built /assets/, answered from this box when the copy kept by
+# cheese-edge-asset-sync has the file; anything it does not have yet falls
+# through to the tunnels like every other request. Imported inside the
+# okcheese.com site block.
+@edge_asset {
+	path /assets/*
+	file {
+		root /srv/okcheese-edge
+	}
+}
+handle @edge_asset {
+	root * /srv/okcheese-edge
+	# Hashed names: a file under a given name never changes.
+	header Cache-Control "public, max-age=31536000, immutable"
+	file_server {
+		precompressed gzip
+	}
+}

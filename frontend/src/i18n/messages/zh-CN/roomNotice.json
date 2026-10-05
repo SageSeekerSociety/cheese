@@ -107,6 +107,10 @@
   "docCommentedHandedTo": "{actor} 评论了文档，已交给 {seat}",
   "docEdited": "{actor} 编辑了文档",
   "docEditedFor": "{requester} 让{agent}改了文档",
+  "docCreatedInLibrary": "{actor} 新建了文档《{title}》",
+  "docEditedInLibrary": "{actor} 改了文档《{title}》",
+  "docSuggestedInLibrary": "{actor} 对文档《{title}》提了修改建议",
+  "docUntitled": "未命名文档",
   "docMissing": "本话题已有进展但还没有实况文档，已请 AI 队友补上",
   "docSuggested": "{agent} 提了 {n} 处修改建议",
   "emptyValue": "（空）",
@@ -345,7 +349,12 @@
   "sandboxAsleep": "沙箱 {minutes} 分钟没有活动，已休眠。文件都留着，下一条消息会唤醒它。",
   "sandboxStoppedNoCredits": "额度已用完，沙箱已停止。文件都留着，有了额度后下一条消息会唤醒它。",
   "sandboxArchiveLost": "沙箱的归档已经不在，沙箱从仓库里已推送的内容重新开始",
+  "cloudVmPreparing": "正在准备云虚拟机",
+  "cloudVmReady": "云虚拟机已就绪",
+  "cloudVmReplaced": "云虚拟机准备失败，正在重新准备",
+  "cloudVmReleasedIdle": "云虚拟机 {minutes} 分钟没有活动，改动已推送到分支，虚拟机已释放。下一条消息会准备一台新的。",
   "sandboxFailing": "云端沙箱连续失败",
   "sandboxFailingNext": "话题会留在原处，不会自动换到别处。需要有人检查这个沙箱里的连接器和会话，修复后可以重试。",
-  "computeCloud": "云端沙箱"
+  "computeCloud": "云端沙箱",
+  "computeCloudVm": "整台云虚拟机"
 }

@@ -28,6 +28,10 @@ vi.mock('../../api/docThreads', () => ({
   listDocThreads: async () => ({ data: [], total: 0 }),
   writeDocThread: async () => ({}),
 }))
+vi.mock('../../api/projectDocuments', () => ({
+  getDocumentAbout: vi.fn(async (id: string) => ({ id, title: '竞品定价对比' })),
+  renameDocument: vi.fn(),
+}))
 vi.mock('../../api/docHistory', () => ({
   getDocVersions: async () => ({ versions: [], cursor: null }),
   restoreDocVersion: async () => ({}),
@@ -489,5 +493,16 @@ describe('工作面板 · Tab 容器', () => {
 
     expect(container.querySelector('.doc-comments__draft')).toBeNull()
     expect(addComment).not.toHaveBeenCalled()
+  })
+})
+
+describe('资料库文档在自由区', () => {
+  it('地址点名的资料库文档开成一格：页签写它的标题，打开的是那一份', async () => {
+    seedRoom('topic-A', '对话自己的文档\n')
+    seedRoom('lib-doc', '三家都有年付\n')
+    const { container } = mountPanel('topic-A', { tab: 'file:doc:lib-doc' })
+    await flush()
+    expect(tabLabels(container)).toContain('竞品定价对比')
+    expect(container.textContent).toContain('三家都有年付')
   })
 })

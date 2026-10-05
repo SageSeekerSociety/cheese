@@ -66,6 +66,12 @@ CALLS = {
         "POST",
         "/documents/fixture-id/edits",
     ),
+    "cheese_doc_new": (
+        {"title": "竞品定价对比"},
+        "POST",
+        "/projects/fixture-project/documents",
+    ),
+    "cheese_doc_list": ({}, "GET", "/projects/fixture-project/documents"),
     "cheese_task": ({"title": "数据清洗"}, "POST", "/topics/fixture/split"),
     "cheese_close_task": (
         {"task": TASK},
@@ -421,6 +427,25 @@ def test_each_platform_tool_reaches_the_platform_without_the_machine(
     assert "deny" not in outcome, outcome
     assert (method, path) in [(m, p) for m, p, _ in platform_calls], platform_calls
     assert executor_calls == [], f"{tool} 经过了那台机器"
+
+
+def test_a_named_document_is_read_and_changed_instead_of_the_rooms(
+    machine_is_gone,
+):
+    """点了名的文档（项目资料库里的那一份）就读写那一份，不去碰话题的实况文档。"""
+    process, platform_calls, _ = machine_is_gone
+
+    _call(process, "cheese_doc_get", {"document": "library-doc"})
+    _call(
+        process,
+        "cheese_doc_edit",
+        {"document": "library-doc", "edits": [{"old": "旧", "new": "新"}]},
+    )
+
+    reached = [(m, p) for m, p, _ in platform_calls]
+    assert ("GET", "/documents/library-doc") in reached
+    assert ("POST", "/documents/library-doc/edits") in reached
+    assert ("GET", "/topics/fixture/document") not in reached
 
 
 @pytest.mark.parametrize(

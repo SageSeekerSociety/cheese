@@ -1428,13 +1428,70 @@ def test_modified_verified_binary_with_wrong_version_is_not_reused(tmp_path):
     fallback.parent.mkdir(parents=True)
     fallback.write_text(binary.read_text())
     fallback.chmod(0o700)
-    verified = {}
-    assert bootstrap.binary(tmp_path, "http://unused", verified) == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
     binary.write_text("#!/bin/sh\necho '0.0.0'\n")
-    assert bootstrap.binary(tmp_path, "http://unused", verified) == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
     assert binary.read_bytes() == fallback.read_bytes()
     fallback.write_text("#!/bin/sh\necho 0.0.0\n")
-    assert bootstrap.binary(tmp_path, "http://unused", verified) == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+
+
+def test_a_proven_pin_is_not_run_again_by_the_next_preparation(tmp_path):
+    """Each room preparation is a new process on the machine. One that finds
+    the pin already proven must not run it again: on a machine its room keeps
+    busy, that run is what outlasted the deadline."""
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+
+    binary = tmp_path / ".cheese/claude/versions" / bootstrap.VERSION
+    binary.parent.mkdir(parents=True)
+    calls = tmp_path / "version-calls"
+    busy = tmp_path / "busy"
+    binary.write_text(
+        "#!/bin/sh\n"
+        f"echo run >> '{calls}'\n"
+        f"if [ -e '{busy}' ]; then sleep 60; fi\n"
+        f"echo '{bootstrap.VERSION}'\n"
+    )
+    binary.chmod(0o700)
+
+    def prepare():
+        # As the machine runs it: the bootstrap source exec'd in a new process.
+        return subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import runpy, sys\n"
+                "from pathlib import Path\n"
+                "found = runpy.run_path(sys.argv[1])['binary']"
+                "(Path(sys.argv[2]), 'http://unused')\n"
+                "print(found)\n",
+                bootstrap.__file__,
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, "PATH": "/usr/bin:/bin"},
+        )
+
+    first = prepare()
+    assert first.returncode == 0, first.stderr
+    assert first.stdout.strip() == str(binary)
+    assert calls.read_text() == "run\n"
+
+    busy.touch()
+    started = time.monotonic()
+    second = prepare()
+    assert second.returncode == 0, second.stderr
+    assert second.stdout.strip() == str(binary)
+    assert time.monotonic() - started < 10
+    assert calls.read_text() == "run\n"
+
+    busy.unlink()
+    binary.write_text(binary.read_text() + "# rewritten\n")
+    third = prepare()
+    assert third.returncode == 0, third.stderr
+    assert calls.read_text() == "run\nrun\n"
 
 
 class RemoteExecutionTests(unittest.TestCase):

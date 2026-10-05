@@ -30,7 +30,7 @@ user-facing route lists hosts. The admin dashboard counts them.
 | `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that runs no sandbox is kept. Then its sleeping homes are archived and it is released. |
 | `CLOUD_POOL_MAX_HOSTS` | 20 | The platform's cap on hosts, protecting the cluster. Draining hosts do not count. A session that finds the pool full and every host full is told capacity is tight and to try later. |
 | `CLOUD_SANDBOX_CREDITS_PER_HOUR` | none | Credits a running sandbox costs per hour. Unset, no cloud sandbox starts. |
-| `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a whole cloud VM, by spec name. A spec not listed cannot start. |
+| `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a whole cloud VM, from creation to release, by its size as `<cores>c<GiB>g` (`4c8g`). A size not listed cannot be created. |
 
 Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (clamped into the
 offering), so a host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at once. A host has a
@@ -73,6 +73,38 @@ its home, on its host or in its archive, until its room's cleanup removes it. A 
 provider fails before it is enrolled holds nothing of anyone's: the pool gives it up, deletes
 it, and places its sessions again; after three such failures within an hour it stops creating
 hosts for the rest of the hour. An enrolled host in `error` keeps its sessions.
+
+### Whole cloud VMs
+
+A room can choose a whole cloud VM instead of a sandbox (`ComputeChoice.whole_machine`):
+each of its sessions gets a virtual machine of its own, for work a sandbox cannot do —
+Docker, KVM, kernel modules, root. It is a host row too (`CloudHost.whole_machine`), created
+under the same platform customer and account from `MICROCLOUD_VM_OFFERING_ID`, enrolled the
+same way, and counted against `CLOUD_POOL_MAX_HOSTS`. It is never taken from the warm pool,
+no other session is placed on it, and the session's executor runs on it without a sandbox.
+The room hears 「正在准备云虚拟机」 and 「云虚拟机已就绪」; the session sees the environment,
+never the machine.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `MICROCLOUD_VM_OFFERING_ID` | 0 | The offering VMs are created from. 0: the deployment does not offer whole cloud VMs, and the choice is refused. |
+| `CLOUD_VM_CORES` / `_MEMORY_MB` / `_DISK_GB` | 4 / 8192 / 40 | The one VM size, clamped into the offering. Recorded on the row with the project the VM was created for. |
+| `CLOUD_VM_IDLE_RELEASE_S` | 1800 | A VM is pushed and released once its session has been idle this long, by the measure a sandbox sleeps by (no turn in the room, no tool call, no background command still running). |
+
+A VM is never put to sleep or archived. The pool sweep releases it as soon as no home is
+left on it, with no idle hold: when its room switches away after pushing, when the room's
+cleanup removed its directory, or when its session was idle (`machine/cloud_vm.py`, run by
+the sandbox sweep). The idle release runs the same push as a switch first; a VM whose push
+fails or cannot run is kept and asked again ten minutes later. A session that leaves
+without pushing keeps its VM until its room's cleanup, like a home on a host. Releasing a
+VM logs its spec, project and lifetime (`services._vm_released`), the point where it will
+be charged.
+
+A session has root on its VM, so no rule inside the VM can bound its network; MicroCloud
+does that. It keeps a new VM off its private network: the MicroCloud API and console, the
+servers there, Proxmox's internal address and other guests are unreachable, while the
+internet, DNS, apt and the SSH reverse forward the connector's control link uses work.
+Proxmox's public addresses (ports 8006 and 22) are still reachable from a VM.
 
 Machines that a room or a session rented for itself before the pool were adopted as
 *draining* hosts by the migration that introduced it: they keep the sessions on them, take

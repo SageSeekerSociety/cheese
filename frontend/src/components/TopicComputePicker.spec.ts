@@ -1,5 +1,5 @@
 // 房间这一项：还没开工的 AI 队友开工时用哪台。开工前后都改得动。
-import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -48,6 +48,7 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
       { device_id: 'home', name: '家里那台', online: false },
     ],
     sessions: [],
+    cloud_vm_available: false,
     profiles: [
       {
         kind: 'compute',
@@ -282,9 +283,48 @@ describe('cloud sandbox choice', () => {
     await waitFor(() =>
       expect(setTopicComputeChoice).toHaveBeenCalledWith(
         'topic-1',
-        { name: null, profile: 'cloud', device_id: null },
+        { name: null, profile: 'cloud', device_id: null, whole_machine: false },
         {}
       )
     )
+  })
+})
+
+describe('whole cloud VM choice', () => {
+  async function openForm(state: TopicComputeProfile) {
+    mountPicker(state)
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    await fireEvent.click(screen.getByRole('button', { name: /其他配置与设备/ }))
+    await fireEvent.mouseDown(await screen.findByRole('combobox'))
+  }
+
+  it('is offered where the deployment has one, and saved as cloud with the whole machine', async () => {
+    setTopicComputeChoice.mockResolvedValue({ choice: cloud, proposal: null })
+    await openForm(profile({ choice: lab, project_default: lab, cloud_vm_available: true }))
+    await fireEvent.click(await screen.findByRole('option', { name: '整台云虚拟机' }))
+    expect(screen.getByText(/每个会话一台独立的云虚拟机，有 sudo，能跑 Docker/)).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
+    await waitFor(() =>
+      expect(setTopicComputeChoice).toHaveBeenCalledWith(
+        'topic-1',
+        { name: null, profile: 'cloud', device_id: null, whole_machine: true },
+        {}
+      )
+    )
+  })
+
+  it('is not offered where the deployment has none', async () => {
+    await openForm(profile({ choice: lab, project_default: lab, cloud_vm_available: false }))
+    expect(await screen.findByRole('option', { name: '云端沙箱' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: '整台云虚拟机' })).toBeNull()
+  })
+
+  it('names a room on a whole cloud VM as such, not as a sandbox', async () => {
+    const vm: ComputeChoice = { ...cloud, whole_machine: true }
+    mountPicker(profile({ choice: vm, project_default: cloud, cloud_vm_available: true }))
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    const current = screen.getByRole('button', { name: /整台云虚拟机/ })
+    expect(current.textContent).toContain('每个会话一台独立的云虚拟机')
+    expect(screen.getByRole('button', { name: /云端沙箱/ })).not.toBe(current)
   })
 })

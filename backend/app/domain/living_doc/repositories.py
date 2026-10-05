@@ -32,6 +32,24 @@ class DocumentRepository:
         )
         return {row.room_id: row for row in rows if row.room_id is not None}
 
+    async def of_project(self, project_id: uuid.UUID) -> list[Document]:
+        """The project's own documents, in no room, the latest changed first."""
+        rows = await self._session.scalars(
+            select(Document)
+            .where(Document.project_id == project_id, Document.room_id.is_(None))
+            .order_by(Document.updated_at.desc(), Document.id)
+        )
+        return list(rows)
+
+    async def create(
+        self, *, project_id: uuid.UUID, title: str, author: str
+    ) -> Document:
+        """A new document of the project's own, empty (version 0)."""
+        doc = Document(project_id=project_id, title=title, author=author)
+        self._session.add(doc)
+        await self._session.flush()
+        return doc
+
     async def ensure_for_room(
         self, *, room_id: uuid.UUID, project_id: uuid.UUID
     ) -> Document:

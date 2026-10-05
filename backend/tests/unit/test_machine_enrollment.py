@@ -498,6 +498,33 @@ sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
     assert calls.read_text().split("\n")[0] == "-n apt-get install -y -q bubblewrap"
 
 
+def test_nothing_is_installed_before_cloud_init_has_finished(tmp_path):
+    """A machine is reported running while cloud-init still upgrades its
+    packages and holds the dpkg lock; an install then fails, and the machine
+    is given up for a provider failure it is not."""
+    import subprocess
+
+    script = enrollment.bootstrap_script(
+        origin="http://cheese.test", token="tok", device_id="dev"
+    )
+    start = script.index("if command -v cloud-init")
+    block = script[start : script.index("\ndone", start) + len("\ndone")]
+    calls = tmp_path / "calls"
+    harness = f"""
+command() {{ [ "$2" = bwrap ] && return 1; return 0; }}
+cloud-init() {{ printf 'cloud-init %s\\n' "$*" >> {calls}; }}
+sudo() {{ printf 'sudo %s\\n' "$*" >> {calls}; }}
+{block}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 0, done.stderr
+    assert calls.read_text().splitlines()[:2] == [
+        "cloud-init status --wait",
+        "sudo -n apt-get install -y -q bubblewrap",
+    ]
+
+
 def test_bootstrap_is_valid_shell():
     """The script is built from an f-string, so a mis-escaped brace turns into a
     syntax error that would only surface on a real machine."""

@@ -14,6 +14,11 @@ disk bounds how many homes a host keeps (``disk_capacity``). A sleeping home
 wakes on the same host when that host has a slot for it, and otherwise is
 archived and restored where there is one.
 
+A session that asks for a whole machine is given a host of its own: a whole
+cloud VM created for it from ``microcloud_vm_offering_id``, which carries no
+other session, is never taken from the warm pool, and is released as soon as
+its home is gone. It counts against ``cloud_pool_max_hosts`` like any host.
+
 Provisioning is asynchronous on MicroCloud's side, so nothing here blocks on it:
 the pool sweep (``runner.CloudPoolSweeper``) keeps the table in line
 with the provider, enrolls hosts that came up, and scales the pool.
@@ -64,7 +69,7 @@ from app.domain.machine.repositories import CloudHostRepository, Load
 from app.domain.machine.supply import pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicStatus
-from app.domain.usage.compute import admit_start
+from app.domain.usage.compute import VM, admit_start, vm_spec
 
 logger = logging.getLogger("cheese.machine")
 
@@ -85,18 +90,20 @@ ACTIVE_STEP = timedelta(minutes=1)
 
 class CloudKeepsFailing(Exception):
     """The provider failed every host the pool asked for lately; the message is
-    what the session is told instead of a sandbox."""
+    what the session is told instead of a sandbox (or its VM)."""
 
-    def __init__(self, failures: int) -> None:
+    def __init__(self, failures: int, *, whole_machine: bool = False) -> None:
         minutes = int(PROVIDER_ERROR_WINDOW.total_seconds() // 60)
-        super().__init__(say("cloudKeepsFailing", failures=failures, minutes=minutes))
+        key = "cloudVmKeepsFailing" if whole_machine else "cloudKeepsFailing"
+        super().__init__(say(key, failures=failures, minutes=minutes))
 
 
 class CloudPoolFull(Exception):
-    """The pool holds ``cloud_pool_max_hosts`` and none has a free slot."""
+    """The pool holds ``cloud_pool_max_hosts`` and none has a free slot (or a
+    whole VM was asked for, which needs a host of its own)."""
 
-    def __init__(self) -> None:
-        super().__init__(say("cloudBusy"))
+    def __init__(self, *, whole_machine: bool = False) -> None:
+        super().__init__(say("cloudVmBusy" if whole_machine else "cloudBusy"))
 
 
 class SandboxMustMove(Exception):
@@ -125,6 +132,7 @@ def accepting(host: CloudHost) -> bool:
         host.released_at is None
         and host.failed_at is None
         and not host.draining
+        and not host.whole_machine
         and host.status not in {MachineStatus.error, MachineStatus.deleting, *GONE}
         and not _failed_unenrolled(host)
     )
@@ -203,7 +211,12 @@ class HostPool:
         return topic
 
     async def place(
-        self, session_id: uuid.UUID, *, actor: Actor, resource_id: str
+        self,
+        session_id: uuid.UUID,
+        *,
+        actor: Actor,
+        resource_id: str,
+        whole_machine: bool = False,
     ) -> CloudHost:
         """The host this session's sandbox is on, placing it if it has none.
 
@@ -215,11 +228,14 @@ class HostPool:
         (``SandboxMustMove`` when it has none); an archived home is placed like
         a new one and keeps its archive, which the caller restores from. Raises
         ``SandboxBusy`` while something else is moving the home.
+        With ``whole_machine`` a session with no home is given a whole cloud
+        VM of its own instead of a slot on a shared host.
 
-        Starting a sandbox, a new one, a sleeping one or an archived one, is
-        charged as cloud compute: it raises ``ComputeRefused`` when no price is
-        set or the project's credits are spent. A sandbox already running is
-        not refused, so the turn using it finishes.
+        Starting a sandbox, a new one, a sleeping one or an archived one, or
+        creating a whole VM, is charged as cloud compute: it raises
+        ``ComputeRefused`` when no price is set for it or the project's credits
+        are spent. A sandbox already running is not refused, so the turn using
+        it finishes.
         """
         from app.domain.agent_session.models import AgentSession
 
@@ -262,7 +278,10 @@ class HostPool:
                 _touch(home)
                 return host
 
-        if home is None or home.host_id is None or home.stopped_at is not None:
+        starting = home is None or home.host_id is None or home.stopped_at is not None
+        if starting and not (whole_machine and home is None):
+            # A whole VM is admitted at its own price once its size is known
+            # (``_place_on_own_vm``).
             await admit_start(self._session, topic.project_id)
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
@@ -288,7 +307,10 @@ class HostPool:
                 await self._fail(host)
                 # The locks were let go around the provider; look again.
                 return await self.place(
-                    session_id, actor=actor, resource_id=resource_id
+                    session_id,
+                    actor=actor,
+                    resource_id=resource_id,
+                    whole_machine=whole_machine,
                 )
         if home is not None:
             # Archived: placed like a new home, restored once it is there.
@@ -304,6 +326,8 @@ class HostPool:
                 "resource_id": resource_id,
                 "session_id": session_id,
             }
+        if whole_machine and isinstance(home, dict):
+            return await self._place_on_own_vm(session_id, topic_id, home)
         host = await self._place_on_free(home)
         if host is not None:
             return host
@@ -348,6 +372,32 @@ class HostPool:
     async def current_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
         return await self._repo.current_home(session_id)
 
+    async def _place_on_own_vm(
+        self, session_id: uuid.UUID, topic_id: uuid.UUID, home: dict
+    ) -> CloudHost:
+        """Create a whole cloud VM for the session, with its home on it. Called
+        holding the room and the pool; the provider is read with neither held."""
+        await self._require_room_to_grow(whole_machine=True)
+        await self._session.commit()
+        body = await self._vm_body()
+        await admit_start(
+            self._session,
+            home["project_id"],
+            kind=VM,
+            spec=vm_spec(body["cores"], body["memoryMb"]),
+        )
+        await self._lock_room(topic_id)
+        await self._repo.lock_pool()
+        existing = await self._repo.current_home(session_id)
+        if existing is not None and existing.host_id is not None:
+            # Another tool call of the session placed it meanwhile.
+            host = await self._repo.get(existing.host_id)
+            assert host is not None
+            await self._session.commit()
+            return host
+        await self._require_room_to_grow(whole_machine=True)
+        return await self._create(body, home, whole_machine=True)
+
     async def _place_on_free(self, home: dict | CloudHostHome) -> CloudHost | None:
         """Put ``home`` on a host with a free slot, if there is one. Called
         holding the pool; commits when it placed."""
@@ -372,30 +422,49 @@ class HostPool:
         await self._session.commit()
         return host
 
-    async def _require_room_to_grow(self) -> None:
+    async def _require_room_to_grow(self, *, whole_machine: bool = False) -> None:
         """Refuse to add a host while the provider keeps failing them, or when
         the pool is at its cap. Called holding the pool."""
         failures = await self._repo.failures_since(
             datetime.now(UTC) - PROVIDER_ERROR_WINDOW
         )
         if failures >= MAX_PROVIDER_ERRORS:
-            raise CloudKeepsFailing(failures)
+            raise CloudKeepsFailing(failures, whole_machine=whole_machine)
         hosts = await self._repo.live()
         if sum(_counts_toward_cap(h) for h in hosts) >= settings.cloud_pool_max_hosts:
-            raise CloudPoolFull()
+            raise CloudPoolFull(whole_machine=whole_machine)
 
     async def _host_body(self) -> dict:
         """What every new host is asked for. Reads the provider: call it with
         no lock held."""
-        offering = await pick_offering(self._client)
+        return await self._body(
+            await pick_offering(self._client),
+            cores=settings.microcloud_default_cores,
+            memory_mb=settings.microcloud_default_memory_mb,
+            disk_gb=settings.microcloud_default_disk_gb,
+        )
+
+    async def _vm_body(self) -> dict:
+        """What every whole cloud VM is asked for. Reads the provider: call it
+        with no lock held."""
+        return await self._body(
+            await pick_offering(self._client, settings.microcloud_vm_offering_id),
+            cores=settings.cloud_vm_cores,
+            memory_mb=settings.cloud_vm_memory_mb,
+            disk_gb=settings.cloud_vm_disk_gb,
+        )
+
+    async def _body(
+        self, offering: dict, *, cores: int, memory_mb: int, disk_gb: int
+    ) -> dict:
         spec = {
             name: max(
                 int(offering[f"{name}Min"]), min(int(offering[f"{name}Max"]), value)
             )
             for name, value in (
-                ("cores", settings.microcloud_default_cores),
-                ("memoryMb", settings.microcloud_default_memory_mb),
-                ("diskGb", settings.microcloud_default_disk_gb),
+                ("cores", cores),
+                ("memoryMb", memory_mb),
+                ("diskGb", disk_gb),
             )
         }
         customer_id, account_id = await self._platform_account()
@@ -422,9 +491,16 @@ class HostPool:
             return warm
         return await self._create(body, home)
 
-    async def _create(self, body: dict, home: dict | CloudHostHome | None) -> CloudHost:
+    async def _create(
+        self,
+        body: dict,
+        home: dict | CloudHostHome | None,
+        *,
+        whole_machine: bool = False,
+    ) -> CloudHost:
         host_id = uuid.uuid4()
-        body = {**body, "hostname": f"host-{host_id.hex[:16]}"}
+        prefix = "vm" if whole_machine else "host"
+        body = {**body, "hostname": f"{prefix}-{host_id.hex[:16]}"}
         # The platform needs its own way in to enroll the host later. The
         # operator's key too: the bootstrap key is erased at enrollment, and a
         # machine nobody can log into cannot be diagnosed (see the setting).
@@ -455,6 +531,10 @@ class HostPool:
             ai_mode="none",
             ai_status=AiStatus.unknown,
             bootstrap_key=bootstrap_private,
+            whole_machine=whole_machine,
+            project_id=(
+                home["project_id"] if whole_machine and isinstance(home, dict) else None
+            ),
         )
         if home is not None:
             await self._repo.put_home(host.id, home)
@@ -535,7 +615,9 @@ class HostPool:
         if home is None or home.waiting_since is not None:
             return None
         home.waiting_since = datetime.now(UTC)
-        return await tell_preparing(self._session, home, sentence)
+        return await tell_preparing(
+            self._session, home, sentence, whole_machine=await self._vm(home)
+        )
 
     async def tell_ready(self, session_id: uuid.UUID) -> dict | None:
         """Close the room's preparing line, if it was told one."""
@@ -545,7 +627,11 @@ class HostPool:
         if home is None or home.waiting_since is None:
             return None
         home.waiting_since = None
-        return await tell_ready(self._session, home)
+        return await tell_ready(self._session, home, await self._vm(home))
+
+    async def _vm(self, home: CloudHostHome) -> bool:
+        host = None if home.host_id is None else await self._repo.get(home.host_id)
+        return host is not None and host.whole_machine
 
     async def _locked_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
         return await self._session.scalar(
@@ -622,6 +708,13 @@ class HostPool:
         idle: list[CloudHost] = []
         for host in live:
             running, stored = load.get(host.id, Load(0, 0))
+            if host.whole_machine:
+                # A whole VM goes the moment no home is on it: nobody else will
+                # be placed on it, and it was never part of the floor.
+                if not stored and host.machine_id is not None:
+                    host.released_at = now
+                    idle.append(host)
+                continue
             if running or host.machine_id is None or host.warm_claim_pending:
                 host.idle_since = None
                 continue
@@ -719,7 +812,12 @@ class HostPool:
         await self._repo.unplace_archived(host.id)
         for home in await self._repo.homes_on(host.id):
             if home.waiting_since is not None:
-                lines.append((home.topic_id, await tell_replaced(self._session, home)))
+                lines.append(
+                    (
+                        home.topic_id,
+                        await tell_replaced(self._session, home, host.whole_machine),
+                    )
+                )
             await self._repo.delete_home(home)
         await self._session.commit()
         for topic_id, line in lines:
@@ -768,7 +866,7 @@ class HostPool:
             from app.domain.machine.progress import tell_ready
 
             locked.waiting_since = None
-            line = await tell_ready(self._session, locked)
+            line = await tell_ready(self._session, locked, host.whole_machine)
             await self._session.commit()
             await publish_line(locked.topic_id, line)
 

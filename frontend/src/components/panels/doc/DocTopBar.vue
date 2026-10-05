@@ -43,6 +43,8 @@ const props = defineProps<{
   headings: OutlineHeading[]
   /** 查找条开着没有，按钮据此发亮。 */
   findOpen: boolean
+  /** 「⋯」里给不给「删除文档」：只有项目资料库里的文档能单独删。 */
+  deletable?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'toggle-suggestions'): void
@@ -53,6 +55,7 @@ const emit = defineEmits<{
   (e: 'open-thread', id: string): void
   (e: 'toggle-find'): void
   (e: 'outline-select', pos: number): void
+  (e: 'delete'): void
 }>()
 
 // 对整篇：菜单里先是输入框，交出去以后是那张卡。菜单关上就收起这一次（正在做的不收）。
@@ -210,6 +213,10 @@ function pickHeading(pos: number) {
               :title="editable ? t('work.room.doc.setReadOnly') : t('work.room.doc.backToEdit')"
               @click="emit('toggle-editable')"
             />
+          </template>
+          <template v-if="deletable">
+            <v-divider class="my-1" />
+            <v-list-item :title="t('work.room.doc.delete')" base-color="error" @click="emit('delete')" />
           </template>
         </v-list>
       </v-menu>
