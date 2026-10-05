@@ -74,7 +74,7 @@ AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`�
 
 **关闭**：`POST /topics/{room}/tasks/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。交付的改动被采纳时任务自己关。
 
-平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。工作电脑按 项目默认 → 房间（`topics.compute_config`）→ 任务（`tasks.compute_config`）取，任务第一次要机器时从房间的选择抄一份。
+平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。工作电脑按 项目默认 → 房间（`topics.compute_config`）→ 任务（`tasks.compute_config`）取，任务第一次要机器时从房间的选择抄一份，之后房间再换也不跟着动；负责人（或任务自己的会话）用 `PUT /topics/{room}/compute-profile?task=` 换。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`compute_configs.works_tasks_of`）：选不了，抄房间的选择时遇到它就改用项目默认，「系统挑一台」时跳过它。
 
 ## 工作目录怎么来 {#worktree}
 

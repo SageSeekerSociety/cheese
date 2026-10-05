@@ -942,11 +942,10 @@ class RoomTurns:
             # still kills at 900s.
             # 不租手的一轮身上不钉机器。钉了就是给一段永远不会用到机器的对话记上
             # 一台机器，而这一行本来是给「以后别换机器」用的。
-            settings_ = project.settings if project else None
             if needs_place and provider is not None:
                 from app.domain.agent.compute_configs import fix_task_choice
 
-                if fix_task_choice(topic, task, settings_):
+                if await fix_task_choice(session, topic, task, project):
                     await session.commit()
             if needs_place and provider is not None and topic.compute_config is None:
                 # v4 affinity red line: materialize the effective target BEFORE

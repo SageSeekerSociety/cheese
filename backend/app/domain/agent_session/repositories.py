@@ -3,7 +3,18 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Uuid, column, delete, exists, select, table
+from sqlalchemy import (
+    JSON,
+    String,
+    Uuid,
+    cast,
+    column,
+    delete,
+    exists,
+    or_,
+    select,
+    table,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +24,12 @@ from app.domain.topic.models import Topic
 # The two columns of ``tasks`` the upsert reads — which room a task hangs in.
 # Named as a bare table rather than imported from ``room_task``, which depends
 # on this domain: importing back would make the two a cycle.
-_tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
+_tasks = table(
+    "tasks",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("compute_config", JSON),
+)
 
 
 class AgentSessionRepository:
@@ -170,18 +186,35 @@ class AgentSessionRepository:
         )
         return result.scalar_one_or_none()
 
-    async def ids_in_room(self, room_id: uuid.UUID) -> list[uuid.UUID]:
-        """Every session id in this room, whether or not it has a machine yet.
+    async def ids_on_choice(
+        self, room_id: uuid.UUID, task_id: uuid.UUID | None = None
+    ) -> list[uuid.UUID]:
+        """Every session that works on one work-computer choice, whether or not
+        it has a machine yet: a task's own sessions, or for the room (no task)
+        the room's sessions and those of its tasks that have no choice of their
+        own and so follow the room's.
 
-        一个话题一个容器（2026-09-28 决定，推翻结论 60）：换工作电脑是**房间**的动
-        作，而写下去要逐条会话去写（每一条各自先推后搬），所以先要一张「这间房里
-        有哪几条」的清单。没开工的那条也算：它的选择是同一项，只是还没有手。
-
-        顺序（agent、id）只为了可复现：搬的先后不影响结果，每一条各自算自己的。
+        Changing a choice is written session by session (each pushes before it
+        moves), so it starts from this list. The order (agent, id) is only for
+        reproducibility: each session works out its own move.
         """
+        if task_id is not None:
+            on_choice = AgentSession.conversation_id == task_id
+        else:
+            # No choice of its own: SQL NULL, or the JSON null an ORM write of
+            # None stores.
+            own = _tasks.c.compute_config
+            following = select(_tasks.c.id).where(
+                _tasks.c.room_id == room_id,
+                or_(own.is_(None), cast(own, String) == "null"),
+            )
+            on_choice = or_(
+                AgentSession.conversation_id == room_id,
+                AgentSession.conversation_id.in_(following),
+            )
         result = await self._session.execute(
             select(AgentSession.id)
-            .where(AgentSession.topic_id == room_id)
+            .where(AgentSession.topic_id == room_id, on_choice)
             .order_by(AgentSession.agent_handle, AgentSession.id)
         )
         return list(result.scalars())

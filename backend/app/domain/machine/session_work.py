@@ -24,6 +24,7 @@ from app.domain.agent.compute_configs import (
     choice_label,
     place_choice,
     room_choice,
+    works_tasks_of,
 )
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
@@ -73,29 +74,6 @@ from app.domain.user.services import user_by_handle
 logger = logging.getLogger(__name__)
 
 
-def presentation(row):
-    request = row.execution_request or {}
-    lease = row.work_lease
-    shown = None
-    if lease:
-        online = device_hub.is_online(lease["device_id"])
-        # A cloud session's sandbox is on one of the platform's hosts. Which one,
-        # and where on it, is the platform's scheduling and nobody's to read.
-        on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
-        shown = (
-            {"status": lease.get("status", "ready"), "online": online}
-            if on_cloud
-            else {**lease, "online": online}
-        )
-    return {
-        "id": str(row.id),
-        "agent_handle": row.agent_handle,
-        "harness": row.harness,
-        "choice": request.get("choice"),
-        "lease": shown,
-    }
-
-
 async def _visibility_of(
     db, devices, topic_id, device_id: str | None
 ) -> Visibility | None:
@@ -121,164 +99,6 @@ async def _whole_vm(db, device_id: str) -> bool:
             select(CloudHost.whole_machine).where(CloudHost.device_id == device_id)
         )
     )
-
-
-async def session_machines(db, topic) -> list[dict]:
-    """Each agent session in the room, with what it works on.
-
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间那一项就是房间里每条会话
-    的选择。选自托管设备的房间，每一行答的都是那**一台**——会话手上有租约就是租约
-    那台，还没开工就是房间那一项将租的那台；选云端的房间，每条会话各有自己的沙箱，
-    在平台的哪台宿主机上不对外说。``choice`` 只有「这条会话还没开工、还没租到手」
-    时才可能是 ``None``。
-    """
-    devices = sql_device_service(db)
-    rows = await db.scalars(
-        select(AgentSession)
-        .where(AgentSession.topic_id == topic.id)
-        .order_by(AgentSession.agent_handle, AgentSession.created_at)
-    )
-    out = []
-    for row in rows:
-        choice = (row.execution_request or {}).get("choice")
-        visibility = None
-        if row.work_lease:
-            visibility = await _visibility_of(
-                db, devices, topic.id, row.work_lease.get("device_id")
-            )
-        elif choice and choice.get("profile") == "device":
-            visibility = await _visibility_of(
-                db, devices, topic.id, choice.get("device_id")
-            )
-        out.append(
-            {
-                **presentation(row),
-                "machine_access": visibility is Visibility.host,
-                "visibility": visibility,
-            }
-        )
-    return out
-
-
-async def _placed_sessions(db, project_id):
-    """Each agent session in the project's open rooms that has a machine, with
-    its room and the device it is on (None for Cloud, and for a device the
-    platform picks when the session leases).
-
-    A session that has not started working has no machine and is left out:
-    the project default decides where it goes.
-    """
-    from app.domain.topic.models import Topic, TopicStatus
-
-    rows = await db.execute(
-        select(AgentSession, Topic)
-        .join(Topic, Topic.id == AgentSession.topic_id)
-        .where(Topic.project_id == project_id, Topic.status != TopicStatus.archived)
-    )
-    placed = []
-    for row, topic in rows:
-        choice = (row.execution_request or {}).get("choice")
-        if not choice:
-            continue
-        device_id = None
-        if choice.get("profile") != "cloud":
-            device_id = (row.work_lease or {}).get("device_id") or choice.get(
-                "device_id"
-            )
-        placed.append((row, topic, choice, device_id))
-    return placed
-
-
-async def project_distribution(db, project_id) -> dict:
-    """Where the project's agents that have started work are, right now.
-
-    Counted per agent session in the project's open rooms: how many are in
-    cloud sandboxes, how many on whole cloud VMs, and how many on each
-    self-hosted device, with whether an agent there can see the whole machine.
-    """
-    cloud = cloud_vm = 0
-    on_devices: dict[str | None, dict] = {}
-    devices = sql_device_service(db)
-    for _row, topic, choice, device_id in await _placed_sessions(db, project_id):
-        if choice.get("profile") == "cloud":
-            if choice.get("whole_machine"):
-                cloud_vm += 1
-            else:
-                cloud += 1
-            continue
-        entry = on_devices.setdefault(
-            device_id,
-            # Only a device's own name is shown; a label stored on "any online
-            # device" is one language's words and is not handed out.
-            {
-                "device_id": device_id,
-                "name": choice.get("name") if device_id else None,
-                "agents": 0,
-                "machine_access": False,
-            },
-        )
-        entry["agents"] += 1
-        # The machine is open to its agents when any room there was given it
-        # whole: access is chosen per room, not per machine.
-        visibility = await _visibility_of(db, devices, topic.id, device_id)
-        entry["machine_access"] |= visibility is Visibility.host
-    listed = []
-    for entry in on_devices.values():
-        if entry["device_id"] is not None:
-            device = await devices.get_device(entry["device_id"])
-            if device is not None:
-                entry["name"] = device.name
-        listed.append(entry)
-    listed.sort(key=lambda entry: (-entry["agents"], entry["name"] or ""))
-    return {"cloud": cloud, "cloud_vm": cloud_vm, "devices": listed}
-
-
-async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
-    """The project's agent sessions on one device, the ones its distribution
-    counts there, as ``(room, session presentation)`` pairs, most recently
-    active first.
-
-    ``working`` is whether the room has a turn running. Turns are recorded per
-    room, not per session, so a session whose room is mid-turn counts as
-    working: a bulk switch skips it rather than take its machine away mid-turn.
-    """
-    from app.domain.agent.models import AgentTurn
-
-    placed = [
-        (row, topic)
-        for row, topic, _choice, on in await _placed_sessions(db, project_id)
-        if on == device_id
-    ]
-    if not placed:
-        return []
-    project = await ProjectService(db).get_or_404(project_id)
-    busy = set(
-        await db.scalars(
-            select(AgentTurn.topic_id).where(
-                AgentTurn.topic_id.in_({topic.id for _row, topic in placed}),
-                AgentTurn.stopped_at.is_(None),
-            )
-        )
-    )
-    out = []
-    for row, topic in sorted(placed, key=lambda pair: pair[0].updated_at, reverse=True):
-        out.append(
-            (
-                topic,
-                {
-                    "id": str(row.id),
-                    "topic_id": str(topic.id),
-                    "topic_title": topic.title,
-                    "topic_title_source": str(topic.title_source),
-                    "agent_handle": row.agent_handle,
-                    **await _agent_name(db, project, topic, row.agent_handle),
-                    "choice": (row.execution_request or {}).get("choice"),
-                    "last_active": row.updated_at.isoformat(),
-                    "working": topic.id in busy,
-                },
-            )
-        )
-    return out
 
 
 async def _roommates_device(db, topic, resource: str) -> str | None:
@@ -759,31 +579,39 @@ async def request_choice(
     topic_id,
     actor,
     choice,
+    task=None,
     abandon_unpushed=False,
     if_idle=False,
 ):
-    """Point the whole room — and every session in it — at another work computer.
+    """Point a room — or one of its tasks — and its sessions at another work
+    computer.
 
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：一间房只有一条算力选择，房间里
-    坐着的每一条会话都工作在那一项算出来的那台机器上，所以「换工作电脑」是房间的动
-    作，不是某一条会话自己的。人打开选择器、或者房间里的某一轮拿着自己的凭据来改
-    （``PUT /topics/{id}/compute-profile``），改的都是这一间房。
+    A room has one choice, and every session working on it moves together: the
+    room's own, and those of its tasks that have no choice of their own. A task
+    with one keeps it when the room changes; changing the task's moves only the
+    task's sessions. A person opening the picker, or a turn with its own
+    credential (``PUT /topics/{id}/compute-profile``), changes the same thing.
 
-    每一条会话各自先在它离开的那台上把改动推上去（``_move_session``，逐条的推送与
-    云机器的归还都还在那里）。**全部搬完才写房间那一项**：一条推不上去就是整个房间
-    不换，而房间那一项没变时，已经搬动过的那几条会在下一轮自己走回来——``_attempt``
-    从房间那一项解析，不是从会话行上那份副本。
+    Each session first pushes its work on the machine it leaves
+    (``_move_session``, where the push and the return of a cloud sandbox are).
+    The choice is written only once every session has moved: one that cannot
+    push leaves the whole choice where it was, and the sessions already moved
+    walk back on their next turn — ``_attempt`` resolves from the choice, not
+    from the copy on the session row.
 
-    人的那一次换机可以不带推送（``abandon_unpushed``），且只在这一条会话原来那台
-    够不着的时候成立；房间正在跑任务的房间，``if_idle`` 时整个不换
-    （``SessionWorking``）。
+    A person may switch without the push (``abandon_unpushed``), only when the
+    machine a session leaves cannot be reached; with ``if_idle`` a room in the
+    middle of a turn is not switched at all (``SessionWorking``).
     """
-    # 「这个选择成不成立、可不可以自己发生、谁付钱」房间那条路由已经答过（池接没
-    # 接入、设备归属、档位闸门、Cloud 的花钱权），这里只做搬：同一个选择原样落到每
-    # 一条会话上。「系统挑一台」也原样落下去，由第一条要手的会话挑、其余的跟着它
-    # （``_roommates_device``）。
+    # Whether the choice holds, may happen by itself and who pays were answered
+    # by the route (pool connected, device ownership, the tier gate, the right to
+    # spend on Cloud); this only moves. 「系统挑一台」 is written as it is too: the
+    # first session that needs hands picks, the rest follow it
+    # (``_roommates_device``).
     await TopicService(db).lock_for_execution(topic_id)
-    sessions = await AgentSessionService(db).ids_in_room(topic_id)
+    sessions = await AgentSessionService(db).ids_on_choice(
+        topic_id, task.id if task is not None else None
+    )
     warnings: list[str] = []
     for session_id in sessions:
         warnings += await _move_session(
@@ -796,7 +624,11 @@ async def request_choice(
             if_idle=if_idle,
         )
     topic = await TopicService(db).lock_for_execution(topic_id)
-    topic.compute_config = choice.model_dump()
+    if task is not None:
+        await db.refresh(task)
+        task.compute_config = choice.model_dump()
+    else:
+        topic.compute_config = choice.model_dump()
     if warnings:
         await _tell_room_what_stayed_behind(db, topic_id, warnings)
     await db.commit()
@@ -854,7 +686,7 @@ async def _move_session(
     abandon_unpushed=False,
     if_idle=False,
 ):
-    """Point one session at the room's work computer, after its work is pushed.
+    """Point one session at a new work computer, after its work is pushed.
 
     The push runs on the machine the session leaves, with no transaction open.
     Only a person may switch without it, and only when that machine could not
@@ -1118,6 +950,23 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             selected = await devices.first_healthy_device(
                 topic.project_id, hub.is_online
             )
+        if (
+            task is not None
+            and not lease
+            and selected is not None
+            and not await works_tasks_of(
+                db, selected.device_id, project, task.owner_handle
+            )
+        ):
+            # 「系统挑一台」 for a task picks among the computers that may work
+            # it: someone else's own computer works only its owner's tasks.
+            selected = None
+            for device in await devices.list_devices_for_project(topic.project_id):
+                if _reachable(hub, device.device_id) and await works_tasks_of(
+                    db, device.device_id, project, task.owner_handle
+                ):
+                    selected = device
+                    break
         if selected is None or not _reachable(hub, selected.device_id):
             await db.commit()
             return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}

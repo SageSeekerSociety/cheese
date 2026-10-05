@@ -3,6 +3,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import String, cast, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -86,7 +87,8 @@ def project_configs(project_settings: dict | None) -> ProjectComputeConfigs:
 
 
 def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
-    """The work computer THIS ROOM works on — every session in it (2026-09-28).
+    """The work computer THIS ROOM works on — the room's own sessions and its
+    tasks' until they fix their own (2026-09-28).
 
     一个话题一个容器（2026-09-28 的决定，推翻结论 60）：一间房只有一条算力选择，
     房间里坐着的每一条会话都工作在它算出来的那台机器上，所以会话要手的时候
@@ -104,14 +106,58 @@ def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
     return project_configs(project_settings).default
 
 
-def fix_task_choice(topic, task, project_settings: dict | None) -> bool:
-    """Fix a task's work computer on its first turn that needs one, so a later
-    change to the room's does not move it. False when there is nothing to fix:
-    a room's own turn, or a task that already has its choice."""
-    if task is None or task.compute_config is not None:
+async def works_tasks_of(
+    session: AsyncSession, device_id: str, project, owner_handle: str | None
+) -> bool:
+    """Whether a device may work a task owned by ``owner_handle``.
+
+    A device shared with the project's team is the team's, and works anyone's
+    tasks. Any other device in the project is a person's own computer, and
+    works only its owner's tasks."""
+    devices = sql_device_service(session)
+    device = await devices.get_device(device_id)
+    if device is None:
         return False
-    task.compute_config = place_choice(topic, task, project_settings).model_dump()
-    return True
+    if project.team_id in await devices.list_teams(device_id):
+        return True
+    owner = (
+        await session.scalar(select(UserRow).where(UserRow.username == owner_handle))
+        if owner_handle
+        else None
+    )
+    return owner is not None and owner.id == device.owner_user_id
+
+
+async def fix_task_choice(session: AsyncSession, topic, task, project) -> bool:
+    """Fix a task's work computer on its first turn that needs one, so a later
+    change to the room's does not move it. The room's choice is copied, unless
+    it names someone else's own computer: then the project default. False when
+    there is nothing to fix: a room's own turn, or a task that already has its
+    choice."""
+    if task is None or task.compute_config:
+        return False
+    settings_ = project.settings if project else None
+    choice = place_choice(topic, task, settings_)
+    if choice.device_id and not await works_tasks_of(
+        session, choice.device_id, project, task.owner_handle
+    ):
+        choice = project_configs(settings_).default
+    # Written only if still unset: the owner may have picked one since this
+    # turn read the task, and that pick stands.
+    model = type(task)
+    unset = or_(
+        model.compute_config.is_(None),
+        cast(model.compute_config, String) == "null",
+    )
+    written = await session.scalar(
+        update(model)
+        .where(model.id == task.id, unset)
+        .values(compute_config=choice.model_dump())
+        .returning(model.id)
+        .execution_options(synchronize_session=False)
+    )
+    await session.refresh(task, ["compute_config"])
+    return written is not None
 
 
 def place_choice(topic, task, project_settings: dict | None) -> ComputeChoice:
