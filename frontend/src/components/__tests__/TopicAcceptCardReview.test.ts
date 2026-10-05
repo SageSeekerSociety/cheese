@@ -182,8 +182,8 @@ describe('改由谁审阅', () => {
     await flush()
 
     const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).map((n) => n.textContent ?? '')
-    expect(items.some((t) => t.includes('@bob'))).toBe(true)
-    expect(items.some((t) => t.includes('@retired'))).toBe(false)
+    expect(items.some((t) => t.includes('Bob') && t.includes('bob'))).toBe(true)
+    expect(items.some((t) => t.includes('Retired'))).toBe(false)
   })
 
   it('选一位就是把卡改派给他', async () => {
@@ -200,7 +200,7 @@ describe('改由谁审阅', () => {
     await flush()
 
     const bob = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).find((n) =>
-      n.textContent?.includes('@bob')
+      n.textContent?.includes('Bob')
     ) as HTMLElement
     await fireEvent.click(bob)
     await flush()

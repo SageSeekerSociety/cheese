@@ -121,13 +121,16 @@ watch(
 )
 
 // 发出去还没被答复的邀请：这些人**还不在名册上**，要他们自己点头才进来。
-const invitations = ref<ProjectInvitation[]>([])
+// The list endpoint also returns who the invitee is (`InvitationService.describe`).
+// Declared here, not on `ProjectInvitation`: cx_types.ts is over its size cap and may only shrink.
+type PendingInvitation = ProjectInvitation & { invitee_name?: string; invitee_avatar_id?: number | null }
+const invitations = ref<PendingInvitation[]>([])
 const revoking = ref<string | null>(null)
 async function refreshInvitations() {
   const pid = props.projectId
   try {
     const payload = await listProjectInvitations(pid)
-    if (props.projectId === pid) invitations.value = payload.data
+    if (props.projectId === pid) invitations.value = payload.data as PendingInvitation[]
   } catch {
     // 同上：拿不到就不显示这一段。
   }
@@ -372,7 +375,7 @@ useCommands(() => [
                 <ExternalTag v-if="s.key === 'external'" />
                 <span v-if="m.user_handle === me" class="chip-neutral">{{ t('work.members.me') }}</span>
               </div>
-              <div class="t-meta c-muted">@{{ m.user_handle }}</div>
+              <div class="t-meta c-muted">{{ m.user_handle }}</div>
               <router-link
                 v-if="s.key === 'team' && m.team_handle"
                 :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
@@ -421,12 +424,18 @@ useCommands(() => [
         <div class="t-eyebrow mb-2">{{ t('work.members.sectionPending') }} · {{ invitations.length }}</div>
         <v-card v-for="inv in invitations" :key="inv.id" class="mb-2" variant="outlined">
           <div class="d-flex align-center pa-3">
-            <UserAvatar :name="inv.invitee_handle" :size="36" class="mr-3" />
+            <UserAvatar
+              :name="inv.invitee_name || inv.invitee_handle"
+              :avatar="inv.invitee_avatar_id == null ? '' : getAvatarUrl(inv.invitee_avatar_id)"
+              :size="36"
+              class="mr-3"
+            />
             <div class="min-w-0">
               <div class="d-flex align-center ga-2">
-                <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
+                <span class="t-title text-truncate">{{ inv.invitee_name || inv.invitee_handle }}</span>
                 <ExternalTag />
               </div>
+              <div v-if="inv.invitee_name" class="t-meta c-muted">{{ inv.invitee_handle }}</div>
               <i18n-t keypath="work.members.pendingBy" tag="div" class="t-meta c-muted">
                 <template #inviter><UserRef :handle="inv.inviter_handle" /></template>
               </i18n-t>
@@ -454,7 +463,7 @@ useCommands(() => [
                 {{ teammateName(a.display_name, a.name_source) || a.handle }}
                 <span v-if="a.is_default" class="chip-neutral">{{ t('work.members.agentDefault') }}</span>
               </div>
-              <div class="t-meta c-muted">@{{ a.handle }}</div>
+              <div class="t-meta c-muted">{{ a.handle }}</div>
             </div>
             <v-spacer />
             <span class="dm-slot">
@@ -525,7 +534,7 @@ useCommands(() => [
         />
         <div class="min-w-0">
           <div class="t-body found-user__name">{{ found.name || found.handle }}</div>
-          <div class="t-meta c-muted">@{{ found.handle }}</div>
+          <div class="t-meta c-muted">{{ found.handle }}</div>
         </div>
         <v-spacer />
         <span v-if="alreadyIn" class="t-meta c-muted">{{ t('work.members.alreadyIn') }}</span>
