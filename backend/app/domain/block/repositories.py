@@ -813,15 +813,17 @@ class BlockRepository:
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def messages_before(self, block: Block, *, limit: int) -> list[Block]:
-        """The ``limit`` messages said on ``block``'s line just before it, oldest
-        first: what was being talked about when it was said."""
+    async def messages_before(
+        self, conversation_id: uuid.UUID, at: datetime, *, limit: int
+    ) -> list[Block]:
+        """The ``limit`` messages said in the conversation just before ``at``,
+        oldest first: what was being talked about then."""
         stmt = (
             select(Block)
             .where(
-                Block.conversation_id == block.conversation_id,
+                Block.conversation_id == conversation_id,
                 Block.kind == BlockKind.message,
-                Block.created_at < block.created_at,
+                Block.created_at < at,
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
             .limit(limit)

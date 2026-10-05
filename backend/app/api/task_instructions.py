@@ -12,14 +12,34 @@ from app.domain.agent.chat import ChatService
 #: How many messages before the one a task comes from its agent is shown: what
 #: was being talked about when it was said.
 SOURCE_CONTEXT_MESSAGES = 8
+#: How many room messages before a proposal its task's agent is shown. A
+#: proposal closes a discussion rather than quoting one line of it, and what
+#: was decided along the way is the document's to keep.
+PROPOSAL_CONTEXT_MESSAGES = 20
+
+
+def _lines(blocks) -> str:
+    return "\n".join(f"[{b.author}] {b.content}" for b in blocks)
 
 
 async def source_text(db, block) -> str:
     """The message a task comes from, with what was said just before it."""
     earlier = await BlockRepository(db).messages_before(
-        block, limit=SOURCE_CONTEXT_MESSAGES
+        block.conversation_id, block.created_at, limit=SOURCE_CONTEXT_MESSAGES
     )
-    return "\n".join(f"[{b.author}] {b.content}" for b in [*earlier, block])
+    return _lines([*earlier, block])
+
+
+async def proposal_source_text(db, proposal) -> str:
+    """What a proposed task comes from: the proposal, and the room's
+    discussion that led to it."""
+    earlier = await BlockRepository(db).messages_before(
+        proposal.room_id, proposal.created_at, limit=PROPOSAL_CONTEXT_MESSAGES
+    )
+    said = f"[{proposal.proposed_by}] 提议：{proposal.summary}"
+    if not earlier:
+        return said
+    return f"{said}\n\n提议之前房间里的讨论：\n{_lines(earlier)}"
 
 
 async def tell_task(db, task, content: str) -> None:

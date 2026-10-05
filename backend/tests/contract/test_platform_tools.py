@@ -76,7 +76,7 @@ CALLS = {
     ),
     "cheese_doc_list": ({}, "GET", "/projects/fixture-project/documents"),
     "cheese_task": (
-        {"title": "数据清洗"},
+        {"title": "数据清洗", "summary": "按新口径重算"},
         "POST",
         f"/topics/{TOPIC}/task-proposals",
     ),
