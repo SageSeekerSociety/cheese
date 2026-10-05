@@ -1008,7 +1008,7 @@
     "gettingStarted": {
       "title": "开始清单",
       "dismiss": "不再提示",
-      "talk": "跟芝士说第一句话",
+      "talk": "跟{agent}说第一句话",
       "talkHint": "就在下面那个输入框里",
       "materials": "把要用的材料放进来",
       "materialsAction": "打开资料库",
