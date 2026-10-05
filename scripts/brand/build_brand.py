@@ -570,6 +570,13 @@ def build():
     scene.paste(Image.new('RGBA', (640, 640), rgb(BRAND) + (255,)), (0, 0), coverage(logo, 640, 0.6, 20, 20))
     scene.save(os.path.join(ASSETS, 'brand-scene', 'logo-color.png'), optimize=True)
     print('frontend/src/assets/brand-scene/logo-color.png')
+    # the notification email's header: the mark alone on a clear ground. Mail
+    # clients show no SVG, and a white tile would sit as a white square in a
+    # dark-mode letter. Drawn at 4x the 36px it is shown at.
+    mail = Image.new('RGBA', (144, 144), (0, 0, 0, 0))
+    mail.paste(Image.new('RGBA', (144, 144), rgb(BRAND) + (255,)), (0, 0), coverage(logo, 144, 0.144, 0, 0))
+    mail.save(os.path.join(PUBLIC, 'email-mark.png'), optimize=True)
+    print('frontend/public/email-mark.png')
 
 
 if __name__ == '__main__':
