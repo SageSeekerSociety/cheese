@@ -1,266 +1,78 @@
 <template>
-  <SettingsToolbar :title="t('spaces.settings.sections.categories')">
-    <BaseButton kind="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
-      {{ t('spaces.detail.manageCategories.addCategory') }}
-    </BaseButton>
-  </SettingsToolbar>
-  <div class="settings-card">
-    <div v-if="loadingCategories" class="pa-4 text-center">
-      <v-progress-circular indeterminate color="primary"></v-progress-circular>
-    </div>
-
-    <v-list v-else-if="categories.length > 0" class="settings-list" bg-color="transparent">
-      <v-list-item
-        v-for="category in categories"
-        :key="category.id"
-        :title="
-          category.name +
-          (currentSpace?.defaultCategoryId === category.id ? ' ' + t('spaces.detail.manageCategories.isDefault') : '')
-        "
-        :subtitle="category.description || undefined"
-        @contextmenu="rowMenu.open(category.id, $event)"
-      >
-        <template #prepend>
-          <v-icon size="18" class="c-faint">{{
-            category.archivedAt ? 'mdi-archive-outline' : 'mdi-shape-outline'
-          }}</v-icon>
-        </template>
-        <template #append>
-          <v-tooltip v-if="!category.archivedAt && currentSpace?.defaultCategoryId !== category.id" location="top">
-            <template #activator="{ props }">
-              <BaseButton
-                v-bind="props"
-                kind="ghost"
-                icon="mdi-star-outline"
-                size="sm"
-                :aria-label="t('spaces.detail.manageCategories.setAsDefault')"
-                @click="setAsDefault(category.id)"
-              />
-            </template>
-            {{ t('spaces.detail.manageCategories.setAsDefault') }}
-          </v-tooltip>
-
-          <BaseButton
-            v-if="!category.archivedAt"
-            kind="ghost"
-            icon="mdi-pencil-outline"
-            size="sm"
-            :aria-label="t('spaces.detail.manageCategories.updateCategory')"
-            @click="openEditDialog(category)"
-          />
-
-          <AdaptiveMenu v-bind="rowMenu.bind(category.id)" :actions="categoryActions(category)" :title="category.name">
-            <template #activator="{ props }">
-              <BaseButton
-                v-bind="props"
-                kind="ghost"
-                icon="mdi-dots-horizontal"
-                size="sm"
-                :aria-label="t('navigation.shell.more')"
-              />
-            </template>
-          </AdaptiveMenu>
-        </template>
-      </v-list-item>
-    </v-list>
-
-    <BaseEmptyState
-      v-else
-      size="inline"
-      class="settings-empty"
-      :title="t('spaces.detail.manageCategories.noCategories')"
-    />
-
-    <!-- Create/edit category form: dialog on desktop, full page on phones (AdaptiveDialog). -->
-    <AdaptiveDialog
-      v-model="dialogOpen"
-      :title="
-        editingCategory
-          ? t('spaces.detail.manageCategories.updateCategory')
-          : t('spaces.detail.manageCategories.createCategory')
-      "
-      :primary-label="t('spaces.detail.manageCategories.confirm')"
-      :primary-loading="isSubmitting"
-      @primary="submitForm"
-    >
-      <v-form @submit.prevent="submitForm">
-        <v-text-field
-          v-model="formData.name"
-          autocomplete="off"
-          :label="t('spaces.detail.manageCategories.name')"
-          required
-          v-bind="nameProps"
-        ></v-text-field>
-
-        <v-textarea
-          v-model="formData.description"
-          autocomplete="off"
-          :label="t('spaces.detail.manageCategories.description')"
-          v-bind="descriptionProps"
-          rows="3"
-          auto-grow
-        ></v-textarea>
-
-        <v-text-field
-          v-model.number="formData.displayOrder"
-          :label="t('spaces.detail.manageCategories.displayOrder')"
-          type="number"
-          min="0"
-          :hint="t('spaces.detail.manageCategories.displayOrderHint')"
-          v-bind="displayOrderProps"
-        ></v-text-field>
-      </v-form>
-    </AdaptiveDialog>
-  </div>
+  <ManageCategoriesView
+    v-model:open="dialogOpen"
+    :categories="categories"
+    :default-category-id="currentSpace?.defaultCategoryId ?? null"
+    :loading="loadingCategories"
+    :saving="saving"
+    :failed="failed"
+    :error-reason="errorReason"
+    :forbidden="forbidden"
+    @retry="load"
+    @submit="submitCategory"
+    @delete="deleteCategory"
+    @archive="archiveCategory"
+    @unarchive="unarchiveCategory"
+    @set-default="setAsDefault"
+  />
 </template>
 
 <script setup lang="ts">
-import type { MenuAction } from '@/components/common/menuAction'
+// 分类管理这一页的容器：读分类、增删改、读失败记下来交出去。画面在
+// `ManageCategoriesView.vue`（场景规则见 docs/manual/dev/scenes.md）。
+import type { CategoryFormValues } from './ManageCategoriesView.vue'
 
-import { onMounted, reactive, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
+import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useForm } from 'vee-validate'
-import { z } from 'zod'
 
-import { vuetifyConfig } from '@/utils/form'
-
-import { useRowMenu } from '@/composables/useRowMenu'
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
-import { useDialog } from '@/plugins/dialog'
+import ManageCategoriesView from './ManageCategoriesView.vue'
+
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { useSpaceStore } from '@/stores/space'
-import { SpaceCategory } from '@/types'
 
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
 const { currentSpace, categories, loadingCategories } = storeToRefs(spaceStore)
-const { t } = useI18n()
-const { confirm } = useDialog()
-const rowMenu = useRowMenu<number>()
 
-// 表单相关
 const dialogOpen = ref(false)
-const editingCategory = ref<SpaceCategory | null>(null)
+const saving = ref(false)
 
-/** 一个分类那一行的 ⋯：归档了的只剩「恢复」和「删除」。 */
-function categoryActions(category: SpaceCategory): MenuAction[] {
-  return [
-    ...(category.archivedAt
-      ? [
-          {
-            key: 'unarchive',
-            label: t('spaces.detail.manageCategories.unarchiveCategory'),
-            icon: 'mdi-archive-arrow-up-outline',
-            onSelect: () => void unarchiveCategory(category.id),
-          },
-        ]
-      : [
-          {
-            key: 'archive',
-            label: t('spaces.detail.manageCategories.archiveCategory'),
-            icon: 'mdi-archive-arrow-down-outline',
-            onSelect: () => void archiveCategory(category.id),
-          },
-        ]),
-    {
-      key: 'delete',
-      label: t('spaces.detail.manageCategories.deleteCategory'),
-      icon: 'mdi-delete-outline',
-      danger: true,
-      onSelect: () => void deleteCategory(category.id),
-    },
-  ]
+// 读失败和「一个分类都没有」要分得开：`fetchCategories` 从前只弹一条 toast，页面
+// 接着画「暂无分类」，两件事长得一模一样。这里把读失败的那个错留住，只要读取失败、
+// 且手上一条分类都没有，就用错误态替换整个列表区（有东西可显示时不动它）。
+const readError = ref<unknown>(null)
+const failed = computed(() => readError.value !== null && categories.value.length === 0)
+const errorReason = computed(() => loadFailureReason(readError.value))
+const forbidden = computed(() => isForbidden(readError.value))
+
+const load = async () => {
+  readError.value = null
+  readError.value = await spaceData.fetchCategories(true)
 }
 
-// 表单校验
-const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({
-  validationSchema: toTypedSchema(
-    z.object({
-      name: z
-        .string()
-        .min(1, { message: 'spaces.detail.manageCategories.categoryNameRequired' })
-        .max(32, { message: 'spaces.detail.manageCategories.categoryNameMaxLength' }),
-      description: z
-        .string()
-        .max(255, { message: 'spaces.detail.manageCategories.descriptionMaxLength' })
-        .nullable()
-        .optional(),
-      displayOrder: z.number().int().nonnegative().optional(),
-    })
-  ),
-})
-
-const [name, nameProps] = defineField('name', vuetifyConfig)
-const [description, descriptionProps] = defineField('description', vuetifyConfig)
-const [displayOrder, displayOrderProps] = defineField('displayOrder', vuetifyConfig)
-
-const formData = reactive({
-  name,
-  description,
-  displayOrder: 0,
-})
-
-// 生命周期钩子
-onMounted(async () => {
-  await spaceData.fetchCategories(true)
-})
-
-// 方法
-const openCreateDialog = () => {
-  resetForm({
-    values: {
-      name: '',
-      description: '',
-      displayOrder: 0,
-    },
-  })
-  editingCategory.value = null
-  dialogOpen.value = true
-}
-
-const openEditDialog = (category: SpaceCategory) => {
-  resetForm({
-    values: {
-      name: category.name,
-      description: category.description,
-      displayOrder: category.displayOrder,
-    },
-  })
-  editingCategory.value = category
-  dialogOpen.value = true
-}
-
-const submitForm = handleSubmit(async (values) => {
+const submitCategory = async (payload: { id: number | null; values: CategoryFormValues }) => {
+  saving.value = true
   try {
-    if (editingCategory.value) {
-      await spaceData.updateCategory(editingCategory.value.id, {
-        name: values.name,
-        description: values.description,
-        displayOrder: values.displayOrder,
+    if (payload.id !== null) {
+      await spaceData.updateCategory(payload.id, {
+        name: payload.values.name,
+        description: payload.values.description,
+        displayOrder: payload.values.displayOrder,
       })
     } else {
-      await spaceData.createCategory(values.name, values.description, values.displayOrder)
+      await spaceData.createCategory(payload.values.name, payload.values.description, payload.values.displayOrder)
     }
     dialogOpen.value = false
   } catch (error) {
     console.error('提交表单失败:', error)
+  } finally {
+    saving.value = false
   }
-})
+}
 
 const deleteCategory = async (categoryId: number) => {
-  const confirmed = await confirm(t('spaces.detail.manageCategories.confirmDelete'), {
-    confirmLabel: t('spaces.detail.manageCategories.deleteCategory'),
-    danger: true,
-  }).wait()
-  if (!confirmed) return
-
   try {
     await spaceData.deleteCategory(categoryId)
   } catch (error) {
@@ -269,9 +81,6 @@ const deleteCategory = async (categoryId: number) => {
 }
 
 const archiveCategory = async (categoryId: number) => {
-  const confirmed = await confirm(t('spaces.detail.manageCategories.confirmArchive')).wait()
-  if (!confirmed) return
-
   try {
     await spaceData.archiveCategory(categoryId)
   } catch (error) {
@@ -294,6 +103,10 @@ const setAsDefault = async (categoryId: number) => {
     console.error('设置默认分类失败:', error)
   }
 }
+
+onMounted(() => {
+  void load()
+})
 </script>
 
 <style scoped src="@/styles/settings-card.css"></style>

@@ -131,16 +131,21 @@ export function useSpaceData() {
   }
 
   // Categories related methods
-  const fetchCategories = async (includeArchived = false) => {
-    if (!space.currentSpaceId) return
+  // 返回读失败的那个错（读成功为 null）：调用方要能在列表区用错误态替换掉「暂无
+  // 分类」——光弹一条 toast 分不出「读失败」和「本来就没有」。行为一字未改，只是把
+  // 原本吞掉的错多交出去一份。
+  const fetchCategories = async (includeArchived = false): Promise<unknown | null> => {
+    if (!space.currentSpaceId) return null
 
     space.setLoadingCategories(true)
     try {
       const { data } = await SpacesApi.listCategories(space.currentSpaceId, { includeArchived })
       space.setCategories(data.categories)
+      return null
     } catch (error) {
       console.error('获取分类失败:', error)
       toast.error(t('spaces.detail.manageCategories.loadFailed'))
+      return error
     } finally {
       space.setLoadingCategories(false)
     }
