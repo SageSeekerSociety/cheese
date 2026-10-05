@@ -9,11 +9,14 @@ session that is merely reused keeps what it started with. Both are written on
 every launch anyway, because the write is for the NEXT fresh session.
 """
 
+import json
+import shlex
 from dataclasses import dataclass
 
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS
 from app.domain.agent.harness.launch import ExecutorLaunch, MachineLaunch, MachinePlace
+from app.domain.agent.harness.prompt import STEP_TITLES
 
 
 def session_settings() -> dict:
@@ -21,7 +24,8 @@ def session_settings() -> dict:
 
     No hook here observes the session: the runner reads what it does from its
     own stdout. The hooks left are the ones that act — the model catalogue
-    written as agent definitions at session start and on each prompt — and the
+    written as agent definitions at session start and on each prompt, and the
+    step-title rule put in front of every agent the session starts — and the
     remote-execution client adds the rest of its own (``client.prepare``).
     """
     # 发现层：把项目的模型目录写成本会话的 CC 分身定义文件（名字、一句话描
@@ -38,6 +42,34 @@ def session_settings() -> dict:
                     # Discovery must never block a user prompt on that old CLI.
                     "command": "cheese sync-agents || true",
                     "timeout": 15,
+                }
+            ]
+        }
+    ]
+    # An agent the session starts — the Agent tool's, a workflow's — gets none
+    # of the session's system prompt, but its every step is a line on the room's
+    # 施工现场 all the same. SubagentStart fires for both, and what it prints as
+    # additionalContext opens that agent's conversation.
+    step_titles = [
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": shlex.join(
+                        [
+                            "printf",
+                            "%s",
+                            json.dumps(
+                                {
+                                    "hookSpecificOutput": {
+                                        "hookEventName": "SubagentStart",
+                                        "additionalContext": STEP_TITLES,
+                                    }
+                                },
+                                ensure_ascii=False,
+                            ),
+                        ]
+                    ),
                 }
             ]
         }
@@ -83,6 +115,7 @@ def session_settings() -> dict:
         "hooks": {
             "SessionStart": sync_agents,
             "UserPromptSubmit": sync_agents,
+            "SubagentStart": step_titles,
         },
     }
 
