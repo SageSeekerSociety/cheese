@@ -29,9 +29,22 @@ from scripts.model_identity_probe.stats import (
     shannon_entropy_bits,
     split_half_jsd,
 )
+from scripts.model_identity_probe.tokenizer_fp import (
+    BASE as TOKENIZER_BASE,
+)
+from scripts.model_identity_probe.tokenizer_fp import (
+    PROBES as TOKENIZER_PROBES,
+)
 from scripts.model_identity_probe.tokenizer_fp import TokenizerSample
 from scripts.model_identity_probe.tokenizer_fp import compare as compare_tokens
-from scripts.model_identity_probe.transport import evidence_headers, pool_from_headers
+from scripts.model_identity_probe.tokenizer_fp import (
+    measure as measure_tokens,
+)
+from scripts.model_identity_probe.transport import (
+    Completion,
+    evidence_headers,
+    pool_from_headers,
+)
 from scripts.model_identity_probe.verdict import (
     INSUFFICIENT,
     MATCH,
@@ -275,6 +288,31 @@ def test_tokenizer_deltas_that_disagree_are_a_mismatch() -> None:
     differed = compare_tokens(TokenizerSample(base=10, deltas={"latin": 11}), reference)
     assert agreed.verdict == MATCH
     assert differed.verdict == MISMATCH
+
+
+def test_a_probe_measured_below_base_is_dropped_not_recorded() -> None:
+    # BASE is a prefix of BASE+probe, so input_tokens can only grow. A server
+    # that reports a smaller count for the longer prompt (a stream that dropped
+    # its usage block) must not be written into the fingerprint as a negative.
+    def usage_for(prompt: str) -> int:
+        if prompt == TOKENIZER_BASE:
+            return 18
+        if prompt == TOKENIZER_BASE + TOKENIZER_PROBES["latin"]:
+            return 27
+        if prompt == TOKENIZER_BASE + TOKENIZER_PROBES["digits"]:
+            return 0
+        return 18
+
+    class _Stub:
+        def complete(self, system: str, prompt: str, **kwargs: object) -> Completion:
+            return Completion(
+                "ok", "stub", {"input_tokens": usage_for(prompt)}, {}, 0.0
+            )
+
+    sample = measure_tokens(_Stub())  # type: ignore[arg-type]
+    assert sample.deltas["latin"] == 9
+    assert "digits" not in sample.deltas
+    assert "digits" in sample.errors
 
 
 def test_tokenizer_without_a_reference_is_insufficient() -> None:

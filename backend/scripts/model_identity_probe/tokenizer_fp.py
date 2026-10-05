@@ -78,12 +78,29 @@ def measure(
     probes = probes or PROBES
     sample = TokenizerSample()
     sample.base = _count(endpoint, BASE)
+    if sample.base is None or sample.base <= 0:
+        # A route that reports no input_tokens (or reports 0) has no countable
+        # baseline; every delta off it would be noise. Say so rather than write
+        # a fingerprint built on a zero.
+        reason = "no positive usage.input_tokens for BASE"
+        sample.errors.update({name: reason for name in probes})
+        return sample
     for name, text in probes.items():
         counted = _count(endpoint, f"{BASE}{text}")
-        if counted is None or sample.base is None:
-            sample.errors[name] = "no usage.input_tokens in the response"
+        if counted is None or counted <= 0:
+            sample.errors[name] = "no positive usage.input_tokens in the response"
             continue
-        sample.deltas[name] = counted - sample.base
+        delta = counted - sample.base
+        if delta < 0:
+            # BASE is a prefix of BASE+probe, so the probe can only add tokens.
+            # A count below BASE means the server reported nothing useful for
+            # this request (a stream that dropped its usage block, say);
+            # recording the negative as a fingerprint would poison the signal.
+            sample.errors[name] = (
+                f"implausible input_tokens: {counted} < BASE {sample.base}"
+            )
+            continue
+        sample.deltas[name] = delta
     return sample
 
 
