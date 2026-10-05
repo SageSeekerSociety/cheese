@@ -13,53 +13,17 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceAnalyticsQueryState } from '../utils'
-
-import { computed, onMounted, ref, watch } from 'vue'
+// 出题人下拉只是一支框：选项和「正在读」都由页面递进来（场景规则见
+// docs/manual/dev/scenes.md）。原来它自己按 spaceId + filters 去拉，取数挪到页面后
+// 它才和别的下拉一样，给 props 就能单独画。
 import { useI18n } from 'vue-i18n'
 
-import { buildAnalyticsApiParams } from '../utils'
-
-import { SpacesApi } from '@/network/api/spaces'
-
-const props = defineProps<{
-  spaceId: number
-  filters: SpaceAnalyticsQueryState
+defineProps<{
+  items: Array<{ title: string; value: number | null }>
+  loading: boolean
 }>()
 
 const model = defineModel<number | null>({ required: true })
 
-const loading = ref(false)
 const { t } = useI18n()
-
-const publishers = ref<Array<{ title: string; value: number | null }>>([])
-
-const params = computed(() => buildAnalyticsApiParams('publishers', props.filters))
-
-const load = async () => {
-  loading.value = true
-  try {
-    const { data } = await SpacesApi.getAnalyticsPublishers(props.spaceId, params.value)
-    publishers.value = [
-      ...data.publishers.map((publisher) => ({
-        title: publisher.publisherName,
-        value: publisher.publisherId,
-      })),
-    ]
-  } catch (error) {
-    console.error('load analytics publishers failed', error)
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(params, () => {
-  load().catch(() => undefined)
-})
-
-onMounted(() => {
-  load().catch(() => undefined)
-})
-
-const items = computed(() => [{ title: t('spaces.analytics.publisher.all'), value: null }, ...publishers.value])
 </script>
