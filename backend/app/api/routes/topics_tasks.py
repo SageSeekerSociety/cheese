@@ -549,6 +549,9 @@ async def update_task(
             place.room_id
         ):
             raise ValidationError(say("taskOwnerNotInRoom"))
+        await _move_off_former_owners_computer(
+            db, actor, place, task, body.owner_handle
+        )
         await tasks.hand_over(task, owner_handle=body.owner_handle)
     if "agent_handle" in body.model_fields_set:
         await tasks.give_agent(task, agent_handle=body.agent_handle)
@@ -556,6 +559,28 @@ async def update_task(
     await db.commit()
     await announce_stale(place.room_id, "topics")
     return ok(out)
+
+
+async def _move_off_former_owners_computer(db, actor, place, task, owner) -> None:
+    """A person's own computer works only that person's tasks: before a task
+    changes hands, it moves to a computer its new owner may use, pushing its
+    work first. A push that fails leaves the task with its owner and says why."""
+    from app.domain.agent.compute_configs import choice_for_owner, works_tasks_of
+    from app.domain.machine import session_work
+    from app.domain.machine.session_reports import devices_held_by
+
+    room = await TopicService(db).get_or_404(place.room_id)
+    project = await ProjectRepository(db).get(place.project_id)
+    target = await choice_for_owner(db, room, task, project, owner)
+    held = await devices_held_by(db, task.id)
+    stays = not task.compute_config or target.model_dump() == task.compute_config
+    if stays and all(
+        [await works_tasks_of(db, device, project, owner) for device in held]
+    ):
+        return
+    await session_work.request_choice(
+        db, topic_id=place.room_id, actor=actor, choice=target, task=task
+    )
 
 
 def _proposal_out(proposal) -> dict:

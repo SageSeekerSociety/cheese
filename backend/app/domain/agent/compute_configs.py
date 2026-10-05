@@ -128,6 +128,22 @@ async def works_tasks_of(
     return owner is not None and owner.id == device.owner_user_id
 
 
+async def choice_for_owner(
+    session: AsyncSession, topic, task, project, owner_handle: str | None
+) -> ComputeChoice:
+    """The work computer a task works on under ``owner_handle``: its own choice,
+    else its room's — skipping either when it names someone else's own
+    computer — else the project default."""
+    settings_ = project.settings if project else None
+    default = project_configs(settings_).default
+    for choice in (place_choice(topic, task, settings_), room_choice(topic, settings_)):
+        if not choice.device_id or await works_tasks_of(
+            session, choice.device_id, project, owner_handle
+        ):
+            return choice
+    return default
+
+
 async def fix_task_choice(session: AsyncSession, topic, task, project) -> bool:
     """Fix a task's work computer on its first turn that needs one, so a later
     change to the room's does not move it. The room's choice is copied, unless
@@ -136,12 +152,7 @@ async def fix_task_choice(session: AsyncSession, topic, task, project) -> bool:
     choice."""
     if task is None or task.compute_config:
         return False
-    settings_ = project.settings if project else None
-    choice = place_choice(topic, task, settings_)
-    if choice.device_id and not await works_tasks_of(
-        session, choice.device_id, project, task.owner_handle
-    ):
-        choice = project_configs(settings_).default
+    choice = await choice_for_owner(session, topic, task, project, task.owner_handle)
     # Written only if still unset: the owner may have picked one since this
     # turn read the task, and that pick stands.
     model = type(task)

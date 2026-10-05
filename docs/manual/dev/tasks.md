@@ -70,11 +70,11 @@ AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`�
 
 **开始**（`POST /topics/{room}/tasks/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的凭证对工作机器只读：能讨论、写文档，不能改项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。
 
-**转交**：`PATCH /topics/{room}/tasks/{task}`，负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`）。原负责人自己的设备上做的任务，转交后回到房间的选择。
+**转交**：`PATCH /topics/{room}/tasks/{task}`，负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`）。转交前，任务若用着或占着新负责人不能用的电脑（原负责人自己的），先照换电脑的流程挪到新负责人能用的那台（`compute_configs.choice_for_owner`：任务自己的选择、房间的选择、项目默认，依次跳过别人的个人电脑）；推送不成功就不转交，说明原因。
 
 **关闭**：`POST /topics/{room}/tasks/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。交付的改动被采纳时任务自己关。
 
-平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。工作电脑按 项目默认 → 房间（`topics.compute_config`）→ 任务（`tasks.compute_config`）取，任务第一次要机器时从房间的选择抄一份，之后房间再换也不跟着动；负责人（或任务自己的会话）用 `PUT /topics/{room}/compute-profile?task=` 换。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`compute_configs.works_tasks_of`）：选不了，抄房间的选择时遇到它就改用项目默认，「系统挑一台」时跳过它。
+平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。工作电脑按 项目默认 → 房间（`topics.compute_config`）→ 任务（`tasks.compute_config`）取，任务第一次要机器时从房间的选择抄一份，之后房间再换也不跟着动；负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{room}/compute-profile?task=` 换；设备页的批量挪走对任务会话走的就是这一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`compute_configs.works_tasks_of`）：选不了，抄房间的选择时遇到它就改用项目默认，「系统挑一台」时跳过它。
 
 ## 工作目录怎么来 {#worktree}
 

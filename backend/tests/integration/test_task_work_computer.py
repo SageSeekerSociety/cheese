@@ -257,3 +257,109 @@ def test_changing_the_room_moves_none_of_a_tasks_sessions(client, monkeypatch):
     assert room_sessions[in_room]["choice"]["device_id"] == there
     assert task_sessions[in_task]["choice"]["device_id"] == here
     assert task_sessions[in_task]["lease"] is not None
+
+
+def _holding(client, conversation_id: str, device_id: str) -> str:
+    """A session of this conversation working on ``device_id`` now."""
+    from app.domain.agent.compute_configs import ComputeChoice
+    from app.domain.agent_session.services import AgentSessionService
+
+    async def _write() -> str:
+        async with client.test_request_factory() as session:
+            row = await AgentSessionService(session).ensure(
+                uuid.UUID(conversation_id), "analyst", harness="pi"
+            )
+            row.execution_request = {
+                "generation": str(uuid.uuid4()),
+                "choice": ComputeChoice(
+                    profile="device", device_id=device_id
+                ).model_dump(),
+                "authorized_by": None,
+            }
+            row.work_lease = {
+                "kind": "device",
+                "device_id": device_id,
+                "status": "ready",
+                "home": "/home",
+                "state": "/home/state",
+            }
+            await session.commit()
+            return str(row.id)
+
+    return client.portal.call(_write)
+
+
+def _machines_answer(monkeypatch) -> list[str]:
+    """Every machine answers, and a push is recorded by the device it ran on."""
+    from app.domain.agent import execution
+    from app.domain.agent.device_hub import device_hub
+    from tests.executor_release import running
+
+    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
+    pushes: list[str] = []
+
+    async def call(target, method, params, **_kwargs):
+        if method == "ping":
+            return running()
+        if method == "control":
+            pushes.append(target["device_id"])
+        return {"value": {"stdout": "", "stderr": "", "interrupted": False}}
+
+    monkeypatch.setattr(execution, "call", call)
+    return pushes
+
+
+def test_a_manager_or_the_devices_owner_moves_a_task_off_a_device(client, monkeypatch):
+    """Not only the task's owner: a project manager, and whoever owns the
+    device the task is on, may take it off. Another member may not."""
+    _machines_answer(monkeypatch)
+    project_id, room_id = _room(client)
+    join_project_team(client, project_id, "dave")
+    join_project_team(client, project_id, "eve")
+    daves = _computer(client, project_id, "dave 的服务器", owner="dave", team=True)
+    elsewhere = _computer(client, project_id, "另一台", owner="alice", team=True)
+    task = open_task(client, room_id, "bob 的任务", owner="bob", reviewer="alice")
+    _holding(client, task["id"], daves)
+
+    def move(handle: str):
+        return _pick(
+            client,
+            room_id,
+            elsewhere,
+            task_id=task["id"],
+            headers=session_auth_headers(handle),
+        )
+
+    assert move("eve").status_code == 403
+    assert move("dave").status_code == 200, move("dave").text
+    assert move("alice").status_code == 200
+
+
+def test_handing_over_takes_a_task_off_its_former_owners_computer(client, monkeypatch):
+    pushes = _machines_answer(monkeypatch)
+    project_id, room_id = _room(client)
+    client.post(
+        f"/topics/{room_id}/members",
+        json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    laptop = _computer(client, project_id, "alice 的笔记本", owner="alice", team=False)
+    shared = _computer(client, project_id, "共用", owner="alice", team=True)
+    assert _pick(client, room_id, shared).status_code == 200
+    task = open_task(client, room_id)
+    assert _pick(client, room_id, laptop, task_id=task["id"]).status_code == 200
+    working = _holding(client, task["id"], laptop)
+
+    handed = client.patch(
+        f"/topics/{room_id}/tasks/{task['id']}",
+        json={"owner_handle": "bob"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert handed.status_code == 200, handed.text
+    assert handed.json()["data"]["owner_handle"] == "bob"
+    assert pushes == [laptop]
+    profile = _profile(client, room_id, task_id=task["id"], handle="bob")
+    assert profile["choice"]["device_id"] == shared
+    session = next(s for s in profile["sessions"] if s["id"] == working)
+    assert session["lease"] is None

@@ -79,6 +79,7 @@ from app.domain.device.supply import (
 )
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import HostPool
+from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.room_task.services import TaskService
@@ -96,6 +97,29 @@ async def _task_of(db, resolver, topic, task_id: uuid.UUID | None):
         return None
     resolver.require_task_scope(task_id)
     return await TaskService(db).require_in_room(topic.id, task_id)
+
+
+async def _may_move_task(db, resolver, actor, topic, task) -> bool:
+    """Who changes a task's work computer: its owner, a manager of the project,
+    or the owner of a device the task holds now (taking a task off one's own
+    machine); a session only its own task's."""
+    if actor.via != "token":
+        return resolver.task_scope() == task.id
+    if actor.handle == task.owner_handle:
+        return True
+    try:
+        await MemberService(db).require_manager(topic.project_id, actor)
+        return True
+    except ForbiddenError:
+        pass
+    from app.domain.machine.session_reports import devices_held_by
+
+    devices = sql_device_service(db)
+    for device_id in await devices_held_by(db, task.id):
+        device = await devices.get_device(device_id)
+        if device is not None and device.owner_user_id == actor.user_id:
+            return True
+    return False
 
 
 @router.get("/{topic_id}/compute-profile")
@@ -326,7 +350,7 @@ async def set_topic_compute_profile(
         raise ForbiddenError("Execution credential does not own this room generation")
     the_task = await _task_of(db, resolver, topic, task)
     if the_task is not None:
-        if actor.via == "token" and actor.handle != the_task.owner_handle:
+        if not await _may_move_task(db, resolver, actor, topic, the_task):
             raise ForbiddenError(say("taskComputeOwnerOnly"))
         if body.get("visibility") is not None:
             raise ValidationError(say("visibilityRoomOnly"))

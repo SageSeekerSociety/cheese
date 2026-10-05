@@ -179,14 +179,24 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
             )
         )
     )
+    from app.domain.room_task.models import Task
+
     out = []
     for row, topic in sorted(placed, key=lambda pair: pair[0].updated_at, reverse=True):
+        # A task's session is moved by changing the task's work computer.
+        task = (
+            await db.get(Task, row.conversation_id)
+            if row.conversation_id != topic.id
+            else None
+        )
         out.append(
             (
                 topic,
                 {
                     "id": str(row.id),
                     "topic_id": str(topic.id),
+                    "task_id": str(task.id) if task is not None else None,
+                    "task_title": task.title if task is not None else None,
                     "topic_title": topic.title,
                     "topic_title_source": str(topic.title_source),
                     "agent_handle": row.agent_handle,
@@ -198,3 +208,14 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
             )
         )
     return out
+
+
+async def devices_held_by(db, conversation_id) -> set[str]:
+    """The devices this conversation's sessions hold a lease on now."""
+    leases = await db.scalars(
+        select(AgentSession.work_lease).where(
+            AgentSession.conversation_id == conversation_id,
+            AgentSession.work_lease.is_not(None),
+        )
+    )
+    return {lease["device_id"] for lease in leases if (lease or {}).get("device_id")}

@@ -266,11 +266,8 @@ class TaskService:
         return task
 
     async def hand_over(self, task: Task, *, owner_handle: str) -> Task:
-        """Another member owns the task from now. A task working on its former
-        owner's own computer goes back to the room's choice: a person's
-        computer works only that person's tasks."""
-        if (task.compute_config or {}).get("profile") == "device":
-            task.compute_config = None
+        """Another member owns the task from now. Moving it off its former
+        owner's own computer first is the caller's (``topics_tasks``)."""
         task.owner_handle = owner_handle
         await self._session.flush()
         return task

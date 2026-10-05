@@ -739,7 +739,7 @@
   "sandboxUnavailableWindows": "这个房间在隔离环境里运行，Windows 机器上没有隔离环境。可以安装 WSL，把 WSL 环境登记为一台机器并为这个房间选它；或者由机器的主人为这个房间开启整台机器的访问权限。",
   "visibilityInvalid": "机器访问范围只能是「isolated」或「host」",
   "visibilityNeedsDevice": "只有指定了一台登记的机器，才能选机器访问范围",
-  "taskComputeOwnerOnly": "只有负责人可以更换任务的工作电脑",
+  "taskComputeOwnerOnly": "只有负责人、项目管理员或任务所用设备的主人可以更换它的工作电脑",
   "visibilityRoomOnly": "机器访问范围只能在房间里设置",
   "deviceOthersOwn": "这是其他成员自己的电脑，只能做其本人负责的任务",
   "visibilityHostOwnerOnly": "只有机器的主人本人登录后，才能让房间访问整台机器",

@@ -739,7 +739,7 @@
   "sandboxUnavailableWindows": "This room runs in an isolated environment, which Windows machines do not have. Install WSL, enroll the WSL environment as a machine and choose it for this room, or have the machine's owner give this room full machine access.",
   "visibilityInvalid": "Machine access must be “isolated” or “host”",
   "visibilityNeedsDevice": "Machine access can only be chosen together with a named enrolled machine",
-  "taskComputeOwnerOnly": "Only the task's owner can change its work computer",
+  "taskComputeOwnerOnly": "Only the task's owner, a project manager or the owner of the device it uses can change its work computer",
   "visibilityRoomOnly": "Machine access is set for the room",
   "deviceOthersOwn": "This is another member's own computer; it only works tasks that member owns",
   "visibilityHostOwnerOnly": "Only the machine's owner, signed in, can give a room full machine access",
