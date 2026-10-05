@@ -1,0 +1,140 @@
+"""Tokenizer fingerprint: the server's own token count, as a hard signal.
+
+Method from "The Tokenizer Is a Fingerprint"
+(https://isimplifyme.com/whitepapers/the-tokenizer-is-a-fingerprint), reached
+through the side-channel survey in this repo's task notes. The idea is small
+and it is the cheapest thing here that is not a claim by the model:
+
+    delta(probe) = usage.input_tokens(BASE + probe) - usage.input_tokens(BASE)
+
+Each vendor ships its own tokenizer, so the same probe string costs a
+different number of tokens per model. Subtracting a fixed BASE cancels the
+constant per-model template overhead, leaving a value that depends on the
+probe's bytes under that model's vocabulary.
+
+What it does NOT prove: two deployments of the same lab's models may share a
+vocabulary (which is why several OpenAI-family rows agree), and a model that
+merely borrows another's tokenizer would pass. It proves a shared request
+pipeline, not shared weights -- so it is evidence beside the behavioural test,
+never a replacement for it.
+
+A caution earned the hard way on this box: use the ``usage`` of a real
+``/v1/messages`` call. A ``count_tokens`` endpoint is not the upstream
+tokenizer -- behind LiteLLM it is hard-coded to Anthropic's or falls back to a
+local ``tiktoken``, and would fingerprint the gateway, not the model.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from .reference import TokenizerReference
+from .transport import Endpoint
+from .verdict import INSUFFICIENT, MATCH, MISMATCH, TokenizerEvidence
+
+#: A fixed, short BASE the count is measured against. Kept ASCII and boring so
+#: it does not itself vary between vendors more than the probe does.
+BASE = "ok"
+
+#: Probe strings chosen to land differently in different vocabularies: scripts
+#: with their own code points, emoji, whitespace-sensitive code, and plain
+#: Latin as a control.
+PROBES: dict[str, str] = {
+    "latin": "the quick brown fox jumps over the lazy dog",
+    "chinese": "请把这一段中文翻译成英文并保持原意",
+    "japanese": "これはトークナイザの違いを見るためのテストです",
+    "korean": "이 문장은 토크나이저 차이를 확인하기 위한 것입니다",
+    "russian": "Это предложение для проверки различий токенизаторов",
+    "emoji": "🌏🧪🔬🎯🚀📚🍣🎈",
+    "code": "def f(x):\n    return {'a': [1, 2, 3]}\n",
+    "unicode-mix": "café • naïve — ½ ⅓ ± Δ ∑",
+    "digits": "0123456789012345678901234567890123456789",
+    "whitespace": "a        b\t\t\tc\n\n\nd",
+    "long-latin": (
+        "the model identity probe measures a tokenizer fingerprint by "
+        "differencing counts "
+    )
+    * 3,
+}
+
+#: How far a delta may drift and still count as agreement. Tokenizers are
+#: deterministic, so in principle the tolerance is zero; it exists only so a
+#: provider that pads a constant number of tokens onto every request does not
+#: produce a false mismatch.
+TOLERANCE = 0
+
+
+@dataclass
+class TokenizerSample:
+    base: int | None = None
+    deltas: dict[str, int] = field(default_factory=dict)
+    errors: dict[str, str] = field(default_factory=dict)
+
+
+def measure(
+    endpoint: Endpoint, probes: dict[str, str] | None = None
+) -> TokenizerSample:
+    """One call per probe plus one for BASE, all tiny."""
+    probes = probes or PROBES
+    sample = TokenizerSample()
+    sample.base = _count(endpoint, BASE)
+    for name, text in probes.items():
+        counted = _count(endpoint, f"{BASE}{text}")
+        if counted is None or sample.base is None:
+            sample.errors[name] = "no usage.input_tokens in the response"
+            continue
+        sample.deltas[name] = counted - sample.base
+    return sample
+
+
+def _count(endpoint: Endpoint, text: str) -> int | None:
+    completion = endpoint.complete(
+        "Reply with the single word ok.",
+        text,
+        max_tokens=8,
+        temperature=None,
+        stream=True,
+    )
+    if completion.error is not None:
+        return None
+    value = completion.usage.get("input_tokens")
+    return value if isinstance(value, int) else None
+
+
+def to_reference(sample: TokenizerSample) -> TokenizerReference:
+    return TokenizerReference(base_input_tokens=sample.base, deltas=dict(sample.deltas))
+
+
+def compare(
+    sample: TokenizerSample, reference: TokenizerReference | None
+) -> TokenizerEvidence:
+    if reference is None or sample.base is None:
+        return TokenizerEvidence(INSUFFICIENT, deltas=dict(sample.deltas))
+    agreed = 0
+    compared = 0
+    disagreements: list[str] = []
+    for name, expected in reference.deltas.items():
+        got = sample.deltas.get(name)
+        if got is None:
+            continue
+        compared += 1
+        if abs(got - expected) <= TOLERANCE:
+            agreed += 1
+        else:
+            disagreements.append(f"{name}: {got} vs {expected}")
+    if compared == 0:
+        return TokenizerEvidence(
+            INSUFFICIENT,
+            deltas=dict(sample.deltas),
+            reference_deltas=reference.deltas,
+            base_input_tokens=sample.base,
+            reference_base=reference.base_input_tokens,
+        )
+    verdict = MATCH if not disagreements else MISMATCH
+    return TokenizerEvidence(
+        verdict,
+        deltas=dict(sample.deltas),
+        reference_deltas=reference.deltas,
+        base_input_tokens=sample.base,
+        reference_base=reference.base_input_tokens,
+    )
