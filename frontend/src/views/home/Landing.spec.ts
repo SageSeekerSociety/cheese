@@ -1,9 +1,13 @@
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { reactive } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Download from './Download.vue'
@@ -117,7 +121,7 @@ describe('公开首页', () => {
 
   it('sends organisations to the solutions page, where the way in is a conversation', async () => {
     const home = await mount()
-    expect(home.queryByRole('tab')).toBeNull()
+    expect(home.queryByRole('tab', { name: '高校与机构' })).toBeNull()
     for (const link of home.getAllByRole('link', { name: /查看方案/ })) {
       expect(link.getAttribute('href')).toBe('/solutions')
     }
@@ -206,6 +210,67 @@ describe('公开首页', () => {
     await view.router.push('/')
     expect(view.router.currentRoute.value.path).toBe('/')
     expect(view.getAllByRole('link', { name: /开始使用/ }).length).toBeGreaterThan(0)
+  })
+})
+
+// What a teacher, a student, an office worker or a developer can do, one tab each,
+// and the page of the manual that shows how.
+describe('use cases on the homepage', () => {
+  // A link into the docs site lands on a page only if the manual has its source.
+  const manual = join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/manual')
+  const inManual = (href: string) => existsSync(join(manual, `${href.replace(/^\/docs\//, '')}.md`))
+
+  it('opens on teachers and switches role by tab, each with a manual page that exists', async () => {
+    const view = await mount()
+    const section = within(view.getByRole('region', { name: '能用知是做什么' }))
+    const roles = ['老师与助教', '学生', '办公', '开发团队']
+    expect(section.getAllByRole('tab').map((tab) => tab.textContent?.trim())).toEqual(roles)
+    expect(section.getByRole('tab', { name: '老师与助教' }).getAttribute('aria-selected')).toBe('true')
+    expect(section.getByText('批准领取')).toBeTruthy()
+
+    const links = new Set<string>()
+    for (const role of roles) {
+      const tab = section.getByRole('tab', { name: role })
+      await fireEvent.click(tab)
+      const panel = await waitFor(() => {
+        const current = section.getByRole('tabpanel')
+        expect(current.getAttribute('aria-labelledby')).toBe(tab.id)
+        return current
+      })
+      expect(within(panel).getAllByRole('listitem').length).toBeGreaterThanOrEqual(3)
+      const href = within(panel).getByRole('link').getAttribute('href')!
+      expect(href).toMatch(/^\/docs\/[a-z-]+$/)
+      expect(inManual(href), `${role} links to ${href}, which the manual does not have`).toBe(true)
+      links.add(href)
+    }
+    expect(links.size).toBe(roles.length)
+  })
+
+  it('moves between roles with the arrow keys', async () => {
+    const view = await mount()
+    const section = within(view.getByRole('region', { name: '能用知是做什么' }))
+    const teachers = section.getByRole('tab', { name: '老师与助教' })
+    await fireEvent.keyDown(teachers, { key: 'ArrowLeft' })
+    const developers = section.getByRole('tab', { name: '开发团队' })
+    expect(developers.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(developers)
+    await fireEvent.keyDown(developers, { key: 'Home' })
+    expect(teachers.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('is reachable from the top bar on every public page, in either language', async () => {
+    const home = await mount()
+    expect(home.getByRole('link', { name: '场景' }).getAttribute('href')).toBe('/#use-cases')
+    cleanup()
+
+    const solutions = await mount('/solutions')
+    await fireEvent.click(solutions.getByRole('button', { name: 'Switch to English' }))
+    const link = solutions.getByRole('link', { name: 'Use cases' })
+    expect(link.getAttribute('href')).toBe('/#use-cases')
+    await fireEvent.click(link)
+    await waitFor(() => expect(solutions.router.currentRoute.value.fullPath).toBe('/#use-cases'))
+    expect(await solutions.findByRole('region', { name: 'What you can do with Cheese' })).toBeTruthy()
+    expect(solutions.getByRole('tab', { name: 'Developers' })).toBeTruthy()
   })
 })
 

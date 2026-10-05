@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import LandingFilm from './LandingFilm.vue'
 import LandingRoom from './LandingRoom.vue'
 import LandingShell from './LandingShell.vue'
+import LandingUseCases from './LandingUseCases.vue'
 
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -97,6 +98,8 @@ onBeforeUnmount(() => observer?.disconnect())
         </div>
       </div>
     </section>
+
+    <LandingUseCases />
 
     <section class="resources">
       <div v-for="item in resources" :key="item.title" class="resources-item">

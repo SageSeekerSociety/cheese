@@ -20,7 +20,7 @@ const homeHref = computed(() => (loggedIn.value ? '/about' : '/'))
 const entryHref = computed(() => (loggedIn.value ? '/' : '/account/signin'))
 const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
 
-// On a phone the four nav links do not fit beside the lockup, so the same links
+// On a phone the nav links do not fit beside the lockup, so the same links
 // live behind a disclosure button instead: without it /download and /docs/ are
 // unreachable from the homepage. `Esc` closes it and hands focus back to the
 // button that opened it.
@@ -80,6 +80,9 @@ onBeforeUnmount(() => {
           :aria-current="page === 'home' ? 'page' : undefined"
         >
           {{ t('publicSite.navProduct') }}
+        </router-link>
+        <router-link :to="page === 'home' ? { hash: '#use-cases' } : { path: homeHref, hash: '#use-cases' }">
+          {{ t('publicSite.navUseCases') }}
         </router-link>
         <router-link to="/solutions" :aria-current="page === 'solutions' ? 'page' : undefined">
           {{ t('publicSite.navSolutions') }}
