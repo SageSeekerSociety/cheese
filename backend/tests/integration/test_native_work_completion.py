@@ -5,6 +5,7 @@ Claude assembler and real ChatService work-close transaction. No provider or
 ComputePool is restarted in these tests.
 """
 
+import asyncio
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -167,8 +168,13 @@ def test_completion_commit_abort_rolls_back_release_and_consumption_together(cli
         chat._sessions, chat._gateway, chat._conversation_rooms = factory, None, {}
         state, result = _state(identity), _result(identity)
         aborted = []
+        # The listener is on every Session in the process, and the app's
+        # periodic jobs commit too: only this task's commits are the close's.
+        closing = asyncio.current_task()
 
         def fail_commit(session):
+            if asyncio.current_task() is not closing:
+                return
             session.flush()
             aborted.append(True)
             session.execute(text("SELECT 1 / 0"))
