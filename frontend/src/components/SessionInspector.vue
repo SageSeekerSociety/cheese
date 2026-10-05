@@ -1,41 +1,59 @@
 <script setup lang="ts">
-import type { AgentControlState, McpDeclaringType, RoomMcpServer } from '../api'
+// 「这间房的会话现在什么样」那一栏的展示件：连没连上、手上有哪几个队友的会话、它在跑
+// 什么任务、用的是哪些 MCP 连接，以及问一句只读的话。
+//
+// 取数（轮询、上一帧会话状态、展开时读 MCP 连接、把那一句问出去）都在
+// `composables/useSessionInspector.ts` 里，由 `usePanelSite` 调一次、整包从 `session`
+// 递进来。这一只原先自己引三个接口函数，而它渲染在「现场」那一格里 —— 那一格是场景
+// （`components/panels/**` 下每个 SFC 都是），于是整格跟着它够得着接口层。
+import type {
+  McpDeclaringType,
+  RoomMcpServer,
+  SessionInspectorBundle,
+  SessionRead,
+} from '../composables/useSessionInspector'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-
-import { getAgentControl, getRoomMcpServers, sendAgentControl } from '../api'
+import { computed } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { userRefRoute } from '@/lib/userRef'
 
 // 现场 only watches: everything here reads the session's state, and nothing
 // changes the session, the room or the machine.
 const props = defineProps<{
-  topicId: string
-  active: boolean
-  /** The room's socket already carries this state. A parent that passes it puts
-   * the panel on the frames and drops it to the idle cadence below; a parent
-   * that does not keeps asking every two seconds. */
-  pushed?: AgentControlState | null
+  /** 这一栏的取数（`composables/useSessionInspector.ts` 那一包）。 */
+  session: SessionInspectorBundle
+  /** 「由 X 授权」那颗 chip 的去处要它：项目 ID 换来项目里的成员页。 */
+  projectId?: string | null
 }>()
-const LIVE_POLL_MS = 2000
-// Only a floor under a frame that never arrived: a socket that dropped, a room
-// opened in a view with no socket. Everything this panel shows arrives pushed.
-const IDLE_POLL_MS = 30000
-const state = ref<AgentControlState | null>(null)
-const error = ref('')
-const busy = ref(false)
-const expanded = ref(false)
-const output = ref<unknown>(null)
-// The teammate whose session is shown, once the room has several working: the
-// platform never picks one of them, so the person does.
-const seat = ref<string | null>(null)
-let timer: ReturnType<typeof setTimeout> | undefined
-let generation = 0
 
-const seats = computed(() => state.value?.seats ?? [])
+const emit = defineEmits<{ (e: 'mention-click', handle: string): void }>()
+
+const {
+  state,
+  error,
+  busy,
+  expanded,
+  output,
+  seat,
+  seats,
+  tasks,
+  mcpServers,
+  reading,
+  values,
+  fields,
+  readItems,
+  fieldLabels,
+  setSeat,
+  setExpanded,
+  setReading,
+  setValue,
+  look,
+} = props.session
+
 const seatItems = computed(() => seats.value.map((held) => ({ value: held.agent, title: held.agent })))
 const status = computed(() => {
   if (state.value?.connected) return t('work.room.site.session.connected')
@@ -43,68 +61,6 @@ const status = computed(() => {
   return t('work.room.site.session.none')
 })
 
-function adopt(next: AgentControlState) {
-  if (next.id !== state.value?.id) output.value = null
-  state.value = next
-  if (seat.value && !seats.value.some((held) => held.agent === seat.value)) seat.value = null
-}
-
-watch(seat, () => void refresh())
-
-async function refresh(epoch = generation) {
-  try {
-    const next = await getAgentControl(props.topicId, seat.value)
-    if (epoch === generation) adopt(next)
-  } catch (e) {
-    if (epoch === generation) error.value = e instanceof Error ? e.message : t('work.room.site.session.loadFailed')
-  }
-}
-
-async function poll(epoch: number) {
-  await refresh(epoch)
-  const every = props.pushed === undefined ? LIVE_POLL_MS : IDLE_POLL_MS
-  if (epoch === generation && props.active) timer = setTimeout(() => void poll(epoch), every)
-}
-
-// A frame lands: take it as the whole state, the same shape the request returns.
-// It speaks for the room as a whole, so with a teammate picked it is only the
-// cue to read that teammate's session again.
-watch(
-  () => props.pushed,
-  (next) => {
-    if (!next) return
-    if (seat.value) void refresh()
-    else adopt(next)
-  }
-)
-
-watch(
-  () => props.active,
-  () => {
-    generation += 1
-    clearTimeout(timer)
-    state.value = null
-    error.value = ''
-    if (props.active) void poll(generation)
-  },
-  { immediate: true }
-)
-onBeforeUnmount(() => {
-  generation += 1
-  clearTimeout(timer)
-})
-
-// 这间房的会话用的是项目的连接：用谁的账号授权的，房间里的人都看得到（#1909）。
-// 只读；连接和断开在项目设置里。
-const mcpServers = ref<RoomMcpServer[]>([])
-watch(expanded, async (open) => {
-  if (!open) return
-  try {
-    mcpServers.value = (await getRoomMcpServers(props.topicId)).servers
-  } catch {
-    mcpServers.value = []
-  }
-})
 // 和项目设置里同一句：项目的 .mcp.json（模板里画），或声明它的那几个队友类型。
 function declaredBy(types: McpDeclaringType[]) {
   const titles = types.map((type) => type.title || type.name).join(t('work.mcp.listSeparator'))
@@ -122,7 +78,6 @@ function mcpState(server: RoomMcpServer) {
   return t(keys[server.status])
 }
 
-const tasks = computed(() => Object.values(state.value?.tasks ?? {}))
 const taskKeys: Record<string, string> = {
   running: 'work.room.site.session.task.running',
   queued: 'work.room.site.session.task.queued',
@@ -136,54 +91,6 @@ const taskKeys: Record<string, string> = {
 }
 function taskLabel(task: { status?: string; subtype?: string }) {
   return t(taskKeys[task.status ?? task.subtype ?? ''] ?? 'work.room.site.session.task.unknown')
-}
-
-// Each of these only reads. `initialize` answers with what the session was
-// started with (its commands, models, account) and changes nothing.
-const reads = [
-  { value: 'initialize', label: 'work.room.site.session.reads.initialize', fields: [] },
-  { value: 'file_suggestions', label: 'work.room.site.session.reads.file_suggestions', fields: ['query'] },
-  { value: 'read_file', label: 'work.room.site.session.reads.read_file', fields: ['path'] },
-  { value: 'get_workspace_diff', label: 'work.room.site.session.reads.get_workspace_diff', fields: [] },
-  { value: 'get_context_usage', label: 'work.room.site.session.reads.get_context_usage', fields: [] },
-  { value: 'get_usage', label: 'work.room.site.session.reads.get_usage', fields: [] },
-  { value: 'mcp_status', label: 'work.room.site.session.reads.mcp_status', fields: [] },
-] as const
-type Read = (typeof reads)[number]['value']
-const readItems = computed(() => reads.map((read) => ({ value: read.value, title: t(read.label) })))
-const fieldLabels: Record<string, string> = {
-  query: 'work.room.site.session.fields.query',
-  path: 'work.room.site.session.fields.path',
-}
-const reading = ref<Read>('initialize')
-const values = ref<Record<string, string>>({})
-const fields = computed(() => reads.find((read) => read.value === reading.value)!.fields)
-
-async function look() {
-  if (!state.value?.id || busy.value) return
-  const epoch = generation
-  const request: Record<string, unknown> = {
-    subtype: reading.value,
-    ...Object.fromEntries(fields.value.map((field) => [field, values.value[field] ?? ''])),
-  }
-  if (reading.value === 'read_file') request.encoding = 'utf8'
-  busy.value = true
-  error.value = ''
-  output.value = null
-  try {
-    const { id, agent } = state.value
-    const result = agent
-      ? await sendAgentControl(props.topicId, id, request, undefined, agent)
-      : await sendAgentControl(props.topicId, id, request)
-    if (epoch !== generation) return
-    const response = result.result?.response
-    if (response?.subtype === 'error') throw new Error(response.error ?? t('work.room.site.session.askFailed'))
-    output.value = response?.response ?? null
-  } catch (e) {
-    if (epoch === generation) error.value = e instanceof Error ? e.message : t('work.room.site.session.askFailed')
-  } finally {
-    busy.value = false
-  }
 }
 
 const formattedOutput = computed(() => {
@@ -205,15 +112,16 @@ const formattedOutput = computed(() => {
       <span>{{ status }}</span>
       <v-select
         v-if="seats.length > 1"
-        v-model="seat"
         class="inspector-seat"
         autocomplete="off"
         :items="seatItems"
+        :model-value="seat"
         :label="t('work.room.site.session.teammate')"
         density="compact"
         hide-details
+        @update:model-value="(v: string | null) => setSeat(v)"
       />
-      <BaseButton kind="ghost" size="sm" :aria-expanded="expanded" @click="expanded = !expanded">{{
+      <BaseButton kind="ghost" size="sm" :aria-expanded="expanded" @click="setExpanded(!expanded)">{{
         t(expanded ? 'work.room.site.session.collapse' : 'work.room.site.session.expand')
       }}</BaseButton>
     </div>
@@ -241,7 +149,13 @@ const formattedOutput = computed(() => {
                 keypath="work.mcp.status.connectedBy"
                 tag="span"
               >
-                <template #name><UserRef :handle="server.authorized_by" /></template>
+                <template #name>
+                  <UserRef
+                    :handle="server.authorized_by"
+                    :to="server.authorized_by ? userRefRoute(server.authorized_by, projectId) : null"
+                    @navigate="emit('mention-click', server.authorized_by ?? '')"
+                  />
+                </template>
                 <template #when>{{ relTime(server.authorized_at) }}</template>
               </i18n-t>
               <template v-else>{{ mcpState(server) }}</template>
@@ -249,24 +163,26 @@ const formattedOutput = computed(() => {
           </li>
         </ul>
       </div>
-      <form class="inspector-form" @submit.prevent="look">
+      <form class="inspector-form" @submit.prevent="look()">
         <v-select
-          v-model="reading"
           autocomplete="off"
           :items="readItems"
+          :model-value="reading"
           :label="t('work.room.site.session.what')"
           density="compact"
           hide-details
+          @update:model-value="(v: string) => setReading(v as SessionRead)"
         />
         <v-text-field
           v-for="field in fields"
           :key="field"
-          v-model="values[field]"
           autocomplete="off"
+          :model-value="values[field]"
           :label="t(fieldLabels[field])"
           density="compact"
           hide-details
           required
+          @update:model-value="(v: string) => setValue(field, v)"
         />
         <BaseButton kind="primary" size="sm" type="submit" :disabled="busy || !state?.connected">{{
           t('work.room.site.session.view')

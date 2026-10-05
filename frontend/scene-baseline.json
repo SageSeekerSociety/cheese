@@ -12,8 +12,10 @@
     "src/components/panels/PanelPreviewView.vue",
     "src/components/panels/PanelProgress.vue",
     "src/components/panels/PanelRoutines.vue",
+    "src/components/panels/PanelSite.vue",
     "src/components/panels/PanelTabs.vue",
     "src/components/panels/PanelThreads.vue",
+    "src/components/panels/SiteStepOutput.vue",
     "src/components/panels/TaskProgress.vue",
     "src/components/panels/TodoChecklist.vue",
     "src/components/panels/doc/DocAgentBox.vue",
@@ -101,8 +103,6 @@
     "src/views/workspace/ChannelTasksView.vue"
   ],
   "debt": [
-    "src/components/panels/PanelSite.vue",
-    "src/components/panels/SiteStepOutput.vue",
     "src/views/ConnectView.vue",
     "src/views/InboxView.vue",
     "src/views/MarketView.vue",

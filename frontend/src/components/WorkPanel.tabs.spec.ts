@@ -81,7 +81,7 @@ function mount(props: Record<string, unknown> = {}) {
       plugins: [vuetify, i18n],
       stubs: {
         PanelOverviewHost: true,
-        PanelSite: true,
+        PanelSiteHost: true,
         PanelChangesHost: true,
         PanelPreviewHost: true,
         RoutinePanelHost: true,

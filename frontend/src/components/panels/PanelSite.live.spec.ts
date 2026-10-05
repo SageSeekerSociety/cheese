@@ -21,7 +21,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import PanelSite from './PanelSite.vue'
+import PanelSite from '../work/PanelSiteHost.vue'
 
 import { setLocale } from '@/i18n'
 

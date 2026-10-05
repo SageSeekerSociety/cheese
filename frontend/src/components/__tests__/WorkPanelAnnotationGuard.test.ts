@@ -120,7 +120,7 @@ function harness() {
       stubs: {
         PanelOverviewHost: PanelOverviewStub,
         PanelChanges: PanelChangesStub,
-        PanelSite: true,
+        PanelSiteHost: true,
         PanelPreview: true,
         RoutinePanelHost: true,
       },

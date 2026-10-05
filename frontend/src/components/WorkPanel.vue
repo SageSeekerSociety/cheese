@@ -41,7 +41,6 @@ import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
-import PanelSite from './panels/PanelSite.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的「定时与触发」）。这个文件里 `panelTabs` 已经
 // 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
 import { workPanelTabs } from './panels/panelTabList'
@@ -52,6 +51,7 @@ import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelDocHost from './work/PanelDocHost.vue'
 import PanelOverviewHost from './work/PanelOverviewHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
+import PanelSiteHost from './work/PanelSiteHost.vue'
 
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
@@ -760,7 +760,7 @@ function setFiles(next: OpenFileTab[]) {
 
 // 对话栏的 socket 上来了现场的一行：交给现场那格。那格还没打开过就不用管，它第一次
 // 打开时会整段读一遍。
-const siteRef = ref<InstanceType<typeof PanelSite> | null>(null)
+const siteRef = ref<InstanceType<typeof PanelSiteHost> | null>(null)
 function siteBlock(block: Block) {
   siteRef.value?.receive(block)
 }
@@ -845,13 +845,14 @@ defineExpose({
             @open-file="openFile"
             @open-output="openFileTab"
           />
-          <PanelSite
+          <PanelSiteHost
             v-if="mounted.has('site')"
             v-show="active === 'site'"
             ref="siteRef"
             :class="enterClass('site')"
             :agent-name="agentName"
             :topic-id="conversationId"
+            :project-id="projectId"
             :active="active === 'site'"
             :running-turns="siteTurns"
             :refresh-tick="refreshTick"

@@ -16,7 +16,6 @@ import { DEMO_PROJECT, DEMO_TOPIC, installPanelAnswers } from './demoPanels'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import DispatchedMarker from '@/components/DispatchedMarker.vue'
-import PanelSite from '@/components/panels/PanelSite.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
@@ -26,6 +25,7 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import PanelChangesHost from '@/components/work/PanelChangesHost.vue'
 import PanelOverviewHost from '@/components/work/PanelOverviewHost.vue'
 import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
+import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
 const props = defineProps<{ scene: Scene; frame: Frame }>()
@@ -90,10 +90,10 @@ const working = computed(() => Object.keys(props.frame.running).length > 0)
 const workingNames = computed(() => props.frame.runningWho.map((h) => names.value[h] ?? h).join('、'))
 
 // ---- 把现场喂给真的 PanelSite ----
-// PanelSite 平时从接口拉一页、再从 socket 一行行收（receive）。演示不连后端：
-// 往前放时把新出来的几行 receive 进去；往回跳（或者哪一行变了样）就换一个新的
-// PanelSite，从头喂一遍 —— 它手上的记录只增不减，这是让它回到过去的唯一办法。
-const site = ref<InstanceType<typeof PanelSite> | null>(null)
+// PanelSite（经它的接线外壳 PanelSiteHost）平时从接口拉一页、再从 socket 一行行收
+// （receive）。演示不连后端：往前放时把新出来的几行 receive 进去；往回跳（或者哪一行
+// 变了样）就换一个新的，从头喂一遍 —— 它手上的记录只增不减，这是让它回到过去的唯一办法。
+const site = ref<InstanceType<typeof PanelSiteHost> | null>(null)
 const siteKey = ref(0)
 let fed: Block[] = []
 
@@ -320,12 +320,13 @@ watch(
             :activity-tick="frame.step"
             :active="frame.panel === 'overview'"
           />
-          <PanelSite
+          <PanelSiteHost
             v-if="mounted.has('site')"
             v-show="frame.panel === 'site'"
             :key="siteKey"
             ref="site"
             :topic-id="topic.id"
+            :project-id="DEMO_PROJECT"
             :active="false"
             :member-names="names"
             :working="working"
