@@ -1455,8 +1455,13 @@ async def test_an_installation_still_running_elsewhere_keeps_its_claim(
     import threading
     import time
 
-    monkeypatch.setattr(lease_claim, "CLAIM_TTL_S", 0.6)
-    monkeypatch.setattr(lease_claim, "CLAIM_RENEW_S", 0.15)
+    # A claim lapses once it goes unrenewed for CLAIM_TTL_S, and nothing renews
+    # it while the event loop is held. Shortened for the test, the TTL still
+    # has to outlast the longest stall a loaded CI runner gives this process's
+    # loop (over a second has been seen), or a start arriving behind one
+    # finds the claim lapsed and rightly installs a second time.
+    monkeypatch.setattr(lease_claim, "CLAIM_TTL_S", 3.0)
+    monkeypatch.setattr(lease_claim, "CLAIM_RENEW_S", 0.3)
     monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
     path, token, session_id = await _a_room_on_its_own_machine(client)
     release = threading.Event()
@@ -1474,8 +1479,8 @@ async def test_an_installation_still_running_elsewhere_keeps_its_claim(
         return response.json()["data"]
 
     assert ask(timeout=0.001).get("preparing") is True
-    # Several times as long as a claim stands unrenewed.
-    hold_until = time.monotonic() + 5 * lease_claim.CLAIM_TTL_S
+    # Twice as long as a claim stands unrenewed.
+    hold_until = time.monotonic() + 2 * lease_claim.CLAIM_TTL_S
     while time.monotonic() < hold_until:
         assert ask(timeout=0.001).get("preparing") is True
         async with client.test_factory() as db:
