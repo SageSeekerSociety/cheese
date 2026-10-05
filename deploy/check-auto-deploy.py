@@ -76,10 +76,16 @@ def should_skip(candidate: str) -> bool:
     healthy_services = set()
     all_healthy = True
     for service in ("backend", "frontend"):
-        containers = command(
-            "docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={project}",
-            "--filter", f"label=com.docker.compose.service={service}",
-        ).split()
+        # Each runs in one of two slots on a box that releases without downtime
+        # (`backend` or `backend-b`, deploy/deploy-docker.sh), so both are read.
+        containers = [
+            container
+            for slot in (service, f"{service}-b")
+            for container in command(
+                "docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={project}",
+                "--filter", f"label=com.docker.compose.service={slot}",
+            ).split()
+        ]
         for container in containers:
             # An unchanged image gets a new release tag but retains its old OCI
             # revision label. Config.Image records the tag actually deployed.

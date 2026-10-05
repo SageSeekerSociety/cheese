@@ -198,14 +198,31 @@ no content domain, or one the operator disabled, is left alone. The owner's
 internal RPC path (`/_internal/preview/`) is reachable only inside the compose
 network, never through nginx.
 
-The deploy starts a healthy successor, switches app-router to it, drains old
-workers, recreates the compose service, switches back and drains again before
-removing the successor. The minimum drain is 31 seconds: the worker shutdown
-deadline is 30 seconds, plus one second for signal delivery. Business streams
-longer than the deadline can reconnect; device and model connections bypass
-these workers. `ACTIVE_FRONTEND_DIR` enables the same procedure for the
-frontend behind the persistent **:18080** entry. Frontends still reach APIs
-through `API_UPSTREAM=host.docker.internal:8081`.
+A release switches app-router once. The backend and the frontend each have
+two slots, compose services `backend` and `backend-b` (`frontend`,
+`frontend-b`) on two loopback ports (`BACKEND_PORT`/`BACKEND_PORT_NEXT`,
+`FRONTEND_PORT`/`FRONTEND_PORT_NEXT`). The deploy starts the idle slot of each
+on the new image and waits for it to answer its health check, writes both
+`backend.conf` and `frontend.conf`, and reloads app-router once. It then signals
+the old backend to hand its work over, waits 31 seconds (`DEPLOY_DRAIN_SECONDS`)
+while the old slots answer what they already have, replaces collab, and stops
+the old slots. The next release goes back into the slots this one left. The
+`-b` services are written at deploy time from compose's merged model of
+`backend` and `frontend`, so they carry every overlay and differ only in port.
+Both backend slots answer to the `backend` network name, which the owners and
+office editor dial.
+
+The container a service runs in therefore alternates between `cheese-backend-1`
+and `cheese-backend-b-1` (likewise for the frontend). Anything that needs it
+asks `deploy/app-container.sh backend`.
+
+App-router's `worker_shutdown_timeout` is 180 seconds, longer than the handover
+pause, the drain and the old backend's stop grace together. The workers a
+reload retires therefore keep their connections until the old slot they lead
+to stops, and that stop is when a room's socket moves: once per release. Device
+and model connections bypass these workers. `ACTIVE_FRONTEND_DIR` puts the
+frontend behind the persistent **:18080** entry and into the same switch.
+Frontends still reach APIs through `API_UPSTREAM=host.docker.internal:8081`.
 
 Each backend switch is also a handover of the running work. One backend at a
 time owns it (the sessions it listens to, the turns it watches, the periodic
@@ -217,7 +234,7 @@ lets the prompts it is still sending arrive, stops reading its sessions, lets go
 of its turns without ending them and releases the lock. The successor then picks every running turn up
 where it stands and starts any turn a message was left waiting for. The whole
 of that fits in the backend's 60-second `stop_grace_period`, which is why the
-successor is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
+old slot is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
 The in-place recreate on boxes without `ACTIVE_BACKEND_DIR` hands over the same
 way, to the container that replaces it.
 
@@ -505,9 +522,10 @@ evidence the deploy had already removed — that is how 257 turn failures on
 gone:
 
 ```bash
-sudo journalctl -t cheese-backend-1 --since "2 hours ago"   # by container name
+# by container name; on a box with an app-router the backend is one of two
+sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "2 hours ago"
 sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
-sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
+sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "09:00" --until "09:30"
 ```
 
 `sudo` (or membership of `systemd-journal`) is required — an ordinary user sees
@@ -520,7 +538,7 @@ never below 40 GB free on the disk, whichever is tighter. At journald's own
 default (a tenth of the filesystem, at most 4 GB) dev kept about thirteen hours
 on 2026-09-29, and the evidence for a failure was gone before anyone looked.
 `sudo journalctl --disk-usage` and
-`sudo journalctl -t cheese-backend-1 -o short-iso | head -1` (the oldest line)
+`sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 -o short-iso | head -1` (the oldest line)
 say how far back a box reaches now.
 
 How long that is depends on what the app tier writes, so some lines are not
@@ -565,7 +583,7 @@ Changing backend env (e.g. enabling an OAuth provider):
 
    ```bash
    cd ~/actions-runner/_work/cheese/cheese
-   SHA=$(docker inspect cheese-backend-1 --format '{{.Config.Image}}' | sed 's/.*://')
+   SHA=$(docker inspect "$(bash deploy/app-container.sh backend)" --format '{{.Config.Image}}' | sed 's/.*://')
    bash deploy/deploy-docker.sh "$SHA"
    ```
 

@@ -60,8 +60,10 @@ class ReleaseOrdering(unittest.TestCase):
 
     def command(self, *args):
         if args[:3] == ("docker", "ps", "-q"):
+            # A container here is named for its compose service; a `-next`
+            # one-off carries the service it was run from.
             service = args[-1].rsplit("=", 1)[-1]
-            return "\n".join(name for name in self.images if name.startswith(service))
+            return "\n".join(name for name in self.images if name.removesuffix("-next") == service)
         if args[:2] == ("docker", "inspect"):
             if args[3] == "{{.Config.Image}}":
                 return self.images[args[-1]]
@@ -94,6 +96,14 @@ class ReleaseOrdering(unittest.TestCase):
 
     def test_partial_rollout_protects_the_newer_service_and_successor(self):
         self.images = {"backend": f"registry/backend:{self.base[:7]}", "frontend": f"registry/frontend:{self.base[:7]}", "frontend-next": f"registry/frontend:{self.newest[:7]}"}
+        self.assertTrue(self.check(self.middle))
+
+    def test_a_release_serving_from_the_second_slot_is_still_protected(self):
+        self.images = {"backend-b": f"registry/backend:{self.newest[:7]}", "frontend-b": f"registry/frontend:{self.newest[:7]}"}
+        self.assertTrue(self.check(self.middle))
+
+    def test_a_healthy_release_in_the_second_slot_is_not_restarted(self):
+        self.images = {"backend-b": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
         self.assertTrue(self.check(self.middle))
 
     def test_same_release_can_be_retried(self):

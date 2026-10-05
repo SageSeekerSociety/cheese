@@ -28,6 +28,11 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
       "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
       >> "$APP_TIER_DOCKER_LOG"
   fi
+  if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps --force-recreate "* ]]; then
+    printf 'slot-up-env %s BACKEND_IMAGE=%s FRONTEND_IMAGE=%s IMAGE_TAG=%s\n' \
+      "${!#}" "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
+      >> "$APP_TIER_DOCKER_LOG"
+  fi
   if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps device-connection"* ]]; then
     printf 'owner-up-env DEVICE_CONNECTION_IMAGE=%s\n' \
       "${DEVICE_CONNECTION_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG"
@@ -144,6 +149,10 @@ if [ "${1:-}" = "compose" ]; then
   done
 
   case "${1:-}" in
+    config)
+      # The merged model deploy-docker.sh copies the second slot from.
+      printf '{"services": {"backend": {"image": "repo/backend:x", "ports": ["127.0.0.1:18081:8081"]}, "frontend": {"image": "repo/frontend:x", "depends_on": {"backend": {"condition": "service_healthy"}}}}}\n'
+      ;;
     ps)
       if [ "${2:-}" = -q ] && [ "${3:-}" = forgejo ]; then
         printf 'forgejo-container\n'
@@ -228,6 +237,13 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
     *com.cheese.image_tag*) printf 'oldsha\n' ;;
     *State.Running*) printf 'true\n' ;;
   esac
+  exit 0
+fi
+
+# deploy/app-container.sh: service and name of each running container.
+if [ "${1:-}" = ps ] && [[ "$*" == *'{{.Names}}'* ]]; then
+  printf 'backend %s\n' "${APP_TIER_BACKEND_CONTAINER:-cheese-backend-1}"
+  printf 'frontend cheese-frontend-1\n'
   exit 0
 fi
 

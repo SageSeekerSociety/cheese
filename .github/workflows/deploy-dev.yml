@@ -262,9 +262,7 @@ jobs:
           if [ -f "$HOME/ops/deploy.env" ]; then
             . "$HOME/ops/deploy.env"
           fi
-          backend="$(docker ps -q --filter "label=com.docker.compose.project=${PROJECT:-cheese}" \
-            --filter label=com.docker.compose.service=backend \
-            --filter label=com.docker.compose.oneoff=False | head -n 1)"
+          backend="$(bash deploy/app-container.sh backend || true)"
           if [ -n "$backend" ]; then
             image="$(docker inspect --format '{{.Config.Image}}' "$backend")"
             echo "tag=${image##*:}" >> "$GITHUB_OUTPUT"
@@ -317,9 +315,7 @@ jobs:
           if [ -f "$HOME/ops/deploy.env" ]; then
             . "$HOME/ops/deploy.env"
           fi
-          backend="$(docker ps -q --filter "label=com.docker.compose.project=${PROJECT:-cheese}" \
-            --filter label=com.docker.compose.service=backend \
-            --filter label=com.docker.compose.oneoff=False | head -n 1)"
+          backend="$(bash deploy/app-container.sh backend)"
           commits="$RUNNER_TEMP/shipped-commits.json"
           gh api "repos/$GITHUB_REPOSITORY/compare/$PREVIOUS...$(git rev-parse HEAD)" \
             --jq '[.commits[] | {sha, message: .commit.message, merged_at: .commit.committer.date}]' \
