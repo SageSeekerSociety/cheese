@@ -620,6 +620,52 @@ div[data-footnote]::before {
 .hljs-strong {
   font-weight: 600;
 }
+/* ---- Between two blocks ------------------------------------------------
+   Two blocks with their own structure can sit with no line between them
+   (blocks/blockEditing.ts, BlockGap). The gap cursor a click leaves there is a
+   line across the column in the caret's colour, blinking like it; hovering
+   such a gap first draws a faint line saying it can be clicked. The gap
+   cursor's rules outrank the ones the editor library injects. */
+
+.doc-prose .ProseMirror-gapcursor {
+  right: 0;
+  left: 0;
+}
+
+.doc-prose .ProseMirror-gapcursor::after {
+  top: -9px;
+  right: 0;
+  left: 0;
+  width: auto;
+  border-top: 2px solid var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-prose .ProseMirror-gapcursor::after {
+    animation: none;
+  }
+}
+
+.doc-gap-hint {
+  position: absolute;
+  z-index: var(--z-raised-2);
+  height: 2px;
+  margin-top: -1px;
+  border-radius: var(--radius-pill);
+  background: var(--line-2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+
+.doc-gap-hint.is-shown {
+  opacity: 1;
+}
+
+:has(> .doc-gap-hint.is-shown) > .doc-prose {
+  cursor: text;
+}
+
 /* ---- Menus and popovers the editor opens ---------------------------------
    One shell for every menu in the document (design-system §3.4): the slash
    menu, the block handle's, the selection bar's, a code block's language, and

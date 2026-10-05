@@ -701,43 +701,6 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   outline-offset: 2px;
 }
 
-/* 两块之间的光标：图表、表格这类块挨在一起时，点它们之间那条缝，光标停在这里，打字
-   就在这里开一行。画成一条和正文等宽的横线，和文字光标同色、同样闪。 */
-.doc-editor :deep(.ProseMirror-gapcursor) {
-  left: 0;
-  right: 0;
-}
-.doc-editor :deep(.ProseMirror-gapcursor::after) {
-  top: -9px;
-  width: auto;
-  left: 0;
-  right: 0;
-  border-top: 2px solid var(--ink);
-}
-@media (prefers-reduced-motion: reduce) {
-  .doc-editor :deep(.ProseMirror-gapcursor::after) {
-    animation: none;
-  }
-}
-/* 指针停在这样一条缝上：先画一条淡线，说这里点得进去（blocks/blockEditing.ts 的 BlockGap）。 */
-.doc-editor :deep(.doc-gap-hint) {
-  position: absolute;
-  z-index: var(--z-raised-2);
-  height: 2px;
-  margin-top: -1px;
-  border-radius: var(--radius-pill);
-  background: var(--line-2);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--dur-quick) var(--ease-standard);
-}
-.doc-editor :deep(.doc-gap-hint.is-shown) {
-  opacity: 1;
-}
-.doc-editor:has(.doc-gap-hint.is-shown) :deep(.doc-prose) {
-  cursor: text;
-}
-
 /* Tables look as styles/docBlocks.css draws them; the cell is the anchor for
    the .selectedCell::after overlay below. */
 .doc-editor :deep(.doc-prose :is(th, td)) {
