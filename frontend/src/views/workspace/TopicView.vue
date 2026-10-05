@@ -15,6 +15,7 @@ import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
 import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
 
+import { getTask } from '@/api/tasks'
 import { useCommands } from '@/commands'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
@@ -175,7 +176,7 @@ const composerClosed = computed(() => {
   const task = taskPage.task.value
   if (!props.taskId || !task) return null
   if (!taskPage.isOpen.value) return t('work.task.closedNotice')
-  return taskPage.isOwner.value ? null : t('work.task.ownerOnlyNotice', { name: store.agentName })
+  return taskPage.takesPart.value ? null : t('work.task.ownerOnlyNotice', { name: store.agentName })
 })
 
 // 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
@@ -479,9 +480,31 @@ onUnmounted(
 // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
 // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
 // 等于对每一条支线都白打一次会 404 的请求。
+// A room that became a task keeps its id, so an old link, a bookmark or the
+// last room remembered for the project still names it: such an id opens the
+// task's page in its channel instead of saying the room is gone.
+const redirecting = ref(false)
 async function openPlace() {
   await store.loadPlace(props.topicId)
-  store.markRead(props.topicId)
+  if (store.placeById(props.topicId)) {
+    store.markRead(props.topicId)
+    return
+  }
+  if (props.taskId) return
+  redirecting.value = true
+  try {
+    const task = await getTask(props.topicId)
+    if (task.project_id !== props.projectId) return
+    await router.replace({
+      name: 'workspace-task',
+      params: { projectId: props.projectId, topicId: task.room_id, taskId: task.id },
+      query: route.query,
+    })
+  } catch {
+    // Not a task either: the empty state below says so.
+  } finally {
+    redirecting.value = false
+  }
 }
 void openPlace()
 </script>
@@ -489,7 +512,7 @@ void openPlace()
 <template>
   <div class="topic-view d-flex flex-column fill-height" style="min-width: 0">
     <div v-if="!selectedTopic" class="flex-grow-1 d-flex align-center justify-center">
-      <v-progress-circular v-if="resolving" indeterminate color="primary" />
+      <v-progress-circular v-if="resolving || redirecting" indeterminate color="primary" />
       <div v-else class="text-center">
         <div class="t-body c-muted">{{ t('work.topic.notFound') }}</div>
         <div class="t-meta mt-1">{{ t('work.topic.notFoundHint') }}</div>
@@ -523,6 +546,7 @@ void openPlace()
         :start="taskPage.start"
         :close="taskPage.close"
         :hand-over="taskPage.handOver"
+        :set-collaborators="taskPage.setCollaborators"
         :load-machine="taskPage.loadMachine"
         @open-room="backToRoom"
       />
