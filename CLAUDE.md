@@ -14,7 +14,7 @@ This file holds principles that no tool enforces. It never describes how things 
 
 Cheese hosts other people's repositories, and a repository must never have to change in order to be hosted: no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. Every line a repo is asked to add is a reason not to adopt us. The rule governs a repository's contents, not a machine's; a machine enrolled to run agents was enrolled for exactly that.
 
-So this file describes this project and nothing else. Anything equally true of a hosted repo goes in `backend/sandbox/skills/cheese/SKILL.md`, which reaches all of them; written here it would fix the problem for us alone. `check-repo-rules.sh` guards this. When unsure: a rule that is false outside a sandbox is leaked platform knowledge.
+So rules are filed by who they are true for. This file holds what is true of this project and of no other hosted repo, and only sessions working on this repo read it. `backend/sandbox/skills/cheese/SKILL.md` holds what is true of every repo the platform hosts, and every hosted repo's agents read it. A rule true only for platform-run agents working on this repo goes in the description of the platform tool it concerns, which is in front of exactly those agents. A platform rule written here fixes the problem for us alone; a project rule written in the skill tells every other repo something false about itself. When unsure: a rule that is false outside a session the platform runs is platform knowledge.
 
 ## Production changes go through CI/CD
 
@@ -55,6 +55,10 @@ A test earns its place by guarding a rule someone could state before the code ex
 ## Report real bugs, not theoretical ones
 
 When auditing, a finding needs a way to actually happen: a crash, corruption, a security hole, a wrong result. Style opinions and "this could in principle" are noise that buries the real ones.
+
+## Name the feedback a fix closes
+
+The commit that completes the fix for a report in the dev deployment's feedback center (okcheese.com) carries `Fixes-feedback: FB-<n>` as a line of its own in its commit message, flush left, several numbers separated by commas. The dev deploy reads that line from main to mark the report fixed and shipped, and notifies whoever filed it; only commit messages reach main, never the PR description. A commit message that merely shows the syntax indents it, or it fires too. A production report's number names a different report on dev and never goes in this line.
 
 ## Fix bugs freely; propose product and interaction changes first
 
