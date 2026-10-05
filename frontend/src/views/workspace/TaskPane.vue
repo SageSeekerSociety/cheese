@@ -5,10 +5,11 @@
 // 在地址里带着 taskId 时画出来。只有负责人能在对话里说话、能点「开始」；别人看得
 // 到全部，输入框的位置换成回到房间的入口。
 import type { Block, ProjectMemberRow, RoomTask, Topic, TopicMemberRow, WsServerFrame } from '@/cx_types'
+import type { TopicComputeProfile } from '@/types/compute'
 
 import { computed, ref, watch } from 'vue'
 
-import { ApiError, editMessage } from '@/api'
+import { ApiError, editMessage, getTopicComputeProfile } from '@/api'
 import {
   closeRoomTask,
   compareDocumentVersions,
@@ -27,8 +28,10 @@ import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import TaskConversation from '@/components/task/TaskConversation.vue'
 import TaskDocCompare from '@/components/task/TaskDocCompare.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import { t } from '@/i18n'
 import { phraseLabel } from '@/lib/board'
+import { choiceName } from '@/lib/computeConfig'
 import { relTime } from '@/lib/relTime'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -239,6 +242,32 @@ async function handOver() {
   }
 }
 
+// ---- 任务信息：负责人、AI 队友、工作电脑 ----
+// 收在负责人那一格里，页头不再多一个按钮。打开时才读工作电脑。
+const detailsOpen = ref(false)
+const machine = ref<TopicComputeProfile | null>(null)
+const machineError = ref(false)
+async function loadMachine() {
+  if (!task.value) return
+  machineError.value = false
+  try {
+    machine.value = await getTopicComputeProfile(props.room.id, task.value.id)
+  } catch {
+    machineError.value = true
+  }
+}
+watch(detailsOpen, (open) => {
+  if (open) void loadMachine()
+})
+const ownerName = computed(() => {
+  const handle = task.value?.owner_handle ?? ''
+  return props.memberNames[handle] || handle
+})
+const taskAgentName = computed(() => {
+  const handle = task.value?.agent_handle
+  return (handle && props.memberNames[handle]) || props.agentName
+})
+
 // ---- 与开始时相比 ----
 const comparing = ref(false)
 const comparison = ref<{ before: string; after: string } | null>(null)
@@ -286,10 +315,52 @@ function review() {
         phraseLabel(task.presentation.phrase)
       }}</span>
       <span class="task-head__spacer" />
-      <span v-if="task?.owner_handle" class="task-head__owner t-meta">
-        {{ t('work.task.owner') }}
-        <UserRef :handle="task.owner_handle" />
-      </span>
+      <v-menu v-if="task?.owner_handle" v-model="detailsOpen" location="bottom end" :close-on-content-click="false">
+        <template #activator="{ props: menuProps }">
+          <button
+            type="button"
+            class="task-head__owner t-meta"
+            v-bind="menuProps"
+            :title="t('work.task.details')"
+            data-testid="task-details"
+          >
+            {{ t('work.task.owner') }} {{ ownerName }}
+          </button>
+        </template>
+        <v-card class="task-details">
+          <dl class="task-details__list t-meta">
+            <div class="task-details__row">
+              <dt>{{ t('work.task.owner') }}</dt>
+              <dd><UserRef :handle="task.owner_handle" /></dd>
+            </div>
+            <div class="task-details__row">
+              <dt>{{ t('work.task.agent') }}</dt>
+              <dd>{{ taskAgentName }}</dd>
+            </div>
+            <div class="task-details__row" data-testid="task-machine">
+              <dt>{{ t('work.task.machine') }}</dt>
+              <dd v-if="machine" class="task-details__machine">
+                <span>{{ choiceName(machine.choice) }}</span>
+                <span v-if="machine.follows_room" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
+                <TopicComputePicker
+                  v-if="isOwner && isOpen"
+                  :topic-id="room.id"
+                  :task-id="task.id"
+                  :profile="machine"
+                  @changed="loadMachine"
+                />
+              </dd>
+              <dd v-else-if="machineError">
+                {{ t('work.roomMachine.loadFailed') }}
+                <button type="button" class="task-details__retry" @click="loadMachine">
+                  {{ t('work.roomMachine.retry') }}
+                </button>
+              </dd>
+              <dd v-else><v-progress-circular indeterminate size="14" width="2" /></dd>
+            </div>
+          </dl>
+        </v-card>
+      </v-menu>
       <BaseButton
         v-if="task && isOwner && isOpen && !task.started_at"
         kind="primary"
@@ -567,7 +638,61 @@ function review() {
   flex: none;
   align-items: center;
   gap: 4px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--muted);
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.task-head__owner:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+.task-details {
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 12px;
+}
+.task-details__list {
+  margin: 0;
+}
+.task-details__row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 0;
+}
+.task-details__row dt {
+  flex: none;
+  width: 72px;
+  color: var(--faint);
+}
+.task-details__row dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+}
+.task-details__machine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.task-details__tag {
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  color: var(--muted);
+}
+.task-details__retry {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-decoration: underline;
+  cursor: pointer;
 }
 .task-start-error {
   display: flex;

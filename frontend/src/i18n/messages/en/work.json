@@ -66,6 +66,8 @@
     "abandonTitle": "Change without pushing?"
   },
   "roomMachine": {
+    "taskHeading": "This task's work computer",
+    "taskHint": "Changing it first pushes this task's changes to its branch and switches only once they are pushed; if they cannot be, nothing changes and the reason is shown.",
     "edit": "Edit",
     "heading": "This topic's work computer",
     "hint": "Every AI teammate in the room shares this one. Changing it pushes each teammate’s work to its branch first and switches only when all of them are pushed; otherwise nothing moves and you are told why.",
@@ -1957,6 +1959,10 @@
     }
   },
   "task": {
+    "agent": "AI teammate",
+    "machine": "Work computer",
+    "followsRoom": "Follows the topic",
+    "details": "Task details",
     "noMessages": "No messages yet",
     "sayPlaceholder": "Message {name}",
     "send": "Send",

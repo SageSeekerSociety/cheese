@@ -66,6 +66,8 @@
     "abandonTitle": "不推送直接更换？"
   },
   "roomMachine": {
+    "taskHeading": "这个任务的工作电脑",
+    "taskHint": "更换时先把这个任务的改动推送到分支，推上去才换；推不上去就不换，并说明原因。",
     "edit": "改",
     "heading": "这个话题的工作电脑",
     "hint": "房间里所有 AI 队友共用这一台。更换时每个队友先把改动推送到分支，全部推上去才换；推不上去就整个不换，并说明原因。",
@@ -1957,6 +1959,10 @@
     }
   },
   "task": {
+    "agent": "AI 队友",
+    "machine": "工作电脑",
+    "followsRoom": "跟随话题",
+    "details": "任务信息",
     "noMessages": "暂无消息",
     "sayPlaceholder": "和{name}说",
     "send": "发送",

@@ -642,8 +642,10 @@ export function getResourceLimits(): Promise<ResourceLimits> {
 }
 
 // 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
-export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
-  return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
+// `taskId`: that task's own work computer instead of the room's.
+export function getTopicComputeProfile(topicId: string, taskId?: string | null): Promise<TopicComputeProfile> {
+  const qs = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
+  return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile${qs}`)
 }
 
 // The project's agent sessions on one self-hosted device, for a project manager
@@ -684,9 +686,15 @@ export interface ComputeProposal {
 export function setTopicComputeChoice(
   topicId: string,
   choice: ComputeChoice,
-  options: { abandonUnpushed?: boolean; ifIdle?: boolean; visibility?: 'host' | 'isolated' } = {}
+  options: {
+    abandonUnpushed?: boolean
+    ifIdle?: boolean
+    visibility?: 'host' | 'isolated'
+    taskId?: string | null
+  } = {}
 ): Promise<{ choice: ComputeChoice; proposal: ComputeProposal | null }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
+  const qs = options.taskId ? `?task=${encodeURIComponent(options.taskId)}` : ''
+  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile${qs}`, {
     method: 'PUT',
     body: JSON.stringify({
       choice,

@@ -5,13 +5,18 @@ import type { RoomTask, Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render, waitFor } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getRoomTask = vi.fn()
 vi.mock('@/api/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/tasks')>()),
   getRoomTask: (...a: unknown[]) => getRoomTask(...a),
+}))
+const getTopicComputeProfile = vi.fn()
+vi.mock('@/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api')>()),
+  getTopicComputeProfile: (...a: unknown[]) => getTopicComputeProfile(...a),
 }))
 let me = 'alice'
 vi.mock('@/me', () => ({ myHandle: () => me }))
@@ -72,8 +77,42 @@ function mount() {
 
 beforeEach(() => {
   getRoomTask.mockReset()
+  getTopicComputeProfile.mockReset()
   me = 'alice'
 })
+
+const LAPTOP = { name: '王宁的笔记本', profile: 'device', device_id: 'd1', whole_machine: false }
+
+function machine() {
+  return {
+    choice: LAPTOP,
+    project_default: LAPTOP,
+    current: 'device',
+    device_id: 'd1',
+    devices: [{ device_id: 'd1', name: '王宁的笔记本', online: true, owned: true, sandbox_unavailable: null }],
+    sessions: [],
+    profiles: [],
+    cloud_vm_available: false,
+    visibility: { options: [], effective: null, machine_access: false },
+    follows_room: true,
+  }
+}
+
+async function openDetails(container: Element) {
+  // 任务信息是一个 VMenu，而 happy-dom 没有 visualViewport 和 devicePixelRatio。
+  vi.stubGlobal('devicePixelRatio', 1)
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    addEventListener() {},
+    removeEventListener() {},
+  })
+  await waitFor(() => expect(container.querySelector('[data-testid="task-details"]')).not.toBeNull())
+  await fireEvent.click(container.querySelector('[data-testid="task-details"]')!)
+  await waitFor(() => expect(document.body.textContent).toContain('王宁的笔记本'))
+}
 
 describe('任务页', () => {
   it('负责人看得到输入框和「开始」', async () => {
@@ -97,5 +136,26 @@ describe('任务页', () => {
     await waitFor(() => expect(container.querySelector('[data-testid="task-blocked"]')).not.toBeNull())
     expect(container.querySelector('[data-testid="task-composer"]')).toBeNull()
     expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
+  })
+
+  it('负责人在任务信息里看得到工作电脑，也能更换', async () => {
+    getRoomTask.mockResolvedValue(task())
+    getTopicComputeProfile.mockResolvedValue(machine())
+    const { container } = mount()
+    await openDetails(container)
+    expect(getTopicComputeProfile).toHaveBeenCalledWith('r1', 't1')
+    const row = document.querySelector('[data-testid="task-machine"]')!
+    expect(row.querySelector('button')).not.toBeNull()
+  })
+
+  it('不是负责人：看得到任务在哪台电脑上做，不能更换', async () => {
+    me = 'bob'
+    getRoomTask.mockResolvedValue(task())
+    getTopicComputeProfile.mockResolvedValue(machine())
+    const { container } = mount()
+    await openDetails(container)
+    const row = document.querySelector('[data-testid="task-machine"]')!
+    expect(row.textContent).toContain('王宁的笔记本')
+    expect(row.querySelector('button')).toBeNull()
   })
 })

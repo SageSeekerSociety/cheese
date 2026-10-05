@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 房间这一项：这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻结论
 // 60）：改它就是整个房间一起搬，房间里的每个 AI 队友都换过去。挂在成员名册里房间
-// 那一行上。
+// 那一行上。带 `taskId` 时改的是那个任务自己的那一项，只有它的会话搬；机器访问范围
+// 是房间的，任务这里不给改。
 import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { computed, ref } from 'vue'
@@ -13,7 +14,7 @@ import { renderNoticeMessage } from '../lib/noticeText'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 
-const props = defineProps<{ topicId: string; profile: TopicComputeProfile }>()
+const props = defineProps<{ topicId: string; profile: TopicComputeProfile; taskId?: string | null }>()
 const emit = defineEmits<{ changed: [] }>()
 const saving = ref(false)
 const error = ref('')
@@ -36,7 +37,7 @@ function online(choice: ComputeChoice): string {
 // 房间在自己登记的那台机器上能看到什么：隔离环境（默认），或者整台机器——只有
 // 机主本人能给。说的是房间点了名、或者第一轮已经钉下的那一台。
 const machine = computed(() => {
-  if (props.profile.current !== 'device') return null
+  if (props.taskId || props.profile.current !== 'device') return null
   const id = props.profile.device_id ?? props.profile.choice.device_id
   return props.profile.devices.find((d) => d.device_id === id) ?? null
 })
@@ -62,6 +63,7 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?:
     const saved = await setTopicComputeChoice(props.topicId, choice, {
       ...(abandonUnpushed ? { abandonUnpushed } : {}),
       ...(visibility ? { visibility } : {}),
+      ...(props.taskId ? { taskId: props.taskId } : {}),
     })
     // 变提议时房间这一项没有变 —— 不说话就等于这次点击石沉大海。菜单留着不收，
     // 那句话就在他刚按下的那个控件上。
@@ -87,8 +89,8 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?:
       <button type="button" class="cp-action" v-bind="menuProps">{{ t('work.roomMachine.edit') }}</button>
     </template>
     <v-card class="cp-menu">
-      <div class="cp-heading">{{ t('work.roomMachine.heading') }}</div>
-      <p class="cp-hint">{{ t('work.roomMachine.hint') }}</p>
+      <div class="cp-heading">{{ taskId ? t('work.roomMachine.taskHeading') : t('work.roomMachine.heading') }}</div>
+      <p class="cp-hint">{{ taskId ? t('work.roomMachine.taskHint') : t('work.roomMachine.hint') }}</p>
       <button
         v-for="choice in choices"
         :key="choiceKey(choice)"
