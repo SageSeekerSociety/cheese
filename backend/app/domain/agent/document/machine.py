@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
+from app.domain.conversation.services import of_room
 from app.domain.topic.models import Topic
 
 #: What of a lease the reader's executor client needs (`RemoteClient`): a
@@ -46,7 +47,9 @@ async def machine_to_read(
         return None
     resource = str(topic.resource_id or topic.id)
     rows = list(
-        await db.scalars(select(AgentSession).where(AgentSession.topic_id == room_id))
+        await db.scalars(
+            select(AgentSession).where(of_room(AgentSession.conversation_id, room_id))
+        )
     )
     rows.sort(key=lambda row: row.agent_handle != seat)
     for row in rows:

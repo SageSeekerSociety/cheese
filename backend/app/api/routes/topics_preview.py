@@ -68,9 +68,7 @@ async def get_preview(
     await _actor_in_place(resolver, place)
     # The conversation's own: a task's preview is what its session last showed.
     topic_id = place.conversation_id
-    art = await BlockRepository(db).latest_artifact(
-        place.room_id, task_id=place.task_id
-    )
+    art = await BlockRepository(db).latest_artifact(place.conversation_id)
     if art is None:
         return ok(None)
     from app.api.preview_host import preview_origin
@@ -149,9 +147,7 @@ async def preview_file(
                 place.project_id, place.room_id, clean_artifact_path(path)
             )
         )
-    art = await BlockRepository(db).latest_artifact(
-        place.room_id, task_id=place.task_id
-    )
+    art = await BlockRepository(db).latest_artifact(place.conversation_id)
     if art is None or art.mime_type == ARTIFACT_MIME["app"]:
         raise NotFoundError("No file preview")
     return ok(library.read_room_text_file(place.project_id, place.room_id, art.content))

@@ -218,7 +218,7 @@ class RoutineService:
                 Block(
                     id=uuid.uuid4(),
                     project_id=row.project_id,
-                    topic_id=row.topic_id,
+                    conversation_id=row.topic_id,
                     author="system",
                     author_type=AuthorType.platform,
                     kind=BlockKind.event,
@@ -390,7 +390,7 @@ class RoutineService:
             already = await self._session.scalar(
                 select(Block.id)
                 .where(
-                    Block.topic_id == room.id,
+                    Block.conversation_id == room.id,
                     Block.meta["event_type"].as_string() == EVENT_ROUTINE_STOPPED,
                     Block.meta["archived_at"].as_string() == stamp,
                 )
@@ -402,7 +402,7 @@ class RoutineService:
                 Block(
                     id=uuid.uuid4(),
                     project_id=room.project_id,
-                    topic_id=room.id,
+                    conversation_id=room.id,
                     author="system",
                     author_type=AuthorType.platform,
                     kind=BlockKind.event,
@@ -554,7 +554,7 @@ async def _fire(
         Block(
             id=event_id,
             project_id=routine.project_id,
-            topic_id=routine.topic_id,
+            conversation_id=routine.topic_id,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,
@@ -593,7 +593,7 @@ async def _fire(
             },
             occurred_at=stamp,
         ),
-        topic_id=routine.topic_id,
+        conversation_id=routine.topic_id,
         instance_id=agent.id,
         content=content,
     )
@@ -872,7 +872,7 @@ async def _announce_finished(session: AsyncSession) -> None:
             Block(
                 id=uuid.uuid4(),
                 project_id=routine.project_id,
-                topic_id=routine.topic_id,
+                conversation_id=routine.topic_id,
                 author="system",
                 author_type=AuthorType.platform,
                 kind=BlockKind.event,

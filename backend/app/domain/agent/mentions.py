@@ -47,6 +47,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.membership.roster import roster_rows
 from app.domain.mentions import canonicalize_refs, expand_mention_names
@@ -298,16 +299,17 @@ async def announce_mentions(
             continue
         # Beside the message it is about, not in the room the message did not
         # go to — same landing as the message.
+        room = await room_of(session, block.conversation_id)
+        in_task = room != block.conversation_id
         landed = landing(
-            EventAbout.task if block.task_id is not None else EventAbout.room,
+            EventAbout.task if in_task else EventAbout.room,
             project_id=block.project_id,
-            room_id=block.topic_id,
-            task_id=block.task_id,
+            room_id=room,
+            task_id=block.conversation_id if in_task else None,
         )
         await BlockRepository(session).add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=author,
             author_type=AuthorType.participant,
             content=say("mentionUnknownMember", member=f"<@{bad}>"),

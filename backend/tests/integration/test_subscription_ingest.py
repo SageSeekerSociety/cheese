@@ -352,7 +352,7 @@ async def test_invalid_topic_keeps_project_usage_and_advances_once(
                 select(ResourceUsage).where(ResourceUsage.project_id == pid)
             )
         )
-        assert {(row.topic_id, row.total_tokens) for row in rows} == {
+        assert {(row.conversation_id, row.total_tokens) for row in rows} == {
             (None, 20),
             (tid, 9),
         }

@@ -96,7 +96,7 @@ async def list_room_tasks(
     # overview would have to ask per thread to tell them apart.
     thread_ids = [t.id for t, _ in threads]
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
-    asked = await BlockRepository(db).tasks_awaiting_an_answer(thread_ids)
+    asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
     # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
     # `tasks` 上没有一列存它。
     spent = await UsageRepository(db).last_model_by_task(thread_ids)
@@ -148,23 +148,11 @@ async def get_task(
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
-    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
-    through: uuid.UUID | None = None,
 ) -> dict:
-    """The task this conversation is, with its conversation — the same shape
-    a room's `/tasks` lists. 404 for a room's own conversation.
-
-    `limit` caps the timeline at its newest N blocks; with none it comes back
-    whole. Same default as `/blocks` and for the same reason — an invented
-    window truncates an agent reading history with no way to notice.
-    `through=<block_id>` stretches that window back to the named block (a card
-    opened at one of its messages); a block of another conversation is a 404.
-    """
+    """The task this conversation is — the same shape a room's `/tasks` lists.
+    404 for a room's own conversation. What is said in it is read like any
+    conversation's (`/topics/{task}/blocks`)."""
     place, _actor, task = await task_conversation(db, resolver, topic_id)
-    tasks = TaskService(db)
-    blocks = await tasks.blocks_for_thread(task.id, limit=limit, through=through)
-    if blocks is None:
-        raise NotFoundError(say("messageNotInTask"))
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
     out = await _task_out(db, chat, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
@@ -186,7 +174,6 @@ async def get_task(
             "pr_url": card.pr_url,
         }
     )
-    out["blocks"] = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
     return ok(out)
 
 
@@ -204,7 +191,7 @@ async def _task_out(db, chat: ChatService, task, card=None) -> dict:
             card,
             running=task.id in running,
             awaiting_answer=bool(
-                await BlockRepository(db).tasks_awaiting_an_answer([task.id])
+                await BlockRepository(db).awaiting_an_answer([task.id])
             ),
         ),
         now=datetime.now(UTC),

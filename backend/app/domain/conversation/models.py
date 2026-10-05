@@ -1,8 +1,9 @@
 """Conversations: the register of every place a conversation happens.
 
 A room and a task are each a conversation, and the things that belong to one —
-an agent's session in it, so far — point here rather than at whichever table
-the conversation lives in. A row holds only who the conversation is: its id
+what is said in it, an agent's session, its turns and spend, its progress —
+point here (``conversation_id``) rather than at whichever table the
+conversation lives in. A row holds only who the conversation is: its id
 (the room's or the task's own), its project and its kind. Everything a room or
 a task says about itself stays in ``topics`` or ``tasks``.
 

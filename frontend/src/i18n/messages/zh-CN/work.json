@@ -780,10 +780,7 @@
       "needsYou": "{count} 件待处理",
       "row": "第 {n} 件：{title}"
     },
-    "card": {
-      "steps": "{count} 步操作",
-      "stepFailed": "有步骤失败"
-    },
+    "card": {},
     "doc": {
       "delete": "删除文档",
       "deleted": "这份文档已被删除",
@@ -1996,17 +1993,13 @@
     "machine": "工作电脑",
     "followsRoom": "跟随话题",
     "details": "任务信息",
-    "noMessages": "暂无消息",
-    "sayPlaceholder": "和{name}说",
-    "send": "发送",
-    "sendFailed": "消息未发送，稍后重试",
     "ownerOnlyNotice": "只有负责人可以在这里和{name}对话",
     "closedNotice": "任务已关闭",
     "backToRoom": "回到 # {room}",
     "notFound": "这个房间里没有这个任务",
     "loadFailed": "无法加载这个任务",
-    "retry": "重试",
     "owner": "负责人",
+    "ownerChip": "{name} 负责",
     "start": "开始",
     "startFailed": "未能开始，稍后重试",
     "reviewer": "审阅人",
@@ -2017,11 +2010,6 @@
     "compareFailed": "无法读取开始时的文档",
     "compareSame": "开始后文档没有改动",
     "conclusion": "结论",
-    "tabChat": "对话",
-    "tabOverview": "总览",
-    "tabChanges": "改动",
-    "tabSite": "现场",
-    "tabPreview": "预览",
     "proposal": {
       "byline": "{name} 提议了一个任务",
       "accept": "创建任务",

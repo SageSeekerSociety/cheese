@@ -303,7 +303,9 @@ def test_a_batch_whose_session_fails_after_a_restart_stays_held_without_replay(
     async def original_input_is_still_held():
         async with client.test_request_factory() as session:
             blocks = list(
-                await session.scalars(select(Block).where(Block.topic_id == room))
+                await session.scalars(
+                    select(Block).where(Block.conversation_id == room)
+                )
             )
             original = next(
                 block
@@ -312,7 +314,7 @@ def test_a_batch_whose_session_fails_after_a_restart_stays_held_without_replay(
             )
             rows = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == room)
+                    select(NativeInput).where(NativeInput.conversation_id == room)
                 )
             )
             holders = [row for row in rows if str(original.id) in row.held_block_ids]

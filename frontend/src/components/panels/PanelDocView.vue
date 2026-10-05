@@ -495,9 +495,10 @@ defineExpose({
               />
 
               <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题
-                 有——别的房间的文档就是它自己那一份，没有人从那里看项目全局。 -->
+                 自己的文档有——别的房间、根话题里的任务，文档就是它自己那一份，没有人
+                 从那里看项目全局（任务的文档不带标题，`untitled` 说的就是它）。 -->
               <OverviewAuto
-                v-if="topic?.kind === 'root' && !bare"
+                v-if="topic?.kind === 'root' && !bare && !untitled"
                 :topic="topic"
                 :activity-tick="activityTick"
                 @open-topic="emit('open-topic', $event)"

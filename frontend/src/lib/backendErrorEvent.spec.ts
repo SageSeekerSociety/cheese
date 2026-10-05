@@ -7,7 +7,7 @@ import { backendErrorPresentation } from './backendErrorEvent'
 function eventBlock(meta: Record<string, unknown> | null, content = '💥 后端报错：ValueError: nope'): Block {
   return {
     id: 'event-1',
-    topic_id: 'topic-1',
+    conversation_id: 'topic-1',
     kind: 'event',
     author_type: 'platform',
     author: 'backend',

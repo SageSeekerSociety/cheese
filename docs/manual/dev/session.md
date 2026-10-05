@@ -28,7 +28,7 @@ covers:
 | 实例 | `agent_instances` | 它在这个项目里是谁、在这里学到了什么 |
 | 会话 | `agent_sessions` | 一段对话（话题或任务）里的会话，可以随时丢掉 |
 
-`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room` 或 `task`，id 就是话题或任务自己的 id，由数据库触发器在话题、任务插入和删除时维护，应用不写它。`topic_id` 是这条会话所在的房间：话题自己的会话就是它本身，任务的会话是任务所在的那个房间——房间范围的问题（房间的机器、换机、清理）只读这一列。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<话题十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把话题交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
+`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room` 或 `task`，id 就是话题或任务自己的 id，由数据库触发器在话题、任务插入和删除时维护，应用不写它。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<话题十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把话题交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
 
 任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions.py`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；任务还没「开始」时凭证对工作机器只读（文档照样能写），启动环境里是 `CHEESE_TASK` 和 `CHEESE_TASK_READS_ONLY`，开始之后空闲的会话带着可写的凭证重开。broker 上任务的频道就是任务 id。
 

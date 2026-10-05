@@ -73,7 +73,7 @@ export function submittedAnswer(block: Block, pending: AskPending): AskAnswerEnt
 
 function scope(account: string, block: Block): string {
   if (!account) throw new Error('ask-account-required')
-  return [account, block.topic_id, block.id].map(encodeURIComponent).join(':')
+  return [account, block.conversation_id, block.id].map(encodeURIComponent).join(':')
 }
 
 export function askDraftKey(account: string, block: Block, version = answerVersion(block)): string {
@@ -113,7 +113,7 @@ export function loadAskPending(storage: Storage, account: string, block: Block):
   const p = JSON.parse(raw) as AskPending
   if (
     p.account !== account ||
-    p.topic !== block.topic_id ||
+    p.topic !== block.conversation_id ||
     p.block !== block.id ||
     typeof p.question !== 'string' ||
     !p.payload ||
@@ -143,7 +143,7 @@ export function prepareAskSubmission(
   if (!validAskDraft(block, draft) || !draft.kind) throw new Error('ask-invalid-draft')
   const pending: AskPending = {
     account,
-    topic: block.topic_id,
+    topic: block.conversation_id,
     block: block.id,
     question: questionIdentity(block),
     payload: {

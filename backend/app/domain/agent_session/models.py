@@ -92,18 +92,9 @@ class AgentSession(UuidPk, Timestamps, Base):
         ),
     )
 
-    # The conversation this session is in: a room's or a task's id. A row
-    # written with only its room is the room's own session.
+    # The conversation this session is in: a room's or a task's id.
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        default=lambda context: context.get_current_parameters()["topic_id"],
-    )
-    # The room this session works in: the conversation itself when that is a
-    # room, the task's room when it is a task. Written with the row
-    # (``AgentSessionRepository._upsert``), so a room-wide question — the room's
-    # machine, its switch, its cleanup — reads one column.
-    topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+        ForeignKey("conversations.id", ondelete="CASCADE")
     )
     # ResolvedAgent.handle — the agent's key inside its project.
     agent_handle: Mapped[str] = mapped_column(String(64))

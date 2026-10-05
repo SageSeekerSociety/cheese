@@ -393,7 +393,7 @@ def test_a_task_message_is_edited_by_its_author_under_the_same_rules(client):
     assert seen["id"] == said
     assert seen["content"] == "接口可以动了"
     assert seen["meta"]["edited_at"]
-    task_blocks = client.get(f"/topics/{task}/task").json()["data"]["blocks"]
+    task_blocks = client.get(f"/topics/{task}/blocks").json()["data"]["data"]
     assert [b["content"] for b in task_blocks if b["id"] == said] == ["接口可以动了"]
 
 

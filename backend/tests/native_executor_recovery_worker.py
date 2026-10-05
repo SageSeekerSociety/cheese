@@ -201,7 +201,7 @@ async def run(descriptor):
         async with factory() as session:
             rows = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert len(rows) == (3 if http else 2)
@@ -233,7 +233,7 @@ async def run(descriptor):
                 }
             turns = list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                    select(AgentTurn).where(AgentTurn.conversation_id == topic)
                 )
             )
             # Leave the evidence behind if anything below fails.

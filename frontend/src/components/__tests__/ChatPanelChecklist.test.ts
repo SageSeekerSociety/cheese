@@ -51,7 +51,7 @@ const topic: Topic = {
 function checklist(id: string, author: string, subjects: string[]): Block {
   return {
     id,
-    topic_id: topic.id,
+    conversation_id: topic.id,
     kind: 'message',
     author_type: 'participant',
     author,

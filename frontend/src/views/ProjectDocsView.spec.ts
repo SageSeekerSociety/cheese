@@ -77,7 +77,7 @@ describe('周报集', () => {
       weeklies: [
         {
           id: 'w1',
-          topic_id: 'room-1',
+          conversation_id: 'room-1',
           kind: 'weekly',
           content: '本周交付了产物页预览。',
           created_at: '2026-09-07T02:00:00Z',
@@ -116,7 +116,7 @@ describe('in English', () => {
       weeklies: [
         {
           id: 'w1',
-          topic_id: 'room-1',
+          conversation_id: 'room-1',
           kind: 'weekly',
           content: 'Shipped the artifact preview.',
           created_at: '2026-09-07T02:00:00Z',

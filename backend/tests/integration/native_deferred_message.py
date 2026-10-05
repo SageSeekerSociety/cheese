@@ -64,7 +64,7 @@ async def finish_deferred_message(
     async with client.test_request_factory() as session:
         waiting = await session.scalar(
             select(NativeInput).where(
-                NativeInput.topic_id == topic,
+                NativeInput.conversation_id == topic,
                 NativeInput.execution_work_id == held_work,
             )
         )
@@ -164,7 +164,7 @@ async def finish_deferred_message(
         async with client.test_request_factory() as session:
             rows = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert len(rows) == 2 and all(row.completed_at for row in rows)
@@ -198,7 +198,7 @@ async def finish_deferred_message(
             async with client.test_request_factory() as session:
                 row = await session.scalar(
                     select(NativeInput).where(
-                        NativeInput.topic_id == topic,
+                        NativeInput.conversation_id == topic,
                         NativeInput.work_id == ordinary_id,
                     )
                 )
@@ -210,7 +210,7 @@ async def finish_deferred_message(
         rows = list(
             await session.scalars(
                 select(NativeInput).where(
-                    NativeInput.topic_id == topic,
+                    NativeInput.conversation_id == topic,
                 )
             )
         )
@@ -231,7 +231,7 @@ async def finish_deferred_message(
         turns = list(
             await session.scalars(
                 select(AgentTurn).where(
-                    AgentTurn.topic_id == topic,
+                    AgentTurn.conversation_id == topic,
                 )
             )
         )

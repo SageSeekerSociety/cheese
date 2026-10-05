@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 侧栏里挂在房间下面的一个任务。比房间那一行缩进一级、字小一号；需要你处理的亮
-// 一颗暖色点，正在运行的一颗绿点，别的不画。
+// 侧栏里挂在房间下面的一个任务（样稿「侧栏 A」）。比它的房间往里缩一级，前面一道分支
+// 线说「这是那个房间里的」，字和房间一样大；需要你处理的亮一颗暖色点，正在运行的一颗
+// 绿点，别的不画。
 import type { RoomTask } from '@/cx_types'
 
 import { computed } from 'vue'
@@ -8,10 +9,15 @@ import { computed } from 'vue'
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
 
-const props = defineProps<{
-  task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>
-  selected: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>
+    selected: boolean
+    // 它的房间在树里的第几层：任务比房间再缩一级。
+    depth?: number
+  }>(),
+  { depth: 0 }
+)
 
 const emit = defineEmits<{
   (e: 'select', task: { roomId: string; taskId: string }): void
@@ -27,11 +33,15 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
 <template>
   <button
     type="button"
-    class="rail-task t-meta"
+    class="rail-task"
     :class="{ 'rail-task--selected': selected }"
+    :style="{ paddingInlineStart: 30 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
   >
+    <svg class="rail-task__branch" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <path d="M2 1.5v6.5a2.5 2.5 0 0 0 2.5 2.5H12" />
+    </svg>
     <span class="rail-task__title">{{ taskTitle(task) }}</span>
     <span
       v-if="mark"
@@ -47,25 +57,34 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
 .rail-task {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  min-height: 28px;
-  padding: 0 12px 0 32px;
+  min-height: 32px;
+  padding-block: 0;
+  padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--muted);
+  color: var(--text);
+  font-size: 14px;
+  line-height: var(--lh-14);
   text-align: left;
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .rail-task:hover {
   background: var(--fill);
-  color: var(--text);
+  color: var(--ink);
 }
 .rail-task--selected {
   background: var(--fill);
   color: var(--ink);
+}
+.rail-task__branch {
+  flex: none;
+  fill: none;
+  stroke: var(--faint);
+  stroke-width: 1.3;
 }
 .rail-task__title {
   flex: 1 1 auto;

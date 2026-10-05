@@ -36,7 +36,7 @@ def input_registrar(
         if rejected is not None:
             raise rejected
         if probe_unread:
-            unread_inputs.setdefault(identity.topic_id, {}).setdefault(
+            unread_inputs.setdefault(identity.conversation_id, {}).setdefault(
                 identity.input_id, time.monotonic()
             )
 
@@ -61,13 +61,13 @@ async def confirm_receipt(chat, receipt) -> None:
         return
     # Echo commits before a waiting correction re-enters normal admission.
     chat.nudge_ask_receipts(receipt.identity)
-    pending = chat._unread_inputs.get(receipt.identity.topic_id)
+    pending = chat._unread_inputs.get(receipt.identity.conversation_id)
     if pending is not None:
         pending.pop(receipt.identity.input_id, None)
     from app.domain.agent.runtime import get_broker
 
     for block_id, value in reactions.items():
         await get_broker().publish(
-            str(receipt.identity.topic_id),
+            str(receipt.identity.conversation_id),
             {"type": "reaction", "block_id": str(block_id), "reactions": value},
         )

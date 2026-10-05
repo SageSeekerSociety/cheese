@@ -42,7 +42,7 @@ function event(id: string, turn: string | null, at: string, meta: Record<string,
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-t1',

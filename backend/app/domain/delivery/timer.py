@@ -24,6 +24,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent, Ledger
 from app.domain.delivery.models import TimedDelivery
@@ -46,7 +47,7 @@ async def deliver_at(
     when: datetime,
     event: str,
     recipient: str,
-    topic_id: uuid.UUID,
+    conversation_id: uuid.UUID,
     project_id: uuid.UUID,
 ) -> TimedDelivery:
     if when.tzinfo is None:
@@ -69,7 +70,7 @@ async def deliver_at(
     row = TimedDelivery(
         id=uuid.uuid4(),
         project_id=project_id,
-        topic_id=topic_id,
+        conversation_id=conversation_id,
         recipient_handle=recipient,
         agent_instance_id=agent_id,
         receiver_id=receiver_id,
@@ -89,7 +90,7 @@ async def _hand_to_agent(session: AsyncSession, row: TimedDelivery) -> None:
         Block(
             id=row.id,
             project_id=row.project_id,
-            topic_id=row.topic_id,
+            conversation_id=row.conversation_id,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,
@@ -110,8 +111,12 @@ async def _hand_to_agent(session: AsyncSession, row: TimedDelivery) -> None:
     assert row.agent_instance_id is not None
     await record_agent(
         session,
-        _event(row, content=row.content),
-        topic_id=row.topic_id,
+        _event(
+            row,
+            room_id=await room_of(session, row.conversation_id),
+            content=row.content,
+        ),
+        conversation_id=row.conversation_id,
         instance_id=row.agent_instance_id,
         content=row.content,
     )
@@ -127,9 +132,11 @@ async def _hand_to_person(session: AsyncSession, row: TimedDelivery) -> None:
     """
     assert row.receiver_id is not None
     said = say("reminder", text=row.content)
-    topic = await session.get(Topic, row.topic_id)
+    room_id = await room_of(session, row.conversation_id)
+    topic = await session.get(Topic, room_id)
     event = _event(
         row,
+        room_id=room_id,
         content=str(said),
         message=said.descriptor(),
         **(
@@ -144,13 +151,15 @@ async def _hand_to_person(session: AsyncSession, row: TimedDelivery) -> None:
         await ledger.send([pending], build_notification_event_handler(session))
 
 
-def _event(row: TimedDelivery, *, content: str, **extra: object) -> DeliveryEvent:
+def _event(
+    row: TimedDelivery, *, room_id: uuid.UUID, content: str, **extra: object
+) -> DeliveryEvent:
     return DeliveryEvent(
         id=row.id,
         type=NotificationType.ROOM_NOTICE,
         payload={
             "projectId": str(row.project_id),
-            "topicId": str(row.topic_id),
+            "topicId": str(room_id),
             "content": content,
             "eventType": EVENT_TIMED_DELIVERY,
             "severity": SEVERITY_INFO,

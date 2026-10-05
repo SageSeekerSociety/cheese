@@ -35,7 +35,7 @@ async def _blocks(factory, project, topic):
                 Block(
                     id=block_id,
                     project_id=project,
-                    topic_id=topic,
+                    conversation_id=topic,
                     kind=BlockKind.message,
                     author_type=AuthorType.participant,
                     author="user-1",
@@ -66,7 +66,7 @@ async def _delivery(factory, identity):
             Delivery(
                 id=delivery_id,
                 event_id=uuid.uuid4(),
-                topic_id=identity.topic_id,
+                conversation_id=identity.conversation_id,
                 recipient_handle=identity.recipient_handle,
                 dedup_key=str(uuid.uuid4()),
                 type="mention",
@@ -292,7 +292,7 @@ def test_only_consumption_by_registered_work_releases_an_initial_hold(client):
             await complete_work_inputs(
                 session,
                 project_id=project,
-                topic_id=topic,
+                conversation_id=topic,
                 recipient_handle=identity.recipient_handle,
                 harness=identity.harness,
                 native_session_id=identity.native_session_id,

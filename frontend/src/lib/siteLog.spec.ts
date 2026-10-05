@@ -112,7 +112,7 @@ describe('打开现场要真的落到底，不是「试过一次」', () => {
 describe('前端报错那一行', () => {
   const block = {
     id: 'e1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'platform',
     author: 'frontend',

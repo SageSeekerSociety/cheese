@@ -309,7 +309,7 @@ async def list_topics(
         else set()
     )
     # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
-    asked = await BlockRepository(db).rooms_awaiting_an_answer([t.id for t in topics])
+    asked = await BlockRepository(db).awaiting_an_answer([t.id for t in topics])
     asks_me = _asks_me(asked, _viewer(actor))
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
@@ -426,7 +426,7 @@ async def get_topic(
         if actor.authenticated
         else set()
     )
-    asked = await BlockRepository(db).rooms_awaiting_an_answer([topic.id])
+    asked = await BlockRepository(db).awaiting_an_answer([topic.id])
     waits = await MemberWaits(db).for_rooms(
         [topic.id], now=datetime.now(UTC), stuck_rooms=_stuck_on_checks(live)
     )
@@ -492,11 +492,7 @@ async def list_topic_blocks(
         # would hand the caller a duplicate page it can't distinguish. A cursor
         # from another conversation in this room is as wrong as one from
         # another room.
-        if (
-            cursor is None
-            or cursor.topic_id != place.room_id
-            or cursor.task_id != place.task_id
-        ):
+        if cursor is None or cursor.conversation_id != place.conversation_id:
             raise NotFoundError(say("cursorMessageNotFound"))
         return cursor
 
@@ -504,7 +500,7 @@ async def list_topic_blocks(
     newer_than = await cursor_of(after)
     centre = await cursor_of(around)
     if limit is None:
-        blocks = await repo.list_for_topic(place.room_id, task_id=place.task_id)
+        blocks = await repo.list_for_topic(place.conversation_id)
         if older_than is not None:
             blocks = [
                 b
@@ -514,28 +510,28 @@ async def list_topic_blocks(
         has_more = has_newer = False
     elif centre is not None:
         above = await repo.page_for_topic(
-            place.room_id, task_id=place.task_id, limit=limit // 2, before=centre
+            place.conversation_id, limit=limit // 2, before=centre
         )
         below = await repo.page_for_topic(
-            place.room_id, task_id=place.task_id, limit=limit - limit // 2, after=centre
+            place.conversation_id, limit=limit - limit // 2, after=centre
         )
         blocks = [*above.items, centre, *below.items]
         has_more, has_newer = above.has_more, below.has_more
     elif newer_than is not None:
         page_result = await repo.page_for_topic(
-            place.room_id, task_id=place.task_id, limit=limit, after=newer_than
+            place.conversation_id, limit=limit, after=newer_than
         )
         blocks = page_result.items
         # Paging down from a block means that block is above this page.
         has_more, has_newer = True, page_result.has_more
     else:
         page_result = await repo.page_for_topic(
-            place.room_id, task_id=place.task_id, limit=limit, before=older_than
+            place.conversation_id, limit=limit, before=older_than
         )
         blocks = page_result.items
         # Paging up from a block means that block is below this page.
         has_more, has_newer = page_result.has_more, older_than is not None
-    total = await repo.count_for_topic(place.room_id, task_id=place.task_id)
+    total = await repo.count_for_topic(place.conversation_id)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
     # Scoped to THIS page's ids, so paging saves the database work too, not just
     # the bytes on the wire.
@@ -560,11 +556,11 @@ async def list_topic_blocks(
 
 
 async def _history_block(
-    repo: BlockRepository, room_id: uuid.UUID, block_id: uuid.UUID
+    repo: BlockRepository, conversation_id: uuid.UUID, block_id: uuid.UUID
 ) -> Block:
     block = await repo.get(block_id)
-    if block is None or block.topic_id != room_id:
-        raise NotFoundError("Message not found in this room")
+    if block is None or block.conversation_id != conversation_id:
+        raise NotFoundError("Message not found in this conversation")
     return block
 
 
@@ -593,20 +589,14 @@ async def read_chat_history(
     if before is not None and after is not None:
         raise ValidationError("Use before or after, not both")
     repo = BlockRepository(db)
-    task_id = place.task_id
     parent = None
     if reply_to is not None:
-        parent = await _history_block(repo, place.room_id, reply_to)
-        if parent.task_id != task_id:
-            raise NotFoundError("Message not found in this conversation")
+        parent = await _history_block(repo, place.conversation_id, reply_to)
     cursor = None
     if cursor_id := before or after:
-        cursor = await _history_block(repo, place.room_id, cursor_id)
-        if cursor.task_id != task_id:
-            raise NotFoundError("Cursor not found in this conversation")
+        cursor = await _history_block(repo, place.conversation_id, cursor_id)
     result = await repo.page_for_topic(
-        place.room_id,
-        task_id=task_id,
+        place.conversation_id,
         limit=limit,
         before=cursor if before else None,
         after=cursor if after else None,
@@ -790,9 +780,7 @@ async def get_topic_progress(
     to be visible without summoning anyone."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    items, updated_at = await TopicService(db).get_progress(
-        place.room_id, task_id=place.task_id
-    )
+    items, updated_at = await TopicService(db).get_progress(place.conversation_id)
     return ok(
         {
             "items": items,
@@ -893,7 +881,7 @@ async def write_topic_progress(
         work = runner.live_work_for_topic(place.conversation_id)
         turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
         await TopicProgressRepository(db).save(
-            place.room_id, items, task_id=task_id, turn_id=turn_id
+            place.conversation_id, items, turn_id=turn_id
         )
         await db.commit()
     if task_id is not None:
@@ -1109,7 +1097,7 @@ async def record_weekly(
         return ok(prior or {"skipped": True})
     block = await BlockRepository(db).add(
         project_id=place.project_id,
-        topic_id=topic_id,  # the place; `add` splits it
+        conversation_id=place.conversation_id,
         author=(
             actor.handle
             if actor.authenticated

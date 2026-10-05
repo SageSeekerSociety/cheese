@@ -35,6 +35,7 @@ from app.domain.block.models import (
     BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import (
     CHEESE_NAME,
     agent_instance_handle,
@@ -659,8 +660,7 @@ class TopicService:
             )
             await self._blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=by,
                 author_type=AuthorType.platform,
                 content=say("threadArchivedWithRoom", room=topic.title),
@@ -732,8 +732,7 @@ class TopicService:
         )
         await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=by,
             author_type=AuthorType.platform,
             content=note,
@@ -776,8 +775,7 @@ class TopicService:
         )
         await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=by,
             author_type=AuthorType.platform,
             content=say("roomUnarchived", actor=f"<@{by}>", room=topic.title),
@@ -859,7 +857,9 @@ class TopicService:
             existing_room = await self._repo.get(block.upgraded_to_topic_id)
             if existing_room is not None:
                 return existing_room, None, False
-        parent = await self._repo.get(block.topic_id)
+        parent = await self._repo.get(
+            await room_of(self._session, block.conversation_id)
+        )
         if parent is None:
             raise NotFoundError("Parent topic not found")
         # 归档后工作面冻结 (spec §6.3) — consistent with dispatch/edit_doc.
@@ -939,8 +939,7 @@ class TopicService:
         landed = landing(EventAbout.room, project_id=room.project_id, room_id=room.id)
         return await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author="system",
             author_type=AuthorType.platform,
             content=say(
@@ -1202,7 +1201,7 @@ class TopicService:
         }
 
     async def get_progress(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+        self, conversation_id: uuid.UUID
     ) -> tuple[list[dict], datetime | None]:
         """进度层 (#187): the checklist this topic's work left behind.
 
@@ -1210,10 +1209,7 @@ class TopicService:
         checklist and no checklist are the same thing to a reader, and making
         the caller handle a null row buys nothing.
         """
-        place = await self.place_or_404(topic_id)
-        row = await TopicProgressRepository(self._session).get(
-            place.room_id, task_id=task_id
-        )
+        row = await TopicProgressRepository(self._session).get(conversation_id)
         if row is None:
             return [], None
         return [dict(item) for item in row.items], row.updated_at

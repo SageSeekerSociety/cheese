@@ -564,7 +564,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     place = await PlaceResolver(session).conversation(topic_id)
                     if place is not None:
                         pending = _pending_input_blocks(
-                            await blocks.turn_history(place.room_id, place.task_id)
+                            await blocks.turn_history(place.conversation_id)
                         )
                         addressed = pending[0] if pending else None
                 recipient = (
@@ -1202,9 +1202,7 @@ class ChatService(SessionRecovery, RoomTurns):
         看到」、点下去却什么也没有可读，白烧一轮。
         """
         async with self._sessions() as session:
-            history = await BlockRepository(session).list_for_topic(
-                topic_id, task_id=None
-            )
+            history = await BlockRepository(session).list_for_topic(topic_id)
             return bool(_pending_input_blocks(history))
 
     async def pending_seat(self, topic_id: uuid.UUID) -> str | None:
@@ -1223,9 +1221,7 @@ class ChatService(SessionRecovery, RoomTurns):
         理由同它：一份近似的复制品会在窗口语义改动时悄悄和它分叉。
         """
         async with self._sessions() as session:
-            history = await BlockRepository(session).list_for_topic(
-                topic_id, task_id=None
-            )
+            history = await BlockRepository(session).list_for_topic(topic_id)
             # 从新到旧：最近一次点名是这批消息现在要交给谁的最新说法。
             for block in reversed(_pending_input_blocks(history)):
                 recipient = (block.meta or {}).get("agent_recipient") or {}
@@ -1272,7 +1268,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 said = set(
                     await session.scalars(
                         select(Block.meta["server"].as_string()).where(
-                            Block.topic_id == topic_id,
+                            Block.conversation_id == topic_id,
                             Block.kind == BlockKind.event,
                             Block.meta["event_type"].as_string()
                             == EVENT_MCP_NOT_CONNECTED,
@@ -1549,10 +1545,10 @@ class ChatService(SessionRecovery, RoomTurns):
         """``(room, task)`` for a conversation: a room is its own room with no
         task, a task is the room it hangs in and itself.
 
-        Everything a session says arrives keyed by its conversation, and the
-        rows it lands in (blocks, turns) are keyed by room with the task beside
-        it. A task stays in the room it hangs in until someone moves it, which
-        drops the remembered answer (``forget_conversation``).
+        Everything a session says arrives keyed by its conversation, while the
+        roster, the machine and the files are its room's. A task stays in the
+        room it hangs in until someone moves it, which drops the remembered
+        answer (``forget_conversation``).
         """
         known = self._conversation_rooms.get(conversation_id)
         if known is not None:
@@ -1723,8 +1719,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 return
             block = await blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=state.acting_agent,
                 author_type=AuthorType.platform,
                 content=say(_ACTION_LABEL[resource], actor=f"<@{state.acting_agent}>"),
@@ -1902,7 +1897,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 await complete_work_inputs(
                     session,
                     project_id=state.project_id,
-                    topic_id=state.topic_id,
+                    conversation_id=state.topic_id,
                     recipient_handle=result.agent_handle,
                     harness=result.harness,
                     native_session_id=result.session_id,
@@ -2089,11 +2084,7 @@ class ChatService(SessionRecovery, RoomTurns):
             reply_uuid = _parse_uuid(reply_to)
             if reply_uuid is not None:
                 parent = await blocks.get(reply_uuid)
-                if (
-                    parent is None
-                    or parent.topic_id != topic.id
-                    or parent.task_id != place.task_id
-                ):
+                if parent is None or parent.conversation_id != place.conversation_id:
                     logger.warning(
                         "dropped cross-topic reply_to (topic=%s, reply_to=%s)",
                         topic_id,
@@ -2121,8 +2112,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     # so the recipient resolved above is already the right one.
                 user_block = await blocks.add(
                     project_id=topic.project_id,
-                    topic_id=place.room_id,
-                    task_id=place.task_id,
+                    conversation_id=place.conversation_id,
                     author=author,
                     author_type=AuthorType.participant,
                     content=content,
@@ -2174,8 +2164,7 @@ class ChatService(SessionRecovery, RoomTurns):
             for index, att in enumerate(attachments or []):
                 att_block = await blocks.add(
                     project_id=topic.project_id,
-                    topic_id=place.room_id,
-                    task_id=place.task_id,
+                    conversation_id=place.conversation_id,
                     author=author,
                     author_type=AuthorType.participant,
                     content=str(att.get("path") or ""),
@@ -2439,8 +2428,7 @@ class ChatService(SessionRecovery, RoomTurns):
             )
             block = await blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=author,
                 author_type=AuthorType.participant,
                 content=text,
@@ -2893,11 +2881,12 @@ async def text_as_sent(
     publication rewrite, with the arguments a publication passes (no roster, no
     topic list). A person's goes through `person_mentions`, as
     `post_user_message` does."""
-    topic = await TopicRepository(session).get(block.topic_id)
-    if topic is None:
+    place = await PlaceResolver(session).conversation(block.conversation_id)
+    if place is None:
         raise NotFoundError("Topic not found")
+    topic = place.room
     by_agent = await TopicMemberService(session).holds_an_agent_seat(topic, author)
-    if block.task_id is not None:
+    if place.task is not None:
         text = await project_refs_text(session, topic.project_id, topic.id, content)
         return SentText(topic, text, None, by_agent)
     if by_agent:

@@ -76,6 +76,12 @@ def _task(client, room_id, task_id, handle="alice") -> dict:
     return r.json()["data"]
 
 
+def _task_contents(client, task_id) -> list[str]:
+    r = client.get(f"/topics/{task_id}/blocks", headers=session_auth_headers("alice"))
+    assert r.status_code == 200, r.text
+    return [b["content"] for b in r.json()["data"]["data"]]
+
+
 def _room_contents(client, room_id) -> list[str]:
     r = client.get(f"/topics/{room_id}/blocks", headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
@@ -272,18 +278,31 @@ def test_a_change_answers_with_the_task_as_its_page_reads_it(client):
         r = client.get(f"/topics/{task['id']}/task", headers=alice)
         return r.json()["data"]["presentation"]
 
-    started = client.post(
-        f"/topics/{task['id']}/start", json={"reviewer_handle": "alice"}, headers=alice
-    ).json()["data"]
-    assert started["presentation"] == read()
-    handed = client.patch(
-        f"/topics/{task['id']}/task", json={"agent_handle": None}, headers=alice
-    ).json()["data"]
-    assert handed["presentation"] == read()
-    closed = client.post(
-        f"/topics/{task['id']}/close", json={"conclusion": "做完了"}, headers=alice
-    ).json()["data"]
-    assert closed["presentation"] == read()
+    def answers_as_read(change) -> None:
+        # The start's message reaches the task's session on its own time, so
+        # the task may begin running between the answer and a read of it: the
+        # answer agrees with the page as it stood just before or just after.
+        before = read()
+        answered = change().json()["data"]["presentation"]
+        assert answered in (before, read())
+
+    answers_as_read(
+        lambda: client.post(
+            f"/topics/{task['id']}/start",
+            json={"reviewer_handle": "alice"},
+            headers=alice,
+        )
+    )
+    answers_as_read(
+        lambda: client.patch(
+            f"/topics/{task['id']}/task", json={"agent_handle": None}, headers=alice
+        )
+    )
+    answers_as_read(
+        lambda: client.post(
+            f"/topics/{task['id']}/close", json={"conclusion": "做完了"}, headers=alice
+        )
+    )
 
 
 # —— 在任务里说话 ——————————————————————————————————————————————————————————
@@ -313,7 +332,7 @@ def test_what_is_said_in_a_task_stays_out_of_the_room(client):
     assert r.status_code == 200, r.text
 
     assert "只在任务里说" not in _room_contents(client, room_id)
-    timeline = [b["content"] for b in _task(client, room_id, task["id"])["blocks"]]
+    timeline = _task_contents(client, task["id"])
     assert "只在任务里说" in timeline
 
 
@@ -492,7 +511,7 @@ def test_a_task_turn_answers_in_the_task(client, tmp_path):
     screen.reply = "任务里的回答"
     _turn(client, _service(client, tmp_path, screen), task["id"], "做吧")
 
-    replies = [b["content"] for b in _task(client, room_id, task["id"])["blocks"]]
+    replies = _task_contents(client, task["id"])
     assert any("任务里的回答" in r for r in replies), replies
     assert "任务里的回答" not in "".join(_room_contents(client, room_id))
 
@@ -503,7 +522,7 @@ def test_talking_in_the_room_does_not_reach_the_task(client):
 
     post_message(client, room_id, "alice", {"content": "房间里的话"})
 
-    timeline = [b["content"] for b in _task(client, room_id, task["id"])["blocks"]]
+    timeline = _task_contents(client, task["id"])
     assert "房间里的话" not in timeline
 
 
@@ -521,8 +540,7 @@ def _step(client, project_id, room_id, task_id, content) -> str:
         async with client.test_request_factory() as session:
             block = await BlockRepository(session).add(
                 project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(room_id),
-                task_id=uuid.UUID(task_id) if task_id else None,
+                conversation_id=uuid.UUID(task_id or room_id),
                 author=author,
                 author_type=AuthorType.participant,
                 content=content,

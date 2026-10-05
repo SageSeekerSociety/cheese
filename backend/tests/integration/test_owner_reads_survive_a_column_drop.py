@@ -92,10 +92,9 @@ def test_loading_the_whole_room_is_what_the_incident_was(db_session, _portal):
         _portal.call(ask_the_old_way)
 
 
-def test_an_execution_session_is_found_without_its_room_column(db_session, _portal):
+def test_an_execution_session_is_found_by_its_id_and_conversation(db_session, _portal):
     """The owner finds the session a credential names by its id and its
-    conversation. Which room a session works in is not its question, so the
-    room column can go without a second owner release."""
+    conversation; which room a session works in is not its question."""
     import json
 
     async def ask():
@@ -105,14 +104,13 @@ def test_an_execution_session_is_found_without_its_room_column(db_session, _port
         await db_session.execute(
             text(
                 "INSERT INTO agent_sessions"
-                " (id, conversation_id, topic_id, agent_handle, harness,"
+                " (id, conversation_id, agent_handle, harness,"
                 " work_lease, created_at, updated_at)"
-                " VALUES (:id, :room, :room, 'cheese', 'claude_code',"
+                " VALUES (:id, :room, 'cheese', 'claude_code',"
                 " CAST(:lease AS json), now(), now())"
             ),
             {"id": session_id, "room": room, "lease": json.dumps({"kind": "device"})},
         )
-        await _without_column(db_session, "agent_sessions", "topic_id")
         named = await owner_reads.session_execution(db_session, session_id)
         assert named is not None and named.conversation_id == room
         legacy = await owner_reads.legacy_execution(db_session, room)

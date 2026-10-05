@@ -22,16 +22,15 @@ import { setLocale } from '@/i18n'
 
 const writeText = vi.fn().mockResolvedValue(undefined)
 
-function block(id: string, taskId: string | null = null): Block {
+function block(id: string): Block {
   return {
     id,
-    topic_id: 'tp1',
+    conversation_id: 'tp1',
     kind: 'message',
     author_type: 'participant',
     author: '张衡',
     content: '这一条',
     created_at: '2026-09-20T00:00:00Z',
-    task_id: taskId,
   }
 }
 
@@ -95,19 +94,6 @@ describe('消息的悬停条：复制链接', () => {
     expect(url.origin).toBe(window.location.origin)
     expect(url.pathname).toBe('/p/pr1/t/tp1')
     expect(url.searchParams.get('block')).toBe('b1')
-  })
-
-  it('活卡里的对话多带 tab 和 card', async () => {
-    const router = await routerStoppedOnTopic()
-    const { container } = renderBar(block('b2', 'task9'), router)
-
-    await fireEvent.click(linkButton(container)!)
-    await flush()
-
-    const url = new URL(writeText.mock.calls[0][0] as string)
-    expect(url.searchParams.get('block')).toBe('b2')
-    expect(url.searchParams.get('tab')).toBe('overview')
-    expect(url.searchParams.get('card')).toBe('task9')
   })
 
   it('复制完原地说一声「已复制链接」', async () => {

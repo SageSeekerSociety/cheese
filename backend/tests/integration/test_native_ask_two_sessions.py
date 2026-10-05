@@ -250,7 +250,7 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                             await session.scalars(
                                 select(NativeInput)
                                 .where(
-                                    NativeInput.topic_id == topic,
+                                    NativeInput.conversation_id == topic,
                                     NativeInput.recipient_handle == seat_b,
                                 )
                                 .order_by(NativeInput.id)
@@ -375,7 +375,8 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                 deliveries = list(
                     await session.scalars(
                         select(Delivery).where(
-                            Delivery.topic_id == topic, Delivery.event_id == event_id
+                            Delivery.conversation_id == topic,
+                            Delivery.event_id == event_id,
                         )
                     )
                 )
@@ -387,7 +388,7 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                 assert delivery.sent_at and delivery.payload["ask_origin"] == origin
                 wake = await session.scalar(
                     select(Block).where(
-                        Block.topic_id == topic,
+                        Block.conversation_id == topic,
                         Block.meta["delivery_event_id"].as_string() == str(event_id),
                     )
                 )
@@ -399,7 +400,7 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                 )
                 rows = list(
                     await session.scalars(
-                        select(NativeInput).where(NativeInput.topic_id == topic)
+                        select(NativeInput).where(NativeInput.conversation_id == topic)
                     )
                 )
                 assert sum(row.recipient_handle == seat_a for row in rows) == 2

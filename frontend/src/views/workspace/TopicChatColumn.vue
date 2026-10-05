@@ -18,6 +18,7 @@ import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
 import TaskProposalCard from '@/components/room/TaskProposalCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
+import { topicTitle } from '@/lib/topicState'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
@@ -36,11 +37,17 @@ const props = defineProps<{
   unreadOnOpen?: number
   /** 打开时停在这一条（地址里的 `?block=`）。 */
   focusBlock?: string | null
+  /** 这一栏是房间里一个任务的对话：每句话都说给做它的 AI 队友，采纳卡是这个任务的，
+   *  房间才有的提议卡（技能、任务、反馈）不在这里。 */
+  taskId?: string | null
+  /** 这里此刻不能说话的原因，见 ChatPanel。 */
+  composerClosed?: string | null
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
 
 const emit = defineEmits<{
+  (e: 'open-room'): void
   (e: 'turn-done'): void
   // 芝士 开工 / 收工。必须一路透传：右边那格「现场」靠它在开工那一刻出现。
   (e: 'working', working: boolean): void
@@ -57,7 +64,7 @@ const emit = defineEmits<{
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
   (e: 'mention-click', handle: string): void
-  (e: 'open-file', path: string, taskId?: string | null): void
+  (e: 'open-file', path: string): void
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
   // 的那几处；只转第一个的话这两样都会静默降级成「整篇闪一下」。
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
@@ -153,6 +160,9 @@ defineExpose({
     <ChatPanel
       ref="chatRef"
       :topic="topic"
+      :conversation-id="taskId"
+      :composer-closed="composerClosed"
+      :always-summon="!!taskId"
       hide-header
       show-composer
       :members="members"
@@ -168,7 +178,7 @@ defineExpose({
       @state-changed="emit('state-changed', $event)"
       @preview-shown="emit('preview-shown')"
       @mention-click="emit('mention-click', $event)"
-      @open-file="(path, taskId) => emit('open-file', path, taskId)"
+      @open-file="(path) => emit('open-file', path)"
       @open-resource="
         (resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) =>
           emit('open-resource', resource, turnId, review, document)
@@ -185,12 +195,13 @@ defineExpose({
           class="chat-dock"
           docked
           :topic-id="topic.id"
+          :task-id="taskId ?? undefined"
           :topic-status="topic.status"
           @phase="emit('phase', $event)"
           @review="emit('review')"
         />
       </template>
-      <template #timeline-end>
+      <template v-if="!taskId" #timeline-end>
         <!-- Agent 反馈卡：「这一轮结束时，平台要人做的一个决定」，接在这一轮的
              对话后面。
              什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
@@ -221,6 +232,11 @@ defineExpose({
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占
          位置：队友进了成员名册（它本来就是这个房间的成员），工作电脑在话题头的 ⋯ 里。 -->
+      <template #composer-closed>
+        <button v-if="taskId" type="button" class="back-to-room" @click="emit('open-room')">
+          {{ t('work.task.backToRoom', { room: topicTitle(topic) }) }}
+        </button>
+      </template>
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
           <span class="status-dot status-dot--muted" />{{ t('work.sidebar.archived') }}
@@ -233,6 +249,18 @@ defineExpose({
 <style scoped>
 .archived-chip {
   font-size: 12px;
+}
+.back-to-room {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.back-to-room:hover {
+  color: var(--ink);
+  text-decoration: underline;
 }
 /* 和对话同一栏：时间线（ChatTimeline）、输入框（ChatPanel）各把自己收成一栏居中，
    贴在输入框上的这一条（验收卡）跟着收同一个值，不然它比上下两块都宽。桌面上是读

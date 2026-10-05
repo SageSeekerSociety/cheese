@@ -91,7 +91,7 @@ const personName = computed(() =>
 )
 
 const emit = defineEmits<{
-  (e: 'open-file', path: string, taskId: string | null): void
+  (e: 'open-file', path: string): void
   (e: 'open-topic', id: string): void
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
@@ -308,7 +308,7 @@ function renderPlain(text: string): string {
         type="button"
         class="im-artifact"
         :title="t('work.room.message.openFile', { name: artifactName(block) })"
-        @click="emit('open-file', block.content, block.task_id ?? null)"
+        @click="emit('open-file', block.content)"
       >
         <span class="att-face im-artifact__face">
           <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>

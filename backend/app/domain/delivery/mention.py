@@ -86,7 +86,7 @@ async def _agent_mentions_since(
             select(func.count())
             .select_from(Delivery)
             .where(
-                Delivery.topic_id == topic_id,
+                Delivery.conversation_id == topic_id,
                 Delivery.recorded_at >= since,
                 Delivery.payload["eventType"].as_string() == BY_AGENT,
             )
@@ -147,7 +147,7 @@ async def record_mentions(
                 },
                 occurred_at=occurred_at,
             ),
-            topic_id=room_id,
+            conversation_id=room_id,
             instance_id=instance.id,
             content=mention_prompt(
                 author=author,

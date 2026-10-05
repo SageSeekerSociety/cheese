@@ -390,7 +390,7 @@ def room_lines(case, seat) -> list[str]:
                 await db.scalars(
                     select(Block.content)
                     .where(
-                        Block.topic_id == seat.room,
+                        Block.conversation_id == seat.room,
                         Block.kind == BlockKind.event,
                         Block.meta["event_type"]
                         .as_string()
@@ -442,7 +442,7 @@ def test_a_sandbox_is_not_idle_while_its_room_runs_a_turn_or_it_was_just_used(cl
             db.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=seat.room,
+                    conversation_id=seat.room,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     started_at=datetime.now(UTC) - timedelta(hours=1),
@@ -744,7 +744,7 @@ def test_a_room_mid_turn_does_not_keep_other_sandboxes_awake(cloud, monkeypatch)
             db.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=busy.room,
+                    conversation_id=busy.room,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     started_at=datetime.now(UTC),

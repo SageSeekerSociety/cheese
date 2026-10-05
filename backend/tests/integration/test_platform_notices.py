@@ -50,10 +50,10 @@ def _pr_card(client, app_world):
 
 def _blocks(client, topic_id: str) -> list[dict]:
     task_id = str(delivery_task_id(client, topic_id))
-    response = client.get(f"/topics/{task_id}/task")
+    response = client.get(f"/topics/{task_id}/blocks")
     assert response.status_code == 200, response.text
-    blocks = response.json()["data"]["blocks"]
-    assert all(block["task_id"] == task_id for block in blocks)
+    blocks = response.json()["data"]["data"]
+    assert all(block["conversation_id"] == task_id for block in blocks)
     return blocks
 
 
@@ -177,6 +177,8 @@ def test_ci_failure_records_the_whole_instruction_for_the_task_session(
     # The producer commits the full instruction for the task's own session, in
     # the task's conversation.
 
+    import uuid as _uuid
+
     from sqlalchemy import select
 
     from app.domain.delivery.models import Delivery
@@ -186,15 +188,18 @@ def test_ci_failure_records_the_whole_instruction_for_the_task_session(
     async def recorded_instruction():
         async with client.test_factory() as db:
             rows = list(
-                await db.scalars(select(Delivery).where(Delivery.task_id.is_not(None)))
+                await db.scalars(
+                    select(Delivery).where(
+                        Delivery.conversation_id == _uuid.UUID(task_id)
+                    )
+                )
             )
             matching = [
                 row for row in rows if "pytest: 3 failed" in row.payload["content"]
             ]
             assert len(matching) == 1
             row = matching[0]
-            assert str(row.task_id) == task_id
-            assert str(row.topic_id) == task_id
+            assert str(row.conversation_id) == task_id
             assert row.agent_instance_id is not None
             return row.payload["content"]
 

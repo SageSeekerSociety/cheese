@@ -15,7 +15,7 @@ function event(turn: string, meta: Record<string, unknown>): Block {
   seq += 1
   return {
     id: `e${seq}`,
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'system',

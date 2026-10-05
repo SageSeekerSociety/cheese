@@ -36,7 +36,7 @@ async def test_last_block_at_reports_the_newest_block_per_topic(business_db_fact
             for _ in range(2):
                 await blocks.add(
                     project_id=project.id,
-                    topic_id=topic.id,
+                    conversation_id=topic.id,
                     author="u",
                     author_type=AuthorType.participant,
                     content="hi",
@@ -45,7 +45,7 @@ async def test_last_block_at_reports_the_newest_block_per_topic(business_db_fact
         # turn leaves behind: registered and running, last block hours old.
         await session.execute(
             update(Block)
-            .where(Block.topic_id == quiet.id)
+            .where(Block.conversation_id == quiet.id)
             .values(created_at=datetime.now(UTC) - timedelta(hours=8))
         )
         await session.commit()

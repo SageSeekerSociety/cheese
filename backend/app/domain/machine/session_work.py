@@ -37,6 +37,7 @@ from app.domain.agent.machine_address import device_api_base, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.conversation.services import of_room, room_column, room_of
 from app.domain.device.supply import (
     Supply,
     Visibility,
@@ -140,7 +141,7 @@ async def _roommates_device(db, topic, resource: str) -> str | None:
     leases = await db.scalars(
         select(AgentSession.work_lease)
         .where(
-            AgentSession.topic_id == topic.id,
+            of_room(AgentSession.conversation_id, topic.id),
             AgentSession.work_lease.is_not(None),
         )
         .order_by(AgentSession.placed_at, AgentSession.id)
@@ -232,7 +233,8 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
     on_device = AgentSession.work_lease["device_id"].as_string()
     rows = await db.execute(
         select(AgentSession, Topic, Project, on_device)
-        .join(Topic, Topic.id == AgentSession.topic_id)
+        .select_from(AgentSession)
+        .join(Topic, Topic.id == room_column(AgentSession.conversation_id))
         .join(Project, Project.id == Topic.project_id)
         .where(on_device.in_(device_ids), Topic.status != TopicStatus.archived)
         .order_by(Project.name, Topic.title, AgentSession.agent_handle)
@@ -337,7 +339,10 @@ async def _room_is_working(db, topic_id) -> bool:
 
     running = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, topic_id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     return running is not None
@@ -554,7 +559,7 @@ async def restart_executor(db, row, lease):
     its ``lease`` is on, as a tool call there would: with the credential a
     session launches with, minted now, since the one it last ran with may have
     expired."""
-    topic = await TopicService(db).get_or_404(row.topic_id)
+    topic = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
     project = await ProjectService(db).get_or_404(topic.project_id)
     author = await _session_author(db, project, row.agent_handle)
     resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
@@ -715,7 +720,7 @@ async def _move_session(
     # 它写，别的请求看到的是「搬之前」或者「搬之后」，没有中间态。
     await TopicService(db).lock_for_execution(topic_id)
     row = await AgentSessionService(db).by_id(session_id, lock=True)
-    if row is None or row.topic_id != topic_id:
+    if row is None or await room_of(db, row.conversation_id) != topic_id:
         raise NotFoundError("Session not found")
     request = row.execution_request or {}
     old = row.work_lease
@@ -888,7 +893,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     topic = await TopicService(db).lock_for_execution(topic_id)
     sessions = AgentSessionService(db)
     row = await sessions.by_id(session_id, lock=True)
-    if row is None or row.topic_id != topic_id:
+    if row is None or await room_of(db, row.conversation_id) != topic_id:
         raise NotFoundError("Session not found")
     resource = str(topic.resource_id or topic.id)
     if (
@@ -911,7 +916,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     # A task's session uses the task's own choice when it has one.
     task = (
         await db.get(Task, row.conversation_id)
-        if row.conversation_id != row.topic_id
+        if row.conversation_id != topic_id
         else None
     )
     choice = place_choice(topic, task, project.settings)

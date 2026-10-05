@@ -276,8 +276,7 @@ async def test_the_card_shows_the_last_model_the_work_actually_spent_on(client):
             session.add(
                 ResourceUsage(
                     project_id=ids["project"],
-                    topic_id=ids["room"],
-                    task_id=ids["work"],
+                    conversation_id=ids["work"],
                     model=model,
                     input_tokens=1,
                     output_tokens=1,
@@ -320,8 +319,7 @@ async def test_spending_does_not_change_the_word_the_card_uses_for_one_model(cli
         session.add(
             ResourceUsage(
                 project_id=ids["project"],
-                topic_id=ids["room"],
-                task_id=ids["work"],
+                conversation_id=ids["work"],
                 model="claude-sonnet-5",
                 input_tokens=1,
                 output_tokens=1,

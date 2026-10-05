@@ -14,6 +14,7 @@ the search results page reads one kind at a time, a page at a time, and
 """
 
 import uuid
+from collections.abc import Iterable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -75,14 +76,30 @@ def _snippet(body: str, terms: list[str], width: int = 160) -> str:
 
 
 def _blocks_matching(
-    terms: list[str], in_readable: list[uuid.UUID], kinds: list[str]
+    terms: list[str], conversations: Iterable[uuid.UUID], kinds: list[str]
 ) -> ColumnElement[bool]:
     return bm25.match_all_words(
         Block.id,
         terms,
         {"content": 1},
-        filters=[bm25.any_of("topic_id", in_readable), bm25.any_of("kind", kinds)],
+        filters=[
+            bm25.any_of("conversation_id", conversations),
+            bm25.any_of("kind", kinds),
+        ],
     )
+
+
+async def _conversation_rooms(
+    db: AsyncSession, rooms: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """Each conversation of these rooms, the rooms' own and their tasks', mapped
+    to its room."""
+    found = {room: room for room in rooms}
+    for task_id, room_id in await db.execute(
+        select(Task.id, Task.room_id).where(Task.room_id.in_(rooms))
+    ):
+        found[task_id] = room_id
+    return found
 
 
 def _tasks_matching(
@@ -207,19 +224,21 @@ async def _page(
     if kinds and in_readable:
         ranked: list[tuple[float, dict]] = []
         block_kinds = [k for k in kinds if k not in doc_search.KINDS]
+        by_conversation = await _conversation_rooms(db, in_readable)
         if block_kinds:
             score = func.paradedb.score(Block.id)
             rows = await db.execute(
                 select(Block, score)
                 .where(
-                    _blocks_matching(terms, in_readable, block_kinds),
+                    _blocks_matching(terms, by_conversation, block_kinds),
                     _SEARCHED_BLOCKS_SQL,
                 )
                 .order_by(score.desc(), Block.id)
                 .limit(offset + limit)
             )
             ranked += [
-                (float(value or 0), _record(b, readable, terms)) for b, value in rows
+                (float(value or 0), _record(b, by_conversation, readable, terms))
+                for b, value in rows
             ]
         docs = await doc_search.readable(db, in_readable)
         for kind in (k for k in kinds if k in doc_search.KINDS):
@@ -251,11 +270,12 @@ async def _counts(
     """How many of each kind the search finds, named as `only` names them."""
     counts: dict[str, int] = dict.fromkeys(ONLY_VALUES, 0)
     if in_readable:
+        by_conversation = await _conversation_rooms(db, in_readable)
         rows = await db.execute(
             select(Block.kind, func.count())
             .where(
                 _blocks_matching(
-                    terms, in_readable, [k.value for k in SEARCHED_BLOCKS]
+                    terms, by_conversation, [k.value for k in SEARCHED_BLOCKS]
                 ),
                 _SEARCHED_BLOCKS_SQL,
             )
@@ -278,8 +298,13 @@ async def _counts(
     return counts
 
 
-def _record(b: Block, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
-    room = readable[b.topic_id]
+def _record(
+    b: Block,
+    by_conversation: dict[uuid.UUID, uuid.UUID],
+    readable: dict[uuid.UUID, Topic],
+    terms: list[str],
+) -> dict:
+    room = readable[by_conversation[b.conversation_id]]
     return {
         "room_id": str(room.id),
         "room_title": room.title,
@@ -288,7 +313,7 @@ def _record(b: Block, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dic
         "kind": str(b.kind.value),
         "author": b.author,
         "created_at": b.created_at.isoformat(),
-        "task_id": str(b.task_id) if b.task_id else None,
+        "task_id": str(b.conversation_id) if b.conversation_id != room.id else None,
         "snippet": _snippet(b.content, terms),
     }
 
@@ -365,6 +390,7 @@ async def search_everything(
         # fill every slot, and the decision or document paragraph that also
         # matches would never be listed.
         docs = await doc_search.readable(db, in_readable)
+        by_conversation = await _conversation_rooms(db, in_readable)
         records: list[dict] = []
         for kind in RECORD_KINDS:
             if kind in doc_search.KINDS:
@@ -372,11 +398,11 @@ async def search_everything(
                 records += [_doc_record(h, readable, terms) for h in found]
                 continue
             records += [
-                _record(b, readable, terms)
+                _record(b, by_conversation, readable, terms)
                 for b in await db.scalars(
                     select(Block)
                     .where(
-                        _blocks_matching(terms, in_readable, [kind]),
+                        _blocks_matching(terms, by_conversation, [kind]),
                         _SEARCHED_BLOCKS_SQL,
                     )
                     .order_by(func.paradedb.score(Block.id).desc(), Block.id)

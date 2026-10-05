@@ -244,7 +244,7 @@ def _worth_reporting(result: Any) -> bool:
 async def last_block_at(
     sessions: SessionFactory, topic_ids: set[uuid.UUID]
 ) -> dict[uuid.UUID, datetime]:
-    """Newest block timestamp per topic — the liveness probe the orphan sweep
+    """Newest block timestamp per conversation — the liveness probe the orphan sweep
     judges silence on. It is the same signal a human reads off the topic
     (「最后一块是几点」), which is what makes a sweep verdict checkable, and it is
     passed IN to `AgentWorkRunner.sweep_orphans` because the runner has no DB
@@ -258,9 +258,9 @@ async def last_block_at(
     async with sessions() as session:
         rows = (
             await session.execute(
-                select(Block.topic_id, func.max(Block.created_at))
-                .where(Block.topic_id.in_(topic_ids))
-                .group_by(Block.topic_id)
+                select(Block.conversation_id, func.max(Block.created_at))
+                .where(Block.conversation_id.in_(topic_ids))
+                .group_by(Block.conversation_id)
             )
         ).all()
     out: dict[uuid.UUID, datetime] = {}

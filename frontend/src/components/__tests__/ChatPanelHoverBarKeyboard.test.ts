@@ -42,7 +42,7 @@ const topic: Topic = {
 function message(id: string, minute: number) {
   return {
     id,
-    topic_id: topic.id,
+    conversation_id: topic.id,
     kind: 'message',
     author_type: 'participant' as const,
     author: '张衡',

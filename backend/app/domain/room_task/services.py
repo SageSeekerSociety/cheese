@@ -354,38 +354,6 @@ class TaskService:
             out.append((task, blocks[-limit:] if limit is not None else blocks))
         return out
 
-    async def blocks_for_thread(
-        self,
-        task_id: uuid.UUID,
-        *,
-        limit: int | None = None,
-        through: uuid.UUID | None = None,
-    ) -> list[Block] | None:
-        """One card's conversation, oldest first, newest *limit* blocks.
-
-        The single-card counterpart of `threads_for_room`: opening one card
-        must not fan out over every other card's history to reach it, and a
-        long-lived room holds close to two hundred of them.
-
-        `through` names a block the window must reach back to, with a few
-        blocks of context above it: a card opened at one of its messages.
-        None when that block is not in this card's conversation.
-        """
-        conversations = await self._repo.conversations_for_tasks([task_id])
-        blocks = conversations.get(task_id, [])
-        start = max(len(blocks) - limit, 0) if limit is not None else 0
-        if through is not None:
-            at = next((i for i, b in enumerate(blocks) if b.id == through), None)
-            if at is None:
-                return None
-            if at < start:
-                start = max(at - _CONTEXT_ABOVE, 0)
-        return blocks[start:]
-
-
-#: Blocks kept above a card's `through` block, so it opens mid-conversation.
-_CONTEXT_ABOVE = 10
-
 
 class RoomLockService:
     """整块覆盖一个文件、跑重活 —— 一次一个。

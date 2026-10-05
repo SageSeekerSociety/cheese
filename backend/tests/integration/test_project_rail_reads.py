@@ -80,7 +80,7 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
     async def _seed_them(s):
         older = Block(
             project_id=uuid.UUID(project),
-            topic_id=uuid.UUID(room),
+            conversation_id=uuid.UUID(room),
             kind=BlockKind.weekly,
             author_type=AuthorType.participant,
             author="alice",
@@ -91,7 +91,7 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
         )
         newer = Block(
             project_id=uuid.UUID(project),
-            topic_id=uuid.UUID(room),
+            conversation_id=uuid.UUID(room),
             kind=BlockKind.weekly,
             author_type=AuthorType.participant,
             author="alice",
@@ -118,8 +118,7 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
     newest = payload["data"][0]
     assert newest == {
         "id": ids["newer"],
-        "topic_id": room,
-        "task_id": None,
+        "conversation_id": room,
         "kind": "weekly",
         "author_type": "participant",
         "author": "alice",

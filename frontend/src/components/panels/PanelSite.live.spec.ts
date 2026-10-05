@@ -50,7 +50,7 @@ function step(
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-t1',
@@ -135,12 +135,11 @@ describe('现场实时接上', () => {
     expect(site.getByTestId('site-act-error').textContent).toContain('command not found')
   })
 
-  it('分身卡上的一步、别的话题的一步，都不进这一栏', async () => {
+  it('别的对话的一步，不进这一栏', async () => {
     const site = await openSite([step('1', '2026-09-25T10:00:00Z', 'ls')])
     await site.answer()
 
-    site.push(step('2', '2026-09-25T10:00:05Z', 'on a card', { task_id: 'card-1' }))
-    site.push(step('3', '2026-09-25T10:00:06Z', 'elsewhere', { topic_id: 't2' }))
+    site.push(step('3', '2026-09-25T10:00:06Z', 'elsewhere', { conversation_id: 't2' }))
     await nextTick()
 
     expect(args(site.container)).toEqual(['ls'])

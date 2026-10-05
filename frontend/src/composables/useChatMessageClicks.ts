@@ -37,9 +37,7 @@ export function useChatMessageClicks(deps: {
       if (deps.roomTasks().some((task) => task.id === id)) deps.emit('open-card', id)
       else deps.emit('open-topic', id)
     } else if (el.dataset.file) {
-      const mid = el.closest('[data-mid]')?.getAttribute('data-mid') ?? undefined
-      const task = deps.rows().find(({ block }) => block.id === mid)?.block.task_id
-      deps.emit('open-file', el.dataset.file, task ?? null)
+      deps.emit('open-file', el.dataset.file)
     }
   }
 }
