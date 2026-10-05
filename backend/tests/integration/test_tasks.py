@@ -56,25 +56,22 @@ def _task_session_headers(client, project_id, room_id, task_id) -> dict:
     """The credential a task's own AI session presents."""
     token = mint_scoped_token(
         project_id=project_id,
-        topic_id=room_id,
+        topic_id=str(task_id),
         agent_handle=room_agent_seat(client, room_id),
-        task_id=str(task_id),
     )
     return {"X-Cheese-Token": token}
 
 
 def _say_in_task(client, room_id, task_id, headers, content="先看看现状"):
     return client.post(
-        f"/topics/{room_id}/tasks/{task_id}/messages",
+        f"/topics/{task_id}/messages",
         json={"content": content, "request_id": str(uuid.uuid4())},
         headers=headers,
     )
 
 
 def _task(client, room_id, task_id, handle="alice") -> dict:
-    r = client.get(
-        f"/topics/{room_id}/tasks/{task_id}", headers=session_auth_headers(handle)
-    )
+    r = client.get(f"/topics/{task_id}/task", headers=session_auth_headers(handle))
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -186,7 +183,7 @@ def test_only_the_owner_starts_a_task(client):
     task = open_task(client, room_id, owner="alice", start=False)
 
     r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/start",
+        f"/topics/{task['id']}/start",
         json={"reviewer_handle": "alice"},
         headers=session_auth_headers("bob"),
     )
@@ -200,7 +197,7 @@ def test_a_task_starts_once(client):
     task = open_task(client, room_id)
 
     r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/start",
+        f"/topics/{task['id']}/start",
         json={"reviewer_handle": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -215,7 +212,7 @@ def test_starting_with_nobody_to_review_is_refused(client):
     task = open_task(client, room_id, start=False)
 
     r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/start",
+        f"/topics/{task['id']}/start",
         json={},
         headers=session_auth_headers("alice"),
     )
@@ -230,7 +227,7 @@ def test_starting_records_what_the_document_said_then(client):
     _project_id, room_id = _room(client)
     task = open_task(client, room_id, start=False)
     doc_id = client.get(
-        f"/topics/{room_id}/tasks/{task['id']}/document",
+        f"/topics/{task['id']}/document",
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     wrote = client.put(
@@ -241,7 +238,7 @@ def test_starting_records_what_the_document_said_then(client):
     assert wrote.status_code == 200, wrote.text
 
     started = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/start",
+        f"/topics/{task['id']}/start",
         json={"reviewer_handle": "alice"},
         headers=session_auth_headers("alice"),
     ).json()["data"]
@@ -303,7 +300,7 @@ def test_a_tasks_own_session_speaks_in_its_task_and_no_other(client):
     in_mine = _say_in_task(client, room_id, mine["id"], headers, "我来写初稿")
     in_other = _say_in_task(client, room_id, other["id"], headers, "串门")
     closing_other = client.post(
-        f"/topics/{room_id}/tasks/{other['id']}/close",
+        f"/topics/{other['id']}/close",
         json={"conclusion": "替你关了"},
         headers=headers,
     )
@@ -318,7 +315,7 @@ def test_a_closed_task_takes_no_more_messages(client):
     _project_id, room_id = _room(client)
     task = open_task(client, room_id)
     closed = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/close",
+        f"/topics/{task['id']}/close",
         json={"conclusion": "结论：不做了，原方案够用"},
         headers=session_auth_headers("alice"),
     )
@@ -335,7 +332,7 @@ def test_only_the_owner_closes_a_task(client):
     task = open_task(client, room_id, owner="alice")
 
     r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/close",
+        f"/topics/{task['id']}/close",
         json={},
         headers=session_auth_headers("bob"),
     )
@@ -352,7 +349,7 @@ def test_others_read_a_tasks_document_and_cannot_write_it(client):
     _with_bob(client, project_id, room_id)
     task = open_task(client, room_id, owner="alice", start=False)
     doc_id = client.get(
-        f"/topics/{room_id}/tasks/{task['id']}/document",
+        f"/topics/{task['id']}/document",
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     client.put(
@@ -379,9 +376,9 @@ def test_a_tasks_session_writes_its_own_document(client):
     project_id, room_id = _room(client)
     task = open_task(client, room_id, start=False)
     headers = _task_session_headers(client, project_id, room_id, task["id"])
-    doc_id = client.get(
-        f"/topics/{room_id}/tasks/{task['id']}/document", headers=headers
-    ).json()["data"]["id"]
+    doc_id = client.get(f"/topics/{task['id']}/document", headers=headers).json()[
+        "data"
+    ]["id"]
 
     r = client.put(
         f"/documents/{doc_id}",
@@ -513,9 +510,9 @@ def _step(client, project_id, room_id, task_id, content) -> str:
 
 
 def _site(client, room_id, task_id=None, handle="alice") -> list[str]:
-    query = f"?task={task_id}" if task_id else ""
     r = client.get(
-        f"/topics/{room_id}/transcript{query}", headers=session_auth_headers(handle)
+        f"/topics/{task_id or room_id}/transcript",
+        headers=session_auth_headers(handle),
     )
     assert r.status_code == 200, r.text
     return [b["content"] for b in r.json()["data"]["data"]]
@@ -542,7 +539,7 @@ def test_a_steps_output_is_read_through_the_conversation_it_belongs_to(client):
     alice = session_auth_headers("alice")
 
     through_task = client.get(
-        f"/topics/{room_id}/transcript/{step}/output?task={task['id']}", headers=alice
+        f"/topics/{task['id']}/transcript/{step}/output", headers=alice
     )
     assert through_task.status_code == 200, through_task.text
     assert through_task.json()["data"]["output"] == "任务里的一步 的输出"
@@ -554,17 +551,73 @@ def test_a_steps_output_is_read_through_the_conversation_it_belongs_to(client):
     )
 
 
-def test_a_task_of_another_room_has_no_site_here(client):
-    _project_id, room_id = _room(client)
-    task = open_task(client, room_id)
-    other = client.post(
-        "/topics",
-        json={"project_id": _project_id, "title": "另一间"},
-        headers=session_auth_headers("alice"),
-    ).json()["data"]["id"]
+# —— 摆出来的东西与预览 ——————————————————————————————————————————————————————
 
-    r = client.get(
-        f"/topics/{other}/transcript?task={task['id']}",
-        headers=session_auth_headers("alice"),
+
+def _show(client, room_id, headers, path, content):
+    r = client.post(
+        f"/topics/{room_id}/shown",
+        json={"path": path, "content": content},
+        headers=headers,
     )
-    assert r.status_code == 404
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _shown(client, conversation_id) -> list[str]:
+    r = client.get(
+        f"/topics/{conversation_id}/shown", headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+    return [item["path"] for item in r.json()["data"]["data"]]
+
+
+def _preview(client, conversation_id):
+    r = client.get(
+        f"/topics/{conversation_id}/preview", headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def test_what_a_task_shows_is_the_tasks_preview_not_the_rooms(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "sites_domain", "sites.localhost")
+    monkeypatch.setattr(settings, "sites_scheme", "http")
+    monkeypatch.setattr(settings, "frontend_url", "http://platform.localhost")
+    project_id, room_id = _room(client)
+    task = open_task(client, room_id)
+    room_session = room_agent_headers(client, room_id)
+    task_session = _task_session_headers(client, project_id, room_id, task["id"])
+    _show(client, room_id, room_session, "room.html", "<p>房间</p>")
+
+    # The task's session shows in its own conversation, as `cheese show` does.
+    _show(client, task["id"], task_session, "task.html", "<p>任务</p>")
+
+    assert _shown(client, task["id"]) == ["task.html"]
+    assert _shown(client, room_id) == ["room.html"]
+    assert _preview(client, task["id"])["path"] == "task.html"
+    assert _preview(client, room_id)["path"] == "room.html"
+
+
+def test_a_task_and_its_room_each_keep_their_own_preview_tunnel(client):
+    """The same teammate serves an app in the room and in a task: the task's
+    helper does not take the room's tunnel, nor the reverse."""
+    from app.api.routes.app_preview import connection_hub
+
+    project_id, room_id = _room(client)
+    task = open_task(client, room_id)
+    seat = room_agent_seat(client, room_id)
+    room_token = mint_scoped_token(
+        project_id=project_id, topic_id=room_id, agent_handle=seat
+    )
+    task_token = mint_scoped_token(
+        project_id=project_id, topic_id=task["id"], agent_handle=seat
+    )
+
+    with client.websocket_connect(f"/preview/tunnel?token={room_token}") as room_ws:
+        with client.websocket_connect(f"/preview/tunnel?token={task_token}"):
+            hub = connection_hub(room_ws)
+            assert hub.is_online(uuid.UUID(room_id), seat)
+            assert hub.is_online(uuid.UUID(task["id"]), seat)

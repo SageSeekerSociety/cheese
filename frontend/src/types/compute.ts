@@ -38,8 +38,9 @@ export interface TopicComputeProfile {
   // Whether cloud also offers a whole VM per session (`whole_machine`).
   cloud_vm_available: boolean
   visibility: TopicComputeVisibility
-  // A task's profile: it has no choice of its own yet and works on its room's.
-  follows_room?: boolean
+  // A task's profile: whether it has no choice of its own yet and works on its
+  // room's. null for a room.
+  follows_room?: boolean | null
 }
 
 // One agent session in the room and whether its agent can see a whole machine.

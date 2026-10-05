@@ -7,8 +7,9 @@ import uuid
 
 import pytest
 
+from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
-from tests.delivery import delivery_artifact, delivery_headers
+from tests.delivery import delivery_artifact
 from tests.integration.conftest import (
     open_task,
     post_project,
@@ -73,9 +74,15 @@ def _dispatch(client, room_id: str, title: str) -> str:
 
 def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = None):
     assert tasks and len(tasks) == 1
+    project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     return client.post(
-        f"/topics/{room_id}/tasks/{tasks[0]}/accept-card",
-        headers=delivery_headers(client, room_id),
+        f"/topics/{tasks[0]}/accept-card",
+        # Filed by that task's own session.
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=project_id, topic_id=str(tasks[0])
+            )
+        },
         json={
             **delivery_artifact(client, room_id),
             "change_subject": subject,
@@ -278,15 +285,24 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
 
 
 def test_work_from_another_room_cannot_be_signed_onto_this_change(client):
-    """An id pasted out of another room would otherwise credit that room's
+    """A session working one conversation cannot file a change for a task it
+    is not: a room's credential reaching another room's task would credit that
     task for a change it never saw."""
     pid = _project(client)
     room = _room(client, pid)
     elsewhere = _room(client, pid)
     theirs = _dispatch(client, elsewhere, "别的房间的活")
 
-    r = _file_card(client, room, "feat: claim someone else's work", [theirs])
-    assert r.status_code == 404, r.text
+    r = client.post(
+        f"/topics/{theirs}/accept-card",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=room)},
+        json={
+            "change_subject": "feat: claim someone else's work",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
+    )
+    assert r.status_code == 403, r.text
 
 
 def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):

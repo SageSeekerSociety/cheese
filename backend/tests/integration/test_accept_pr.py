@@ -58,7 +58,7 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card_response(client, topic_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -892,9 +892,9 @@ def test_accept_merges_the_pr_on_the_spot_when_clean(client, app_world):
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_at"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_at"
+        ]
         is not None
     )
     assert delivered["accepted_at"] is None
@@ -1552,9 +1552,9 @@ def test_accept_without_forge_binding_refuses_delivery(client, app_world, monkey
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_at"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_at"
+        ]
         is None
     )
     assert delivered["accepted_at"] is None
@@ -2015,9 +2015,9 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_at"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_at"
+        ]
         is not None
     )
     assert delivered["accepted_at"] is None
@@ -2385,9 +2385,9 @@ def test_merge_anyway_merges_and_signs_the_card(client, app_world):
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_at"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_at"
+        ]
         is not None
     )
     assert delivered["accepted_at"] is None
@@ -2491,7 +2491,7 @@ def test_push_fix_observes_machine_push_and_disarms_old_approval(client, app_wor
     second_head = _real_git_head(puid, tuid)
     fake.prs[number]["head_sha"] = second_head
     pushed = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        f"/topics/{delivery_task_id(client, tid)}/push-fix",
         headers=session_auth_headers("alice"),
     ).json()["data"]
     assert pushed["pushed"] is True
@@ -2501,7 +2501,7 @@ def test_push_fix_observes_machine_push_and_disarms_old_approval(client, app_wor
     assert fake.merge_calls == []
 
     again = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        f"/topics/{delivery_task_id(client, tid)}/push-fix",
         headers=session_auth_headers("alice"),
     ).json()["data"]
     assert again["pushed"] is False, "没有新东西可推时,再问一次不算错误"
@@ -2552,11 +2552,11 @@ def test_push_fix_drops_dependency_only_after_forge_confirms_target(
 
         monkeypatch.setattr(fake, "pull_request_status", stale_status)
 
-    endpoint = f"/topics/{tid}/tasks/{task_id}/push-fix?drop_dependency=true"
+    endpoint = f"/topics/{task_id}/push-fix?drop_dependency=true"
     response = client.post(endpoint, headers=session_auth_headers("alice"))
     assert response.status_code == (200 if confirmed else 422), response.text
     card = _cards(client, tid)[0]
-    task = client.get(f"/topics/{tid}/tasks/{task_id}").json()["data"]
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert len(_cards(client, tid)) == 1
     assert card["id"] == cid
     assert fake.merge_calls == []
@@ -2582,7 +2582,7 @@ def test_push_fix_reports_unreachable_forge_without_pushing(client, app_world):
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     app_world["fake"].status_error = github_pr.GitHubPrError("HTTP 502")
     pushed = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        f"/topics/{delivery_task_id(client, tid)}/push-fix",
         headers=session_auth_headers("alice"),
     ).json()["data"]
 
@@ -2675,7 +2675,7 @@ def _room_with_work(client) -> tuple[str, str]:
 
 def _ready(client, topic_id: str):
     return client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/ready",
+        f"/topics/{delivery_task_id(client, topic_id)}/ready",
         headers=delivery_headers(client, topic_id),
     )
 
@@ -2766,7 +2766,7 @@ def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
     asyncio.run(dependency())
     sweeping["fake"].prs[number]["base"] = "task/parent"
     response = client.post(
-        f"/topics/{tid}/tasks/{task_id}/push-fix?drop_dependency=true",
+        f"/topics/{task_id}/push-fix?drop_dependency=true",
         headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
@@ -2776,7 +2776,7 @@ def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
     assert len(sweeping["opened"]) == 1
     assert sweeping["fake"].draft_by_number[number] is True
     assert sweeping["fake"].merge_calls == []
-    task = client.get(f"/topics/{tid}/tasks/{task_id}").json()["data"]
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["base_task_id"] is None
     assert task["base_branch"] == "main"
 
@@ -2968,7 +2968,7 @@ def test_ready_never_opens_a_pr(client, sweeping):
 def _describe(client, topic_id: str, **body):
     task_id = delivery_task_id(client, topic_id)
     return client.post(
-        f"/topics/{topic_id}/tasks/{task_id}/accept-card/describe",
+        f"/topics/{task_id}/accept-card/describe",
         headers=delivery_headers(client, topic_id),
         json=body,
     )

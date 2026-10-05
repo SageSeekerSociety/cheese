@@ -381,7 +381,7 @@ def open_task(
     task = r.json()["data"]
     if start:
         r = client.post(
-            f"/topics/{room_id}/tasks/{task['id']}/start",
+            f"/topics/{task['id']}/start",
             json={"reviewer_handle": reviewer},
             headers=session_auth_headers(owner),
         )

@@ -139,9 +139,7 @@ def test_a_room_and_its_tasks_agree_with_the_project_list(client):
     # 单开一条活看到的那一格，和它在两份清单里显示的必须是同一句话 —— 同一个函数
     # 算的，所以深链接进来和从看板点进来不可能给出两种说法。
     from_card = {
-        task_id: client.get(f"/topics/{ids['room']}/tasks/{task_id}").json()["data"][
-            "presentation"
-        ]
+        task_id: client.get(f"/topics/{task_id}/task").json()["data"]["presentation"]
         for task_id in (
             ids["discussing"],
             ids["running"],

@@ -642,10 +642,9 @@ export function getResourceLimits(): Promise<ResourceLimits> {
 }
 
 // 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
-// `taskId`: that task's own work computer instead of the room's.
-export function getTopicComputeProfile(topicId: string, taskId?: string | null): Promise<TopicComputeProfile> {
-  const qs = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
-  return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile${qs}`)
+// A task's id: that task's own work computer.
+export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
+  return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
 
 // The project's agent sessions on one self-hosted device, for a project manager
@@ -690,11 +689,9 @@ export function setTopicComputeChoice(
     abandonUnpushed?: boolean
     ifIdle?: boolean
     visibility?: 'host' | 'isolated'
-    taskId?: string | null
   } = {}
 ): Promise<{ choice: ComputeChoice; proposal: ComputeProposal | null }> {
-  const qs = options.taskId ? `?task=${encodeURIComponent(options.taskId)}` : ''
-  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile${qs}`, {
+  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({
       choice,
@@ -1387,11 +1384,10 @@ export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
 // Read on topic open — between turns there is no WS stream to carry it, and
 // "做到哪了" has to be visible without summoning anyone. `items` is [] for a
-// topic that never had a checklist. With `taskId`, that card's list — the one
-// its 分身 wrote — instead of the room's.
-export function getProgress(topicId: string, taskId?: string): Promise<TopicProgress> {
-  const q = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
-  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
+// topic that never had a checklist. A task's id reads the list its own session
+// wrote.
+export function getProgress(topicId: string): Promise<TopicProgress> {
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
 }
 
 // A document's top-level blocks (heading/paragraph/list/…), in order: which
@@ -1456,10 +1452,9 @@ export function deleteMemory(entryId: string): Promise<{ deleted: string }> {
 export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
-  opts: { limit?: number; before?: string; author?: string | null; task?: string | null } = {}
+  opts: { limit?: number; before?: string; author?: string | null } = {}
 ): Promise<SitePage> {
   const q = new URLSearchParams()
-  if (opts.task) q.set('task', opts.task)
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
   if (opts.author) q.set('author', opts.author)
@@ -1469,14 +1464,9 @@ export function getTranscript(
 
 // 现场一步打印出来的东西：后端只留末尾一截（至多 8 KiB，凭据已抹掉）。列表和
 // socket 上只带它有多长（`meta.output_bytes`），摊开那一步时才来取这一份。
-export function getStepOutput(
-  topicId: string,
-  blockId: string,
-  taskId?: string | null
-): Promise<{ output: string; bytes: number }> {
-  const qs = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
+export function getStepOutput(topicId: string, blockId: string): Promise<{ output: string; bytes: number }> {
   return request<{ output: string; bytes: number }>(
-    `/topics/${encodeURIComponent(topicId)}/transcript/${encodeURIComponent(blockId)}/output${qs}`
+    `/topics/${encodeURIComponent(topicId)}/transcript/${encodeURIComponent(blockId)}/output`
   )
 }
 
@@ -1609,18 +1599,15 @@ export function getAppVersion(): Promise<AppVersion> {
 // ---- 采纳卡 / 验收 (eval C5/A3) ----
 
 // Accept cards for a topic, newest first.
-export function getAcceptCards(topicId: string, taskId?: string | null): Promise<ListPayload<AcceptCard>> {
-  return request<ListPayload<AcceptCard>>(
-    `/topics/${encodeURIComponent(topicId)}/accept-card${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
-  )
+// A task's id lists that task's cards; a room's, every card of its tasks.
+export function getAcceptCards(topicId: string): Promise<ListPayload<AcceptCard>> {
+  return request<ListPayload<AcceptCard>>(`/topics/${encodeURIComponent(topicId)}/accept-card`)
 }
 
 // 采纳 PR 化 (#188 §5.1): live CI state of the newest card's PR. Safe to poll —
 // answers {available:false} when the topic has no PR-riding card.
-export function getPrChecks(topicId: string, taskId?: string | null): Promise<PrChecks> {
-  return request<PrChecks>(
-    `/topics/${encodeURIComponent(topicId)}/pr-checks${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
-  )
+export function getPrChecks(topicId: string): Promise<PrChecks> {
+  return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
 }
 
 /** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
@@ -1804,8 +1791,8 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
 // 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
 export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
 
-// 一个 id 指向一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`
-// 的 `getRoomTask`（房间的地址 + 任务的 id）。
+// 一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`
+// 的 `getTask`（`/topics/{task}/task`）。
 export function getTopic(topicId: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}`)
 }

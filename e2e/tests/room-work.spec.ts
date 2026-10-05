@@ -23,7 +23,7 @@ async function freshRoom(page: Page, title: string) {
 /** 一个任务：alice 建的，她负责，并且已经开始（审阅人也是她）。 */
 async function dispatch(page: Page, roomId: string, title: string) {
   const task = (await api(page, 'post', `/topics/${roomId}/tasks`, { title })) as { id: string };
-  return (await api(page, 'post', `/topics/${roomId}/tasks/${task.id}/start`, {
+  return (await api(page, 'post', `/topics/${task.id}/start`, {
     reviewer_handle: 'alice',
   })) as { id: string; branch_name?: string };
 }

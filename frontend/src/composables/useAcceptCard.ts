@@ -235,7 +235,8 @@ export function useAcceptCard(props: AcceptCardHost) {
     const task = props.taskId
     if (!tid) return
     try {
-      const payload = await getAcceptCards(tid, task)
+      // A task's cards are read through the task's own conversation.
+      const payload = await getAcceptCards(task ?? tid)
       if (props.topicId === tid && props.taskId === task) {
         acceptCards.value = payload.data.filter((card) =>
           props.taskId ? card.task_id === props.taskId : !card.task_id
@@ -260,7 +261,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     const task = props.taskId
     if (!prCheckCard.value?.pr_number) return
     try {
-      const payload = await getPrChecks(tid, task)
+      const payload = await getPrChecks(task ?? tid)
       if (props.topicId === tid && props.taskId === task) prChecks.value = payload
     } catch {
       // Best-effort; the PR row just shows the link without CI state.

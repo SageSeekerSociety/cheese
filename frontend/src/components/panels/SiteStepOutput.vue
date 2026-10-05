@@ -10,8 +10,6 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string
-  // 这一步是房间里哪个任务的；null = 房间自己的。
-  taskId?: string | null
   blockId: string
   /** 整段输出有多长（字节）；后端留下的至多是末尾 8 KiB。 */
   bytes: number
@@ -34,7 +32,7 @@ async function toggle() {
   if (!open.value || text.value !== null) return
   failed.value = false
   try {
-    text.value = (await getStepOutput(props.topicId, props.blockId, props.taskId ?? null)).output
+    text.value = (await getStepOutput(props.topicId, props.blockId)).output
   } catch {
     failed.value = true
   }

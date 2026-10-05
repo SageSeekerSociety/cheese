@@ -556,7 +556,7 @@ async def restart_executor(db, row, lease):
     author = await _session_author(db, project, row.agent_handle)
     resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
     token = bind_resource_token(
-        mint_session_token(project.id, topic.id, author),
+        mint_session_token(project.id, row.conversation_id, author),
         resource,
         session_id=str(row.id),
         lease_generation=lease.get("generation"),
@@ -903,7 +903,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     if (
         claims.get("session") != str(row.id)
         or claims.get("p") != str(topic.project_id)
-        or claims.get("t") != str(topic_id)
+        or claims.get("t") != str(row.conversation_id)
         or claims.get("r") != resource
     ):
         raise ForbiddenError("Execution credential does not own this session")
@@ -1110,7 +1110,9 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     if lease:
         lease = {
             **lease,
-            "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
+            "url": (
+                f"{host_api}/topics/{row.conversation_id}/execution/session-{resource}"
+            ),
         }
     claim = str(uuid.uuid4())
     reservation = {
@@ -1164,7 +1166,10 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             api=api,
             host_api=host_api,
             project_id=project_id,
-            topic_id=topic_id,
+            # The executor and its progress lines belong to the conversation;
+            # its machine and lock to the room.
+            topic_id=row.conversation_id,
+            room_id=topic_id,
             actor_handle=actor_handle,
             work_resource=work_resource,
             hub=hub,
@@ -1225,6 +1230,7 @@ async def _install(
     host_api,
     project_id,
     topic_id,
+    room_id,
     actor_handle,
     work_resource,
     hub,
@@ -1318,7 +1324,7 @@ async def _install(
                     return _CLOUD_PREPARING
                 return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
             raise
-        current = await TopicService(db).lock_for_execution(topic_id)
+        current = await TopicService(db).lock_for_execution(room_id)
         row = await sessions.by_id(session_id, lock=True)
         if (
             row is None

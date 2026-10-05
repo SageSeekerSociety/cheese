@@ -373,8 +373,8 @@ def _task(client, room: str) -> str:
 
 def _say_in_task(client, room: str, task: str, author: str, content: str) -> str:
     response = client.post(
-        f"/topics/{room}/tasks/{task}/messages",
-        json={"content": content},
+        f"/topics/{task}/messages",
+        json={"request_id": str(uuid.uuid4()), "content": content},
         headers=session_auth_headers(author),
     )
     assert response.status_code == 200, response.text
@@ -393,7 +393,7 @@ def test_a_task_message_is_edited_by_its_author_under_the_same_rules(client):
     assert seen["id"] == said
     assert seen["content"] == "接口可以动了"
     assert seen["meta"]["edited_at"]
-    task_blocks = client.get(f"/topics/{room}/tasks/{task}").json()["data"]["blocks"]
+    task_blocks = client.get(f"/topics/{task}/task").json()["data"]["blocks"]
     assert [b["content"] for b in task_blocks if b["id"] == said] == ["接口可以动了"]
 
 

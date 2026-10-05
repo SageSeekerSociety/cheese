@@ -15,8 +15,7 @@
   CHEESE_API     平台 API 基址；直连后端用 http://host.docker.internal:8099，
                  经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
-  CHEESE_TOPIC   当前话题 id
-  CHEESE_TASK    当前任务 id（任务自己的会话才有：发言、进度、文档都落在这个任务里）
+  CHEESE_TOPIC   当前对话 id：话题的，或者任务自己的会话里是任务的
   CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用任务或话题的实况文档）
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
   CHEESE_TOKEN   房间凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
@@ -227,15 +226,13 @@ MACHINE_PROFILE_DESCRIPTION = (
     "指定哪一台，不填 device_id 就自动选一台在线的。"
 )
 
-_TASK = _text("任务 id")
 _CONTRIBUTOR = {
     "type": "array",
     "items": {"type": "string"},
     "description": "实际贡献者的 handle",
 }
 _CHAT_SCOPE = {
-    "topic": _text("房间 id，默认当前房间"),
-    "task": _text("任务 id：读或校验这条任务卡的记录"),
+    "topic": _text("话题或任务 id，默认当前对话"),
 }
 _CHAT_PAGE = {
     "limit": {"type": "integer", "description": "每页条数 1..500，默认 50"},
@@ -333,7 +330,6 @@ PLATFORM_TOOLS = ToolTable(
                 "result": _text(
                     f"做完时写一句结果（≤{TODO_MAX_CHARS} 字），显示在清单下面"
                 ),
-                "task": _text("任务 id；在任务自己的对话里不用填"),
             },
             ["todos"],
         ),
@@ -424,18 +420,17 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_close_task",
-            "放弃或撤销一条任务时显式关闭；正常交付在采纳后自动关闭。",
+            "放弃或撤销当前任务时显式关闭；正常交付在采纳后自动关闭。",
             {
-                "task": _TASK,
                 "conclusion": _text("关闭原因或最终说明"),
                 "reported_by": _text("需求提出者的 handle"),
                 "contributor": _CONTRIBUTOR,
             },
-            ["task"],
+            [],
         ),
         _tool(
             "cheese_accept_request",
-            "为一条任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
+            "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
@@ -445,7 +440,6 @@ PLATFORM_TOOLS = ToolTable(
             "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
             "不抄 subject，抄了会被打回。",
             {
-                "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
                 "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
                 "reason": _text("验收证据和要对方检查的内容"),
@@ -456,23 +450,23 @@ PLATFORM_TOOLS = ToolTable(
                 "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
                 "deliver_url": _text("交出去的地址"),
             },
-            ["task", "subject"],
+            ["subject"],
         ),
         _tool(
             "cheese_describe",
-            "修改任务尚未采纳的验收卡及 PR 的标题或正文；采纳以卡为准。",
+            "修改当前任务尚未采纳的验收卡及 PR 的标题或正文；采纳以卡为准。",
             {
-                "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符"),
                 "body": _text("改动原因和验证说明，用中文"),
             },
-            ["task"],
+            [],
         ),
         _tool(
             "cheese_ready",
-            "把任务已有的 draft PR 标记为可评审；请人验收用 cheese_accept_request。",
-            {"task": _TASK},
-            ["task"],
+            "把当前任务已有的 draft PR 标记为可评审；"
+            "请人验收用 cheese_accept_request。",
+            {},
+            [],
         ),
         _tool(
             "cheese_title",
@@ -532,16 +526,16 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_lock",
-            "为一条任务占用房间的重资源锁，装依赖、跑大型测试或起服务前用；"
+            "为当前任务占用房间的重资源锁，装依赖、跑大型测试或起服务前用；"
             "占不到时说谁占着，不等待。",
-            {"task": _TASK, "kind": {"type": "string", "enum": ["heavy"]}},
-            ["task"],
+            {"kind": {"type": "string", "enum": ["heavy"]}},
+            [],
         ),
         _tool(
             "cheese_unlock",
-            "释放任务持有的重资源锁；锁 30 分钟后自动到期。",
-            {"task": _TASK, "kind": {"type": "string", "enum": ["heavy"]}},
-            ["task"],
+            "释放当前任务持有的重资源锁；锁 30 分钟后自动到期。",
+            {"kind": {"type": "string", "enum": ["heavy"]}},
+            [],
         ),
         _tool(
             "cheese_members",
@@ -1091,8 +1085,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         raise ValueError("Missing CHEESE_TOPIC")
     if tool in _NEEDS_PROJECT and not project:
         raise ValueError("Missing CHEESE_PROJECT")
-    own_task = env.get("CHEESE_TASK", "")
-    task = f"/topics/{topic}/tasks/{args.get('task') or own_task}"
+    here = f"/topics/{topic}"
     if tool == "platform_request":
         method = (args.get("method") or "GET").upper()
         path = args.get("path") or ""
@@ -1122,9 +1115,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             else str(uuid.uuid4()),
             **_given(args, "reply_to"),
         }
-        # A task's own session speaks in the task's conversation.
-        path = task + "/messages" if own_task else f"/topics/{topic}/messages"
-        return {"method": "POST", "path": path, "body": body}
+        return {"method": "POST", "path": here + "/messages", "body": body}
     if tool == "chat_edit":
         return {
             "method": "PATCH",
@@ -1138,8 +1129,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "body": {
                 "todos": args["todos"],
                 **({"new": True} if args.get("new") is True else {}),
-                **({"task": own_task} if own_task and not args.get("task") else {}),
-                **_given(args, "task", "result"),
+                **_given(args, "result"),
             },
         }
     if tool == "cheese_doc_get":
@@ -1166,7 +1156,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_close_task":
         return {
             "method": "POST",
-            "path": task + "/close",
+            "path": here + "/close",
             "body": {
                 "conclusion": args.get("conclusion") or "",
                 **_given(
@@ -1179,7 +1169,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_accept_request":
         return {
             "method": "POST",
-            "path": task + "/accept-card",
+            "path": here + "/accept-card",
             "body": {
                 "routing_reason": args.get("reason") or "",
                 "change_subject": args["subject"],
@@ -1199,23 +1189,23 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         body = _given(args, "subject:change_subject", "body:change_body")
         if not body:
             raise ValueError("describe 至少要给 subject 或 body")
-        return {"method": "POST", "path": task + "/accept-card/describe", "body": body}
+        return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
     if tool == "cheese_ready":
-        return {"method": "POST", "path": task + "/ready"}
+        return {"method": "POST", "path": here + "/ready"}
     if tool in {"cheese_lock", "cheese_unlock"}:
         verb = tool.removeprefix("cheese_")
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/{verb}",
-            "body": {"kind": args.get("kind") or "heavy", "task_id": args["task"]},
+            "path": f"{here}/{verb}",
+            "body": {"kind": args.get("kind") or "heavy"},
         }
     if tool == "cheese_library_ls":
         # 带上话题：沙箱 token 是为一轮、一个地方铸的，后端要凭它确认这个凭据属于谁。
         where = urllib.parse.quote(topic)
         return {"method": "GET", "path": f"/projects/{project}/library?topic={where}"}
     if tool == "cheese_title":
-        path = task + "/title" if own_task else f"/topics/{topic}/title"
-        return {"method": "POST", "path": path, "body": {"title": args["text"]}}
+        body = {"title": args["text"]}
+        return {"method": "POST", "path": here + "/title", "body": body}
     if tool == "cheese_docs_search":
         return {
             "method": "POST",
@@ -1524,7 +1514,7 @@ def _chat_call(name: str, **kwargs) -> str:
 
 
 def _chat_scope(args: dict) -> dict:
-    return {key: args[key] for key in ("topic", "task") if args.get(key)}
+    return {key: args[key] for key in ("topic",) if args.get(key)}
 
 
 def _chat_get(args: dict, host) -> str:
@@ -1538,8 +1528,6 @@ def _chat_get(args: dict, host) -> str:
         + urllib.parse.quote(args["message_id"], safe="")
     )
     block = host.request({"method": "GET", "path": path})["data"]
-    if args.get("task") and block.get("task_id") != args["task"]:
-        raise PlatformToolError("这条消息不属于那条任务卡")
     text = _chat_message_text(block)
     end = offset + length
     shown = text[offset:end]
@@ -1566,7 +1554,6 @@ def _chat_page(tool: str):
         for key, name in (
             ("before", "before"),
             ("after", "after"),
-            ("task", "task_id"),
             ("kind", "kind"),
             ("author", "author"),
         ):
@@ -1674,12 +1661,7 @@ def _document(host) -> dict:
     topic = host.environ.get("CHEESE_TOPIC", "")
     if not topic:
         raise PlatformToolError("Missing CHEESE_DOCUMENT or CHEESE_TOPIC")
-    own_task = host.environ.get("CHEESE_TASK", "")
-    path = (
-        f"/topics/{topic}/tasks/{own_task}/document"
-        if own_task
-        else f"/topics/{topic}/document"
-    )
+    path = f"/topics/{topic}/document"
     found = host.request({"method": "GET", "path": path})
     return {"CHEESE_DOCUMENT": (found.get("data") or {})["id"]}
 
@@ -1785,11 +1767,12 @@ def _task_relative(path: str, task: str) -> str:
 
 def _accept_request(args: dict, host) -> str:
     if args.get("deliver"):
-        args = {**args, "deliver": _task_relative(args["deliver"], args["task"])}
+        task = host.environ.get("CHEESE_TOPIC", "")
+        args = {**args, "deliver": _task_relative(args["deliver"], task)}
     plan = request_plan("cheese_accept_request", args, host.environ)
     # 卡读的是 forge 上那条分支：先让机器把这条任务的提交推上去，推不上去就不递
     # ——递一张照着旧提交的卡，比一次「机器够不着」更糟，因为没人会发现。
-    host.sync_task(args["task"])
+    host.sync_task(host.environ.get("CHEESE_TOPIC", ""))
     data = host.request(plan).get("data") or {}
     art = data.get("artifact") or {}
     named = art.get("name") or args.get("new_artifact") or args.get("artifact")
@@ -2419,9 +2402,7 @@ _SAY = {
         "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
     ),
     "cheese_title": lambda a, d, e: (
-        f"任务现在叫「{(d or {}).get('title') or a['text']}」。"
-        if e.get("CHEESE_TASK")
-        else f"话题标题已设为：{a['text']}"
+        f"标题已设为：{(d or {}).get('title') or a['text']}"
     ),
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
@@ -4231,7 +4212,7 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)
         _print_left_out(task, _sync_task(task))
-        path = f"/topics/{topic}/tasks/{task}/push-fix"
+        path = f"/topics/{task}/push-fix"
         if a.drop_dependency:
             path += "?drop_dependency=true"
         r = _call("POST", path)["data"]

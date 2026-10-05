@@ -22,6 +22,7 @@
   "taskModelUnavailable": "The model {model} this task is bound to isn't available in this project. Choose another one",
   "titleRequired": "Title can't be empty",
   "taskNotInRoom": "This task isn't in this room",
+  "taskNotFound": "No such task",
   "taskClosedNoTurn": "This task has ended and takes no more messages",
   "taskOwnerOnly": "Only the task's owner can talk to its AI teammate here",
   "taskDocOwnerOnly": "Only the task's owner can change this task's document; say what you think in the room",

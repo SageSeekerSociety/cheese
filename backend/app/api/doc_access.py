@@ -35,7 +35,8 @@ class Reached:
     place: Place | None
     #: The task whose living document this is.
     task: Task | None = None
-    #: The task the caller's credential works, when it is a task session's.
+    #: The conversation the caller's credential was minted in, when it is a
+    #: session's: a task's own session writes its task's document.
     scope: uuid.UUID | None = None
 
 
@@ -54,20 +55,22 @@ async def reach(
         raise NotFoundError(say("docNotFound"))
     task = await TaskService(db).of_document(doc.id) if doc.room_id is None else None
     if task is not None:
-        place = await TopicService(db).place_or_404(task.room_id)
+        place = await TopicService(db).place_or_404(task.id)
         actor = await resolver.resolve(
-            topic_id=place.room_id, project_id=place.project_id
+            topic_id=place.conversation_id, project_id=place.project_id
         )
         await resolver.authorize_topic(
             actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
         )
-        return Reached(doc, actor, place, task, resolver.task_scope())
+        return Reached(doc, actor, place, task, resolver.credential_conversation())
     if doc.room_id is None:
         actor = await resolver.resolve(project_id=doc.project_id)
         await resolver.authorize_project(actor, project_id=doc.project_id)
         return Reached(doc, actor, None)
     place = await TopicService(db).place_or_404(doc.room_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
     )

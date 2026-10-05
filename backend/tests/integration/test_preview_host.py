@@ -496,13 +496,13 @@ def test_private_room_roster_is_required_even_for_project_members(
         == 404
     )
     if dispatch_task:
-        # A task does not own a room or a separate preview origin.
+        # A task has its own preview, seen by whoever may see its room.
         assert (
             client.post(
                 f"/topics/{preview_id}/preview-session",
                 headers=session_auth_headers("bob"),
             ).status_code
-            == 404
+            == 200
         )
         return
     _open_preview(client, preview_id, "bob")

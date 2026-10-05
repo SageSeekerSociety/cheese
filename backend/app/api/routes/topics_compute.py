@@ -82,21 +82,9 @@ from app.domain.machine.services import HostPool
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
-from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
-
-
-async def _task_of(db, resolver, topic, task_id: uuid.UUID | None):
-    """The task whose work computer this request is about, or None for the
-    room's. A task session's credential is about its own task even when it
-    names none."""
-    task_id = task_id or resolver.task_scope()
-    if task_id is None:
-        return None
-    resolver.require_task_scope(task_id)
-    return await TaskService(db).require_in_room(topic.id, task_id)
 
 
 async def _may_move_task(db, resolver, actor, topic, task) -> bool:
@@ -104,7 +92,7 @@ async def _may_move_task(db, resolver, actor, topic, task) -> bool:
     or the owner of a device the task holds now (taking a task off one's own
     machine); a session only its own task's."""
     if actor.via != "token":
-        return resolver.task_scope() == task.id
+        return resolver.credential_conversation() == task.id
     if actor.handle == task.owner_handle:
         return True
     try:
@@ -127,17 +115,17 @@ async def get_topic_compute_profile(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    task: uuid.UUID | None = None,
 ) -> dict:
-    """The room's work computer — or with `task`, that task's: the one choice
+    """A conversation's work computer — a room's, or a task's: the one choice
     every session of that conversation works on. A session that has not
     started answers the same choice, the machine it will get."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
+    topic, the_task = place.room, place.task
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic.id
     )
-    the_task = await _task_of(db, resolver, topic, task)
+    topic_id = topic.id
     project = await ProjectRepository(db).get(topic.project_id)
     from app.domain.agent.compute_configs import (
         place_choice,
@@ -192,8 +180,11 @@ async def get_topic_compute_profile(
             "current": current,
             "choice": choice.model_dump(),
             "project_default": configs.default.model_dump(),
-            # A task with no choice of its own works on its room's.
-            "follows_room": the_task is not None and not the_task.compute_config,
+            # A task's: whether it has no choice of its own yet and works on
+            # its room's. None for a room.
+            "follows_room": (
+                not the_task.compute_config if the_task is not None else None
+            ),
             # A machine id only has selection meaning under the self-hosted pool.
             # A cloud session's sandbox sits on a platform host nobody chooses.
             "device_id": (
@@ -270,9 +261,9 @@ async def acquire_session_work_lease(
     claims = scoped_token_claims(token)
     if claims is None:
         raise AuthenticationRequiredError("A session execution credential is required")
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     await require_seated_agent(
-        db, token, project_id=topic.project_id, topic_id=topic_id
+        db, token, project_id=place.project_id, topic_id=topic_id
     )
     try:
         # body.timeout caps how long the caller waits for a machine being
@@ -283,7 +274,7 @@ async def acquire_session_work_lease(
             return ok(
                 await work_lease.ensure(
                     db,
-                    topic_id=topic_id,
+                    topic_id=place.room_id,
                     session_id=session_id,
                     claims=claims,
                     token=token,
@@ -308,16 +299,15 @@ async def set_topic_compute_profile(
     request: Request,
     db: DbSession,
     resolver: ActorResolverDep,
-    task: uuid.UUID | None = None,
 ) -> dict:
-    """The room's work computer, or with `task` that task's.
+    """A conversation's work computer: a room's, or a task's.
 
     Every session working on the choice moves with it, each pushing its work
     first (``machine/session_work.request_choice``): for the room, its own
     sessions and those of tasks that follow it; for a task, the task's. Only
-    the task's owner changes a task's, or its own session; a task session's
-    credential changes its own task's, never the room's. A person's own
-    computer works only that person's tasks.
+    the task's owner, a project manager or the owner of a device the task
+    holds changes a task's, or the task's own session. A person's own computer
+    works only that person's tasks.
     """
     from pydantic import ValidationError as SchemaError
 
@@ -331,12 +321,13 @@ async def set_topic_compute_profile(
     )
     from app.domain.machine import session_work as work_lease
 
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
+    topic, the_task = place.room, place.task
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic.id
     )
-    await TopicService(db).lock_for_execution(topic_id)
+    await TopicService(db).lock_for_execution(topic.id)
     # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
     # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
     from app.core.sandbox_auth import scoped_token_claims
@@ -348,7 +339,7 @@ async def set_topic_compute_profile(
         or claims.get("r") != str(topic.resource_id or topic.id)
     ):
         raise ForbiddenError("Execution credential does not own this room generation")
-    the_task = await _task_of(db, resolver, topic, task)
+    topic_id = topic.id
     if the_task is not None:
         if not await _may_move_task(db, resolver, actor, topic, the_task):
             raise ForbiddenError(say("taskComputeOwnerOnly"))

@@ -50,7 +50,7 @@ def _status(client, topic_id: str) -> str:
 
 def _card_status(client, room_id: str, task_id: str) -> str:
     """一张卡的状态 —— 经过它所在的房间读，因为卡不是地点。"""
-    r = client.get(f"/topics/{room_id}/tasks/{task_id}")
+    r = client.get(f"/topics/{task_id}/task")
     assert r.status_code == 200, r.text
     return r.json()["data"]["status"]
 

@@ -40,7 +40,7 @@ def _thread(client, room_id: str, title: str = "一件活") -> str:
 
 def _file_card(client, place_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/topics/{place_id}/tasks/{delivery_task_id(client, place_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, place_id)}/accept-card",
         headers=delivery_headers(client, place_id),
         json={
             "change_subject": _SUBJECT,

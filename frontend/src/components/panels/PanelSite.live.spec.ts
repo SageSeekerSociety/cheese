@@ -80,7 +80,7 @@ async function openSite(blocks: Block[]) {
   getTranscript.mockReturnValue(new Promise((r) => (resolve = r)))
   const site = ref<{ receive: (b: Block) => void } | null>(null)
   const Host = defineComponent({
-    setup: () => () => h(PanelSite as unknown as Component, { ref: site, topic, active: true }),
+    setup: () => () => h(PanelSite as unknown as Component, { ref: site, topicId: topic.id, active: true }),
   })
   const view = render(Host, { global: { plugins: [vuetify] } })
   return {

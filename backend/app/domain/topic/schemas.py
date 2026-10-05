@@ -116,7 +116,8 @@ class LockIn(BaseModel):
     """Acquire or release the room's heavy-operation lane."""
 
     kind: str = Field(pattern="^heavy$")
-    task_id: uuid.UUID
+    #: The task holding it. Implied when the lock is asked for in a task.
+    task_id: uuid.UUID | None = None
     resource: str = Field(default="", max_length=0)
 
 

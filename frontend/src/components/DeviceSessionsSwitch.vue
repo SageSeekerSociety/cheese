@@ -114,7 +114,7 @@ function settle(conversation: string, outcome: Outcome) {
 
 async function switchOne(session: DeviceSession, choice: ComputeChoice, abandonUnpushed = false) {
   try {
-    await setTopicComputeChoice(session.topic_id, choice, { ifIdle: true, abandonUnpushed, taskId: session.task_id })
+    await setTopicComputeChoice(conversationOf(session), choice, { ifIdle: true, abandonUnpushed })
     settle(conversationOf(session), { state: 'done', message: t('work.bulkSwitch.done') })
     moved.value = true
   } catch (cause) {

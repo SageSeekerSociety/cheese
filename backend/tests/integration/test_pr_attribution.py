@@ -82,7 +82,7 @@ def test_reporter_credit_is_declared_on_close_and_only_declared_work_counts(clie
     task = open_task(client, room, "Fix reported bug")
     alice = session_auth_headers("alice")
     declared = client.post(
-        f"/topics/{room}/tasks/{task['id']}/close",
+        f"/topics/{task['id']}/close",
         json={"reporter_handle": "reporter", "contributor_handles": ["coder", "coder"]},
         headers=alice,
     )
@@ -106,7 +106,7 @@ def test_reporter_credit_is_declared_on_close_and_only_declared_work_counts(clie
     )
     assert credited.author == identity.agent_identity(room_agent_seat(client, room))
     concluded = client.post(
-        f"/topics/{room}/tasks/{task['id']}/close",
+        f"/topics/{task['id']}/close",
         json={"contributor_handles": ["reporter"], "reporter_handle": None},
         headers=alice,
     )
@@ -117,19 +117,17 @@ def test_reporter_credit_is_declared_on_close_and_only_declared_work_counts(clie
         identity.platform_identity("alice"),
         identity.platform_identity("reporter"),
     )
-    preserved = client.post(
-        f"/topics/{room}/tasks/{task['id']}/close", json={}, headers=alice
-    )
+    preserved = client.post(f"/topics/{task['id']}/close", json={}, headers=alice)
     assert preserved.status_code == 200, preserved.text
     assert preserved.json()["data"]["contributor_handles"] == ["reporter"]
     rejected = client.post(
-        f"/topics/{room}/tasks/{task['id']}/close",
+        f"/topics/{task['id']}/close",
         json={"contributor_handles": ["nobody-exists"]},
         headers=alice,
     )
     assert rejected.status_code == 422, rejected.text
     bad = client.post(
-        f"/topics/{room}/tasks/{task['id']}/close",
+        f"/topics/{task['id']}/close",
         json={"reporter_handle": "nobody-exists"},
         headers=alice,
     )
@@ -196,7 +194,7 @@ def _project(client, owner: str) -> tuple[str, str]:
 
 def _card(client, topic_id: str) -> str:
     r = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "reviewer_handle": "alice",
@@ -281,7 +279,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
     tid = open_task(client, root, start=False)["id"]
 
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "reviewer_handle": "alice",

@@ -102,7 +102,7 @@ def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
         **declared,
     }
     response = client.post(
-        f"/topics/{room_id}/tasks/{task.id}/accept-card",
+        f"/topics/{task.id}/accept-card",
         headers=delivery_headers(client, room_id),
         json=body,
     )
@@ -539,7 +539,7 @@ def test_saying_a_field_is_null_hands_over_the_merge_like_leaving_it_out(client,
     task = delivery_task(client, room_id)
 
     filed = client.post(
-        f"/topics/{room_id}/tasks/{task.id}/accept-card",
+        f"/topics/{task.id}/accept-card",
         headers=delivery_headers(client, room_id),
         json={
             "change_subject": "chore(test): no artifact",

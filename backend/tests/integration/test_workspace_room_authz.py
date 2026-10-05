@@ -147,11 +147,7 @@ def test_finished_work_remains_readable_but_cannot_be_overwritten(
 ):
     project, tid = private_workspace
     task = delivery_task_id(client, tid)
-    path = (
-        f"/topics/{tid}/tasks/{task}/close"
-        if end == "close"
-        else f"/topics/{tid}/archive"
-    )
+    path = f"/topics/{task}/close" if end == "close" else f"/topics/{tid}/archive"
     result = client.post(
         path, json={"by": "alice"}, headers=session_auth_headers("alice")
     )
@@ -269,7 +265,7 @@ def test_task_management_keeps_room_authorization(
     _, room = private_workspace
     task = delivery_task_id(client, room)
     denied = client.post(
-        f"/topics/{room}/tasks/{task}/{endpoint}",
+        f"/topics/{task}/{endpoint}",
         json=body,
         headers=session_auth_headers("bob"),
     )

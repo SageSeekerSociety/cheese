@@ -50,7 +50,7 @@ def _pr_card(client, app_world):
 
 def _blocks(client, topic_id: str) -> list[dict]:
     task_id = str(delivery_task_id(client, topic_id))
-    response = client.get(f"/topics/{topic_id}/tasks/{task_id}")
+    response = client.get(f"/topics/{task_id}/task")
     assert response.status_code == 200, response.text
     blocks = response.json()["data"]["blocks"]
     assert all(block["task_id"] == task_id for block in blocks)

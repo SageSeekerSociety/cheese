@@ -251,11 +251,11 @@ async function seed(page: Page): Promise<Seed> {
   const created = (await api(page, "post", `/topics/${room.id}/tasks`, {
     title: "Write the release notes",
   })) as { id: string };
-  const task = (await api(page, "post", `/topics/${room.id}/tasks/${created.id}/start`, {
+  const task = (await api(page, "post", `/topics/${created.id}/start`, {
     reviewer_handle: "alice",
   })) as { id: string; branch_name: string };
   await pushToTaskBranch(page, projectId, task.branch_name);
-  await api(page, "post", `/topics/${room.id}/tasks/${task.id}/accept-card`, {
+  await api(page, "post", `/topics/${task.id}/accept-card`, {
     reviewer_handle: "alice",
     change_subject: "docs: add the release notes",
   });

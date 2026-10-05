@@ -794,7 +794,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
             ref="siteRef"
             :class="enterClass('site')"
             :agent-name="agentName"
-            :topic="topic"
+            :topic-id="topic?.id ?? null"
             :active="active === 'site'"
             :running-turns="siteTurns"
             :refresh-tick="refreshTick"

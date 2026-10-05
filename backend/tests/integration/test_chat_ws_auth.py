@@ -225,10 +225,10 @@ def test_a_tasks_channel_refuses_someone_outside_its_room(client):
 
 def test_a_member_watching_a_task_sees_its_workers_checklist(client):
     """The task view's live checklist: the room's member subscribes to the
-    task's channel and its worker's `todo_write` arrives there."""
+    task's channel and its own session's `todo_write` arrives there."""
     project, room = _project_topic(client, owner="alice")
     card = _task(client, room)
-    agent = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
+    agent = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=card)}
 
     with client.websocket_connect(chat_ws_url(card, "alice")) as ws:
         # The pong says the subscription is live; the task's own session may
@@ -237,11 +237,8 @@ def test_a_member_watching_a_task_sees_its_workers_checklist(client):
         while ws.receive_json()["type"] != "pong":
             pass
         response = client.put(
-            f"/topics/{room}/progress",
-            json={
-                "todos": [{"content": "改接口", "status": "in_progress"}],
-                "task": card,
-            },
+            f"/topics/{card}/progress",
+            json={"todos": [{"content": "改接口", "status": "in_progress"}]},
             headers=agent,
         )
         assert response.status_code == 200, response.text

@@ -117,21 +117,21 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
     pid, rid = _room(client)
     task = delivery_task_id(client, rid)
     filed = client.post(
-        f"/topics/{rid}/tasks/{task}/accept-card",
+        f"/topics/{task}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
         },
-        headers=_agent(pid, rid),
+        headers=_agent(pid, str(task)),
     )
     assert filed.status_code == 200, filed.text
     assert _stale(frames, rid) == ["accept"]
     frames.clear()
     corrected = client.post(
-        f"/topics/{rid}/tasks/{task}/accept-card/describe",
+        f"/topics/{task}/accept-card/describe",
         json={"change_subject": "chore(test): say what the card is for"},
-        headers=_agent(pid, rid),
+        headers=_agent(pid, str(task)),
     )
     assert corrected.status_code == 200, corrected.text
     assert _stale(frames, rid) == ["accept"]

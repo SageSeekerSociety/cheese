@@ -56,7 +56,7 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -77,9 +77,9 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
 
 
 def test_create_card_404_for_missing_topic(client):
-    missing_room, missing_task = uuid.uuid4(), uuid.uuid4()
+    missing_task = uuid.uuid4()
     r = client.post(
-        f"/topics/{missing_room}/tasks/{missing_task}/accept-card",
+        f"/topics/{missing_task}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
@@ -132,9 +132,9 @@ def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
     r = client.get(f"/topics/{tid}")
     topic = r.json()["data"]
     assert topic["status"] == "active"
-    delivered = client.get(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}"
-    ).json()["data"]
+    delivered = client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()[
+        "data"
+    ]
     assert delivered["accepted_by"] == "alice"
     assert delivered["accepted_at"] is not None
     assert delivered["status"] == "closed"
@@ -274,9 +274,9 @@ def test_revoke_clears_the_delivery_marker(client):
         headers=session_auth_headers("alice"),
     )
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_by"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_by"
+        ]
         == "alice"
     )
 
@@ -316,7 +316,7 @@ def test_only_one_pending_card_per_topic(client):
     tid = _make_topic(client, pid)
     _make_card(client, tid, "alice")
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -339,7 +339,7 @@ def test_no_new_card_after_delivery(client):
         headers=session_auth_headers("alice"),
     )
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -378,9 +378,9 @@ def test_revoke_requires_authority(client):
     )
     assert r.status_code == 422
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_by"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_by"
+        ]
         == "alice"
     )
 
@@ -391,9 +391,9 @@ def test_revoke_requires_authority(client):
     )
     assert r.status_code == 200
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_by"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_by"
+        ]
         is None
     )
 
@@ -440,8 +440,6 @@ def test_conflicting_remote_branch_refuses_delivery_without_closing_task(client)
     assert response.status_code == 422, response.text
     assert "dirty" in response.json()["message"]
     assert fake.merge_calls == []
-    task = client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-        "data"
-    ]
+    task = client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"]
     assert task["status"] == "open"
     assert task["accepted_at"] is None

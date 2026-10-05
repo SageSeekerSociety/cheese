@@ -45,7 +45,7 @@ def _say(client, pid: str, room: str, card: str, text: str) -> str:
 
 
 def _open(client, room: str, card: str, **params):
-    return client.get(f"/topics/{room}/tasks/{card}", params=params)
+    return client.get(f"/topics/{card}/task", params=params)
 
 
 def test_a_card_opened_at_an_old_message_reaches_back_to_it(client):

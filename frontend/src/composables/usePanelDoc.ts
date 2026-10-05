@@ -21,7 +21,6 @@ import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
-import { getTaskDocumentId } from '../api/tasks'
 import { isAgentHandle } from '../lib/authorship'
 import { dispatch } from '../lib/docAgent'
 import { expandMentions } from '../lib/expandMentions'
@@ -161,7 +160,8 @@ export function usePanelDoc(props: PanelDocProps) {
   async function resolveDocument(tid: string, taskId: string | null) {
     const sequence = ++documentSequence
     try {
-      const id = taskId ? await getTaskDocumentId(tid, taskId) : (await getRoomDocument(tid)).id
+      // A task's document is its own conversation's.
+      const id = (await getRoomDocument(taskId ?? tid)).id
       if (disposed || props.topic?.id !== tid || sequence !== documentSequence) return
       documentId.value = id
     } catch (cause) {

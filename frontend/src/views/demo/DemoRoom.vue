@@ -214,8 +214,10 @@ watch(
   () => {
     const card = props.frame.card
     const checks = props.frame.checks
-    answer('/topics/demo/accept-card', card ? () => ({ data: [card], total: 1 }) : null)
-    answer('/topics/demo/pr-checks', () => checks ?? { available: false })
+    // The card is read through its task's own conversation.
+    const conversation = card?.task_id ?? 'demo'
+    answer(`/topics/${conversation}/accept-card`, card ? () => ({ data: [card], total: 1 }) : null)
+    answer(`/topics/${conversation}/pr-checks`, () => checks ?? { available: false })
   },
   { immediate: true }
 )
@@ -324,7 +326,7 @@ watch(
             v-show="frame.panel === 'site'"
             :key="siteKey"
             ref="site"
-            :topic="topic"
+            :topic-id="topic.id"
             :active="false"
             :member-names="names"
             :working="working"

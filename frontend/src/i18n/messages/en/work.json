@@ -1988,6 +1988,7 @@
     "tabOverview": "Overview",
     "tabChanges": "Changes",
     "tabSite": "Activity",
+    "tabPreview": "Preview",
     "proposal": {
       "byline": "{name} proposed a task",
       "accept": "Create task",

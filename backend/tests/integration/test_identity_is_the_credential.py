@@ -161,14 +161,14 @@ def test_a_task_and_a_message_in_it_belong_to_the_caller(client):
     assert task["owner_handle"] == A
 
     said = client.post(
-        f"/topics/{room}/tasks/{task['id']}/messages",
-        json={"content": "先跑小样本", "author": B},
+        f"/topics/{task['id']}/messages",
+        json={"request_id": str(uuid.uuid4()), "content": "先跑小样本", "author": B},
         headers=_as(A),
     )
     assert said.status_code == 200, said.text
-    blocks = client.get(f"/topics/{room}/tasks/{task['id']}", headers=_as(A)).json()[
-        "data"
-    ]["blocks"]
+    blocks = client.get(f"/topics/{task['id']}/task", headers=_as(A)).json()["data"][
+        "blocks"
+    ]
     mine = [b for b in blocks if b.get("content") == "先跑小样本"]
     assert [b["author"] for b in mine] == [A]
 

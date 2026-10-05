@@ -1,31 +1,28 @@
 // 任务：一个人负责、和 AI 队友在自己的对话里做成的一件事，挂在它所在的房间下。
-// 地址都经过房间（`/topics/{room}/tasks/{task}`）：谁能看任务，由谁能进房间决定。
+// 任务就是一段对话，地址用它自己的 id（`/topics/{task}/…`）；谁能看任务，由谁能进它
+// 所在的房间决定。列出、新建任务和 AI 的提议挂在房间下。
 import type { Block, RoomTask } from '../cx_types'
 
 import { request } from './http'
 
 type TaskWithBlocks = RoomTask & { blocks: Block[] }
 
-function taskPath(roomId: string, taskId: string): string {
-  return `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}`
+function taskPath(taskId: string): string {
+  return `/topics/${encodeURIComponent(taskId)}`
 }
 
 /** 一个任务，连着它自己的对话。`limit` 只截对话，任务本身照常整份回来。 */
-export function getRoomTask(
-  roomId: string,
-  taskId: string,
-  opts?: { limit?: number; through?: string }
-): Promise<TaskWithBlocks> {
+export function getTask(taskId: string, opts?: { limit?: number; through?: string }): Promise<TaskWithBlocks> {
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   if (opts?.through) q.set('through', opts.through)
   const query = q.toString() ? `?${q.toString()}` : ''
-  return request<TaskWithBlocks>(`${taskPath(roomId, taskId)}${query}`)
+  return request<TaskWithBlocks>(`${taskPath(taskId)}/task${query}`)
 }
 
 /** 负责人在任务里说话，直接送到做这个任务的 AI 队友。别人说话后端会拒绝。 */
-export function sayOnRoomTask(roomId: string, taskId: string, content: string, requestId?: string): Promise<Block> {
-  return request<Block>(`${taskPath(roomId, taskId)}/messages`, {
+export function sayInTask(taskId: string, content: string, requestId?: string): Promise<Block> {
+  return request<Block>(`${taskPath(taskId)}/messages`, {
     method: 'POST',
     body: JSON.stringify({ content, request_id: requestId ?? crypto.randomUUID() }),
   })
@@ -40,36 +37,30 @@ export function createRoomTask(roomId: string, title?: string): Promise<RoomTask
 }
 
 /** 开始：负责人确认讨论清楚了。项目没有默认审阅人时要指定一位。 */
-export function startRoomTask(roomId: string, taskId: string, reviewerHandle?: string | null): Promise<RoomTask> {
-  return request<RoomTask>(`${taskPath(roomId, taskId)}/start`, {
+export function startTask(taskId: string, reviewerHandle?: string | null): Promise<RoomTask> {
+  return request<RoomTask>(`${taskPath(taskId)}/start`, {
     method: 'POST',
     body: JSON.stringify(reviewerHandle ? { reviewer_handle: reviewerHandle } : {}),
   })
 }
 
 /** 转交：换负责人，或换做它的 AI 队友。 */
-export function updateRoomTask(
-  roomId: string,
+export function updateTask(
   taskId: string,
   change: { owner_handle?: string; agent_handle?: string | null }
 ): Promise<RoomTask> {
-  return request<RoomTask>(taskPath(roomId, taskId), {
+  return request<RoomTask>(`${taskPath(taskId)}/task`, {
     method: 'PATCH',
     body: JSON.stringify(change),
   })
 }
 
 /** 关闭任务。带结论是做完了，不带是不做了。 */
-export function closeRoomTask(roomId: string, taskId: string, conclusion?: string): Promise<RoomTask> {
-  return request<RoomTask>(`${taskPath(roomId, taskId)}/close`, {
+export function closeTask(taskId: string, conclusion?: string): Promise<RoomTask> {
+  return request<RoomTask>(`${taskPath(taskId)}/close`, {
     method: 'POST',
     body: JSON.stringify(conclusion ? { conclusion } : {}),
   })
-}
-
-/** 任务的实况文档是哪一份；第一次问时建一份空的。 */
-export function getTaskDocumentId(roomId: string, taskId: string): Promise<string> {
-  return request<{ id: string }>(`${taskPath(roomId, taskId)}/document`).then((doc) => doc.id)
 }
 
 export interface DocumentComparison {

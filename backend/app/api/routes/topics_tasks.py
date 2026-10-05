@@ -1,52 +1,15 @@
-"""A room's work: its threads, one card with its conversation, and closing it.
+"""A room's tasks, and what is done to a task.
 
-Eighth slice of `app/api/routes/topics.py` (arch review C-backend.md section
-3.3), after `topics_attachments.py` (#2171), `topics_documents.py` +
-`topics_preview.py` (#2175), `topics_side_routes.py` (#2190),
-`topics_compute.py` (#2197), `topics_title.py` (#2201) and `topics_shown.py`
-(#2207). topics.py is 2,753 lines against a 1,500-line cap that only ratchets
-down.
+`GET|POST /topics/{room}/tasks` list a room's tasks and create one, and the
+`task-proposals` routes are what an AI teammate proposes there: those are the
+room's. Everything about one task is addressed by the task's own conversation
+id — `GET|PATCH /topics/{task}/task` (the task, handing it over), `POST
+/topics/{task}/start` and `/close`. Talking in a task, naming it and reading its
+document go through the same routes as a room's (`/messages`, `/title`,
+`/document`), with the task's id.
 
-What moves, verbatim: `GET /topics/{topic_id}/tasks` (every thread of work in
-the room, each with its own conversation), `GET /topics/{topic_id}/tasks/{task_id}`
-(one card, in the same shape) and the three things the room says about one --
-`POST .../messages` (say it under the card; the room is woken to relay it),
-`POST .../title` (name or rename the thread) and `POST .../close` (the work is
-over). They are one group because they are one subject read one way: the list,
-one entry, and the room's three acts on it.
-
-What stays behind, and why. `_actor_in_place` (identity, then the room's roster
--- the shape `topics_preview.py` and `topics_shown.py` import it in in),
-`DbSession`, and the five repositories these handlers read (`BlockRepository`,
-`AcceptCardRepository`, `ProjectRepository`, `TaskRepository`, `UsageRepository`)
-are imported from topics.py rather than from `app.domain.*.repositories`: every
-one of them is still read by handlers that stay, and the guard in
-`tests/unit/test_domain_import_guard.py` ratchets (route module, repository
-module) pairs, so importing them from the package that already owns those edges
-adds no exemption. `AuthorType` and `BlockKind` come from topics.py for the same
-reason, and there it is the C2 baseline that ratchets them: importing
-`app.domain.block.models` here would add an edge to `.importlinter`.
-
-One edge does follow the code. `say_on_task` is the only reader of
-`NotificationType` in topics.py (imported inside the function, where the
-delivery notice that uses it is built), so moving it moves the frozen C2 edge
-`app.api.routes.topics -> app.domain.notification.models` to
-`app.api.routes.topics_tasks` -- the same debt with a new importer, not new debt
-(the shape #2196 took for `app.domain.review`). Nothing else in the frozen block
-moves, and no contract grows.
-
-Ordering. This module sorts after `topics.py` and after every other `topics_*`
-module (`_` > `.`, and `tasks` sits between `shown` and `title`), so its five
-paths mount later in the route table than they did inside topics.py. Every one
-of them is literal where `tasks` sits, and no route registered in between has a
-parameter there, so none loses its first full match; resolving every path in the
-table confirms each still reaches the handler it did before, now under
-`app.api.routes.topics_tasks`. OpenAPI is byte-identical apart from the moved
-paths' position in the paths object.
-
-The new module mounts itself: `app.main._discover_routers` includes every
-module-level `APIRouter` under `app.api.routes`, so the declaration below, with
-the same prefix and tags, is all it takes.
+`_actor_in_place`, `DbSession` and the repositories come from topics.py, so the
+import guard and `.importlinter` see no new edges.
 """
 
 import uuid
@@ -57,7 +20,8 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_broker, get_chat_service, get_work_runner
+from app.api.deps import get_chat_service, get_work_runner
+from app.api.place import task_conversation
 from app.api.response import ok, page
 from app.api.routes.topics import (
     AcceptCardRepository,
@@ -65,13 +29,12 @@ from app.api.routes.topics import (
     DbSession,
     ProjectRepository,
     UsageRepository,
-    _actor_in_place,
 )
 from app.api.task_instructions import dispatch, tell_task
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.chat import ChatService, project_refs_text
+from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.runtime import announce_stale
@@ -179,21 +142,17 @@ async def list_room_tasks(
     return ok(page(items, len(items)))
 
 
-@router.get("/{topic_id}/tasks/{task_id}")
-async def get_room_task(
+@router.get("/{topic_id}/task")
+async def get_task(
     topic_id: uuid.UUID,
-    task_id: uuid.UUID,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
     through: uuid.UUID | None = None,
 ) -> dict:
-    """One card, with its conversation — the same shape `/tasks` lists.
-
-    Through the room, because a card is not a place: `GET /topics/{card}` is a
-    404 by construction, and the person reading a card is standing in the room
-    it belongs to anyway.
+    """The task this conversation is, with its conversation — the same shape
+    a room's `/tasks` lists. 404 for a room's own conversation.
 
     `limit` caps the timeline at its newest N blocks; with none it comes back
     whole. Same default as `/blocks` and for the same reason — an invented
@@ -201,14 +160,9 @@ async def get_room_task(
     `through=<block_id>` stretches that window back to the named block (a card
     opened at one of its messages); a block of another conversation is a 404.
     """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    resolver.require_task_scope(task_id)
+    place, _actor, task = await task_conversation(db, resolver, topic_id)
     tasks = TaskService(db)
-    task = await tasks.get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError(say("taskNotInRoom"))
-    blocks = await tasks.blocks_for_thread(task_id, limit=limit, through=through)
+    blocks = await tasks.blocks_for_thread(task.id, limit=limit, through=through)
     if blocks is None:
         raise NotFoundError(say("messageNotInTask"))
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
@@ -250,127 +204,9 @@ async def get_room_task(
     return ok(out)
 
 
-class TaskMessageIn(BaseModel):
-    content: str = Field(min_length=1, max_length=100000)
-    #: The sender's own id for this send: a retry with the same id returns the
-    #: message already stored.
-    request_id: uuid.UUID | None = None
-    reply_to: uuid.UUID | None = None
-
-
-@router.post("/{topic_id}/tasks/{task_id}/messages")
-async def say_on_task(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: TaskMessageIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> dict:
-    """在任务里说话 —— 任务自己的对话里只有负责人和做它的 AI 队友。
-
-    From the task's owner it is what the task's session answers: the message
-    lands in the task's conversation and the session is woken, or handed it
-    mid-turn. From the task's own session (its credential names this task) it is
-    a publication in its own turn. Anyone else is refused: what others have to
-    say about a task they say in the room.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    task = await TaskService(db).get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError(say("taskNotInRoom"))
-    content = body.content.strip()
-    if not content:
-        raise ValidationError(say("messageEmpty"))
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    if actor.via == "cheese":
-        if resolver.task_scope() != task.id:
-            raise ForbiddenError(say("taskOwnerOnly"))
-        return ok(await _publish_in_task(chat, db, place, task, body, actor.handle))
-    if not actor.authenticated or actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
-    TaskService.require_open(task)
-    anchor_id = await get_broker().receive_message(
-        chat,
-        task.id,
-        author=actor.handle,
-        content=content,
-        reply_to=str(body.reply_to) if body.reply_to else None,
-        provision_actor=actor,
-        client_id=str(body.request_id) if body.request_id else None,
-    )
-    stored = await BlockRepository(db).get(anchor_id)
-    return ok(BlockOut.model_validate(stored).model_dump(mode="json"))
-
-
-async def _publish_in_task(
-    chat: ChatService, db, place, task, body, author
-) -> dict | None:
-    """The task's session speaking in its own conversation, inside its turn."""
-    content = await project_refs_text(
-        db, place.project_id, place.room_id, body.content.strip()
-    )
-    runner = get_work_runner()
-    work = runner.live_work_for_topic(task.id)
-    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-    payload = await chat._persist_assistant_message(
-        project_id=place.project_id,
-        topic_id=place.room_id,
-        task_id=task.id,
-        text=content,
-        turn_id=turn_id,
-        reply_to=body.reply_to,
-        roster=None,
-        topic_refs=[],
-        publish=True,
-        author=author,
-        publication_id=str(body.request_id) if body.request_id else None,
-    )
-    await get_broker().publish(
-        str(task.id), {"type": "assistant_block", "block": payload}
-    )
-    if turn_id is not None:
-        runner.note_session_output(turn_id, tool=False)
-    return payload
-
-
-@router.post("/{topic_id}/tasks/{task_id}/title")
-async def set_task_title(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """给任务起名或改名：its owner, or its own session (`cheese_title`), which
-    names a task that was created without a title."""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    resolver.require_task_scope(task_id)
-    task = await TaskService(db).get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError(say("taskNotInRoom"))
-    if actor.via == "cheese":
-        if resolver.task_scope() != task.id:
-            raise ForbiddenError(say("taskOwnerOnly"))
-    elif actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
-    title = (body.get("title") or "").strip()
-    if not title:
-        raise ValidationError(say("titleRequired"))
-    TaskService.rename(task, title[:80])
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    await db.commit()
-    return ok(out)
-
-
-@router.post("/{topic_id}/tasks/{task_id}/close")
+@router.post("/{topic_id}/close")
 async def conclude_task(
     topic_id: uuid.UUID,
-    task_id: uuid.UUID,
     body: ConclusionIn,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -380,16 +216,11 @@ async def conclude_task(
     decision); without one it was put down. Delivered work closes by itself
     when its change is accepted.
     """
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    resolver.require_task_scope(task_id)
+    place, actor, task = await task_conversation(db, resolver, topic_id)
     tasks = TaskService(db)
-    task = await tasks.get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError(say("taskNotInRoom"))
     # The owner closes the task, or its own session (`cheese_close_task`).
     if actor.via == "cheese":
-        if resolver.task_scope() != task.id:
+        if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnerOnly"))
     elif actor.handle != task.owner_handle:
         raise ForbiddenError(say("taskOwnerOnly"))
@@ -457,18 +288,6 @@ class TaskProposalIn(BaseModel):
     summary: str = Field(default="", max_length=20000)
 
 
-async def _task_in_room(db, resolver, topic_id: uuid.UUID, task_id: uuid.UUID):
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    task = await TaskService(db).get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError(say("taskNotInRoom"))
-    return place, actor, task
-
-
 @router.post("/{topic_id}/tasks")
 async def create_task(
     topic_id: uuid.UUID,
@@ -479,7 +298,9 @@ async def create_task(
     """新建任务：a task owned by whoever creates it, empty until they say what
     it is for. Its agent starts on the owner's first message."""
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
@@ -496,10 +317,9 @@ async def create_task(
     return ok(out)
 
 
-@router.post("/{topic_id}/tasks/{task_id}/start")
+@router.post("/{topic_id}/start")
 async def start_task(
     topic_id: uuid.UUID,
-    task_id: uuid.UUID,
     body: TaskStartIn,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -508,7 +328,7 @@ async def start_task(
     """开始：the owner says the task is discussed enough. From here its agent may
     change the project, and what the document says now is what its changes are
     reviewed against."""
-    place, actor, task = await _task_in_room(db, resolver, topic_id, task_id)
+    place, actor, task = await task_conversation(db, resolver, topic_id)
     if not actor.authenticated or actor.handle != task.owner_handle:
         raise ForbiddenError(say("taskOwnerOnly"))
     TaskService.require_open(task)
@@ -529,17 +349,16 @@ async def start_task(
     return ok(out)
 
 
-@router.patch("/{topic_id}/tasks/{task_id}")
+@router.patch("/{topic_id}/task")
 async def update_task(
     topic_id: uuid.UUID,
-    task_id: uuid.UUID,
     body: TaskUpdateIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
     """转交：the owner hands the task to another member, or to another AI
     teammate."""
-    place, actor, task = await _task_in_room(db, resolver, topic_id, task_id)
+    place, actor, task = await task_conversation(db, resolver, topic_id)
     if not actor.authenticated or actor.handle != task.owner_handle:
         raise ForbiddenError(say("taskOwnerOnly"))
     TaskService.require_open(task)
@@ -598,7 +417,9 @@ def _proposal_out(proposal) -> dict:
 
 async def _room_actor(db, resolver, topic_id: uuid.UUID):
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )

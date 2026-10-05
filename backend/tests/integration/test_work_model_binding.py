@@ -68,7 +68,7 @@ async def _room(factory) -> dict[str, uuid.UUID]:
 
 
 def _card(client, ids) -> dict:
-    response = client.get(f"/topics/{ids['room']}/tasks/{ids['work']}")
+    response = client.get(f"/topics/{ids['work']}/task")
     assert response.status_code == 200, response.text
     return response.json()["data"]
 

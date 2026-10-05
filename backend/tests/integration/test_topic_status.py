@@ -46,7 +46,7 @@ def test_status_includes_cards_with_gate_tail(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",

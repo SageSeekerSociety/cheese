@@ -10,19 +10,13 @@ import type { TopicComputeProfile } from '@/types/compute'
 import { computed, ref, watch } from 'vue'
 
 import { ApiError, editMessage, getTopicComputeProfile } from '@/api'
-import {
-  closeRoomTask,
-  compareDocumentVersions,
-  getRoomTask,
-  sayOnRoomTask,
-  startRoomTask,
-  updateRoomTask,
-} from '@/api/tasks'
+import { closeTask, compareDocumentVersions, getTask, sayInTask, startTask, updateTask } from '@/api/tasks'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import PanelChanges from '@/components/panels/PanelChanges.vue'
 import PanelDoc from '@/components/panels/PanelDoc.vue'
+import PanelPreview from '@/components/panels/PanelPreview.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import TaskConversation from '@/components/task/TaskConversation.vue'
@@ -70,10 +64,10 @@ async function load(silent = false) {
   try {
     let payload: TaskWithBlocks
     try {
-      payload = await getRoomTask(room, id, { limit: 300, through: props.focusBlock ?? undefined })
+      payload = await getTask(id, { limit: 300, through: props.focusBlock ?? undefined })
     } catch (e) {
       if (!(props.focusBlock && e instanceof ApiError && e.status === 404)) throw e
-      payload = await getRoomTask(room, id, { limit: 300 })
+      payload = await getTask(id, { limit: 300 })
     }
     if (props.room.id !== room || props.taskId !== id) return
     task.value = payload
@@ -161,7 +155,7 @@ async function send(text: string) {
   sending.value = true
   sendError.value = null
   try {
-    mergeBlock(await sayOnRoomTask(props.room.id, task.value.id, text))
+    mergeBlock(await sayInTask(task.value.id, text))
     draft.value = ''
   } catch (e) {
     sendError.value = e instanceof ApiError && e.message ? e.message : t('work.task.sendFailed')
@@ -195,7 +189,7 @@ async function start() {
   starting.value = true
   startError.value = null
   try {
-    const started = await startRoomTask(props.room.id, task.value.id, reviewer.value || null)
+    const started = await startTask(task.value.id, reviewer.value || null)
     task.value = { ...task.value, ...started }
   } catch (e) {
     startError.value = e instanceof ApiError && e.message ? e.message : t('work.task.startFailed')
@@ -209,12 +203,12 @@ const actionError = ref<string | null>(null)
 const closing = ref(false)
 const closeOpen = ref(false)
 const conclusion = ref('')
-async function closeTask() {
+async function concludeTask() {
   if (!task.value || closing.value) return
   closing.value = true
   actionError.value = null
   try {
-    const closed = await closeRoomTask(props.room.id, task.value.id, conclusion.value.trim() || undefined)
+    const closed = await closeTask(task.value.id, conclusion.value.trim() || undefined)
     task.value = { ...task.value, ...closed }
     closeOpen.value = false
   } catch (e) {
@@ -232,7 +226,7 @@ async function handOver() {
   handingOver.value = true
   actionError.value = null
   try {
-    const moved = await updateRoomTask(props.room.id, task.value.id, { owner_handle: nextOwner.value })
+    const moved = await updateTask(task.value.id, { owner_handle: nextOwner.value })
     task.value = { ...task.value, ...moved }
     handOverOpen.value = false
   } catch (e) {
@@ -251,7 +245,7 @@ async function loadMachine() {
   if (!task.value) return
   machineError.value = false
   try {
-    machine.value = await getTopicComputeProfile(props.room.id, task.value.id)
+    machine.value = await getTopicComputeProfile(task.value.id)
   } catch {
     machineError.value = true
   }
@@ -290,13 +284,16 @@ async function toggleCompare() {
   }
 }
 
-// 右边三格：总览（实况文档）、现场和改动。手机上一屏放不下两栏，对话也是一格。
-const sideTab = ref<'overview' | 'site' | 'changes'>('overview')
+// 右边四格：总览（实况文档）、现场、改动和预览。手机上一屏放不下两栏，对话也是一格。
+const sideTab = ref<'overview' | 'site' | 'changes' | 'preview'>('overview')
 // 现场第一次打开时才挂上去，之后切走也留着，socket 上来的行接着往里收。
 const siteRef = ref<InstanceType<typeof PanelSite> | null>(null)
 const siteMounted = ref(false)
+// 预览同理：第一次打开才挂，挂上后切走也留着，回来不用重新授权。
+const previewMounted = ref(false)
 watch(sideTab, (tab) => {
   if (tab === 'site') siteMounted.value = true
+  if (tab === 'preview') previewMounted.value = true
 })
 const phoneTab = ref<'chat' | 'doc'>('chat')
 function review() {
@@ -344,8 +341,7 @@ function review() {
                 <span v-if="machine.follows_room" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
                 <TopicComputePicker
                   v-if="isOwner && isOpen"
-                  :topic-id="room.id"
-                  :task-id="task.id"
+                  :topic-id="task.id"
                   :profile="machine"
                   @changed="loadMachine"
                 />
@@ -395,7 +391,7 @@ function review() {
       :title="t('work.task.closeTitle')"
       :confirm-label="t('work.task.close')"
       :loading="closing"
-      @confirm="closeTask"
+      @confirm="concludeTask"
     >
       <p class="t-body mb-2">{{ t('work.task.closeBody') }}</p>
       <textarea
@@ -514,6 +510,16 @@ function review() {
             >
               {{ t('work.task.tabChanges') }}
             </button>
+            <button
+              type="button"
+              role="tab"
+              class="task-tabs__tab t-meta"
+              :aria-selected="sideTab === 'preview'"
+              data-testid="task-tab-preview"
+              @click="sideTab = 'preview'"
+            >
+              {{ t('work.task.tabPreview') }}
+            </button>
           </div>
           <TopicAcceptCard :topic-id="room.id" :task-id="task.id" topic-status="active" @review="review" />
           <PanelSite
@@ -521,14 +527,22 @@ function review() {
             v-show="sideTab === 'site'"
             ref="siteRef"
             class="task-body__doc"
-            :topic="room"
-            :task-id="task.id"
+            :topic-id="task.id"
             :active="sideTab === 'site'"
             :refresh-tick="docTick"
             :member-names="memberNames"
             :agent-name="agentName"
             @open-topic="emit('open-topic', $event)"
             @mention-click="emit('mention-click', $event)"
+          />
+          <PanelPreview
+            v-if="previewMounted"
+            v-show="sideTab === 'preview'"
+            class="task-body__doc"
+            :topic-id="task.id"
+            :project-id="room.project_id"
+            :active="sideTab === 'preview'"
+            :refresh-tick="docTick"
           />
           <PanelChanges
             v-if="sideTab === 'changes'"

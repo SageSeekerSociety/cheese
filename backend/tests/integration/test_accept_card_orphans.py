@@ -127,7 +127,7 @@ def test_archiving_a_card_riding_an_open_pr_revokes_it_and_leaves_the_pr(
     # 留痕：这条「平台放手了」落在那张卡上（结论 14），不落房间主线——要看见它的
     # 是这张卡的验收人，而他打开的是卡，不是一个刚刚被归档的房间的时间线。
     card_line = client.get(
-        f"/topics/{tid}/history", params={"task_id": card["task_id"], "limit": 200}
+        f"/topics/{card['task_id']}/history", params={"limit": 200}
     ).json()["data"]["data"]
     assert f"停止跟进 PR #{number}" in room_text(card_line)
     room_line = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
@@ -153,7 +153,7 @@ def test_archiving_after_a_pr_was_closed_does_not_ask_anyone_to_close_it(
     assert card["note"] == voided["note"]
     assert "仍在 GitHub 上打开" not in card["note"]
     card_line = client.get(
-        f"/topics/{tid}/history", params={"task_id": card["task_id"], "limit": 200}
+        f"/topics/{card['task_id']}/history", params={"limit": 200}
     ).json()["data"]["data"]
     assert f"停止跟进 PR #{number}" not in room_text(card_line)
 
@@ -275,9 +275,9 @@ def test_poll_pause_note_does_not_swallow_a_later_ci_failure(
 
     from tests.delivery import delivery_task_id
 
-    blocks = client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-        "data"
-    ]["blocks"]
+    blocks = client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+        "blocks"
+    ]
     assert "pytest: 7 failed" in room_text(blocks)
     note = _cards(client, tid)[0]["note"]
     assert "轮询暂停" not in note

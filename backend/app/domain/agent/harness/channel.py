@@ -1,6 +1,5 @@
 """Transport operations shared by harness implementations."""
 
-import uuid
 from typing import NamedTuple
 
 from app.core.sandbox_auth import mint_scoped_token
@@ -13,11 +12,9 @@ from app.domain.device.supply import Supply
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
 
 
-def mint_session_token(
-    project_id, topic_id, agent_handle: str, task_id: uuid.UUID | None = None
-) -> str:
-    """The credential a session launches with, for ``agent_handle`` in the room
-    ``topic_id`` — narrowed to ``task_id`` for a task's own session: the one
+def mint_session_token(project_id, conversation_id, agent_handle: str) -> str:
+    """The credential a session launches with, for ``agent_handle`` in the
+    conversation ``conversation_id`` (a room, or one of its tasks): the one
     every harness starts its agent with, and the one a session's executor is
     started again with when no turn is starting it.
 
@@ -27,11 +24,10 @@ def mint_session_token(
     platform call made from there — its push included — was refused."""
     return mint_scoped_token(
         project_id=str(project_id),
-        topic_id=str(topic_id),
+        topic_id=str(conversation_id),
         ttl_s=SESSION_TOKEN_TTL_S,
         access_scope="project",
         agent_handle=agent_handle,
-        task_id=str(task_id) if task_id is not None else None,
     )
 
 

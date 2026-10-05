@@ -80,7 +80,7 @@ def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
         **delivery_artifact(client, room),
     }
     body.update(kw)
-    return client.post(f"/topics/{room}/tasks/{task_id}/accept-card", json=body)
+    return client.post(f"/topics/{task_id}/accept-card", json=body)
 
 
 def _cards(client, room: str) -> list[dict]:

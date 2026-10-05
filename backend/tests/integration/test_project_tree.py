@@ -106,7 +106,7 @@ def test_a_task_is_named_by_its_own_session_or_its_owner(client):
     ).json()["data"]
     _wait_work_idle()
     assert task["title"] == "新话题"
-    title = f"/topics/{room['id']}/tasks/{task['id']}/title"
+    title = f"/topics/{task['id']}/title"
 
     # 房间自己的会话不替任务起名 —— 那是任务自己会话的事。
     room_session = {
@@ -116,9 +116,7 @@ def test_a_task_is_named_by_its_own_session_or_its_owner(client):
     assert refused.status_code == 403
 
     task_session = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=p["id"], topic_id=room["id"], task_id=task["id"]
-        )
+        "X-Cheese-Token": mint_scoped_token(project_id=p["id"], topic_id=task["id"])
     }
     r = client.post(title, json={"title": "拆导入"}, headers=task_session)
     assert r.status_code == 200, r.text
@@ -138,18 +136,10 @@ def test_a_task_is_named_by_its_own_session_or_its_owner(client):
     assert renamed.json()["data"]["title"] == "导入"
     assert client.get(f"/topics/{room['id']}").json()["data"]["title"] == "讨论"
 
-    # 拿任务的 id 当房间的地址走不通：那个 id 名下没有地点。
+    # 一个谁都不是的 id 名下没有对话。
     assert (
         client.post(
-            f"/topics/{task['id']}/tasks/{task['id']}/title",
-            json={"title": "自己来"},
-            headers=session_auth_headers("owner"),
-        ).status_code
-        == 404
-    )
-    assert (
-        client.post(
-            f"/topics/{room['id']}/tasks/{uuid.uuid4()}/title",
+            f"/topics/{uuid.uuid4()}/title",
             json={"title": "谁"},
             headers=session_auth_headers("owner"),
         ).status_code
@@ -260,7 +250,7 @@ def test_open_and_conclude_a_task(client):
 
     # Its owner says it is over.
     r = client.post(
-        f"/topics/{topic['id']}/tasks/{sub['id']}/close",
+        f"/topics/{sub['id']}/close",
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
         headers=session_auth_headers("owner"),
     )
@@ -280,9 +270,7 @@ def test_concluding_something_that_is_not_a_task_fails(client):
     """房间不是任务,收不了自己。"""
     p = _project(client)
     root_id = _project_root(client, p["id"])
-    r = client.post(
-        f"/topics/{root_id}/tasks/{root_id}/close", json={"conclusion": "x"}
-    )
+    r = client.post(f"/topics/{root_id}/close", json={"conclusion": "x"})
     assert r.status_code == 404
 
 

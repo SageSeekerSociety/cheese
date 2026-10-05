@@ -806,7 +806,7 @@ class RoomSessions:
         async with self.channel.prepare_session(
             session=session,
             token=mint_session_token(
-                session.project_id, session.topic_id, agent, session.task_id
+                session.project_id, session.conversation_id, agent
             ),
             env=env,
             precheck=precheck,
@@ -822,15 +822,13 @@ class RoomSessions:
                 env={
                     **prepared.env,
                     "CHEESE_PROJECT": str(session.project_id),
-                    "CHEESE_TOPIC": str(session.topic_id),
+                    # The conversation: a room, or the task this session works.
+                    "CHEESE_TOPIC": str(session.conversation_id),
                     "CHEESE_AUTHOR": prepared.agent_handle,
+                    # Part of the launch, so starting the task relaunches
+                    # an idle session with a credential that may write.
                     **(
-                        {
-                            "CHEESE_TASK": str(session.task_id),
-                            # Part of the launch, so starting the task relaunches
-                            # an idle session with a credential that may write.
-                            "CHEESE_TASK_READS_ONLY": "1" if reads_only else "0",
-                        }
+                        {"CHEESE_TASK_READS_ONLY": "1" if reads_only else "0"}
                         if session.task_id is not None
                         else {}
                     ),

@@ -29,7 +29,7 @@ def _topic(client, project_id: str) -> str:
 
 def _card(client, topic_id: str, reviewer: str = "alice") -> str:
     return client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -48,9 +48,9 @@ def _reject(client, card_id: str, reviewer: str = "alice", note: str = ""):
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}"
-    ).json()["data"]["blocks"]
+    return client.get(f"/topics/{delivery_task_id(client, topic_id)}/task").json()[
+        "data"
+    ]["blocks"]
 
 
 def _instruction(client, card_id):
@@ -139,7 +139,7 @@ def test_reject_of_closed_task_reports_reason_without_waking_worker(client, stub
     cid = _card(client, tid)
     task_id = delivery_task_id(client, tid)
     closed = client.post(
-        f"/topics/{tid}/tasks/{task_id}/close",
+        f"/topics/{task_id}/close",
         json={"conclusion": "Stopped"},
         headers=session_auth_headers("alice"),
     )

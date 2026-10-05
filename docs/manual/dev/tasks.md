@@ -54,7 +54,7 @@ covers:
 
 ## 一条任务是一段对话 {#conversation}
 
-任务在房间旁边有自己的对话：只有负责人和做这条任务的 AI 队友在里面说话（`POST /topics/{room}/tasks/{task}/messages` 只收负责人，或这条任务自己的会话），其他人能读，要说的话去房间说。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)），它的凭证只能对这条任务动手。
+任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。只有负责人和做这条任务的 AI 队友在里面说话（`POST /topics/{task}/messages` 只收负责人，或这条任务自己的会话），其他人能读，要说的话去房间说。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
 
 **创建只由人做**，创建的人就是负责人：
 
@@ -66,15 +66,15 @@ covers:
 
 AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`，`{title, summary}`）：房间里落一张卡，带「创建任务」和「不用」两个按钮，点「创建任务」的人成为负责人。
 
-**实况文档**写这件事要做什么、做到哪、定了什么（`GET /topics/{room}/tasks/{task}/document` 第一次要时建）。看得见任务的人都能读，只有负责人和这条任务自己的会话能写。
+**实况文档**写这件事要做什么、做到哪、定了什么（`GET /topics/{task}/document` 第一次要时建）。看得见任务的人都能读，只有负责人和这条任务自己的会话能写。
 
-**开始**（`POST /topics/{room}/tasks/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的凭证对工作机器只读：能讨论、写文档，不能改项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。
+**开始**（`POST /topics/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的凭证对工作机器只读：能讨论、写文档，不能改项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。
 
-**转交**：`PATCH /topics/{room}/tasks/{task}`，负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`）。转交前，任务若用着或占着新负责人不能用的电脑（原负责人自己的），先照换电脑的流程挪到新负责人能用的那台（`compute_configs.choice_for_owner`：任务自己的选择、房间的选择、项目默认，依次跳过别人的个人电脑）；推送不成功就不转交，说明原因。
+**转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`）。转交前，任务若用着或占着新负责人不能用的电脑（原负责人自己的），先照换电脑的流程挪到新负责人能用的那台（`compute_configs.choice_for_owner`：任务自己的选择、房间的选择、项目默认，依次跳过别人的个人电脑）；推送不成功就不转交，说明原因。
 
-**关闭**：`POST /topics/{room}/tasks/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。交付的改动被采纳时任务自己关。
+**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。交付的改动被采纳时任务自己关。
 
-平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。工作电脑按 项目默认 → 房间（`topics.compute_config`）→ 任务（`tasks.compute_config`）取，任务第一次要机器时从房间的选择抄一份，之后房间再换也不跟着动；负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{room}/compute-profile?task=` 换；设备页的批量挪走对任务会话走的就是这一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`compute_configs.works_tasks_of`）：选不了，抄房间的选择时遇到它就改用项目默认，「系统挑一台」时跳过它。
+平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。工作电脑按 项目默认 → 房间（`topics.compute_config`）→ 任务（`tasks.compute_config`）取，任务第一次要机器时从房间的选择抄一份，之后房间再换也不跟着动；负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/compute-profile` 换；设备页的批量挪走对任务会话走的就是这一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`compute_configs.works_tasks_of`）：选不了，抄房间的选择时遇到它就改用项目默认，「系统挑一台」时跳过它。
 
 ## 工作目录怎么来 {#worktree}
 
@@ -118,7 +118,7 @@ AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`�
 
 ## push-fix {#push-fix}
 
-`cheese push-fix [--task <id>] [--drop-dependency]` 先跑一次 sync，再调 `POST /topics/{topic}/tasks/{task}/push-fix`，把新提交刷到这条活**已有的**那个 PR 上并刷新验收状态；没有可推的东西就打印原因，不报错。`--drop-dependency` 用在「已经整理并验证是独立改动」之后：把现有 PR 改到项目默认分支，清掉任务依赖和旧批准。
+`cheese push-fix [--task <id>] [--drop-dependency]` 先跑一次 sync，再调 `POST /topics/{task}/push-fix`，把新提交刷到这条活**已有的**那个 PR 上并刷新验收状态；没有可推的东西就打印原因，不报错。`--drop-dependency` 用在「已经整理并验证是独立改动」之后：把现有 PR 改到项目默认分支，清掉任务依赖和旧批准。
 
 一个任务只有一个 PR（`Task.pr_number`），改验收卡不会新开 PR，`push-fix` 推的还是同一个。
 

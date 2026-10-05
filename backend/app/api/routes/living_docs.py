@@ -46,32 +46,18 @@ rooms = APIRouter(prefix="/topics", tags=["topics"])
 
 
 @rooms.get("/{topic_id}/document")
-async def room_document(
+async def conversation_document(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Which document is this room's living document. It is made, empty, the
-    first time anyone asks."""
+    """Which document is this conversation's living document — a room's, or a
+    task's. It is made, empty, the first time anyone asks."""
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    doc = await topics.room_doc(place.room_id, place.project_id)
-    await db.commit()
-    return ok({"id": str(doc.id)})
-
-
-@rooms.get("/{topic_id}/tasks/{task_id}/document")
-async def task_document(
-    topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Which document is this task's living document. It is made, empty, the
-    first time anyone asks."""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    tasks = TaskService(db)
-    task = await tasks.get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError(say("taskNotInRoom"))
-    document_id = await tasks.ensure_document(task)
+    if place.task is not None:
+        document_id = await TaskService(db).ensure_document(place.task)
+    else:
+        document_id = (await topics.room_doc(place.room_id, place.project_id)).id
     await db.commit()
     return ok({"id": str(document_id)})
 

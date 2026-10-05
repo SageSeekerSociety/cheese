@@ -83,7 +83,7 @@ def test_second_card_still_blocked_while_first_is_pending(client):
     assert first["status"] == "pending"
 
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",

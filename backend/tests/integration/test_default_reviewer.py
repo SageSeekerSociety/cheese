@@ -2,8 +2,8 @@
 
 The setting existed and nothing read it, so a project could configure a default
 reviewer and every card still had to be routed by hand. These go through the
-real doors — `POST /topics/{id}/tasks/{task}/start` and
-`POST /topics/{id}/tasks/{task}/accept-card` — and read the answer off the
+real doors — `POST /topics/{task}/start` and
+`POST /topics/{task}/accept-card` — and read the answer off the
 card, because the interesting part is precisely that a value travels from one
 door to the other.
 
@@ -77,7 +77,7 @@ def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
         **delivery_artifact(client, room),
     }
     body.update(kw)
-    return client.post(f"/topics/{room}/tasks/{task_id}/accept-card", json=body)
+    return client.post(f"/topics/{task_id}/accept-card", json=body)
 
 
 # --- 开始 -----------------------------------------------------------------

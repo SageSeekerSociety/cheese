@@ -61,7 +61,7 @@ def test_an_upgraded_task_is_unnamed_until_it_is_given_a_title(client):
     assert _listed(client, room_id, task["id"])["title_source"] == "placeholder"
 
     renamed = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/title",
+        f"/topics/{task['id']}/title",
         json={"title": "拆导入"},
         headers=session_auth_headers("alice"),
     )
@@ -76,7 +76,7 @@ def test_a_task_named_by_a_person_who_typed_the_placeholder_is_still_named(clien
     task = _upgraded_task(client, project_id, room_id)
 
     renamed = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/title",
+        f"/topics/{task['id']}/title",
         json={"title": "新话题"},
         headers=session_auth_headers("alice"),
     )
@@ -126,7 +126,7 @@ def test_the_migration_marks_tasks_that_were_never_named(client):
     untouched = _upgraded_task(client, project_id, room_id)
     named = _upgraded_task(client, project_id, room_id)
     client.post(
-        f"/topics/{room_id}/tasks/{named['id']}/title",
+        f"/topics/{named['id']}/title",
         json={"title": "拆"},
         headers=session_auth_headers("alice"),
     )

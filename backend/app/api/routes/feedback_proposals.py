@@ -69,7 +69,9 @@ async def _actor_in_topic(
     a caller who has not been resolved against this topic yet.
     """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )

@@ -31,10 +31,11 @@ from app.domain.block.schemas import BlockOut
 
 
 async def latest_preview_for_room(
-    db: AsyncSession, room_id: uuid.UUID
+    db: AsyncSession, room_id: uuid.UUID, task_id: uuid.UUID | None = None
 ) -> BlockOut | None:
-    """Return the room's latest artifact through the block read boundary."""
-    block = await BlockRepository(db).latest_artifact(room_id)
+    """Return the room's (or its task's) latest artifact through the block read
+    boundary."""
+    block = await BlockRepository(db).latest_artifact(room_id, task_id=task_id)
     return BlockOut.model_validate(block) if block is not None else None
 
 

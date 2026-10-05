@@ -8,10 +8,10 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getRoomTask = vi.fn()
+const getTask = vi.fn()
 vi.mock('@/api/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/tasks')>()),
-  getRoomTask: (...a: unknown[]) => getRoomTask(...a),
+  getTask: (...a: unknown[]) => getTask(...a),
 }))
 const getTopicComputeProfile = vi.fn()
 vi.mock('@/api', async (importOriginal) => ({
@@ -76,7 +76,7 @@ function mount() {
 }
 
 beforeEach(() => {
-  getRoomTask.mockReset()
+  getTask.mockReset()
   getTopicComputeProfile.mockReset()
   me = 'alice'
 })
@@ -116,14 +116,14 @@ async function openDetails(container: Element) {
 
 describe('任务页', () => {
   it('负责人看得到输入框和「开始」', async () => {
-    getRoomTask.mockResolvedValue(task())
+    getTask.mockResolvedValue(task())
     const { container } = mount()
     await waitFor(() => expect(container.querySelector('[data-testid="task-composer"]')).not.toBeNull())
     expect(container.querySelector('[data-testid="task-start"]')).not.toBeNull()
   })
 
   it('开始之后不再有「开始」', async () => {
-    getRoomTask.mockResolvedValue(task({ started_at: '2026-10-05T01:00:00Z', started_by: 'alice' }))
+    getTask.mockResolvedValue(task({ started_at: '2026-10-05T01:00:00Z', started_by: 'alice' }))
     const { container } = mount()
     await waitFor(() => expect(container.querySelector('[data-testid="task-composer"]')).not.toBeNull())
     expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
@@ -131,7 +131,7 @@ describe('任务页', () => {
 
   it('不是负责人：没有输入框、不能开始，只有回到房间的入口', async () => {
     me = 'bob'
-    getRoomTask.mockResolvedValue(task())
+    getTask.mockResolvedValue(task())
     const { container } = mount()
     await waitFor(() => expect(container.querySelector('[data-testid="task-blocked"]')).not.toBeNull())
     expect(container.querySelector('[data-testid="task-composer"]')).toBeNull()
@@ -139,18 +139,18 @@ describe('任务页', () => {
   })
 
   it('负责人在任务信息里看得到工作电脑，也能更换', async () => {
-    getRoomTask.mockResolvedValue(task())
+    getTask.mockResolvedValue(task())
     getTopicComputeProfile.mockResolvedValue(machine())
     const { container } = mount()
     await openDetails(container)
-    expect(getTopicComputeProfile).toHaveBeenCalledWith('r1', 't1')
+    expect(getTopicComputeProfile).toHaveBeenCalledWith('t1')
     const row = document.querySelector('[data-testid="task-machine"]')!
     expect(row.querySelector('button')).not.toBeNull()
   })
 
   it('不是负责人：看得到任务在哪台电脑上做，不能更换', async () => {
     me = 'bob'
-    getRoomTask.mockResolvedValue(task())
+    getTask.mockResolvedValue(task())
     getTopicComputeProfile.mockResolvedValue(machine())
     const { container } = mount()
     await openDetails(container)

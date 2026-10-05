@@ -60,7 +60,6 @@ from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_times import turn_starts
-from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -74,7 +73,6 @@ async def topic_transcript(
     limit: int | None = Query(None, ge=1, le=200),
     before: uuid.UUID | None = None,
     author: str | None = Query(None, min_length=1, max_length=120),
-    task: uuid.UUID | None = None,
 ) -> dict:
     """施工现场 (spec §7.1): the topic's AI session record — tool/event actions,
     read-only, newest window first.
@@ -91,14 +89,12 @@ async def topic_transcript(
     after the fact returns fewer rows than asked for and reports `has_more`
     against the wrong set, so the caller pages through holes.
 
-    The room's own line, or with `task` that task's: each conversation's
-    session has its own record, and interleaving every task's actions into the
-    room's would bury what the room did."""
+    One conversation's record — a room's own line, or a task's: each
+    conversation's session has its own, and interleaving every task's actions
+    into the room's would bury what the room did."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    if task is not None:
-        resolver.require_task_scope(task)
-        await TaskService(db).require_in_room(place.room_id, task)
+    task = place.task_id
     repo = BlockRepository(db)
     # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
     # to the conversation pane — mirroring them here just duplicates the chat.
@@ -156,14 +152,11 @@ async def step_output(
     block_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    task: uuid.UUID | None = None,
 ) -> dict:
     """The tail of what one 现场 step printed, as kept (``step_output``)."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    if task is not None:
-        resolver.require_task_scope(task)
-        await TaskService(db).require_in_room(place.room_id, task)
+    task = place.task_id
     block = await BlockRepository(db).get(block_id)
     # Same door as the transcript: the one conversation it was asked about.
     if (

@@ -318,7 +318,9 @@ async def _agent_scope(
             raise AuthenticationRequiredError("Login required")
         return False
     place = await TopicService(db).place_or_404(body.topic)
-    who = await actor.resolve(topic_id=place.room_id, project_id=place.project_id)
+    who = await actor.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await actor.authorize_topic(
         who, project_id=place.project_id, topic_id=place.room_id
     )

@@ -32,7 +32,7 @@ def _task(client, room_id: str, title: str) -> str:
 
 def _file_card(client, room_id: str, subject: str) -> str:
     r = client.post(
-        f"/topics/{room_id}/tasks/{delivery_task_id(client, room_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, room_id)}/accept-card",
         headers=delivery_headers(client, room_id),
         json={
             "change_subject": subject,

@@ -11,6 +11,8 @@
 一处带 `task_id IS NULL` 一处不带，很容易以为是漏了。
 """
 
+import uuid
+
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
@@ -59,8 +61,8 @@ def _say_in_task(client, room_id: str, task_id: str, who: str, text: str) -> Non
     要比的东西：只有消息会被计进未读。
     """
     r = client.post(
-        f"/topics/{room_id}/tasks/{task_id}/messages",
-        json={"content": text},
+        f"/topics/{task_id}/messages",
+        json={"request_id": str(uuid.uuid4()), "content": text},
         headers=session_auth_headers(who),
     )
     assert r.status_code == 200, r.text

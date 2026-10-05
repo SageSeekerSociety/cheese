@@ -66,18 +66,18 @@ def _computer(client, project_id: str, name: str, *, owner: str, team: bool) -> 
 
 
 def _pick(client, room_id, device_id, *, task_id=None, headers=None):
-    query = f"?task={task_id}" if task_id else ""
+    """Pick a computer for the room, or for the task when ``task_id`` names
+    one: either is addressed by its own conversation id."""
     return client.put(
-        f"/topics/{room_id}/compute-profile{query}",
+        f"/topics/{task_id or room_id}/compute-profile",
         json={"profile": "device", "device_id": device_id},
         headers=headers or session_auth_headers("alice"),
     )
 
 
 def _profile(client, room_id, *, task_id=None, handle="alice") -> dict:
-    query = f"?task={task_id}" if task_id else ""
     r = client.get(
-        f"/topics/{room_id}/compute-profile{query}",
+        f"/topics/{task_id or room_id}/compute-profile",
         headers=session_auth_headers(handle),
     )
     assert r.status_code == 200, r.text
@@ -166,7 +166,7 @@ def test_a_task_does_not_take_someone_elses_computer_from_its_room(client):
     assert client.portal.call(_fix, alices["id"])["device_id"] == laptop
 
 
-def test_a_task_session_changes_its_own_tasks_computer_not_the_rooms(client):
+def test_a_task_session_changes_its_own_tasks_computer_and_not_the_rooms(client):
     project_id, room_id = _room(client)
     first, second = (
         _computer(client, project_id, name, owner="alice", team=True)
@@ -177,15 +177,15 @@ def test_a_task_session_changes_its_own_tasks_computer_not_the_rooms(client):
     credential = {
         "X-Cheese-Token": mint_scoped_token(
             project_id=project_id,
-            topic_id=room_id,
+            topic_id=task["id"],
             agent_handle=room_agent_seat(client, room_id),
-            task_id=task["id"],
         )
     }
 
-    moved = _pick(client, room_id, second, headers=credential)
+    moved = _pick(client, room_id, second, task_id=task["id"], headers=credential)
 
     assert moved.status_code == 200, moved.text
+    assert _pick(client, room_id, second, headers=credential).status_code == 403
     assert (
         _profile(client, room_id, task_id=task["id"])["choice"]["device_id"] == second
     )
@@ -351,7 +351,7 @@ def test_handing_over_takes_a_task_off_its_former_owners_computer(client, monkey
     working = _holding(client, task["id"], laptop)
 
     handed = client.patch(
-        f"/topics/{room_id}/tasks/{task['id']}",
+        f"/topics/{task['id']}/task",
         json={"owner_handle": "bob"},
         headers=session_auth_headers("alice"),
     )

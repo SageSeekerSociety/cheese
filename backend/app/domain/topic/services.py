@@ -1063,12 +1063,13 @@ class TopicService:
         return target
 
     async def place_or_404(self, place_id: uuid.UUID) -> Place:
-        """The room this id names, plus the tree it is writing to, or 404.
+        """The conversation this id names — a room, or one of its tasks — or 404.
 
-        The route-level counterpart of `get_or_404`, and the difference is the
-        tree: nearly every handler that has a place goes on to want files.
+        The route-level counterpart of `get_or_404`. A task's place carries its
+        room: the roster, files and work computer are the room's, the history
+        and the session are the task's.
         """
-        place = await PlaceResolver(self._session).resolve(place_id)
+        place = await PlaceResolver(self._session).conversation(place_id)
         if place is None:
             raise NotFoundError("Topic not found")
         return place

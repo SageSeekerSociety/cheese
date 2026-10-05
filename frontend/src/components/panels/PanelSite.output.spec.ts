@@ -71,7 +71,7 @@ beforeEach(() => {
 
 async function openSite(blocks: Block[]) {
   getTranscript.mockResolvedValue({ data: blocks, total: blocks.length })
-  const view = render(Site, { props: { topic, active: true }, global: { plugins: [vuetify] } })
+  const view = render(Site, { props: { topicId: topic.id, active: true }, global: { plugins: [vuetify] } })
   await waitFor(() => expect(view.container.querySelector('.site-act')).not.toBeNull())
   return view
 }
@@ -88,7 +88,7 @@ describe('现场一步的输出', () => {
 
     await fireEvent.click(toggle)
     await waitFor(() => expect(view.getByTestId('site-step-output').textContent).toContain('42 passed'))
-    expect(getStepOutput).toHaveBeenCalledWith('t1', 's1', null)
+    expect(getStepOutput).toHaveBeenCalledWith('t1', 's1')
     expect(view.queryByText(/仅显示最后/)).toBeNull()
   })
 
