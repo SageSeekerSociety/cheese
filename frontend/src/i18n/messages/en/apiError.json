@@ -773,7 +773,6 @@
   "topicIdInvalid": "topic isn't a valid topic ID",
   "projectCredentialManagerOnly": "Only the project owner or a team admin can manage project credentials",
   "alertKindNotFromInbox": "This kind of notification isn't written from the project inbox",
-  "alertChoiceNotOffered": "The selected item isn't one of the choices",
   "alertRecipientOutside": "The recipient isn't in this project or room",
   "deviceNotYours": "This device doesn't exist or isn't yours",
   "deviceTeamMemberOnly": "You're not a member of this team, so you can't register a device to it",

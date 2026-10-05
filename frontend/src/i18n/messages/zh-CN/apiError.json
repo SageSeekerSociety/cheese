@@ -773,7 +773,6 @@
   "topicIdInvalid": "topic 不是合法的话题 id",
   "projectCredentialManagerOnly": "只有项目所有者或团队管理员能管理项目凭证",
   "alertKindNotFromInbox": "这一类通知不从项目收件箱写入",
-  "alertChoiceNotOffered": "所选项不在候选项中",
   "alertRecipientOutside": "收件人不在这个项目或房间里",
   "deviceNotYours": "设备不存在或不属于你",
   "deviceTeamMemberOnly": "你不是该团队成员，不能把设备注册给它",

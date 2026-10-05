@@ -7,11 +7,6 @@
       <template v-else>{{ title }}</template>
     </div>
     <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
-    <div v-if="message" class="text-body-2 text-medium-emphasis mt-2 message-box">
-      <v-icon icon="mdi-format-quote-open" size="12" class="me-1 text-primary-lighten-1" />
-      {{ message }}
-      <v-icon icon="mdi-format-quote-close" size="12" class="ms-1 text-primary-lighten-1" />
-    </div>
   </div>
 </template>
 
@@ -21,72 +16,67 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { useProjectInvitationAnswer } from '@/composables/useProjectInvitationAnswer'
+
 import { getEntity, getStringMetadata } from './NotificationRenderUtils'
 
 import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<NotificationRenderProps>()
+const emit = defineEmits<{
+  (e: 'update-notification', notificationId: number): void
+}>()
 const { t } = useI18n()
 
-// 获取实体和元数据
 const inviter = computed(() => getEntity(props.notification, 'inviter'))
 const project = computed(() => getEntity(props.notification, 'project'))
 const projectName = computed(() => getStringMetadata(props.notification, 'projectName', project.value?.name || ''))
-const role = computed(() => getStringMetadata(props.notification, 'role', t('notifications.common.member')))
-const message = computed(() => getStringMetadata(props.notification, 'message', ''))
 const invitationId = computed(() => getStringMetadata(props.notification, 'invitationId', ''))
 
-// 通知标题
+// How the invitation ended. The server writes it once the invitation is answered or
+// withdrawn; an answer given from this row is known here before the list reloads.
+const { answered: answeredHere, answer: answerInvitation } = useProjectInvitationAnswer()
+const settled = computed(() => getStringMetadata(props.notification, 'status', ''))
+const status = computed(() => answeredHere.value ?? settled.value)
+const isOpen = computed(() => !status.value)
+
 const title = computed(() => {
   if (!inviter.value) return t('notifications.PROJECT_INVITE.title_anonymous')
   return t('notifications.PROJECT_INVITE.title', { inviter: inviter.value.name })
 })
 
-// 通知内容
 const body = computed(() => {
-  return t('notifications.PROJECT_INVITE.body', {
-    projectName: projectName.value || t('notifications.common.unknownProject'),
-  })
+  const name = projectName.value || t('notifications.common.unknownProject')
+  if (status.value === 'accepted' || status.value === 'declined' || status.value === 'revoked') {
+    return t(`notifications.PROJECT_INVITE.ended.${status.value}`, { projectName: name })
+  }
+  return t('notifications.PROJECT_INVITE.body', { projectName: name })
 })
 
-// 构建路由链接
+// Accepted: the project itself. Still open on the server: the page that lists open
+// invitations. An answer given here never takes the link away — `NotificationItem`
+// renders a row with a link and one without as two instances, so dropping it would
+// remount this one and lose the answer it is showing.
 const routerLink = computed(() => {
-  if (project.value) {
-    return {
-      name: 'ProjectInvitations',
-      params: { id: project.value.id },
-      query: invitationId.value ? { invitationId: invitationId.value } : undefined,
-    }
+  if (status.value === 'accepted' && project.value) {
+    return { name: 'workspace-project', params: { projectId: project.value.id } }
   }
+  if (!settled.value) return { name: 'HomeTeamsPending' }
   return undefined
 })
 
-// 自定义操作按钮
+async function answer(accept: boolean) {
+  if (await answerInvitation(invitationId.value, accept)) emit('update-notification', props.notification.id)
+}
+
 const actions = computed(() => {
-  if (invitationId.value) {
-    return [
-      {
-        text: t('notifications.PROJECT_INVITE.action.accept'),
-        color: 'success',
-        handler: () => {
-          console.log('Accept project invitation:', invitationId.value)
-          // 这里可以实现接受邀请的逻辑
-        },
-      },
-      {
-        text: t('notifications.PROJECT_INVITE.action.decline'),
-        color: 'error',
-        handler: () => {
-          console.log('Decline project invitation:', invitationId.value)
-          // 这里可以实现拒绝邀请的逻辑
-        },
-      },
-    ]
-  }
-  return []
+  if (!invitationId.value || !isOpen.value) return []
+  return [
+    { text: t('notifications.PROJECT_INVITE.action.accept'), color: 'success', handler: () => answer(true) },
+    { text: t('notifications.PROJECT_INVITE.action.decline'), color: 'error', handler: () => answer(false) },
+  ]
 })
 
-// 导出渲染结果，供父组件使用
 const content = computed<RenderedNotificationContent>(() => ({
   title: title.value,
   body: body.value,
@@ -103,14 +93,5 @@ defineExpose({
 .notification-content {
   display: flex;
   flex-direction: column;
-}
-
-.message-box {
-  background-color: rgba(var(--v-theme-surface-variant), 0.7);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin-top: 8px;
-  font-style: italic;
-  position: relative;
 }
 </style>

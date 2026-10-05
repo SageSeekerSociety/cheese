@@ -48,6 +48,17 @@
     "action": {
       "accept": "接受",
       "decline": "拒绝"
+    },
+    "ended": {
+      "accepted": "你已加入项目 \"{projectName}\"",
+      "declined": "你已拒绝加入项目 \"{projectName}\"",
+      "revoked": "项目 \"{projectName}\" 的邀请已撤回"
+    },
+    "toast": {
+      "accepted": "已接受邀请",
+      "acceptFailed": "接受邀请失败，请稍后再试",
+      "declined": "已拒绝邀请",
+      "declineFailed": "拒绝邀请失败，请稍后再试"
     }
   },
   "DEADLINE_REMIND": {
