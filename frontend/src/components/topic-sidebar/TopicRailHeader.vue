@@ -28,8 +28,10 @@ defineProps<{
   searchTitle: string
   /** 手机上的项目菜单开着没（那颗 ⌄ 的选中态）。 */
   menuOpen: boolean
-  /** 平时收在 ⋯ 里的那几页（首页不在其中：项目名那一行就是它的入口）。 */
-  menuPages: { key: string; label: string; icon: string }[]
+  /** 平时收在 ⋯ 里的那几页（首页不在其中：项目名那一行就是它的入口）。`showable` 的
+   *  那几页行尾有一颗「在侧栏显示」：壳点名了它、只是这会儿没摆出来（默认收起，或者
+   *  他亲手拿掉了）。 */
+  menuPages: { key: string; label: string; icon: string; showable?: boolean }[]
   /** 当前页的名字，用来画菜单里的选中态。 */
   routeName: string | null
   /** 壳换了词之后的项目词汇表。 */
@@ -42,6 +44,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'open-page', key: string): void
+  (e: 'show-page', key: string): void
   (e: 'open-palette'): void
   (e: 'open-sheet'): void
   (e: 'open-transfer'): void
@@ -122,7 +125,21 @@ const emit = defineEmits<{
             :active="routeName === p.key"
             :disabled="!projectSelected"
             @click="emit('open-page', p.key)"
-          />
+          >
+            <!-- 「在侧栏显示」是「从侧栏隐藏」（侧栏那一行的右键）的另一半：一页从侧栏上
+                 拿掉之后，放回去的路就长在它落脚的这一格上。 -->
+            <template v-if="p.showable" #append>
+              <button
+                type="button"
+                class="rail-header__show"
+                :title="t('work.sidebar.showOnRail')"
+                :aria-label="t('work.sidebar.showOnRailNamed', { page: t(p.label, terms) })"
+                @click.stop="emit('show-page', p.key)"
+              >
+                <v-icon size="16" icon="mdi-eye-outline" />
+              </button>
+            </template>
+          </v-list-item>
           <v-divider class="my-1" />
           <v-list-item
             prepend-icon="mdi-cog-outline"
@@ -276,5 +293,27 @@ const emit = defineEmits<{
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* 菜单行尾那颗「在侧栏显示」：手写的 <button>，外观全得自己给（style.css 把
+   button:not(.v-btn) 重置掉了）。中性色，hover 只换底色。 */
+.rail-header__show {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-inline-start: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+.rail-header__show:hover {
+  background: var(--fill-2);
+  color: var(--text);
 }
 </style>

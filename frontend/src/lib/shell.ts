@@ -87,13 +87,16 @@ export function orderedNav(shell: Shell, surface: ShellSurface, known: readonly 
  * 「默认收起」，不是「禁止」——`hidden` 只决定谁开局是收着的。
  *
  * `revealed` 是**这个人**手动打开过的：打开过一次就记住了，个人级压过壳。
+ * `concealed` 是他亲手从侧栏上拿掉的：同样压过壳，而且压过 `revealed`——见
+ * `lib/shellPrefs.ts`。拿掉的照样落进「更多」，所以仍然一次点击可达。
  */
 export function projectPagePlan(
   shell: Shell,
   known: readonly string[],
-  revealed: ReadonlySet<string>
+  revealed: ReadonlySet<string>,
+  concealed: ReadonlySet<string> = new Set()
 ): { visible: string[]; more: string[] } {
   const shown = orderedNav(shell, 'project', known)
-  const visible = shown.filter((key) => !shell.hidden.includes(key) || revealed.has(key))
+  const visible = shown.filter((key) => !concealed.has(key) && (!shell.hidden.includes(key) || revealed.has(key)))
   return { visible, more: known.filter((key) => !visible.includes(key)) }
 }

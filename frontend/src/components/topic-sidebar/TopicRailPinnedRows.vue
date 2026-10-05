@@ -40,11 +40,26 @@ defineProps<{
   mutedOf?: (id: string) => boolean
   /** 全局房间那一行的操作（和话题行 ⋯ 同一份），右键弹出来。 */
   rootActions?: MenuAction[]
+  /** 项目文档那一行在不在侧栏上（他可能亲手拿掉了，那它就在项目菜单里）。 */
+  docsOnRail: boolean
 }>()
 
 // 全局房间和话题行一样：右键弹它的操作，弹在鼠标那一点上；手机上长按（父级那一个
-// useLongPress 认 data-row-actions）。
-const rowMenu = useRowMenu<'root'>()
+// useLongPress 认 data-row-actions）。项目页那几行（连同项目文档）右键弹的是「从侧栏
+// 隐藏」：一页这个人用不着，就从他自己的侧栏上拿掉，它仍在项目菜单里（FB-49）。
+// 手机上这几行本来就不在列表里（收进了项目菜单），所以只有桌面一种形态。
+const rowMenu = useRowMenu<string>()
+
+function hideActions(key: string): MenuAction[] {
+  return [
+    {
+      key: 'hide-from-rail',
+      label: t('work.sidebar.hideFromRail'),
+      icon: 'mdi-eye-off-outline',
+      onSelect: () => emit('hide-page', key),
+    },
+  ]
+}
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
@@ -55,6 +70,8 @@ const emit = defineEmits<{
   (e: 'hover-page', key: string): void
   (e: 'cancel-prefetch'): void
   (e: 'select-docs'): void
+  /** 把这一页从他自己的侧栏上拿掉（`project-docs` = 项目文档那一行）。 */
+  (e: 'hide-page', key: string): void
 }>()
 </script>
 
@@ -124,6 +141,7 @@ const emit = defineEmits<{
       :class="{ 'is-active': routeName === p.key }"
       :style="ROW_INDENT"
       @click="emit('open-page', p.key)"
+      @contextmenu="rowMenu.open(p.key, $event)"
       @mouseenter="emit('hover-page', p.key)"
       @mouseleave="emit('cancel-prefetch')"
     >
@@ -132,6 +150,9 @@ const emit = defineEmits<{
           <v-icon size="16" class="row-glyph" :icon="p.icon" />
         </span>
       </template>
+      <AdaptiveMenu v-bind="rowMenu.bind(p.key)" :actions="hideActions(p.key)" :title="t(p.label, terms)">
+        <template #activator />
+      </AdaptiveMenu>
       <!-- 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变。表里
            存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。 -->
       <v-list-item-title>{{ t(p.label, terms) }}</v-list-item-title>
@@ -145,7 +166,7 @@ const emit = defineEmits<{
     <!-- 项目文档：一行。四种文档的切换在页面里，所以它和资料库、成员一样是这个
          项目的一页，排在一起，不压在话题列表底下（话题一多就被挤出视野）。 -->
     <v-list-item
-      v-if="!page"
+      v-if="!page && docsOnRail"
       tabindex="0"
       :active="docsActive"
       rounded="lg"
@@ -153,12 +174,20 @@ const emit = defineEmits<{
       :class="{ 'is-active': docsActive }"
       :style="ROW_INDENT"
       @click="emit('select-docs')"
+      @contextmenu="rowMenu.open('project-docs', $event)"
     >
       <template #prepend>
         <span class="row-slot">
           <v-icon size="16" class="row-glyph" icon="mdi-file-document-outline" />
         </span>
       </template>
+      <AdaptiveMenu
+        v-bind="rowMenu.bind('project-docs')"
+        :actions="hideActions('project-docs')"
+        :title="t('navigation.project.docs')"
+      >
+        <template #activator />
+      </AdaptiveMenu>
       <v-list-item-title>{{ t('navigation.project.docs') }}</v-list-item-title>
     </v-list-item>
   </v-list>

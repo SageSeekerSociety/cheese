@@ -17,8 +17,8 @@ import { useLongPress } from '@/composables/useLongPress'
 import { useTopicRail } from '@/composables/useTopicRail'
 import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 
-import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
-import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
+import { DEFAULT_SHELL, orderedNav, projectPagePlan, shellFor, termParams } from '../lib/shell'
+import { loadConcealedPages, loadRevealedPages, withPageOnRail, withRevealedPage } from '../lib/shellPrefs'
 import { topicTitle } from '../lib/topicState'
 import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
@@ -170,18 +170,32 @@ const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
 const terms = computed(() => termParams(shell.value))
 
-// 「个人级压过壳」：他手动打开过一次的收起页，之后就在他自己的侧栏里。按 handle
-// 存——这是**这个人**对某一个壳的选择，和 projectOrder 同一个理由。
+// 「个人级压过壳」：他手动打开过一次的收起页，之后就在他自己的侧栏里；他亲手从侧栏
+// 上拿掉的页（右键那一行 →「从侧栏隐藏」），之后就只在项目菜单里。按 handle 存——这是
+// **这个人**对某一个壳的选择，和 projectOrder 同一个理由。两份的关系见 lib/shellPrefs.ts。
 const revealed = ref<ReadonlySet<string>>(new Set<string>())
+const concealed = ref<ReadonlySet<string>>(new Set<string>())
 watch(
   () => myHandle(),
   (handle) => {
     revealed.value = loadRevealedPages(handle)
+    concealed.value = loadConcealedPages(handle)
   },
   { immediate: true }
 )
 
-const plan = computed(() => projectPagePlan(shell.value, KNOWN_PROJECT_PAGES, revealed.value))
+const plan = computed(() => projectPagePlan(shell.value, KNOWN_PROJECT_PAGES, revealed.value, concealed.value))
+
+// 项目文档那一行不是壳里的一页（它在每个壳里都在），但它和那几页一样能被他拿掉；
+// 拿掉之后落在项目菜单里，key 记作 `project-docs`。
+const DOCS_KEY = 'project-docs'
+const docsOnRail = computed(() => !concealed.value.has(DOCS_KEY))
+
+function setOnRail(key: string, onRail: boolean) {
+  const next = withPageOnRail({ revealed: revealed.value, concealed: concealed.value }, key, onRail, myHandle())
+  revealed.value = next.revealed
+  concealed.value = next.concealed
+}
 
 // 表里没有的 key 落空：壳比前端新时菜单里会多出一格这一版还不认识的页，那也不该
 // 让侧栏白屏。
@@ -197,17 +211,31 @@ function pageOf(key: string): { label: string; icon: string } {
 // 首页不进菜单：项目名那一行就是它的入口，同一个地方两个入口只会让人猜哪个才算数。
 const homePage = computed(() => shell.value.home ?? 'workspace-running')
 const onHome = computed(() => routeName.value === homePage.value)
-const menuPages = computed(() =>
-  plan.value.more.filter((key) => key !== homePage.value).map((key) => ({ key, ...pageOf(key) }))
-)
+// 「在侧栏显示」只给壳点了名的那几页：壳没点名的页侧栏上本来就没有它的位置，那颗
+// 按钮按下去什么也不会变。
+const namedPages = computed(() => orderedNav(shell.value, 'project', KNOWN_PROJECT_PAGES))
+const menuPages = computed(() => [
+  ...plan.value.more
+    .filter((key) => key !== homePage.value)
+    .map((key) => ({ key, ...pageOf(key), showable: namedPages.value.includes(key) })),
+  ...(docsOnRail.value
+    ? []
+    : [{ key: DOCS_KEY, label: 'navigation.project.docs', icon: 'mdi-file-document-outline', showable: true }]),
+])
 // 侧栏上摆出来的那几页（顺序就是壳说的顺序），置顶行按它画。
 const visiblePages = computed(() => plan.value.visible.map((key) => ({ key, ...pageOf(key) })))
 
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
+  // 项目文档拿掉之后，菜单里那一格点下去照旧是进章程。
+  if (name === DOCS_KEY) {
+    emit('select-docs', 'charter')
+    return
+  }
   // 打开一个默认收起的页 = 这一页对他有用。记住它，下次它在外面。
   // 首页不算：它的入口是项目名那一行，记成「打开过」会把它摆回侧栏，成了第二个入口。
-  if (name !== homePage.value && plan.value.more.includes(name)) {
+  // 他亲手拿掉的页也不算：从菜单里点开它是这一次要用，不是要它回到侧栏上。
+  if (name !== homePage.value && plan.value.more.includes(name) && !concealed.value.has(name)) {
     revealed.value = withRevealedPage(revealed.value, name, myHandle())
   }
   openPage(name)
@@ -262,7 +290,7 @@ const projectSheetActions = computed<MenuAction[]>(() => {
       icon: 'mdi-file-document-outline',
       onSelect: () => emit('select-docs', 'charter'),
     },
-    ...menuPages.value.map((p) => page(p.key)),
+    ...menuPages.value.filter((p) => p.key !== DOCS_KEY).map((p) => page(p.key)),
     {
       key: 'project-settings',
       label: t('navigation.project.settings'),
@@ -416,6 +444,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         :can-transfer="canTransfer"
         :can-leave="canLeave"
         @open-page="openProjectPage"
+        @show-page="setOnRail($event, true)"
         @open-palette="openPalette()"
         @open-sheet="projectSheetOpen = true"
         @open-transfer="transferOpen = true"
@@ -473,6 +502,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :route-name="routeName"
             :terms="terms"
             :docs-active="onDocs"
+            :docs-on-rail="docsOnRail"
             :private-unread-total="privateUnreadTotal"
             :page="page === true"
             :unread-of="unreadOf"
@@ -486,6 +516,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             @hover-page="hoverProjectPage"
             @cancel-prefetch="cancelPrefetch()"
             @select-docs="emit('select-docs', 'charter')"
+            @hide-page="setOnRail($event, false)"
           />
 
           <v-divider class="mx-3 my-1" />

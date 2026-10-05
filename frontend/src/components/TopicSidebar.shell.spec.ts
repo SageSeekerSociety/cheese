@@ -16,7 +16,7 @@ import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
 
@@ -219,5 +219,105 @@ describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
 
     const { container } = mount()
     expect(titlesIn(container, '.pinned-row')).toContain('定时与触发')
+  })
+})
+
+/** 在侧栏上右键这一行，点弹出来的「从侧栏隐藏」。 */
+async function hideFromRail(container: Element, baseElement: Element, label: string): Promise<void> {
+  const row = Array.from(container.querySelectorAll('.pinned-row')).find(
+    (el) => el.querySelector('.v-list-item-title')?.textContent?.trim() === label
+  )
+  if (!row) throw new Error(`侧栏上没有 ${label}`)
+  await fireEvent.contextMenu(row)
+  const item = await waitFor(() => {
+    const found = Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).find((el) =>
+      el.textContent?.includes(t('work.sidebar.hideFromRail'))
+    )
+    if (!found) throw new Error('右键菜单还没开')
+    return found
+  })
+  await fireEvent.click(item)
+}
+
+/** 打开项目菜单，点某一格行尾的「在侧栏显示」。 */
+async function showOnRail(container: Element, baseElement: Element, label: string): Promise<void> {
+  await openProjectMenu(container, baseElement)
+  const button = baseElement.querySelector(
+    `.v-overlay button[aria-label="${t('work.sidebar.showOnRailNamed', { page: label })}"]`
+  )
+  if (!button) throw new Error(`菜单里 ${label} 没有「在侧栏显示」`)
+  await fireEvent.click(button)
+}
+
+describe('他用不着的页，能从自己的侧栏上拿掉（FB-49）', () => {
+  it('右键一行点「从侧栏隐藏」：这一行离开侧栏，落进项目菜单', async () => {
+    const { container, baseElement } = mount()
+    await hideFromRail(container, baseElement, '资料库')
+
+    await waitFor(() => expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '成员', '项目文档']))
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes('资料库'))).toBe(true)
+  })
+
+  it('拿掉的页重新挂载之后仍然不在侧栏上，换个账号进来是壳的默认', async () => {
+    const first = mount()
+    await hideFromRail(first.container, first.baseElement, '成员')
+    first.unmount()
+
+    const again = mount()
+    expect(titlesIn(again.container, '.pinned-row')).toEqual(['全局', '资料库', '项目文档'])
+    again.unmount()
+
+    localStorage.setItem('user', JSON.stringify({ id: 2, username: 'someone-else', nickname: '别人' }))
+    const other = mount()
+    expect(titlesIn(other.container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档'])
+  })
+
+  it('从菜单里点开一个拿掉的页：这一次打开了它，但它不回到侧栏上', async () => {
+    const { container, baseElement } = mount()
+    await hideFromRail(container, baseElement, '资料库')
+    await clickMenuItem(container, baseElement, '资料库')
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('project-library'))
+    expect(titlesIn(container, '.pinned-row')).not.toContain('资料库')
+  })
+
+  it('打开过一次而留在侧栏上的页，也能再拿掉', async () => {
+    const { container, baseElement } = mount()
+    await clickMenuItem(container, baseElement, t('navigation.project.routines'))
+    await waitFor(() => expect(titlesIn(container, '.pinned-row')).toContain('定时与触发'))
+
+    await hideFromRail(container, baseElement, '定时与触发')
+    await waitFor(() => expect(titlesIn(container, '.pinned-row')).not.toContain('定时与触发'))
+  })
+
+  it('菜单里那一格的「在侧栏显示」把它放回原来的位置', async () => {
+    const { container, baseElement } = mount()
+    await hideFromRail(container, baseElement, '资料库')
+    await waitFor(() => expect(titlesIn(container, '.pinned-row')).not.toContain('资料库'))
+
+    await showOnRail(container, baseElement, '资料库')
+    await waitFor(() => expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档']))
+  })
+
+  it('壳默认收起的页也能直接从菜单放上侧栏', async () => {
+    const { container, baseElement } = mount()
+    await showOnRail(container, baseElement, '定时与触发')
+    await waitFor(() =>
+      expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '定时与触发', '项目文档'])
+    )
+  })
+
+  it('项目文档那一行也能拿掉：菜单里那一格点下去照旧打开项目文档', async () => {
+    const onSelectDocs = vi.fn()
+    const { container, baseElement } = mount({ onSelectDocs })
+    await hideFromRail(container, baseElement, '项目文档')
+    await waitFor(() => expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员']))
+
+    await clickMenuItem(container, baseElement, '项目文档')
+    expect(onSelectDocs).toHaveBeenCalledWith('charter')
+
+    await showOnRail(container, baseElement, '项目文档')
+    await waitFor(() => expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档']))
   })
 })
