@@ -60,6 +60,9 @@ jobs:
       - name: Automatic release ordering
         run: python3 deploy/tests/test_auto_deploy.py
 
+      - name: Hong Kong edge asset copy
+        run: python3 deploy/tests/test_edge_asset_sync.py
+
       - name: Persistent ingress survives application switches
         run: |
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
