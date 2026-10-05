@@ -253,7 +253,10 @@ _ROUTINE = _text("规则 id")
 _ROUTINE_SPEC = (
     '定时写 {"freq": "weekly", "weekdays": [0], "time": "09:00"}（0=周一）；'
     "也可以是 daily + time、monthly + day + time、hourly + minute；"
-    '事件触发写 {"scope": "room"} 或 {"scope": "project"}'
+    '事件触发写 {"scope": "room"} 或 {"scope": "project"}。'
+    '定时规则可以加 "feedback_batch": N（1–10）：每次执行时平台把最早的 N 条'
+    "没人处理的反馈连同分诊步骤附在工作说明后面，没有就不执行；"
+    "只有做平台本身的项目里的房间能用"
 )
 _ROUTINE_TIMEZONE = _text("时区，默认 Asia/Shanghai")
 

@@ -72,6 +72,8 @@
   "routinePauseActiveOnly": "只有执行中的规则能暂停",
   "routineResumePausedOnly": "只有暂停中的规则能恢复",
   "routineRunUnconfirmed": "还没确认的规则不能执行",
+  "routineFeedbackBatch": "feedback_batch 是每次交给队友的反馈条数，要写 1 到 {max} 之间的整数",
+  "routineFeedbackBatchPlatformOnly": "只有做平台本身的项目里的房间能接反馈分诊：别处的队友领不了反馈",
   "timezoneUnknown": "不认识的时区：{name}",
   "scheduleTimeFormat": "执行时间要写成 HH:MM，例如 09:00",
   "scheduleHourlyMinute": "每小时执行要给出第几分钟（0–59）",

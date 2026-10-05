@@ -23,7 +23,7 @@ vi.mock('../../api/routines', () => ({
 
 import RoutinePanelHost from './RoutinePanelHost.vue'
 
-const { createRoutine, listProjectRoutines } = await import('../../api/routines')
+const { createRoutine, listProjectRoutines, updateRoutine } = await import('../../api/routines')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -130,5 +130,22 @@ describe('房间右侧的「定时与触发」', () => {
     expect(room).toBe('room-1')
     expect(body.trigger).toBe('schedule')
     expect(body.spec).toEqual({ freq: 'weekly', time: '09:00', weekdays: [0] })
+  })
+
+  it('改一条每日分诊的钟点：它附带的反馈条数跟着留下，不被表单丢掉', async () => {
+    const triage = { ...live, spec: { freq: 'daily', time: '09:00', feedback_batch: 5 } }
+    vi.mocked(listProjectRoutines).mockResolvedValue({ data: [triage], total: 1 })
+    vi.mocked(updateRoutine).mockResolvedValue(triage)
+    const { findByText } = mount()
+    await findByText('这个房间的日报')
+
+    const row = document.querySelector('[data-routine="live-1"]')!
+    await fireEvent.click(button('修改', row)!)
+    await waitFor(() => expect(button('保存')).toBeTruthy())
+    await fireEvent.click(button('保存')!)
+
+    await waitFor(() => expect(updateRoutine).toHaveBeenCalled())
+    const body = vi.mocked(updateRoutine).mock.calls[0][1]
+    expect(body.spec).toEqual({ freq: 'daily', time: '09:00', feedback_batch: 5 })
   })
 })

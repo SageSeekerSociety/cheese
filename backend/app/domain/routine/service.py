@@ -38,6 +38,8 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
+from app.domain.feedback import claims as feedback_claims
+from app.domain.feedback import triage as feedback_triage
 from app.domain.library import service as library
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -122,9 +124,24 @@ def _validate(trigger: str, spec: dict, tz: str) -> dict:
     return {"scope": scope}
 
 
+NO_FEEDBACK_WAITING = "没有待分诊的反馈，这一次不执行"
+
+
 class RoutineService:
     def __init__(self, session: AsyncSession):
         self._session = session
+
+    async def _check_feedback_batch(self, spec: dict, project_id: uuid.UUID) -> None:
+        """Feedback triage runs only where the teammate may claim what it is handed.
+
+        Claiming is open to rooms of the projects working on the platform itself
+        (`feedback.claims`); a room elsewhere would be handed reports it can read
+        but not take, every day.
+        """
+        if spec.get("feedback_batch") and not await feedback_claims.is_platform_project(
+            self._session, project_id
+        ):
+            raise ValidationError(say("routineFeedbackBatchPlatformOnly"))
 
     async def get(self, routine_id: uuid.UUID) -> Routine:
         row = await self._session.get(Routine, routine_id)
@@ -179,6 +196,7 @@ class RoutineService:
         if not title.strip() or not instructions.strip():
             raise ValidationError(say("routineFieldsRequired"))
         spec = _validate(trigger, spec, tz)
+        await self._check_feedback_batch(spec, topic.project_id)
         if by_agent:
             agent = await self._agent_for(topic.id, agent_handle or by)
             if not owner_handle:
@@ -298,6 +316,7 @@ class RoutineService:
         spec = changes.get("spec", row.spec)
         tz = changes.get("timezone", row.timezone)
         new_spec = _validate(trigger, spec, tz)
+        await self._check_feedback_batch(new_spec, row.project_id)
         for key in ("title", "instructions", "context_scope"):
             if key in changes and changes[key] is not None:
                 setattr(row, key, str(changes[key]).strip())
@@ -548,6 +567,18 @@ async def _fire(
         run.finished_at = stamp
         return run
     content = run_prompt(routine, run)
+    batch_size = routine.spec.get("feedback_batch")
+    if batch_size:
+        batch = await feedback_triage.untriaged(session, batch_size)
+        if not batch:
+            # Nothing waiting is not news: no turn, and no daily notice to the
+            # owner saying so (`notified` is what `_announce_finished` reads).
+            run.status = RunStatus.skipped.value
+            run.error = NO_FEEDBACK_WAITING
+            run.finished_at = stamp
+            run.notified = True
+            return run
+        content = f"{content}\n\n{feedback_triage.batch_prompt(batch)}"
     event_id = uuid.uuid4()
     line = say("routineRunStarted", title=routine.title)
     session.add(

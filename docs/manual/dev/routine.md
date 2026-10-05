@@ -49,6 +49,8 @@ covers:
 | `task_closed` | `{scope: room\|project}` | `task:<id>` |
 | `card_accepted` | `{scope: room\|project}` | `card:<id>` |
 
+定时规则的 `spec` 还可以带 `feedback_batch`（1–10）：每次执行附上一批没人处理的反馈，没有就记 `skipped`，不派活也不通知；只有做平台本身的项目里的房间能用，见[每日分诊](/dev/feedback#triage)。
+
 钟点一律**按人自己的时区**算（`timezone`，默认 `Asia/Shanghai`），`schedule.next_after` 返回严格晚于给定时刻的下一个 UTC 瞬间：`hourly` 只认第几分钟，`weekly` 的 `weekdays` 是 0=周一，`monthly` 的号数会按当月长度收敛（`min(day, last)`，所以「31 号」在二月落在月末）。`normalize` 把「说不清是哪一刻」的计划全部拒掉，而不是猜一个。
 
 事件触发靠游标：`event_cursor` 之前的从不算这条规则的事，`_activate` 把它设成「现在」—— 所以一条刚建的规则不会去补跑这个项目的历史。`_events_for` 把项目里的事翻出来（资料库文件按 mtime、任务按 `closed_at`、验收卡按 `decided_at`），排序后取最新的时刻当新游标。
