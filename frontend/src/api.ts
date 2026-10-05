@@ -54,7 +54,6 @@ import type {
   ReactionAgg,
   RoomTask,
   Topic,
-  TopicComputeProfile,
   TopicMemberRow,
   TopicProgress,
   TopicWorkSummary,
@@ -66,6 +65,7 @@ import type {
 } from './cx_types'
 import type { DocComment } from './lib/docThreadTypes'
 import type { AgentFieldChoice } from './lib/modelChoices'
+import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from './types/compute'
 import type { SitePage } from './types/site'
 
 import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
@@ -657,14 +657,14 @@ export function listDeviceSessions(
   return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 
-export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
+export function getProjectComputeConfigs(projectId: string): Promise<ProjectComputeConfigs> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`)
 }
 
 export function saveProjectComputeConfigs(
   projectId: string,
-  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default'>
-): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default'>> {
+  configs: Pick<ProjectComputeConfigs, 'default'>
+): Promise<Pick<ProjectComputeConfigs, 'default'>> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`, {
     method: 'PUT',
     body: JSON.stringify(configs),
@@ -685,9 +685,9 @@ export interface ComputeProposal {
 // 点名那台上能看到什么，不给就保持原样，新绑上的是隔离环境。
 export function setTopicComputeChoice(
   topicId: string,
-  choice: import('./cx_types').ComputeChoice,
+  choice: ComputeChoice,
   options: { abandonUnpushed?: boolean; ifIdle?: boolean; visibility?: 'host' | 'isolated' } = {}
-): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
+): Promise<{ choice: ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({

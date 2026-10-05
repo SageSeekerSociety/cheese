@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'

@@ -1,4 +1,4 @@
-import type { ComputeChoice } from '../cx_types'
+import type { ComputeChoice } from '../types/compute'
 
 import { t } from '@/i18n'
 

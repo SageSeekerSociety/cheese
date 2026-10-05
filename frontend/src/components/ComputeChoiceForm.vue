@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
+import type { ComputeChoice, TopicComputeDevice } from '../types/compute'
 
 import { computed, ref } from 'vue'
 

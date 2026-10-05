@@ -1,5 +1,5 @@
 // 项目设置里的工作电脑：只有「新 agent 默认用」和「现在的分布」，没有常用配置。
-import type { ComputeChoice, ProjectComputeConfigs } from '../cx_types'
+import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'

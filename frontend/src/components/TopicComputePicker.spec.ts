@@ -1,5 +1,5 @@
 // 房间这一项：还没开工的 AI 队友开工时用哪台。开工前后都改得动。
-import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 项目只给默认：新 agent 开工时用哪台工作电脑。已经在干活的 agent 各有各的机器，
 // 改默认不搬它们；它们现在在哪，写在「现在的分布」里。
-import type { ComputeChoice, ProjectComputeConfigs } from '../cx_types'
+import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
 
 import { onMounted, ref, watch } from 'vue'
 
