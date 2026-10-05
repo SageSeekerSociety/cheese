@@ -43,7 +43,6 @@ import { withViewTransition } from '../lib/viewTransition'
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelDoc from './panels/PanelDoc.vue'
-import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的「定时与触发」）。这个文件里 `panelTabs` 已经
@@ -52,6 +51,7 @@ import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
+import PanelOverviewHost from './work/PanelOverviewHost.vue'
 
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
@@ -276,7 +276,7 @@ function enterClass(key: string) {
   return e?.key === key ? `tabpane-in tabpane-in--${e.from}` : undefined
 }
 
-const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
+const overviewRef = ref<InstanceType<typeof PanelOverviewHost> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
@@ -826,7 +826,7 @@ defineExpose({
           <div v-if="!taskId" v-show="active === 'threads'" class="tabpane-slot" :class="enterClass('threads')">
             <slot name="threads" />
           </div>
-          <PanelOverview
+          <PanelOverviewHost
             v-if="!taskId"
             v-show="active === 'overview'"
             ref="overviewRef"

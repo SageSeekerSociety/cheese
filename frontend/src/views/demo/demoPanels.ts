@@ -8,12 +8,12 @@
 //
 // 剧本只写要讲的东西（哪几个文件、改哪几行、文档正文），信封里那些和这一步无关的
 // 字段（版本号、字节数、时间戳）由这里补。
-import type { RoomOutput } from '@/api'
 import type {
   Block,
   BoardPhrase,
   FileContent,
   PreviewInfo,
+  RoomOutput,
   RoomTask,
   TodoItem,
   TopicProgress,

@@ -16,32 +16,56 @@
 // 它挂在总览的最底下、实况文档下面，默认收起，只露小标题那一行（带件数）。它原先
 // 在预览那一格的底部，和预览抢高度；预览那一格现在只放预览。小标题那一行是折叠开
 // 关，摊开后列表有高度上限、自己滚，不把上面的文档挤没。
-import type { DocumentTemplate, RoomOutput } from '@/api'
 import type { MenuAction } from '@/components/common/menuAction'
+import type { DocumentTemplate, RoomOutput } from '@/cx_types'
 
 import { computed, ref, useId, watch } from 'vue'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
-import { listDocumentTemplates, listRoomOutputs, newFromTemplate, saveRoomOutputToLibrary } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
-const props = defineProps<{ topicId: string | null }>()
+// **只吃 props**：取数在 `components/work/PanelOverviewHost.vue`（它渲染整个总览）。
+// 这里留下的只有「这一格长什么样」：折叠态、正在存哪一份、存完了叫什么、出错了说什么。
+// `components/panels/**` 下每个 SFC 都是「场景」，场景不取数，也不自己定义怎么取。
+const props = withDefaults(
+  defineProps<{
+    topicId: string | null
+    /** 这个房间摆出来的东西，新的在前。读不到就是空的。 */
+    outputs?: RoomOutput[]
+    /** 标准模板。第一次点「从模板新建」时由上面那一层去取，取到的再传回来。 */
+    templates?: DocumentTemplate[]
+    /** 去取一次模板列表。 */
+    loadTemplates?: () => void
+    /** 把一份存进资料库，返回它在资料库里叫什么（撞名时那边会加 `(2)`）。 */
+    saveToLibrary?: (path: string) => Promise<string>
+    /** 从模板建一份。建完的列表刷新和打开由上面那一层做——这里只管按钮的忙碌和报错。 */
+    createFromTemplate?: (templateId: string, path: string) => Promise<void>
+  }>(),
+  {
+    topicId: null,
+    outputs: () => [],
+    templates: () => [],
+    loadTemplates: undefined,
+    saveToLibrary: undefined,
+    createFromTemplate: undefined,
+  }
+)
+
 const emit = defineEmits<{
   /** 点开这一份：上面那块只看得到最后一样，前面几样从这里开成自己的页签。 */
   (e: 'open', path: string): void
 }>()
 
-const outputs = ref<RoomOutput[]>([])
 const saving = ref('')
 const error = ref('')
 const saved = ref<Record<string, string>>({})
 
 /** 跑着的应用没有文件可存：它是一个进程，不是一份东西。 */
-const files = computed(() => outputs.value.filter((o) => o.kind === 'file'))
+const files = computed(() => props.outputs.filter((o) => o.kind === 'file'))
 
 // ---- 折叠 ----
 // 按话题存人自己按的那一下；键不在 = 没按过 = 收起。v1 是它还在预览格里、默认按
@@ -89,27 +113,9 @@ function applyDefault() {
   expanded.value = loadExpanded(props.topicId) ?? false
 }
 
-async function load() {
-  const topicId = props.topicId
-  if (!topicId) return
-  try {
-    const listed = await listRoomOutputs(topicId)
-    outputs.value = listed.data
-  } catch {
-    // 读不到这一块就不显示列表：这一格的主体是上面的文档。
-    outputs.value = []
-  }
-}
-
-// 换一个话题就是换一份列表，折叠态也跟着换一份。
+// 换一个话题就是换一份列表，折叠态也跟着换一份。列表本身由上面那一层跟着换。
 applyDefault()
-watch(
-  () => props.topicId,
-  () => {
-    applyDefault()
-    void load()
-  }
-)
+watch(() => props.topicId, applyDefault)
 
 // 右键一个文件：打开它、存进资料库（已经存过的不再给），弹在鼠标那一点上。
 const rowMenu = useRowMenu<string>()
@@ -134,16 +140,16 @@ function outputActions(output: RoomOutput): MenuAction[] {
 }
 
 async function save(output: RoomOutput) {
-  const topicId = props.topicId
-  if (!topicId) return
+  const toLibrary = props.saveToLibrary
+  if (!toLibrary) return
   saving.value = output.path
   error.value = ''
   try {
-    const done = await saveRoomOutputToLibrary(topicId, output.path)
     // 说出它在资料库里叫什么：撞名时那边会加 `(2)`，而人下次找的是那个名字。
+    const name = await toLibrary(output.path)
     saved.value = {
       ...saved.value,
-      [output.path]: t('tasks.preview.roomOutputs.savedToLibrary', { name: done.name }),
+      [output.path]: t('tasks.preview.roomOutputs.savedToLibrary', { name }),
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('tasks.preview.roomOutputs.saveFailed')
@@ -153,7 +159,6 @@ async function save(output: RoomOutput) {
 }
 
 // 从标准模板新建：建出来的是房间里的一份文件，建好就打开，进编辑器接着写。
-const templates = ref<DocumentTemplate[]>([])
 const picking = ref<DocumentTemplate | null>(null)
 const newPath = ref('')
 const creating = ref(false)
@@ -162,17 +167,7 @@ const choosing = ref(false)
 function toggleTemplates() {
   choosing.value = !choosing.value
   picking.value = null
-  if (choosing.value) void loadTemplates()
-}
-
-async function loadTemplates() {
-  const topicId = props.topicId
-  if (!topicId || templates.value.length) return
-  try {
-    templates.value = (await listDocumentTemplates(topicId)).data
-  } catch {
-    templates.value = []
-  }
+  if (choosing.value) props.loadTemplates?.()
 }
 
 function pick(template: DocumentTemplate) {
@@ -181,17 +176,15 @@ function pick(template: DocumentTemplate) {
 }
 
 async function create() {
-  const topicId = props.topicId
   const template = picking.value
-  if (!topicId || !template) return
+  const make = props.createFromTemplate
+  if (!template || !make) return
   creating.value = true
   error.value = ''
   try {
-    const made = await newFromTemplate(topicId, template.id, newPath.value.trim())
+    await make(template.id, newPath.value.trim())
     picking.value = null
     choosing.value = false
-    await load()
-    emit('open', made.path)
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('tasks.preview.roomOutputs.createFailed')
   } finally {
@@ -202,10 +195,6 @@ async function create() {
 function name(path: string): string {
   return path.split('/').pop() || path
 }
-
-void load()
-
-defineExpose({ reload: load })
 </script>
 
 <template>
