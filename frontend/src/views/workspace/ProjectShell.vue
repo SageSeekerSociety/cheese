@@ -65,9 +65,17 @@ onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 // 归档了的项目不在项目清单里，谁是所有者要单独问一句；这句话原本在
 // ProjectAccessNotice 里，现在它只认 isOwner，就得在这一层问。
 const isOwner = computed(() => !!store.openedProject?.owner_handle && store.openedProject.owner_handle === myHandle())
-onMounted(() => {
-  if (store.accessDenied === 'archived' && !store.openedProject) void store.loadOpenedProject()
-})
+// 跟着状态走，不是跟着挂载走：accessDenied 是 openProject 异步回信才变成 'archived'
+// 的，而这个容器一开始就挂载——挂载那一刻问只会问在 null 上。原来这句话挂在
+// ProjectAccessNotice 的 onMounted（它是变档之后才挂载的，时机刚好），搬上来就得
+// 换成 watch。
+watch(
+  () => store.accessDenied === 'archived' && !store.openedProject,
+  (need) => {
+    if (need) void store.loadOpenedProject()
+  },
+  { immediate: true }
+)
 
 // 「取消归档」：正在不在传由容器记着，作为 prop 交给画面上的按钮。
 const restoring = ref(false)
