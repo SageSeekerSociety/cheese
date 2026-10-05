@@ -4,23 +4,27 @@ conversation of its own, beside the room it came from.
 The rules a person could state before any of this was built:
 
 - a person creates a task, and owns it; an AI teammate may only propose one;
-- only the owner talks in the task — everyone else says what they have to say
-  in the room;
+- only the people working the task talk in it — its owner and the
+  collaborators the owner brought in; everyone else says what they have to
+  say in the room;
 - nothing is changed in the project until the owner starts the task, and what
   the task's document said then is what its changes are reviewed against;
 - the task's conversation and its AI session are its own: talking in it leaves
   the room's history and the room's session alone, and the reverse;
 - a task's document is readable by whoever can see the task and written only
-  by its owner and its own session;
+  by the people working it and its own session;
 - a closed task takes no more messages.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
+from app.domain.block.models import AuthorType
+from app.domain.block.repositories import BlockRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     join_project_team,
@@ -101,6 +105,45 @@ def test_the_person_who_creates_a_task_owns_it_and_it_has_not_started(client):
 
     assert task["owner_handle"] == "bob"
     assert task["started_at"] is None
+
+
+def test_a_room_lists_each_task_with_its_newest_lines(client):
+    """`limit` is per task: each task brings its own newest lines, so one long
+    conversation never crowds out another's."""
+    project_id, room_id = _room(client)
+    long = open_task(client, room_id, "长的那件", start=False)
+    short = open_task(client, room_id, "短的那件", start=False)
+
+    async def say(task_id: str, lines: list[str]) -> None:
+        start = datetime.now(UTC)
+        async with client.test_factory() as db:
+            for n, line in enumerate(lines):
+                await BlockRepository(db).add(
+                    project_id=uuid.UUID(project_id),
+                    conversation_id=uuid.UUID(task_id),
+                    author="alice",
+                    author_type=AuthorType.participant,
+                    content=line,
+                    created_at=start + timedelta(seconds=n),
+                )
+            await db.commit()
+
+    client.portal.call(say, long["id"], ["一", "二", "三"])
+    client.portal.call(say, short["id"], ["就一句"])
+
+    listed = client.get(
+        f"/topics/{room_id}/tasks",
+        params={"limit": 2},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert listed.status_code == 200, listed.text
+    said = {
+        t["id"]: [b["content"] for b in t["blocks"] if b["kind"] == "message"]
+        for t in listed.json()["data"]["data"]
+    }
+    assert said[long["id"]] == ["二", "三"]
+    assert said[short["id"]] == ["就一句"]
 
 
 def test_an_ai_teammate_cannot_create_a_task(client):

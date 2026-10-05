@@ -641,10 +641,7 @@ class TopicService:
         and the cards they are still waiting on have to be settled with them
         (an unresolved card on a frozen place is one nobody can ever act on).
         """
-        for task in await TaskService(self._session).threads_for_room(
-            topic.id, limit=0
-        ):
-            thread = task[0]
+        for thread in await TaskService(self._session).list_in_room(topic.id):
             if thread.status == TaskStatus.closed:
                 continue
             thread.status = TaskStatus.closed

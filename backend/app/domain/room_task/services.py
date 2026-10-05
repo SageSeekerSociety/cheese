@@ -347,12 +347,10 @@ class TaskService:
         whether anyone had spoken yet.
         """
         tasks = await self._repo.list_for_room(room_id)
-        conversations = await self._repo.conversations_for_tasks([t.id for t in tasks])
-        out: list[tuple[Task, list[Block]]] = []
-        for task in tasks:
-            blocks = conversations.get(task.id, [])
-            out.append((task, blocks[-limit:] if limit is not None else blocks))
-        return out
+        conversations = await self._repo.conversations_for_tasks(
+            [t.id for t in tasks], limit=limit
+        )
+        return [(task, conversations.get(task.id, [])) for task in tasks]
 
 
 class RoomLockService:
