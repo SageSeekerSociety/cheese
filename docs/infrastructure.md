@@ -833,7 +833,7 @@ To check the public path from anywhere, run
 ### Static assets are answered in Hong Kong
 
 The page's built files under `/assets/` are hashed: a name never changes its
-content. Once TLS ends on etrip, Caddy answers them from a copy on etrip
+content. Since TLS ends on etrip, Caddy answers them from a copy on etrip
 instead of sending each one through a tunnel, so a cold page load no longer
 waits on the tunnels for about a megabyte of script, and a fresh service
 worker's precache (about 6 MB gzipped, most of it again after every deploy)
@@ -859,9 +859,11 @@ stops competing with API calls inside them.
 Rollback: delete the `import` line from the okcheese.com site and
 `systemctl reload caddy`; then `systemctl disable --now cheese-edge-asset-sync`.
 
-A reload of this Caddy closes every WebSocket it proxies unless the
-`reverse_proxy` carries `stream_close_delay`; with it, open sockets stay up
-for that long after the reload, and clients reconnect on their own schedule.
+The okcheese.com `reverse_proxy` carries `stream_close_delay 10m`. Without
+it, a reload of this Caddy closes every WebSocket it proxies at once (room
+sockets, device connectors, preview tunnels); with it, sockets open at the
+reload stay up for up to ten minutes, and clients reconnect on their own
+schedule.
 
 ## Access
 
