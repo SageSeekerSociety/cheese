@@ -386,9 +386,12 @@ async def list_project_tasks(
     now = datetime.now(UTC)
     # 第四次批查询：哪几条此刻有一轮在跑（`agent.liveness`：不止看内存）。
     running = await running_tasks(chat, db, tasks)
+    # 第五次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
+    last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
     items = []
     for task in tasks:
         card = cards.get(task.id)
+        said_at = last_said.get(task.id)
         shown = presentation.task_presentation(
             presentation.facts_for_task(
                 task,
@@ -402,6 +405,7 @@ async def list_project_tasks(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
                 "presentation": shown.as_dict(),
+                "last_activity_at": (said_at or task.created_at).isoformat(),
                 "card": None
                 if card is None
                 else {
