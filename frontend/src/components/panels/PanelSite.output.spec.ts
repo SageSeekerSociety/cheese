@@ -88,7 +88,7 @@ describe('现场一步的输出', () => {
 
     await fireEvent.click(toggle)
     await waitFor(() => expect(view.getByTestId('site-step-output').textContent).toContain('42 passed'))
-    expect(getStepOutput).toHaveBeenCalledWith('t1', 's1')
+    expect(getStepOutput).toHaveBeenCalledWith('t1', 's1', null)
     expect(view.queryByText(/仅显示最后/)).toBeNull()
   })
 

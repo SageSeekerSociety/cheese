@@ -37,6 +37,8 @@ import { vRovingTabs } from '@/lib/rovingTabs'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    // 读房间里这个任务的记录，而不是房间自己的。
+    taskId?: string | null
     // This tab is the one on screen. Load happens on the rising edge, exactly
     // like opening the old drawer did.
     active?: boolean
@@ -152,6 +154,7 @@ const viewing = computed(() =>
 // 容器；读回来的人由 noteAgents / noteStarts 记到这一栏自己的名册和轮次上。
 const { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive } = useSiteTranscript({
   topicId: () => props.topic?.id ?? null,
+  taskId: () => props.taskId ?? null,
   viewing: () => viewing.value,
   scrollRef,
   noteAgents,
@@ -292,7 +295,7 @@ function isLive(index: number): boolean {
 
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
-      <SessionInspector v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
+      <SessionInspector v-if="topic && !taskId" :topic-id="topic.id" :active="active" :pushed="agentControl" />
       <div
         v-if="agents.length > 1"
         v-roving-tabs
@@ -404,6 +407,7 @@ function isLive(index: number): boolean {
               <SiteStepOutput
                 v-if="topic && expandedSite.has(b.id) && b.meta?.output_bytes"
                 :topic-id="topic.id"
+                :task-id="taskId ?? null"
                 :block-id="b.id"
                 :bytes="b.meta.output_bytes"
               />

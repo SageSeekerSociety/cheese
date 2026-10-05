@@ -1981,6 +1981,7 @@
     "tabChat": "Conversation",
     "tabOverview": "Overview",
     "tabChanges": "Changes",
+    "tabSite": "Activity",
     "proposal": {
       "byline": "{name} proposed a task",
       "accept": "Create task",

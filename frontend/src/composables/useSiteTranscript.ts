@@ -18,6 +18,8 @@ import { t } from '@/i18n'
 export interface SiteTranscriptHooks {
   /** 现在开着哪个话题（没开就是 null）。 */
   topicId: () => string | null
+  /** 读的是房间里哪个任务的记录：null = 房间自己那一条线。 */
+  taskId: () => string | null
   /** 现在看的是谁：null = 全部（同 PanelSite 的 `viewing`）。 */
   viewing: () => string | null
   /** 这一窗自己的滚动容器。 */
@@ -30,6 +32,11 @@ export interface SiteTranscriptHooks {
 
 export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   const loading = ref(false)
+  // 房间自己那条线不带 task；任务的才带。
+  const taskScope = () => {
+    const task = hooks.taskId()
+    return task ? { task } : {}
+  }
   const errorMsg = ref<string | null>(null)
 
   // 现场: read-only transcript timeline. 手上这一窗是**当前视角**的：「全部」是房间里
@@ -87,6 +94,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     loadingOlder.value = true
     try {
       const page = await getTranscript(tid, {
+        ...taskScope(),
         limit: SITE_PAGE_SIZE,
         before: oldest.id,
         author,
@@ -173,7 +181,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     if (!quiet) loading.value = true
     errorMsg.value = null
     try {
-      const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE, author })
+      const tx = await getTranscript(tid, { ...taskScope(), limit: SITE_PAGE_SIZE, author })
       // 读的人可能已经又换了一个视角：这一页不是他现在要的，丢掉。骨架屏由下面的
       // finally 收掉，不能让它留在半路。
       if (hooks.topicId() !== tid || hooks.viewing() !== author) return
@@ -224,11 +232,12 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
 
   /**
    * socket 上来的一行（对话栏收到，一路转过来）：新的接在末尾，已有的原地换掉。
-   * 别的话题的、分身卡上的、不是事件的，都不归这一栏。只看一个队友时，别人的行
+   * 别的话题的、别的对话（房间或任务）的、不是事件的，都不归这一栏。只看一个队友时，别人的行
    * 也不归这一栏——手上这条时间线就是那个人的。
    */
   function receive(block: Block): void {
-    if (block.topic_id !== hooks.topicId() || block.kind !== 'event' || block.task_id) return
+    if (block.topic_id !== hooks.topicId() || block.kind !== 'event' || (block.task_id ?? null) !== hooks.taskId())
+      return
     // 名册先记上：别的队友在干活，tab 得出现（切过去时才读得到它的记录）。
     hooks.noteAgents([block])
     const viewing = hooks.viewing()

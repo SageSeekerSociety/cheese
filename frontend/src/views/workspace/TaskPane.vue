@@ -22,6 +22,7 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import PanelChanges from '@/components/panels/PanelChanges.vue'
 import PanelDoc from '@/components/panels/PanelDoc.vue'
+import PanelSite from '@/components/panels/PanelSite.vue'
 import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import TaskConversation from '@/components/task/TaskConversation.vue'
 import TaskDocCompare from '@/components/task/TaskDocCompare.vue'
@@ -119,8 +120,10 @@ const socket = useRoomSocket({
   onFrame(frame: WsServerFrame) {
     if (frame.type === 'assistant_block' || frame.type === 'event_block' || frame.type === 'user_block') {
       mergeBlock(frame.block)
+      siteRef.value?.receive(frame.block)
     } else if (frame.type === 'block_updated') {
       mergeBlock(frame.block)
+      siteRef.value?.receive(frame.block)
     } else if (frame.type === 'retract_block') {
       removeBlock(frame.block_id)
     } else if (frame.type === 'done' || frame.type === 'turn_finished') {
@@ -258,8 +261,14 @@ async function toggleCompare() {
   }
 }
 
-// 右边两格：总览（实况文档）和改动。手机上一屏放不下两栏，对话也是一格。
-const sideTab = ref<'overview' | 'changes'>('overview')
+// 右边三格：总览（实况文档）、现场和改动。手机上一屏放不下两栏，对话也是一格。
+const sideTab = ref<'overview' | 'site' | 'changes'>('overview')
+// 现场第一次打开时才挂上去，之后切走也留着，socket 上来的行接着往里收。
+const siteRef = ref<InstanceType<typeof PanelSite> | null>(null)
+const siteMounted = ref(false)
+watch(sideTab, (tab) => {
+  if (tab === 'site') siteMounted.value = true
+})
 const phoneTab = ref<'chat' | 'doc'>('chat')
 function review() {
   sideTab.value = 'changes'
@@ -419,6 +428,16 @@ function review() {
               type="button"
               role="tab"
               class="task-tabs__tab t-meta"
+              :aria-selected="sideTab === 'site'"
+              data-testid="task-tab-site"
+              @click="sideTab = 'site'"
+            >
+              {{ t('work.task.tabSite') }}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="task-tabs__tab t-meta"
               :aria-selected="sideTab === 'changes'"
               @click="sideTab = 'changes'"
             >
@@ -426,6 +445,20 @@ function review() {
             </button>
           </div>
           <TopicAcceptCard :topic-id="room.id" :task-id="task.id" topic-status="active" @review="review" />
+          <PanelSite
+            v-if="siteMounted"
+            v-show="sideTab === 'site'"
+            ref="siteRef"
+            class="task-body__doc"
+            :topic="room"
+            :task-id="task.id"
+            :active="sideTab === 'site'"
+            :refresh-tick="docTick"
+            :member-names="memberNames"
+            :agent-name="agentName"
+            @open-topic="emit('open-topic', $event)"
+            @mention-click="emit('mention-click', $event)"
+          />
           <PanelChanges
             v-if="sideTab === 'changes'"
             class="task-body__doc"
@@ -436,7 +469,7 @@ function review() {
             :active="sideTab === 'changes'"
             :refresh-tick="docTick"
           />
-          <template v-else>
+          <template v-else-if="sideTab === 'overview'">
             <div v-if="task.started_at" class="task-started t-meta">
               <span>{{
                 t('work.task.startedLine', {

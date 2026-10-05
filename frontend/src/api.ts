@@ -1448,9 +1448,10 @@ export function deleteMemory(entryId: string): Promise<{ deleted: string }> {
 export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
-  opts: { limit?: number; before?: string; author?: string | null } = {}
+  opts: { limit?: number; before?: string; author?: string | null; task?: string | null } = {}
 ): Promise<SitePage> {
   const q = new URLSearchParams()
+  if (opts.task) q.set('task', opts.task)
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
   if (opts.author) q.set('author', opts.author)
@@ -1460,9 +1461,14 @@ export function getTranscript(
 
 // 现场一步打印出来的东西：后端只留末尾一截（至多 8 KiB，凭据已抹掉）。列表和
 // socket 上只带它有多长（`meta.output_bytes`），摊开那一步时才来取这一份。
-export function getStepOutput(topicId: string, blockId: string): Promise<{ output: string; bytes: number }> {
+export function getStepOutput(
+  topicId: string,
+  blockId: string,
+  taskId?: string | null
+): Promise<{ output: string; bytes: number }> {
+  const qs = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
   return request<{ output: string; bytes: number }>(
-    `/topics/${encodeURIComponent(topicId)}/transcript/${encodeURIComponent(blockId)}/output`
+    `/topics/${encodeURIComponent(topicId)}/transcript/${encodeURIComponent(blockId)}/output${qs}`
   )
 }
 

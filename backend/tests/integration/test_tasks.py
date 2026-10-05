@@ -482,3 +482,89 @@ def test_talking_in_the_room_does_not_reach_the_task(client):
 
     timeline = [b["content"] for b in _task(client, room_id, task["id"])["blocks"]]
     assert "房间里的话" not in timeline
+
+
+# —— 现场 ————————————————————————————————————————————————————————————————
+
+
+def _step(client, project_id, room_id, task_id, content) -> str:
+    """One step an AI session took, in the room's line or in a task's."""
+    from app.domain.block.models import AuthorType, BlockKind
+    from app.domain.block.repositories import BlockRepository
+
+    author = room_agent_seat(client, room_id)
+
+    async def _add() -> str:
+        async with client.test_request_factory() as session:
+            block = await BlockRepository(session).add(
+                project_id=uuid.UUID(project_id),
+                topic_id=uuid.UUID(room_id),
+                task_id=uuid.UUID(task_id) if task_id else None,
+                author=author,
+                author_type=AuthorType.participant,
+                content=content,
+                kind=BlockKind.event,
+                meta={"tool": "Bash", "output": f"{content} 的输出", "output_bytes": 9},
+            )
+            await session.commit()
+            return str(block.id)
+
+    return client.portal.call(_add)
+
+
+def _site(client, room_id, task_id=None, handle="alice") -> list[str]:
+    query = f"?task={task_id}" if task_id else ""
+    r = client.get(
+        f"/topics/{room_id}/transcript{query}", headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return [b["content"] for b in r.json()["data"]["data"]]
+
+
+def test_a_tasks_site_shows_what_its_session_did_and_the_rooms_does_not(client):
+    project_id, room_id = _room(client)
+    task = open_task(client, room_id)
+    _with_bob(client, project_id, room_id)
+    _step(client, project_id, room_id, None, "房间里的一步")
+    _step(client, project_id, room_id, task["id"], "任务里的一步")
+
+    in_task, in_room = _site(client, room_id, task["id"]), _site(client, room_id)
+    assert "任务里的一步" in in_task and "房间里的一步" not in in_task
+    assert "房间里的一步" in in_room and "任务里的一步" not in in_room
+    # Whoever can see the task can watch it being worked.
+    assert "任务里的一步" in _site(client, room_id, task["id"], handle="bob")
+
+
+def test_a_steps_output_is_read_through_the_conversation_it_belongs_to(client):
+    project_id, room_id = _room(client)
+    task = open_task(client, room_id)
+    step = _step(client, project_id, room_id, task["id"], "任务里的一步")
+    alice = session_auth_headers("alice")
+
+    through_task = client.get(
+        f"/topics/{room_id}/transcript/{step}/output?task={task['id']}", headers=alice
+    )
+    assert through_task.status_code == 200, through_task.text
+    assert through_task.json()["data"]["output"] == "任务里的一步 的输出"
+    assert (
+        client.get(
+            f"/topics/{room_id}/transcript/{step}/output", headers=alice
+        ).status_code
+        == 404
+    )
+
+
+def test_a_task_of_another_room_has_no_site_here(client):
+    _project_id, room_id = _room(client)
+    task = open_task(client, room_id)
+    other = client.post(
+        "/topics",
+        json={"project_id": _project_id, "title": "另一间"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+
+    r = client.get(
+        f"/topics/{other}/transcript?task={task['id']}",
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 404

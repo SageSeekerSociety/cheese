@@ -60,6 +60,7 @@ from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_times import turn_starts
+from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -73,6 +74,7 @@ async def topic_transcript(
     limit: int | None = Query(None, ge=1, le=200),
     before: uuid.UUID | None = None,
     author: str | None = Query(None, min_length=1, max_length=120),
+    task: uuid.UUID | None = None,
 ) -> dict:
     """施工现场 (spec §7.1): the topic's AI session record — tool/event actions,
     read-only, newest window first.
@@ -89,11 +91,14 @@ async def topic_transcript(
     after the fact returns fewer rows than asked for and reports `has_more`
     against the wrong set, so the caller pages through holes.
 
-    The room's own line. What a task's session did is in that task's own
-    conversation, read through it (`GET /topics/{room}/tasks/{task}`) —
-    interleaving every task's actions here would bury what the room did."""
+    The room's own line, or with `task` that task's: each conversation's
+    session has its own record, and interleaving every task's actions into the
+    room's would bury what the room did."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    if task is not None:
+        resolver.require_task_scope(task)
+        await TaskService(db).require_in_room(place.room_id, task)
     repo = BlockRepository(db)
     # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
     # to the conversation pane — mirroring them here just duplicates the chat.
@@ -103,24 +108,21 @@ async def topic_transcript(
         cursor = await repo.get(before)
         # Same rule as the conversation's pager: an unknown cursor must not
         # degrade into "newest N", which the caller cannot tell from a real page.
-        # A cursor from one of this room's CARDS is as wrong as one from
-        # another room.
-        if (
-            cursor is None
-            or cursor.topic_id != place.room_id
-            or cursor.task_id is not None
-        ):
+        # A cursor from another conversation in this room is as wrong as one
+        # from another room.
+        if cursor is None or cursor.topic_id != place.room_id or cursor.task_id != task:
             raise NotFoundError(say("cursorEventNotFound"))
     if limit is None:
         site = [
             b
-            for b in await repo.list_for_topic(place.room_id)
+            for b in await repo.list_for_topic(place.room_id, task_id=task)
             if b.kind in kinds and (author is None or b.author == author)
         ]
         has_more = False
     else:
         result = await repo.page_for_topic(
             place.room_id,
+            task_id=task,
             limit=limit,
             before=cursor,
             kinds=kinds,
@@ -135,7 +137,7 @@ async def topic_transcript(
     ]
     # A turn's first step comes after its preparation and the model's first
     # answer; the 现场 counts the turn from when it started.
-    starts = await turn_starts(db, place.room_id, (b.turn_id for b in site))
+    starts = await turn_starts(db, task or place.room_id, (b.turn_id for b in site))
     return ok(
         {
             **page(items, len(items)),
@@ -154,16 +156,20 @@ async def step_output(
     block_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
 ) -> dict:
     """The tail of what one 现场 step printed, as kept (``step_output``)."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    if task is not None:
+        resolver.require_task_scope(task)
+        await TaskService(db).require_in_room(place.room_id, task)
     block = await BlockRepository(db).get(block_id)
-    # Same door as the transcript: this room's own line, never a card's.
+    # Same door as the transcript: the one conversation it was asked about.
     if (
         block is None
         or block.topic_id != place.room_id
-        or block.task_id is not None
+        or block.task_id != task
         or block.kind != BlockKind.event
     ):
         raise NotFoundError(say("stepNotFound"))

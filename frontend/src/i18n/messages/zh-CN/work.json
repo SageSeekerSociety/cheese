@@ -1981,6 +1981,7 @@
     "tabChat": "对话",
     "tabOverview": "总览",
     "tabChanges": "改动",
+    "tabSite": "现场",
     "proposal": {
       "byline": "{name} 提议了一个任务",
       "accept": "创建任务",
