@@ -100,14 +100,10 @@ function rewind() {
   transform: translateX(3px);
 }
 
-/* The picture takes the rest of the row under the caption, down to the
-   manifesto's last line, and the width of its column; whatever does not fit is
-   cropped, more off the left, where the picture is empty and feathered anyway. */
 .film-frame {
   position: relative;
   isolation: isolate;
-  flex: 1;
-  min-height: 0;
+  aspect-ratio: 16 / 9;
 }
 
 /* The glow: the poster itself, blurred and spread past the frame. */
@@ -153,13 +149,7 @@ function rewind() {
   filter: none;
 }
 
-/* Below the text on a phone, the picture keeps its own shape. */
 @media (width <= 900px) {
-  .film-frame {
-    flex: none;
-    aspect-ratio: 16 / 9;
-  }
-
   .film-video {
     mask-image: linear-gradient(to right, transparent, var(--ink) 16%, var(--ink) 84%, transparent),
       linear-gradient(to bottom, transparent, var(--ink) 20%, var(--ink) 80%, transparent);
