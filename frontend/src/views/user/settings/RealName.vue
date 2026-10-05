@@ -1,159 +1,38 @@
+<!--
+  The real-name page: reads the stored record, saves, deletes, and works out who
+  read it. Changing an existing record, confirming who you are, and the delete
+  confirmation all happen here; what it shows is RealNameView.vue.
+-->
 <template>
-  <div class="settings-page realname">
-    <header>
-      <h1 class="t-page-title">{{ t('account.realName.title') }}</h1>
-      <p class="settings-page__lede">{{ t('account.realName.lede') }}</p>
-    </header>
-
-    <!-- Held at the card's height until the record arrives, so the page does
-         not jump when it does. -->
-    <section v-if="!loaded" class="settings-card realname__pending" :aria-busy="!loadFailed">
-      <p v-if="loadFailed" class="realname__pending-note">{{ t('account.realName.loadFailed') }}</p>
-    </section>
-
-    <!-- Editing, or filling in for the first time. Save is the one main action
-         while the form is open, so it is the only amber (design-system §1.6). -->
-    <form v-else-if="editing" class="settings-card" novalidate @submit.prevent="save">
-      <h2 class="settings-card__title">
-        {{ record ? t('account.realName.editTitle') : t('account.realName.fillTitle') }}
-      </h2>
-      <div v-for="field in FIELDS" :key="field.key" class="srow srow--pair srow--field">
-        <label class="srow__k" :for="`realname-${field.key}`">
-          {{ t(field.label) }}
-          <span v-if="field.optional" class="realname__optional">{{ t('account.realName.optional') }}</span>
-        </label>
-        <v-text-field
-          :id="`realname-${field.key}`"
-          v-model="form[field.key]"
-          :autocomplete="field.key === 'realName' ? 'name' : 'off'"
-          variant="outlined"
-          density="compact"
-          :error-messages="errors[field.key]"
-          hide-details="auto"
-        />
-      </div>
-      <div class="realname__foot realname__foot--form">
-        <BaseButton :disabled="saving" @click="cancel">
-          {{ t('account.realName.cancel') }}
-        </BaseButton>
-        <BaseButton type="submit" kind="primary" :loading="saving">
-          {{ t('account.realName.save') }}
-        </BaseButton>
-      </div>
-    </form>
-
-    <section v-else-if="record" class="settings-card">
-      <div class="settings-card__head">
-        <h2 class="settings-card__title">{{ t('account.realName.yours') }}</h2>
-        <div class="realname__actions">
-          <BaseButton
-            :prepend-icon="full ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
-            :loading="revealing"
-            @click="toggleFull"
-          >
-            {{ full ? t('account.realName.hideFull') : t('account.realName.showFull') }}
-          </BaseButton>
-          <BaseButton kind="secondary" :loading="opening" @click="startEditing">
-            {{ t('account.realName.edit') }}
-          </BaseButton>
-        </div>
-      </div>
-      <div v-for="field in FIELDS" :key="field.key" class="srow srow--pair">
-        <span class="srow__k">{{ t(field.label) }}</span>
-        <span
-          v-if="shown[field.key]"
-          class="realname__value"
-          :class="{ 'realname__value--mono': field.key === 'studentId' }"
-          >{{ shown[field.key] }}</span
-        >
-        <span v-else class="realname__value realname__value--none">{{ t('account.realName.notGiven') }}</span>
-      </div>
-      <div class="realname__foot">
-        <BaseButton :loading="deleting" @click="remove">
-          {{ t('account.realName.delete') }}
-        </BaseButton>
-        <span class="realname__foot-note">{{ t('account.realName.deleteNote') }}</span>
-      </div>
-    </section>
-
-    <section v-else class="settings-card realname__empty">
-      <h2 class="t-title">{{ t('account.realName.emptyTitle') }}</h2>
-      <p class="realname__empty-body">{{ t('account.realName.emptyBody') }}</p>
-      <BaseButton kind="secondary" @click="startEditing">{{ t('account.realName.fill') }}</BaseButton>
-    </section>
-
-    <!-- Kept after a record is deleted: it says what already happened. -->
-    <section
-      v-if="loaded && (record || logTotal > 0)"
-      class="realname__log"
-      :aria-label="t('account.realName.log.title')"
-    >
-      <div class="realname__log-head">
-        <h2 class="t-title">{{ t('account.realName.log.title') }}</h2>
-        <span v-if="logTotal > 0" class="t-meta-read t-num">{{ logTotal }}</span>
-      </div>
-      <div class="settings-card">
-        <p v-if="!logs.length" class="realname__log-empty">
-          {{ logsFailed ? t('account.realName.log.loadFailed') : t('account.realName.log.empty') }}
-        </p>
-        <div
-          v-for="(entry, index) in logs"
-          :key="`${entry.accessTime}-${index}`"
-          class="log-row"
-          :class="{ 'log-row--own': isOwnView(entry) }"
-        >
-          <span v-if="isOwnView(entry)" class="log-row__mark" aria-hidden="true">
-            <v-icon icon="mdi-eye-outline" size="16" />
-          </span>
-          <UserAvatar v-else :avatar="avatarOf(entry)" :name="nameOf(entry)" size="28" class="log-row__avatar" />
-          <span class="log-row__body">
-            <span v-if="isOwnView(entry) && entry.accessType !== UserIdentityAccessType.EXPORT" class="log-row__what">{{
-              t('account.realName.log.youViewed')
-            }}</span>
-            <i18n-t
-              v-else
-              :keypath="
-                entry.accessType === UserIdentityAccessType.EXPORT
-                  ? 'account.realName.log.exported'
-                  : 'account.realName.log.viewed'
-              "
-              tag="span"
-              class="log-row__what"
-            >
-              <template #name><UserRef :handle="entry.accessor.username" :name="nameOf(entry)" /></template>
-            </i18n-t>
-            <span v-if="entry.accessEntityName" class="log-row__where">
-              {{
-                t('account.realName.log.where', {
-                  name: entry.accessEntityName,
-                  kind: t('account.realName.log.space'),
-                })
-              }}
-            </span>
-          </span>
-          <time class="t-meta" :datetime="new Date(entry.accessTime).toISOString()">{{
-            formatTime(entry.accessTime)
-          }}</time>
-        </div>
-        <div v-if="logsHaveMore" class="realname__log-more">
-          <BaseButton size="sm" :loading="loadingLogs" @click="loadLogs(false)">
-            {{ t('account.realName.log.more') }}
-          </BaseButton>
-        </div>
-      </div>
-    </section>
-
-    <router-link class="realname__policy" :to="{ name: 'LegalPrivacy' }" target="_blank" rel="noopener">
-      {{ t('account.realName.privacyPolicy') }}
-      <v-icon icon="mdi-open-in-new" size="14" />
-    </router-link>
-  </div>
+  <RealNameView
+    :loaded="loaded"
+    :load-failed="loadFailed"
+    :editing="editing"
+    :record="record"
+    :full="full"
+    :revealing="revealing"
+    :opening="opening"
+    :saving="saving"
+    :deleting="deleting"
+    :rows="rows"
+    :log-total="logTotal"
+    :logs-failed="logsFailed"
+    :logs-have-more="logsHaveMore"
+    :loading-logs="loadingLogs"
+    @save="save"
+    @cancel="cancel"
+    @edit="startEditing"
+    @toggle-full="toggleFull"
+    @remove="remove"
+    @load-more="loadLogs(false)"
+  />
 </template>
 
 <script setup lang="ts">
 import type { RealNameInfo, UserIdentityAccessLog } from '@/network/api/users/types'
+import type { RealNameLogRow } from './RealNameView.vue'
 
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -161,25 +40,15 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
-import i18n, { t } from '@/i18n'
+import RealNameView from './RealNameView.vue'
+
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { UserIdentityAccessType } from '@/network/api/users/types'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
 
-type Field = keyof RealNameInfo
-
-const FIELDS: { key: Field; label: string; optional: boolean }[] = [
-  { key: 'realName', label: 'account.realName.name', optional: false },
-  { key: 'studentId', label: 'account.realName.studentId', optional: false },
-  { key: 'grade', label: 'account.realName.grade', optional: true },
-  { key: 'major', label: 'account.realName.major', optional: true },
-  { key: 'className', label: 'account.realName.className', optional: true },
-]
 const LOG_PAGE = 20
 
 const dialogs = useDialog()
@@ -193,11 +62,6 @@ const loadFailed = ref(false)
 const record = ref<RealNameInfo | null>(null)
 /** The same record in full, once the person has confirmed who they are to see it. */
 const full = ref<RealNameInfo | null>(null)
-const shown = computed(() => full.value ?? record.value ?? emptyRecord())
-
-function emptyRecord(): RealNameInfo {
-  return { realName: '', studentId: '', grade: '', major: '', className: '' }
-}
 
 async function load() {
   const userId = currentUserId.value
@@ -244,16 +108,6 @@ async function toggleFull() {
 const editing = ref(false)
 const opening = ref(false)
 const saving = ref(false)
-const attempted = ref(false)
-const form = reactive<RealNameInfo>(emptyRecord())
-
-const errors = computed<Partial<Record<Field, string>>>(() => {
-  if (!attempted.value) return {}
-  return {
-    realName: form.realName.trim() ? undefined : t('account.realName.nameRequired'),
-    studentId: form.studentId.trim() ? undefined : t('account.realName.studentIdRequired'),
-  }
-})
 
 /**
  * A masked value cannot go into a field, so changing an existing record starts
@@ -266,27 +120,16 @@ async function startEditing() {
     const ok = await reveal().finally(() => (opening.value = false))
     if (!ok) return
   }
-  Object.assign(form, full.value ?? emptyRecord())
-  attempted.value = false
   editing.value = true
 }
 
 function cancel() {
   editing.value = false
-  attempted.value = false
 }
 
-async function save() {
-  attempted.value = true
+async function save(values: RealNameInfo) {
   const userId = currentUserId.value
-  if (!userId || errors.value.realName || errors.value.studentId || saving.value) return
-  const values: RealNameInfo = {
-    realName: form.realName.trim(),
-    studentId: form.studentId.trim(),
-    grade: form.grade.trim(),
-    major: form.major.trim(),
-    className: form.className.trim(),
-  }
+  if (!userId || saving.value) return
   saving.value = true
   try {
     await withSudo('realname:update', (ticket) => UserApi.updateRealNameInfo(userId, values, ticket))
@@ -362,18 +205,16 @@ const nameOf = (entry: UserIdentityAccessLog) => entry.accessor.nickname || entr
 const avatarOf = (entry: UserIdentityAccessLog) =>
   isChosenAvatar(entry.accessor.avatarId) ? getAvatarUrl(entry.accessor.avatarId) : ''
 
-function formatTime(ms: number) {
-  const date = new Date(ms)
-  const sameYear = date.getFullYear() === new Date().getFullYear()
-  return new Intl.DateTimeFormat(i18n.global.locale.value, {
-    year: sameYear ? undefined : 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
-}
+/** The log lines, with everything the view needs to draw one worked out here. */
+const rows = computed<RealNameLogRow[]>(() =>
+  logs.value.map((entry) => ({
+    entry,
+    name: nameOf(entry),
+    avatarUrl: avatarOf(entry),
+    isOwn: isOwnView(entry),
+    isExport: entry.accessType === UserIdentityAccessType.EXPORT,
+  }))
+)
 
 onMounted(() => {
   ensureDefaultAvatarId()
@@ -381,257 +222,3 @@ onMounted(() => {
   void loadLogs(true)
 })
 </script>
-
-<style scoped src="@/styles/settings-card.css"></style>
-
-<style scoped>
-/* 不再自己设宽度：这一页也在浮层那一条 720 居中的内容列里（SettingsOverlay 的
-   `.so__content`），和别的设置页同宽。 */
-
-.realname__pending {
-  min-height: 296px;
-}
-
-.realname__pending-note {
-  padding: 24px;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--muted);
-}
-
-.realname__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-  margin-top: 12px;
-}
-
-/* A label and what is there, on one line. */
-.srow--pair {
-  grid-template-columns: 120px minmax(0, 1fr);
-  gap: 24px;
-  min-height: 0;
-  padding: 12px 24px;
-}
-
-.srow--pair > .srow__k {
-  padding-top: 8px;
-}
-
-/* A row holding a field: the label sits on the field's first line. */
-.srow--field {
-  align-items: start;
-}
-
-.srow--field > .srow__k {
-  padding-top: 10px;
-}
-
-.realname__optional {
-  font-size: 13px;
-  font-weight: 400;
-  line-height: var(--lh-13);
-  color: var(--faint);
-}
-
-.realname__value {
-  padding-top: 8px;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-
-.realname__value--mono {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.realname__value--none {
-  color: var(--faint);
-}
-
-.realname__foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  align-items: center;
-  padding: 12px 16px;
-  margin-top: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.realname__foot--form {
-  gap: 8px;
-  justify-content: flex-end;
-  padding: 16px 24px;
-  background: var(--canvas);
-}
-
-.realname__foot-note {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--faint);
-}
-
-.realname__empty {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 32px 24px;
-}
-
-.realname__empty .t-title {
-  color: var(--ink);
-}
-
-.realname__empty-body {
-  font-size: 14px;
-  line-height: var(--lh-14-loose);
-  color: var(--muted);
-}
-
-.realname__log {
-  display: grid;
-  gap: 12px;
-}
-
-.realname__log-head {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.realname__log-head .t-title {
-  color: var(--ink);
-}
-
-.realname__log-empty {
-  padding: 16px 24px;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--muted);
-}
-
-.log-row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 12px 24px;
-  border-top: 1px solid var(--line);
-}
-
-.log-row:first-child {
-  border-top: 0;
-}
-
-.log-row__avatar,
-.log-row__mark {
-  flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.log-row__mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  color: var(--faint);
-  background: var(--fill-2);
-  border-radius: var(--radius-pill);
-}
-
-.log-row__body {
-  display: flex;
-  flex-direction: column;
-  flex-grow: 1;
-  gap: 2px;
-  min-width: 0;
-}
-
-.log-row__what {
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--ink);
-}
-
-.log-row--own .log-row__what {
-  color: var(--muted);
-}
-
-.log-row__where {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
-.log-row time {
-  flex-shrink: 0;
-}
-
-.realname__log-more {
-  display: flex;
-  justify-content: center;
-  padding: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.realname__policy {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
-  justify-self: start;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  text-decoration: none;
-  transition: color var(--dur-quick) var(--ease-standard);
-}
-
-.realname__policy:hover {
-  color: var(--ink);
-}
-
-/* 断点对齐共享 token（`styles/breakpoints.scss`）：599.98 → 767.98，和这一页
-   一起加载的 `settings-card.css` 同一条线。 */
-@media (max-width: 767.98px) {
-  .srow--pair {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
-    padding: 12px 16px;
-  }
-
-  .srow--pair > .srow__k,
-  .realname__value {
-    padding-top: 0;
-  }
-
-  .settings-card__head {
-    flex-wrap: wrap;
-  }
-
-  .realname__actions {
-    justify-content: flex-start;
-    margin-top: 0;
-    padding: 0 16px 8px;
-  }
-
-  .realname__foot--form {
-    padding: 12px 16px;
-  }
-
-  .realname__empty {
-    padding: 24px 16px;
-  }
-
-  .log-row {
-    padding: 12px 16px;
-  }
-}
-</style>
