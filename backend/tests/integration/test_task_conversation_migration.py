@@ -23,7 +23,7 @@ import asyncpg
 
 from tests.conftest import _PG_BASE, _admin_recreate_db
 
-BEFORE = "7d3a9c61e2b4"
+BEFORE = "6d0ce0a4287b"
 AFTER = "f7985445d2bf"
 BACKEND = Path(__file__).resolve().parents[2]
 

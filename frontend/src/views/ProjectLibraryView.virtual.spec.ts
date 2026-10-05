@@ -44,6 +44,14 @@ vi.mock('virtua/vue', async () => {
   }
 })
 
+vi.mock('../api/projectDocuments', () => ({
+  listProjectDocuments: vi.fn(async () => ({ data: [] })),
+  searchProjectDocuments: vi.fn(async (_: string, query: string) => ({ query, library: [], rooms: [] })),
+  createProjectDocument: vi.fn(),
+  deleteDocument: vi.fn(),
+  getDocumentAbout: vi.fn(),
+}))
+
 vi.mock('../api', () => ({
   listProjectLibrary: vi.fn(),
   deleteLibraryFile: vi.fn(),

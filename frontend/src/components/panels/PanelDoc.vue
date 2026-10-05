@@ -15,10 +15,11 @@
 // 这一只只负责把两边接起来：状态递下去、事件接回来。加取数动作在组合式函数里加，加画法
 // 在展示组件里加，这一只基本不再长。props 一次摊开而不是 v-bind 一整包：这二十来样东西
 // 就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
+import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 import { useDocPeople } from '../../composables/useDocPeople'
 import { useDocThreads } from '../../composables/useDocThreads'
@@ -33,6 +34,8 @@ const props = withDefaults(
     topic: Topic | null
     /** 打开的是这个房间里某个任务的实况文档。 */
     taskId?: string | null
+    /** 项目资料库里的一份文档：直接打开它，标题在页上就能改。 */
+    document?: PanelDocument | null
     // Bumped by the parent on AI activity (turn-done / update_doc tool) so the
     // panel reloads the doc 芝士 just wrote. See TopicView activityTick.
     activityTick: number
@@ -51,6 +54,7 @@ const props = withDefaults(
   }>(),
   {
     taskId: null,
+    document: null,
     topicList: () => [],
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
@@ -67,6 +71,10 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
+  /** 资料库文档的标题变了（自己改的，或者别人改的）。 */
+  (e: 'titled', title: string): void
+  /** 「⋯」里点了删除：问不问、怎么删、删完去哪，由这一页定。 */
+  (e: 'delete'): void
 }>()
 
 const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
@@ -107,6 +115,44 @@ function reviewEdits(request: DocReviewRequest) {
   viewRef.value?.reviewEdits(request)
 }
 
+// ---- 资料库文档的标题 ----
+const title = ref(props.document?.title ?? '')
+watch(
+  () => props.document?.title,
+  (next) => {
+    if (next !== undefined) title.value = next
+  }
+)
+async function rename(next: string) {
+  if (!props.document || next === title.value) return
+  const before = title.value
+  title.value = next
+  try {
+    emit('titled', await doc.rename(next))
+  } catch (cause) {
+    title.value = before
+    doc.setError(cause instanceof Error ? cause.message : String(cause))
+  }
+}
+// 别人改了名，或者只拿到了编号（地址上点名的那一格）：读一次它现在叫什么。
+async function readTitle() {
+  const asked = props.document?.id
+  if (!asked) return
+  const current = await doc.currentTitle().catch(() => null)
+  if (current !== null && props.document?.id === asked) {
+    title.value = current
+    emit('titled', current)
+  }
+}
+watch(doc.renames, readTitle)
+watch(
+  () => props.document?.id,
+  (id) => {
+    if (id && !props.document?.title) void readTitle()
+  },
+  { immediate: true }
+)
+
 defineExpose({ pulse, highlightTurn, reviewEdits })
 </script>
 
@@ -114,6 +160,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
   <PanelDocView
     ref="viewRef"
     :topic="props.topic"
+    :document="props.document ? { ...props.document, title } : null"
+    :deleted="doc.deleted.value"
     :activity-tick="props.activityTick"
     :topic-list="props.topicList"
     :agent-name="props.agentName"
@@ -153,5 +201,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
+    @rename="rename"
+    @delete="emit('delete')"
   />
 </template>

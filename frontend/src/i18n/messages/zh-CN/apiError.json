@@ -807,6 +807,7 @@
   "docRestoreNeedsWriter": "恢复文档需要已认证的写入者",
   "docVersionNotFound": "没有这份历史文档版本",
   "docCollabOnly": "只接受文档协同服务的请求",
+  "docBelongsToRoom": "对话的文档属于这个对话，不能单独改名或删除",
   "docNotFound": "没有这份文档",
   "localDirSignIn": "授权本机目录需要登录",
   "localDirGrantNotFound": "这条授权不存在",

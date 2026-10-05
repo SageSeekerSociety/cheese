@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { AgentControlState, Block, ChatAttachment, Topic, TopicMemberRow } from '@/cx_types'
-import type { DocReviewRequest } from '@/lib/docReview'
+import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
@@ -221,6 +221,7 @@ const panelRef = ref<{
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
   reviewDoc?: (request: DocReviewRequest) => void
+  openDocument?: (document: OpenedDocument, review?: DocReviewRequest) => Promise<void>
   previewShown?: () => void
   // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
   activeTab: () => string
@@ -352,7 +353,19 @@ function handleStateChanged(resource: string) {
 }
 
 // An action card's button → open the relevant view (§3.1.1 控件).
-async function handleOpenResource(resource: string, turnId?: string, review?: DocReviewRequest) {
+async function handleOpenResource(
+  resource: string,
+  turnId?: string,
+  review?: DocReviewRequest,
+  document?: OpenedDocument
+) {
+  if (resource === 'doc' && document) {
+    // 资料库里的一份文档：在面板的自由区开一格，不是这个对话自己的文档。
+    focusMode.value = false
+    await nextTick()
+    await panelRef.value?.openDocument?.(document, review)
+    return
+  }
   if (resource === 'site') {
     // 对话里在动的那个头像：它此刻在干什么，去现场看。
     focusMode.value = false

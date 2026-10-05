@@ -3,11 +3,27 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import ColumnElement, Uuid, and_, column, delete, select, table, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.living_doc.models import Document, DocumentNode
+
+# Which documents a task points at. A bare table: ``room_task`` depends on this
+# domain, and importing back would make the two a cycle.
+_tasks = table("tasks", column("document_id", Uuid))
+
+
+def project_own(project_id: uuid.UUID) -> ColumnElement[bool]:
+    """The project's own documents: in no room, and no task's living document.
+    The library lists and searches these."""
+    return and_(
+        Document.project_id == project_id,
+        Document.room_id.is_(None),
+        Document.id.not_in(
+            select(_tasks.c.document_id).where(_tasks.c.document_id.is_not(None))
+        ),
+    )
 
 
 class DocumentRepository:
@@ -32,6 +48,26 @@ class DocumentRepository:
         )
         return {row.room_id: row for row in rows if row.room_id is not None}
 
+    async def of_project(self, project_id: uuid.UUID) -> list[Document]:
+        """The project's own documents, in no room and no task's, the latest
+        changed first."""
+        rows = await self._session.scalars(
+            select(Document)
+            .where(project_own(project_id))
+            .order_by(Document.updated_at.desc(), Document.id)
+        )
+        return list(rows)
+
+    async def create(
+        self, *, project_id: uuid.UUID, title: str | None = None, author: str = "system"
+    ) -> Document:
+        """A new document in no room, empty (version 0): the project's own, or
+        one a task points at (which goes by the task's title)."""
+        doc = Document(project_id=project_id, title=title, author=author)
+        self._session.add(doc)
+        await self._session.flush()
+        return doc
+
     async def ensure_for_room(
         self, *, room_id: uuid.UUID, project_id: uuid.UUID
     ) -> Document:
@@ -44,13 +80,6 @@ class DocumentRepository:
         )
         doc = await self.of_room(room_id)
         assert doc is not None
-        return doc
-
-    async def create(self, *, project_id: uuid.UUID) -> Document:
-        """A new empty document (version 0) of the project's, in no room."""
-        doc = Document(id=uuid.uuid4(), project_id=project_id)
-        self._session.add(doc)
-        await self._session.flush()
         return doc
 
     async def set_content(

@@ -24,7 +24,7 @@
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, ProjectMemberRow, Topic } from '../cx_types'
-import type { DocReviewRequest } from '../lib/docReview'
+import type { DocReviewRequest, OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
@@ -42,6 +42,7 @@ import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
+import PanelDoc from './panels/PanelDoc.vue'
 import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
@@ -140,6 +141,8 @@ const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview'
 // 一份文件一个页签，键是 `file:<路径>`，地址里的 `?tab=` 用的也是它——「你看一下
 // 这份报告」得是一条能发出去的链接。
 const FILE_TAB = 'file:'
+// 自由区里的资料库文档，路径写成 `doc:<编号>`：和文件同一排页签，打开的是文档。
+const DOC_TAB = 'doc:'
 function fileKey(path: string): string {
   return FILE_TAB + path
 }
@@ -160,7 +163,10 @@ function tabFromUrl(): string | null {
 function ensureFileFromUrl(key: string | null) {
   if (!key?.startsWith(FILE_TAB)) return
   const path = key.slice(FILE_TAB.length)
-  if (!openFiles.value.some((f) => f.path === path)) placeFile(path)
+  if (openFiles.value.some((f) => f.path === path)) return
+  // 资料库文档的页签：名字等它自己读到了再补上。
+  if (path.startsWith(DOC_TAB)) placeFile(path, { id: path.slice(DOC_TAB.length), title: '' })
+  else placeFile(path)
 }
 
 // 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
@@ -673,13 +679,33 @@ async function inRoomFiles(path: string): Promise<boolean> {
 
 // 放进自由区，不切过去：开着的就不动，否则占临时位——有一格临时的就在原位换掉它，
 // 没有就排到最后。
-function placeFile(path: string) {
+function placeFile(path: string, document?: { id: string; title: string }) {
   if (openFiles.value.some((f) => f.path === path)) return
   const next = [...openFiles.value]
+  const tab = document ? { path, pinned: false, document } : { path, pinned: false }
   const temp = next.findIndex((f) => !f.pinned)
-  if (temp >= 0) next.splice(temp, 1, { path, pinned: false })
-  else next.push({ path, pinned: false })
+  if (temp >= 0) next.splice(temp, 1, tab)
+  else next.push(tab)
   setFiles(next)
+}
+
+// 聊天里那张文档卡：资料库里的这份文档在自由区开一格，改过的一处处标出来。
+const docRefs = new Map<string, InstanceType<typeof PanelDoc>>()
+async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
+  const path = DOC_TAB + document.id
+  placeFile(path, { ...document })
+  if (!(await setTab(fileKey(path)))) return
+  if (!review) return
+  // 编辑器要等文档到了才找得到那几处；面板自己会等，这里只要它已经挂上。
+  await nextTick()
+  docRefs.get(document.id)?.reviewEdits(review)
+}
+function keepDocRef(id: string, el: unknown) {
+  if (el) docRefs.set(id, el as InstanceType<typeof PanelDoc>)
+  else docRefs.delete(id)
+}
+function retitle(id: string, title: string) {
+  setFiles(openFiles.value.map((f) => (f.document?.id === id ? { ...f, document: { ...f.document, title } } : f)))
 }
 
 function openFileTab(path: string) {
@@ -726,7 +752,16 @@ function siteBlock(block: Block) {
 
 // 面板此刻在画哪一格。地址不一定写得出来——平板横放里自动挑中的那一格就没写进地址，
 // 而收起浮层再打开要回到它，所以这里是那份记忆的出处（TopicView 打开浮层时来问）。
-defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShown, activeTab: () => active.value })
+defineExpose({
+  pulse,
+  highlightTurn,
+  reviewDoc,
+  openFile,
+  openDocument,
+  siteBlock,
+  previewShown,
+  activeTab: () => active.value,
+})
 </script>
 
 <template>
@@ -841,8 +876,24 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
             :refresh-tick="refreshTick"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
+            <PanelDoc
+              v-if="f.document && mounted.has(fileKey(f.path))"
+              v-show="active === fileKey(f.path)"
+              :ref="(el: unknown) => keepDocRef(f.document!.id, el)"
+              :class="enterClass(fileKey(f.path))"
+              :topic="null"
+              :document="{ ...f.document, projectId: projectId ?? topic?.project_id ?? '' }"
+              :activity-tick="activityTick"
+              :agent-name="agentName"
+              :agent-handle="agentHandle"
+              :members="members"
+              :topic-list="topicList"
+              @titled="retitle(f.document!.id, $event)"
+              @open-topic="emit('open-topic', $event)"
+              @mention-click="emit('mention-click', $event)"
+            />
             <PanelPreview
-              v-if="mounted.has(fileKey(f.path))"
+              v-else-if="mounted.has(fileKey(f.path))"
               v-show="active === fileKey(f.path)"
               :submit-question="submitQuestion"
               :class="enterClass(fileKey(f.path))"

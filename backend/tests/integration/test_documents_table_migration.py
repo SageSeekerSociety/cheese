@@ -6,7 +6,9 @@ before it, puts the old shapes into it as literals — a room document whose
 current version predates the journal, a room with live state and a receipt but
 no document block, old thread briefs, a comment anchored to a node, an event
 citing the document — then upgrades and checks what a reader of each would
-see.
+see. It also runs the migration while another connection, as the backend
+being replaced does during a deploy, has read `blocks` and then reads
+`topics`, and checks the two wait for each other instead of deadlocking.
 """
 
 import asyncio
@@ -333,3 +335,65 @@ def test_the_migration_keeps_what_every_reader_of_a_document_sees():
                 await conn.close()
 
         asyncio.run(drop())
+
+
+def test_a_live_request_waits_for_the_migration_instead_of_deadlocking():
+    """The backend being replaced keeps serving while the migration runs. A
+    request that read the room's messages and then reads its room holds
+    `blocks` while it asks for `topics`; the migration needs both. It must not
+    be killed, nor kill the migration."""
+    name = "documents_migration_" + uuid.uuid4().hex[:12]
+    url = f"{_PG_BASE}/{name}"
+    dsn = url.replace("+asyncpg", "")
+    asyncio.run(_admin_recreate_db(name))
+    _alembic(url, BEFORE)
+
+    async def run() -> tuple[int, str, str]:
+        conn = await asyncpg.connect(dsn)
+        try:
+            ids = await _seed(conn)
+        finally:
+            await conn.close()
+        live = await asyncpg.connect(dsn)
+        tx = live.transaction()
+        await tx.start()
+        await live.fetch("SELECT id FROM blocks WHERE topic_id = $1", ids["room"])
+        migration = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "41a261d02e9e",
+            cwd=BACKEND,
+            env={**os.environ, "DATABASE_URL": url},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.sleep(3)
+        outcome = "read"
+        try:
+            await asyncio.wait_for(
+                live.fetch("SELECT id FROM topics WHERE id = $1", ids["room"]), 30
+            )
+            await tx.commit()
+        except Exception as exc:  # noqa: BLE001 — the outcome is what is checked
+            outcome = type(exc).__name__
+            await tx.rollback()
+        finally:
+            await live.close()
+        _, err = await migration.communicate()
+        return migration.returncode or 0, outcome, err.decode()
+
+    async def drop():
+        conn = await asyncpg.connect(_PG_BASE.replace("+asyncpg", "") + "/postgres")
+        try:
+            await conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        finally:
+            await conn.close()
+
+    try:
+        code, outcome, err = asyncio.run(run())
+    finally:
+        asyncio.run(drop())
+    assert outcome == "read"
+    assert code == 0, err

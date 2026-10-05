@@ -18,6 +18,12 @@ export interface DocReviewRequest {
   edits: DocEdit[]
 }
 
+/** 聊天里点开的一份项目资料库文档：打开它，而不是这个对话自己的文档。 */
+export interface OpenedDocument {
+  id: string
+  title: string
+}
+
 export interface LocatedEdit {
   /** Its place in the request. */
   index: number

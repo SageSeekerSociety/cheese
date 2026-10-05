@@ -129,20 +129,24 @@ class ActorResolver:
 
     def credential_conversation(self) -> uuid.UUID | None:
         """The conversation the presented credential was minted in: a room, or
-        a task its session works."""
+        a task its session works — where what the agent does elsewhere in the
+        project is told. None for a person, a project credential, a delegated
+        one, or a token naming no conversation."""
         claims = scoped_token_claims(self._cheese_token) if self._cheese_token else None
         named = (claims or {}).get("t")
         return uuid.UUID(named) if named else None
 
     async def _confine_task_credential(self, topic_id: uuid.UUID | None) -> None:
-        """A credential minted for a task's conversation acts there and nowhere
-        else — not in its room, not in another task — even the session-wide one
-        that otherwise reaches across its project."""
-        if not self._cheese_token:
+        """A credential minted for a task's conversation acts in no other
+        conversation — not its room, not another task — even the session-wide
+        one that otherwise reaches across its project. Routes that name no
+        conversation (the project's library, its documents) it reaches as any
+        session of the project does."""
+        if not self._cheese_token or topic_id is None:
             return
         claims = scoped_token_claims(self._cheese_token)
         named = (claims or {}).get("t")
-        if not named or topic_id is not None and named == str(topic_id):
+        if not named or named == str(topic_id):
             return
         if await conversations.is_task(self._session, uuid.UUID(named)):
             raise ForbiddenError("This credential works another conversation")

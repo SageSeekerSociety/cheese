@@ -57,17 +57,26 @@ class Documents:
         """Several rooms' living documents at once, keyed by room id."""
         return await self._repo.of_rooms(room_ids)
 
+    async def of_project(self, project_id: uuid.UUID) -> list[Document]:
+        """The project's own documents, in no room, the latest changed first."""
+        return await self._repo.of_project(project_id)
+
+    async def create(
+        self, *, project_id: uuid.UUID, title: str | None = None, author: str = "system"
+    ) -> Document:
+        """A new document in no room, empty (version 0): the project's own, or
+        one a task points at. What it says is written the way every other
+        write is, through the service."""
+        return await self._repo.create(
+            project_id=project_id, title=title, author=author
+        )
+
     async def ensure_for_room(
         self, *, room_id: uuid.UUID, project_id: uuid.UUID
     ) -> Document:
         """The room's living document, created empty (version 0) the first time
         anyone needs to address it."""
         return await self._repo.ensure_for_room(room_id=room_id, project_id=project_id)
-
-    async def create(self, *, project_id: uuid.UUID) -> Document:
-        """A new empty document of the project's, in no room — one that
-        something else (a task) points at."""
-        return await self._repo.create(project_id=project_id)
 
     async def nodes(self, doc: Document) -> list[DocumentNode]:
         """The document's top-level blocks, in order."""

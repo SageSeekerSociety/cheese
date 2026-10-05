@@ -436,7 +436,13 @@
       "added": "新增",
       "removed": "删除",
       "docEditCount": "改了 {n} 处",
-      "viewSuggestions": "查看"
+      "viewSuggestions": "查看",
+      "docCard": {
+        "created": "新文档 · 资料库",
+        "open": "打开",
+        "suggested": "提了 {n} 处建议",
+        "updated": "已更新"
+      }
     },
     "message": {
       "copy": "复制",
@@ -779,6 +785,11 @@
       "stepFailed": "有步骤失败"
     },
     "doc": {
+      "delete": "删除文档",
+      "deleted": "这份文档已被删除",
+      "untitled": "未命名文档",
+      "titlePlaceholder": "标题",
+      "titleLabel": "文档标题",
       "pickTopic": "选择一个话题查看文档",
       "outdated": "页面已更新，刷新后继续编辑",
       "reload": "刷新",
@@ -1195,7 +1206,9 @@
       "allRestored": "{requester}让{agent}改的几处都已还原",
       "close": "收起改动",
       "position": "第 {i}/{n} 处",
-      "restore": "还原这处"
+      "restore": "还原这处",
+      "titleOwn": "{agent}改的 {n} 处",
+      "allRestoredOwn": "{agent}改的几处都已还原"
     }
   },
   "board": {
@@ -1416,12 +1429,12 @@
     }
   },
   "library": {
-    "intro": "你给这个项目的文件。每个对话都能引用，AI 队友只读不改",
+    "intro": "项目里的文档和文件，每个对话都能引用。文档大家都能改，上传的文件只读",
     "dropHint": "把文件拖到这里即可上传",
     "upload": "上传文件",
     "uploaded": "已上传 {n} 份文件",
     "uploadFailed": "上传失败",
-    "search": "按文件名搜索",
+    "search": "搜索标题和内容",
     "kindsLabel": "按类型筛选",
     "kinds": {
       "all": "全部",
@@ -1451,6 +1464,7 @@
     "delete": "删除",
     "deleteTitle": "删除《{name}》",
     "deleteBody": "删除后无法恢复，已经引用过它的消息也将打不开这份文件",
+    "deleteDocBody": "删除后无法恢复，文档的历史版本和评论也会一起删除",
     "deleteFailed": "删除失败",
     "close": "关闭",
     "actionsOf": "{name} 的操作",
@@ -1469,7 +1483,18 @@
     "restoreTitle": "把第 {n} 版恢复为当前？",
     "restoreBody": "会把这一版复制成新的一版，之前的各版都保留。引用这份文件的消息之后读到的是它。",
     "restoreFailed": "没能恢复这一版",
-    "restoredDone": "已把第 {n} 版恢复为当前"
+    "restoredDone": "已把第 {n} 版恢复为当前",
+    "newDoc": "新建文档",
+    "docMeta": "文档 · {who} {when}改过",
+    "hits": {
+      "library": "资料库里的文档",
+      "libraryCount": "资料库 · {n}",
+      "rooms": "对话里的文档",
+      "roomsCount": "对话里的文档 · {n}",
+      "roomDoc": "「{room}」的文档",
+      "keep": "另存为文档"
+    },
+    "newDocFailed": "新建文档失败"
   },
   "projectSettings": {
     "title": "项目设置",

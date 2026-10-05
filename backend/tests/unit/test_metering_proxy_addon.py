@@ -1415,6 +1415,12 @@ def _gateway_answer(mod, status: int, body: dict):
     return flow.response
 
 
+def _litellm_429(message: str) -> dict:
+    """The body LiteLLM's ``/v1/messages`` gives every 429: the Anthropic
+    envelope, typed by status alone, with the cause only in ``message``."""
+    return {"type": "error", "error": {"type": "rate_limit_error", "message": message}}
+
+
 def test_the_gateways_budget_brake_reads_as_the_projects_spent_budget(
     monkeypatch, tmp_path
 ):
@@ -1427,15 +1433,10 @@ def test_the_gateways_budget_brake_reads_as_the_projects_spent_budget(
     response = _gateway_answer(
         mod,
         429,
-        {
-            "error": {
-                "message": "Budget has been exceeded! Key=0123abcd Current cost: "
-                "9.97, Max budget: 5.0108",
-                "type": "budget_exceeded",
-                "param": None,
-                "code": "429",
-            }
-        },
+        _litellm_429(
+            "Budget has been exceeded! Key=0123abcd Current cost: 9.97, "
+            "Max budget: 5.0108"
+        ),
     )
 
     _assert_read_as_a_reached_cap(response)
@@ -1444,11 +1445,57 @@ def test_the_gateways_budget_brake_reads_as_the_projects_spent_budget(
     assert "0123abcd" not in message
 
 
+# What the gateway's LiteLLM (1.103.3) sent Claude Code on 2026-10-01, when
+# the ChatGPT account behind gpt-6-astra had used its weekly plan (FB-62).
+CHATGPT_USAGE_LIMIT = (
+    "litellm.RateLimitError: RateLimitError: OpenAIException - "
+    '{"error":{"type":"usage_limit_reached","message":"The usage limit has been '
+    'reached","plan_type":"pro","resets_at":1791058083,"eligible_promo":null,'
+    '"limit_window_minutes":10080,"resets_in_seconds":164824}}. '
+    "Received Model Group=gpt-6-astra\nAvailable Model Group Fallbacks=None"
+)
+
+
+def test_a_subscription_accounts_spent_plan_stops_the_turn_and_says_when(
+    monkeypatch, tmp_path
+):
+    """No retry inside the turn can get past an account whose plan is used up,
+    so the client must stop at once instead of retrying ten times under
+    "Server is temporarily limiting requests (not your usage limit)", and
+    hear which model is out and when it comes back."""
+    mod = _load_addon(monkeypatch, tmp_path)
+
+    # 1893456000 is 2030-01-01 00:00 UTC; the recorded reset has passed.
+    said = CHATGPT_USAGE_LIMIT.replace("1791058083", "1893456000")
+
+    response = _gateway_answer(mod, 429, _litellm_429(said))
+
+    _assert_read_as_a_reached_cap(response)
+    message = json.loads(response.content)["error"]["message"]
+    assert "gpt-6-astra" in message
+    assert "用量已到上限" in message
+    assert "北京时间1月1日 08:00 恢复" in message
+    assert response.headers["anthropic-ratelimit-unified-reset"] == "1893456000"
+    expected_wait = 1893456000 - int(time.time())
+    assert abs(int(response.headers["retry-after"]) - expected_wait) <= 5
+
+
+def test_a_spent_plan_with_no_reset_still_stops_the_turn(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path)
+    said = CHATGPT_USAGE_LIMIT.replace('"resets_at":1791058083,', "")
+
+    response = _gateway_answer(mod, 429, _litellm_429(said))
+
+    _assert_read_as_a_reached_cap(response)
+    assert "retry-after" not in response.headers
+    assert "恢复" not in json.loads(response.content)["error"]["message"]
+
+
 def test_a_gateway_rate_limit_is_passed_on_as_it_came(monkeypatch, tmp_path):
     """Only the spent budget is the project's to explain; an upstream that is
     throttling really is throttling, and the client should back off."""
     mod = _load_addon(monkeypatch, tmp_path)
-    body = {"error": {"message": "upstream busy", "type": "rate_limit_error"}}
+    body = _litellm_429("litellm.RateLimitError: upstream busy")
 
     response = _gateway_answer(mod, 429, body)
 

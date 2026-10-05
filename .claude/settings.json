@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Bash(bash .claude/scripts/check.sh *)",
       "Bash(bash .claude/scripts/post-pull.sh *)",
       "Bash(task *)",
       "Bash(uv run *)",

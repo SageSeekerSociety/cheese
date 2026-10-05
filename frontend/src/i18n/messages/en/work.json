@@ -436,7 +436,13 @@
       "added": "Added",
       "removed": "Removed",
       "docEditCount": "Changes: {n}",
-      "viewSuggestions": "View"
+      "viewSuggestions": "View",
+      "docCard": {
+        "created": "New doc · Library",
+        "open": "Open",
+        "suggested": "{n} suggestions",
+        "updated": "Updated"
+      }
     },
     "message": {
       "copy": "Copy",
@@ -779,6 +785,11 @@
       "stepFailed": "A step failed"
     },
     "doc": {
+      "delete": "Delete doc",
+      "deleted": "This doc has been deleted",
+      "untitled": "Untitled doc",
+      "titlePlaceholder": "Title",
+      "titleLabel": "Doc title",
       "pickTopic": "Select a topic to see its document",
       "outdated": "This page has been updated. Refresh to keep editing",
       "reload": "Refresh",
@@ -1195,7 +1206,9 @@
       "allRestored": "All changes {requester} asked {agent} to make are restored",
       "close": "Hide changes",
       "position": "Change {i} of {n}",
-      "restore": "Restore this"
+      "restore": "Restore this",
+      "titleOwn": "{n} changes by {agent}",
+      "allRestoredOwn": "All changes by {agent} are restored"
     }
   },
   "board": {
@@ -1416,12 +1429,12 @@
     }
   },
   "library": {
-    "intro": "Files you gave this project. Every conversation can reference them; the AI teammate reads them but never changes them",
+    "intro": "Docs and files for this project, citable from any conversation. Anyone can edit a doc; uploaded files are read-only",
     "dropHint": "Drop files here to upload",
     "upload": "Upload files",
     "uploaded": "Uploaded {n} files",
     "uploadFailed": "Upload failed",
-    "search": "Search by file name",
+    "search": "Search titles and contents",
     "kindsLabel": "Filter by type",
     "kinds": {
       "all": "All",
@@ -1451,6 +1464,7 @@
     "delete": "Delete",
     "deleteTitle": "Delete “{name}”",
     "deleteBody": "This cannot be undone, and messages that referenced it will no longer open this file",
+    "deleteDocBody": "This can't be undone. The doc's history and comments are deleted with it",
     "deleteFailed": "Delete failed",
     "close": "Close",
     "actionsOf": "Actions for {name}",
@@ -1469,7 +1483,18 @@
     "restoreTitle": "Restore version {n} as current?",
     "restoreBody": "This copies it as a new version; every earlier version stays. Messages that reference this file will read it from then on.",
     "restoreFailed": "Couldn't restore this version",
-    "restoredDone": "Version {n} is current again"
+    "restoredDone": "Version {n} is current again",
+    "newDoc": "New doc",
+    "docMeta": "Doc · edited by {who} {when}",
+    "hits": {
+      "library": "Docs in the library",
+      "libraryCount": "Library · {n}",
+      "rooms": "Docs in conversations",
+      "roomsCount": "Docs in conversations · {n}",
+      "roomDoc": "Doc of “{room}”",
+      "keep": "Save as a doc"
+    },
+    "newDocFailed": "Couldn't create the doc"
   },
   "projectSettings": {
     "title": "Project settings",

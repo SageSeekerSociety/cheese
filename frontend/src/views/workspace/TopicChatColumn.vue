@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
+import type { OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
@@ -59,7 +60,7 @@ const emit = defineEmits<{
   (e: 'open-file', path: string, taskId?: string | null): void
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
   // 的那几处；只转第一个的话这两样都会静默降级成「整篇闪一下」。
-  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'upgrade-message', payload: unknown): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
@@ -169,8 +170,8 @@ defineExpose({
       @mention-click="emit('mention-click', $event)"
       @open-file="(path, taskId) => emit('open-file', path, taskId)"
       @open-resource="
-        (resource: string, turnId?: string, review?: DocReviewRequest) =>
-          emit('open-resource', resource, turnId, review)
+        (resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) =>
+          emit('open-resource', resource, turnId, review, document)
       "
       @upgrade-message="emit('upgrade-message', $event)"
       @open-topic="emit('open-topic', $event)"

@@ -17,15 +17,15 @@ covers:
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己声明的 MCP 服务，见[项目自定义 MCP](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，43 样 {#table}
+## 一张表，45 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 43 样：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 45 样：
 
 | 类别 | 工具 |
 | --- | --- |
 | 对话 | `chat_send`、`chat_edit`、`todo_write` |
 | 读房间 | `cheese_chat_list`、`cheese_chat_search`、`cheese_chat_get`、`cheese_chat_replies` |
-| 文档 | `cheese_doc_get`、`cheese_doc_set`、`cheese_doc_edit` |
+| 文档 | `cheese_doc_get`、`cheese_doc_set`、`cheese_doc_edit`、`cheese_doc_new`、`cheese_doc_list` |
 | 任务与验收 | `cheese_task`、`cheese_close_task`、`cheese_accept_request`、`cheese_describe`、`cheese_ready` |
 | 记录 | `cheese_title` |
 | 通知与拍板 | `cheese_notify`、`cheese_ask` |

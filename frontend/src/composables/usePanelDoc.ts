@@ -21,6 +21,7 @@ import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
+import { getDocumentAbout, renameDocument } from '../api/projectDocuments'
 import { isAgentHandle } from '../lib/authorship'
 import { dispatch } from '../lib/docAgent'
 import { expandMentions } from '../lib/expandMentions'
@@ -31,10 +32,19 @@ import { useDocCollab } from './useDocCollab'
 
 import { t } from '@/i18n'
 
+/** 不在哪个对话里的一份文档（项目资料库里的）：直接给编号，不经对话去问。 */
+export interface PanelDocument {
+  id: string
+  projectId: string
+  title: string
+}
+
 export interface PanelDocProps {
   topic: Topic | null
   /** 打开的是这个房间里某个任务的实况文档，而不是房间自己的。 */
   taskId?: string | null
+  /** 有它就打开这一份，`topic` 不再决定是哪份文档。 */
+  document?: PanelDocument | null
   /** 父层在 AI 动过之后加一：已存的那一版据此重读。 */
   activityTick: number
   /** 项目 AI 队友的名字。 */
@@ -46,7 +56,7 @@ export interface PanelDocProps {
 /** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
 export function usePanelDoc(props: PanelDocProps) {
   const AUTHOR = myHandle()
-  const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
+  const projectId = computed<string | null>(() => props.document?.projectId ?? props.topic?.project_id ?? null)
   // 房间的文档是哪一份：切到一个房间时问一次。之后的读写都对着这份文档的 id。
   const documentId = ref<string | null>(null)
   const resolveError = ref<string | null>(null)
@@ -60,7 +70,13 @@ export function usePanelDoc(props: PanelDocProps) {
   const wantsEditable = ref(true)
   const editable = computed(() => wantsEditable.value && !collab.readOnly.value)
   const loading = computed(
-    () => !!props.topic && !collab.synced.value && !collab.error.value && !resolveError.value && !collab.outdated.value
+    () =>
+      (!!props.topic || !!props.document) &&
+      !collab.synced.value &&
+      !collab.error.value &&
+      !resolveError.value &&
+      !collab.outdated.value &&
+      !collab.deleted.value
   )
   // 当场要说的失败（复制代码失败这一类），和文档打不开的原因，说同一个地方。
   const localError = ref<string | null>(null)
@@ -171,12 +187,16 @@ export function usePanelDoc(props: PanelDocProps) {
   }
 
   watch(
-    () => [props.topic?.id ?? null, props.taskId ?? null] as const,
-    ([id, taskId]) => {
+    () => [props.document?.id ?? null, props.topic?.id ?? null, props.taskId ?? null] as const,
+    ([given, topicId, taskId]) => {
       documentSequence++
-      documentId.value = null
       resolveError.value = null
-      if (id) void resolveDocument(id, taskId)
+      if (given) {
+        documentId.value = given
+        return
+      }
+      documentId.value = null
+      if (topicId) void resolveDocument(topicId, taskId)
     },
     { immediate: true }
   )
@@ -236,6 +256,8 @@ export function usePanelDoc(props: PanelDocProps) {
     session: collab.session,
     connection: collab.connection,
     outdated: collab.outdated,
+    deleted: collab.deleted,
+    renames: collab.renames,
     peers: collab.peers,
     readOnly: collab.readOnly,
     // 这一篇现在是什么状态
@@ -261,6 +283,17 @@ export function usePanelDoc(props: PanelDocProps) {
     loadVersions,
     restoreVersion,
     withMentions,
+    /** 资料库文档改名；回执是存下来的名字。 */
+    rename: async (title: string) => {
+      const did = documentId.value
+      if (!did) throw new Error(t('work.room.docEdit.unavailable'))
+      return (await renameDocument(did, title)).title ?? ''
+    },
+    /** 资料库文档现在叫什么（别人改了名之后重读）。 */
+    currentTitle: async () => {
+      const did = documentId.value
+      return did ? (await getDocumentAbout(did)).title ?? '' : null
+    },
     toggleEditable,
     setError,
     fetchDocNodes,
