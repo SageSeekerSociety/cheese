@@ -225,6 +225,16 @@ describe('公开首页', () => {
     expect(view.getByRole('link', { name: 'Docs' }).getAttribute('href')).toBe('/docs/')
   })
 
+  it('links the docs on their own host once the deployment has one', async () => {
+    vi.stubEnv('VITE_DOCS_ORIGIN', 'https://docs.example.test')
+    try {
+      const view = await mount('/solutions')
+      expect(view.getByRole('link', { name: '文档' }).getAttribute('href')).toBe('https://docs.example.test/')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('says how to get past the system’s first-launch block only once a download has started', async () => {
     const view = await mount('/download')
     const download = await view.findByRole('link', { name: /下载 Mac 版/ })

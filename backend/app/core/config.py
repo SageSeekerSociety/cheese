@@ -5,6 +5,7 @@ import binascii
 import hashlib
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,6 +18,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # the API layer because the device launcher needs the same string to tell an
 # agent where its app will be mounted, and the domain cannot import the API.
 GATEWAY_MOUNT = "/api"
+
+
+def browser_origin(url: str) -> str:
+    """``scheme://host[:port]`` of ``url`` as a browser writes it in Origin:
+    lower case, and no port when it is the scheme's default."""
+    parts = urlsplit(url.strip().lower())
+    default = {"https": 443, "http": 80}.get(parts.scheme)
+    port = f":{parts.port}" if parts.port and parts.port != default else ""
+    return f"{parts.scheme}://{parts.hostname or ''}{port}"
+
 
 # What an unconfigured development machine or test run encrypts with. Public
 # by construction, so a deployment may never use it; see
@@ -349,14 +360,21 @@ class Settings(BaseSettings):
     llm_gateway_admin_key: str | None = None  # the LiteLLM master key
 
     # --- Docs site (app/domain/docs_site) ---
-    # Where 问芝士 reads the docs from: the frontend image serves the built
-    # site, so the backend asks its own deployment for the same version readers
-    # see. Unset, 问芝士 answers that it is unavailable.
-    docs_index_url: str | None = "http://frontend/docs/ask-index.json"
-    # The developer pages' index, behind the /docs/dev/ gate; the backend passes
-    # it with an internal pass (docs_site/access.py). Agents read it only in
+    # The docs' own host, as a browser origin: "https://docs.okcheese.com". Empty,
+    # the platform serves them under /docs/ on `frontend_url`. Set, the
+    # platform's /docs/ redirects there and readers sign in to it through the
+    # platform (docs_site/access.py). The frontend reads the same value
+    # (frontend/nginx/), so a compose deployment sets it once, in the deploy
+    # environment the compose file passes to both.
+    docs_origin: str = ""
+    # Where 问芝士 reads the docs from. Unset, the frontend container this
+    # deployment runs, so the backend reads the version readers see
+    # (docs_site/site.py works out the address).
+    docs_index_url: str | None = None
+    # The developer pages' index, behind the dev/ gate; the backend passes it
+    # with an internal pass (docs_site/access.py). Agents read it only in
     # projects whose repository is one of `docs_dev_repositories`.
-    docs_dev_index_url: str | None = "http://frontend/docs/dev/ask-index.json"
+    docs_dev_index_url: str | None = None
     # Projects working on this platform's own code ("owner/repo",
     # case-insensitive): their agents may read the developer docs, and their
     # members and agents may claim feedback (`FeedbackService.may_claim`).
@@ -377,8 +395,9 @@ class Settings(BaseSettings):
     # credits at what the gateway spent, so the model must be priced there.
     assistant_model: str = "deepseek-flash"
     docs_question_retention_days: int = 90
-    # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
-    docs_dev_session_seconds: int = 3600
+    # How long a docs sign-in lasts before the reader goes through the
+    # platform again. It also ends with the platform sign-in it came from.
+    docs_session_seconds: int = 8 * 3600
 
     # --- Topic naming (app/domain/topic/naming.py) ---
     # The platform names rooms itself, off the main agent's turn: a small model
@@ -1296,6 +1315,49 @@ class Settings(BaseSettings):
             "deploy/.env.prod.example). If you are sure nobody should, set it "
             "to a handle you control rather than leaving it empty."
         )
+
+    @model_validator(mode="after")
+    def _docs_origin_is_an_origin(self) -> "Settings":
+        """``docs_origin`` is a browser origin of its own, written as browsers do.
+
+        The docs sign-in cookie is minted for exactly this origin and the Origin
+        header of every docs request is compared with it, so it is normalised
+        the way browsers write one (lower case, no default port, no trailing
+        slash) and blank means unset, as the frontend container reads it too.
+        Plain http only on a loopback name, where browsers keep Secure cookies
+        off. And it must not be the platform's own host: the frontend's docs
+        server would then answer every platform request in the platform's place.
+        """
+        value = self.docs_origin.strip()
+        if not value:
+            self.docs_origin = ""
+            return self
+        parts = urlsplit(value.lower())
+        host = parts.hostname or ""
+        local = host == "localhost" or host.endswith(".localhost")
+        if (
+            parts.scheme not in ("https", "http")
+            or (parts.scheme == "http" and not local)
+            or not host
+            or parts.path not in ("", "/")
+            or parts.query
+            or parts.fragment
+            or parts.username
+        ):
+            raise RuntimeError(
+                f"DOCS_ORIGIN={self.docs_origin!r} is not an https origin. "
+                "Write the scheme and host only, e.g. https://docs.okcheese.com "
+                "(http is accepted for *.localhost)."
+            )
+        if host == (urlsplit(self.frontend_url.strip().lower()).hostname or ""):
+            raise RuntimeError(
+                f"DOCS_ORIGIN={self.docs_origin!r} is the platform's own host "
+                f"(FRONTEND_URL={self.frontend_url!r}). The docs need a host of "
+                "their own, such as docs.<platform domain>; leave DOCS_ORIGIN empty "
+                "to serve them under /docs/ on the platform."
+            )
+        self.docs_origin = browser_origin(value)
+        return self
 
     @model_validator(mode="after")
     def _require_data_encryption_key(self) -> "Settings":

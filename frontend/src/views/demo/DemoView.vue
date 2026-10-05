@@ -15,6 +15,7 @@ import { frameAt, stepDuration } from './demoScene'
 import { SCENES } from './scenes'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { docsUrl } from '@/lib/docsSite'
 
 // 地址是 /demo/<名字>；只写 /demo（或者话题预览打开的根路径）就放第一个。
 // 入口（demo-main.ts）把地址当 props 传进来，而不是这里自己读 location：测试里
@@ -24,6 +25,10 @@ installDemoBackend()
 const props = withDefaults(defineProps<{ path?: string; search?: string }>(), { path: '/', search: '' })
 const params = new URLSearchParams(props.search)
 const embedded = params.get('embed') === '1'
+// The docs page that embeds this one: the docs' own host, or this origin when
+// the platform serves them under /docs/. Messages go only there and are taken
+// only from there.
+const docsOrigin = new URL(docsUrl(), window.location.origin).origin
 const fromPath = /^\/demo\/([\w-]+)/.exec(props.path)?.[1]
 const name = ref(fromPath ?? params.get('scene') ?? Object.keys(SCENES)[0])
 const scene = computed<Scene | null>(() => SCENES[name.value] ?? null)
@@ -48,7 +53,8 @@ let raf = 0
 let last = 0
 
 function tell(message: Record<string, unknown>): void {
-  if (embedded && window.parent !== window) window.parent.postMessage({ cheeseDemo: message.type, ...message }, '*')
+  if (embedded && window.parent !== window)
+    window.parent.postMessage({ cheeseDemo: message.type, ...message }, docsOrigin)
 }
 
 function loop(now: number): void {
@@ -103,6 +109,7 @@ function go(n: number, andPlay: boolean): void {
 }
 
 function onMessage(e: MessageEvent): void {
+  if (e.origin !== docsOrigin) return
   const data = e.data as { cheeseDemo?: string; step?: number; play?: boolean } | null
   if (!data || data.cheeseDemo !== 'go' || typeof data.step !== 'number') return
   go(data.step, data.play === true)

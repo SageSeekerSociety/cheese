@@ -1,6 +1,6 @@
 """Find the sections of the public docs that answer a question.
 
-The index is ``ask-index.json``, emitted by the docs build (docs/site/build.mjs)
+The index is ``sections.json``, emitted by the docs build (docs/site/build.mjs)
 and served by the frontend image next to the pages it was built from — so the
 assistant answers from exactly the version readers see, and the backend image
 carries no copy of the docs. Only public pages are in it: the answer is shown to
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.core.config import settings
+from app.domain.docs_site import site
 
 logger = logging.getLogger(__name__)
 
@@ -194,12 +194,13 @@ class IndexSource:
 
     def __init__(
         self,
-        url: str | None,
+        url: str | Callable[[], str] | None,
         transport: httpx.AsyncBaseTransport | None = None,
         *,
         cookies: Callable[[], dict[str, str]] | None = None,
     ) -> None:
-        self._url = url
+        # A callable is asked at each fetch: where the docs are is configuration.
+        self._url = url if callable(url) else (lambda: url)
         self._transport = transport
         # For an index behind the /docs/dev/ gate: the pass, minted per fetch.
         self._cookies = cookies
@@ -207,7 +208,8 @@ class IndexSource:
         self._at = 0.0
 
     async def get(self) -> DocsIndex | None:
-        if self._url and (
+        url = self._url()
+        if url and (
             self._index is None or time.monotonic() - self._at > REFRESH_SECONDS
         ):
             try:
@@ -215,7 +217,7 @@ class IndexSource:
                     timeout=httpx.Timeout(5.0), transport=self._transport
                 ) as client:
                     r = await client.get(
-                        self._url,
+                        url,
                         headers=_cookie_header(
                             self._cookies() if self._cookies else {}
                         ),
@@ -234,9 +236,7 @@ class IndexSource:
                     ]
                 )
             except Exception:  # noqa: BLE001 — keep the last good copy
-                logger.warning(
-                    "docs index refresh from %s failed", self._url, exc_info=True
-                )
+                logger.warning("docs index refresh from %s failed", url, exc_info=True)
             self._at = time.monotonic()
         return self._index
 
@@ -250,10 +250,10 @@ def _cookie_header(cookies: dict[str, str]) -> dict[str, str]:
 def _internal_pass() -> dict[str, str]:
     from app.domain.docs_site import access
 
-    return {access.COOKIE: access.internal_pass()}
+    return {access.cookie_name(): access.internal_pass()}
 
 
-source = IndexSource(settings.docs_index_url)
+source = IndexSource(site.index_url)
 # The developer pages, for agents in the platform's own project only
 # (docs_site/library.py). Never read by 问芝士.
-dev_source = IndexSource(settings.docs_dev_index_url, cookies=_internal_pass)
+dev_source = IndexSource(site.dev_index_url, cookies=_internal_pass)

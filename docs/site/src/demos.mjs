@@ -23,6 +23,7 @@
 // build, loudly, with the line number.
 
 import { esc, docHref } from './render.mjs'
+import { PLATFORM } from './where.mjs'
 import { num, show, simulate, fill, evaluate, sumContext } from './demo-model.mjs'
 import { selectSuites, fnmatchcase } from './ci-scope.mjs'
 import { fitIndex, limitBreach, indexTextOf } from './memory-limits.mjs'
@@ -67,7 +68,7 @@ const DATASETS = {}
 export function registerDataset(name, rows) { DATASETS[name] = rows }
 
 // A fence that says `embed: seats` also plays on the product's own components:
-// the page at /demo/seats (frontend/src/views/demo) goes in an iframe above the
+// the platform's page /demo/seats (frontend/src/views/demo) goes in an iframe above the
 // step list, and the list drives it. The scene there and the steps here are two
 // files describing one demo, so the build holds them to the same step titles in
 // the same order — the list stays the words, the scene stays the pictures.
@@ -94,7 +95,7 @@ function embedStage(spec, steps, where) {
   if (labels.length !== mine.length || labels.some((l, i) => l !== mine[i])) {
     missing(where, `the scene «${spec.embed}» has steps «${labels.join(' / ')}», this fence has «${mine.join(' / ')}» — change both together`)
   }
-  return `<div class="dm-stage"><iframe data-dm-embed src="/demo/${esc(spec.embed)}?embed=1" title="${esc(spec.title)}（演示画面）" loading="lazy"></iframe></div>`
+  return `<div class="dm-stage"><iframe data-dm-embed src="${PLATFORM}/demo/${esc(spec.embed)}?embed=1" title="${esc(spec.title)}（演示画面）" loading="lazy"></iframe></div>`
 }
 
 // ---------- the fence body ----------

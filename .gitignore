@@ -106,6 +106,7 @@ tmp/
 
 # 文档站的构建产物与依赖（docs/site 构建出 frontend/public/docs）
 frontend/public/docs/
+frontend/docs-host/
 # 桌面端安装包与更新清单（build.yml 从 desktop-latest 拉进镜像构建上下文）
 frontend/public/downloads/
 frontend/.docs-island-build/
