@@ -343,9 +343,9 @@
       "gateBlocked": "平台检查未能执行",
       "delivering": "已采纳，合并未完成",
       "accepted": "已采纳",
-      "waitingOn": "待 {'@'}{handle} 审阅",
+      "waitingOn": "待 {'@'}{name} 审阅",
       "waitingOnYou": "待你审阅",
-      "decidedBy": "{'@'}{handle} 已采纳",
+      "decidedBy": "{'@'}{name} 已采纳",
       "review": "审阅",
       "expand": "展开详情",
       "collapse": "收起详情",
@@ -1842,7 +1842,7 @@
     "lookupTeam": "团队里没人可交？直接找一个人：",
     "lookupOwn": "输入接手人的用户名或邮箱：",
     "lookupLabel": "用户名或邮箱（要写完整）",
-    "movingOut": "转让会把项目整个搬到 {'@'}{handle} 名下。转完你就不再是项目成员，也看不到它的任何话题。"
+    "movingOut": "转让会把项目整个搬到 {who} 名下。转完你就不再是项目成员，也看不到它的任何话题。"
   },
   "skills": {
     "awaiting": "待确认",

@@ -30,6 +30,7 @@ import { useAccountLookup } from '@/composables/useAccountLookup'
 import { listProjectMembers, setProjectOwner } from '@/api'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -238,8 +239,10 @@ async function doTransfer() {
 
       <!-- 不在团队里 = 项目跟着 TA 走。这句话必须在按下按钮之前就说清楚，不能让人
          以为只是换个人挂名字。 -->
-      <v-alert v-if="movingOut" type="warning" density="comfortable" class="mt-4">
-        {{ t('work.projectTransfer.movingOut', { handle: picked?.handle ?? '' }) }}
+      <v-alert v-if="movingOut && picked" type="warning" density="comfortable" class="mt-4">
+        <i18n-t scope="global" keypath="work.projectTransfer.movingOut" tag="span">
+          <template #who><UserRef :handle="picked.handle" :name="picked.name" /></template>
+        </i18n-t>
       </v-alert>
 
       <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
