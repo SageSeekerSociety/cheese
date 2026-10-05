@@ -52,24 +52,33 @@ SEARCHED_KINDS = ("message", "doc", "doc_node", "comment", "decision", "weekly")
 
 
 def _lock_all(tables: str) -> None:
-    """As in 4383bf20b465: every table at once without waiting, or none, and
-    try again shortly — never holding some while waiting on the rest."""
+    """Every table, or none: wait in line for them a few seconds at a time,
+    and on a timeout or a deadlock let go of all of them and try again.
+
+    Waiting, unlike ``NOWAIT``, queues this lock ahead of requests that come
+    later, so a steady stream of short transactions on these tables (a live
+    backend reading sessions, rooms and tasks) drains in front of it instead of
+    never leaving every table free at the same instant."""
     op.execute(f"""
         DO $$
-        DECLARE attempts integer := 0;
+        DECLARE
+            attempts integer := 0;
+            outer_timeout text := current_setting('lock_timeout');
         BEGIN
+            PERFORM set_config('lock_timeout', '3s', true);
             LOOP
                 BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE NOWAIT;
+                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE;
                     EXIT;
-                EXCEPTION WHEN lock_not_available THEN
+                EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
                     attempts := attempts + 1;
-                    IF attempts >= 1200 THEN
+                    IF attempts >= 100 THEN
                         RAISE;
                     END IF;
-                    PERFORM pg_sleep(0.05);
+                    PERFORM pg_sleep(0.2);
                 END;
             END LOOP;
+            PERFORM set_config('lock_timeout', outer_timeout, true);
         END
         $$
     """)
