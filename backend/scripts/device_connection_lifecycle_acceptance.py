@@ -511,6 +511,10 @@ INSERT INTO projects
 SELECT '11111111-1111-1111-1111-111111111111','Acceptance','acceptance',id,
        'off','{}',now(),now()
 FROM team WHERE personal_owner_user_id = 42;
+INSERT INTO hosted_device (device_id,owner_user_id) VALUES ('acceptance-machine',42);
+INSERT INTO device_project (id,device_id,project_id,created_at,updated_at)
+VALUES ('55555555-5555-5555-5555-555555555555','acceptance-machine',
+        '11111111-1111-1111-1111-111111111111',now(),now());
 INSERT INTO topics (id,project_id,title,kind,status,is_private,created_at,updated_at)
 VALUES ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',
         'Acceptance','room','active',false,now(),now());
