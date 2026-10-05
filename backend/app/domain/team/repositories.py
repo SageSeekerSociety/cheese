@@ -193,6 +193,18 @@ class TeamRepository:
         teams = list(result.scalars().all())
         return {t.id: t for t in teams}
 
+    async def application_statuses(self, ids: Sequence[int]) -> dict[int, str]:
+        """Where each team invitation or join request stands now, by id."""
+        if not ids:
+            return {}
+        stmt = select(
+            TeamMembershipApplication.id, TeamMembershipApplication.status
+        ).where(
+            TeamMembershipApplication.id.in_(list(ids)),
+            TeamMembershipApplication.deleted_at.is_(None),
+        )
+        return {app_id: status for app_id, status in await self._session.execute(stmt)}
+
     async def list_teams_of_user(self, user_id: int) -> Sequence[Team]:
         """Return teams joined by the given user using team_user_relation."""
         rel_stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(

@@ -74,6 +74,39 @@ class TeamEntityResolver:
         return result
 
 
+class TeamMembershipApplicationEntityResolver:
+    """Resolve the team invitation or join request a team notification is about.
+
+    A team invitation card can offer accept and decline only if it knows which
+    invitation it is. The status is read now, not copied from the payload: a
+    card written while the invitation waited would otherwise go on offering an
+    answer after it was answered, cancelled, or accepted from the team's page.
+    """
+
+    def __init__(self, team_service: TeamService) -> None:
+        self._team_service = team_service
+
+    def supported_entity_type(self) -> str:
+        return "team_membership_application"
+
+    async def resolve(
+        self, entity_ids: Sequence[str]
+    ) -> dict[str, ResolvedEntityInfoDTO | None]:
+        numeric = {raw: int(raw) for raw in entity_ids if raw.isdigit()}
+        statuses = await self._team_service.application_statuses(list(numeric.values()))
+        return {
+            raw: None
+            if app_id not in statuses
+            else ResolvedEntityInfoDTO(
+                id=str(app_id),
+                type="team_membership_application",
+                name="",
+                status=statuses[app_id],
+            )
+            for raw, app_id in numeric.items()
+        }
+
+
 class UserEntityResolver:
     """Resolve 'user' entities for notifications."""
 
