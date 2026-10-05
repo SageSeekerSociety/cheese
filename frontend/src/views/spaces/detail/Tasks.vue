@@ -1,85 +1,10 @@
-<template>
-  <v-sheet flat rounded="lg" class="task-container">
-    <!-- 顶部导航和筛选区 -->
-    <div class="filter-section pa-4 pb-0">
-      <PinnedAnnouncements class="mb-4" />
-      <!-- 主分类选项按钮在移动端显示 -->
-      <div class="d-md-none category-nav-mobile mb-4">
-        <v-select
-          v-model="selectedCategoryIdModel"
-          autocomplete="off"
-          :items="categoryFilterOptions"
-          density="comfortable"
-          variant="outlined"
-          hide-details
-          class="category-select"
-        ></v-select>
-      </div>
-
-      <TaskListToolbar
-        class="mb-4"
-        :scope="scope"
-        :pending-only="pendingOnly"
-        :topics="hotTopics"
-        :selected-topics="selectedTopics"
-        :sort="sortKey"
-        :search="searchQuery ?? ''"
-        @update:scope="selectScope"
-        @update:pending-only="setPendingOnly"
-        @update:selected-topics="selectedTopics = $event"
-        @update:sort="sortKey = $event"
-        @search="searchQuery = $event"
-      />
-    </div>
-
-    <v-divider class="mt-0"></v-divider>
-
-    <!-- 「我发布的」包括还没过审和被驳回的题：通用列表对出题人自己也只给已通过的，
-         所以这一格走「我发布的题目」接口，卡片上带审核状态。 -->
-    <div v-if="scope === 'publishing'" class="tasks-list">
-      <template v-if="publishedLoading && !publishedTasks.length">
-        <v-skeleton-loader v-for="index in 3" :key="index" type="list-item-three-line" />
-      </template>
-      <BaseLoadError
-        v-else-if="publishedFailed"
-        :title="t('spaces.detail.tasks.loadFailed')"
-        :error="publishedError"
-        @retry="loadPublishedTasks"
-      />
-      <BaseEmptyState
-        v-else-if="!visiblePublishedTasks.length"
-        icon="mdi-pencil-box-multiple-outline"
-        :title="t('spaces.detail.tasks.noTasks')"
-      />
-      <template v-else>
-        <PublishedTaskRow
-          v-for="task in visiblePublishedTasks"
-          :key="task.taskId"
-          :task="task"
-          :space-id="Number(route.params.spaceId)"
-        />
-      </template>
-    </div>
-    <div v-else class="tasks-list">
-      <infinite-scroll
-        :loading="loadingMore"
-        :has-more="hasMore"
-        :initial-loading="refreshing"
-        :is-empty="tasks.length === 0"
-        :shown="tasks.length"
-        :total="total"
-        @load-more="loadMore"
-      >
-        <template #empty>
-          <BaseEmptyState icon="mdi-trophy" :title="t('spaces.detail.tasks.noTasks')" />
-        </template>
-        <TaskRow v-for="task in tasks" :key="task.id" :task="task" :query="route.query" />
-      </infinite-scroll>
-    </div>
-  </v-sheet>
-</template>
-
 <script setup lang="ts">
+// 题目列表页「落网」的那一半：读题目列表（分页）、读「我发布的」、读热门话题与分类，
+// 以及范围/搜索/排序/分类这些地址参数怎么写回地址栏。画面那一半在 TasksView.vue。
+// 顶上那栏置顶公告的「当前」公告、每一行点去哪，都在这里算好当 prop 传进去。
+//
+// 「发布题目」是这一页的主操作：桌面上在页头右边，手机上是顶栏右边那一颗。
+import type { UserRefTarget } from '@/lib/userRef'
 import type { SpaceMyPublishedTask } from '@/network/api/spaces/types'
 import type { Task, Topic } from '@/types'
 import type { TaskScope, TaskSortKey } from './taskListFilters'
@@ -93,18 +18,13 @@ import { createEmptyResult, usePaging } from '@/utils/paging'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import PublishedTaskRow from './PublishedTaskRow.vue'
-import TaskListToolbar from './TaskListToolbar.vue'
-import TaskRow from './TaskRow.vue'
+import TasksView from './TasksView.vue'
+import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import { useCommands } from '@/commands'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
-import PinnedAnnouncements from '@/views/spaces/detail/PinnedAnnouncements.vue'
 
 type SortBy = 'createdAt' | 'updatedAt' | 'deadline'
 type SortOrder = 'asc' | 'desc'
@@ -127,7 +47,7 @@ type QueryOptions = {
 
 const route = useRoute()
 const router = useRouter()
-const searchQuery = ref<string>()
+const searchQuery = ref('')
 // 选了几个话题就是「带其中任一个」。
 const selectedTopics = ref<number[]>([])
 
@@ -136,6 +56,8 @@ const { t } = useI18n()
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
 const { currentSpace, categories } = storeToRefs(spaceStore)
+
+const spaceId = computed(() => Number(route.params.spaceId))
 
 const hotTopics = ref<Topic[]>([])
 
@@ -287,6 +209,20 @@ const visiblePublishedTasks = computed(() => {
   })
 })
 
+/** 顶上那栏置顶公告：读「当前」公告，并把公告页地址备好给画面那一半。 */
+const { current: announcements } = useSpaceAnnouncements(() => Number(route.params.spaceId))
+const announcementsTarget = computed(() => ({
+  name: 'SpacesAnnouncements',
+  params: { spaceId: Number(route.params.spaceId) },
+}))
+
+/** 每一行的去处：题目页地址，带着列表的筛选 —— 从题目页返回时列表还是原来那样。 */
+const rowTo = (task: Task): UserRefTarget => ({
+  name: 'TasksDetail',
+  params: { taskId: task.id },
+  query: route.query,
+})
+
 const navigateToPublishTask = async () => {
   try {
     if (currentSpace.value) {
@@ -344,22 +280,32 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped lang="scss">
-.task-container {
-  border: none;
-  /* 一栏题目列表：1920/2560 上铺满整屏会把每行的两头拉得很远，视线横穿整行才
-     找得到右边的状态。封顶居中，和上面的筛选条同一栏。 */
-  max-width: 1100px;
-  margin-inline: auto;
-}
-
-.category-nav-mobile {
-  .category-select {
-    border-radius: 8px;
-  }
-}
-
-.tasks-list {
-  padding: 0 16px 16px;
-}
-</style>
+<template>
+  <TasksView
+    v-model:search="searchQuery"
+    v-model:selected-category="selectedCategoryIdModel"
+    v-model:selected-topics="selectedTopics"
+    v-model:sort="sortKey"
+    :announcements="announcements"
+    :announcements-target="announcementsTarget"
+    :category-filter-options="categoryFilterOptions"
+    :has-more="hasMore"
+    :hot-topics="hotTopics"
+    :loading-more="loadingMore"
+    :pending-only="pendingOnly"
+    :published-error="publishedError"
+    :published-failed="publishedFailed"
+    :published-loading="publishedLoading"
+    :published-tasks="visiblePublishedTasks"
+    :refreshing="refreshing"
+    :row-to="rowTo"
+    :scope="scope"
+    :space-id="spaceId"
+    :tasks="tasks"
+    :total="total"
+    @load-more="loadMore"
+    @load-published-tasks="loadPublishedTasks"
+    @update:pending-only="setPendingOnly"
+    @update:scope="selectScope"
+  />
+</template>

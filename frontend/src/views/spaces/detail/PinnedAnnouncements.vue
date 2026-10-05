@@ -1,29 +1,34 @@
 <script setup lang="ts">
 // 题目列表顶上那一栏：这个空间置顶、还没到期的公告，一条一行，点开去公告页。一条
 // 都没有时整块不出现。手机上只列第一条，其余的收成一行「另有 N 条置顶公告」。
+//
+// 只认 props：读公告、算去哪都在容器里（Tasks.vue 用 useSpaceAnnouncements 取当前
+// 公告、把公告页地址算好传进来）。这样这一栏在没装路由、没连 API 的树里也能渲染。
+import type { UserRefTarget } from '@/lib/userRef'
+import type { SpaceAnnouncement } from '@/types'
+
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { announcementDay, expiryDay } from '../model'
 
 import { useAnnouncementDay } from './useAnnouncementDay'
-import { useSpaceAnnouncements } from './useSpaceAnnouncements'
+
+const props = defineProps<{
+  /** 这个空间「当前」的公告。哪些已到期由服务端分好，这里不自己比时间。 */
+  current: SpaceAnnouncement[]
+  /** 公告页地址。空的话点了不去。 */
+  target: UserRefTarget
+}>()
 
 const { t } = useI18n()
-const route = useRoute()
 const { smAndDown } = useDisplay()
 const dayText = useAnnouncementDay()
 
-const spaceId = () => Number(route.params.spaceId)
-const { current } = useSpaceAnnouncements(spaceId)
-
-const pinned = computed(() => current.value.filter((a) => a.pinned))
+const pinned = computed(() => props.current.filter((a) => a.pinned))
 const shown = computed(() => (smAndDown.value ? pinned.value.slice(0, 1) : pinned.value))
 const more = computed(() => pinned.value.length - shown.value.length)
-
-const target = computed(() => ({ name: 'SpacesAnnouncements', params: { spaceId: spaceId() } }))
 
 function when(createdAt: number, expiresAt: number | null): string {
   const published = dayText(announcementDay(createdAt))

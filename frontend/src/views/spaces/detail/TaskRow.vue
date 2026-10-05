@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 题目列表里的一行。左边是这道题是什么：标题、简介、谁发的、话题；右边是它现在怎样：
 // 状态、领了几个人、什么时候截止。整行点进题目页，列表的筛选跟着带过去。
-import type { LocationQueryRaw } from 'vue-router'
+import type { UserRefTarget } from '@/lib/userRef'
 import type { Task } from '@/types'
 
 import { computed } from 'vue'
@@ -14,8 +14,8 @@ import { splitOrigin } from '@/views/spaces/model'
 
 const props = defineProps<{
   task: Task
-  /** 带到题目页的地址参数：从题目页返回时列表还是原来那样。 */
-  query?: LocationQueryRaw
+  /** 整行点去哪。题目页地址由容器算好传进来（带着列表的筛选，从题目页返回时列表还是原来那样）。 */
+  to: UserRefTarget
 }>()
 
 const { t } = useI18n()
@@ -41,7 +41,7 @@ const deadline = computed(() =>
 </script>
 
 <template>
-  <router-link :to="{ name: 'TasksDetail', params: { taskId: task.id }, query }" class="tr">
+  <router-link :to="to" class="tr">
     <div class="tr__main">
       <div class="tr__title">
         <span class="tr__name">{{ task.name }}</span>
