@@ -14,6 +14,7 @@ import TopicChatColumn from '../../views/workspace/TopicChatColumn.vue'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { previewBundles } from '@/test/panelBundles'
 
 const text = 'Whole page original PDF text '.repeat(30)
 const pdfText = vi.hoisted(() => ({ text: 'Whole page original PDF text '.repeat(30) }))
@@ -66,6 +67,7 @@ vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } 
 vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 const docBytes = new ArrayBuffer(8)
 const props = {
+  ...previewBundles(),
   topicId: 'room',
   projectId: 'project',
   path: 'deck.pptx',

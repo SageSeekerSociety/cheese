@@ -8,10 +8,13 @@
 // 一格在测试和 /demo 里都只需要一串 props。
 //
 // 留在这里的是「画」和「只和这一格有关的手势」：全屏（它要的就是这个 DOM 节点）、
-// 指哪里说哪句话的那个输入框、在线编辑器和草稿历史那两个对话框的状态。这些没有一件
-// 需要问后端。
+// 指哪里说哪句话的那个输入框。这些没有一件需要问后端。开没开编辑器、历史栏展没展开
+// 不在这里记：那一层要拿它决定历史栏读的是哪一份（编辑器里那份，还是预览台上这份）。
+import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevisions'
 import type { AnnotateDraft, UploadAnnotation } from '../../composables/usePanelPreview'
 import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
+import type { RoomFileEditorBundle } from '../../composables/useRoomFileEditor'
+import type { RoomFileHistoryBundle } from '../../composables/useRoomFileHistory'
 import type { ChatAttachment, FileContent } from '../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentIdentity'
 import type { FileKind } from '../../lib/fileKind'
@@ -97,6 +100,16 @@ const props = withDefaults(
     docLoading: boolean
     docError: string
     docRendererMissing: boolean
+    /** 这一份 .docx 的修订：清单、只读、处理动作都在里面（`useDocumentRevisions.ts`）。 */
+    revs: DocumentRevisionsBundle
+    /** 在线编辑那一份会话：编辑器实例、盯版本、另存都在里面（`useRoomFileEditor.ts`）。 */
+    editor: RoomFileEditorBundle
+    /** 同一栏历史：编辑器旁边那一栏和下面文档条那一栏读的是同一份（`useRoomFileHistory.ts`）。 */
+    fileHistory: RoomFileHistoryBundle
+    /** 现在开着哪一份的编辑会话；null 就是没开。开不开由外面记，因为关掉之后还要重取那一页。 */
+    editing: string | null
+    /** 文档条下面那一栏历史开着没有。 */
+    showHistory: boolean
   }>(),
   {
     submitQuestion: undefined,
@@ -128,6 +141,14 @@ const emit = defineEmits<{
   (e: 'open-file', path: string): void
   /** 圈选开关变了：有桥的网页要把它递进帧（取数那一层把消息送过去）。 */
   (e: 'pick-mode', on: boolean): void
+  /** 按了「编辑」：开哪一份的编辑会话由外面记。 */
+  (e: 'open-editor', path: string): void
+  /** 编辑器关了（或者按了叉）：外面要收掉会话并让这一页按新版本重取。 */
+  (e: 'close-editor'): void
+  /** 文档条上按了「历史」：那一栏的开合由外面记（编辑器那一栏也归它管）。 */
+  (e: 'toggle-history'): void
+  /** 点了一个人名（历史栏、编辑器上那句「谁改的」）：去他的主页由会读路由的那一层做。 */
+  (e: 'mention-click', handle: string): void
 }>()
 
 const panelElement = ref<HTMLElement | null>(null)
@@ -181,21 +202,11 @@ async function fullscreen() {
 // 决定把不把字节交给 iframe 的）。
 
 // 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。编辑器开在全屏
-// 对话框里；关掉之后预览按新版本重取。
+// 对话框里；关掉之后预览按新版本重取。开没开、历史栏展没展开都记在外面（那一层同时
+// 要拿它决定历史栏读哪一份），这里只按 props 画。
 const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
 const canEdit = computed(() => EDITABLE_SUFFIXES.has(props.documentSuffix))
-const editing = ref<string | null>(null)
-const showHistory = ref(false)
-function closeEditor() {
-  editing.value = null
-  emit('document-changed')
-}
-function onEditorOpened(path: string) {
-  editing.value = path
-  emit('open-file', path)
-}
 
-const revisionsRef = ref<InstanceType<typeof RevisionList> | null>(null)
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 
 // ---- 指出位置 ----
@@ -588,7 +599,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           size="sm"
           prepend-icon="mdi-pencil-outline"
           data-testid="edit-file"
-          @click="editing = previewFile.path"
+          @click="previewFile && emit('open-editor', previewFile.path)"
         >
           {{ t('work.room.preview.edit') }}
         </BaseButton>
@@ -598,7 +609,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           size="sm"
           prepend-icon="mdi-history"
           data-testid="file-history"
-          @click="showHistory = !showHistory"
+          @click="emit('toggle-history')"
         >
           {{ t('work.room.preview.history') }}
         </BaseButton>
@@ -608,10 +619,9 @@ async function onAnnotate(payload: AnnotateDraft) {
       </div>
       <RoomFileHistory
         v-if="showHistory && topicId && previewFile"
-        :topic-id="topicId"
-        :path="previewFile.path"
-        :version="previewFile.version"
-        @restored="emit('document-changed')"
+        :file-history="props.fileHistory"
+        :project-id="props.projectId"
+        @mention-click="emit('mention-click', $event)"
       />
 
       <v-alert v-if="downloadError" type="warning" density="compact" class="mx-3 mb-2">
@@ -672,13 +682,7 @@ async function onAnnotate(payload: AnnotateDraft) {
 
         <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
              用来逐条处理的。改动那一格用的是同一个组件。 -->
-        <RevisionList
-          ref="revisionsRef"
-          :topic-id="topicId"
-          :path="documentSuffix === 'docx' ? previewFile.path : null"
-          :version="previewFile.version"
-          @decided="emit('document-changed')"
-        />
+        <RevisionList :revs="props.revs" :path="documentSuffix === 'docx' ? previewFile.path : null" />
       </div>
     </div>
     <!-- The shown blob and region share the same original-byte snapshot. -->
@@ -749,14 +753,20 @@ async function onAnnotate(payload: AnnotateDraft) {
       @cancel="clearLocator"
     />
 
-    <v-dialog :model-value="!!editing" fullscreen @update:model-value="(open: boolean) => !open && closeEditor()">
+    <v-dialog
+      :model-value="!!editing"
+      fullscreen
+      @update:model-value="(open: boolean) => !open && emit('close-editor')"
+    >
       <RoomFileEditor
         v-if="editing && topicId"
         :key="editing"
-        :topic-id="topicId"
         :path="editing"
-        @close="closeEditor"
-        @opened="onEditorOpened"
+        :project-id="props.projectId"
+        :editor="props.editor"
+        :file-history="props.fileHistory"
+        @close="emit('close-editor')"
+        @mention-click="emit('mention-click', $event)"
       />
     </v-dialog>
   </div>

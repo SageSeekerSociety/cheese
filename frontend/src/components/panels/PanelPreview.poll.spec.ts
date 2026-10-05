@@ -35,7 +35,7 @@ vi.mock('../../api', () => ({
   requestPreviewSession: (...args: unknown[]) => requestPreviewSession(...args),
 }))
 
-import PanelPreview from './PanelPreview.vue'
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 
 const POLL_MS = 20_000
 
@@ -51,7 +51,7 @@ function artifact(id = 'artifact-a'): PreviewInfo {
 }
 
 function mount(props: Record<string, unknown> = {}) {
-  return render(PanelPreview, {
+  return render(PanelPreviewHost, {
     props: { topicId: 'topic-a', projectId: 'project-a', active: true, ...props },
     global: { plugins: [createVuetify({ components, directives })] },
   })

@@ -18,6 +18,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
+import { previewBundles } from '@/test/panelBundles'
 
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
@@ -49,6 +50,7 @@ function frame(overrides: Partial<PreviewFrame> = {}): PreviewFrame {
 
 function baseProps(submitQuestion: SubmitPreviewQuestion | undefined, overrides: Record<string, unknown>) {
   return {
+    ...previewBundles(),
     topicId: 'room',
     projectId: 'project',
     path: null,

@@ -5,71 +5,48 @@
 // 留着；已经交出去、被采纳的那几版在产物页上，这里碰不到。
 
 import type { RoomFileRevision } from '../../../api'
+import type { RoomFileHistoryBundle } from '../../../composables/useRoomFileHistory'
 
-import { onMounted, ref, watch } from 'vue'
+import { ref } from 'vue'
 
-import { downloadRoomFileRevision, restoreRoomFileRevision, roomFileRevisions } from '../../../api'
 import i18n, { t } from '../../../i18n'
+import { userRefRoute } from '../../../lib/userRef'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 
-const props = defineProps<{ topicId: string; path: string; version?: string | null }>()
-const emit = defineEmits<{ (e: 'restored', revision: RoomFileRevision): void }>()
+// **只吃 props**：清单、下载、恢复都在 `composables/useRoomFileHistory.ts` 里
+// （`components/work/PanelPreviewHost.vue` 调一次，编辑器和预览台共用那一份），这一
+// 只只决定画成什么样。`components/panels/**` 下每个 SFC 都是「场景」，场景不取数。
+const props = defineProps<{
+  /** 这一份历史的取数（`composables/useRoomFileHistory.ts` 那一包）。 */
+  fileHistory: RoomFileHistoryBundle
+  /** 这一份属于哪个项目：人名 chip 去成员页时要用（和别处那颗 chip 同一个去处）。 */
+  projectId?: string | null
+}>()
 
-const rows = ref<RoomFileRevision[]>([])
-const loading = ref(false)
-const error = ref('')
-const busy = ref<string | null>(null)
+const emit = defineEmits<{
+  /** 点了一个人名：去他的主页这件事在会读路由的那一层做。 */
+  (e: 'mention-click', handle: string): void
+}>()
+
+// 哪一版的「恢复」按开了（还要再确认一下）——纯界面状态，和取数无关。
 const confirming = ref<RoomFileRevision | null>(null)
+
+// 恢复是一条会改文件的长活：等它回来才收回那个确认框（失败了还留着，读者能再试一次）。
+async function confirmRestore(row: RoomFileRevision) {
+  await props.fileHistory.restore(row)
+  confirming.value = null
+}
 
 const SOURCES = new Set<string>(['baseline', 'upload', 'ai', 'editor', 'restore', 'scheduled'])
 function sourceLabel(source: RoomFileRevision['source']): string {
   return SOURCES.has(source) ? t(`work.room.fileHistory.source.${source}`) : source
 }
 
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    rows.value = (await roomFileRevisions(props.topicId, props.path)).data
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.room.fileHistory.loadFailed')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function restore(row: RoomFileRevision) {
-  busy.value = row.id
-  error.value = ''
-  try {
-    const made = await restoreRoomFileRevision(props.topicId, row.id)
-    confirming.value = null
-    emit('restored', made)
-    await load()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.room.fileHistory.restoreFailed')
-  } finally {
-    busy.value = null
-  }
-}
-
-async function download(row: RoomFileRevision) {
-  try {
-    await downloadRoomFileRevision(props.topicId, row)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.room.fileHistory.downloadFailed')
-  }
-}
-
 function when(iso: string) {
   return new Date(iso).toLocaleString(i18n.global.locale.value, { hour12: false })
 }
-
-onMounted(load)
-watch(() => [props.path, props.version], load)
-defineExpose({ reload: load })
 </script>
 
 <template>
@@ -78,26 +55,37 @@ defineExpose({ reload: load })
       {{ t('work.room.fileHistory.title') }}
       <span class="t-meta">{{ t('work.room.fileHistory.hint') }}</span>
     </div>
-    <v-alert v-if="error" type="warning" density="compact" class="my-2">{{ error }}</v-alert>
-    <div v-if="loading && !rows.length" class="t-meta py-4 text-center">{{ t('work.room.fileHistory.loading') }}</div>
-    <div v-else-if="!rows.length" class="t-meta py-4 text-center">
+    <v-alert v-if="props.fileHistory.error.value" type="warning" density="compact" class="my-2">
+      {{ props.fileHistory.error.value }}
+    </v-alert>
+    <div v-if="props.fileHistory.loading.value && !props.fileHistory.rows.value.length" class="t-meta py-4 text-center">
+      {{ t('work.room.fileHistory.loading') }}
+    </div>
+    <div v-else-if="!props.fileHistory.rows.value.length" class="t-meta py-4 text-center">
       {{ t('work.room.fileHistory.empty') }}
     </div>
     <ol v-else class="rh__list">
-      <li v-for="(row, i) in rows" :key="row.id" class="rh__row" :data-seq="row.seq">
+      <li v-for="(row, i) in props.fileHistory.rows.value" :key="row.id" class="rh__row" :data-seq="row.seq">
         <div class="rh__head">
           <strong>{{ t('work.room.fileHistory.version', { seq: row.seq }) }}</strong>
           <v-chip v-if="i === 0" size="x-small" color="primary" variant="tonal">{{
             t('work.room.fileHistory.current')
           }}</v-chip>
           <span class="t-meta">{{ sourceLabel(row.source) }}</span>
-          <span v-if="row.author" class="t-meta">· <UserRef :handle="row.author" /></span>
+          <span v-if="row.author" class="t-meta">
+            ·
+            <UserRef
+              :handle="row.author"
+              :to="userRefRoute(row.author, props.projectId)"
+              @navigate="emit('mention-click', row.author ?? '')"
+            />
+          </span>
           <span v-else-if="row.author_kind === 'agent'" class="t-meta">· {{ t('work.room.defaultAgentName') }}</span>
         </div>
         <div class="t-meta">{{ when(row.created_at) }}</div>
         <div v-if="row.note" class="rh__note">{{ row.note }}</div>
         <div class="rh__actions">
-          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-download" @click="download(row)">{{
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-download" @click="props.fileHistory.download(row)">{{
             t('work.room.fileHistory.downloadVersion')
           }}</BaseButton>
           <BaseButton
@@ -105,7 +93,7 @@ defineExpose({ reload: load })
             kind="ghost"
             size="sm"
             prepend-icon="mdi-restore"
-            :loading="busy === row.id"
+            :loading="props.fileHistory.busy.value === row.id"
             @click="confirming = row"
           >
             {{ t('work.room.fileHistory.restoreVersion') }}
@@ -114,7 +102,7 @@ defineExpose({ reload: load })
         <div v-if="confirming?.id === row.id" class="rh__confirm">
           {{ t('work.room.fileHistory.restoreConfirm', { seq: row.seq }) }}
           <div class="mt-1">
-            <BaseButton kind="primary" size="sm" @click="restore(row)">{{
+            <BaseButton kind="primary" size="sm" @click="confirmRestore(row)">{{
               t('work.room.fileHistory.restore')
             }}</BaseButton>
             <BaseButton kind="ghost" size="sm" @click="confirming = null">{{

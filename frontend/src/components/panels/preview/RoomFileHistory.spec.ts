@@ -1,8 +1,11 @@
+import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+import { useRoomFileHistory } from '../../../composables/useRoomFileHistory'
 
 import { setLocale } from '@/i18n'
 
@@ -38,11 +41,21 @@ function row(seq: number, extra: Record<string, unknown> = {}) {
   }
 }
 
+// 这一只只画：取数那一包由宿主调（产品里是 `components/work/PanelPreviewHost.vue`），
+// 所以这里也搭一个最小的宿主，取数照旧走被 mock 掉的接口层。
 function mount() {
-  return render(RoomFileHistory, {
-    props: { topicId: 'room', path: 'output/报告.docx' },
-    global: { plugins: [createVuetify({ components, directives })] },
+  const restored = vi.fn()
+  const Host = defineComponent({
+    setup() {
+      const fileHistory = useRoomFileHistory(
+        { topicId: () => 'room', path: () => 'output/报告.docx' },
+        { onRestored: restored }
+      )
+      return () => h(RoomFileHistory, { fileHistory, projectId: 'project' })
+    },
   })
+  const ui = render(Host, { global: { plugins: [createVuetify({ components, directives })] } })
+  return { ...ui, restored }
 }
 
 beforeEach(() => {
@@ -60,7 +73,7 @@ it('lists every save with who made it and what they said changed', async () => {
 })
 
 it('restores an earlier save only after the reader confirms', async () => {
-  const { emitted } = mount()
+  const { restored } = mount()
   await screen.findByText('第 1 版')
   const buttons = screen.getAllByText('恢复到这一版')
   await fireEvent.click(buttons[buttons.length - 1])
@@ -71,7 +84,8 @@ it('restores an earlier save only after the reader confirms', async () => {
   await fireEvent.click(buttons[buttons.length - 1])
   await fireEvent.click(screen.getByText('恢复'))
   await waitFor(() => expect(restoreRoomFileRevision).toHaveBeenCalledWith('room', 'r1'))
-  expect(emitted().restored).toBeTruthy()
+  // 恢复了一版这件事是取数那一层告诉宿主的，不在这一只身上发事件。
+  await waitFor(() => expect(restored).toHaveBeenCalled())
 })
 
 it('offers no restore for the current save', async () => {

@@ -29,7 +29,7 @@ vi.mock('../../api', () => ({
   requestPreviewSession: (...args: unknown[]) => requestPreviewSession(...args),
 }))
 
-import PanelPreview from './PanelPreview.vue'
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 
 const url = 'https://preview-topic-a.example/'
 // 实例指纹是 sha256(...) 的十六进制串；两个不同的值就代表两个不同的监听进程。
@@ -52,7 +52,7 @@ function appArtifact(instance: string, online = true): PreviewInfo {
 
 let submissions: { action: string; target: string; body: string }[]
 function mount() {
-  return render(PanelPreview, {
+  return render(PanelPreviewHost, {
     props: { topicId: 'topic-a', projectId: 'project-a', active: true },
     global: { plugins: [createVuetify({ components, directives })] },
   })

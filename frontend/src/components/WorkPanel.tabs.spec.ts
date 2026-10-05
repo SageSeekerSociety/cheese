@@ -82,8 +82,8 @@ function mount(props: Record<string, unknown> = {}) {
       stubs: {
         PanelOverviewHost: true,
         PanelSite: true,
-        PanelChanges: true,
-        PanelPreview: true,
+        PanelChangesHost: true,
+        PanelPreviewHost: true,
         RoutinePanelHost: true,
       },
     },

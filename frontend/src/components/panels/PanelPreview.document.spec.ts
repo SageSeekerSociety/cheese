@@ -20,6 +20,8 @@ const previewFileBytes = vi.fn()
 const previewDocumentPdfSnapshot = vi.fn()
 const documentRevisions = vi.fn()
 const decideDocumentRevisions = vi.fn()
+const roomFileRevisions = vi.fn()
+const restoreRoomFileRevision = vi.fn()
 
 // Declared through vi.hoisted: the vi.mock factory below is lifted above every
 // other statement in this file, so a plain `class` here is still in its temporal
@@ -37,6 +39,8 @@ vi.mock('../../api', () => ({
   previewFileBytes: (...args: unknown[]) => previewFileBytes(...args),
   previewDocumentPdfSnapshot: (...args: unknown[]) => previewDocumentPdfSnapshot(...args),
   documentRevisions: (...args: unknown[]) => documentRevisions(...args),
+  roomFileRevisions: (...args: unknown[]) => roomFileRevisions(...args),
+  restoreRoomFileRevision: (...args: unknown[]) => restoreRoomFileRevision(...args),
   decideDocumentRevisions: (...args: unknown[]) => decideDocumentRevisions(...args),
   PreviewRendererUnavailable,
 }))
@@ -72,7 +76,9 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
 }))
 
 // 编辑器（OnlyOffice）和草稿历史各有自己的 spec，这里要的只是它们和文档字节之间
-// 那个约定：改完、恢复完，面板按新版本重取这一页。两个替身各自把手势变成一个事件。
+// 那个约定：改完、恢复完，面板按新版本重取这一页。两者的手势各按自己那一半的接口
+// 做：历史那一边叫取数那一包（`fileHistory.restore`，和真组件一样），编辑器那一边
+// 发自己的 `close`。
 //
 // 这两个是异步装上的（defineAsyncComponent），Vue 只有在载入结果上认出 ESM 时才会
 // 取它的 default —— 所以 `__esModule` 不是装饰，少了它这一格拿到的是整个模块对象。
@@ -80,26 +86,24 @@ vi.mock('./preview/RoomFileHistory.vue', () => ({
   __esModule: true,
   default: {
     name: 'RoomFileHistory',
-    props: ['topicId', 'path', 'version'],
-    emits: ['restored'],
-    template: '<button data-testid="restore" @click="$emit(\'restored\', { id: 1 })">恢复</button>',
+    props: ['fileHistory', 'projectId'],
+    template: '<button data-testid="restore" @click="fileHistory.restore({ id: \'r1\' })">恢复</button>',
   },
 }))
 vi.mock('./preview/RoomFileEditor.vue', () => ({
   __esModule: true,
   default: {
     name: 'RoomFileEditor',
-    props: ['topicId', 'path'],
-    emits: ['close', 'opened'],
+    props: ['editor', 'fileHistory', 'path', 'projectId'],
+    emits: ['close'],
     template:
       '<div data-testid="editor">' +
-      '<button data-testid="editor-opened" @click="$emit(\'opened\', path)">已打开</button>' +
       '<button data-testid="editor-close" @click="$emit(\'close\')">关闭</button>' +
       '</div>',
   },
 }))
 
-import PanelPreview from './PanelPreview.vue'
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -114,7 +118,7 @@ function fileContent(path: string) {
 }
 
 function mount() {
-  return render(PanelPreview, {
+  return render(PanelPreviewHost, {
     props: { topicId: 'topic-a', projectId: 'project-a', active: true },
     global: { plugins: [createVuetify({ components, directives })] },
   })
@@ -135,6 +139,8 @@ beforeEach(() => {
   previewDocumentPdfSnapshot.mockResolvedValue({ bytes: new ArrayBuffer(4096), sourceVersion: null })
   previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
   documentRevisions.mockResolvedValue({ path: 'output/评审简报.docx', revisions: [] })
+  roomFileRevisions.mockResolvedValue({ data: [], total: 0, version: 'v1' })
+  restoreRoomFileRevision.mockResolvedValue({ id: 'r1' })
 })
 afterEach(cleanup)
 
@@ -399,11 +405,10 @@ it('关掉编辑器之后这一页按新版本重取，期间把这份文件交�
   expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1)
 
   await fireEvent.click(screen.getByTestId('edit-file'))
-  await fireEvent.click(await screen.findByTestId('editor-opened'))
   // 编辑器里改的是房间里那一份，所以这一格之外也得有一份它的页签。
   expect((emitted()['open-file'] as unknown[][])[0][0]).toBe('output/评审简报.docx')
 
-  await fireEvent.click(screen.getByTestId('editor-close'))
+  await fireEvent.click(await screen.findByTestId('editor-close'))
   await waitFor(() => expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))
 })
 

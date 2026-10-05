@@ -16,8 +16,6 @@ import { DEMO_PROJECT, DEMO_TOPIC, installPanelAnswers } from './demoPanels'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import DispatchedMarker from '@/components/DispatchedMarker.vue'
-import PanelChanges from '@/components/panels/PanelChanges.vue'
-import PanelPreview from '@/components/panels/PanelPreview.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
@@ -25,7 +23,9 @@ import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import PanelChangesHost from '@/components/work/PanelChangesHost.vue'
 import PanelOverviewHost from '@/components/work/PanelOverviewHost.vue'
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
 const props = defineProps<{ scene: Scene; frame: Frame }>()
@@ -331,14 +331,14 @@ watch(
             :working="working"
             :running-turns="frame.running"
           />
-          <PanelChanges
+          <PanelChangesHost
             v-if="mounted.has('changes')"
             v-show="frame.panel === 'changes'"
             :topic-id="DEMO_TOPIC"
             :project-id="DEMO_PROJECT"
             :active="frame.panel === 'changes'"
           />
-          <PanelPreview
+          <PanelPreviewHost
             v-if="mounted.has('preview')"
             v-show="frame.panel === 'preview'"
             :topic-id="DEMO_TOPIC"

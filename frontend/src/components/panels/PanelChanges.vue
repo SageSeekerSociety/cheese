@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 话题页右侧「改动」这一格 —— 一只薄容器。
 //
-// 它以前是一个 1709 行的组件：自己 import 十个接口函数、自己按 20 秒轮询、自己挂
+// 它以前是一个 1709 行的组件：自己引十个接口函数、自己按 20 秒轮询、自己挂
 // `beforeunload`、自己读共享草稿，然后又自己把那一切画出来。于是「改动」这个界面
 // 在测试和 /demo 里都必须先立一个假后端（`views/demo/demoPanels.ts` 最初就是为它
 // 写的十几条路由）。
@@ -11,28 +11,24 @@
 //     → `composables/usePanelChanges.ts`
 //   - 画（树上标了什么、diff 什么颜色、空态写哪句话）
 //     → `components/panels/PanelChangesView.vue`，只凭 props 渲染
-// 这一只只负责把两边接起来：状态递下去、事件接回来。加取数动作在组合式函数里加，
-// 加画法在展示组件里加，这一只基本不再长。
+//
+// 取数那一层由 `components/work/PanelChangesHost.vue` 调（这一格在
+// `components/panels/` 下，是场景棘轮里的一个「场景」，场景不取数、也不引会取数的
+// 模块），结果整包从这里递下去。这一只只负责把两边接起来：状态递下去、动作接
+// 回来。加取数动作在组合式函数里加，加画法在展示组件里加，这一只基本不再长。
+import type { PanelChangesBundle } from '../../composables/usePanelChanges'
 import type { FileSource } from '../../cx_types'
-
-import { usePanelChanges } from '../../composables/usePanelChanges'
 
 import PanelChangesView from './PanelChangesView.vue'
 
 const props = withDefaults(
   defineProps<{
     topicId: string | null
-    taskId?: string | null
     readOnly?: boolean
-    projectId: string | null
-    // This tab is the one on screen. Loads happen on the rising edge, exactly
-    // like opening the old drawer did.
-    active?: boolean
-    // Bumped by WorkPanel when a turn ends — the moment 芝士's commits and its
-    // working tree actually changed. Silent re-fetch, never a spinner.
-    refreshTick?: number
+    /** 这一格的取数（`composables/usePanelChanges.ts` 那一包）。 */
+    changes: PanelChangesBundle
   }>(),
-  { active: false, refreshTick: 0, taskId: null, readOnly: false }
+  { readOnly: false }
 )
 
 const {
@@ -90,6 +86,7 @@ const {
   docLoading,
   docError,
   docRendererMissing,
+  revs,
   // 动作
   loadAll,
   selectFile,
@@ -102,10 +99,9 @@ const {
   saveFile,
   overwriteFile,
   reloadOpenFile,
-  onRevisionDecided,
-} = usePanelChanges(props)
+} = props.changes
 
-// 展示组件往上发的三件事是「换了个值」，不是「做了个动作」：这里落回组合式函数那
+// 展示组件往上发的三件事是「换了个值」，不是「做了个动作」：这里落回取数那一层那
 // 几个 ref 上。写成三个函数而不是模板里的行内赋值，是为了让类型检查看得见。
 function setScope(v: boolean) {
   showAll.value = v
@@ -186,6 +182,7 @@ defineExpose({ openFile })
     :open-is-document="openIsDocument"
     :open-document-type="openDocumentType"
     :revision-path="revisionPath"
+    :revs="revs"
     :open-raw-url="openRawUrl"
     :expanded-dirs="expandedDirs"
     :reveal-tick="revealTick"
@@ -206,7 +203,6 @@ defineExpose({ openFile })
     @save="saveFile"
     @overwrite="overwriteFile"
     @reload="reloadOpenFile"
-    @revision-decided="onRevisionDecided"
     @scope-changed="setScope"
     @view-changed="setView"
     @draft-changed="setDraft"

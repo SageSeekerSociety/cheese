@@ -30,7 +30,10 @@ import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '
 import { warmPreviewPointer } from '../lib/previewPointer'
 import { roomFileDestination } from '../lib/previewSession'
 
+import { useDocumentRevisions } from './useDocumentRevisions'
 import { APP_NAVIGATION_BUDGET_MS, usePreviewFrames } from './usePreviewFrames'
+import { useRoomFileEditor } from './useRoomFileEditor'
+import { useRoomFileHistory } from './useRoomFileHistory'
 
 import { t } from '@/i18n'
 
@@ -64,6 +67,8 @@ export interface PanelPreviewOptions {
   onEscape?: () => void
   /** 帧里圈选了一处：画不画标注条、发不发引用是画的那一半的事，这一层只往上递。 */
   onPick?: (pick: FramePick) => void
+  /** 编辑里「另存一份」另存出了一份新的：宿主要把它开成自由区的一个页签。 */
+  onOpenFile?: (path: string) => void
 }
 
 /** 一张要进房间的图。上传真正要的只有这两样。 */
@@ -563,6 +568,71 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docNonce.value += 1
   }
 
+  // ---- 在线编辑 + 历史 ----
+  // 这三件事原先长在展示组件里（编辑器那一包在自己身上，历史那一包在历史栏身上，修订
+  // 那一包在清单身上），于是「预览」这一格顺着一层层 import 够得着接口层。现在三份取数
+  // 都在这儿，画的那几层只认递下去的这几包。
+  //
+  // `editing` 是「现在开着哪一份的编辑会话」：它同时决定了编辑器开在哪一份上、旁边那一栏
+  // 历史读的是哪一份（编辑时读编辑器里那份，否则读预览台上那份），以及两处恢复/处理完
+  // 之后重画谁。
+  const editing = ref<string | null>(null)
+  const showHistory = ref(false)
+
+  function openEditor(path: string) {
+    editing.value = path
+    options.onOpenFile?.(path)
+  }
+
+  function closeEditor() {
+    editing.value = null
+    // 编辑器里存下的那一版就是这份文件现在的样子：字节按版本缓存，版本没变，所以要自己
+    // 说一句让它重取。
+    refreshDocument()
+  }
+
+  function toggleHistory() {
+    showHistory.value = !showHistory.value
+  }
+
+  // 这一份 .docx 的修订。只在 .docx 上读：别的类型没有修订，读也是白读一次。
+  const revs = useDocumentRevisions(
+    {
+      topicId: () => props.topicId,
+      path: () => (documentSuffix.value === 'docx' ? previewFile.value?.path ?? null : null),
+      version: () => previewFile.value?.version ?? null,
+      task: () => null,
+      source: () => previewFile.value?.source ?? 'live',
+    },
+    { onDecided: () => refreshDocument() }
+  )
+
+  const editor = useRoomFileEditor(
+    { topicId: () => props.topicId, path: () => editing.value },
+    { onOpened: (path) => openEditor(path) }
+  )
+
+  // 编辑器和预览台上那一份共用同一栏历史：编辑时它读编辑器里那份（刚存下的那一版也在
+  // 里面），否则读预览台上这份。恢复完，编辑中还开着的会话要重新载入新版本，否则把那一页
+  // 重取一遍。
+  //
+  // 只在那一栏真的开着的时候读：历史是「要看才看」的东西，跟着每一份预览都去问一遍
+  // 等于每次翻文件都多打一次接口。编辑器开着时也读，因为那一栏和编辑共用同一份。
+  const fileHistory = useRoomFileHistory(
+    {
+      topicId: () => props.topicId,
+      path: () => editing.value ?? previewFile.value?.path ?? null,
+      version: () => (editing.value ? null : previewFile.value?.version ?? null),
+      enabled: () => !!editing.value || showHistory.value,
+    },
+    {
+      onRestored: () => {
+        if (editing.value) void editor.start()
+        else refreshDocument()
+      },
+    }
+  )
+
   /**
    * 标注合成图要进房间：上传是取数这一层的事。
    *
@@ -607,13 +677,25 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docLoading,
     docError,
     docRendererMissing,
+    // 在线编辑 + 历史（各自的取数那一包，原样递下去）
+    revs,
+    editing,
+    showHistory,
+    editor,
+    fileHistory,
     // 动作
     load,
     downloadArtifact,
     refreshDocument,
     uploadAnnotation,
+    openEditor,
+    closeEditor,
+    toggleHistory,
     // 圈选：画的那一半按帧的类型选「递进帧」还是「宿主自己盖一层」，取数这一层只管把
     // 开关送到当前那一帧的桥。
     setPickMode: host.setPickMode,
   }
 }
+
+/** 「预览」这一格的取数原样递给面板（props）：面板自己不认识接口。 */
+export type PanelPreviewBundle = ReturnType<typeof usePanelPreview>
