@@ -26,13 +26,12 @@ from app.domain.agent.compute_configs import (
 )
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
-    _preview_ws_url,
-    device_api_base,
     device_home_dir,
     environment_status,
 )
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
+from app.domain.agent.machine_address import device_api_base, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
@@ -588,7 +587,7 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         "CHEESE_PROJECT": str(project_id),
         "CHEESE_TOPIC": str(topic_id),
         "CHEESE_AUTHOR": author,
-        "CHEESE_PREVIEW_URL": _preview_ws_url(api),
+        "CHEESE_PREVIEW_URL": ws_url(api, "/preview/tunnel"),
         "CHEESE_RESOURCE_ID": work_resource,
         "GIT_AUTHOR_NAME": author,
         "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",

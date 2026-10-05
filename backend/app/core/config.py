@@ -587,12 +587,12 @@ class Settings(BaseSettings):
     # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
     # cannot reach the CONNECT listener directly. On the ghg network it cannot:
     # measured 2026-08-14, packets to the box's listener port never reach its NIC,
-    # dropped at a hypervisor bridge the box can neither see nor change — while
-    # the gateway path those machines already use for the connector works and
-    # carries websockets. Set this to that path and device subscription turns ride
-    # it instead. Empty = no tunnel, and a device falls back to dialling
-    # `subscription_device_proxy_host` directly (right for a flat network, and the
-    # behaviour every deployment has today).
+    # dropped at a hypervisor bridge the box can neither see nor change. Set, every
+    # device's subscription turns ride the tunnel: a private-control cloud machine
+    # dials it through its loopback forward to the backend
+    # (`machine_address.tunnel_url`), every other device dials this URL. Empty =
+    # no tunnel, and a device dials `subscription_device_proxy_host` directly
+    # (right for a flat network).
     subscription_tunnel_url: str = ""
     # Where the proxy's own CA is mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as

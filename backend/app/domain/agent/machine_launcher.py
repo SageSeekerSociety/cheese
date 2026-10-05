@@ -133,11 +133,14 @@ except (OSError, subprocess.TimeoutExpired):
 raise SystemExit(0 if pid in held else 1)
 PROBEPY
 }
-# Adopt a live helper ONLY if it is running the helper we just wrote. The
-# launcher rewrites cheese-tunnel.py on every launch, so a shipped fix would
-# otherwise never reach a machine whose helper is still alive — it would keep
-# serving the old code indefinitely, and nothing would look wrong.
+# Adopt a live helper ONLY if it is running the helper we just wrote, dialling
+# the URL this launch was given. The launcher rewrites cheese-tunnel.py on every
+# launch, so a shipped fix would otherwise never reach a machine whose helper is
+# still alive — it would keep serving the old code indefinitely, and nothing
+# would look wrong. The same holds for a machine whose tunnel moved (a cloud
+# machine onto its loopback forward): the old address may no longer answer.
 WANT="$(cksum "$HOME/.cheese/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
+[ -z "$WANT" ] || WANT="$WANT $CHEESE_TUNNEL_URL"
 HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
 PID="$(cat "$PIDF" 2>/dev/null || true)"
 PORT="$(cat "$PORTF" 2>/dev/null || true)"
