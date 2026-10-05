@@ -325,6 +325,16 @@ const refMenu = useDocRefMenu({ people: () => props.mentionPeople, topics: () =>
 // 因为 Collaboration 扩展只在建编辑器时认一次文档。
 const editor = shallowRef<DocEditor | undefined>()
 
+// 焦点环只给键盘：焦点被键盘带进正文时，编辑器盒子画一圈；鼠标点进来不画，光标本身
+// 就是落点。可编辑区对 `:focus-visible` 不分鼠标键盘（一点就亮），所以自己记：焦点进来
+// 之前按没按过鼠标。
+const keyFocus = ref(false)
+let pointing = false
+function onPointerDown() {
+  pointing = true
+  keyFocus.value = false
+}
+
 function buildEditor(session: DocSession): DocEditor {
   return new DocEditor({
     extensions: [
@@ -360,6 +370,14 @@ function buildEditor(session: DocSession): DocEditor {
     },
     onTransaction: () => {
       displayTick.value++
+    },
+    onFocus: () => {
+      keyFocus.value = !pointing
+      pointing = false
+    },
+    onBlur: () => {
+      keyFocus.value = false
+      pointing = false
     },
     onUpdate: ({ transaction }) => {
       // 正文在光标底下换了：浮条指着的段落已经不是原来那一段了。浮条自己改的格式除外。
@@ -421,13 +439,19 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 <template>
   <!-- 根元素上是那两件「针脚」：⌘S 从页面原样落到这里（存不存是取数那一半的事），
        鼠标经过转给浮层量坐标（坐标系就是这个壳的矩形）。 -->
-  <div class="doc-editor-wrap" @click="onDocClick" @mouseover="onHover">
+  <div class="doc-editor-wrap" @click="onDocClick" @mouseover="onHover" @pointerdown.capture="onPointerDown">
     <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
          占位的那句灰字，而那句话的意思是「这篇文档是空的」——文档有内容、
          只是还没到，说的就是假话。编辑器本身不卸载
          （v-show），卸了它每换一个话题都要重建一次。 -->
     <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
-    <EditorContent v-if="editor" v-show="!loading" :editor="editor" class="doc-editor" />
+    <EditorContent
+      v-if="editor"
+      v-show="!loading"
+      :editor="editor"
+      class="doc-editor"
+      :class="{ 'doc-editor--keyfocus': keyFocus }"
+    />
     <Transition name="doc-menu">
       <DocLinkCallout v-if="linkTarget" :target="linkTarget" @close="linkTarget = null" />
     </Transition>
@@ -667,10 +691,14 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   caret-color: var(--ink);
   color: var(--text);
 }
-/* 正文是一整页纸，不画焦点环：光标本身就是落点。可编辑区对 `:focus-visible` 不分
-   鼠标键盘，一点进来就会亮。 */
+/* 正文自己不画 outline；焦点环画在外面的编辑器盒子上，只在焦点由键盘带进来时
+   （keyFocus，见上面的脚本）。 */
 .doc-editor :deep(.doc-prose:focus) {
   outline: none;
+}
+.doc-editor--keyfocus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 /* 两块之间的光标：图表、表格这类块挨在一起时，点它们之间那条缝，光标停在这里，打字
