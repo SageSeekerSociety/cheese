@@ -44,6 +44,19 @@ const MATERIALS = [
   { id: 162, name: '参考答案-红黑树.pdf', visibility: 'admins' },
 ]
 
+/**
+ * 这块板存着的那一份，照 `GET /spaces/{id}` / `PATCH /spaces/{id}` 回的样子写：六个
+ * camelCase 键都在（服务端 `teaching_to_api`）。表单读的就是这一份，再整份存回去。
+ */
+const SAVED = {
+  systemPrompt: '这块板的默认',
+  currentWeek: 3,
+  allowedTopics: ['循环', '数组'],
+  avoidInCode: ['递归'],
+  materialIds: [161],
+  knowledgeIds: [],
+}
+
 function mountPage(teaching?: Record<string, unknown>) {
   listMaterials.mockResolvedValue({ data: { materials: MATERIALS, canManage: true } })
   const pinia = createPinia()
@@ -83,7 +96,7 @@ afterEach(() => {
 
 describe('空间设置：给 AI 队友的指导', () => {
   it('这块板存着的那一份填进表单', async () => {
-    const view = mountPage({ systemPrompt: '这块板的默认', currentWeek: 3 })
+    const view = mountPage(SAVED)
 
     expect((view.getByLabelText('spaces.teaching.fields.systemPrompt') as HTMLTextAreaElement).value).toBe(
       '这块板的默认'
@@ -91,6 +104,23 @@ describe('空间设置：给 AI 队友的指导', () => {
 
     await expandAdvanced(view)
     expect((view.getByLabelText('spaces.teaching.fields.currentWeek') as HTMLInputElement).value).toBe('3')
+    expect((view.getByLabelText('spaces.teaching.fields.allowedTopics') as HTMLInputElement).value).toBe('循环, 数组')
+    expect((view.getByLabelText('spaces.teaching.fields.avoidInCode') as HTMLInputElement).value).toBe('递归')
+  })
+
+  it('不改一个字再点保存，存着的那一份原样发回去，存完表单还是它', async () => {
+    // 服务端把存下的那一份回过来，表单照它重填。
+    updateSpace.mockResolvedValue({ data: { space: { id: SPACE_ID, name: '数据结构题板', teaching: SAVED } } })
+    const view = mountPage(SAVED)
+
+    await fireEvent.click(saveButton())
+
+    await waitFor(() => expect(updateSpace).toHaveBeenCalledTimes(1))
+    expect(updateSpace.mock.calls[0][1]).toEqual({ teaching: SAVED })
+
+    await expandAdvanced(view)
+    expect((view.getByLabelText('spaces.teaching.fields.currentWeek') as HTMLInputElement).value).toBe('3')
+    expect((view.getByLabelText('spaces.teaching.fields.allowedTopics') as HTMLInputElement).value).toBe('循环, 数组')
   })
 
   it('保存摆在卡片最后那一条，不在标题下面那条工具行里 —— 和「基本信息」同形', () => {
