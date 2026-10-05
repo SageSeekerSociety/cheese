@@ -622,7 +622,14 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     {
       topicId: () => props.topicId,
       path: () => editing.value ?? previewFile.value?.path ?? null,
-      version: () => (editing.value ? null : previewFile.value?.version ?? null),
+      // 编辑器开着时这一栏读的是编辑器里那份：它自己存下的那一版由 `editor.savedSeq`
+      // 报回来，变了就让这一栏重读一遍，刚存下的那版才当场出现在列表里。
+      version: () =>
+        editing.value
+          ? editor.savedSeq.value === null
+            ? null
+            : String(editor.savedSeq.value)
+          : previewFile.value?.version ?? null,
       enabled: () => !!editing.value || showHistory.value,
     },
     {

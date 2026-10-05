@@ -52,17 +52,20 @@ export function useRoomFileHistory(scope: RoomFileHistoryScope, hooks: RoomFileH
     }
   }
 
-  async function restore(row: RoomFileRevision) {
+  /** 把某一版恢复成最新版。做成了没有要回话：画的那一半拿它决定收不收那个确认框。 */
+  async function restore(row: RoomFileRevision): Promise<boolean> {
     const tid = scope.topicId()
-    if (!tid) return
+    if (!tid) return false
     busy.value = row.id
     error.value = ''
     try {
       const made = await restoreRoomFileRevision(tid, row.id)
       hooks.onRestored?.(made)
       await load()
+      return true
     } catch (e) {
       error.value = e instanceof Error ? e.message : t('work.room.fileHistory.restoreFailed')
+      return false
     } finally {
       busy.value = null
     }

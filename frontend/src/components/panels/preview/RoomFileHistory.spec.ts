@@ -88,6 +88,20 @@ it('restores an earlier save only after the reader confirms', async () => {
   await waitFor(() => expect(restored).toHaveBeenCalled())
 })
 
+it('keeps the confirmation open when the restore fails', async () => {
+  restoreRoomFileRevision.mockRejectedValue(new Error('boom'))
+  mount()
+  await screen.findByText('第 1 版')
+  const buttons = screen.getAllByText('恢复到这一版')
+  await fireEvent.click(buttons[buttons.length - 1])
+  await fireEvent.click(screen.getByText('恢复'))
+  await waitFor(() => expect(restoreRoomFileRevision).toHaveBeenCalledWith('room', 'r1'))
+  // 取数那一层把失败咽下去、只回一句 false，所以「恢复」成没成由它说了算：
+  // 没成，确认框就得留着，读者能直接再点一次。
+  expect(await screen.findByRole('alert')).toBeTruthy()
+  expect(screen.getByText('恢复')).toBeTruthy()
+})
+
 it('offers no restore for the current save', async () => {
   mount()
   await screen.findByText('第 3 版')

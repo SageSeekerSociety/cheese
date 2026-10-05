@@ -32,7 +32,7 @@ export function fileHistoryBundle(over: Partial<RoomFileHistoryBundle> = {}): Ro
     error: ref(''),
     busy: ref<string | null>(null),
     load: async () => {},
-    restore: async () => {},
+    restore: async () => true,
     download: async () => {},
     ...over,
   }

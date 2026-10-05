@@ -35,8 +35,7 @@ const confirming = ref<RoomFileRevision | null>(null)
 
 // 恢复是一条会改文件的长活：等它回来才收回那个确认框（失败了还留着，读者能再试一次）。
 async function confirmRestore(row: RoomFileRevision) {
-  await props.fileHistory.restore(row)
-  confirming.value = null
+  if (await props.fileHistory.restore(row)) confirming.value = null
 }
 
 const SOURCES = new Set<string>(['baseline', 'upload', 'ai', 'editor', 'restore', 'scheduled'])
