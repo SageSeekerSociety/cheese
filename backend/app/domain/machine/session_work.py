@@ -74,6 +74,29 @@ from app.domain.user.services import user_by_handle
 logger = logging.getLogger(__name__)
 
 
+def presentation(row):
+    request = row.execution_request or {}
+    lease = row.work_lease
+    shown = None
+    if lease:
+        online = device_hub.is_online(lease["device_id"])
+        # A cloud session's sandbox is on one of the platform's hosts. Which one,
+        # and where on it, is the platform's scheduling and nobody's to read.
+        on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
+        shown = (
+            {"status": lease.get("status", "ready"), "online": online}
+            if on_cloud
+            else {**lease, "online": online}
+        )
+    return {
+        "id": str(row.id),
+        "agent_handle": row.agent_handle,
+        "harness": row.harness,
+        "choice": request.get("choice"),
+        "lease": shown,
+    }
+
+
 async def _visibility_of(
     db, devices, topic_id, device_id: str | None
 ) -> Visibility | None:

@@ -7,35 +7,11 @@ Read-only. What changes a session's machine is ``session_work``.
 
 from sqlalchemy import select
 
-from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.session_work import _agent_name, _visibility_of
+from app.domain.machine.session_work import _agent_name, _visibility_of, presentation
 from app.domain.project.services import ProjectService
-
-
-def presentation(row):
-    request = row.execution_request or {}
-    lease = row.work_lease
-    shown = None
-    if lease:
-        online = device_hub.is_online(lease["device_id"])
-        # A cloud session's sandbox is on one of the platform's hosts. Which one,
-        # and where on it, is the platform's scheduling and nobody's to read.
-        on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
-        shown = (
-            {"status": lease.get("status", "ready"), "online": online}
-            if on_cloud
-            else {**lease, "online": online}
-        )
-    return {
-        "id": str(row.id),
-        "agent_handle": row.agent_handle,
-        "harness": row.harness,
-        "choice": request.get("choice"),
-        "lease": shown,
-    }
 
 
 async def session_machines(db, topic, task_id=None) -> list[dict]:
