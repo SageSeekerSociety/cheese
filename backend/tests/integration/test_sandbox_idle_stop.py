@@ -47,7 +47,7 @@ from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.services import HostPool
 from app.domain.project.models import Project
 from app.domain.team.models import Team
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.user.repositories import UserRepository
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
@@ -848,3 +848,34 @@ def test_a_restore_holds_the_home_until_it_is_done(cloud):
     assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"
     assert held == [True]
     assert home_of(cloud, seat).busy_until is None
+
+
+def test_an_archived_rooms_sandbox_sleeps_and_frees_its_host(cloud):
+    """An archived room whose cleanup has not finished still had its sandbox
+    running, and stopping it raised: every sweep failed there, no sandbox of
+    any room slept, and no host was ever released (dev, 2026-10-05)."""
+    archived_room, other, _ = cloud.seats
+    working_on(cloud, archived_room, "host-a")
+    working_on(cloud, other, "host-b")
+
+    async def archive():
+        async with cloud.client.test_request_factory() as db:
+            (await db.get(Topic, archived_room.room)).status = TopicStatus.archived
+            await db.commit()
+
+    run(cloud, archive)
+    time_passes(cloud, archived_room, timedelta(minutes=11))
+    time_passes(cloud, other, timedelta(minutes=11))
+
+    assert sweep(cloud)["asleep"] == 2
+    assert home_of(cloud, archived_room).stopped_at is not None
+    assert home_of(cloud, other).stopped_at is not None
+
+    # Asleep long enough, the home goes to the bucket and its host is
+    # released, while the room's own cleanup is still to come.
+    machine = host_of_machine(cloud, "host-a")
+    time_passes(cloud, archived_room, timedelta(days=8))
+    assert sweep(cloud)["archived"] == 1
+    maintain(cloud)
+    assert home_of(cloud, archived_room).host_id is None
+    assert machine in cloud.provider.deleted

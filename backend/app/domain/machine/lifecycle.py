@@ -282,8 +282,10 @@ class SandboxLifecycle:
 
         if room_id is not None:
             # The room's lock first, as a tool call takes it: one that arrives
-            # now waits until this stop is recorded, and then wakes it.
-            await TopicService(self._session).lock_for_execution(room_id)
+            # now waits until this stop is recorded, and then wakes it. An
+            # archived room takes no tool call, but its sandbox still sleeps:
+            # one left running holds its host's slot, and its host, for good.
+            await TopicService(self._session).lock(room_id)
         home = await self._repo.lock_home(home_id)
         now = datetime.now(UTC)
         if (
