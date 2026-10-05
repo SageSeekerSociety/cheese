@@ -452,6 +452,7 @@ defineExpose({
                 :loading="loading"
                 :session="session"
                 :title="docTitle"
+                :placeholder="document ? t('work.room.doc.emptyPlaceholderLibrary') : ''"
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
                 :mention-names="mentionNames"

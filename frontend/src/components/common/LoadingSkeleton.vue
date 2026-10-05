@@ -159,7 +159,7 @@ function width(i: number): string {
 
     <!-- 实况文档的正文。文档没有固定的形状，但它有固定的**节奏**：一条小标题带
          着几段字。画这个节奏，胜过画一片等长的灰条——更胜过现在这样，正文还在路
-         上就先摆出一句「AI 队友会在这里维护文档」，那句话是说给空文档的。 -->
+         上就先摆出空文档的那句占位灰字，那句话是说给空文档的。 -->
     <template v-else-if="variant === 'doc'">
       <div v-for="i in rows || DEFAULT_ROWS.doc" :key="i" class="skel__dsec" :style="{ '--skel-i': i }">
         <div class="skel__bone skel__bone--h2" :style="{ width: i % 2 ? '38%' : '30%' }" />

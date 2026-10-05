@@ -27,7 +27,7 @@ import { useFocusReturn } from '@/composables/useFocusReturn'
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { spotAt } from '../../../lib/docCommentSpots'
 import { captureNewDocLink } from '../../../lib/docLinks'
-import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
+import { BLOCK_ITEMS, blockKeyOf, convertsInPlace } from '../../../lib/docSlashMenu'
 import { statusAt } from '../../../lib/docStatus'
 
 import DocBubble from './DocBubble.vue'
@@ -125,7 +125,7 @@ function positionCta() {
   }
   const wr = wrap.getBoundingClientRect(),
     br = body.getBoundingClientRect()
-  const sidebar = wrap.closest('.doc-reading')?.querySelector<HTMLElement>('[data-comments-panel]')
+  const sidebar = wrap.closest('.doc-pane')?.querySelector<HTMLElement>('[data-comments-panel]')
   const sr = sidebar && getComputedStyle(sidebar).display !== 'none' ? sidebar.getBoundingClientRect() : null
   const left = Math.max(0, br.left),
     top = Math.max(0, br.top)
@@ -264,7 +264,7 @@ function bindEditor(ed?: CoreEditor | null) {
     if (typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(schedulePosition)
       const wrap = wrapOf(bound)
-      const pane = wrap?.closest('.doc-reading') ?? wrap
+      const pane = wrap?.closest('.doc-pane') ?? wrap
       if (pane) observer.observe(pane)
       const body = wrap?.closest('.doc-body')
       if (body) observer.observe(body)
@@ -490,16 +490,23 @@ function addBlockBelow() {
     .run()
 }
 
-// ---- 行首手柄点一下：这一块换成别的块（和浮条上的「正文 ▾」同一张表），不用先选字。
+// ---- 行首手柄点一下：这一块换成别的块（和浮条上的「正文 ▾」同一张表），不用先选字；
+// 或者整块删掉。图表、表格这类有结构的块只能删，换成正文会丢掉结构。
 // 拖它照旧是挪这一块。菜单量着手柄的位置摆在屏幕上，手柄因为鼠标移开而收起时它还在。
-const blockMenu = ref<{ pos: number; current: string; top: number; left: number } | null>(null)
+const blockMenu = ref<{ pos: number; current: string; converts: boolean; top: number; left: number } | null>(null)
 function openBlockMenu(e: MouseEvent) {
   const ed = props.editor
   if (!ed || hoverPos.value == null) return
   const node = ed.state.doc.nodeAt(hoverPos.value)
   if (!node) return
   const at = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  blockMenu.value = { pos: hoverPos.value, current: blockKeyOf(node), top: at.bottom + 4, left: at.left }
+  blockMenu.value = {
+    pos: hoverPos.value,
+    current: blockKeyOf(node),
+    converts: convertsInPlace(node),
+    top: at.bottom + 4,
+    left: at.left,
+  }
 }
 function pickBlock(item: SlashItem) {
   const ed = props.editor
@@ -515,6 +522,21 @@ function pickBlock(item: SlashItem) {
         .setTextSelection({ from: menu.pos + 1, to: menu.pos + node.nodeSize - 1 })
     )
     .run()
+}
+function deleteBlock() {
+  const ed = props.editor
+  const menu = blockMenu.value
+  blockMenu.value = null
+  const node = ed && menu ? ed.state.doc.nodeAt(menu.pos) : null
+  if (!ed || !menu || !node) return
+  const { tr } = ed.state
+  // 文档至少留一段：删的是最后一块时换成一个空段落。
+  if (ed.state.doc.childCount === 1)
+    tr.replaceWith(menu.pos, menu.pos + node.nodeSize, ed.schema.nodes.paragraph.create())
+  else tr.delete(menu.pos, menu.pos + node.nodeSize)
+  tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(menu.pos, tr.doc.content.size))))
+  ed.view.dispatch(tr.scrollIntoView())
+  ed.view.focus()
 }
 function closeBlockMenu(e: Event) {
   if (e instanceof KeyboardEvent && e.key !== 'Escape') return
@@ -678,17 +700,24 @@ defineExpose({ onHover, onEdited })
       :aria-label="t('work.room.doc.blockType')"
       :style="{ top: `${blockMenu.top}px`, left: `${blockMenu.left}px` }"
     >
-      <button
-        v-for="item in BLOCK_ITEMS"
-        :key="item.key"
-        type="button"
-        role="menuitemradio"
-        :aria-checked="item.key === blockMenu.current"
-        class="doc-block-menu__item"
-        @click="pickBlock(item)"
-      >
-        <v-icon size="16">{{ item.icon }}</v-icon>
-        {{ item.label }}
+      <template v-if="blockMenu.converts">
+        <button
+          v-for="item in BLOCK_ITEMS"
+          :key="item.key"
+          type="button"
+          role="menuitemradio"
+          :aria-checked="item.key === blockMenu.current"
+          class="doc-block-menu__item"
+          @click="pickBlock(item)"
+        >
+          <v-icon size="16">{{ item.icon }}</v-icon>
+          {{ item.label }}
+        </button>
+        <div class="doc-block-menu__sep" role="separator" />
+      </template>
+      <button type="button" role="menuitem" class="doc-block-menu__item" @click="deleteBlock">
+        <v-icon size="16">mdi-trash-can-outline</v-icon>
+        {{ t('work.room.doc.deleteBlock') }}
       </button>
     </div>
   </Teleport>
@@ -769,6 +798,11 @@ defineExpose({ onHover, onEdited })
 }
 .doc-block-menu__item .v-icon {
   color: var(--muted);
+}
+.doc-block-menu__sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
 }
 @media (prefers-reduced-motion: reduce) {
   .doc-block-menu {

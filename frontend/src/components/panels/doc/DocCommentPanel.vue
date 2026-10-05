@@ -247,7 +247,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
 </script>
 
 <template>
-  <div ref="root" class="doc-reading" :class="{ 'is-resizing': resizing }">
+  <div ref="root" class="doc-pane" :class="{ 'is-resizing': resizing }">
     <slot />
     <aside
       v-show="opened"
@@ -357,7 +357,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
 </template>
 
 <style scoped>
-.doc-reading {
+.doc-pane {
   position: relative;
   display: flex;
   flex: 1 1 auto;

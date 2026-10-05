@@ -309,6 +309,24 @@ export const SLASH_ITEMS: SlashItem[] = [
  *  东西的那几项（表格、分隔线）。 */
 export const BLOCK_ITEMS: SlashItem[] = SLASH_ITEMS.filter((item) => !item.insert && item.key !== 'table')
 
+/** 这一块能不能就地换成表里的别的块：只有一段字的那几种能。图表、表格、时间线这类
+ *  有自己结构的块换成正文，结构就丢了。 */
+export function convertsInPlace(node: PMNode | null | undefined): boolean {
+  switch (node?.type.name) {
+    case 'paragraph':
+    case 'heading':
+    case 'bulletList':
+    case 'orderedList':
+    case 'taskList':
+    case 'codeBlock':
+    case 'blockquote':
+    case 'callout':
+      return true
+    default:
+      return false
+  }
+}
+
 /** 这一块在表里是哪一项；对不上的（比如表格）算正文。 */
 export function blockKeyOf(node: PMNode | null | undefined): string {
   switch (node?.type.name) {

@@ -86,6 +86,8 @@ const props = withDefaults(
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
+    /** 整篇是空的时候那一行灰字；不给就用话题文档的那一句。 */
+    placeholder?: string
     /** 项目 AI 队友的名字和 handle（选中浮条上用）。 */
     agentName: string
     agentHandle?: string | null
@@ -100,6 +102,7 @@ const props = withDefaults(
     scrollTick: 0,
     agentHandle: null,
     title: '',
+    placeholder: '',
   }
 )
 
@@ -411,7 +414,7 @@ defineExpose({
 })
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
-const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPlaceholder')))
+const emptyPlaceholder = computed(() => JSON.stringify(props.placeholder || t('work.room.doc.emptyPlaceholder')))
 const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHint')))
 </script>
 
@@ -420,8 +423,8 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
        鼠标经过转给浮层量坐标（坐标系就是这个壳的矩形）。 -->
   <div class="doc-editor-wrap" @click="onDocClick" @mouseover="onHover">
     <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
-         「AI 队友会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是空
-         的」——文档有内容、只是还没到，说的就是假话。编辑器本身不卸载
+         占位的那句灰字，而那句话的意思是「这篇文档是空的」——文档有内容、
+         只是还没到，说的就是假话。编辑器本身不卸载
          （v-show），卸了它每换一个话题都要重建一次。 -->
     <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
     <EditorContent v-if="editor" v-show="!loading" :editor="editor" class="doc-editor" />
@@ -667,15 +670,10 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   caret-color: var(--ink);
   color: var(--text);
 }
+/* 正文是一整页纸，不画焦点环：光标本身就是落点。可编辑区对 `:focus-visible` 不分
+   鼠标键盘，一点进来就会亮。 */
 .doc-editor :deep(.doc-prose:focus) {
   outline: none;
-}
-/* 正文自己把 outline 去掉了（上面两条），键盘焦点就没有可见的落点。环改画在外面的
-   编辑器盒子上：`:focus-visible` 只在键盘进来时才亮，鼠标点进正文不亮，光标在一行
-   行里走的时候环也不跟着跳。用的是和别处一样的焦点令牌。 */
-.doc-editor:has(.doc-prose:focus-visible) {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 /* Tables look as styles/docBlocks.css draws them; the cell is the anchor for
@@ -916,7 +914,10 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   display: block;
   margin: 0.6em 0;
 }
-.doc-editor :deep(img.ProseMirror-selectednode) {
+/* 整块被选中（在图表、表格这类块后面按一下退格，或点了图片）：框出来，再按一下退格
+   删掉的就是它。 */
+.doc-editor :deep(img.ProseMirror-selectednode),
+.doc-editor :deep(.doc-prose > .ProseMirror-selectednode) {
   outline: 2px solid rgb(var(--v-theme-primary));
   outline-offset: 2px;
 }
