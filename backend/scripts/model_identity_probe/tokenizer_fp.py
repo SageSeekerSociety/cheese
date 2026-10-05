@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .reference import TokenizerReference
+from .stats import PROBE_TEMPERATURE
 from .transport import Endpoint
 from .verdict import INSUFFICIENT, MATCH, MISMATCH, TokenizerEvidence
 
@@ -136,6 +137,7 @@ def _count(endpoint: Endpoint, text: str, adapter=None) -> int | None:
         "Reply with the single word ok.",
         text,
         max_tokens=8,
+        temperature=adapter.temperature if adapter is not None else PROBE_TEMPERATURE,
         extra_body=adapter.extra_body if adapter else None,
         stream=True,
     )

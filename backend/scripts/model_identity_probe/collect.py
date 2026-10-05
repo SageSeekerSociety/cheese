@@ -28,6 +28,7 @@ def probe_once(
     if adapter is not None:
         kwargs["max_tokens"] = adapter.max_tokens
         kwargs["extra_body"] = adapter.extra_body
+        kwargs["temperature"] = adapter.temperature
     completion = endpoint.complete(system, prompt, **kwargs)
     samples = CellSamples()
     if completion.error is not None:

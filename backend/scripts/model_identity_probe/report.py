@@ -21,6 +21,7 @@ from .stats import (
     DEFAULT_CONCURRENCY,
     DEFAULT_SAMPLES_PER_CELL,
     PROBE_PROTOCOL,
+    PROBE_TEMPERATURE,
     SPLIT_HALF_WARN_THRESHOLD,
     CellSamples,
     compare_cells,
@@ -250,6 +251,7 @@ def verify(
     completion = endpoint.complete(
         battery.system_prompt(first_cell),
         battery.pick_paraphrase(first_cell, random.Random(seed)),
+        temperature=adapter.temperature if adapter is not None else PROBE_TEMPERATURE,
         extra_body=adapter.extra_body if adapter else None,
     )
     provenance = build_provenance(claimed_model, completion, expected_pool)

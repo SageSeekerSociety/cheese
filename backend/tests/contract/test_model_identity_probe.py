@@ -457,6 +457,39 @@ def test_the_openai_reasoning_field_is_offered_first() -> None:
     )
 
 
+def test_complete_omits_temperature_when_asked(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_stream(self, client, body):  # noqa: ANN001
+        seen.update(body)
+        return Completion("1", "m", {}, {}, 0.0)
+
+    monkeypatch.setattr(Endpoint, "_stream", fake_stream)
+    Endpoint.gateway("m").complete("sys", "hi", temperature=None)
+    assert "temperature" not in seen
+
+
+def test_detect_adapter_drops_temperature_when_the_upstream_rejects_it(
+    monkeypatch,
+) -> None:
+    calls: list[dict] = []
+
+    def fake_complete(self, system, prompt, **kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        if kwargs.get("temperature") == 1.0:
+            return Completion(
+                "", "m", {}, {}, 0.0, "HTTP 400: Unsupported parameter: temperature"
+            )
+        return Completion("7", "m", {}, {}, 0.0)
+
+    monkeypatch.setattr(Endpoint, "complete", fake_complete)
+    adapter = detect_adapter(Endpoint(mode="gateway", model="m"))
+    assert adapter.omit_temperature is True
+    assert adapter.temperature is None
+    assert calls[0]["temperature"] == 1.0  # the paper temperature was tried first
+    assert calls[1]["temperature"] is None  # and dropped only after the rejection
+
+
 def test_detect_adapter_picks_the_first_field_that_works(monkeypatch) -> None:
     calls: list[dict] = []
 
@@ -472,7 +505,7 @@ def test_detect_adapter_picks_the_first_field_that_works(monkeypatch) -> None:
     adapter = detect_adapter(endpoint)
     assert adapter.strategy == "openai-effort"
     assert adapter.extra_body == {"reasoning_effort": "none"}
-    assert calls[0] == {"reasoning_effort": "none"}
+    assert {"reasoning_effort": "none"} in calls
 
 
 # --- transport shell ---------------------------------------------------------

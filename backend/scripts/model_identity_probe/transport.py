@@ -229,7 +229,7 @@ class Endpoint:
         prompt: str,
         *,
         max_tokens: int = PROBE_MAX_TOKENS,
-        temperature: float = PROBE_TEMPERATURE,
+        temperature: float | None = PROBE_TEMPERATURE,
         extra_body: dict | None = None,
         stream: bool = True,
     ) -> Completion:
@@ -238,16 +238,18 @@ class Endpoint:
 
         ``temperature`` is sent *explicitly* (the paper protocol's 1.0, not
         omitted): a route that silently defaults a missing temperature to
-        something else would change the distribution under test. ``extra_body``
-        carries the reasoning-disable field (see ``detect_adapter``); without
-        it a reasoning model spends ``max_tokens`` on hidden thinking and every
-        sample normalises to empty.
+        something else would change the distribution under test. ``None`` omits
+        the field, which a few strict OpenAI-proxied routes require -- that
+        deviation is discovered by ``detect_adapter`` and recorded in the
+        reference's notes, never applied silently. ``extra_body`` carries the
+        reasoning-disable field (see ``detect_adapter``); without it a reasoning
+        model spends ``max_tokens`` on hidden thinking and every sample
+        normalises to empty.
         """
         if self.protocol == "openai-chat":
             body: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": max_tokens,
-                "temperature": temperature,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
@@ -257,10 +259,11 @@ class Endpoint:
             body = {
                 "model": self.model,
                 "max_tokens": max_tokens,
-                "temperature": temperature,
                 "system": system,
                 "messages": [{"role": "user", "content": prompt}],
             }
+        if temperature is not None:
+            body["temperature"] = temperature
         if extra_body:
             body.update(extra_body)
         if stream:
@@ -482,26 +485,65 @@ class ReasoningAdapter:
     extra_body: dict = field(default_factory=dict)
     max_tokens: int = PROBE_MAX_TOKENS
     post_reasoning: bool = False
+    #: A few strict OpenAI-proxied gateway routes reject the paper's explicit
+    #: ``temperature`` with ``Unsupported parameter: temperature``. Discovered
+    #: once and recorded, so the reference's notes say which protocol it was
+    #: drawn under; the default stays "send 1.0".
+    omit_temperature: bool = False
+
+    @property
+    def temperature(self) -> float | None:
+        return None if self.omit_temperature else PROBE_TEMPERATURE
+
+
+#: How an upstream says it will not take the explicit temperature. Matched
+#: case-insensitively against the error body; kept narrow so a generic 400 is
+#: not mistaken for this.
+_TEMPERATURE_REJECTED = "unsupported parameter: temperature"
 
 
 def detect_adapter(
     endpoint: Endpoint, cell_id: str = "random-number-1-100:en"
 ) -> ReasoningAdapter:
-    """Find the reasoning-disable field the endpoint accepts. One probe each,
-    bare request as fallback, post-reasoning budget as the last resort."""
+    """Find the reasoning-disable field the endpoint accepts, and whether it
+    takes the paper's explicit temperature. One probe each, bare request as
+    fallback, post-reasoning budget as the last resort."""
     from . import battery  # local import: battery imports stats, not transport
 
     system = battery.system_prompt(cell_id)
     prompt = battery.pick_paraphrase(cell_id, random.Random(0))
+
+    # Send the paper temperature first; if the upstream names it as unsupported,
+    # drop it for every subsequent probe and flag the reference as drawn without
+    # it. No silent fallback: the flag rides into the notes.
+    first = endpoint.complete(system, prompt, temperature=PROBE_TEMPERATURE)
+    omit_temperature = bool(
+        first.error and _TEMPERATURE_REJECTED in first.error.lower()
+    )
+
+    def probe(extra_body: dict | None = None) -> Completion:
+        return endpoint.complete(
+            system,
+            prompt,
+            temperature=None if omit_temperature else PROBE_TEMPERATURE,
+            extra_body=extra_body,
+        )
+
     for strategy, body in REASONING_DISABLE_BODIES.get(endpoint.protocol, []):
-        completion = endpoint.complete(system, prompt, extra_body=body)
+        completion = probe(body)
         if completion.error is None and completion.text.strip():
-            return ReasoningAdapter(strategy, body, PROBE_MAX_TOKENS, False)
-    bare = endpoint.complete(system, prompt)
+            return ReasoningAdapter(
+                strategy, body, PROBE_MAX_TOKENS, False, omit_temperature
+            )
+    bare = probe()
     if bare.error is None and bare.text.strip():
-        return ReasoningAdapter("none", {}, PROBE_MAX_TOKENS, False)
+        return ReasoningAdapter("none", {}, PROBE_MAX_TOKENS, False, omit_temperature)
     return ReasoningAdapter(
-        "none", {}, POST_REASONING_MAX_TOKENS, post_reasoning=True
+        "none",
+        {},
+        POST_REASONING_MAX_TOKENS,
+        post_reasoning=True,
+        omit_temperature=omit_temperature,
     )
 
 

@@ -157,13 +157,16 @@ def cmd_enroll(args: argparse.Namespace) -> int:
         # and the tokenizer probes must use it, and its name goes in the notes
         # so a later reader can compare two fingerprints' conditions.
         adapter = detect_adapter(endpoint, next(iter(cells)))
+        temperature_note = "omitted" if adapter.omit_temperature else str(
+            PROBE_TEMPERATURE
+        )
         reference = reference_mod.new_reference(
             endpoint.model,
             source=f"{endpoint.mode}:{endpoint.model}",
             samples_per_cell=args.samples,
             notes=(
                 f"protocol={PROBE_PROTOCOL} preset={args.preset} "
-                f"temperature={PROBE_TEMPERATURE} max_tokens={adapter.max_tokens} "
+                f"temperature={temperature_note} max_tokens={adapter.max_tokens} "
                 f"reasoning={adapter.strategy}"
                 + (" post_reasoning" if adapter.post_reasoning else "")
             ),
