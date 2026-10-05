@@ -234,7 +234,10 @@ a new resource UUID and drops only obsolete session-resume pointers. Published G
 branches, platform memory, room messages and task records remain. Old cleanup commands
 keep their original UUID and parked backend worktree path; they cannot target the
 replacement. On a cloud host, cleanup removes the room's directories; a session
-home archived to the bucket is deleted from there. The host itself is the pool's,
+home archived to the bucket is deleted from there once the host that wrote
+the archive found everything in it pushed. An archive holding unpushed work
+keeps cleanup pending before the claim, and unarchiving restores the home
+from it. The host itself is the pool's,
 and the pool releases it once it runs no sandbox and no home is left on it.
 A session's whole cloud VM is released by the next pool sweep once cleanup has removed
 its directory.
