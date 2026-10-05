@@ -42,7 +42,7 @@
   "roomArchivedUnarchiveFirst": "This channel is archived. Unarchive it before continuing work",
   "projectRootCannotArchive": "The project itself can't be archived",
   "unarchiveWhileSessionStopping": "The session is stopping and saving its record. You can unarchive once that's done",
-  "topicArchivedFrozen": "This channel is archived and its workspace is frozen. Turn its conclusion into a new channel instead",
+  "topicArchivedFrozen": "This channel is archived. Unarchive it to turn a message into a task",
   "reviewerRequired": "Choose a reviewer, or set a default reviewer in project settings",
   "topicArchivedDocFrozen": "This channel is archived. Its document is frozen and can't be edited",
   "sessionExpired": "Your session is invalid or has expired. Sign in again",
@@ -991,5 +991,6 @@
   "personalTeamCannotDisband": "Your personal team belongs to your account and can't be disbanded",
   "personalTeamCannotTransfer": "Your personal team belongs to your account and can't be transferred",
   "teamTransferToSelf": "You already own this team",
-  "teamHasProjects": "This team still has projects that aren't archived. Archive them all before disbanding it"
+  "teamHasProjects": "This team still has projects that aren't archived. Archive them all before disbanding it",
+  "privateMessageStaysPrivate": "A message in a direct chat cannot become a task"
 }

@@ -690,15 +690,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  /** 转出来的东西：房间里的消息变成这个房间的一个任务，私聊里的变成一个新房间。
-   *  调用方要据此决定去哪儿——打开那个任务，还是跳进那个房间。 */
-  async function upgradeMessage(messageId: string): Promise<{ kind: 'card' | 'room'; id: string } | null> {
+  /** 转为任务：频道里的一条消息变成这个频道的一个任务，返回任务的 id。 */
+  async function upgradeMessage(messageId: string): Promise<string | null> {
     try {
       const made = await upgradeBlock(messageId)
       await refreshTopics()
-      // 任务带着「我挂在哪个房间」，房间没有这个问题——这就是分辨它们的那一位。
-      const kind = 'room_id' in made ? 'card' : 'room'
-      return { kind, id: made.id }
+      return made.id
     } catch (e) {
       reportError(e, t('shell.workspaceErrors.convertMessage'))
       return null

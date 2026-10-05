@@ -458,7 +458,6 @@
       "reply": "Reply",
       "react": "Add reaction",
       "upgrade": "Turn into a task",
-      "upgradeToTopic": "Move to a new channel",
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
       "upgradedToTask": "Moved to a task",

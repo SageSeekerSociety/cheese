@@ -445,13 +445,10 @@ function handleMentionClick(handle: string) {
   void router.push(userRefRoute(handle, props.projectId))
 }
 
-// 转为任务 from a message bubble. 房间里的消息变成这个房间的一个任务，私聊里的
-// 变成一个新房间——两种落点，两种去处。
+// 转为任务 from a message bubble: the message becomes a task in this channel.
 async function handleUpgradeMessage(messageId: string) {
-  const upgraded = await store.upgradeMessage(messageId)
-  if (!upgraded) return
-  if (upgraded.kind === 'card') onOpenCard(upgraded.id)
-  else openTopic(upgraded.id)
+  const taskId = await store.upgradeMessage(messageId)
+  if (taskId) onOpenCard(taskId)
 }
 
 // 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。

@@ -42,7 +42,7 @@
   "roomArchivedUnarchiveFirst": "频道已归档，请先取消归档再继续工作",
   "projectRootCannotArchive": "项目本体不能归档",
   "unarchiveWhileSessionStopping": "会话正在停止并保存记录，确认完成后即可取消归档",
-  "topicArchivedFrozen": "频道已归档（工作面冻结），请从结论升级成新频道",
+  "topicArchivedFrozen": "频道已归档，取消归档后才能把消息转为任务",
   "reviewerRequired": "需要指定由谁审阅，或在项目设置中设置默认审阅的人",
   "topicArchivedDocFrozen": "频道已归档，文档已定格，不能再编辑",
   "sessionExpired": "登录状态无效或已过期，请重新登录",
@@ -991,5 +991,6 @@
   "personalTeamCannotDisband": "个人团队跟着你的账号，不能解散",
   "personalTeamCannotTransfer": "个人团队跟着你的账号，不能转让",
   "teamTransferToSelf": "你已经是这个团队的所有者了",
-  "teamHasProjects": "团队里还有没归档的项目，把它们都归档后才能解散"
+  "teamHasProjects": "团队里还有没归档的项目，把它们都归档后才能解散",
+  "privateMessageStaysPrivate": "私聊里的消息不能转为任务"
 }

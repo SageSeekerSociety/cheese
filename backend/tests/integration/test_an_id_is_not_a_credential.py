@@ -189,30 +189,6 @@ def test_a_member_who_names_someone_else_upgrades_a_card_as_themselves(client):
     ]
 
 
-def test_a_member_who_names_someone_else_upgrades_a_room_as_themselves(client):
-    """私聊里的一条升级出来的是一个房间：房间的主人同样是升级的那个人。"""
-    p = _team(client)
-    dm = client.get(
-        f"/projects/{p['id']}/private-chat",
-        params={"user_handle": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert dm.status_code == 200, dm.text
-    block = _insert_block(client, p["id"], dm.json()["data"]["id"])
-
-    r = client.post(
-        f"/blocks/{block}/upgrade",
-        json={"created_by": "bob"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-    wait_work_idle()
-
-    roster = client.get(f"/topics/{r.json()['data']['id']}/members").json()["data"]
-    owners = [m["member_handle"] for m in roster["data"] if m["role"] == "owner"]
-    assert owners == ["alice"]
-
-
 def test_a_member_who_names_someone_else_reacts_as_themselves(client):
     p = _team(client)
     block = _insert_block(client, p["id"], p["root_topic_id"])
