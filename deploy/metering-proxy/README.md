@@ -137,15 +137,44 @@ ledger ingestion.
 
 ## The Claude credential
 
-The proxy holds the platform's only Claude credential, in
-`<proxy home>/claude-credential/credential`, and no session holds any: every
+The proxy holds the platform's Claude credentials, and no session holds any: every
 Claude Code session boots on `NO_LOGIN_PLACEHOLDER` (`cheese_billing_core.py`),
 which authenticates nothing. On a request bound for Anthropic the proxy puts
-the credential in place of the placeholder; on one admission routes to the
+the selected account's credential in place of the placeholder; on one admission routes to the
 gateway it puts the project's virtual key.
 
-The file is re-read on every request, so logging in, switching account and
-logging out take effect at the next request of every running session. Use
+The primary account stays in `claude-credential/credential`. Add another account
+with `claude-login.sh --account NAME setup-token`; it is stored in
+`claude-credential/accounts/NAME/credential`. Set its egress with
+`claude-login.sh --account NAME egress set URL` before installing its credential.
+Each account needs its own subscription allowance; two tokens for the same
+account share that account's limits.
+
+New conversations are distributed across available accounts. Each conversation
+keeps its account until that account returns HTTP 429. The proxy records a
+persistent cooldown and retries the rejected request once on another available
+account, using the same model and request body. Subsequent requests stay on that
+account. Existing healthy conversations do not move when another account recovers.
+
+Cooldowns honor `Retry-After` and the binding
+`anthropic-ratelimit-unified-reset` header. A quota error without a reset time
+disables the account until an operator runs
+`claude-login.sh --account NAME cooldown-reset`. Other 429s start with a
+five-minute cooldown and back off to one hour after repeated failures. After
+cooldown, one new conversation tests the account; concurrent requests continue
+using healthy accounts. A failed recovery request extends cooldown. State is
+stored in `cooldowns.json` beside the primary credential and survives restarts.
+
+Only complete request bodies up to 64 MiB can be replayed. They are spooled with
+at most 1 MiB in memory per request. Early upload rejections and larger requests
+retain the original 429, while still cooling the account. Once response streaming
+starts, the proxy never replays a request. If every account is cooling, it returns
+429 without contacting the provider.
+
+The replay adapter uses the image's pinned mitmproxy 12.1.2 transport. CI runs
+real HTTP/1.1 and HTTP/2 proxy tests against a local fake upstream before release.
+
+Credential files are re-read on each request. Use
 `<proxy home>/claude-login.sh` on the box, as the directory's owner (every release installs it there):
 
 - `claude-login.sh setup-token` stores a one-year token from

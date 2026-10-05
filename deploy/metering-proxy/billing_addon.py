@@ -2,9 +2,9 @@
 
 This sits between a caller's Claude Code and the upstream. The caller is a
 session on the platform's central session host, and its Authorization is a
-placeholder that authenticates nothing. This proxy holds the platform's only
-Claude credential and puts it on each request bound for Anthropic, so logging
-the platform in or out reaches every running session at its next request.
+placeholder that authenticates nothing. This proxy holds the platform's
+Claude credentials and selects an account for each conversation bound for
+Anthropic, retaining that account until it is unavailable.
 
 That placement makes this the only point that can:
   - meter a subscription turn's real cost (the subscription path deliberately
@@ -61,6 +61,8 @@ from urllib.request import Request, urlopen
 from mitmproxy import http, tls
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from claude_accounts import ClaudeAccounts  # noqa: E402
+from claude_retry import ATTEMPTS, Attempt, install as install_retry  # noqa: E402
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
     BINDING,
@@ -124,6 +126,13 @@ CREDENTIAL = PlatformCredential(
         )
     )
 )
+CLAUDE_ACCOUNTS = ClaudeAccounts(CREDENTIAL)
+
+
+def load(loader):
+    install_retry()
+
+
 # The proxy's own credential rides every admission call: only a caller holding
 # it is handed a gateway project's key (the session's bearer names the room,
 # and a session must never hold that key).
@@ -441,15 +450,17 @@ def http_connect(flow: http.HTTPFlow) -> None:
     )
 
 
-def _leave_through_egress(flow: http.HTTPFlow) -> bool:
+def _leave_through_egress(flow: http.HTTPFlow, credential=None) -> bool:
     """Send a request carrying the platform's credential out through the
     credential's egress, when it has one. Only these requests: the gateway,
     the answers given here and everything tunnelled raw keep their own route.
     No egress reachable means no request: the upstream connection fails and
     the client is told so, never quietly sent direct instead. False when the
     request has been refused here instead."""
-    egress = CREDENTIAL.egress()
+    egress = (credential or CREDENTIAL).egress()
     if egress is None:
+        flow.server_conn.via = None
+        flow.metadata.pop("cheese_egress", None)
         return True
     if egress == _REFUSED_EGRESS.get("egress"):
         # Refused the proxy's credentials once, it will again until someone
@@ -642,10 +653,12 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
 
 
 def client_disconnected(client) -> None:
-    """A long-lived proxy must not accumulate one entry per connection ever
-    made; the proven project does not outlive the connection that established
-    it — and a recycled connection id must not inherit the previous caller's
-    project."""
+    """Release request spools and attribution when their connection closes."""
+    for flow_id, attempt in list(ATTEMPTS.items()):
+        if attempt.flow.client_conn.id == client.id:
+            CLAUDE_ACCOUNTS.release(attempt.account, flow_id)
+            attempt.close()
+            ATTEMPTS.pop(flow_id)
     _SCOPED_BY_CLIENT.pop(getattr(client, "id", ""), None)
     _EGRESS_AUTH_BY_CLIENT.pop(getattr(client, "id", ""), None)
 
@@ -954,8 +967,37 @@ async def _refresh_credential() -> None:
     """Renew the platform's pair before a request needs it, off the event loop:
     the refresh is a blocking HTTP call, and one slow token endpoint must not
     stall every other flow through the proxy."""
-    if CREDENTIAL.refresh_due():
-        await asyncio.to_thread(CREDENTIAL.refresh_if_due)
+    for credential in CLAUDE_ACCOUNTS.accounts().values():
+        if credential.refresh_due():
+            await asyncio.to_thread(credential.refresh_if_due)
+
+
+def _retry_claude(attempt):
+    flow = attempt.flow
+    CLAUDE_ACCOUNTS.reject(
+        attempt.account, flow.response.headers, flow.response.content or b""
+    )
+    if attempt.replayed or not attempt.complete or attempt.size > 64 * 1024 * 1024:
+        return False
+    selected = CLAUDE_ACCOUNTS.select(
+        tuple(flow.metadata.get("cheese_attr", ())),
+        excluded=(attempt.account,),
+        request_id=flow.id,
+    )
+    if selected is None:
+        return False
+    name, credential = selected
+    # A different egress cannot reuse the first account's connection.
+    if not _leave_through_egress(flow, credential):
+        CLAUDE_ACCOUNTS.release(name, flow.id)
+        return False
+    token, _ = credential.token()
+    flow.request.headers["authorization"] = f"Bearer {token}"
+    logger.info(
+        "Claude request %s switches %s -> %s after 429", flow.id, attempt.account, name
+    )
+    attempt.account = name
+    return True
 
 
 def _refuse_without_credential(flow, verdict, missing: str) -> None:
@@ -1047,11 +1089,30 @@ def _route(
                 return
 
     # Everything from here goes to Anthropic, on the platform's credential.
+    selected = None
     if _caller_bearer(flow) == NO_LOGIN_PLACEHOLDER:
-        token, missing = CREDENTIAL.token()
+        if is_messages:
+            selected = CLAUDE_ACCOUNTS.select(
+                tuple(flow.metadata.get("cheese_attr", ())), request_id=flow.id
+            )
+            if selected is None and CLAUDE_ACCOUNTS.state:
+                _refuse(
+                    flow,
+                    429,
+                    "rate_limit_error",
+                    "cheese: all Claude accounts are cooling down",
+                )
+                wait = CLAUDE_ACCOUNTS.retry_after()
+                if wait is not None:
+                    flow.response.headers["retry-after"] = str(wait)
+                return
+        credential = selected[1] if selected else CREDENTIAL
+        token, missing = credential.token()
         if token:
             flow.request.headers["authorization"] = f"Bearer {token}"
-            if not _leave_through_egress(flow):
+            if not _leave_through_egress(flow, credential):
+                if selected:
+                    CLAUDE_ACCOUNTS.release(selected[0], flow.id)
                 return
         else:
             _refuse_without_credential(flow, verdict, missing)
@@ -1059,6 +1120,8 @@ def _route(
 
     if is_messages:
         if METER.would_exceed(TOKEN_CAP):
+            if selected:
+                CLAUDE_ACCOUNTS.release(selected[0], flow.id)
             used = METER.used()
             _refuse(
                 flow,
@@ -1078,6 +1141,23 @@ def _route(
 
     # A stale x-api-key would override the session's bearer upstream.
     flow.request.headers.pop("x-api-key", None)
+    if selected:
+        attempt = Attempt(flow, selected[0], _retry_claude)
+        ATTEMPTS[flow.id] = attempt
+        if buffered:
+            attempt.tee(flow.request.raw_content or b"")
+            attempt.complete = True
+        else:
+            rewrite = flow.request.stream
+
+            def retain(chunk):
+                out = rewrite(chunk) if callable(rewrite) else chunk
+                attempt.tee(out)
+                if not chunk:
+                    attempt.complete = True
+                return out
+
+            flow.request.stream = retain
 
 
 class GatewayStream(StreamingUsageExtractor):
@@ -1116,6 +1196,15 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None:
         return
+    attempt = ATTEMPTS.get(flow.id)
+    if attempt:
+        if resp.status_code == 429:
+            resp.stream = False
+            return
+        if resp.status_code == 200:
+            CLAUDE_ACCOUNTS.accepted(attempt.account, flow.id)
+        else:
+            CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
     if flow.metadata.get("cheese_chatgpt"):
         resp.stream = True
         return
@@ -1398,6 +1487,10 @@ def _answer_a_reached_gateway_cap(flow: http.HTTPFlow) -> bool:
 
 
 def error(flow: http.HTTPFlow) -> None:
+    attempt = ATTEMPTS.pop(flow.id, None)
+    if attempt:
+        CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
+        attempt.close()
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
     chatgpt_account = flow.metadata.get("cheese_chatgpt_account")
@@ -1423,6 +1516,10 @@ def error(flow: http.HTTPFlow) -> None:
 
 
 def response(flow: http.HTTPFlow) -> None:
+    attempt = ATTEMPTS.pop(flow.id, None)
+    if attempt:
+        CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
+        attempt.close()
     if _answer_a_missed_binding(flow):
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
