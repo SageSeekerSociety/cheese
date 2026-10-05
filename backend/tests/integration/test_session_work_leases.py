@@ -24,6 +24,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import lease_claim
 from app.domain.machine import session_work as work_lease
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
@@ -1494,3 +1495,26 @@ async def test_an_installation_still_running_elsewhere_keeps_its_claim(
             await asyncio.sleep(0.1)
     assert started is not None, answer
     assert hub.exec.await_count == 1
+
+
+async def test_a_wait_that_runs_out_on_the_rooms_lock_still_answers_preparing(
+    client, monkeypatch
+):
+    """A switch of the room's machine holds the room while it pushes each
+    session's work, which can take longer than a start of a session waits. A
+    start that runs out of time still waiting for the room answers that the
+    machine is being prepared, as it does when any other step outlasts it, and
+    the session asks again."""
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 0.5)
+    path, token, _session_id = await _a_room_on_its_own_machine(client)
+    room = uuid.UUID(path.split("/")[2])
+
+    async with client.test_factory() as switching:
+        await TopicService(switching).lock_for_execution(room)
+        response = client.post(
+            path, headers={"X-Cheese-Token": token}, json={"timeout": 0.001}
+        )
+        await switching.rollback()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"].get("preparing") is True
