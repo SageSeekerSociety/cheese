@@ -6,20 +6,21 @@ import BrandLockup from '@/components/common/BrandLockup.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import i18n, { t } from '@/i18n'
 import { docsUrl } from '@/lib/docsSite'
-import AccountService from '@/services/account'
 
 // The bar and footer shared by the public pages: the homepage for the people who
 // build projects, the solutions page for the schools, companies and research
 // teams that bring them in, and the download page.
+//
+// Whether the visitor is signed in is passed in by the page: this piece only
+// draws, and the pages that know the session hand it down.
 
-defineProps<{ page: 'home' | 'solutions' | 'download' }>()
+const props = defineProps<{ page: 'home' | 'solutions' | 'download'; loggedIn: boolean }>()
 
-const loggedIn = computed(() => AccountService.loggedIn)
 // `/` sends a signed-in visitor to their work, so the way back to the
 // introduction for them is `/about`, which always shows it.
-const homeHref = computed(() => (loggedIn.value ? '/about' : '/'))
-const entryHref = computed(() => (loggedIn.value ? '/' : '/account/signin'))
-const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
+const homeHref = computed(() => (props.loggedIn ? '/about' : '/'))
+const entryHref = computed(() => (props.loggedIn ? '/' : '/account/signin'))
+const entryLabel = computed(() => (props.loggedIn ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
 
 // On a phone the nav links do not fit beside the lockup, so the same links
 // live behind a disclosure button instead: without it /download and /docs/ are

@@ -9,6 +9,10 @@ import LandingUseCases from './LandingUseCases.vue'
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
+import AccountService from '@/services/account'
+
+// The shell only draws; who is signed in comes from the session here.
+const loggedIn = computed(() => AccountService.loggedIn)
 
 // The manifesto lights up clause by clause once it is on screen, beside the film
 // that shows it happening, and goes dim again once it has left, to replay.
@@ -164,7 +168,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <LandingShell v-slot="{ entryHref, entryLabel }" page="home">
+  <LandingShell v-slot="{ entryHref, entryLabel }" page="home" :logged-in="loggedIn">
     <section class="hero">
       <div class="hero-scene">
         <BrandScene scene="neuro" />
