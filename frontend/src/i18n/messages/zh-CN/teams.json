@@ -31,7 +31,10 @@
   },
   "members": {
     "invite": "邀请成员",
-    "inviteUidHint": "当前只支持通过 UID 邀请，UID 在对方的头像菜单里",
+    "inviteLabel": "用户名或邮箱",
+    "invitePlaceholder": "输入完整的用户名或邮箱",
+    "inviteNotFound": "找不到这个用户名或邮箱",
+    "inviteLookupFailed": "查找失败，请重试",
     "roleLabel": "角色",
     "inviteMessageLabel": "邀请消息（可选）",
     "inviteMessagePlaceholder": "请输入邀请说明...",

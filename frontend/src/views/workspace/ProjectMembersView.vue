@@ -19,7 +19,6 @@
 // `DELETE /projects/{id}/membership` 认的恒是当前身份那个人），只有所有者不行——他
 // 换一颗「转让项目」（他一走项目就没人管，得先把手交出去）。团队成员退的也是**这个
 // 项目**：他还在小队里，小队别的项目照常，回来要人再请一次。
-import type { LookedUpUser } from '@/api'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
@@ -28,6 +27,7 @@ import { useRouter } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useAccountLookup } from '@/composables/useAccountLookup'
 import { provideRevealGate } from '@/composables/useRevealGate'
 import { useRowMenu } from '@/composables/useRowMenu'
 
@@ -37,7 +37,6 @@ import {
   inviteExternalMember,
   listProjectAgents,
   listProjectInvitations,
-  lookupUser,
   removeProjectMember,
   revokeInvitation,
 } from '@/api'
@@ -259,39 +258,15 @@ const canTransfer = computed(() => project.value !== null && (isOwner.value || c
 // 精确匹配——邀请是把人放进项目的动作，「我以为我请的是他」这种错必须在按下按钮之
 // 前就露出来。
 const inviteOpen = ref(false)
-const inviteQuery = ref('')
 const inviting = ref(false)
-const lookingUp = ref(false)
-const found = ref<LookedUpUser | null>(null)
-const lookupError = ref<string | null>(null)
-let lookupTimer: ReturnType<typeof setTimeout> | null = null
-let lookupSeq = 0
-
-async function runLookup(raw: string) {
-  const q = raw.trim()
-  found.value = null
-  lookupError.value = null
-  if (!q) return
-  const seq = ++lookupSeq
-  lookingUp.value = true
-  try {
-    const user = await lookupUser(q)
-    // 打字比请求快：只认最后一次发出去的那个，否则先回来的旧结果会盖掉新的。
-    if (seq !== lookupSeq) return
-    found.value = user
-  } catch (e) {
-    if (seq !== lookupSeq) return
-    lookupError.value =
-      e instanceof ApiError && e.status === 404 ? t('work.members.notFound') : messageOf(e, t('work.members.failed'))
-  } finally {
-    if (seq === lookupSeq) lookingUp.value = false
-  }
-}
-
-watch(inviteQuery, (raw) => {
-  if (lookupTimer) clearTimeout(lookupTimer)
-  lookupTimer = setTimeout(() => void runLookup(raw), 350)
-})
+const {
+  query: inviteQuery,
+  found,
+  lookingUp,
+  lookupError,
+} = useAccountLookup((e) =>
+  e instanceof ApiError && e.status === 404 ? t('work.members.notFound') : messageOf(e, t('work.members.failed'))
+)
 
 // 已经在项目里的人（团队成员、所有者、已有的外部成员）不用再邀请——后端也会拒，但那
 // 是按下按钮之后才知道。
