@@ -83,15 +83,6 @@ const SHOTS = {
     const end = await page.getByRole('tab', { name: '成员列表' }).boundingBox()
     return { clip: { x: top.x - 24, y: top.y - 16, width: right.x + right.width + 24 - (top.x - 24), height: end.y - top.y - 8 } }
   }],
-  'new-project-team': [desktop, async (page) => {
-    await page.goto(`${APP}/teams/team-1`)
-    await settle(page)
-    await page.getByRole('button', { name: '新建项目' }).first().click()
-    await page.getByLabel('项目名称').fill('数据结构大作业')
-    await page.waitForTimeout(500)
-    const box = await page.locator('.v-overlay__content').filter({ hasText: '新建项目' }).last().boundingBox()
-    return { clip: { x: box.x - 16, y: box.y - 16, width: box.width + 32, height: box.height + 32 } }
-  }],
   'm-work-home': [phone, async (page) => { await page.goto(`${APP}/`); await settle(page) }],
   'm-room': [phone, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/topics/${rooms['报名表单改版']}`); await settle(page, 2000) }],
 }
