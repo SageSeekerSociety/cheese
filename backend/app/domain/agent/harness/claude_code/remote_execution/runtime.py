@@ -2031,26 +2031,6 @@ def bridge(state, server, *, call=None):
         thread.join()
 
 
-def terminate_unrequested(state, named):
-    """Stop an executor that refused `shutdown`: one started before stopping was
-    a request. Signal the pid it reports once it is seen running this state's
-    service: whatever answers on a room's socket is not proof of who is behind
-    it, and a sandboxed room names the state `/proc/self/fd/N`, resolved here."""
-    try:
-        pid = request(state, "ping")["pid"]
-    except (OSError, RuntimeError):
-        return
-    running = subprocess.run(
-        ["ps", "-ww", "-p", str(pid), "-o", "args="],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.rstrip()
-    spellings = {str(named), str(state), str(Path(state).resolve())}
-    if any(running.endswith(f"serve --state {path}") for path in spellings):
-        os.kill(pid, signal.SIGTERM)
-
-
 def main():
     import argparse
 
@@ -2074,7 +2054,8 @@ def main():
             if not state.exists():
                 return
         except RuntimeError:
-            terminate_unrequested(state, args.state)
+            # Answered, then refused: old enough that stopping was not a request.
+            beside("predecessor")["end_unrequested"](state, args.state)
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
         with os.fdopen(os.open(state / "service.lock", flags, 0o600), "a") as lock_file:
             for _ in range(100):
