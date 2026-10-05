@@ -851,14 +851,6 @@ h1 {
   color: var(--warn-ink);
 }
 
-.callout.tip {
-  background: var(--accent-wash);
-}
-
-.callout.tip .ico {
-  color: var(--accent-ink);
-}
-
 .callout-label {
   display: block;
   margin-bottom: 2px;
@@ -923,8 +915,7 @@ h1 {
 
 /* ```prompt — a message to send to 芝士, copyable. */
 .code.say {
-  background: var(--accent-wash);
-  border-color: transparent;
+  background: var(--surface);
 }
 
 .code.say .code-bar {
@@ -934,7 +925,7 @@ h1 {
 
 .code.say .code-lang {
   display: inline-flex;
-  color: var(--accent-ink);
+  color: var(--muted);
   align-items: center;
   gap: 6px;
 }
