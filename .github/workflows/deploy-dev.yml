@@ -19,13 +19,14 @@ name: Deploy (dev/test box)
 # which ends app-router's sockets 30 s later — pulls and migrates, and then
 # refuses to switch while app-router names BACKEND_PORT_NEXT or
 # FRONTEND_PORT_NEXT, as it does whenever the `-b` slots serve. The box's :8080
-# and :80 stay up through that (they live in frontend.conf). Once a revert has
-# landed, no commit on main has the slots any more, and every automatic deploy
-# of main does exactly that, until someone dispatches this workflow on the last
-# SHA that contains them (#2770): that moves back to the first slots, and the
-# next release of main goes through. Before a revert lands, or for a manual
-# dispatch of an older SHA, do the same first when the last deploy's log ends
-# with "backend-b and frontend-b serve this release".
+# and :80 stay up through that (they live in frontend.conf). If a revert lands
+# while the `-b` slots serve, no commit on main has the slots any more, and
+# every automatic deploy of main does exactly that, until someone dispatches
+# this workflow on the last SHA that contains them (#2770): that moves back to
+# `backend` and `frontend`, and the next release of main goes through. From
+# those, an older commit releases as it always did. Before a revert lands, or
+# for a manual dispatch of an SHA from before the slots, do the same first when
+# the last deploy's log ends with "backend-b and frontend-b serve this release".
 # deploy/tests/test-pre-slot-release.sh checks both states against the last
 # commit before the slots.
 on:
