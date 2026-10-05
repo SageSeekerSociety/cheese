@@ -27,6 +27,7 @@ export function newStatusAt(editor: Editor): void {
   const buttons = (Object.keys(STATUS_KINDS) as StatusKind[]).map((k) => {
     const button = document.createElement('button')
     button.type = 'button'
+    button.className = 'doc-menu__item'
     button.textContent = `${STATUS_KINDS[k]} ${t(`work.room.doc.blocks.statusKinds.${k}`)}`
     button.setAttribute('aria-pressed', String(k === kind))
     button.addEventListener('click', () => {

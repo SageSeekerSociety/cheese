@@ -717,6 +717,7 @@ details[open]::details-content {
 }
 .room-happening :deep(.mention) {
   color: var(--muted);
+  background: none;
   cursor: pointer;
 }
 .room-happening :deep(.mention:hover) {

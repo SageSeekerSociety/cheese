@@ -67,8 +67,7 @@ beforeEach(() => {
   )
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     if (this.matches('[data-comments-panel]')) return rect(sidebarLeft ?? bodyRight, 40, bodyRight, 600)
-    if (this.classList.contains('doc-body') || this.classList.contains('doc-reading'))
-      return rect(100, 40, bodyRight, 600)
+    if (this.classList.contains('doc-body') || this.classList.contains('doc-pane')) return rect(100, 40, bodyRight, 600)
     if (this.classList.contains('doc-editor-wrap')) return rect(100, 60 - scroll, bodyRight, 800 - scroll)
     return rect(100, 60 - scroll, bodyRight, 600)
   })
@@ -94,7 +93,7 @@ async function mountDoc(html: string, askAgent = true) {
     defineComponent({
       setup() {
         return () =>
-          h('div', { class: 'doc-reading' }, [
+          h('div', { class: 'doc-pane' }, [
             h('div', { class: 'doc-body' }, [
               h(DocSurface, {
                 ref: surface,

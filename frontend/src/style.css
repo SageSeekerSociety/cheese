@@ -185,15 +185,21 @@
   --usage-write: #3d5a80;
 
   /* ---- Chart series ----
-     The series of a document's chart block, in order. Six hues far enough
-     apart to tell bars and lines from each other, none of them the amber of
-     the primary action. */
-  --chart-1: #3d6bb3;
-  --chart-2: #2a9d8f;
-  --chart-3: #d9822b;
-  --chart-4: #8a63c2;
-  --chart-5: #c9506f;
-  --chart-6: #6b7b8c;
+     The series of a document's chart block, in this fixed order (design-system
+     §1.7): blue, teal, clay, violet, olive, rose, sky, ochre. One chroma and
+     two lightness steps, so they read as one family; the warm ones are earthy
+     rather than signal colours, away from amber and the status colours.
+     Validated with the dataviz checks against --surface: every neighbour
+     apart under protan/deutan (ΔE ≥ 13) and normal vision (ΔE ≥ 17), all
+     ≥ 3:1. A ninth series is never a new colour: it folds into 「其他」. */
+  --chart-1: #2863ab;
+  --chart-2: #0e9a94;
+  --chart-3: #9a4729;
+  --chart-4: #6f4fa1;
+  --chart-5: #8a8c34;
+  --chart-6: #9a3e67;
+  --chart-7: #1f93b8;
+  --chart-8: #ac7d1b;
 
   /* ---- Radius ladder ----
      Theme-independent (a corner does not change shape in the dark), so these
@@ -459,12 +465,14 @@
   --usage-ask: #4fb8aa;
   --usage-write: #7d9cc4;
 
-  --chart-1: #7aa2e3;
-  --chart-2: #4fb8aa;
-  --chart-3: #eba25a;
-  --chart-4: #ad8fe2;
-  --chart-5: #e57f99;
-  --chart-6: #9eacba;
+  --chart-1: #346fb8;
+  --chart-2: #18a7a1;
+  --chart-3: #a85334;
+  --chart-4: #7b5aae;
+  --chart-5: #969841;
+  --chart-6: #a74a72;
+  --chart-7: #32a0c5;
+  --chart-8: #b8892d;
 }
 
 /* Paint the root element itself, so the gap between "HTML parsed" and "Vue has
@@ -689,13 +697,17 @@
    再上移一档，不然会和浮层底一样亮、看不见；浅色下两者本来就分得开，不动。 */
 .v-menu > .v-overlay__content,
 .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content,
-.mention-menu {
+.mention-menu,
+.doc-menu,
+.doc-pop {
   --surface: var(--raised);
 }
 
 :root[data-theme='dark'] .v-menu > .v-overlay__content,
 :root[data-theme='dark'] .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content,
-:root[data-theme='dark'] .mention-menu {
+:root[data-theme='dark'] .mention-menu,
+:root[data-theme='dark'] .doc-menu,
+:root[data-theme='dark'] .doc-pop {
   --fill: var(--fill-2);
 }
 
@@ -1292,25 +1304,29 @@ button:not(.v-btn) {
 
 /* 引用 chip：`<@handle>` `<&path>` `<#话题id>` 展开出来的可点小方块。
    定义放在这里而不是产出它的那一个组件里：这份 markup 由 lib/refChip 一处
-   产出，用它的地方却早就不止一处——对话栏、现场、动作卡。以前它写在组件自己的
+   产出，用它的地方却早就不止一处——对话栏、现场、动作卡、文档。以前它写在组件自己的
    scoped 样式里，于是换一个 panel 渲染同一段字，chip 就退化成一行普通文字：点得到，
-   看不出来能点。文档编辑器里那几颗另有自己的色调（品牌主色，不是这里的琥珀墨色），
-   留它自己覆盖。 */
+   看不出来能点。
+   @人 是浅琥珀底、琥珀墨色字：它会叫到一个人，是这段字里要紧的那一处。话题和文件只是
+   去处，中性底、正文色。悬停只加深底色。 */
 .mention {
-  color: var(--accent-ink);
-  background: var(--fill);
+  padding: 0 4px;
   border-radius: var(--radius-sm);
-  padding: 0 3px;
   font-weight: 500;
+  color: var(--accent-ink);
+  background: var(--accent-wash);
   cursor: pointer;
-}
-/* @人 是链接，常年带下划线；文件/话题 chip 保持方块样，只在悬停时加线。 */
-.mention:not(.file-ref):not(.topic-ref) {
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .mention:hover {
-  text-decoration: underline;
+  background: color-mix(in srgb, var(--accent) 18%, var(--accent-wash));
+}
+.mention:is(.file-ref, .topic-ref) {
+  color: var(--ink);
+  background: var(--fill-2);
+}
+.mention:is(.file-ref, .topic-ref):hover {
+  background: var(--line-2);
 }
 /* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
 .mention--static {
