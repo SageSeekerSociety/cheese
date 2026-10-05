@@ -98,3 +98,46 @@ describe('a chart in the document panel', () => {
     expect(prose.querySelector('[data-block="chart"]')).not.toBeNull()
   })
 })
+
+/** The editor in the panel, to put the caret somewhere before pressing keys. */
+function editorIn(prose: HTMLElement): {
+  commands: { setTextSelection: (pos: number) => boolean; focus: () => boolean }
+  state: { doc: { descendants: (f: (node: { type: { name: string } }, pos: number) => boolean | void) => void } }
+} {
+  return (prose as unknown as { editor: ReturnType<typeof editorIn> }).editor
+}
+
+/** Put the caret inside the first node named `name`. */
+function caretInto(prose: HTMLElement, name: string): void {
+  const editor = editorIn(prose)
+  let at = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (at < 0 && node.type.name === name) at = pos
+    return at < 0
+  })
+  editor.commands.setTextSelection(at + 3)
+}
+
+describe('a block as a whole', () => {
+  it('Esc selects the block the caret is in, and Backspace then removes it', async () => {
+    open(true)
+    const prose = await drawn('.doc-prose')
+    caretInto(prose, 'callout')
+    await fireEvent.keyDown(prose, { key: 'Escape' })
+    await fireEvent.keyDown(prose, { key: 'Backspace' })
+    expect(prose.querySelector('[data-block="callout"]')).toBeNull()
+    expect(prose.querySelector('[data-block="stats"]')).not.toBeNull()
+  })
+
+  it('a table selected whole goes with Backspace, not just its words', async () => {
+    open(true, '开头一段。\n\n| 方案 | 工期 |\n| --- | --- |\n| 保留 | 0 天 |\n\n结尾一段。')
+    const prose = await drawn('.doc-prose')
+    await waitFor(() => expect(prose.querySelector('table')).not.toBeNull())
+    caretInto(prose, 'tableCell')
+    await fireEvent.keyDown(prose, { key: 'Escape' })
+    await fireEvent.keyDown(prose, { key: 'Backspace' })
+    expect(prose.querySelector('table')).toBeNull()
+    expect(prose.textContent).toContain('开头一段。')
+    expect(prose.textContent).toContain('结尾一段。')
+  })
+})

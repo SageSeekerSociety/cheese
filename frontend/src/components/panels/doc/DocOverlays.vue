@@ -27,7 +27,7 @@ import { useFocusReturn } from '@/composables/useFocusReturn'
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { spotAt } from '../../../lib/docCommentSpots'
 import { captureNewDocLink } from '../../../lib/docLinks'
-import { BLOCK_ITEMS, blockKeyOf, convertsInPlace } from '../../../lib/docSlashMenu'
+import { BLOCK_ITEMS, blockKeyOf, convertsInPlace, removeBlock } from '../../../lib/docSlashMenu'
 import { statusAt } from '../../../lib/docStatus'
 
 import DocBubble from './DocBubble.vue'
@@ -527,16 +527,7 @@ function deleteBlock() {
   const ed = props.editor
   const menu = blockMenu.value
   blockMenu.value = null
-  const node = ed && menu ? ed.state.doc.nodeAt(menu.pos) : null
-  if (!ed || !menu || !node) return
-  const { tr } = ed.state
-  // 文档至少留一段：删的是最后一块时换成一个空段落。
-  if (ed.state.doc.childCount === 1)
-    tr.replaceWith(menu.pos, menu.pos + node.nodeSize, ed.schema.nodes.paragraph.create())
-  else tr.delete(menu.pos, menu.pos + node.nodeSize)
-  tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(menu.pos, tr.doc.content.size))))
-  ed.view.dispatch(tr.scrollIntoView())
-  ed.view.focus()
+  if (ed && menu) removeBlock(ed, menu.pos)
 }
 function closeBlockMenu(e: Event) {
   if (e instanceof KeyboardEvent && e.key !== 'Escape') return

@@ -985,6 +985,11 @@ div[data-footnote]::before {
   cursor: zoom-in;
 }
 
+/* While editing, a press selects the diagram; full screen is the bar's button. */
+.ProseMirror[contenteditable='true'] .doc-mermaid__figure {
+  cursor: default;
+}
+
 .doc-mermaid__figure--scroll {
   text-align: left;
 }

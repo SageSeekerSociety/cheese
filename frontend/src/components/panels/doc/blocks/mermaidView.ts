@@ -15,7 +15,7 @@
 import type { Editor, NodeViewRendererProps } from '@tiptap/core'
 import type { NodeView } from '@tiptap/pm/view'
 
-import { TextSelection } from '@tiptap/pm/state'
+import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 
 import { controlButton } from './popover'
 import { onThemeChange, posOf, token } from './viewKit'
@@ -161,12 +161,14 @@ function plainView({ node }: NodeViewRendererProps): NodeView {
 }
 
 /** A diagram drawn from `read()` into `dom`: the figure (a tap opens it full
- *  screen) and the line that says why it cannot be drawn. It redraws when the
- *  theme changes, when the width crosses the narrow line, and on `redraw`. */
+ *  screen while `pressOpens()` says so) and the line that says why it cannot be
+ *  drawn. It redraws when the theme changes, when the width crosses the narrow
+ *  line, and on `redraw`; `open` shows it full screen. */
 export function diagramFigure(
   dom: HTMLElement,
-  read: () => string
-): { figure: HTMLElement; error: HTMLElement; redraw: () => void; destroy: () => void } {
+  read: () => string,
+  pressOpens: () => boolean = () => true
+): { figure: HTMLElement; error: HTMLElement; redraw: () => void; open: () => void; destroy: () => void } {
   let svg = ''
   let timer = 0
   let alive = true
@@ -214,8 +216,11 @@ export function diagramFigure(
     timer = window.setTimeout(() => void draw(), 300)
   }
   requestAnimationFrame(() => void draw())
-  figure.addEventListener('click', () => {
+  const open = () => {
     if (svg) fullScreen(svg)
+  }
+  figure.addEventListener('click', () => {
+    if (pressOpens()) open()
   })
 
   let width = 0
@@ -232,6 +237,7 @@ export function diagramFigure(
     figure,
     error,
     redraw: later,
+    open,
     destroy() {
       alive = false
       clearTimeout(timer)
@@ -252,8 +258,24 @@ function mermaidView({ node, editor, getPos }: NodeViewRendererProps, agent: Age
   const edit = controlButton('doc-mermaid__edit', t('work.room.doc.blocks.diagramSource'))
   edit.textContent = t('work.room.doc.blocks.diagramSource')
   const ask = controlButton('doc-mermaid__ask', '')
-  bar.append(edit, ask)
-  const { figure, error, redraw, destroy } = diagramFigure(dom, () => source)
+  const full = controlButton('doc-mermaid__full', t('work.room.doc.blocks.openDiagram'))
+  full.textContent = t('work.room.doc.blocks.openDiagram')
+  bar.append(edit, ask, full)
+  // While editing, pressing the diagram selects the block (as a chart does), so
+  // Backspace removes it and Enter opens a line after it; full screen is a button.
+  const { figure, error, redraw, open, destroy } = diagramFigure(
+    dom,
+    () => source,
+    () => !editor.isEditable
+  )
+  full.addEventListener('click', open)
+  figure.addEventListener('mousedown', (e) => {
+    const pos = posOf(getPos)
+    if (e.button !== 0 || pos === null || !editor.isEditable) return
+    e.preventDefault()
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos)))
+    editor.view.focus()
+  })
   const pre = document.createElement('pre')
   pre.dataset.language = 'mermaid'
   const code = document.createElement('code')

@@ -29,13 +29,13 @@ function ms(name: string): number {
   return Number.parseFloat(token(name)) || 0
 }
 
-function still(el: Element | null): el is HTMLElement {
-  return !(el instanceof HTMLElement) || reducedMotion() || typeof el.animate !== 'function'
+function animatable(el: Element | null): el is HTMLElement {
+  return el instanceof HTMLElement && !reducedMotion() && typeof el.animate === 'function'
 }
 
 /** A new item settles into place. */
 export function arrive(el: Element | null): void {
-  if (still(el)) return
+  if (!animatable(el)) return
   el.animate(
     [
       { opacity: 0, transform: 'translateY(-4px)' },
@@ -50,7 +50,7 @@ export function arrive(el: Element | null): void {
 
 /** An item leaves before it is taken out; resolves when it is gone. */
 export function depart(el: Element | null): Promise<void> {
-  if (still(el)) return Promise.resolve()
+  if (!animatable(el)) return Promise.resolve()
   return el
     .animate([{ opacity: 1 }, { opacity: 0 }], {
       duration: ms('--dur-quick'),
@@ -65,7 +65,7 @@ export function depart(el: Element | null): Promise<void> {
 
 /** An item that moved slides from where it was (`from`) to where it is now. */
 export function slideFrom(el: Element | null, from: DOMRect | undefined): void {
-  if (still(el) || !from) return
+  if (!animatable(el) || !from) return
   const to = el.getBoundingClientRect()
   const dx = from.left - to.left
   const dy = from.top - to.top

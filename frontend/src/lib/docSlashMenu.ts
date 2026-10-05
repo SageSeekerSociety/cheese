@@ -11,10 +11,11 @@
 // round-trip schema 一个字没动。
 import type { ChainedCommands, Editor } from '@tiptap/core'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
+import type { Selection } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
 
 import { Extension } from '@tiptap/core'
-import { PluginKey, TextSelection } from '@tiptap/pm/state'
+import { NodeSelection, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
 
 import { emptyItem, FIELD_NODES } from './docSchema/blocks'
@@ -325,6 +326,27 @@ export function convertsInPlace(node: PMNode | null | undefined): boolean {
     default:
       return false
   }
+}
+
+/** 选区落在的那一整块（文档的直接子节点）和它的位置；在两块之间时没有。 */
+export function topBlockAt(selection: Selection): { pos: number; node: PMNode } | null {
+  if (selection instanceof NodeSelection && selection.$from.depth === 0)
+    return { pos: selection.from, node: selection.node }
+  const { $from } = selection
+  return $from.depth > 0 ? { pos: $from.before(1), node: $from.node(1) } : null
+}
+
+/** 删掉 `pos` 上的那一整块，光标落到原处附近。文档至少留一段：删的是最后一块时换成空段落。 */
+export function removeBlock(editor: Editor, pos: number): void {
+  const { state } = editor
+  const node = state.doc.nodeAt(pos)
+  if (!node) return
+  const { tr } = state
+  if (state.doc.childCount === 1) tr.replaceWith(pos, pos + node.nodeSize, state.schema.nodes.paragraph.create())
+  else tr.delete(pos, pos + node.nodeSize)
+  tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(pos, tr.doc.content.size))))
+  editor.view.dispatch(tr.scrollIntoView())
+  editor.view.focus()
 }
 
 /** 这一块在表里是哪一项；对不上的（比如表格）算正文。 */

@@ -16,7 +16,7 @@ import { useFocusReturn } from '@/composables/useFocusReturn'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { STATUS_KINDS } from '../../../lib/docSchema/blocks'
-import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
+import { BLOCK_ITEMS, blockKeyOf, convertsInPlace, removeBlock, topBlockAt } from '../../../lib/docSlashMenu'
 import { canSetStatus, currentStatus, statusTransaction } from '../../../lib/docStatus'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
@@ -116,16 +116,27 @@ function applyStatus(kind: keyof typeof STATUS_KINDS | null) {
 
 // ---- 「正文 ▾」：把选中的这一块（或者这几块）换成别的块。和 slash 菜单是同一张表，
 // 去掉插入新东西的那几项（表格、分隔线）。
-const blockMenu = computed(() => {
-  if (props.restyle !== undefined) return props.restyle
+/** 选区所在的那一整块。 */
+const topBlock = computed(() => {
   void revision.value
-  return toRaw(props.editor).state.selection.$from.depth > 0
+  return topBlockAt(toRaw(props.editor).state.selection)
 })
+/** 这一块能换成别的块：图表、表格这类有结构的块不能，换了结构就丢了。 */
+const converts = computed(() => convertsInPlace(topBlock.value?.node))
+const blockMenu = computed(() => {
+  if (props.restyle !== undefined) return props.restyle && converts.value
+  return !!topBlock.value && converts.value
+})
+/** 键盘上方那一条（手机上没有行首手柄）：整块删掉的入口也在这里。 */
+const canRemove = computed(() => props.variant === 'bar' && !!topBlock.value)
+function removeThis() {
+  blockOpen.value = false
+  const block = topBlock.value
+  if (block) removeBlock(toRaw(props.editor), block.pos)
+}
 const blockOpen = ref(false)
 const currentBlock = computed(() => {
-  void revision.value
-  const { $from } = toRaw(props.editor).state.selection
-  const key = blockKeyOf($from.depth > 0 ? $from.node(1) : null)
+  const key = blockKeyOf(topBlock.value?.node)
   return BLOCK_ITEMS.find((item) => item.key === key) ?? BLOCK_ITEMS[0]
 })
 function pickBlock(run: (chain: ChainedCommands) => ChainedCommands) {
@@ -219,9 +230,26 @@ useFocusReturn(blockOpen)
                 <v-icon size="16">{{ item.icon }}</v-icon>
                 {{ item.label }}
               </button>
+              <template v-if="canRemove">
+                <div class="doc-menu__sep" role="separator" />
+                <button type="button" role="menuitem" class="doc-menu__item" @click="removeThis">
+                  <v-icon size="16">mdi-trash-can-outline</v-icon>
+                  {{ t('work.room.doc.deleteBlock') }}
+                </button>
+              </template>
             </div>
           </Transition>
         </div>
+        <button
+          v-else-if="canRemove"
+          type="button"
+          class="doc-bubble__icon"
+          :aria-label="t('work.room.doc.deleteBlock')"
+          :title="t('work.room.doc.deleteBlock')"
+          @click="removeThis"
+        >
+          <v-icon size="18">mdi-trash-can-outline</v-icon>
+        </button>
         <button
           v-for="item in marks"
           :key="item.key"
