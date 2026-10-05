@@ -129,7 +129,13 @@
               </AccountField>
             </template>
 
-            <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" :documents="consentDocuments" :load-error="consentLoadError" class="mb-4" />
+            <LegalConsent
+              ref="consentRef"
+              :action-label="t('account.agreeAndSignUp')"
+              :documents="consentDocuments"
+              :load-error="consentLoadError"
+              class="mb-4"
+            />
 
             <BaseButton
               type="submit"
@@ -195,6 +201,8 @@ import { toast } from 'vuetify-sonner'
 
 import { REGEX_PASSWORD, REGEX_USERNAME } from '@/utils/form'
 
+import { useConsentDocuments } from '@/composables/useConsentDocuments'
+
 import { emailCodeMessage } from './attemptWait'
 import EmailCodeStep from './EmailCodeStep.vue'
 import { oauthProviderName } from './oauthProvider'
@@ -205,7 +213,6 @@ import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { useConsentDocuments } from '@/composables/useConsentDocuments'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 

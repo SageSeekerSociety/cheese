@@ -9,10 +9,11 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useConsentDocuments } from '@/composables/useConsentDocuments'
+
 import LegalConsent from './LegalConsent.vue'
 
 import { setLocale } from '@/i18n'
-import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
 const listDocuments = vi.fn()
 vi.mock('@/network/api/legal', () => ({ LegalApi: { listDocuments: () => listDocuments() } }))

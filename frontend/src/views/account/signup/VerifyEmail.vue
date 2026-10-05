@@ -31,7 +31,14 @@
         @update:model-value="handleOtpInput"
       />
 
-      <LegalConsent v-if="needsConsent" ref="consentRef" :action-label="t('account.agreeAndSignUp')" :documents="consentDocuments" :load-error="consentLoadError" class="mb-4" />
+      <LegalConsent
+        v-if="needsConsent"
+        ref="consentRef"
+        :action-label="t('account.agreeAndSignUp')"
+        :documents="consentDocuments"
+        :load-error="consentLoadError"
+        class="mb-4"
+      />
 
       <BaseButton
         block
@@ -73,6 +80,8 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { useConsentDocuments } from '@/composables/useConsentDocuments'
+
 import { attemptMessage, useAttemptWait } from '../attemptWait'
 
 import AccountField from '@/components/account/AccountField.vue'
@@ -81,7 +90,6 @@ import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { useConsentDocuments } from '@/composables/useConsentDocuments'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
 import { useSignupStore } from '@/stores/signup'
@@ -137,7 +145,7 @@ const submit = async () => {
   error.value = ''
   if (needsConsent) {
     await loadConsentDocuments()
-  const consent = await consentRef.value?.confirm()
+    const consent = await consentRef.value?.confirm()
     if (!consent) return
     signupStore.consent = consent
   }

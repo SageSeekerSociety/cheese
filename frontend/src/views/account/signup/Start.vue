@@ -83,7 +83,13 @@
         />
       </AccountField>
 
-      <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" :documents="consentDocuments" :load-error="consentLoadError" class="mb-4" />
+      <LegalConsent
+        ref="consentRef"
+        :action-label="t('account.agreeAndSignUp')"
+        :documents="consentDocuments"
+        :load-error="consentLoadError"
+        class="mb-4"
+      />
 
       <BaseButton
         block
@@ -109,6 +115,8 @@ import { z } from 'zod'
 
 import { REGEX_PASSWORD, REGEX_USERNAME, vuetifyConfig } from '@/utils/form'
 
+import { useConsentDocuments } from '@/composables/useConsentDocuments'
+
 import { attemptMessage } from '../attemptWait'
 
 import AccountField from '@/components/account/AccountField.vue'
@@ -117,7 +125,6 @@ import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { useConsentDocuments } from '@/composables/useConsentDocuments'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useSignupStore } from '@/stores/signup'
