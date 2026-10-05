@@ -58,7 +58,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'open-file', path: string, taskId: string | null): void
+  (e: 'open-file', path: string): void
   (e: 'open-topic', id: string): void
   (e: 'mention-click', handle: string): void
 }>()
@@ -91,7 +91,7 @@ defineExpose({ receive: site.receive })
     :agent-name="props.agentName"
     :activity="props.activity"
     :site="site"
-    @open-file="(path: string, taskId: string | null) => emit('open-file', path, taskId)"
+    @open-file="(path: string) => emit('open-file', path)"
     @open-topic="(id: string) => emit('open-topic', id)"
     @mention-click="(handle: string) => emit('mention-click', handle)"
   />
