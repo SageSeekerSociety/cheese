@@ -62,6 +62,8 @@
     "src/views/tasks/detail/BriefView.vue",
     "src/views/tasks/detail/InsightsView.vue",
     "src/views/tasks/detail/RosterView.vue",
+    "src/views/teams/ExploreView.vue",
+    "src/views/teams/MineView.vue",
     "src/views/teams/detail/CreditsView.vue",
     "src/views/user/settings/General.vue",
     "src/views/user/settings/UsageView.vue"
@@ -162,9 +164,7 @@
     "src/views/tasks/detail/Submissions.vue",
     "src/views/tasks/detail/Submit.vue",
     "src/views/teams/Detail.vue",
-    "src/views/teams/Explore.vue",
     "src/views/teams/Index.vue",
-    "src/views/teams/Mine.vue",
     "src/views/teams/Pending.vue",
     "src/views/teams/detail/Compute.vue",
     "src/views/teams/detail/Knowledge.vue",
