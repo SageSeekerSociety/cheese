@@ -1,37 +1,37 @@
 ---
-title: 学生：在空间里完成第一道题目
-slug: tut-student
+title: 完成一道题目
+slug: solve-a-challenge
 ---
 
-# 学生：在空间里完成第一道题目 {#tut-student}
+# 完成一道题目 {#solve-a-challenge}
 
 这篇教程带你走完一道题目，大约二十分钟：加入空间、领取题目、在项目里和芝士一起做完、提交。
 
 开始前你需要：一个知是账号，以及老师给的邀请码。
 
 ```demo-steps
-title: 学生做完一道题目
+title: 做完一道题目
 note: 六步走一遍：领题、在项目里和芝士一起做、提交；对应下面第 4、6、7 节
 embed: student
 steps:
   - label: 领到题目
     desc: 在空间的题目列表里打开这道题，点「领取这道题」，再用它新建一个项目，芝士已经在这个项目里等你。
-    link: /student-tutorial#claim
+    link: /solve-a-challenge#claim
   - label: 在项目里讲清要做什么
     desc: 把题目要求说给它，并 @ 芝士。说清要交什么，比说清怎么做更要紧。
-    link: /student-tutorial#work
+    link: /solve-a-challenge#work
   - label: 芝士问清一个选择
     desc: 拿不准的地方，它会在对话里发一张按钮卡问你（这一步问的是数据用哪一份）；点一下选项就答完了。
-    link: /student-tutorial#work
+    link: /solve-a-challenge#work
   - label: 列出要做的几步，边做边勾
     desc: 它把要做的几步列在对话里，做一步勾一步，进度随时看得见。
-    link: /student-tutorial#work
+    link: /solve-a-challenge#work
   - label: 交付，交给你审阅
     desc: 报告写好后它递上验收卡：点「审阅」看一遍，没问题再点「采纳」，见[验收与采纳](/accept#accept)。
     link: /accept#accept
   - label: 提交作业
     desc: 回到题目点「提交作业」交成果；交完在「我的提交记录」里看老师有没有看。
-    link: /student-tutorial#submit
+    link: /solve-a-challenge#submit
 ```
 
 ## 1. 加入空间 {#join}

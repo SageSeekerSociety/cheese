@@ -61,15 +61,16 @@ summary: 知是是什么、给谁用，空间、团队、项目、频道、芝�
 4. 交付。芝士递一张验收卡，写着改了什么、推荐谁审。
 5. 验收。点「审阅」看改动，满意就「采纳」，不满意就「退回」并写明原因。
 
-## 按你的身份读 {#next}
+## 接下来读什么 {#next}
 
-第一次用知是，先按你的身份读对应的教程：
+第一次用知是，先读[快速开始](/quickstart#quickstart)，再按要做的事挑一篇：
 
-| 你是 | 先读 | 再读 |
-|---|---|---|
-| 学生 | [学生：在空间里完成第一道题目](/student-tutorial#tut-student) | [提交](/submissions#submit) |
-| 老师 / 助教 | [空间与题目 · 发布题目](/challenges#publish) | [提交 · 评审](/submissions#submit)、[空间与题目](/challenges#spaces) |
-| 办公 | [办公：完成第一个协作项目](/office-tutorial#tut-office) | [团队](/teams#teams)、[文件与成果](/files#files) |
-| 团队项目、写代码 | [快速开始](/quickstart#quickstart) | [验收与采纳](/accept#accept)、[设备与工作电脑](/devices#devices)、[发布网站](/sites#sites) |
+| 要做的事 | 读这一篇 |
+|---|---|
+| 和同学一起做一个项目 | [和同学一起做一个项目](/team-project#team-project) |
+| 在空间里领一道题目，做完后提交 | [完成一道题目](/solve-a-challenge#solve-a-challenge) |
+| 在空间里发布题目、审核报名、看提交 | [空间与题目 · 发布题目](/challenges#publish)、[提交 · 发布者查看提交](/submissions#review) |
+| 让芝士在你自己的电脑或服务器上干活 | [设备与工作电脑](/devices#devices) |
+| 把芝士做的网页发布出去 | [发布网站](/sites#sites) |
 
 遇到问题，按提示原文在[常见问题与排障](/troubleshooting#troubleshooting)里找对应的一节。发现哪里写错或不好用，去[反馈中心](/feedback#feedback)提。
