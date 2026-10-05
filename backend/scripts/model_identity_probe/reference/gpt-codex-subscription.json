@@ -3,14 +3,14 @@
   "protocol": "one-token/v1",
   "model": "gpt-codex-subscription",
   "source": "gateway:gpt-codex-subscription",
-  "collected_at": "2026-10-05T09:09:49Z",
-  "samples_per_cell": 20,
+  "collected_at": "2026-10-05T10:32:05Z",
+  "samples_per_cell": 25,
   "cells": {
     "coin-flip:en": {
       "counts": {
-        "heads": 20
+        "heads": 25
       },
-      "valid": 20,
+      "valid": 25,
       "invalid": 0,
       "refusal": 0,
       "empty": 0,
@@ -18,14 +18,12 @@
     },
     "random-animal:en": {
       "counts": {
-        "otter": 10,
-        "penguin": 1,
-        "axolotl": 5,
-        "giraffe": 1,
-        "octopus": 2,
-        "capybara": 1
+        "otter": 22,
+        "wombat": 1,
+        "quokka": 1,
+        "axolotl": 1
       },
-      "valid": 20,
+      "valid": 25,
       "invalid": 0,
       "refusal": 0,
       "empty": 0,
@@ -33,12 +31,12 @@
     },
     "random-color:en": {
       "counts": {
-        "teal": 14,
-        "cerulean": 3,
-        "vermilion": 1,
-        "turquoise": 2
+        "turquoise": 7,
+        "teal": 12,
+        "cerulean": 5,
+        "blue": 1
       },
-      "valid": 20,
+      "valid": 25,
       "invalid": 0,
       "refusal": 0,
       "empty": 0,
@@ -46,11 +44,12 @@
     },
     "random-color:zh": {
       "counts": {
-        "蓝": 18,
-        "青": 1,
-        "靛蓝": 1
+        "橙": 1,
+        "蓝": 20,
+        "紫": 2,
+        "靛蓝": 2
       },
-      "valid": 20,
+      "valid": 25,
       "invalid": 0,
       "refusal": 0,
       "empty": 0,
@@ -58,10 +57,10 @@
     },
     "random-letter:en": {
       "counts": {
-        "q": 19,
+        "q": 24,
         "k": 1
       },
-      "valid": 20,
+      "valid": 25,
       "invalid": 0,
       "refusal": 0,
       "empty": 0,
@@ -69,13 +68,12 @@
     },
     "random-number-1-100:en": {
       "counts": {
-        "73": 8,
-        "47": 9,
-        "57": 1,
-        "37": 1,
-        "70": 1
+        "73": 14,
+        "47": 8,
+        "77": 1,
+        "37": 2
       },
-      "valid": 20,
+      "valid": 25,
       "invalid": 0,
       "refusal": 0,
       "empty": 0,
@@ -83,23 +81,24 @@
     },
     "random-number-1-100:zh": {
       "counts": {
-        "73": 5,
-        "42": 2,
-        "57": 7,
-        "47": 3,
-        "37": 2
+        "37": 5,
+        "42": 3,
+        "73": 9,
+        "67": 1,
+        "47": 2,
+        "57": 5
       },
-      "valid": 19,
+      "valid": 25,
       "invalid": 0,
       "refusal": 0,
-      "empty": 1,
+      "empty": 0,
       "error": 0
     },
     "random-number-1-10:en": {
       "counts": {
-        "7": 20
+        "7": 25
       },
-      "valid": 20,
+      "valid": 25,
       "invalid": 0,
       "refusal": 0,
       "empty": 0,
@@ -122,5 +121,5 @@
       "long-latin": 37
     }
   },
-  "notes": "preset=standard protocol=Answer with exactly one ..."
+  "notes": "protocol=one-token/v1 preset=standard temperature=omitted max_tokens=16 reasoning=anthropic-thinking"
 }
