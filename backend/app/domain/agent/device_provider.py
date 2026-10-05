@@ -53,6 +53,8 @@ from app.domain.agent.harness.claude_code import (
     resident_release,
 )
 from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachinePlan
+from app.domain.agent.machine_address import device_api_base, ws_url
+from app.domain.agent.machine_address import tunnel_url as machine_tunnel_url
 from app.domain.agent.place import (
     CHECKOUT_DIR,
     SANDBOXES_DIR,
@@ -64,12 +66,8 @@ from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
 )
-from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import (
-    Supply,
-    has_runnable_transport,
-)
+from app.domain.device.supply import Supply, Visibility, default_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
@@ -122,22 +120,25 @@ async def resolve_pinned_device(
     A topic's work tree + resumable claude session live on ONE machine. So:
       * an existing binding — either a machine named before the first turn or the
         machine frozen by an earlier automatic choice — takes precedence over
-        automatic selection. Return it **iff hosted, online, and runnable**; an
-        offline binding raises
-        (queue/retry) and an `isolated` binding raises the #358 「尚未实现」 error.
-        NEVER fall back to another device, which would break an explicit choice or
-        start a resumed topic from an empty tree;
+        automatic selection. Return it **iff hosted, online, and `host`**; an
+        offline binding raises (queue/retry) and an `isolated` one raises
+        ``DEVICE_ISOLATED_UNSUPPORTED_MESSAGE``. NEVER fall back to another
+        device, which would break an explicit choice or start a resumed topic
+        from an empty tree;
       * no binding means 「系统挑一台」 on the first turn: pick the first online,
-        **non-quarantined** hosted device serving the project and create a runnable
-        ``host`` binding (write-once), so every later turn returns to it. Quarantined
-        = judged unhealthy by ``device.health``; a topic that is already bound
-        is never moved — not here, not anywhere (``agent.host_failure``).
+        **non-quarantined** hosted device serving the project and bind it at the
+        default 档 (write-once), so every later turn returns to it — when this
+        channel can run that 档, which it cannot while the default is
+        `isolated`, so it refuses and pins nothing. Quarantined = judged
+        unhealthy by ``device.health``; a topic that is already bound is never
+        moved — not here, not anywhere (``agent.host_failure``).
 
-    The #358 visibility gate lives entirely here (the one resolution point every
-    production turn passes through), so an `isolated` binding on a machine with no
-    sandbox for it (self-hosted, until #2320 step 2) is never launched bare-on-host
-    in its place: silently degrading `isolated` to bare is exactly the
-    whole-machine exposure the gate exists to prevent.
+    This channel starts the agent in a screen on the machine itself, which no
+    sandbox wraps; sessions that run in a sandbox (#2320) reach the machine
+    through their executor (`machine.session_work`) instead. So a room bound
+    `isolated` is refused here rather than launched bare-on-host: silently
+    degrading `isolated` to bare is exactly the whole-machine exposure this
+    gate exists to prevent.
 
     Returns the device id, or ``None`` when no runnable bound device is online at all
     (the caller turns that into a clean "no online device" turn error)."""
@@ -149,7 +150,7 @@ async def resolve_pinned_device(
         device_id = chosen.device_id
         if not await service.serves_project(device_id, project_id):
             raise ScreenSetupError(say("screenDeviceRemoved"))
-        if (hosted := await service.get_hosted_device(device_id)) is None:
+        if await service.get_hosted_device(device_id) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(device_id):
             raise ScreenSetupError(
@@ -157,7 +158,7 @@ async def resolve_pinned_device(
             )
         # An isolated binding must refuse rather than run bare — the pin does not
         # move, but the turn will not silently expose the whole machine either.
-        if not has_runnable_transport(chosen.visibility, hosted.supply):
+        if chosen.visibility is Visibility.isolated:
             raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
         return device_id
     # 「系统挑一台」 on the first turn: pick from machines that are online AND not
@@ -173,13 +174,11 @@ async def resolve_pinned_device(
         return None
     # The same fact the market catalogue publishes as `default=True`, read from
     # one place so the picker can never advertise a 档 the resolver does not
-    # bind. On a self-hosted machine that is `host` until #2320 step 2 gives
-    # `isolated` a transport there; then this and the catalogue move together.
-    await service.bind_topic_device(
-        topic_id,
-        device.device_id,
-        visibility=await service.binding_visibility(device.device_id),
-    )
+    # bind — and that default is a sandbox, which this channel cannot give.
+    visibility = default_visibility()
+    if visibility is Visibility.isolated:
+        raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
+    await service.bind_topic_device(topic_id, device.device_id, visibility=visibility)
     return device.device_id
 
 
@@ -201,40 +200,6 @@ def uses_tunnel(*, tunnel_url: str) -> bool:
     than a guess: the deployment knows whether its machines can reach the box.
     """
     return bool(tunnel_url.strip())
-
-
-async def device_api_base(session, device_id: str, public_base: str) -> str:
-    """The backend base that ``device_id`` dials, from configuration.
-
-    An address belongs to the dialer: the session host reaches the backend over
-    its own configured base, a private-control cloud machine over loopback, and
-    everything else over the public connector base.
-    """
-    if (
-        device_id == settings.agent_session_device_id
-        and settings.agent_session_api_base
-    ):
-        return settings.agent_session_api_base.rstrip("/")
-    device = await session.get(DeviceRow, device_id)
-    if device and device.supply == Supply.cloud and device.cloud_control_private:
-        return "http://127.0.0.1:18080"
-    return public_base.rstrip("/")
-
-
-def _preview_ws_url(public_base: str) -> str:
-    """``wss://…/preview/tunnel`` for a machine, from the base it already dials.
-
-    Scheme-swapped rather than configured: the connector and the CLI all reach
-    this origin already, so a preview that rides the same one needs no
-    second address to keep true — and a deployment cannot end up with a preview
-    pointed somewhere the machine was never able to reach.
-    """
-    base = public_base.rstrip("/")
-    for http_scheme, ws_scheme in (("https://", "wss://"), ("http://", "ws://")):
-        if base.startswith(http_scheme):
-            base = ws_scheme + base[len(http_scheme) :]
-            break
-    return f"{base}/preview/tunnel"
 
 
 def connect_transport(*, session_token: str, via_tunnel: bool) -> str | None:
@@ -505,9 +470,7 @@ class DeviceChannel(Channel):
         # resolver is used lazily (keeps this module importable without a DB).
         self._device_resolver = device_resolver
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
-        # sid → what a turn here brought that screen up to date with
-        # (``settled_with``), and when the credential it wrote expires.
-        self._settled: dict[str, tuple[str, int]] = {}
+        self.screen_ledger = screen_identity.ScreenLedger()
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
@@ -696,7 +659,7 @@ class DeviceChannel(Channel):
             screen.sid,
             reason,
         )
-        self._settled.pop(screen.sid, None)
+        self.screen_ledger.forget(screen.sid)
         await self._hub.close_screen(screen.device_id, screen.sid)
 
     def _existing_screen(
@@ -1216,7 +1179,7 @@ class DeviceChannel(Channel):
             # more than one agent, so the launcher, which knows, says it.
             agent_handle=agent_handle,
         )
-        tunnel_url = settings.subscription_tunnel_url.strip()
+        tunnel_url = machine_tunnel_url(api_base)
         via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
         connect_proxy_url = connect_transport(
             session_token=session_token, via_tunnel=via_tunnel
@@ -1276,7 +1239,7 @@ class DeviceChannel(Channel):
         # reaches for git and the CLI rather than configured separately:
         # the preview rides the path the connector proved, so a deployment that
         # can host a device can host a preview with nothing further to set.
-        model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(api_base)
+        model_env["CHEESE_PREVIEW_URL"] = ws_url(api_base, "/preview/tunnel")
         mark("configuration_ready")
         # 跑什么，问计划要 —— 这个 channel 只说「在哪」。
         # Everything below is a fact about this room and this machine; what any
@@ -1306,9 +1269,11 @@ class DeviceChannel(Channel):
         if (
             runner_alive
             and existing is not None
-            and self._settled.get(existing.sid, ("", 0))[0] == settled_with
-            and self._settled[existing.sid][1]
-            > int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
+            and self.screen_ledger.current(
+                existing.sid,
+                settled_with,
+                valid_after=int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S,
+            )
             and not await self._tunnel_helper_is_down(existing, home_dir)
         ):
             mark("screen_settled")
@@ -1339,7 +1304,7 @@ class DeviceChannel(Channel):
         screen_env["CHEESE_AGENT_CONFIG"] = configuration
         # Whether this turn leaves the screen running what it would be started
         # with today, so the next send to it may skip all of this
-        # (``_settled``). A relaunch or a release put off for running work
+        # (``screen_ledger``). A relaunch or a release put off for running work
         # leaves it behind.
         settled = True
         if existing is not None and existing.agent_configuration != configuration:
@@ -1478,8 +1443,10 @@ class DeviceChannel(Channel):
             )
             if inspect.isawaitable(updated):
                 existing = await updated
-            if settled:
-                self._settle(existing.sid, settled_with, token)
+            seat = (topic_id, agent_handle)
+            self.screen_ledger.record(
+                existing.sid, seat, settled_with, token, settled=settled
+            )
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -1507,12 +1474,10 @@ class DeviceChannel(Channel):
         )
         if inspect.isawaitable(updated):
             screen = await updated
-        self._settle(screen.sid, settled_with, token)
+        self.screen_ledger.record(
+            screen.sid, (topic_id, agent_handle), settled_with, token
+        )
         return screen
-
-    def _settle(self, sid: str, settled_with: str, token: str) -> None:
-        claims = scoped_token_claims(token) or {}
-        self._settled[sid] = (settled_with, int(claims.get("exp") or 0))
 
     # --- turn --------------------------------------------------------------
 

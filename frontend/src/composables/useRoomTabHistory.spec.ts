@@ -107,15 +107,6 @@ describe('手机上话题里的 Back', () => {
     await browserBack()
     expect(where(router)).toBe('list')
   })
-
-  it('从对话打开总览里的一张卡，Back 回到对话', async () => {
-    const router = await setup({ phone: true, start: '/room' })
-    api.openCard('task-1')
-    await settle()
-    expect(where(router)).toBe('room:overview')
-    await browserBack()
-    expect(where(router)).toBe('room:chat')
-  })
 })
 
 describe('桌面上话题里的 Back', () => {

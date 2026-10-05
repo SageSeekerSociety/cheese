@@ -1,4 +1,4 @@
-"""Rejection commits its task event and preserves the reason for the native parent."""
+"""Rejection commits its task event and takes the reason to the task's own session."""
 
 import asyncio
 import uuid
@@ -29,7 +29,7 @@ def _topic(client, project_id: str) -> str:
 
 def _card(client, topic_id: str, reviewer: str = "alice") -> str:
     return client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -48,9 +48,9 @@ def _reject(client, card_id: str, reviewer: str = "alice", note: str = ""):
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}"
-    ).json()["data"]["blocks"]
+    return client.get(f"/topics/{delivery_task_id(client, topic_id)}/task").json()[
+        "data"
+    ]["blocks"]
 
 
 def _instruction(client, card_id):
@@ -65,13 +65,15 @@ def _instruction(client, card_id):
             row = await session.scalar(
                 select(Delivery).where(Delivery.task_id == card.task_id)
             )
-            assert row.state == "pending" and row.agent_instance_id is None
+            # Addressed to the agent working the task, in the task's conversation.
+            assert row.agent_instance_id is not None
+            assert row.topic_id == card.task_id
             return row.payload["content"]
 
     return asyncio.run(read())
 
 
-def test_reject_retains_the_reason_until_its_native_parent_is_known(client, stub_hooks):
+def test_reject_takes_the_reason_to_the_tasks_own_session(client, stub_hooks):
     pid = _project(client)
     tid = _topic(client, pid)
     cid = _card(client, tid)
@@ -82,7 +84,6 @@ def test_reject_retains_the_reason_until_its_native_parent_is_known(client, stub
     wait_work_idle()
 
     instruction = _instruction(client, cid)
-    assert stub_hooks.last_prompt is None
     assert "迁移没加索引，列表页会全表扫" in instruction
     assert "alice" in instruction
     assert "重新递卡" in instruction
@@ -138,9 +139,9 @@ def test_reject_of_closed_task_reports_reason_without_waking_worker(client, stub
     cid = _card(client, tid)
     task_id = delivery_task_id(client, tid)
     closed = client.post(
-        f"/topics/{tid}/tasks/{task_id}/close",
+        f"/topics/{task_id}/close",
         json={"conclusion": "Stopped"},
-        headers=delivery_headers(client, tid),
+        headers=session_auth_headers("alice"),
     )
     assert closed.status_code == 200, closed.text
     before = stub_hooks.last_prompt

@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import functools
 import hashlib
 import json
 import time
@@ -20,6 +21,7 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     cli_client,
+    confinement,
     private,
     runtime,
     sandbox_host,
@@ -36,15 +38,32 @@ exec cheese sync --all
 """
 
 
-def can_prepare(info):
+class SandboxRefused(RuntimeError):
+    """The machine refused to install a room's executor because it cannot
+    give the room its isolated environment (`bootstrap.SandboxUnavailable`);
+    the message is the machine's, saying what would let it."""
+
+
+def refused(installed: dict) -> SandboxRefused | None:
+    """The refusal an install's exec result reports, if it is one."""
+    if installed.get("exit") != bootstrap.SANDBOX_UNAVAILABLE_EXIT:
+        return None
+    return SandboxRefused((installed.get("stderr") or "").strip())
+
+
+def can_prepare(info, sandbox=None):
+    """Whether the running executor that answered `info` can be prepared in
+    place: it runs this release, and, when `sandbox` is given, runs in a
+    sandbox exactly when asked to. One that does not is installed again, and
+    the install replaces it once it is idle (`bootstrap.prepared`)."""
     return (
-        "prepare" in info.get("capabilities", [])
+        (sandbox is None or bool(info.get("sandbox")) == bool(sandbox))
+        and "prepare" in info.get("capabilities", [])
         and not info.get("upgrading")
         and info.get("protocol_version") == runtime.PROTOCOL_VERSION
         and all(
-            info.get("files", {}).get(name)
-            == hashlib.sha256(content.encode()).hexdigest()
-            for name, content in file_sources().items()
+            info.get("files", {}).get(name) == digest
+            for name, digest in _file_digests().items()
         )
     )
 
@@ -53,6 +72,14 @@ BACKEND = Path(__file__).resolve().parents[6]
 
 
 def file_sources():
+    return dict(_file_sources())
+
+
+# Read and hashed once per process: these are the image's own files, fixed for
+# as long as it runs, and every tool call a session makes compares against them
+# (`machine.session_work`), each time on the event loop every request shares.
+@functools.cache
+def _file_sources():
     return {
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/bin/cheese": Path(cli_client.__file__).read_text(),
@@ -65,6 +92,7 @@ def file_sources():
         "cheese-preview-up": CHEESE_PREVIEW_UP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
         "remote-execution/sandbox_host.py": Path(sandbox_host.__file__).read_text(),
+        "remote-execution/confinement.py": Path(confinement.__file__).read_text(),
         **{
             name: (BACKEND / source).read_text()
             for name, source in runtime.RELEASE_FILES.items()
@@ -72,11 +100,25 @@ def file_sources():
     }
 
 
-def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
+@functools.cache
+def _file_digests():
+    return {
+        name: hashlib.sha256(content.encode()).hexdigest()
+        for name, content in _file_sources().items()
+    }
+
+
+def payload_for(
+    project_id, resource_id, env, known_files=None, *, sandbox, platform_machine
+):
     """What the executor is installed or prepared from. ``sandbox`` says
     whether it runs in a sandbox of its own (`bootstrap.sandbox_argv`) or over
-    the whole machine, as the session's visibility on that machine decides; a
-    sandbox is sent with the limits it runs under."""
+    the whole machine, as the room's access to that machine decides.
+    ``platform_machine``: the platform provisioned the machine, so the install
+    may add what a sandbox needs there and the sandbox gets a network and
+    limits of its own, sent here. On a machine a person enrolled nothing is
+    installed and there is no root to give either: its sandbox is sent
+    without limits and shares the machine's network."""
     files = file_sources()
     values = {
         name: value
@@ -91,14 +133,19 @@ def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
     return {
         "protocol_version": runtime.PROTOCOL_VERSION,
         "toolchain_fonts": toolchain.fonts_pin(),
-        "sandbox": {
-            "memory_mb": settings.cloud_sandbox_memory_mb,
-            "swap_mb": settings.cloud_sandbox_swap_mb,
-            "cpus": settings.cloud_sandbox_cpus,
-            "pids": settings.cloud_sandbox_pids,
-        }
+        "sandbox": (
+            {
+                "memory_mb": settings.cloud_sandbox_memory_mb,
+                "swap_mb": settings.cloud_sandbox_swap_mb,
+                "cpus": settings.cloud_sandbox_cpus,
+                "pids": settings.cloud_sandbox_pids,
+            }
+            if platform_machine
+            else {"limits": None}
+        )
         if sandbox
         else None,
+        "platform_machine": platform_machine,
         "project": str(project_id),
         "resource": str(resource_id),
         "env": values,
@@ -121,16 +168,21 @@ def payload_for(project_id, resource_id, env, known_files=None, *, sandbox):
         "files": {
             name: base64.b64encode(content.encode()).decode()
             for name, content in files.items()
-            if (known_files or {}).get(name)
-            != hashlib.sha256(content.encode()).hexdigest()
+            if (known_files or {}).get(name) != _file_digests()[name]
         },
     }
 
 
-def script(project_id, resource_id, env, *, sandbox):
-    payload = payload_for(project_id, resource_id, env, sandbox=sandbox)
+def script(project_id, resource_id, env, *, sandbox, platform_machine):
+    payload = payload_for(
+        project_id,
+        resource_id,
+        env,
+        sandbox=sandbox,
+        platform_machine=platform_machine,
+    )
     return (
-        Path(bootstrap.__file__).read_text()
+        _file_sources()["remote-execution/bootstrap.py"]
         + "\nconfigure(json.loads("
         + repr(json.dumps(payload))
         + "))\n"

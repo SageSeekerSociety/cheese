@@ -1,6 +1,7 @@
 """Device launcher: the isolated config, the pinned build, and the runner it starts."""
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -28,6 +29,7 @@ from app.domain.agent.harness.claude_code.session_launch import (
     session_settings,
 )
 from app.domain.agent.harness.launch import MachinePlace
+from app.domain.project_skill.service import session_skill_bundle
 
 PIN = device_launch.CLAUDE_PINNED_VERSION
 STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
@@ -578,8 +580,18 @@ def test_no_claude_anywhere_is_named_not_started(tmp_path):
     assert not (session / "command").exists()
 
 
-def _fetching_curl(log: Path, version: str = PIN) -> str:
-    """A `curl` that logs its URL and writes a stand-in claude to `-o`."""
+def _fetching_curl(log: Path, version: str = PIN, bundle: Path | None = None) -> str:
+    """A `curl` that logs its URL and writes what it was asked for to `-o`.
+
+    A claude download gets a stand-in binary. When ``bundle`` is given, the
+    skill-bundle URL a launch fetches gets the real bytes back, so the sha256
+    the launcher checks against the digest in its script matches."""
+    serve_bundle = (
+        f'case "$url" in *"/skill-bundles/"*) '
+        f'cat {shlex.quote(str(bundle))} > "$dest"; exit 0 ;; esac\n'
+        if bundle is not None
+        else ""
+    )
     return (
         "#!/bin/sh\n"
         'dest=""; url=""\n'
@@ -588,9 +600,10 @@ def _fetching_curl(log: Path, version: str = PIN) -> str:
         "  shift\n"
         "done\n"
         f'echo "$url" >> {shlex.quote(str(log))}\n'
-        "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
-        f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
-        "AGENT\n"
+        + serve_bundle
+        + "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
+        + f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
+        + "AGENT\n"
     )
 
 
@@ -681,6 +694,17 @@ def _machine(tmp_path, *, api: str = ""):
             (target / name).write_text("fixture")
             (target / name).chmod(0o755)
     return owner, session, work, claude, env
+
+
+def _seed_skill_cache(owner: Path) -> None:
+    """Put this project's skill bundle where a machine that already fetched it
+    keeps it (device_launch addresses the skills by content, and the cache is
+    the hit path). A launch then installs them with no platform to ask."""
+    bundle = session_skill_bundle(None)
+    digest = hashlib.sha256(bundle).hexdigest()
+    cache = owner / ".cheese/skill-bundles" / f"{digest}.json.gz"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(bundle)
 
 
 def _launch(tmp_path, env, **named):
@@ -796,10 +820,46 @@ def test_new_seat_leaves_busy_older_seats_shared_files_intact(tmp_path):
     ).resolve()
 
 
+@contextlib.contextmanager
+def _bundle_server(bundle: bytes | None):
+    """The platform's skill-bundle route, as far as a launch can tell: it serves
+    ``bundle`` at any ``/connector/skill-bundles/`` path (or 404s when None)
+    and records every path asked for. The launch fetches it with python, not
+    curl, so the curl stand-in cannot answer for it."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            hits.append(self.path)
+            if bundle is None or "/connector/skill-bundles/" not in self.path:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(bundle)))
+            self.end_headers()
+            self.wfile.write(bundle)
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", hits
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
-    owner, session, work, _claude, env = _machine(
-        tmp_path, api="https://fixture.invalid"
-    )
+    bundle = session_skill_bundle(None)
+    served = _bundle_server(bundle)
+    api, hits = served.__enter__()
+    owner, session, work, _claude, env = _machine(tmp_path, api=api)
     config = work / ".claude"
     config.mkdir(parents=True)
     protected = [
@@ -829,10 +889,19 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     (tmp_path / "bin/curl").write_text(_fetching_curl(log))
     (tmp_path / "bin/curl").chmod(0o755)
 
-    result = _launch(tmp_path, env)
+    try:
+        result = _launch(tmp_path, env)
+    finally:
+        served.__exit__(None, None, None)
 
     assert result.returncode == 0, result.stderr
-    assert len(log.read_text().splitlines()) == 1
+    # One fetch each: the pinned build (curl) and this project's skill bundle.
+    # The bundle is content-addressed, so this machine downloads it here and
+    # never again (device_launch), keyed by the digest this launch carried.
+    urls = log.read_text().splitlines()
+    assert len(urls) == 1 and f"/connector/claude/{PIN}/" in urls[0]
+    digest = hashlib.sha256(bundle).hexdigest()
+    assert hits == [f"/connector/skill-bundles/{digest}"]
     assert {path: path.read_bytes() for path in protected} == before
     assert set(owner.iterdir()) == original_entries | {owner / ".cheese"}
     assert set(work.rglob("*")) == project_entries
@@ -840,6 +909,48 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     for name in ("cheese", "cheese-docs"):
         assert (seat_of(session) / ".claude/skills" / name / "SKILL.md").is_file()
     assert not any(skill.exists() for skill in retired)
+
+
+def test_a_cached_skill_bundle_is_never_refetched(tmp_path):
+    """Content addressing is the point: a machine that already holds this
+    project's bundle fetches the pinned build and nothing else. The bytes are
+    the same for every room and project on the machine (the platform set), so
+    one launch here spares every later session the download."""
+    owner, session, _work, _claude, env = _machine(
+        tmp_path, api="https://fixture.invalid"
+    )
+    digest = hashlib.sha256(session_skill_bundle(None)).hexdigest()
+    cache = owner / ".cheese/skill-bundles" / f"{digest}.json.gz"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(session_skill_bundle(None))
+    log = tmp_path / "curl.log"
+    (tmp_path / "bin/curl").write_text(_fetching_curl(log))
+    (tmp_path / "bin/curl").chmod(0o755)
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    assert all("/skill-bundles/" not in url for url in log.read_text().splitlines())
+    assert (seat_of(session) / ".claude/skills/cheese/SKILL.md").is_file()
+
+
+def test_a_launch_whose_skills_cannot_be_fetched_starts_and_says_so(tmp_path):
+    """Like the pinned build above it: a machine that cannot get the bundle for
+    a moment must not become one where nothing starts. It starts without the
+    skills, says so in the launch log naming the digest, and caches nothing."""
+    with _bundle_server(None) as (api, hits):
+        owner, session, _work, _claude, env = _machine(tmp_path, api=api)
+        (tmp_path / "bin/curl").write_text("#!/bin/sh\nexit 1\n")
+        (tmp_path / "bin/curl").chmod(0o755)
+        result = _launch(tmp_path, env)
+
+    digest = hashlib.sha256(session_skill_bundle(None)).hexdigest()
+    assert result.returncode == 0, result.stderr
+    assert "STARTING WITHOUT THIS PROJECT'S SKILLS" in result.stderr
+    assert digest in result.stderr
+    assert len(hits) == 3, "three attempts before giving up"
+    assert not (owner / ".cheese/skill-bundles" / f"{digest}.json.gz").exists()
+    assert not (seat_of(session) / ".claude/skills/cheese/SKILL.md").exists()
 
 
 def test_the_session_the_runner_starts_holds_no_claude_credential(tmp_path):
@@ -1050,13 +1161,16 @@ def _kill_helper(home) -> None:
     _await(lambda: not _pid_alive(pid), timeout=5)
 
 
-def _run_tunnel_up(home):
+_HELPER_URL = "ws://127.0.0.1:9/llm/tunnel"
+
+
+def _run_tunnel_up(home, url: str = _HELPER_URL):
     return subprocess.run(
         ["sh", str(home / ".cheese" / "cheese-tunnel-up")],
         env={
             **os.environ,
             "HOME": str(home),
-            "CHEESE_TUNNEL_URL": "ws://127.0.0.1:9/llm/tunnel",
+            "CHEESE_TUNNEL_URL": url,
         },
         capture_output=True,
         text=True,
@@ -1064,10 +1178,10 @@ def _run_tunnel_up(home):
     )
 
 
-def _up(home) -> int:
+def _up(home, url: str = _HELPER_URL) -> int:
     """Run the up-script, and return the port it printed — which must be all it
     printed, since the launcher exports stdout verbatim as the proxy's port."""
-    result = _run_tunnel_up(home)
+    result = _run_tunnel_up(home, url)
     assert result.returncode == 0, result.stderr
     assert re.fullmatch(r"[0-9]+\n", result.stdout), result.stdout
     port = int(result.stdout)
@@ -1076,12 +1190,14 @@ def _up(home) -> int:
 
 
 def _stamp_of(home) -> str:
-    return subprocess.run(
+    """The stamp a helper started by `_up` leaves: its code and its URL."""
+    code = subprocess.run(
         ["cksum", str(home / ".cheese" / "cheese-tunnel.py")],
         capture_output=True,
         text=True,
         check=True,
     ).stdout.split()[0]
+    return f"{code} {_HELPER_URL}"
 
 
 @pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
@@ -1241,6 +1357,36 @@ def test_a_helper_it_already_started_is_adopted_on_its_port(tmp_path):
         assert _up(home) == port
         assert _helper_pid(home) == first, "a healthy helper was restarted"
         assert _listening(port)
+    finally:
+        _kill_helper(home)
+
+
+def test_a_helper_dialling_another_url_is_retired_not_adopted(tmp_path):
+    """A machine's tunnel address can move — a cloud machine's onto its
+    loopback forward — while its helper is still alive. Adopting that helper
+    would keep the room on the old address, which may no longer answer."""
+    home, _up_script = _tunnel_up_home(tmp_path)
+    moved = "ws://127.0.0.1:10/llm/tunnel"
+    try:
+        _up(home)
+        first = _helper_pid(home)
+
+        port = _up(home, moved)
+        second = _helper_pid(home)
+
+        assert second != first, "a helper dialling the old URL was adopted"
+        assert _await(lambda: not _pid_alive(first))
+        assert _listening(port)
+        args = subprocess.run(
+            ["ps", "-o", "args=", "-p", str(second)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert moved in args
+        # Asked again with the same URL, the new helper is the one kept.
+        assert _up(home, moved) == port
+        assert _helper_pid(home) == second
     finally:
         _kill_helper(home)
 
@@ -1476,9 +1622,11 @@ def test_nothing_in_the_settings_observes_the_session():
     """The runner reads what the session does from its stdout. A hook left here
     to report it would be a second, racing account of the same turn."""
     hooks = session_settings()["hooks"]
-    assert set(hooks) == {"SessionStart", "UserPromptSubmit"}
-    for entries in hooks.values():
-        (entry,) = entries
+    # SubagentStart's hook hands each new agent the step-title rule
+    # (test_every_agent_reads_the_step_title_rule); it reports nothing.
+    assert set(hooks) == {"SessionStart", "UserPromptSubmit", "SubagentStart"}
+    for event in ("SessionStart", "UserPromptSubmit"):
+        (entry,) = hooks[event]
         assert [hook["command"] for hook in entry["hooks"]] == [
             "cheese sync-agents || true"
         ]

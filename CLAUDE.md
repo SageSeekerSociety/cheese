@@ -14,7 +14,7 @@ This file holds principles that no tool enforces. It never describes how things 
 
 Cheese hosts other people's repositories, and a repository must never have to change in order to be hosted: no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. Every line a repo is asked to add is a reason not to adopt us. The rule governs a repository's contents, not a machine's; a machine enrolled to run agents was enrolled for exactly that.
 
-So this file describes this project and nothing else. Anything equally true of a hosted repo goes in `backend/sandbox/skills/cheese/SKILL.md`, which reaches all of them; written here it would fix the problem for us alone. `check-repo-rules.sh` guards this. When unsure: a rule that is false outside a sandbox is leaked platform knowledge.
+So rules are filed by who they are true for. This file holds what is true of this project and of no other hosted repo, and only sessions working on this repo read it. `backend/sandbox/skills/cheese/SKILL.md` holds what is true of every repo the platform hosts, and every hosted repo's agents read it. A rule true only for platform-run agents working on this repo goes in the description of the platform tool it concerns, which is in front of exactly those agents. A platform rule written here fixes the problem for us alone; a project rule written in the skill tells every other repo something false about itself. When unsure: a rule that is false outside a session the platform runs is platform knowledge.
 
 ## Production changes go through CI/CD
 
@@ -25,6 +25,10 @@ dev and production are separate deployments; a change reaching one does not reac
 - Do not substitute custom images, local builds or retagged candidates; hot-edit containers; mount candidate source over deployed code; run deployments or migrations by hand; or write an ad hoc script or workflow to get around the pipeline. Building an artifact in CI and handing it to someone to install is not the pipeline. Image recipes, dependency changes and recovery take the same path, recovery with database-compatible artifacts.
 - SSH diagnosis is allowed. Pre-merge experiments belong in separate test environments, which this rule does not cover, and must not touch the production deployment or its data.
 - Services maintained outside this repository (MicroCloud, the metering proxy) follow their own deployment and authorisation rules; do not impose this one on them. All other safety and authorisation rules still apply.
+
+## The company's knowledge is in Feishu
+
+What the product is for, who it serves, the partnerships behind it, facts about the company and the team's product decisions are kept in the team's Feishu wiki, not in this repository: the code shows what was built, not why or for whom. Before deciding anything a user or partner will see, such as product copy, scenarios or positioning, read the relevant Feishu pages through `lark-cli` and work from them, and name the pages you relied on in the PR; where you could not reach Feishu, say so in the PR instead of working from the code. Setting up access is in `docs/feishu-lark.md`.
 
 ## Read the issues before the docs, and clean the docs when a design lands
 
@@ -39,6 +43,10 @@ Once something is decided, finish it. Leave no remnant of the old shape: no expi
 Retiring something means deleting its code; adopting a replacement means deleting what it replaced. A new path can be contracted, documented and never reached while the old call site still serves every request, and both look done from the surface. The change is finished when the code that chooses changes, so check there, not in the menu, the contract or the doc.
 
 Judge a mechanism by what it does now, not by why it was created. A check written after an incident points at where that incident surfaced; the code that causes it moves on.
+
+## One table holds one kind of thing
+
+A new kind of data does not go into an existing table as one more type value or one more `meta` key. A column only some kind of row would ever fill says that kind needs a table of its own. Different things share interfaces — references, search, permissions, events — not tables.
 
 ## Assume other agents are working right now
 
@@ -56,6 +64,14 @@ A test earns its place by guarding a rule someone could state before the code ex
 
 When auditing, a finding needs a way to actually happen: a crash, corruption, a security hole, a wrong result. Style opinions and "this could in principle" are noise that buries the real ones.
 
+## Name the feedback a fix closes
+
+The commit that completes the fix for a report in the dev deployment's feedback center (okcheese.com) carries `Fixes-feedback: FB-<n>` as a line of its own in its commit message, flush left, several numbers separated by commas. The dev deploy reads that line from main to mark the report fixed and shipped, and notifies whoever filed it; only commit messages reach main, never the PR description. A commit message that merely shows the syntax indents it, or it fires too. A production report's number names a different report on dev and never goes in this line.
+
 ## Fix bugs freely; propose product and interaction changes first
 
 A bug — the product failing to do what it already sets out to do, including a message that says something untrue — is fixed without asking. A change to what people see or do is proposed to whoever you are working for, and waits for their yes before it merges: a new, moved or removed control, a new element on screen, new behaviour behind an existing action. This holds when the change is the natural fix for a bug; ship the part that restores the intended behaviour and propose the rest.
+
+## Legal texts are not the work
+
+The work here is code. Do not read or edit the terms or the privacy policy (`backend/app/domain/legal/texts/`). Only a task that names one of these texts makes it yours, and "Fix bugs freely" does not reach them.

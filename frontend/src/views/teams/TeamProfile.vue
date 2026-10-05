@@ -50,7 +50,7 @@ async function submit() {
       </v-avatar>
       <div class="ml-4">
         <h1 class="t-page-title">{{ team.name }}</h1>
-        <p class="t-meta c-muted">@{{ team.handle }}</p>
+        <p class="t-meta c-muted">{{ team.handle }}</p>
         <div class="t-meta c-muted mt-1">
           <span v-if="team.owner">
             <i18n-t keypath="work.teamProfile.owner" tag="span">

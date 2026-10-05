@@ -1,6 +1,6 @@
 // 「现在的分布」里一台自有设备上的 agent：选一些，换到另一台工作电脑。换的是它所在
 // 的整个房间（一个话题一个容器），走名册那条更换；正在干活的跳过并说明原因，连不上的只由人逐个决定不推送直接更换。
-import type { ComputeChoice } from '../cx_types'
+import type { ComputeChoice } from '../types/compute'
 import type { DeviceSession } from '../types/deviceSessions'
 
 import { createVuetify } from 'vuetify'
@@ -38,9 +38,6 @@ const cloud: ComputeChoice = {
   name: null,
   profile: 'cloud',
   device_id: null,
-  cores: null,
-  memory_mb: null,
-  disk_gb: null,
 }
 const leaving: ComputeChoice = { ...cloud, name: '旧工作站', profile: 'device', device_id: 'old' }
 function row(id: string, room: string, working = false): DeviceSession {
@@ -198,7 +195,7 @@ it('offers every other work computer but the one being left', async () => {
 
   await fireEvent.mouseDown(screen.getByLabelText('换到'))
 
-  expect(await screen.findByRole('option', { name: '云端 · 标准配置' })).toBeTruthy()
+  expect(await screen.findByRole('option', { name: '云端沙箱' })).toBeTruthy()
   expect(screen.getByRole('option', { name: '备用机 · 不可用' })).toBeTruthy()
   expect(screen.queryByRole('option', { name: /旧工作站/ })).toBeNull()
 })

@@ -192,17 +192,24 @@ async def main() -> None:
             "expected_version": doc.get("doc_version", 0),
         },
     )
-    tasks = [
+    def task(title: str, goal: str) -> str:
+        """A task the way a person makes one: created, its document written,
+        started."""
+        made = api("POST", f"/topics/{form}/tasks", alice, json={"title": title})
+        path = f"/topics/{form}/tasks/{made['id']}"
+        doc = api("GET", f"{path}/document", alice)["id"]
         api(
-            "POST",
-            f"/topics/{form}/split",
+            "PUT",
+            f"/documents/{doc}",
             alice,
-            json={"title": title, "brief": brief, "reviewer_handle": "alice"},
-        )["id"]
-        for title, brief in (
-            ("表单字段精简", "必填项减到 4 项，院系年级由学号带出。"),
-            ("提交校验与错误提示", "手机号、学号格式校验，错误提示写在输入框下方。"),
+            json={"content": f"## 目标\n\n{goal}\n", "expected_version": 0},
         )
+        api("POST", f"{path}/start", alice, json={"reviewer_handle": "alice"})
+        return made["id"]
+
+    tasks = [
+        task("表单字段精简", "必填项减到 4 项，院系年级由学号带出。"),
+        task("提交校验与错误提示", "手机号、学号格式校验，错误提示写在输入框下方。"),
     ]
     await (
         say(

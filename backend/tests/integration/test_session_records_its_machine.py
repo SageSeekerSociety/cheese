@@ -53,6 +53,13 @@ async def room(client):
     for handle in ("ada", "linus"):
         made = client.post(f"/projects/{project_id}/agents", json={"handle": handle})
         assert made.status_code == 200, made.text
+        # It sits in the room: a session runs only for a teammate seated there.
+        seated = client.post(
+            f"/topics/{topic['id']}/members",
+            json={"handle": made.json()["data"]["seat_handle"], "role": "member"},
+            headers=session_auth_headers("alice"),
+        )
+        assert seated.status_code == 200, seated.text
     async with client.test_factory() as db:
         owner = await db.scalar(select(User).where(User.username == "alice"))
         if owner is None:
@@ -87,6 +94,7 @@ def channel(client, monkeypatch, executors=("executor",)):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     online = {"center", "center-two", *client.session_test_devices.values()}
     hub: Any = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda device: device in online,
         reconnecting=lambda device: False,
         # No session is running on the session host: `_ensure_screen` is
@@ -252,7 +260,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
     # 骨架交回一个可续的 token——写侧和真正跑完一轮时走的是同一个入口。
     async with client.test_factory() as db:
         await AgentSessionService(db).remember(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle="ada",
             resume_token="conversation-1",
             harness=harness_for(None),
@@ -304,7 +312,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
         sessions = AgentSessionService(db)
         before = await sessions.place(topic, "ada", harness=harness_for(None))
         await sessions.remember_place(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle="ada",
             work_lease=before.lease,
             runtime_location={
@@ -334,7 +342,7 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, 
     async with business_db_factory() as db:
         sessions = AgentSessionService(db)
         await sessions.remember_place(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle="ada",
             work_lease=None,
             runtime_location={
@@ -347,7 +355,7 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, 
         await db.commit()
         assert await sessions.has_run(topic) is False
         await sessions.remember(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle="ada",
             resume_token="conversation-1",
             harness=harness_for(None),
@@ -377,7 +385,7 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     for harness in ("claude-code", "pi"):
         async with client.test_factory() as db:
             await AgentSessionService(db).remember_place(
-                topic_id=topic,
+                conversation_id=topic,
                 agent_handle="ada",
                 harness=harness,
                 work_lease=None,
@@ -393,7 +401,7 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     async with client.test_factory() as db:
         placed = await AgentSessionService(db).placed_sessions()
     # 收养清单按座位出：同一座位换过骨架的两行都在，新落的在前。
-    assert [(row[1], row[3]) for row in placed] == [
+    assert [(row[1], row[4]) for row in placed] == [
         (topic, "pi"),
         (topic, "claude-code"),
     ]

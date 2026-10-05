@@ -7,7 +7,7 @@
 // `composables/useTopicRailRoutes.ts`（我在哪、点一下去哪儿、行的 ⋯ 里有哪几项）——
 // 分这两半是为了让组件不认识 `vue-router`（.claude/rules/architecture.md），也让
 // 折叠记不记得住、红灯会不会自己亮这些事能离开「画」单独测。
-import type { Project, Topic } from '../cx_types'
+import type { Project, RoomTask, Topic } from '../cx_types'
 import type { MenuAction } from './common/menuAction'
 import type { VirtualListHandle } from './common/VirtualList.vue'
 
@@ -34,12 +34,14 @@ import TopicRailGroupToggle from './topic-sidebar/TopicRailGroupToggle.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
 import TopicRailPinnedRows from './topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRow from './topic-sidebar/TopicRailRow.vue'
+import TopicRailTaskRow from './topic-sidebar/TopicRailTaskRow.vue'
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -48,6 +50,8 @@ const props = defineProps<{
   topics: Topic[]
   selectedTopicId: string | null
   loadingTopics: boolean
+  /** 话题清单没读到时服务端给的原因；有值就地显示失败 + 重试，不画骨架。 */
+  error?: string | null
   creatingTopic?: boolean
   // Which 项目文档 is open in the main area ('charter'|'weeklies'|'memory'),
   // or null when none — the rail shows ONE 项目文档 row, active for
@@ -67,16 +71,23 @@ const props = defineProps<{
   // 两栏（平板）: 还是整页形态的那份列表，但它是左边一栏、顶栏只盖着右边的房间，
   // 所以项目名那一行留在这一栏自己的顶上，不填进顶栏。
   column?: boolean
+  /** 每个房间里还开着的任务（房间 id → 任务），挂在房间那一行下面。 */
+  roomTasks?: Record<string, Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>[]>
+  /** 正打开的任务。 */
+  selectedTaskId?: string | null
 }>()
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
+  (e: 'select-task', task: { roomId: string; taskId: string }): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
+  // 话题清单读失败后那颗「重试」：让拥有这份数据的父级再读一次。
+  (e: 'retry'): void
   // 已归档那一组里行尾的「取消归档」。
   (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
@@ -472,6 +483,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :page="page === true"
             :unread-of="unreadOf"
             :muted-of="mutedOf"
+            :root-actions="rootTopic ? actionsFor(rootTopic).map(menuActionOf) : []"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
             @press-topic="emit('press-topic', $event)"
@@ -480,7 +492,17 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             @hover-page="hoverProjectPage"
             @cancel-prefetch="cancelPrefetch()"
             @select-docs="emit('select-docs', 'charter')"
-          />
+          >
+            <template #root-tasks>
+              <TopicRailTaskRow
+                v-for="task in rootTopic ? roomTasks?.[rootTopic.id] ?? [] : []"
+                :key="task.id"
+                :task="task"
+                :selected="task.id === selectedTaskId"
+                @select="emit('select-task', $event)"
+              />
+            </template>
+          </TopicRailPinnedRows>
 
           <v-divider class="mx-3 my-1" />
 
@@ -498,7 +520,19 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             />
           </div>
 
-          <LoadingSkeleton v-if="loadingTopics" variant="list" class="rail-skel" />
+          <!-- Topic list failed to load: replace this block in place with an error
+               and a retry (docs/design-system.md §3.10), not a toast that is gone in
+               seconds — once it is, this block looks exactly like "no topics" and
+               you cannot tell broken from empty. -->
+          <BaseLoadError
+            v-if="error"
+            :title="t('shell.workspaceErrors.loadTopics')"
+            :error="error"
+            class="rail-error"
+            @retry="emit('retry')"
+          />
+
+          <LoadingSkeleton v-else-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
@@ -556,26 +590,35 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                   :transition-key="selectedProjectId ?? undefined"
                 >
                   <template #item="{ item }">
-                    <TopicRailRow
-                      :row="item"
-                      :selected="item.topic.id === selectedTopicId"
-                      :page="page === true"
-                      :renaming="renamingTopicId === item.topic.id"
-                      :menu-open="actionsMenuFor === item.topic.id"
-                      :stalled="stalledOf(item.topic.id)"
-                      :muted="mutedOf?.(item.topic.id) ?? false"
-                      :marks="memberMarks(item.topic)"
-                      :toggle-title="toggleTitle(item)"
-                      :actions="actionsFor"
-                      @select="emit('select-topic', $event)"
-                      @hover="emit('hover-topic', $event)"
-                      @press="emit('press-topic', $event)"
-                      @leave="emit('leave-topic')"
-                      @toggle-collapse="toggleCollapse"
-                      @commit-rename="(draft: string) => commitRename(item.topic, draft)"
-                      @cancel-rename="cancelRename()"
-                      @update:menu-open="(open: boolean) => setActionsMenu(item.topic.id, open)"
-                    />
+                    <div>
+                      <TopicRailRow
+                        :row="item"
+                        :selected="item.topic.id === selectedTopicId"
+                        :page="page === true"
+                        :renaming="renamingTopicId === item.topic.id"
+                        :menu-open="actionsMenuFor === item.topic.id"
+                        :stalled="stalledOf(item.topic.id)"
+                        :muted="mutedOf?.(item.topic.id) ?? false"
+                        :marks="memberMarks(item.topic)"
+                        :toggle-title="toggleTitle(item)"
+                        :actions="actionsFor"
+                        @select="emit('select-topic', $event)"
+                        @hover="emit('hover-topic', $event)"
+                        @press="emit('press-topic', $event)"
+                        @leave="emit('leave-topic')"
+                        @toggle-collapse="toggleCollapse"
+                        @commit-rename="(draft: string) => commitRename(item.topic, draft)"
+                        @cancel-rename="cancelRename()"
+                        @update:menu-open="(open: boolean) => setActionsMenu(item.topic.id, open)"
+                      />
+                      <TopicRailTaskRow
+                        v-for="task in roomTasks?.[item.topic.id] ?? []"
+                        :key="task.id"
+                        :task="task"
+                        :selected="task.id === selectedTaskId"
+                        @select="emit('select-task', $event)"
+                      />
+                    </div>
                   </template>
                 </VirtualList>
               </v-list>
@@ -635,6 +678,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
    这条 rail 上「再离底一档」的那个值（选中行用的也是它），在两个主题下都看得见。 */
 .rail-skel {
   --skel-bone: var(--line-2);
+}
+
+/* 就地报错和上面那一列话题对齐（subhead 的内距是 16px），右边留出一点收口。 */
+.rail-error {
+  padding: 8px 16px 4px;
 }
 
 /* 行换位置、进出（见模板里 TransitionGroup 那段）。走掉的那一行脱离文档流，否则

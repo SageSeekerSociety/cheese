@@ -44,7 +44,7 @@ covers:
 
 同一条入口上还有**组件预览站**：`/demo/catalog` 是目录，`/demo/catalog/<id>` 是一个组件、一格里一种状态。注册表在 `views/demo/catalog.ts`（页面和测试读的是同一份），形状数据由 `views/demo/catalogFixtures.ts` 从产品自己的剧本里搭出来。它不起后端、不登录、不读环境变量，`pnpm dev` 打开就能看；往目录里加一个组件的三步写在仓库内的 `frontend/AGENTS.md`。
 
-nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files $uri $uri/ /index.html`（SPA 兜底），`location /demo/` 走 `try_files /demo.html =404`。dev server 在 `vite.config.ts` 里做同样的事（`req.url` 以 `/demo` 开头就改写成 `/demo.html`）。`/docs/`、`/docs/dev/` 各有自己的 location，见[文档站与问芝士](/dev/docs-site#build)。
+nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files $uri $uri/ /index.html`（SPA 兜底），`location /demo/` 走 `try_files /demo.html =404`。dev server 在 `vite.config.ts` 里做同样的事（`req.url` 以 `/demo` 开头就改写成 `/demo.html`）。文档站的 location 在 `frontend/nginx/docs/`，在 `/docs/` 下还是在自己的域名上由 `DOCS_ORIGIN` 决定，见[文档站与问芝士](/dev/docs-site#build)。
 
 `main.ts` 在挂载前后各做两件容易漏的事：
 

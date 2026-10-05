@@ -129,7 +129,7 @@ async def _instance_of(
     from app.domain.room_task.place import PlaceResolver
 
     async with session_factory() as session:
-        place = await PlaceResolver(session).resolve(place_id)
+        place = await PlaceResolver(session).conversation(place_id)
         if place is None:
             return None
         return await session.scalar(
@@ -1310,11 +1310,6 @@ class AgentWorkRunner:
         and closed by the Stop that screen eventually sends, exactly as if
         nothing had happened. Nothing is said, because nothing broke.
 
-        That used to be inferred rather than known. The sweep read the topic's
-        blocks looking for traces that claude had been talking, because the
-        platform had no way to ask whether the session was still there. It can
-        ask now, so the tracing is gone.
-
         What is left needs a remedy:
 
         - WEDGED (in `_live`, silent): the thing the task drove — the sandbox
@@ -1496,7 +1491,7 @@ class AgentWorkRunner:
         cannot know, sending again is the riskier side.
 
         Whose turn it was does not enter into it. A deploy that strands 平台's
-        own work — a 分身's kickoff, 验收卡被驳回, CI 红了 — strands it just as
+        own work — a task's kickoff, 验收卡被驳回, CI 红了 — strands it just as
         permanently as a person's message, and the room shows nothing either
         way. Re-sending it is what keeps the platform working rather than merely
         quiet.
@@ -1543,6 +1538,8 @@ class AgentWorkRunner:
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
             logger.exception("orphan block probe failed for %s", topic_id)
         attach = bool(delivered) or not probe_ok
+        if probe_ok:  # what reached nobody leaves no live turn behind
+            chat_service.retire_unheard({r.turn_id for r in entries} - delivered)
 
         # Each re-send and the agent it goes back to (None: the room decides).
         resends: dict[str | None, TurnRecord] = {}

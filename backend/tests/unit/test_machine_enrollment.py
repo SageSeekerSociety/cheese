@@ -26,6 +26,7 @@ class FakeDevices:
         self.team_assigned: list[tuple[str, int]] = []
         self.started: list[str] = []
         self.approved_supply: list[Supply] = []
+        self.owners: list[int] = []
 
     async def start(self, name):
         self.started.append(name)
@@ -36,6 +37,7 @@ class FakeDevices:
         # #358) — mirrored here so this double cannot go on accepting a call the
         # production one rejects.
         self.approved_supply.append(supply)
+        self.owners.append(owner_user_id)
         return SimpleNamespace(
             device_id="dev123",
             token="SECRET-TOKEN",
@@ -61,12 +63,17 @@ class FakeSession:
         self.timeline.append("commit")
 
 
-class FakeProjects:
-    def __init__(self, team_id=None):
-        self.team_id = team_id
+class FakeIdentity:
+    """The platform's pool identity, as ``IdentityService`` would answer it."""
 
-    async def get(self, project_id):
-        return SimpleNamespace(id=project_id, team_id=self.team_id)
+    POOL_USER_ID = 99
+
+    def __init__(self, _session):
+        pass
+
+    async def ensure_agent_user(self, *, handle):
+        assert handle == "cheese-host-pool"
+        return SimpleNamespace(id=self.POOL_USER_ID)
 
 
 class FakeMachineRepo:
@@ -92,9 +99,7 @@ class FakeMachineRepo:
 def make_machine(**overrides):
     base = dict(
         id=uuid.uuid4(),
-        topic_id=None,
-        project_id=uuid.uuid4(),
-        hostname="proj-abc123-1",
+        hostname="host-abc123",
         login_user="cheese",
         ip="10.0.1.10",
         status=MachineStatus.running,
@@ -104,7 +109,6 @@ def make_machine(**overrides):
         enroll_error=None,
         enroll_attempts=0,
         bootstrap_key="PRIVATE-KEY",
-        owner_user_id=42,
         machine_id=7,
     )
     base.update(overrides)
@@ -116,17 +120,16 @@ def build_service(
     *,
     bootstrap=None,
     origin="https://cheese.example",
-    team_id=None,
 ):
-    from app.domain.machine.services import MachineService
+    from app.domain.machine.services import HostPool
 
     calls: list[dict] = []
-    service = MachineService.__new__(MachineService)
+    service = HostPool.__new__(HostPool)
     service._session = FakeSession()
     service._repo = FakeMachineRepo()
-    service._projects = FakeProjects(team_id)
     service._devices = FakeDevices()
     service._client = SimpleNamespace(configured=True)
+    monkeypatch.setattr("app.domain.machine.services.IdentityService", FakeIdentity)
 
     monkeypatch.setattr(
         "app.domain.machine.services.settings.connector_public_base", origin
@@ -158,7 +161,6 @@ async def test_enrollment_writes_the_credential_the_device_flow_would_have(
     assert "SECRET-TOKEN" in script
     assert "link connect" in script
     assert machine.device_id == "dev123"
-    assert service._devices.assigned == [("dev123", machine.project_id)]
 
 
 async def test_the_credential_is_committed_before_the_machine_is_told_to_dial(
@@ -188,13 +190,15 @@ async def test_a_machine_the_platform_opened_is_enrolled_as_cloud_supply(monkeyp
     assert service._devices.approved_supply == [Supply.cloud]
 
 
-async def test_team_machine_enrolls_into_the_team_pool(monkeypatch):
-    service, _ = build_service(monkeypatch, team_id=73)
-    machine = make_machine()
+async def test_a_host_belongs_to_the_platform_and_to_no_team(monkeypatch):
+    """A host carries sessions of many projects: no team's or project's pool
+    lists it, and its device is the platform pool identity's."""
+    service, _ = build_service(monkeypatch)
 
-    await service.enroll(machine)
+    await service.enroll(make_machine())
 
-    assert service._devices.team_assigned == [("dev123", 73)]
+    assert service._devices.owners == [FakeIdentity.POOL_USER_ID]
+    assert service._devices.team_assigned == []
     assert service._devices.assigned == []
 
 
@@ -255,14 +259,6 @@ async def test_an_unreachable_origin_is_refused_before_a_device_is_minted(
         await service.enroll(machine)
     assert service._devices.started == []
     assert calls == []
-
-
-async def test_a_machine_from_before_enrollment_says_so(monkeypatch):
-    service, _ = build_service(monkeypatch)
-    machine = make_machine(owner_user_id=None)
-
-    with pytest.raises(ValidationError):
-        await service.enroll(machine)
 
 
 async def test_the_sweep_keeps_going_when_one_machine_fails(monkeypatch):
@@ -334,7 +330,7 @@ async def test_the_sweep_is_a_no_op_when_microcloud_is_not_configured(monkeypatc
     Nothing can have been provisioned, so there is nothing to enroll — that is a
     quiet no-op, not a failure.
     """
-    from app.domain.machine.runner import MachineEnrollmentSweeper
+    from app.domain.machine.runner import CloudPoolSweeper
 
     class Session:
         async def __aenter__(self):
@@ -346,72 +342,11 @@ async def test_the_sweep_is_a_no_op_when_microcloud_is_not_configured(monkeypatc
         async def commit(self):
             raise AssertionError("must not commit when there is nothing to do")
 
-    from app.domain.machine.services import MachineService
+    from app.domain.machine.services import HostPool
 
-    monkeypatch.setattr(MachineService, "available", property(lambda self: False))
-    runner = MachineEnrollmentSweeper(Session)
+    monkeypatch.setattr(HostPool, "available", property(lambda self: False))
+    runner = CloudPoolSweeper(Session)
     assert await runner.sweep() == {"enrolled": 0, "failed": 0}
-
-
-async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
-    """The lifecycle sweep is the sole wake source; it hands settled candidates
-    to the connector-presence gate without creating a per-topic retry timer."""
-    from unittest.mock import AsyncMock
-
-    from app.domain.machine.runner import MachineEnrollmentSweeper
-    from app.domain.machine.services import MachineService
-
-    topic_id = uuid.uuid4()
-    failed_leases: list = []
-
-    class Session:
-        info: dict = {}
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def commit(self):
-            return None
-
-    class Service:
-        available = True
-
-        def __init__(self, _session):
-            pass
-
-        async def settle_reservations(self):
-            return 0
-
-        async def release_left_machines(self):
-            return 0
-
-        async def refresh_due(self):
-            return None
-
-        async def enroll_pending(self):
-            return {"enrolled": 1, "failed": 0}
-
-        async def ready_topic_devices(self):
-            return [(topic_id, "cloud-1")]
-
-        async def failed_topic_leases(self):
-            return list(failed_leases)
-
-        async def unsettled_startups(self):
-            return []
-
-    monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
-    on_ready = AsyncMock()
-    runner = MachineEnrollmentSweeper(Session, on_ready=on_ready)
-
-    assert await runner.sweep() == {"enrolled": 1, "failed": 0}
-    on_ready.assert_awaited_once_with([(topic_id, "cloud-1")])
-
-    # Keep the imported name live so the monkeypatch target is checked by linters.
-    assert MachineService is not Service
 
 
 def test_the_script_provides_tmux_the_connector_needs():
@@ -563,6 +498,33 @@ sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
     assert calls.read_text().split("\n")[0] == "-n apt-get install -y -q bubblewrap"
 
 
+def test_nothing_is_installed_before_cloud_init_has_finished(tmp_path):
+    """A machine is reported running while cloud-init still upgrades its
+    packages and holds the dpkg lock; an install then fails, and the machine
+    is given up for a provider failure it is not."""
+    import subprocess
+
+    script = enrollment.bootstrap_script(
+        origin="http://cheese.test", token="tok", device_id="dev"
+    )
+    start = script.index("if command -v cloud-init")
+    block = script[start : script.index("\ndone", start) + len("\ndone")]
+    calls = tmp_path / "calls"
+    harness = f"""
+command() {{ [ "$2" = bwrap ] && return 1; return 0; }}
+cloud-init() {{ printf 'cloud-init %s\\n' "$*" >> {calls}; }}
+sudo() {{ printf 'sudo %s\\n' "$*" >> {calls}; }}
+{block}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 0, done.stderr
+    assert calls.read_text().splitlines()[:2] == [
+        "cloud-init status --wait",
+        "sudo -n apt-get install -y -q bubblewrap",
+    ]
+
+
 def test_bootstrap_is_valid_shell():
     """The script is built from an f-string, so a mis-escaped brace turns into a
     syntax error that would only surface on a real machine."""
@@ -649,65 +611,3 @@ def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
 
     # The HTTP identity is unchanged either way — only the control channel moved.
     assert config["base"] == "https://cheese.test/api/connector"
-
-
-async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch):
-    """A lease whose machine or AI channel errored never reaches `on_ready`; the
-    sweep hands it to `on_failed` in the same pass, so the room stops waiting."""
-    from unittest.mock import AsyncMock
-
-    from app.domain.machine.runner import MachineEnrollmentSweeper
-    from app.domain.machine.services import FailedLease, MachineService
-
-    lease = FailedLease(
-        topic_id=uuid.uuid4(), hostname="box-9", reason="MicroCloud 报告机器创建失败"
-    )
-
-    class Session:
-        info: dict = {}
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def commit(self):
-            return None
-
-    class Service:
-        available = True
-
-        def __init__(self, _session):
-            pass
-
-        async def settle_reservations(self):
-            return 0
-
-        async def release_left_machines(self):
-            return 0
-
-        async def refresh_due(self):
-            return None
-
-        async def enroll_pending(self):
-            return {"enrolled": 0, "failed": 0}
-
-        async def ready_topic_devices(self):
-            return []
-
-        async def failed_topic_leases(self):
-            return [lease]
-
-        async def unsettled_startups(self):
-            return []
-
-    monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
-    on_ready, on_failed = AsyncMock(), AsyncMock()
-    await MachineEnrollmentSweeper(
-        Session, on_ready=on_ready, on_failed=on_failed
-    ).sweep()
-
-    on_ready.assert_not_awaited()
-    on_failed.assert_awaited_once_with([lease])
-    assert MachineService is not None

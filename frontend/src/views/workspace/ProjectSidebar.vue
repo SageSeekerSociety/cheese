@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import type { RoomTask } from '@/cx_types'
+
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -8,6 +10,7 @@ import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLa
 import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
+import { readProjectTasks } from '@/lib/projectTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
 import { useWorkspaceStore } from '@/stores/workspace'
 import BoardSummary from '@/views/workspace/BoardSummary.vue'
@@ -40,6 +43,45 @@ const column = computed(
 
 // Active state is read off the URL, never off a local flag.
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? String(route.params.topicId) : null))
+const activeTaskId = computed(() => (route.name === 'workspace-task' ? String(route.params.taskId) : null))
+
+// 每个房间里还开着的任务，挂在房间那一行下面。和看板读同一份（`readProjectTasks`），
+// 看板刚读过就拿它那一份；换了地方（新建、开始、关闭任务之后）也重读一次。
+const TASKS_REFRESH_MS = 30_000
+const tasks = ref<RoomTask[]>([])
+async function loadTasks(maxAgeMs?: number) {
+  const pid = props.projectId
+  try {
+    const payload = await readProjectTasks(pid, { maxAgeMs })
+    if (props.projectId === pid) tasks.value = payload.data
+  } catch {
+    // 留着上一次的那份。
+  }
+}
+const roomTasks = computed(() => {
+  const byRoom: Record<string, RoomTask[]> = {}
+  for (const task of tasks.value) {
+    if (task.presentation.column === 'done' || task.status !== 'open') continue
+    ;(byRoom[task.room_id] ??= []).push(task)
+  }
+  return byRoom
+})
+let tasksTimer: number | undefined
+onMounted(() => {
+  void loadTasks()
+  tasksTimer = window.setInterval(() => void loadTasks(TASKS_REFRESH_MS), TASKS_REFRESH_MS)
+})
+onUnmounted(() => window.clearInterval(tasksTimer))
+watch(
+  () => [props.projectId, route.fullPath],
+  () => void loadTasks(2_000)
+)
+function openTask(task: { roomId: string; taskId: string }) {
+  void router.push({
+    name: 'workspace-task',
+    params: { projectId: props.projectId, topicId: task.roomId, taskId: task.taskId },
+  })
+}
 const activeDocs = computed(() => (route.name === 'project-docs' ? String(route.params.kind) : null))
 
 function openTopic(topicId: string) {
@@ -125,17 +167,22 @@ useCommands(() => [
       :selected-project-id="store.projectId"
       :topics="store.topics"
       :selected-topic-id="activeTopicId"
+      :room-tasks="roomTasks"
+      :selected-task-id="activeTaskId"
       :loading-topics="store.loadingTopics"
+      :error="store.topicsError"
       :creating-topic="creatingTopic"
       :active-docs="activeDocs"
       :unread-map="store.badgeUnreadMap"
       :muted-of="store.isMuted"
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
+      @select-task="openTask"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @leave-topic="cancelPrefetch"
       @select-docs="openDocs"
+      @retry="store.reloadTopics()"
       @unarchive-topic="store.unarchive"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
       @create-topic="onCreateTopic"

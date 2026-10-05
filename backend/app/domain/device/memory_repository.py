@@ -63,6 +63,12 @@ class InMemoryDeviceRepository:
             if d.device_id in self._hosted_device_ids and project_id in d.project_ids
         ]
 
+    async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
+        return any(
+            d.device_id == device_id
+            for d in await self.list_devices_by_project(project_id)
+        )
+
     async def list_devices_by_team(self, team_id: int) -> list[Device]:
         return [
             d

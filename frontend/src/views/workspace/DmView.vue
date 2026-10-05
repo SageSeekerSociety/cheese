@@ -137,6 +137,7 @@ async function handleUpgradeMessage(messageId: string) {
     </v-alert>
     <ChatPanel
       v-else-if="topic"
+      upgrade-to-topic
       class="flex-grow-1"
       style="min-height: 0"
       :topic="topic"

@@ -22,7 +22,11 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -90,9 +94,10 @@ async def _lent(client, monkeypatch, project_id, room_id, *, online: bool):
     monkeypatch.setattr(
         reading, "device_hub", SimpleNamespace(is_online=lambda _device: online)
     )
+    seat = room_agent_seat(client, room_id)
     async with client.test_factory() as db:
         return await machine_to_read(
-            db, project_id=project_id, room_id=room_id, seat="cheese", ttl_s=600
+            db, project_id=project_id, room_id=room_id, seat=seat, ttl_s=600
         )
 
 

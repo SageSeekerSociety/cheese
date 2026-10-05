@@ -26,7 +26,7 @@ from app.domain.machine import session_work as work_lease
 from app.domain.notification.models import Notification
 from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from tests.integration.conftest import post_project, registered, session_auth_headers
 
 pytestmark = pytest.mark.anyio
@@ -83,6 +83,20 @@ async def _teammates_on_bobs_device(client):
         handles["legacy"] = seats["legacy"] = (
             await IdentityService(db).ensure_room_agent_user(topic_id)
         ).username
+        # Each of them sits in the room, as a teammate a session runs for does.
+        seated = set(
+            await db.scalars(
+                select(TopicMembership.member_handle).where(
+                    TopicMembership.topic_id == topic_id
+                )
+            )
+        )
+        for seat in set(seats.values()) - seated:
+            db.add(
+                TopicMembership(
+                    topic_id=topic_id, member_handle=seat, role=TopicRole.member
+                )
+            )
         devices = sql_device_service(db)
         device = await devices.approve(
             await devices.start("workstation"),
@@ -153,7 +167,11 @@ def _machines(monkeypatch):
     monkeypatch.setattr(
         work_lease,
         "device_hub",
-        SimpleNamespace(is_online=lambda d: True, exec=AsyncMock(side_effect=install)),
+        SimpleNamespace(
+            target=lambda _device: "linux-amd64",
+            is_online=lambda d: True,
+            exec=AsyncMock(side_effect=install),
+        ),
     )
     monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
 

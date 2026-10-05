@@ -3,7 +3,8 @@
 // 名册里的东西有一样不能跟着藏：有 AI 队友能访问整台机器。那是权限，不是设置——
 // 名册合着的时候它也得在这一行上。
 import type { Component } from 'vue'
-import type { Topic, TopicComputeProfile } from '@/cx_types'
+import type { Topic } from '@/cx_types'
+import type { TopicComputeProfile } from '@/types/compute'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -49,9 +50,6 @@ const cloud = {
   name: null,
   profile: 'cloud',
   device_id: null,
-  cores: null,
-  memory_mb: null,
-  disk_gb: null,
 }
 
 function profile(machineAccess: boolean): TopicComputeProfile {
@@ -63,6 +61,7 @@ function profile(machineAccess: boolean): TopicComputeProfile {
     devices: [],
     sessions: [],
     profiles: [],
+    cloud_vm_available: false,
     visibility: {
       options: [],
       effective: 'host',
@@ -139,7 +138,7 @@ describe('话题头', () => {
     await fireEvent.click(screen.getByRole('button', { name: '更多' }))
     await screen.findByRole('button', { name: '专注模式' })
     expect(document.body.textContent).not.toContain('工作电脑')
-    expect(bar().textContent).not.toContain('云端 · 标准配置')
+    expect(bar().textContent).not.toContain('云端沙箱')
   })
 
   it('专注模式从 ⋯ 里进', async () => {

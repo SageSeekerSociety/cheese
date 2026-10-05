@@ -46,11 +46,7 @@ def a_full_delivery():
         author=identity.agent_identity(agent_instance_handle(uuid.uuid4())),
         requester=identity.GitIdentity("Alice", "1+alice@users.noreply.github.com"),
         coauthors=(identity.GitIdentity("Bob", "2+bob@users.noreply.github.com"),),
-        tasks=(
-            identity.WorkItem(
-                task_id=uuid.uuid4(), subagent_id="abc123", title="写了这一批"
-            ),
-        ),
+        tasks=(identity.WorkItem(task_id=uuid.uuid4(), title="写了这一批"),),
     )
     return room, card, who
 
@@ -123,14 +119,15 @@ def test_the_emails_and_the_urls_are_still_one_parseable_block(a_full_delivery):
     assert str(room.id) in by_token["Cheese-Topic"]
     # 卡没有能打开它的路由，所以它老老实实是个 id，不是一条打不开的链接。
     assert by_token["Cheese-Card"] == str(card.id)
-    # 活有路由：地址、分身、标题仍是三段，两次 split 照样拆得开，而活的 id 还能从
-    # 地址里取出来 —— 审计脚本要的就是这个。
-    where, subagent, title = by_token["Cheese-Task"].split(" ", 2)
-    assert (subagent, title) == ("abc123", "写了这一批")
-    from urllib.parse import parse_qs, urlparse
+    # 任务有路由：地址和标题两段，一次 split 拆得开，而任务的 id 还能从地址里取
+    # 出来 —— 审计脚本要的就是这个。
+    where, title = by_token["Cheese-Task"].split(" ", 1)
+    assert title == "写了这一批"
+    from urllib.parse import urlparse
 
-    assert parse_qs(urlparse(where).query)["card"] == [str(who.tasks[0].task_id)]
-    assert urlparse(where).path.endswith(f"/topics/{room.id}")
+    assert urlparse(where).path.endswith(
+        f"/topics/{room.id}/tasks/{who.tasks[0].task_id}"
+    )
 
 
 def test_somebody_without_github_gets_the_platforms_own_address(a_full_delivery):

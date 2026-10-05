@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.domain.block.models import Block
+from app.domain.block.models import Block, in_conversation
 from app.domain.delivery.models import Delivery
 
 #: Payload marker: the wait itself. ``conversation`` is the one the answer may
@@ -178,7 +178,7 @@ async def waiting_ask_blocks(session, *, topic_id, recipient_handle) -> set[uuid
     return set(
         await session.scalars(
             select(Block.id).where(
-                Block.topic_id == topic_id,
+                in_conversation(topic_id),
                 Block.meta["delivery_event_id"]
                 .as_string()
                 .in_([str(event) for event in events]),

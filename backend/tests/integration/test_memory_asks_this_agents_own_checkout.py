@@ -73,7 +73,7 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
         sessions = AgentSessionService(session)
         generation = str(room.resource_id or room.id)
         await sessions.remember_place(
-            topic_id=room.id,
+            conversation_id=room.id,
             agent_handle="cheese",
             harness=harness,
             work_lease={"kind": "device", "device_id": HANDS_OF_THE_DEFAULT},
@@ -86,7 +86,7 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
         assert asked == []
 
         await sessions.remember_place(
-            topic_id=room.id,
+            conversation_id=room.id,
             agent_handle="reviewer",
             harness=harness,
             work_lease={"kind": "device", "device_id": HANDS_OF_THE_REVIEWER},
@@ -107,7 +107,7 @@ async def test_a_lease_from_a_previous_generation_is_not_this_turns_hand(
         project, room = await _room(session)
         harness = harness_for(project.settings)
         await AgentSessionService(session).remember_place(
-            topic_id=room.id,
+            conversation_id=room.id,
             agent_handle="reviewer",
             harness=harness,
             work_lease={"kind": "device", "device_id": HANDS_OF_THE_REVIEWER},

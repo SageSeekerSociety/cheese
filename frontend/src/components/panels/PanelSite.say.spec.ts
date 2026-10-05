@@ -73,7 +73,7 @@ beforeEach(() => {
 async function openSite(blocks: Block[], props: Record<string, unknown> = {}) {
   getTranscript.mockResolvedValue({ data: blocks, total: blocks.length })
   const utils = render(Site, {
-    props: { topic, active: true, ...props },
+    props: { topicId: topic.id, active: true, ...props },
     global: { plugins: [vuetify] },
   })
   await waitFor(() => expect(utils.container.querySelector('.site-msg__body')).not.toBeNull())

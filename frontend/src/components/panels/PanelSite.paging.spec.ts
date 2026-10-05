@@ -135,7 +135,7 @@ function optsOf(call: number): Record<string, unknown> {
 
 async function openSite() {
   const view = render(Site, {
-    props: { topic, active: true, memberNames: NAMES },
+    props: { topicId: topic.id, active: true, memberNames: NAMES },
     global: { plugins: [vuetify] },
   })
   const pane = view.container.querySelector<HTMLElement>('.panel-site')

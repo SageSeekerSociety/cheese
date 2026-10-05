@@ -70,7 +70,7 @@ beforeEach(() => {
 async function openSite(blocks: Block[], props: Record<string, unknown> = {}) {
   getTranscript.mockResolvedValue({ data: blocks, total: blocks.length })
   const { container } = render(Site, {
-    props: { topic, active: true, ...props },
+    props: { topicId: topic.id, active: true, ...props },
     global: { plugins: [vuetify] },
   })
   await waitFor(() => expect(container.querySelector('.turn')).not.toBeNull())
@@ -160,7 +160,7 @@ describe('现场按轮组织', () => {
       total: 2,
       turn_starts: { 'turn-a': '2026-09-15T20:28:00Z' },
     })
-    const { container } = render(Site, { props: { topic, active: true }, global: { plugins: [vuetify] } })
+    const { container } = render(Site, { props: { topicId: topic.id, active: true }, global: { plugins: [vuetify] } })
     await waitFor(() => expect(container.querySelector('.turn')).not.toBeNull())
 
     expect(container.querySelector('.turn__head')?.textContent).toContain('18 秒')

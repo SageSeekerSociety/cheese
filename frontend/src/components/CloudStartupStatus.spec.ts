@@ -37,7 +37,7 @@ it('shows live elapsed time, retains logs on completion, and stops the clock', a
   await vi.advanceTimersByTimeAsync(41000)
   expect(view.getByText(/没有新的启动进度/)).toBeTruthy()
   await view.rerender({ events: [...events, event('3', 80, '已接入，继续处理消息', 'ready')] })
-  expect(view.getByText(/工作电脑已就绪 · 共用时 1分20秒/)).toBeTruthy()
+  expect(view.getByText(/沙箱已就绪 · 共用时 1分20秒/)).toBeTruthy()
   expect(view.getByText('正在传输运行程序')).toBeTruthy()
   await vi.advanceTimersByTimeAsync(60000)
   expect(view.getByText(/共用时 1分20秒/)).toBeTruthy()
@@ -55,7 +55,7 @@ it('reads in English under the English locale', async () => {
   expect(view.getByRole('list', { name: 'Startup log' })).toBeTruthy()
   expect(view.getByText(/No new startup progress for 1m 20s/)).toBeTruthy()
   await view.rerender({ events: [...events, event('3', 80, 'Connected', 'ready')] })
-  expect(view.getByText(/Work computer ready · Took 1m 20s/)).toBeTruthy()
+  expect(view.getByText(/Sandbox ready · Took 1m 20s/)).toBeTruthy()
   view.unmount()
 })
 

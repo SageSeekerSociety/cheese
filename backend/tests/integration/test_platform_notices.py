@@ -50,7 +50,7 @@ def _pr_card(client, app_world):
 
 def _blocks(client, topic_id: str) -> list[dict]:
     task_id = str(delivery_task_id(client, topic_id))
-    response = client.get(f"/topics/{topic_id}/tasks/{task_id}")
+    response = client.get(f"/topics/{task_id}/task")
     assert response.status_code == 200, response.text
     blocks = response.json()["data"]["blocks"]
     assert all(block["task_id"] == task_id for block in blocks)
@@ -149,7 +149,7 @@ def test_ci_failure_lands_as_one_line_event_not_a_fake_human_message(client, app
     assert all("AssertionError" not in (b.get("content") or "") for b in fresh)
 
 
-def test_ci_failure_records_the_whole_instruction_for_its_observed_parent(
+def test_ci_failure_records_the_whole_instruction_for_the_task_session(
     client, app_world, stub_hooks
 ):
     """Keep the full instruction durable until the task's parent is known.
@@ -174,9 +174,8 @@ def test_ci_failure_records_the_whole_instruction_for_its_observed_parent(
     )
     wait_work_idle()
 
-    # The producer commits the full instruction for the observed parent; it
-    # must not start a room-default turn before that parent is known.
-    import uuid
+    # The producer commits the full instruction for the task's own session, in
+    # the task's conversation.
 
     from sqlalchemy import select
 
@@ -187,12 +186,7 @@ def test_ci_failure_records_the_whole_instruction_for_its_observed_parent(
     async def recorded_instruction():
         async with client.test_factory() as db:
             rows = list(
-                await db.scalars(
-                    select(Delivery).where(
-                        Delivery.topic_id == uuid.UUID(tid),
-                        Delivery.task_id.is_not(None),
-                    )
-                )
+                await db.scalars(select(Delivery).where(Delivery.task_id.is_not(None)))
             )
             matching = [
                 row for row in rows if "pytest: 3 failed" in row.payload["content"]
@@ -200,12 +194,11 @@ def test_ci_failure_records_the_whole_instruction_for_its_observed_parent(
             assert len(matching) == 1
             row = matching[0]
             assert str(row.task_id) == task_id
-            assert row.state == "pending"
-            assert row.agent_instance_id is None
+            assert str(row.topic_id) == task_id
+            assert row.agent_instance_id is not None
             return row.payload["content"]
 
     prompt = client.portal.call(recorded_instruction)
-    assert not stub_hooks.last_prompt
     assert "pytest: 3 failed" in prompt
     # Recovery names the task workspace and updates its existing PR. It must
     # retain human approval instead of promising an unconditional merge.

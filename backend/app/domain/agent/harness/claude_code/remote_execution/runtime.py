@@ -100,6 +100,11 @@ NATIVE_TOOLS = {
 # link drop a deploy of the device connection causes, which the prefix waits
 # out and then reattaches.
 COMMAND_ABANDONED_S = 600.0
+# The stops a session's host sends, by their POSIX numbers: SIGHUP, SIGINT,
+# SIGKILL, SIGTERM. Not spelled through `signal`: Windows has no SIGHUP or
+# SIGKILL, so there every stop failed on the name before `signal_command`,
+# which stops the whole tree on Windows whatever the number.
+STOP_SIGNALS = frozenset({1, 2, 9, 15})
 # The longest one `shell` read waits for output before answering with none.
 COMMAND_READ_WAIT_S = 25.0
 # The most one `shell` read answers with per stream, before base64.
@@ -338,8 +343,6 @@ def request(state, method, params=None):
 class Executor:
     def __init__(self, state):
         self.state = Path(state).resolve()
-        # Bootstrap is reloaded each turn; successful checks belong to this process.
-        self.verified_binaries = {}
         self.config = json.loads((self.state / "config.json").read_text())
         self.programs = Path(self.config.get("release", self.state.parent))
         self.admission_lock = threading.Lock()
@@ -1005,12 +1008,7 @@ class Executor:
             )
         if operation == "signal":
             number = int(params["signal"])
-            if number not in (
-                signal.SIGTERM,
-                signal.SIGINT,
-                signal.SIGHUP,
-                signal.SIGKILL,
-            ):
+            if number not in STOP_SIGNALS:
                 raise ValueError("Unsupported signal")
             return self.signal_command(command_id, number)
         if operation == "forget":
@@ -1756,7 +1754,6 @@ class Executor:
         with bootstrap["prepared"](
             payload,
             owner,
-            self.verified_binaries,
             # Read-only in a sandbox: only the install, outside it, fetches it.
             fetch_toolchain=not self.config.get("sandbox"),
         ) as (
@@ -1838,20 +1835,20 @@ class Executor:
             files = {}
             if manifest.exists():
                 for name in json.loads(manifest.read_text()):
-                    path = self.programs / name
-                    if path.is_file():
+                    if (path := self.programs / name).is_file():
                         files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
             return {
                 "pid": os.getpid(),
                 "workspace": str(self.root),
-                # Where the platform's skills are on this machine: the files a
-                # skill's text names beside it (`bootstrap.plant_native_skills`).
+                # Where the skills are here (`bootstrap.plant_native_skills`).
                 "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
                 "files": files,
                 "runtime_sha256": SOURCE_SHA256,
                 "protocol_version": PROTOCOL_VERSION,
                 "release": self.config.get("release"),
+                "sandbox": bool(self.config.get("sandbox")),  # launch.can_prepare
                 "upgrading": self.upgrading,
+                "running_commands": len(self.running),
                 "capabilities": [
                     "prepare",
                     "idle_upgrade",

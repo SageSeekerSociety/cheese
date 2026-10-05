@@ -1,9 +1,12 @@
 ---
 title: 任务与工作目录
 kind: 参考
-summary: 一条活 = 一张任务卡 + 一个分支 + 一个工作目录，以及同一条规则算出来的看板与待处理清单。
+summary: 一条任务 = 一段自己的对话 + 一份实况文档 + 一个分支 + 一个工作目录，以及同一条规则算出来的看板与待处理清单。
 covers:
   - backend/app/domain/room_task/
+  - backend/app/domain/conversation/
+  - backend/app/api/routes/topics_tasks.py
+  - backend/app/api/task_instructions.py
   - backend/app/api/routes/awaiting.py
   - backend/app/api/routes/git_http.py
   - backend/app/domain/delivery/addressing.py
@@ -15,23 +18,25 @@ covers:
 
 # 任务与工作目录 {#tasks}
 
-一条活 = 一张任务卡 + 一个分支 + 一个工作目录；看板上的每一格和「待我处理」里的每一行，都是同一份规则算出来的。
+一条任务是房间旁边的一段对话，带着自己的实况文档、分支和工作目录；看板上的每一格和「待我处理」里的每一行，都是同一份规则算出来的。
 
-> 讲：一条活由哪三件东西组成、状态怎么变、机器上的工作目录怎么来、同步与备份、看板的列和短语。不讲：交付链路本身（分支→PR→采纳合并，见[任务 → 分支 → PR → 验收合并](/dev/delivery)），验收卡与合并态（见[验收与采纳](/dev/accept)），看板读的其余几块（见[看板](/dev/boards)）。
+> 讲：一条任务由哪几件东西组成、谁能在里面说话、怎么创建和开始、状态怎么变、机器上的工作目录怎么来、同步与备份、看板的列和短语。不讲：交付链路本身（分支→PR→采纳合并，见[任务 → 分支 → PR → 验收合并](/dev/delivery)），验收卡与合并态（见[验收与采纳](/dev/accept)），看板读的其余几块（见[看板](/dev/boards)）。
 
-## 三件东西 {#anatomy}
+## 一条任务由什么组成 {#anatomy}
 
-`cheese_task` 开一条活时造出第一件，另外两件是**算出来的名字**，不是另开的记录：
+人创建任务时造出第一件，分支和工作目录是**算出来的名字**，不是另开的记录：
 
 | 东西 | 在哪 | 谁造的 |
 |---|---|---|
 | 任务卡 | `tasks` 表一行（`room_task/models.py` 的 `Task`） | `TaskService.open_thread` |
+| 对话 | `conversations` 登记表一行，`kind = task`，id 就是任务的 id | 数据库触发器，插入任务时登记、删除时移除 |
+| 实况文档 | `documents` 一行（不属于任何房间），`tasks.document_id` 指向它 | 第一次被要时建（`TaskService.ensure_document`） |
 | 分支 | `task/<id 的前 8 个 hex>`（`Task.branch_name`） | 同一个函数，从 id 算 |
 | 工作目录 | 执行机上 `$CHEESE_WORKTREE_ROOT/<task_id>`（默认 `/work/<task_id>`） | `cheese worktree`，在机器上建 |
 
-`workspace_name` 是同一个 id 的另一种写法（`task_<8 位 hex>`），给人看的名字。三个名字都从卡的 id 推出来，没有第二个来源；`thread_label.py` 对这个形状有一句说明：存一列就等于同一件事有两份声明，而它们对不上的那天没有任何地方能说出哪份是对的。
+`workspace_name` 是同一个 id 的另一种写法（`task_<8 位 hex>`），给人看的名字。三个名字都从卡的 id 推出来，没有第二个来源。
 
-一条活**只属于一个房间**（`Task.room_id` 指向 `topics`），活不嵌套——「这条活的活」是同一个房间里的另一条活。卡上另外两组人：`owner_handle` 是谁的活，`reviewer_handle` 是谁说它可以落地；验收人在**派活那一刻**解析并写死（显式 `--reviewer`，否则取项目设置 `branch_protection.default_reviewer`，见 `project/protection.py`），不在递卡时回头读设置——设置是会变的政策，而「这条活交给了谁」是那一刻的事实。
+一条活**只属于一个房间**（`Task.room_id` 指向 `topics`），活不嵌套——「这条活的活」是同一个房间里的另一条活。卡上另外两组人：`owner_handle` 是谁的任务（唯一的负责人，一个人），`reviewer_handle` 是谁说它可以落地；验收人在**开始那一刻**解析并写死（开始时指定的，否则任务上已有的，否则项目设置 `branch_protection.default_reviewer`，都没有就拒绝开始），不在递卡时回头读设置——设置是会变的政策，而「这条任务交给了谁」是那一刻的事实。`agent_handle` 是哪位 AI 队友在做，空着就是项目的默认队友。
 
 ## 状态只有两个 {#status}
 
@@ -43,34 +48,50 @@ covers:
 |---|---|---|
 | `accepted_at` | 采纳（那次合并成功） | 交付标记，和 `status` 无关；批准被撤销也不抹掉 |
 | `delivered_head` | 同上，记下合进去的那一版 | 与 `accepted_at` 一起构成「已交付」 |
-| `closed_at` | `cheese_close_task`，或采纳后的自动关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
+| `closed_at` | 负责人或任务的会话关闭（`cheese_close_task`），或采纳后的自动关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
 
 所以有两条容易读错的组合：一条活可以**已交付却还开着**（有人继续往同一条分支推），也可以**关掉却什么都没交付**（显式放弃）。看板把「已交付」排在最前面，正是为了前一种（`presentation.task_presentation` 的第一条规矩）。
 
-## 线程标识 {#thread-label}
+## 一条任务是一段对话 {#conversation}
 
-开卡时平台能报出这条活的线程标识 `work-<32 位 hex>`（`thread_label.thread_label`，从卡 id 算）。agent 起子 agent 时把它原样写进那段 prompt，骨架让它出现在这条子线程的每一个事件上，平台照着它把事件归到卡（`TaskService.open_by_thread_label`，每个事件问一次，走主键读）。
+任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。只有负责人和做这条任务的 AI 队友在里面说话（`POST /topics/{task}/messages` 只收负责人，或这条任务自己的会话），其他人能读，要说的话去房间说。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
 
-归属是**读出来的，不是报上来的绑定**：一个从没报过的子线程，它的事件仍然带着标识。前缀 `work-` 必须在——骨架自己起的内部子 agent 带的是它自己的词（`general-purpose` 这种），没有前缀就分不出两者，会去认领别人的卡。标识在文本里按形状挑（`label_in_text`，取第一个）：简报里顺带提到别的卡是常事，而形状卡到全长 hex——认错一张卡比认不出更糟。
+**创建只由人做**，创建的人就是负责人：
 
-`subagent_id` 是另一件事：那是**谁在做**，只有在容器里诞生的那个 id 开工时才写（`note_worker`），同时盖一次 `last_turn_at`。它不参与归属。
+| 入口 | 路由 | 之后 |
+|---|---|---|
+| 房间 ⋯ 菜单里的「新建任务」 | `POST /topics/{room}/tasks` | 空任务，负责人第一句话时会话才起 |
+| 从一条消息「转为任务」 | `POST /blocks/{id}/upgrade` | 任务的会话收到一段开场提示，带着那条消息和它前面的几条讨论 |
+| 接受 AI 的提议 | `POST /topics/{room}/task-proposals/{block}/accept` | 同上，再加上提议里的说明；`.../dismiss` 是「不用」 |
+
+AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`，`{title, summary}`）：房间里落一张卡，带「创建任务」和「不用」两个按钮，点「创建任务」的人成为负责人。
+
+**实况文档**写这件事要做什么、做到哪、定了什么（`GET /topics/{task}/document` 第一次要时建）。看得见任务的人都能读，只有负责人和这条任务自己的会话能写。
+
+**开始**（`POST /topics/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的凭证对工作机器只读：能讨论、写文档，不能改项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。
+
+**转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`）。转交前，任务若用着或占着新负责人不能用的电脑（原负责人自己的），先照换电脑的流程挪到新负责人能用的那台（`compute_configs.choice_for_owner`：任务自己的选择、房间的选择、项目默认，依次跳过别人的个人电脑）；推送不成功就不转交，说明原因。
+
+**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。交付的改动被采纳时任务自己关。
+
+平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。工作电脑按 项目默认 → 房间（`topics.compute_config`）→ 任务（`tasks.compute_config`）取，任务第一次要机器时从房间的选择抄一份，之后房间再换也不跟着动；负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/compute-profile` 换；设备页的批量挪走对任务会话走的就是这一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`compute_configs.works_tasks_of`）：选不了，抄房间的选择时遇到它就改用项目默认，「系统挑一台」时跳过它。
 
 ## 工作目录怎么来 {#worktree}
 
 `cheese worktree <task_id>`（`backend/sandbox/cheese`）是机器上唯一建工作目录的地方：
 
-1. `POST /projects/{project_id}/git/tasks/{task_id}`——这一下**才是**把 `author_handle` 写上的地方（`TaskService.record_author`，只认第一个）。派活和房间成员都不证明是谁在干活。房间不对答「这条任务不属于当前房间」，已结束答「这条任务已结束，请创建新任务」。
+1. `POST /projects/{project_id}/git/tasks/{task_id}`——这一下**才是**把 `author_handle` 写上的地方（`TaskService.record_author`，只认第一个）。创建任务和房间成员都不证明是谁在干活。房间不对答「这条任务不属于当前房间」，已结束答「这条任务已结束，请创建新任务」。
 2. 在 `~/.cheese/repositories/<project>.git` 造/复用一个裸仓，凭证由 `!cheese git-credential` 现取；`fetch --filter=blob:none` 只取提交不取历史 blob（注释里记着实测：同一份仓库整下 195 MB、这样 9.6 MB；一个 169 MB 的 fetch 曾冻住后端 3.7 秒）。历史仍在，`git log` 和与基准的 diff 照常，某个文件的旧内容真被读时才取。
 3. `git worktree add` 到 `/work/<task_id>`，起点是远端分支（还没开出来就是基准分支）。
-4. 写两个钩子：`post-commit` → `cheese sync`，`prepare-commit-msg` → `cheese git-attribution`。
+4. 写两个钩子：`post-commit` → `cheese sync`，`prepare-commit-msg` → `cheese git-attribution`。钩子装在裸仓上，同一裸仓的每个工作目录都会跑它们，包括在任务目录旁边用 `git worktree add` 另开的那种；只有带任务标记（`cheese-task.json`）的任务目录才署名、才同步，其余目录照普通 git 提交，不碰任何任务。
 
-两处守卫写在注释里：创建期要拿 `<project>.lock` 串行化（本地子 agent 会并发要工作目录，一个被打断的 clone 会被当成完整仓库）；这台机器上有 `~/.cheese-environment/config.json` 却找不到准备脚本时**直接失败**——静默跳过会交出一个依赖从没装过的工作目录。
+两处守卫写在注释里：创建期要拿 `<project>.lock` 串行化（同一台机器上几条会话会并发要工作目录，一个被打断的 clone 会被当成完整仓库）；这台机器上有 `~/.cheese-environment/config.json` 却找不到准备脚本时**直接失败**——静默跳过会交出一个依赖从没装过的工作目录。
 
 ## 同步、备份、恢复 {#sync}
 
 `cheese sync` 做两件事，顺序不能换（`_sync_task`）：
 
-1. **备份未提交的文件**：用另一个索引文件（`GIT_INDEX_FILE=…/cheese-snapshot-index`）`read-tree` + `add -A` + `write-tree`，把树写成一个挂在当前 HEAD 上的临时提交（`commit-tree`）。工作树自己的暂存区不受影响。
+1. **备份未提交的文件**：用另一个索引文件（`GIT_INDEX_FILE=…/cheese-snapshot-index`）`read-tree HEAD` + `add -u`，再加上该带的未跟踪文件，`write-tree`，把树写成一个挂在当前 HEAD 上的临时提交（`commit-tree`）。工作树自己的暂存区不受影响。带哪些见下面的[备份里有什么](#backup-contents)。
 2. **推 HEAD**（`_deliver_task_branch`）：HEAD 已在本检出上次推送或 fetch 时记下的分支尖（`refs/remotes/origin/<branch>`）里，就不问托管平台、什么都不推：托管平台一时连不上时，问一句只会把它已经有的工作报成「没能推回」，而且每次 sync 都报一遍。否则先读托管平台上这条分支的尖。HEAD 已在其中——同一任务的另一个检出走得更远——就什么都不推；尖在 HEAD 的历史里就普通推送；两边分叉而那个尖是本检出自己在这条分支上有过、后来 amend/rebase 掉的提交，就以它为 lease 替换（`--force-with-lease`），整理本任务的提交（比如移除依赖）本来就是工作的一部分；尖里有本检出从没有过的提交就拒绝，替换会把别人的工作从 PR 上删掉。
 
 任务的 PR 在合并队列里时（任务数据里的 `merge_queued_pr`），托管平台锁着这条分支：有新东西要推就不推，只备份，房间里说清楚这些提交为什么不在 PR 里——重试推不上去，合并后在新任务里交付，或由验收人退回、PR 撤出队列。
@@ -79,15 +100,25 @@ covers:
 
 备份和推送各自遇到连接被重置或超时，就在同一次 sync 里再试一次；连着两次才算失败——一次重置是网络，连着两次多半是这个请求本身（大小、中间代理的限制），再试只会拖长换机时那两分钟的推送。
 
-备份不是每次都往对象存储打——`_backup_task_snapshot` 先看 `rev-list --count <snapshot> ^<base>`，是 0 说明每个对象都已经在托管平台上，就地返回；再问一次后端这条任务最新那份备份（`GET …/snapshots/latest`），它的 head 和文件树跟现在一样，也不再发——快照提交每次现做，不问这一句，没动过的已结束任务每次 sync 都会重新打包上传一遍，换机时的推送就等着它们。问不通、还没有备份、本机已经没有那份快照，都照常上传。叠在另一条任务分支上的任务，底座分支合并后会被删掉（这里 fetch `--prune` 也跟着删），这时改成扣掉 `--remotes=origin`：托管平台任何一条分支上见过的提交都不进备份。真要备份的，进 `refs/cheese/snapshots/<task_id>`、打成 bundle、随 `PUT /projects/{id}/git/tasks/{id}/snapshots/{sha}` 交给后端（`room_task/snapshots.py` 的 `save`），落进**私有** bucket（`task-snapshots/<project>/<task>/<sha>/<digest>.bundle`），单次上限 512 MiB（超了回「请将大文件移入附件存储」），服务端按 sha256 复核 digest、并校验它真是个 git bundle。同一份内容再交一次不会再存一遍；它要是已经不是最新那份（文件改动过又改了回去），就新记一行指向原来那个对象，让它重新成为最新——否则恢复出来的是那次已经撤掉的改动，下一轮 sync 也会因为「最新」对不上而每次都重传。bundle 每次现打，上传完不论成败都删：底座会前进，留下一份被拒的原样再发，只会每轮都被拒。
+备份不是每次都往对象存储打——`_backup_task_snapshot` 先看 `rev-list --count <snapshot> ^<base>`，是 0 说明每个对象都已经在托管平台上，就地返回；再问一次后端这条任务最新那份备份（`GET …/snapshots/latest`），它的 head 和文件树跟现在一样，也不再发——快照提交每次现做，不问这一句，没动过的已结束任务每次 sync 都会重新打包上传一遍，换机时的推送就等着它们。问不通、还没有备份、本机已经没有那份快照，都照常上传。叠在另一条任务分支上的任务，底座分支合并后会被删掉（这里 fetch `--prune` 也跟着删），这时改成扣掉 `--remotes=origin`：托管平台任何一条分支上见过的提交都不进备份。真要备份的，进 `refs/cheese/snapshots/<task_id>`、打成 bundle、随 `PUT /projects/{id}/git/tasks/{id}/snapshots/{sha}` 交给后端（`room_task/snapshots.py` 的 `save`），落进**私有** bucket（`task-snapshots/<project>/<task>/<sha>/<digest>.bundle`），单次上限 512 MiB（超了回「请将大文件移入附件存储」；未跟踪文件已经被[预算](#backup-contents)挡住，能超的只剩提交过、托管平台上还没有的内容和跟踪文件的改动），服务端按 sha256 复核 digest、并校验它真是个 git bundle。同一份内容再交一次不会再存一遍；它要是已经不是最新那份（文件改动过又改了回去），就新记一行指向原来那个对象，让它重新成为最新——否则恢复出来的是那次已经撤掉的改动，下一轮 sync 也会因为「最新」对不上而每次都重传。bundle 每次现打，上传完不论成败都删：底座会前进，留下一份被拒的原样再发，只会每轮都被拒。
 
 同步失败**会在房间里说一句**（`_report_sync_failure`）：一轮结束时改动还在机器上，和一轮成功长得一模一样——这正是「一次被拒的推送被读成了一个完成的回合」的由来，直到机器被回收、改动跟着没了。成功不发消息，那会是训练人跳过它的噪音。
 
 `cheese recover <task_id>` 把最近一次备份恢复到 `~/.cheese/recovered/<task>-<snapshot 前 12 位>`，**不动原工作目录和评审分支**；bundle 的 sha256 对不上就一个文件都不恢复。备份缺的历史（bundle 头里的前置提交）按提交 id 从托管平台取，不经底座分支：叠放任务的底座合并后就被删了，而一台从没检出过这条任务的机器除了提交 id 没有别的可取。合并过的 PR 在托管平台上留着它的头，这些提交还在。
 
+### 备份里有什么 {#backup-contents}
+
+`_snapshot_index` 决定：
+
+- **跟踪的文件一律带上**，不论多大：改过的、删掉的，以及 agent 已经 `git add`、还没提交的新文件（包括越过 `.gitignore` 强行加的）。对跟踪文件的改动永远是工作。
+- **被忽略的文件一律不带**（`.gitignore`、`.git/info/exclude`、全局 excludes）。
+- **其余未跟踪的文件**，先去掉落在只有工具才写的目录里的（`_GENERATED_DIRS`：`node_modules`、`__pycache__`、`.venv`/`venv`、各种工具缓存），它们重装就回来，而且一个 `node_modules` 的文件数比任务里其他东西加起来都多；剩下的合计超过 `_UNTRACKED_BACKUP_BUDGET`（64 MiB）就从最大的开始略过，直到放得下。`dist/`、`build/`、`target/` 不按名字去掉：这些名字也有人用来放手写的文件，它们是大文件时靠这道预算挡住。
+
+略过了什么要说出来：写进那次快照提交的说明里跟着备份走，`cheese recover` 恢复完照着列一遍；单条任务的 `cheese sync`（提交钩子跑的就是它）打到 stderr，提交的那个 agent 能看到；因为太大被略过的文件，每个在房间里说一次（这台检出说过哪些记在 `cheese-backup-left-out`），生成目录不说。`sync --all` 成功时什么都不打：平台把它的输出全当失败读（`session_work._failed_tasks`）。
+
 ## push-fix {#push-fix}
 
-`cheese push-fix [--task <id>] [--drop-dependency]` 先跑一次 sync，再调 `POST /topics/{topic}/tasks/{task}/push-fix`，把新提交刷到这条活**已有的**那个 PR 上并刷新验收状态；没有可推的东西就打印原因，不报错。`--drop-dependency` 用在「已经整理并验证是独立改动」之后：把现有 PR 改到项目默认分支，清掉任务依赖和旧批准。
+`cheese push-fix [--task <id>] [--drop-dependency]` 先跑一次 sync，再调 `POST /topics/{task}/push-fix`，把新提交刷到这条活**已有的**那个 PR 上并刷新验收状态；没有可推的东西就打印原因，不报错。`--drop-dependency` 用在「已经整理并验证是独立改动」之后：把现有 PR 改到项目默认分支，清掉任务依赖和旧批准。
 
 一个任务只有一个 PR（`Task.pr_number`），改验收卡不会新开 PR，`push-fix` 推的还是同一个。
 
@@ -99,11 +130,12 @@ covers:
 
 | 列 | 意思 | 允许出现的短语 |
 |---|---|---|
-| `building` 施工中 | 还没递出交付 | 运行中、已动工、待开工、已交回、空闲（房间）、草稿（房间）、失联 |
-| `delivering` 交付中 | 下一步在平台 / 芝士手上 | 检查运行中、等待检查、修复检查、解决冲突、平台更新分支 |
+| `not_started` 未开始 | 任务还在讨论，负责人还没点「开始」 | 讨论中 |
+| `building` 进行中 | 开始了，还没递出交付 | 运行中、已开始、空闲（房间）、草稿（房间） |
+| `delivering` 检查中 | 下一步在平台 / 芝士手上 | 检查运行中、等待检查、修复检查、解决冲突、平台更新分支 |
 | `needs_you` 待处理 | 下一步在人手上 | 检查未通过、待审阅、已退回、待回答 |
-| `done` 已完成 | 已采纳，或已关闭且没交付 | 已采纳、已关闭 |
-| `archived` 已归档 | 房间才有；活不归档 | 已归档 |
+| `done` 已完成 | 已采纳，或已关闭 | 已采纳、已完成（留了结论）、已关闭 |
+| `archived` 已归档 | 房间才有；任务不归档 | 已归档 |
 
 同一个客观事实会因为「谁负责下一步」落在不同列：CI 红了但平台已经派芝士去修是 `delivering`（显示「修复检查」）；芝士推不上去、那个红没人能清掉就是 `needs_you`（显示「检查未通过」）。列**从短语推出来**（`_show`：每个短语是它那一列专属枚举的成员，列由成员的类型查表得到），所以「显示了一句不属于本列的话」在结构上写不出来。
 
@@ -129,8 +161,6 @@ covers:
 
 ## 边界与坑 {#traps}
 
-- 「失联」只在**没人知道那个分身还在不在**的时候说话，退回时间戳，宽限期 10 分钟（`LOST_SIGNAL_AFTER`，实测轮内 block 间隔中位数 8 秒、p90 34 秒）。知道的有两处：跑轮次的进程（`ChatService.worker_live`）说它收工了就是收工了——那是缺席的证据，立刻算失联；说它还在做就是在跑。进程那处会忘，忘的三种情形都和分身死没死无关（后端重启、房间换一个会话、分身交回一次话），所以还有第二处：这条活**开工那一轮还开不开**（`Task.execution_turn_id`，见 `agent.liveness`）——关掉区间的是孤儿扫描，它知道容器真的死了没有。两处都答不出来才退回时间戳。一个埋头跑四十分钟长命令、一条 block 都不落的分身是正常干法——安静不是证据，缺席才是。
 - 「待回答」是唯一会**中断运行**的一格，它压过「运行中」——看板显示「运行中」正是让人不来看的那句话。
-- `has_progress`（「已动工」的判据）只读平台看得见的两个痕迹：`pr_number` 非空或 `author_handle` 非空。主 agent 自己动手那条路平台看不见过程（提交直接推去托管平台、工作树在沙箱里自己开），所以这一位只够把「做了一半停着」和「还没人碰过」分开，不够说明「正在做」。
-- `Task.model` / `effort` 今天**只有卡片渲染读，没有任何接口写**：平台还没有「派活」这条路径，一条活是房间会话里的子 agent，由 agent 自己起。卡上显示哪个模型也从 `usage` 里这条活最后一行算出来（`presentation.card_model`），不存一列。
+- `Task.model` / `effort` 今天**只有卡片渲染读，没有任何接口写**，任务会话的执行路径也不读它们。卡上显示哪个模型从 `usage` 里这条任务最后一行算出来（`presentation.card_model`），不存一列。
 - 备份与工作目录都绑在**那一台机器**上：机器被回收而同步没成功，改动就没有了——房间里那句失败通知是唯一的信号。

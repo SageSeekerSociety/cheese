@@ -133,7 +133,7 @@ def main() -> None:
     # kind is what the client acts on, so both are read, not just the number.
     budget_status, budget_src = grab(ADDON, r'_refuse\(flow, (\d+), "billing_error", message, headers\)')
     budget_type, _ = grab(ADDON, r'_refuse\(flow, \d+, "([^"]+)", message, headers\)')
-    budget_prefix, prefix_src = grab(ADDON, r'_refuse_spent_budget\(\s*flow, f"([^"]+)\{verdict\.reason\}"')
+    budget_prefix, prefix_src = grab(ADDON, r'_refuse_reached_cap\(\s*flow, f"([^"]+)\{verdict\.reason\}"')
     fact("budget.status", int(budget_status), ADDON, budget_src)
     fact("budget.type", budget_type, ADDON, budget_src)
     fact("budget.prefix", budget_prefix, ADDON, prefix_src)

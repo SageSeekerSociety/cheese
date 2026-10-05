@@ -5,10 +5,14 @@
 // 它们和话题行同一种视觉语法——同图标槽、同缩进基准、同选中态、同未读角标，所以
 // 「点它会发生什么」不用另学一遍。这里只画：哪几页露出来了（顺序、壳、收起来过没
 // 收起来过）由父级算好传进来，点了去哪儿由父级决定。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Topic } from '@/cx_types'
+
+import { useRowMenu } from '@/composables/useRowMenu'
 
 import TopicRailBadge from './TopicRailBadge.vue'
 
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
 
@@ -34,7 +38,13 @@ defineProps<{
   unreadOf: (id: string) => number
   /** 我静音了的房间：行尾画一个静音标记（未读已经不计了）。 */
   mutedOf?: (id: string) => boolean
+  /** 全局房间那一行的操作（和话题行 ⋯ 同一份），右键弹出来。 */
+  rootActions?: MenuAction[]
 }>()
+
+// 全局房间和话题行一样：右键弹它的操作，弹在鼠标那一点上；手机上长按（父级那一个
+// useLongPress 认 data-row-actions）。
+const rowMenu = useRowMenu<'root'>()
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
@@ -58,7 +68,9 @@ const emit = defineEmits<{
       class="nav-row pinned-row"
       :class="{ 'is-active': rootTopic.id === selectedTopicId }"
       :style="ROW_INDENT"
+      :data-row-actions="rootTopic.id"
       @click="emit('select-topic', rootTopic.id)"
+      @contextmenu="!page && rootActions?.length && rowMenu.open('root', $event)"
       @mouseenter="emit('hover-topic', rootTopic.id)"
       @mouseleave="emit('leave-topic')"
       @focusin="emit('hover-topic', rootTopic.id)"
@@ -80,6 +92,14 @@ const emit = defineEmits<{
       <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">{{
         topicTitle(rootTopic)
       }}</v-list-item-title>
+      <AdaptiveMenu
+        v-if="!page && rootActions?.length"
+        v-bind="rowMenu.bind('root')"
+        :actions="rootActions"
+        :title="topicTitle(rootTopic)"
+      >
+        <template #activator />
+      </AdaptiveMenu>
       <template #append>
         <v-icon
           v-if="mutedOf?.(rootTopic.id)"
@@ -92,6 +112,8 @@ const emit = defineEmits<{
         <TopicRailBadge v-if="unreadOf(rootTopic.id) > 0" :count="unreadOf(rootTopic.id)" />
       </template>
     </v-list-item>
+    <!-- 挂在这个房间下面的任务。 -->
+    <slot name="root-tasks" />
 
     <!-- 手机上这几行收进了项目菜单（项目名旁边那颗 ⌄），列表只留话题。 -->
     <v-list-item

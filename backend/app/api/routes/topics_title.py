@@ -50,6 +50,8 @@ from app.api.routes.topics import DbSession, Topic
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.runtime import announce_stale
+from app.domain.room_task.schemas import TaskOut
+from app.domain.room_task.services import TaskService
 from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
@@ -62,22 +64,33 @@ async def set_title(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """给这个地方起/改标题 — used by both `cheese_title` (a person asked 芝士
-    for this name) and the frontend sidebar rename UI (dual-use, like doc/split).
+    for this name) and the frontend sidebar rename UI (dual-use, like doc).
     Either way a person chose it, so the platform's naming leaves it alone from
     now on (`topic/naming.py`).
 
-    Names the THREAD when the id is a thread's. Resolving only rooms did not
-    fail here, which is what made it dangerous: a 分身 naming the piece of work
-    it had just been handed would have renamed the whole room around it.
+    A task's id names the task: its owner, or its own session (which names a
+    task created without a title), renames it.
     """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError(say("titleRequired"))
+    task = place.task
+    if task is not None:
+        own_session = resolver.credential_conversation() == task.id
+        if not own_session and actor.handle != task.owner_handle:
+            raise ForbiddenError(say("taskOwnerOnly"))
+        TaskService.rename(task, title[:80])
+        out = TaskOut.model_validate(task).model_dump(mode="json")
+        await db.commit()
+        await announce_stale(place.room_id, "topics")
+        return ok(out)
     await naming.rename_by_person(
         db,
         place.room,

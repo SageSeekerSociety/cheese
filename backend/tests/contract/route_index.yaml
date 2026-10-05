@@ -41,12 +41,14 @@ auth_entries:
   device.agent.ws: "connector.agent_socket authenticates durable device session token via device.owner_reads.device_for_token from X-Cheese-Session or token query; binds the socket to that device. Source: app/api/routes/connector.py."
   device.viewer.ws: "connector._may_view_screen verifies query access token and actual screen project-member/owner or topic roster membership before the viewer socket. Source: app/api/routes/connector.py."
   local.device.owner: "local_dirs._require_user requires verified user_id, then _require_owned_device checks Device.owner_user_id. All selected-directory and access-log operations stay bound to caller device ownership. Source: app/api/routes/local_dirs.py."
-  machine.manager: "machines._require_project_access resolves an authenticated actor; reads require current numeric user_id and TeamRepository.is_team_member, while delete/power action delegates MachineService.require_manage_authority (team owner/admin and agent standing). Source: app/api/routes/machines.py; domain/machine/services.py."
+  dashboard.team.member: "dashboard._require_team_member resolves an authenticated actor with a current numeric user_id and requires team_service.is_team_member of the project's team; outsiders get NotFound. Source: app/api/routes/dashboard.py."
   dashboard.board: "dashboard._require_board_reader: require_verified_caller and membership in at least one project in the space board via may_read_project; global sandbox development override is explicit. Source: app/api/routes/dashboard.py."
   dashboard.person: "dashboard._signed_in resolves a verified handle; DashboardService filters profile/topics by viewer access. forget_understanding deletes only facts about that same viewer. Source: app/api/routes/dashboard.py,186,198,232."
-  docs.dev.cookie: "docs_site.check_dev_access verifies the dev docs cookie through docs_site.access; internal proof or holder still in AdminService allow-list is required for nginx auth_request. Source: app/api/routes/docs_site.py."
+  docs.dev.cookie: "docs_site.check_dev_access: internal proof, or the docs sign-in cookie resolved by docs_site.access.reader (docs host only, platform sign-in session still live) whose holder is in the AdminService allow-list; nginx auth_request. Source: app/api/routes/docs_site.py."
+  docs.session: "docs_site.docs_reader: the docs sign-in cookie resolved by docs_site.access.reader (signature, docs-host Host, platform sign-in session still live via SessionService.live_handle); non-GET requests must carry the docs Origin. Source: app/api/routes/docs_site.py, app/domain/docs_site/access.py."
+  docs.grant: "public(form post on the docs host): Origin must be the platform's; a 30-second docs grant spent once in Valkey, naming a still-live sign-in session, becomes the host-only docs cookie. Source: app/api/routes/docs_site.py open_docs_session, app/domain/docs_site/access.py."
   docs.agent: "docs_site._agent_scope resolves in named canonical room/project and calls authorize_topic (ordinary access setting applies), then library.reads_dev_docs checks that project dev-doc scope. No separate unconditional require_verified_caller is invented. Source: app/api/routes/docs_site.py."
-  docs.visit: "public(docs visit beacon) with optional get_optional_user_id attribution; random visitor id is accepted, unusable anonymous id is ignored, and visit rate limiting is not authorization. Source: app/api/routes/docs_visit.py."
+  docs.visit: "public(docs visit beacon) with optional docs sign-in cookie attribution (docs_site.access.reader); random visitor id is accepted, unusable anonymous id is ignored, and visit rate limiting is not authorization. Source: app/api/routes/docs_visit.py."
   feedback.read: "Feedback routes resolve optional caller (with ?topic=, in that room via _in_room, authorize_topic enforce=True, and _reader requires the room to be in a platform project: FeedbackService.require_platform_room), then FeedbackService.list_public / visible_row / visible_ref / may_see filters public, author, originating-room and admin visibility. _is_admin also applies refuse_management_action and agent-binding checks; it is not just an allow-list. Source: app/api/routes/feedback.py,260,336."
   feedback.write: "Feedback routes explicitly require authenticated actor/handle; FeedbackService owns author/moderator rights. _is_admin adds refuse_management_action with IdentityService agent binding. create refuses agent direct filing in the service. Source: app/api/routes/feedback.py and domain/feedback/services.py."
   feedback.claim: "_claimer resolves the caller from the credential (in the named room via _in_room, authorize_topic enforce=True, when ?topic= is given); FeedbackService.claim/release: visible_ref 404s what the caller cannot see, may_claim = feedback admin or works_on_platform (room project or a readable project in settings.docs_dev_repositories), release = holder or admin. Source: app/api/routes/feedback.py and domain/feedback/services.py, claims.py."
@@ -68,6 +70,7 @@ auth_entries:
   routines.manage: "routines._routine_actor -> enforced room access, then _require_manage / _person according to operation: ownership or project manager and person-only confirmation/run/pause decisions. Agent draft/update limits remain in those helpers. Source: app/api/routes/routines.py onward."
   routines.create: "routines.create_routine uses _viewer(enforced room access); owner/speaker and draft-vs-confirmed state are decided by _speaker and _is_person. Source: app/api/routes/routines.py."
   skill.project: "project_skills._in_project / _load bind skill actual project, use enforced room access when topic is supplied, otherwise authorize_project. Source: app/api/routes/project_skills.py,127."
+  skill.bundle: "skill_bundles.download_skill_bundle reads scoped_token_claims from X-Cheese-Token (the session's project token) and derives the project from claim p; the URL carries no project id, so the credential itself is the only scope. A global sandbox token is not a project claim and is refused. Source: app/api/routes/skill_bundles.py and app/core/sandbox_auth.py."
   environment.user: "project_environment.User -> require_auth_user; access resolves user handle and checks roster for reads / MemberService.manages for writes, plus archive-write guard. room/apply operations bind the room and idle requirement. Source: app/api/routes/project_environment.py,54,79."
   environment.overview: "project_environment.overview_access requires scoped claims p=URL project and t=project.root_topic_id; recovery repair additionally requires idle and matching incident. Source: app/api/routes/project_environment.py."
   export.human: "domain/project/export.create_archive requires token user_id, rejects IdentityService agent binding, checks may_read_project and filters readable_topic_ids. This is the route delegated authorization seam. Source: app/domain/project/export.py."
@@ -75,12 +78,14 @@ auth_entries:
   site.access: "ActorResolver resolves verified actor then site.services.require_site_access, for publication/read or minting a short-lived site grant. Source: app/api/routes/project_sites.py and site_sessions.py; app/domain/site/services.py."
   preview.access: "preview_sessions resolves authenticated actor then api/preview_host.require_preview_access, before minting resource-bound preview grant. Source: app/api/routes/preview_sessions.py; app/api/preview_host.py."
   workspace.access: "Decorator Depends(workspace.require_project_access): verify_scoped_token for project or auth.caller.may_access_project, then actual requested room/task containment + authorize_topic, with archive/task-ended PUT guards. Source: app/api/routes/workspace.py."
-  document.reader: "api/doc_access.reach: a room's document resolves the actor in its room then authorize_topic (the topic-access setting applies); a document in no room resolves in its project then authorize_project. Source: app/api/doc_access.py and the cited handler."
+  document.reader: "api/doc_access.reach: a room's document resolves the actor in its room then authorize_topic (the topic-access setting applies); a document in no room resolves in its project then doc_access.authorize_in_project (a member, or 芝士 with its session credential in the project). Source: app/api/doc_access.py and the cited handler."
   document.member: "document_comments._member uses api/doc_access.reach(enforce=True) (room roster for a room's document, project membership for one in no room) and doc_identity.operation_actor; mutations also bind the comment to its document. Source: app/api/routes/document_comments.py; app/api/doc_access.py."
   delegated.self: "ActorResolver.resolve(); the caller must be authenticated with a user id: a person's login, or a delegated credential (sandbox_auth.DelegatedClaims, cxdg_ prefix) that api.auth.DELEGATED_ROUTES admits here and resolves to the person the 芝士 answers for. Lists only that person's own rows. Source: app/api/routes/tasks/participation.py; app/api/auth.py."
   document.human: "document_agent._asker uses api/doc_access.reach(enforce=True) and doc_identity.human_operation_actor (verified human, not agent identity); a box conversation is held in Valkey with its asker and document, and only that person on that document may go on with it, stop it, or put its answer into a thread they started. Source: app/api/routes/document_agent.py; app/domain/agent/document/box.py; app/api/doc_identity.py."
   collab.service: "living_docs._service: the bearer derived from COLLAB_SECRET (living_doc.collab.verify_service); only the collaboration service holds it. Identity in a store comes from the actors it carries, which the service took from backend-signed tickets or from the backend's own replace call. Source: app/api/routes/living_docs.py."
-  living.document: "living_docs resolves through api/doc_access.reach (room roster for a room's document, project membership for one in no room); state-changing/history/receipt/restore branches enforce it and use doc_identity.operation_actor, and writes refuse an archived room or project (doc_access.require_writable). Source: app/api/routes/living_docs.py; app/api/doc_access.py. Endpoint-specific branch is kept in the map below."
+  project.documents: "living_docs project routes resolve in the project then api/doc_access.authorize_in_project: a member (authorize_project), or 芝士 with its session credential naming one of the project's rooms, refused once taken off that room (refuse_unseated_agent). Creating also requires an authenticated actor and refuses an archived project. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
+  document.own: "living_docs._own: api/doc_access.reach(enforce=True), refuses a room's living document (docBelongsToRoom), then doc_access.require_writable. Rename and delete apply only to the project's own documents. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
+  living.document: "living_docs resolves through api/doc_access.reach (room roster for a room's document, project membership, or 芝士's session credential in the project, for one in no room); state-changing/history/receipt/restore branches enforce it and use doc_identity.operation_actor, and writes refuse an archived room or project (doc_access.require_writable). Source: app/api/routes/living_docs.py; app/api/doc_access.py. Endpoint-specific branch is kept in the map below."
   editor.link: "room_files.editor_fetches_file authenticates the signed/expiring document link with documents.editor.read_link; that link is the only credential. Source: app/api/routes/room_files.py; domain/documents/editor.py."
   editor.callback: "room_files.editor_saves_file validates the link via editor.read_link and callback JWT/body via editor.verify_callback before saving. Internal download URL validation is a separate safety check. Source: app/api/routes/room_files.py; domain/documents/editor.py."
   capability.execution: "execution.execute validates scoped cheese claims, then device.owner_reads session_execution / legacy_execution and execution_device_authorized bind project/room/session/device. No ordinary Bearer dependency. Source: app/api/routes/execution.py; domain/device/owner_reads.py."
@@ -107,6 +112,7 @@ auth_entries:
   public.catalogue: "public(catalogue): the cited read handler returns published static/catalogue choices without credential dependencies. This entry is only used for agent types, public resource limits, installer and public metadata reads verified below."
   public.health: "public(health/readiness/metrics/version): no route credential dependency or authorization call. Handler exposes health/build/metrics data as currently implemented. Source: app/api/routes/health.py; app/main.py,842."
   public.legal: "public(legal document text/version): no credential dependency; consent operations use require_auth_user separately. Source: app/api/routes/legal.py onward."
+  public.redirect: "public(redirect only): docs_site.docs_sign_in answers a validated in-site path with a 303 to the platform's /docs-signin page; it reads no credential and grants nothing. Source: app/api/routes/docs_site.py."
   public.uploads: "public(local uploaded asset delivery): no credential check; _safe_path requires contained existing storage path, executable suffixes are served as download/inert content. Fixed local profile registers /uploads/{key:path}. Source: app/api/routes/uploads.py,61."
   public.mcp.metadata: "public(remote MCP OAuth client metadata): publishes only the OAuth client declaration; management and callbacks use separate gates. Source: app/api/routes/remote_mcp.py."
   observed.debug: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /debug/turns returns agent execution lifecycle summaries. Source: app/main.py."
@@ -115,7 +121,6 @@ auth_entries:
   project.can_manage.read: "ActorResolver.resolve + authorize_project gates the read; MemberService.require_manager is caught to return can_manage true/false, not to reject a nonmanager. Source: projects.get_topic_naming and projects_run_config.get_default_model/get_compute_configs."
   project.private.chat: "projects.get_private_chat calls require_verified_caller; authenticated actors must pass authorize_project and be one of the named DM participants. Explicit global sandbox development override remains in resolver. Source: app/api/routes/projects.py."
   chat.ws: "chat.chat reads access credential from token query, constructs ActorResolver with bearer and no cheese token, applies authz.policy.refuse_unauthenticated_chat, then resolves actual task/room and authorize_topic for membership. Topic access setting applies to the membership step, not the initial login refusal. Source: app/api/routes/chat.py; domain/authz/policy.py."
-  team.live.ws: "team_live.team_live reads access credential from token query, constructs ActorResolver with bearer and no cheese token, requires resolve() to be authenticated, then authorize_team(actor, team_id). AuthenticationRequiredError and ForbiddenError map to the room socket auth_expired/forbidden codes and close 1008. Source: app/api/routes/team_live.py; app/api/auth.py."
   routines.list: "routines.list_routines uses _viewer(enforced room access) for topic-filtered reads or resolve/authorize_project otherwise, then _readable_rules filters each rule. Source: app/api/routes/routines.py."
   library.save.shown: "topics_shown.save_shown_to_library uses require_verified_caller(project_id) then authorize_project before save_to_library. It does not call the library route helper. Source: app/api/routes/topics_shown.py."
   public.framework.docs: "public(FastAPI OpenAPI/Swagger/ReDoc): framework routes generated by app construction, with no application route credential dependency; effective methods include actual GET and HEAD. Source: app/main.py."
@@ -184,11 +189,11 @@ auth_entries:
   legacy.teams.get_team: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService.visible_team permits member or public shared team; personal-handle lookup permits its owner; source: backend/app/api/routes/teams.py:509, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:92, backend/app/domain/team/services.py:132"
   legacy.teams.get_team_join_link: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService._managed_team requires team owner/admin and refuses personal-team join links; source: backend/app/api/routes/teams.py:559, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:155"
   legacy.teams.get_team_by_join_link: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService.team_for_join_token requires current, non-reset invitation token; link possession may reach a stealth team; source: backend/app/api/routes/teams.py:594, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:149"
-  legacy.teams.get_team_resource_quotas: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); existing team and current-user membership required before quota details; source: backend/app/api/routes/teams.py:624, backend/app/auth/checker.py:142, backend/app/api/routes/teams.py:630"
   legacy.teams.get_team_members: "authenticated(require_permission rejects guest, then checks Action.READ, Resource.TEAM_MEMBERSHIP, 'teamId'); source: backend/app/api/routes/teams.py:679, backend/app/auth/checker.py:153"
   legacy.teams.patch_team: "authenticated(require_permission rejects guest, then checks Action.UPDATE, Resource.TEAM, 'teamId'); TeamService also requires team owner/admin; source: backend/app/api/routes/teams.py:761, backend/app/auth/checker.py:153, backend/app/domain/team/services.py:299"
   legacy.teams.delete_team: "authenticated(require_permission rejects guest, then checks Action.DELETE, Resource.TEAM, 'teamId'); TeamService also requires team owner; source: backend/app/api/routes/teams.py:802, backend/app/auth/checker.py:153, backend/app/domain/team/services.py:340"
   legacy.teams.delete_team_member: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); TeamService permits leaving oneself or owner/admin removing lower-role member; refuses owner removal and admin-to-admin removal; task-lock check applies; source: backend/app/api/routes/teams.py:818, backend/app/auth/checker.py:142, backend/app/domain/team/services.py:350"
+  legacy.teams.put_team_owner: "authenticated(require_auth_user rejects guest user_id=0); TeamService.transfer_team_owner requires the caller to be the team OWNER, the target an existing member, refuses a personal team and transferring to oneself; caller becomes ADMIN; source: backend/app/api/routes/teams.py, backend/app/domain/team/services.py"
   legacy.teams.patch_team_member_role: "authenticated(require_permission rejects guest, then checks Action.UPDATE, Resource.TEAM_MEMBERSHIP, 'teamId'); TeamService additionally requires team OWNER, refuses direct owner-role edits; source: backend/app/api/routes/teams.py:836, backend/app/auth/checker.py:153, backend/app/domain/team/services.py:384"
   legacy.teams.add_team_member_entry: "authenticated(require_permission rejects guest, then checks Action.CREATE, Resource.TEAM_MEMBERSHIP, 'teamId'); source: backend/app/api/routes/teams.py:883, backend/app/auth/checker.py:153"
   legacy.teams.list_team_join_requests: "authenticated(require_permission rejects guest, then checks Action.READ, Resource.TEAM_REQUEST, 'teamId'); TeamMembershipService additionally requires current team owner/admin for team-side application/invitation management; source: backend/app/api/routes/teams.py:928, backend/app/auth/checker.py:153, backend/app/domain/team/membership_services.py:194, backend/app/domain/team/membership_services.py:534"
@@ -252,8 +257,7 @@ owners:
   agent.credentials: "Off-platform project agent credentials and generation revocation; domain/agent_credential/services.py."
   agent.llm: "Model admission, budget metering/proxy and subscription tunnel; domain/agent budget_proxy/chat/supply plus core subscription meter. This is the existing transport responsibility."
   compute.availability: "Compute pool catalogue and node availability; domain/agent/market.py and work-runner active load (market.list_nodes)."
-  machine: "Cloud machines, project supply and execution lease lifecycle; domain/machine/services.py, supply.py and session_work.py."
-  machine.live: "Signal to a team's open pages that its machines changed, naming the projects to read again; domain/machine/live.py (team_channel, note_change, announce_changes), written by domain/machine/repositories.py and runner.py and announced by machines.py after commit."
+  machine: "The platform's cloud host pool and sessions' execution leases; domain/machine/services.py and session_work.py."
   device: "User/team hosted-device enrollment, session links and screen streams; domain/device/service.py, owner_reads.py and domain/agent/device_hub.py."
   local_fs: "User-selected local-directory grants and access audit; domain/local_fs services/enforcement."
   review: "Accept cards, reviewer decisions and PR readiness/merge; domain/review/AcceptService. Route owns request composition."
@@ -274,6 +278,7 @@ owners:
   project.environment: "Project/room execution environment and recovery; domain/project/environment.py and environment_recovery.py, composed with machine/device state."
   project.export: "Caller-visible offline project export; domain/project/export.create_archive owns archive construction and delegated auth."
   project.skills: "Project-owned reusable skills/revisions; domain/project_skill/ProjectSkillService."
+  skill.bundle: "Content-addressed delivery of a session's shipped platform skills plus this project's own skills to the launching machine; domain/project_skill/service.session_skill_bundle and the device launcher cache. Derived content, not new business state."
   project.context: "Project context search assembly; project_context route composes filtered room/block/library/task queries using domain/search bm25. No new cross-domain service is invented."
   project.run_config: "Project default model/compute choices and tier policy; project route composes existing agent compute configs, policy and machine/device services."
   membership: "Project members and invitations; domain/membership/MemberService, InvitationService and roster."
@@ -351,10 +356,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/redoc", auth: "public.framework.docs", owner: "api.documentation"}
   - {protocol: "http", method: "HEAD", path: "/redoc", auth: "public.framework.docs", owner: "api.documentation"}
   # app.api.routes.accept
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/accept-card", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/push-fix", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/ready", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/accept-card/describe", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/accept-card", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/push-fix", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/ready", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/accept-card/describe", auth: "review.task", owner: "review"}
   - {protocol: "http", method: "GET", path: "/accept-cards/{card_id}/deliverable", auth: "review.download", owner: "review.delivery"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/accept-card", auth: "review.task", owner: "review"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/pr-checks", auth: "review.task", owner: "review"}
@@ -519,16 +524,18 @@ routes:
   - {protocol: "http", method: "GET", path: "/spaces/{space_id}/dashboard", auth: "dashboard.board", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/members/{user_handle}/summary", auth: "actor.project", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/usage", auth: "actor.project", owner: "dashboard"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/credits", auth: "machine.manager", owner: "dashboard"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/credits", auth: "dashboard.team.member", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/contributions", auth: "actor.project", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/users/{handle}/profile", auth: "dashboard.person", owner: "dashboard"}
   - {protocol: "http", method: "GET", path: "/users/{handle}/topics", auth: "dashboard.person", owner: "dashboard"}
   - {protocol: "http", method: "DELETE", path: "/users/me/understanding/{entry_id}", auth: "dashboard.person", owner: "memory"}
   # app.api.routes.doc_agent
   # app.api.routes.docs_site
-  - {protocol: "http", method: "POST", path: "/docs/dev-access", auth: "platform.admin", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/grant", auth: "user.session", owner: "docs_site"}
+  - {protocol: "http", method: "GET", path: "/docs/signin", auth: "public.redirect", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/session", auth: "docs.grant", owner: "docs_site"}
   - {protocol: "http", method: "GET", path: "/docs/dev-access/check", auth: "docs.dev.cookie", owner: "docs_site"}
-  - {protocol: "http", method: "POST", path: "/docs/ask", auth: "user.session", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/ask", auth: "docs.session", owner: "docs_site"}
   - {protocol: "http", method: "POST", path: "/docs/agent/search", auth: "docs.agent", owner: "docs_site"}
   - {protocol: "http", method: "POST", path: "/docs/agent/read", auth: "docs.agent", owner: "docs_site"}
   # app.api.routes.docs_visit
@@ -561,6 +568,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/feedback-proposals/{block_id}/accept", auth: "feedback.proposal", owner: "feedback"}
   # app.api.routes.fetch
   - {protocol: "http", method: "POST", path: "/fetch", auth: "fetch.caller", owner: "fetch"}
+  - {protocol: "http", method: "POST", path: "/page-check", auth: "fetch.caller", owner: "fetch"}
   # app.api.routes.forge_token
   - {protocol: "ws", method: "WS", path: "/sandbox/forge-tunnel/{project_id}", auth: "capability.forge", owner: "forge.transport"}
   - {protocol: "http", method: "DELETE", path: "/sandbox/forge/{project_id}/{path:path}", auth: "capability.forge", owner: "forge.transport"}
@@ -663,6 +671,11 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   # app.api.routes.living_docs
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/document", auth: "actor.topic", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/about", auth: "document.reader", owner: "living_doc"}
+  - {protocol: "http", method: "PATCH", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
+  - {protocol: "http", method: "DELETE", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/ticket", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/documents/{document_id}", auth: "living.document", owner: "living_doc"}
@@ -670,6 +683,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/history", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/operations/{operation_id}", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/restore", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/compare", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   # app.api.routes.llm_proxy
@@ -683,11 +697,6 @@ routes:
   - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/directories", auth: "local.device.owner", owner: "local_fs"}
   - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}/directories/{grant_id}", auth: "local.device.owner", owner: "local_fs"}
   - {protocol: "http", method: "GET", path: "/connector/my/access-log", auth: "local.device.owner", owner: "local_fs"}
-  # app.api.routes.machines
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/machines", auth: "machine.manager", owner: "machine"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/cloud-supply", auth: "actor.project", owner: "machine"}
-  - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/machines/{machine_row_id}", auth: "machine.manager", owner: "machine"}
-  - {protocol: "http", method: "POST", path: "/projects/{project_id}/machines/{machine_row_id}/{operation}", auth: "machine.manager", owner: "machine"}
   # app.api.routes.market
   - {protocol: "http", method: "GET", path: "/market/pools", auth: "public.catalogue", owner: "compute.availability"}
   - {protocol: "http", method: "GET", path: "/market/nodes", auth: "observed.compute.nodes", owner: "compute.availability"}
@@ -733,6 +742,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/preview-session", auth: "preview.access", owner: "preview"}
   # app.api.routes.project_context
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/context/search", auth: "context.rooms", owner: "project.context"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/documents/search", auth: "context.rooms", owner: "project.context"}
   # app.api.routes.project_environment
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/environment", auth: "environment.user", owner: "project.environment"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/environment", auth: "environment.user", owner: "project.environment"}
@@ -878,6 +888,8 @@ routes:
   - {protocol: "http", method: "GET", path: "/sandbox/cli/cheese", auth: "capability.cli", owner: "installer"}
   # app.api.routes.site_sessions
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/site-session", auth: "site.access", owner: "site"}
+  # app.api.routes.skill_bundles
+  - {protocol: "http", method: "GET", path: "/connector/skill-bundles/{digest}", auth: "skill.bundle", owner: "skill.bundle"}
   # app.api.routes.space_announcements
   - {protocol: "http", method: "GET", path: "/spaces/{spaceId}/announcements", auth: "legacy.space_announcements.list_announcements", owner: "space.announcements"}
   - {protocol: "http", method: "POST", path: "/spaces/{spaceId}/announcements", auth: "legacy.space_announcements.publish_announcement", owner: "space.announcements"}
@@ -982,8 +994,6 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
   - {protocol: "http", method: "PUT", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
   - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
-  # app.api.routes.team_live
-  - {protocol: "ws", method: "WS", path: "/teams/{team_id}/live", auth: "team.live.ws", owner: "machine.live"}
   # app.api.routes.teams
   - {protocol: "http", method: "GET", path: "/teams", auth: "legacy.teams.get_teams", owner: "team"}
   - {protocol: "http", method: "GET", path: "/teams/my-teams", auth: "legacy.teams.get_my_teams", owner: "team"}
@@ -993,13 +1003,13 @@ routes:
   - {protocol: "http", method: "GET", path: "/teams/{teamId}/join-link", auth: "legacy.teams.get_team_join_link", owner: "team"}
   - {protocol: "http", method: "PATCH", path: "/teams/{teamId}/join-link", auth: "legacy.teams.get_team_join_link", owner: "team"}
   - {protocol: "http", method: "POST", path: "/teams/{teamId}/join-link/reset", auth: "legacy.teams.get_team_join_link", owner: "team"}
-  - {protocol: "http", method: "GET", path: "/teams/{teamId}/resource-quotas", auth: "legacy.teams.get_team_resource_quotas", owner: "team"}
   - {protocol: "http", method: "GET", path: "/teams/{teamId}/members", auth: "legacy.teams.get_team_members", owner: "team"}
   - {protocol: "http", method: "POST", path: "/teams", auth: "legacy.answers.list_answers", owner: "team"}
   - {protocol: "http", method: "PATCH", path: "/teams/{teamId}", auth: "legacy.teams.patch_team", owner: "team"}
   - {protocol: "http", method: "DELETE", path: "/teams/{teamId}", auth: "legacy.teams.delete_team", owner: "team"}
   - {protocol: "http", method: "DELETE", path: "/teams/{teamId}/members/{userId}", auth: "legacy.teams.delete_team_member", owner: "team"}
   - {protocol: "http", method: "PATCH", path: "/teams/{teamId}/members/{userId}", auth: "legacy.teams.patch_team_member_role", owner: "team"}
+  - {protocol: "http", method: "PUT", path: "/teams/{teamId}/owner", auth: "legacy.teams.put_team_owner", owner: "team"}
   - {protocol: "http", method: "POST", path: "/teams/{teamId}/members", auth: "legacy.teams.add_team_member_entry", owner: "team"}
   - {protocol: "http", method: "GET", path: "/teams/{teamId}/join-requests", auth: "legacy.teams.list_team_join_requests", owner: "team"}
   - {protocol: "http", method: "GET", path: "/teams/{teamId}/requests", auth: "legacy.teams.list_team_join_requests", owner: "team"}
@@ -1040,8 +1050,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/split", auth: "actor.topic", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/check-result", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/check-result", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/lock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unlock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/clone-from", auth: "actor.topic", owner: "topic"}
@@ -1098,10 +1107,15 @@ routes:
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/upgrade", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_tasks
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks/{task_id}", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/messages", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/title", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/start", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/accept", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_title
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title/undo", auth: "actor.topic.verified", owner: "topic"}

@@ -29,6 +29,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.living_doc import search as doc_search
+from app.domain.living_doc.schemas import document_row
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task
 from app.domain.search import bm25
@@ -90,7 +91,7 @@ def _tasks_matching(
     return bm25.match_all_words(
         Task.id,
         terms,
-        {"title": 2, "brief": 1, "conclusion": 1},
+        {"title": 2, "conclusion": 1},
         filters=[bm25.any_of("room_id", in_readable)],
     )
 
@@ -321,9 +322,7 @@ def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
         "title_source": str(t.title_source),
         "status": str(t.status.value),
         "closed_at": t.closed_at.isoformat() if t.closed_at else None,
-        "snippet": _snippet(
-            " ".join(filter(None, (t.title, t.brief, t.conclusion))), terms
-        ),
+        "snippet": _snippet(" ".join(filter(None, (t.title, t.conclusion))), terms),
     }
 
 
@@ -411,3 +410,50 @@ async def search_everything(
         {"id": str(a.id), "name": a.name, "about": a.about} for a in artifacts
     ]
     return hits
+
+
+@router.get("/projects/{project_id}/documents/search")
+async def search_documents(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    q: Annotated[str, Query(min_length=1, max_length=200)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> dict:
+    """The library's search: the project's own documents by title and by what
+    they say, and the documents of the rooms the caller may read by what they
+    say. A room's document is not in the library's list, but it is found here,
+    under its room, to open there or keep a copy of."""
+    q = _query(q)
+    readable, _ = await _readable_rooms(db, resolver, project_id, None)
+    terms = bm25.words(q)
+    await bm25.serial_scans(db)
+    own = await doc_search.own(db, project_id)
+    rooms = await doc_search.readable(db, list(readable))
+    written = {i: d for i, d in own.items() if d.version > 0}
+    found = await doc_search.find(db, "doc", terms, {**written, **rooms}, limit=limit)
+    by_title = [
+        d
+        for d in sorted(own.values(), key=lambda d: d.updated_at, reverse=True)
+        if q.lower() in (d.title or "").lower()
+    ]
+    library_hits: list[dict] = []
+    seen: set[uuid.UUID] = set()
+    for doc in [*by_title, *(h.document for h in found if h.document.room_id is None)]:
+        if doc.id in seen or len(library_hits) >= limit:
+            continue
+        seen.add(doc.id)
+        library_hits.append(
+            {**document_row(doc), "snippet": _snippet(doc.content, terms)}
+        )
+    room_hits = [
+        {
+            **document_row(h.document),
+            "room_title": readable[h.document.room_id].title,
+            "room_title_source": str(readable[h.document.room_id].title_source),
+            "snippet": _snippet(h.content, terms),
+        }
+        for h in found
+        if h.document.room_id is not None and h.document.room_id in readable
+    ]
+    return ok({"query": q, "library": library_hits, "rooms": room_hits})

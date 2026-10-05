@@ -20,8 +20,10 @@ const props = withDefaults(
     error?: string | null
     /** 这一块读失败的那句话；不给就用全局的「加载失败」。 */
     title?: string
+    /** 重试那颗按钮的字。不给就用全局的「重试」；页面另有说法时传它，别为此改写既有文案。 */
+    retryLabel?: string
   }>(),
-  { error: null, title: undefined }
+  { error: null, title: undefined, retryLabel: undefined }
 )
 
 defineEmits<{ retry: [] }>()
@@ -37,7 +39,7 @@ defineEmits<{ retry: [] }>()
       :text="props.error?.trim() || undefined"
     />
     <BaseButton kind="secondary" class="mt-3" @click="$emit('retry')">
-      {{ t('global.loadError.retry') }}
+      {{ props.retryLabel ?? t('global.loadError.retry') }}
     </BaseButton>
   </div>
 </template>

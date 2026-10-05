@@ -23,6 +23,7 @@
 // build, loudly, with the line number.
 
 import { esc, docHref } from './render.mjs'
+import { PLATFORM } from './where.mjs'
 import { num, show, simulate, fill, evaluate, sumContext } from './demo-model.mjs'
 import { selectSuites, fnmatchcase } from './ci-scope.mjs'
 import { fitIndex, limitBreach, indexTextOf } from './memory-limits.mjs'
@@ -67,7 +68,7 @@ const DATASETS = {}
 export function registerDataset(name, rows) { DATASETS[name] = rows }
 
 // A fence that says `embed: seats` also plays on the product's own components:
-// the page at /demo/seats (frontend/src/views/demo) goes in an iframe above the
+// the platform's page /demo/seats (frontend/src/views/demo) goes in an iframe above the
 // step list, and the list drives it. The scene there and the steps here are two
 // files describing one demo, so the build holds them to the same step titles in
 // the same order — the list stays the words, the scene stays the pictures.
@@ -94,7 +95,7 @@ function embedStage(spec, steps, where) {
   if (labels.length !== mine.length || labels.some((l, i) => l !== mine[i])) {
     missing(where, `the scene «${spec.embed}» has steps «${labels.join(' / ')}», this fence has «${mine.join(' / ')}» — change both together`)
   }
-  return `<div class="dm-stage"><iframe data-dm-embed src="/demo/${esc(spec.embed)}?embed=1" title="${esc(spec.title)}（演示画面）" loading="lazy"></iframe></div>`
+  return `<div class="dm-stage"><iframe data-dm-embed src="${PLATFORM}/demo/${esc(spec.embed)}?embed=1" title="${esc(spec.title)}（演示画面）" loading="lazy"></iframe></div>`
 }
 
 // ---------- the fence body ----------
@@ -175,8 +176,6 @@ function bound(spec, where) {
 const shortTitle = (t) => String(t).replace(/（.*$/, '').replace(/^\s+|\s+$/g, '')
 
 // ---------- prerender ----------
-const PALETTE = ['--info', '--ok', '--warn', '--sec', '--accent', '--accent-3']
-const tone = (i) => `var(${PALETTE[i % PALETTE.length]})`
 
 export function renderDemo(lang, body, where) {
   const spec = parseFence(body, where)
@@ -230,14 +229,14 @@ function renderArch(spec, where) {
 // click before it goes in. The interactive part is src/context-window.mjs.
 export const CONTEXT_CATS = {
   harness: { label: '骨架自带', c: '--faint' },
-  rules: { label: '平台规则', c: '--info' },
-  state: { label: '项目状态', c: '--sec' },
-  memory: { label: '记忆', c: '--accent-3' },
-  you: { label: '人和平台的话', c: '--ok' },
-  work: { label: '文件和输出', c: '--warn' },
-  say: { label: '芝士发言', c: '--accent' },
-  compact: { label: '压缩摘要', c: '--accent-2' },
-  sub: { label: '分身', c: '--sec' },
+  rules: { label: '平台规则', c: '--chart-1' },
+  state: { label: '项目状态', c: '--chart-4' },
+  memory: { label: '记忆', c: '--chart-5' },
+  you: { label: '人和平台的话', c: '--chart-2' },
+  work: { label: '文件和输出', c: '--chart-6' },
+  say: { label: '芝士发言', c: '--chart-3' },
+  compact: { label: '压缩摘要', c: '--text' },
+  sub: { label: '分身', c: '--chart-4' },
 }
 const KIND_NAMES = ['auto', 'you', 'platform', 'cheese', 'sub', 'compact']
 const SEEN = {
@@ -456,7 +455,7 @@ function renderSteps(spec, where, timeline) {
     if (s.label) bits.push(`<b>${esc(s.label)}</b>`)
     if (s.value !== undefined) bits.push(`<span class="dm-val"${s.valueNote ? ` title="${esc(s.valueNote)}"` : ''}>${estimate ? '≈' : ''}${num(s.value)}${unit ? ` ${esc(unit)}` : ''}</span>`)
     return `<li class="dm-step" data-dm-step="${i}"${s.value !== undefined ? ` data-value="${s.value}"` : ''}>
-      <span class="dm-rail"><i class="dm-dot" style="--c:${tone(i)}"></i></span>
+      <span class="dm-rail"><i class="dm-dot"></i></span>
       <div class="dm-body">
         ${bits.length ? `<div class="dm-line">${bits.join('')}</div>` : ''}
         <p class="dm-desc">${esc(s.desc)}</p>
@@ -468,7 +467,7 @@ function renderSteps(spec, where, timeline) {
 
   const segs = steps.map((s, i) => {
     const w = s.value !== undefined ? Math.max((s.value / max) * 100, 0.6) : 100 / steps.length
-    return `<button class="dm-seg" data-dm-jump="${i}" style="--w:${w.toFixed(3)}%;--c:${tone(i)}" aria-label="跳到第 ${i + 1} 步：${esc(s.label || '')}"><i></i></button>`
+    return `<button class="dm-seg" data-dm-jump="${i}" style="--w:${w.toFixed(3)}%" aria-label="跳到第 ${i + 1} 步：${esc(s.label || '')}"><i></i></button>`
   }).join('')
 
   return `<figure class="demo demo-steps${timeline ? ' demo-tl' : ''}" data-demo="steps" aria-label="${esc(spec.title)}">

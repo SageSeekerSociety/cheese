@@ -1,0 +1,37 @@
+# Beijing edge for okcheese (deployed at /etc/caddy/Caddyfile on 47.95.114.66).
+# Mainland counterpart of the HK box's okcheese site: TLS ends here and plain
+# HTTP goes into two reverse SSH tunnels from the dev box, each landing on the
+# dev front door's 127.0.0.1:18080.
+#
+# PRE-FILING: okcheese.cn has no ICP filing yet, so nothing listens on 80/443.
+# The only HTTPS listener is :8443 with Caddy's internal CA, reachable through
+# ufw from a few test addresses only. When the filing is approved, this site
+# moves to :443 with a public certificate and the test listener goes away.
+{
+	auto_https disable_redirects
+}
+
+https://okcheese.cn:8443, https://okcheese.com:8443 {
+	tls internal
+	reverse_proxy 127.0.0.1:18463 127.0.0.1:18464 {
+		# Same reasoning as HK: neither line is reliably faster, so requests
+		# in flight decide (a slow line collects them).
+		lb_policy least_conn
+		lb_try_duration 5s
+		lb_try_interval 250ms
+		fail_duration 10s
+		max_fails 1
+		# The dev front door answers /_internal/ with 404 itself.
+		health_uri /_internal/edge-health
+		health_status 404
+		health_interval 3s
+		health_timeout 2s
+		flush_interval -1
+		stream_close_delay 10m
+		transport http {
+			keepalive 60s
+			keepalive_idle_conns 64
+			keepalive_idle_conns_per_host 32
+		}
+	}
+}

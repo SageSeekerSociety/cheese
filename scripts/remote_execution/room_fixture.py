@@ -116,7 +116,7 @@ class RoomExecutor:
         }
         result = subprocess.run(
             [sys.executable, "-"],
-            input=script(project, resource, env, sandbox=False),
+            input=script(project, resource, env, sandbox=False, platform_machine=False),
             env={**os.environ, "HOME": str(self.owner)},
             capture_output=True,
             text=True,

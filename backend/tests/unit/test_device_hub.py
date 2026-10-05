@@ -135,14 +135,16 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
             )
             recovered.extend(inventory)
 
-    class Wakeup:
-        async def wake_device(self, device_id):
-            await hub._device(device_id).send({"t": "recovery.finished"})
+    async def last_step_of_recovery(sessions, *, device_id):
+        await hub._device(device_id).send({"t": "recovery.finished"})
 
     monkeypatch.setattr(connector, "device_hub", hub)
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
-    monkeypatch.setattr("app.api.deps.get_cloud_wakeup", lambda: Wakeup())
     monkeypatch.setattr("app.domain.topic.retire.sweep_retired_storage", AsyncMock())
+    monkeypatch.setattr(
+        "app.domain.room_task.checkouts.remove_closed_checkouts",
+        last_step_of_recovery,
+    )
     app = FastAPI()
     app.include_router(connector.router)
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())

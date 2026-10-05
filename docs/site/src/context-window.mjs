@@ -131,7 +131,7 @@ export function mountContextWindow(fig) {
     const segs = segments()
     const sum = segs.reduce((a, s) => a + s.v, 0)
     const pct = (sum / MAX) * 100
-    const tone = pct > 75 ? '--accent-3' : pct > 50 ? '--warn' : '--ok'
+    const tone = pct > 75 ? '--danger' : pct > 50 ? '--warn' : '--ok'
     const active = pinned ?? hovered
     bar.innerHTML = segs.map((s) => {
       const on = s.i === active || (hotCat && rows[s.i].cat === hotCat)
@@ -140,7 +140,7 @@ export function mountContextWindow(fig) {
       return `<i data-seg="${s.i}" class="${on ? 'on' : dim ? 'dim' : ''}" style="width:${Math.max((s.v / MAX) * 100, 0.18).toFixed(3)}%;background:var(${color})"></i>`
     }).join('')
     $('[data-total]').textContent = `~${fmt(sum)}`
-    $('[data-total]').style.color = `var(${tone})`
+    $('[data-total]').style.color = `var(${tone}-ink)`
     $('[data-thin]').style.cssText = `width:${pct.toFixed(2)}%;background:var(${tone})`
 
     const kept = compacted() ? rows[compactAt].keeps || [] : null

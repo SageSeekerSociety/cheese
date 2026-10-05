@@ -2,7 +2,7 @@
 // 「现在的分布」里一台自有设备上的 agent：列出来，选一些换到另一台工作电脑。一个话题
 // 一个容器（2026-09-28，推翻结论 60）：换的是它所在的整个房间，走和成员名册同一条
 // 更换（先推送，失败就不换并说明原因），同房间的队友一起搬；房间正在干活的跳过，不打断。
-import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
+import type { ComputeChoice, TopicComputeDevice } from '../types/compute'
 import type { DeviceSession } from '../types/deviceSessions'
 
 import { computed, ref, watch } from 'vue'
@@ -48,9 +48,6 @@ const choices = computed(() => {
     name: null,
     profile: 'cloud',
     device_id: null,
-    cores: null,
-    memory_mb: null,
-    disk_gb: null,
   }
   const devices = props.devices
     .filter((device) => device.device_id !== props.device.device_id)
@@ -85,7 +82,10 @@ const allSelected = computed(
   () => selectable.value.length > 0 && selectable.value.every((s) => selected.value.includes(s.id))
 )
 
-const sessionRoom = (s: DeviceSession) => topicTitle({ title: s.topic_title, title_source: s.topic_title_source })
+const sessionRoom = (s: DeviceSession) =>
+  s.task_title ?? topicTitle({ title: s.topic_title, title_source: s.topic_title_source })
+// 换的是一段对话的工作电脑：房间自己的，或者某个任务的。
+const conversationOf = (s: DeviceSession) => s.task_id ?? s.topic_id
 
 function toggleAll() {
   selected.value = allSelected.value ? [] : selectable.value.map((s) => s.id)
@@ -105,22 +105,22 @@ async function load() {
   }
 }
 
-// 换的是房间：答案落在这个房间在这台设备上的每一行上。
-function settle(topicId: string, outcome: Outcome) {
-  const room = sessions.value.filter((s) => s.topic_id === topicId).map((s) => s.id)
+// 换的是一段对话：答案落在它在这台设备上的每一行上。
+function settle(conversation: string, outcome: Outcome) {
+  const room = sessions.value.filter((s) => conversationOf(s) === conversation).map((s) => s.id)
   for (const id of room) outcomes.value[id] = outcome
   if (outcome.state === 'done') selected.value = selected.value.filter((id) => !room.includes(id))
 }
 
 async function switchOne(session: DeviceSession, choice: ComputeChoice, abandonUnpushed = false) {
   try {
-    await setTopicComputeChoice(session.topic_id, choice, { ifIdle: true, abandonUnpushed })
-    settle(session.topic_id, { state: 'done', message: t('work.bulkSwitch.done') })
+    await setTopicComputeChoice(conversationOf(session), choice, { ifIdle: true, abandonUnpushed })
+    settle(conversationOf(session), { state: 'done', message: t('work.bulkSwitch.done') })
     moved.value = true
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : t('global.updateFailed')
     const unreachable = cause instanceof ApiError && cause.code === 'WorkComputerUnreachable'
-    settle(session.topic_id, { state: unreachable ? 'unreachable' : 'failed', message })
+    settle(conversationOf(session), { state: unreachable ? 'unreachable' : 'failed', message })
   }
 }
 
@@ -129,11 +129,11 @@ async function run() {
   const choice = picked.value
   if (!choice || !selected.value.length) return
   running.value = true
-  // 一个房间只换一次：同房间的几行选了几行，都是同一次更换。
+  // 一段对话只换一次：同一段对话的几行选了几行，都是同一次更换。
   const rooms = new Set<string>()
   for (const session of sessions.value.filter((s) => selected.value.includes(s.id))) {
-    if (rooms.has(session.topic_id)) continue
-    rooms.add(session.topic_id)
+    if (rooms.has(conversationOf(session))) continue
+    rooms.add(conversationOf(session))
     await switchOne(session, choice)
   }
   running.value = false

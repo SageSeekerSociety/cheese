@@ -237,7 +237,7 @@ class SessionHost:
     async def _api(self, host: str) -> str:
         """The platform as ``host`` reaches it."""
         from app.core.db import async_session_factory
-        from app.domain.agent.device_provider import device_api_base
+        from app.domain.agent.machine_address import device_api_base
 
         factory = self._session_factory or async_session_factory
         async with factory() as db:
@@ -509,6 +509,13 @@ class SessionHost:
         if running is None:
             raise SessionError("The session was not started by this process")
         return running
+
+    def answers(self, ref: SessionRef) -> bool | None:
+        """Whether the session's runner answered its last read; False once it
+        stopped — most often because it let its idle session go — and None
+        when this process holds no such session."""
+        running = self._running.get(ref)
+        return None if running is None else running.answering
 
     def _wake(self, running: _Running) -> None:
         running.woken.set()

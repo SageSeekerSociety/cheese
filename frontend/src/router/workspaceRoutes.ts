@@ -63,6 +63,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
+      // 任务页：一个任务自己的对话和实况文档。和房间页是同一个组件——任务挂在房间下，
+      // 房间要先打开，任务页借它的名册和外框；地址里多出来的 taskId 决定画哪一边。
+      name: 'workspace-task',
+      path: 'topics/:topicId/tasks/:taskId',
+      component: () => import('@/views/workspace/TopicView.vue'),
+      props: true,
+      meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
+    },
+    {
       // 看板: 跨房间的一块板，按「该谁动」分列。房间总览答的是「这个房间在干什么」，
       // 而一个项目有上百个房间——「现在整个项目有什么在跑、有什么在等我」得一个个
       // 点进去才知道，于是没人知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回
@@ -174,7 +183,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       redirect: (to) => ({ name: 'project-settings', params: { projectId: to.params.projectId, section: 'agents' } }),
     },
     {
-      // 盖在整个窗口上的一层，八栏各有地址（`settings/agents`…）。不带栏时桌面落到第一
+      // 盖在整个窗口上的一层，九栏各有地址（`settings/agents`…）。不带栏时桌面落到第一
       // 栏，手机上是目录。
       name: 'project-settings',
       path: 'settings/:section?',

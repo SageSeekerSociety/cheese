@@ -276,12 +276,9 @@ _MISSING_SUBJECT = (
 #: here is the one overlap a machine can judge on its own (#314).
 _ALEMBIC_VERSIONS_DIR = "alembic/versions/"
 
-#: 声明了一条本房间没有的活。Almost always a copy-pasted id from another room's
-#: 简报; naming the room is what makes that visible instead of "not found".
-_NOT_THIS_ROOMS_WORK = (
-    "这个房间里没有活 {task_id}。task 只认本房间派出的活的 id"
-    "（`cheese_task` 当时返回的那个）。"
-)
+#: 声明了一个本房间没有的任务。Almost always a copy-pasted id from another
+#: room; naming the room is what makes that visible instead of "not found".
+_NOT_THIS_ROOMS_WORK = "这个房间里没有任务 {task_id}。task 只认本房间里任务的 id。"
 
 
 #: 人工放行时「当时检查是什么状态」对应的那半句话。以前它是写死的「明知检查未

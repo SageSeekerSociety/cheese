@@ -507,7 +507,7 @@ test("compact desktop menu keeps all actions on its captured message after hover
   };
   await open("before");
   await expect(menu.locator(".hover-menu__emojis button")).toHaveCount(8);
-  for (const label of ["回复", "复制", "转为话题"]) {
+  for (const label of ["回复", "复制", "转为任务"]) {
     await expect(menu.getByText(label, { exact: true })).toBeVisible();
   }
   await expect(menu.getByText("编辑", { exact: true })).toHaveCount(0);
@@ -554,7 +554,7 @@ test("compact desktop menu keeps all actions on its captured message after hover
     "前一条消息。",
   );
   await open("before");
-  await menu.getByText("转为话题", { exact: true }).click();
+  await menu.getByText("转为任务", { exact: true }).click();
   await expect(page.locator("#opened")).toHaveAttribute(
     "data-upgraded",
     "before",

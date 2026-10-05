@@ -166,7 +166,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         return InputReceipt(
             InputIdentity(
                 self.session.project_id,
-                self.session.topic_id,
+                self.session.conversation_id,
                 self.recipient_handle,
                 self.session.harness,
                 stamp["receipt_session_id"],

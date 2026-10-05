@@ -11,8 +11,11 @@ one: a commit per record is a sync per record, and a backlog can run to a
 million records.
 
 A record that waited too long to be read is stepped over, not landed
-(``STALE_S``): the cursor moves past it and the room never hears it. So is one
-the room went on refusing (``REFUSED_TIMES``), with its id in the error log.
+(``STALE_S``): the cursor moves past it and the room never hears it. One that
+ends a turn still ends it, and the turns of what was read inside it, without a
+word to the room: nothing else would, while the session goes on answering. So
+is one the room went on refusing (``REFUSED_TIMES``), with its id in the error
+log.
 
 What a harness supplies is what its protocol decides: how to pull from its
 runner, how to read its mirror, which records open and close a turn, what to do
@@ -30,6 +33,7 @@ awaited before the next is asked for.
 """
 
 import asyncio
+import dataclasses
 import functools
 import logging
 import time
@@ -92,12 +96,14 @@ RETENTION_EVERY_S = 3600
 #: How old an unlanded record may be and still reach the room. A record gets
 #: this old only while nothing read the journal: the backend was gone, the
 #: machine was, or every drain stopped at a record it could not take. By then
-#: the room has gone on without it — the turn was ended for it, its prompt
-#: re-sent or the person told — so landing it would answer, hours late, what has
-#: been answered since, and open the books again for turns the session started
-#: by itself. Two hours is the orphan sweep's own line between a deploy and an
-#: outage (``ORPHAN_STALE_S``): past it, the platform stops acting for the
-#: person on its own.
+#: the room has gone on without it — its prompt re-sent or the person told — so
+#: landing it would answer, hours late, what has been answered since, and open
+#: the books again for turns the session started by itself. A record that ends
+#: a turn is the exception in part: the turn is still open, and a session that
+#: still answers is one the orphan sweep leaves alone, so it ends the turn
+#: (``_end_late``) and lands nothing. Two hours is the orphan sweep's own line
+#: between a deploy and an outage (``ORPHAN_STALE_S``): past it, the platform
+#: stops acting for the person on its own.
 #:
 #: Age is by the time the journal gives a record: when the session machine
 #: recorded it for Claude Code and Codex, when the backend mirrored it for pi.
@@ -342,6 +348,8 @@ class Subscription[B: Backlog]:
                         completion = await self.settle_completion(entry.record)
                         if entry.age_s >= STALE_S:
                             stale += 1
+                            if self.ends_turn(entry.record, reader):
+                                await self._end_late(entry, reader)
                         else:
                             try:
                                 delivered += await self._deliver(entry, reader)
@@ -391,6 +399,37 @@ class Subscription[B: Backlog]:
                 self.forgotten_at = time.monotonic()
                 await self.on_disk(reader.forget, older_than_s=RETENTION_S)
             return delivered
+
+    async def _end_late(self, entry: HarnessEvent, reader: B) -> None:
+        """End the turn a record too old to land closes, saying nothing.
+
+        The ending is the same as a fresh one's — the turn's interval closed,
+        the turns of inputs read inside it ended with its outcome — but neither
+        its closing text nor its failure reaches the room.
+        """
+        assert isinstance(entry.record, dict)
+        work = (entry.record.get("cheese") or {}).get("work_id")
+        if work is None:
+            return
+        work_id = uuid.UUID(work)
+        for event in reader.assemble(entry):
+            if not isinstance(event, AgentResult):
+                continue
+            await self.consume(
+                self.session.project_id,
+                self.session.topic_id,
+                work_id,
+                dataclasses.replace(
+                    event,
+                    text="",
+                    late=True,
+                    agent_handle=event.agent_handle or self.session.agent_handle,
+                ),
+                getattr(event, "eid", None) or entry.eid,
+                False,
+                False,
+            )
+        await self.activity(self.session.project_id, self.seat, work_id, False)
 
     async def _deliver(self, entry: HarnessEvent, reader: B) -> int:
         """Hand one record to the room; how many events it came out as."""

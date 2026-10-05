@@ -1,0 +1,20 @@
+[Unit]
+Description=cheese okcheese.com: keep a copy of the built /assets/ for Caddy to serve here
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=cheese-edge
+ExecStart=/usr/bin/python3 /usr/local/libexec/cheese-edge/edge-asset-sync.py
+Restart=always
+RestartSec=10
+# Only its own directory is writable.
+ProtectSystem=strict
+ReadWritePaths=/srv/okcheese-edge
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

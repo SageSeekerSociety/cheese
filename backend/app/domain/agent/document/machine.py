@@ -2,7 +2,7 @@
 work while it answers a question about the document.
 
 It is the machine the room's sessions already hold, never one taken for the
-reader. Taking hands (`session_work.ensure`) rents a cloud machine or claims a
+reader. Taking hands (`session_work.ensure`) places a cloud sandbox or claims a
 device; a question in a comment is not worth either, so a room with no machine
 in hand right now (none chosen yet, a cloud one released, a device offline)
 lends none, and the question is answered without it.

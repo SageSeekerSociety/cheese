@@ -17,6 +17,7 @@ from app.domain.attachment import models as attachment  # noqa: F401
 from app.domain.avatars import models as avatars  # noqa: F401
 from app.domain.block import models as block  # noqa: F401
 from app.domain.comments import models as comments  # noqa: F401
+from app.domain.conversation import models as conversation  # noqa: F401
 from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
@@ -32,7 +33,6 @@ from app.domain.library import models as library  # noqa: F401
 from app.domain.living_doc import models as living_doc  # noqa: F401
 from app.domain.local_fs import models as local_fs  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
-from app.domain.machine.limits import MachineLimit, TeamMachineLimit  # noqa: F401
 from app.domain.materials import models as materials  # noqa: F401
 from app.domain.memory import models as memory  # noqa: F401
 from app.domain.notification import models as notification  # noqa: F401
@@ -45,6 +45,7 @@ from app.domain.questions import models as questions  # noqa: F401
 from app.domain.remote_mcp import models as remote_mcp  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401
+from app.domain.room_task import proposals as task_proposals  # noqa: F401
 from app.domain.routine import models as routine  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401

@@ -29,17 +29,31 @@ const error = ref('')
 const busy = ref(false)
 const expanded = ref(false)
 const output = ref<unknown>(null)
+// The teammate whose session is shown, once the room has several working: the
+// platform never picks one of them, so the person does.
+const seat = ref<string | null>(null)
 let timer: ReturnType<typeof setTimeout> | undefined
 let generation = 0
+
+const seats = computed(() => state.value?.seats ?? [])
+const seatItems = computed(() => seats.value.map((held) => ({ value: held.agent, title: held.agent })))
+const status = computed(() => {
+  if (state.value?.connected) return t('work.room.site.session.connected')
+  if (seats.value.length > 1) return t('work.room.site.session.several', { count: seats.value.length })
+  return t('work.room.site.session.none')
+})
 
 function adopt(next: AgentControlState) {
   if (next.id !== state.value?.id) output.value = null
   state.value = next
+  if (seat.value && !seats.value.some((held) => held.agent === seat.value)) seat.value = null
 }
+
+watch(seat, () => void refresh())
 
 async function refresh(epoch = generation) {
   try {
-    const next = await getAgentControl(props.topicId)
+    const next = await getAgentControl(props.topicId, seat.value)
     if (epoch === generation) adopt(next)
   } catch (e) {
     if (epoch === generation) error.value = e instanceof Error ? e.message : t('work.room.site.session.loadFailed')
@@ -53,10 +67,14 @@ async function poll(epoch: number) {
 }
 
 // A frame lands: take it as the whole state, the same shape the request returns.
+// It speaks for the room as a whole, so with a teammate picked it is only the
+// cue to read that teammate's session again.
 watch(
   () => props.pushed,
   (next) => {
-    if (next) adopt(next)
+    if (!next) return
+    if (seat.value) void refresh()
+    else adopt(next)
   }
 )
 
@@ -153,7 +171,10 @@ async function look() {
   error.value = ''
   output.value = null
   try {
-    const result = await sendAgentControl(props.topicId, state.value.id, request)
+    const { id, agent } = state.value
+    const result = agent
+      ? await sendAgentControl(props.topicId, id, request, undefined, agent)
+      : await sendAgentControl(props.topicId, id, request)
     if (epoch !== generation) return
     const response = result.result?.response
     if (response?.subtype === 'error') throw new Error(response.error ?? t('work.room.site.session.askFailed'))
@@ -181,7 +202,17 @@ const formattedOutput = computed(() => {
 <template>
   <section class="session-inspector" :aria-label="t('work.room.site.session.label')">
     <div class="inspector-bar">
-      <span>{{ t(state?.connected ? 'work.room.site.session.connected' : 'work.room.site.session.none') }}</span>
+      <span>{{ status }}</span>
+      <v-select
+        v-if="seats.length > 1"
+        v-model="seat"
+        class="inspector-seat"
+        autocomplete="off"
+        :items="seatItems"
+        :label="t('work.room.site.session.teammate')"
+        density="compact"
+        hide-details
+      />
       <BaseButton kind="ghost" size="sm" :aria-expanded="expanded" @click="expanded = !expanded">{{
         t(expanded ? 'work.room.site.session.collapse' : 'work.room.site.session.expand')
       }}</BaseButton>
@@ -261,6 +292,11 @@ const formattedOutput = computed(() => {
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px;
+}
+
+.inspector-seat {
+  flex: 0 1 200px;
+  min-width: 140px;
 }
 
 .inspector-body {

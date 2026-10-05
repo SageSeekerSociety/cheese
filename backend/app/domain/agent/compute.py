@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.domain.agent.room.reads import RoomReader
     from app.domain.agent.room.sessions import (
         MemoryConsumer,
+        QuietListener,
         RoomSessions,
         UnreadProbe,
     )
@@ -232,14 +233,22 @@ class ComputePool:
         *,
         unread: "UnreadProbe",
         memory: "MemoryConsumer",
+        quiet: "QuietListener | None" = None,
     ) -> None:
         """Hand every harness's sessions the room's books: where the room hears
         what its sessions say and do (``RoomReader``), where it says what it
-        sent that is still unread, and where 「记忆该对账了」 goes — before an
+        sent that is still unread, where 「记忆该对账了」 goes — before an
         input and after a turn, for every harness: one whose sessions keep no
-        memory files answers ``memory`` with None."""
+        memory files answers ``memory`` with None — and who brings a seat that
+        went quiet up to date."""
         for runtime in self._runtimes():
-            runtime.report_to(reader, unread=unread, memory=memory)
+            runtime.report_to(reader, unread=unread, memory=memory, quiet=quiet)
+
+    def seat_runtime(
+        self, topic_id: uuid.UUID, agent_handle: str
+    ) -> "RoomSessions | None":
+        """The backend holding this seat's session, if this process holds it."""
+        return self._owners.get((topic_id, agent_handle))
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         """Relay a memory reconciliation to whichever runtime owns this room.
@@ -294,6 +303,14 @@ class ComputePool:
             if runtime.holds(topic_id, agent_handle)
         ]
         if len(candidates) != 1:
+            from app.domain.agent.ask_origin import refused
+
+            refused(
+                "runtimes holding the seat",
+                topic_id,
+                agent_handle,
+                count=len(candidates),
+            )
             return None
         return await candidates[0].ask_origin(project_id, topic_id, agent_handle)
 
@@ -459,8 +476,8 @@ def build_compute_pool(
             Capability.REMOTE_EXECUTION in HARNESSES[name].capabilities
         )
 
-    # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
-    # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
+    # 挂谁，由注册表说（结论 43）。一个骨架没注册就不在 `HARNESSES` 里，而「不在
+    # 注册表里」如果只是矩阵上少一列，它照样是个活调用点：
     # `recover_sessions` 进程重启后会把它的旧会话恢复回来并写进 `_owners`，
     # `report_to` 照样把房间的耳朵交给它，`steer` 在没有 owner 的时候照样按
     # `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候

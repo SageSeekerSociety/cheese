@@ -217,7 +217,7 @@ def test_a_topic_agent_cannot_accept_its_own_work(client):
     pid, tid = _project_topic(client)
     handle = _seat(client, tid)
     card = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",

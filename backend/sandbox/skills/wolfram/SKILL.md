@@ -13,12 +13,12 @@ description: 用户问一个可以算出来的问题（数值、单位换算、�
 
 ## 工具在哪
 
-脚本跟着平台的原生技能一起发到这台机器上，文件是 `scripts/wolfram_mcp.py`。每次新开一条
-shell 都要先定位它：
+脚本在这个技能自己的目录里，文件是 `scripts/wolfram_mcp.py`。技能目录就是加载技能时给出的那个：
+Claude Code 的 Skill 工具在开头印出的 Base directory；没有 Skill 工具时，是技能列表里这个 `SKILL.md`
+所在的目录。不要用工作目录里同名的 `skills/wolfram`，那是仓库自己的东西。每条命令开头都要设一次：
 
 ```bash
-SKILL=skills/wolfram                                          # 项目 checkout 里的位置，先试这个
-[ -d "$SKILL" ] || SKILL="$CLAUDE_CONFIG_DIR/skills/wolfram"   # 不在 checkout 就在会话的技能目录里
+SKILL="<这个技能的目录>"
 uv run --quiet --script "$SKILL/scripts/wolfram_mcp.py" health # 验 Wolfram 通道通不通
 ```
 
@@ -29,8 +29,8 @@ uv run --quiet --script "$SKILL/scripts/wolfram_mcp.py" health # 验 Wolfram 通
 **表达式由你自己写**：把用户的话翻成一条 WL 表达式，交给 `wolfram_execute` 跑。只调一层：
 
 ```bash
-S="$CLAUDE_CONFIG_DIR/skills/wolfram/scripts/wolfram_mcp.py"   # 定位一次，后面复用
-uv run --quiet --script "$S" call wolfram_execute '{"code":"{N[Sqrt[129],20], Plot[Sqrt[x],{x,0,129}]}"}'
+SKILL="<这个技能的目录>"
+uv run --quiet --script "$SKILL/scripts/wolfram_mcp.py" call wolfram_execute '{"code":"{N[Sqrt[129],20], Plot[Sqrt[x],{x,0,129}]}"}'
 ```
 
 第一个位置参数是工具名，第二个是入参 JSON。`call` 不带工具名会把全部可用工具列出来。

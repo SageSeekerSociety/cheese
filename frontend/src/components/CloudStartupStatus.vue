@@ -18,10 +18,10 @@ const finished = computed(() => ['ready', 'failed'].includes(String(lifecycle.va
 const latest = computed(() => props.events.at(-1)!)
 const steps = computed(() => props.events.filter((event) => event.meta?.event_type === 'cloud_startup'))
 const title = computed(() => {
-  if (lifecycle.value?.meta?.state === 'ready') return t('work.room.notice.machineReady')
+  if (lifecycle.value?.meta?.state === 'ready') return t('work.room.notice.sandboxReady')
   if (lifecycle.value?.meta?.state === 'failed') return noticeText(lifecycle.value)
   const step = steps.value.at(-1)
-  return (step && noticeText(step)) || t('work.room.notice.machinePreparing')
+  return (step && noticeText(step)) || t('work.room.notice.sandboxPreparing')
 })
 const end = computed(() => (finished.value ? Date.parse(lifecycle.value!.created_at) : now.value))
 function duration(start: string, until = end.value) {

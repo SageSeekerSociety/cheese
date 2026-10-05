@@ -1,10 +1,10 @@
 import type { Component } from 'vue'
-import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const machines = vi.hoisted(() => ({ get: vi.fn() }))
@@ -100,9 +100,6 @@ const CLOUD: ComputeChoice = {
   name: null,
   profile: 'cloud',
   device_id: null,
-  cores: null,
-  memory_mb: null,
-  disk_gb: null,
 }
 const LAB: ComputeChoice = { ...CLOUD, profile: 'device', device_id: null }
 
@@ -114,6 +111,7 @@ function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComput
     device_id: null,
     devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],
     sessions: [],
+    cloud_vm_available: false,
     profiles: [],
     visibility: { options: [], effective: null, machine_access: false },
     ...overrides,
@@ -127,6 +125,17 @@ beforeEach(() => {
 })
 
 describe('成员名册', () => {
+  it('右键一位成员：改角色和移出，弹在鼠标那一点上', async () => {
+    await openRoster()
+    const bob = Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('Bob'))!
+    await fireEvent.contextMenu(bob, { clientX: 20, clientY: 40 })
+    await waitFor(() =>
+      expect(
+        Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim())
+      ).toEqual(['设为拥有者', '设为管理员', '移出话题'])
+    )
+  })
+
   it('队友和人一样能被移出，但房间没有「换队友」这种开关', async () => {
     await openRoster()
     const rows = Array.from(document.querySelectorAll('.roster__item'))
@@ -210,8 +219,8 @@ describe('外部成员在房间里', () => {
   it('名册上团队以外的人挂「外部」，团队里的人不挂', async () => {
     await openRoster()
     const rows = Array.from(document.querySelectorAll('.roster__item'))
-    const carol = rows.find((r) => r.textContent?.includes('@carol'))!
-    const bob = rows.find((r) => r.textContent?.includes('@bob'))!
+    const carol = rows.find((r) => r.textContent?.includes('Carol'))!
+    const bob = rows.find((r) => r.textContent?.includes('Bob'))!
     expect(carol.textContent).toContain('外部')
     expect(bob.textContent).not.toContain('外部')
   })
@@ -262,7 +271,7 @@ describe('名册上这个话题的工作电脑', () => {
   it('房间那一行跟着项目默认时标出来', async () => {
     await openRoster()
     const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('本话题运行在：云端 · 标准配置')
+    expect(room.textContent).toContain('本话题运行在：云端沙箱')
     expect(room.textContent).toContain('项目默认')
   })
 

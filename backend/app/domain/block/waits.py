@@ -19,7 +19,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import String, Uuid, any_, bindparam, or_, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.authorship import participant_blocks
@@ -56,6 +57,19 @@ CHECKS_FOR_THE_AGENT = (
 
 #: The reason a failed turn is reported under.
 FAILED = "failed"
+
+
+def _among(column, values, item_type):
+    """`column = ANY(:values)`, one array parameter however many values there are.
+
+    An `IN` list binds each value on its own, so the SQL grows with the list
+    and is compiled on the event loop at every call, then prepared afresh by
+    asyncpg because its text changed. Rooms are counted in hundreds and a
+    week's failed turns in thousands: about 100 ms of loop time per
+    `GET /topics` on dev (2026-10-04), with every other request held behind it.
+    Past 32767 values asyncpg refuses the query, and the page with it.
+    """
+    return column == any_(bindparam(None, list(values), type_=ARRAY(item_type)))
 
 
 @dataclass(frozen=True)
@@ -142,7 +156,7 @@ class MemberWaits:
         stmt = (
             select(Block.topic_id, Block.author, Block.created_at)
             .where(
-                Block.topic_id.in_(topic_ids),
+                _among(Block.topic_id, topic_ids, Uuid),
                 Block.task_id.is_(None),
                 Block.kind == BlockKind.message,
                 Block.created_at >= since,
@@ -180,7 +194,7 @@ class MemberWaits:
         answering, and people talking to each other wake nobody.
         """
         stmt = select(Block.topic_id, Block.created_at, Block.meta).where(
-            Block.topic_id.in_(topic_ids),
+            _among(Block.topic_id, topic_ids, Uuid),
             Block.task_id.is_(None),
             Block.kind == BlockKind.message,
             Block.created_at >= since,
@@ -211,7 +225,10 @@ class MemberWaits:
         """
         if not topic_ids:
             return []
-        under_room = (Block.topic_id.in_(topic_ids), Block.created_at >= since)
+        under_room = (
+            _among(Block.topic_id, topic_ids, Uuid),
+            Block.created_at >= since,
+        )
         events = (
             select(Block.topic_id, Block.created_at)
             .where(
@@ -255,7 +272,7 @@ class MemberWaits:
         stmt = (
             select(Block.topic_id, event, Block.created_at)
             .where(
-                Block.topic_id.in_(topic_ids),
+                _among(Block.topic_id, topic_ids, Uuid),
                 Block.created_at >= since,
                 ~participant_blocks(),
                 MACHINE_EVENT_ROWS,
@@ -279,7 +296,7 @@ class MemberWaits:
         stmt = (
             select(Block.topic_id, Block.turn_id, Block.created_at)
             .where(
-                Block.topic_id.in_(topic_ids),
+                _among(Block.topic_id, topic_ids, Uuid),
                 Block.task_id.is_(None),
                 Block.created_at >= since,
                 ~participant_blocks(),
@@ -308,12 +325,20 @@ class MemberWaits:
             return {}
         owners: dict[uuid.UUID, str] = {}
         prompts = select(Block.meta).where(
-            Block.topic_id.in_(topic_ids),
+            _among(Block.topic_id, topic_ids, Uuid),
             Block.created_at >= since,
             Block.kind == BlockKind.message,
             or_(
-                Block.meta[PROMPTED_TURN_META_KEY].as_string().in_(map(str, turns)),
-                Block.meta[CONSUMED_TURN_META_KEY].as_string().in_(map(str, turns)),
+                _among(
+                    Block.meta[PROMPTED_TURN_META_KEY].as_string(),
+                    map(str, turns),
+                    String,
+                ),
+                _among(
+                    Block.meta[CONSUMED_TURN_META_KEY].as_string(),
+                    map(str, turns),
+                    String,
+                ),
             ),
         )
         for (meta,) in (await self._session.execute(prompts)).all():
@@ -324,7 +349,7 @@ class MemberWaits:
         wrote = (
             select(Block.turn_id, Block.author)
             .where(
-                Block.turn_id.in_(turns),
+                _among(Block.turn_id, turns, Uuid),
                 participant_blocks(),
                 agent_handle_column(Block.author),
             )

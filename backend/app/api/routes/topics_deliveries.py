@@ -43,7 +43,9 @@ async def ask_for_a_delivery(
     给别人设闹钟是另一件事：往别人的收件箱里放一条对方没要过的提醒，没有人要过它。
     """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )

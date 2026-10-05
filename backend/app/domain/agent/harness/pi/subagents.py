@@ -18,18 +18,14 @@ is a spawn that fails with the platform's words.
 
 **Everything it writes goes into the session's own log.** Its entries are
 pulled from its own pi the way the session's are, and written into the same
-journal, each carrying which subagent it came from and the thread label its
-prompt gave (``journal.THREAD``) — so a reader attributes them to the card
-without anybody having reported a binding. That it started and how it ended
-are records of the runner's own (``SUBAGENT_STARTED``, ``SUBAGENT_STOPPED``),
-the latter with its closing words.
+journal, each carrying which subagent it came from (``journal.THREAD``), so a
+reader keeps them apart from the session's own turn.
 
 **Its parent controls it and outlives it.** The parent says more to one that is
 still running (``send``), stops one and leaves its siblings running (``stop``),
 and when the parent's work is interrupted or its session ends, every subagent
 it started ends with it (``stop_all``). One that has finished has handed back
-its conclusion and is gone; the room's instructions for more work on that card
-say to start another one with the same thread label.
+its conclusion and is gone; more work means starting another one.
 """
 
 import asyncio
@@ -40,18 +36,15 @@ import uuid
 from pathlib import Path
 
 from app.domain.agent.harness.driven.journal import PAGE
-from app.domain.agent.harness.pi.journal import SUBAGENT_STARTED, SUBAGENT_STOPPED
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
-from app.domain.room_task.thread_label import label_in_text
 
 #: The supply a pi can reach its model through. A subscription model is minted
 #: for Claude Code alone (``Harness.carries_subscription``).
 GATEWAY = "gateway"
 #: How long a stopped subagent gets to wind down before it is killed.
 STOP_GRACE_S = 5.0
-#: What a parent that wants more from an ended subagent is told to do, as the
-#: room's own instructions say it (``prompt.thread_relay_prompt``).
-AGAIN = "要接着做，照原来的简报重起一个分身，prompt 里照旧写这条活的线程标识"
+#: What a parent that wants more from an ended subagent is told to do.
+AGAIN = "要接着做，就重新起一个"
 #: A live event after which pi has written an entry (``runner.SETTLES``).
 SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 
@@ -124,14 +117,12 @@ class Subagent:
         runner,
         agent_id: str,
         *,
-        label: str,
         model: str,
         description: str,
         background: bool,
     ):
         self.runner = runner
         self.id = agent_id
-        self.label = label
         self.model = model
         self.description = description
         self.background = background
@@ -213,19 +204,11 @@ class Subagent:
             self.process.stdout, self.process.stdin, on_event=self.observe
         )
         self.listener = asyncio.create_task(self.client.listen())
-        self.runner.note(
-            {
-                "type": SUBAGENT_STARTED,
-                "model": self.model,
-                "description": self.description,
-            },
-            thread=self.thread,
-        )
         await self.client.request("prompt", message=prompt)
 
     @property
     def thread(self) -> dict:
-        return {"id": self.id, "label": self.label}
+        return {"id": self.id}
 
     # --- reading -----------------------------------------------------------
 
@@ -283,10 +266,6 @@ class Subagent:
 
     async def _end(self, status: str, text: str) -> None:
         self.status = status
-        self.runner.note(
-            {"type": SUBAGENT_STOPPED, "status": status, "text": text},
-            thread=self.thread,
-        )
         await self._terminate()
         if not self.ended.done():
             self.ended.set_result({"status": status, "text": text})
@@ -380,7 +359,6 @@ class Subagents:
         agent = Subagent(
             self.runner,
             f"sub-{uuid.uuid4().hex[:12]}",
-            label=label_in_text(prompt) or "",
             model=wire,
             description=description,
             background=background,
@@ -394,7 +372,7 @@ class Subagents:
         except Exception:
             await agent._end("failed", "")
             raise
-        return {"agent_id": agent.id, "model": wire, "label": agent.label}
+        return {"agent_id": agent.id, "model": wire}
 
     async def wait(self, agent_id: str) -> dict:
         return await asyncio.shield(self._get(agent_id).ended)

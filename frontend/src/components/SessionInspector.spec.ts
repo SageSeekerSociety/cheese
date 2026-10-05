@@ -146,6 +146,34 @@ it('takes the room session state off the socket instead of asking again', async 
   expect(getAgentControl).toHaveBeenCalledTimes(1)
 })
 
+it('names the teammates when several are working, and reads the one picked', async () => {
+  const seats = [
+    { agent: 'cheese-a', id: 'conv-a' },
+    { agent: 'cheese-b', id: 'conv-b' },
+  ]
+  vi.mocked(getAgentControl).mockImplementation(async (_topic, agent) =>
+    agent === 'cheese-b'
+      ? { id: 'conv-b', connected: true, agent: 'cheese-b', seats }
+      : { id: null, connected: false, agent: null, seats }
+  )
+  vi.mocked(sendAgentControl).mockResolvedValue({
+    request_id: 'r1',
+    status: 'completed',
+    result: { response: { subtype: 'success', response: { model: 'claude-b' } } },
+  })
+  const view = mount()
+  await view.findByText('房间里有 2 个会话在运行，选一位队友查看')
+  expect(view.queryByText('没有在运行的会话')).toBeNull()
+  // Details are folded, so the teammate picker is the only choice on screen.
+  await fireEvent.mouseDown(view.getByRole('combobox'))
+  await fireEvent.click(await view.findByRole('option', { name: 'cheese-b' }))
+  await view.findByText('会话已连接')
+  await fireEvent.click(view.getByText('查看详情'))
+  await ask(view)
+  await view.findByText(/"model": "claude-b"/)
+  expect(sendAgentControl).toHaveBeenCalledWith('topic1', 'conv-b', { subtype: 'initialize' }, undefined, 'cheese-b')
+})
+
 it("says where each of the project's MCP servers comes from", async () => {
   const server = { host: 'mcp.example.test', auth: 'oauth', authorized_by: null, authorized_at: null } as const
   vi.mocked(getRoomMcpServers).mockResolvedValue({

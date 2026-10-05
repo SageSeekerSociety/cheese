@@ -8,16 +8,18 @@ close a loop through the harness packages.
 import uuid
 
 from app.core.config import settings
-from app.domain.agent.compute_configs import project_configs, room_choice
+from app.domain.agent.compute_configs import place_choice, project_configs
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.repositories import TopicRepository
+from app.domain.room_task.place import PlaceResolver
 from app.domain.usage.ledger import Ledger, payer_for_project
 
 
-def resolve_compute_id(project_settings: dict | None, topic=None) -> str | None:
-    """A room keeps its choice; otherwise use the explicit project default."""
+def resolve_compute_id(
+    project_settings: dict | None, topic=None, task=None
+) -> str | None:
+    """A task keeps its own choice, a room its; otherwise the project default."""
     if topic is not None:
-        return room_choice(topic, project_settings).profile
+        return place_choice(topic, task, project_settings).profile
     return project_configs(project_settings).default.profile
 
 
@@ -27,9 +29,10 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
     exhausted, and whether its session starts on the session host. None when
     the topic does not exist (the turn itself will surface the 404)."""
     async with sessions() as session:
-        topic = await TopicRepository(session).get(topic_id)
-        if topic is None:
+        place = await PlaceResolver(session).conversation(topic_id)
+        if place is None:
             return None
+        topic, task = place.room, place.task
         project = await ProjectRepository(session).get(topic.project_id)
         refused = await Ledger(session).admit(
             await payer_for_project(session, topic.project_id)
@@ -43,7 +46,7 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
     # harness runs its session on the session host and reaches the room's
     # machine from there; a turn with no backend here starts no session at all.
     _harness, provider = compute.choose(
-        project_settings, resolve_compute_id(project_settings, topic)
+        project_settings, resolve_compute_id(project_settings, topic, task)
     )
     return {
         "project_id": str(topic.project_id),

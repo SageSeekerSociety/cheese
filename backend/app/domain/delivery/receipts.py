@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.block.input_effects import apply_input_echo, consume_input_blocks
-from app.domain.block.models import Block
+from app.domain.block.models import Block, conversation_of, in_conversation
 from app.domain.delivery.answer_ownership import unread_input_with_over_work
 from app.domain.delivery.ask_inputs import guard_ask_inputs
 from app.domain.delivery.ask_receipt_wait import AskReceiptPending
@@ -313,7 +313,7 @@ async def _shared_ask_continuation(
             select(Block)
             .where(
                 Block.project_id == identity.project_id,
-                Block.topic_id == identity.topic_id,
+                in_conversation(identity.topic_id),
                 Block.id.in_(wake_ids),
             )
             .execution_options(populate_existing=True)
@@ -401,7 +401,8 @@ async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
         )
     )
     if len(rows) != len(ids) or any(
-        block.project_id != identity.project_id or block.topic_id != identity.topic_id
+        block.project_id != identity.project_id
+        or conversation_of(block) != identity.topic_id
         for block in rows
     ):
         raise ValidationError("Input blocks do not belong to the addressed room")

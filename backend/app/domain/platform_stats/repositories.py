@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import DeviceRow, HostedDeviceRow
-from app.domain.machine.models import ProjectMachine, WarmMachine
+from app.domain.machine.models import CloudHost, WarmMachine
 
 
 class MachineInventoryRepository:
@@ -46,5 +46,5 @@ class MachineInventoryRepository:
             "devices": await _count(DeviceRow),
             "hosted_devices": await _count(HostedDeviceRow),
             "warm_machines": await _count(WarmMachine),
-            "project_machines": await _count(ProjectMachine),
+            "cloud_hosts": await _count(CloudHost),
         }

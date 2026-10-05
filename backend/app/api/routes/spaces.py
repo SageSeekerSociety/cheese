@@ -44,6 +44,7 @@ from app.domain.space.repositories import (
 from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.space.tags_service import SpaceTagsService
+from app.domain.task.protocol import Teaching
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
@@ -88,6 +89,25 @@ class TeachingRequest(BaseModel):
     knowledge_ids: list[Annotated[int, Field(gt=0)]] = Field(
         default_factory=list, alias="knowledgeIds"
     )
+
+
+def teaching_to_api(teaching: Teaching) -> dict:
+    """The read side of `TeachingRequest`: the same six camelCase keys.
+
+    The column stores snake_case (the spelling `Teaching.from_json` reads), and
+    every response that carries a 指导 goes through here rather than returning
+    the stored dict: a form fills itself from what it reads and saves that back
+    whole, so a read in another spelling shows it blank and the next save erases
+    the stored config.
+    """
+    return {
+        "systemPrompt": teaching.system_prompt,
+        "currentWeek": teaching.current_week,
+        "allowedTopics": list(teaching.allowed_topics),
+        "avoidInCode": list(teaching.avoid_in_code),
+        "materialIds": list(teaching.material_ids),
+        "knowledgeIds": list(teaching.knowledge_ids),
+    }
 
 
 class CreateSpaceRequest(BaseModel):
@@ -407,12 +427,11 @@ def _space_to_api_model(space: Space) -> dict:
         "visibleTaskLimit": space.visible_task_limit,
         "defaultCategoryId": space.default_category_id,
         "taskTemplates": json.dumps(space.task_templates or []),
-        # 空间级「给 AI 队友的指导」(#944), `{}` when the board set none — the
-        # settings form reads it back, so it has to be here rather than only on
-        # the write path. Same shape as `SpaceCategory.teaching` (see
-        # `_category_to_api_model`): the stored dict, snake_case keys, which is
-        # also the shape `Teaching.from_json` reads.
-        "teaching": getattr(space, "teaching", None) or {},
+        # 空间级「给 AI 队友的指导」(#944) — the settings form reads it back, so it
+        # has to be here rather than only on the write path.
+        "teaching": teaching_to_api(
+            Teaching.from_json(getattr(space, "teaching", None))
+        ),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -512,10 +531,9 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
         "name": cat.name,
         "description": cat.description,
         "displayOrder": cat.display_order,
-        # 课程级教学配置 (#8d772257), `{}` when this 项目集 is not a course — the
-        # edit form reads it back, so it has to be here rather than only on the
-        # write path.
-        "teaching": getattr(cat, "teaching", None) or {},
+        # 课程级教学配置 (#8d772257) — the edit form reads it back, so it has to be
+        # here rather than only on the write path.
+        "teaching": teaching_to_api(Teaching.from_json(getattr(cat, "teaching", None))),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "archivedAt": archived_at_ms,

@@ -13,8 +13,6 @@ from app.domain.agent.service import (
     AgentSessionInfo,
     AgentStepFailed,
     AgentStepOutput,
-    AgentSubagentStart,
-    AgentSubagentStop,
     AgentToolUse,
 )
 
@@ -26,23 +24,10 @@ RETRY_COUNT = re.compile(r"(\d+)\s*/\s*(\d+)")
 class Assembler:
     def __init__(self):
         self.pending: dict[str, AgentMessage] = {}
-        self.children: dict[str, tuple[str, str]] = {}
+        #: Threads a thread started (``parentThreadId``). Their turns are the
+        #: session's own work: a child's completion is not the session's end.
+        self.children: set[str] = set()
         self.last_text: dict[str, str] = {}
-
-    def attribution(self, thread_id: str) -> dict:
-        """这条记录属于哪条子线程 —— 契约上的 `thread_label`。
-
-        Codex 把起子线程时给的那个名字放在 `agentRole` 上，每条记录都带着它回来，
-        所以这个骨架的标识绑在它上面（`agentRole` 这个名字不出这个包）。父线程的
-        记录不在 `children` 里，返回空 dict，也就是「房间自己说的」。
-
-        `agentRole` 能不能装下一张卡的标识，没有实测过：codex-cli 0.155.1 的
-        `spawn_agent` 里自由文本的那个参数叫 `task_name`，而 role 那一侧有
-        `core/src/agent/role.rs` 的 `unknown agent_type '…'` —— 看着和 Claude
-        Code 的 `subagent_type` 一样是个封闭集合。真要落到哪个字段上是 P33 的事。
-        """
-        child = self.children.get(thread_id)
-        return {"thread_label": child[1]} if child else {}
 
     def accept(self, record: dict) -> list[AgentEvent]:
         method = record["method"]
@@ -54,10 +39,9 @@ class Assembler:
         message_owner = {"agent_handle": owner.get("agent_handle")}
         if method == "thread/started":
             thread = params["thread"]
-            if parent := thread.get("parentThreadId"):
-                role = thread.get("agentRole") or ""
-                self.children[thread["id"]] = (parent, role)
-                return [AgentSubagentStart(thread["id"], role, parent)]
+            if thread.get("parentThreadId"):
+                self.children.add(thread["id"])
+                return []
             return [AgentSessionInfo(thread["id"], **identity)]
         if method == "turn/started":
             self.last_text.pop(params["threadId"], None)
@@ -74,16 +58,13 @@ class Assembler:
                     error=said,
                     attempt=int(counted[1]) if counted else None,
                     max_attempts=int(counted[2]) if counted else None,
-                    **self.attribution(params.get("threadId") or ""),
                 )
             ]
         if method == "item/agentMessage/delta":
             eid = f"codex:{params['threadId']}:{params['itemId']}"
             message = self.pending.setdefault(
                 eid,
-                AgentMessage(
-                    "", eid=eid, **message_owner, **self.attribution(params["threadId"])
-                ),
+                AgentMessage("", eid=eid, **message_owner),
             )
             message.text += params["delta"]
             return []
@@ -95,12 +76,7 @@ class Assembler:
                 # it as an item of its own). The item says nothing about how it
                 # went: a compaction that failed fails the turn, and the turn's
                 # ending says so.
-                return [
-                    AgentCompacting(
-                        done=method == "item/completed",
-                        **self.attribution(params["threadId"]),
-                    )
-                ]
+                return [AgentCompacting(done=method == "item/completed")]
             if item["type"] == "agentMessage":
                 if method == "item/started":
                     at = params.get("startedAtMs", record.get("emittedAtMs"))
@@ -108,18 +84,12 @@ class Assembler:
                         item.get("text", ""),
                         eid=eid,
                         at=datetime.fromtimestamp(at / 1000, UTC) if at else None,
-                        **self.attribution(params["threadId"]),
                         **message_owner,
                     )
                     return []
                 message = self.pending.pop(
                     eid,
-                    AgentMessage(
-                        "",
-                        eid=eid,
-                        **message_owner,
-                        **self.attribution(params["threadId"]),
-                    ),
+                    AgentMessage("", eid=eid, **message_owner),
                 )
                 message.text = item["text"]
                 message.eids = (eid,)
@@ -133,7 +103,6 @@ class Assembler:
                         eid=eid,
                         # The item's own id: its completion names the same one.
                         call_id=item["id"],
-                        **self.attribution(params["threadId"]),
                     )
                 ]
             if item["type"] == "dynamicToolCall":
@@ -142,7 +111,6 @@ class Assembler:
                     for part in item.get("contentItems") or []
                     if isinstance(part, dict) and part.get("type") == "inputText"
                 )
-                owner = self.attribution(params["threadId"])
                 steps: list[AgentEvent] = []
                 # The call's answer said it failed (`success: false`, which the
                 # platform's own tool bridge sets), or the item did.
@@ -151,13 +119,10 @@ class Assembler:
                         AgentStepFailed(
                             call_id=item["id"],
                             text=" ".join(said.split())[-STEP_ERROR_MAX:],
-                            **owner,
                         )
                     )
                 if said.strip():
-                    steps.append(
-                        AgentStepOutput(call_id=item["id"], text=said, **owner)
-                    )
+                    steps.append(AgentStepOutput(call_id=item["id"], text=said))
                 return steps
             return []
         if method == "turn/completed":
@@ -181,17 +146,8 @@ class Assembler:
                     else (partial[-1].text if partial else last)
                 )
             )
-            if child := self.children.get(thread_id):
-                parent, role = child
-                return [
-                    *partial,
-                    AgentSubagentStop(
-                        thread_id,
-                        text,
-                        role,
-                        session_id=parent,
-                    ),
-                ]
+            if thread_id in self.children:
+                return [*partial]
             result = AgentResult(
                 text=text,
                 session_id=params["threadId"],

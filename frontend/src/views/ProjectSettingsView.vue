@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
+import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
@@ -23,6 +24,7 @@ import CreditsPanel from '@/components/settings/CreditsPanel.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubAccountSettings from '@/components/settings/GithubAccountSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
+import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
@@ -31,7 +33,7 @@ import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目设置（`/projects/<id>/settings/<栏>`）。盖在整个窗口上的一层（SettingsOverlay），
-// 左边八栏，一次画一栏；取数照旧一次取完。这一页只剩**接线**：取数与保存在
+// 左边九栏，一次画一栏；取数照旧一次取完。这一页只剩**接线**：取数与保存在
 // `composables/useProjectSettings.ts`（仓库那一组）和 `composables/useBranchProtection.ts`
 // （分支保护），各块的画法在 `components/settings/*.vue`，谁在哪一组里、哪一块什么时候
 // 出现，看下面那个模板就够了。
@@ -100,6 +102,11 @@ const {
   saveOverrideHandles,
 } = useBranchProtection(() => props.projectId)
 
+const { exporting, exportError, exportProject } = useProjectExport(
+  () => props.projectId,
+  () => projectName.value
+)
+
 const gate = provideRevealGate()
 const { revealed } = gate
 
@@ -119,7 +126,7 @@ watch(
 const { mdAndUp } = useDisplay()
 const router = useRouter()
 
-/** 八栏；归档只有所有者看得到。 */
+/** 九栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
   { group: 'ai', key: 'agents', icon: 'mdi-robot-outline' },
   { group: 'ai', key: 'topic-naming', icon: 'mdi-format-title' },
@@ -128,11 +135,12 @@ const SECTIONS = computed(() => [
   { group: 'code', key: 'merge', icon: 'mdi-source-merge' },
   { group: 'code', key: 'repository', icon: 'mdi-source-repository' },
   { group: 'code', key: 'mcp', icon: 'mdi-connection' },
+  { group: 'data', key: 'export', icon: 'mdi-download-outline' },
   ...(ownsProject.value ? [{ group: 'danger', key: 'archive', icon: 'mdi-archive-outline', danger: true }] : []),
 ])
 
 const groups = computed(() =>
-  ['ai', 'run', 'code', 'danger']
+  ['ai', 'run', 'code', 'data', 'danger']
     .map((group) => ({
       key: group,
       title: group === 'danger' ? undefined : t(`work.projectSettings.groups.${group}`),
@@ -320,6 +328,15 @@ function close() {
         </template>
 
         <ProjectMcpSettings v-else-if="section === 'mcp'" :project-id="projectId" />
+
+        <!-- Exporting is for everyone who can read the project; the archive follows the
+             caller's current room permissions (docs/project-export.md). -->
+        <ProjectExportSection
+          v-else-if="section === 'export'"
+          :busy="exporting"
+          :error="exportError"
+          @export="exportProject"
+        />
 
         <!-- 归档只给所有者：归档是他一个人的决定（后端也只认他）。 -->
         <ArchiveProjectSection

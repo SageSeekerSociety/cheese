@@ -62,6 +62,6 @@ async def test_one_type_two_instances_and_two_works_on_two_models(client):
         await session.commit()
 
     for handle, model in bound.items():
-        card = client.get(f"/topics/{ids['room']}/tasks/{ids[handle]}")
+        card = client.get(f"/topics/{ids[handle]}/task")
         assert card.status_code == 200, card.text
         assert card.json()["data"]["model"] == model

@@ -142,23 +142,28 @@ async def admitted_initial(
             )
             yield offered is True or isinstance(offered, InputReconciliationPending)
             return
-        from app.domain.agent.queries import session_agent_in_room
+        from app.domain.agent.queries import conversation_seat
+        from app.domain.room_task.place import PlaceResolver
 
         async with chat.session_factory() as session:
-            if instance_id is not None:
+            place = await PlaceResolver(session).conversation(topic_id)
+            # A room's addressed agent must still sit on its roster; a task's
+            # agent is the task's own and sits on no roster.
+            if instance_id is not None and place is not None and place.task is None:
                 from app.core.errors import ValidationError
                 from app.domain.identity.handles import agent_instance_handle
                 from app.domain.topic_membership.services import TopicMemberService
 
                 if agent_instance_handle(instance_id) not in await TopicMemberService(
                     session
-                ).agent_handles(topic_id):
+                ).agent_handles(place.room_id):
                     raise ValidationError(
                         "The addressed agent is no longer seated in this room"
                     )
-            agent = await session_agent_in_room(session, topic_id, seat)
-            acting = await chat._acting_handle(session, topic_id, agent)
-            pending = await seat_has_unfinished_input(session, topic_id, acting)
+            seated = await conversation_seat(session, topic_id, seat)
+            pending = seated is not None and await seat_has_unfinished_input(
+                session, topic_id, seated[1]
+            )
             if pending and user_block_id is not None:
                 from app.domain.agent.pending_messages import defer_message
 

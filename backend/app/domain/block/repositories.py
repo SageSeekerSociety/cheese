@@ -779,7 +779,9 @@ class BlockRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def turn_history(self, topic_id: uuid.UUID) -> list[Block]:
+    async def turn_history(
+        self, topic_id: uuid.UUID, task_id: uuid.UUID | None = None
+    ) -> list[Block]:
         """Inputs awaiting consumption and the two turn-preparation boundaries.
 
         Inputs, not the timeline: a room's events are mostly for people to read,
@@ -788,7 +790,7 @@ class BlockRepository:
         input is selected by being one — not by their kind, which says who can
         see them rather than who they are for.
         """
-        place = self._in_place(topic_id, None)
+        place = self._in_place(topic_id, task_id)
         latest_ai = (
             select(Block.id)
             .where(
@@ -862,6 +864,21 @@ class BlockRepository:
             .limit(1)
         )
         return (await self._session.scalars(stmt)).first()
+
+    async def messages_before(self, block: Block, *, limit: int) -> list[Block]:
+        """The ``limit`` messages said on ``block``'s line just before it, oldest
+        first: what was being talked about when it was said."""
+        stmt = (
+            select(Block)
+            .where(
+                *self._in_place(block.topic_id, block.task_id),
+                Block.kind == BlockKind.message,
+                Block.created_at < block.created_at,
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(limit)
+        )
+        return list(reversed(list((await self._session.scalars(stmt)).all())))
 
     async def page_for_topic(
         self,
@@ -957,13 +974,18 @@ class BlockRepository:
         return int((await self._session.scalar(stmt)) or 0)
 
     async def count_messages(
-        self, room_id: uuid.UUID, *, excluding: Collection[uuid.UUID] = ()
+        self,
+        room_id: uuid.UUID,
+        *,
+        excluding: Collection[uuid.UUID] = (),
+        task_id: uuid.UUID | None = None,
     ) -> int:
-        """Chat messages on a room's own line, leaving out ``excluding``."""
+        """Chat messages on a room's own line, or one task's, leaving out
+        ``excluding``."""
         stmt = (
             select(func.count())
             .select_from(Block)
-            .where(*self._in_place(room_id, None), Block.kind == BlockKind.message)
+            .where(*self._in_place(room_id, task_id), Block.kind == BlockKind.message)
         )
         if excluding:
             stmt = stmt.where(Block.id.not_in(list(excluding)))

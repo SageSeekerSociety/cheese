@@ -281,6 +281,29 @@ def rejected_path(path: str) -> str:
     return f"{path[: -len('.md')]}.rejected.md"
 
 
+def conflict_path(path: str) -> str:
+    """被平台盖回去的那一版留在哪儿：同一个目录，`<名字>.conflict.md`。
+
+    也是带点的名字，同样过不了 `check_path`。写它的是会话机上的对账
+    （`claude_code/runner.py` 的 `_keep_refused`），叫 agent 去读它的是
+    `platform_notices.memory_conflict_notice`——同一个文件名两处要说对，所以
+    在这里只定义一次。
+    """
+    return f"{path[: -len('.md')]}.conflict.md"
+
+
+def prompt_path(path: str) -> str:
+    """这条记忆在 agent 手里怎么拼：`~/.cheese/memory/team/x.md`。
+
+    agent 的文件工具按路径里有没有 `.cheese/memory/` 这一段决定这次读写发给
+    会话机还是工作机（`remote_execution/proxy.js` 的 `memoryPath`），它的系统
+    提示词也是这么写的（`instructions.MEMORY_DIR`）。只说一个 `team/x.md`，
+    那次读写就在工作机上找一个相对路径——记忆树在会话机上，读回来是「文件不
+    存在」。
+    """
+    return f"~/{MEMORY_ROOT}/{path}"
+
+
 def prefix_of(scope: MemoryFileScope, owner_handle: str | None) -> str:
     """会话目录里，这个作用域的前缀（`team` 或 `private/<handle>`）。"""
     if scope is MemoryFileScope.team:

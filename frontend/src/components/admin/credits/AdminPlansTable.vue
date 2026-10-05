@@ -3,9 +3,9 @@ import type { Plan, PlanWindow } from '@/lib/adminCredits'
 
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
-import AdminGrid from '@/components/admin/AdminGrid.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
 import { AUDIENCE_KEY, fmtCredits, planTiers, TIER_KEY } from '@/lib/adminCredits'
 
 // 方案一览：每个方案发多少、限多少、能用哪几档模型。
@@ -46,7 +46,7 @@ function tiersText(plan: Plan): string {
 </script>
 
 <template>
-  <AdminGrid
+  <BaseTable
     class="acp"
     :label="t('credits.plans.label')"
     :cols="[null, '120px', '120px', '200px', '220px', '88px', '88px']"
@@ -69,13 +69,11 @@ function tiersText(plan: Plan): string {
     </template>
 
     <template #error>
-      <AdminEmptyState
-        compact
-        tone="error"
+      <BaseLoadError
         :title="t('credits.plans.loadFailed')"
-        :desc="props.error || undefined"
-        :action="t('credits.plans.retry')"
-        @action="emit('retry')"
+        :error="props.error || undefined"
+        :retry-label="t('credits.plans.retry')"
+        @retry="emit('retry')"
       />
     </template>
 
@@ -98,7 +96,7 @@ function tiersText(plan: Plan): string {
         <BaseButton kind="ghost" size="sm" @click="emit('edit', plan)">{{ t('credits.plans.edit') }}</BaseButton>
       </td>
     </tr>
-  </AdminGrid>
+  </BaseTable>
 </template>
 
 <style scoped>

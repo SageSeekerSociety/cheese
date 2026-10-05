@@ -134,11 +134,7 @@
              field below. The one line that changes what a project can expect
              stays; the rest moves behind the notice's own disclosure, and the
              gap below clears the label. -->
-        <ResourceLimitsNotice
-          v-if="newProjectDialog"
-          class="mt-3 mb-6"
-          :own="newProjectTeams.find((team) => team.id === newProjectTeamId)?.personal"
-        />
+        <ResourceLimitsNotice v-if="newProjectDialog" class="mt-3 mb-6" />
         <v-text-field
           v-model="newProjectName"
           autocomplete="off"
@@ -277,6 +273,7 @@ import { pendingSudo } from '@/utils/sudo'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useProjectMenu } from '@/composables/useProjectMenu'
 import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
@@ -297,7 +294,7 @@ import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
 import { defineCommands } from '@/commands'
-import { copyLink, linkOf } from '@/commands/copy'
+import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
 import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -593,39 +590,8 @@ const { count: unreadActivity } = useUnreadNotifications()
 // The same number on the desktop app's icon, whenever this page has read it.
 watch(awaitingCount, desktopBadge)
 
-// 右键 rail 上一个项目：复制链接、打开项目设置，不是所有者的还能退出。都是别处已有
-// 的操作——项目菜单、成员页——这里只是把它们挂到那一格上，对的是那一格的项目，
-// 不一定是正开着的这个。
-const leaveOpen = ref(false)
-const leavingProjectId = ref<string | null>(null)
-function projectMenu(project: Project): MenuAction[] {
-  const actions: MenuAction[] = [
-    {
-      key: 'project.copyLink',
-      label: t('work.room.menu.copyLink'),
-      icon: 'mdi-link-variant',
-      onSelect: () => void copyLink(linkOf(router, { name: 'workspace-project', params: { projectId: project.id } })),
-    },
-    {
-      key: 'project.settings',
-      label: t('work.projectSettings.title'),
-      icon: 'mdi-cog-outline',
-      onSelect: () => void router.push({ name: 'project-settings', params: { projectId: project.id } }),
-    },
-  ]
-  if (project.owner_handle !== myHandle())
-    actions.push({
-      key: 'project.leave',
-      label: t('work.members.leave'),
-      icon: 'mdi-exit-to-app',
-      danger: true,
-      onSelect: () => {
-        leavingProjectId.value = project.id
-        leaveOpen.value = true
-      },
-    })
-  return actions
-}
+// 右键 rail 上一个项目：那一份菜单和退出确认框的状态见 useProjectMenu。
+const { projectMenu, leaveOpen, leavingProjectId } = useProjectMenu(router)
 
 const navSources = computed<NavSources>(() => ({
   projects: railProjects.value,

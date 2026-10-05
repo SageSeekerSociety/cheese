@@ -50,8 +50,8 @@ else
   exit 1
 fi
 
-# Spend reads page through one key's day by (api_key, startTime) (the backend's
-# gateway.py). LiteLLM's schema declares that index but leaves building it to
+# LiteLLM's own spend-log pages (/spend/logs/v2 and its admin UI) read one key's
+# days by (api_key, startTime). Its schema declares that index but leaves building it to
 # operators, because a plain CREATE INDEX blocks spend-log inserts for the whole
 # build; without it every page full-scans the spend table. CONCURRENTLY does not
 # block inserts. A CONCURRENTLY build that failed leaves an invalid index, which

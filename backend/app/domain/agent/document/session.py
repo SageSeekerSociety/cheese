@@ -103,6 +103,7 @@ def session_for(
             topic_id=str(asked.room_id) if asked.room_id is not None else None,
             agent_handle=bound.agent_handle,
             resource_id=str(key),
+            document_id=str(asked.document_id),
             ttl_s=TOKEN_TTL_S,
         ),
         around.machine,

@@ -1,7 +1,45 @@
 """Authenticated Ask creation's exact active-work provenance."""
 
+import asyncio
+import logging
+import time
+
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.identity.handles import names_a_person
+
+logger = logging.getLogger(__name__)
+
+
+def refused(reason: str, topic_id, seat, **facts) -> None:
+    """Say which check refused a question: every refusal reads the same to the
+    agent (403 askOriginUnknown), so this line is the only place they differ."""
+    detail = " ".join(f"{key}={value}" for key, value in facts.items())
+    logger.info(
+        "ask origin refused: %s topic=%s seat=%s %s", reason, topic_id, seat, detail
+    )
+
+
+# A takeover took under a minute on dev; the agent's tool call waits 240 s.
+TAKEOVER_WAIT_S = 120.0
+
+
+async def waited_for_takeover(runner, wait_s=TAKEOVER_WAIT_S) -> bool:
+    """True when this process had not yet taken the running work over and now has.
+
+    During a rollout the incoming backend serves requests before it has taken
+    the running work over (`app.core.ownership`): until then the turn asking is
+    known only to the outgoing one, and `ask_origin` finds nothing. A question
+    waits for the takeover, like a turn asked for meanwhile, and is read again,
+    instead of being refused as asked outside any turn.
+    """
+    if runner.accepting_turns:
+        return False
+    deadline = time.monotonic() + wait_s
+    while not runner.accepting_turns:
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.2)
+    return True
 
 
 async def ask_origin(chat, project_id, topic_id, author):
@@ -19,21 +57,47 @@ async def ask_origin(chat, project_id, topic_id, author):
         and state.work_id in chat._active_turn_ids.get(topic_id, ())
     ]
     if len(states) != 1:
+        refused(
+            "no live turn" if not states else "several live turns",
+            topic_id,
+            author,
+            works=sorted(str(state.work_id) for state in states),
+            active=sorted(
+                str(work) for work in chat._active_turn_ids.get(topic_id, ())
+            ),
+        )
         return None
     state = states[0]
     origin = await chat._compute.ask_origin(
         project_id, topic_id, state.agent_instance_handle
     )
+    if origin is None:
+        # The session side names its own reason (`RoomSessions.ask_origin`).
+        refused("session has no matching work", topic_id, author, work=state.work_id)
+        return None
     if (
-        origin is None
-        or origin["work_id"] != str(state.work_id)
+        origin["work_id"] != str(state.work_id)
         or chat._hook_work.get((topic_id, state.work_id)) is not state
         or state.work_id not in chat._active_turn_ids.get(topic_id, ())
     ):
+        refused(
+            "live turn changed while reading",
+            topic_id,
+            author,
+            work=state.work_id,
+            session_work=origin["work_id"],
+        )
         return None
     async with chat.session_factory() as session:
         turn = await AgentTurnRepository(session).get(state.work_id)
         if turn is None or turn.topic_id != topic_id or turn.stopped_at is not None:
+            refused(
+                "turn row missing or closed",
+                topic_id,
+                author,
+                work=state.work_id,
+                stopped_at=turn.stopped_at if turn is not None else None,
+            )
             return None
         asked = turn.author if names_a_person(turn.author) else None
         task_id = str(turn.task_id) if turn.task_id else None

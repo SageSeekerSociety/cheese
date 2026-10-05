@@ -100,7 +100,9 @@ def nudge_messages(chat, topic_id):
 
 
 async def resume_messages(runner, chat, *, topic_id=None):
-    from app.domain.agent.queries import session_agent_in_room
+    """``topic_id`` is a conversation: a room, or a task, whose messages are
+    blocks in its room carrying its id."""
+    from app.domain.agent.queries import conversation_seat
 
     if not runner.owns_sessions or not runner.accepting_turns:
         return 0
@@ -115,7 +117,9 @@ async def resume_messages(runner, chat, *, topic_id=None):
             Block.meta["agent_recipient"]["mentioned"].as_boolean(),
         )
         if topic_id is not None:
-            query = query.where(Block.topic_id == topic_id)
+            query = query.where(
+                or_(Block.topic_id == topic_id, Block.task_id == topic_id)
+            )
         mentioned = [
             block
             for block in await session.scalars(
@@ -134,12 +138,12 @@ async def resume_messages(runner, chat, *, topic_id=None):
             await session.scalars(select(AgentTurn.id).where(AgentTurn.id.in_(ids)))
         )
         busy = {}
-        for room, handle in await session.execute(
-            select(AgentTurn.topic_id, AgentTurn.agent_handle).where(
+        for room, task, handle in await session.execute(
+            select(AgentTurn.topic_id, AgentTurn.task_id, AgentTurn.agent_handle).where(
                 AgentTurn.stopped_at.is_(None)
             )
         ):
-            busy.setdefault(room, set()).add(handle)
+            busy.setdefault(task or room, set()).add(handle)
         answered = {
             block.turn_id
             for block in await session.scalars(
@@ -158,23 +162,24 @@ async def resume_messages(runner, chat, *, topic_id=None):
                 continue
             recipient = (block.meta or {}).get("agent_recipient") or {}
             handle = recipient.get("handle")
-            key = (block.topic_id, handle)
+            conversation = block.task_id or block.topic_id
+            key = (conversation, handle)
             if key in seats:
                 continue
-            running = busy.get(block.topic_id, set())
+            running = busy.get(conversation, set())
             if None in running or handle in running or chat.has_running_turn(*key):
                 continue
-            agent = await session_agent_in_room(session, block.topic_id, handle)
-            if agent is None:
+            seated = await conversation_seat(session, conversation, handle)
+            if seated is None:
                 continue
+            agent, acting = seated
             if agent.handle != handle:
                 continue
             if recipient.get("instance_id") not in (None, str(agent.instance_id)):
                 continue
-            acting = await chat._acting_handle(session, block.topic_id, agent)
             if acting != recipient_seat(recipient):
                 continue
-            if await seat_has_unfinished_input(session, block.topic_id, acting):
+            if await seat_has_unfinished_input(session, conversation, acting):
                 continue
             seats[key] = block
     started = 0

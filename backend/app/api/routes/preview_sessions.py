@@ -56,7 +56,7 @@ async def preview_session(
     if selection is not None:
         artifact = None
         if selection.artifact_id:
-            artifact = await latest_preview_for_room(db, place.room_id)
+            artifact = await latest_preview_for_room(db, place.room_id, place.task_id)
             if artifact is None or artifact.id != selection.artifact_id:
                 raise NotFoundError("Preview selection changed")
         if artifact and artifact.mime_type == APP_MIME:
@@ -81,7 +81,7 @@ async def preview_session(
                 artifact.content if artifact else selection.path or ""
             )
             version = await asyncio.to_thread(
-                library.preview_file_version, place.project_id, topic_id, path
+                library.preview_file_version, place.project_id, place.room_id, path
             )
             if not version or selection.version != version:
                 raise NotFoundError("Preview entry changed or unavailable")

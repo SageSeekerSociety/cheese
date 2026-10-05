@@ -120,5 +120,16 @@ export function useFakeDocCollab(room: () => string | null) {
 
   watch(room, open, { immediate: true })
   onBeforeUnmount(() => close?.())
-  return { session, connection, synced, readOnly, peers, error, outdated, stores: ref(0) }
+  return {
+    session,
+    connection,
+    synced,
+    readOnly,
+    peers,
+    error,
+    outdated,
+    stores: ref(0),
+    renames: ref(0),
+    deleted: ref(false),
+  }
 }

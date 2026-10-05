@@ -179,8 +179,13 @@ export const ASK_ANSWERED = askRow({ option: ASK_OPTIONS[0].text, by: 'wang' })
  * （`demoBackend`），和 `DemoRoom.installPanelAnswers` 是同一件事。
  */
 export function installCatalogAnswers(): void {
-  answer('/topics/demo/accept-card', () => ({ data: ACCEPT_CARD ? [ACCEPT_CARD] : [], total: ACCEPT_CARD ? 1 : 0 }))
-  answer('/topics/demo/pr-checks', () => ACCEPT_CHECKS ?? { available: false })
+  // The card is read through its task's own conversation.
+  const conversation = ACCEPT_CARD?.task_id ?? 'demo'
+  answer(`/topics/${conversation}/accept-card`, () => ({
+    data: ACCEPT_CARD ? [ACCEPT_CARD] : [],
+    total: ACCEPT_CARD ? 1 : 0,
+  }))
+  answer(`/topics/${conversation}/pr-checks`, () => ACCEPT_CHECKS ?? { available: false })
 }
 
 // ---- 验收卡（TopicAcceptCard）拆出来的那几件 ----------------------------------
@@ -953,24 +958,8 @@ export function chatTimelineProps(over: Record<string, unknown> = {}): Record<st
   }
 }
 
-/** 工作电脑表单：两台自有设备（一台离线），以及云端此刻的供应（示例数字，取自 2026-09-30 的 dev）。 */
+/** 工作电脑表单：两台自有设备（一台离线）。 */
 export const COMPUTE_DEVICES = [
   { device_id: 'lab', name: '实验室工作站', online: true },
   { device_id: 'home', name: '家里那台', online: false },
 ]
-export const CLOUD_SUPPLY = {
-  available: true as const,
-  offering: 'standard-lxc',
-  selectable: {
-    cores: { min: 1, max: 32 },
-    memory_mb: { min: 512, max: 131072 },
-    disk_gb: { min: 2, max: 128 },
-  },
-  provider: {
-    cores: { min: 1, max: 32 },
-    memory_mb: { min: 128, max: 131072 },
-    disk_gb: { min: 2, max: 128 },
-  },
-  capacity_known: false,
-}
-export const CLOUD_SUPPLY_UNKNOWN = { available: false as const, reason: 'MicroCloud unreachable' }

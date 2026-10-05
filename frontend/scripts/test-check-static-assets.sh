@@ -41,18 +41,21 @@ HTML
   mkdir -p "$fixture/docs"
   : > "$fixture/docs/index.html"
   : > "$fixture/docs/llms.txt"
+  mkdir -p "$fixture.docs-host"
+  : > "$fixture.docs-host/index.html"
+  : > "$fixture.docs-host/llms.txt"
 }
 
 complete="$TEST_ROOT/complete"
 make_complete_fixture "$complete"
-output="$(sh "$CHECKER" "$complete")"
+output="$(sh "$CHECKER" "$complete" "$complete.docs-host")"
 assert_contains "$output" "STATIC ASSETS OK: 4 local references, manual present"
 echo "PASS: complete asset tree"
 
 missing="$TEST_ROOT/missing"
 make_complete_fixture "$missing"
 rm "$missing/assets/app.css"
-if output="$(sh "$CHECKER" "$missing" 2>&1)"; then
+if output="$(sh "$CHECKER" "$missing" "$missing.docs-host" 2>&1)"; then
   fail "checker accepted an index with a missing stylesheet"
 fi
 assert_contains "$output" "missing assets/app.css"
@@ -74,11 +77,20 @@ echo "PASS: missing entrypoints rejected"
 no_manual="$TEST_ROOT/no-manual"
 make_complete_fixture "$no_manual"
 rm -r "$no_manual/docs"
-if output="$(sh "$CHECKER" "$no_manual" 2>&1)"; then
+if output="$(sh "$CHECKER" "$no_manual" "$no_manual.docs-host" 2>&1)"; then
   fail "checker accepted an image with no user manual under /docs"
 fi
 assert_contains "$output" "missing docs/index.html"
 echo "PASS: missing manual rejected"
+
+no_host_manual="$TEST_ROOT/no-host-manual"
+make_complete_fixture "$no_host_manual"
+rm -r "$no_host_manual.docs-host"
+if output="$(sh "$CHECKER" "$no_host_manual" "$no_host_manual.docs-host" 2>&1)"; then
+  fail "checker accepted an image with no manual for the docs host"
+fi
+assert_contains "$output" "missing docs-host/index.html"
+echo "PASS: missing docs-host manual rejected"
 
 no_index="$TEST_ROOT/no-index"
 mkdir -p "$no_index"

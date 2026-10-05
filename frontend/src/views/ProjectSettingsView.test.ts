@@ -246,6 +246,7 @@ describe('project settings', () => {
         '合并规则',
         '仓库与署名',
         'MCP 服务器',
+        '导出项目',
         '归档项目',
       ])
     } finally {
@@ -260,6 +261,8 @@ describe('project settings', () => {
     // 分支保护是合并规则，不是仓库连接。
     ['merge', ['分支保护']],
     ['repository', ['GitHub 仓库地址', '连接 GitHub 仓库', '提交署名', '连接 GitHub 账号']],
+    // 导出打包整个项目，不和任何一栏混在一起。
+    ['export', ['导出项目']],
   ])('puts the right blocks in the %s section', async (section, blocks) => {
     const wrapper = await openSettings(section)
     try {

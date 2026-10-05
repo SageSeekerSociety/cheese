@@ -19,9 +19,11 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.db import Base
 from app.domain.block.indexed_rows import (
@@ -339,3 +341,14 @@ class BlockReaction(UuidPk, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+def in_conversation(conversation_id: uuid.UUID) -> ColumnElement[bool]:
+    """The blocks of one conversation: a room's own (no task), or one task's.
+    A task's blocks sit in its room and carry its id."""
+    return func.coalesce(Block.task_id, Block.topic_id) == conversation_id
+
+
+def conversation_of(block: Block) -> uuid.UUID:
+    """The conversation a block was said in."""
+    return block.task_id or block.topic_id

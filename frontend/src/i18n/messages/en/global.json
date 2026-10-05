@@ -9,6 +9,7 @@
   },
   "loadError": {
     "title": "Couldn't load",
+    "page": "That page didn't open. The connection may be unstable.",
     "retry": "Try again"
   },
   "cheese": "Cheese",

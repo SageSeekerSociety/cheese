@@ -33,19 +33,23 @@ COMPACTING = "cheese_compacting"
 #: A subagent the session started (``subagents.py``) began its work, or ended
 #: it — finished, failed, or stopped by its parent. pi has no subagents of its
 #: own, so nothing in pi's log can say either.
-SUBAGENT_STARTED = "cheese_subagent_started"
-SUBAGENT_STOPPED = "cheese_subagent_stopped"
 #: Every record the runner writes; none of them is an id pi knows.
-RUNNER_RECORDS = (RETRYING, GAVE_UP, COMPACTING, SUBAGENT_STARTED, SUBAGENT_STOPPED)
-#: The key on every record of a subagent's thread: which subagent, and the
-#: label of the card its work lands on (``subagents.py`` stamps it). A record
-#: without it is the session's own.
+RUNNER_RECORDS = (RETRYING, GAVE_UP, COMPACTING)
+#: The key on every record of a subagent's thread: which subagent
+#: (``subagents.py`` stamps it). A record without it is the session's own.
 THREAD = "subagent"
 
 
 class Journal(journal.Journal):
     table = "entries"
     column = "entry"
+    # Every assistant message, not only the final one: which stop reasons end
+    # a turn is the subscription's to say, and over-including only stops the
+    # step early.
+    turn_end = (
+        f"json_extract(entry, '$.type') = '{GAVE_UP}' "
+        "OR json_extract(entry, '$.message.role') = 'assistant'"
+    )
     schema = """
         CREATE TABLE IF NOT EXISTS entries (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,

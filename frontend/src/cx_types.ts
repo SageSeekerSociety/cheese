@@ -1,6 +1,8 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
+export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { WaitingItem } from './types/waiting'
 
@@ -235,20 +237,19 @@ export interface TodoItem {
 export interface RoomTask {
   id: string
   project_id: string
-  // 它挂在哪个房间里。永远是房间——活不嵌套。
-  room_id: string
+  room_id: string // 它挂在哪个房间里；任务不嵌套
   title: string
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
-  // 谁来验收这条活 —— 派活那一刻定下的（显式指定，否则项目的默认验收人）。递卡
-  // 沿用它。null 只可能来自历史记录。
-  reviewer_handle?: string | null
+  reviewer_handle?: string | null // 谁审阅它的改动，开始时定下
   created_by?: string | null
   branch_name?: string | null
-  // 派它出去时说的那份要求，和分身交回来的那句话，都住在卡上：做活的分身拿的是房间的
-  // token，够不着「活自己的实况文档」，那份文档从播种起就再没人改过。
-  brief?: string
+  agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
+  document_id?: string | null // 实况文档；第一次打开任务时才建
+  started_at?: string | null // 开始的时刻、人和文档版本：审阅时与它相比
+  started_by?: string | null
+  started_doc_version?: number | null
   conclusion?: string | null
   base_branch?: string | null
   base_task_id?: string | null
@@ -275,19 +276,20 @@ export interface RoomTask {
 
 /** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
  *  下一步在平台手上还是在人手上，落在不同的列里。
- *
- *    building   施工中 —— 还没递出交付
- *    delivering 交付中 —— 下一步在平台/芝士手上
+ *    not_started 未开始 —— 还在讨论，负责人还没点「开始」
+ *    building   进行中 —— 已开始，还没递出交付
+ *    delivering 检查中 —— 下一步在平台/芝士手上
  *    needs_you  待处理 —— 下一步在人手上
  *    done       已完成 —— 已采纳，或已关闭且没交付
  *    archived   已归档 —— 房间才有；活不归档
  */
-export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
+export type BoardColumn = 'not_started' | 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
-type BuildingPhrase = 'running' | 'started' | 'not_started' | 'returned' | 'idle' | 'draft' | 'lost'
+type BuildingPhrase = 'running' | 'started' | 'idle' | 'draft'
 type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
 type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer'
-export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | 'accepted' | 'closed' | 'archived'
+type DonePhrase = 'accepted' | 'completed' | 'closed' | 'archived'
+export type BoardPhrase = 'discussing' | BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | DonePhrase
 
 /** 后端算好的呈现（`room_task/presentation.py`），前端不推状态。`phrase` 是码，由 `lib/board.ts` 按读者的语言画。 */
 export interface Presentation {
@@ -345,24 +347,6 @@ export type WsServerFrame =
   // The same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
   | import('./types/live').LiveFrame
-
-export interface AgentControlState {
-  id: string | null
-  connected: boolean
-  controls?: string[]
-  tasks?: Record<
-    string,
-    {
-      task_id: string
-      description?: string
-      status?: string
-      subtype?: string
-      tool_use_id?: string
-      task_type?: string
-    }
-  >
-  state?: Record<string, Record<string, unknown>>
-}
 
 // An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
@@ -926,87 +910,6 @@ export interface ProjectCredits {
 
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
-// A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-export type ProjectMachineStatus =
-  | 'provisioning'
-  | 'starting'
-  | 'running'
-  | 'suspending'
-  | 'suspended'
-  | 'resuming'
-  | 'stopping'
-  | 'stopped'
-  | 'deleting'
-  | 'deleted'
-  | 'error'
-  | 'unknown'
-
-export type ProjectMachineAiStatus = 'disabled' | 'provisioning' | 'ready' | 'error' | 'unknown'
-
-// A MicroCloud machine billed/audited through a project. Once enrolled, its device
-// belongs to the project's team pool and is available to every project on that team.
-export interface ProjectMachine {
-  id: string
-  project_id: string
-  machine_id: number | null
-  hostname: string
-  login_user: string
-  cores: number
-  memory_mb: number
-  disk_gb: number
-  status: ProjectMachineStatus
-  ip: string | null
-  ai_mode: string
-  ai_status: ProjectMachineAiStatus
-  device_id: string | null
-  enrolled_at: string | null
-  enroll_error: string | null
-  enroll_attempts: number
-  enroll_max_attempts: number
-  requested_by: string | null
-  created_at: string
-}
-
-// #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
-// `effective` is the widest visibility any agent session here has on the enrolled
-// machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
-// is the one flag the room's 「能访问整台机器」 notice keys on (its tooltip, the honest
-// #282 line, is `work.roomMachine.wholeMachineNotice`). `options` carries the two 档 with
-// their capability copy (isolated = boxed default, host = whole-machine, 申请制).
-export interface TopicComputeVisibility {
-  options: PoolListing[]
-  effective: 'host' | 'isolated' | null
-  machine_access: boolean
-}
-
-export interface TopicComputeDevice {
-  device_id: string
-  name: string
-  online: boolean
-}
-
-// GET /topics/{id}/compute-profile — the room's one work computer (一个话题一个容器, 2026-09-28).
-// `choice` is what an agent that has not started yet will be given (room choice
-// → project default → deployment default); `sessions` is each agent session and
-// the machine it works on, `choice: null` for one that has not started working;
-// `device_id` is the self-hosted machine pinned to this room, or null while
-// 「系统挑一台」still waits for the first turn to choose one.
-export interface TopicComputeProfile {
-  choice: ComputeChoice
-  project_default: ComputeChoice
-  current: string
-  device_id: string | null
-  devices: TopicComputeDevice[]
-  sessions: RoomSessionMachine[]
-  profiles: PoolListing[]
-  visibility: TopicComputeVisibility
-}
-
-// One agent session in the room and whether its agent can see a whole machine.
-export interface RoomSessionMachine extends SessionWorkLease {
-  machine_access: boolean
-}
-
 export interface EnvironmentConfig {
   setup_script: string
   startup_script: string
@@ -1029,38 +932,6 @@ export interface EnvironmentStatus {
   pinned_revision?: string | null
   started_at?: string
   finished_at?: string | null
-}
-
-export interface ComputeChoice {
-  name: string | null
-  profile: 'cloud' | 'device'
-  device_id: string | null
-  cores: number | null
-  memory_mb: number | null
-  disk_gb: number | null
-}
-
-export interface SessionWorkLease {
-  id: string
-  agent_handle: string
-  harness: string
-  choice: ComputeChoice | null
-  lease: { device_id: string; generation: number; status: string; online: boolean } | null
-}
-
-// GET /projects/{id}/compute-configs — the machine new agents start on, and where
-// the project's agents that have started are working now.
-export interface ProjectComputeConfigs {
-  default: ComputeChoice
-  can_manage: boolean
-  devices: TopicComputeDevice[]
-  cloud_available: boolean
-  distribution: ComputeDistribution
-}
-
-export interface ComputeDistribution {
-  cloud: number
-  devices: { device_id: string | null; name: string | null; agents: number; machine_access: boolean }[]
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)

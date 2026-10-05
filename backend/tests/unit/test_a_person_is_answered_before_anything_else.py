@@ -61,6 +61,8 @@ SUBAGENT_TASK = "SUBAGENT_TASK: run the commands"
 REFUSED = REPLY_OWED.split(":")[0]
 #: …and of the reminder a turn that tried to end unanswered is held to.
 HELD = REPLY_INSIST.split(";")[0]
+#: What the person wrote, as the room's record holds it.
+IN_THE_ROOM = "the build broke on the arm runner, see the log above"
 
 
 def shell(command: str) -> tuple[str, str]:
@@ -69,6 +71,11 @@ def shell(command: str) -> tuple[str, str]:
 
 def publish(text: str) -> tuple[str, str]:
     return ("publish", text)
+
+
+def read_room() -> tuple[str, str]:
+    """The model reads the room's messages."""
+    return ("read", "")
 
 
 def say(text: str) -> tuple[str, str]:
@@ -90,6 +97,27 @@ class Backend:
             def log_message(self, *_):
                 pass
 
+            def answer(self, result):
+                data = json.dumps(result).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                # The room's record, as its history route pages it.
+                assert self.path.startswith(f"/topics/{TOPIC}/history"), self.path
+                message = {
+                    "id": "m1",
+                    "created_at": "2026-10-04T00:00:00Z",
+                    "author": "someone",
+                    "author_type": "user",
+                    "kind": "message",
+                    "content": IN_THE_ROOM,
+                }
+                self.answer({"data": {"data": [message], "has_more": False}})
+
             def do_POST(self):
                 body = json.loads(
                     self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -109,12 +137,7 @@ class Backend:
                     if self.path == f"/topics/{TOPIC}/messages":
                         backend.published.append(body["content"])
                     result = {"data": {"id": str(uuid.uuid4()), **body}}
-                data = json.dumps(result).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                self.answer(result)
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -249,6 +272,7 @@ async def claude_code(tmp_path: Path, steps: list):
             "name": "mcp__native__chat_send",
             "input": {"content": value},
         },
+        "read": lambda value: {"name": "mcp__native__cheese_chat_list", "input": {}},
         # Words that reach no one: the fixture answers with plain text.
         "say": lambda value: None,
         # Only Claude Code's model starts a subagent here; the value is the
@@ -414,6 +438,8 @@ async def codex(tmp_path: Path, steps: list):
             if kind == "shell"
             else {"text": value}
             if kind == "say"
+            else {"tool": "cheese_chat_list", "arguments": {}}
+            if kind == "read"
             else {"tool": "chat_send", "arguments": {"content": value}}
             for kind, value in steps
         ]
@@ -488,6 +514,8 @@ async def pi(tmp_path: Path, steps: list):
             if kind == "shell"
             else {"text": value}
             if kind == "say"
+            else {"tool": "cheese_chat_list", "arguments": {}}
+            if kind == "read"
             else {"tool": "chat_send", "arguments": {"content": value}}
             for kind, value in steps
         ]
@@ -567,6 +595,30 @@ async def test_a_person_is_answered_before_the_session_does_anything_else(
         assert not (session.machine / "FIRST").exists()
         assert REFUSED in session.told(1)
         assert session.backend.published == ["on it"]
+        assert (session.machine / "AFTER").exists()
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_the_session_may_read_the_room_before_it_answers(tmp_path, harness):
+    """What the person wrote is part of answering them: a session that has not
+    seen it, or was pointed at messages above, reads the room first — and
+    reading is not an answer, so the work still waits for the reply."""
+    steps = [
+        read_room(),
+        shell("touch FIRST"),
+        publish("the arm runner, on it"),
+        shell("touch AFTER"),
+    ]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: <@cheese>", owes_reply=True)
+        await session.finished(len(steps) + 1)
+
+        assert REFUSED not in session.told(1)
+        assert IN_THE_ROOM in session.told(1)
+        assert REFUSED in session.told(2)
+        assert not (session.machine / "FIRST").exists()
+        assert session.backend.published == ["the arm runner, on it"]
         assert (session.machine / "AFTER").exists()
 
 

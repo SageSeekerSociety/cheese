@@ -11,7 +11,7 @@ to whoever answers it.
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +38,9 @@ Chat = Annotated[ChatService, Depends(get_chat_service)]
 async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
     """Whoever is in this room may look at a session here."""
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
+    actor = await resolver.resolve(
+        project_id=place.project_id, topic_id=place.conversation_id
+    )
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to view a session")
     await resolver.authorize_topic(
@@ -49,18 +51,37 @@ async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
 
 @router.get("/topics/{topic_id}/agent/control", operation_id="agent-control-state")
 async def control_state(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, chat: Chat
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Chat,
+    agent: str | None = Query(default=None, max_length=80),
 ) -> dict:
+    """The session of the seat ``agent`` names, or of the room's only one.
+
+    With several teammates live and none named, ``id`` is null and ``seats``
+    lists them: the caller names one, and this never picks for it."""
     await controller(topic_id, db, resolver)
     await db.commit()
     runtime = chat.session_controls(topic_id)
     if runtime is None:
-        return ok({"id": None, "connected": False, "controls": [], "tasks": {}})
-    return ok(await runtime.control_state(topic_id))
+        return ok(
+            {
+                "id": None,
+                "connected": False,
+                "agent": None,
+                "seats": [],
+                "controls": [],
+                "tasks": {},
+            }
+        )
+    return ok(await runtime.control_state(topic_id, agent=agent))
 
 
 class ControlIn(BaseModel):
     session_id: str = Field(max_length=80)
+    #: The seat whose session ``session_id`` is; omitted, the room's only one.
+    agent: str | None = Field(default=None, max_length=80)
     request_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()), min_length=1, max_length=100
     )
@@ -93,7 +114,7 @@ async def control(
     runtime = chat.session_controls(topic_id)
     if runtime is None:
         raise ConflictError("No session is running in this room")
-    state = await runtime.control_state(topic_id)
+    state = await runtime.control_state(topic_id, agent=data.agent)
     if state.get("id") != data.session_id:
         raise ConflictError("The active session changed; refresh and ask again")
     request = data.request
@@ -104,7 +125,7 @@ async def control(
     await db.commit()
     try:
         if request.get("subtype") not in runtime.executor_controls:
-            response = await runtime.control(topic_id, request)
+            response = await runtime.control(topic_id, request, agent=data.agent)
         elif target is None:
             raise ConflictError("This room has no work machine for that control")
         else:

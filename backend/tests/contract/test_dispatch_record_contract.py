@@ -85,6 +85,7 @@ class _Chat:
     _turn_seat_handle = ChatService._turn_seat_handle
     _seat_lock_for = ChatService._seat_lock_for
     _resolved_agent = ChatService._resolved_agent
+    _agent_at = ChatService._agent_at
     _session_agent = staticmethod(ChatService._session_agent)
     _acting_handle = ChatService._acting_handle
 
@@ -102,6 +103,9 @@ class _Chat:
     def has_live_screen(self, topic_id, agent_handle=None):
         # 屏幕还在，但它从没听到这条消息 —— 这正是平台今天会原样重发的那一档。
         return True
+
+    def retire_unheard(self, turn_ids):
+        pass
 
     async def turns_that_produced_something(self, turn_ids):
         return set()

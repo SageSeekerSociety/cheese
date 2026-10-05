@@ -172,21 +172,11 @@ class Task(UuidPk, Timestamps, Base):
     )
     last_check_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_check_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
-    # WHICH worker inside the room's session is doing this.
-    #
-    # A string, not a foreign key: the id is minted by the harness inside the
-    # container, so the platform can only ever recognise it — it is written when
-    # that worker's start event arrives (`ChatService._note_worker`), never
-    # reported by the agent. NULL means nobody has started on this work yet, and
-    # nothing is looked up BY it: which card an event belongs to is the thread
-    # label's answer (`room_task/thread_label.py`), and this column says only
-    # who is on the card and whether that worker is still alive.
-    subagent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    execution_agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    execution_parent_session_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
-    )
-    execution_turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    # 在哪台工作电脑上做。None = 跟着所在房间的那一项选择（再往上是项目默认）；
+    # 负责人改了才有自己的一份。第一次要用机器时解析一次，写进会话行，之后不变。
+    compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 哪位 AI 队友在做（ResolvedAgent.handle）。None = 项目的默认队友。
+    agent_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # 这条活占用的模型资源（结论 3）。NULL = 没有自己的绑定，跟项目默认走 ——
     # 见 `room_task/binding.py`，那里是唯一读这两列的地方。
@@ -205,31 +195,19 @@ class Task(UuidPk, Timestamps, Base):
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    # 最后一次有人确认这条活还活着。Stamped when a worker is bound; the board
-    # reads it together with the thread's last block, and takes the later of the
-    # two — a worker that has said nothing yet has only this, and one that has
-    # been going for hours has only the blocks. Nothing else writes it, because
-    # nothing else knows: the work happens inside a session the platform does
-    # not drive.
-    last_turn_at: Mapped[datetime | None] = mapped_column(
+    # 这件事的实况文档：要做什么、做到哪、定了什么。文档不认识任务，由任务指向它。
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL", name="fk_tasks_document_id"),
+        nullable=True,
+    )
+    # 「开始」：负责人确认讨论清楚了，芝士从这一刻起可以改动项目。三列一起写，
+    # 只写一次；`started_doc_version` 是那一刻实况文档的版本，审阅时对照它。
+    started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-
-    # 简报原文, written once when the work is dispatched and never edited —
-    # a brief is a statement of what was asked for, and one that could be
-    # rewritten afterwards would stop being evidence of that.
-    #
-    # It lives on the row rather than in a document of its own because the
-    # document had no maintainer: work is a subagent holding the room's token,
-    # which cannot reach a thread's doc address at all, so what got seeded at
-    # dispatch stayed frozen there forever while the real state moved on.
-    brief: Mapped[str] = mapped_column(Text, default="", server_default="")
-    # 分身交回来的最后一句话 —— `SubagentStop.last_assistant_message`, written
-    # by the platform every time a sub-thread whose label names this card hands
-    # something back, each one overwriting the last. A worker reports finished
-    # more than once (parking a long command counts), so the newest is the only
-    # one worth keeping and no single one of them means the work is over. What
-    # ends it is the room closing the card, after reading this.
+    started_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    started_doc_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 关闭时留下的一句话：做成了什么，或者为什么不做了。
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 交付标记, stamped when the work merges. Independent of `status`, above.

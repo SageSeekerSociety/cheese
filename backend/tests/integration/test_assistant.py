@@ -105,12 +105,34 @@ class Gateway:
                         ]
                     }
                     self._json(body)
-                elif self.path.startswith("/spend/logs/v2"):
+                elif self.path.startswith("/user/daily/activity"):
+                    # As LiteLLM keeps them: a day's totals per model, each
+                    # split by key. Every call here was made today.
                     query = parse_qs(urlsplit(self.path).query)
-                    rows = [r for r in outer.spend if r["key"] == query["api_key"][0]]
-                    size = int(query["page_size"][0])
-                    start = (int(query["page"][0]) - 1) * size
-                    self._json({"data": rows[start : start + size]})
+                    key = query["api_key"][0]
+                    models: dict[str, dict] = {}
+                    for r in outer.spend:
+                        if r["key"] != key:
+                            continue
+                        shares = models.setdefault(r["model"], {})
+                        totals = shares.setdefault(
+                            key,
+                            {"prompt_tokens": 0, "completion_tokens": 0, "spend": 0.0},
+                        )
+                        for field in totals:
+                            totals[field] += r[field]
+                    breakdown = {
+                        name: {
+                            "api_key_breakdown": {
+                                k: {"metrics": totals} for k, totals in shares.items()
+                            }
+                        }
+                        for name, shares in models.items()
+                    }
+                    day = query["start_date"][0]
+                    self._json(
+                        {"results": [{"date": day, "breakdown": {"models": breakdown}}]}
+                    )
                 else:
                     self._json({}, 404)
 

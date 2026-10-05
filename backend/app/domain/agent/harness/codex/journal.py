@@ -14,6 +14,7 @@ from app.domain.agent.harness.driven import journal
 class Journal(journal.Journal):
     table = "events"
     column = "record"
+    turn_end = "json_extract(record, '$.method') = 'turn/completed'"
     schema = """
         CREATE TABLE IF NOT EXISTS events (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,10 +59,11 @@ class Journal(journal.Journal):
             if entries:
                 self.advance("received", entries[-1]["sequence"])
 
-    def children(self) -> dict[str, tuple[str, str]]:
+    def children(self) -> set[str]:
+        """The threads a thread started, as the runner recorded them."""
         return {
-            key.removeprefix("child:"): tuple(json.loads(value))
-            for key, value in self.connection.execute(
-                "SELECT key, value FROM state WHERE key LIKE 'child:%'"
+            key.removeprefix("child:")
+            for (key,) in self.connection.execute(
+                "SELECT key FROM state WHERE key LIKE 'child:%'"
             )
         }

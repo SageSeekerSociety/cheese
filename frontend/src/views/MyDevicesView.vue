@@ -12,6 +12,7 @@ import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../a
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '../components/common/AdaptiveMenu.vue'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
+import { useRowMenu } from '../composables/useRowMenu'
 import {
   connectThisComputer,
   desktopBridge,
@@ -180,6 +181,8 @@ const unbindTitle = computed(() =>
 // 手机上一台设备的操作（改名、解绑）收进行尾的 ⋯（底部面板）：名字旁那颗小铅笔和
 // 行尾的「解绑」都比手指小，挨着「在线」两个字也容易按错。
 const { mdAndUp } = useDisplay()
+// 桌面上改名、解绑摆在行里；右键一台设备弹的是同一份，弹在鼠标那一点上。
+const rowMenu = useRowMenu<string>()
 function deviceActions(d: MyDevice): MenuAction[] {
   return [
     { key: 'rename', label: t('account.devices.rename'), icon: 'mdi-pencil-outline', onSelect: () => startRename(d) },
@@ -292,7 +295,15 @@ useCommands(() =>
           </template>
         </BaseEmptyState>
 
-        <div v-for="d in devices" :key="d.device_id" class="device">
+        <div
+          v-for="d in devices"
+          :key="d.device_id"
+          class="device"
+          @contextmenu="mdAndUp && renaming !== d.device_id && rowMenu.open(d.device_id, $event)"
+        >
+          <AdaptiveMenu v-if="mdAndUp" v-bind="rowMenu.bind(d.device_id)" :actions="deviceActions(d)" :title="d.name">
+            <template #activator />
+          </AdaptiveMenu>
           <div class="device__line">
             <span class="device__dot" :class="{ 'device__dot--on': d.online }" aria-hidden="true" />
             <v-text-field

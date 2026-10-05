@@ -177,7 +177,7 @@ describe('看板页 · 用量那一屏', () => {
 })
 
 describe('看板页 · 平台那一屏', () => {
-  it('五张 KPI、机器四行、健康三格、配额与缺口那两块', async () => {
+  it('五张 KPI、机器四行、健康三格、配额与缺口那几块', async () => {
     const { container } = await openTab('平台')
 
     expect(kpiLabels(container).slice(0, 3)).toEqual(['账号总数', '真人', 'Agent'])
@@ -196,8 +196,10 @@ describe('看板页 · 平台那一屏', () => {
     expect(health).toHaveLength(3)
     expect(health.every((cell) => cell.querySelector('.ad__health-dot--ok'))).toBe(true)
 
-    // 配额与缺口：磁盘与预览两条计量，加两张状态分布。
-    expect(container.querySelectorAll('.amb')).toHaveLength(2)
+    // 配额与缺口：磁盘、宿主机池的沙箱槽位、预览三条计量，加两张状态分布。
+    expect(container.querySelectorAll('.amb')).toHaveLength(3)
+    expect(container.textContent).toContain('沙箱槽位')
+    expect(container.textContent).toContain('3 / 8')
     expect(container.textContent).toContain('51.5%')
     expect(container.textContent).toContain('274.9 GB')
     expect(container.querySelectorAll('.ash')).toHaveLength(2)
