@@ -43,8 +43,8 @@ const RESEND_COOLDOWN_SECONDS = 60
 const router = useRouter()
 const route = useRoute()
 
-const backToSignIn = computed(() =>
-  router.resolve({ name: 'SignIn', query: { redirect: route.query.redirect } }).fullPath
+const backToSignIn = computed(
+  () => router.resolve({ name: 'SignIn', query: { redirect: route.query.redirect } }).fullPath
 )
 
 const pending = ref(pendingCode())

@@ -45,7 +45,12 @@
         </BaseButton>
 
         <p class="account-foot">
-          <button type="button" class="account-link account-link--quiet" :disabled="signingOut" @click="emit('signOut')">
+          <button
+            type="button"
+            class="account-link account-link--quiet"
+            :disabled="signingOut"
+            @click="emit('signOut')"
+          >
             {{ t('account.addEmail.signOut') }}
           </button>
         </p>
