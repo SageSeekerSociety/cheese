@@ -822,6 +822,48 @@ def test_a_restore_never_follows_a_link_the_session_left_in_its_home(cloud):
     assert (victim / "state").read_text() == "another room's executor"
 
 
+def test_a_restore_that_failed_is_said_in_the_room(cloud):
+    """A restore that did not finish says so where it happened.
+
+    Its reason only ever reached the tool call that asked for the restore, so
+    a room kept the ``sandboxRestoring`` line it had been given and its timer
+    went on climbing: a restore that keeps failing looked exactly like a
+    restore that never ends (dev, 2026-10-05)."""
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-a")
+    # The same unrestorable tree as the test above: the archive is fine, the
+    # tree inside it is not.
+    victim = cloud.hosts.home_dir("host-b") / "another-room" / "executor"
+    victim.mkdir(parents=True)
+    (victim / "state").write_text("another room's executor")
+    (home / ".cheese").symlink_to(victim.parent)
+    asleep(cloud, seat)
+    archived(cloud, seat)
+
+    assert tool_call(cloud, seat).get("preparing")
+    host_comes_up(cloud, seat, "host-b")
+    answer = tool_call(cloud, seat)
+    assert answer.get("unavailable") == work_lease.SANDBOX_RESTORE_FAILED
+
+    said = "沙箱没能从归档恢复，下一条消息会再试；对话和平台工具仍可用。"
+    lines = room_lines(cloud, seat)
+    assert "正在从归档恢复沙箱" in lines
+    # The line a screen shows for a startup is the last one, so what the room
+    # reads is the failure, not the restoring line it replaced.
+    assert lines[-1] == said
+
+    async def reason():
+        async with cloud.client.test_request_factory() as db:
+            return await db.scalar(
+                select(Block.meta["detail"].as_string()).where(
+                    Block.topic_id == seat.room, Block.content == said
+                )
+            )
+
+    # The machine's own words come with it, behind the fold.
+    assert run(cloud, reason)
+
+
 def test_a_restore_holds_the_home_until_it_is_done(cloud):
     """A tool call's claim on its session lapses long before a large restore
     ends; the home itself is held, so a second call waits instead of

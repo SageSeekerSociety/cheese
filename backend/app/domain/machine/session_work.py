@@ -48,8 +48,8 @@ from app.domain.identity.actor import Actor
 from app.domain.machine import lease_claim
 from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxLifecycle
-from app.domain.machine.models import CloudHost
-from app.domain.machine.progress import publish_line
+from app.domain.machine.models import CloudHost, CloudHostHome
+from app.domain.machine.progress import publish_line, tell_restore_failed
 from app.domain.machine.sandbox_wait import (
     SANDBOX_PREPARING,
     SANDBOX_RESTORE_FAILED,
@@ -1306,6 +1306,17 @@ async def _install(
                 return {"unavailable": str(exc)}
             if isinstance(exc, SandboxHomeError):
                 # The archive is still there; the next tool call tries again.
+                # Said in the room as well: the only other place this reason
+                # went was the tool call that asked for the restore, so the
+                # room kept the "restoring" line with its timer running and a
+                # restore that keeps failing looked like one that never ends.
+                line = None
+                if restoring is not None:
+                    home = await db.get(CloudHostHome, restoring)
+                    if home is not None:
+                        line = await tell_restore_failed(db, home, str(exc))
+                        await db.commit()
+                await publish_line(topic_id, line)
                 return {"unavailable": SANDBOX_RESTORE_FAILED}
             if isinstance(exc, SandboxBusy):
                 return _SANDBOX_BUSY

@@ -352,6 +352,7 @@
   "sandboxRestoring": "Restoring the sandbox from its archive",
   "sandboxAsleep": "The sandbox went to sleep after {minutes} minutes without activity. Its files are kept, and the next message wakes it.",
   "sandboxArchiveLost": "The sandbox's archive is gone, so it starts again from what is pushed to the repository",
+  "sandboxRestoreFailed": "The sandbox could not be restored from its archive; the next message tries again. The conversation and the platform tools still work.",
   "cloudVmPreparing": "Preparing the cloud VM",
   "cloudVmReady": "The cloud VM is ready",
   "cloudVmReplaced": "Preparing the cloud VM failed; preparing it again",
