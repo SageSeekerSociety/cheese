@@ -417,6 +417,95 @@ def test_only_the_owner_talks_in_a_task(client):
     assert by_room_agent.status_code == 403
 
 
+def _seated(client, project_id: str, room_id: str, handle: str) -> None:
+    """``handle`` is on the project's team and in this room's roster."""
+    join_project_team(client, project_id, handle)
+    r = client.post(
+        f"/topics/{room_id}/members",
+        json={"handle": handle, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _set_collaborators(client, task_id, handles, by="alice"):
+    return client.patch(
+        f"/topics/{task_id}/task",
+        json={"contributor_handles": handles},
+        headers=session_auth_headers(by),
+    )
+
+
+def test_a_collaborator_talks_in_the_task_and_others_still_do_not(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    _seated(client, project_id, room_id, "carol")
+    task = open_task(client, room_id, owner="alice", start=False)
+
+    added = _set_collaborators(client, task["id"], ["bob"])
+
+    assert added.status_code == 200, added.text
+    assert added.json()["data"]["contributor_handles"] == ["bob"]
+    by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
+    assert by_bob.status_code == 200, by_bob.text
+    by_carol = _say_in_task(client, room_id, task["id"], session_auth_headers("carol"))
+    assert by_carol.status_code == 403
+
+
+def test_only_the_owner_brings_collaborators_in(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    _seated(client, project_id, room_id, "carol")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    # A collaborator cannot bring someone else in, nor start or hand it over.
+    assert (
+        _set_collaborators(client, task["id"], ["bob", "carol"], by="bob").status_code
+        == 403
+    )
+    handed = client.patch(
+        f"/topics/{task['id']}/task",
+        json={"owner_handle": "bob"},
+        headers=session_auth_headers("bob"),
+    )
+    assert handed.status_code == 403
+    # Someone outside the room cannot be made one.
+    join_project_team(client, project_id, "dave")
+    assert _set_collaborators(client, task["id"], ["dave"]).status_code == 422
+    assert _task(client, room_id, task["id"])["contributor_handles"] == ["bob"]
+
+
+def test_a_collaborator_can_leave_and_then_no_longer_talks(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    left = _set_collaborators(client, task["id"], [], by="bob")
+
+    assert left.status_code == 200, left.text
+    by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
+    assert by_bob.status_code == 403
+
+
+def test_handing_a_task_to_its_collaborator_makes_them_its_owner_only(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    handed = client.patch(
+        f"/topics/{task['id']}/task",
+        json={"owner_handle": "bob"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert handed.status_code == 200, handed.text
+    assert handed.json()["data"]["owner_handle"] == "bob"
+    assert handed.json()["data"]["contributor_handles"] == []
+
+
 def test_what_is_said_in_a_task_stays_out_of_the_room(client):
     _project_id, room_id = _room(client)
     task = open_task(client, room_id, start=False)
@@ -510,6 +599,25 @@ def test_others_read_a_tasks_document_and_cannot_write_it(client):
     assert write.status_code == 403
     still = client.get(f"/documents/{doc_id}", headers=session_auth_headers("alice"))
     assert "一句话" in still.json()["data"]["content"]
+
+
+def test_a_collaborator_writes_the_tasks_document(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+    doc_id = client.get(
+        f"/topics/{task['id']}/document",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+
+    write = client.put(
+        f"/documents/{doc_id}",
+        json={"content": "# 目标\n\n协作者写的。", "expected_version": 0},
+        headers=session_auth_headers("bob"),
+    )
+
+    assert write.status_code == 200, write.text
 
 
 def test_a_tasks_session_writes_its_own_document(client):
