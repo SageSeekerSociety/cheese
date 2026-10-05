@@ -128,7 +128,7 @@ import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-type SignUpValues = {
+export type SignUpValues = {
   username: string
   nickname: string
   password: string

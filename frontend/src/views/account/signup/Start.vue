@@ -25,21 +25,12 @@ import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
 import { attemptMessage } from '../attemptWait'
 
-import StartView from './StartView.vue'
+import StartView, { type SignUpValues } from './StartView.vue'
 
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useSignupStore } from '@/stores/signup'
-
-type SignUpValues = {
-  username: string
-  nickname: string
-  password: string
-  confirmPassword: string
-  email: string
-  inviteCode?: string
-}
 
 const error = ref('')
 const requireInviteCode = ref(false)

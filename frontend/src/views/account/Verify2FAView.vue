@@ -87,13 +87,12 @@
 </template>
 
 <script setup lang="ts">
+import type { NavTarget } from '@/lib/navTarget'
+
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
-
-/** Where the back-to-sign-in link points: a named route and its query. */
-type RouteTarget = string | { name?: string; path?: string; query?: Record<string, unknown> }
 
 defineProps<{
   codeType: 'totp' | 'backup'
@@ -103,7 +102,8 @@ defineProps<{
   trustDevice: boolean
   totpCode: string
   backupCode: string
-  backTo: RouteTarget
+  /** Where the back-to-sign-in link goes; the page works it out. */
+  backTo: NavTarget
   showBackupCodeDialog: boolean
 }>()
 

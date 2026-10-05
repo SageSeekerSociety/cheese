@@ -48,6 +48,8 @@
 </template>
 
 <script lang="ts" setup>
+import type { NavTarget } from '@/lib/navTarget'
+
 import { computed } from 'vue'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
@@ -70,7 +72,7 @@ const props = defineProps<{
   /** The container is waiting on the server. */
   submitting: boolean
   /** Where the way back to signing in goes, keeping where the sign-in was headed. */
-  backToSignIn: { name: string; query: Record<string, unknown> }
+  backToSignIn: NavTarget
 }>()
 
 const emit = defineEmits<{ submit: [email: string] }>()
