@@ -2,6 +2,9 @@
  *
  * 三块总览是项目级的：只有根话题的文档是「整个项目」那一份，别的房间的文档写的
  * 是它自己。在那些房间里再挂一份项目全局，读的人会以为这两块说的是这个房间。
+ *
+ * 挂的是接线外壳（`PanelDocHost`）：这两块的内容由 `usePanelDoc` 一起取（只有根话题
+ * 去取），面板只负责画。
  */
 import type { Component } from 'vue'
 import type { Topic } from '../../cx_types'
@@ -43,11 +46,11 @@ vi.mock('../../api', async () => {
 
 import { seedRoom } from '../../test/fakeDocCollab'
 
-import PanelDoc from './PanelDoc.vue'
+import PanelDocHost from './PanelDocHost.vue'
 
 import { setLocale } from '@/i18n'
 
-const Doc = PanelDoc as unknown as Component
+const Doc = PanelDocHost as unknown as Component
 
 const ROOT = {
   id: 'root-1',

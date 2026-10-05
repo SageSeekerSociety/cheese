@@ -62,7 +62,7 @@ function mount(props: Record<string, unknown>) {
     global: {
       plugins: [vuetify, i18n],
       // 四个子面板各自会去拿数据/建编辑器，这一份只关心 tab 栏本身。
-      stubs: { PanelDoc: true, PanelSite: true, PanelChanges: true, PanelPreview: true },
+      stubs: { PanelDocHost: true, PanelSite: true, PanelChanges: true, PanelPreview: true },
     },
   })
 }

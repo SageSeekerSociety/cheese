@@ -17,7 +17,6 @@ import { DEMO_PROJECT, DEMO_TOPIC, installPanelAnswers } from './demoPanels'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import DispatchedMarker from '@/components/DispatchedMarker.vue'
 import PanelChanges from '@/components/panels/PanelChanges.vue'
-import PanelOverview from '@/components/panels/PanelOverview.vue'
 import PanelPreview from '@/components/panels/PanelPreview.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
@@ -26,6 +25,7 @@ import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import PanelOverviewHost from '@/components/work/PanelOverviewHost.vue'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
 const props = defineProps<{ scene: Scene; frame: Frame }>()
@@ -313,12 +313,11 @@ watch(
         <!-- 当前那一格。四格都在这里，切走的是藏起来的那几格（和产品一样），
              它们的接口调用由各格自己在「轮到我上场」那一下发起。 -->
         <div class="demo-tabbody" data-region="panel">
-          <PanelOverview
+          <PanelOverviewHost
             v-if="mounted.has('overview')"
             v-show="frame.panel === 'overview'"
             :topic="topic"
             :activity-tick="frame.step"
-            :member-names="names"
             :active="frame.panel === 'overview'"
           />
           <PanelSite

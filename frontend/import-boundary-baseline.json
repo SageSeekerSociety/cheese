@@ -33,7 +33,6 @@
     "src/components/LeaveProjectDialog.vue": 2,
     "src/components/NeedsYou.vue": 2,
     "src/components/NodeBoard.vue": 1,
-    "src/components/panels/doc/OverviewAuto.vue": 1,
     "src/components/panels/preview/RevisionList.vue": 1,
     "src/components/panels/preview/RoomFileEditor.vue": 2,
     "src/components/panels/preview/RoomFileHistory.vue": 2,

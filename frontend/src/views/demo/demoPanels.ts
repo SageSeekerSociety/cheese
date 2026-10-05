@@ -1,9 +1,10 @@
 // 演示房间右侧那几格的数据：剧本里写的东西（`demoScene` 算出来的帧）→ 产品组件要
 // 的形状 → 演示后端的那几条路由。
 //
-// 那几格用的是产品里真的面板（`PanelOverview` / `PanelChanges` / `PanelPreview`），
-// 它们不接 props 拿数据，而是自己去 `/api/...` 取。演示页没有后端，所以这里把剧本
-// 声明的那点东西翻译成后端会回的信封，交给 `demoBackend.answer`。产品组件一行不改，
+// 那几格用的是产品里真的面板（`PanelOverviewHost` / `PanelChanges` / `PanelPreview`），
+// 它们不接 props 拿数据，而是自己去 `/api/...` 取（面板本身只吃 props，取数在渲染它的
+// 那一层：总览是 `components/work/PanelOverviewHost.vue`）。演示页没有后端，所以这里把
+// 剧本声明的那点东西翻译成后端会回的信封，交给 `demoBackend.answer`。产品组件一行不改，
 // 演示和真界面画的于是是同一段代码——「产品一改、演示跟着变」这句在这里才成立。
 //
 // 剧本只写要讲的东西（哪几个文件、改哪几行、文档正文），信封里那些和这一步无关的

@@ -14,6 +14,9 @@ import type { DocReviewRequest } from '../../lib/docReview'
 
 import { ref } from 'vue'
 
+import { useDocPeople } from '../../composables/useDocPeople'
+import { useDocThreads } from '../../composables/useDocThreads'
+import { usePanelDoc } from '../../composables/usePanelDoc'
 import { usePanelOverview } from '../../composables/usePanelOverview'
 import PanelOverview from '../panels/PanelOverview.vue'
 
@@ -73,6 +76,17 @@ async function createOutput(templateId: string, path: string): Promise<void> {
   if (made) emit('open-output', made)
 }
 
+// 最底下那一格是房间的文档：它自己的取数（打开协同文档、评论串、名册读成名字）也在这
+// 一层，和上面几块的取数并列 —— 面板里那三只（PanelOverview / PanelDoc / PanelDocView）
+// 都只吃 props。
+const docPanel = usePanelDoc(props)
+const docThreads = useDocThreads(() => docPanel.documentId.value)
+const docPeople = useDocPeople({
+  members: () => props.members,
+  agentHandle: () => props.agentHandle,
+  agentName: () => props.agentName,
+})
+
 // 文档那一半的外部接口原样透出去 —— WorkPanel 拿着外壳的 ref 调它们（<&path> 芯片、
 // 高亮某一轮、查看改动），中间多一层不该让这些线断掉。
 const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
@@ -87,9 +101,9 @@ defineExpose({
 <template>
   <PanelOverview
     ref="overviewRef"
-    :agent-name="props.agentName"
-    :agent-handle="props.agentHandle"
-    :members="props.members"
+    :doc-panel="docPanel"
+    :doc-threads="docThreads"
+    :doc-people="docPeople"
     :topic="props.topic"
     :activity-tick="props.activityTick"
     :topic-list="props.topicList"

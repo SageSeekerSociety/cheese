@@ -9,7 +9,7 @@ import type { DocConnection, DocPeer, DocSession } from '../../composables/useDo
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
-import type { Block, Topic } from '../../cx_types'
+import type { Block, OverviewAutoBlock, Topic } from '../../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
 import type { CommentSpot } from '../../lib/docCommentSpots'
 import type { DocEdit } from '../../lib/docEdits'
@@ -96,6 +96,13 @@ const props = withDefaults(
     suggestionReasons?: Record<string, string>
     /** 文档里有了新的修改建议时调一下：读它们的理由。 */
     fetchSuggestionReasons?: () => void
+    // ---- 总览房间的其余两块（#1889 ②③，正文下面那一栏） ----
+    /** 平台现拼的那两块。 */
+    overviewBlocks?: OverviewAutoBlock[]
+    /** 那一次没读回来。 */
+    overviewFailed?: boolean
+    /** 重读那两块。 */
+    reloadOverview?: () => void
     /** 取一份最新的节点树（闪某一段要它）。 */
     fetchDocNodes: () => Promise<Block[]>
     /** 图片 src 的显示期解析。 */
@@ -139,6 +146,9 @@ const props = withDefaults(
     answerToComment: undefined,
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
+    overviewBlocks: () => [],
+    overviewFailed: false,
+    reloadOverview: undefined,
     applyDocEdits: undefined,
     lastEdit: null,
     nameOf: (handle: string) => handle,
@@ -515,8 +525,9 @@ defineExpose({
                  从那里看项目全局（任务的文档不带标题，`untitled` 说的就是它）。 -->
               <OverviewAuto
                 v-if="topic?.kind === 'root' && !bare && !untitled"
-                :topic="topic"
-                :activity-tick="activityTick"
+                :blocks="overviewBlocks"
+                :failed="overviewFailed"
+                :reload="reloadOverview"
                 @open-topic="emit('open-topic', $event)"
               />
             </div>

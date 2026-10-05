@@ -4,6 +4,10 @@
  *
  * TaskProgress 在这里换成只会 emit 的桩：要钉的是**这一层有没有把事件转出去**。
  */
+import type { DocPeopleBundle } from '../../composables/useDocPeople'
+import type { DocThreadsBundle } from '../../composables/useDocThreads'
+import type { PanelDocBundle } from '../../composables/usePanelDoc'
+
 import { fireEvent, render } from '@testing-library/vue'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -19,9 +23,16 @@ vi.mock('./PanelDoc.vue', () => ({ default: { name: 'PanelDocStub', template: '<
 
 import PanelOverview from './PanelOverview.vue'
 
+// 文档那一格的取数：面板只是把它原样递给上面那个桩，所以三包空的就够。
+const doc = {
+  docPanel: {} as PanelDocBundle,
+  docThreads: {} as DocThreadsBundle,
+  docPeople: {} as DocPeopleBundle,
+}
+
 describe('总览里点开的任务', () => {
   it('把是哪个任务透出去', async () => {
-    const { container, emitted } = render(PanelOverview, { props: { topic: null, activityTick: 0 } })
+    const { container, emitted } = render(PanelOverview, { props: { topic: null, activityTick: 0, ...doc } })
     await fireEvent.click(container.querySelector('.task-stub') as HTMLElement)
     expect(emitted()['open-card']).toEqual([['task-1']])
   })

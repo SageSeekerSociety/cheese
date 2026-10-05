@@ -42,7 +42,6 @@ import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
-import PanelDoc from './panels/PanelDoc.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的「定时与触发」）。这个文件里 `panelTabs` 已经
@@ -51,6 +50,7 @@ import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
+import PanelDocHost from './work/PanelDocHost.vue'
 import PanelOverviewHost from './work/PanelOverviewHost.vue'
 
 import { useCommands } from '@/commands'
@@ -705,7 +705,7 @@ function placeFile(path: string, document?: { id: string; title: string }) {
 }
 
 // 聊天里那张文档卡：资料库里的这份文档在自由区开一格，改过的一处处标出来。
-const docRefs = new Map<string, InstanceType<typeof PanelDoc>>()
+const docRefs = new Map<string, InstanceType<typeof PanelDocHost>>()
 async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
   const path = DOC_TAB + document.id
   placeFile(path, { ...document })
@@ -716,7 +716,7 @@ async function openDocument(document: OpenedDocument, review?: DocReviewRequest)
   docRefs.get(document.id)?.reviewEdits(review)
 }
 function keepDocRef(id: string, el: unknown) {
-  if (el) docRefs.set(id, el as InstanceType<typeof PanelDoc>)
+  if (el) docRefs.set(id, el as InstanceType<typeof PanelDocHost>)
   else docRefs.delete(id)
 }
 function retitle(id: string, title: string) {
@@ -899,7 +899,7 @@ defineExpose({
             :refresh-tick="refreshTick"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
-            <PanelDoc
+            <PanelDocHost
               v-if="f.document && mounted.has(fileKey(f.path))"
               v-show="active === fileKey(f.path)"
               :ref="(el: unknown) => keepDocRef(f.document!.id, el)"

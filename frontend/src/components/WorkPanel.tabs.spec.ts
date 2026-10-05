@@ -80,7 +80,7 @@ function mount(props: Record<string, unknown> = {}) {
     global: {
       plugins: [vuetify, i18n],
       stubs: {
-        PanelOverview: true,
+        PanelOverviewHost: true,
         PanelSite: true,
         PanelChanges: true,
         PanelPreview: true,
