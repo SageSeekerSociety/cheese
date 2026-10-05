@@ -168,6 +168,13 @@ esac
 # came from is exactly the kind of assumption that fails quietly.
 echo CHEESE_STARTUP:tools
 PATH="$PATH:/usr/sbin:/sbin"
+# MicroCloud reports a machine running while cloud-init is still at work on it,
+# and on its VM template that work is an `apt-get dist-upgrade` holding the
+# dpkg lock for a minute or two after boot: every install below failed on the
+# lock (dev, 2026-10-04, the VM offering). Let it finish first.
+if command -v cloud-init >/dev/null 2>&1; then
+  cloud-init status --wait >/dev/null 2>&1 || true
+fi
 for tool in tmux git python3 bwrap ip iptables-restore; do
   command -v "$tool" >/dev/null 2>&1 && continue
   case "$tool" in

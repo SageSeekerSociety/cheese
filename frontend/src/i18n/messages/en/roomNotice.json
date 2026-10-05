@@ -344,7 +344,12 @@
   "sandboxRestoring": "Restoring the sandbox from its archive",
   "sandboxAsleep": "The sandbox went to sleep after {minutes} minutes without activity. Its files are kept, and the next message wakes it.",
   "sandboxArchiveLost": "The sandbox's archive is gone, so it starts again from what is pushed to the repository",
+  "cloudVmPreparing": "Preparing the cloud VM",
+  "cloudVmReady": "The cloud VM is ready",
+  "cloudVmReplaced": "Preparing the cloud VM failed; preparing it again",
+  "cloudVmReleasedIdle": "The cloud VM was idle for {minutes} minutes. Its changes were pushed to their branches and it was released; the next message prepares a new one.",
   "sandboxFailing": "The cloud sandbox keeps failing",
   "sandboxFailingNext": "The topic stays where it is and won't move elsewhere on its own. Someone needs to check the connector and the session in this sandbox; retry once it is fixed.",
-  "computeCloud": "Cloud sandbox"
+  "computeCloud": "Cloud sandbox",
+  "computeCloudVm": "Whole cloud VM"
 }

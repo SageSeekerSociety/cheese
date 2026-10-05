@@ -432,13 +432,15 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) {
     const latest = run[run.length - 1] ?? block
     const state = str(meta(latest)?.state)
+    // A session's whole cloud VM says so; everything else on cloud is a sandbox.
+    const vm = str(meta(latest)?.environment) === 'vm'
     return {
       mode: 'agent-status',
       line:
         state === 'ready'
-          ? t('work.room.notice.sandboxReady')
+          ? t(vm ? 'work.room.notice.cloudVmReady' : 'work.room.notice.sandboxReady')
           : state === 'waiting'
-            ? t('work.room.notice.sandboxPreparing')
+            ? t(vm ? 'work.room.notice.cloudVmPreparing' : 'work.room.notice.sandboxPreparing')
             : noticeText(latest),
       updatedAt: latest.created_at,
       occurrences: run.map((item) => ({

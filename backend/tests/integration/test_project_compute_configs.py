@@ -58,7 +58,7 @@ def test_room_choice_does_not_change_project_default_or_new_room(client, monkeyp
     tid = new_room(client, pid)
     original = client.get(f"/projects/{pid}/compute-configs").json()["data"]
     assert original["default"]["profile"] == "cloud"
-    assert original["distribution"] == {"cloud": 0, "devices": []}
+    assert original["distribution"] == {"cloud": 0, "cloud_vm": 0, "devices": []}
     choice = ComputeChoice(profile="cloud").model_dump()
     response = client.put(f"/topics/{tid}/compute-profile", json={"choice": choice})
     assert response.status_code == 200, response.text
@@ -240,6 +240,7 @@ def test_the_project_shows_where_its_started_agents_work(client, monkeypatch):
 
     assert body["distribution"] == {
         "cloud": 1,
+        "cloud_vm": 0,
         "devices": [
             {
                 "device_id": device_id,

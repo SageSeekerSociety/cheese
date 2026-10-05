@@ -7,6 +7,9 @@ provider ids it needs to talk about it again, and which session homes are on
 it (``CloudHostHome``). Everything authoritative — status, IP — is kept in line
 with MicroCloud by the pool sweep (``HostPool.refresh_due``), and reads report
 what it last learned.
+
+A session that asks for a whole machine gets a host of its own instead
+(``CloudHost.whole_machine``): a whole cloud VM, its one home that session's.
 """
 
 import enum
@@ -218,6 +221,19 @@ class CloudHost(UuidPk, Timestamps, Base):
     released_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # A whole cloud VM for one session, not a host of sandboxes: created for
+    # that session from ``microcloud_vm_offering_id``, its executor runs with
+    # the whole machine (``host`` visibility, sudo), it takes no other session
+    # and is released as soon as its session's home is gone. Never warm.
+    whole_machine: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    # Whose session a whole VM was created for: what billing charges its
+    # spec × time to (#2320 step 4). NULL on a pool host, which is no
+    # project's cost.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class CloudHostHome(UuidPk, Timestamps, Base):
@@ -302,11 +318,16 @@ class CloudHostHome(UuidPk, Timestamps, Base):
 
 def capacity(host: CloudHost) -> int:
     """The sandboxes a host runs at once: per core, by the deployment's
-    setting."""
+    setting. A whole cloud VM has none to give: it is its one session's."""
+    if host.whole_machine:
+        return 0
     return max(1, int(host.cores)) * settings.cloud_host_slots_per_core
 
 
 def disk_capacity(host: CloudHost) -> int:
     """The homes a host keeps on its disk, running or asleep: its disk at
-    ``cloud_sandbox_disk_gb`` each, and never fewer than it runs at once."""
+    ``cloud_sandbox_disk_gb`` each, and never fewer than it runs at once. A
+    whole cloud VM keeps none but its own session's."""
+    if host.whole_machine:
+        return 0
     return max(capacity(host), int(host.disk_gb) // settings.cloud_sandbox_disk_gb)

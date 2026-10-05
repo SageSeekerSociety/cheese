@@ -30,6 +30,10 @@ is a cache of the rest: what was not committed, the environment, the build.
 
 The bytes never pass through the backend: the host PUTs and GETs the object
 through a URL signed for that one object, for an hour.
+
+A session's whole cloud VM is neither put to sleep nor archived: idle by the
+same measure for ``cloud_vm_idle_release_s``, it is pushed and released
+(``cloud_vm``), on the same clock (``runner.SandboxSweeper``).
 """
 
 import json
@@ -191,6 +195,9 @@ class SandboxLifecycle:
                 CloudHostHome.active_at < now - idle_for,
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
+                # A session's whole cloud VM is released, not put to sleep
+                # (``cloud_vm``).
+                CloudHost.whole_machine.is_(False),
                 or_(
                     CloudHostHome.left_at.is_not(None),
                     CloudHostHome.session_id.is_(None),
@@ -207,7 +214,7 @@ class SandboxLifecycle:
                 break
             if not self._hub.is_online(home.device_id):
                 continue
-            since = await self._idle_since(home, now)
+            since = await self._idle_since(home, now, idle_for)
             if since is None:
                 continue
             # A home its session still uses is stopped under its room's lock.
@@ -221,8 +228,11 @@ class SandboxLifecycle:
                 stopped += 1
         return stopped
 
-    async def _idle_since(self, home, now: datetime) -> datetime | None:
-        """Since when the sandbox has been idle, or None while it is not."""
+    async def _idle_since(
+        self, home, now: datetime, idle_for: timedelta
+    ) -> datetime | None:
+        """Since when the session has been idle for at least ``idle_for``, or
+        None while it is not."""
         from app.domain.agent.models import AgentTurn
 
         if home.left_at is not None or home.session_id is None:
@@ -239,7 +249,7 @@ class SandboxLifecycle:
         if turns[0]:
             return None
         since = max(home.active_at, turns[1] or home.active_at)
-        if now - since < timedelta(seconds=settings.cloud_sandbox_idle_stop_s):
+        if now - since < idle_for:
             return None
         lease = await self._session.scalar(
             select(AgentSession.work_lease).where(AgentSession.id == home.session_id)
@@ -355,6 +365,7 @@ class SandboxLifecycle:
                 ),
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
+                CloudHost.whole_machine.is_(False),
                 or_(
                     # A session waits for it to wake where there is a slot.
                     CloudHostHome.waiting_since.is_not(None),

@@ -79,6 +79,7 @@ from app.domain.agent.compute_configs import (
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_TIERS,
+    cloud_vm_provisionable,
     compute_selectable,
 )
 from app.domain.agent_instance.configuration import model_choices
@@ -222,6 +223,7 @@ async def get_compute_configs(
             "cloud_available": any(
                 p.id == COMPUTE_CLOUD for p in compute_selectable(settings)
             ),
+            "cloud_vm_available": cloud_vm_provisionable(settings),
         }
     )
 

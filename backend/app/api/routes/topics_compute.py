@@ -65,6 +65,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_DEVICE,
     VISIBILITY_HOST,
+    cloud_vm_provisionable,
     compute_default_name,
     compute_listings,
     compute_selectable,
@@ -177,6 +178,8 @@ async def get_topic_compute_profile(
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
             ],
+            # Whether cloud also offers a whole VM per session (`whole_machine`).
+            "cloud_vm_available": cloud_vm_provisionable(settings),
             "visibility": {
                 "options": [asdict(v) for v in visibility_listings()],
                 # "host" | "isolated" | null (no agent here on an enrolled machine).
@@ -290,6 +293,7 @@ async def set_topic_compute_profile(
                 **standard_choice(name).model_dump(),
                 "profile": name,
                 "device_id": body.get("device_id"),
+                "whole_machine": body.get("whole_machine") is True,
             }
         )
     except SchemaError as exc:
@@ -310,7 +314,7 @@ async def set_topic_compute_profile(
     # is selectable only when at least one project-scoped device is online.
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
         raise ValidationError(say("computeKindUnavailable", name=repr(name)))
-    if body.get("choice"):
+    if body.get("choice") or choice.whole_machine:
         await validate_choice(db, topic.project_id, choice)
 
     device_service = sql_device_service(db)

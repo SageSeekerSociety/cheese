@@ -276,7 +276,8 @@ class GapRepository:
 
         槽位是 ``cloud_host_homes`` 里的行数（每条会话在宿主机上的家占一格）对
         ``capacity``（核数 × ``cloud_host_slots_per_core``）；只数还在池子里的宿主
-        机。这里数的是台账里的**行**与状态分布，不是在线进程。
+        机。整台云虚拟机不出槽位，也不占槽位。这里数的是台账里的**行**与状态
+        分布，不是在线进程。
         """
 
         async def _count(model: Any, *where: Any) -> int:
@@ -319,7 +320,9 @@ class GapRepository:
             # A slot is a running sandbox; one asleep holds only disk.
             "host_slots_used": await _count(
                 CloudHostHome,
-                CloudHostHome.host_id.in_([host.id for host in live]),
+                CloudHostHome.host_id.in_(
+                    [host.id for host in live if not host.whole_machine]
+                ),
                 CloudHostHome.stopped_at.is_(None),
             ),
             "host_slots_total": sum(capacity(host) for host in live),
