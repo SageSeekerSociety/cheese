@@ -9,7 +9,9 @@ first. An agent still on the roster is served as before.
 
 import time
 import uuid
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.api.routes import llm_proxy
@@ -54,7 +56,12 @@ class _Answer:
 @pytest.fixture
 def model_pool(monkeypatch):
     monkeypatch.setattr(llm_proxy.settings, "anthropic_base_url", "http://pool:4000")
-    monkeypatch.setattr(llm_proxy.httpx, "AsyncClient", _Upstream)
+    # Only the model route's client: the rest of the app keeps the real one.
+    monkeypatch.setattr(
+        llm_proxy,
+        "httpx",
+        SimpleNamespace(AsyncClient=_Upstream, HTTPError=httpx.HTTPError),
+    )
 
     async def project_key(self, project_id):
         return "sk-project"
