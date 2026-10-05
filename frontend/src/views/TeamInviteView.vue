@@ -1,15 +1,19 @@
 <script setup lang="ts">
 // 小队链接的落地页：看到小队，然后加入（小队开着审批时是申请）。
+//
+// 这一份是容器：路由、按链接取小队、加入、登录前先留个念想到哪都在这里；画的那一半在
+// TeamInviteViewView.vue。
+import type { UserRefTarget } from '@/lib/userRef'
 import type { Team } from '@/types'
 
-import { ref, watch } from 'vue'
+import { getCurrentInstance, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import TeamProfile from './teams/TeamProfile.vue'
+import TeamInviteViewView from './TeamInviteViewView.vue'
 
 import { authToken } from '@/api'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { userRefRoute } from '@/lib/userRef'
 import { TeamsApi } from '@/network/api/teams'
 import { BusinessError } from '@/network/types/error'
 
@@ -54,24 +58,31 @@ async function join(message: string) {
   team.value = result
 }
 
+// 小队所有者那颗 @ 去哪：没有装路由（单测里）就不给去处，照样画 @名字。
+const app = getCurrentInstance()?.appContext.config.globalProperties
+
+function userTo(handle: string): UserRefTarget | null {
+  return app?.$router ? userRefRoute(handle) : null
+}
+
+function navigate(target: UserRefTarget | null) {
+  if (target) void router.push(target)
+}
+
 watch(() => route.params.token, load, { immediate: true })
 </script>
 
 <template>
-  <v-container class="fill-height justify-center pa-4" fluid>
-    <TeamProfile v-if="team" :team="team" :join="join" />
-    <v-card v-else class="pa-6" max-width="560" width="100%" rounded="lg" flat border>
-      <div class="t-eyebrow c-muted mb-2">{{ t('work.teamProfile.eyebrow') }}</div>
-      <h1 class="t-page-title mb-4">{{ t('work.teamProfile.joinTitle') }}</h1>
-      <template v-if="needsLogin">
-        <p class="t-body c-muted mb-6">{{ t('work.teamProfile.loginHint') }}</p>
-        <BaseButton kind="primary" @click="signIn">{{ t('work.teamProfile.login') }}</BaseButton>
-      </template>
-      <v-alert v-else-if="error" type="error" class="mb-4">{{ error }}</v-alert>
-      <v-progress-linear v-if="busy" indeterminate :aria-label="t('work.teamProfile.loading')" />
-      <BaseButton v-else-if="error && !invalid" kind="secondary" @click="load">{{
-        t('work.teamProfile.retry')
-      }}</BaseButton>
-    </v-card>
-  </v-container>
+  <TeamInviteViewView
+    :team="team"
+    :join="join"
+    :busy="busy"
+    :error="error"
+    :invalid="invalid"
+    :needs-login="needsLogin"
+    :user-to="userTo"
+    @sign-in="signIn"
+    @retry="load"
+    @navigate="navigate"
+  />
 </template>

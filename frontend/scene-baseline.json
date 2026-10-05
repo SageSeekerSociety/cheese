@@ -70,7 +70,8 @@
     "src/views/MyDevicesViewView.vue",
     "src/views/MyConnectionsViewView.vue",
     "src/views/ProfileViewView.vue",
-    "src/views/ProjectSkillsViewView.vue"
+    "src/views/ProjectSkillsViewView.vue",
+    "src/views/TeamInviteViewView.vue"
   ],
   "debt": [
     "src/components/panels/PanelChanges.vue",
@@ -95,7 +96,6 @@
     "src/views/ProjectDocsView.vue",
     "src/views/ProjectLibraryView.vue",
     "src/views/ProjectSettingsView.vue",
-    "src/views/TeamInviteView.vue",
     "src/views/account/AddEmail.vue",
     "src/views/account/AppSignInFinish.vue",
     "src/views/account/AppSignInStart.vue",
