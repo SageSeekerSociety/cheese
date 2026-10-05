@@ -661,3 +661,25 @@ def test_what_happens_in_a_task_nudges_its_naming_and_a_channel_does_not(
     )
     assert r.status_code == 200, r.text
     assert rewritten == [document]
+
+
+def test_a_rename_is_heard_on_the_tasks_own_page_and_in_its_channel(
+    client, alice, gateway, monkeypatch
+):
+    """The task's page listens on the task's conversation and the channel's
+    pages on the channel's: a new title reaches both without a reload."""
+    import app.domain.agent.runtime as runtime
+
+    heard: list[tuple[str, str]] = []
+
+    async def announce(conversation_id, resource):
+        heard.append((str(conversation_id), resource))
+
+    monkeypatch.setattr(runtime, "announce_stale", announce)
+    project = _project(client, alice)
+    room = project["root_topic_id"]
+    tid = _task(client, alice, room)
+    _say(client, tid, "帮我排查一下 dev 机器从外网访问很慢的问题")
+    gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
+    assert _run(client, tid, "message") is not None
+    assert (tid, "topics") in heard and (room, "topics") in heard

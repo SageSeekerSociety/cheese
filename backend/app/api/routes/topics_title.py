@@ -61,6 +61,7 @@ async def set_title(
         out = TaskOut.model_validate(task).model_dump(mode="json")
         await db.commit()
         await announce_stale(place.room_id, "topics")
+        await announce_stale(task.id, "topics")
         return ok(out)
     place.room.title = title[:80]
     await db.flush()

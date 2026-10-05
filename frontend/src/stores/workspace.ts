@@ -662,10 +662,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 成员名册。
   async function create(title: string): Promise<Topic | null> {
     const pid = projectId.value
-    if (!pid) return null
+    const name = title.trim()
+    if (!pid || !name) return null
     const epoch = projectEpoch
     try {
-      const topic = await createTopic(pid, title.trim())
+      const topic = await createTopic(pid, name)
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
       topics.value.unshift(topic)
