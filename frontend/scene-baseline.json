@@ -68,7 +68,8 @@
     "src/views/user/settings/UsageView.vue",
     "src/views/workspace/ProjectShellView.vue",
     "src/views/MyDevicesViewView.vue",
-    "src/views/MyConnectionsViewView.vue"
+    "src/views/MyConnectionsViewView.vue",
+    "src/views/ProfileViewView.vue"
   ],
   "debt": [
     "src/components/panels/PanelChanges.vue",
@@ -89,7 +90,6 @@
     "src/components/panels/preview/RoomOutputs.vue",
     "src/views/InboxView.vue",
     "src/views/MarketView.vue",
-    "src/views/ProfileView.vue",
     "src/views/ProjectArtifactView.vue",
     "src/views/ProjectDocsView.vue",
     "src/views/ProjectLibraryView.vue",
