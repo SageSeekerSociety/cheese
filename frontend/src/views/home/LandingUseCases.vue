@@ -33,7 +33,7 @@ const roles = computed(() => [
       { title: t('publicSite.useCases.students.item3Title'), body: t('publicSite.useCases.students.item3Body') },
       { title: t('publicSite.useCases.students.item4Title'), body: t('publicSite.useCases.students.item4Body') },
     ],
-    docs: { label: t('publicSite.useCases.students.docs'), href: '/docs/student-tutorial' },
+    docs: { label: t('publicSite.useCases.students.docs'), href: '/docs/solve-a-challenge' },
   },
   {
     id: 'office' as UseCaseRole,
@@ -45,7 +45,7 @@ const roles = computed(() => [
       { title: t('publicSite.useCases.office.item3Title'), body: t('publicSite.useCases.office.item3Body') },
       { title: t('publicSite.useCases.office.item4Title'), body: t('publicSite.useCases.office.item4Body') },
     ],
-    docs: { label: t('publicSite.useCases.office.docs'), href: '/docs/office-tutorial' },
+    docs: { label: t('publicSite.useCases.office.docs'), href: '/docs/working-with-cheese' },
   },
   {
     id: 'developers' as UseCaseRole,
