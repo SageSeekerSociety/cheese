@@ -193,10 +193,9 @@ def test_room_history_and_task_history_have_separate_scopes(client):
         ],
     )
     assert ids[1] not in [b["id"] for b in _history(client, room)["data"]]
-    assert [
-        b["id"] for b in _history(client, room, task_id=task, q="Task")["data"]
-    ] == ids[1:]
-    replies = _history(client, room, reply_to=str(parent))
+    assert [b["id"] for b in _history(client, task, q="Task")["data"]] == ids[1:]
+    assert ids[0] not in [b["id"] for b in _history(client, task)["data"]]
+    replies = _history(client, task, reply_to=str(parent))
     assert replies["data"][0]["id"] == str(child)
     assert replies["data"][0]["task_id"] == task
     assert (

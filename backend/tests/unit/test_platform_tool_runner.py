@@ -17,7 +17,6 @@ import pytest
 
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 _ROOM = "11111111-1111-4111-8111-111111111111"
-_TASK = "33333333-3333-4333-8333-333333333333"
 _DOC = "44444444-4444-4444-8444-444444444444"
 
 
@@ -120,12 +119,12 @@ def test_search_encodes_literal_query_and_preserves_scope():
     host = _history({"data": [], "has_more": False}, room="room-2")
     out = run(
         "cheese_chat_search",
-        {"query": "报错 & 50%_", "topic": "room-2", "task": "card-1"},
+        {"query": "报错 & 50%_", "topic": "room-2"},
         host,
     )
-    query = parse_qs(urlsplit(host.requests[0]["path"]).query)
-    assert query["q"] == ["报错 & 50%_"]
-    assert query["task_id"] == ["card-1"]
+    asked = urlsplit(host.requests[0]["path"])
+    assert asked.path == "/topics/room-2/history"
+    assert parse_qs(asked.query)["q"] == ["报错 & 50%_"]
     assert "No messages" in out
 
 
@@ -405,8 +404,8 @@ def test_a_lock_someone_else_holds_is_a_refusal():
         }
     )
     with pytest.raises(cheese.PlatformToolError, match="任务 x 占着"):
-        run("cheese_lock", {"task": _TASK}, host)
-    assert host.requests[0]["body"] == {"kind": "heavy", "task_id": _TASK}
+        run("cheese_lock", {}, host)
+    assert host.requests[0]["body"] == {"kind": "heavy"}
 
 
 # --- memory, roster, status and the rest -----------------------------------
