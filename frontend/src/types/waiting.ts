@@ -11,7 +11,6 @@ export interface WaitingItem {
   projectName: string
   topicId: string
   topicTitle: string
-  topicTitleSource?: string
   taskId: string | null
   taskTitle: string | null
   taskTitleSource?: string | null

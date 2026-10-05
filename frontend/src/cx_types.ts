@@ -63,9 +63,6 @@ export interface Topic {
   project_id: string
   parent_id: string | null
   title: string
-  // 标题是谁定的：placeholder = 还叫「新话题」；auto = 平台起的（方向变了会再改）；
-  // human = 人定的（平台不再动它）。见 backend topic/naming.py。
-  title_source?: 'placeholder' | 'auto' | 'human'
   kind: string
   status: string
   created_at: string
@@ -239,6 +236,8 @@ export interface RoomTask {
   project_id: string
   room_id: string // 它挂在哪个房间里；任务不嵌套
   title: string
+  // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了
+  // 会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
@@ -510,7 +509,7 @@ export interface SpaceDashboard {
 // ---- 成员页 / portfolio (spec §7.2) ----
 
 // A topic the member started, shown on their member page.
-export type MemberTopic = Pick<Topic, 'id' | 'title' | 'title_source' | 'status'>
+export type MemberTopic = Pick<Topic, 'id' | 'title' | 'status'>
 
 // GET /api/projects/{id}/members/{handle}/summary
 export interface MemberSummary {
@@ -593,7 +592,6 @@ export interface UserProfile {
 export interface ProfileTopic {
   id: string
   title: string
-  title_source?: string
   status: string
   project_id: string
   project_name: string
@@ -1042,7 +1040,6 @@ export interface DeviceUser {
   project_name: string
   topic_id: string
   topic_title: string
-  topic_title_source?: string
   agent_handle: string
   agent_name: string
   agent_name_source?: string

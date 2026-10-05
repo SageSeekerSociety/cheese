@@ -139,11 +139,7 @@ async def _hand_to_person(session: AsyncSession, row: TimedDelivery) -> None:
         room_id=room_id,
         content=str(said),
         message=said.descriptor(),
-        **(
-            {"topicTitle": topic.title, "topicTitleSource": str(topic.title_source)}
-            if topic is not None
-            else {}
-        ),
+        **({"topicTitle": topic.title} if topic is not None else {}),
     )
     ledger = Ledger(session)
     pending = await ledger.record_mailbox(event, row.recipient_handle, row.receiver_id)

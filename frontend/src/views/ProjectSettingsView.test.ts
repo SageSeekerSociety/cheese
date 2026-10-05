@@ -241,7 +241,7 @@ describe('project settings', () => {
       expect(entries).toEqual([
         '频道',
         'AI 队友',
-        '频道命名',
+        '任务命名',
         '工作电脑',
         '运行环境',
         '合并规则',

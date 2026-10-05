@@ -1,53 +1,53 @@
 <script setup lang="ts">
-import type { TopicNaming, TopicNamingMode } from '../api'
+import type { TaskNaming, TaskNamingMode } from '../api'
 
 import { onMounted, ref, watch } from 'vue'
 
 import { holdRevealGate } from '@/composables/useRevealGate'
 
-import { getTopicNaming, setTopicNaming } from '../api'
+import { getTaskNaming, setTaskNaming } from '../api'
 
 import { t } from '@/i18n'
 
-// 话题命名：平台自动给话题起名、方向变了再改（默认），还是全由人来起名。
-// 两档都不碰人定过的名字——那是每个话题自己的锁，只能由人再改一次，解不开。
-// 行为见后端 topic/naming.py。选中即保存：两个选项、没有要一起提交的别的字段。
+// 任务命名：没起名的任务由平台自动起名、方向变了再改（默认），还是全由人来起名。
+// 两档都不碰人定过的名字。行为见后端 room_task/naming.py。选中即保存：两个选项、
+// 没有要一起提交的别的字段。
 const props = defineProps<{ projectId: string }>()
 
-const state = ref<TopicNaming | null>(null)
+const state = ref<TaskNaming | null>(null)
 const error = ref('')
 const busy = ref(false)
 
-const OPTIONS: { value: TopicNamingMode; title: string; detail: string }[] = [
+const OPTIONS: { value: TaskNamingMode; title: string; detail: string }[] = [
   {
     value: 'auto',
-    title: t('work.projectSettings.topicNaming.autoTitle'),
-    detail: t('work.projectSettings.topicNaming.autoDetail'),
+    title: t('work.projectSettings.taskNaming.autoTitle'),
+    detail: t('work.projectSettings.taskNaming.autoDetail'),
   },
   {
     value: 'manual',
-    title: t('work.projectSettings.topicNaming.manualTitle'),
-    detail: t('work.projectSettings.topicNaming.manualDetail'),
+    title: t('work.projectSettings.taskNaming.manualTitle'),
+    detail: t('work.projectSettings.taskNaming.manualDetail'),
   },
 ]
 
 async function load() {
   error.value = ''
   try {
-    state.value = await getTopicNaming(props.projectId)
+    state.value = await getTaskNaming(props.projectId)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.topicNaming.loadFailed')
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.loadFailed')
   }
 }
 
-async function choose(mode: TopicNamingMode | null) {
+async function choose(mode: TaskNamingMode | null) {
   if (!mode || !state.value?.can_manage || mode === state.value.mode) return
   busy.value = true
   error.value = ''
   try {
-    state.value = await setTopicNaming(props.projectId, mode)
+    state.value = await setTaskNaming(props.projectId, mode)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.topicNaming.saveFailed')
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.saveFailed')
   } finally {
     busy.value = false
   }
@@ -60,14 +60,14 @@ watch(() => props.projectId, load)
 
 <template>
   <div>
-    <p class="t-body c-muted mb-4">{{ t('work.projectSettings.topicNaming.intro') }}</p>
+    <p class="t-body c-muted mb-4">{{ t('work.projectSettings.taskNaming.intro') }}</p>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <template v-if="state">
       <div
         class="naming-options"
         role="radiogroup"
-        :aria-label="t('work.projectSettings.topicNaming.label')"
-        data-testid="topic-naming-mode"
+        :aria-label="t('work.projectSettings.taskNaming.label')"
+        data-testid="task-naming-mode"
       >
         <button
           v-for="o in OPTIONS"
@@ -88,10 +88,10 @@ watch(() => props.projectId, load)
         </button>
       </div>
       <p v-if="!state.available && state.mode === 'auto'" class="t-caption c-muted mt-2">
-        {{ t('work.projectSettings.topicNaming.fallback') }}
+        {{ t('work.projectSettings.taskNaming.fallback') }}
       </p>
       <p v-if="!state.can_manage" class="t-caption c-muted mt-2">
-        {{ t('work.projectSettings.topicNaming.readOnly') }}
+        {{ t('work.projectSettings.taskNaming.readOnly') }}
       </p>
     </template>
   </div>

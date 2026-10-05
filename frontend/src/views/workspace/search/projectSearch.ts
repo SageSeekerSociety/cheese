@@ -26,8 +26,8 @@ export function hitsFor(projectId: string, query: string): Promise<ProjectSearch
 }
 
 /** 结果在哪个房间：还没起名的房间按读者的语言叫「新话题」。 */
-export function searchRoomTitle(hit: { room_title: string; room_title_source?: string }): string {
-  return topicTitle({ title: hit.room_title, title_source: hit.room_title_source })
+export function searchRoomTitle(hit: { room_title: string }): string {
+  return topicTitle({ title: hit.room_title })
 }
 
 /** 结果下面那一行：在哪个房间、谁、什么时候。 */

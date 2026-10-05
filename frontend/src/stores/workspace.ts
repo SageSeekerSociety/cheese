@@ -21,7 +21,6 @@ import {
   setTopicTitle,
   unarchiveProject,
   unarchiveTopic,
-  undoTopicTitle,
   upgradeBlock,
 } from '@/api'
 import { ApiError, isProjectArchivedError } from '@/api'
@@ -595,11 +594,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (t) {
       topicRevision += 1
       t.title = updated.title
-      t.title_source = updated.title_source
     }
   }
 
-  // 人起的名字：平台之后不会再自动改它（见后端 topic/naming.py）。
   async function renameTopic(topicId: string, title: string) {
     try {
       applyTopic(await setTopicTitle(topicId, title))
@@ -609,14 +606,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   /** 撤销房间里那条「标题自动更新为…」：原来的名字回来，并且算人定的。 */
-  async function undoAutoTitle(topicId: string, eventId: string) {
-    try {
-      applyTopic(await undoTopicTitle(topicId, eventId))
-    } catch (e) {
-      reportError(e, t('shell.workspaceErrors.undo'))
-    }
-  }
-
   async function archive(topicId: string) {
     const topic = topics.value.find((row) => row.id === topicId)
     const prevStatus = topic?.status
@@ -676,9 +665,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (!pid) return null
     const epoch = projectEpoch
     try {
-      // Untitled when nothing was typed: the backend stores its placeholder and
-      // flags it (`title_source`), and every screen names it in its own language.
-      const topic = await createTopic(pid, title.trim() || undefined)
+      const topic = await createTopic(pid, title.trim())
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
       topics.value.unshift(topic)
@@ -745,7 +732,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     markRead,
     markDmRead,
     renameTopic,
-    undoAutoTitle,
     archive,
     unarchive,
     rememberTopic,

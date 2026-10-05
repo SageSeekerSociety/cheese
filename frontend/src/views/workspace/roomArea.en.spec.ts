@@ -72,7 +72,7 @@ describe('topic and room surfaces in English', () => {
     const now = Date.parse('2026-09-28T04:00:00Z')
     const wait = { member: 'cheese-a1', reason: 'mention', since: '2026-09-28T00:00:00Z' }
     const row = {
-      topic: topic({ status: 'draft', title_source: 'auto', waits: [wait] }),
+      topic: topic({ status: 'draft', waits: [wait] }),
       depth: 1,
       hasChildren: true,
       collapsed: true,

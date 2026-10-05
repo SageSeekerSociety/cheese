@@ -376,7 +376,6 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
                     "id": str(t.id),
                     "project_id": str(t.project_id),
                     "title": t.title,
-                    "title_source": t.title_source,
                     "kind": t.kind,
                     "status": t.status,
                 }

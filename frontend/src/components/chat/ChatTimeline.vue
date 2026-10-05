@@ -117,7 +117,6 @@ const emit = defineEmits<{
   (e: 'cancel-edit'): void
   (e: 'retry'): void
   (e: 'retry-send', clientId: string): void
-  (e: 'undo-title', blockId: string): void
   (e: 'starter', text: string): void
   (e: 'settle-arrival', event: AnimationEvent, id: string): void
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
@@ -370,7 +369,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :data-row-id="m.id"
             @animationend="settleRow"
             @open-resource="emitOpenResource"
-            @undo-title="emit('undo-title', $event)"
             @open-card="emit('open-card', $event)"
             @retry="emit('retry')"
           />

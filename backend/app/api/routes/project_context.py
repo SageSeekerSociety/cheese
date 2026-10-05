@@ -308,7 +308,6 @@ def _record(
     return {
         "room_id": str(room.id),
         "room_title": room.title,
-        "room_title_source": str(room.title_source),
         "id": str(b.id),
         "kind": str(b.kind.value),
         "author": b.author,
@@ -326,7 +325,6 @@ def _doc_record(
     return {
         "room_id": str(room.id),
         "room_title": room.title,
-        "room_title_source": str(room.title_source),
         "id": str(hit.id),
         "kind": hit.kind,
         "author": hit.author,
@@ -341,7 +339,6 @@ def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
     return {
         "room_id": str(room.id),
         "room_title": room.title,
-        "room_title_source": str(room.title_source),
         "id": str(t.id),
         "title": t.title,
         "title_source": str(t.title_source),
@@ -364,7 +361,6 @@ async def search_everything(
         return {
             "room_id": str(room.id),
             "room_title": room.title,
-            "room_title_source": str(room.title_source),
         }
 
     hits: dict[str, list[dict]] = {"rooms": [], "records": [], "tasks": []}
@@ -476,7 +472,6 @@ async def search_documents(
         {
             **document_row(h.document),
             "room_title": readable[h.document.room_id].title,
-            "room_title_source": str(readable[h.document.room_id].title_source),
             "snippet": _snippet(h.content, terms),
         }
         for h in found

@@ -205,31 +205,6 @@ def test_the_rooms_that_would_lose_their_owner_are_named_as_a_list(client, beare
     }
 
 
-def test_an_unnamed_room_is_named_in_the_readers_language(client, bearer):
-    """A room nobody has named yet is stored under the placeholder 「新频道」, which
-    is the Chinese screen's word for "untitled", not the room's name. The refusal
-    names it as a sentence, so an English screen says "New topic" instead of
-    showing Chinese inside an English line."""
-    pid = _project(client)
-    _add(client, pid, "alice")
-    _add(client, pid, "bob")
-    _seat(client, _topic(client, pid, "alice", title=None), "bob", by="alice")
-
-    r = _leave(client, pid, "alice")
-
-    assert r.status_code == 422, r.text
-    assert r.json()["message"] == "你是频道「新频道」唯一的 owner，先把频道交给别人"
-    assert r.json()["error"]["i18n"] == {
-        "key": "soleTopicOwner",
-        "params": {
-            "topics": {
-                "list": [{"key": "untitledTopic", "params": {}}],
-                "quoted": True,
-            }
-        },
-    }
-
-
 def test_a_teammate_cannot_be_removed_from_the_project(client):
     """团队成员在名册上是从团队读出来的，没有一条可删的成员行 —— 移他是 404，人
     还在（这条路由仍然只对外部成员和 AI 队友的座位成立）。

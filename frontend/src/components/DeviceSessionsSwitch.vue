@@ -82,8 +82,7 @@ const allSelected = computed(
   () => selectable.value.length > 0 && selectable.value.every((s) => selected.value.includes(s.id))
 )
 
-const sessionRoom = (s: DeviceSession) =>
-  s.task_title ?? topicTitle({ title: s.topic_title, title_source: s.topic_title_source })
+const sessionRoom = (s: DeviceSession) => s.task_title ?? topicTitle({ title: s.topic_title })
 // 换的是一段对话的工作电脑：房间自己的，或者某个任务的。
 const conversationOf = (s: DeviceSession) => s.task_id ?? s.topic_id
 

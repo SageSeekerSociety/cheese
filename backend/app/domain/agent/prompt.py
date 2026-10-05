@@ -53,8 +53,6 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
 from app.domain.project.models import Project
 from app.domain.topic.models import (
-    PLACEHOLDER_TITLE,  # noqa: F401 — re-exported through `agent.chat`
-    TitleSource,
     Topic,
     TopicKind,
     TopicStatus,
@@ -224,21 +222,15 @@ def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
     所以过滤掉的话题（含已归档的）用 `@标题` 照样解析得出 <#id> 链接——少注入是
     纯赚的，不损失任何引用能力。
 
-    剔除三类：
+    剔除两类：
     - 已归档：本项目实测占注入量的 74%，而引用一个几周前归档的话题几乎没有价值；
       需要时 agent 自己查（prompt 那段里给了查法）。
-    - 未命名（标题就是占位符）：按标题根本引用不了。
     - 同名：`expand_mention_names` 对同名标题只解析第一个（mentions.py 的 `seen`
       去重），其余会**静默指向错的那一个**。所以同名的**全部剔除**而不是留一个
       ——留一个等于在 prompt 里推荐一个会指错的引用；全部不列，它们仍可通过查询
       拿到 id 后用 <#id> 精确引用。
     """
-    live = [
-        t
-        for t in topics
-        if t.status != TopicStatus.archived
-        and t.title_source != TitleSource.placeholder
-    ]
+    live = [t for t in topics if t.status != TopicStatus.archived]
     titles = Counter(t.title for t in live)
     return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
 
