@@ -1349,7 +1349,8 @@
     "expandWorking": "Expand: a teammate is working in here",
     "moreMembers": "+{count}",
     "taskNeedsYou": "Needs you",
-    "taskRunning": "Running"
+    "taskRunning": "Running",
+    "allTasks": "All tasks"
   },
   "members": {
     "leave": "Leave project",
@@ -1993,13 +1994,18 @@
     "machine": "Work computer",
     "followsRoom": "Follows the topic",
     "details": "Task details",
-    "ownerOnlyNotice": "Only the owner can talk to {name} here",
+    "ownerOnlyNotice": "Only the owner and collaborators can talk to {name} here",
     "closedNotice": "This task is closed",
     "backToRoom": "Back to # {room}",
     "notFound": "This room has no such task",
     "loadFailed": "Couldn't load this task",
     "owner": "Owner",
     "ownerChip": "Owned by {name}",
+    "collaborators": "Collaborators",
+    "collaboratorsHint": "Can talk to the AI teammate in this task",
+    "addCollaborator": "Add a collaborator",
+    "removeCollaborator": "Remove",
+    "leaveCollaboration": "Leave",
     "start": "Start",
     "startFailed": "Couldn't start. Try again later",
     "reviewer": "Reviewer",
@@ -2024,5 +2030,15 @@
     "handOverTitle": "Hand over to whom?",
     "handOverTo": "Choose the new owner",
     "actionFailed": "Couldn't do that. Try again later"
+  },
+  "channelTasks": {
+    "whose": "Filter by owner",
+    "all": "All",
+    "mine": "Mine",
+    "helping": "Helping",
+    "others": "Others'",
+    "closed": "Closed",
+    "empty": "No tasks here",
+    "loadFailed": "Could not load the tasks"
   }
 }

@@ -29,6 +29,7 @@ import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import VirtualList from './common/VirtualList.vue'
+import TopicRailAllTasksRow from './topic-sidebar/TopicRailAllTasksRow.vue'
 import TopicRailArchivedGroup from './topic-sidebar/TopicRailArchivedGroup.vue'
 import TopicRailGroupToggle from './topic-sidebar/TopicRailGroupToggle.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
@@ -73,6 +74,10 @@ const props = defineProps<{
   column?: boolean
   /** 每个房间里还开着的任务（房间 id → 任务），挂在房间那一行下面。 */
   roomTasks?: Record<string, Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>[]>
+  // 每个频道里一共还有几条任务在进行；侧栏只列其中和我有关的几条（`roomTasks`）。
+  roomTaskTotals?: Record<string, number>
+  // 正在看哪个频道的「全部任务」。
+  allTasksChannelId?: string | null
   /** 正打开的任务。 */
   selectedTaskId?: string | null
 }>()
@@ -80,6 +85,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
   (e: 'select-task', task: { roomId: string; taskId: string }): void
+  (e: 'all-tasks', channelId: string): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
@@ -501,6 +507,14 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :selected="task.id === selectedTaskId"
                 @select="emit('select-task', $event)"
               />
+              <TopicRailAllTasksRow
+                v-if="rootTopic && roomTaskTotals?.[rootTopic.id]"
+                :channel-id="rootTopic.id"
+                :total="roomTaskTotals[rootTopic.id]"
+                :label="t('work.sidebar.allTasks')"
+                :selected="allTasksChannelId === rootTopic.id"
+                @select="emit('all-tasks', $event)"
+              />
             </template>
           </TopicRailPinnedRows>
 
@@ -618,6 +632,15 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
                         @select="emit('select-task', $event)"
+                      />
+                      <TopicRailAllTasksRow
+                        v-if="roomTaskTotals?.[item.topic.id]"
+                        :channel-id="item.topic.id"
+                        :total="roomTaskTotals[item.topic.id]"
+                        :depth="item.depth"
+                        :label="t('work.sidebar.allTasks')"
+                        :selected="allTasksChannelId === item.topic.id"
+                        @select="emit('all-tasks', $event)"
                       />
                     </div>
                   </template>

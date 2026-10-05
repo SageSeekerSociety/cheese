@@ -63,6 +63,14 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
+      // 一个频道的全部任务：侧栏只挂和我有关的几条，其余在这一页。
+      name: 'workspace-channel-tasks',
+      path: 'topics/:topicId/tasks',
+      component: () => import('@/views/workspace/ChannelTasks.vue'),
+      props: true,
+      meta: { hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
       // 任务页：一个任务自己的对话和实况文档。和房间页是同一个组件——任务挂在房间下，
       // 房间要先打开，任务页借它的名册和外框；地址里多出来的 taskId 决定画哪一边。
       name: 'workspace-task',

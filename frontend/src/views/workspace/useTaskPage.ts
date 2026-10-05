@@ -49,6 +49,10 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
   }
 
   const isOwner = computed(() => !!task.value && task.value.owner_handle === ME)
+  // 负责人和协作者都在做这件事：都能在任务里说话。开始、关闭、转交只归负责人。
+  const takesPart = computed(
+    () => isOwner.value || (!!task.value && (task.value.contributor_handles ?? []).includes(ME))
+  )
   const isOpen = computed(() => task.value?.status === 'open')
   const people = computed(() => opts.roomMembers().filter((m) => !m.agent))
 
@@ -87,6 +91,19 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
     actionError.value = null
     try {
       task.value = { ...task.value, ...(await updateTask(task.value.id, { owner_handle: owner })) }
+      return true
+    } catch (e) {
+      actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
+      return false
+    }
+  }
+
+  // ---- 协作者：负责人增减；协作者只能把自己去掉 ----
+  async function setCollaborators(handles: string[]): Promise<boolean> {
+    if (!task.value) return false
+    actionError.value = null
+    try {
+      task.value = { ...task.value, ...(await updateTask(task.value.id, { contributor_handles: handles })) }
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -136,6 +153,8 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
     load,
     reset,
     isOwner,
+    takesPart,
+    setCollaborators,
     isOpen,
     people,
     starting,

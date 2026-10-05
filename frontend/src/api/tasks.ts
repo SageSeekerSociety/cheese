@@ -33,7 +33,7 @@ export function startTask(taskId: string, reviewerHandle?: string | null): Promi
 /** 转交：换负责人，或换做它的 AI 队友。 */
 export function updateTask(
   taskId: string,
-  change: { owner_handle?: string; agent_handle?: string | null }
+  change: { owner_handle?: string; agent_handle?: string | null; contributor_handles?: string[] }
 ): Promise<RoomTask> {
   return request<RoomTask>(`${taskPath(taskId)}/task`, {
     method: 'PATCH',

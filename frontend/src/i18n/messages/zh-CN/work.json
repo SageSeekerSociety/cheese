@@ -1349,7 +1349,8 @@
     "expandWorking": "展开：里面有队友在工作",
     "moreMembers": "+{count}",
     "taskNeedsYou": "需要你处理",
-    "taskRunning": "运行中"
+    "taskRunning": "运行中",
+    "allTasks": "全部任务"
   },
   "members": {
     "leave": "退出项目",
@@ -1993,13 +1994,18 @@
     "machine": "工作电脑",
     "followsRoom": "跟随话题",
     "details": "任务信息",
-    "ownerOnlyNotice": "只有负责人可以在这里和{name}对话",
+    "ownerOnlyNotice": "只有负责人和协作者可以在这里和{name}对话",
     "closedNotice": "任务已关闭",
     "backToRoom": "回到 # {room}",
     "notFound": "这个房间里没有这个任务",
     "loadFailed": "无法加载这个任务",
     "owner": "负责人",
     "ownerChip": "{name} 负责",
+    "collaborators": "协作者",
+    "collaboratorsHint": "可以在任务里和 AI 队友对话",
+    "addCollaborator": "添加协作者",
+    "removeCollaborator": "移除",
+    "leaveCollaboration": "退出协作",
     "start": "开始",
     "startFailed": "未能开始，稍后重试",
     "reviewer": "审阅人",
@@ -2024,5 +2030,15 @@
     "handOverTitle": "转交给谁？",
     "handOverTo": "选择新的负责人",
     "actionFailed": "操作失败，稍后重试"
+  },
+  "channelTasks": {
+    "whose": "按负责人筛选",
+    "all": "全部",
+    "mine": "我负责的",
+    "helping": "我协作的",
+    "others": "其他人的",
+    "closed": "已关闭",
+    "empty": "暂无任务",
+    "loadFailed": "无法加载任务"
   }
 }

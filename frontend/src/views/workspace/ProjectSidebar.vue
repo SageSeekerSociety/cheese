@@ -11,7 +11,9 @@ import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { readProjectTasks } from '@/lib/projectTasks'
+import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import BoardSummary from '@/views/workspace/BoardSummary.vue'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
@@ -44,8 +46,9 @@ const column = computed(
 // Active state is read off the URL, never off a local flag.
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? String(route.params.topicId) : null))
 const activeTaskId = computed(() => (route.name === 'workspace-task' ? String(route.params.taskId) : null))
+const activeAllTasks = computed(() => (route.name === 'workspace-channel-tasks' ? String(route.params.topicId) : null))
 
-// 每个房间里还开着的任务，挂在房间那一行下面。和看板读同一份（`readProjectTasks`），
+// 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和看板读同一份（`readProjectTasks`），
 // 看板刚读过就拿它那一份；换了地方（新建、开始、关闭任务之后）也重读一次。
 const TASKS_REFRESH_MS = 30_000
 const tasks = ref<RoomTask[]>([])
@@ -58,14 +61,13 @@ async function loadTasks(maxAgeMs?: number) {
     // 留着上一次的那份。
   }
 }
-const roomTasks = computed(() => {
-  const byRoom: Record<string, RoomTask[]> = {}
-  for (const task of tasks.value) {
-    if (task.presentation.column === 'done' || task.status !== 'open') continue
-    ;(byRoom[task.room_id] ??= []).push(task)
-  }
-  return byRoom
-})
+const railTasks = computed(() => railTasksByChannel(tasks.value, myHandle()))
+const roomTasks = computed(() =>
+  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.shown]))
+)
+const roomTaskTotals = computed(() =>
+  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.total]))
+)
 let tasksTimer: number | undefined
 onMounted(() => {
   void loadTasks()
@@ -76,6 +78,9 @@ watch(
   () => [props.projectId, route.fullPath],
   () => void loadTasks(2_000)
 )
+function openAllTasks(channelId: string) {
+  void router.push({ name: 'workspace-channel-tasks', params: { projectId: props.projectId, topicId: channelId } })
+}
 function openTask(task: { roomId: string; taskId: string }) {
   void router.push({
     name: 'workspace-task',
@@ -168,6 +173,8 @@ useCommands(() => [
       :topics="store.topics"
       :selected-topic-id="activeTopicId"
       :room-tasks="roomTasks"
+      :room-task-totals="roomTaskTotals"
+      :all-tasks-channel-id="activeAllTasks"
       :selected-task-id="activeTaskId"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
@@ -178,6 +185,7 @@ useCommands(() => [
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @select-task="openTask"
+      @all-tasks="openAllTasks"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @leave-topic="cancelPrefetch"
