@@ -512,6 +512,7 @@ describe("有人发来消息的时候", () => {
       JSON.stringify({
         id,
         answers: ["chat_send", "cheese_ask"],
+        reads: ["cheese_chat_list"],
         reason: "REPLY_FIRST",
         answered: `${file}.answered`,
       }),
@@ -548,6 +549,17 @@ describe("有人发来消息的时候", () => {
     // Written down where the runner reads it, so the turn may end.
     const answered = `${process.env.CHEESE_REPLY_OWED}.answered`;
     assert.equal(fs.readFileSync(answered, "utf8"), "m1");
+  });
+
+  it("读房间的记录不被拒，也不算回了话", async () => {
+    fresh();
+    const { pi } = await load();
+    owe("m1");
+
+    assert.equal(await pi.emit("tool_call", { toolName: "cheese_chat_list", input: {} }), undefined);
+    const refused = await pi.emit("tool_call", { toolName: "bash", input: {} });
+    assert.deepEqual(refused, { block: true, reason: "REPLY_FIRST" });
+    assert.ok(!fs.existsSync(`${process.env.CHEESE_REPLY_OWED}.answered`));
   });
 
   it("正在跑的命令转到后台，模型马上拿回控制，命令照样跑完", async () => {
