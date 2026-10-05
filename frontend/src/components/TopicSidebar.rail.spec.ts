@@ -144,14 +144,20 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('侧栏上常驻的是每天要用的那几样：全局、资料库、成员和项目文档', () => {
+  it('项目自己的几页在项目名下面一行，综合是频道分组里的第一个频道', () => {
     const { container } = mount()
     expect(container.querySelector('.proj-pages')).toBeNull()
     // 看板不在这里——它就是首页，项目名那一行点下去就到。定时与触发不常用，收进了
     // 项目名旁边那个菜单。成员留在外面不是因为它天天用，而是因为「退出项目」长在
     // 成员页上——名册一收进 ⋯，没注意到那个 ⋯ 的人就连怎么退出都找不到了。项目
     // 文档和它们排在一起，不压在话题列表底下：话题一多，那个位置就看不见了。
-    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '成员', '项目文档'])
+    const labels = Array.from(container.querySelectorAll('.page-bar__label')).map((el) => el.textContent?.trim())
+    expect(labels).toEqual(['资料库', '成员', '项目文档'])
+    // 综合排在「频道」标题下面，和别的频道同一组。
+    const heading = container.querySelector('.side-subhead')!
+    const general = container.querySelector('.pinned-row')!
+    expect(titlesIn(container, '.pinned-row')).toEqual(['综合'])
+    expect(heading.compareDocumentPosition(general) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('点项目名回项目首页，不打开任何房间', async () => {
@@ -225,9 +231,10 @@ describe('C4 项目文档', () => {
   it('侧栏只占一行，点它去章程', async () => {
     const onSelectDocs = vi.fn()
     const { container } = mount({ onSelectDocs })
-    const rows = container.querySelectorAll('.docs-row')
+    const rows = Array.from(container.querySelectorAll('.page-bar__item')).filter(
+      (el) => el.textContent?.trim() === '项目文档'
+    )
     expect(rows.length).toBe(1)
-    expect(titlesIn(container, '.docs-row')).toEqual(['项目文档'])
     ;(rows[0] as HTMLElement).click()
     expect(onSelectDocs).toHaveBeenCalledWith('charter')
   })
@@ -235,7 +242,10 @@ describe('C4 项目文档', () => {
   it('三种文档里的任何一种打开时，这一行都是选中态', () => {
     for (const kind of ['charter', 'weeklies', 'memory']) {
       const { container, unmount } = mount({ activeDocs: kind })
-      expect(container.querySelector('.docs-row')?.classList.contains('is-active')).toBe(true)
+      const docs = Array.from(container.querySelectorAll('.page-bar__item')).find(
+        (el) => el.textContent?.trim() === '项目文档'
+      )
+      expect(docs?.classList.contains('is-active')).toBe(true)
       unmount()
     }
   })

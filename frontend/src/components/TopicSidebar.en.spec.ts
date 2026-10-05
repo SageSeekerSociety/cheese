@@ -136,7 +136,7 @@ describe('the topic sidebar in English', () => {
 
   it('when the only topics belong to other people', () => {
     const { baseElement, getByText } = mount({ topics: [root, theirs] })
-    getByText('No channels involve you yet')
+    getByText('General')
     expect(chineseIn(baseElement)).toEqual([])
   })
 })

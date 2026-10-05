@@ -34,6 +34,7 @@ import TopicRailArchivedGroup from './topic-sidebar/TopicRailArchivedGroup.vue'
 import TopicRailGroupToggle from './topic-sidebar/TopicRailGroupToggle.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
 import TopicRailPinnedRows from './topic-sidebar/TopicRailPinnedRows.vue'
+import TopicRailRootRow from './topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from './topic-sidebar/TopicRailRow.vue'
 import TopicRailTaskRow from './topic-sidebar/TopicRailTaskRow.vue'
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
@@ -475,17 +476,41 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         <template v-else>
           <!-- 列表顶上由外面填的一行（手机上是看板的摘要，见 ProjectSidebar）。 -->
           <slot name="top" />
-          <!-- 置顶行 (C1): 全局房间 + 这个项目露出来的那几页 + 项目文档。和话题行同一
-               种语法——同图标槽、同缩进基准、同选中态、同未读角标，所以「点它会发生
-               什么」不用另学一遍。 -->
+          <!-- 项目名下面一行：这个项目自己的几页，压成一行，放不下的进「⋯」。 -->
           <TopicRailPinnedRows
-            :root-topic="rootTopic"
-            :selected-topic-id="selectedTopicId"
             :pages="visiblePages"
             :route-name="routeName"
             :terms="terms"
             :docs-active="onDocs"
             :private-unread-total="privateUnreadTotal"
+            :page="page === true"
+            @open-page="openProjectPage"
+            @hover-page="hoverProjectPage"
+            @cancel-prefetch="cancelPrefetch()"
+            @select-docs="emit('select-docs', 'charter')"
+          />
+
+          <v-divider class="mx-3 my-1" />
+
+          <div class="t-eyebrow side-subhead side-subhead--row">
+            <span>{{ t('work.sidebar.topics') }}</span>
+            <BaseButton
+              icon="mdi-plus"
+              size="sm"
+              :title="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
+              :aria-label="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
+              :loading="creatingTopic"
+              :disabled="creatingTopic"
+              :class="{ 'tap-target': page }"
+              @click="newTopic()"
+            />
+          </div>
+
+          <!-- 频道的第一行：项目自带的「综合」，固定在最上面，和其他频道同一组。 -->
+          <TopicRailRootRow
+            v-if="!error"
+            :root-topic="rootTopic"
+            :selected-topic-id="selectedTopicId"
             :page="page === true"
             :unread-of="unreadOf"
             :muted-of="mutedOf"
@@ -494,10 +519,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             @hover-topic="emit('hover-topic', $event)"
             @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
-            @open-page="openProjectPage"
-            @hover-page="hoverProjectPage"
-            @cancel-prefetch="cancelPrefetch()"
-            @select-docs="emit('select-docs', 'charter')"
           >
             <template #root-tasks>
               <TopicRailTaskRow
@@ -516,23 +537,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 @select="emit('all-tasks', $event)"
               />
             </template>
-          </TopicRailPinnedRows>
-
-          <v-divider class="mx-3 my-1" />
-
-          <div class="t-eyebrow side-subhead side-subhead--row">
-            <span>{{ t('work.sidebar.topics') }}</span>
-            <BaseButton
-              icon="mdi-plus"
-              size="sm"
-              :title="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
-              :aria-label="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
-              :loading="creatingTopic"
-              :disabled="creatingTopic"
-              :class="{ 'tap-target': page }"
-              @click="newTopic()"
-            />
-          </div>
+          </TopicRailRootRow>
 
           <!-- Topic list failed to load: replace this block in place with an error
                and a retry (docs/design-system.md §3.10), not a toast that is gone in
@@ -551,7 +556,13 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <template v-else>
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
                  说清楚「空的是这一组，不是这个项目」，否则下面那个折叠组会像个谜。 -->
-            <v-list v-if="mineTree.length === 0 && othersCount > 0" density="compact" nav class="py-0" tabindex="-1">
+            <v-list
+              v-if="!rootTopic && mineTree.length === 0 && othersCount > 0"
+              density="compact"
+              nav
+              class="py-0"
+              tabindex="-1"
+            >
               <v-list-item class="c-faint t-body">{{ t('work.sidebar.noneMine') }}</v-list-item>
             </v-list>
 

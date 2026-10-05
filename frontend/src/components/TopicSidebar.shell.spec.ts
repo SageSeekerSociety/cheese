@@ -95,13 +95,21 @@ function mount(inner: Record<string, unknown> = {}) {
   })
 }
 
-function titlesIn(root: Element, selector: string): string[] {
-  return Array.from(root.querySelectorAll(selector)).map(
-    (el) => el.querySelector('.v-list-item-title')?.textContent?.trim() ?? ''
+/** 打开项目名旁边那个 ⌄ 菜单，返回菜单里每一行的文字。 */
+/** 项目名下面那一行露出来的几页：直接摆着的，加上「⋯」里收着的。 */
+async function pagesIn(container: Element, baseElement: Element): Promise<string[]> {
+  const shown = Array.from(container.querySelectorAll('.page-bar__label')).map((el) => el.textContent?.trim() ?? '')
+  const more = container.querySelector('.page-bar__more') as HTMLElement | null
+  if (!more) return shown
+  await fireEvent.click(more)
+  await waitFor(() => expect(baseElement.querySelector('.v-overlay--active .v-list-item-title')).not.toBeNull())
+  const folded = Array.from(baseElement.querySelectorAll('.v-overlay--active .v-list-item-title')).map(
+    (el) => el.textContent?.trim() ?? ''
   )
+  await fireEvent.keyDown(document, { key: 'Escape' })
+  return [...shown, ...folded]
 }
 
-/** 打开项目名旁边那个 ⌄ 菜单，返回菜单里每一行的文字。 */
 async function openProjectMenu(container: Element, baseElement: Element): Promise<string[]> {
   const header = container.querySelector('[title="项目菜单"]') ?? baseElement.querySelector('[title="项目菜单"]')
   await fireEvent.click(header as Element)
@@ -166,7 +174,7 @@ beforeEach(() => {
 describe('侧栏画哪几页由壳说了算', () => {
   it('壳收起来的页不在侧栏上，但在项目名旁边那个菜单里', async () => {
     const { container, baseElement } = mount()
-    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '成员', '项目文档'])
+    expect(await pagesIn(container, baseElement)).toEqual(['资料库', '成员', '项目文档'])
 
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes(t('navigation.project.routines')))).toBe(true)
@@ -185,7 +193,7 @@ describe('侧栏画哪几页由壳说了算', () => {
     const shell = { ...COURSE_SHELL, nav: { ...COURSE_SHELL.nav, project: ['project-library', 'project-future'] } }
     const { container, baseElement } = mount({ projects: [project(shell)] })
     // 这份壳只点名了资料库；成员没被点名，于是它落进「更多」（菜单里那一格）。
-    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '项目文档'])
+    expect(await pagesIn(container, baseElement)).toEqual(['资料库', '项目文档'])
 
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes('project-future'))).toBe(false)
@@ -198,7 +206,7 @@ describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
     const { container, baseElement } = mount()
     await clickMenuItem(container, baseElement, t('navigation.project.routines'))
 
-    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '成员', '定时与触发', '项目文档'])
+    expect(await pagesIn(container, baseElement)).toEqual(['资料库', '成员', '定时与触发', '项目文档'])
     expect(localStorage.getItem('cheesex.shellRevealed.v1:me')).toContain('project-routines')
   })
 
@@ -208,8 +216,8 @@ describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
     first.unmount()
 
     localStorage.setItem('user', JSON.stringify({ id: 2, username: 'someone-else', nickname: '别人' }))
-    const { container } = mount()
-    expect(titlesIn(container, '.pinned-row')).toEqual(['综合', '资料库', '成员', '项目文档'])
+    const { container, baseElement } = mount()
+    expect(await pagesIn(container, baseElement)).toEqual(['资料库', '成员', '项目文档'])
   })
 
   it('重新挂载之后仍然是展开的', async () => {
@@ -217,7 +225,7 @@ describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
     await clickMenuItem(first.container, first.baseElement, t('navigation.project.routines'))
     first.unmount()
 
-    const { container } = mount()
-    expect(titlesIn(container, '.pinned-row')).toContain('定时与触发')
+    const { container, baseElement } = mount()
+    expect(await pagesIn(container, baseElement)).toContain('定时与触发')
   })
 })

@@ -10,7 +10,9 @@
     "settings": "Project settings",
     "general": "General",
     "routines": "Routines",
-    "skills": "Skills"
+    "skills": "Skills",
+    "pages": "Project pages",
+    "morePages": "More pages"
   },
   "spaces": "Spaces",
   "teams": "Teams",

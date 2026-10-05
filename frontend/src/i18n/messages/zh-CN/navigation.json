@@ -10,7 +10,9 @@
     "settings": "项目设置",
     "general": "综合",
     "routines": "定时与触发",
-    "skills": "技能"
+    "skills": "技能",
+    "pages": "项目页面",
+    "morePages": "更多页面"
   },
   "spaces": "空间",
   "teams": "团队",

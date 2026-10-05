@@ -19,6 +19,7 @@ import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailGroupToggle from '@/components/topic-sidebar/TopicRailGroupToggle.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
+import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
@@ -128,73 +129,55 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-pinned',
     title: 'TopicRailPinnedRows',
-    about: '话题列表顶上那几行置顶入口：全局房间、这个项目露出来的几页、项目文档。',
+    about: '项目名下面那一行：这个项目自己的几页压成一行，放不下的收进「⋯」。',
     file: 'src/components/topic-sidebar/TopicRailPinnedRows.vue',
     component: TopicRailPinnedRows,
     // 只读词表和 props：哪几页露出来了、当前在哪一页，都是父级算好递进来的。
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '置顶上那组入口',
-        note: '和话题行同一种语法（同图标槽、同缩进、同选中态）：点它会发生什么，不用另学一遍。',
+        name: '一行入口',
+        note: '前三项直接摆出来，其余的在「⋯」里；成员那一项挂着私聊未读。',
         props: {
-          rootTopic: RAIL_ROOT_TOPIC,
-          selectedTopicId: null,
           pages: RAIL_PAGES,
           routeName: 'project-library',
           terms: RAIL_TERMS,
           docsActive: false,
           privateUnreadTotal: 3,
           page: false,
-          unreadOf: (id: string) => (id === 't-root' ? 3 : 0),
         },
         expect: '资料库',
       },
       {
-        name: '站在全局房间里',
-        note: '选中态落在「全局」那一行上，它的未读角标也亮着——置顶行和话题行是同一套。',
+        name: '手机上：这一行收进项目菜单',
+        note: '整页形态里这几页在项目名旁边那颗 ⌄ 里，这一行不画。',
         props: {
-          rootTopic: RAIL_ROOT_TOPIC,
-          selectedTopicId: 't-root',
-          pages: RAIL_PAGES,
-          routeName: 'workspace-running',
-          terms: RAIL_TERMS,
-          docsActive: false,
-          privateUnreadTotal: 0,
-          page: false,
-          unreadOf: () => 0,
-        },
-        expect: '综合',
-      },
-      {
-        name: '打开的是项目文档',
-        note: '四种文档（章程/决策/周报/记忆）在侧栏只占这一行，任何一种开着它都是选中态。',
-        props: {
-          rootTopic: RAIL_ROOT_TOPIC,
-          selectedTopicId: null,
-          pages: RAIL_PAGES,
-          routeName: 'project-docs',
-          terms: RAIL_TERMS,
-          docsActive: true,
-          privateUnreadTotal: 0,
-          page: false,
-          unreadOf: () => 0,
-        },
-        expect: '项目文档',
-      },
-      {
-        name: '手机上：列表只留话题',
-        note: '那几页收进了项目名旁边那颗 ⌄（整页形态的列表只留话题），所以这里只剩「全局」一行。',
-        props: {
-          rootTopic: RAIL_ROOT_TOPIC,
-          selectedTopicId: null,
           pages: RAIL_PAGES,
           routeName: 'workspace-running',
           terms: RAIL_TERMS,
           docsActive: false,
           privateUnreadTotal: 0,
           page: true,
-          unreadOf: () => 0,
+        },
+      },
+    ],
+  },
+  {
+    id: 'topic-rail-root',
+    title: 'TopicRailRootRow',
+    about: '频道分组的第一行：项目自带的频道「综合」，固定在最上面。',
+    file: 'src/components/topic-sidebar/TopicRailRootRow.vue',
+    component: TopicRailRootRow,
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '站在综合里',
+        note: '选中态和未读角标都和频道行同一套。',
+        props: {
+          rootTopic: RAIL_ROOT_TOPIC,
+          selectedTopicId: 't-root',
+          page: false,
+          unreadOf: (id: string) => (id === 't-root' ? 3 : 0),
         },
         expect: '综合',
       },

@@ -257,11 +257,13 @@ describe('左侧话题列表：按相关性分两组', () => {
     expect(visibleTitles(container)).toEqual(['mine'])
   })
 
-  it('一个都不相关时，上组说清楚空的是这一组、不是这个项目', () => {
+  it('一个都不相关时，综合仍在最上面，其余收在「其他频道」里', () => {
     const patched = topics.map((t) => (t.id.startsWith('mine') ? ({ ...t, i_participate: false } as Topic) : t))
     const { container } = mount({ topics: patched })
     expect(visibleTitles(container)).toEqual([])
-    expect(container.textContent).toContain('暂无与你相关的频道')
+    // 综合永远是频道分组的第一行，所以上组从来不是空的，不用再解释。
+    expect(container.querySelector('.pinned-row')?.textContent).toContain('综合')
+    expect(container.textContent).not.toContain('暂无与你相关的频道')
     expect(container.textContent).not.toContain('暂无频道')
     expect(othersHead(container).querySelector('.group-count')?.textContent?.trim()).toBe('5')
   })
