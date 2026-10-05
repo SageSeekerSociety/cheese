@@ -15,6 +15,10 @@ own executor dies on the lock, and the platform tells the room its executor
 failed to start.
 """
 
+import functools
+import os
+import runpy
+import signal
 import subprocess
 import sys
 import time
@@ -114,6 +118,73 @@ def stop_predecessor(state):
         raise RuntimeError(
             f"The executor that owns {state} did not stop; a second one cannot take it"
         ) from exc
+
+
+@functools.cache
+def runtime_module():
+    """The release's `runtime.py`, loaded by path the way this file was.
+
+    Cached, and the handle everything else here goes through: `beside` below is
+    `runtime.beside`, so a sibling is loaded one way in this release and not two.
+    """
+    return runpy.run_path(str(Path(__file__).with_name("runtime.py")))
+
+
+def command_line(pid):
+    """How this machine spells the command line of a process, or "".
+
+    Asked of the machine's own table, because `ps` is not a Windows program:
+    there `portable.processes()` reads the same thing of every process this
+    user can see. One implementation, since the test below it is the only proof
+    that a pid is the process this module means to end.
+    """
+    if sys.platform == "win32":
+        rows = runtime_module()["beside"]("portable")["processes"]()
+        return next((row["command"] for row in rows if row["pid"] == pid), "")
+    return subprocess.run(
+        ["ps", "-ww", "-p", str(pid), "-o", "args="],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.rstrip()
+
+
+def serving(command, state, named):
+    """Whether `command` is an executor serving this state, however it is spelled.
+
+    The state has three spellings between the room's own record, the service
+    started for it, and the path a sandbox's `/proc/self/fd/N` resolves to; on
+    Windows an argument with a space in it arrives quoted.
+    """
+    tails = [
+        spelling
+        for path in {str(named), str(state), str(Path(state).resolve())}
+        for spelling in (f"serve --state {path}", f'serve --state "{path}"')
+    ]
+    return any(command.endswith(tail) for tail in tails)
+
+
+def end_unrequested(state, named):
+    """End an executor that refused `shutdown`: one started before stopping was
+    a request.
+
+    Signal the pid it reports once its command line is seen running this state's
+    service: whatever answers on a room's socket is not proof of who is behind
+    it, and neither is a pid. The signal is this machine's own — a console-less
+    process has no gentler request than `terminate_tree` on Windows (which takes
+    the programs it started with it, as they are its children and not the
+    room's), and SIGTERM elsewhere, which `serve` handles by shutting down.
+    """
+    try:
+        pid = runtime_module()["request"](state, "ping")["pid"]
+    except (OSError, RuntimeError):
+        return
+    if not serving(command_line(pid), state, named):
+        return
+    if sys.platform == "win32":
+        runtime_module()["beside"]("portable")["terminate_tree"](pid)
+    else:
+        os.kill(pid, signal.SIGTERM)
 
 
 def refuse_if_served(state, runtime):
