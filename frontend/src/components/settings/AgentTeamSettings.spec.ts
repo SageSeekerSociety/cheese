@@ -124,8 +124,8 @@ describe('队友名册', () => {
       total: 2,
     })
     mountPage()
-    expect(await screen.findByText('@cheese · 通用')).toBeTruthy()
-    expect(await screen.findByText('@reviewer · 代码评审')).toBeTruthy()
+    expect(await screen.findByText('cheese · 通用')).toBeTruthy()
+    expect(await screen.findByText('reviewer · 代码评审')).toBeTruthy()
   })
 
   it('每一行写着模型和思考强度，跟随项目时写出项目那个模型', async () => {

@@ -305,7 +305,7 @@ async function onSetRole(handle: string, role: string) {
           }}</span>
           <span class="roster__who">
             <span class="roster__name">{{ memberName(m) || m.member_handle }}</span>
-            <span class="roster__handle">@{{ m.member_handle }}</span>
+            <span class="roster__handle">{{ m.member_handle }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />

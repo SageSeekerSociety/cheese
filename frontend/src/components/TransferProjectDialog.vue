@@ -230,7 +230,7 @@ async function doTransfer() {
               <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="28" class="me-3" />
             </template>
             <v-list-item-title class="t-body">{{ m.name || m.user_handle }}</v-list-item-title>
-            <v-list-item-subtitle class="t-meta">@{{ m.user_handle }}</v-list-item-subtitle>
+            <v-list-item-subtitle class="t-meta">{{ m.user_handle }}</v-list-item-subtitle>
           </v-list-item>
         </v-list>
       </template>
@@ -258,7 +258,7 @@ async function doTransfer() {
             <UserAvatar :name="found.name || found.handle" :avatar="foundFace(found)" :size="28" class="me-3" />
           </template>
           <v-list-item-title class="t-body">{{ found.name || found.handle }}</v-list-item-title>
-          <v-list-item-subtitle class="t-meta">@{{ found.handle }}</v-list-item-subtitle>
+          <v-list-item-subtitle class="t-meta">{{ found.handle }}</v-list-item-subtitle>
         </v-list-item>
       </v-list>
 
