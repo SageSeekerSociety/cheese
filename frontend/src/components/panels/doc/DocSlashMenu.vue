@@ -28,73 +28,42 @@ watch(
   () => props.index,
   () => {
     void nextTick(() => {
-      menuEl.value?.querySelector('.doc-slash__item--active')?.scrollIntoView({ block: 'nearest' })
+      menuEl.value?.querySelector('.doc-menu__item.is-active')?.scrollIntoView({ block: 'nearest' })
     })
   }
 )
 </script>
 
 <template>
-  <div ref="menuEl" class="doc-slash__menu" :style="{ top: `${top}px`, left: `${left}px` }">
+  <div ref="menuEl" class="doc-menu doc-slash__menu" role="menu" :style="{ top: `${top}px`, left: `${left}px` }">
     <button
       v-for="(it, i) in items"
       :key="it.key"
       type="button"
-      class="doc-slash__item"
-      :class="{ 'doc-slash__item--active': i === index }"
+      role="menuitem"
+      class="doc-menu__item"
+      :class="{ 'is-active': i === index }"
       @mousedown.prevent
       @mouseenter="emit('hover', i)"
       @click="emit('pick', it)"
     >
-      <v-icon size="15" class="doc-slash__icon">{{ it.icon }}</v-icon>
-      <span class="doc-slash__label">{{ it.label }}</span>
-      <span class="doc-slash__hint">{{ it.hint }}</span>
+      <v-icon size="16">{{ it.icon }}</v-icon>
+      <span class="doc-menu__label">{{ it.label }}</span>
+      <span class="doc-menu__hint">{{ it.hint }}</span>
     </button>
   </div>
 </template>
 
 <style scoped>
+/* 外观在 styles/docBlocks.css 的 .doc-menu：这里只管摆在哪、多高。 */
 .doc-slash__menu {
   position: absolute;
   z-index: var(--z-raised-7);
-  display: flex;
-  flex-direction: column;
   min-width: 196px;
   max-height: 300px;
   overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  box-shadow: var(--shadow-2);
-  padding: 4px;
 }
-.doc-slash__item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  background: none;
-  text-align: left;
-  font-size: 13px;
-  color: var(--ink);
-  padding: 6px 9px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.doc-slash__item--active {
-  background: var(--fill);
-}
-.doc-slash__icon {
-  color: var(--muted);
-  flex: 0 0 auto;
-}
-.doc-slash__label {
-  flex: 1 1 auto;
-}
-.doc-slash__hint {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--faint);
+.doc-menu__hint {
+  padding-left: 16px;
 }
 </style>

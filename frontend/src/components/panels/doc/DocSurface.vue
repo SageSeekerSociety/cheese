@@ -648,8 +648,10 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   padding-bottom: 32px;
   max-width: 720px;
   margin: 0 auto;
+  /* 长文的阅读档，和文档站正文同一档（设计系统 §3.2）：一篇文档一读就是几屏，
+     聊天那一档 15 / 24 放在这里字偏小、行偏挤。 */
   font-size: 16px;
-  line-height: 1.5;
+  line-height: 28px;
   overflow-wrap: break-word;
   caret-color: var(--ink);
   color: var(--text);
@@ -697,23 +699,31 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(h5),
 .doc-editor :deep(h6) {
   font-weight: 600;
-  line-height: 1.5;
-  margin: 12px 0 -4px;
   color: var(--ink);
 }
+/* 标题按设计系统的字号表（23 / 18），再往下与正文同大、只靠字重分级。上面空得比下面
+   多：标题跟着它下面那一段走。 */
 .doc-editor :deep(h1) {
-  font-size: 22px;
+  margin: 32px 0 8px;
+  font-size: 23px;
+  line-height: var(--lh-23);
 }
 .doc-editor :deep(h2) {
+  margin: 24px 0 8px;
   font-size: 18px;
+  line-height: var(--lh-18);
 }
 .doc-editor :deep(h3),
 .doc-editor :deep(h4) {
+  margin: 16px 0 4px;
   font-size: 16px;
+  line-height: 28px;
 }
 .doc-editor :deep(h5),
 .doc-editor :deep(h6) {
-  font-size: 14px;
+  margin: 16px 0 4px;
+  font-size: 15px;
+  line-height: var(--lh-15);
 }
 /* The doc starts flush: no phantom gap above a leading heading. */
 .doc-editor :deep(.doc-prose > :first-child) {
@@ -721,6 +731,10 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 }
 .doc-editor :deep(p) {
   margin: 0;
+}
+/* 连着的两段之间留一点：回车分开的就是两段话，挤在一起读着像一段。 */
+.doc-editor :deep(p + p) {
+  margin-top: 8px;
 }
 .doc-editor :deep(ul),
 .doc-editor :deep(ol) {
@@ -793,7 +807,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   color: var(--muted);
 }
 .doc-editor :deep(blockquote blockquote) {
-  margin: 0.4em 0;
+  margin: 8px 0;
   background: transparent;
 }
 .doc-editor :deep(blockquote p:last-child) {
@@ -802,9 +816,9 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(code) {
   font-family: var(--font-mono);
   background: var(--fill);
-  padding: 0.5px 5px;
+  padding: 0 4px;
   border-radius: var(--radius-sm);
-  font-size: 0.87em;
+  font-size: 14px;
 }
 /* 代码块: light ground + hairline, language tag in the top-right corner
    (hidden while hovered — the copy button takes that spot). */
@@ -812,12 +826,12 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   position: relative;
   background: var(--canvas);
   border: 1px solid var(--line-2);
-  padding: 13px 15px;
-  border-radius: 8px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
   overflow-x: auto;
-  margin: 0.7em 0;
-  font-size: 0.855em;
-  line-height: 1.6;
+  margin: 12px 0;
+  font-size: 14px;
+  line-height: var(--lh-14-loose);
 }
 /* The static corner tag yields whenever the interactive code bar is up —
    two things must never occupy the corner at once. The bar anchors on the
@@ -851,7 +865,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(hr) {
   border: none;
   border-top: 1px solid var(--line-2);
-  margin: 1.6em 0;
+  margin: 24px 0;
 }
 /* 链接: 主题琥珀 ink, quiet until hover. */
 .doc-editor :deep(a) {
@@ -894,9 +908,9 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 }
 .doc-editor :deep(img) {
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   display: block;
-  margin: 0.6em 0;
+  margin: 12px 0;
 }
 /* 整块被选中（点了图表或图片，或在图表、表格这类块后面按一下退格）：框出来，再按
    退格删掉的就是它。 */

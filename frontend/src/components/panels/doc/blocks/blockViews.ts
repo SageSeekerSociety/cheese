@@ -342,6 +342,7 @@ const footnoteRefView: ViewFactory = ({ node, editor }) => {
     if (note && editor.isEditable) {
       const go = document.createElement('button')
       go.type = 'button'
+      go.className = 'doc-menu__item'
       go.textContent = t('work.room.doc.blocks.editFootnote')
       go.addEventListener('click', () => {
         closePopover()

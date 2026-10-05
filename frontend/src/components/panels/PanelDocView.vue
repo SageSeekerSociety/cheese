@@ -588,9 +588,9 @@ defineExpose({
   max-width: 720px;
   margin: 0 auto 24px;
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 23px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: var(--lh-23);
   letter-spacing: -0.02em;
   color: var(--ink);
 }
@@ -650,7 +650,7 @@ defineExpose({
 .md-content :deep(pre) {
   background: var(--fill);
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow-x: auto;
 }
 

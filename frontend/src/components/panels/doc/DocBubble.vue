@@ -205,20 +205,22 @@ useFocusReturn(blockOpen)
             {{ currentBlock.label }}
             <v-icon size="14">mdi-chevron-down</v-icon>
           </button>
-          <div v-if="blockOpen" class="doc-bubble__menu" role="menu">
-            <button
-              v-for="item in BLOCK_ITEMS"
-              :key="item.key"
-              type="button"
-              role="menuitemradio"
-              :aria-checked="item.key === currentBlock.key"
-              class="doc-bubble__item"
-              @click="pickBlock(item.run)"
-            >
-              <v-icon size="16">{{ item.icon }}</v-icon>
-              {{ item.label }}
-            </button>
-          </div>
+          <Transition name="doc-menu">
+            <div v-if="blockOpen" class="doc-menu doc-bubble__menu" role="menu">
+              <button
+                v-for="item in BLOCK_ITEMS"
+                :key="item.key"
+                type="button"
+                role="menuitemradio"
+                :aria-checked="item.key === currentBlock.key"
+                class="doc-menu__item"
+                @click="pickBlock(item.run)"
+              >
+                <v-icon size="16">{{ item.icon }}</v-icon>
+                {{ item.label }}
+              </button>
+            </div>
+          </Transition>
         </div>
         <button
           v-for="item in marks"
@@ -297,12 +299,13 @@ useFocusReturn(blockOpen)
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);
   font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--text);
   background: var(--raised);
   box-shadow: var(--shadow-2);
   white-space: nowrap;
 }
-.doc-bubble button {
+.doc-bubble button:not(.doc-menu__item) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -315,9 +318,9 @@ useFocusReturn(blockOpen)
   cursor: pointer;
   transition: background var(--dur-quick) var(--ease-standard);
 }
-.doc-bubble button:hover:not(:disabled),
-.doc-bubble button[aria-pressed='true'],
-.doc-bubble button[aria-expanded='true'] {
+.doc-bubble button:not(.doc-menu__item):hover:not(:disabled),
+.doc-bubble button:not(.doc-menu__item)[aria-pressed='true'],
+.doc-bubble button:not(.doc-menu__item)[aria-expanded='true'] {
   background: var(--fill);
 }
 .doc-bubble button[aria-pressed='true'] {
@@ -377,6 +380,7 @@ useFocusReturn(blockOpen)
 }
 /* 键盘上方那一条在屏幕最下面：块样式的菜单往上开。 */
 .doc-bubble--bar .doc-bubble__menu {
+  --doc-menu-from: 4px;
   position: fixed;
   top: auto;
   bottom: calc(var(--doc-keyboard-bar-bottom, 0px) + 52px);
@@ -391,32 +395,10 @@ useFocusReturn(blockOpen)
 .doc-bubble__blocks {
   position: relative;
 }
-/* 块样式的菜单是浅色的一张，和 slash 菜单一个样子。 */
+/* 块样式的菜单：外观在 styles/docBlocks.css 的 .doc-menu，这里只管摆在哪。 */
 .doc-bubble__menu {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  display: flex;
-  flex-direction: column;
-  min-width: 168px;
-  padding: 4px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  background: var(--raised);
-  box-shadow: var(--shadow-2);
-}
-.doc-bubble .doc-bubble__item {
-  justify-content: flex-start;
-  gap: 10px;
-  height: 32px;
-  color: var(--ink);
-  font-size: 13px;
-}
-.doc-bubble .doc-bubble__item:hover,
-.doc-bubble .doc-bubble__item[aria-checked='true'] {
-  background: var(--fill);
-}
-.doc-bubble__item .v-icon {
-  color: var(--muted);
 }
 </style>

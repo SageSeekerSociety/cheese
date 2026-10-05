@@ -689,13 +689,17 @@
    再上移一档，不然会和浮层底一样亮、看不见；浅色下两者本来就分得开，不动。 */
 .v-menu > .v-overlay__content,
 .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content,
-.mention-menu {
+.mention-menu,
+.doc-menu,
+.doc-pop {
   --surface: var(--raised);
 }
 
 :root[data-theme='dark'] .v-menu > .v-overlay__content,
 :root[data-theme='dark'] .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content,
-:root[data-theme='dark'] .mention-menu {
+:root[data-theme='dark'] .mention-menu,
+:root[data-theme='dark'] .doc-menu,
+:root[data-theme='dark'] .doc-pop {
   --fill: var(--fill-2);
 }
 

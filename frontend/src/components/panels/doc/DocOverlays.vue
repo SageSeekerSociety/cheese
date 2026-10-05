@@ -627,15 +627,17 @@ defineExpose({ onHover, onEdited })
      clientRect), wrap-relative like the other overlays. Keyboard
      (↑↓/Enter/Esc) is handled in the suggestion plugin; the mouse
      path routes through the same command(). -->
-  <DocSlashMenu
-    v-if="slashMenu"
-    :items="slashMenu.items"
-    :index="slashMenu.index"
-    :top="slashMenu.top"
-    :left="slashMenu.left"
-    @pick="emit('pick', $event)"
-    @hover="emit('hover', $event)"
-  />
+  <Transition name="doc-menu">
+    <DocSlashMenu
+      v-if="slashMenu"
+      :items="slashMenu.items"
+      :index="slashMenu.index"
+      :top="slashMenu.top"
+      :left="slashMenu.left"
+      @pick="emit('pick', $event)"
+      @hover="emit('hover', $event)"
+    />
+  </Transition>
   <!-- Code-block hover toolbar: ONE right-anchored flex bar
      ([language ∨][copy]) growing leftward — the two controls can
      no longer overlap however long the language name gets. -->
@@ -645,11 +647,21 @@ defineExpose({ onHover, onEdited })
         {{ currentCodeLang() }}
         <v-icon size="12">mdi-chevron-down</v-icon>
       </button>
-      <div v-if="codeLangOpen" class="doc-codelang__menu">
-        <button v-for="l in CODE_LANGS" :key="l" type="button" class="doc-codelang__item" @click="setCodeBlockLang(l)">
-          {{ l }}
-        </button>
-      </div>
+      <Transition name="doc-menu">
+        <div v-if="codeLangOpen" class="doc-menu doc-codelang__menu" role="menu">
+          <button
+            v-for="l in CODE_LANGS"
+            :key="l"
+            type="button"
+            role="menuitemradio"
+            :aria-checked="l === currentCodeLang()"
+            class="doc-menu__item doc-codelang__item"
+            @click="setCodeBlockLang(l)"
+          >
+            {{ l }}
+          </button>
+        </div>
+      </Transition>
     </div>
     <button
       type="button"
@@ -693,44 +705,46 @@ defineExpose({ onHover, onEdited })
     </span>
   </DragHandle>
   <Teleport to="body">
-    <div
-      v-if="blockMenu"
-      class="doc-block-menu"
-      role="menu"
-      :aria-label="t('work.room.doc.blockType')"
-      :style="{ top: `${blockMenu.top}px`, left: `${blockMenu.left}px` }"
-    >
-      <template v-if="blockMenu.converts">
-        <button
-          v-for="item in BLOCK_ITEMS"
-          :key="item.key"
-          type="button"
-          role="menuitemradio"
-          :aria-checked="item.key === blockMenu.current"
-          class="doc-block-menu__item"
-          @click="pickBlock(item)"
-        >
-          <v-icon size="16">{{ item.icon }}</v-icon>
-          {{ item.label }}
+    <Transition name="doc-menu">
+      <div
+        v-if="blockMenu"
+        class="doc-menu doc-block-menu"
+        role="menu"
+        :aria-label="t('work.room.doc.blockType')"
+        :style="{ top: `${blockMenu.top}px`, left: `${blockMenu.left}px` }"
+      >
+        <template v-if="blockMenu.converts">
+          <button
+            v-for="item in BLOCK_ITEMS"
+            :key="item.key"
+            type="button"
+            role="menuitemradio"
+            :aria-checked="item.key === blockMenu.current"
+            class="doc-menu__item"
+            @click="pickBlock(item)"
+          >
+            <v-icon size="16">{{ item.icon }}</v-icon>
+            {{ item.label }}
+          </button>
+          <div class="doc-menu__sep" role="separator" />
+        </template>
+        <button type="button" role="menuitem" class="doc-menu__item" @click="deleteBlock">
+          <v-icon size="16">mdi-trash-can-outline</v-icon>
+          {{ t('work.room.doc.deleteBlock') }}
         </button>
-        <div class="doc-block-menu__sep" role="separator" />
-      </template>
-      <button type="button" role="menuitem" class="doc-block-menu__item" @click="deleteBlock">
-        <v-icon size="16">mdi-trash-can-outline</v-icon>
-        {{ t('work.room.doc.deleteBlock') }}
-      </button>
-    </div>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
 <style scoped>
 .doc-comment-cta-enter-active {
   transition:
-    opacity 120ms ease-out,
-    transform 140ms cubic-bezier(0.2, 0, 0, 1);
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 .doc-comment-cta-leave-active {
-  transition: opacity 80ms ease-in;
+  transition: opacity var(--dur-quick) var(--ease-in);
 }
 .doc-comment-cta-enter-from {
   opacity: 0;
@@ -738,12 +752,6 @@ defineExpose({ onHover, onEdited })
 }
 .doc-comment-cta-leave-to {
   opacity: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .doc-comment-cta-enter-active,
-  .doc-comment-cta-leave-active {
-    transition: none;
-  }
 }
 /* 浮条的外框：只管摆在哪儿，样子在 DocBubble 里。 */
 .doc-comment-cta {
@@ -757,57 +765,10 @@ defineExpose({ onHover, onEdited })
     display: none;
   }
 }
-/* 点手柄开出的那张：和浮条上的「正文 ▾」一个样子。 */
+/* 点手柄开出的那张：外观在 styles/docBlocks.css 的 .doc-menu，这里只管摆在哪。 */
 .doc-block-menu {
   position: fixed;
   z-index: var(--z-overlay);
-  display: flex;
-  flex-direction: column;
-  min-width: 168px;
-  padding: 4px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  background: var(--raised);
-  box-shadow: var(--shadow-2);
-  animation: docBlockMenuIn 120ms ease-out;
-}
-@keyframes docBlockMenuIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-.doc-block-menu__item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 32px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-.doc-block-menu__item:hover,
-.doc-block-menu__item[aria-checked='true'] {
-  background: var(--fill);
-}
-.doc-block-menu__item .v-icon {
-  color: var(--muted);
-}
-.doc-block-menu__sep {
-  height: 1px;
-  margin: 4px 0;
-  background: var(--line);
-}
-@media (prefers-reduced-motion: reduce) {
-  .doc-block-menu {
-    animation: none;
-  }
 }
 /* Feishu-style left gutter block handles — REAL controls, not decoration.
    The DragHandle floats next to the hovered block (positioned by the extension).
@@ -823,6 +784,14 @@ defineExpose({ onHover, onEdited })
   padding-right: 6px;
   /* Nudge down so the 22px buttons center on the ~29px first text line. */
   transform: translateY(3.4px);
+  /* The extension shows and hides it with an inline visibility; it fades
+     instead of blinking, and stays visible until the fade is done. */
+  transition:
+    opacity var(--dur-quick) var(--ease-standard),
+    visibility var(--dur-quick);
+}
+.doc-handle[style*='hidden'] {
+  opacity: 0;
 }
 .doc-handle__btn {
   width: 18px;
@@ -838,8 +807,8 @@ defineExpose({ onHover, onEdited })
   border-radius: var(--radius-sm);
   user-select: none;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
 }
 .doc-handle__add {
   cursor: pointer;
@@ -879,54 +848,38 @@ defineExpose({ onHover, onEdited })
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  padding: 2px 8px;
   border: 1px solid var(--line-2);
-  background: var(--surface);
-  border-radius: 6px;
-  padding: 2px 7px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
+  line-height: var(--lh-12);
   color: var(--muted);
+  background: var(--surface);
   cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
 }
 .doc-codelang__chip:hover {
   color: var(--ink);
   background: var(--fill);
 }
+/* 外观在 styles/docBlocks.css 的 .doc-menu。 */
 .doc-codelang__menu {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  display: flex;
-  flex-direction: column;
+  min-width: 140px;
   max-height: 260px;
   overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  box-shadow: var(--shadow-2);
-  padding: 4px;
-  min-width: 120px;
 }
 .doc-codelang__item {
-  border: none;
-  background: none;
-  text-align: left;
-  font-size: 13px;
-  font-family: ui-monospace, monospace;
-  color: var(--ink);
-  padding: 5px 9px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+  font-family: var(--font-mono);
 }
-.doc-codelang__item:hover {
-  background: var(--fill);
-}
-
-/* Notion-style slash menu — same visual language as .doc-codelang__menu:
-   surface ground, hairline border, radius 8, soft shadow; the active item
-   (keyboard or hover) sits on --fill. */
 
 /* Code-block copy button: the chat hover-action language — surface ground,
-   hairline border, muted icon, only present while hovering the block. */
+   hairline border, muted icon, only present while hovering the block. It sits
+   on the page, so no shadow (design-system §3.4). */
 .doc-codecopy {
   z-index: var(--z-raised-5);
   display: inline-flex;
@@ -935,14 +888,13 @@ defineExpose({ onHover, onEdited })
   width: 26px;
   height: 24px;
   border: 1px solid var(--line-2);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--muted);
   cursor: pointer;
-  box-shadow: var(--shadow-1);
   transition:
-    color 0.12s ease,
-    border-color 0.12s ease;
+    color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
 }
 .doc-codecopy:hover {
   color: var(--ink);
