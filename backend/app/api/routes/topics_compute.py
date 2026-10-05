@@ -289,6 +289,11 @@ async def acquire_session_work_lease(
         # client asks again until its own deadline (`executor_transport.acquire`).
         # A 504 here reached the agent as a failed tool call it read as final,
         # and it slept instead of letting the next call wait.
+        # The step it outlasted may have been a query — waiting on the room's
+        # lock while a switch pushes, say — and a query cancelled mid-flight
+        # leaves the session unusable: the commit after this answer would
+        # raise and turn it into a 500. Nothing of this attempt is kept.
+        await db.rollback()
         return ok({"unavailable": str(say("workComputerPreparing")), "preparing": True})
 
 
