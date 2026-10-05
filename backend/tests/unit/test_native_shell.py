@@ -7,6 +7,7 @@ writes.
 """
 
 import base64
+import errno
 import json
 import os
 import shlex
@@ -166,6 +167,68 @@ def test_the_same_start_is_one_command_and_other_input_is_refused(machine):
     assert (machine.workspace / "count.txt").read_text() == "x"
     with pytest.raises(RuntimeError, match="different input"):
         machine.start("once", "printf y >> count.txt")
+
+
+def test_a_record_that_will_not_take_the_exit_code_still_ends_the_reader(
+    tmp_path, monkeypatch
+):
+    """A record that refuses the exit code — a machine with no room left for it
+    (2026-10-03) — must not leave the command in `running`: its reader would
+    then never see an `exit` and never hear that it was lost, and the room's
+    Bash call would wait for an answer that never comes."""
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.json").write_text(
+        json.dumps({"workspace": str(workspace), "claude": claude_binary(), "env": {}})
+    )
+    executor = runtime.Executor(state)
+    monkeypatch.setattr(executor, "shell_snapshot", lambda: None)
+    record = state / "commands" / "unrecorded"
+    writes = Path.write_text
+    try:
+        executor.shell(
+            {
+                "operation": "start",
+                "command_id": "unrecorded",
+                "kind": "sh",
+                "body": "while [ ! -e go ]; do sleep 0.05; done; exit 5",
+                "cwd": str(workspace),
+                "env": {},
+                "merge": True,
+                "stdin": None,
+            }
+        )
+
+        # What is written into the record goes in nowhere, as a full disk leaves
+        # no room for it: the exit code's file included.
+        def no_room(where, *args, **kwargs):
+            if where.parent == record:
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return writes(where, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", no_room)
+        (workspace / "go").write_text("")
+
+        deadline = time.monotonic() + 20
+        while True:
+            answer = executor.shell(
+                {
+                    "operation": "read",
+                    "command_id": "unrecorded",
+                    "out": 0,
+                    "err": 0,
+                    "wait": 1,
+                }
+            )
+            if answer.get("lost") or "exit" in answer:
+                break
+            assert time.monotonic() < deadline, answer
+        assert answer.get("lost"), answer
+        assert executor.dispatch("ping", {})["running_commands"] == 0
+    finally:
+        executor.close()
 
 
 def test_forget_takes_a_finished_command_and_leaves_a_running_one(machine):

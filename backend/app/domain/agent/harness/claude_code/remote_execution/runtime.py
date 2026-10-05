@@ -749,18 +749,18 @@ class Executor:
 
     def _wait_command(self, command_id, process):
         code = process.wait()
-        record = self._record(command_id)
         # Negative for a POSIX child killed by signal n, kept so its reader can
-        # end the same way.
-        temporary = record / ("exit." + uuid.uuid4().hex)
-        temporary.write_text(str(code))
-        # Renamed in and taken off `running` as one step: a reader answers
-        # `exit` once the file is there, and `forget` refuses a command still
-        # in `running`, so apart they would call one command both.
-        with self.command_lock:
-            temporary.replace(record / "exit")
-            self.running.pop(command_id, None)
-            self.collected[command_id] = time.time()
+        # end the same way. Renamed in and off `running` as one step, and that
+        # step is a `finally`: a full disk (2026-10-03) must not strand a reader.
+        temporary = self._record(command_id) / ("exit." + uuid.uuid4().hex)
+        try:
+            temporary.write_text(str(code))
+        finally:
+            with self.command_lock:
+                with contextlib.suppress(OSError):
+                    temporary.replace(temporary.with_name("exit"))
+                self.running.pop(command_id, None)
+                self.collected[command_id] = time.time()
         self.log(command_id, "exited", exit_code=code)
 
     def _tree(self, pid):
