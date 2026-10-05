@@ -118,7 +118,7 @@ async def project_owner(session: AsyncSession, project_id: uuid.UUID) -> str | N
     )
 
 
-async def legacy_execution(session: AsyncSession, place_id: uuid.UUID):
+async def legacy_execution(session: AsyncSession, conversation_id: uuid.UUID):
     """Only an un-upgraded lease can be addressed by a pre-session credential.
 
     A new session becoming the sole row never grants an old room token access.
@@ -129,7 +129,7 @@ async def legacy_execution(session: AsyncSession, place_id: uuid.UUID):
             select(
                 AgentSession.id, AgentSession.runtime_location, AgentSession.work_lease
             )
-            .where(AgentSession.topic_id == place_id)
+            .where(AgentSession.conversation_id == conversation_id)
             .with_for_update()
         )
     ).all()
@@ -144,10 +144,9 @@ async def legacy_execution(session: AsyncSession, place_id: uuid.UUID):
     return legacy[0] if len(legacy) == 1 else None
 
 
-async def session_execution(
-    session: AsyncSession, place_id: uuid.UUID, session_id: uuid.UUID
-):
-    """Read exactly the session named by the signed execution credential."""
+async def session_execution(session: AsyncSession, session_id: uuid.UUID):
+    """Read exactly the session named by the signed execution credential. The
+    caller checks it is the credential's conversation's."""
     return (
         await session.execute(
             select(
@@ -155,7 +154,7 @@ async def session_execution(
                 AgentSession.work_lease,
                 AgentSession.conversation_id,
             )
-            .where(AgentSession.topic_id == place_id, AgentSession.id == session_id)
+            .where(AgentSession.id == session_id)
             .with_for_update()
         )
     ).one_or_none()

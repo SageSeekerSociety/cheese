@@ -119,12 +119,12 @@ async def execute(
             raise AuthenticationRequiredError(
                 "An execution session is required"
             ) from None
-        owned = await owner_reads.session_execution(db, room_id, session_id)
+        owned = await owner_reads.session_execution(db, session_id)
         # A credential reaches only a session of its own conversation.
         if owned is not None and owned.conversation_id != topic_id:
             raise ForbiddenError("This credential works another conversation")
     else:
-        owned = await owner_reads.legacy_execution(db, room_id)
+        owned = await owner_reads.legacy_execution(db, topic_id)
         session_id = owned.id if owned is not None else None
     lease = owned.work_lease if owned is not None else None
     if (
