@@ -185,9 +185,11 @@ def test_a_sandbox_is_charged_for_the_time_it_runs_and_not_while_it_sleeps(cloud
     # its usage page shows them as 算力.
     assert credits_used(cloud) == pytest.approx(total)
 
+    team_id = team_of(cloud)
+
     async def team_page():
         async with cloud.client.test_request_factory() as db:
-            team = await team_service(db).get_team(team_of(cloud))
+            team = await team_service(db).get_team(team_id)
             return await UsageReport(db).team(team.id, team.plan_key)
 
     page = run(cloud, team_page)
