@@ -85,6 +85,13 @@ _create_locks: dict[uuid.UUID, asyncio.Lock] = {}
 # A home's ``active_at`` moves at most this often: every tool call passes
 # through placement, and idleness is measured in minutes.
 ACTIVE_STEP = timedelta(minutes=1)
+#: Why a room's cleanup waits on an archived home: the reason it records, and
+#: what ``GET /topics/{id}/cleanup`` reports. Unarchiving the room restores the
+#: home from the archive on its session's next tool call.
+UNPUSHED_ARCHIVE = (
+    "an archived sandbox home holds work that was not pushed; "
+    "it is kept in the archive, and unarchiving the room restores it"
+)
 
 
 class CloudKeepsFailing(Exception):
@@ -645,12 +652,30 @@ class HostPool:
         self, topic_id: uuid.UUID, room_resource_id: str
     ) -> None:
         """A room's cleanup finished: none of that generation's homes remain,
-        on a host or in the bucket."""
+        on a host or in the bucket.
+
+        Refuses while an archive holds unpushed work: the archive is the only
+        copy of it (``unpushed_archives``)."""
         from app.domain.machine.lifecycle import delete_archive
 
+        if await self.unpushed_archives(topic_id, room_resource_id):
+            raise RuntimeError(UNPUSHED_ARCHIVE)
         for home in await self._repo.room_archives(topic_id, room_resource_id):
             await delete_archive(home.archive_key, missing_ok=False)
         await self._repo.delete_room_homes(topic_id, room_resource_id)
+
+    async def unpushed_archives(
+        self, topic_id: uuid.UUID, room_resource_id: str
+    ) -> list[CloudHostHome]:
+        """The generation's archived homes that the host did not find pushed
+        when it wrote them. Archived, a home is on no machine for the room's
+        cleanup to check, so the host's answer at archive time is the check;
+        an archive without one is counted here too."""
+        return [
+            home
+            for home in await self._repo.room_archives(topic_id, room_resource_id)
+            if home.archive_published is not True
+        ]
 
     async def archived_resources(self, topic_id: uuid.UUID) -> set[str]:
         """The room's session directories whose work is in the bucket: a

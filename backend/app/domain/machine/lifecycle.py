@@ -463,6 +463,7 @@ class SandboxLifecycle:
         home.archive_key = key
         home.archive_size = int(written["size"])
         home.archive_md5 = str(written["md5"])
+        home.archive_published = written.get("published") is True
         await self._session.commit()
         await self._drop(device_id, home_id, project, resource)
         await self._release(home_id)
@@ -543,6 +544,7 @@ class SandboxLifecycle:
         if home is not None:
             home.busy_until = None
             home.archive_key = home.archive_size = home.archive_md5 = None
+            home.archive_published = None
             if answer.get("missing"):
                 logger.warning("sandbox archive %s was gone at restore", key)
                 line = await tell_archive_lost(self._session, home)
