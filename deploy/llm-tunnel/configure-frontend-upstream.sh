@@ -11,13 +11,14 @@ set -euo pipefail
 ACTIVE_DIR="${1:?usage: configure-frontend-upstream.sh ACTIVE_DIRECTORY UPSTREAM_PORT [PORT DIRECT_LISTEN]}"
 UPSTREAM="${2:?upstream port required}"
 PORT="${3:-}"
-# host:port, as FRONTEND_PORT_DIRECT names it for the compose frontend.
+# ip:port or [ipv6]:port; deploy-docker.sh turns FRONTEND_PORT_DIRECT into one.
 DIRECT="${4:-}"
 for port in "$UPSTREAM" ${PORT:+"$PORT"}; do
   [[ "$port" =~ ^[0-9]+$ ]] && ((port > 0 && port < 65536)) || { echo "Invalid port: $port" >&2; exit 1; }
 done
 if [ -n "$PORT" ]; then
-  [[ "$DIRECT" =~ ^[0-9.]+:[0-9]+$ ]] || { echo "Invalid listen address: $DIRECT" >&2; exit 1; }
+  [[ "$DIRECT" =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:]+\]):[0-9]+$ ]] \
+    || { echo "Invalid listen address: $DIRECT" >&2; exit 1; }
 fi
 CONFIG_TMP="$(mktemp "$ACTIVE_DIR/.frontend.conf.XXXXXX")"
 trap 'rm -f "$CONFIG_TMP"' EXIT

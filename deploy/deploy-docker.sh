@@ -474,6 +474,24 @@ fi
 PREVIEW_CONNECTION_PORT="${PREVIEW_CONNECTION_PORT:-18087}"
 export PREVIEW_CONNECTION_MODE PREVIEW_CONNECTION_PORT
 
+# With a rolling frontend, app-router listens on the box's frontend ports itself
+# (take_frontend_ports), on FRONTEND_PORT and on what FRONTEND_PORT_DIRECT names
+# for the compose frontend. Compose takes a bare port, ip:port or [ipv6]:port
+# there; nginx takes the last two, so a bare port becomes 0.0.0.0:port. Checked
+# here, before anything on the box is touched: a value nginx cannot listen on
+# would otherwise fail in the middle of a switch.
+FRONTEND_DIRECT_LISTEN=""
+if [ -n "${ACTIVE_BACKEND_DIR:-}" ] && [ -n "${ACTIVE_FRONTEND_DIR:-}" ]; then
+  [[ "${FRONTEND_PORT:-8080}" =~ ^[0-9]+$ ]] \
+    || fail "FRONTEND_PORT must be a port number, not '${FRONTEND_PORT}'; nothing was changed"
+  FRONTEND_DIRECT_LISTEN="${FRONTEND_PORT_DIRECT:-0.0.0.0:80}"
+  if [[ "$FRONTEND_DIRECT_LISTEN" =~ ^[0-9]+$ ]]; then
+    FRONTEND_DIRECT_LISTEN="0.0.0.0:$FRONTEND_DIRECT_LISTEN"
+  fi
+  [[ "$FRONTEND_DIRECT_LISTEN" =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:]+\]):[0-9]+$ ]] \
+    || fail "FRONTEND_PORT_DIRECT='${FRONTEND_PORT_DIRECT}' is not a port, ip:port or [ipv6]:port app-router can listen on; nothing was changed"
+fi
+
 if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
   ! command -v fusermount >/dev/null || ! ldconfig -p | grep 'libfuse.so.2 ' >/dev/null
 }; then
@@ -1145,7 +1163,7 @@ write_frontend_conf() {
   local port="$1" with_ports="$2"
   if [ "$with_ports" = true ]; then
     bash "$HERE/llm-tunnel/configure-frontend-upstream.sh" "$ACTIVE_BACKEND_DIR" "$port" \
-      "$FRONTEND_PORT" "${FRONTEND_PORT_DIRECT:-0.0.0.0:80}"
+      "$FRONTEND_PORT" "$FRONTEND_DIRECT_LISTEN"
   else
     bash "$HERE/llm-tunnel/configure-frontend-upstream.sh" "$ACTIVE_BACKEND_DIR" "$port"
   fi || fail "could not write $ACTIVE_BACKEND_DIR/frontend.conf"
@@ -1180,7 +1198,7 @@ take_frontend_ports() {
   local old_frontend="$1" port="$2"
   write_frontend_conf "$port" true
   if docker exec cheese-app-router nginx -t && docker exec cheese-app-router nginx -s reload; then
-    log "app-router now serves the box's frontend ports :$FRONTEND_PORT and ${FRONTEND_PORT_DIRECT:-0.0.0.0:80}"
+    log "app-router now serves the box's frontend ports :$FRONTEND_PORT and $FRONTEND_DIRECT_LISTEN"
     return 0
   fi
   write_frontend_conf "$port" false
@@ -1354,13 +1372,13 @@ rollout_app() {
     dc rm -f "$frontend_from" >/dev/null 2>&1 || true
   fi
   [ "$ports_failed" = false ] \
-    || fail "app-router could not take the box's ports :$FRONTEND_PORT and ${FRONTEND_PORT_DIRECT:-0.0.0.0:80} (see the nginx error above); $old_frontend serves them again, and the next release takes them over"
+    || fail "app-router could not take the box's ports :$FRONTEND_PORT and $FRONTEND_DIRECT_LISTEN (see the nginx error above); $old_frontend serves them again, and the next release takes them over"
   [ "$collab_failed" = false ] || fail "compose up collab failed"
   log "$backend_from${frontend_from:+ and $frontend_from} stopped; $backend_to${frontend_to:+ and $frontend_to} serve this release"
   if [ "$backend_to" = backend-b ]; then
     # The script before the two slots starts its one-off successors on these
     # ports and refuses while app-router names them.
-    log "note: a release of a commit older than the two slots refuses to switch while backend-b serves; release any current commit once to move back to the first slots, then that one"
+    log "note: a release of a commit older than the two slots (a revert included) reloads app-router, pulls, migrates and then refuses to switch while backend-b serves; dispatch a release of a commit that has the slots once to move back to the first slots, then that one"
   fi
 }
 

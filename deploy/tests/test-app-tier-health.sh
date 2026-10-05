@@ -1053,6 +1053,30 @@ test_failed_port_takeover_gives_the_ports_back() {
   echo "PASS: a failed port takeover gives the ports back, and the next release takes them"
 }
 
+# app-router listens on what FRONTEND_PORT_DIRECT names for the compose
+# frontend. A form nginx cannot listen on must stop the release before anything
+# is touched, not in the middle of a switch; a bare port is the 0.0.0.0 one.
+test_frontend_direct_port_is_checked_before_anything() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087
+  printf 'upstream frontend_active { server 127.0.0.1:8080; }\n' > "$run_dir/active/frontend.conf"
+  cp "$run_dir/active/frontend.conf" "$run_dir/frontend.conf.before"
+  if rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" FRONTEND_PORT_DIRECT=80-81 \
+      >"$run_dir/deploy.log" 2>&1; then
+    fail "a release went ahead with a FRONTEND_PORT_DIRECT nginx cannot listen on"
+  fi
+  grep -q "FRONTEND_PORT_DIRECT='80-81' is not a port" "$run_dir/deploy.log" || { cat "$run_dir/deploy.log"; fail "the refusal did not name the value"; }
+  [ ! -s "$run_dir/docker.log" ] || { cat "$run_dir/docker.log"; fail "docker was used before the value was checked"; }
+  cmp -s "$run_dir/frontend.conf.before" "$run_dir/active/frontend.conf" || fail "frontend.conf changed although the release refused"
+  : > "$run_dir/docker.log"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" FRONTEND_PORT_DIRECT=80 APP_TIER_FRONTEND_CONTAINER=green-frontend \
+    >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "a bare FRONTEND_PORT_DIRECT was refused"; }
+  grep -Fq 'listen 0.0.0.0:80;' "$run_dir/active/frontend.conf" || fail "a bare port did not become 0.0.0.0:80: $(cat "$run_dir/active/frontend.conf")"
+  rm -rf "$run_dir"
+  echo "PASS: FRONTEND_PORT_DIRECT is checked before anything is touched, and a bare port is accepted"
+}
+
 # A one-off successor an interrupted release before the two slots left behind:
 # removed by the next release when app-router does not send traffic to it, and
 # a refusal before anything changes when it does.
@@ -1749,6 +1773,7 @@ case "$CASE" in
   frontend-rollout) test_frontend_rollout_switches_with_the_backend ;;
   rollout-leftovers) test_rollout_clears_an_interrupted_release ;;
   port-takeover-failure) test_failed_port_takeover_gives_the_ports_back ;;
+  frontend-direct-port) test_frontend_direct_port_is_checked_before_anything ;;
   second-slot) test_second_slot_matches_the_first ;;
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
@@ -1803,6 +1828,7 @@ case "$CASE" in
     test_frontend_rollout_switches_with_the_backend
     test_rollout_clears_an_interrupted_release
     test_failed_port_takeover_gives_the_ports_back
+    test_frontend_direct_port_is_checked_before_anything
     test_second_slot_matches_the_first
     test_frontend_rollout_rejects_unhealthy_next
     test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up

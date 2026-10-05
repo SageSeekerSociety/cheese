@@ -220,10 +220,13 @@ The containers therefore alternate between `cheese-backend-1` and
 `deploy/app-container.sh backend`. A release of a commit from before the two
 slots, a revert or a manual dispatch, runs that commit's script. It installs
 its own `app-router.conf` and reloads, which ends app-router's sockets 30
-seconds later at that config's deadline, and then refuses to switch while
-app-router names `BACKEND_PORT_NEXT` or `FRONTEND_PORT_NEXT`; release any
-current commit once to move back to the first slots, then that one. From the
-first slots it releases as it always did. `deploy/tests/test-pre-slot-release.sh`
+seconds later at that config's deadline, pulls and migrates, and then refuses
+to switch while app-router names `BACKEND_PORT_NEXT` or `FRONTEND_PORT_NEXT`.
+Once a revert has landed, no commit on main has the slots, and every automatic
+deploy of main does that until someone dispatches the deploy workflow on the
+last SHA that contains them (#2770), which moves back to the first slots; the
+next release of main then goes through. From the first slots an older commit
+releases as it always did. `deploy/tests/test-pre-slot-release.sh`
 runs the last such commit's script against both states.
 
 The box's own frontend ports, :8080 and :80, which the edge reaches directly,
