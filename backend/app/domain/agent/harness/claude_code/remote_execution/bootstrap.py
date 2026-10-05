@@ -414,10 +414,47 @@ def read_json_beneath(root, relative):
         return None
 
 
-def binary(owner, api, verified=None):
+def identity(path):
+    """What the pin was when it last proved its version. Replacing it, writing
+    it in place or touching it each change this."""
+    stat = path.stat()
+    return [
+        VERSION,
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_mode,
+        stat.st_size,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+    ]
+
+
+def remember(destination, record):
+    """Keep the proof that `destination` runs as VERSION, beside it."""
+    temporary = temporary_beside(record)
+    try:
+        temporary.write_text(json.dumps(identity(destination)))
+        temporary.replace(record)
+    except OSError:
+        # A sandboxed executor is shown this directory read-only. The install
+        # outside its sandbox recorded the pin before starting it.
+        temporary.unlink(missing_ok=True)
+
+
+def binary(owner, api):
     windows = sys.platform == "win32"
     executable = ".exe" if windows else ""
     destination = owner / ".cheese/claude/versions" / (VERSION + executable)
+    # Every room preparation asks for the pin, and a run of it is a 240 MB
+    # program paged in on the room's own machine, which the room may be keeping
+    # busy: under a full test suite on two cores a run outlasted 15 s. So the
+    # pin is run once, and what it was then is kept beside it.
+    record = destination.with_name(destination.name + ".verified")
+    try:
+        if json.loads(record.read_text()) == identity(destination):
+            return str(destination)
+    except (OSError, ValueError):
+        pass
     candidates = [destination, owner / ".local/bin" / ("claude" + executable)]
     installed = shutil.which("claude")
     if installed:
@@ -428,18 +465,6 @@ def binary(owner, api, verified=None):
         if windows and candidate.suffix.lower() != ".exe":
             continue
         if candidate.is_file() and os.access(candidate, os.X_OK):
-            stat = candidate.stat()
-            identity = (
-                VERSION,
-                stat.st_dev,
-                stat.st_ino,
-                stat.st_mode,
-                stat.st_size,
-                stat.st_mtime_ns,
-                stat.st_ctime_ns,
-            )
-            if verified is not None and verified.get(str(candidate)) == identity:
-                return str(candidate)
             result = subprocess.run(
                 [str(candidate), "--version"],
                 capture_output=True,
@@ -453,10 +478,8 @@ def binary(owner, api, verified=None):
                     shutil.copyfile(candidate, temporary)
                     temporary.chmod(0o700)
                     temporary.replace(destination)
-                    return str(destination)
-                if verified is not None:
-                    verified[str(candidate)] = identity
-                return str(candidate)
+                remember(destination, record)
+                return str(destination)
     # Warm room preparation needs neither download handling nor TLS setup.
     import platform
     from urllib.request import urlopen
@@ -493,6 +516,7 @@ def binary(owner, api, verified=None):
     if result.stdout.split()[0] != VERSION:
         raise RuntimeError("The executor binary does not match the verified version")
     temporary.replace(destination)
+    remember(destination, record)
     return str(destination)
 
 
@@ -1048,9 +1072,7 @@ def start_sandbox(
 
 
 @contextlib.contextmanager
-def prepared(
-    payload, owner, verified=None, *, refresh_runtime=False, fetch_toolchain=True
-):
+def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -1154,7 +1176,7 @@ def prepared(
             env["USERPROFILE"] = scoped_env["USERPROFILE"] = str(home)
         config = {
             "workspace": str(work),
-            "claude": binary(owner, env["CHEESE_API"], verified),
+            "claude": binary(owner, env["CHEESE_API"]),
             "env": scoped_env,
             "mcp_servers": {},
             "release": str(release),
