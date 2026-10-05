@@ -6,17 +6,17 @@ import { apiLogin } from './helpers';
 // 壳最容易出的错不是崩，是**悄悄换了一屏**——第一屏换了地方，或者侧栏少了一格。
 // 那种错单测问不出来（单测问的是函数返回什么），只有真开一个项目、看屏幕上还剩下
 // 什么才发现。所以这一条走真浏览器：登录 → 点开第一个项目（种子里那三个都没声明
-// 壳）→ 第一屏落在哪、侧栏有哪几行、⋯ 菜单里有什么。
+// 壳）→ 第一屏落在哪、项目名下有哪几行、点项目名弹出的菜单里有什么。
 //
 // 等号右边是**今天**的样子，不是壳的某种理想形态：这一格、这个顺序、这一屏，就是
 // 此刻每个人打开项目看到的。改这一条等于改「老项目长什么样」，要单独想清楚。
 //
-// Membership stays visible so joining, transferring and leaving are discoverable.
-const PINNED = ['综合', '资料库', '成员', '项目文档'];
+// 项目名下只有看板和资料库，这一行不再加东西（.claude/rules/project-sidebar.md）。
+const PAGES = ['看板', '资料库'];
 
-// 项目名旁边那个 ⋯ 菜单里的页：不占竖线，但一次点击可达。看板不在这里——项目名
-// 那一行就是它的入口。
-const MENU = ['定时与触发', '技能'];
+// 点项目名弹出的菜单：项目文档，再按壳的顺序列其余几页。成员排第一个，「退出项目」
+// 在那一页上。
+const MENU = ['项目文档', '成员', '定时与触发', '技能'];
 
 test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一格，菜单里几页都在', async ({ page }) => {
   await apiLogin(page);
@@ -37,12 +37,10 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
   await page.waitForURL(/\/projects\/[^/]+\/running$/);
 
   // 侧栏是常驻的，板块页上也在。等它画出来再数格子。
-  const pinned = page.locator('.pinned-row');
-  await expect(pinned).toHaveCount(PINNED.length);
-  await expect(pinned.locator('.v-list-item-title')).toHaveText(PINNED);
+  const pages = page.locator('[aria-label="项目页面"] .v-list-item-title');
+  await expect(pages).toHaveText(PAGES);
 
-  // ⋯ 菜单里那一组是**壳说了算**的：这一版前端认得的页里没摆上侧栏的，全在这里。
-  // 少了谁，就说明有页在加壳之后掉出了导航。
+  // 菜单里是这一版前端认得、又没摆在项目名下的全部页。少了谁，就说明有页掉出了导航。
   await page.getByRole('button', { name: '项目菜单', exact: true }).click();
   // 菜单项**没有 role**：Vuetify 3 的 `v-list-item` 渲染成不带 role 的 `<div>`，
   // 外层 `v-list` 才是 `role="listbox"`，条目既不 `menuitem` 也不 `option`（对着

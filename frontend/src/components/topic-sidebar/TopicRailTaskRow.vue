@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// 侧栏里挂在房间下面的一个任务（样稿「侧栏 A」）。比它的房间往里缩一级，前面一道分支
-// 线说「这是那个房间里的」，字和房间一样大；需要你处理的亮一颗暖色点，正在运行的一颗
-// 绿点，别的不画。
+// 侧栏里挂在频道下面的一个任务。比频道的字往里缩一点，左边一条竖线从频道的 # 下面
+// 一直连到「全部任务」，说「这几条是那个频道里的」；字和频道一样大。需要你处理的亮
+// 一颗暖色点，正在运行的一颗绿点，别的不画。
 import type { RoomTask } from '@/cx_types'
 
 import { computed } from 'vue'
@@ -13,7 +13,7 @@ const props = withDefaults(
   defineProps<{
     task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>
     selected: boolean
-    // 它的房间在树里的第几层：任务比房间再缩一级。
+    // 它的频道在树里的第几层：竖线跟着频道的图标列走。
     depth?: number
   }>(),
   { depth: 0 }
@@ -35,13 +35,10 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
     type="button"
     class="rail-task"
     :class="{ 'rail-task--selected': selected }"
-    :style="{ paddingInlineStart: 30 + depth * 20 + 'px' }"
+    :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
   >
-    <svg class="rail-task__branch" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-      <path d="M2 1.5v6.5a2.5 2.5 0 0 0 2.5 2.5H12" />
-    </svg>
     <span class="rail-task__title">{{ taskTitle(task) }}</span>
     <span
       v-if="mark"
@@ -55,6 +52,7 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
 
 <style scoped>
 .rail-task {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -66,6 +64,7 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text);
+  font-family: inherit;
   font-size: 14px;
   line-height: var(--lh-14);
   text-align: left;
@@ -80,11 +79,16 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
   background: var(--fill);
   color: var(--ink);
 }
-.rail-task__branch {
-  flex: none;
-  fill: none;
-  stroke: var(--faint);
-  stroke-width: 1.3;
+/* 竖线落在频道 # 的中线上，一行接一行连成一条（上下各探 3px 盖住行间的空隙）。
+   结构线，不是强调条。 */
+.rail-task::before {
+  content: '';
+  position: absolute;
+  left: var(--guide-x);
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line-2);
 }
 .rail-task__title {
   flex: 1 1 auto;

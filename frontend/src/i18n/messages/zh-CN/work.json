@@ -1340,8 +1340,6 @@
     "switchProject": "切换项目",
     "chooseProjectFirst": "先选择一个项目",
     "topics": "频道",
-    "newTopic": "新建频道",
-    "creatingTopic": "正在创建频道",
     "noneMine": "暂无与你相关的频道",
     "othersUnread": "其他频道里有新消息",
     "empty": "暂无频道",
@@ -1511,12 +1509,14 @@
     "defaultModel": "默认模型",
     "defaultComputer": "默认工作电脑",
     "groups": {
+      "collab": "协作",
       "ai": "AI",
       "run": "运行",
       "code": "代码",
       "data": "数据"
     },
     "sections": {
+      "channels": "频道",
       "agents": "AI 队友",
       "topic-naming": "频道命名",
       "computer": "工作电脑",
@@ -1817,6 +1817,17 @@
       "repoConnected": "已连接仓库 {repo}",
       "installPending": "安装请求已提交，待组织管理员批准",
       "accountConnected": "已连接 GitHub 账号"
+    },
+    "channels": {
+      "intro": "频道用来按人群或领域分开讨论。一件要做成的事建成任务，不用为它新建频道。",
+      "nameLabel": "频道名称",
+      "create": "新建频道",
+      "activeLabel": "在用的频道",
+      "archivedLabel": "已归档",
+      "rootNote": "项目自带，不能归档",
+      "rename": "重命名",
+      "archive": "归档",
+      "unarchive": "取消归档"
     }
   },
   "computeChoice": {

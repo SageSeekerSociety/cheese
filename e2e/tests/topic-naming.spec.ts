@@ -10,8 +10,12 @@ import { api, apiLogin, openFirstProject } from './helpers';
 
 const activeTitle = (page: Page) => page.locator('.topic-row.is-active .topic-title .text-truncate');
 
+// 界面上新建频道要先起名（项目设置的「频道」一栏），没有名字的频道只从接口和
+// 私聊转出来时出现；这里走接口建一个，再打开它。
 async function newRoom(page: Page) {
-  await page.locator('[title="新建频道"]').click();
+  const projectId = projectIdOf(page);
+  const room = await api(page, 'post', '/topics', { project_id: projectId });
+  await page.goto(`/projects/${projectId}/topics/${room.id as string}`);
   await expect(activeTitle(page)).toHaveText('新频道');
   const composer = page.locator('.composer-input textarea').first();
   await expect(composer).toBeEnabled({ timeout: 15_000 });

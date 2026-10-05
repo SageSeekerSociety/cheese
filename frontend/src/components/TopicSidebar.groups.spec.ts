@@ -262,7 +262,7 @@ describe('左侧话题列表：按相关性分两组', () => {
     const { container } = mount({ topics: patched })
     expect(visibleTitles(container)).toEqual([])
     // 综合永远是频道分组的第一行，所以上组从来不是空的，不用再解释。
-    expect(container.querySelector('.pinned-row')?.textContent).toContain('综合')
+    expect(container.querySelector('[data-row-actions="root"]')?.textContent).toContain('综合')
     expect(container.textContent).not.toContain('暂无与你相关的频道')
     expect(container.textContent).not.toContain('暂无频道')
     expect(othersHead(container).querySelector('.group-count')?.textContent?.trim()).toBe('5')

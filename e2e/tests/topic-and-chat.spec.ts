@@ -6,18 +6,20 @@ test.describe('Topics and chat', () => {
     await apiLogin(page);
   });
 
-  test('creating a topic adds it to the sidebar as the active topic', async ({ page }) => {
+  // 新建频道在项目设置的「频道」一栏：先起名，建好就打开它，侧栏上多出这一行。
+  test('creating a channel in project settings opens it in the sidebar', async ({ page }) => {
     const rows = await openFirstProject(page);
     const before = await rows.count();
+    const projectId = /\/projects\/([^/]+)/.exec(page.url())?.[1];
 
-    // One click creates the room. A room is a group chat: the project's
-    // default teammate is already seated, and any other teammate is invited
-    // from the roster afterwards, the way a person is — there is no "whose
-    // room is this" question to answer up front.
-    await page.locator('[title="新建频道"]').click();
+    await page.goto(`/projects/${projectId}/settings/channels`);
+    const name = `e2e 频道 ${Date.now()}`;
+    await page.getByLabel('频道名称').fill(name);
+    await page.getByRole('button', { name: '新建频道' }).click();
 
+    await expect(page).toHaveURL(/\/topics\/[^/]+$/);
     await expect(rows).toHaveCount(before + 1);
-    await expect(page.locator('.topic-row.is-active')).toHaveCount(1);
+    await expect(page.locator('.topic-row.is-active')).toContainText(name);
   });
 
   // 打开一个项目，第一屏是**看板**，不是任何一个聊天（见

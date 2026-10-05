@@ -116,29 +116,14 @@ function onPressTopic(topicId: string) {
   })
 }
 
-const creatingTopic = ref(false)
-async function onCreateTopic(title: string) {
-  if (creatingTopic.value) return
-  creatingTopic.value = true
-  // Fetch the room view while the server creates the room.
-  void import('./TopicView.vue').catch(() => {})
-  try {
-    const topic = await store.create(title)
-    if (topic)
-      await router.push({ name: 'workspace-topic', params: { projectId: topic.project_id, topicId: topic.id } })
-  } finally {
-    creatingTopic.value = false
-  }
-}
-
-// 新建话题和侧栏上那颗 ＋ 是同一件事。
+// 新建频道在项目设置的「频道」一栏（先起名再建），命令面板里这一条去那里。
 useCommands(() => [
   {
     id: 'topic.new',
     title: t('navigation.palette.newTopic'),
     icon: 'mdi-plus',
-    disabled: creatingTopic.value,
-    run: () => void onCreateTopic(''),
+    run: () =>
+      void router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'channels' } }),
   },
   // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
   // 别人（比如关掉一个浮层）。
@@ -178,7 +163,6 @@ useCommands(() => [
       :selected-task-id="activeTaskId"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
-      :creating-topic="creatingTopic"
       :active-docs="activeDocs"
       :unread-map="store.badgeUnreadMap"
       :muted-of="store.isMuted"
@@ -193,7 +177,6 @@ useCommands(() => [
       @retry="store.reloadTopics()"
       @unarchive-topic="store.unarchive"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
-      @create-topic="onCreateTopic"
     >
       <!-- 手机上进项目落在话题列表上而不是看板上，所以看板的一句话摘要放在列表最顶上，
            点下去是看板。桌面上项目名那一行就是看板的入口。 -->

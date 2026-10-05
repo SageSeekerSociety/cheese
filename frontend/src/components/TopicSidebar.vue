@@ -17,8 +17,7 @@ import { useLongPress } from '@/composables/useLongPress'
 import { useTopicRail } from '@/composables/useTopicRail'
 import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 
-import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
-import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
+import { DEFAULT_SHELL, projectPageLayout, shellFor, termParams } from '../lib/shell'
 import { topicTitle } from '../lib/topicState'
 import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
@@ -42,7 +41,6 @@ import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
-import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { t } from '@/i18n'
 
@@ -54,7 +52,6 @@ const props = defineProps<{
   loadingTopics: boolean
   /** 话题清单没读到时服务端给的原因；有值就地显示失败 + 重试，不画骨架。 */
   error?: string | null
-  creatingTopic?: boolean
   // Which 项目文档 is open in the main area ('charter'|'weeklies'|'memory'),
   // or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
@@ -92,7 +89,6 @@ const emit = defineEmits<{
   (e: 'hover-topic', id: string): void
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
-  (e: 'create-topic', title: string): void
   // 话题清单读失败后那颗「重试」：让拥有这份数据的父级再读一次。
   (e: 'retry'): void
   // 已归档那一组里行尾的「取消归档」。
@@ -149,26 +145,19 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
   { rename: (topic) => (renamingTopicId.value = topic.id) }
 )
 
-// 项目级页面（看板/资料库/…）住在话题列表最上面的置顶行里，和话题行同一种视觉
-// 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
-// 一年点两次的东西，收进项目头的 ⋯ 菜单。
+// 项目级页面：看板和资料库摆在项目名下那一行，其余几页、项目文档、项目设置、转让或
+// 退出都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
 //
-// 「退出项目」只在成员页：那里有名册，知道我是所有者、负责人还是团队带进来的人，
-// 而这几种人能不能退各不相同。项目行上读不出这些，按它判会把退出递给退不掉的人。
-// 「转让项目」两处都有（这里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
+// 「转让项目」两处都有（菜单里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
 // 或这个项目的团队管理员」，项目行自己就带着这个答案。
 //
-// 这张表是**这一版前端认得**的项目页：key → 它长什么样。露出哪几格、什么顺序、谁
-// 开局收着，全部由这个项目的壳说（catalog.py）。default 壳说的是「今天」的样子：
-// 侧栏那一面资料库和名册是常驻那两格，例行和技能收进项目名旁边那个 ⋯ 菜单——#1330
-// 把这条竖线收窄过一轮，名册又回到侧栏（#6：「退出项目」长在名册页上，名册收进 ⋯
-// 就没人找得到怎么退出），壳的 default 声明跟着一起改，否则这一版会把别人刚挪走的
-// 几格又摆回来。
+// 这张表是**这一版前端认得**的项目页：key → 它长什么样。菜单里的顺序由这个项目的壳
+// 说（catalog.py）；那一行摆什么由 `PROJECT_BAR_PAGES` 说，壳改不了。
 //
 // 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变成「工作文档」。
 // 表里存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。
 const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
-  // 看板就是首页（项目名那一行点下去就到），但它仍然是一页：壳想把它摆回侧栏也行。
+  // 看板是首页，项目名下那一行的第一格。
   'workspace-running': { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
   'project-library': { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
@@ -183,18 +172,9 @@ const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
 const terms = computed(() => termParams(shell.value))
 
-// 「个人级压过壳」：他手动打开过一次的收起页，之后就在他自己的侧栏里。按 handle
-// 存——这是**这个人**对某一个壳的选择，和 projectOrder 同一个理由。
-const revealed = ref<ReadonlySet<string>>(new Set<string>())
-watch(
-  () => myHandle(),
-  (handle) => {
-    revealed.value = loadRevealedPages(handle)
-  },
-  { immediate: true }
-)
-
-const plan = computed(() => projectPagePlan(shell.value, KNOWN_PROJECT_PAGES, revealed.value))
+// 项目名下那一行只有看板和资料库，其余都进点项目名弹出的菜单（`projectPageLayout`）。
+// 那一行**不再加东西**，见 .claude/rules/project-sidebar.md。
+const layout = computed(() => projectPageLayout(shell.value, KNOWN_PROJECT_PAGES))
 
 // 表里没有的 key 落空：壳比前端新时菜单里会多出一格这一版还不认识的页，那也不该
 // 让侧栏白屏。
@@ -202,27 +182,11 @@ function pageOf(key: string): { label: string; icon: string } {
   return PROJECT_PAGES[key] ?? { label: key, icon: 'mdi-dots-horizontal' }
 }
 
-// 「一年点几次」的那几页住在项目名旁边那个 ⋯ 菜单里（#1330）：仍然一次点击可达，
-// 只是不再占着每天都要扫一遍的那条竖线。谁在菜单里由壳说——**侧栏上没摆出来的
-// 全部**都在这里，包括壳写错了 key、或这一版前端还不认识的页，所以它们不会凭空
-// 消失（画的时候 key 不认识就落成那一个字面量，见 pageOf）。文案和侧栏同一条来源，
-// 理由也一样：壳能换词。
-// 首页不进菜单：项目名那一行就是它的入口，同一个地方两个入口只会让人猜哪个才算数。
-const homePage = computed(() => shell.value.home ?? 'workspace-running')
-const onHome = computed(() => routeName.value === homePage.value)
-const menuPages = computed(() =>
-  plan.value.more.filter((key) => key !== homePage.value).map((key) => ({ key, ...pageOf(key) }))
-)
-// 侧栏上摆出来的那几页（顺序就是壳说的顺序），置顶行按它画。
-const visiblePages = computed(() => plan.value.visible.map((key) => ({ key, ...pageOf(key) })))
+const barPages = computed(() => layout.value.bar.map((key) => ({ key, ...pageOf(key) })))
+const menuPages = computed(() => layout.value.menu.map((key) => ({ key, ...pageOf(key) })))
 
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
-  // 打开一个默认收起的页 = 这一页对他有用。记住它，下次它在外面。
-  // 首页不算：它的入口是项目名那一行，记成「打开过」会把它摆回侧栏，成了第二个入口。
-  if (name !== homePage.value && plan.value.more.includes(name)) {
-    revealed.value = withRevealedPage(revealed.value, name, myHandle())
-  }
   openPage(name)
 }
 // 谁负责 push，谁负责预热：指针停住的时候把这个页面的代码先下下来，等真按下去时
@@ -254,9 +218,8 @@ const currentProjectName = computed<string>(
   () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? t('work.sidebar.chooseProject')
 )
 
-// 手机上的项目菜单（整页形态）：侧栏上摆在话题上面的那几页、项目文档、平时收在 ⋯
-// 里的那几页、项目设置、转让或退出，一张面板全列出来。顺序照桌面：先是侧栏上那几
-// 行，再是菜单里那几项。
+// 手机上的项目菜单（整页形态）：手机上项目名下不摆那一行，看板、资料库也在这张面板
+// 里；接着是桌面菜单里那几项（项目文档、其余几页、项目设置、转让或退出），顺序照桌面。
 const projectSheetOpen = ref(false)
 const projectSheetActions = computed<MenuAction[]>(() => {
   if (!props.selectedProjectId) return []
@@ -268,7 +231,7 @@ const projectSheetActions = computed<MenuAction[]>(() => {
     onSelect: () => openProjectPage(key),
   })
   const actions: MenuAction[] = [
-    ...plan.value.visible.map(page),
+    ...barPages.value.map((p) => page(p.key)),
     {
       key: 'project-docs',
       label: t('navigation.project.docs'),
@@ -304,15 +267,6 @@ const projectSheetActions = computed<MenuAction[]>(() => {
 function switchProjectFromSheet(projectId: string) {
   projectSheetOpen.value = false
   openProject(projectId)
-}
-
-// New topic: don't ask the human for a title — create an untitled one and open
-// it; the title is derived from the first message (and 芝士 can refine it).
-//
-// 房间是个群聊，不「交给」谁：建出来时坐着项目的默认队友，别的队友和人一样从
-// 成员名册请进来。
-function newTopic() {
-  emit('create-topic', '')
 }
 
 // Inline rename (pattern mirrors MyDevicesView's rename-in-place): a click on
@@ -415,14 +369,12 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
       <TopicRailHeader
         :page="page === true"
         :column="column === true"
-        :home-active="onHome"
-        :home-key="homePage"
-        :home-icon="pageOf(homePage).icon"
         :project-name="currentProjectName"
         :private-unread-total="privateUnreadTotal"
         :search-title="searchTitle"
         :menu-open="projectSheetOpen"
         :menu-pages="menuPages"
+        :docs-active="onDocs"
         :route-name="routeName"
         :terms="terms"
         :project-selected="!!selectedProjectId"
@@ -431,14 +383,15 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         @open-page="openProjectPage"
         @open-palette="openPalette()"
         @open-sheet="projectSheetOpen = true"
+        @select-docs="emit('select-docs', 'charter')"
         @open-transfer="transferOpen = true"
         @open-leave="leaveOpen = true"
       />
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
-      <!-- 手机上的项目菜单。话题列表上面那几行（资料库、成员、项目文档）在手机上收进
-           这里：列表只留话题，打开项目先看到的是它们。换项目也只能在这里——一个项目
+      <!-- 手机上的项目菜单。项目名下那一行（看板、资料库）在手机上也收进这里：列表只留
+           频道。换项目也只能在这里——一个项目
            一格的那条竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目。 -->
       <MobileActionSheet v-if="page" v-model="projectSheetOpen" :actions="projectSheetActions">
         <div v-if="projects.length > 1" class="project-switch">
@@ -476,35 +429,20 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         <template v-else>
           <!-- 列表顶上由外面填的一行（手机上是看板的摘要，见 ProjectSidebar）。 -->
           <slot name="top" />
-          <!-- 项目名下面一行：这个项目自己的几页，压成一行，放不下的进「⋯」。 -->
+          <!-- 项目名下面一行：看板和资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
           <TopicRailPinnedRows
-            :pages="visiblePages"
+            :pages="barPages"
             :route-name="routeName"
             :terms="terms"
-            :docs-active="onDocs"
-            :private-unread-total="privateUnreadTotal"
             :page="page === true"
             @open-page="openProjectPage"
             @hover-page="hoverProjectPage"
             @cancel-prefetch="cancelPrefetch()"
-            @select-docs="emit('select-docs', 'charter')"
           />
 
-          <v-divider class="mx-3 my-1" />
-
-          <div class="t-eyebrow side-subhead side-subhead--row">
-            <span>{{ t('work.sidebar.topics') }}</span>
-            <BaseButton
-              icon="mdi-plus"
-              size="sm"
-              :title="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
-              :aria-label="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
-              :loading="creatingTopic"
-              :disabled="creatingTopic"
-              :class="{ 'tap-target': page }"
-              @click="newTopic()"
-            />
-          </div>
+          <!-- 新建、改名、归档频道在项目设置的「频道」一栏，这里不放「＋」：频道少而稳定，
+               新建是一年几次的事。 -->
+          <div class="t-eyebrow side-subhead">{{ t('work.sidebar.topics') }}</div>
 
           <!-- 频道的第一行：项目自带的「综合」，固定在最上面，和其他频道同一组。 -->
           <TopicRailRootRow
@@ -699,13 +637,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 }
 .side-subhead {
   padding: 14px 16px 4px;
-}
-.side-subhead--row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-block: 6px 4px;
-  padding-inline-end: 8px;
 }
 
 /* 话题还在路上时，先把行的形状画出来（LoadingSkeleton）。这条 rail 的底是

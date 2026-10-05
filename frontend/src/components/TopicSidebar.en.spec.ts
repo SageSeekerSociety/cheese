@@ -122,15 +122,8 @@ describe('the topic sidebar in English', () => {
   })
 
   it('in a project with no topics yet', () => {
-    const { baseElement, getByText, getByLabelText } = mount({})
+    const { baseElement, getByText } = mount({})
     getByText('No channels yet')
-    getByLabelText('New channel')
-    expect(chineseIn(baseElement)).toEqual([])
-  })
-
-  it('while a topic is being created', () => {
-    const { baseElement, getByLabelText } = mount({ creatingTopic: true })
-    getByLabelText('Creating channel')
     expect(chineseIn(baseElement)).toEqual([])
   })
 

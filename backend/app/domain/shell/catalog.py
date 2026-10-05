@@ -1,4 +1,4 @@
-"""壳 (shell) — the four declaration-only dials that make one platform look like
+"""壳 (shell) — the three declaration-only dials that make one platform look like
 several products without forking it.
 
 **Why this exists.** The platform has exactly one entry today: everybody who
@@ -40,8 +40,9 @@ class Nav:
     which argues the same point about the two APP-level lists. A single list
     plus filters is what made 「＋新建项目」 homeless on mobile once already.
 
-    Keys not listed here are not deleted: the frontend lifts every page a 壳
-    does not show into 「更多」, so 默认收起 stays 收起 and never becomes 禁止.
+    Keys not listed here are not deleted: every page the frontend knows and the
+    project bar does not show is in the menu under the project name, so leaving
+    a page out of `nav.project` moves it there and never hides it.
     """
 
     #: App rail (desktop): "home" | "projects" | "add".
@@ -61,11 +62,6 @@ class Shell:
     #: 「do not move」 — the address itself is the destination.
     home: str | None
     nav: Nav
-    #: Project pages collapsed under 「更多」 by default. A subset of `nav.project`
-    #: is the normal shape, but the frontend shows EVERY page it is not
-    #: currently rendering under 更多, so a page left out of `nav.project` is
-    #: one click away too, never gone.
-    hidden: tuple[str, ...] = ()
     #: 词表: the shell's nouns, by term key. `{"project": "工作"}` says this shell
     #: calls a 项目 a 「工作」. Strings interpolate the term (`新建{project}`), so
     #: the word AND its grammar stay in the translation catalog rather than in a
@@ -77,17 +73,10 @@ class Shell:
 #: their existing order. A project that declares no 壳 must be indistinguishable
 #: from today, screen by screen — that equality is the acceptance test for this
 #: whole mechanism, which is why this declaration is edited whenever 「today」
-#: moves upstream. It moved twice already: #1330/#1339 narrowed the project
-#: sidebar to 资料库 and sent 日历 / 成员 into the ⋯ menu beside the project name
-#: (总览 and 导出与发布 stopped being pages at all), and then 成员 came back out
-#: — 收起名册 put 「退出项目」 (which lives on that page) two menus deep past the
-#: one ⋯ people already miss, so nobody could find how to leave. `hidden`
-#: carries these moves rather than a list of seven, so what stays hidden is one
-#: click away in the menu — still 收起, never 禁止. Un-hiding is 「open」, the dial
-#: a 壳 has.
-#:
-#: 看板 is the 壳's `home` and lives in no `nav.project` list: the project name
-#: itself is the way to it, exactly as upstream argues beside the menu it draws.
+#: moves upstream. The bar under the project name holds only 看板 (the `home`)
+#: and 资料库, a rule the frontend keeps (`PROJECT_BAR_PAGES`); every other page
+#: is in the menu the project name opens, in the order `nav.project` gives.
+#: 成员 comes first there because 「退出项目」 lives on that page.
 _DEFAULT = Shell(
     name=DEFAULT_SHELL_NAME,
     home="workspace-running",
@@ -96,12 +85,11 @@ _DEFAULT = Shell(
         tabs=("home", "workspace", "inbox"),
         project=(
             "project-library",
-            "project-routines",
             "project-members",
+            "project-routines",
             "project-skills",
         ),
     ),
-    hidden=("project-routines", "project-skills"),
 )
 
 #: 办公: a project is a 工作, a topic is an 议题, and the day starts in 工作区.
@@ -119,7 +107,6 @@ _WORKBENCH = Shell(
             "project-skills",
         ),
     ),
-    hidden=(),
     terms={"project": "工作", "topic": "议题"},
 )
 
@@ -141,7 +128,6 @@ _COURSE_STUDENT = Shell(
             "project-routines",
         ),
     ),
-    hidden=("project-members", "project-routines"),
     terms={"project": "课程", "topic": "提问"},
 )
 
@@ -156,11 +142,9 @@ _COURSE_TEACHER = Shell(
         project=(
             "workspace-running",
             "project-members",
-            "project-library",
             "project-routines",
         ),
     ),
-    hidden=("project-library", "project-routines"),
     terms={"project": "课程", "topic": "提问"},
 )
 

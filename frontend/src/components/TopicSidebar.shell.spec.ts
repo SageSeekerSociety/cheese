@@ -40,12 +40,11 @@ const topics: Topic[] = [
   } as Topic,
 ]
 
-/** 一个把「定时与触发」收起来的壳：它仍然找得到，只是不占每天都要扫一遍的那条竖线。 */
+/** 一个点名了三页的壳。 */
 const COURSE_SHELL = {
   name: 'course',
   home: 'workspace-running',
   nav: { rail: [], tabs: [], project: ['project-library', 'project-members', 'project-routines'] },
-  hidden: ['project-routines'],
   terms: {},
 }
 
@@ -95,23 +94,17 @@ function mount(inner: Record<string, unknown> = {}) {
   })
 }
 
-/** 打开项目名旁边那个 ⌄ 菜单，返回菜单里每一行的文字。 */
-/** 项目名下面那一行露出来的几页：直接摆着的，加上「⋯」里收着的。 */
-async function pagesIn(container: Element, baseElement: Element): Promise<string[]> {
-  const shown = Array.from(container.querySelectorAll('.page-bar__label')).map((el) => el.textContent?.trim() ?? '')
-  const more = container.querySelector('.page-bar__more') as HTMLElement | null
-  if (!more) return shown
-  await fireEvent.click(more)
-  await waitFor(() => expect(baseElement.querySelector('.v-overlay--active .v-list-item-title')).not.toBeNull())
-  const folded = Array.from(baseElement.querySelectorAll('.v-overlay--active .v-list-item-title')).map(
-    (el) => el.textContent?.trim() ?? ''
-  )
-  await fireEvent.keyDown(document, { key: 'Escape' })
-  return [...shown, ...folded]
+/** 项目名下面那几行。 */
+function pagesIn(container: Element): string[] {
+  return Array.from(
+    container.querySelectorAll(`[aria-label="${t('navigation.project.pages')}"] .v-list-item-title`)
+  ).map((el) => el.textContent?.trim() ?? '')
 }
 
+/** 点项目名，返回弹出的菜单里每一行的文字。 */
 async function openProjectMenu(container: Element, baseElement: Element): Promise<string[]> {
-  const header = container.querySelector('[title="项目菜单"]') ?? baseElement.querySelector('[title="项目菜单"]')
+  const header =
+    container.querySelector('[aria-label="项目菜单"]') ?? baseElement.querySelector('[aria-label="项目菜单"]')
   await fireEvent.click(header as Element)
   await waitFor(() => {
     if (baseElement.querySelectorAll('.v-overlay .v-list-item').length === 0) throw new Error('菜单还没开')
@@ -171,61 +164,40 @@ beforeEach(() => {
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
 })
 
-describe('侧栏画哪几页由壳说了算', () => {
-  it('壳收起来的页不在侧栏上，但在项目名旁边那个菜单里', async () => {
+describe('项目名下只有看板和资料库，其余都在点项目名弹出的菜单里', () => {
+  it('壳点名了更多页，项目名下也只有看板和资料库', async () => {
     const { container, baseElement } = mount()
-    expect(await pagesIn(container, baseElement)).toEqual(['资料库', '成员', '项目文档'])
+    expect(pagesIn(container)).toEqual([t('navigation.project.board'), t('navigation.project.library')])
 
     const rows = await openProjectMenu(container, baseElement)
-    expect(rows.some((r) => r.includes(t('navigation.project.routines')))).toBe(true)
+    for (const label of ['navigation.project.members', 'navigation.project.routines', 'navigation.project.docs'])
+      expect(rows.some((r) => r.includes(t(label)))).toBe(true)
+    expect(rows.some((r) => r.includes(t('navigation.project.settings')))).toBe(true)
   })
 
-  it('首页不进菜单：项目名那一行就是它的入口，同一个地方不要两个入口', async () => {
+  it('点项目名只弹菜单，不换页', async () => {
+    await router.push('/projects/p1/library')
     const { container, baseElement } = mount()
-    const rows = await openProjectMenu(container, baseElement)
-    expect(rows.some((r) => r.includes(t('navigation.project.board')))).toBe(false)
-    expect(rows.some((r) => r.includes(t('navigation.project.settings')))).toBe(true)
+    await openProjectMenu(container, baseElement)
+    expect(router.currentRoute.value.name).toBe('project-library')
+  })
+
+  it('在菜单里打开一页，它不会因此出现在项目名下', async () => {
+    const { container, baseElement } = mount()
+    await clickMenuItem(container, baseElement, t('navigation.project.routines'))
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('project-routines'))
+    expect(pagesIn(container)).toEqual([t('navigation.project.board'), t('navigation.project.library')])
   })
 
   it('壳比前端新（多了一个不认识的 key）：那一格不画，别处照旧，不白屏', async () => {
     // 服务端先发了第五个壳的名字，而这一版前端还没有那一页：画一格点了就 404 的
-    // 东西比不画更糟，所以它落在 `orderedNav` 那一步，不进侧栏也不进菜单。
+    // 东西比不画更糟，所以它落在 `orderedNav` 那一步，哪里都不画。
     const shell = { ...COURSE_SHELL, nav: { ...COURSE_SHELL.nav, project: ['project-library', 'project-future'] } }
     const { container, baseElement } = mount({ projects: [project(shell)] })
-    // 这份壳只点名了资料库；成员没被点名，于是它落进「更多」（菜单里那一格）。
-    expect(await pagesIn(container, baseElement)).toEqual(['资料库', '项目文档'])
+    expect(pagesIn(container)).toEqual([t('navigation.project.board'), t('navigation.project.library')])
 
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes('project-future'))).toBe(false)
     expect(rows.some((r) => r.includes(t('navigation.project.routines')))).toBe(true)
-  })
-})
-
-describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
-  it('在菜单里点开一次，这一页当场就回到侧栏上', async () => {
-    const { container, baseElement } = mount()
-    await clickMenuItem(container, baseElement, t('navigation.project.routines'))
-
-    expect(await pagesIn(container, baseElement)).toEqual(['资料库', '成员', '定时与触发', '项目文档'])
-    expect(localStorage.getItem('cheesex.shellRevealed.v1:me')).toContain('project-routines')
-  })
-
-  it('记住的是这个人：换一个 handle 进来，壳的默认照旧', async () => {
-    const first = mount()
-    await clickMenuItem(first.container, first.baseElement, t('navigation.project.routines'))
-    first.unmount()
-
-    localStorage.setItem('user', JSON.stringify({ id: 2, username: 'someone-else', nickname: '别人' }))
-    const { container, baseElement } = mount()
-    expect(await pagesIn(container, baseElement)).toEqual(['资料库', '成员', '项目文档'])
-  })
-
-  it('重新挂载之后仍然是展开的', async () => {
-    const first = mount()
-    await clickMenuItem(first.container, first.baseElement, t('navigation.project.routines'))
-    first.unmount()
-
-    const { container, baseElement } = mount()
-    expect(await pagesIn(container, baseElement)).toContain('定时与触发')
   })
 })

@@ -1340,8 +1340,6 @@
     "switchProject": "Switch project",
     "chooseProjectFirst": "Choose a project first",
     "topics": "Channels",
-    "newTopic": "New channel",
-    "creatingTopic": "Creating channel",
     "noneMine": "No channels involve you yet",
     "othersUnread": "New messages in other channels",
     "empty": "No channels yet",
@@ -1511,12 +1509,14 @@
     "defaultModel": "Default model",
     "defaultComputer": "Default work computer",
     "groups": {
+      "collab": "Collaboration",
       "ai": "AI",
       "run": "Running",
       "code": "Code",
       "data": "Data"
     },
     "sections": {
+      "channels": "Channels",
       "agents": "AI teammates",
       "topic-naming": "Channel names",
       "computer": "Work computer",
@@ -1817,6 +1817,17 @@
       "repoConnected": "Connected repository {repo}",
       "installPending": "Install request sent, awaiting approval from an organization admin",
       "accountConnected": "GitHub account connected"
+    },
+    "channels": {
+      "intro": "Channels separate discussion by group or area. Something to get done becomes a task; it does not need a channel of its own.",
+      "nameLabel": "Channel name",
+      "create": "New channel",
+      "activeLabel": "Channels in use",
+      "archivedLabel": "Archived",
+      "rootNote": "Comes with the project; cannot be archived",
+      "rename": "Rename",
+      "archive": "Archive",
+      "unarchive": "Unarchive"
     }
   },
   "computeChoice": {

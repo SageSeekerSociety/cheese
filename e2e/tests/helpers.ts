@@ -150,12 +150,11 @@ export async function openFirstProject(page: Page) {
   // `.app-rail-item:not(--add)` also matches the 首页/cheese home icon, which
   // sits first in the rail — clicking it lands on /spaces, not a project.
   await page.locator(".app-rail-item--tile").first().click();
-  await page.locator('[title="新建频道"]').waitFor();
   const rows = page.locator(".topic-row");
-  // The + button renders before the topics do, so returning here would let a
-  // caller count zero rows and then watch the seeded ones arrive — a
-  // `toHaveCount(before + 1)` that passes without anything being created.
-  // alice's project always has at least one topic (see the seed note above).
+  // Wait for the rows themselves: a caller that counts before the seeded ones
+  // arrive would see zero, and a later `toHaveCount(before + 1)` would pass
+  // without anything being created. alice's project always has at least one
+  // topic (see the seed note above).
   await rows.first().waitFor();
   return rows;
 }
