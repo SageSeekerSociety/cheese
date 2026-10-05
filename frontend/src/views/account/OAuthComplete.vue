@@ -1,217 +1,45 @@
+<!--
+  Third-party sign-up: reads the state token from the address, loads the
+  provider's returned identity and the registration settings, sends the mailed
+  code, and creates or binds the account. What it shows is OAuthCompleteView.vue.
+-->
 <template>
-  <div>
-    <v-progress-linear v-if="loading" indeterminate color="primary" height="2" />
-
-    <transition v-else-if="oauthState" name="account-page" mode="out-in">
-      <EmailCodeStep
-        v-if="step === 'code'"
-        key="code"
-        :email="createEmail.trim()"
-        :submit-label="t('account.verifyEmail.submit')"
-        :verify="verifyEmail"
-        :send="sendCode"
-        @change="step = 'form'"
-      />
-
-      <div v-else key="form">
-        <AccountHeading
-          :title="t('account.oauth.complete.title', { name: oauthState.userInfo.name || oauthState.suggestedNickname })"
-          :lede="t('account.oauth.complete.lede', { provider: providerName })"
-        />
-
-        <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-6">
-          {{ error }}
-        </v-alert>
-
-        <v-btn-toggle
-          v-model="selectedOption"
-          mandatory
-          divided
-          variant="outlined"
-          color="on-surface"
-          class="oauth-choice"
-        >
-          <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
-          <v-btn value="create">{{ t('account.oauth.complete.create') }}</v-btn>
-          <!-- eslint-disable-next-line vue/no-restricted-syntax -- a segment of v-btn-toggle, not one of the BaseButton roles -->
-          <v-btn value="bind">{{ t('account.oauth.complete.bind') }}</v-btn>
-        </v-btn-toggle>
-
-        <transition name="account-page" mode="out-in">
-          <v-form
-            v-if="selectedOption === 'create'"
-            key="create"
-            ref="createFormRef"
-            @submit.prevent="handleCreateAccount"
-          >
-            <AccountField :label="t('account.field.username')" input-id="oauth-create-username">
-              <v-text-field
-                id="oauth-create-username"
-                v-model="createUsername"
-                autocomplete="username"
-                autocapitalize="none"
-                autocorrect="off"
-                spellcheck="false"
-                name="createUsername"
-                :rules="usernameRules"
-                :hint="t('account.rule.username')"
-                persistent-hint
-              />
-            </AccountField>
-
-            <AccountField :label="t('account.field.displayName')" input-id="oauth-create-nickname">
-              <v-text-field
-                id="oauth-create-nickname"
-                v-model="createNickname"
-                autocomplete="nickname"
-                name="createNickname"
-                :rules="nicknameRules"
-              />
-            </AccountField>
-
-            <AccountField :label="t('account.field.email')" input-id="oauth-create-email">
-              <v-text-field
-                id="oauth-create-email"
-                v-model="createEmail"
-                autocomplete="email"
-                autocapitalize="none"
-                autocorrect="off"
-                spellcheck="false"
-                type="email"
-                name="createEmail"
-                :rules="emailRules"
-                :hint="t('account.rule.emailHint')"
-                persistent-hint
-              />
-            </AccountField>
-
-            <AccountField v-if="requireInviteCode" :label="t('account.invitationCode')" input-id="oauth-create-invite">
-              <v-text-field
-                id="oauth-create-invite"
-                v-model="createInviteCode"
-                autocomplete="off"
-                autocapitalize="none"
-                autocorrect="off"
-                spellcheck="false"
-                name="createInviteCode"
-                :rules="inviteCodeRules"
-              />
-            </AccountField>
-
-            <v-checkbox v-model="setPassword" density="compact" hide-details class="oauth-set-password">
-              <template #label>
-                <span class="oauth-set-password__label">{{ t('account.oauth.complete.setPassword') }}</span>
-              </template>
-            </v-checkbox>
-            <p class="account-hint">{{ t('account.oauth.complete.setPasswordHint') }}</p>
-
-            <template v-if="setPassword">
-              <AccountField :label="t('account.field.password')" input-id="oauth-create-password">
-                <PasswordField
-                  id="oauth-create-password"
-                  v-model="createPassword"
-                  autocomplete="new-password"
-                  name="createPassword"
-                  :rules="newPasswordRules"
-                  :hint="t('account.rule.passwordHint')"
-                  persistent-hint
-                />
-              </AccountField>
-
-              <AccountField :label="t('account.field.confirmPassword')" input-id="oauth-create-confirm">
-                <PasswordField
-                  id="oauth-create-confirm"
-                  v-model="confirmPassword"
-                  autocomplete="new-password"
-                  name="confirmPassword"
-                  :rules="confirmPasswordRules"
-                />
-              </AccountField>
-            </template>
-
-            <LegalConsent
-              ref="consentRef"
-              :action-label="t('account.agreeAndSignUp')"
-              :documents="consentDocuments"
-              :load-error="consentLoadError"
-              class="mb-4"
-            />
-
-            <BaseButton
-              type="submit"
-              block
-              kind="primary"
-              size="lg"
-              class="account-submit"
-              :loading="creating"
-              :disabled="!registrationConfigReady"
-            >
-              {{ t('account.signUp.submit') }}
-            </BaseButton>
-          </v-form>
-
-          <v-form v-else key="bind" ref="bindFormRef" @submit.prevent="handleBindAccount">
-            <AccountField :label="t('account.field.username')" input-id="oauth-bind-username">
-              <v-text-field
-                id="oauth-bind-username"
-                v-model="bindUsername"
-                autocomplete="username"
-                autocapitalize="none"
-                autocorrect="off"
-                spellcheck="false"
-                name="bindUsername"
-                :rules="bindUsernameRules"
-              />
-            </AccountField>
-
-            <AccountField :label="t('account.field.password')" input-id="oauth-bind-password">
-              <PasswordField
-                id="oauth-bind-password"
-                v-model="bindPassword"
-                autocomplete="current-password"
-                name="bindPassword"
-                :rules="bindPasswordRules"
-              />
-            </AccountField>
-
-            <BaseButton type="submit" block kind="primary" size="lg" class="account-submit" :loading="binding">
-              {{ t('account.oauth.complete.bindSubmit') }}
-            </BaseButton>
-          </v-form>
-        </transition>
-      </div>
-    </transition>
-
-    <template v-else>
-      <AccountHeading :title="t('account.oauth.complete.unavailable')" :lede="error" />
-      <BaseButton block kind="primary" size="lg" :to="{ name: 'SignIn' }" class="account-submit">
-        {{ t('account.backToSignIn') }}
-      </BaseButton>
-    </template>
-  </div>
+  <OAuthCompleteView
+    ref="viewRef"
+    :loading="loading"
+    :error="error"
+    :oauth-state="oauthState"
+    :provider-name="providerName"
+    :step="step"
+    :require-invite-code="requireInviteCode"
+    :registration-config-ready="registrationConfigReady"
+    :creating="creating"
+    :binding="binding"
+    :consent-documents="consentDocuments"
+    :consent-load-error="consentLoadError"
+    :verify-email="verifyEmail"
+    :send-code="sendCode"
+    @create="handleCreateAccount"
+    @bind="handleBindAccount"
+    @change="step = 'form'"
+  />
 </template>
 
 <script setup lang="ts">
 import type { AcceptedDocuments, ConsentMethod } from '@/network/api/legal/types'
 import type { OAuthCreateUserRequest, OAuthState } from '@/network/api/users/types'
+import type { OAuthBindValues, OAuthCreateValues } from './OAuthCompleteView.vue'
 
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
-import { REGEX_PASSWORD, REGEX_USERNAME } from '@/utils/form'
-
 import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
 import { emailCodeMessage } from './attemptWait'
-import EmailCodeStep from './EmailCodeStep.vue'
+import OAuthCompleteView from './OAuthCompleteView.vue'
 import { oauthProviderName } from './oauthProvider'
 
-import AccountField from '@/components/account/AccountField.vue'
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import LegalConsent from '@/components/account/LegalConsent.vue'
-import PasswordField from '@/components/account/PasswordField.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -219,10 +47,10 @@ import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 const route = useRoute()
 const router = useRouter()
 
+const viewRef = ref<InstanceType<typeof OAuthCompleteView> | null>(null)
 const loading = ref(true)
 const error = ref('')
 const oauthState = ref<OAuthState | null>(null)
-const selectedOption = ref<'create' | 'bind'>('create')
 const creating = ref(false)
 const binding = ref(false)
 // Proving the address is a step of creating the account: the form, then the
@@ -232,73 +60,32 @@ const step = ref<'form' | 'code'>('form')
 // bar keeps so a reload does not ask for the code again.
 const stateToken = ref(typeof route.query.stateToken === 'string' ? route.query.stateToken : '')
 
-// Create form fields
-const createUsername = ref('')
-const createNickname = ref('')
-const setPassword = ref(false)
-const createPassword = ref('')
-const confirmPassword = ref('')
-const createInviteCode = ref('')
-const createEmail = ref('')
+// What the create form was sent with, kept until the address is proven.
+let createValues: OAuthCreateValues | null = null
 // What the consent prompt answered on the form, sent once the address is proven.
 let consentGiven: { documents: AcceptedDocuments; method: ConsentMethod } | null = null
 const requireInviteCode = ref(false)
 const registrationConfigReady = ref(false)
 
-// Bind form fields
-const bindUsername = ref('')
-const bindPassword = ref('')
-
-// Form refs
-const createFormRef = ref()
-const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
 const { documents: consentDocuments, loadError: consentLoadError, load: loadConsentDocuments } = useConsentDocuments()
 // 同意要交后端当前的协议版本；一进页面就取，提交时 `confirm()` 才有东西可交。
 onMounted(() => {
   void loadConsentDocuments()
 })
-const bindFormRef = ref()
-
-// Validation rules — the same ones the sign-up form states.
-const usernameRules = [
-  (v: string) => !!v || t('account.rule.usernameRequired'),
-  (v: string) => REGEX_USERNAME.test(v) || t('account.rule.username'),
-]
-
-// Binding names an account that already exists, so only presence is checked.
-const bindUsernameRules = [(v: string) => !!v || t('account.rule.usernameRequired')]
-const bindPasswordRules = [(v: string) => !!v || t('account.rule.passwordRequired')]
-
-const nicknameRules = [
-  (v: string) => !!v || t('account.rule.displayNameRequired'),
-  (v: string) => /^[a-zA-Z0-9_\u4e00-\u9fa5]{1,50}$/.test(v) || t('account.rule.displayName'),
-]
-
-const emailRules = [(v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) || t('account.rule.emailInvalid')]
-
-const inviteCodeRules = [(v: string) => !!v?.trim() || t('account.enterAnInvitationCode')]
-
-const newPasswordRules = [(v: string) => REGEX_PASSWORD.test(v) || t('account.rule.passwordInvalid')]
-
-const confirmPasswordRules = [
-  (v: string) => !!v || t('account.rule.confirmPasswordRequired'),
-  (v: string) => v === createPassword.value || t('account.rule.passwordsDoNotMatch'),
-]
 
 const providerName = computed(() => (oauthState.value ? oauthProviderName(oauthState.value.providerId) : ''))
 
-const handleCreateAccount = async () => {
-  if (!createFormRef.value) return
-  const { valid } = await createFormRef.value.validate()
-  if (!valid || !oauthState.value) return
+const handleCreateAccount = async (values: OAuthCreateValues) => {
+  if (!oauthState.value) return
   await loadConsentDocuments()
-  const consent = await consentRef.value?.confirm()
+  const consent = await viewRef.value?.confirmConsent()
   if (!consent) return
   consentGiven = consent
+  createValues = values
 
   error.value = ''
   const verified = oauthState.value.userInfo.verifiedEmail
-  if (verified && verified.toLowerCase() === createEmail.value.trim().toLowerCase()) {
+  if (verified && verified.toLowerCase() === values.email.trim().toLowerCase()) {
     submitCreate()
     return
   }
@@ -314,10 +101,11 @@ const handleCreateAccount = async () => {
   }
 }
 
-const sendCode = () => UserApi.sendOAuthEmailCode({ stateToken: stateToken.value, email: createEmail.value.trim() })
+const sendCode = () =>
+  UserApi.sendOAuthEmailCode({ stateToken: stateToken.value, email: createValues?.email.trim() ?? '' })
 
 const verifyEmail = async (code: string) => {
-  const email = createEmail.value.trim()
+  const email = createValues?.email.trim() ?? ''
   const { data } = await UserApi.verifyOAuthEmail({ stateToken: stateToken.value, email, code })
   if (data.ownership) {
     // The address belongs to an account already: that account is proven and
@@ -334,39 +122,35 @@ const verifyEmail = async (code: string) => {
 
 // The form post is answered with a redirect to the success or error page.
 const submitCreate = () => {
-  if (!consentGiven) return
+  if (!consentGiven || !createValues) return
   creating.value = true
   const requestData: OAuthCreateUserRequest = {
     stateToken: stateToken.value,
-    username: createUsername.value,
-    nickname: createNickname.value,
-    passwordMode: setPassword.value ? 'password' : 'none',
+    username: createValues.username,
+    nickname: createValues.nickname,
+    passwordMode: createValues.setPassword ? 'password' : 'none',
     consentTerms: consentGiven.documents.terms,
     consentPrivacy: consentGiven.documents.privacy,
     consentMethod: consentGiven.method,
   }
   if (requireInviteCode.value) {
-    requestData.inviteCode = createInviteCode.value.trim()
+    requestData.inviteCode = createValues.inviteCode.trim()
   }
-  if (setPassword.value) {
-    requestData.password = createPassword.value
+  if (createValues.setPassword) {
+    requestData.password = createValues.password
   }
   UserApi.createUserFromOAuth(requestData)
 }
 
-const handleBindAccount = async () => {
-  if (!bindFormRef.value) return
-  const { valid } = await bindFormRef.value.validate()
-  if (!valid || !oauthState.value) return
-
+const handleBindAccount = async (values: OAuthBindValues) => {
   binding.value = true
   error.value = ''
 
   try {
     UserApi.bindOAuthToUser({
       stateToken: stateToken.value,
-      username: bindUsername.value,
-      password: bindPassword.value,
+      username: values.username,
+      password: values.password,
     })
   } catch {
     error.value = t('account.oauth.error.bindingFailed')
@@ -384,11 +168,6 @@ const loadOAuthState = async () => {
   try {
     const response = await UserApi.getOAuthState(stateToken.value)
     oauthState.value = response.data
-
-    // Pre-fill form fields with suggested values
-    createUsername.value = response.data.suggestedUsername
-    createNickname.value = response.data.suggestedNickname
-    createEmail.value = response.data.userInfo.verifiedEmail ?? response.data.userInfo.email ?? ''
   } catch (err) {
     error.value = requestErrorMessage(err, t('account.oauth.error.sessionExpired'))
   } finally {
@@ -411,29 +190,3 @@ onMounted(() => {
   loadRegistrationConfig()
 })
 </script>
-
-<style scoped>
-.oauth-choice {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  width: 100%;
-  height: 40px;
-  margin-bottom: 24px;
-  border-color: var(--line-2);
-}
-
-.oauth-choice :deep(.v-btn--active) {
-  color: var(--ink);
-  background: var(--fill-2);
-}
-
-.oauth-choice :deep(.v-btn--active .v-btn__overlay) {
-  opacity: 0;
-}
-
-.oauth-set-password__label {
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--text);
-}
-</style>

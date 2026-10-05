@@ -1,3 +1,8 @@
+<!--
+  What one published terms-of-service or privacy-policy version looks like
+  (LegalDocument.vue): its version and effective date, then its own markdown. It
+  is drawn from the document the container hands it and fetches nothing itself.
+-->
 <template>
   <main class="legal">
     <article class="legal-column">
@@ -7,7 +12,8 @@
           {{ t('account.legalVersion', { version: doc.version }) }} ·
           {{ t('account.legalEffectiveDate', { date: doc.effectiveDate }) }}
         </p>
-        <!-- 正文来自后端（backend/app/domain/legal/texts），和同意记录里的哈希是同一份 -->
+        <!-- The body comes from the backend (backend/app/domain/legal/texts): the same
+             text the consent record hashes. -->
         <MarkdownView class="legal-body t-reading" :source="doc.content" />
       </template>
     </article>
@@ -15,39 +21,17 @@
 </template>
 
 <script setup lang="ts">
-/**
- * 用户协议 / 隐私政策的公开页（#1486）。不登录也能看，注册页、登录页和重新
- * 同意的弹窗都新开一页链到这里。`?version=` 可以看任何一个发布过的版本。
- */
-import type { LegalDocumentFull, LegalDocumentKey } from '@/network/api/legal/types'
-
-import { ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import type { LegalDocumentFull } from '@/network/api/legal/types'
 
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
-import { LegalApi } from '@/network/api/legal'
 
-const props = defineProps<{ document: LegalDocumentKey }>()
-const route = useRoute()
-
-const doc = ref<LegalDocumentFull | null>(null)
-const error = ref('')
-
-watch(
-  () => [props.document, route.query.version] as const,
-  async ([document, version]) => {
-    error.value = ''
-    try {
-      const { data } = await LegalApi.getDocument(document, typeof version === 'string' ? version : undefined)
-      doc.value = data
-    } catch {
-      doc.value = null
-      error.value = t('account.legalLoadFailed')
-    }
-  },
-  { immediate: true }
-)
+defineProps<{
+  /** The version to draw; null while it is being read or when it could not be. */
+  doc: LegalDocumentFull | null
+  /** The message shown in its place when the version could not be read. */
+  error: string
+}>()
 </script>
 
 <style scoped>
