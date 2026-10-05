@@ -219,6 +219,9 @@ class TeamService:
     async def get_teams_by_ids(self, ids: Sequence[int]) -> dict[int, Team]:
         return await self._repo.get_by_ids(ids)
 
+    async def application_statuses(self, ids: Sequence[int]) -> dict[int, str]:
+        return await self._repo.application_statuses(ids)
+
     async def get_teams_of_user(self, user_id: int) -> Sequence[Team]:
         """Return teams joined by the given user (simplified)."""
         return await self._repo.list_teams_of_user(user_id=user_id)
