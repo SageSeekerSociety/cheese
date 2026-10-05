@@ -140,15 +140,6 @@ async def _recover_business_state(device_id: str) -> None:
         remove_closed_checkouts(async_session_factory, device_id=device_id),
         name="closed task checkouts device reconnect",
     )
-    try:
-        # A Cloud topic whose machine just came up has been holding a message;
-        # this attach is the last fact it was waiting for, so deliver now instead
-        # of at the next sweep tick (machine/wakeup.py).
-        from app.api.deps import get_cloud_wakeup
-
-        await get_cloud_wakeup().wake_device(device_id)
-    except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
-        logger.exception("cloud wake-up on attach failed for device %s", device_id)
 
 
 # --- request/response schemas --------------------------------------------------

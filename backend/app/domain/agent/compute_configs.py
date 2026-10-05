@@ -12,6 +12,7 @@ from app.domain.agent.market import (
     COMPUTE_DEVICE,
     COMPUTE_TIERS,
     cloud_provisionable,
+    cloud_vm_provisionable,
     compute_default_name,
 )
 from app.domain.device.supply import default_visibility
@@ -19,24 +20,21 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
 
-# What a platform choice may hold at all, provider aside. The cloud supply
-# range a form offers is the provider's offering met with these
-# (`domain/machine/supply.py`), so both read the same numbers.
-PLATFORM_BOUNDS: dict[str, tuple[int, int]] = {
-    "cores": (1, 256),
-    "memory_mb": (512, 1048576),
-    "disk_gb": (1, 16384),
-}
-
 
 class ComputeChoice(BaseModel):
-    """Which machine a room works on: the profile, the device, the specs.
+    """Which machine a room works on: a cloud sandbox, a whole cloud VM, or a
+    self-hosted device.
 
-    ``name`` is only ever a device's own name, a proper noun that reads the same
-    in every language. A choice the platform describes — the cloud, standard or
-    with specs, and 「any online device」 — carries no name: it is identified by
-    its fields, and each reader's screen renders its own label for it. A stored
-    name would be one language's words shown to every member of the project.
+    Cloud is either a sandbox on a platform host, or with ``whole_machine`` a
+    whole virtual machine for each session, for work a sandbox cannot do
+    (Docker, KVM, kernel modules, root). Neither has a spec to choose: every
+    sandbox gets the same fixed share of a host, and every VM the deployment's
+    one VM size. ``name`` is only ever a device's own name, a proper
+    noun that reads the same in every language. A choice the platform describes
+    — the cloud, and 「any online device」 — carries no name: it is identified
+    by its fields, and each reader's screen renders its own label for it. A
+    stored name would be one language's words shown to every member of the
+    project.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -44,19 +42,7 @@ class ComputeChoice(BaseModel):
     name: str | None = Field(default=None, max_length=60)
     profile: Literal["cloud", "device"]
     device_id: str | None = None
-    cores: int | None = Field(
-        default=None, ge=PLATFORM_BOUNDS["cores"][0], le=PLATFORM_BOUNDS["cores"][1]
-    )
-    memory_mb: int | None = Field(
-        default=None,
-        ge=PLATFORM_BOUNDS["memory_mb"][0],
-        le=PLATFORM_BOUNDS["memory_mb"][1],
-    )
-    disk_gb: int | None = Field(
-        default=None,
-        ge=PLATFORM_BOUNDS["disk_gb"][0],
-        le=PLATFORM_BOUNDS["disk_gb"][1],
-    )
+    whole_machine: bool = False
 
     @model_validator(mode="after")
     def resource_kind(self):
@@ -65,10 +51,8 @@ class ComputeChoice(BaseModel):
         self.name = ((self.name or "").strip() or None) if named_device else None
         if self.profile == "cloud" and self.device_id:
             raise ValueError(say("computeCloudCannotNameDevice"))
-        if self.profile == "device" and any(
-            v is not None for v in (self.cores, self.memory_mb, self.disk_gb)
-        ):
-            raise ValueError(say("computeDeviceUsesOwnSpec"))
+        if self.profile == "device" and self.whole_machine:
+            raise ValueError(say("computeWholeMachineIsCloud"))
         return self
 
 
@@ -91,9 +75,7 @@ def choice_label(choice: ComputeChoice) -> str:
         return choice.name
     if choice.profile == "device":
         return say("computeAnyDevice" if choice.device_id is None else "computeDevice")
-    if choice.cores or choice.memory_mb or choice.disk_gb:
-        return say("computeCloudCustom")
-    return say("computeCloudStandard")
+    return say("computeCloudVm" if choice.whole_machine else "computeCloud")
 
 
 def project_configs(project_settings: dict | None) -> ProjectComputeConfigs:
@@ -144,6 +126,8 @@ async def validate_choice(session: AsyncSession, project_id, choice: ComputeChoi
     if choice.profile == "cloud":
         if not cloud_provisionable(settings):
             raise ValidationError(say("cloudNotAvailable"))
+        if choice.whole_machine and not cloud_vm_provisionable(settings):
+            raise ValidationError(say("cloudVmNotAvailable"))
         return
     devices = await sql_device_service(session).list_devices_for_project(project_id)
     if choice.device_id:

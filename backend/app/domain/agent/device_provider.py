@@ -53,6 +53,8 @@ from app.domain.agent.harness.claude_code import (
     resident_release,
 )
 from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachinePlan
+from app.domain.agent.machine_address import device_api_base, ws_url
+from app.domain.agent.machine_address import tunnel_url as machine_tunnel_url
 from app.domain.agent.place import (
     CHECKOUT_DIR,
     SANDBOXES_DIR,
@@ -64,7 +66,6 @@ from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
 )
-from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility, default_visibility
 from app.domain.device.wiring import sql_device_service
@@ -199,40 +200,6 @@ def uses_tunnel(*, tunnel_url: str) -> bool:
     than a guess: the deployment knows whether its machines can reach the box.
     """
     return bool(tunnel_url.strip())
-
-
-async def device_api_base(session, device_id: str, public_base: str) -> str:
-    """The backend base that ``device_id`` dials, from configuration.
-
-    An address belongs to the dialer: the session host reaches the backend over
-    its own configured base, a private-control cloud machine over loopback, and
-    everything else over the public connector base.
-    """
-    if (
-        device_id == settings.agent_session_device_id
-        and settings.agent_session_api_base
-    ):
-        return settings.agent_session_api_base.rstrip("/")
-    device = await session.get(DeviceRow, device_id)
-    if device and device.supply == Supply.cloud and device.cloud_control_private:
-        return "http://127.0.0.1:18080"
-    return public_base.rstrip("/")
-
-
-def _preview_ws_url(public_base: str) -> str:
-    """``wss://…/preview/tunnel`` for a machine, from the base it already dials.
-
-    Scheme-swapped rather than configured: the connector and the CLI all reach
-    this origin already, so a preview that rides the same one needs no
-    second address to keep true — and a deployment cannot end up with a preview
-    pointed somewhere the machine was never able to reach.
-    """
-    base = public_base.rstrip("/")
-    for http_scheme, ws_scheme in (("https://", "wss://"), ("http://", "ws://")):
-        if base.startswith(http_scheme):
-            base = ws_scheme + base[len(http_scheme) :]
-            break
-    return f"{base}/preview/tunnel"
 
 
 def connect_transport(*, session_token: str, via_tunnel: bool) -> str | None:
@@ -1212,7 +1179,7 @@ class DeviceChannel(Channel):
             # more than one agent, so the launcher, which knows, says it.
             agent_handle=agent_handle,
         )
-        tunnel_url = settings.subscription_tunnel_url.strip()
+        tunnel_url = machine_tunnel_url(api_base)
         via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
         connect_proxy_url = connect_transport(
             session_token=session_token, via_tunnel=via_tunnel
@@ -1272,7 +1239,7 @@ class DeviceChannel(Channel):
         # reaches for git and the CLI rather than configured separately:
         # the preview rides the path the connector proved, so a deployment that
         # can host a device can host a preview with nothing further to set.
-        model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(api_base)
+        model_env["CHEESE_PREVIEW_URL"] = ws_url(api_base, "/preview/tunnel")
         mark("configuration_ready")
         # 跑什么，问计划要 —— 这个 channel 只说「在哪」。
         # Everything below is a fact about this room and this machine; what any

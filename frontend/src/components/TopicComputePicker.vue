@@ -2,21 +2,19 @@
 // 房间这一项：这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻结论
 // 60）：改它就是整个房间一起搬，房间里的每个 AI 队友都换过去。挂在成员名册里房间
 // 那一行上。
-import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 import { ApiError, setTopicComputeChoice } from '../api'
-import { useCloudSupply } from '../composables/useCloudSupply'
 import { t } from '../i18n'
 import { choiceDetail, choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 import { renderNoticeMessage } from '../lib/noticeText'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 
-const props = defineProps<{ topicId: string; projectId: string; profile: TopicComputeProfile }>()
+const props = defineProps<{ topicId: string; profile: TopicComputeProfile }>()
 const emit = defineEmits<{ changed: [] }>()
-const { supply: cloudSupply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
 const saving = ref(false)
 const error = ref('')
 // 选择变成了一条提议：这次点击没有改掉任何东西，等人点头。不是错误，所以不走
@@ -27,12 +25,6 @@ const proposal = ref('')
 const unreachable = ref<ComputeChoice | null>(null)
 const menuOpen = ref(false)
 const more = ref(false)
-// 再打开就再问一次范围：菜单收起时这一项还挂着（`v-menu` 不销毁内容），留着的
-// 那份答案会旧 —— 服务可能已经恢复，云端的上限也可能已经放开。还没问过就不问，
-// 等表单自己要；这样一次打开最多问一次。
-watch(menuOpen, (open) => {
-  if (open && cloudSupply.value) void loadSupply()
-})
 const choices = computed(() => compactChoices(props.profile.project_default, props.profile.choice))
 const cloudAvailable = computed(() => props.profile.profiles.some((p) => p.id === 'cloud' && p.available))
 function online(choice: ComputeChoice): string {
@@ -159,11 +151,9 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?:
         v-if="more"
         :devices="profile.devices"
         :cloud-available="cloudAvailable"
-        :supply="cloudSupply"
-        :supply-loading="supplyLoading"
+        :cloud-vm-available="profile.cloud_vm_available"
         :busy="saving"
         @select="pick"
-        @need-supply="loadSupply"
       />
       <p v-if="proposal" role="status" class="cp-proposal">{{ proposal }}</p>
       <p v-if="error" role="alert" class="cp-error">{{ error }}</p>

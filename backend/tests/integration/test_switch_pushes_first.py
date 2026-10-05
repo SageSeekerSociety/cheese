@@ -2,8 +2,8 @@
 
 The push runs on the machine being left; the switch happens only after it
 succeeds. When that machine cannot be reached, a person may switch anyway and
-nobody else may. A Cloud machine left after a push stops counting against the
-team's quota.
+nobody else may. A cloud sandbox left after a push gives its home on the host
+back to the pool; one left without a push keeps it, and the host with it.
 """
 
 import ast
@@ -33,16 +33,13 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
-from app.domain.machine.models import MachineStatus
-from app.domain.machine.repositories import ProjectMachineRepository
-from app.domain.machine.services import MachineService
+from app.domain.machine.models import CloudHost, CloudHostHome, MachineStatus
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from app.main import app
 from tests.delivery import delivery_task
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
-from tests.unit.test_machine_service import FakeMicroCloud
 
 pytestmark = pytest.mark.anyio
 
@@ -307,33 +304,37 @@ async def test_an_unreachable_old_machine_only_a_person_can_switch_past(
 
 
 @pytest.mark.parametrize("reachable", [True, False])
-async def test_a_cloud_machine_left_after_a_push_stops_counting_against_quota(
+async def test_a_cloud_sandbox_left_after_a_push_gives_its_home_back(
     client, monkeypatch, reachable
 ):
     room = await _room(client, on_cloud=True)
-    cloud = FakeMicroCloud()
-    cloud.machines[71] = {"id": 71, "status": "running"}
-    monkeypatch.setattr("app.domain.machine.services.MicroCloudClient", lambda: cloud)
     async with client.test_factory() as db:
-        machine = await ProjectMachineRepository(db).add(
-            project_id=room.project_id,
-            topic_id=room.topic_id,
-            session_id=room.session_id,
+        host = CloudHost(
             machine_id=71,
             customer_id=7,
             account_id=9,
             offering_id=1,
-            hostname="left-cloud",
+            hostname="pool-host",
             login_user="cheese",
             cores=2,
             memory_mb=4096,
             disk_gb=20,
             status=MachineStatus.running,
-            ip=None,
-            requested_by="alice",
+            device_id=room.old_device,
         )
-        machine.device_id = room.old_device
-        machine_id = machine.id
+        db.add(host)
+        await db.flush()
+        db.add(
+            CloudHostHome(
+                host_id=host.id,
+                project_id=room.project_id,
+                topic_id=room.topic_id,
+                room_resource_id=room.lease["room_resource_id"],
+                resource_id=room.lease["resource_id"],
+                session_id=room.session_id,
+            )
+        )
+        host_id = host.id
         await db.commit()
     _machines(monkeypatch, online=reachable)
 
@@ -345,27 +346,62 @@ async def test_a_cloud_machine_left_after_a_push_stops_counting_against_quota(
 
     assert switched.status_code == 200, switched.text
     async with client.test_factory() as db:
-        service = MachineService(db, cloud)
-        left = await ProjectMachineRepository(db).get(machine_id)
-        counted = await service.quota_machines(
-            await service.quota_team_id(room.project_id)
+        homes = list(
+            await db.scalars(
+                select(CloudHostHome).where(CloudHostHome.host_id == host_id)
+            )
         )
+        host = await db.get(CloudHost, host_id)
         session = await AgentSessionService(db).by_id(room.session_id)
-    assert left.superseded_at is not None
+    # The host is the pool's either way: a switch never deletes it.
+    assert host.released_at is None
     if reachable:
-        assert cloud.deleted == [71]
-        assert left.released_at is not None
-        assert left.status == MachineStatus.deleting
-        assert machine_id not in {m.id for m in counted}
-        # Nothing is left on it for the room's cleanup to look for.
+        # Pushed: nothing of the session's is only there, so its slot is free.
+        assert homes == []
         assert session.execution_request["retained_leases"] == []
     else:
         # Switched without a push: whatever was only there stays, and so does
-        # the machine, until the room's cleanup.
-        assert cloud.deleted == []
-        assert left.released_at is None
-        assert machine_id in {m.id for m in counted}
+        # the home, which keeps the host until the room's cleanup.
+        assert [home.left_at is not None for home in homes] == [True]
         assert session.execution_request["retained_leases"] == [room.lease]
+
+
+async def test_a_cloud_session_whose_home_is_archived_switches_and_keeps_it(
+    client, monkeypatch
+):
+    """Its home is in the bucket and on no machine, so there is nothing to push
+    from and nobody has to agree to leave it: the archive stays, with whatever
+    it holds, until the room's cleanup."""
+    room = await _room(client, on_cloud=True)
+    async with client.test_factory() as db:
+        db.add(
+            CloudHostHome(
+                host_id=None,
+                project_id=room.project_id,
+                topic_id=room.topic_id,
+                room_resource_id=room.lease["room_resource_id"],
+                resource_id=room.lease["resource_id"],
+                session_id=room.session_id,
+                archive_key="sandbox-archives/home.tar.gz",
+                archive_size=1,
+                archive_md5="0" * 32,
+            )
+        )
+        await db.commit()
+    remote = _machines(monkeypatch, online=False)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    remote.assert_not_awaited()
+    async with client.test_factory() as db:
+        home = await db.scalar(
+            select(CloudHostHome).where(CloudHostHome.session_id == room.session_id)
+        )
+        session = await AgentSessionService(db).by_id(room.session_id)
+    assert home.left_at is not None
+    assert home.archive_key == "sandbox-archives/home.tar.gz"
+    assert session.execution_request["retained_leases"] == [room.lease]
 
 
 class _IdleMachine:

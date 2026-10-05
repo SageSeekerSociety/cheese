@@ -39,7 +39,7 @@ this migration changes or adds a foreign key to is locked up front, all at once
 or not at all (`_lock_all`).
 
 Revision ID: f7985445d2bf
-Revises: d72d0f566149
+Revises: 7d3a9c61e2b4
 Create Date: 2026-10-05
 """
 
@@ -50,7 +50,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f7985445d2bf"
-down_revision: str | Sequence[str] | None = "d72d0f566149"
+down_revision: str | Sequence[str] | None = "7d3a9c61e2b4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

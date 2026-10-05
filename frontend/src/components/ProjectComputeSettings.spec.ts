@@ -1,5 +1,5 @@
 // 项目设置里的工作电脑：只有「新 agent 默认用」和「现在的分布」，没有常用配置。
-import type { ComputeChoice, ProjectComputeConfigs } from '../cx_types'
+import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -21,9 +21,6 @@ const cloud: ComputeChoice = {
   name: null,
   profile: 'cloud',
   device_id: null,
-  cores: null,
-  memory_mb: null,
-  disk_gb: null,
 }
 
 function configs(overrides: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
@@ -32,8 +29,10 @@ function configs(overrides: Partial<ProjectComputeConfigs> = {}): ProjectCompute
     can_manage: true,
     devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],
     cloud_available: true,
+    cloud_vm_available: false,
     distribution: {
       cloud: 3,
+      cloud_vm: 0,
       devices: [{ device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: true }],
     },
     ...overrides,
@@ -88,13 +87,22 @@ describe('project work computer settings', () => {
     const row = await mount()
 
     expect(row.textContent).toContain('新 AI 队友默认使用')
-    expect(row.textContent).toContain('云端 · 标准配置')
+    expect(row.textContent).toContain('云端沙箱')
     expect(screen.getByText('只影响尚未开始运行的 AI 队友，已在运行的继续用原来的工作电脑')).toBeTruthy()
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('当前分布')).toBeTruthy()
-    expect(distribution.getByText(/云端 · 3 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/云端沙箱 · 3 个 AI 队友/)).toBeTruthy()
     expect(distribution.getByText(/实验室工作站 · 2 个 AI 队友 · 能访问整台机器/)).toBeTruthy()
     expect(screen.queryByText(/常用/)).toBeNull()
+  })
+
+  it('counts agents on whole cloud VMs apart from those in sandboxes', async () => {
+    api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { cloud: 1, cloud_vm: 2, devices: [] } }))
+    await mount()
+
+    const distribution = within(screen.getByTestId('project-distribution'))
+    expect(distribution.getByText(/云端沙箱 · 1 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/整台云虚拟机 · 2 个 AI 队友/)).toBeTruthy()
   })
 
   it('counts one agent as one in English', async () => {
@@ -103,6 +111,7 @@ describe('project work computer settings', () => {
       configs({
         distribution: {
           cloud: 1,
+          cloud_vm: 0,
           devices: [
             { device_id: 'lab', name: 'Lab', agents: 1, machine_access: false },
             { device_id: 'rig', name: 'Rig', agents: 2, machine_access: false },
@@ -113,7 +122,7 @@ describe('project work computer settings', () => {
     await mount()
 
     const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('Cloud · 1 agent')).toBeTruthy()
+    expect(distribution.getByText('Cloud sandbox · 1 agent')).toBeTruthy()
     expect(distribution.getByText('Lab · 1 agent')).toBeTruthy()
     expect(distribution.getByText('Rig · 2 agents')).toBeTruthy()
   })
@@ -126,6 +135,7 @@ describe('project work computer settings', () => {
       configs({
         distribution: {
           cloud: 0,
+          cloud_vm: 0,
           devices: [
             { device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: false },
             { device_id: null, name: null, agents: 1, machine_access: false },
@@ -135,7 +145,7 @@ describe('project work computer settings', () => {
     )
     const row = await mount()
 
-    expect(row.textContent).toContain('Cloud · Standard configuration')
+    expect(row.textContent).toContain('Cloud sandbox')
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('实验室工作站 · 2 agents')).toBeTruthy()
     expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
@@ -148,24 +158,17 @@ describe('project work computer settings', () => {
         default: { ...cloud, name: '云端 · 标准配置' },
         distribution: {
           cloud: 0,
+          cloud_vm: 0,
           devices: [{ device_id: null, name: '自有设备 · 自动选择', agents: 1, machine_access: false }],
         },
       })
     )
     const row = await mount()
 
-    expect(row.textContent).toContain('Cloud · Standard configuration')
+    expect(row.textContent).toContain('Cloud sandbox')
     expect(row.textContent).not.toContain('云端')
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
-  })
-
-  it('names a cloud choice with its own specs as custom', async () => {
-    setLocale('en')
-    api.getProjectComputeConfigs.mockResolvedValue(configs({ default: { ...cloud, cores: 8, memory_mb: 16384 } }))
-    const row = await mount()
-
-    expect(row.textContent).toContain('Cloud · Custom configuration')
   })
 
   it('saves the cloud without a name, so no language is stored for everyone', async () => {
@@ -180,11 +183,13 @@ describe('project work computer settings', () => {
     await fireEvent.click(await screen.findByRole('option', { name: /^云端/ }))
     await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
 
-    await waitFor(() => expect(api.saveProjectComputeConfigs).toHaveBeenCalledWith('p1', { default: cloud }))
+    await waitFor(() =>
+      expect(api.saveProjectComputeConfigs).toHaveBeenCalledWith('p1', { default: { ...cloud, whole_machine: false } })
+    )
   })
 
   it('says so when no agent has started', async () => {
-    api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { cloud: 0, devices: [] } }))
+    api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { cloud: 0, cloud_vm: 0, devices: [] } }))
     await mount()
 
     expect(screen.getByText('暂无运行中的 AI 队友')).toBeTruthy()
@@ -224,6 +229,7 @@ describe('project work computer settings', () => {
       configs({
         distribution: {
           cloud: 1,
+          cloud_vm: 0,
           devices: [
             { device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: true },
             // Picked when those sessions lease; there is no one device to list yet.

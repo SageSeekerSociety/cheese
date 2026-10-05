@@ -37,7 +37,6 @@ from app.domain.block.queries import (
     weeklies_for_project,
 )
 from app.domain.identity.actor import Actor
-from app.domain.machine.limits import get_machine_limit
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
 from app.domain.project.protection import (
@@ -155,14 +154,9 @@ async def _require_claim(
 
 
 @router.get("/resource-limits")
-async def resource_limits(db: DbSession) -> dict:
+async def resource_limits() -> dict:
     """Creation defaults, available before a project exists."""
-    return ok(
-        {
-            "max_machines_per_team": await get_machine_limit(db),
-            "max_concurrent_turns": settings.max_concurrent_turns,
-        }
-    )
+    return ok({"max_concurrent_turns": settings.max_concurrent_turns})
 
 
 @router.post("")

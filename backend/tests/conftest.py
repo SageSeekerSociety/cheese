@@ -427,9 +427,6 @@ class StubChannel(SeatChannel):
     def available(self) -> bool:
         return True
 
-    async def prepare_topic(self, **_: object) -> tuple[bool, str]:
-        return True, ""
-
     async def open(self, session: SessionRef, agent: str, launch) -> None:
         """The seat's runner, started the first time the seat starts."""
         self.last_system_prompt = launch.system_prompt

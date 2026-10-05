@@ -7,7 +7,8 @@
 //
 // 名册底下一行写这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻
 // 结论 60）：房间里的 AI 队友都在这一台上，所以不再每个队友各写一行。
-import type { ProjectMemberRow, TopicComputeProfile, TopicMemberRow } from '../cx_types'
+import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+import type { TopicComputeProfile } from '../types/compute'
 import type { MenuAction } from './common/menuAction'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -361,7 +362,7 @@ async function onSetRole(handle: string, role: string) {
         >
           <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
         </span>
-        <TopicComputePicker :topic-id="topicId" :project-id="projectId" :profile="machines" @changed="loadMachines" />
+        <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
       </div>
       <div v-else-if="machinesError" class="roster__hint">
         {{ t('work.roomMachine.loadFailed') }}

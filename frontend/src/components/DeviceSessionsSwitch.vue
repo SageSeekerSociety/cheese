@@ -2,7 +2,7 @@
 // 「现在的分布」里一台自有设备上的 agent：列出来，选一些换到另一台工作电脑。一个话题
 // 一个容器（2026-09-28，推翻结论 60）：换的是它所在的整个房间，走和成员名册同一条
 // 更换（先推送，失败就不换并说明原因），同房间的队友一起搬；房间正在干活的跳过，不打断。
-import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
+import type { ComputeChoice, TopicComputeDevice } from '../types/compute'
 import type { DeviceSession } from '../types/deviceSessions'
 
 import { computed, ref, watch } from 'vue'
@@ -48,9 +48,6 @@ const choices = computed(() => {
     name: null,
     profile: 'cloud',
     device_id: null,
-    cores: null,
-    memory_mb: null,
-    disk_gb: null,
   }
   const devices = props.devices
     .filter((device) => device.device_id !== props.device.device_id)

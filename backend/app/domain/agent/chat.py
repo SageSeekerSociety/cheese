@@ -112,7 +112,6 @@ from app.domain.agent.mentions import (
     _resolve_mentions,  # noqa: F401
     _topic_refs,  # noqa: F401
     announce_mentions,
-    cloud_waiting_topics,
     person_mentions,
     project_refs_text,
 )
@@ -1328,11 +1327,6 @@ class ChatService(SessionRecovery, RoomTurns):
             meta=meta,
             task_id=task_id,
         )
-
-    async def cloud_waiting_topics(self, topic_ids: list[uuid.UUID]) -> list[uuid.UUID]:
-        """Topics whose latest durable Cloud lifecycle event is still waiting."""
-        async with self._sessions() as session:
-            return await cloud_waiting_topics(session, topic_ids)
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
         """Admission facts the AgentWorkRunner gates on BEFORE running a turn."""

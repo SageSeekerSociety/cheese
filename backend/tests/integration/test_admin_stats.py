@@ -486,7 +486,7 @@ def test_platform_reports_accounts_by_day_and_machine_stock(client, as_admin):
         "devices": 1,
         "hosted_devices": 0,
         "warm_machines": 1,
-        "project_machines": 0,
+        "cloud_hosts": 0,
     }
 
 

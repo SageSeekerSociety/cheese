@@ -587,12 +587,12 @@ class Settings(BaseSettings):
     # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
     # cannot reach the CONNECT listener directly. On the ghg network it cannot:
     # measured 2026-08-14, packets to the box's listener port never reach its NIC,
-    # dropped at a hypervisor bridge the box can neither see nor change — while
-    # the gateway path those machines already use for the connector works and
-    # carries websockets. Set this to that path and device subscription turns ride
-    # it instead. Empty = no tunnel, and a device falls back to dialling
-    # `subscription_device_proxy_host` directly (right for a flat network, and the
-    # behaviour every deployment has today).
+    # dropped at a hypervisor bridge the box can neither see nor change. Set, every
+    # device's subscription turns ride the tunnel: a private-control cloud machine
+    # dials it through its loopback forward to the backend
+    # (`machine_address.tunnel_url`), every other device dials this URL. Empty =
+    # no tunnel, and a device dials `subscription_device_proxy_host` directly
+    # (right for a flat network).
     subscription_tunnel_url: str = ""
     # Where the proxy's own CA is mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
@@ -643,19 +643,20 @@ class Settings(BaseSettings):
     # (CONNECTOR_WS_OVERRIDES, commits ce30e62 + 6327c7e).
     connector_ws_overrides: dict[str, str] = {}
 
-    # --- MicroCloud: cloud nodes for the team's compute pool ---
-    # A project remains the billing/audit unit for each machine, but enrollment
-    # binds the resulting device to that project's team. Cheese is one MicroCloud
-    # tenant and keeps the opaque provider secret server-side. Empty secret = the
-    # feature reports itself unavailable without breaking self-hosted compute.
+    # --- MicroCloud: the platform's pool of cloud hosts ---
+    # Every cloud host belongs to the platform, under one MicroCloud customer and
+    # account of its own, and carries the sandboxes of sessions from any project.
+    # Cheese is one MicroCloud tenant and keeps the opaque provider secret
+    # server-side. Empty secret = the feature reports itself unavailable without
+    # breaking self-hosted compute.
     microcloud_base_url: str = ""
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
     microcloud_offering_id: int = 0
-    # Requested spec. Every value is clamped into the chosen offering's own
-    # range, so these are preferences, not guarantees.
+    # The size every cloud host is created with. Every value is clamped into the
+    # chosen offering's own range, so these are preferences, not guarantees.
     microcloud_default_cores: int = 2
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
@@ -686,10 +687,56 @@ class Settings(BaseSettings):
     # machine 477 was never diagnosed. Platform-provisioned machines only: a
     # self-hosted box is someone else's and never gets a key of ours.
     microcloud_operator_ssh_pubkey: str = ""
-    # The billing project's fund account, and the balance kept in it. MicroCloud
-    # bills compute against this; 0 disables top-ups (an operator funds it by hand).
+    # The platform's fund account for its hosts, and the balance kept in it.
+    # MicroCloud bills compute against this; 0 disables top-ups (an operator funds
+    # it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
+    # Sandbox slots per host core: how many sessions' sandboxes one host runs at
+    # once. A sandbox holds its slot while it runs; one asleep holds only disk.
+    cloud_host_slots_per_core: int = Field(default=2, ge=1, le=16)
+    # The disk a session's home is budgeted on its host. A host keeps at most
+    # `disk_gb // this` homes, running or asleep (never fewer than its slots).
+    cloud_sandbox_disk_gb: int = Field(default=5, ge=1, le=1024)
+    # A cloud sandbox is stopped once its room has run no turn and the session
+    # has asked for no tool for this long; its home stays on the host's disk and
+    # the next tool call starts it again.
+    cloud_sandbox_idle_stop_s: int = Field(default=600, ge=60, le=86400)
+    # A command the executor still runs for the session (a Bash call sent to the
+    # background) keeps an otherwise idle sandbox up, but no longer than this
+    # after the session's last activity.
+    cloud_sandbox_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
+    # A home asleep this long is archived to the private bucket and deleted
+    # from its host; the session's next tool call restores it on any host.
+    cloud_sandbox_archive_after_s: int = Field(
+        default=7 * 86400, ge=3600, le=365 * 86400
+    )
+    # Pre-scale: when the free slots of the pool's live hosts fall below this,
+    # the pool sweep claims (or creates) the next host before anyone waits on it.
+    cloud_pool_min_free_slots: int = Field(default=2, ge=0, le=64)
+    # How long a host that runs no sandbox is kept. Then its sleeping homes are
+    # archived and it is released.
+    cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
+    # The most hosts the pool holds at once, legacy hosts draining excluded. It
+    # protects the MicroCloud cluster; a session that finds the pool full is told
+    # capacity is tight and to try later.
+    cloud_pool_max_hosts: int = Field(default=20, ge=1, le=500)
+    # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
+    # The offering a session that asks for a whole machine gets its VM from
+    # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
+    # the choice. Each VM counts against `cloud_pool_max_hosts` like a host.
+    microcloud_vm_offering_id: int = 0
+    # The size every whole cloud VM is created with, clamped into the offering's
+    # own range. One size: what a session is charged is spec × time, and the
+    # spec is recorded on the VM's row.
+    cloud_vm_cores: int = Field(default=4, ge=1)
+    cloud_vm_memory_mb: int = Field(default=8192, ge=1024)
+    cloud_vm_disk_gb: int = Field(default=40, ge=10)
+    # A session's VM is released once its room has run no turn and the session
+    # has asked for no tool for this long, after its work is pushed. The next
+    # tool call prepares a new one, which takes minutes, so this is longer
+    # than a sandbox's idle stop.
+    cloud_vm_idle_release_s: int = Field(default=1800, ge=60, le=7 * 86400)
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud by the sweep. Never would let a machine destroyed upstream sit
     # here as `running` forever (which happened, and also consumed the
@@ -961,9 +1008,10 @@ class Settings(BaseSettings):
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
-    # The private bucket, for task snapshot bundles (room_task/snapshots.py);
-    # the public upload bucket is never used for them. The name is the bucket's
-    # first use: it also holds the transcript objects `raw_transcripts` indexes.
+    # The private bucket, for task snapshot bundles (room_task/snapshots.py)
+    # and archived cloud sandbox homes (machine/lifecycle.py); the public upload
+    # bucket is never used for them. The name is the bucket's first use: it also
+    # holds the transcript objects `raw_transcripts` indexes.
     transcript_s3_bucket: str = ""
     s3_endpoint_url: str | None = None
     s3_access_key: str | None = None

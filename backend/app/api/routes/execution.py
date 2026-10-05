@@ -148,9 +148,7 @@ async def execute(
         raise ForbiddenError("This credential only reads the machine's files")
     target = lease
     if not (
-        await machine_owner_reads.active_cloud_device_for_project(
-            db, target["device_id"], room.project_id
-        )
+        await machine_owner_reads.active_cloud_host(db, target["device_id"])
         or await owner_reads.execution_device_authorized(
             db, target["device_id"], room.project_id
         )

@@ -54,7 +54,6 @@ import type {
   ReactionAgg,
   RoomTask,
   Topic,
-  TopicComputeProfile,
   TopicMemberRow,
   TopicProgress,
   TopicWorkSummary,
@@ -66,6 +65,7 @@ import type {
 } from './cx_types'
 import type { DocComment } from './lib/docThreadTypes'
 import type { AgentFieldChoice } from './lib/modelChoices'
+import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from './types/compute'
 import type { SitePage } from './types/site'
 
 import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
@@ -632,61 +632,13 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
 
-// MicroCloud machines are billed/audited through one project but enroll into that
-// project's team compute pool. The browser never receives provider credentials.
+// Creation defaults, available before a project exists.
 export interface ResourceLimits {
-  max_machines_per_team: number
   max_concurrent_turns: number
 }
 
 export function getResourceLimits(): Promise<ResourceLimits> {
   return request('/projects/resource-limits')
-}
-
-export interface MachineQuota {
-  team_id: number
-  used: number
-  limit: number
-  project_used: number
-}
-
-export interface TeamResourceQuotas {
-  team_id: number
-  machines: { used: number; limit: number }
-  projects: {
-    id: string
-    name: string
-    machines_used: number
-  }[]
-}
-
-export function getTeamResourceQuotas(teamId: number): Promise<TeamResourceQuotas> {
-  return request(`/teams/${teamId}/resource-quotas`)
-}
-
-export function listProjectMachines(
-  projectId: string
-): Promise<ListPayload<import('./cx_types').ProjectMachine> & { quota: MachineQuota }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines`)
-}
-
-export function deleteProjectMachine(
-  projectId: string,
-  machineId: string
-): Promise<import('./cx_types').ProjectMachine | null> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines/${encodeURIComponent(machineId)}`, {
-    method: 'DELETE',
-  })
-}
-
-export function changeProjectMachinePower(
-  projectId: string,
-  machineId: string,
-  operation: 'suspend' | 'resume'
-): Promise<import('./cx_types').ProjectMachine> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines/${encodeURIComponent(machineId)}/${operation}`, {
-    method: 'POST',
-  })
 }
 
 // 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
@@ -703,14 +655,14 @@ export function listDeviceSessions(
   return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 
-export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
+export function getProjectComputeConfigs(projectId: string): Promise<ProjectComputeConfigs> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`)
 }
 
 export function saveProjectComputeConfigs(
   projectId: string,
-  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default'>
-): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default'>> {
+  configs: Pick<ProjectComputeConfigs, 'default'>
+): Promise<Pick<ProjectComputeConfigs, 'default'>> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`, {
     method: 'PUT',
     body: JSON.stringify(configs),
@@ -731,9 +683,9 @@ export interface ComputeProposal {
 // 点名那台上能看到什么，不给就保持原样，新绑上的是隔离环境。
 export function setTopicComputeChoice(
   topicId: string,
-  choice: import('./cx_types').ComputeChoice,
+  choice: ComputeChoice,
   options: { abandonUnpushed?: boolean; ifIdle?: boolean; visibility?: 'host' | 'isolated' } = {}
-): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
+): Promise<{ choice: ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({
@@ -2169,7 +2121,7 @@ export interface StatsPlatform {
     new_agents: number
     series: { date: string; created: number; human_created: number; agent_created: number }[]
   }
-  machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
+  machines: { devices: number; hosted_devices: number; warm_machines: number; cloud_hosts: number }
   /** **这一刻**的健康度（和上面两组的「存量 / 窗口」不是一回事）。判据与 `/health/detailed` 同源。 */
   health: {
     overall: 'healthy' | 'degraded' | 'unknown'
@@ -2195,10 +2147,12 @@ export interface StatsPlatform {
       warm_total: number
       warm_by_state: Record<string, number>
       warm_error: number
-      project_total: number
-      project_by_status: Record<string, number>
-      project_leased: number
-      project_enroll_error: number
+      host_total: number
+      host_by_status: Record<string, number>
+      host_active: number
+      host_enroll_error: number
+      host_slots_used: number
+      host_slots_total: number
       note_key: string
     }
   }

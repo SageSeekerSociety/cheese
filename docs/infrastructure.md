@@ -211,9 +211,10 @@ Each backend switch is also a handover of the running work. One backend at a
 time owns it (the sessions it listens to, the turns it watches, the periodic
 jobs), and a Postgres advisory lock says which (`app/core/ownership.py`). A
 successor serves requests at once but holds the turns asked of it until the lock
-reaches it. The outgoing backend, on SIGTERM, lets the prompts it is still
-sending arrive, stops reading its sessions, lets go of its turns without ending
-them and releases the lock. The successor then picks every running turn up
+reaches it, and so does a question (`cheese_ask`) that a running turn asks it:
+only the owner knows which turn is running. The outgoing backend, on SIGTERM,
+lets the prompts it is still sending arrive, stops reading its sessions, lets go
+of its turns without ending them and releases the lock. The successor then picks every running turn up
 where it stands and starts any turn a message was left waiting for. The whole
 of that fits in the backend's 60-second `stop_grace_period`, which is why the
 successor is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
@@ -828,6 +829,41 @@ on etrip names that process; killing it releases the port.
 
 To check the public path from anywhere, run
 [`scripts/ops/probe-okcheese.sh`](../scripts/ops/probe-okcheese.sh).
+
+### Static assets are answered in Hong Kong
+
+The page's built files under `/assets/` are hashed: a name never changes its
+content. Since TLS ends on etrip, Caddy answers them from a copy on etrip
+instead of sending each one through a tunnel, so a cold page load no longer
+waits on the tunnels for about a megabyte of script, and a fresh service
+worker's precache (about 6 MB gzipped, most of it again after every deploy)
+stops competing with API calls inside them.
+
+- `cheese-edge-asset-sync.service` runs
+  [`scripts/ops/edge-asset-sync.py`](../scripts/ops/edge-asset-sync.py) as
+  user `cheese-edge`. Every 15 s it reads the live `index.html` and `sw.js`
+  through the same tunnel ports Caddy uses, and fetches every `/assets/` file
+  they name that is missing from `/srv/okcheese-edge/assets/`. A file appears
+  under its name only after its size matched the origin's `Content-Length`,
+  with a `.gz` twin beside the compressible ones.
+- [`scripts/ops/okcheese-edge-assets.caddy`](../scripts/ops/okcheese-edge-assets.caddy),
+  installed as `/etc/caddy/okcheese-edge-assets.caddy` and imported inside the
+  okcheese.com site, serves a file only when the copy has it. Anything else,
+  including a file from a deploy the job has not caught up with yet, goes
+  through the tunnels as before, so the job being down costs speed and nothing
+  else.
+- The job never deletes a file that is still referenced, and keeps every
+  other one for 14 days, so a tab still running an older build finds its lazy
+  chunks here after the dev box has replaced them.
+
+Rollback: delete the `import` line from the okcheese.com site and
+`systemctl reload caddy`; then `systemctl disable --now cheese-edge-asset-sync`.
+
+The okcheese.com `reverse_proxy` carries `stream_close_delay 10m`. Without
+it, a reload of this Caddy closes every WebSocket it proxies at once (room
+sockets, device connectors, preview tunnels); with it, sockets open at the
+reload stay up for up to ten minutes, and clients reconnect on their own
+schedule.
 
 ## Access
 

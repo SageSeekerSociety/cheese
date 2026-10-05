@@ -939,7 +939,7 @@ def resolv_conf():
 def loopback_ports(env):
     """The machine's loopback ports a sandbox must reach as its own: the
     backend's, where the machine reaches it through a loopback forward
-    (`device_provider.device_api_base`), and the preview tunnel's beside it."""
+    (`machine_address.device_api_base`), and the preview tunnel's beside it."""
     from urllib.parse import urlsplit
 
     ports = []

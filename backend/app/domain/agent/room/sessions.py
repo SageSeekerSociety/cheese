@@ -254,10 +254,6 @@ class RoomSessions:
         return self.channel.name
 
     @property
-    def provisions_machine(self) -> bool:
-        return self.channel.provisions_machine
-
-    @property
     def deferred_work(self) -> bool:
         return self.channel.deferred_work
 
@@ -267,9 +263,6 @@ class RoomSessions:
 
     def available(self) -> bool:
         return self.channel.available()
-
-    async def prepare_topic(self, **kwargs) -> tuple[bool, str]:
-        return await self.channel.prepare_topic(**kwargs)
 
     def report_to(
         self,
@@ -286,24 +279,27 @@ class RoomSessions:
         self._quiet = quiet
 
     def prewarm_due(self, session: SessionRef) -> "Live | None":
-        """The seat's live session, when it may be launched from something the
-        backend would no longer start and nothing is running on it; else None.
+        """The seat's live session, when the next message would have to start
+        it again and nothing is running on it; else None.
 
         Owed after this process took the seat over, until a start compares it
-        (``unchecked``), and whenever the channel put a relaunch off because the
-        session was working (``owes``). Only the process that owns the
-        running work answers yes: the one handing it over must not start what
-        the next one is about to read."""
+        (``unchecked``); whenever the channel put a relaunch off because the
+        session was working (``owes``); and once its runner stopped answering,
+        which is what letting an idle session go looks like from here. Only the
+        process that owns the running work answers yes: the one handing it over
+        must not start what the next one is about to read."""
         seat = self._seat_of(session)
         live = self.live.get(seat)
         if live is None or not live.takes_inputs or seat in self.work:
             return None
         provider = self._owns_sessions_provider
-        if provider is not None and not provider().owns_sessions():
+        if provider is not None and not provider().owns_sessions:
             return None
         ledger = getattr(self.channel, "screen_ledger", None)
-        if seat in self.unchecked or (
-            ledger is not None and ledger.owes((seat[0], live.acting))
+        if (
+            seat in self.unchecked
+            or (ledger is not None and ledger.owes((seat[0], live.acting)))
+            or self.host.answers(live.ref) is False
         ):
             return live
         return None
@@ -1131,19 +1127,34 @@ class RoomSessions:
     async def ask_origin(self, project_id, topic_id, agent_handle) -> dict | None:
         """The seat's exact live native identity, starting and sending nothing:
         the work its session is doing is the work this process has open."""
+        from app.domain.agent.ask_origin import refused
+
         seat = (topic_id, agent_handle)
         live = self.live.get(seat)
         work = self.work.get(seat)
         if live is None or work is None or live.session.project_id != project_id:
+            refused(
+                "no live session work",
+                topic_id,
+                agent_handle,
+                live=live is not None,
+                work=work,
+            )
             return None
         status = await self.host.status(live.ref)
-        if (
-            status is None
-            or not status.working
-            or status.work_id != str(work)
-            or self.live.get(seat) is not live
-            or self.work.get(seat) != work
-        ):
+        if status is None or not status.working or status.work_id != str(work):
+            refused(
+                "session not working on it",
+                topic_id,
+                agent_handle,
+                work=work,
+                reachable=status is not None,
+                working=status.working if status is not None else None,
+                session_work=status.work_id if status is not None else None,
+            )
+            return None
+        if self.live.get(seat) is not live or self.work.get(seat) != work:
+            refused("session changed while reading", topic_id, agent_handle, work=work)
             return None
         return {
             "harness": self.harness,

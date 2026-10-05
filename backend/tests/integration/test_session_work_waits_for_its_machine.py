@@ -1,4 +1,4 @@
-"""A tool issued while its session's Cloud machine is prepared waits for it.
+"""A tool issued while its session's cloud sandbox is prepared waits for it.
 
 The room's first command used to come back at once with "still preparing",
 and the agent retried it in a loop until the machine was up. A native session
@@ -25,28 +25,32 @@ from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import (
     MAX_ENROLL_ATTEMPTS,
     MAX_PROVIDER_ERRORS,
-    ProjectMachine,
+    AiStatus,
+    CloudHost,
+    MachineStatus,
 )
-from app.domain.machine.repositories import ProjectMachineRepository
-from app.domain.machine.services import MachineService
+from app.domain.machine.repositories import CloudHostRepository
 from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.topic.models import Topic
 from tests.integration.conftest import post_project, session_auth_headers
-from tests.unit.test_machine_service import FakeMicroCloud
+from tests.microcloud import FakeMicroCloud
 
 
 @pytest.fixture
 def cloud_rooms(client, monkeypatch):
     """Two Cloud rooms of one project: an older one whose session already
-    works on its own machine, and a new one whose session has not run
-    anything yet."""
+    works in a sandbox, and a new one whose session has not run anything yet.
+    A host has one slot here, so each session's sandbox needs a host of its
+    own."""
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    monkeypatch.setattr(settings, "microcloud_default_cores", 1)
+    monkeypatch.setattr(settings, "cloud_host_slots_per_core", 1)
+    # No host ahead of demand: the hosts here are the ones these sessions ask for.
+    monkeypatch.setattr(settings, "cloud_pool_min_free_slots", 0)
     cloud = FakeMicroCloud()
-    monkeypatch.setattr(
-        work_lease, "MachineService", lambda db: MachineService(db, cloud)
-    )
+    monkeypatch.setattr("app.domain.machine.services.MicroCloudClient", lambda: cloud)
     project = post_project(client, json={"name": "Cloud rooms"}, owner="alice").json()[
         "data"
     ]
@@ -148,27 +152,33 @@ def _lease(case, seat, timeout=660):
     )
 
 
-def _session_machine(case, session_id):
+def _session_machine(case, session_id) -> CloudHost | None:
+    """The host the session's sandbox is placed on."""
+
     async def read():
         async with case.client.test_request_factory() as db:
-            return await ProjectMachineRepository(db).get_active_for_session(session_id)
+            repo = CloudHostRepository(db)
+            home = await repo.current_home(session_id)
+            return None if home is None else await repo.get(home.host_id)
 
     return case.client.portal.call(read)
 
 
 def _machine_is_up(case, session_id, device_id):
-    """What the enrolment sweep does once the connector on it dials in."""
+    """What the pool sweep does once the host's connector dials in."""
 
     async def enrol():
         async with case.client.test_request_factory() as db:
-            repo = ProjectMachineRepository(db)
-            machine = await repo.get_active_for_session(session_id)
-            case.cloud.machines[machine.machine_id].update(
-                status="running", aiStatus="ready"
+            repo = CloudHostRepository(db)
+            home = await repo.current_home(session_id)
+            host = await repo.get(home.host_id)
+            case.cloud.machines[host.machine_id].update(
+                status="running", aiStatus="disabled"
             )
-            await repo.mark_enrolled(
-                machine, device_id=device_id, when=datetime.now(UTC)
-            )
+            host.status = MachineStatus.running
+            host.ai_status = AiStatus.disabled
+            host.last_seen_at = datetime.now(UTC)
+            await repo.mark_enrolled(host, device_id=device_id, when=datetime.now(UTC))
             await db.commit()
 
     case.client.portal.call(enrol)
@@ -186,16 +196,16 @@ def test_a_new_rooms_first_command_waits_for_its_own_machine(cloud_rooms, monkey
         "older-rooms-machine"
     )
 
-    # The new room's first command: the platform asks for the new room's own
-    # machine, and a bounded request answers that it is still being prepared —
-    # never with the older room's machine, online as it is.
+    # The new room's first command: the older room's host is full, so the
+    # pool asks for another, and a bounded request answers that the sandbox is
+    # still being prepared.
     waiting = _lease(case, case.new, timeout=5)
     assert waiting.status_code == 200, waiting.text
     answer = waiting.json()["data"]
     assert answer["preparing"] is True
     assert "target" not in answer
     own = _session_machine(case, case.new[1])
-    assert own is not None and own.topic_id == case.new[0]
+    assert own is not None and own.device_id is None
     assert len(case.cloud.created) == 2
 
     # The next ask waits, and runs as soon as that machine is up.
@@ -263,9 +273,12 @@ def test_a_session_that_will_not_wait_is_still_answered(cloud_rooms):
     assert ready.json()["data"]["target"]["device_id"] == "new-rooms-machine"
 
 
-def test_a_machine_that_cannot_be_enrolled_is_reported_at_once(
+def test_a_host_that_cannot_be_enrolled_is_given_up_for_another(
     cloud_rooms, monkeypatch
 ):
+    """Nothing of the session's is on a host that never joined, so the pool
+    lets it go and prepares the sandbox on another instead of reporting the
+    failure for good."""
     case = cloud_rooms
     monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
     assert _lease(case, case.new, timeout=5).json()["data"]["preparing"] is True
@@ -273,21 +286,21 @@ def test_a_machine_that_cannot_be_enrolled_is_reported_at_once(
 
     async def fail():
         async with case.client.test_request_factory() as db:
-            row = await db.get(ProjectMachine, machine.id)
+            row = await db.get(CloudHost, machine.id)
             case.cloud.machines[row.machine_id].update(
-                status="running", aiStatus="ready"
+                status="running", aiStatus="disabled"
             )
+            row.status = MachineStatus.running
+            row.ai_status = AiStatus.disabled
             row.enroll_attempts = MAX_ENROLL_ATTEMPTS
             await db.commit()
 
     case.client.portal.call(fail)
-    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 30.0)
-    started = time.monotonic()
-    answer = _lease(case, case.new)
-    assert time.monotonic() - started < 5, "A failure is not waited out"
-    data = answer.json()["data"]
-    assert "preparing" not in data
-    assert data["unavailable"].startswith("云端工作电脑接入失败")
+    answer = _lease(case, case.new, timeout=5).json()["data"]
+    assert answer["preparing"] is True, answer
+    assert case.cloud.deleted == [machine.machine_id]
+    assert _session_machine(case, case.new[1]).id != machine.id
+    assert len(case.cloud.created) == 2
     case.hub.exec.assert_not_awaited()
 
 
@@ -300,7 +313,8 @@ def _provider_fails(case, session_id):
 
 def test_a_machine_the_provider_failed_to_build_is_replaced(cloud_rooms, monkeypatch):
     """dev, 2026-10-01: a Proxmox create outlived MicroCloud's wait, and every
-    later command of the room was answered 「创建失败」 for good."""
+    later command of the room was answered 「创建失败」 for good. The pool lets
+    the failed host go and places the sandbox again."""
     case = cloud_rooms
     monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
     assert _lease(case, case.new, timeout=5).json()["data"]["preparing"] is True
@@ -318,7 +332,7 @@ def test_a_machine_the_provider_failed_to_build_is_replaced(cloud_rooms, monkeyp
     assert len(case.cloud.created) == 2
 
 
-def test_a_room_whose_machines_keep_failing_is_told_retries_were_made(
+def test_a_session_whose_hosts_keep_failing_is_told_retries_were_made(
     cloud_rooms, monkeypatch
 ):
     case = cloud_rooms
@@ -333,7 +347,7 @@ def test_a_room_whose_machines_keep_failing_is_told_retries_were_made(
     data = _lease(case, case.new).json()["data"]
     assert time.monotonic() - started < 5, "A failure is not waited out"
     assert "preparing" not in data
-    assert data["unavailable"].startswith("云端工作电脑创建失败")
+    assert data["unavailable"].startswith("沙箱准备失败")
     assert f"连续 {MAX_PROVIDER_ERRORS} 次" in data["unavailable"]
     assert "重试" in data["unavailable"]
     assert len(case.cloud.created) == MAX_PROVIDER_ERRORS
@@ -381,3 +395,47 @@ def test_a_caller_that_left_stops_the_wait_without_taking_the_machine(
             return (await AgentSessionService(db).by_id(session_id)).work_lease
 
     assert case.client.portal.call(lease) is None
+
+
+def test_each_session_on_a_cloud_host_has_its_executor_sandboxed(cloud_rooms):
+    """A cloud host's sessions are `isolated`: each one's executor is installed
+    to run in a sandbox of its own (#2320)."""
+    import ast
+
+    from app.domain.device.supply import Supply
+    from app.domain.device.wiring import sql_device_service
+    from app.domain.machine.models import HOST_OWNER
+
+    case = cloud_rooms
+    assert _lease(case, case.new, timeout=5).json()["data"].get("preparing")
+
+    async def enrol():
+        async with case.client.test_factory() as db:
+            owner = await IdentityService(db).ensure_agent_user(handle=HOST_OWNER)
+            devices = sql_device_service(db)
+            device = await devices.approve(
+                await devices.start("pool-host"),
+                owner_user_id=owner.id,
+                supply=Supply.cloud,
+            )
+            await db.commit()
+            return device.device_id
+
+    device_id = case.client.portal.call(enrol)
+    _machine_is_up(case, case.new[1], device_id)
+    answer = _lease(case, case.new)
+    assert answer.json()["data"]["target"]["device_id"] == device_id, answer.text
+
+    [installed] = [
+        call.kwargs["stdin"]
+        for call in case.hub.exec.await_args_list
+        if call.args[0] == device_id
+    ]
+    configure = ast.parse(installed).body[-1].value
+    payload = json.loads(ast.literal_eval(configure.args[0].args[0]))
+    assert payload["sandbox"] == {
+        "memory_mb": settings.cloud_sandbox_memory_mb,
+        "swap_mb": settings.cloud_sandbox_swap_mb,
+        "cpus": settings.cloud_sandbox_cpus,
+        "pids": settings.cloud_sandbox_pids,
+    }

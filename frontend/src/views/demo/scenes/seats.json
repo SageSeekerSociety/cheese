@@ -2,7 +2,7 @@
   "title": "两个队友在同一个话题里并行",
   "project": "知是",
   "topic": "登录页改版",
-  "machine": "本话题运行在：云机器 cm-7f3a",
+  "machine": "本话题运行在：云端沙箱",
   "people": {
     "wang": { "name": "王长鑫" },
     "li": { "name": "李甘" },
@@ -18,7 +18,7 @@
       "events": [
         { "at": 300, "do": "seat", "who": "cheese", "dir": "~/tasks/a17c", "state": "空闲" },
         { "at": 900, "do": "seat", "who": "cheese-k", "dir": "~/tasks/b42e", "state": "空闲" },
-        { "at": 1800, "do": "machine", "text": "本话题运行在：云机器 cm-7f3a · 2 份工作目录" }
+        { "at": 1800, "do": "machine", "text": "本话题运行在：云端沙箱 · 每位队友一个" }
       ]
     },
     {

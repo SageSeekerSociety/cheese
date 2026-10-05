@@ -225,16 +225,16 @@ def test_the_profiled_app_expands_exactly_the_effective_routes(profiled_route_ro
     assert [row["index"] for row in rows] == list(range(len(rows))), (
         "global leaf registration order is preserved"
     )
-    assert sum(row["protocol"] == "ws" for row in rows) == 8, (
-        "the eight WebSocket routes are collected despite having no methods"
+    assert sum(row["protocol"] == "ws" for row in rows) == 7, (
+        "the seven WebSocket routes are collected despite having no methods"
     )
     assert (
         "/topics/{topic_id}/tasks/{task_id}/accept-card",
         "app.api.routes.accept.create_accept_card",
     ) in {(row["path"], row["endpoint"]) for row in rows}
     assert (
-        "/teams/{team_id}/live",
-        "app.api.routes.team_live.team_live",
+        "/topics/{topic_id}/chat",
+        "app.api.routes.chat.chat",
     ) in {(row["path"], row["endpoint"]) for row in rows}
 
 

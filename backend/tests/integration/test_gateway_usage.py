@@ -56,8 +56,6 @@ def _leases_a_machine() -> RoomSessions:
     return RoomSessions(
         CloudChannel(
             configured=True,
-            ensure_topic_cloud=AsyncMock(),
-            read_topic_cloud=AsyncMock(),
         ),
         CLAUDE_CODE,
         SessionHost(),

@@ -1,10 +1,9 @@
-"""A machine the provider destroyed must stop being reported as running.
+"""A host the provider destroyed must stop being counted as part of the pool.
 
 Observed live on 2026-08-02: three machines were `running` and enrolled in this
 table while MicroCloud returned 404 for every one of them. A settled machine was
-never asked about again, so the books could not correct themselves — and
-`provision()` counts those rows against the per-project limit, so a project
-whose machines are gone upstream could never get another one.
+never asked about again, so the books could not correct themselves — and the
+pool would place sessions on hosts that are gone.
 """
 
 import uuid
@@ -14,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.machine.models import AiStatus, MachineStatus
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import HostPool
 
 
 class _Repo:
@@ -23,9 +22,6 @@ class _Repo:
     def __init__(self, machines):
         self.machines = list(machines)
         self.deleted = []
-
-    async def list_for_project(self, project_id):
-        return list(self.machines)
 
     async def list_due(self, limit, *, seen_before):
         return list(self.machines)
@@ -82,10 +78,16 @@ def _machine(**kw):
     return SimpleNamespace(**base)
 
 
-def _service(repo, client) -> MachineService:
-    service = MachineService.__new__(MachineService)
+class _Devices:
+    async def get_device(self, device_id):
+        return None
+
+
+def _service(repo, client) -> HostPool:
+    service = HostPool.__new__(HostPool)
     service._repo = repo  # type: ignore[attr-defined]
     service._client = client  # type: ignore[attr-defined]
+    service._devices = _Devices()  # type: ignore[attr-defined]
     return service
 
 
@@ -97,36 +99,9 @@ async def test_a_machine_the_provider_forgot_stops_being_reported():
     client = _Client(None)  # MicroCloud 404 -> get_machine returns None
     service = _service(repo, client)
     await service.refresh_due()
-    alive = await service.list_for_project(uuid.uuid4())
 
     assert client.calls == 1, "a settled machine was never re-checked"
-    assert alive == [], "a machine MicroCloud has forgotten was reported as alive"
-    assert len(repo.deleted) == 1, "its row still occupies one of the project's slots"
-
-
-@pytest.mark.anyio
-async def test_reading_a_projects_machines_never_asks_the_provider():
-    """Pages poll this every few seconds. With a provider round-trip per machine
-    on the read, one open page on a 48-machine project held dev's backend CPU on
-    2026-10-01."""
-    moving = _machine(status=MachineStatus.provisioning, ai_status=AiStatus.unknown)
-    overdue = _machine(last_seen_at=datetime.now(UTC) - timedelta(hours=2))
-    repo = _Repo([moving, overdue])
-    client = _Client(None)
-    alive = await _service(repo, client).list_for_project(uuid.uuid4())
-
-    assert client.calls == 0
-    assert alive == [moving, overdue]
-
-
-@pytest.mark.anyio
-async def test_a_read_drops_a_machine_already_known_to_be_gone():
-    gone = _machine(status=MachineStatus.deleted)
-    repo = _Repo([gone])
-    alive = await _service(repo, _Client(None)).list_for_project(uuid.uuid4())
-
-    assert alive == []
-    assert repo.deleted == [gone]
+    assert repo.machines == [], "a host MicroCloud has forgotten is still in the pool"
 
 
 @pytest.mark.anyio
@@ -187,7 +162,7 @@ async def test_a_provider_outage_does_not_stop_the_refresh_sweep():
                 for name in ("a", "b")
             ]
 
-    service = MachineService.__new__(MachineService)
+    service = HostPool.__new__(HostPool)
     service._repo = _Repo()  # type: ignore[attr-defined]
     seen: list[str] = []
 
@@ -198,5 +173,5 @@ async def test_a_provider_outage_does_not_stop_the_refresh_sweep():
 
     service.refresh = _refresh  # type: ignore[method-assign]
 
-    assert await MachineService.refresh_due(service) == 2
+    assert await HostPool.refresh_due(service) == 2
     assert seen == ["a", "b"]

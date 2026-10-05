@@ -4,17 +4,13 @@ import asyncio
 import uuid
 
 import pytest
-from sqlalchemy import event
 
 from app.core.config import settings
-from app.core.db import engine as app_engine
 from app.domain.agent.compute_configs import ComputeChoice, bind_room_device_choice
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
-from app.domain.identity.actor import Actor
-from app.domain.machine.services import MachineService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
@@ -22,7 +18,6 @@ from app.domain.topic.services import TopicService
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project
-from tests.unit.test_machine_service import FakeMicroCloud
 
 
 def setup_project(client, monkeypatch, *, shared_team: bool = False):
@@ -63,10 +58,8 @@ def test_room_choice_does_not_change_project_default_or_new_room(client, monkeyp
     tid = new_room(client, pid)
     original = client.get(f"/projects/{pid}/compute-configs").json()["data"]
     assert original["default"]["profile"] == "cloud"
-    assert original["distribution"] == {"cloud": 0, "devices": []}
-    choice = ComputeChoice(
-        name="Large memory", profile="cloud", cores=8, memory_mb=16384, disk_gb=64
-    ).model_dump()
+    assert original["distribution"] == {"cloud": 0, "cloud_vm": 0, "devices": []}
+    choice = ComputeChoice(profile="cloud").model_dump()
     response = client.put(f"/topics/{tid}/compute-profile", json={"choice": choice})
     assert response.status_code == 200, response.text
     assert (
@@ -160,11 +153,9 @@ def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeyp
             await session.commit()
             return member.id
 
-    member_id = asyncio.run(join())
+    asyncio.run(join())
     client.headers["Authorization"] = f"Bearer {member_token}"
-    choice = ComputeChoice(
-        name="Cloud", profile="cloud", cores=2, memory_mb=4096, disk_gb=32
-    ).model_dump()
+    choice = ComputeChoice(profile="cloud").model_dump()
     assert (
         client.put(
             f"/topics/{tid}/compute-profile", json={"choice": choice}
@@ -178,52 +169,6 @@ def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeyp
         ).status_code
         == 403
     )
-    cloud = FakeMicroCloud()
-
-    async def provision():
-        async with client.test_request_factory() as session:
-            machine = await MachineService(session, cloud).ensure_topic_machine(
-                uuid.UUID(tid), actor=Actor("config_member", member_id, "token")
-            )
-            await session.commit()
-            return machine
-
-    # Startup progress opens its own application session, outside the session
-    # passed to MachineService. It must use the same loop as HTTP requests.
-    request_loop = client.portal.call(asyncio.get_running_loop)
-    progress_loops = []
-
-    def checked_out(*_args):
-        progress_loops.append(asyncio.get_running_loop())
-
-    event.listen(app_engine.sync_engine, "checkout", checked_out)
-    try:
-        machine = client.portal.call(provision)
-    finally:
-        event.remove(app_engine.sync_engine, "checkout", checked_out)
-    assert progress_loops
-    assert all(loop is request_loop for loop in progress_loops)
-    assert (machine.cores, machine.memory_mb, machine.disk_gb) == (2, 4096, 32)
-    # The room has started: a new choice is the default for agents that start
-    # later, and the machine the room already has keeps its size.
-    changed = client.put(
-        f"/topics/{tid}/compute-profile", json={"choice": {**choice, "cores": 4}}
-    )
-    assert changed.status_code == 200, changed.text
-    assert (
-        client.get(f"/topics/{tid}/compute-profile").json()["data"]["choice"]["cores"]
-        == 4
-    )
-
-    async def machines():
-        from app.domain.machine.repositories import ProjectMachineRepository
-
-        async with client.test_factory() as session:
-            return await ProjectMachineRepository(session).list_active_for_topic(
-                uuid.UUID(tid)
-            )
-
-    assert [m.cores for m in asyncio.run(machines())] == [2]
 
 
 def test_the_project_shows_where_its_started_agents_work(client, monkeypatch):
@@ -295,6 +240,7 @@ def test_the_project_shows_where_its_started_agents_work(client, monkeypatch):
 
     assert body["distribution"] == {
         "cloud": 1,
+        "cloud_vm": 0,
         "devices": [
             {
                 "device_id": device_id,

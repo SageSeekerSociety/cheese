@@ -94,7 +94,6 @@ class SeatChannel:
     device = "test-device"
     #: The conversation a seat's runner names when its ping does not.
     conversation = "session"
-    provisions_machine = False
     deferred_work = False
     builds_model_env = False
     _session_factory = None
@@ -180,9 +179,6 @@ class SeatChannel:
 
     def available(self) -> bool:
         return True
-
-    async def prepare_topic(self, **_: object) -> tuple[bool, str]:
-        return True, ""
 
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         return Placement(

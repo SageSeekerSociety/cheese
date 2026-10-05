@@ -10,8 +10,6 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
-from app.domain.machine.limits import get_machine_limit
-from app.domain.machine.services import MachineService
 from app.domain.project.services import ProjectService
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.models import (
@@ -622,40 +620,6 @@ async def join_team_by_join_link(
         message=payload.message if payload else None,
     )
     return await _team_profile(team, auth_user.user_id, service, membership_service, db)
-
-
-@router.get("/{teamId}/resource-quotas", summary="Query Team Resource Quotas")
-async def get_team_resource_quotas(
-    team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
-) -> dict:
-    repo = TeamRepository(db)
-    if not await repo.get_by_id(team_id) or not await repo.is_team_member(
-        team_id, auth_user.user_id
-    ):
-        raise NotFoundError("Resource team not found")
-    machines = await MachineService(db).quota_machines(team_id)
-    projects = await ProjectService(db).list_for_team(team_id)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "team_id": team_id,
-            "machines": {
-                "used": len(machines),
-                "limit": await get_machine_limit(db, team_id),
-            },
-            "projects": [
-                {
-                    "id": str(p.id),
-                    "name": p.name,
-                    "machines_used": sum(m.project_id == p.id for m in machines),
-                }
-                for p in projects
-            ],
-        },
-    }
 
 
 @router.get(

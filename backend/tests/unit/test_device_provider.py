@@ -1410,6 +1410,52 @@ async def test_a_tunnel_screen_is_handed_no_loopback_port(monkeypatch, tmp_path)
     assert env["CHEESE_MODEL_PROXY"] == "1"
 
 
+@pytest.mark.parametrize("cloud", [True, False])
+async def test_a_cloud_machine_tunnels_through_its_loopback_forward(
+    monkeypatch, tmp_path, cloud
+):
+    """A MicroCloud guest is isolated from private networks, so a cloud machine
+    whose backend is the loopback forward must find the model tunnel there too,
+    not at the deployment's private gateway. A device someone enrolled keeps
+    the configured URL."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    from app.domain.agent import machine_address
+    from app.domain.device.supply import Supply
+
+    _subscription_settings(monkeypatch, tmp_path)
+    configured = "wss://gateway.internal.example/api/llm/tunnel"
+    monkeypatch.setattr(settings, "subscription_tunnel_url", configured)
+    monkeypatch.setattr(settings, "agent_session_device_id", None)
+    machine = SimpleNamespace(
+        supply=Supply.cloud if cloud else Supply.self_hosted,
+        cloud_control_private=cloud,
+    )
+
+    class Session:
+        async def get(self, _row, _device_id):
+            return machine
+
+    async def api_base(self, device_id):
+        return await machine_address.device_api_base(
+            Session(), device_id, self._public_base
+        )
+
+    monkeypatch.setattr(DeviceChannel, "_device_api_base", api_base)
+    _hub, env, _project, _topic = await _subscription_screen()
+
+    tunnel = urlsplit(env["CHEESE_TUNNEL_URL"])
+    if cloud:
+        api = urlsplit(env["CHEESE_API"])
+        assert ipaddress.ip_address(tunnel.hostname).is_loopback
+        assert (tunnel.hostname, tunnel.port) == (api.hostname, api.port)
+        assert (tunnel.scheme, tunnel.path) == ("ws", "/llm/tunnel")
+    else:
+        assert env["CHEESE_TUNNEL_URL"] == configured
+    assert "HTTPS_PROXY" not in env
+
+
 def test_every_backend_in_the_deployed_pool_gets_the_same_liveness_policy():
     """How long a turn may talk without working, how long an input may sit
     unread, and the ceiling over both are decided once for the deployment. A

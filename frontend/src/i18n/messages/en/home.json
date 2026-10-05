@@ -37,6 +37,7 @@
     "disbandTeamTitle": "Disband “{name}”?",
     "disbandTeamBody": "Every member leaves the team and this can't be undone. Archive all of the team's projects first; after the team is disbanded, only their owners and external members can still see them.",
     "disbandTeamDone": "Disbanded “{name}”",
-    "disbandTeamFailed": "Couldn't disband the team"
+    "disbandTeamFailed": "Couldn't disband the team",
+    "disbandTeamTypeName": "Type the team name “{name}” to confirm"
   }
 }

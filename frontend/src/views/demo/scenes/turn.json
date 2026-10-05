@@ -2,7 +2,7 @@
   "title": "一条消息怎么变成芝士的一轮",
   "project": "知是",
   "topic": "新话题",
-  "machine": "本话题运行在：云机器 cm-7f3a",
+  "machine": "本话题运行在：云端沙箱",
   "people": {
     "wang": { "name": "王长鑫" },
     "li": { "name": "李甘" },
@@ -38,8 +38,8 @@
       "focus": "machine",
       "tag": "先探一下机器还在不在（最多 15 秒）",
       "events": [
-        { "at": 200, "do": "machine", "text": "探测云机器 cm-7f3a…" },
-        { "at": 1400, "do": "machine", "text": "本话题运行在：云机器 cm-7f3a · 在线 120ms" }
+        { "at": 200, "do": "machine", "text": "探测执行机 cm-7f3a…" },
+        { "at": 1400, "do": "machine", "text": "本话题运行在：云端沙箱 · 在线 120ms" }
       ]
     },
     {

@@ -94,7 +94,7 @@ describe('Cheese-Task 那条地址', () => {
     await waitFor(() => expect(container.querySelector('[data-testid="panel"]')).not.toBeNull())
 
     expect(getRoomEnvironment).not.toHaveBeenCalled()
-    expect(container.textContent).not.toContain('正在准备工作电脑')
+    expect(container.textContent).not.toContain('正在准备沙箱')
   })
 
   it.each([

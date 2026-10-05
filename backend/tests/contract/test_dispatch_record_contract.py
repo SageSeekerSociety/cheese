@@ -104,6 +104,9 @@ class _Chat:
         # 屏幕还在，但它从没听到这条消息 —— 这正是平台今天会原样重发的那一档。
         return True
 
+    def retire_unheard(self, turn_ids):
+        pass
+
     async def turns_that_produced_something(self, turn_ids):
         return set()
 

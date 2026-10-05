@@ -337,6 +337,7 @@ def periodic_jobs(
     *,
     chat: "ChatService",
     machines: Sweeper,
+    sandboxes: Sweeper,
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     """Every periodic job the platform runs, in one list.
@@ -438,12 +439,20 @@ def periodic_jobs(
             settings.gate_sweep_interval_s,
             lambda: sweep_abandoned_gates(chat),
         ),
-        # Enrolling provisioned machines is platform plumbing, so it runs on its
+        # Keeping the cloud host pool is platform plumbing, so it runs on its
         # own interval — see machine/runner.py.
         PeriodicRunner(
-            "machine enrollment sweep",
+            "cloud host pool sweep",
             settings.machine_enroll_interval_seconds,
             machines.sweep,
+        ),
+        # Idle cloud sandboxes go to sleep and long-asleep homes are archived:
+        # the pool's plumbing, on its switch, in a loop of its own because an
+        # archive takes minutes (machine/runner.py).
+        PeriodicRunner(
+            "cloud sandbox lifecycle",
+            settings.machine_enroll_interval_seconds,
+            sandboxes.sweep,
         ),
         PeriodicRunner(
             "cloud warm pool",

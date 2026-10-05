@@ -173,6 +173,10 @@ async def chat(
         # ends on the current state whichever side of the snapshot a change fell.
         if busy := broker.activity.snapshot(channel):
             await send({"type": "activity_snapshot", "members": busy})
+        # Somebody is here, and a message may follow: a session its runner let
+        # go while the room sat idle starts now rather than when it arrives.
+        if card is None:
+            chat_service.prewarm.room_active(room_id)
 
         relay_task = asyncio.create_task(relay(queue))
         try:
@@ -189,11 +193,10 @@ async def chat(
                     await send({"type": "pong"})
                     continue
                 if payload.get("type") == "typing":
-                    await broker.typing(
-                        channel,
-                        conn_actor.handle,
-                        active=payload.get("active") is not False,
-                    )
+                    typing = payload.get("active") is not False
+                    await broker.typing(channel, conn_actor.handle, active=typing)
+                    if typing and card is None:
+                        chat_service.prewarm.room_active(room_id)
                     continue
                 # A message is POSTed to /topics/{id}/messages; this socket
                 # writes nothing, so it says so rather than dropping the frame.

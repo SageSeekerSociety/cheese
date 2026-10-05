@@ -185,19 +185,15 @@ describe('English settings copy', () => {
     expectNoChinese()
   })
 
-  it('the work computer form, with a custom cloud size', async () => {
+  it('the work computer form, on the cloud sandbox', async () => {
     render(ComputeChoiceForm, {
       props: {
         cloudAvailable: true,
         devices: [{ device_id: 'd1', name: 'Lab box', online: true }] as never,
-        // The real "not asked yet" state: no range has been read, so the form
-        // shows no range numbers at all.
-        supply: null,
       },
       ...mountOpts(),
     })
-    await fireEvent.input(screen.getByLabelText('Custom CPU, memory and disk'), { target: { checked: true } })
-    await screen.findByLabelText('CPU cores')
+    await screen.findByText(/Each session works in a cloud sandbox of its own/)
     expectNoChinese()
   })
 

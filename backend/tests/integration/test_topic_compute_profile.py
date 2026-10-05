@@ -2,7 +2,7 @@
 
 A room's choice is what an agent gets when it starts working there: before the
 first turn it is also the room's pin, and afterwards it is the default for the
-agents that start later. Each session that has started keeps its own machine.
+agents that start later.
 """
 
 import asyncio
@@ -28,7 +28,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import CHEESE_HANDLE
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import HostPool
 from app.domain.project.models import Project
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
@@ -169,13 +169,13 @@ def test_select_persists_only_to_topic(client, monkeypatch):
 def test_changing_the_room_while_an_agent_is_getting_its_machine_does_not_deadlock(
     client, monkeypatch
 ):
-    """An agent asking for its machine locks the room, then the room's machine
-    slot. A person changing the room at that moment must wait behind it, not
-    take the slot first and then wait for the room: that pair of waits is a
+    """An agent asking for its sandbox locks the room, then the cloud host
+    pool. A person changing the room at that moment must wait behind it, not
+    take the pool first and then wait for the room: that pair of waits is a
     deadlock, and one of the two requests failed with a 500 on dev."""
     import threading
 
-    from app.domain.machine.repositories import ProjectMachineRepository
+    from app.domain.machine.repositories import CloudHostRepository
     from app.domain.topic.services import TopicService
 
     pid = _project(client)
@@ -192,7 +192,7 @@ def test_changing_the_room_while_an_agent_is_getting_its_machine_does_not_deadlo
             await asyncio.to_thread(change_sent.wait, 10)
             # Long enough for the change to reach whichever lock it waits on.
             await asyncio.sleep(1.5)
-            await ProjectMachineRepository(session).lock_topic(uuid.UUID(tid))
+            await CloudHostRepository(session).lock_pool()
             await session.commit()
 
     def run_agent() -> None:
@@ -384,13 +384,13 @@ def test_selecting_cloud_without_machine_create_authority_is_refused(
     tid = _topic(client, pid)
     monkeypatch.setattr(settings, "microcloud_base_url", "https://cloud.example")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
-    provision = AsyncMock()
-    monkeypatch.setattr(MachineService, "provision", provision)
+    place = AsyncMock()
+    monkeypatch.setattr(HostPool, "place", place)
 
     response = client.put(f"/topics/{tid}/compute-profile", json={"profile": "cloud"})
 
     assert response.status_code == 401
-    provision.assert_not_awaited()
+    place.assert_not_awaited()
 
 
 def test_visibility_block_is_present(client):
@@ -521,8 +521,8 @@ def test_a_room_whose_next_session_starts_on_an_enrolled_machine_says_so(client)
 
 
 def test_sessions_on_cloud_machines_show_no_badge(client):
-    """A Cloud box is the room's own: seeing all of it grants nothing more,
-    even when it reaches the room through the device transport."""
+    """A cloud host is the platform's, not a machine anyone in the room is
+    shown: no whole-machine badge, even through the device transport."""
     pid = _project(client)
     tid = _topic(client, pid)
 

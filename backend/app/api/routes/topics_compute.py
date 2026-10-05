@@ -29,7 +29,7 @@ either.
 Everything else here keeps its home and is imported from where it is defined;
 the names topics.py read only for these routes -- `asyncio`, `asdict`,
 `Request`, `project_device_online`, `device_hub`, the eight `market` names,
-`sql_device_service`, `MachineService`, `gate` and `propose` -- leave its
+`sql_device_service`, `HostPool`, `gate` and `propose` -- leave its
 imports with them. topics.py imports nothing from this module, so there is no
 cycle.
 
@@ -65,6 +65,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_DEVICE,
     VISIBILITY_HOST,
+    cloud_vm_provisionable,
     compute_default_name,
     compute_listings,
     compute_selectable,
@@ -77,7 +78,7 @@ from app.domain.device.supply import (
     sandbox_unavailable,
 )
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import HostPool
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.topic.services import TopicService
@@ -138,9 +139,7 @@ async def get_topic_compute_profile(
             "choice": choice.model_dump(),
             "project_default": configs.default.model_dump(),
             # A machine id only has selection meaning under the self-hosted pool.
-            # Cloud also records its connector in device_topic, but that endpoint is
-            # an implementation detail of the freshly provisioned topic machine, not
-            # a machine the person chose from a list.
+            # A cloud session's sandbox sits on a platform host nobody chooses.
             "device_id": (
                 binding.device_id
                 if current == COMPUTE_DEVICE and binding is not None
@@ -179,6 +178,8 @@ async def get_topic_compute_profile(
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
             ],
+            # Whether cloud also offers a whole VM per session (`whole_machine`).
+            "cloud_vm_available": cloud_vm_provisionable(settings),
             "visibility": {
                 "options": [asdict(v) for v in visibility_listings()],
                 # "host" | "isolated" | null (no agent here on an enrolled machine).
@@ -272,7 +273,7 @@ async def set_topic_compute_profile(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    await work_lease.lock_room(db, topic_id)
+    await TopicService(db).lock_for_execution(topic_id)
     # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
     # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
     from app.core.sandbox_auth import scoped_token_claims
@@ -292,6 +293,7 @@ async def set_topic_compute_profile(
                 **standard_choice(name).model_dump(),
                 "profile": name,
                 "device_id": body.get("device_id"),
+                "whole_machine": body.get("whole_machine") is True,
             }
         )
     except SchemaError as exc:
@@ -312,7 +314,7 @@ async def set_topic_compute_profile(
     # is selectable only when at least one project-scoped device is online.
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
         raise ValidationError(say("computeKindUnavailable", name=repr(name)))
-    if body.get("choice"):
+    if body.get("choice") or choice.whole_machine:
         await validate_choice(db, topic.project_id, choice)
 
     device_service = sql_device_service(db)
@@ -398,7 +400,7 @@ async def set_topic_compute_profile(
     # "cloud")` 一句 401 撞死在这里，连那条「等项目主人点头」的提议都长不出来——
     # 而那条提议正是 Cloud 这一档该有的产物（结论 23）。变成提议的那一次没有花任
     # 何人的钱，该点头的人就是项目主人本人。
-    await MachineService(db).admit_choice(topic.project_id, actor, choice)
+    await HostPool(db).admit_choice(topic.project_id, actor, choice)
 
     # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
     # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——

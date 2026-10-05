@@ -63,7 +63,7 @@ async def test_one_strike_is_not_a_verdict():
     assert await service.topic_device(topic) == machine
 
 
-async def test_a_dead_cloud_machine_is_named_and_never_replaced():
+async def test_a_dead_cloud_host_is_reported_as_the_sandbox_and_never_replaced():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
     sick = await _device_on_project(service, project, "老机器")
@@ -84,13 +84,15 @@ async def test_a_dead_cloud_machine_is_named_and_never_replaced():
     assert await service.topic_device(topic) == sick
     release.assert_not_awaited()
     bind.assert_not_awaited()
-    assert verdict.message is not None and "老机器" in verdict.message
+    # The room hears about its sandbox; the host is the platform's.
+    assert verdict.message is not None and "沙箱" in verdict.message
+    assert "老机器" not in verdict.message
     assert verdict.event_meta is not None
     assert verdict.event_meta["event_type"] == "host_failure"
     # Nothing here may read as "a new machine is on its way": the room's
     # provisioning branch keys on that state, and it would be a lie.
     assert "state" not in verdict.event_meta
-    assert "不会换" in verdict.event_meta["detail"]
+    assert "不会自动换" in verdict.event_meta["detail"]
 
 
 async def test_a_dead_self_hosted_machine_keeps_its_pin_and_waits_for_it():

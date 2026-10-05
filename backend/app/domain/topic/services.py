@@ -194,6 +194,12 @@ class TopicService:
         """Return one topic for cross-domain service callers."""
         return await self._repo.get(topic_id)
 
+    async def lock(self, topic_id: uuid.UUID) -> Topic | None:
+        """Hold the room's row lock for the rest of the transaction, whatever
+        state the room is in: for work that orders itself against the room's
+        own, such as putting an archived room's sandbox to sleep."""
+        return await self._repo.lock(topic_id)
+
     async def lock_for_execution(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.lock(topic_id)
         if topic is None:
@@ -757,9 +763,6 @@ class TopicService:
             elif operation.state in {"claimed", "retained", "complete"}:
                 topic.resource_id = uuid.uuid4()
                 await AgentSessionService(self._session).forget_room(topic.id)
-                from app.domain.machine.services import MachineService
-
-                await MachineService(self._session).detach_archived_machine(topic.id)
         topic.status = TopicStatus.active
         topic.archived_at = None
         topic.cleanup_due_at = None
