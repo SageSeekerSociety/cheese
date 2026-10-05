@@ -1,53 +1,22 @@
+<!--
+  The code screen of a sign-in by mailed code: it reads which address a code
+  was last asked for, verifies the code, sends another on request, and goes on
+  to where the sign-in was headed. What it shows is VerifyView.vue.
+-->
 <template>
-  <div v-if="pending">
-    <AccountHeading
-      :title="t('account.emailCode.codeTitle')"
-      :lede="t('account.verifyEmail.sentTo', { email: pending.email })"
-    />
-
-    <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-6">
-      {{ error }}
-    </v-alert>
-
-    <v-form @submit.prevent="submit">
-      <v-otp-input
-        v-model="code"
-        length="6"
-        type="number"
-        class="account-otp"
-        :aria-label="t('account.emailCode.codeTitle')"
-        :disabled="submitting"
-        @finish="submit"
-      />
-
-      <BaseButton
-        block
-        kind="primary"
-        size="lg"
-        type="submit"
-        class="account-submit"
-        :loading="submitting"
-        :disabled="code.length !== 6 || waiting"
-      >
-        {{ t('account.signIn.submit') }}
-      </BaseButton>
-
-      <div class="account-foot account-foot--split">
-        <span>
-          {{ t('account.verifyEmail.noCode') }}
-          <span v-if="resendWait > 0" class="account-foot__wait">
-            {{ t('account.verifyEmail.resendIn', { seconds: resendWait }) }}
-          </span>
-          <button v-else type="button" class="account-link" :disabled="resending" @click="resend">
-            {{ t('account.verifyEmail.resend') }}
-          </button>
-        </span>
-        <router-link :to="backToSignIn" class="account-link account-link--quiet">
-          {{ t('account.backToSignIn') }}
-        </router-link>
-      </div>
-    </v-form>
-  </div>
+  <VerifyView
+    :pending="pending"
+    :code="code"
+    :error="error"
+    :submitting="submitting"
+    :waiting="waiting"
+    :resending="resending"
+    :resend-wait="resendWait"
+    :back-to-sign-in="backToSignIn"
+    @update:code="code = $event"
+    @submit="submit"
+    @resend="resend"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -60,9 +29,8 @@ import { rememberSignIn } from '../lastSignIn'
 import { firstStepAccepted, landingAfterSignIn, upgradeAfterEmailCodeSignIn } from '../passkeyEnrollment'
 
 import { forgetPendingCode, pendingCode, rememberCodeSent } from './pendingCode'
+import VerifyView from './VerifyView.vue'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -75,7 +43,9 @@ const RESEND_COOLDOWN_SECONDS = 60
 const router = useRouter()
 const route = useRoute()
 
-const backToSignIn = computed(() => ({ name: 'SignIn', query: { redirect: route.query.redirect } }))
+const backToSignIn = computed(() =>
+  router.resolve({ name: 'SignIn', query: { redirect: route.query.redirect } }).fullPath
+)
 
 const pending = ref(pendingCode())
 const code = ref('')
