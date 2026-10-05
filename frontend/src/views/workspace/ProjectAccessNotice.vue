@@ -7,32 +7,31 @@
 //
 // 三档分开写，因为下一步动作不一样：没登录的人要去登录，登录了的人得去要权限，
 // 项目归档了的话，所有者可以把它取消归档，别人只能离开。
-import { computed, onMounted, ref } from 'vue'
+//
+// 谁是所有者（`isOwner`）、服务端那句话（`error`）、正在不在传（`restoring`）都由
+// 渲染它的容器算好传进来——这一半只收 props，只发 `restore`。
+import { computed } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AccessNotice from '@/components/common/AccessNotice.vue'
 import { t } from '@/i18n'
-import { myHandle } from '@/me'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 defineOptions({ name: 'ProjectAccessNotice' })
 
-const props = defineProps<{ reason: 'unauthenticated' | 'forbidden' | 'archived' }>()
+const props = withDefaults(
+  defineProps<{
+    reason: 'unauthenticated' | 'forbidden' | 'archived'
+    /** 打开这个项目的人是不是所有者。归档项目只有所有者能把「取消归档」当主操作。 */
+    isOwner?: boolean
+    /** 上一次「取消归档」失败时服务端那句话；没有就是 null。 */
+    error?: string | null
+    /** 「取消归档」正在路上。 */
+    restoring?: boolean
+  }>(),
+  { isOwner: false, error: null, restoring: false }
+)
 
-const store = useWorkspaceStore()
-const isOwner = computed(() => !!store.openedProject?.owner_handle && store.openedProject.owner_handle === myHandle())
-const restoring = ref(false)
-
-// 归档了的项目不在项目清单里，谁是所有者要单独问一句。
-onMounted(() => {
-  if (props.reason === 'archived' && !store.openedProject) void store.loadOpenedProject()
-})
-
-async function restore() {
-  restoring.value = true
-  await store.unarchiveOpenProject()
-  restoring.value = false
-}
+defineEmits<{ restore: [] }>()
 
 const said = computed(() => {
   if (props.reason === 'unauthenticated')
@@ -46,7 +45,7 @@ const said = computed(() => {
   if (props.reason === 'archived')
     return {
       title: t('work.access.archivedTitle'),
-      body: isOwner.value ? t('work.access.archivedOwnerBody') : t('work.access.archivedBody'),
+      body: props.isOwner ? t('work.access.archivedOwnerBody') : t('work.access.archivedBody'),
       icon: 'mdi-archive-outline',
       action: { label: t('work.access.backToProjects'), to: '/' },
     }
@@ -65,7 +64,7 @@ const said = computed(() => {
   <AccessNotice :icon="said.icon" :title="said.title" :body="said.body">
     <template #actions>
       <!-- The owner's primary action is to unarchive it; leaving stays the secondary one. -->
-      <BaseButton v-if="reason === 'archived' && isOwner" kind="primary" :loading="restoring" @click="restore">
+      <BaseButton v-if="reason === 'archived' && isOwner" kind="primary" :loading="restoring" @click="$emit('restore')">
         {{ t('work.room.menu.unarchive') }}
       </BaseButton>
       <BaseButton :kind="reason === 'archived' && isOwner ? 'ghost' : 'primary'" :to="said.action.to">
@@ -73,7 +72,7 @@ const said = computed(() => {
       </BaseButton>
     </template>
     <template #extra>
-      <p v-if="store.error && reason === 'archived'" class="t-body c-danger mt-4">{{ store.error }}</p>
+      <p v-if="error && reason === 'archived'" class="t-body c-danger mt-4">{{ error }}</p>
     </template>
   </AccessNotice>
 </template>

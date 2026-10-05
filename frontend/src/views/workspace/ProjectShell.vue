@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { provideTopicMemory } from '@/composables/useTopicMemory'
 
+import ProjectShellView from './ProjectShellView.vue'
+
+import { myHandle } from '@/me'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
-import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
 
 // 项目工作台的框架层 (P0). Everything inside a project is a CHILD of this
 // route, which is the whole point: the project sidebar (rendered through the
@@ -16,6 +18,8 @@ import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
 // and become ordinary destinations inside the workspace. Before this existed
 // each of those pages had to hand-roll its own 返回 button and its own content
 // width, because there was no frame to come back to.
+//
+// 画面在 ProjectShellView.vue：只收 props、只发 restore。
 defineOptions({ name: 'ProjectShell' })
 
 const PROJECT_FRAME_TITLE = 'project-frame'
@@ -58,6 +62,21 @@ watch(
 )
 onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 
+// 归档了的项目不在项目清单里，谁是所有者要单独问一句；这句话原本在
+// ProjectAccessNotice 里，现在它只认 isOwner，就得在这一层问。
+const isOwner = computed(() => !!store.openedProject?.owner_handle && store.openedProject.owner_handle === myHandle())
+onMounted(() => {
+  if (store.accessDenied === 'archived' && !store.openedProject) void store.loadOpenedProject()
+})
+
+// 「取消归档」：正在不在传由容器记着，作为 prop 交给画面上的按钮。
+const restoring = ref(false)
+async function restore() {
+  restoring.value = true
+  await store.unarchiveOpenProject()
+  restoring.value = false
+}
+
 // 实时性: poll unread badges so messages landing in OTHER topics light up
 // without a manual refresh. The same tick refreshes the topic list, so the
 // sidebar's 芝士还在跑 呼吸点 fades for topics you are not watching too.
@@ -89,28 +108,12 @@ watch(
 </script>
 
 <template>
-  <div class="project-shell fill-height">
-    <!-- Screen-reader heading for the frame. Text from the same store the top
-         bar reads (the `project-frame` dynamic title), so the two can never
-         drift. Hidden: on desktop the project name lives in the sidebar's top
-         row, on mobile in the top bar; neither is a heading. -->
-    <h1 v-if="store.projectName" class="visually-hidden">{{ store.projectName }}</h1>
-    <!-- 进不来的时候，整块内容区换成说明，而不是让人对着一个空壳猜。侧栏和顶栏
-         留着，因为「离开这里」的路都在那上面。 -->
-    <ProjectAccessNotice v-if="store.accessDenied" :reason="store.accessDenied" />
-    <!-- 一个话题一个实例：换话题就换一整棵组件树。复用同一个实例的话，每个挂在话题
-         下面的组件都得自己记得在换话题时清空、并丢掉上一个话题迟到的响应——漏一处，
-         上一个话题的东西就会在下一个话题里露出来。只有话题页带 topicId，别的页
-         不受影响。 -->
-    <router-view v-else v-slot="{ Component, route: current }">
-      <component :is="Component" :key="current.params.topicId" />
-    </router-view>
-  </div>
+  <ProjectShellView
+    :project-name="store.projectName"
+    :access-denied="store.accessDenied"
+    :is-owner="isOwner"
+    :access-error="store.error"
+    :restoring="restoring"
+    @restore="restore"
+  />
 </template>
-
-<style scoped>
-.project-shell {
-  width: 100%;
-  overflow: hidden;
-}
-</style>
