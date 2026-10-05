@@ -99,7 +99,7 @@ class ReleaseOrdering(unittest.TestCase):
         self.assertTrue(self.check(self.middle))
 
     def test_a_release_serving_from_the_second_slot_is_still_protected(self):
-        self.images = {"backend-b": f"registry/backend:{self.newest[:7]}", "frontend": f"registry/frontend:{self.newest[:7]}"}
+        self.images = {"backend-b": f"registry/backend:{self.newest[:7]}", "frontend-b": f"registry/frontend:{self.newest[:7]}"}
         self.assertTrue(self.check(self.middle))
 
     def test_a_healthy_release_in_the_second_slot_is_not_restarted(self):

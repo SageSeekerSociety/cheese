@@ -22,8 +22,8 @@ events_image=""
 events_state=""
 events_status=""
 
-# A box with an app-router runs the backend in one of two slots (`backend` or
-# `backend-b`, see deploy-docker.sh); either is the backend.
+# A box with an app-router runs the backend and the frontend each in one of two
+# slots (`backend` or `backend-b`, see deploy-docker.sh); either is that service.
 while IFS=$'\t' read -r service image state status; do
   case "$service" in
     backend|backend-b)
@@ -32,7 +32,7 @@ while IFS=$'\t' read -r service image state status; do
       backend_state="$state"
       backend_status="$status"
       ;;
-    frontend)
+    frontend|frontend-b)
       frontend_count=$((frontend_count + 1))
       frontend_image="$image"
       frontend_state="$state"

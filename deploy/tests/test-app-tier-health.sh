@@ -948,92 +948,106 @@ test_rollout_refuses_an_upstream_it_did_not_write() {
   echo "PASS: a release refuses an app-router upstream that is neither slot"
 }
 
-# With a rolling frontend, a temporary frontend on the new image comes up as
-# app-router's backup, and the compose frontend is replaced in place right after
-# the one backend switch: no reload of its own, and it keeps its ports.
-test_frontend_rollout_needs_no_reload_of_its_own() {
-  local run_dir docker_log backend_up temp_up reload recreate temp_gone told drain upstream
+# With a rolling frontend, its idle slot comes up beside the backend's and both
+# move in the one reload. The release whose old frontend still published the
+# box's :8080 and :80 hands them to app-router once that frontend has stopped.
+test_frontend_rollout_switches_with_the_backend() {
+  local run_dir docker_log backend_up frontend_up reload collab drain stopped removed ports_reload
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
-  # A box already behind app-router, as the release before left it.
+  # A box already behind app-router, its frontend still the compose one on :8080.
   bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087
-  upstream='upstream frontend_active { server 127.0.0.1:8080; server 127.0.0.1:18084 backup; }'
-  printf '%s\n' "$upstream" > "$run_dir/active/frontend.conf"
+  printf 'upstream frontend_active { server 127.0.0.1:8080; }\n' > "$run_dir/active/frontend.conf"
+  # Left from before a revert: app-router must not bind the ports while the
+  # compose frontend still publishes them.
+  printf 'server { listen 0.0.0.0:8080; }\n' > "$run_dir/active/frontend-ports.conf"
   grep -Fq 'location ~ ^/api/topics/[^/]+/execution/[^/]+$' "$run_dir/active/sites-frontend.conf" \
     || fail "stable frontend ingress still sends public execution through the rolling frontend"
   rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_BACKEND_CONTAINER=blue-container \
-    >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "frontend rollout failed"; }
+    APP_TIER_FRONTEND_CONTAINER=green-frontend >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "frontend rollout failed"; }
   backend_up="$(log_line "$docker_log" 'up -d --no-deps --force-recreate backend-b')"
-  temp_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-frontend-next -p 127.0.0.1:18084:80 frontend')"
+  frontend_up="$(log_line "$docker_log" 'up -d --no-deps --force-recreate frontend-b')"
   reload="$(log_line "$docker_log" 'exec cheese-app-router nginx -s reload')"
-  recreate="$(log_line "$docker_log" 'up -d --no-deps frontend$')"
-  temp_gone="$(log_line "$docker_log" 'rm -f cheese-frontend-next')"
-  told="$(log_line "$docker_log" 'kill --signal USR1 blue-container')"
+  collab="$(log_line "$docker_log" 'up -d --no-deps collab')"
   drain="$(log_line "$docker_log" 'sleep 31')"
-  [ -n "$temp_up" ] || fail "no temporary frontend was started"
-  [ "$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log")" = 1 ] \
-    || fail "the frontend added a reload of its own"
-  [ "$backend_up" -lt "$reload" ] && [ "$temp_up" -lt "$reload" ] \
-    || fail "app-router was switched before the new backend and the temporary frontend were up"
-  grep -q 'curl -fsS -m 3 http://127.0.0.1:18084/' "$docker_log" || fail "the temporary frontend was not checked"
-  [ -n "$recreate" ] && [ "$reload" -lt "$recreate" ] && [ "$recreate" -lt "$temp_gone" ] \
-    || fail "the compose frontend was not replaced after the switch while the temporary one stood by"
-  [ -n "$told" ] && [ "$told" -lt "$drain" ] || fail "the old backend did not hand over before the drain"
-  ! grep -q 'frontend-b' "$docker_log" || fail "the frontend was started in a second slot"
-  grep -Fqx "$upstream" "$run_dir/active/frontend.conf" || fail "frontend upstream changed: $(cat "$run_dir/active/frontend.conf")"
+  stopped="$(log_line "$docker_log" 'stop --time 120 green-frontend')"
+  removed="$(log_line "$docker_log" ' rm -f backend frontend$')"
+  ports_reload="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
+  [ -n "$frontend_up" ] || fail "the idle frontend slot was never started"
+  grep -q 'removing frontend-ports.conf' "$run_dir/deploy.log" \
+    || fail "a frontend-ports.conf left from before was kept while the compose frontend publishes the ports"
+  [ "$backend_up" -lt "$reload" ] && [ "$frontend_up" -lt "$reload" ] \
+    || fail "app-router was switched before both new slots were up"
+  grep -q 'curl -fsS -m 3 http://127.0.0.1:18084/' "$docker_log" || fail "the new frontend was not checked"
+  [ "$reload" -lt "$collab" ] && [ "$collab" -lt "$drain" ] || fail "collab was not replaced between the switch and the old frontend's stop"
+  [ -n "$stopped" ] && [ "$drain" -lt "$stopped" ] && [ "$stopped" -lt "$removed" ] \
+    || fail "the old frontend was not stopped gracefully after the drain, before removal"
+  [ -n "$ports_reload" ] && [ "$removed" -lt "$ports_reload" ] \
+    || fail "app-router took the box's frontend ports before the old frontend let go of them"
+  [ "$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log")" = 2 ] \
+    || fail "the first release did not reload exactly twice (switch, ports)"
+  grep -Fq 'server 127.0.0.1:18084;' "$run_dir/active/frontend.conf" || fail "frontend proxy did not move to the new slot"
+  grep -Fq 'server 127.0.0.1:18082;' "$run_dir/active/backend.conf" || fail "backend did not move in the same switch"
+  grep -Fq 'listen 0.0.0.0:8080;' "$run_dir/active/frontend-ports.conf" && grep -Fq 'listen 0.0.0.0:80;' "$run_dir/active/frontend-ports.conf" \
+    || fail "app-router does not serve the box's :8080 and :80"
+  ! grep -q -E '(run|up) .*cheese-frontend-next' "$docker_log" || fail "a temporary frontend was started"
+
+  # The next release goes back into the first slots, on loopback, with one reload.
+  : > "$docker_log"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >/dev/null 2>&1 || fail "second rollout failed"
+  grep -q -- 'up -d --no-deps --force-recreate frontend$' "$docker_log" || fail "the second release did not use the first frontend slot"
+  grep -q 'curl -fsS -m 3 http://127.0.0.1:18088/' "$docker_log" || fail "the first frontend slot was not checked on its loopback port"
+  [ "$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log")" = 1 ] || fail "the second release did not switch exactly once"
+  grep -Fq 'server 127.0.0.1:18088;' "$run_dir/active/frontend.conf" || fail "frontend proxy did not return to the first slot"
   ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
     || fail "ordinary frontend/backend release reloaded the persistent ingress"
   rm -rf "$run_dir"
-  echo "PASS: the frontend is replaced in place behind a temporary backup, with no reload of its own"
-}
-
-# The first release with a rolling frontend writes that upstream once.
-test_frontend_upstream_gets_its_backup() {
-  local run_dir
-  run_dir="$(new_rollout_run_dir)"
-  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 8080
-  printf 'upstream frontend_active { server 127.0.0.1:8080; }\n' > "$run_dir/active/frontend.conf"
-  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >"$run_dir/deploy.log" 2>&1 \
-    || { cat "$run_dir/deploy.log"; fail "frontend rollout failed"; }
-  grep -Fqx 'upstream frontend_active { server 127.0.0.1:8080; server 127.0.0.1:18084 backup; }' \
-    "$run_dir/active/frontend.conf" || fail "frontend upstream has no backup: $(cat "$run_dir/active/frontend.conf")"
-  rm -rf "$run_dir"
-  echo "PASS: the frontend upstream gets the temporary frontend as its backup"
+  echo "PASS: the frontend moves with the backend in one reload, and the box's ports stay served"
 }
 
 test_frontend_rollout_rejects_unhealthy_next() {
   local run_dir
   run_dir="$(new_rollout_run_dir)"
-  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 8080
-  printf 'upstream frontend_active { server 127.0.0.1:8080; server 127.0.0.1:18084 backup; }\n' > "$run_dir/active/frontend.conf"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087
+  printf 'upstream frontend_active { server 127.0.0.1:8080; }\n' > "$run_dir/active/frontend.conf"
   if rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_CURL_FAIL_MATCH=:18084/ >/dev/null 2>&1; then
     fail "unhealthy frontend was accepted"
   fi
   ! grep -q 'exec cheese-app-router nginx -s reload' "$run_dir/docker.log" || fail "app-router was switched without a healthy frontend"
-  grep -q 'rm -f cheese-frontend-next' "$run_dir/docker.log" || fail "the unhealthy temporary frontend was left running"
-  grep -q 'rm -f -s backend-b' "$run_dir/docker.log" || fail "the new backend was left running beside the old one"
-  ! grep -q 'up -d --no-deps frontend$' "$run_dir/docker.log" || fail "the serving frontend was replaced"
+  grep -q 'rm -f -s backend-b frontend-b' "$run_dir/docker.log" || fail "the new slots were left running beside the old ones"
+  ! grep -q ' rm -f backend frontend$' "$run_dir/docker.log" || fail "the serving slots were removed"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/frontend.conf" || fail "frontend proxy moved to unhealthy successor"
   grep -Fq 'server 127.0.0.1:18081;' "$run_dir/active/backend.conf" || fail "backend moved although the frontend could not"
+  [ ! -f "$run_dir/active/frontend-ports.conf" ] || fail "app-router took the frontend ports although the old frontend still holds them"
   rm -rf "$run_dir"
   echo "PASS: failed frontend startup leaves the old frontend and backend serving"
 }
 
-# A successor an interrupted older release left on a port this release would
-# use may be what app-router serves; the release must stop before anything.
-test_rollout_refuses_an_interrupted_release() {
+# A one-off successor an interrupted release before the two slots left behind:
+# removed by the next release when app-router does not send traffic to it, and
+# a refusal before anything changes when it does.
+test_rollout_clears_an_interrupted_release() {
   local run_dir leftover
   for leftover in cheese-backend-next cheese-frontend-next; do
     run_dir="$(new_rollout_run_dir)"
-    if rollout_run "$run_dir" env APP_TIER_LEFTOVERS="$leftover" >"$run_dir/release.log" 2>&1; then
-      fail "a release went ahead beside a leftover $leftover"
-    fi
-    grep -q "$leftover is left from an interrupted release" "$run_dir/release.log" \
-      || fail "the refusal did not name $leftover"
-    ! grep -q -E -- '--force-recreate|nginx -s reload|alembic' "$run_dir/docker.log" \
-      || fail "something changed beside a leftover $leftover"
+    rollout_run "$run_dir" env APP_TIER_LEFTOVERS="$leftover" >"$run_dir/release.log" 2>&1 \
+      || { cat "$run_dir/release.log"; fail "a release did not clear a leftover $leftover nobody serves from"; }
+    grep -q "removing $leftover" "$run_dir/release.log" || fail "$leftover was not removed"
+    [ "$(log_line "$run_dir/docker.log" "rm -f $leftover")" -lt "$(log_line "$run_dir/docker.log" 'alembic')" ] \
+      || fail "$leftover was removed only after the migrations"
     rm -rf "$run_dir"
   done
-  echo "PASS: a release refuses to start beside a leftover successor"
+  run_dir="$(new_rollout_run_dir)"
+  printf 'upstream backend_active { server 127.0.0.1:18082; }\n' > "$run_dir/active/backend.conf"
+  if rollout_run "$run_dir" env APP_TIER_LEFTOVERS=cheese-backend-next >"$run_dir/release.log" 2>&1; then
+    fail "a release went ahead while a leftover cheese-backend-next serves"
+  fi
+  grep -q 'cheese-backend-next, left by an interrupted release, is what app-router serves' "$run_dir/release.log" \
+    || fail "the refusal did not say that the leftover serves"
+  ! grep -q -E -- '--force-recreate|nginx -s reload|alembic|rm -f cheese-backend-next' "$run_dir/docker.log" \
+    || fail "something changed beside a serving leftover"
+  rm -rf "$run_dir"
+  echo "PASS: a leftover successor is removed when idle and refused when serving"
 }
 
 # The second backend slot, written from compose's real merged model in the
@@ -1046,7 +1060,10 @@ test_second_slot_matches_the_first() {
   [ -n "$real_docker" ] && "$real_docker" compose version >/dev/null 2>&1 \
     || fail "this case needs a real docker CLI with compose (none found on PATH)"
   run_dir="$(new_rollout_run_dir)"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087
+  printf 'upstream frontend_active { server 127.0.0.1:8080; }\n' > "$run_dir/active/frontend.conf"
   rollout_run "$run_dir" env APP_TIER_REAL_DOCKER="$real_docker" APP_TIER_SLOT_MODEL="$run_dir/model.json" \
+    ACTIVE_FRONTEND_DIR="$run_dir/active" \
     COMPOSE_OVERLAYS=docker-compose.subscription.yml FORGEJO_WEBHOOK_HOSTS=relay.example \
     >"$run_dir/release.log" 2>&1 || { cat "$run_dir/release.log"; fail "rollout with the real compose model failed"; }
   [ -s "$run_dir/model.json" ] || fail "the second slot was never started"
@@ -1070,9 +1087,18 @@ for name in ("COLLAB_SECRET", "OFFICE_EDITOR_JWT_SECRET"):
         print(f"{name} is empty in the second slot"); sys.exit(1)
 if second["networks"]["default"]["aliases"] != ["backend"]:
     print("the second slot does not answer to `backend`"); sys.exit(1)
+front, front_b = services["frontend"], services["frontend-b"]
+differ = sorted(k for k in set(front) | set(front_b) if front.get(k) != front_b.get(k))
+if differ != ["depends_on", "networks", "ports"]:
+    print("frontend slots differ in", differ); sys.exit(1)
+if front_b["networks"]["default"]["aliases"] != ["frontend"]:
+    print("the second frontend slot does not answer to `frontend`"); sys.exit(1)
+published = sorted((p["host_ip"], p["published"]) for p in front["ports"])
+if published != [("127.0.0.1", "18088")]:
+    print("the first frontend slot still publishes", published); sys.exit(1)
 PY
   rm -rf "$run_dir"
-  echo "PASS: the second backend slot is the first with another port, secrets included"
+  echo "PASS: the second slots are the first with another port, secrets included"
 }
 
 test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up() {
@@ -1690,9 +1716,8 @@ case "$CASE" in
   forge-router-recovery) test_rollout_recovers_after_forge_stops_backend ;;
   rollout-unknown-upstream) test_rollout_refuses_an_upstream_it_did_not_write ;;
   rollout-rollback) test_rollout_rollback_returns_to_the_previous_slot ;;
-  frontend-rollout) test_frontend_rollout_needs_no_reload_of_its_own ;;
-  frontend-upstream) test_frontend_upstream_gets_its_backup ;;
-  rollout-leftovers) test_rollout_refuses_an_interrupted_release ;;
+  frontend-rollout) test_frontend_rollout_switches_with_the_backend ;;
+  rollout-leftovers) test_rollout_clears_an_interrupted_release ;;
   second-slot) test_second_slot_matches_the_first ;;
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
@@ -1744,9 +1769,8 @@ case "$CASE" in
     test_rollout_recovers_after_forge_stops_backend
     test_rollout_refuses_an_upstream_it_did_not_write
     test_rollout_rollback_returns_to_the_previous_slot
-    test_frontend_rollout_needs_no_reload_of_its_own
-    test_frontend_upstream_gets_its_backup
-    test_rollout_refuses_an_interrupted_release
+    test_frontend_rollout_switches_with_the_backend
+    test_rollout_clears_an_interrupted_release
     test_second_slot_matches_the_first
     test_frontend_rollout_rejects_unhealthy_next
     test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up

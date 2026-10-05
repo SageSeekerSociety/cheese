@@ -183,7 +183,7 @@ if [ "${1:-}" = "compose" ]; then
   case "${1:-}" in
     config)
       # The merged model deploy-docker.sh copies the second slot from.
-      printf '{"services": {"backend": {"image": "repo/backend:x", "ports": ["127.0.0.1:18081:8081"]}}}\n'
+      printf '{"services": {"backend": {"image": "repo/backend:x", "ports": ["127.0.0.1:18081:8081"]}, "frontend": {"image": "repo/frontend:x", "depends_on": {"backend": {"condition": "service_healthy"}}}}}\n'
       ;;
     ps)
       if [ "${2:-}" = -q ] && [ "${3:-}" = forgejo ]; then
@@ -199,6 +199,9 @@ if [ "${1:-}" = "compose" ]; then
       fi
       if [ "${2:-}" = -q ] && [ "${3:-}" = backend ] &&         [ -n "${APP_TIER_BACKEND_CONTAINER:-}" ]; then
         printf '%s\n' "$APP_TIER_BACKEND_CONTAINER"
+      fi
+      if [ "${2:-}" = -q ] && [ "${3:-}" = frontend ] && [ -n "${APP_TIER_FRONTEND_CONTAINER:-}" ]; then
+        printf '%s\n' "$APP_TIER_FRONTEND_CONTAINER"
       fi
       if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
         case "${3:-}" in
