@@ -198,14 +198,60 @@ no content domain, or one the operator disabled, is left alone. The owner's
 internal RPC path (`/_internal/preview/`) is reachable only inside the compose
 network, never through nginx.
 
-The deploy starts a healthy successor, switches app-router to it, drains old
-workers, recreates the compose service, switches back and drains again before
-removing the successor. The minimum drain is 31 seconds: the worker shutdown
-deadline is 30 seconds, plus one second for signal delivery. Business streams
-longer than the deadline can reconnect; device and model connections bypass
-these workers. `ACTIVE_FRONTEND_DIR` enables the same procedure for the
-frontend behind the persistent **:18080** entry. Frontends still reach APIs
-through `API_UPSTREAM=host.docker.internal:8081`.
+A release switches app-router once. The backend has two slots, compose
+services `backend` and `backend-b` on `BACKEND_PORT` and `BACKEND_PORT_NEXT`;
+with `ACTIVE_FRONTEND_DIR` the frontend has two as well, `frontend` and
+`frontend-b` on loopback `FRONTEND_SLOT_PORT` (18088) and `FRONTEND_PORT_NEXT`.
+The deploy starts the idle slot of each on the new image, waits for its health
+check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
+The old backend is told to hand its work over 5 seconds after that switch, and
+`collab` is replaced at once, while the old frontend still runs. After a
+31-second drain (`DEPLOY_DRAIN_SECONDS`) the old slots stop gracefully, in
+parallel: the frontend's nginx gets up to 120 seconds to finish its requests, the
+backend 60 seconds to finish its handover. The next release goes back into the
+slots this one left. The `-b` services are written at deploy time from
+compose's merged model, after every value the deploy exports, so they carry
+every overlay and differ only in their port and in answering to the service's
+network name (`backend`, dialled by `device-connection` and the office editor;
+`frontend`, by the backend's docs index).
+
+The containers therefore alternate between `cheese-backend-1` and
+`cheese-backend-b-1` (likewise for the frontend); anything that needs one asks
+`deploy/app-container.sh backend`. A release of a commit from before the two
+slots, a revert or a manual dispatch, runs that commit's script. It installs
+its own `app-router.conf` and reloads, which ends app-router's sockets 30
+seconds later at that config's deadline, pulls and migrates, and then refuses
+to switch while app-router names `BACKEND_PORT_NEXT` or `FRONTEND_PORT_NEXT`.
+If a revert lands while the `-b` slots serve, no commit on main has the slots,
+and every automatic deploy of main does that until someone dispatches the deploy
+workflow on the last SHA that contains them (#2770), which moves back to
+`backend` and `frontend`; the next release of main then goes through. From the first slots an older commit
+releases as it always did. `deploy/tests/test-pre-slot-release.sh`
+runs the last such commit's script against both states.
+
+The box's own frontend ports, :8080 and :80, which the edge reaches directly,
+belong to app-router: `frontend.conf`, written by
+`deploy/llm-tunnel/configure-frontend-upstream.sh`, carries a server on them
+that forwards to whichever frontend slot serves. They live in that file because
+every `app-router.conf`, an older commit's included, includes it, so an older
+commit's release keeps them; its own frontend switch drops them just before it
+recreates the compose frontend on them, 31 seconds later. The first release with
+two frontend slots adds them once the compose frontend that still published
+them has stopped, which it gives 5 seconds since its traffic has moved; the
+ports are closed from that stop to app-router's second reload of that release.
+If app-router cannot take them, that frontend is started again to serve them
+and the next release takes them at its switch. A one-off
+`cheese-backend-next` or `cheese-frontend-next` left by an interrupted release
+from before the slots is removed by the next release when app-router does not
+send traffic to it, and stops the release when it does.
+
+App-router's `worker_shutdown_timeout` is 240 seconds, longer than the
+handover pause, the drain and the longer graceful stop together (5 + 31 + 120),
+so the workers the one reload
+retires keep their connections until the container they lead to stops. Device
+and model connections bypass these workers. The persistent **:18080** entry
+routes to app-router's frontend upstream. Frontends still reach APIs through
+`API_UPSTREAM=host.docker.internal:8081`.
 
 Each backend switch is also a handover of the running work. One backend at a
 time owns it (the sessions it listens to, the turns it watches, the periodic
@@ -217,7 +263,7 @@ lets the prompts it is still sending arrive, stops reading its sessions, lets go
 of its turns without ending them and releases the lock. The successor then picks every running turn up
 where it stands and starts any turn a message was left waiting for. The whole
 of that fits in the backend's 60-second `stop_grace_period`, which is why the
-successor is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
+old slot is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
 The in-place recreate on boxes without `ACTIVE_BACKEND_DIR` hands over the same
 way, to the container that replaces it.
 
@@ -505,9 +551,10 @@ evidence the deploy had already removed — that is how 257 turn failures on
 gone:
 
 ```bash
-sudo journalctl -t cheese-backend-1 --since "2 hours ago"   # by container name
+# by container name; on a box with an app-router the backend is one of two
+sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "2 hours ago"
 sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
-sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
+sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "09:00" --until "09:30"
 ```
 
 `sudo` (or membership of `systemd-journal`) is required — an ordinary user sees
@@ -520,7 +567,7 @@ never below 40 GB free on the disk, whichever is tighter. At journald's own
 default (a tenth of the filesystem, at most 4 GB) dev kept about thirteen hours
 on 2026-09-29, and the evidence for a failure was gone before anyone looked.
 `sudo journalctl --disk-usage` and
-`sudo journalctl -t cheese-backend-1 -o short-iso | head -1` (the oldest line)
+`sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 -o short-iso | head -1` (the oldest line)
 say how far back a box reaches now.
 
 How long that is depends on what the app tier writes, so some lines are not
@@ -565,7 +612,7 @@ Changing backend env (e.g. enabling an OAuth provider):
 
    ```bash
    cd ~/actions-runner/_work/cheese/cheese
-   SHA=$(docker inspect cheese-backend-1 --format '{{.Config.Image}}' | sed 's/.*://')
+   SHA=$(docker inspect "$(bash deploy/app-container.sh backend)" --format '{{.Config.Image}}' | sed 's/.*://')
    bash deploy/deploy-docker.sh "$SHA"
    ```
 

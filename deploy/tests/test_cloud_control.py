@@ -109,5 +109,32 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("127.0.0.1:18083:127.0.0.1:18083", forwards)
 
 
+
+class BackendLookupTests(unittest.IsolatedAsyncioTestCase):
+    """The backend runs as cheese-backend-1 or cheese-backend-b-1, whichever slot
+    the last release moved it to; inventory must reach whichever is running."""
+
+    async def running_backend_with(self, listing):
+        with TemporaryDirectory() as bin_dir:
+            docker = Path(bin_dir) / "docker"
+            docker.write_text("#!/bin/sh\nprintf '%s' \"$FAKE_DOCKER_PS\"\n")
+            docker.chmod(0o755)
+            with patch.dict("os.environ", {"PATH": f"{bin_dir}:/usr/bin:/bin", "FAKE_DOCKER_PS": listing}):
+                return await control.running_backend()
+
+    async def test_finds_the_backend_in_either_slot(self):
+        self.assertEqual(
+            await self.running_backend_with("collab cheese-collab-1\nbackend-b cheese-backend-b-1\n"),
+            "cheese-backend-b-1",
+        )
+        self.assertEqual(
+            await self.running_backend_with("frontend cheese-frontend-1\nbackend cheese-backend-1\n"),
+            "cheese-backend-1",
+        )
+
+    async def test_no_running_backend_is_an_error_not_a_guess(self):
+        with self.assertRaises(RuntimeError):
+            await self.running_backend_with("frontend cheese-frontend-1\n")
+
 if __name__ == "__main__":
     unittest.main()
