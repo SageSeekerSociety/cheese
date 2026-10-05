@@ -57,6 +57,19 @@ class Documents:
         """Several rooms' living documents at once, keyed by room id."""
         return await self._repo.of_rooms(room_ids)
 
+    async def of_project(self, project_id: uuid.UUID) -> list[Document]:
+        """The project's own documents, in no room, the latest changed first."""
+        return await self._repo.of_project(project_id)
+
+    async def create(
+        self, *, project_id: uuid.UUID, title: str, author: str
+    ) -> Document:
+        """A new document of the project's own, empty (version 0). What it
+        says is written the way every other write is, through the service."""
+        return await self._repo.create(
+            project_id=project_id, title=title, author=author
+        )
+
     async def ensure_for_room(
         self, *, room_id: uuid.UUID, project_id: uuid.UUID
     ) -> Document:

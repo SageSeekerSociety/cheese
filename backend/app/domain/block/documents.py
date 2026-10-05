@@ -375,3 +375,86 @@ class DocumentWriter:
         if datetime.now(UTC) - last.created_at > DOC_NOTICE_MERGE_WINDOW:
             return None
         return last
+
+
+#: A line about a document of the project's own: which one (``{id, title}``).
+#: Such a document is in no room, so the room 芝士 worked in when it made or
+#: changed it is told, and the line carries the document to open.
+DOC_CARD_KEY = "document"
+DOC_CREATED_KEY = "doc_created"
+
+
+async def tell_room_of_document(
+    session: AsyncSession,
+    *,
+    room_id: uuid.UUID,
+    doc: Document,
+    actor: str,
+    created: bool = False,
+    edits: list[dict] | None = None,
+    suggested: list[str] | None = None,
+) -> tuple[Block, bool]:
+    """Put in the room that ``actor`` made or changed ``doc``, a document of
+    the project's own: a line with the document on it, to open beside the
+    conversation. ``suggested`` are the ids of changes proposed instead of
+    made. A run of changes of one kind to the same document by the same actor
+    is one line, as with a room's document. Returns the line and whether it
+    extended the last one."""
+    blocks = BlockRepository(session)
+    landed = landing(EventAbout.room, project_id=doc.project_id, room_id=room_id)
+    changed = [{"old": e["old"], "new": e["new"]} for e in edits or []]
+    last = await blocks.latest_for_topic(landed.topic_id, task_id=landed.task_id)
+    meta_of_last = (last.meta or {}) if last is not None else {}
+    if (
+        last is not None
+        and last.kind == BlockKind.event
+        and (meta_of_last.get(DOC_CARD_KEY) or {}).get("id") == str(doc.id)
+        and last.author == actor
+        and bool(meta_of_last.get(DOC_SUGGESTED_KEY)) == bool(suggested)
+        and datetime.now(UTC) - last.created_at <= DOC_NOTICE_MERGE_WINDOW
+    ):
+        extended = {
+            **meta_of_last,
+            DOC_CARD_KEY: {"id": str(doc.id), "title": doc.title or ""},
+            DOC_EDITS_KEY: [*meta_of_last.get(DOC_EDITS_KEY, []), *changed],
+        }
+        if suggested:
+            extended[DOC_SUGGESTIONS_KEY] = [
+                *meta_of_last.get(DOC_SUGGESTIONS_KEY, []),
+                *suggested,
+            ]
+        last.meta = extended
+        last.created_at = datetime.now(UTC)
+        await session.flush()
+        return last, True
+    title = doc.title or say("docUntitled")
+    who = _actor_label([actor])
+    if created:
+        line = say("docCreatedInLibrary", actor=who, title=title)
+    elif suggested:
+        line = say("docSuggestedInLibrary", actor=who, title=title)
+    else:
+        line = say("docEditedInLibrary", actor=who, title=title)
+    block = await blocks.add(
+        project_id=landed.project_id,
+        topic_id=landed.topic_id,
+        task_id=landed.task_id,
+        author=actor,
+        author_type=AuthorType.platform,
+        content=line,
+        kind=BlockKind.event,
+        refs=[str(doc.id)],
+        meta={
+            "platform": True,
+            "action": "doc",
+            DOC_CARD_KEY: {"id": str(doc.id), "title": doc.title or ""},
+            DOC_CREATED_KEY: created,
+            DOC_EDITS_KEY: changed,
+            **(
+                {DOC_SUGGESTED_KEY: True, DOC_SUGGESTIONS_KEY: list(suggested)}
+                if suggested
+                else {}
+            ),
+        },
+    )
+    return block, False

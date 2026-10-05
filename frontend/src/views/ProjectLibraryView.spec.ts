@@ -27,6 +27,15 @@ vi.mock('../api', () => ({
   libraryFileRawUrl: (projectId: string, path: string) => `/api/projects/${projectId}/library/raw?path=${path}`,
 }))
 
+// 文档那一半在 ProjectLibraryView.documents.spec.ts；这里资料库里没有文档。
+vi.mock('../api/projectDocuments', () => ({
+  listProjectDocuments: vi.fn(async () => ({ data: [] })),
+  searchProjectDocuments: vi.fn(async (_: string, query: string) => ({ query, library: [], rooms: [] })),
+  createProjectDocument: vi.fn(),
+  deleteDocument: vi.fn(),
+  getDocumentAbout: vi.fn(),
+}))
+
 vi.mock('../lib/libraryApi', () => ({
   uploadLibraryFile: vi.fn(),
   replaceLibraryFile: vi.fn(),

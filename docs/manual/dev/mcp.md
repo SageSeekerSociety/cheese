@@ -17,15 +17,15 @@ covers:
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己声明的 MCP 服务，见[项目自定义 MCP](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，36 样 {#table}
+## 一张表，46 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 36 样：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 46 样：
 
 | 类别 | 工具 |
 | --- | --- |
 | 对话 | `chat_send`、`chat_edit`、`todo_write` |
 | 读房间 | `cheese_chat_list`、`cheese_chat_search`、`cheese_chat_get`、`cheese_chat_replies` |
-| 文档 | `cheese_doc_get`、`cheese_doc_set` |
+| 文档 | `cheese_doc_get`、`cheese_doc_set`、`cheese_doc_edit`、`cheese_doc_new`、`cheese_doc_list` |
 | 任务与验收 | `cheese_task`、`cheese_close_task`、`cheese_accept_request`、`cheese_describe`、`cheese_ready`、`cheese_tell` |
 | 记录 | `cheese_title` |
 | 通知与拍板 | `cheese_notify`、`cheese_ask` |
@@ -35,7 +35,7 @@ covers:
 | 机器与调度 | `cheese_machine`、`cheese_wait_machine`、`cheese_note`、`cheese_deliver_at` |
 | 定时与触发 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |
 | 项目技能 | `cheese_skill_draft`、`cheese_skill_update` |
-| 反馈 | `cheese_feedback_propose` |
+| 反馈 | `cheese_feedback_propose`、`cheese_feedback_list`、`cheese_feedback_get`、`cheese_feedback_claim`、`cheese_feedback_release` |
 | 其余的平台接口 | `platform_request` |
 
 这张表以前是**问出来的**：会话侧的 MCP 服务器收到 `tools/list` 就去执行器要一份，执行器再把机器上那棵 argparse 树翻成工具。于是一台执行机够不着，整个 `cheese_*` 家族就从清单里消失，agent 被告知「没有这个工具」——而它这一刻最需要的恰恰是跟房间说一句这里出事了。表变成常量之后它不再问任何人：这些要的是平台，不是那台机器，所以从会话直接打后端，机器离线时一样不少。

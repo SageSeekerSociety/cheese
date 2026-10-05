@@ -44,6 +44,18 @@ async def readable(
     return {row.id: row for row in rows}
 
 
+async def own(
+    session: AsyncSession, project_id: uuid.UUID
+) -> dict[uuid.UUID, Document]:
+    """The project's own documents, written or not, by id."""
+    rows = await session.scalars(
+        select(Document).where(
+            Document.project_id == project_id, Document.room_id.is_(None)
+        )
+    )
+    return {row.id: row for row in rows}
+
+
 def _matching(kind: str, terms: list[str], ids: list[uuid.UUID]) -> ColumnElement[bool]:
     if kind == "doc":
         return bm25.match_all_words(

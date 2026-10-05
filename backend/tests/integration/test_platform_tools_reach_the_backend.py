@@ -15,7 +15,11 @@ from pathlib import Path
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 
@@ -213,3 +217,43 @@ def test_a_task_is_opened_without_the_machine(client, room):
 def test_each_room_tool_is_accepted_by_the_backend(client, room, tool, arguments):
     """每一样的请求形状都是后端认的那一种：一个列在表上、后端却拒的工具，比没有更糟。"""
     assert cheese.run_platform_tool(tool, arguments, BackendHost(client, *room))
+
+
+def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room):
+    """芝士在话题里建一份资料库文档、列出来、点名改它：建的和改的都是那一份，
+    话题里出现的是这份文档，话题自己的实况文档一字没动。"""
+    project, topic = room
+    host = BackendHost(client, project, topic, files={"/w/doc.md": "三家都有年付"})
+    host.headers = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project,
+            topic_id=topic,
+            agent_handle=room_agent_seat(client, topic),
+            access_scope="project",
+        )
+    }
+
+    said = cheese.run_platform_tool(
+        "cheese_doc_new", {"title": "竞品定价对比", "path": "/w/doc.md"}, host
+    )
+    document = said.split("编号 ", 1)[1].split("（", 1)[0]
+    assert "竞品定价对比" in cheese.run_platform_tool("cheese_doc_list", {}, host)
+    cheese.run_platform_tool(
+        "cheese_doc_edit",
+        {"document": document, "edits": [{"old": "年付", "new": "年付折扣"}]},
+        host,
+    )
+
+    assert (
+        cheese.run_platform_tool("cheese_doc_get", {"document": document}, host)
+        == "三家都有年付折扣"
+    )
+    assert "还是空的" in cheese.run_platform_tool("cheese_doc_get", {}, host)
+    lines = client.get(
+        f"/topics/{topic}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    assert [
+        b["meta"]["document"]["id"]
+        for b in lines
+        if (b.get("meta") or {}).get("document")
+    ] == [document]
