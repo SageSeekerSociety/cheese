@@ -250,7 +250,12 @@ class CentralChannel(DeviceChannel):
                 "kind": "deferred",
                 "resource_id": str(resource),
                 "session_id": str(session_id),
-                "lease_path": f"/topics/{topic_id}/sessions/{session_id}/work-lease",
+                # Named by the conversation, as the credential is: a task's
+                # credential is refused on its room's path.
+                "lease_path": (
+                    f"/topics/{session.conversation_id}/sessions/{session_id}"
+                    "/work-lease"
+                ),
                 "setup_env": {
                     key: value
                     for key, value in values.items()
@@ -264,7 +269,9 @@ class CentralChannel(DeviceChannel):
                 # machine there, relaunches it onto the machine.
                 "workspace": leased["workspace"]
                 if leased
-                and await self._starts_on_machine(leased, center, topic_id, resource)
+                and await self._starts_on_machine(
+                    leased, center, session.conversation_id, resource
+                )
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
