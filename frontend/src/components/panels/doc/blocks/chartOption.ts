@@ -18,6 +18,8 @@ export interface ChartTheme {
   line: string
   surface: string
   font: string
+  /** The system asks for reduced motion: draw without animating. */
+  still: boolean
 }
 
 export interface ChartData {
@@ -57,7 +59,8 @@ export function chartOption(
   const base: Option = {
     color: theme.colors,
     textStyle: { fontFamily: theme.font, color: theme.text },
-    animationDuration: 300,
+    animation: !theme.still,
+    animationDuration: 220,
     legend: legend
       ? {
           top: 0,

@@ -328,7 +328,7 @@ useFocusReturn(blockOpen)
   cursor: default;
 }
 .doc-bubble button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .doc-bubble .doc-bubble__icon {

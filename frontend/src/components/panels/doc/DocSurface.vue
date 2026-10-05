@@ -635,24 +635,6 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
     box-shadow: 0 0 0 1px transparent;
   }
 }
-/* 文档里的 @/话题 chip：和聊天同一视觉词汇，可点。 */
-.doc-editor :deep(.mention) {
-  color: rgb(var(--v-theme-primary));
-  background: var(--fill);
-  border-radius: var(--radius-sm);
-  padding: 0 3px;
-  font-weight: 500;
-  cursor: pointer;
-}
-/* @person handle reads as a link: persistent accent underline. File/topic
-   refs (file icon / #) keep their chip look and only underline on hover. */
-.doc-editor :deep(.mention:not(.file-ref):not(.topic-ref)) {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.doc-editor :deep(.mention:hover) {
-  text-decoration: underline;
-}
 /* 文件 chip 前的 mdi 图标（正文里的 <&path> 装饰，以及评论区的同款 chip）。 */
 :deep(.file-ref__icon) {
   margin-right: 3px;

@@ -412,7 +412,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   border-bottom: 1px solid var(--line);
 }
 .doc-comment-panel__close:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .doc-tool-content {
@@ -455,7 +455,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   touch-action: none;
 }
 .doc-comment-panel__resize:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .doc-comment-panel__tabs {
@@ -491,7 +491,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   font-weight: 400;
 }
 .doc-comment-panel__tab:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 </style>

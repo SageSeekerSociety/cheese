@@ -128,9 +128,10 @@ export function detailsShape(
 type Katex = typeof import('katex').default
 let katexLoading: Promise<Katex> | null = null
 
-/** KaTeX is loaded the first time a formula is on the page. */
+/** KaTeX is loaded the first time a formula is on the page, with its stylesheet:
+ *  without it the formula's MathML copy shows beside the drawn one. */
 function loadKatex(): Promise<Katex> {
-  katexLoading ??= import('katex').then((m) => m.default)
+  katexLoading ??= Promise.all([import('katex'), import('katex/dist/katex.min.css')]).then(([m]) => m.default)
   return katexLoading
 }
 

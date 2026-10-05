@@ -16,6 +16,8 @@ import type { ChartTheme } from './chartOption'
 
 import { NodeSelection } from '@tiptap/pm/state'
 
+import { reducedMotion } from '@/utils/motion'
+
 import { CHART_HORIZONTAL, CHART_KINDS } from '../../../../lib/docSchema/blocks'
 
 import { chartData, chartHeight, chartOption } from './chartOption'
@@ -60,6 +62,7 @@ function chartTheme(): ChartTheme {
     line: token('--line'),
     surface: token('--surface'),
     font: getComputedStyle(document.body).fontFamily,
+    still: reducedMotion(),
   }
 }
 
