@@ -55,15 +55,17 @@
 #                             reverse SSH tunnels log in; every other name goes
 #                             to this Caddy's HTTPS sites on 127.0.0.1:8443.
 #   okcheese.com, www, hk  -> TLS ends here; plain HTTP through the dev box's
-#                             tunnels (127.0.0.1:18453, else :18454) to its front
-#                             door on 127.0.0.1:18080.
+#   docs.okcheese.com         tunnels (127.0.0.1:18453 and :18454) to its front
+#                             door on 127.0.0.1:18080. docs has a site block of
+#                             its own; the frontend container answers that Host
+#                             with the docs server.
 #   ruc-etrip.cn           -> 127.0.0.1:80, the etrip deployment's frontend
 #                             container (cheese_prod_frontend), loopback only.
 #   any other Host on :80  -> the same container, so visiting the bare IP still
 #                             lands where it always did.
 #   :8080                  -> CheeseX, served from /opt/cheesex.
 #
-# Plain http for the four names is a permanent redirect to https; see the
+# Plain http for the five names above is a permanent redirect to https; see the
 # redirect block at the end for why that has to be spelled out here.
 
 :8080 {
