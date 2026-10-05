@@ -2,7 +2,7 @@
 // The shape of "you can't open this": one icon, a heading, one line of body copy,
 // and the actions that get you out. Both the project notice
 // (`views/workspace/ProjectAccessNotice.vue`) and the space-management notice
-// (`views/spaces/detail/ManageDenied.vue`) paint this, so the two read as the
+// (`views/spaces/detail/ManageDeniedView.vue`) paint this, so the two read as the
 // same thing instead of two looks that drift apart.
 //
 // Only the frame lives here — the words and the buttons are the caller's, because
