@@ -31,7 +31,7 @@
         @update:model-value="handleOtpInput"
       />
 
-      <LegalConsent v-if="needsConsent" ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-4" />
+      <LegalConsent v-if="needsConsent" ref="consentRef" :action-label="t('account.agreeAndSignUp')" :documents="consentDocuments" :load-error="consentLoadError" class="mb-4" />
 
       <BaseButton
         block
@@ -81,6 +81,7 @@ import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { useConsentDocuments } from '@/composables/useConsentDocuments'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
 import { useSignupStore } from '@/stores/signup'
@@ -98,6 +99,11 @@ const needsPassword = !signupStore.password
 // back intact, it is asked for here instead of being assumed.
 const needsConsent = !signupStore.consent
 const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
+const { documents: consentDocuments, loadError: consentLoadError, load: loadConsentDocuments } = useConsentDocuments()
+// 同意要交后端当前的协议版本；一进页面就取，提交时 `confirm()` 才有东西可交。
+onMounted(() => {
+  void loadConsentDocuments()
+})
 
 const { handleSubmit, defineField } = useForm({
   validationSchema: computed(() =>
@@ -130,7 +136,8 @@ const submit = async () => {
   if (!value) return
   error.value = ''
   if (needsConsent) {
-    const consent = await consentRef.value?.confirm()
+    await loadConsentDocuments()
+  const consent = await consentRef.value?.confirm()
     if (!consent) return
     signupStore.consent = consent
   }

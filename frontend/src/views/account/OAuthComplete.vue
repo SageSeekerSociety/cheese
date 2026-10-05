@@ -129,7 +129,7 @@
               </AccountField>
             </template>
 
-            <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-4" />
+            <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" :documents="consentDocuments" :load-error="consentLoadError" class="mb-4" />
 
             <BaseButton
               type="submit"
@@ -205,6 +205,7 @@ import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { useConsentDocuments } from '@/composables/useConsentDocuments'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
@@ -244,6 +245,11 @@ const bindPassword = ref('')
 // Form refs
 const createFormRef = ref()
 const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
+const { documents: consentDocuments, loadError: consentLoadError, load: loadConsentDocuments } = useConsentDocuments()
+// 同意要交后端当前的协议版本；一进页面就取，提交时 `confirm()` 才有东西可交。
+onMounted(() => {
+  void loadConsentDocuments()
+})
 const bindFormRef = ref()
 
 // Validation rules — the same ones the sign-up form states.
@@ -278,6 +284,7 @@ const handleCreateAccount = async () => {
   if (!createFormRef.value) return
   const { valid } = await createFormRef.value.validate()
   if (!valid || !oauthState.value) return
+  await loadConsentDocuments()
   const consent = await consentRef.value?.confirm()
   if (!consent) return
   consentGiven = consent
