@@ -412,6 +412,9 @@
   position: relative;
   margin: 12px 0;
   padding-left: 24px;
+  /* The body's height animates to and from auto where the browser can; where
+     it cannot, it opens and closes at once. */
+  interpolate-size: allow-keywords;
 }
 
 [data-block='details'] [data-field='summary'] {
@@ -419,17 +422,32 @@
   color: var(--ink);
 }
 
-[data-block='details']:not(.doc-details--open) [data-field='details'] {
-  display: none;
+/* Opening grows the body out of the summary (base / ease-out); closing folds it
+   back a step faster (quick / ease-in). Folded, it keeps no height and is not
+   drawn. */
+[data-block='details'] [data-field='details'] {
+  height: auto;
+  margin-top: 4px;
+  overflow: clip;
+  transition:
+    height var(--dur-base) var(--ease-out),
+    margin-top var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    content-visibility var(--dur-base) allow-discrete;
 }
 
-[data-block='details'] [data-field='details'] {
-  margin-top: 4px;
+[data-block='details']:not(.doc-details--open) [data-field='details'] {
+  height: 0;
+  margin-top: 0;
+  opacity: 0;
+  content-visibility: hidden;
+  transition-duration: var(--dur-quick);
+  transition-timing-function: var(--ease-in);
 }
 
 .doc-details__toggle {
   position: absolute;
-  top: 2px;
+  top: 4px;
   left: 0;
   width: 20px;
   height: 20px;
@@ -612,6 +630,19 @@ div[data-footnote]::before {
     opacity: 0;
     transform: translateY(var(--doc-menu-from, -4px));
   }
+}
+
+/* The same way in for a Vue piece that is not a menu (the find bar, the link
+   card, the review strips): <Transition name="doc-menu">. */
+.doc-menu-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+
+.doc-menu-enter-from {
+  opacity: 0;
+  transform: translateY(var(--doc-menu-from, -4px));
 }
 
 .doc-menu-leave-active,

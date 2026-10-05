@@ -249,110 +249,117 @@ defineExpose({ open, locate, toggle, close, opened, busy })
 <template>
   <div ref="root" class="doc-pane" :class="{ 'is-resizing': resizing }">
     <slot />
-    <aside
-      v-show="opened"
-      ref="aside"
-      class="doc-comment-panel"
-      :class="{ 'doc-comment-panel--drawer': !docked, 'doc-comment-panel--compact': !docked && compact }"
-      data-comments-panel
-      :data-comments-drawer="!docked ? '' : undefined"
-      :role="docked ? 'complementary' : 'dialog'"
-      :aria-label="t('work.room.comments.title')"
-      tabindex="-1"
-      :style="{ width: `${width}px` }"
-      @keydown="onEscape"
-    >
-      <div
-        v-if="docked"
-        class="doc-comment-panel__resize"
-        role="separator"
-        tabindex="0"
-        aria-orientation="vertical"
-        :aria-label="t('work.room.comments.resize')"
-        :aria-valuemin="min"
-        :aria-valuemax="max"
-        :aria-valuenow="width"
-        @pointerdown="startResize"
-        @pointermove="moveResize"
-        @pointerup="endResize($event, true)"
-        @pointercancel="endResize($event, false)"
-        @lostpointercapture="endResize($event, false)"
-        @dblclick="commit(340)"
-        @keydown="resizeKey"
-      />
-      <header class="doc-comment-panel__head">
-        <div v-roving-tabs class="doc-comment-panel__tabs" role="tablist" :aria-label="t('work.room.comments.filter')">
-          <button
-            v-for="kind in ['open', 'resolved'] as const"
-            :key="kind"
-            type="button"
-            role="tab"
-            class="doc-comment-panel__tab"
-            :aria-selected="filter === kind"
-            :aria-controls="listId"
-            @click="filter = kind"
-          >
-            {{ t(`work.room.comments.${kind}`) }}
-            <span class="doc-comment-panel__count">{{ counts[kind] }}</span>
-          </button>
-        </div>
-        <div class="doc-comment-panel__window-actions">
-          <button
-            v-if="writable"
-            type="button"
-            class="doc-comment-panel__close"
-            :aria-label="t('work.room.comments.write')"
-            :title="t('work.room.comments.write')"
-            @click="writeOnDocument"
-          >
-            <v-icon size="18">mdi-plus</v-icon>
-          </button>
-          <button
-            v-if="canDock"
-            type="button"
-            class="doc-comment-panel__close"
-            :aria-label="t(docked ? 'work.room.docTools.float' : 'work.room.docTools.dock')"
-            :title="t(docked ? 'work.room.docTools.float' : 'work.room.docTools.dock')"
-            @click="switchSurface"
-          >
-            <v-icon size="18">{{ docked ? 'mdi-dock-window' : 'mdi-dock-right' }}</v-icon>
-          </button>
-          <button
-            type="button"
-            class="doc-comment-panel__close"
-            :disabled="busy"
-            :aria-label="t('work.room.docTools.backToDocument')"
-            :title="busy ? t('work.room.comments.waitForSend') : t('work.room.docTools.backToDocument')"
-            @click="close"
-          >
-            <v-icon size="18">mdi-close</v-icon>
-          </button>
-        </div>
-      </header>
-      <div class="doc-tool-content">
-        <DocComments
-          :id="listId"
-          ref="commentsRef"
-          role="tabpanel"
-          :aria-label="t(`work.room.comments.${filter}`)"
-          :topic-id="topicId"
-          :author="author"
-          :send-comment="sendComment"
-          :thread-state="threadState"
-          :thread-actions="threadActions"
-          :open-id="openId"
-          :place-of="placeOf"
-          :agent-name="agentName"
-          :mention-names="mentionNames"
-          :name-of="nameOf"
-          :writable="writable"
-          :filter="filter"
-          @update:open-id="emit('update:openId', $event)"
-          @busy="busy = $event"
-          @locate="emit('locate', $event)"
+    <Transition name="doc-comment-panel">
+      <aside
+        v-show="opened"
+        ref="aside"
+        class="doc-comment-panel"
+        :class="{ 'doc-comment-panel--drawer': !docked, 'doc-comment-panel--compact': !docked && compact }"
+        data-comments-panel
+        :data-comments-drawer="!docked ? '' : undefined"
+        :role="docked ? 'complementary' : 'dialog'"
+        :aria-label="t('work.room.comments.title')"
+        tabindex="-1"
+        :style="{ width: `${width}px` }"
+        @keydown="onEscape"
+      >
+        <div
+          v-if="docked"
+          class="doc-comment-panel__resize"
+          role="separator"
+          tabindex="0"
+          aria-orientation="vertical"
+          :aria-label="t('work.room.comments.resize')"
+          :aria-valuemin="min"
+          :aria-valuemax="max"
+          :aria-valuenow="width"
+          @pointerdown="startResize"
+          @pointermove="moveResize"
+          @pointerup="endResize($event, true)"
+          @pointercancel="endResize($event, false)"
+          @lostpointercapture="endResize($event, false)"
+          @dblclick="commit(340)"
+          @keydown="resizeKey"
         />
-      </div>
-    </aside>
+        <header class="doc-comment-panel__head">
+          <div
+            v-roving-tabs
+            class="doc-comment-panel__tabs"
+            role="tablist"
+            :aria-label="t('work.room.comments.filter')"
+          >
+            <button
+              v-for="kind in ['open', 'resolved'] as const"
+              :key="kind"
+              type="button"
+              role="tab"
+              class="doc-comment-panel__tab"
+              :aria-selected="filter === kind"
+              :aria-controls="listId"
+              @click="filter = kind"
+            >
+              {{ t(`work.room.comments.${kind}`) }}
+              <span class="doc-comment-panel__count">{{ counts[kind] }}</span>
+            </button>
+          </div>
+          <div class="doc-comment-panel__window-actions">
+            <button
+              v-if="writable"
+              type="button"
+              class="doc-comment-panel__close"
+              :aria-label="t('work.room.comments.write')"
+              :title="t('work.room.comments.write')"
+              @click="writeOnDocument"
+            >
+              <v-icon size="18">mdi-plus</v-icon>
+            </button>
+            <button
+              v-if="canDock"
+              type="button"
+              class="doc-comment-panel__close"
+              :aria-label="t(docked ? 'work.room.docTools.float' : 'work.room.docTools.dock')"
+              :title="t(docked ? 'work.room.docTools.float' : 'work.room.docTools.dock')"
+              @click="switchSurface"
+            >
+              <v-icon size="18">{{ docked ? 'mdi-dock-window' : 'mdi-dock-right' }}</v-icon>
+            </button>
+            <button
+              type="button"
+              class="doc-comment-panel__close"
+              :disabled="busy"
+              :aria-label="t('work.room.docTools.backToDocument')"
+              :title="busy ? t('work.room.comments.waitForSend') : t('work.room.docTools.backToDocument')"
+              @click="close"
+            >
+              <v-icon size="18">mdi-close</v-icon>
+            </button>
+          </div>
+        </header>
+        <div class="doc-tool-content">
+          <DocComments
+            :id="listId"
+            ref="commentsRef"
+            role="tabpanel"
+            :aria-label="t(`work.room.comments.${filter}`)"
+            :topic-id="topicId"
+            :author="author"
+            :send-comment="sendComment"
+            :thread-state="threadState"
+            :thread-actions="threadActions"
+            :open-id="openId"
+            :place-of="placeOf"
+            :agent-name="agentName"
+            :mention-names="mentionNames"
+            :name-of="nameOf"
+            :writable="writable"
+            :filter="filter"
+            @update:open-id="emit('update:openId', $event)"
+            @busy="busy = $event"
+            @locate="emit('locate', $event)"
+          />
+        </div>
+      </aside>
+    </Transition>
   </div>
 </template>
 
@@ -390,6 +397,27 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   background: var(--raised);
   z-index: var(--z-panel-2);
   box-shadow: var(--shadow-2);
+}
+/* 评论栏出现、收起：侧栏的那一档时长（设计系统 §9.3），从它所在的那一边来、回那一边去；
+   收起快一档。停靠时正文的宽度一下就让出来，栏本身淡进来。 */
+.doc-comment-panel-enter-active {
+  transition:
+    opacity var(--dur-slow) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out);
+}
+.doc-comment-panel-leave-active {
+  transition:
+    opacity var(--dur-base) var(--ease-in),
+    transform var(--dur-base) var(--ease-in);
+}
+.doc-comment-panel-enter-from,
+.doc-comment-panel-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
+}
+.doc-comment-panel--compact.doc-comment-panel-enter-from,
+.doc-comment-panel--compact.doc-comment-panel-leave-to {
+  transform: translateY(-8px);
 }
 .doc-comment-panel--compact {
   inset: 0 0 auto;

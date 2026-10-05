@@ -389,25 +389,29 @@ defineExpose({
           @prev="stepFind(-1)"
           @close="setFindOpen(false)"
         />
-        <DocReviewStrip
-          v-if="review.request.value"
-          :agent-name="agentName"
-          :requester="review.request.value.requester"
-          :count="review.live.value.length"
-          @step="review.step"
-          @close="review.close"
-        />
-        <DocSuggestionStrip
-          v-if="suggestionsOpen"
-          :agent-name="agentName"
-          :count="suggestions.list.value.length"
-          :decided="suggestions.decided.value"
-          :editable="editable"
-          @step="suggestions.step"
-          @accept-all="suggestions.decideAll(true)"
-          @reject-all="suggestions.decideAll(false)"
-          @dismiss="dismissSuggestions"
-        />
+        <Transition name="doc-menu">
+          <DocReviewStrip
+            v-if="review.request.value"
+            :agent-name="agentName"
+            :requester="review.request.value.requester"
+            :count="review.live.value.length"
+            @step="review.step"
+            @close="review.close"
+          />
+        </Transition>
+        <Transition name="doc-menu">
+          <DocSuggestionStrip
+            v-if="suggestionsOpen"
+            :agent-name="agentName"
+            :count="suggestions.list.value.length"
+            :decided="suggestions.decided.value"
+            :editable="editable"
+            @step="suggestions.step"
+            @accept-all="suggestions.decideAll(true)"
+            @reject-all="suggestions.decideAll(false)"
+            @dismiss="dismissSuggestions"
+          />
+        </Transition>
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <DocCommentPanel
           ref="commentsRef"
@@ -609,12 +613,19 @@ defineExpose({
 
 /* B1 Phase 2: a brief highlight when a chat action points at the doc. */
 .doc-pulse {
-  animation: docPulse 1.2s ease-out;
+  animation: docPulse 1.2s var(--ease-out);
+}
+/* 不动的时候：整页框一下，直到脚本收回（pulse）。 */
+@media (prefers-reduced-motion: reduce) {
+  .doc-pulse {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 45%, transparent);
+  }
 }
 @keyframes docPulse {
   0% {
-    box-shadow: 0 0 0 3px var(--accent);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 45%, transparent);
+    background: var(--ok-wash);
   }
   100% {
     box-shadow: 0 0 0 0 transparent;

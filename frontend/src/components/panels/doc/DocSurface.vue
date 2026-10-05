@@ -428,7 +428,9 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
          （v-show），卸了它每换一个话题都要重建一次。 -->
     <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
     <EditorContent v-if="editor" v-show="!loading" :editor="editor" class="doc-editor" />
-    <DocLinkCallout v-if="linkTarget" :target="linkTarget" @close="linkTarget = null" />
+    <Transition name="doc-menu">
+      <DocLinkCallout v-if="linkTarget" :target="linkTarget" @close="linkTarget = null" />
+    </Transition>
     <MentionMenu
       :open="!!refMenu.menu.value"
       :matches="refMenu.menu.value?.items ?? []"
@@ -537,14 +539,14 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-review-new) {
   background: var(--ok-wash);
   cursor: pointer;
-  animation: docReviewIn 320ms var(--ease-out);
+  animation: docReviewIn var(--dur-slow) var(--ease-out);
 }
 .doc-editor :deep(.doc-review-old) {
   margin-right: 2px;
   color: var(--danger-ink);
   text-decoration: line-through var(--danger);
   user-select: none;
-  animation: docReviewIn 320ms var(--ease-out);
+  animation: docReviewIn var(--dur-slow) var(--ease-out);
 }
 @keyframes docReviewIn {
   from {
@@ -623,16 +625,25 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   margin: -3px -8px;
   padding: 3px 8px;
   box-sizing: content-box;
-  animation: nodeFlash 1.5s ease-out forwards;
+  /* 「这几段是它写的」：和改动同一种绿，不拿琥珀装饰（设计系统 §1.6）。 */
+  background: var(--ok-wash);
+  animation: nodeFlash 1.5s var(--ease-out) forwards;
 }
 @keyframes nodeFlash {
-  0% {
-    background: color-mix(in srgb, var(--accent) 24%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  0%,
+  40% {
+    background: var(--ok-wash);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent);
   }
   100% {
     background: transparent;
     box-shadow: 0 0 0 1px transparent;
+  }
+}
+/* 不动的时候它还得在：底色留着，到时由脚本拿走（flashBlocks）。 */
+@media (prefers-reduced-motion: reduce) {
+  .doc-editor-wrap :deep(.node-flash-overlay) {
+    animation: none;
   }
 }
 /* 文件 chip 前的 mdi 图标（正文里的 <&path> 装饰，以及评论区的同款 chip）。 */
