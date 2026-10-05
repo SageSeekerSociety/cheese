@@ -60,7 +60,9 @@ describe('DemoView', () => {
     const view = mount('/demo/seats?embed=1')
     expect(posted).toContainEqual(expect.objectContaining({ cheeseDemo: 'ready', steps: 6 }))
 
-    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 2, play: false } }))
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { cheeseDemo: 'go', step: 2, play: false }, origin: location.origin })
+    )
     await waitFor(() => expect(view.getByText('按钮用主色，别用描边', { exact: false })).toBeTruthy())
     // 现场是真的 PanelSite：队友切换栏出来了，叙述那一行也在。
     await waitFor(() => expect(view.getByText('收到补充：登录按钮改成主色实心。')).toBeTruthy())
@@ -72,19 +74,54 @@ describe('DemoView', () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
+  it('talks only to the docs page: posts to its origin, ignores any other', async () => {
+    vi.stubEnv('VITE_DOCS_ORIGIN', 'https://docs.example.test')
+    try {
+      const sent: [unknown, string][] = []
+      const parent = { postMessage: (m: unknown, origin: string) => sent.push([m, origin]) }
+      vi.spyOn(window, 'parent', 'get').mockReturnValue(parent as unknown as Window)
+      const view = mount('/demo/seats?embed=1')
+      expect(sent.every(([, origin]) => origin === 'https://docs.example.test')).toBe(true)
+      expect(sent.length).toBeGreaterThan(0)
+
+      // A page on this origin, or anywhere else, does not get to drive it.
+      for (const origin of [location.origin, 'https://elsewhere.example']) {
+        window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 4, play: false }, origin }))
+      }
+      await new Promise((r) => setTimeout(r, 50))
+      expect(view.queryByText('uv run pytest tests/api -x -q')).toBeNull()
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { cheeseDemo: 'go', step: 4, play: false },
+          origin: 'https://docs.example.test',
+        })
+      )
+      await waitFor(() => expect(view.getByText('uv run pytest tests/api -x -q')).toBeTruthy())
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('stepping back replays the site from scratch instead of keeping later rows', async () => {
     vi.spyOn(window, 'parent', 'get').mockReturnValue({ postMessage: () => {} } as unknown as Window)
     const view = mount('/demo/seats?embed=1')
-    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 4, play: false } }))
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { cheeseDemo: 'go', step: 4, play: false }, origin: location.origin })
+    )
     await waitFor(() => expect(view.getByText('uv run pytest tests/api -x -q')).toBeTruthy())
-    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 1, play: false } }))
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { cheeseDemo: 'go', step: 1, play: false }, origin: location.origin })
+    )
     await waitFor(() => expect(view.queryByText('uv run pytest tests/api -x -q')).toBeNull())
   })
 
   it('draws the real accept card, checklist and turn summary from the scene', async () => {
     vi.spyOn(window, 'parent', 'get').mockReturnValue({ postMessage: () => {} } as unknown as Window)
     const view = mount('/demo/quickstart?embed=1')
-    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 4, play: false } }))
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { cheeseDemo: 'go', step: 4, play: false }, origin: location.origin })
+    )
     // 验收卡是真的 TopicAcceptCard，数据来自演示后端。
     await waitFor(() => expect(view.getAllByRole('button').some((b) => /采纳/.test(b.textContent ?? ''))).toBe(true))
     expect(view.getAllByText('docs: add a welcome note', { exact: false }).length).toBeGreaterThan(0)
@@ -102,13 +139,17 @@ describe('DemoView', () => {
       view.container.querySelector('[data-region="tabs"] [role="tab"][aria-selected="true"]')?.textContent?.trim()
 
     // 第三步（这张剧本里没写 panel）：右边还是现场，改动那几格连挂都没挂上。
-    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 2, play: false } }))
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { cheeseDemo: 'go', step: 2, play: false }, origin: location.origin })
+    )
     await waitFor(() => expect(selected()).toBe('现场'))
     expect(view.container.querySelectorAll('[data-region="panel"] > *').length).toBe(1)
 
     // 第四步写了 panel: changes：选中的换成改动，格子里是产品自己的 PanelChanges，
     // 画的是剧本里那份 diff（README.md，+6）。
-    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 3, play: false } }))
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { cheeseDemo: 'go', step: 3, play: false }, origin: location.origin })
+    )
     await waitFor(() => expect(selected()).toContain('改动'))
     // 页签上带着改动的规模（剧本里那一个文件）。
     expect(view.container.querySelector('.tabbar__count')?.textContent).toBe('1')

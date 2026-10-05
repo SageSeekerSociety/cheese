@@ -5,6 +5,7 @@ import binascii
 import hashlib
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -349,14 +350,21 @@ class Settings(BaseSettings):
     llm_gateway_admin_key: str | None = None  # the LiteLLM master key
 
     # --- Docs site (app/domain/docs_site) ---
-    # Where 问芝士 reads the docs from: the frontend image serves the built
-    # site, so the backend asks its own deployment for the same version readers
-    # see. Unset, 问芝士 answers that it is unavailable.
-    docs_index_url: str | None = "http://frontend/docs/ask-index.json"
-    # The developer pages' index, behind the /docs/dev/ gate; the backend passes
-    # it with an internal pass (docs_site/access.py). Agents read it only in
+    # The docs' own host, as a browser origin: "https://docs.okcheese.com". Empty,
+    # the platform serves them under /docs/ on `frontend_url`. Set, the
+    # platform's /docs/ redirects there and readers sign in to it through the
+    # platform (docs_site/access.py). The frontend reads the same value
+    # (frontend/nginx/), so a compose deployment sets it once, in the deploy
+    # environment the compose file passes to both.
+    docs_origin: str = ""
+    # Where 问芝士 reads the docs from. Unset, the frontend container this
+    # deployment runs, so the backend reads the version readers see
+    # (docs_site/site.py works out the address).
+    docs_index_url: str | None = None
+    # The developer pages' index, behind the dev/ gate; the backend passes it
+    # with an internal pass (docs_site/access.py). Agents read it only in
     # projects whose repository is one of `docs_dev_repositories`.
-    docs_dev_index_url: str | None = "http://frontend/docs/dev/ask-index.json"
+    docs_dev_index_url: str | None = None
     # Projects working on this platform's own code ("owner/repo",
     # case-insensitive): their agents may read the developer docs, and their
     # members and agents may claim feedback (`FeedbackService.may_claim`).
@@ -377,8 +385,9 @@ class Settings(BaseSettings):
     # credits at what the gateway spent, so the model must be priced there.
     assistant_model: str = "deepseek-flash"
     docs_question_retention_days: int = 90
-    # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
-    docs_dev_session_seconds: int = 3600
+    # How long a docs sign-in lasts before the reader goes through the
+    # platform again. It also ends with the platform sign-in it came from.
+    docs_session_seconds: int = 8 * 3600
 
     # --- Topic naming (app/domain/topic/naming.py) ---
     # The platform names rooms itself, off the main agent's turn: a small model
@@ -1296,6 +1305,38 @@ class Settings(BaseSettings):
             "deploy/.env.prod.example). If you are sure nobody should, set it "
             "to a handle you control rather than leaving it empty."
         )
+
+    @model_validator(mode="after")
+    def _docs_origin_is_an_origin(self) -> "Settings":
+        """``docs_origin`` is a browser origin and nothing more.
+
+        The docs sign-in cookie is minted for exactly this origin and checked
+        against the Host of every request, so a trailing path or a typo would
+        not fail anywhere visible: every reader would just be signed out. Plain
+        http only on a loopback name, where browsers keep Secure cookies off."""
+        value = self.docs_origin.strip().rstrip("/").lower()
+        if not value:
+            self.docs_origin = ""
+            return self
+        parts = urlsplit(value)
+        host = parts.hostname or ""
+        local = host == "localhost" or host.endswith(".localhost")
+        if (
+            parts.scheme not in ("https", "http")
+            or (parts.scheme == "http" and not local)
+            or not host
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or parts.username
+        ):
+            raise RuntimeError(
+                f"DOCS_ORIGIN={self.docs_origin!r} is not an https origin. "
+                "Write the scheme and host only, e.g. https://docs.okcheese.com "
+                "(http is accepted for *.localhost)."
+            )
+        self.docs_origin = value
+        return self
 
     @model_validator(mode="after")
     def _require_data_encryption_key(self) -> "Settings":

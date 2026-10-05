@@ -1,10 +1,13 @@
 // Builds the documentation site into frontend/public/docs (served at /docs/).
 //
 //   cd docs/site && npm ci && npm run build          # OUT=<dir> to build elsewhere
+//   DOCS_BASE= OUT=../../frontend/docs-host npm run build   # the docs host's copy, served at its root
+//
+// src/where.mjs says what DOCS_BASE changes; the frontend image carries both builds.
 //
 // Content is docs/manual/*.md (user docs, public) and docs/manual/dev/*.md
 // (developer docs, platform admins only — nginx asks the backend before serving
-// anything under /docs/dev/). Every URL is a prerendered HTML file; src/app.js
+// anything under dev/). Every URL is a prerendered HTML file; src/app.js
 // adds behaviour. The site's shape lives in src/structure.mjs.
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -17,6 +20,7 @@ import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS } from './src/structure.mjs'
 import { esc, docHref, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
 import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed, registerSource, registerArchFacts, ciSelections } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
+import { BASE, SITE, PLATFORM } from './src/where.mjs'
 import { selectSuites } from './src/ci-scope.mjs'
 import { fitIndex, limitBreach, indexTextOf } from './src/memory-limits.mjs'
 
@@ -24,7 +28,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '../..')
 const MANUAL = path.join(REPO, 'docs/manual')
 const OUT = path.resolve(process.env.OUT || path.join(REPO, 'frontend/public/docs'))
-const SITE = 'https://okcheese.com'
 
 // The demo scenes a fence can embed (`embed: <name>`), by their step titles.
 const SCENES = path.join(REPO, 'frontend/src/views/demo/scenes')
@@ -111,7 +114,7 @@ function renderMarkdown(md, { file }) {
   }
   renderer.image = ({ href, text }) => {
     if (href.startsWith('/images/') && !fs.existsSync(path.join(MANUAL, 'public', href))) fail(`${file}: picture ${href} is not in docs/manual/public/images`)
-    const src = href.startsWith('/') ? `/docs${href}` : href
+    const src = href.startsWith('/') ? `${BASE}${href}` : href
     return `<figure><div class="shot"><img src="${esc(src)}" alt="${esc(text)}" loading="lazy"></div>${text ? `<figcaption>${esc(text)}</figcaption>` : ''}</figure>`
   }
   renderer.blockquote = function ({ tokens }) { return `<div class="callout note">${INFO}<div>${this.parser.parse(tokens)}</div></div>` }
@@ -162,7 +165,7 @@ for (const [key, label, , groups] of SECTIONS) {
     const { data, body } = frontmatter(raw)
     if (!data.title) fail(`docs/manual/${slug}.md has no title`)
     const r = renderMarkdown(body, { file: rel(file) })
-    const page = { slug, section: key, sectionLabel: label, group, title: data.title, url: `/docs/${slug}`, mdUrl: `/docs/${slug}.md`, src: rel(file), updated: lastChanged(file), ...r, source: r.text, summary: data.summary || plain(r.lede) }
+    const page = { slug, section: key, sectionLabel: label, group, title: data.title, path: `/${slug}`, url: `${BASE}/${slug}`, mdUrl: `${BASE}/${slug}.md`, src: rel(file), updated: lastChanged(file), ...r, source: r.text, summary: data.summary || plain(r.lede) }
     pages[slug] = page
     return page
   })])
@@ -577,7 +580,7 @@ const devNav = DEV.map(([group, slugs]) => [group, slugs.map((slug) => {
   if (!d) fail(`developer page "${slug}" is in src/structure.mjs but docs/manual/dev/${slug}.md does not exist and nothing generates it`)
   const r = renderMarkdown(d.body, { file: d.file ? rel(d.file) : `generated:${slug}` })
   const page = {
-    slug, section: 'dev', sectionLabel: '开发文档', group, title: d.title, url: `/docs/dev/${slug}`, mdUrl: `/docs/dev/${slug}.md`,
+    slug, section: 'dev', sectionLabel: '开发文档', group, title: d.title, path: `/dev/${slug}`, url: `${BASE}/dev/${slug}`, mdUrl: `${BASE}/dev/${slug}.md`,
     src: d.file ? rel(d.file) : '', updated: d.file ? lastChanged(d.file) : '', generated: !!d.generated,
     kind: d.kind, kindKey: KINDS[d.kind], covers: d.covers, summary: d.summary, source: r.text, ...r,
   }
@@ -602,7 +605,7 @@ for (const f of fs.readdirSync(DIAGRAMS).filter((f) => f.endsWith('.json'))) {
   if (!fs.existsSync(htmlFile)) fail(`diagrams/${slug}.html is missing; run npm run diagrams`)
   const { meta } = JSON.parse(fs.readFileSync(path.join(DIAGRAMS, f), 'utf8'))
   const [w, h] = meta.viewBox || [1200, 760]
-  const url = `${page.section === 'dev' ? '/docs/dev' : '/docs'}/diagrams/${slug}.html`
+  const url = `${BASE}${page.section === 'dev' ? '/dev' : ''}/diagrams/${slug}.html`
   page.diagram = { url, file: htmlFile }
   page.html = `<figure class="archify"><iframe data-diagram="${url}" title="${esc(meta.title)}" loading="lazy" style="aspect-ratio:${w}/${h}"></iframe><figcaption><span>${esc(meta.title)}</span><a href="${url}" target="_blank" rel="noopener">全屏查看：可缩放、搜索、导出 ↗</a></figcaption></figure>` + page.html
 }
@@ -610,11 +613,11 @@ for (const f of fs.readdirSync(DIAGRAMS).filter((f) => f.endsWith('.json'))) {
 // ---------- every internal link must land on a page and, if it names one, an anchor ----------
 {
   const ids = new Map(Object.values(pages).map((p) => [p.url, new Set([...p.html.matchAll(/\sid="([\w-]+)"/g)].map((m) => m[1]))]))
-  const known = new Set(['/docs/', '/docs/changelog', '/docs/download', '/docs/llms.txt', '/docs/dev/llms.txt', '/docs/manual.zip', '/docs/changelog.xml'])
+  const known = new Set(['/', '/changelog', '/download', '/llms.txt', '/dev/llms.txt', '/manual.zip', '/changelog.xml'].map((u) => BASE + u))
   const broken = []
   for (const p of Object.values(pages)) {
-    for (const [, url, anchor] of p.html.matchAll(/href="(\/docs\/[\w/.-]*)(?:#([\w-]+))?"/g)) {
-      if (url.startsWith('/docs/diagrams/') || url.startsWith('/docs/dev/diagrams/') || known.has(url)) continue
+    for (const [, url, anchor] of p.html.matchAll(new RegExp(`href="(${BASE}/[\\w/.-]*)(?:#([\\w-]+))?"`, 'g'))) {
+      if (url.startsWith(`${BASE}/diagrams/`) || url.startsWith(`${BASE}/dev/diagrams/`) || known.has(url)) continue
       if (!ids.has(url)) broken.push(`${p.src || p.url}: ${url} is not a page`)
       else if (anchor && !ids.get(url).has(anchor)) broken.push(`${p.src || p.url}: ${url}#${anchor} has no such section`)
     }
@@ -647,16 +650,18 @@ const FAQ = [...trouble.matchAll(/^## (.+?)\s*\{#([\w-]+)\}\n+([\s\S]*?)(?=\n## 
 fs.rmSync(OUT, { recursive: true, force: true })
 fs.mkdirSync(path.join(OUT, 'assets'), { recursive: true })
 const write = (p, content) => { fs.mkdirSync(path.dirname(path.join(OUT, p)), { recursive: true }); fs.writeFileSync(path.join(OUT, p), content) }
-const asset = (name, ext, content) => { const file = `assets/${name}-${hash(content)}.${ext}`; write(file, content); return `/docs/${file}` }
+const asset = (name, ext, content) => { const file = `assets/${name}-${hash(content)}.${ext}`; write(file, content); return `${BASE}/${file}` }
 
-const js = (await esbuild.build({ entryPoints: [path.join(HERE, 'src/app.js')], bundle: true, format: 'esm', minify: true, target: 'es2022', write: false, legalComments: 'none' })).outputFiles[0].text
+// src/where.mjs reads the environment; the browser gets this build's answers as constants.
+const define = Object.fromEntries(Object.entries({ DOCS_BASE: BASE, DOCS_SITE: SITE, DOCS_PLATFORM: PLATFORM }).map(([k, v]) => [`process.env.${k}`, JSON.stringify(v)]))
+const js = (await esbuild.build({ entryPoints: [path.join(HERE, 'src/app.js')], bundle: true, format: 'esm', minify: true, target: 'es2022', write: false, define, legalComments: 'none' })).outputFiles[0].text
 const css = (await esbuild.build({ stdin: { contents: `${productTokens()}\n${fs.readFileSync(path.join(HERE, 'src/style.css'), 'utf8')}`, loader: 'css', resolveDir: path.join(HERE, 'src') }, bundle: true, minify: true, write: false })).outputFiles[0].text
 const assets = {
   js: asset('app', 'js', js),
   css: asset('app', 'css', css),
   logo: asset('logo', 'svg', LOGO_SVG),
 }
-for (const p of Object.values(pages)) if (p.diagram) write(p.diagram.url.replace(/^\/docs\//, ''), fs.readFileSync(p.diagram.file))
+for (const p of Object.values(pages)) if (p.diagram) write(p.diagram.url.slice(BASE.length + 1), fs.readFileSync(p.diagram.file))
 const images = path.join(MANUAL, 'public')
 if (fs.existsSync(images)) fs.cpSync(images, OUT, { recursive: true })
 
@@ -666,8 +671,8 @@ const site = {
   description: '知是 · Cheese 的使用文档、开发文档和更新日志：怎么开始、每个功能怎么用、遇到问题怎么办。',
   tabs: [
     ...SECTIONS.map(([key, label, icon]) => ({ key, label, icon, href: firstUrl(key) })),
-    { key: 'dev', label: '开发文档', icon: 'code', href: '/docs/dev/overview', lock: true },
-    { key: 'changelog', label: '更新日志', icon: 'log', href: '/docs/changelog' },
+    { key: 'dev', label: '开发文档', icon: 'code', href: `${BASE}/dev/overview`, lock: true },
+    { key: 'changelog', label: '更新日志', icon: 'log', href: `${BASE}/changelog` },
   ],
   userSections: SECTIONS.map(([key, label]) => ({ label, href: firstUrl(key) })),
 }
@@ -680,7 +685,7 @@ for (const [key] of SECTIONS) {
 }
 const devList = flatNav(devNav)
 devList.forEach((p, i) => write(`dev/${p.slug}.html`, docPage(ctx, p, devNav, devList[i - 1], devList[i + 1])))
-write('dev/index.html', redirectPage('/docs/dev/overview'))
+write('dev/index.html', redirectPage(`${BASE}/dev/overview`))
 
 const doors = SECTIONS.map(([key, label, icon]) => ({ key, label, icon, items: userNav[key].flatMap(([, items]) => items) }))
 write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, doors }))
@@ -691,7 +696,7 @@ write('dev-gate.html', devGatePage(ctx))
 write('404.html', notFoundPage(ctx))
 for (const [from, to] of Object.entries(REDIRECTS)) {
   if (!pages[to]) fail(`redirect ${from} → ${to}: no such page`)
-  write(`${from}.html`, redirectPage(`/docs/${to}`))
+  write(`${from}.html`, redirectPage(`${BASE}/${to}`))
 }
 
 // ---------- search indexes: public and developer, kept apart ----------
@@ -703,19 +708,21 @@ write('search.json', searchIndex(publicPages))
 write('dev/search.json', searchIndex(devList))
 // What 问芝士 and the agents' cheese_docs_search read (backend: app/domain/docs_site/
 // retrieval.py), whole sections. Public pages in one file, developer pages in another
-// behind the /docs/dev/ gate: 问芝士's answers are shown to anyone signed in, and only
+// behind the dev/ gate: 问芝士's answers are shown to anyone signed in, and only
 // agents in the platform's own project may search developer pages.
+// Its urls are paths within the site (/accept#is-merge), the same in either build:
+// the backend puts the docs' public address in front (docs_site/site.py).
 const askIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.filter((c) => c.text).map((c) => ({
-  title: p.title, heading: c.heading, url: c.id ? `${p.url}#${c.id}` : p.url, text: (c.id ? c.text : `${plain(p.lede)} ${c.text}`).slice(0, 4000),
+  title: p.title, heading: c.heading, url: c.id ? `${p.path}#${c.id}` : p.path, text: (c.id ? c.text : `${plain(p.lede)} ${c.text}`).slice(0, 4000),
 }))))
 write('ask-index.json', askIndex(publicPages))
 write('dev/ask-index.json', askIndex(devList))
 
 // ---------- for models: llms.txt, a .md twin per page, and the whole manual ----------
 const llms = (title, intro, nav) => [`# ${title}`, '', `> ${intro}`, '', ...nav.flatMap(([g, items]) => [`## ${g}`, '', ...items.map((p) => `- [${p.title}](${SITE}${p.mdUrl}): ${p.summary}`), ''])].join('\n')
-const twin = (p, index) => `> ## Documentation Index\n> Fetch the complete documentation index at: ${SITE}${index}\n> Use this file to discover all available pages before exploring further.\n\n${p.source.replace(/\]\((\/[^)\s]*)\)/g, (_, u) => `](${SITE}/docs${u})`).trimStart()}`
-for (const p of publicPages) write(`${p.slug}.md`, twin(p, '/docs/llms.txt'))
-for (const p of devList) write(`dev/${p.slug}.md`, twin(p, '/docs/dev/llms.txt'))
+const twin = (p, index) => `> ## Documentation Index\n> Fetch the complete documentation index at: ${SITE}${index}\n> Use this file to discover all available pages before exploring further.\n\n${p.source.replace(/\]\((\/[^)\s]*)\)/g, (_, u) => `](${SITE}${BASE}${u})`).trimStart()}`
+for (const p of publicPages) write(`${p.slug}.md`, twin(p, `${BASE}/llms.txt`))
+for (const p of devList) write(`dev/${p.slug}.md`, twin(p, `${BASE}/dev/llms.txt`))
 write('llms.txt', llms('知是 · 使用说明', '知是是一个你和 AI 队友一起做项目的地方。这份文档讲怎么用它：从建第一个项目，到把 AI 做出来的成果合并进主分支。', SECTIONS.flatMap(([key]) => userNav[key])))
 write('dev/llms.txt', llms('知是 · 开发文档', '按当前代码写的开发文档，写给改这个仓库的人和 agent。每页开头声明类型、摘要和涉及的代码。', devNav))
 execFileSync('python3', ['-c', `

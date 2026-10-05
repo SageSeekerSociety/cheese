@@ -1,26 +1,43 @@
 ---
 title: 文档站与问芝士
 kind: 流程
-summary: 文档站怎么构建和发布、开发文档怎么只对平台管理员开放，以及问芝士怎么只根据文档回答、怎么防滥用。
+summary: 文档站怎么构建和发布、在自己的域名上怎么登录、开发文档怎么只对平台管理员开放，以及问芝士怎么只根据文档回答、怎么防滥用。
 covers:
   - docs/site/
   - backend/app/domain/docs_site/
   - backend/app/api/routes/docs_site.py
   - frontend/nginx.conf
+  - frontend/nginx/docs/
+  - frontend/docker-entrypoint.sh
+  - frontend/src/views/DocsSignInView.vue
 ---
 
 # 文档站与问芝士 {#docs-ask}
 
-文档站怎么构建和发布、开发文档怎么只对平台管理员开放，以及问芝士怎么只根据文档回答、怎么防滥用。
+文档站怎么构建和发布、在自己的域名上怎么登录、开发文档怎么只对平台管理员开放，以及问芝士怎么只根据文档回答、怎么防滥用。
 
 > 讲：这个站本身的架构。不讲：怎么写文档页，见 `docs/manual/README.md`。
 
 ## 构建与发布 {#build}
 
-`docs/site/build.mjs` 把 `docs/manual/` 下的 Markdown 构建成 `frontend/public/docs/`，随前端镜像一起发布，由前端 nginx 在 `/docs/` 下提供。
+`docs/site/build.mjs` 把 `docs/manual/` 下的 Markdown 构建成静态站，随前端镜像一起发布。同一份源构建两次（`src/where.mjs`）：
+
+| 构建 | 站点根 | 产物 | 什么时候用 |
+|---|---|---|---|
+| `DOCS_BASE=/docs`（默认） | 平台的 `/docs/` | `frontend/public/docs/` | 部署没配 `DOCS_ORIGIN` |
+| `DOCS_BASE=`（空） | 文档站自己的域名的根，如 `https://docs.okcheese.com/` | `frontend/docs-host/`，镜像里放在 html 根之外 | 部署配了 `DOCS_ORIGIN` |
+
+两份内容一字不差，差的只是链接前缀、`llms.txt` / `.md` 原文 / RSS 里的绝对地址（`DOCS_SITE`），以及离开文档站的链接（用量、条款、演示画面，`DOCS_PLATFORM`；登录不在其中，见[在文档站登录](#sign-in)）：自己的域名那份指向 `https://okcheese.com`，`/docs/` 那份是同源的相对地址。`frontend/scripts/check-static-assets.sh` 两份都要，少一份镜像构建失败。
+
+前端容器只发其中一份，由 `DOCS_ORIGIN` 决定（`frontend/docker-entrypoint.sh` 从 `frontend/nginx/docs/` 里挑配置）：
+
+- **空**：平台的 server 在 `/docs/` 下发 `/docs` 那份（`under-platform.conf`）。
+- **设了**：文档站自己一个 server（`host.conf`，`server_name` 是那个域名），只放行 `/api/docs/` 这一段接口；平台的 `/docs/…` 一律 301 到文档站同一页（`redirect.conf`，查询串照带，`#小节` 浏览器自己保留）。网上只有一份在发，旧链接全落到新地址。
+
+后端读的也是正在发的那一份：`ask-index.json` 里的 `url` 都是站内路径（`/accept#is-merge`），两份构建一样，后端要给人看的链接再拼上文档站的地址（`docs_site/site.py`）。
 
 - 每个地址都是一个预渲染好的 HTML 文件，`src/app.js` 只负责交互：搜索、问芝士、深浅色和交互演示。
-- 样式用产品自己的设计系统：构建时把 `frontend/src/style.css` 的 `:root` 和深色两段 token 原样放在 `src/style.css` 前面，颜色、圆角、字体、动效都只在那一处定义；深色是 `<html data-theme="dark">`，偏好和产品共用 `cheesex.theme`。
+- 样式用产品自己的设计系统：构建时把 `frontend/src/style.css` 的 `:root` 和深色两段 token 原样放在 `src/style.css` 前面，颜色、圆角、字体、动效都只在那一处定义；深色是 `<html data-theme="dark">`，偏好记在 `cheesex.theme`：在 `/docs/` 下和产品共用一份；在文档站自己的域名上是那个源自己的一份（同一个键名，另一个源的存储）。页面里嵌的演示画面是平台的页面，读不到文档站那一份，所以页面在画面地址里告诉它用哪种（`?theme=dark|light`，`src/demo-dom.mjs` 的 `themeStages`；画面那边见 `frontend/src/demo-main.ts`）。
 - 站点结构写在 `docs/site/src/structure.mjs`，这是导航和分组的唯一来源。
 - 开发文档每页开头必须声明类型和摘要；「流程」「概念」和「参考」三类还要列出涉及的代码路径（`covers`）。缺字段、类型不在五类之内、或 `covers` 指向不存在的路径，构建都会失败；站内链接和锚点也必须全部有效。
 - 构建同时产出：公开和开发两份搜索索引、`llms.txt` 与每页的 `.md` 原文、全部文档的压缩包、更新日志 RSS，以及问芝士和 AI 队友检索用的 `ask-index.json`（公开页）与 `dev/ask-index.json`（开发文档，在门后）。
@@ -103,7 +120,7 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 - `prefers-reduced-motion` 下不自动播放，一次全给；窄屏（700px 以下）收起控制器和进度柱，步骤直接铺开。
 - 键盘可用。控制器是原生 `button`、`input[type=range]` 和 `select`，焦点在组件里时左右箭头走一步。
 - 跟随现有的 CSS 变量，所以深浅色自动跟着走。
-- 不引新依赖。组件的行为进公开的 `app.js` bundle（`src/demo-dom.mjs`），**不放在 `/docs/dev/` 下**：那条路径有鉴权门禁，而这些组件在公开文档里也要能跑。
+- 不引新依赖。组件的行为进公开的 `app.js` bundle（`src/demo-dom.mjs`），**不放在 `dev/` 下**：那条路径有鉴权门禁，而这些组件在公开文档里也要能跑。
 
 ### 两个读者，两份东西 {#demos-readers}
 
@@ -142,19 +159,38 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 
 - 使用文档里的界面截图由 `shots/shots.mjs` 在 `shots/fixture.py` 造出的示例项目里拍（需要本地全套服务），落到 `docs/manual/public/images/`。截图是真实界面，页面上的本地地址会换成 `https://okcheese.com`。
 
+## 在文档站登录 {#sign-in}
+
+文档站在自己的域名上时，读不到平台的登录：平台的访问令牌在应用的 `localStorage` 里，那是另一个源。所以平台把登录转交过去，做法和项目网站、话题预览的内容域一样（见[话题预览](/dev/preview#grant)）：
+
+1. 文档站需要知道是谁时（问芝士回 401、开发文档的门回 401），把读者送到 `/api/docs/signin?path=<当前页>`，后端再 303 到平台的 `/docs-signin`：平台在哪由后端的 `FRONTEND_URL` 说了算，不写死在静态页里。
+2. 那一页（`frontend/src/views/DocsSignInView.vue`）在平台上：没登录先去登录，回来接着走；登录了就 `POST /api/docs/grant`，拿到一张 30 秒、只能用一次的凭证，写着这个人和他这一次登录（`sid`）。
+3. 页面把凭证用表单 `POST` 到文档站的 `/api/docs/session`，凭证不进 URL、历史和 Referer。文档站验签、在 Valkey 里记下这张凭证已用（Valkey 不可用就拒绝，不放行），再确认那次平台登录还在，然后发一张 cookie，303 回到原来那页。
+4. 之后文档站上要认人的请求都带这张 cookie，后端每次都重新认（`access.reader`）：签名、受众（就是这个文档站的源）、请求进来的 Host 必须是文档站，以及签发它的那次平台登录还活着。
+
+cookie 名 `__Host-cheese-docs`：HttpOnly、Secure、`Path=/`、不带 `Domain`，所以浏览器只把它发回文档站自己，平台收不到；就算有人把它拿到平台的域名上用，Host 对不上也不认。有效期 8 小时（`DOCS_SESSION_SECONDS`），但它活不过平台那次登录：在平台退出、在设备列表里移除那台设备、改密码，下一个请求文档站就不认了，不用通知文档站。
+
+文档站和平台是**同站**（同一个可注册域 `okcheese.com`），不是同源。SameSite 管的是跨站，挡不住 `okcheese.com` 下别的子域名带着 cookie 发请求，所以靠 Origin：
+
+- 换 cookie 的那一下，`Origin` 必须是平台的源，别的页面没法替读者登录（也就没法把人登到别人的账号上）。
+- 文档站上会改东西的请求（问芝士要花读者的额度），`Origin` 必须是文档站自己。
+- cookie 用 `SameSite=Lax`，不用 `Strict`：从别处的链接打开一页开发文档是跨站的顶层跳转，`Strict` 时这一下不带 cookie，管理员会先看到门。
+
+没配 `DOCS_ORIGIN` 时文档站就在平台的 `/docs/` 下，走的还是这一套，只是「文档站的源」就是平台的源。文档站自己从来不碰平台的令牌，也不替平台刷新登录。
+
 ## 开发文档只给平台管理员 {#dev-access}
 
-静态文件读不到浏览器 `localStorage` 里的访问令牌，所以换成一张 cookie：
+静态文件自己不认人，所以每个开发文档的文件（页面、搜索索引、`.md` 原文、架构图）nginx 都先用 `auth_request` 问后端 `GET /api/docs/dev-access/check`，后端按上面那张 cookie 答：
 
-1. 管理员打开 `/docs/dev/...` 时，nginx 先通过 `auth_request` 问后端 `GET /api/docs/dev-access/check`。
-2. 没有有效 cookie 时，nginx 返回提示页。页面用访问令牌调用 `POST /api/docs/dev-access`；后端确认调用者是平台管理员后，签发名为 `cheese_docs_dev` 的 cookie：只对 `/docs/dev` 路径有效，HttpOnly、Secure、SameSite=Strict，有效期 1 小时（`DOCS_DEV_SESSION_SECONDS`）。
-3. 之后每个文件（页面、搜索索引、`.md` 原文、架构图）都会再校验一次：签名、受众和有效期都对，并且持有人仍在管理员名单里。名单最多缓存 60 秒，所以被移出管理员的人一分钟内就会失去访问。
+- 204：登录着，而且是平台管理员。管理员名单最多缓存 60 秒，所以被移出管理员的人一分钟内就进不去了。
+- 401：没登录，或者 cookie 不作数了。nginx 换成提示页（`dev-gate.html`），提示页自己去平台走一趟登录再回来；一分钟内已经走过一趟还是 401，就停下来给一个「登录」按钮，不来回跳。
+- 403：登录了，但不是管理员。提示页说明这一点。
 
-`/docs/dev/` 用 `location ^~` 声明，这样对 `.md` 的正则规则不会绕过鉴权。
+开发文档用 `location ^~` 声明（`/docs/dev/`，或文档站上的 `/dev/`），这样对 `.md` 的正则规则不会绕过鉴权。
 
 ## 问芝士 {#ask}
 
-`POST /api/docs/ask`，需要登录，以 server-sent events 流式返回：`sources`（这次回答可以引用的页面）、`tool`（模型正在搜什么、正在读哪一页）、`delta`（文字）、`error`、`done`。
+`POST /api/docs/ask`，需要在文档站登录（[在文档站登录](#sign-in)），以 server-sent events 流式返回：`sources`（这次回答可以引用的页面）、`tool`（模型正在搜什么、正在读哪一页）、`delta`（文字）、`error`、`done`。
 
 1. **准入**：同一个人同一时间只能有一个问题在答（`limits.py`，Valkey；不可用时拒绝，不放行）；个人额度用完时拒绝，提示哪天重置；网关上问芝士的模型没有单价时，无法计费，也拒绝。每个进程同时最多答 8 个，满了立刻返回「忙」，不排队。问多少由个人额度决定，不另设次数上限。
 2. **模型自己查文档**（默认，`DOCS_ASSISTANT_AGENTIC=true`）：给它三个只读工具（`tools.py`，形状照 OpenAI 的文档服务）——`search_docs`（用 `retrieval.py` 检索 `ask-index.json`，返回最相关的六节：标题、小节、链接、摘录）、`fetch_doc`（读一页的 `.md` 原文；链接带 `#小节` 时只返回那一节和相邻小节）、`list_docs`（列出全部公开页）。检索词由模型自己换：口语换成文档的说法、英文换中文关键词、代词换成上一轮的对象——「那怎么把他移出去？」这种追问，一次检索是接不上的。最多四轮工具调用，第五轮不带工具、必须作答。
@@ -174,8 +210,9 @@ AI 队友在平台里回答「怎么用」的问题时，用两个平台工具�
 
 - 使用文档对所有项目开放。
 - 开发文档只对「在做知是本身」的项目开放：项目绑定的仓库在 `DOCS_DEV_REPOSITORIES` 里（默认 `SageSeekerSociety/cheese`）。别的项目检索不到开发文档，点名读 `dev/…` 返回 403。
-- 开发文档的索引 `dev/ask-index.json` 和 `.md` 原文都在 `/docs/dev/` 的门后面。后端读它们时带一张内部通行证（`access.internal_pass`，单独的 audience，五分钟有效），门的检查接口认它；浏览器拿不到这种通行证。
+- 两个工具返回的链接是绝对地址，落在文档站上（配了 `DOCS_ORIGIN` 就是那个域名），芝士可以原样交给人。
+- 开发文档的索引 `dev/ask-index.json` 和 `.md` 原文都在 `dev/` 的门后面。后端从前端容器读它们（按 compose 服务名 `frontend`，配了文档站时这个名字由文档站那个 server 接，读到的就是读者看到的那一份），带一张内部通行证（`access.internal_pass`，单独的 audience，五分钟有效），门的检查接口认它；浏览器拿不到这种通行证。
 
 ## 相关设置 {#settings}
 
-全部见 [环境变量全表](/dev/ref-env)，以 `DOCS_` 开头：`DOCS_INDEX_URL`、`DOCS_DEV_INDEX_URL`、`DOCS_DEV_REPOSITORIES`、`DOCS_ASSISTANT_MODEL`、`DOCS_ASSISTANT_AGENTIC`（默认 `true`；`false` 走一轮检索的旧路径）、`DOCS_ASSISTANT_BUDGET_USD`、`DOCS_ASSISTANT_HOURLY_LIMIT`、`DOCS_ASSISTANT_DAILY_LIMIT`、`DOCS_ASSISTANT_CONCURRENCY`、`DOCS_QUESTION_RETENTION_DAYS`、`DOCS_DEV_SESSION_SECONDS`。网关地址和管理密钥沿用 `LLM_GATEWAY_ADMIN_BASE`、`LLM_GATEWAY_ADMIN_KEY`；没配置时问芝士显示暂未开放。
+全部见 [环境变量全表](/dev/ref-env)，以 `DOCS_` 开头：`DOCS_ORIGIN`（文档站自己的域名，如 `https://docs.okcheese.com`；空就在平台的 `/docs/` 下。compose 部署在部署环境 `~/ops/deploy.env` 里设一次，后端和前端容器都从那里读）、`DOCS_INDEX_URL`、`DOCS_DEV_INDEX_URL`（不设就读本部署的前端容器）、`DOCS_DEV_REPOSITORIES`、`DOCS_ASSISTANT_MODEL`、`DOCS_ASSISTANT_AGENTIC`（默认 `true`；`false` 走一轮检索的旧路径）、`DOCS_ASSISTANT_BUDGET_USD`、`DOCS_ASSISTANT_HOURLY_LIMIT`、`DOCS_ASSISTANT_DAILY_LIMIT`、`DOCS_ASSISTANT_CONCURRENCY`、`DOCS_QUESTION_RETENTION_DAYS`、`DOCS_SESSION_SECONDS`。网关地址和管理密钥沿用 `LLM_GATEWAY_ADMIN_BASE`、`LLM_GATEWAY_ADMIN_KEY`；没配置时问芝士显示暂未开放。

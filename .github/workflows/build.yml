@@ -405,11 +405,15 @@ jobs:
       # check-static-assets, which the image build and healthcheck both run,
       # fails if this step did not happen. The build also fails on a broken
       # internal link or a developer page missing its kind/summary/covers.
+      # Twice, from the same sources: under /docs/ for a deployment that serves
+      # them on the platform, and at the root for the docs' own host
+      # (docs/site/src/where.mjs). The container serves one (frontend/nginx/docs/).
       - name: Build the docs site into the image context
         run: |
           cd docs/site
           npm ci --no-audit --no-fund
           npm run build
+          DOCS_BASE= OUT=../../frontend/docs-host npm run build
 
       # The site serves the desktop installers itself (/downloads/desktop/):
       # GitHub release downloads are unreliable from mainland networks. Like the

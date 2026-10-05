@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/demo-arch.test.mjs && node test/ask-walk.test.mjs && node test/visit-beacon.test.mjs",
+    "test": "node test/demo-arch.test.mjs && node test/ask-walk.test.mjs && node test/visit-beacon.test.mjs && OUT= node test/docs-host.test.mjs",
     "diagrams": "bash gen/diagrams.sh"
   },
   "devDependencies": {
