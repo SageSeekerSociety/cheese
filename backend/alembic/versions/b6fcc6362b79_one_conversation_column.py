@@ -85,6 +85,9 @@ def _fold(table: str) -> None:
 
 
 def upgrade() -> None:
+    # Dropping ``topic_id`` and ``task_id`` drops their foreign keys, which
+    # locks ``topics`` and ``tasks`` too: taken mid-way, behind a request that
+    # holds one of them and wants a table locked here, it deadlocks.
     _lock_all(
         ", ".join(
             (
@@ -93,6 +96,8 @@ def upgrade() -> None:
                 *_RENAMED,
                 "agent_sessions",
                 "conversations",
+                "topics",
+                "tasks",
             )
         )
     )
