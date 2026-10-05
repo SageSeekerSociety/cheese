@@ -13,6 +13,16 @@ import pytest
 
 from scripts.model_identity_probe import battery
 from scripts.model_identity_probe import reference as reference_mod
+from scripts.model_identity_probe.binding import (
+    SeatCheck,
+    check_seat,
+    credential_claims,
+    credential_seat,
+    declared_from_card,
+    declared_from_operator,
+    declared_from_seat_config,
+    session_seat,
+)
 from scripts.model_identity_probe.normalize import (
     normalize_answer,
     parse_any_number,
@@ -56,6 +66,7 @@ from scripts.model_identity_probe.verdict import (
     MATCH,
     MISMATCH,
     UNCERTAIN,
+    AdmissionReading,
     BehaviourEvidence,
     ProvenanceEvidence,
     TokenizerEvidence,
@@ -310,6 +321,88 @@ def test_unstable_routing_downgrades_a_behavioural_match() -> None:
     )
     assert verdict == UNCERTAIN
     assert "split-half" in reason
+
+
+def test_unstable_routing_without_a_statistic_does_not_raise() -> None:
+    # R3-5: an evidence built by hand can set the flag without the statistic.
+    # The threshold is on the statistic, so a missing one must not format into a
+    # TypeError -- remove the guard and this raises.
+    behaviour = _behaviour(MATCH, 8)
+    behaviour.unstable_routing = True
+    behaviour.split_half_mean = None
+    verdict, reason = combine(
+        _provenance(MATCH), behaviour, TokenizerEvidence(MATCH)
+    )
+    assert verdict == UNCERTAIN
+    assert "split-half" in reason
+
+
+def test_a_credential_signed_for_another_seat_is_a_mismatch() -> None:
+    # Fix #1: the credential's own seat claim vs the session's own seat. The
+    # wire and pool here agree completely; only the seat disagreement decides.
+    seat = SeatCheck(
+        False, "default-seat", "cheese-opus", "signed for another seat"
+    )
+    verdict, reason = combine(_provenance(MATCH), None, None, seat=seat)
+    assert verdict == MISMATCH
+    assert "seat" in reason
+
+
+def test_an_admission_that_resolves_another_model_is_a_mismatch() -> None:
+    # Fix #2 / R3-4: admission is the call the metering proxy rewrites the body
+    # from, so its answer disagreeing with the independent declaration is the
+    # FB-73 disease -- a mismatch, not the expectation.
+    admission = AdmissionReading(model="deepseek-flash", pool="gateway")
+    verdict, reason = combine(
+        _provenance(MATCH, pool="subscription"),
+        None,
+        None,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=admission,
+    )
+    assert verdict == MISMATCH
+    assert "admission" in reason
+
+
+def test_an_admission_that_resolves_another_pool_is_a_mismatch() -> None:
+    admission = AdmissionReading(model="claude-opus-5-5", pool="gateway")
+    verdict, reason = combine(
+        _provenance(MATCH, pool="subscription", claimed_model="claude-opus-5-5"),
+        None,
+        None,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=admission,
+    )
+    assert verdict == MISMATCH
+    assert "pool" in reason
+
+
+def test_an_admission_alias_of_the_expected_model_is_not_a_mismatch() -> None:
+    # A dated snapshot of the expected model is the same model, not a conflict.
+    admission = AdmissionReading(model="claude-opus-5-5-20250915")
+    verdict, _ = combine(
+        _provenance(MATCH),
+        None,
+        None,
+        expected_model="claude-opus-5-5",
+        admission=admission,
+    )
+    assert verdict == MATCH
+
+
+def test_expected_model_equal_to_admission_does_not_fire() -> None:
+    admission = AdmissionReading(model="claude-opus-5-5", pool="subscription")
+    verdict, _ = combine(
+        _provenance(MATCH, pool="subscription", claimed_model="claude-opus-5-5"),
+        None,
+        None,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=admission,
+    )
+    assert verdict == MATCH
 
 
 def test_uncertainty_band_is_reported_as_uncertain() -> None:
@@ -604,6 +697,32 @@ def test_a_body_echo_that_disagrees_is_a_mismatch_not_a_hedge() -> None:
     assert provenance.verdict == MISMATCH
 
 
+def test_a_matching_header_cannot_paper_over_a_disagreeing_body() -> None:
+    # R3-3: the header named the claim, the body echoed another model. Before
+    # the fix the header branch short-circuited to MATCH and the contradiction
+    # was never looked at -- remove the fix and this goes red.
+    provenance = build_provenance(
+        "claude-opus-5-5",
+        _completion(
+            "deepseek-flash",
+            {"x-litellm-model-name": "anthropic/claude-opus-5-5"},
+        ),
+    )
+    assert provenance.verdict == MISMATCH
+    assert provenance.echo_matches_claim is False
+
+
+def test_the_header_and_echo_branches_fold_names_the_same_way() -> None:
+    # R3-3: an echo carrying the provider prefix and a dated snapshot folds onto
+    # the claim, and echo_matches_claim must say so -- the header branch used to
+    # compare strictly while the echo branch normalised, so the two disagreed.
+    provenance = build_provenance(
+        "claude-opus-5-5", _completion("anthropic/claude-opus-5-5-20250915")
+    )
+    assert provenance.echo_matches_claim is True
+    assert provenance.verdict == MATCH
+
+
 # --- seat mode: the no-reference verdict -------------------------------------
 
 
@@ -664,6 +783,104 @@ def test_verify_without_a_reference_flags_a_pool_mismatch(monkeypatch) -> None:
     )
     assert verification.verdict == MISMATCH
     assert "pool" in verification.reason
+
+
+# --- FB-73, end to end -------------------------------------------------------
+#
+# The whole failure in one fake response: the session is the Opus seat, but its
+# credential was signed for the project-default seat, so admission resolves the
+# request to deepseek-flash/gateway and the metering proxy writes that into the
+# body; the wire echoes deepseek-flash. The card (the seat's own config) still
+# says claude-opus-5-5/subscription. Each of the two independent fixes -- the
+# seat check and the independent expected binding -- catches it alone, which is
+# what keeps the probe honest when the other source is unavailable.
+
+
+def _fb73_endpoint(monkeypatch):
+    from scripts.model_identity_probe import transport as transport_mod
+
+    # The wire: both the body echo and the upstream header name deepseek-flash.
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "42",
+            "deepseek-flash",
+            {"input_tokens": 5},
+            {
+                "x-litellm-call-id": "abc",
+                "x-litellm-model-name": "deepseek/deepseek-flash",
+            },
+            0.0,
+        ),
+    )
+    return transport_mod.Endpoint(mode="seat", model="claude-opus-5-5")
+
+
+FB73_ADMISSION = AdmissionReading(model="deepseek-flash", pool="gateway")
+FB73_SEAT = SeatCheck(
+    False,
+    "default-seat",
+    "cheese-eeb5ebc073fc",
+    "the credential was signed for another seat ('default-seat'); this "
+    "session is 'cheese-eeb5ebc073fc'",
+)
+
+
+def test_fb73_end_to_end_is_a_mismatch(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "claude-opus-5-5",
+        None,
+        sample_tokenizer=False,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=FB73_ADMISSION,
+        seat=FB73_SEAT,
+    )
+    assert verification.verdict == MISMATCH
+    assert verification.seat is FB73_SEAT
+
+
+def test_fb73_is_still_caught_with_the_seat_check_removed(monkeypatch) -> None:
+    # Remove fix #1 (the credential-seat check): the independent expected binding
+    # alone still catches it, because admission resolved another model/pool.
+    from scripts.model_identity_probe import report as report_mod
+
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "claude-opus-5-5",
+        None,
+        sample_tokenizer=False,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=FB73_ADMISSION,
+        seat=None,
+    )
+    assert verification.verdict == MISMATCH
+
+
+def test_fb73_is_still_caught_with_the_independent_binding_removed(
+    monkeypatch,
+) -> None:
+    # Remove fix #2 (the independent expected binding): the expectation collapses
+    # back onto admission (the circular old behaviour -- wire and admission both
+    # say deepseek-flash), and the seat check alone still catches it.
+    from scripts.model_identity_probe import report as report_mod
+
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "deepseek-flash",
+        None,
+        sample_tokenizer=False,
+        expected_model=None,
+        expected_pool=None,
+        admission=FB73_ADMISSION,
+        seat=FB73_SEAT,
+    )
+    assert verification.verdict == MISMATCH
 
 
 # --- tokenizer: cached input tokens ------------------------------------------
@@ -737,8 +954,208 @@ def test_model_ids_that_are_not_filenames_are_slugged(tmp_path) -> None:
     )
 
 
-# --- helpers -----------------------------------------------------------------
+# --- credential seat / declared binding --------------------------------------
 
+
+def _scoped(payload: dict, sig: str = "sig", prefix: str = "") -> str:
+    import base64
+    import json
+
+    body = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode()
+    ).decode().rstrip("=")
+    return f"{prefix}{body}.{sig}"
+
+
+def test_credential_seat_reads_the_claim_and_never_the_signature() -> None:
+    import json
+
+    token = _scoped(
+        {"p": "proj", "t": "topic", "a": "cheese-opus"},
+        sig="secret-signature",
+        prefix="cxss_",
+    )
+    assert credential_seat(token) == "cheese-opus"
+    claims = credential_claims(token)
+    assert claims is not None and claims["a"] == "cheese-opus"
+    # The signature segment is never decoded into the claims.
+    assert "secret-signature" not in json.dumps(claims)
+
+
+def test_a_credential_that_names_no_seat_is_not_a_mismatch() -> None:
+    check = check_seat(_scoped({"p": "proj"}), seat="cheese-opus", env={})
+    assert check.ok is True
+
+
+def test_a_credential_signed_for_another_seat_is_flagged() -> None:
+    check = check_seat(_scoped({"a": "default-seat"}), seat="cheese-opus", env={})
+    assert check.ok is False
+    assert check.credential_seat == "default-seat"
+    assert "another seat" in check.reason
+
+
+def test_the_session_seat_comes_from_cheese_author() -> None:
+    token = _scoped({"a": "cheese-opus"})
+    assert session_seat({"CHEESE_AUTHOR": "cheese-opus"}) == "cheese-opus"
+    assert session_seat({}) is None
+    check = check_seat(token, env={"CHEESE_AUTHOR": "cheese-opus"})
+    assert check.ok is True
+
+
+def test_the_operator_seat_overrides_the_environment() -> None:
+    # With both an operator seat and an environment seat, --seat wins.
+    check = check_seat(
+        _scoped({"a": "cheese-opus"}),
+        seat="cheese-opus",
+        env={"CHEESE_AUTHOR": "someone-else"},
+    )
+    assert check.ok is True
+
+
+def test_the_operator_declaration_is_the_highest_trust_source() -> None:
+    declared = declared_from_operator("claude-opus-5-5", "subscription")
+    assert declared.model == "claude-opus-5-5"
+    assert declared.pool == "subscription"
+    assert declared.source == "operator"
+    assert declared_from_operator("", "").source == "none"
+
+
+def test_seat_config_reads_the_model_the_session_launched_with() -> None:
+    declared = declared_from_seat_config({"init": {"model": "claude-opus-5-5"}})
+    assert declared.model == "claude-opus-5-5"
+    assert declared.source == "seat-config"
+    assert declared_from_seat_config({}).source == "none"
+
+
+def test_a_merged_declaration_fills_gaps_without_overwriting() -> None:
+    seat = declared_from_seat_config({"init": {"model": "claude-opus-5-5"}})
+    # A pool-only operator declaration keeps the seat's model and adds the pool.
+    merged = declared_from_operator("", "subscription").merged(seat)
+    assert merged.model == "claude-opus-5-5"
+    assert merged.pool == "subscription"
+    # A model from the operator is not overwritten by the seat's.
+    merged2 = declared_from_operator("m1", "").merged(seat)
+    assert merged2.model == "m1"
+
+
+def test_a_card_with_a_model_and_route_declares_the_binding() -> None:
+    declared = declared_from_card(
+        [{"meta": {"model": "claude-opus-5-5", "route": "subscription"}}]
+    )
+    assert declared.model == "claude-opus-5-5"
+    assert declared.pool == "subscription"
+    assert declared.source == "card"
+
+
+def test_a_card_without_a_model_declares_nothing() -> None:
+    assert declared_from_card([{"meta": {"tool": "Bash"}}]).source == "none"
+    assert declared_from_card([]).source == "none"
+
+
+# --- CLI plumbing ------------------------------------------------------------
+
+
+def test_the_backend_reads_cheese_api_and_ignores_cheese_backend(monkeypatch) -> None:
+    from scripts import probe_model_identity as cli
+
+    monkeypatch.setenv("CHEESE_BACKEND", "http://box-local:8081")
+    monkeypatch.setenv("CHEESE_API", "https://okcheese.com/api")
+    assert cli._backend() == "https://okcheese.com/api"
+    monkeypatch.delenv("CHEESE_API", raising=False)
+    # Without CHEESE_API the default is the platform's own address, never the
+    # local CHEESE_BACKEND the platform does not set.
+    assert cli._backend() == "http://172.17.0.1:8081"
+
+
+def test_verify_takes_the_model_from_the_operator_declaration(
+    monkeypatch, capsys
+) -> None:
+    from scripts import probe_model_identity as cli
+    from scripts.model_identity_probe import transport as transport_mod
+
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "42",
+            "claude-opus-5-5",
+            {"input_tokens": 5},
+            {"anthropic-ratelimit-requests-limit": "50"},
+            0.0,
+        ),
+    )
+    monkeypatch.delenv("CHEESE_TOKEN", raising=False)
+    monkeypatch.setenv(
+        "CHEESE_TOKEN", "cxss_" + _scoped({"a": "seat-1"}).split(".")[0] + ".sig"
+    )
+    monkeypatch.setenv("CHEESE_AUTHOR", "seat-1")
+    # No topic: the seat-config/card lookups return empty without any request.
+    monkeypatch.delenv("CHEESE_TOPIC", raising=False)
+    args = cli.build_parser().parse_args(
+        ["verify", "--mode", "gateway", "--expected-model", "claude-opus-5-5"]
+    )
+    args.models = ["claude-opus-5-5"]
+    # gateway mode does not read admission; the declaration drives the run.
+    assert cli.cmd_verify(args) == 0
+    out = capsys.readouterr().out
+    assert '"source": "operator"' in out
+
+
+# --- transport: the openai-chat stream dispatch ------------------------------
+
+
+class _FakeStreamCtx:
+    def __init__(self, response: object) -> None:
+        self._response = response
+
+    def __enter__(self) -> object:
+        return self._response
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class _FakeClient:
+    def __init__(self, response: object) -> None:
+        self._response = response
+
+    def stream(self, method: str, url: str, **kwargs: object) -> _FakeStreamCtx:
+        return _FakeStreamCtx(self._response)
+
+
+class _FakeResponse:
+    def __init__(self, headers: dict, lines: list[str]) -> None:
+        self.status_code = 200
+        self.headers = headers
+        self._lines = lines
+
+    def read(self) -> bytes:
+        return b""
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+
+def test_the_openai_chat_stream_dispatch_parses_chunks() -> None:
+    # R3-5/S8: the openai-chat arm of `_stream` had a test for its parser but
+    # not for the dispatch that reaches it; this drives `_stream` itself.
+    endpoint = Endpoint(mode="gateway", model="m", protocol="openai-chat")
+    response = _FakeResponse(
+        {"x-litellm-model-name": "openai/gpt-6-astra"},
+        [
+            'data: {"model":"gpt-6-astra","choices":[{"delta":{"content":"4"}}]}',
+            'data: {"choices":[{"delta":{"content":"2"}}]}',
+            'data: {"usage":{"prompt_tokens":5}}',
+            "data: [DONE]",
+        ],
+    )
+    completion = endpoint._stream(_FakeClient(response), {"model": "m"})
+    assert completion.text == "42"
+    assert completion.model_echo == "gpt-6-astra"
+    assert completion.usage["prompt_tokens"] == 5
+
+
+# --- helpers -----------------------------------------------------------------
 
 def _cell(counts: dict[str, int]) -> CellSamples:
     samples = CellSamples()
@@ -760,12 +1177,14 @@ def _behaviour(verdict: str, cells: int) -> BehaviourEvidence:
     return BehaviourEvidence(mean_jsd=0.2, comparable_cells=cells, verdict=verdict)
 
 
-def _provenance(verdict: str) -> ProvenanceEvidence:
+def _provenance(
+    verdict: str, *, pool: str = "gateway", claimed_model: str = "m"
+) -> ProvenanceEvidence:
     return ProvenanceEvidence(
-        claimed_model="m",
+        claimed_model=claimed_model,
         wire_model="m",
         upstream_model_name=None,
-        pool="gateway",
+        pool=pool,
         echo_matches_claim=verdict == MATCH,
         verdict=verdict,
     )
