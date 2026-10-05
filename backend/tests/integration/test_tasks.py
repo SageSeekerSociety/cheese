@@ -260,6 +260,32 @@ def test_starting_records_what_the_document_said_then(client):
     assert _task(client, room_id, task["id"])["started_doc_version"] == at_start
 
 
+def test_a_change_answers_with_the_task_as_its_page_reads_it(client):
+    """The task page replaces what it shows with what a start, a hand-over or
+    a close answers; an answer without the task's board cell left the page
+    with nothing to render. Each answer says what reading the task says."""
+    _project_id, room_id = _room(client)
+    task = open_task(client, room_id, start=False)
+    alice = session_auth_headers("alice")
+
+    def read() -> dict:
+        r = client.get(f"/topics/{task['id']}/task", headers=alice)
+        return r.json()["data"]["presentation"]
+
+    started = client.post(
+        f"/topics/{task['id']}/start", json={"reviewer_handle": "alice"}, headers=alice
+    ).json()["data"]
+    assert started["presentation"] == read()
+    handed = client.patch(
+        f"/topics/{task['id']}/task", json={"agent_handle": None}, headers=alice
+    ).json()["data"]
+    assert handed["presentation"] == read()
+    closed = client.post(
+        f"/topics/{task['id']}/close", json={"conclusion": "做完了"}, headers=alice
+    ).json()["data"]
+    assert closed["presentation"] == read()
+
+
 # —— 在任务里说话 ——————————————————————————————————————————————————————————
 
 

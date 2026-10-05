@@ -166,21 +166,7 @@ async def get_task(
     if blocks is None:
         raise NotFoundError(say("messageNotInTask"))
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
-    running = await running_tasks(chat, db, [task])
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    # 看板那一格，和它在列表里显示的是同一句话——同一个函数算的，所以深链接进来
-    # 和从看板点进来不可能给出两种说法。
-    out["presentation"] = presentation.task_presentation(
-        presentation.facts_for_task(
-            task,
-            cards.get(task.id),
-            running=task.id in running,
-            awaiting_answer=bool(
-                await BlockRepository(db).tasks_awaiting_an_answer([task.id])
-            ),
-        ),
-        now=datetime.now(UTC),
-    ).as_dict()
+    out = await _task_out(db, chat, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
     project = await ProjectRepository(db).get(place.project_id)
@@ -204,12 +190,35 @@ async def get_task(
     return ok(out)
 
 
+async def _task_out(db, chat: ChatService, task, card=None) -> dict:
+    """The task with its board cell — what every route that hands a task back
+    to its page returns, so the page never holds one without it. The same
+    function the list uses, so a deep link and the board cannot disagree."""
+    if card is None:
+        card = (await AcceptCardRepository(db).latest_by_task([task.id])).get(task.id)
+    running = await running_tasks(chat, db, [task])
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    out["presentation"] = presentation.task_presentation(
+        presentation.facts_for_task(
+            task,
+            card,
+            running=task.id in running,
+            awaiting_answer=bool(
+                await BlockRepository(db).tasks_awaiting_an_answer([task.id])
+            ),
+        ),
+        now=datetime.now(UTC),
+    ).as_dict()
+    return out
+
+
 @router.post("/{topic_id}/close")
 async def conclude_task(
     topic_id: uuid.UUID,
     body: ConclusionIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """关闭任务：its owner or its own session says it is over. With a
     conclusion it is done — the work did not end in a merge (research, a
@@ -260,7 +269,7 @@ async def conclude_task(
         ),
         meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
     )
-    out = TaskOut.model_validate(task).model_dump(mode="json")
+    out = await _task_out(db, chat, task)
     await db.commit()
     return ok(out)
 
@@ -342,7 +351,7 @@ async def start_task(
         meta={"platform": True, "action": "task_started", "task_id": str(task.id)},
     )
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
-    out = TaskOut.model_validate(task).model_dump(mode="json")
+    out = await _task_out(db, chat, task)
     await db.commit()
     await announce_stale(place.room_id, "topics")
     await dispatch(chat)
@@ -355,6 +364,7 @@ async def update_task(
     body: TaskUpdateIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """转交：the owner hands the task to another member, or to another AI
     teammate."""
@@ -374,7 +384,7 @@ async def update_task(
         await tasks.hand_over(task, owner_handle=body.owner_handle)
     if "agent_handle" in body.model_fields_set:
         await tasks.give_agent(task, agent_handle=body.agent_handle)
-    out = TaskOut.model_validate(task).model_dump(mode="json")
+    out = await _task_out(db, chat, task)
     await db.commit()
     await announce_stale(place.room_id, "topics")
     return ok(out)

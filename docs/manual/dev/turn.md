@@ -131,7 +131,9 @@ steps:
 
 会话记录按（话题, 队友, 骨架）存（`agent_sessions`），每位队友续跑自己的会话。内存里的运行时状态和算力池的归属按座位（话题, 队友）记（`RoomSessions`、`ComputePool._owners`）：`activate` 只停同一座位上换下来的旧骨架，不碰同一房间里别的队友。后端重启后，每个座位的会话都会被接回来（`placed_everywhere`）。
 
-机器上的文件也照这个分。**属于一位队友的，写进这个座位的目录**（`place.seat_dir`，`$HOME/.cheese/seats/<sha256(队友名) 前 12 位>`）：执行目标 `remote-target.json`、每轮配置 `remote-session/`、系统提示 `cheese-system-prompt.md`、执行凭据 `remote-session/execution.token`、Claude 设置与技能（座位下的 `.claude/`），以及 `remote-execution/` 辅助程序。第二位队友开屏不会改写第一位的 hook 或辅助程序。
+一位队友在房间里和在房间的某个任务里是两个座位：任务的会话是一段独立的对话，座位名是「队友名@任务 id」（`place.seat_key`），房间里的座位名就是队友名。启动脚本（`$HOME/.cheese/launch/`）、runner 的状态目录和下面这些文件都按座位名分。
+
+机器上的文件也照这个分。**属于一个座位的，写进这个座位的目录**（`place.seat_dir`，`$HOME/.cheese/seats/<sha256(座位名) 前 12 位>`）：执行目标 `remote-target.json`、每轮配置 `remote-session/`、系统提示 `cheese-system-prompt.md`、执行凭据 `remote-session/execution.token`、Claude 设置与技能（座位下的 `.claude/`），以及 `remote-execution/` 辅助程序。第二位队友开屏不会改写第一位的 hook 或辅助程序。
 
 留在房间层的是工作目录、环境运行器的状态（`$HOME/.cheese-environment/status.json`）、store 和会话记录（`$HOME/.claude/projects/`）。每个座位的 `.claude/projects` 指向这份记录，续跑、迁机和发布前的忙闲扫描仍能找到原会话。辅助程序按座位更新；一个座位的更新不会覆盖另一位正在使用的文件。
 
