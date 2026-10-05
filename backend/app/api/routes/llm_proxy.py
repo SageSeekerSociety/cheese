@@ -55,6 +55,8 @@ from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
+from app.domain.agent_instance.repositories import AgentInstanceRepository
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -180,6 +182,37 @@ async def _bind_requested_subagent_model(
     return binding.resolve(None, choices, agent_model=requested_id)
 
 
+async def _require_model_caller(
+    db: AsyncSession, token: str, project_id: uuid.UUID
+) -> None:
+    """Refuse a credential whose agent is no longer seated where it acts.
+
+    A document question's session is the one exception: one asked in a room
+    that seats no agent is answered by the project's own agent, which sits in
+    no room for it (``document.question.bind``). Its credential names the
+    document (``d``) and the project's own agent, and is let through on that.
+    A room session's credential names no document, so the project's own agent
+    taken off a room is refused like any other.
+    """
+    claims = scoped_token_claims(token) or {}
+    if claims.get("d") and await _projects_own_agent(db, project_id, claims.get("a")):
+        return
+    await require_seated_in_its_room(db, token, project_id=project_id)
+
+
+async def _projects_own_agent(
+    db: AsyncSession, project_id: uuid.UUID, handle: object
+) -> bool:
+    project = await ProjectRepository(db).get(project_id)
+    if project is None or project.default_agent_instance_id is None:
+        return False
+    agent = await AgentInstanceRepository(db).get(project.default_agent_instance_id)
+    return agent is not None and handle in (
+        agent.handle,
+        agent_instance_handle(agent.id),
+    )
+
+
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
 @router.post("/admission", include_in_schema=False)
@@ -210,7 +243,7 @@ async def admission(
     project = await ProjectRepository(db).get(project_uuid)
     if project is not None:
         try:
-            await require_seated_in_its_room(db, token, project_id=project_uuid)
+            await _require_model_caller(db, token, project_uuid)
         except (AuthenticationRequiredError, ForbiddenError) as exc:
             # Answered, not raised: the metering proxy reads any non-200 as the
             # backend being unreachable and lets the request through (fail-open).
@@ -422,7 +455,7 @@ async def proxy(
             project_uuid = uuid.UUID(project_id)
         except ValueError as exc:
             raise NotFoundError("Unknown project") from exc
-        await require_seated_in_its_room(db, token, project_id=project_uuid)
+        await _require_model_caller(db, token, project_uuid)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
         key = await chat.project_gateway_key(project_uuid)
