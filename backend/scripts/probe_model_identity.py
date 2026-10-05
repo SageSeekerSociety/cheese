@@ -52,6 +52,7 @@ from scripts.model_identity_probe import binding as binding_mod  # noqa: E402
 from scripts.model_identity_probe import reference as reference_mod
 from scripts.model_identity_probe.binding import (  # noqa: E402
     DeclaredBinding,
+    SeatCheck,
     check_seat,
 )
 from scripts.model_identity_probe.collect import collect  # noqa: E402
@@ -88,6 +89,20 @@ def _token() -> str:
     return token
 
 
+def _data(response: httpx.Response) -> object:
+    """The ``data`` field of a platform answer, or ``None`` if it has none.
+
+    A 200 that is not a JSON object (an HTML error page, an empty body, a
+    list) is treated as unreadable rather than raised: every platform read
+    here is evidence the verdict can do without.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    return body.get("data") if isinstance(body, dict) else None
+
+
 def read_binding(args: argparse.Namespace) -> dict:
     """What ``/llm/admission`` says this credential resolves to -- a third party.
 
@@ -121,7 +136,9 @@ def read_binding(args: argparse.Namespace) -> dict:
         return {"error": f"admission unreachable: {type(exc).__name__}"}
     if response.status_code != 200:
         return {"error": f"admission refused: HTTP {response.status_code}"}
-    data = response.json().get("data", {})
+    data = _data(response)
+    if not isinstance(data, dict):
+        return {"error": "admission answered without a readable body"}
     supply = data.get("supply") or {}
     return {
         "allow": data.get("allow"),
@@ -162,7 +179,8 @@ def read_seat_config_binding(args: argparse.Namespace) -> DeclaredBinding:
         return DeclaredBinding()
     if response.status_code != 200:
         return DeclaredBinding()
-    return binding_mod.declared_from_seat_config(response.json().get("data") or {})
+    data = _data(response)
+    return binding_mod.declared_from_seat_config(data if isinstance(data, dict) else {})
 
 
 def read_card_binding(args: argparse.Namespace) -> DeclaredBinding:
@@ -186,7 +204,7 @@ def read_card_binding(args: argparse.Namespace) -> DeclaredBinding:
         return DeclaredBinding()
     if response.status_code != 200:
         return DeclaredBinding()
-    body = response.json().get("data") or {}
+    body = _data(response) or {}
     blocks = body.get("data") if isinstance(body, dict) else None
     return binding_mod.declared_from_card(blocks or [])
 
@@ -308,6 +326,34 @@ def cmd_enroll(args: argparse.Namespace) -> int:
     return 0
 
 
+# Exit codes follow the upstream CLI: 0 match, 2 mismatch, 3 uncertain,
+# 4 insufficient -- so a gate that only checks "exit 0" never reads an
+# uncertain run (FB-73 without --seat) as a pass.
+_EXIT = {"match": 0, "mismatch": 2, "uncertain": 3, "insufficient": 4}
+# Severity for picking the worst verdict: mismatch > uncertain > insufficient.
+_EXIT_RANK = {0: 0, 4: 1, 3: 2, 2: 3}
+
+
+def exit_code(verdicts: list[str]) -> int:
+    """The process exit code for a run: the most severe verdict wins."""
+    codes = [_EXIT[v] for v in verdicts] or [4]
+    return max(codes, key=_EXIT_RANK.__getitem__)
+
+
+def read_seat_check(args: argparse.Namespace) -> SeatCheck:
+    """Every seat declaration this session can read, plus the operator's --seat.
+
+    The CONNECT credential is the one admission resolves the model from, so it
+    must be among them (FB-73 is that token naming the wrong seat).
+    """
+    return check_seat(
+        _token(),
+        getattr(args, "seat", ""),
+        None,
+        connect_token=binding_mod.connect_credential(),
+    )
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     # The expectation comes from an INDEPENDENT source, never from admission
     # (R3-1): admission is the same call the metering proxy makes to rewrite the
@@ -335,12 +381,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     # The seat check: the credential's own seat claim vs the seat this session
     # is. FB-73's root cause is exactly this disagreement (R3-1/2), and it is a
     # mismatch on its own, independent of any wire or admission answer.
-    seat = check_seat(
-        _token(),
-        getattr(args, "seat", ""),
-        None,
-        connect_token=binding_mod.connect_credential(),
-    )
+    seat = read_seat_check(args)
 
     # Admission, read only as a third party (see read_binding). Its disagreement
     # with the declaration is a mismatch in `combine`.
@@ -412,7 +453,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         "results": results,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 0 if all(r["verdict"] != "mismatch" for r in results) else 2
+    return exit_code([r["verdict"] for r in results])
 
 
 def cmd_explain(args: argparse.Namespace) -> int:

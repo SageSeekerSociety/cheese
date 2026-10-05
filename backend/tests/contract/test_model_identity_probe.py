@@ -1229,7 +1229,8 @@ def test_verify_takes_the_model_from_the_operator_declaration(
     )
     args.models = ["claude-opus-5-5"]
     # gateway mode does not read admission; the declaration drives the run.
-    assert cli.cmd_verify(args) == 0
+    # Uncertain (no --seat, no wire) exits 3, not 0.
+    assert cli.cmd_verify(args) == 3
     out = capsys.readouterr().out
     assert '"source": "operator"' in out
 
@@ -1358,3 +1359,71 @@ def _provenance(
         echo_matches_claim=verdict == MATCH,
         verdict=verdict,
     )
+
+
+def test_the_cli_seat_check_reads_the_connect_credential(monkeypatch) -> None:
+    import argparse
+
+    from scripts import probe_model_identity as cli
+
+    monkeypatch.setenv("CHEESE_TOKEN", _scoped({"a": "cheese-opus"}))
+    monkeypatch.setenv("CHEESE_AUTHOR", "cheese-opus")
+    monkeypatch.setenv("CHEESE_CONNECT_TOKEN", _scoped({"a": "default-seat"}))
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    check = cli.read_seat_check(argparse.Namespace(seat="cheese-opus"))
+    assert check.ok is False
+    assert check.connect_seat == "default-seat"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "<html>oops</html>",
+        "",
+        "[1, 2, 3]",
+        '{"data": null}',
+    ],
+)
+def test_an_admission_200_without_a_readable_body_is_not_fatal(
+    monkeypatch, response: str
+) -> None:
+    import argparse
+
+    import httpx
+
+    from scripts import probe_model_identity as cli
+
+    class _Odd:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> None:
+            return None
+
+        def post(self, *args, **kwargs):
+            return httpx.Response(200, text=response)
+
+    monkeypatch.setenv("CHEESE_TOKEN", _scoped({"a": "s"}))
+    monkeypatch.setenv("CHEESE_API", "http://backend.invalid")
+    monkeypatch.setattr(cli.httpx, "Client", _Odd)
+    reading = cli.read_binding(argparse.Namespace(child_model=""))
+    assert "error" in reading
+
+
+def test_an_uncertain_run_does_not_exit_zero() -> None:
+    from scripts.probe_model_identity import exit_code
+
+    assert exit_code(["match"]) == 0
+    assert exit_code(["uncertain"]) == 3
+    assert exit_code(["insufficient"]) == 4
+    assert exit_code(["match", "uncertain", "mismatch"]) == 2
+    assert exit_code(["match", "insufficient", "uncertain"]) == 3
+
+
+def test_a_launch_disagreement_is_not_called_a_credential_problem() -> None:
+    check = check_seat("", seat="cheese-opus", env={"CHEESE_AUTHOR": "default-seat"})
+    assert check.ok is False
+    assert "launched for another seat" in check.reason

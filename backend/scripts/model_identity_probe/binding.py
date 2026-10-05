@@ -205,8 +205,12 @@ def check_seat(
         if value != first:
             return result(
                 False,
-                f"{label} names seat {value!r} but {first_label} names {first!r}: "
-                "the credential was signed for another seat",
+                f"{label} names seat {value!r} but {first_label} names {first!r}"
+                + (
+                    ": a credential was signed for another seat"
+                    if "credential" in label or label == "CHEESE_TOKEN"
+                    else ": the session was launched for another seat"
+                ),
             )
     if connect is None:
         missing = "the CONNECT credential was not readable here"

@@ -282,7 +282,7 @@ class Endpoint:
                 last_error = result.error
             except httpx.HTTPError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
-            except ValueError as exc:
+            except (ValueError, ImportError, httpx.InvalidURL) as exc:
                 # httpx raises ValueError for a malformed proxy URL and puts the
                 # whole URL -- credential included -- in the message. Keep the
                 # type only; retrying a malformed URL cannot help.
