@@ -77,7 +77,7 @@ RELEASE_FILES = {
         f"remote-execution/{name}.py": (
             f"app/domain/agent/harness/claude_code/remote_execution/{name}.py"
         )
-        for name in _OWN
+        for name in (*_OWN, "predecessor")
     },
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
