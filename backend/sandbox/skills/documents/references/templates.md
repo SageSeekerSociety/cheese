@@ -14,8 +14,7 @@
 ## 先看它由什么构成
 
 ```bash
-SKILL=skills/documents
-[ -d "$SKILL" ] || SKILL="$CLAUDE_CONFIG_DIR/skills/documents"
+SKILL="<这个技能的目录>"   # 加载 documents 技能时给出的那个目录
 python3 "$SKILL/scripts/template.py" inspect 模板.docx
 ```
 
