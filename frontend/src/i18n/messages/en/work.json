@@ -343,9 +343,9 @@
       "gateBlocked": "Platform check could not run",
       "delivering": "Accepted, merge not finished",
       "accepted": "Accepted",
-      "waitingOn": "Waiting for {'@'}{handle} to review",
+      "waitingOn": "Waiting for {'@'}{name} to review",
       "waitingOnYou": "Waiting for your review",
-      "decidedBy": "Accepted by {'@'}{handle}",
+      "decidedBy": "Accepted by {'@'}{name}",
       "review": "Review",
       "expand": "Show details",
       "collapse": "Hide details",
@@ -1842,7 +1842,7 @@
     "lookupTeam": "No one on the team to hand it to? Find a person directly:",
     "lookupOwn": "Enter the new owner's username or email:",
     "lookupLabel": "Full username or email",
-    "movingOut": "The whole project moves to {'@'}{handle}. Afterwards you are no longer a member and can't see any of its topics."
+    "movingOut": "The whole project moves to {who}. Afterwards you are no longer a member and can't see any of its topics."
   },
   "skills": {
     "awaiting": "Waiting for you",
