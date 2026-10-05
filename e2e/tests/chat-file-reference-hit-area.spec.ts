@@ -27,7 +27,7 @@ window.WebSocket = class {
   removeEventListener() {}
 };
 const message = (id, content, created_at) => ({
-  id, project_id: 'p1', topic_id: 't1', kind: 'message',
+  id, project_id: 'p1', conversation_id: 't1', kind: 'message',
   author_type: 'participant', author: 'me', content,
   reply_to: null, refs: [], created_at, task_id: null,
 });

@@ -41,7 +41,7 @@ function block(kind: string, content: string, extra: Partial<Block> = {}): Block
   return {
     id: `b-${content}`,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind,
     author_type: 'participant',
     author: SEAT,
@@ -131,14 +131,14 @@ describe('芝士摆出来的东西', () => {
     expect(card?.textContent).not.toContain('build/out')
   })
 
-  it('点它把这份东西交出去开，并带上它属于哪条活', async () => {
-    history = [block('artifact', 'demo.html', { mime_type: 'text/html', task_id: 'task-7' })]
+  it('点它把这份东西交出去开', async () => {
+    history = [block('artifact', 'demo.html', { mime_type: 'text/html' })]
     const { container, emitted } = await open()
 
     await (container.querySelector('.im-artifact') as HTMLElement).click()
     await settle()
 
-    expect(emitted()['open-file']?.[0]).toEqual(['demo.html', 'task-7'])
+    expect(emitted()['open-file']?.[0]).toEqual(['demo.html'])
   })
 
   it('认不出后缀时说一句中性的话，而不是把后缀摆上去', async () => {
@@ -154,11 +154,11 @@ describe('芝士摆出来的东西', () => {
 
 describe('消息里的文件引用', () => {
   it.each([
-    ['library/design-fit-4096x2304(3).png', ME, null],
-    ['library/报告(2).pdf:7', ME, null],
-    ['src/page(2).ts:12-30', SEAT, 'task-7'],
-  ])('点开 %s 时保留原路径、行号与所属任务', async (path, author, taskId) => {
-    history = [block('message', `见 <&${path}>`, { author, task_id: taskId })]
+    ['library/design-fit-4096x2304(3).png', ME],
+    ['library/报告(2).pdf:7', ME],
+    ['src/page(2).ts:12-30', SEAT],
+  ])('点开 %s 时保留原路径与行号', async (path, author) => {
+    history = [block('message', `见 <&${path}>`, { author })]
     const { container, emitted } = await open()
 
     const chip = container.querySelector<HTMLElement>('.im-text [data-file]')
@@ -167,6 +167,6 @@ describe('消息里的文件引用', () => {
     chip!.click()
     await settle()
 
-    expect(emitted()['open-file']).toEqual([[path, taskId]])
+    expect(emitted()['open-file']).toEqual([[path]])
   })
 })

@@ -104,7 +104,7 @@ const emit = defineEmits<{
   (e: 'edit', block: Block): void
   (e: 'edit-send', item: Outgoing): void
   (e: 'toggle-picker', blockId: string): void
-  (e: 'open-file', path: string, taskId: string | null): void
+  (e: 'open-file', path: string): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
@@ -238,8 +238,8 @@ watch(
 function emitChecklist(block: Block, items: TodoItem[]) {
   emit('checklist', block, items)
 }
-function emitOpenFile(path: string, taskId: string | null) {
-  emit('open-file', path, taskId)
+function emitOpenFile(path: string) {
+  emit('open-file', path)
 }
 function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
   emit('open-resource', resource, turnId, review, document)

@@ -59,7 +59,7 @@ function room(id: string): Topic {
 function message(roomId: string, author: string) {
   return {
     id: 'b1',
-    topic_id: roomId,
+    conversation_id: roomId,
     kind: 'message',
     author_type: 'participant' as const,
     author,

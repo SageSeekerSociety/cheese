@@ -66,7 +66,7 @@ vi.mock('../../api/messages', () => ({
     sent.push({ payload: JSON.stringify(body) })
     return {
       id: body.request_id,
-      topic_id: topicId,
+      conversation_id: topicId,
       kind: 'message',
       author_type: 'participant',
       author: 'alice',
@@ -203,7 +203,7 @@ describe('对话栏自己的输入栏', () => {
       data: [
         {
           id: 'm1',
-          topic_id: 'starter-talked',
+          conversation_id: 'starter-talked',
           kind: 'message',
           content: '我打算把这学期的课程材料整理成一份大纲',
           author: 'alice',
@@ -229,7 +229,7 @@ describe('对话栏自己的输入栏', () => {
       data: [
         {
           id: 'm2',
-          topic_id: 'starter-answered',
+          conversation_id: 'starter-answered',
           kind: 'message',
           content: '好，我先把材料归拢一下，再跟你确认大纲的结构。',
           author: 'cheese-topica',
@@ -417,7 +417,7 @@ describe('对话栏自己的输入栏', () => {
       data: [
         {
           id: 'doc-1',
-          topic_id: 'topic-download',
+          conversation_id: 'topic-download',
           kind: 'attachment',
           content: 'uploads/id/report.docx',
           mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

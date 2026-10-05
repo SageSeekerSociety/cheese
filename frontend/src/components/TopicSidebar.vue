@@ -615,6 +615,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         v-for="task in roomTasks?.[item.topic.id] ?? []"
                         :key="task.id"
                         :task="task"
+                        :depth="item.depth"
                         :selected="task.id === selectedTaskId"
                         @select="emit('select-task', $event)"
                       />

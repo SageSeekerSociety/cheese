@@ -59,6 +59,11 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    // 画的是这个房间里的一个任务：现场、改动、预览都是这个任务的，总览由 `overview`
+    // 插槽填（任务的实况文档），没有「定时与触发」。
+    taskId?: string | null
+    // 任务页上，改动只读（不是负责人，或任务已关）。
+    taskReadOnly?: boolean
     submitQuestion?: SubmitPreviewQuestion
     // Bumped by the parent on AI activity (turn-done / a platform resource the
     // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
@@ -102,6 +107,8 @@ const props = withDefaults(
     activity?: MemberActivityLine[]
   }>(),
   {
+    taskId: null,
+    taskReadOnly: false,
     submitQuestion: undefined,
     working: false,
     agentControl: null,
@@ -271,6 +278,8 @@ const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
+// 这一面板读的那段对话：任务页上是任务，否则是房间自己。
+const conversationId = computed(() => props.taskId ?? topicId.value)
 const projectId = computed(() => props.topic?.project_id ?? null)
 
 // A turn just ended: that is the moment 芝士's commits, its working tree and
@@ -316,7 +325,7 @@ function markPreviewSeen(id?: string | null) {
 // 状态），`undefined` 是「这一问没成」（没话题 id，或者网络断了）——两者不能混，兜
 // 底轮询要拿它分「变了」和「没问成、下次再比」。
 async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string | null | undefined> {
-  const tid = props.topic?.id
+  const tid = conversationId.value
   if (!tid) return undefined
   let art: PreviewInfo | null = null
   try {
@@ -420,7 +429,7 @@ const summary = ref<{ changedFiles: string[]; hasRun: boolean }>({ changedFiles:
 const summaryLoaded = ref(false)
 
 async function pollWorkSummary(opts: { seen?: boolean } = {}) {
-  const tid = props.topic?.id
+  const tid = conversationId.value
   const pid = props.topic?.project_id
   if (!tid || !pid) return
   let next: { changed_files: string[]; has_run: boolean }
@@ -463,7 +472,7 @@ function countThreads(rows: { status: string }[]) {
 
 async function pollThreads(opts: { fresh?: boolean } = {}) {
   const roomId = props.topic?.id
-  if (!roomId) return
+  if (!roomId || props.taskId) return
   // Show the count from last time (e.g. switching back to a room) while the fresh one loads.
   const cached = cachedTopicPanel('roomTasks', roomId)
   if (cached) countThreads(cached.data)
@@ -492,7 +501,7 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-const tabs = computed(() => workPanelTabs(props.withChat))
+const tabs = computed(() => workPanelTabs(props.withChat).filter((tab) => !(props.taskId && tab.key === 'routines')))
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
 useCommands(() =>
   tabs.value.map((tab) => ({
@@ -558,7 +567,7 @@ const panelTabs = computed<PanelTab[]>(() =>
 // straight onto 预览 from someone's link — never greets you with a hint for work
 // that was there before you arrived.
 {
-  const id = props.topic?.id
+  const id = conversationId.value
   openFiles.value = (id && filesByTopic.get(id)) || []
   const asked = tabFromUrl()
   ensureFileFromUrl(asked)
@@ -659,10 +668,11 @@ async function openFile(path: string, taskId?: string | null) {
   // 一次没有落地、也没人知道的假动作。
   if (!(await setTab('changes'))) return
   await nextTick()
-  // `undefined`, not `null`: a message under no card says nothing about which
+  // `undefined`, not `null`: a message that names no task says nothing about which
   // source holds the file, while `null` means 「项目当前代码」 — and a file this
-  // room is still working on is not on main yet.
-  await changesRef.value?.openFile(want, taskId ?? undefined)
+  // room is still working on is not on main yet. On a task's page the file is the
+  // task's.
+  await changesRef.value?.openFile(want, taskId ?? props.taskId ?? undefined)
 }
 
 /** 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。 */
@@ -739,7 +749,7 @@ async function closeFile(path: string) {
 
 function setFiles(next: OpenFileTab[]) {
   openFiles.value = next
-  const tid = props.topic?.id
+  const tid = conversationId.value
   if (tid) filesByTopic.set(tid, next)
 }
 
@@ -805,7 +815,11 @@ defineExpose({
           <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
             <slot name="chat" />
           </div>
+          <div v-if="taskId" v-show="active === 'overview'" class="tabpane-slot" :class="enterClass('overview')">
+            <slot name="overview" />
+          </div>
           <PanelOverview
+            v-else
             v-show="active === 'overview'"
             ref="overviewRef"
             :class="enterClass('overview')"
@@ -829,7 +843,7 @@ defineExpose({
             ref="siteRef"
             :class="enterClass('site')"
             :agent-name="agentName"
-            :topic-id="topic?.id ?? null"
+            :topic-id="conversationId"
             :active="active === 'site'"
             :running-turns="siteTurns"
             :refresh-tick="refreshTick"
@@ -847,7 +861,8 @@ defineExpose({
             ref="changesRef"
             :class="enterClass('changes')"
             :topic-id="topicId"
-            :read-only="topic?.status === 'archived'"
+            :task-id="taskId"
+            :read-only="topic?.status === 'archived' || taskReadOnly"
             :project-id="projectId"
             :active="active === 'changes'"
             :refresh-tick="refreshTick"
@@ -857,7 +872,7 @@ defineExpose({
             v-show="active === 'preview'"
             :submit-question="submitQuestion"
             :class="enterClass('preview')"
-            :topic-id="topicId"
+            :topic-id="conversationId"
             :project-id="projectId"
             :active="active === 'preview'"
             :refresh-tick="refreshTick"
@@ -897,7 +912,7 @@ defineExpose({
               v-show="active === fileKey(f.path)"
               :submit-question="submitQuestion"
               :class="enterClass(fileKey(f.path))"
-              :topic-id="topicId"
+              :topic-id="conversationId"
               :project-id="projectId"
               :path="f.path"
               :active="active === fileKey(f.path)"
@@ -928,6 +943,13 @@ defineExpose({
   min-width: 0;
   min-height: 0;
   height: 100%;
+}
+.tabpane-slot {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 .tabpane-in {
   animation: tabpane-in var(--dur-base) var(--ease-standard);

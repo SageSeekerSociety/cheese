@@ -280,8 +280,8 @@ useCommands(() => {
                 <span class="t-meta">{{ t('project.docs.recordedOn', { date: fmtDate(w.created_at) }) }}</span>
                 <v-spacer />
                 <BaseButton
-                  v-if="w.topic_id"
-                  :to="topicTo(w.topic_id)"
+                  v-if="w.conversation_id"
+                  :to="topicTo(w.conversation_id)"
                   kind="ghost"
                   size="sm"
                   append-icon="mdi-arrow-top-right"

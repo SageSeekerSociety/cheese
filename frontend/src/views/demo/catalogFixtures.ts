@@ -153,7 +153,7 @@ function askRow(answered: { option: string; by: string } | null): RoomRow {
   }
   const block: Block = {
     id: answered ? 'ask-demo-answered' : 'ask-demo-open',
-    topic_id: 'demo',
+    conversation_id: 'demo',
     kind: 'message',
     author_type: 'participant',
     author: 'cheese',
@@ -346,7 +346,7 @@ const LONG_TEXT = `我把这周的进度理了一遍，发在这里，谁有空�
 
 const LONG_BLOCK: Block = {
   id: 'catalog-long',
-  topic_id: 'demo',
+  conversation_id: 'demo',
   kind: 'message',
   author_type: 'participant',
   author: 'wang',

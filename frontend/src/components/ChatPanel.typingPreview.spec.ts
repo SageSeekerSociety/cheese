@@ -85,7 +85,7 @@ function live(blocks: LiveBlock[], agent = 'cheese', turn = 'turn-a'): WsServerF
 function message(content: string, author = 'cheese'): Block {
   return {
     id: `msg-${author}`,
-    topic_id: topic.id,
+    conversation_id: topic.id,
     kind: 'message',
     author_type: 'participant',
     author,

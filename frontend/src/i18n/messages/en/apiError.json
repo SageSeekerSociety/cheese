@@ -33,7 +33,6 @@
   "taskStartedAlready": "This task has already started",
   "taskOwnerNotInRoom": "A task can only be handed to a member of this room",
   "taskNotStarted": "This task hasn't started; the project can change once its owner starts it",
-  "messageNotInTask": "This message isn't in this task",
   "commentDocFrozen": "This topic is archived and takes no more comments",
   "cursorEventNotFound": "That event doesn't exist",
   "stepNotFound": "This step doesn't exist",

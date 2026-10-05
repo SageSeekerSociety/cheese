@@ -159,9 +159,9 @@ export interface ChecklistMeta {
 }
 
 export interface Block {
-  task_id?: string | null
   id: string
-  topic_id: string
+  // The conversation it was said in: a room's id, or a task's.
+  conversation_id: string
   kind: string
   author_type: AuthorType
   author: string

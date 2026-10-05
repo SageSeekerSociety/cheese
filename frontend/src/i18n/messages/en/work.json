@@ -780,10 +780,7 @@
       "needsYou": "1 needs you | {count} need you",
       "row": "#{n}: {title}"
     },
-    "card": {
-      "steps": "No steps | 1 step | {count} steps",
-      "stepFailed": "A step failed"
-    },
+    "card": {},
     "doc": {
       "delete": "Delete doc",
       "deleted": "This doc has been deleted",
@@ -1996,17 +1993,13 @@
     "machine": "Work computer",
     "followsRoom": "Follows the topic",
     "details": "Task details",
-    "noMessages": "No messages yet",
-    "sayPlaceholder": "Message {name}",
-    "send": "Send",
-    "sendFailed": "Message not sent. Try again later",
     "ownerOnlyNotice": "Only the owner can talk to {name} here",
     "closedNotice": "This task is closed",
     "backToRoom": "Back to # {room}",
     "notFound": "This room has no such task",
     "loadFailed": "Couldn't load this task",
-    "retry": "Retry",
     "owner": "Owner",
+    "ownerChip": "Owned by {name}",
     "start": "Start",
     "startFailed": "Couldn't start. Try again later",
     "reviewer": "Reviewer",
@@ -2017,11 +2010,6 @@
     "compareFailed": "Couldn't read the document as it was at the start",
     "compareSame": "The document hasn't changed since the start",
     "conclusion": "Conclusion",
-    "tabChat": "Conversation",
-    "tabOverview": "Overview",
-    "tabChanges": "Changes",
-    "tabSite": "Activity",
-    "tabPreview": "Preview",
     "proposal": {
       "byline": "{name} proposed a task",
       "accept": "Create task",
