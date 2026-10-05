@@ -21,6 +21,9 @@ room or a task.
   `started_doc_version`). It loses what only a subagent wrote (`subagent_id`,
   `execution_agent_instance_id`, `execution_parent_session_id`,
   `execution_turn_id`, `last_turn_at`) and `brief`.
+- **A task never shares an id with a room.** The closed tasks an older
+  migration made from rooms' work trees kept their room's id; each gets a new
+  one, and every row that points at it follows.
 - **Every existing task is started**, at the moment it was created: until now a
   task was handed to a worker when it was opened.
 - **A task's brief becomes its document.** Each task with a non-empty brief gets
@@ -96,6 +99,71 @@ def _lock_all(tables: str) -> None:
     """)
 
 
+# Moves each task in `task_new_ids` to its new id. Every foreign key to `tasks`
+# is made deferrable for the moment the referencing rows and the task move
+# together, then checked and made immediate again; the three columns that hold
+# a task id without a foreign key follow by hand.
+RENUMBER_TASKS = """
+DO $$
+DECLARE
+    fk record;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM task_new_ids) THEN
+        RETURN;
+    END IF;
+    FOR fk IN
+        SELECT c.conname, c.conrelid::regclass AS tbl, a.attname AS col
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+        WHERE c.contype = 'f' AND c.confrelid = 'tasks'::regclass
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %s ALTER CONSTRAINT %I DEFERRABLE INITIALLY DEFERRED',
+            fk.tbl, fk.conname
+        );
+    END LOOP;
+    -- A second pass: a table with a pending check can no longer be altered.
+    FOR fk IN
+        SELECT c.conrelid::regclass AS tbl, a.attname AS col
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+        WHERE c.contype = 'f' AND c.confrelid = 'tasks'::regclass
+    LOOP
+        EXECUTE format(
+            'UPDATE %s x SET %I = m.new_id FROM task_new_ids m WHERE x.%I = m.old_id',
+            fk.tbl, fk.col, fk.col
+        );
+    END LOOP;
+    UPDATE tasks t SET id = m.new_id FROM task_new_ids m WHERE t.id = m.old_id;
+    UPDATE deliveries x SET task_id = m.new_id
+        FROM task_new_ids m WHERE x.task_id = m.old_id;
+    UPDATE local_fs_access x SET task_id = m.new_id
+        FROM task_new_ids m WHERE x.task_id = m.old_id;
+    UPDATE accept_cards c SET delivered_task_ids = (
+        SELECT json_agg(COALESCE(m.new_id::text, e.id) ORDER BY e.n)
+        FROM json_array_elements_text(c.delivered_task_ids) WITH ORDINALITY e(id, n)
+        LEFT JOIN task_new_ids m ON m.old_id::text = e.id
+    )
+    WHERE json_typeof(c.delivered_task_ids) = 'array'
+      AND EXISTS (
+        SELECT 1 FROM json_array_elements_text(c.delivered_task_ids) e(id)
+        JOIN task_new_ids m ON m.old_id::text = e.id
+      );
+    SET CONSTRAINTS ALL IMMEDIATE;
+    FOR fk IN
+        SELECT c.conname, c.conrelid::regclass AS tbl
+        FROM pg_constraint c
+        WHERE c.contype = 'f' AND c.confrelid = 'tasks'::regclass
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %s ALTER CONSTRAINT %I NOT DEFERRABLE', fk.tbl, fk.conname
+        );
+    END LOOP;
+END
+$$
+"""
+
+
 def upgrade() -> None:
     _lock_all("topics, projects, tasks, agent_sessions, documents, document_versions")
 
@@ -118,6 +186,16 @@ def upgrade() -> None:
         sa.CheckConstraint("kind IN ('room', 'task')", name="ck_conversations_kind"),
     )
     op.create_index("ix_conversations_project_id", "conversations", ["project_id"])
+    # b8e2f4a90d33 gave every room of its day a work tree under the room's own
+    # id, and d7a419be028c kept each tree's id for the closed task it became:
+    # those tasks share their room's id. A conversation id names one thing, so
+    # each takes a new id and everything that points at it follows.
+    op.execute("""
+        CREATE TEMPORARY TABLE task_new_ids ON COMMIT DROP AS
+        SELECT t.id AS old_id, gen_random_uuid() AS new_id
+        FROM tasks t JOIN topics r ON r.id = t.id
+    """)
+    op.execute(RENUMBER_TASKS)
     op.execute("""
         INSERT INTO conversations (id, project_id, kind, created_at)
         SELECT id, project_id, 'room', created_at FROM topics

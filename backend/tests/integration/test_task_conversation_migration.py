@@ -9,10 +9,13 @@ and checks what a reader of each finds afterwards:
   rooms and tasks come and go;
 - the room's session is still the room's;
 - a brief is not lost: it is the task's document;
-- work that was already under way is not sent back to discussion.
+- work that was already under way is not sent back to discussion;
+- a closed task that an older migration gave its room's own id gets an id of
+  its own, and what pointed at it follows.
 """
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -80,6 +83,37 @@ async def _seed(conn) -> dict:
             brief,
             created_by,
         )
+    # The task an older migration made from the room's work tree, under the
+    # room's id, with what points at it.
+    await conn.execute(
+        "INSERT INTO tasks (id, project_id, room_id, title, status, brief,"
+        " created_at, updated_at)"
+        " VALUES ($1, $2, $1, 'old delivery', 'closed', '', now(), now())",
+        ids["room"],
+        ids["project"],
+    )
+    ids["other"] = str(uuid.uuid4())
+    await conn.execute(
+        "INSERT INTO accept_cards (id, topic_id, task_id, reviewer_handle,"
+        " routing_reason, status, note, delivered_task_ids, created_at, updated_at)"
+        " VALUES ($1, $2, $2, 'bob', '', 'accepted', '', $3::json, now(), now())",
+        uuid.uuid4(),
+        ids["room"],
+        f'["{ids["room"]}", "{ids["other"]}"]',
+    )
+    await conn.execute(
+        "INSERT INTO deliveries (id, event_id, recipient_handle, dedup_key, type,"
+        " payload, event_at, recorded_at, task_id)"
+        " VALUES ($1, $2, 'bob', 'd', 'notice', '{}', now(), now(), $3)",
+        uuid.uuid4(),
+        uuid.uuid4(),
+        ids["room"],
+    )
+    await conn.execute(
+        "UPDATE tasks SET base_task_id = $1 WHERE id = $2",
+        ids["room"],
+        ids["briefed"],
+    )
     await conn.execute(
         "INSERT INTO agent_sessions (id, topic_id, agent_handle, harness,"
         " resume_token, created_at, updated_at)"
@@ -91,6 +125,8 @@ async def _seed(conn) -> dict:
 
 
 async def _check(conn, ids: dict) -> None:
+    old = await conn.fetchval("SELECT id FROM tasks WHERE title = 'old delivery'")
+    assert old != ids["room"]
     kinds = {
         row["id"]: (row["kind"], row["project_id"])
         for row in await conn.fetch("SELECT id, kind, project_id FROM conversations")
@@ -99,7 +135,18 @@ async def _check(conn, ids: dict) -> None:
         ids["room"]: ("room", ids["project"]),
         ids["briefed"]: ("task", ids["project"]),
         ids["bare"]: ("task", ids["project"]),
+        old: ("task", ids["project"]),
     }
+    card = await conn.fetchrow("SELECT task_id, delivered_task_ids FROM accept_cards")
+    assert card["task_id"] == old
+    assert json.loads(card["delivered_task_ids"]) == [str(old), ids["other"]]
+    assert await conn.fetchval("SELECT task_id FROM deliveries") == old
+    assert (
+        await conn.fetchval(
+            "SELECT base_task_id FROM tasks WHERE id = $1", ids["briefed"]
+        )
+        == old
+    )
 
     session = await conn.fetchrow(
         "SELECT conversation_id, topic_id, resume_token FROM agent_sessions"
