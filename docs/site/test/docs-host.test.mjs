@@ -4,8 +4,8 @@
 // told to paint.
 //
 //     node docs/site/test/docs-host.test.mjs                  (builds into a temp dir)
-//     OUT=/tmp/docs-host node docs/site/test/docs-host.test.mjs   (uses a DOCS_BASE= build there
-//                                                              made with DOCS_PLATFORM=https://app.example.test)
+//     OUT=/tmp/docs-host node docs/site/test/docs-host.test.mjs   (uses a DOCS_BASE= build there made with
+//                                       DOCS_PLATFORM=https://app.example.test DOCS_SITE=https://docs.example.test)
 //
 // happy-dom comes from `frontend/node_modules`, as for demo-arch.test.mjs.
 import fs from 'node:fs'
@@ -36,7 +36,7 @@ const out = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'docs-host-
 if (!process.env.OUT) {
   execFileSync(process.execPath, ['build.mjs'], {
     cwd: SITE,
-    env: { ...process.env, OUT: out, DOCS_BASE: '', DOCS_PLATFORM: PLATFORM },
+    env: { ...process.env, OUT: out, DOCS_BASE: '', DOCS_PLATFORM: PLATFORM, DOCS_SITE: DOCS },
     stdio: ['ignore', 'ignore', 'inherit'],
   })
 }
@@ -48,8 +48,23 @@ for (const file of ['index.html', 'quickstart.html', 'dev/turn.html', 'changelog
   const stale = [...html.matchAll(/(?:href|src)="(\/docs\/[^"]*)"/g)].map((m) => m[1])
   eq(stale.length, 0, `${file} links into /docs/ (${stale.slice(0, 3).join(', ')})`)
 }
-ok(read('llms.txt').includes('](https://docs.okcheese.com/quickstart.md)'), 'llms.txt points at the docs host')
-const index = JSON.parse(read('ask-index.json'))
+ok(read('llms.txt').includes(`](${DOCS}/quickstart.md)`), 'llms.txt points at the docs host')
+// ---------- no deployment's domain in the image ----------
+// What differs per deployment is a placeholder, filled at container start
+// (frontend/scripts/docs-mode.sh, tested by test-docs-mode.sh).
+{
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-host-plain-'))
+  const env = { ...process.env, OUT: plain, DOCS_BASE: '' }
+  delete env.DOCS_PLATFORM
+  delete env.DOCS_SITE
+  execFileSync(process.execPath, ['build.mjs'], { cwd: SITE, env, stdio: ['ignore', 'ignore', 'inherit'] })
+  const at = (f) => fs.readFileSync(path.join(plain, f), 'utf8')
+  ok(at('llms.txt').includes('](__DOCS_SITE__/quickstart.md)'), 'llms.txt waits for the docs origin')
+  ok(at('dev/turn.html').includes('src="__DOCS_PLATFORM__/demo/turn?embed=1'), 'the demo stage waits for the platform origin')
+  ok(at('index.html').includes('href="__DOCS_PLATFORM__/"'), 'the way back to the product waits for the platform origin')
+  ok(!/https:\/\/(docs\.)?okcheese\.com\/(?!connector)/.test(at('index.html') + at('llms.txt') + at('dev/turn.html')), 'and nothing names okcheese.com in their place')
+}
+const index = JSON.parse(read('sections.json'))
 ok(index.length > 0 && index.every((r) => r.url.startsWith('/') && !r.url.startsWith('/docs/')), 'the ask index holds paths within the site')
 
 // ---------- the demo stages: the platform's pages ----------

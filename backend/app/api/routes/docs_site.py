@@ -83,7 +83,7 @@ async def docs_grant(
 @router.get("/signin", include_in_schema=False)
 async def docs_sign_in(path: str = "/") -> Response:
     """On the docs host: off to the platform's sign-in page, which comes back
-    with a grant (``views/DocsSignInView.vue``). The docs pages are the same
+    with a grant (``views/DocsSignIn.vue``). The docs pages are the same
     files on every deployment, so where the platform is comes from here."""
     if not _destination(path):
         path = "/"

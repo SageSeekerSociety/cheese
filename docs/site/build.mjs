@@ -715,8 +715,8 @@ write('dev/search.json', searchIndex(devList))
 const askIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.filter((c) => c.text).map((c) => ({
   title: p.title, heading: c.heading, url: c.id ? `${p.path}#${c.id}` : p.path, text: (c.id ? c.text : `${plain(p.lede)} ${c.text}`).slice(0, 4000),
 }))))
-write('ask-index.json', askIndex(publicPages))
-write('dev/ask-index.json', askIndex(devList))
+write('sections.json', askIndex(publicPages))
+write('dev/sections.json', askIndex(devList))
 
 // ---------- for models: llms.txt, a .md twin per page, and the whole manual ----------
 const llms = (title, intro, nav) => [`# ${title}`, '', `> ${intro}`, '', ...nav.flatMap(([g, items]) => [`## ${g}`, '', ...items.map((p) => `- [${p.title}](${SITE}${p.mdUrl}): ${p.summary}`), ''])].join('\n')

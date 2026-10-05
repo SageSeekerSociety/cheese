@@ -1,6 +1,6 @@
 """Find the sections of the public docs that answer a question.
 
-The index is ``ask-index.json``, emitted by the docs build (docs/site/build.mjs)
+The index is ``sections.json``, emitted by the docs build (docs/site/build.mjs)
 and served by the frontend image next to the pages it was built from — so the
 assistant answers from exactly the version readers see, and the backend image
 carries no copy of the docs. Only public pages are in it: the answer is shown to

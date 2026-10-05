@@ -19,6 +19,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # agent where its app will be mounted, and the domain cannot import the API.
 GATEWAY_MOUNT = "/api"
 
+
+def browser_origin(url: str) -> str:
+    """``scheme://host[:port]`` of ``url`` as a browser writes it in Origin:
+    lower case, and no port when it is the scheme's default."""
+    parts = urlsplit(url.strip().lower())
+    default = {"https": 443, "http": 80}.get(parts.scheme)
+    port = f":{parts.port}" if parts.port and parts.port != default else ""
+    return f"{parts.scheme}://{parts.hostname or ''}{port}"
+
+
 # What an unconfigured development machine or test run encrypts with. Public
 # by construction, so a deployment may never use it; see
 # `Settings._require_data_encryption_key`.
@@ -1308,24 +1318,28 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _docs_origin_is_an_origin(self) -> "Settings":
-        """``docs_origin`` is a browser origin and nothing more.
+        """``docs_origin`` is a browser origin of its own, written as browsers do.
 
-        The docs sign-in cookie is minted for exactly this origin and checked
-        against the Host of every request, so a trailing path or a typo would
-        not fail anywhere visible: every reader would just be signed out. Plain
-        http only on a loopback name, where browsers keep Secure cookies off."""
-        value = self.docs_origin.strip().rstrip("/").lower()
+        The docs sign-in cookie is minted for exactly this origin and the Origin
+        header of every docs request is compared with it, so it is normalised
+        the way browsers write one (lower case, no default port, no trailing
+        slash) and blank means unset, as the frontend container reads it too.
+        Plain http only on a loopback name, where browsers keep Secure cookies
+        off. And it must not be the platform's own host: the frontend's docs
+        server would then answer every platform request in the platform's place.
+        """
+        value = self.docs_origin.strip()
         if not value:
             self.docs_origin = ""
             return self
-        parts = urlsplit(value)
+        parts = urlsplit(value.lower())
         host = parts.hostname or ""
         local = host == "localhost" or host.endswith(".localhost")
         if (
             parts.scheme not in ("https", "http")
             or (parts.scheme == "http" and not local)
             or not host
-            or parts.path
+            or parts.path not in ("", "/")
             or parts.query
             or parts.fragment
             or parts.username
@@ -1335,7 +1349,14 @@ class Settings(BaseSettings):
                 "Write the scheme and host only, e.g. https://docs.okcheese.com "
                 "(http is accepted for *.localhost)."
             )
-        self.docs_origin = value
+        if host == (urlsplit(self.frontend_url.strip().lower()).hostname or ""):
+            raise RuntimeError(
+                f"DOCS_ORIGIN={self.docs_origin!r} is the platform's own host "
+                f"(FRONTEND_URL={self.frontend_url!r}). The docs need a host of "
+                "their own, such as docs.<platform domain>; leave DOCS_ORIGIN empty "
+                "to serve them under /docs/ on the platform."
+            )
+        self.docs_origin = browser_origin(value)
         return self
 
     @model_validator(mode="after")

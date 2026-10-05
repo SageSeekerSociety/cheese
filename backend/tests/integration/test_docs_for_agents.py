@@ -54,9 +54,9 @@ def frontend(monkeypatch: pytest.MonkeyPatch) -> dict:
             if not access.is_internal(token):
                 seen["dev_refused"] += 1
                 return httpx.Response(401, text="gate")
-        if path == "/ask-index.json":
+        if path == "/sections.json":
             return httpx.Response(200, json=PUBLIC)
-        if path == "/dev/ask-index.json":
+        if path == "/dev/sections.json":
             return httpx.Response(200, json=DEV)
         md = {
             "/accept.md": "# 验收与采纳\n\n采纳就是合并。",
@@ -221,3 +221,38 @@ def test_page_names_are_normalised():
     assert library.page_slug("https://docs.okcheese.com/dev/turn#x") == "dev/turn"
     for bad in ("../x", "dev/../x", "a b", "", "/docs/dev/a/b"):
         assert library.page_slug(bad) is None
+
+
+def test_a_frontend_from_before_the_docs_host_is_not_read_as_this_one(
+    client, monkeypatch
+):
+    """A release rolls the backend before the frontend. The old frontend's index
+    has links that start with /docs/; read as this release's, every link would
+    come out as /docs/docs/… for as long as the copy is kept. Until the new
+    frontend is up, agents are told the index is not there."""
+
+    def old_frontend(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/docs/ask-index.json":
+            return httpx.Response(
+                200, json=[{**PUBLIC[0], "url": "/docs/accept#is-merge"}]
+            )
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(old_frontend)
+    real = httpx.AsyncClient
+
+    class Stubbed(real):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", Stubbed)
+    monkeypatch.setattr(retrieval, "source", retrieval.IndexSource(site.index_url))
+    topic, headers = _room(client, platform_repo=False)
+    r = client.post(
+        "/docs/agent/search",
+        json={"topic": topic, "query": "怎么采纳"},
+        headers=headers,
+    )
+    assert "/docs/docs/" not in r.text
+    assert r.status_code == 503, r.text

@@ -10,7 +10,7 @@ address in front (``public_url``), and everything else keeps the path.
 
 from urllib.parse import urlsplit
 
-from app.core.config import settings
+from app.core.config import browser_origin, settings
 
 # The frontend container, by its compose name. With a docs host configured, its
 # nginx answers this name with the docs host's server (frontend/nginx/), so the
@@ -19,13 +19,17 @@ FRONTEND = "http://frontend"
 
 
 def platform_origin() -> str:
-    parts = urlsplit(settings.frontend_url)
-    return f"{parts.scheme}://{parts.netloc}"
+    return browser_origin(settings.frontend_url)
 
 
 def origin() -> str:
-    """The browser origin the docs are on: their own host, or the platform's."""
-    return settings.docs_origin or platform_origin()
+    """The browser origin the docs are on: their own host, or the platform's.
+    Written as browsers write Origin, which is what it is compared with."""
+    return (
+        browser_origin(settings.docs_origin)
+        if settings.docs_origin
+        else platform_origin()
+    )
 
 
 def base() -> str:
@@ -44,11 +48,11 @@ def page_path(slug: str) -> str:
 
 
 def index_url() -> str:
-    return settings.docs_index_url or f"{FRONTEND}{base()}/ask-index.json"
+    return settings.docs_index_url or f"{FRONTEND}{base()}/sections.json"
 
 
 def dev_index_url() -> str:
-    return settings.docs_dev_index_url or f"{FRONTEND}{base()}/dev/ask-index.json"
+    return settings.docs_dev_index_url or f"{FRONTEND}{base()}/dev/sections.json"
 
 
 def on_docs_host(host_header: str | None) -> bool:

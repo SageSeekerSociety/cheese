@@ -292,8 +292,12 @@ services:
       - DEVICE_CONNECTION_UPSTREAM=${DEVICE_CONNECTION_UPSTREAM:-device-connection:8082}
       - OFFICE_EDITOR_UPSTREAM=${OFFICE_EDITOR_UPSTREAM:-cheese-office-editor:80}
       - COLLAB_UPSTREAM=${COLLAB_UPSTREAM:-collab:8902}
-      # Where the docs are: see DOCS_ORIGIN on the backend above.
+      # Where the docs are: see DOCS_ORIGIN on the backend above. With a docs
+      # host the docs' pages link back to the platform, and the image names no
+      # deployment's domain, so it needs the platform's origin too: the same
+      # value as the backend's FRONTEND_URL. It refuses to start without it.
       - DOCS_ORIGIN=${DOCS_ORIGIN:-}
+      - FRONTEND_URL=${FRONTEND_URL:-}
     # Lets API_UPSTREAM name the host; unused otherwise.
     extra_hosts:
       - "host.docker.internal:host-gateway"

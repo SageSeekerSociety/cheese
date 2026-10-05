@@ -97,7 +97,7 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path.endswith("/ask-index.json"):
+        if path.endswith("/sections.json"):
             seen["index"] += 1
             return httpx.Response(200, json=INDEX)
         if path == "/model/info":
@@ -777,3 +777,17 @@ def test_one_question_at_a_time_per_person(client, gateway):
 )
 def test_malformed_questions_are_rejected(client, asker, gateway, bad):
     assert client.post("/docs/ask", json=bad, headers=asker).status_code == 400
+
+
+def test_a_question_asked_from_a_default_port_origin_still_counts(
+    client, monkeypatch, gateway
+):
+    # Browsers leave :443 out of Origin; a DOCS_ORIGIN written with it must not
+    # turn every question into a cross-site refusal.
+    monkeypatch.setattr(settings, "frontend_url", PLATFORM_ORIGIN + ":443")
+    monkeypatch.setattr(settings, "docs_origin", "https://docs.example.test:443")
+    headers = on_docs(docs_cookie(docs_sign_in(client, sign_in(client, "docs-port"))))
+    r = client.post(
+        "/docs/ask", json={"question": "采纳和合并是一回事吗"}, headers=headers
+    )
+    assert r.status_code == 200, r.text

@@ -270,7 +270,7 @@ async def test_index_source_keeps_the_last_good_copy(monkeypatch):
         )
 
     src = IndexSource(
-        "http://frontend/docs/ask-index.json", transport=httpx.MockTransport(handler)
+        "http://frontend/docs/sections.json", transport=httpx.MockTransport(handler)
     )
     first = await src.get()
     assert first is not None and first.sections[0].url == "/t#h"
@@ -669,3 +669,23 @@ async def test_a_gateway_that_refuses_thinking_on_the_last_round_is_asked_again(
     assert "thinking" in gateway.posts[-2] and "thinking" not in gateway.posts[-1]
     assert gateway.posts[-1]["tool_choice"] == "none"
     assert result.outcome == "no_match"
+
+
+async def test_an_index_that_is_not_there_yet_is_asked_for_again(monkeypatch):
+    # During a release the backend can be up before the frontend that carries
+    # the index; it must not then wait out a full refresh period with nothing.
+    rows = [{"title": "t", "heading": "h", "url": "/t#h", "text": "采纳"}]
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return (
+            httpx.Response(404) if len(calls) == 1 else httpx.Response(200, json=rows)
+        )
+
+    src = IndexSource(
+        "http://frontend/sections.json", transport=httpx.MockTransport(handler)
+    )
+    assert await src.get() is None
+    again = await src.get()
+    assert again is not None and again.sections[0].url == "/t#h"

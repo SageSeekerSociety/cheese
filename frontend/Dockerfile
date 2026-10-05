@@ -42,7 +42,8 @@ COPY nginx.conf /etc/nginx/nginx.conf
 COPY nginx/docs /etc/nginx/docs-modes
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY scripts/check-static-assets.sh /usr/local/bin/check-static-assets
-RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets
+COPY scripts/docs-mode.sh /usr/local/bin/docs-mode
+RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets /usr/local/bin/docs-mode
 COPY --from=build /app/dist /usr/share/nginx/html
 # The docs built for a host of their own (DOCS_BASE=, build.yml), outside the
 # html root so no platform path reaches it.

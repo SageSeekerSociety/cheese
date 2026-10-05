@@ -78,10 +78,10 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'navigation.pages.openSite', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
-    // The docs site signs its readers in through here (views/DocsSignInView.vue).
+    // The docs site signs its readers in through here (views/DocsSignIn.vue).
     name: 'docs-signin',
     path: '/docs-signin',
-    component: () => import('@/views/DocsSignInView.vue'),
+    component: () => import('@/views/DocsSignIn.vue'),
     meta: { titleKey: 'navigation.pages.openDocs', isFullPage: true, ...PERSONAL_PAGE },
   },
   {

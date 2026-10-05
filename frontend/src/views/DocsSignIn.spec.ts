@@ -15,10 +15,10 @@ const route = {
 }
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace }) }))
 
-import DocsSignInView from './DocsSignInView.vue'
+import DocsSignIn from './DocsSignIn.vue'
 
 function mount() {
-  return render(DocsSignInView, { global: { plugins: [createVuetify({ components, directives })] } })
+  return render(DocsSignIn, { global: { plugins: [createVuetify({ components, directives })] } })
 }
 
 let submitted: { action: string; method: string; body: string } | undefined
