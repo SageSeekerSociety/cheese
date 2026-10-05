@@ -18,9 +18,9 @@ from app.domain.agent.device_hub_rpc import RemoteDeviceHub  # noqa: E402
 OWNER_ENV_DEFAULTS = {
     "ACCEPTANCE_OWNER_IMAGE": (
         "ghcr.io/sageseekersociety/cheese/backend@sha256:"
-        "b5fc0a2172b3eb0a398af31321526a7f3a0ba654a3d448b4c860b8ac59207732"
+        "5e5dc5b19bd3aae0a8e74db9a9aed9bba5ff721031e4ca3ab0c462c932d42d8b"
     ),
-    "ACCEPTANCE_OWNER_REVISION": "fbb08b0f874ba3bdb5b567efffcbcb83156ff144",
+    "ACCEPTANCE_OWNER_REVISION": "b65e9f364c97a6b9f44d03c812c1728b8e57c599",
     "ACCEPTANCE_OWNER_PORT": "18783",
 }
 

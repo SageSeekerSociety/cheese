@@ -19,7 +19,7 @@ const history: Block[] = [
   {
     id: 'm1',
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author_type: 'participant',
     author: 'other',
@@ -70,7 +70,7 @@ function posted(body: Record<string, unknown>): Block {
   sent.push(body)
   return {
     id: String(body.request_id),
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author: 'me',
     content: String(body.content),

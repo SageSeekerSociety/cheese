@@ -66,7 +66,7 @@ steps:
 
 ## 4. 启动或续跑骨架 {#harness}
 
-骨架是 Claude Code、Codex、Pi 三种之一。会话按「对话 × 队友 × 骨架」记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)），下一轮续跑同一个会话。一段对话是一个房间，或房间里的一条任务：任务的一轮跑在任务自己的会话里（`converse(topic_id=<任务 id>)`），这一轮写下的块 `topic_id` 是房间、`task_id` 是任务。本次跑哪个由部署和项目设置决定，怎么把协议翻译成统一的事件见[骨架](/dev/harness)。会话开场时芝士读到什么、接着跑时怎么补上变化，见[提示词注入与上下文管理](/dev/context)。
+骨架是 Claude Code、Codex、Pi 三种之一。会话按「对话 × 队友 × 骨架」记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)），下一轮续跑同一个会话。一段对话是一个房间，或房间里的一条任务：任务的一轮跑在任务自己的会话里（`converse(topic_id=<任务 id>)`），这一轮写下的块、轮次和用量都记在任务这段对话上（`conversation_id` = 任务 id）。本次跑哪个由部署和项目设置决定，怎么把协议翻译成统一的事件见[骨架](/dev/harness)。会话开场时芝士读到什么、接着跑时怎么补上变化，见[提示词注入与上下文管理](/dev/context)。
 
 ## 5. 芝士怎么说话 {#publish}
 

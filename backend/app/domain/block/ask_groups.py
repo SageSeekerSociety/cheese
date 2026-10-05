@@ -72,15 +72,15 @@ class AskGroups:
     def __init__(self, session):
         self.session = session
 
-    def query(self, topic_id, asked_by, group_id):
+    def query(self, conversation_id, asked_by, group_id):
         return select(Block).where(
-            Block.topic_id == topic_id,
+            Block.conversation_id == conversation_id,
             Block.author == asked_by,
             Block.meta["ask_group"]["id"].as_string() == group_id,
         )
 
-    async def read(self, topic_id, asked_by, group_id, *, lock=False):
-        query = self.query(topic_id, asked_by, group_id).order_by(Block.id)
+    async def read(self, conversation_id, asked_by, group_id, *, lock=False):
+        query = self.query(conversation_id, asked_by, group_id).order_by(Block.id)
         if lock:
             query = query.with_for_update().execution_options(populate_existing=True)
         rows = list(await self.session.scalars(query))
@@ -113,17 +113,25 @@ class AskGroups:
         return ordered
 
     async def create(
-        self, *, project_id, topic_id, asked_by, group_id, questions, asked, origin
+        self,
+        *,
+        project_id,
+        conversation_id,
+        asked_by,
+        group_id,
+        questions,
+        asked,
+        origin,
     ):
         # Only creation needs a namespace lock: before there are member rows,
         # concurrent callers cannot serialize by their UUIDs yet.
-        scope = f"{topic_id}:{asked_by}:{group_id}"
+        scope = f"{conversation_id}:{asked_by}:{group_id}"
         await self.session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:scope, 0))"),
             {"scope": scope},
         )
         existing = list(
-            await self.session.scalars(self.query(topic_id, asked_by, group_id))
+            await self.session.scalars(self.query(conversation_id, asked_by, group_id))
         )
         if existing:
             raise ConflictError(say("askGroupAlreadyCreated"))
@@ -134,8 +142,7 @@ class AskGroups:
             row = Block(
                 id=ids[index],
                 project_id=project_id,
-                topic_id=topic_id,
-                task_id=uuid.UUID(origin["task_id"]) if origin.get("task_id") else None,
+                conversation_id=conversation_id,
                 author=asked_by,
                 author_type=AuthorType.participant,
                 content=question.content,
@@ -162,7 +169,7 @@ class AskGroups:
         await self.session.flush()
         return rows
 
-    async def settle(self, *, topic_id, asked_by, group_id, body, author):
+    async def settle(self, *, conversation_id, asked_by, group_id, body, author):
         operation = required_text(body.get("client_op_id"), "client_op_id")
         version = body.get("expect_version")
         if type(version) is not int or version < 0:
@@ -170,7 +177,7 @@ class AskGroups:
         parsed = {}
         all_ids = []
         canonical = {
-            "topic_id": str(topic_id),
+            "topic_id": str(conversation_id),
             "asked_by": asked_by,
             "group_id": group_id,
             "expect_version": version,
@@ -207,7 +214,7 @@ class AskGroups:
                 canonical, sort_keys=True, ensure_ascii=False, separators=(",", ":")
             ).encode()
         ).hexdigest()
-        rows = await self.read(topic_id, asked_by, group_id, lock=True)
+        rows = await self.read(conversation_id, asked_by, group_id, lock=True)
         if set(all_ids) != {str(row.id) for row in rows}:
             raise ValidationError(say("askGroupListsIncomplete"))
         first = rows[0].meta or {}
@@ -234,7 +241,7 @@ class AskGroups:
             staged.append(meta)
         event_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"ask-settle:{topic_id}:{asked_by}:{group_id}:{version + 1}",
+            f"ask-settle:{conversation_id}:{asked_by}:{group_id}:{version + 1}",
         )
         settlement = {
             "v": version + 1,

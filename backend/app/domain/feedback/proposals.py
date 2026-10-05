@@ -137,7 +137,7 @@ class ProposalService:
         stmt = (
             select(Block)
             .where(
-                Block.topic_id == topic_id,
+                Block.conversation_id == topic_id,
                 Block.created_at >= since,
                 Block.meta.is_not(None),
             )
@@ -213,7 +213,7 @@ class ProposalService:
         stmt = (
             select(Block)
             .where(
-                Block.topic_id == topic_id,
+                Block.conversation_id == topic_id,
                 Block.meta["feedback_proposal"].is_not(None),
             )
             .order_by(Block.created_at.desc())

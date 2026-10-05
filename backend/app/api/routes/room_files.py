@@ -192,7 +192,7 @@ async def copy_into_room(
     shown = await add_shown_block(
         db,
         project_id=place.project_id,
-        room_id=place.room_id,
+        conversation_id=place.room_id,
         path=target,
         author=actor.handle,
         mime=ARTIFACT_MIME[artifact_kind_for(target)],
@@ -255,7 +255,7 @@ async def new_from_template(
     shown = await add_shown_block(
         db,
         project_id=place.project_id,
-        room_id=place.room_id,
+        conversation_id=place.room_id,
         path=target,
         author=actor.handle,
         mime=ARTIFACT_MIME[artifact_kind_for(target)],
@@ -408,7 +408,7 @@ async def editor_saves_file(
         shown = await add_shown_block(
             db,
             project_id=place.project_id,
-            room_id=place.room_id,
+            conversation_id=place.room_id,
             path=aside,
             author=author,
             mime=ARTIFACT_MIME[artifact_kind_for(aside)],

@@ -8,8 +8,9 @@ the roster, the work computer and the files are its room's.
 
 import uuid
 
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import ColumnElement, Uuid, column, func, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from app.domain.conversation.models import Conversation, ConversationKind
 
@@ -39,3 +40,39 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
         select(_tasks.c.room_id).where(_tasks.c.id == conversation_id)
     )
     return room or conversation_id
+
+
+def of_room(
+    column, room_id: uuid.UUID | ColumnElement[uuid.UUID] | InstrumentedAttribute
+) -> ColumnElement[bool]:
+    """Rows of a room's conversations: the room's own and every task in it.
+
+    For a room-wide question (the room's machine, its spend, its sessions).
+    A question about one conversation compares ``column`` with its id.
+    ``room_id`` may be a column of the enclosing query (a correlated lookup)."""
+    return or_(
+        column == room_id,
+        column.in_(
+            select(_tasks.c.id)
+            .where(_tasks.c.room_id == room_id)
+            .correlate_except(_tasks)
+        ),
+    )
+
+
+def of_rooms(column, room_ids) -> ColumnElement[bool]:
+    """``of_room`` for several rooms at once."""
+    room_ids = list(room_ids)
+    return or_(
+        column.in_(room_ids),
+        column.in_(select(_tasks.c.id).where(_tasks.c.room_id.in_(room_ids))),
+    )
+
+
+def room_column(column) -> ColumnElement[uuid.UUID]:
+    """The room a conversation id in ``column`` is in, as SQL: itself for a
+    room, its room for a task. For grouping rows by room."""
+    return func.coalesce(
+        select(_tasks.c.room_id).where(_tasks.c.id == column).scalar_subquery(),
+        column,
+    )

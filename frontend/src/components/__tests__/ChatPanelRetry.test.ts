@@ -56,7 +56,7 @@ function block(over: Partial<Block>): Block {
   blockSeq += 1
   return {
     id: `b-${blockSeq}`,
-    topic_id: '',
+    conversation_id: '',
     kind: 'event',
     author_type: 'platform',
     author: 'system',
@@ -91,7 +91,7 @@ async function flush() {
 
 async function mountRoom(blocks: Block[]) {
   const topic = room()
-  listBlocks.mockResolvedValue({ data: blocks.map((b) => ({ ...b, topic_id: topic.id })), has_more: false })
+  listBlocks.mockResolvedValue({ data: blocks.map((b) => ({ ...b, conversation_id: topic.id })), has_more: false })
   const utils = render(ChatPanel, {
     props: { topic, topicList: [topic], showComposer: true },
     global: { plugins: [createVuetify({ components, directives }), i18n] },

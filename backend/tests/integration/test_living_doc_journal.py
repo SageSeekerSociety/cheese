@@ -237,7 +237,9 @@ async def test_rollback_leaves_no_document_nodes_event_history_or_claim(
             assert await session.scalar(select(func.count()).select_from(table)) == 0
         assert (
             await session.scalar(
-                select(func.count()).select_from(Block).where(Block.topic_id == room)
+                select(func.count())
+                .select_from(Block)
+                .where(Block.conversation_id == room)
             )
             == 0
         )
@@ -265,7 +267,7 @@ async def test_platform_brief_seed_has_raw_history_without_contribution_event(
         assert versions[0]["base_version"] == 0
         assert versions[0]["event_id"] is None
         blocks = list(
-            await session.scalars(select(Block).where(Block.topic_id == room))
+            await session.scalars(select(Block).where(Block.conversation_id == room))
         )
         assert not any((block.meta or {}).get("action") == "doc" for block in blocks)
 
@@ -356,7 +358,7 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
             == 1
         )
         blocks = list(
-            await session.scalars(select(Block).where(Block.topic_id == room))
+            await session.scalars(select(Block).where(Block.conversation_id == room))
         )
         assert sum((block.meta or {}).get("action") == "doc" for block in blocks) == 1
         doc = await TopicService(session).get_doc(room)

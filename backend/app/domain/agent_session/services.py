@@ -138,16 +138,14 @@ class AgentSessionService:
         (FB-56).
         """
         found = []
-        for row, project_id in await self._repo.placed_everywhere():
+        for row, project_id, room_id in await self._repo.placed_everywhere():
             place = row.place()
             if place is not None:
                 found.append(
                     (
                         project_id,
-                        row.topic_id,
-                        row.conversation_id
-                        if row.conversation_id != row.topic_id
-                        else None,
+                        room_id,
+                        row.conversation_id if row.conversation_id != room_id else None,
                         row.agent_handle,
                         row.harness,
                         row.resume_token,

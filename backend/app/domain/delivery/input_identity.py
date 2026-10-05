@@ -9,7 +9,7 @@ from typing import Literal
 @dataclass(frozen=True)
 class InputIdentity:
     project_id: uuid.UUID
-    topic_id: uuid.UUID
+    conversation_id: uuid.UUID
     recipient_handle: str
     harness: str
     native_session_id: str
@@ -27,7 +27,7 @@ class InputReceipt:
 @dataclass(frozen=True)
 class WorkCompletion:
     project_id: uuid.UUID
-    topic_id: uuid.UUID
+    conversation_id: uuid.UUID
     recipient_handle: str
     harness: str
     native_session_id: str
@@ -46,7 +46,7 @@ class WorkTermination:
     """
 
     project_id: uuid.UUID
-    topic_id: uuid.UUID
+    conversation_id: uuid.UUID
     recipient_handle: str
     harness: str
     native_session_id: str

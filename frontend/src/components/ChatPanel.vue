@@ -66,6 +66,11 @@ const props = withDefaults(
     unreadOnOpen?: number
     // 打开时停在这一条（搜索结果、链接里的 `?block=`）。null = 停在平常的位置。
     focusBlock?: string | null
+    // 读的是房间里的一个任务的对话，而不是房间自己的（见 useChatPanel 的 `place`）。
+    conversationId?: string | null
+    // 这里此刻不能说话，以及为什么（任务只有负责人能说话、任务已关闭）。输入框的
+    // 位置换成这一句，`composer-closed` 插槽接在它后面。
+    composerClosed?: string | null
   }>(),
   {
     alwaysSummon: false,
@@ -77,6 +82,8 @@ const props = withDefaults(
     titleOverride: null,
     backLabel: null,
     unreadOnOpen: 0,
+    conversationId: null,
+    composerClosed: null,
   }
 )
 
@@ -90,6 +97,7 @@ const emit = defineEmits<ChatPanelEmit>()
 // when it needs it. That is why every prop is handed over as an accessor.
 const panel = useChatPanel({
   topic: () => props.topic,
+  conversationId: () => props.conversationId,
   alwaysSummon: () => props.alwaysSummon,
   showComposer: () => props.showComposer,
   members: () => props.members,
@@ -350,7 +358,7 @@ defineExpose({ send, connected, submitQuestion })
           @edit="startEdit"
           @edit-send="editSend"
           @toggle-picker="togglePicker"
-          @open-file="(path, taskId) => emit('open-file', path, taskId)"
+          @open-file="(path) => emit('open-file', path)"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
           @open-resource="
@@ -404,7 +412,7 @@ defineExpose({ send, connected, submitQuestion })
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
 
-      <div v-if="showComposer && draftQuote" class="composer-quote">
+      <div v-if="showComposer && !composerClosed && draftQuote" class="composer-quote">
         <MessageQuote :quote="draftQuote" />
         <button type="button" class="composer-quote__remove" @click="clearDraftQuote">
           {{ t('slides.removeQuote') }}
@@ -413,11 +421,22 @@ defineExpose({ send, connected, submitQuestion })
       <!-- 提问接管输入框：两者是同一格里的二选一，不是浮层。有题要答就把
            composer 换下来（不用点），答完或没有题时它自己回来。Esc 收起后
            「有 N 个问题待回答」那一条让人重新把它叫回来，问题不会被永久藏掉。 -->
-      <button v-if="showComposer && askReturn > 0" type="button" class="composer-ask-return" @click="restoreAsk">
+      <button
+        v-if="showComposer && !composerClosed && askReturn > 0"
+        type="button"
+        class="composer-ask-return"
+        @click="restoreAsk"
+      >
         {{ t('ask.group.returnHint', { count: askReturn }) }}
       </button>
+      <div v-if="showComposer && composerClosed" class="composer-closed">
+        <div class="composer-closed__box t-body">
+          <span class="composer-closed__text">{{ composerClosed }}</span>
+          <slot name="composer-closed" />
+        </div>
+      </div>
       <AskGroupFlow
-        v-if="showComposer && askTakeover"
+        v-else-if="showComposer && askTakeover"
         :state="askTakeover"
         :viewer="askViewer"
         :names="refMaps.mentionNames"
@@ -460,6 +479,35 @@ defineExpose({ send, connected, submitQuestion })
 </template>
 
 <style scoped>
+/* 不能说话时，输入框的位置留着同样大小的一格，写着为什么：和输入框同一个圆角描边，
+   底色退一档，读得出这里平时是输入框。 */
+.composer-closed {
+  width: 100%;
+  max-width: var(--page-w-read);
+  margin-inline: auto;
+  padding: 8px 12px;
+}
+@media (max-width: 959.98px) {
+  .composer-closed {
+    max-width: var(--page-w);
+  }
+}
+.composer-closed__box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 46px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--fill);
+  color: var(--muted);
+}
+.composer-closed__text {
+  min-width: 0;
+}
 .composer-quote {
   margin: 0 16px 8px;
 }

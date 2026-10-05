@@ -29,6 +29,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.answer_submission import add_answer_wake, submit_answer
 from app.domain.block.ask_groups import AskGroups, parse_questions, required_text
+from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.ask_receipts import ask_receipt
 from app.domain.delivery.ask_wake import (
@@ -55,12 +56,12 @@ async def group_data(db, rows, *, operation=None):
             db,
             event_id=settlement["delivery_event_id"],
             project_id=first.project_id,
-            topic_id=first.topic_id,
+            topic_id=await room_of(db, first.conversation_id),
             recipient=first.meta["ask_origin"]["recipient_handle"],
         )
     return {
         "group": {
-            "topic_id": str(first.topic_id),
+            "topic_id": str(first.conversation_id),
             "asked_by": group["asked_by"],
             "id": group["id"],
             "members": group["members"],
@@ -102,9 +103,13 @@ async def create_ask_group(
     ):
         raise ForbiddenError(say("askNativeSessionOnly"))
     questions = parse_questions(body)
-    origin = await ask_origin(chat, place.project_id, place.room_id, actor.handle)
+    origin = await ask_origin(
+        chat, place.project_id, place.conversation_id, actor.handle
+    )
     if origin is None and await waited_for_takeover(runner):
-        origin = await ask_origin(chat, place.project_id, place.room_id, actor.handle)
+        origin = await ask_origin(
+            chat, place.project_id, place.conversation_id, actor.handle
+        )
     if origin is None:
         raise ForbiddenError(say("askOriginUnknown"))
     group_id = body.get("ask_group")
@@ -116,7 +121,7 @@ async def create_ask_group(
     asked = origin.get("asked")
     rows = await AskGroups(db).create(
         project_id=place.project_id,
-        topic_id=place.room_id,
+        conversation_id=place.conversation_id,
         asked_by=actor.handle,
         group_id=group_id,
         questions=questions,
@@ -136,7 +141,7 @@ async def create_ask_group(
     await db.commit()
     for block in data["blocks"]:
         await get_broker().publish(
-            str(place.room_id), {"type": "assistant_block", "block": block}
+            str(place.conversation_id), {"type": "assistant_block", "block": block}
         )
     return ok(data)
 
@@ -151,7 +156,7 @@ async def read_ask_group(
 ):
     place = await TopicService(db).place_or_404(topic_id)
     await authorize_group(resolver, place)
-    rows = await AskGroups(db).read(place.room_id, asked_by, group_id)
+    rows = await AskGroups(db).read(place.conversation_id, asked_by, group_id)
     return ok(await group_data(db, rows))
 
 
@@ -174,7 +179,7 @@ async def list_awaiting_ask_groups(
     place = await TopicService(db).place_or_404(topic_id)
     actor = await authorize_group(resolver, place)
     groups = await BlockRepository(db).groups_awaiting_an_answer(
-        place.room_id, actor.handle
+        place.conversation_id, actor.handle
     )
     return ok({"groups": groups})
 
@@ -222,7 +227,7 @@ async def settle_ask_group(
     place = await TopicService(db).place_or_404(topic_id)
     actor = await authorize_group(resolver, place)
     rows, settlement, replay = await AskGroups(db).settle(
-        topic_id=place.room_id,
+        conversation_id=place.conversation_id,
         asked_by=asked_by,
         group_id=group_id,
         body=body,
@@ -235,7 +240,8 @@ async def settle_ask_group(
     recipient = await record_ask_wake(
         db,
         project_id=place.project_id,
-        topic_id=place.room_id,
+        room_id=place.room_id,
+        conversation_id=place.conversation_id,
         origin=rows[0].meta["ask_origin"],
         event_id=event_id,
         content=text,
@@ -255,7 +261,7 @@ async def settle_ask_group(
         meta["agent_recipient"] = recipient
     wake = await BlockRepository(db).add(
         project_id=place.project_id,
-        topic_id=place.room_id,
+        conversation_id=place.conversation_id,
         author=actor.handle,
         author_type=AuthorType.participant,
         content=text,
@@ -283,10 +289,10 @@ async def settle_ask_group(
     await db.commit()
     for block in data["blocks"]:
         await get_broker().publish(
-            str(place.room_id), {"type": "block_updated", "block": block}
+            str(place.conversation_id), {"type": "block_updated", "block": block}
         )
     await get_broker().publish(
-        str(place.room_id), {"type": "block_added", "block": wake_out}
+        str(place.conversation_id), {"type": "block_added", "block": wake_out}
     )
     await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok(data)
@@ -322,10 +328,11 @@ async def submit_versioned_answer(
         raise NotFoundError(say("optionQuestionNotFound"))
 
     # Identity comes only from the credential; the body never names the caller.
-    actor = await resolver.resolve(topic_id=blk.topic_id, project_id=blk.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=blk.project_id, topic_id=blk.topic_id
+    actor = await resolver.resolve(
+        topic_id=blk.conversation_id, project_id=blk.project_id
     )
+    room_id = await room_of(db, blk.conversation_id)
+    await resolver.authorize_topic(actor, project_id=blk.project_id, topic_id=room_id)
     author = actor.handle
 
     answer = await submit_answer(db, block_id=block_id, author=author, body=body)
@@ -334,7 +341,7 @@ async def submit_versioned_answer(
     wake = await single_answer_wake(
         db,
         project_id=answer.project_id,
-        topic_id=answer.topic_id,
+        room_id=room_id,
         block_id=block_id,
         asked_by=answer.asked_by,
         entry=answer.entry,
@@ -342,14 +349,14 @@ async def submit_versioned_answer(
     answer_out = await add_answer_wake(
         db,
         project_id=answer.project_id,
-        topic_id=answer.topic_id,
+        conversation_id=answer.conversation_id,
         author=author,
         content=wake.content,
         meta=wake.meta,
     )
     await record_single_answer_wake(
         db,
-        topic_id=answer.topic_id,
+        conversation_id=answer.conversation_id,
         block_id=block_id,
         version=answer.entry["v"],
         wake=wake,
@@ -357,10 +364,10 @@ async def submit_versioned_answer(
     # Publish only committed state; failed publication is recoverable by GET.
     await db.commit()
     await get_broker().publish(
-        str(answer.topic_id), {"type": "block_updated", "block": answer.updated}
+        str(answer.conversation_id), {"type": "block_updated", "block": answer.updated}
     )
     await get_broker().publish(
-        str(blk.topic_id), {"type": "block_added", "block": answer_out}
+        str(answer.conversation_id), {"type": "block_added", "block": answer_out}
     )
     # Committed pending intent survives a crash before dispatch.
     await dispatch_pending(chat.session_factory, chat=chat, runner=runner)

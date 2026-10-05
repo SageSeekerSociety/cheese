@@ -78,7 +78,9 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                 async with factory() as session:
                     rows = list(
                         await session.scalars(
-                            select(NativeInput).where(NativeInput.topic_id == topic)
+                            select(NativeInput).where(
+                                NativeInput.conversation_id == topic
+                            )
                         )
                     )
                     if len(rows) == expected and all(row.completed_at for row in rows):
@@ -100,12 +102,14 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                 async with factory() as session:
                     deliveries = list(
                         await session.scalars(
-                            select(Delivery).where(Delivery.topic_id == topic)
+                            select(Delivery).where(Delivery.conversation_id == topic)
                         )
                     )
                     rows = list(
                         await session.scalars(
-                            select(NativeInput).where(NativeInput.topic_id == topic)
+                            select(NativeInput).where(
+                                NativeInput.conversation_id == topic
+                            )
                         )
                     )
                     await observe(deliveries, rows)
@@ -200,7 +204,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                         async with factory() as session:
                             delivery = await session.scalar(
                                 select(Delivery).where(
-                                    Delivery.topic_id == topic,
+                                    Delivery.conversation_id == topic,
                                     Delivery.payload["v"].as_integer() == 2,
                                 )
                             )
@@ -243,7 +247,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
             answers = list(
                 await session.scalars(
                     select(Block).where(
-                        Block.topic_id == topic,
+                        Block.conversation_id == topic,
                         Block.meta["answer_to"].as_string() == str(question),
                     )
                 )
@@ -252,7 +256,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
             deliveries = list(
                 await session.scalars(
                     select(Delivery).where(
-                        Delivery.topic_id == topic,
+                        Delivery.conversation_id == topic,
                     )
                 )
             )
@@ -261,7 +265,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
             rows = list(
                 await session.scalars(
                     select(NativeInput).where(
-                        NativeInput.topic_id == topic,
+                        NativeInput.conversation_id == topic,
                     )
                 )
             )

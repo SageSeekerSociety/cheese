@@ -33,7 +33,6 @@
   "taskStartedAlready": "这个任务已经开始了",
   "taskOwnerNotInRoom": "只能转交给这个房间里的成员",
   "taskNotStarted": "这个任务还没开始，负责人点「开始」后才能改动项目",
-  "messageNotInTask": "这条消息不在这个任务里",
   "commentDocFrozen": "话题已归档，不能再评论",
   "cursorEventNotFound": "游标事件不存在",
   "stepNotFound": "步骤不存在",

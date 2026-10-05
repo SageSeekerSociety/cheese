@@ -62,12 +62,14 @@ def _summary(client, pid: str, place_id: str):
 # --- 这一格该不该摆出来 ------------------------------------------------------
 
 
-def test_a_task_has_no_work_summary_of_its_own(client):
-    """这份摘要是房间的；拿任务的 id 去问不到。"""
+def test_a_task_has_a_work_summary_of_its_own(client):
+    """任务是一段自己的对话：拿任务的 id 问，答的是这件活，不是它所在的房间。"""
     pid, room = _room(client)
     task = _task(client, room)
 
-    assert _summary(client, pid, task).status_code == 404
+    r = _summary(client, pid, task)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["has_run"] is False
 
 
 def test_a_room_that_has_run_says_so(client):

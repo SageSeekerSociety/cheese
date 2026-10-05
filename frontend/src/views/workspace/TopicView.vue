@@ -18,6 +18,8 @@ import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
 import { useCommands } from '@/commands'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
+import TaskHeader from '@/components/task/TaskHeader.vue'
+import TaskOverview from '@/components/task/TaskOverview.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
@@ -25,14 +27,16 @@ import { agentNames, memberName } from '@/lib/agentNames'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { cachedTopicPanel, fetchTopicMembers } from '@/lib/topicPanelCache'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
-import { topicTitle } from '@/lib/topicState'
+import { taskTitle, topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
-import TaskPane from '@/views/workspace/TaskPane.vue'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
+import { useTaskPage } from '@/views/workspace/useTaskPage'
 
-// 话题视图: ONE topic header, then the chat | 工作面板 split. The input bar is
+// 话题视图: ONE topic header, then the chat | 工作面板 split. A task in the room
+// is drawn by the same view with the task's header, its own conversation in the
+// chat column and its own 总览 / 现场 / 改动 / 预览 in the panel. The input bar is
 // the chat column's own — it used to span both columns from here, which read as
 // addressing the whole topic while 99% of what it sent was a chat message only
 // the left column shows. Which topic is open is a route param, and ProjectShell
@@ -40,7 +44,7 @@ import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 // any child — can carry one topic's state into the next.
 defineOptions({ name: 'TopicView' })
 
-// `taskId`：地址指着这个房间里的一个任务时，画的是任务页（`TaskPane`）。
+// `taskId`：地址指着这个房间里的一个任务时，画的是任务页。
 const props = defineProps<{ projectId: string; topicId: string; taskId?: string }>()
 const { mdAndUp } = useDisplay()
 // 平板横放那一档（960–1180）：对话占满整宽，工作面板是从右边拉进来的浮层。
@@ -139,13 +143,49 @@ const AUTHOR = myHandle()
 // URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
 const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId))
 
+// ---- 任务页 ----
+// 页头、总览、能不能说话都读这一份；对话和面板的其余几格按任务的 id 自己读。
+const taskPage = useTaskPage({ taskId: () => props.taskId, roomMembers: () => roomMembers.value })
+watch(
+  () => props.taskId,
+  () => {
+    taskPage.reset()
+    void taskPage.load()
+  },
+  { immediate: true }
+)
+const {
+  task: currentTask,
+  loading: taskLoading,
+  loadError: taskLoadError,
+  isOwner: taskOwner,
+  isOpen: taskOpen,
+  people: taskPeople,
+  machine: taskMachine,
+  machineError: taskMachineError,
+  starting: taskStarting,
+  startError: taskStartError,
+  actionError: taskActionError,
+  comparing: taskComparing,
+  comparison: taskComparison,
+  compareError: taskCompareError,
+} = taskPage
+// 任务里只有负责人能说话，关了就谁都不能说了：输入框的位置换成这一句。
+const composerClosed = computed(() => {
+  const task = taskPage.task.value
+  if (!props.taskId || !task) return null
+  if (!taskPage.isOpen.value) return t('work.task.closedNotice')
+  return taskPage.isOwner.value ? null : t('work.task.ownerOnlyNotice', { name: store.agentName })
+})
+
 // 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
 // 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
 const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
 watch(
-  selectedTopic,
-  (topic) => {
-    if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
+  () => [selectedTopic.value, taskPage.task.value] as const,
+  ([topic, task]) => {
+    if (props.taskId && task) setDynamicTitle(taskTitle(task), 'workspace-topic')
+    else if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
     else clearDynamicTitle('workspace-topic')
   },
   { immediate: true }
@@ -284,7 +324,7 @@ const chatEvents = {
   'preview-shown': () => panelRef.value?.previewShown?.(),
 
   'mention-click': handleMentionClick,
-  'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
+  'open-file': (path: string) => panelRef.value?.openFile?.(path),
   'open-resource': handleOpenResource,
   'upgrade-message': handleUpgradeMessage,
   'open-topic': openTopic,
@@ -329,6 +369,7 @@ function handleTurnDone() {
   // 这一轮干完了 —— 现场那条时间线就是它留下的记录。
   working.value = false
   activityTick.value += 1
+  if (props.taskId) void taskPage.load(true)
   void store.refreshTopics()
   // 芝士's reply landed after our read cursor — the user is watching this
   // topic, so re-bump the cursor before refreshing badges (other topics that
@@ -349,6 +390,7 @@ function handleStateChanged(resource: string) {
   else if (resource === 'skills') chatColumn.value?.reloadSkills()
   // AI 队友提议了任务，或者有人创建、不用了一条：提议卡跟着变。
   else if (resource === 'task-proposals') chatColumn.value?.reloadProposals()
+  else if (resource === 'tasks' && props.taskId) void taskPage.load(true)
   else activityTick.value += 1 // doc / notify → reload
 }
 
@@ -426,6 +468,7 @@ async function loadMemberNames() {
   }
 }
 void loadMemberNames()
+
 // 名册抽屉里加了人、移了人，这份跟着重拉：刚请进来的队友在「现场」那一格也要叫得出名字。
 onUnmounted(
   onTopicRosterChange((topicId) => {
@@ -453,33 +496,38 @@ void openPlace()
       </div>
     </div>
 
-    <TaskPane
-      v-else-if="taskId"
-      :key="taskId"
-      :room="selectedTopic"
-      :task-id="taskId"
-      :members="store.members"
-      :room-members="roomMembers"
-      :member-names="memberNames"
-      :agent-name="store.agentName"
-      :agent-handle="store.agentHandle"
-      :topic-list="store.topics"
-      :focus-block="focusBlock"
-      :phone="!mdAndUp"
-      @open-room="backToRoom"
-      @open-topic="openTopic"
-      @mention-click="handleMentionClick"
-    />
-
     <template v-else>
       <!-- Screen-reader heading for the room. Text from `topicTitle`, the same
            source as the `workspace-topic` dynamic title the top bar reads. The
            room name is drawn as a span in TopicHeader (not a heading); the
            project shell adds its own h1 for the project. Hidden: the name is
            already on screen. -->
-      <h1 class="visually-hidden">{{ topicTitle(selectedTopic) }}</h1>
-      <!-- 一条话题头部，横跨对话和工作面板 -->
+      <h1 class="visually-hidden">
+        {{ taskId && currentTask ? taskTitle(currentTask) : topicTitle(selectedTopic) }}
+      </h1>
+      <!-- 一条话题头部，横跨对话和工作面板。任务页上是任务的那一条：同一个高度，
+           写着它在哪个房间、谁负责。 -->
+      <TaskHeader
+        v-if="taskId"
+        :room="selectedTopic"
+        :task="currentTask"
+        :member-names="memberNames"
+        :agent-name="store.agentName"
+        :people="taskPeople"
+        :machine="taskMachine"
+        :machine-error="taskMachineError"
+        :starting="taskStarting"
+        :start-error="taskStartError"
+        :action-error="taskActionError"
+        :connected="roomConnected"
+        :start="taskPage.start"
+        :close="taskPage.close"
+        :hand-over="taskPage.handOver"
+        :load-machine="taskPage.loadMachine"
+        @open-room="backToRoom"
+      />
       <TopicHeader
+        v-else
         :topic="selectedTopic"
         :members="store.members"
         :me="AUTHOR"
@@ -497,7 +545,16 @@ void openPlace()
          画。放在这里而不是首屏：见组件自己的说明。 -->
       <PushPermissionPrompt :working="working" />
 
-      <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
+      <div v-if="taskId && !currentTask" class="task-state flex-grow-1">
+        <v-progress-circular v-if="taskLoading" indeterminate color="primary" size="24" />
+        <span v-else class="t-body c-muted">{{ taskLoadError ?? t('work.task.notFound') }}</span>
+      </div>
+      <div
+        v-else
+        :key="taskId ?? 'room'"
+        class="panes d-flex flex-grow-1"
+        style="min-width: 0; min-height: 0; position: relative"
+      >
         <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。
            专注模式开关时这一栏像抽屉一样收起 / 拉开，而不是一下消失、面板一下跳宽：
            人要看得出面板是从哪儿长过来的。平板横放那一档里这一栏占满整宽，面板是浮在
@@ -514,7 +571,10 @@ void openPlace()
             :topic-list="store.topics"
             :unread-on-open="unreadOnOpen"
             :focus-block="focusBlock"
+            :task-id="taskId ?? null"
+            :composer-closed="composerClosed"
             v-on="chatEvents"
+            @open-room="backToRoom"
           />
         </Transition>
         <div
@@ -548,6 +608,8 @@ void openPlace()
             :members="store.members"
             :activity="activity"
             :topic="selectedTopic"
+            :task-id="taskId ?? null"
+            :task-read-only="!!taskId && (!taskOwner || !taskOpen)"
             :activity-tick="activityTick"
             :working="working"
             :agent-control="agentControl"
@@ -564,6 +626,24 @@ void openPlace()
             @update:tab="onPanelTab"
             @locate="onLocate"
           >
+            <template v-if="taskId && currentTask" #overview>
+              <TaskOverview
+                :room="selectedTopic"
+                :task="currentTask"
+                :member-names="memberNames"
+                :activity-tick="activityTick"
+                :topic-list="store.topics"
+                :agent-name="store.agentName"
+                :agent-handle="store.agentHandle"
+                :members="store.members"
+                :comparing="taskComparing"
+                :comparison="taskComparison"
+                :compare-error="taskCompareError"
+                @toggle-compare="taskPage.toggleCompare"
+                @open-topic="openTopic"
+                @mention-click="handleMentionClick"
+              />
+            </template>
             <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
             <template #chat>
               <TopicChatColumn
@@ -574,7 +654,10 @@ void openPlace()
                 :topic-list="store.topics"
                 :unread-on-open="unreadOnOpen"
                 :focus-block="focusBlock"
+                :task-id="taskId ?? null"
+                :composer-closed="composerClosed"
                 v-on="chatEvents"
+                @open-room="backToRoom"
               />
             </template>
           </WorkPanel>
@@ -596,6 +679,12 @@ void openPlace()
   background: var(--surface);
   /* Switching topics on a wide screen cross-fades this view only (lib/viewTransition.ts). */
   view-transition-name: topic-view;
+}
+.task-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
 }
 .col {
   min-width: 0;

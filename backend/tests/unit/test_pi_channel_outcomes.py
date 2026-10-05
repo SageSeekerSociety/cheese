@@ -126,7 +126,9 @@ async def test_an_offline_machine_and_another_channels_pointer_say_nothing(
 
         await session.execute(
             update(AgentSession)
-            .where(AgentSession.topic_id == topic, AgentSession.agent_handle == "kb")
+            .where(
+                AgentSession.conversation_id == topic, AgentSession.agent_handle == "kb"
+            )
             .values(
                 runtime_location={
                     "device_id": DEVICE,

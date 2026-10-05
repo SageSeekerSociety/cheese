@@ -8,6 +8,7 @@ Read-only. What changes a session's machine is ``session_work``.
 from sqlalchemy import select
 
 from app.domain.agent_session.models import AgentSession
+from app.domain.conversation.services import of_rooms, room_column
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.session_work import _agent_name, _visibility_of, presentation
@@ -27,10 +28,7 @@ async def session_machines(db, topic, task_id=None) -> list[dict]:
     devices = sql_device_service(db)
     rows = await db.scalars(
         select(AgentSession)
-        .where(
-            AgentSession.topic_id == topic.id,
-            AgentSession.conversation_id == (task_id or topic.id),
-        )
+        .where(AgentSession.conversation_id == (task_id or topic.id))
         .order_by(AgentSession.agent_handle, AgentSession.created_at)
     )
     out = []
@@ -67,7 +65,8 @@ async def _placed_sessions(db, project_id):
 
     rows = await db.execute(
         select(AgentSession, Topic)
-        .join(Topic, Topic.id == AgentSession.topic_id)
+        .select_from(AgentSession)
+        .join(Topic, Topic.id == room_column(AgentSession.conversation_id))
         .where(Topic.project_id == project_id, Topic.status != TopicStatus.archived)
     )
     placed = []
@@ -149,8 +148,10 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
     project = await ProjectService(db).get_or_404(project_id)
     busy = set(
         await db.scalars(
-            select(AgentTurn.topic_id).where(
-                AgentTurn.topic_id.in_({topic.id for _row, topic in placed}),
+            select(room_column(AgentTurn.conversation_id)).where(
+                of_rooms(
+                    AgentTurn.conversation_id, {topic.id for _row, topic in placed}
+                ),
                 AgentTurn.stopped_at.is_(None),
             )
         )

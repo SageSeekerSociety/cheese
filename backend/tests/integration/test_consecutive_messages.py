@@ -264,7 +264,8 @@ async def test_a_reply_sent_mid_turn_carries_the_message_it_answers(
     async with factory() as session:
         parent_id = await session.scalar(
             select(Block.id).where(
-                Block.topic_id == topic_id, Block.content.startswith("B 组第 7 行")
+                Block.conversation_id == topic_id,
+                Block.content.startswith("B 组第 7 行"),
             )
         )
 

@@ -5,24 +5,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import ColumnElement, and_, func, or_, select, update
+from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.domain.agent.models import AgentTurn
-from app.domain.room_task.models import Task
-
-#: The conversation a turn ran in: its task's, or the room's own line.
-TURN_CONVERSATION = func.coalesce(AgentTurn.task_id, AgentTurn.topic_id)
-
-
-def in_conversation(conversation_id: uuid.UUID) -> ColumnElement[bool]:
-    """Turns in this conversation: a task's, or a room's own line (no task)."""
-    return or_(
-        AgentTurn.task_id == conversation_id,
-        and_(AgentTurn.topic_id == conversation_id, AgentTurn.task_id.is_(None)),
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +58,7 @@ class AgentTurnRepository:
         self,
         *,
         turn_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         continuation_id: uuid.UUID,
         author: str,
         content: str,
@@ -85,14 +73,6 @@ class AgentTurnRepository:
         # `delivered_at` is for a turn that has no 投喂 phase to stamp later — it
         # is born delivered or it is born unclosable. Everything the platform
         # feeds leaves it None and stamps it when the transport accepts.
-        #
-        # `topic_id` names the conversation; the row keeps the room, with the
-        # task beside it when the conversation is a task's.
-        room_id = await self._session.scalar(
-            select(Task.room_id).where(Task.id == topic_id)
-        )
-        task_id = topic_id if room_id is not None else None
-        topic_id = room_id or topic_id
         if exists_ok:
             # A session's own work keeps its id across backend processes: the
             # row an earlier process opened for it is this row, and stays as
@@ -101,8 +81,7 @@ class AgentTurnRepository:
                 insert(AgentTurn)
                 .values(
                     id=turn_id,
-                    topic_id=topic_id,
-                    task_id=task_id,
+                    conversation_id=conversation_id,
                     continuation_id=continuation_id,
                     author=author,
                     content=content,
@@ -119,8 +98,7 @@ class AgentTurnRepository:
         self._session.add(
             AgentTurn(
                 id=turn_id,
-                topic_id=topic_id,
-                task_id=task_id,
+                conversation_id=conversation_id,
                 continuation_id=continuation_id,
                 author=author,
                 content=content,
@@ -212,13 +190,13 @@ class AgentTurnRepository:
         finds the interval that place names, so a credits refusal can be
         stamped on the turn it actually refused.
 
-        The room's OWN line, which is where every turn now runs; the rows a
-        thread left behind before work stopped being a place are excluded by
-        the same clause that used to select them.
+        Turns are matched by the conversation they ran in.
         """
         stmt = (
             select(AgentTurn.id)
-            .where(in_conversation(topic_id), AgentTurn.stopped_at.is_(None))
+            .where(
+                AgentTurn.conversation_id == topic_id, AgentTurn.stopped_at.is_(None)
+            )
             .order_by(AgentTurn.started_at.desc())
             .limit(1)
         )
@@ -241,7 +219,9 @@ class AgentTurnRepository:
         """
         stmt = (
             select(AgentTurn.author)
-            .where(in_conversation(topic_id), AgentTurn.stopped_at.is_(None))
+            .where(
+                AgentTurn.conversation_id == topic_id, AgentTurn.stopped_at.is_(None)
+            )
             .order_by(AgentTurn.started_at.desc())
             .limit(1)
         )
@@ -268,7 +248,7 @@ class AgentTurnRepository:
             select(AgentTurn.id)
             .where(
                 AgentTurn.id == turn_id,
-                TURN_CONVERSATION == topic_id,
+                AgentTurn.conversation_id == topic_id,
                 AgentTurn.stopped_at.is_not(None),
             )
             .exists()
@@ -317,7 +297,7 @@ class AgentTurnRepository:
         return list(
             await self._session.scalars(
                 select(AgentTurn.id).where(
-                    in_conversation(topic_id),
+                    AgentTurn.conversation_id == topic_id,
                     AgentTurn.id.in_(turn_ids),
                     AgentTurn.stopped_at.is_(None),
                 )
@@ -354,7 +334,7 @@ class AgentTurnRepository:
                 # The session's own conversation: a Stop is that session
                 # finishing, and another conversation's interval is not its
                 # to close.
-                in_conversation(topic_id),
+                AgentTurn.conversation_id == topic_id,
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )
@@ -373,24 +353,20 @@ class AgentTurnRepository:
             return {}
         rows = await self._session.execute(
             select(AgentTurn.id, AgentTurn.started_at).where(
-                in_conversation(topic_id), AgentTurn.id.in_(ids)
+                AgentTurn.conversation_id == topic_id, AgentTurn.id.in_(ids)
             )
         )
         return {turn_id: _aware(started) for turn_id, started in rows}
 
     async def open_on(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None
+        self, conversation_id: uuid.UUID
     ) -> list[tuple[str, float, str | None]]:
-        """The delivered turns still open on one line — the room's own
-        (``task_id`` None) or one thread's: ``(turn id, started at as epoch
-        seconds, agent seat)``. A turn not yet delivered has not reached its
-        session, so nobody is working on it yet."""
+        """The delivered turns still open in one conversation: ``(turn id,
+        started at as epoch seconds, agent seat)``. A turn not yet delivered
+        has not reached its session, so nobody is working on it yet."""
         rows = await self._session.execute(
             select(AgentTurn.id, AgentTurn.started_at, AgentTurn.agent_handle).where(
-                AgentTurn.topic_id == topic_id,
-                AgentTurn.task_id.is_(None)
-                if task_id is None
-                else AgentTurn.task_id == task_id,
+                AgentTurn.conversation_id == conversation_id,
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )
@@ -412,10 +388,10 @@ class AgentTurnRepository:
         return [
             TurnRecord(
                 turn_id=row.id,
-                # The PLACE this turn ran in — the thread when it had one. The
-                # sweep re-addresses work by this id, and re-addressing a
-                # thread's turn to its room would resume the wrong conversation.
-                topic_id=row.task_id or row.topic_id,
+                # The conversation this turn ran in. The sweep re-addresses work
+                # by this id, and re-addressing a task's turn to its room would
+                # resume the wrong conversation.
+                topic_id=row.conversation_id,
                 continuation_id=row.continuation_id,
                 author=row.author,
                 content=row.content,

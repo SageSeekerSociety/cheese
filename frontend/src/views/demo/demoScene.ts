@@ -364,7 +364,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         case 'say': {
           const block: Block = {
             id: e.id ?? id,
-            topic_id: 'demo',
+            conversation_id: 'demo',
             kind: 'message',
             author_type: 'participant',
             author: e.who,
@@ -402,7 +402,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
           const existing = chat.find((l) => l.id === e.id)
           const block: Block = {
             id: e.id,
-            topic_id: 'demo',
+            conversation_id: 'demo',
             kind: 'message',
             author_type: 'participant',
             author: e.who,
@@ -423,7 +423,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         case 'notice': {
           const block: Block = {
             id,
-            topic_id: 'demo',
+            conversation_id: 'demo',
             kind: 'event',
             author_type: 'participant',
             author: e.who ?? 'system',
@@ -466,7 +466,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         case 'act':
           site.push({
             id,
-            topic_id: 'demo',
+            conversation_id: 'demo',
             kind: 'event',
             author_type: 'participant',
             author: e.who,
@@ -484,7 +484,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         case 'note':
           site.push({
             id,
-            topic_id: 'demo',
+            conversation_id: 'demo',
             kind: 'event',
             author_type: 'participant',
             author: e.who,

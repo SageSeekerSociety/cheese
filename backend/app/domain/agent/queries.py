@@ -266,8 +266,7 @@ async def _bail_notice(
     landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
     block = await BlockRepository(session).add(
         project_id=landed.project_id,
-        topic_id=landed.topic_id,
-        task_id=landed.task_id,
+        conversation_id=landed.conversation_id,
         author="system",
         author_type=AuthorType.platform,
         content=text,

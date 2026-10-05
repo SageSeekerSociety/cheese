@@ -91,7 +91,8 @@ def _room_events(client, tid: str) -> list[Block]:
         async with client.test_factory() as session:
             rows = await session.scalars(
                 select(Block).where(
-                    Block.topic_id == uuid.UUID(tid), Block.kind == BlockKind.event
+                    Block.conversation_id == uuid.UUID(tid),
+                    Block.kind == BlockKind.event,
                 )
             )
             return list(rows)

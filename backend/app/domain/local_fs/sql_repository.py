@@ -56,8 +56,7 @@ def _to_record(row: LocalFsAccessRow) -> AccessRecord:
         detail=row.detail,
         actor_handle=row.actor_handle,
         project_id=row.project_id,
-        topic_id=row.topic_id,
-        task_id=row.task_id,
+        conversation_id=row.conversation_id,
         created_at=row.created_at,
     )
 
@@ -146,8 +145,7 @@ class SqlLocalFsRepository(LocalFsRepository):
                 detail=record.detail,
                 actor_handle=record.actor_handle,
                 project_id=record.project_id,
-                topic_id=record.topic_id,
-                task_id=record.task_id,
+                conversation_id=record.conversation_id,
                 created_at=record.created_at,
             )
         )

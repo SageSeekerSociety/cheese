@@ -158,7 +158,7 @@ def legacy_question(
                 session_id = native_session_id or "fixture-native-session"
                 await turns.open(
                     turn_id=work,
-                    topic_id=uuid.UUID(str(topic)),
+                    conversation_id=uuid.UUID(str(topic)),
                     continuation_id=work,
                     # The person who asked is the turn's author, which is what
                     # makes ``asked`` below a read of the row and not a guess.
@@ -184,12 +184,10 @@ def legacy_question(
                 "recipient_handle": seat,
                 "asked_by": author,
                 "asked": asked,
-                "task_id": str(opened.task_id) if opened.task_id else None,
             }
             block = await BlockRepository(session).add(
                 project_id=uuid.UUID(str(project)),
-                topic_id=uuid.UUID(str(topic)),
-                task_id=opened.task_id,
+                conversation_id=uuid.UUID(str(topic)),
                 author=author,
                 author_type=AuthorType.participant,
                 content=question,

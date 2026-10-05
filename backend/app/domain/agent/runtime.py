@@ -1066,7 +1066,7 @@ class AgentWorkRunner:
         await _open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             continuation_id=turn_id,
             author=author,
             content="",
@@ -2290,7 +2290,7 @@ class AgentWorkRunner:
         await _open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             continuation_id=continuation_id,
             author=author,
             content=content,

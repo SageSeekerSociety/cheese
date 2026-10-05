@@ -41,6 +41,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent.compute_configs import ComputeChoice
+from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -249,7 +250,7 @@ class HostPool:
         agent_session = await self._session.get(AgentSession, session_id)
         if agent_session is None:
             raise NotFoundError("agent session not found")
-        topic_id = agent_session.topic_id
+        topic_id = await room_of(self._session, agent_session.conversation_id)
         topic = await self._lock_room(topic_id)
         await self.require_use_authority(topic.project_id, actor)
 

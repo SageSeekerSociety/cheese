@@ -48,9 +48,9 @@ def _reject(client, card_id: str, reviewer: str = "alice", note: str = ""):
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/topics/{delivery_task_id(client, topic_id)}/task").json()[
+    return client.get(f"/topics/{delivery_task_id(client, topic_id)}/blocks").json()[
         "data"
-    ]["blocks"]
+    ]["data"]
 
 
 def _instruction(client, card_id):
@@ -63,11 +63,11 @@ def _instruction(client, card_id):
         async with client.test_factory() as session:
             card = await session.get(AcceptCard, uuid.UUID(card_id))
             row = await session.scalar(
-                select(Delivery).where(Delivery.task_id == card.task_id)
+                select(Delivery).where(Delivery.conversation_id == card.task_id)
             )
             # Addressed to the agent working the task, in the task's conversation.
             assert row.agent_instance_id is not None
-            assert row.topic_id == card.task_id
+            assert row.conversation_id == card.task_id
             return row.payload["content"]
 
     return asyncio.run(read())

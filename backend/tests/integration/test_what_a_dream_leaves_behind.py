@@ -104,7 +104,7 @@ async def _dream_and_listen(client, tmp_path) -> tuple[dict, list[str]]:
             )
         await UsageRepository(session).add(
             project_id=project.id,
-            topic_id=None,
+            conversation_id=None,
             model="m",
             input_tokens=0,
             output_tokens=10,
@@ -121,7 +121,8 @@ async def _dream_and_listen(client, tmp_path) -> tuple[dict, list[str]]:
         events = (
             await session.scalars(
                 select(Block).where(
-                    Block.topic_id == root_topic_id, Block.kind == BlockKind.event
+                    Block.conversation_id == root_topic_id,
+                    Block.kind == BlockKind.event,
                 )
             )
         ).all()

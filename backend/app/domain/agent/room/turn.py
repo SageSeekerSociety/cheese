@@ -522,7 +522,7 @@ class RoomTurns:
             #
             # This conversation's OWN line: a room's history leaves out its
             # tasks' conversations, and a task's is only its own.
-            history = await blocks.turn_history(place.room_id, place.task_id)
+            history = await blocks.turn_history(place.conversation_id)
             phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_input_blocks(history)
             # Kept apart from `pending` on purpose: that list answers
@@ -749,13 +749,13 @@ class RoomTurns:
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.
             progress_row = await TopicProgressRepository(session).get(
-                place.room_id, task_id=place.task_id
+                place.conversation_id
             )
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
             earlier_messages = await blocks.count_messages(
-                place.room_id, excluding=prompt_pending_ids, task_id=place.task_id
+                place.conversation_id, excluding=prompt_pending_ids
             )
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000

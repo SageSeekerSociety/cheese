@@ -39,9 +39,11 @@ async def _wake(factory, initial, origin, group_id, version):
     """Use the real settlement/wake producers; reserve its dispatcher attempt."""
     async with factory() as session:
         groups = AskGroups(session)
-        rows = await groups.read(initial.topic_id, initial.recipient_handle, group_id)
+        rows = await groups.read(
+            initial.conversation_id, initial.recipient_handle, group_id
+        )
         rows, settlement, replay = await groups.settle(
-            topic_id=initial.topic_id,
+            conversation_id=initial.conversation_id,
             asked_by=initial.recipient_handle,
             group_id=group_id,
             author="user-1",
@@ -66,7 +68,8 @@ async def _wake(factory, initial, origin, group_id, version):
         recipient = await record_ask_wake(
             session,
             project_id=initial.project_id,
-            topic_id=initial.topic_id,
+            room_id=initial.conversation_id,
+            conversation_id=initial.conversation_id,
             origin=origin,
             event_id=event_id,
             content=f"Answer version {version}",
@@ -80,7 +83,7 @@ async def _wake(factory, initial, origin, group_id, version):
         assert recipient is not None
         wake = await BlockRepository(session).add(
             project_id=initial.project_id,
-            topic_id=initial.topic_id,
+            conversation_id=initial.conversation_id,
             author="user-1",
             author_type=AuthorType.participant,
             content=f"Answer version {version}",
@@ -148,13 +151,12 @@ def test_question_sharing_refuses_unproven_or_conflicting_batches(client, bounda
             "recipient_handle": seat,
             "asked_by": seat,
             "asked": "user-1",
-            "task_id": None,
         }
         group_id = str(uuid.uuid4())
         async with factory() as session:
             await AskGroups(session).create(
                 project_id=project,
-                topic_id=topic,
+                conversation_id=topic,
                 asked_by=seat,
                 group_id=group_id,
                 questions=parse_questions(
@@ -191,7 +193,7 @@ def test_question_sharing_refuses_unproven_or_conflicting_batches(client, bounda
                 await complete_work_inputs(
                     session,
                     project_id=project,
-                    topic_id=topic,
+                    conversation_id=topic,
                     recipient_handle=seat,
                     harness=initial.harness,
                     native_session_id=initial.native_session_id,
@@ -231,7 +233,7 @@ def test_question_sharing_refuses_unproven_or_conflicting_batches(client, bounda
                 await complete_work_inputs(
                     session,
                     project_id=project,
-                    topic_id=topic,
+                    conversation_id=topic,
                     recipient_handle=seat,
                     harness=initial.harness,
                     native_session_id=initial.native_session_id,
@@ -262,7 +264,7 @@ def test_question_sharing_refuses_unproven_or_conflicting_batches(client, bounda
             async with factory() as session:
                 inputs = list(
                     await session.scalars(
-                        select(NativeInput).where(NativeInput.topic_id == topic)
+                        select(NativeInput).where(NativeInput.conversation_id == topic)
                     )
                 )
                 assert {row.input_id for row in inputs} == {

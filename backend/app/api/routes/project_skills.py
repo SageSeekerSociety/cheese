@@ -219,7 +219,7 @@ async def create_skill(
             Block(
                 id=uuid.uuid4(),
                 project_id=place.project_id,
-                topic_id=place.room_id,
+                conversation_id=place.room_id,
                 author="system",
                 author_type=AuthorType.platform,
                 kind=BlockKind.event,

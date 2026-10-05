@@ -296,7 +296,7 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         turn = AgentTurn(
             id=uuid.uuid4(),
             continuation_id=uuid.uuid4(),
-            topic_id=topic_id,
+            conversation_id=topic_id,
             author=actor_handle,
             started_at=datetime.now(UTC),
         )

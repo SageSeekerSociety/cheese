@@ -26,8 +26,7 @@ class BlockOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    topic_id: uuid.UUID
-    task_id: uuid.UUID | None = None
+    conversation_id: uuid.UUID
     kind: BlockKind
     author_type: AuthorType
     author: str

@@ -200,11 +200,10 @@ async def show_in_room(
     block = await add_shown_block(
         db,
         project_id=place.project_id,
-        room_id=place.room_id,
+        conversation_id=place.conversation_id,
         path=path,
         author=author,
         mime=mime,
-        task_id=place.task_id,
     )
     payload = block.model_dump(mode="json")
     await get_broker().publish(
@@ -225,9 +224,7 @@ async def list_shown(
     部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    shown = await BlockRepository(db).shown_in_room(
-        place.room_id, task_id=place.task_id
-    )
+    shown = await BlockRepository(db).shown_in_room(place.conversation_id)
     items = [
         {
             "path": block.content,

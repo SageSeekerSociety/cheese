@@ -1,31 +1,17 @@
 // 任务：一个人负责、和 AI 队友在自己的对话里做成的一件事，挂在它所在的房间下。
 // 任务就是一段对话，地址用它自己的 id（`/topics/{task}/…`）；谁能看任务，由谁能进它
 // 所在的房间决定。列出、新建任务和 AI 的提议挂在房间下。
-import type { Block, RoomTask } from '../cx_types'
+import type { RoomTask } from '../cx_types'
 
 import { request } from './http'
-
-type TaskWithBlocks = RoomTask & { blocks: Block[] }
 
 function taskPath(taskId: string): string {
   return `/topics/${encodeURIComponent(taskId)}`
 }
 
-/** 一个任务，连着它自己的对话。`limit` 只截对话，任务本身照常整份回来。 */
-export function getTask(taskId: string, opts?: { limit?: number; through?: string }): Promise<TaskWithBlocks> {
-  const q = new URLSearchParams()
-  if (opts?.limit != null) q.set('limit', String(opts.limit))
-  if (opts?.through) q.set('through', opts.through)
-  const query = q.toString() ? `?${q.toString()}` : ''
-  return request<TaskWithBlocks>(`${taskPath(taskId)}/task${query}`)
-}
-
-/** 负责人在任务里说话，直接送到做这个任务的 AI 队友。别人说话后端会拒绝。 */
-export function sayInTask(taskId: string, content: string, requestId?: string): Promise<Block> {
-  return request<Block>(`${taskPath(taskId)}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ content, request_id: requestId ?? crypto.randomUUID() }),
-  })
+/** 一个任务。它的对话和房间的一样读（`/topics/{task}/blocks`）。 */
+export function getTask(taskId: string): Promise<RoomTask> {
+  return request<RoomTask>(`${taskPath(taskId)}/task`)
 }
 
 /** 新建任务：创建的人就是负责人。 */

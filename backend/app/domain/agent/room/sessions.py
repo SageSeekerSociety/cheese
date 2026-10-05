@@ -334,21 +334,21 @@ class RoomSessions:
     async def _hear_receipt(self, receipt: InputReceipt) -> None:
         identity = receipt.identity
         await self._hear(
-            self._room(identity.project_id, identity.topic_id),
+            self._room(identity.project_id, identity.conversation_id),
             Read(str(identity.work_id), Received(receipt)),
             required=True,
         )
 
     async def _hear_completion(self, completion: WorkCompletion) -> None:
         await self._hear(
-            self._room(completion.project_id, completion.topic_id),
+            self._room(completion.project_id, completion.conversation_id),
             Read(str(completion.work_id), Completed(completion)),
             required=True,
         )
 
     async def _hear_termination(self, termination: WorkTermination) -> None:
         await self._hear(
-            self._room(termination.project_id, termination.topic_id),
+            self._room(termination.project_id, termination.conversation_id),
             Read(str(termination.work_id), Terminated(termination)),
             required=True,
         )

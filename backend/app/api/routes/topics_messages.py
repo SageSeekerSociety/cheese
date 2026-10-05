@@ -190,11 +190,7 @@ async def _publish_as_agent(
         raise ValidationError("content must not be blank")
     if body.reply_to is not None:
         parent = await BlockRepository(db).get(body.reply_to)
-        if (
-            parent is None
-            or parent.topic_id != place.room_id
-            or parent.task_id != place.task_id
-        ):
+        if parent is None or parent.conversation_id != place.conversation_id:
             raise ValidationError("reply_to must belong to this conversation")
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     # The input request can finish while its terminal session is still working.

@@ -43,6 +43,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
 
+# The registry `conversation_id` points at: mapped wherever this is, so the
+# foreign key resolves in a process that never imports `app.models`.
+from app.domain.conversation.models import Conversation  # noqa: F401
+
 
 class AgentTurn(Base):
     __tablename__ = "agent_turns"
@@ -59,13 +63,9 @@ class AgentTurn(Base):
 
     # The runtime's turn id, not one minted here — blocks already carry it.
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    # The room this turn ran in — always a room, never a piece of work.
-    topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
-    )
-    # Which thread in it, NULL when the turn ran on the room's own main line.
-    task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    # The conversation this turn ran in: a room or a task.
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
     # Which attempt-chain this turn belongs to. A resumed turn keeps the id of
     # the first attempt, so every key its predecessor claimed still matches and

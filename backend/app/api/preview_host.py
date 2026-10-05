@@ -369,7 +369,7 @@ class PreviewHostMiddleware:
             artifact = None
             if target is None and resource is None:
                 artifact = await BlockRepository(session).latest_artifact(
-                    place.room_id, task_id=place.task_id
+                    place.conversation_id
                 )
                 if artifact is None:
                     return Response("Preview unavailable", status_code=404)
@@ -473,7 +473,7 @@ class PreviewHostMiddleware:
                     seat = resource["seat"]
                 else:
                     artifact = await BlockRepository(session).latest_artifact(
-                        place.room_id, task_id=place.task_id
+                        place.conversation_id
                     )
                     if artifact is None or artifact.mime_type != APP_MIME:
                         raise NotFoundError("Preview unavailable")

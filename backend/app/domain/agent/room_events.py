@@ -154,7 +154,7 @@ async def _persist_room_event(
     )
     async with sessions() as session:
         blocks = BlockRepository(session)
-        if eid and await blocks.has_eid(topic_id, eid):
+        if eid and await blocks.has_eid(task_id or topic_id, eid):
             return None
         # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
         # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
@@ -167,8 +167,7 @@ async def _persist_room_event(
         )
         block = await blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=(
                 author
                 or (state.acting_agent if state is not None else None)

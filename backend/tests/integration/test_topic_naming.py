@@ -116,7 +116,7 @@ def _say(client, room_id: str, text: str, *, author: str = "alice") -> None:
             s.add(
                 Block(
                     project_id=room.project_id,
-                    topic_id=room.id,
+                    conversation_id=room.id,
                     kind=BlockKind.message,
                     author_type=AuthorType.participant,
                     author=author,
@@ -165,7 +165,7 @@ def _events(client, room_id: str) -> list[Block]:
         async with client.test_factory() as s:
             rows = await s.scalars(
                 select(Block).where(
-                    Block.topic_id == uuid.UUID(room_id),
+                    Block.conversation_id == uuid.UUID(room_id),
                     Block.kind == BlockKind.event,
                 )
             )

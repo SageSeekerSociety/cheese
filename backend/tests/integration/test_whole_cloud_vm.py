@@ -219,7 +219,7 @@ def _room_lines(case, seat) -> list[str]:
             rows = await db.scalars(
                 select(Block.content)
                 .where(
-                    Block.topic_id == seat.room,
+                    Block.conversation_id == seat.room,
                     Block.kind == BlockKind.event,
                     Block.meta["event_type"]
                     .as_string()
@@ -584,7 +584,7 @@ def test_a_vm_is_kept_while_its_session_or_room_is_at_work(cloud):
             db.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=seat.room,
+                    conversation_id=seat.room,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     started_at=datetime.now(UTC) - timedelta(hours=1),
