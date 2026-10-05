@@ -31,7 +31,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.errors import ConflictError
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.machine import session_work
+from app.domain.machine import lease_claim, session_work
 from app.domain.machine.models import CloudHost, CloudHostHome
 from app.domain.machine.progress import publish_line, tell_vm_released
 from app.domain.machine.services import HostPool
@@ -101,7 +101,7 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     lease = row.work_lease if row is not None else None
     if lease is not None and lease.get("device_id") != home.device_id:
         lease = None
-    if lease is not None and session_work.still_preparing(lease):
+    if lease is not None and lease_claim.still_preparing(lease):
         await db.commit()
         return False
     if lease is not None and lease.get("state"):
