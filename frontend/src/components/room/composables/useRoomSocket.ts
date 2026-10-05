@@ -26,8 +26,9 @@ export function useRoomSocket(options: {
   url?: (topicId: string) => string
   /** 收到一帧（`pong` 已经在这里吃掉了）。 */
   onFrame: (frame: WsServerFrame) => void
-  /** 刚连上：链路又通了，断线期间没送出去的消息可以再走一次。 */
-  onOpen: () => void
+  /** 刚连上：链路又通了，断线期间没送出去的消息可以再走一次。`reconnect` 为真表示这
+   * 是同一间房断了又连回来的重连，而不是进这间房的第一次连接。 */
+  onOpen: (reconnect: boolean) => void
   /** 重连：重新拉一遍历史再开一条新的——断线期间漏掉的消息要补回来。 */
   reconnect: (topicId: string) => void
   /** 房间那条错误横幅。连上要清掉它，断了要在上面写原因。 */
@@ -43,6 +44,9 @@ export function useRoomSocket(options: {
   let socket: WebSocket | null = null
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let retryDelayMs = 1000
+  // 上一次成功连上的是哪一间房：把「重连」和「进这间房的第一次连接」分开。切到别的
+  // 话题就把这里换成新的话题，所以回到旧话题仍算第一次连接（那一刻该重新载入）。
+  let openedTopic: string | null = null
 
   function cancelRetry() {
     if (retryTimer) {
@@ -71,6 +75,42 @@ export function useRoomSocket(options: {
   // the green dot flickering and the reason blinking with it, forever. So we latch
   // it: stop retrying and keep the reason on screen until they act.
   const connectRefused = ref(false)
+
+  // A drop the first reconnect heals is not news. A release reloads the app
+  // router, and a reload cuts every room socket once its old workers retire —
+  // several drops per release, each healed about a second later. Announced
+  // on every one of them, a room that never stopped working read as 断联
+  // several times an hour. So the banner waits until the link has been down
+  // this long without coming back: past the 1 s retry, the history refetch and
+  // the handshake over a slow path, short of a wait anyone would sit through
+  // without wanting to be told.
+  const OUTAGE_ANNOUNCE_MS = 8_000
+  let downSince: number | null = null
+  let announceTimer: ReturnType<typeof setTimeout> | null = null
+
+  function announceOutage() {
+    if (!connectRefused.value) options.errorMsg.value = t('work.room.socket.reconnecting')
+  }
+
+  function noteLinkDown() {
+    if (downSince === null) {
+      downSince = Date.now()
+      announceTimer = setTimeout(() => {
+        announceTimer = null
+        if (!connected.value) announceOutage()
+      }, OUTAGE_ANNOUNCE_MS)
+    } else if (Date.now() - downSince >= OUTAGE_ANNOUNCE_MS) {
+      // Already announced once and since wiped by a retry's history refetch
+      // (loadTopic clears the banner): still down, so say so again at once.
+      announceOutage()
+    }
+  }
+
+  function noteLinkUp() {
+    downSince = null
+    if (announceTimer) clearTimeout(announceTimer)
+    announceTimer = null
+  }
 
   function scheduleReconnect(topicId: string) {
     if (retryTimer || connectRefused.value) return
@@ -157,10 +197,13 @@ export function useRoomSocket(options: {
 
     ws.onopen = () => {
       connected.value = true
+      noteLinkUp()
       retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
       options.errorMsg.value = null
       startHeartbeat(ws)
-      options.onOpen()
+      const reconnect = openedTopic === topicId
+      openedTopic = topicId
+      options.onOpen(reconnect)
     }
     ws.onclose = () => {
       if (socket === ws) {
@@ -170,8 +213,9 @@ export function useRoomSocket(options: {
       }
     }
     ws.onerror = () => {
-      // The close handler owns retry; the banner just explains the grey dot.
-      if (!connectRefused.value) options.errorMsg.value = t('work.room.socket.reconnecting')
+      // The close handler owns retry; the banner explains the grey dot once the
+      // drop has lasted long enough to be one (see OUTAGE_ANNOUNCE_MS).
+      noteLinkDown()
     }
     ws.onmessage = (ev: MessageEvent) => {
       // Guard against frames from a stale socket after topic switch.
@@ -207,7 +251,10 @@ export function useRoomSocket(options: {
     options.reconnect(topicId)
   }
   useEventListener(window, 'online', reconnectOnOnline)
-  onScopeDispose(closeSocket)
+  onScopeDispose(() => {
+    closeSocket()
+    noteLinkUp()
+  })
 
   return {
     connected,

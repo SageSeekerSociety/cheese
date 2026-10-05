@@ -14,7 +14,7 @@
 ``test_a_private_chats_two_seats_live_in_the_roster.py`` 从门面那条路径覆盖。这里补的
 是搬出来之后新出现的两样东西：模块边界，和原先没有直接单测的那几件——``<#id>``
 引用 token 的解析、``person_mentions`` 那个 ``dm`` 参数（`_is_dm` 仍钉在
-chat.py，那个布尔不该在第二个模块里出现）。
+`room/turn.py`，那个布尔不该在第二个模块里出现）。
 """
 
 import ast
@@ -146,7 +146,7 @@ def test_the_same_handle_twice_resolves_once():
 def test_person_mentions_takes_the_private_room_answer_as_a_keyword():
     """``dm`` 必填且 keyword-only：这一块不去读 `is_private`。
 
-    `is_private` 全仓只有 chat.py 的 `_is_dm` 一个读点，而且那道棘轮连形参与关键
+    `is_private` 全仓只有 `room/turn.py` 的 `_is_dm` 一个读点，而且那道棘轮连形参与关键
     字实参都数（`test_is_private_read_points.py`）——参数按名字递进来，那个布尔就
     不会在这里多出一个出处。"""
     signature = inspect.signature(mentions.person_mentions)

@@ -1,5 +1,6 @@
 <template>
   <v-navigation-drawer
+    :id="SIDEBAR_DRAWER_ID"
     v-model="drawerModel"
     :permanent="permanent"
     :temporary="temporary"
@@ -20,6 +21,8 @@ import { computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { storeToRefs } from 'pinia'
 
+import { useEscapeLayer } from '@/composables/useEscapeStack'
+import { focusSidebarToggle, SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 import { useSidebarWidth } from '@/composables/useSidebarWidth'
 
 import { t } from '@/i18n'
@@ -53,6 +56,15 @@ const { closeSecondaryDrawer } = navigationStore
 // 计算是否为桌面端模式
 const isDesktop = computed(() => mdAndUp.value && !props.forceMobile)
 
+// 桌面窄档（960–1180）：这一栏是一只可收起的浮层，rail 顶上那颗开关管它。宽档里它
+// 常驻，手机上是另一套（`isSecondaryDrawerOpen`）。
+const {
+  compact: compactSidebar,
+  open: sidebarOpen,
+  setExpanded: setSidebarExpanded,
+  close: closeSidebar,
+} = useSidebarCollapse()
+
 const { width, setWidth } = useSidebarWidth()
 
 // 拖右边缘：宽度 = 指针到抽屉左边缘的距离。抽屉左边还有一级导航那一条，所以不能
@@ -73,21 +85,44 @@ function startResize(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-// 计算是否使用 permanent 模式
-const permanent = computed(() => isDesktop.value)
+// 计算是否使用 permanent 模式：只有宽档的桌面侧栏才常驻。
+const permanent = computed(() => isDesktop.value && !compactSidebar.value)
 
 // 计算是否使用 temporary 模式
-const temporary = computed(() => !isDesktop.value)
+const temporary = computed(() => !permanent.value)
 
 // 双向绑定的抽屉模型
 const drawerModel = computed({
-  get: () => (isDesktop.value ? true : isSecondaryDrawerOpen.value),
+  get: () => {
+    if (permanent.value) return true
+    if (isDesktop.value) return sidebarOpen.value
+    return isSecondaryDrawerOpen.value
+  },
   set: (value: boolean) => {
-    if (!isDesktop.value) {
-      navigationStore.setSecondaryDrawerOpen(value)
-    }
+    if (permanent.value) return
+    // 抽屉自己也会改这个 model —— 点遮罩、换路由，都从这儿走。这些是「这一次」的
+    // 收起，不是人的选择，所以不写进 localStorage：记住的只该是 rail 上那颗开关
+    // 按下的那一下（`toggle()` 才 persist）。
+    if (isDesktop.value) setSidebarExpanded(value, false)
+    else navigationStore.setSecondaryDrawerOpen(value)
   },
 })
+
+// 窄档里这一栏是一只可收起的浮层：它开着的时候，按 Esc 关掉它、焦点回到 rail 上打开
+// 它的那颗开关。Vuetify 的抽屉自己不管键盘，而「按 Esc 关掉浮层」这条对键盘和读屏
+// 用户是必须的（宽档常驻、手机上另一套，都不在这里处理）。
+//
+// Esc 走全局的栈（`useEscapeStack`），不是这里自己一颗 window 监听：这一档里话题的
+// 工作面板浮层也可能同时开着，一下 Esc 只该打发最上面那层——各关各的会把两层一起收，
+// 人分不清刚才关掉的是哪一层。栈顶是谁，由打开顺序定。
+function dismissSidebarOverlay() {
+  closeSidebar()
+  focusSidebarToggle()
+}
+useEscapeLayer(
+  computed(() => isDesktop.value && compactSidebar.value && sidebarOpen.value),
+  dismissSidebarOverlay
+)
 
 // 计算抽屉的 CSS 类
 const drawerClass = computed(() => {
@@ -110,6 +145,10 @@ watch(
   () => {
     if (!isDesktop.value) {
       closeSecondaryDrawer()
+    } else if (compactSidebar.value && sidebarOpen.value) {
+      // 平板横放：从浮层里点进一个房间（或别的层）就把它收起来。收起的是这一次，不是
+      // 人的选择——`closeSidebar` 不写 localStorage，别把这一下记成「我平时要它收着」。
+      closeSidebar()
     }
   }
 )

@@ -74,4 +74,20 @@ test.describe('Topics and chat', () => {
       expect(delivered!.y, `"${message}" moved when it was delivered`).toBeCloseTo(pending!.y, 0);
     }
   });
+
+  // 进房间首屏就该是一屏历史，而不是一条飘在半空的消息。最新那一段几乎全是
+  // `in_room:false` 的回合事件：只读一页（PAGE_SIZE=50 块）常常一行都画不出来，铺满之前
+  // 就把骨架撤掉，看见的就是一两条、下面一大片空白，往上也翻不动——这一窗没长高，就没有
+  // 下一次滚动事件。还欠着更早的历史（那条 loader 在）时，这一窗必须已经高过一屏、滚得动。
+  test('entering a topic first paints a screenful of history', async ({ page }) => {
+    const rows = await openFirstProject(page);
+    await rows.first().click();
+    const pane = page.getByTestId('chat-scroll');
+    await expect(pane).toBeVisible();
+    // 还有更早的历史才会画那条 loader；它在就说明这一窗不是全部。
+    if (await page.getByTestId('chat-older-loader').count()) {
+      const { sh, ch } = await pane.evaluate((el) => ({ sh: el.scrollHeight, ch: el.clientHeight }));
+      expect(sh, '还有更早的历史时，首屏这一窗该已经铺满一屏').toBeGreaterThan(ch);
+    }
+  });
 });

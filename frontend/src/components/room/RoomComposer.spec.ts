@@ -378,6 +378,78 @@ describe('@ 候选：不在话题里的人', () => {
   })
 })
 
+describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
+  it('记不住名字、记得住 handle 时，打 handle 也找得到那个人', async () => {
+    const { container, box } = mount()
+
+    // 芝士的 label 是「芝士」，一个字都不含 topica；handle 是 cheese-topica。只按
+    // 名字搜的话，人默写一遍自己的 handle 也一个候选都搜不出来。
+    await fireEvent.update(box(), '@topica')
+    await flush()
+
+    expect(labels(container)).toContain('芝士')
+  })
+
+  it('大小写不影响：handle 是 cheese-topica，打 Cheese 也命中', async () => {
+    const { container, box } = mount()
+
+    await fireEvent.update(box(), '@Cheese-')
+    await flush()
+
+    expect(labels(container)).toContain('芝士')
+  })
+
+  it('一个候选都没有时菜单不消失，说的是「暂无匹配」', async () => {
+    const { container, box } = mount()
+
+    await fireEvent.update(box(), '@zzz')
+    await flush()
+
+    // 整块收起来看起来像那个 @ 没生效，人会以为自己打错了。
+    expect(container.querySelector('.mention-menu')).toBeTruthy()
+    expect(container.querySelector('.mention-menu-item')).toBeNull()
+    expect(container.querySelector('.mention-menu')!.textContent).toContain('暂无匹配')
+  })
+
+  it('空态里回车不被菜单吃掉：`@` 那半截字原样发出去', async () => {
+    const { box, onSend } = mount()
+
+    await fireEvent.update(box(), '@zzz')
+    await flush()
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith({ content: '@zzz', summon: false })
+  })
+
+  it('空态里 ↑/↓ 不拦：那时候它们该去挪光标', async () => {
+    const { box } = mount()
+
+    await fireEvent.update(box(), '@zzz')
+    await flush()
+    focusIn(box())
+
+    const ev = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+    box().dispatchEvent(ev)
+    await flush()
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
+  it('空态里 Esc 把它收起来，再打字又打开', async () => {
+    const { container, box } = mount()
+
+    await fireEvent.update(box(), '@zzz')
+    await flush()
+    await fireEvent.keyDown(box(), { key: 'Escape' })
+    await flush()
+    expect(container.querySelector('.mention-menu')).toBeNull()
+
+    await fireEvent.update(box(), '@zz')
+    await flush()
+    expect(container.querySelector('.mention-menu')).toBeTruthy()
+  })
+})
+
 describe('发出去的消息 @ 了不在话题里的人', () => {
   /** 自己是这个话题的 `role`；Carol 在项目里、不在这个话题里。 */
   function pool(role: string): MentionPoolEntry[] {
@@ -653,6 +725,95 @@ describe('动作行', () => {
   it('粘贴交给房间——上传和缩略图是它那一侧的事', async () => {
     const { box, onPaste } = mount()
     await fireEvent.paste(box())
+    expect(onPaste).toHaveBeenCalled()
+  })
+})
+
+describe('贴一大段文字：就地给一条转成附件的路', () => {
+  /** happy-dom 里 fireEvent 传不进只读的 clipboardData，所以这一份自己造事件。 */
+  function pasteText(text: string): Event {
+    const ev = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'clipboardData', { value: { getData: () => text } })
+    return ev
+  }
+  function offerButton(container: Element, text: string): HTMLElement | undefined {
+    return Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === text)
+  }
+
+  it('短粘贴什么都不变，也不冒出提议', async () => {
+    const { container, box, draft, onFiles } = mount()
+    box().dispatchEvent(pasteText('一句普通的话'))
+    await flush()
+    expect(container.querySelector('.long-paste')).toBeNull()
+    expect(onFiles).not.toHaveBeenCalled()
+    expect(draft.value).toBe('')
+  })
+
+  it('超过字数就冒出一条提议，正文原样留着', async () => {
+    const long = 'x'.repeat(4001)
+    const { container, box, draft } = mount()
+    box().dispatchEvent(pasteText(long))
+    await flush()
+    const offer = container.querySelector('.long-paste')
+    expect(offer, '贴长文字没有出现转附件的提议').toBeTruthy()
+    expect(offer!.textContent).toContain('4001')
+    // 忽略它：正文就是粘进来的样子——原来的行为不变。
+    expect(draft.value).toBe(long)
+  })
+
+  it('一行很短但行数很多，也算长', async () => {
+    const manyLines = Array.from({ length: 90 }, () => 'a').join('\n')
+    const { container, box } = mount()
+    box().dispatchEvent(pasteText(manyLines))
+    await flush()
+    expect(container.querySelector('.long-paste')).toBeTruthy()
+  })
+
+  it('「存为 .txt」把那一段从正文里拿掉，换成一份 txt 附件', async () => {
+    const long = 'x'.repeat(4001)
+    const { container, box, draft, onFiles } = mount()
+    box().dispatchEvent(pasteText(long))
+    await flush()
+    await fireEvent.click(offerButton(container, '存为 .txt')!)
+    await flush()
+
+    expect(draft.value).toBe('')
+    expect(container.querySelector('.long-paste')).toBeNull()
+    expect(onFiles).toHaveBeenCalledTimes(1)
+    const [files] = onFiles.mock.calls[0] as [File[]]
+    expect(files).toHaveLength(1)
+    expect(files[0].name).toMatch(/^粘贴的文字-\d{8}-\d{6}\.txt$/)
+    expect(files[0].type).toBe('text/plain')
+  })
+
+  it('「存为 .md」给的是 markdown', async () => {
+    const long = 'y'.repeat(5000)
+    const { container, box, onFiles } = mount()
+    box().dispatchEvent(pasteText(long))
+    await flush()
+    await fireEvent.click(offerButton(container, '存为 .md')!)
+    await flush()
+    const [files] = onFiles.mock.calls[0] as [File[]]
+    expect(files[0].name).toMatch(/\.md$/)
+    expect(files[0].type).toBe('text/markdown')
+  })
+
+  it('关掉提议只是关掉：正文一个字不动', async () => {
+    const long = 'z'.repeat(4001)
+    const { container, box, draft, onFiles } = mount()
+    box().dispatchEvent(pasteText(long))
+    await flush()
+    await fireEvent.click(container.querySelector('.long-paste__x')!)
+    await flush()
+    expect(container.querySelector('.long-paste')).toBeNull()
+    expect(draft.value).toBe(long)
+    expect(onFiles).not.toHaveBeenCalled()
+  })
+
+  it('长粘贴仍然交给房间先看一眼——贴截图优先走上传', async () => {
+    const { box, onPaste } = mount()
+    box().dispatchEvent(pasteText('x'.repeat(4001)))
+    await flush()
     expect(onPaste).toHaveBeenCalled()
   })
 })

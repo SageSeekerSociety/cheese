@@ -189,6 +189,36 @@ def test_a_stop_signals_no_process_but_the_rooms_own_service(tmp_path):
             child.kill()
 
 
+def test_a_stop_reaches_a_service_named_through_a_state_descriptor(tmp_path):
+    """A sandboxed room reaches its executor's state through an open directory
+    descriptor (`bootstrap.executor_state`), so `stop` is told `/proc/self/fd/N`
+    while the service's own command line carries the path it resolved to in
+    `start`. The fallback that runs when a service refuses `shutdown` has to
+    recognize both spellings, or such a room can never stop an executor from an
+    earlier release."""
+    state, process = _previous_executor(tmp_path)
+    descriptor = os.open(state, os.O_RDONLY)
+    try:
+        stopped = subprocess.run(
+            [
+                sys.executable,
+                str(RUNTIME),
+                "stop",
+                "--state",
+                f"/proc/self/fd/{descriptor}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            pass_fds=(descriptor,),
+        )
+        assert stopped.returncode == 0, stopped.stderr
+        assert process.wait(timeout=10) == 0
+    finally:
+        os.close(descriptor)
+        process.kill()
+
+
 @pytest.mark.parametrize("sandbox", [True, False])
 def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
     tmp_path, monkeypatch, sandbox
@@ -214,6 +244,7 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
         release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
         (release / "remote-execution").mkdir(parents=True)
         shutil.copy(RUNTIME, release / "remote-execution/runtime.py")
+        shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
         marker = tmp_path / ".cheese/sandboxes" / project / resource
         marker.parent.mkdir(parents=True)
         marker.write_text(str(release))
@@ -244,6 +275,7 @@ def test_the_install_writes_through_no_link_a_room_left_in_its_home(
         resource,
         {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
         sandbox=False,
+        platform_machine=False,
     )
 
     with pytest.raises(OSError):
@@ -332,6 +364,7 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
             "CHEESE_ENVIRONMENT": json.dumps(environment),
         },
         sandbox=True,
+        platform_machine=True,
     )
     state = home / ".cheese/executor"
     store = owner / ".cheese/store" / str(project)
@@ -406,6 +439,7 @@ def test_a_sandboxed_executor_survives_its_own_room_rewriting_its_programs(
         resource,
         {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
         sandbox=True,
+        platform_machine=True,
     )
     home = owner / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"

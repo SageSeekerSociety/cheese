@@ -13,6 +13,12 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.living_doc import document_of
+
+
+def _doc(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
@@ -150,7 +156,7 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
     for version, content in ((0, doc), (1, doc.replace("0.15", "0.25"))):
         assert (
             client.put(
-                f"/topics/{topic_id}/doc",
+                _doc(client, topic_id),
                 json={
                     "content": content,
                     "expected_version": version,
@@ -236,8 +242,8 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
         post_message(client, topic_id, "user-1", {"content": "@芝士 技术栈是什么"})
         _drain_until_done(ws)
 
-    prompt = stub_hooks.last_system_prompt
-    assert prompt is not None
+    assert stub_hooks.last_system_prompt is not None
+    prompt = stub_hooks.told
     assert "索引里那句钩子" in prompt
     assert "正文里才有的那句话" not in prompt
     assert "说话这个人的索引钩子" in prompt

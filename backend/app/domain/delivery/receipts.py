@@ -441,6 +441,23 @@ async def held_blocks(
     }
 
 
+async def inputs_answered_inside(session, topic_id, work_id) -> list[uuid.UUID]:
+    """The works whose input the session read inside ``work_id`` and answered
+    there: each echoed under ``work_id`` though it is a work of its own."""
+    return list(
+        await session.scalars(
+            select(NativeInput.work_id)
+            .distinct()
+            .where(
+                NativeInput.topic_id == topic_id,
+                NativeInput.execution_work_id == work_id,
+                NativeInput.work_id != work_id,
+                NativeInput.echoed_at.is_not(None),
+            )
+        )
+    )
+
+
 async def complete_work_inputs(
     session,
     *,

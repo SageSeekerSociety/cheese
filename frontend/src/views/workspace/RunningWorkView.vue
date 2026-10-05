@@ -12,24 +12,23 @@
 // 到别处去了」。这两条理由是这一页存在的全部原因，改成板不能把它们弄丢。
 //
 // 屏幕上每一个状态词都是后端算好的 `presentation.phrase`，这里一个都不推。
-import type { BoardColumn, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { BoardColumn, RoomTask, Topic } from '@/cx_types'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { avatarColor, avatarInitial } from '@/utils/avatar'
-import { getAvatarUrl } from '@/utils/materials'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import VirtualList from '@/components/common/VirtualList.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
-import { memberName } from '@/lib/agentNames'
 import { isAgentHandle } from '@/lib/authorship'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
 import { readProjectTasks } from '@/lib/projectTasks'
@@ -37,6 +36,8 @@ import { relTime } from '@/lib/relTime'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
+import BoardFind from '@/views/workspace/BoardFind.vue'
+import { useBoardMembers } from '@/views/workspace/useBoardMembers'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -46,10 +47,16 @@ const { mdAndUp } = useDisplay()
 const store = useWorkspaceStore()
 
 const rows = ref<RoomTask[]>([])
-/** 「做出了什么」那一列有几项。列头属于这块网格，件数属于那个组件，所以它报上来。 */
-const madeCount = ref(0)
+/** 「做出了什么」那一列有几项。列头属于这块网格，件数属于那个组件，所以它报上来。
+ *
+ *  报上来之前是 `null` 而不是 0：那一列的清单也在路上，先写一个 0 会被读成「这个
+ *  项目什么都没交出去」。和 `countsPending` 是同一条规矩。 */
+const madeCount = ref<number | null>(null)
 const loading = ref(false)
-const errorMsg = ref<string | null>(null)
+// 整块板没读出来时：一句「加载失败」（标题）＋服务端那句原因，就地替换板体，
+// 带一条重试的路（docs/design-system.md §3.10）。不再是裸灰字 + 自制按钮。
+const failed = ref(false)
+const errorReason = ref('')
 // 已完成折起来。板面留给还需要人看的东西，但要说得出有多少件——悄悄不显示会让人
 // 以为这个项目从来没交付过什么。
 const showDone = ref(false)
@@ -67,7 +74,7 @@ const REFRESH_MS = 15_000
 
 /** 重拉。
  *
- *  `silent` 的一次不碰 `loading`、不清 `rows`、失败也不写 `errorMsg` —— 正在看的
+ *  `silent` 的一次不碰 `loading`、不清 `rows`、失败也不写 `failed` —— 正在看的
  *  那几列因此不会闪回骨架，也不会因为一次网络抖动整块变成「加载失败」。同
  *  `TopicAcceptCard.vue` 的 `loadAcceptCard(silent)`，那里的注释解释了为什么这两
  *  种加载必须分开。 */
@@ -79,7 +86,8 @@ async function load(silent = false) {
   inFlight = true
   if (!silent) {
     loading.value = true
-    errorMsg.value = null
+    failed.value = false
+    errorReason.value = ''
   }
   try {
     // 每次都真读（板是进项目的第一屏），只是和同一刻别处发出的那一次合并。
@@ -87,10 +95,14 @@ async function load(silent = false) {
     if (props.projectId === pid) {
       rows.value = payload.data
       // 上一次前台加载失败过、这一次悄悄成功了：把错误收掉，人不用自己点重试。
-      errorMsg.value = null
+      failed.value = false
+      errorReason.value = ''
     }
-  } catch {
-    if (!silent && props.projectId === pid) errorMsg.value = t('work.board.loadFailed')
+  } catch (e) {
+    if (!silent && props.projectId === pid) {
+      failed.value = true
+      errorReason.value = e instanceof Error ? e.message : ''
+    }
   } finally {
     inFlight = false
     if (!silent && props.projectId === pid) loading.value = false
@@ -131,30 +143,8 @@ const roomTitle = computed(() => {
   return (roomId: string) => byId.get(roomId) ?? t('work.board.unknownRoom')
 })
 
-// 「谁在做」是一个人，不是一个 handle。名册里有昵称和他自己挑的头像，卡上就该是
-// 那两样——`n1ctheboy` 这种串认得出来的只有他本人。
-const memberByHandle = computed(() => new Map((store.members as ProjectMemberRow[]).map((m) => [m.user_handle, m])))
-
-/** 名册上的昵称；名册里没有这个 handle 就把 handle 原样显示出来（同
- *  `ChatPanel.vue` 的 `displayName`）—— 退回空白等于把「这条活有主」也一起抹掉。 */
-function ownerName(handle?: string | null): string {
-  if (!handle) return ''
-  return memberName(memberByHandle.value.get(handle)) || handle
-}
-
-// 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
-const avatarBroken = ref<Set<string>>(new Set())
-function avatarSrc(handle?: string | null): string | null {
-  if (!handle || avatarBroken.value.has(handle)) return null
-  const id = memberByHandle.value.get(handle)?.avatar_id
-  // 名册上没这个人、或这行没有头像时返回 null：宁可留一个按 handle 哈希、认得出
-  // 是谁的色块，也不要 getAvatarUrl(undefined) 给所有没挑过头像的人配同一张脸。
-  return id == null ? null : getAvatarUrl(id)
-}
-function onAvatarError(handle?: string | null): void {
-  if (!handle || avatarBroken.value.has(handle)) return
-  avatarBroken.value = new Set(avatarBroken.value).add(handle)
-}
+// 卡上「谁在做」那一小块的名册信息（昵称、头像、破图退回）分在 useBoardMembers 里。
+const { ownerName, avatarSrc, onAvatarError } = useBoardMembers()
 
 /** 这会儿真的在跑的那些。
  *
@@ -187,9 +177,28 @@ const archivedRooms = computed(
  *  在数字里还算着。 */
 const boardRows = computed(() => liveBoardTasks(rows.value, archivedRooms.value))
 
-const visibleRows = computed(() =>
-  mine.value && mineHandle.value ? boardRows.value.filter((r) => r.owner_handle === mineHandle.value) : boardRows.value
+/** 本视图内按标题找（同 Linear 的 find in view）：只筛这块板上的活，不发请求、不进地
+ *  址——它是「我在这一屏上找一条」，换一屏就不该还留着。按 `/` 聚焦。 */
+const find = ref('')
+// 换了项目（同一个组件实例被复用）就不再按上一个项目的词筛。
+watch(
+  () => props.projectId,
+  () => (find.value = '')
 )
+const findNeedle = computed(() => find.value.trim().toLocaleLowerCase())
+const filtered = computed(() => mine.value || !!findNeedle.value)
+// 「筛选空」那句下面的一键清除：清掉搜索框里的词，内容自己回来（docs/design-system.md §8.1）。
+function clearFind() {
+  find.value = ''
+}
+
+const visibleRows = computed(() => {
+  let list = boardRows.value
+  if (mine.value && mineHandle.value) list = list.filter((r) => r.owner_handle === mineHandle.value)
+  const needle = findNeedle.value
+  if (needle) list = list.filter((r) => taskTitle(r).toLocaleLowerCase().includes(needle))
+  return list
+})
 
 function bucket(list: RoomTask[]): Map<BoardColumn, RoomTask[]> {
   const buckets = new Map<BoardColumn, RoomTask[]>()
@@ -210,10 +219,20 @@ function inColumn(column: BoardColumn): RoomTask[] {
   return byColumn.value.get(column) ?? []
 }
 
+/** 活到货之前，列头不能先写一个数字。
+ *
+ *  冷加载时四列的计数槽里原来写的是 0，一秒后才跳到真实的 44 / 2 / 1 —— 那个 0 被
+ *  读成「我的活没了」。它和列里那份骨架是同一个窗口：骨架在的时候，计数槽里放的也
+ *  是占位，而不是数字。数字只在数据到货之后出现一次，不先假后真。
+ *  判据只是**前台**的第一次加载（`rows` 还空着）：静默重拉不碰 `loading`，所以人看
+ *  着的时候计数不会闪回占位；换项目时 `rows` 里还挂着上一个项目的活，那一路也不在
+ *  这里 —— 它整块都要重画，不是计数槽那一件事。 */
+const countsPending = computed(() => loading.value && !rows.value.length)
+
 /** 列头上那个数。开关一开就写成「3 / 12」——只写 3 的话，人会以为活丢了。 */
 function countLabel(column: BoardColumn): string {
   const shown = inColumn(column).length
-  if (!mine.value) return String(shown)
+  if (!filtered.value) return String(shown)
   return `${shown} / ${totalByColumn.value.get(column)?.length ?? 0}`
 }
 
@@ -223,6 +242,7 @@ function countLabel(column: BoardColumn): string {
  *  条，三列全空、底下一条「已完成 292」才是常态。所以「施工中」那一列还要多说一
  *  句下一步——一块空板本身说不出该做什么。 */
 function emptyLine(column: BoardColumn): string {
+  if (findNeedle.value) return t('work.board.findNone', { text: find.value.trim() })
   if (mine.value) return t('work.board.noneMine')
   return t('work.board.emptyColumn', { column: columnLabel(column) })
 }
@@ -310,14 +330,23 @@ function taskRowKey(row: unknown): string {
             <span>{{ item.label }} {{ item.n }}</span>
           </template>
         </template>
-        <!-- 正文已经整屏说了「暂无任务」时，这里不再说第二遍。 -->
-        <template v-else-if="!loading && !nothingYet">{{ t('work.room.noTasks') }}</template>
+        <!-- When the body already says "no tasks" full-screen, do not repeat it
+             here; and when loading failed, never print "no tasks" in this summary
+             either — that is exactly failure degrading into an empty state. -->
+        <template v-else-if="!loading && !nothingYet && !failed">{{ t('work.room.noTasks') }}</template>
       </span>
     </template>
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
-    <template v-if="mineHandle" #controls>
-      <button type="button" class="board__mine t-meta tap-target" :aria-pressed="mine" @click="toggleMine">
+    <template #controls>
+      <BoardFind v-if="!nothingYet && !failed" v-model="find" />
+      <button
+        v-if="mineHandle"
+        type="button"
+        class="board__mine t-meta tap-target"
+        :aria-pressed="mine"
+        @click="toggleMine"
+      >
         <span class="board__sw" aria-hidden="true" />
         {{ t('work.board.mineOnly') }}
       </button>
@@ -332,10 +361,13 @@ function taskRowKey(row: unknown): string {
       <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
       <NeedsYou :project-id="projectId" />
 
-      <div v-if="errorMsg" class="pa-6 t-body c-muted">
-        {{ errorMsg }}
-        <BaseButton kind="secondary" class="ms-2" size="sm" @click="load()">{{ t('work.board.retry') }}</BaseButton>
-      </div>
+      <BaseLoadError
+        v-if="failed"
+        class="pa-6"
+        :title="t('work.board.loadFailed')"
+        :error="errorReason || null"
+        @retry="load()"
+      />
 
       <template v-else-if="nothingYet">
         <!-- 刚建出来的项目落在这儿时，几列空格子是它的整个第一屏。把那一屏换成
@@ -358,7 +390,13 @@ function taskRowKey(row: unknown): string {
             <header class="board-col__head">
               <span class="board-dot" :class="col.cls" :style="columnDotStyle(col.key)" aria-hidden="true" />
               <span class="board-col__name t-body">{{ col.label }}</span>
-              <span class="board-col__count t-meta">{{ countLabel(col.key) }}</span>
+              <!-- The count slot holds the same placeholder the column's cards do:
+                   until the data lands, no number is written, so the count never
+                   reads 0 and then jumps to the real value. -->
+              <span class="board-col__count t-meta">
+                <span v-if="countsPending" class="board-col__count-bone" aria-hidden="true" />
+                <template v-else>{{ countLabel(col.key) }}</template>
+              </span>
             </header>
             <!-- 活还在路上时，列已经在这儿了：列本身是固定的（三列 + 列头），会变的
                只有里面装什么。所以加载态画在列**里面**，板的框架一开始就是最终的
@@ -374,7 +412,12 @@ function taskRowKey(row: unknown): string {
             <TransitionGroup v-else tag="ul" name="board-card" class="board-col__list">
               <!-- 空列自己说它空，到此为止（设计规范 §8.1）。 -->
               <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
-                {{ emptyLine(col.key) }}
+                <span>{{ emptyLine(col.key) }}</span>
+                <!-- Empty because of the filter: say the search box filtered it
+                     out, then offer a one-click clear -->
+                <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
+                  {{ t('work.board.clearFilter') }}
+                </BaseButton>
               </li>
               <li v-for="row in inColumn(col.key)" :key="row.id">
                 <button type="button" class="board-card" @click="openTask(row)">
@@ -395,6 +438,7 @@ function taskRowKey(row: unknown): string {
                         aria-hidden="true"
                       />
                       <img
+                        decoding="async"
                         v-else-if="avatarSrc(row.owner_handle)"
                         class="board-card__avatar"
                         :src="avatarSrc(row.owner_handle)!"
@@ -452,7 +496,10 @@ function taskRowKey(row: unknown): string {
           <section class="board-col board-col--made">
             <header class="board-col__head">
               <span class="board-col__name t-body">{{ t('work.board.made') }}</span>
-              <span class="board-col__count t-meta">{{ madeCount }}</span>
+              <span class="board-col__count t-meta">
+                <span v-if="madeCount === null" class="board-col__count-bone" aria-hidden="true" />
+                <template v-else>{{ madeCount }}</template>
+              </span>
             </header>
             <ArtifactManifest :project-id="projectId" @count="madeCount = $event" />
           </section>
@@ -473,7 +520,12 @@ function taskRowKey(row: unknown): string {
                wraps each row (item-as), it never owns the container, so the list keeps its
                semantics in both paths. -->
           <ul v-if="showDone" ref="doneScroll" class="board__done-list" role="list">
-            <li v-if="!doneRows.length" class="board-col__empty t-body">{{ t('work.board.noneMine') }}</li>
+            <li v-if="!doneRows.length" class="board-col__empty t-body">
+              <span>{{ findNeedle ? t('work.board.findNone', { text: find.trim() }) : t('work.board.noneMine') }}</span>
+              <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
+                {{ t('work.board.clearFilter') }}
+              </BaseButton>
+            </li>
             <VirtualList
               :items="doneRows"
               :item-key="taskRowKey"
@@ -530,7 +582,7 @@ function taskRowKey(row: unknown): string {
 .board__mine {
   position: relative;
   flex: none;
-  margin-left: auto;
+  margin-left: 8px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -634,6 +686,17 @@ function taskRowKey(row: unknown): string {
     max-height: none;
   }
 }
+/* 再宽一档，四列本身封顶居中：列再多就没有了（「该谁动」只有那三档，产物只有
+   一栏），而 1920/2560 上四列各拉到 500+ 只是把卡片摊薄、把一行文字拉长。
+   1360 = 三条 350 的任务列 + 一条 280 的产物列 + 3×10 的列间距，和 1000 那一档
+   同一种算法，到这儿列宽就停在读得动的尺寸上，两侧留白。 */
+@container (min-width: 1360px) {
+  .board__cols {
+    width: 100%;
+    max-width: 1360px;
+    margin-inline: auto;
+  }
+}
 /* 三列「该谁动」是 --fill 的泳道，卡片白底描边：卡比泳道亮，列和卡一眼分得开。
    内容区本身是 surface，所以列不能再是白框。
    「做出了什么」也是同一种泳道（它原来只有一条分隔线、没有底色，四列并排时最右边
@@ -662,6 +725,17 @@ function taskRowKey(row: unknown): string {
 .board-col__count {
   margin-left: auto;
   color: var(--muted);
+}
+/* 数字到货之前，计数槽里放一根灰条。它不冒领 `LoadingSkeleton` 那个 `role=status`
+   —— 列里那份骨架已经把「在等」说清楚了，这里只是不让一个 0 先跑出来。宽度按一位
+   到两位的数字取（14px 对 `t-meta` 那一档），右对齐、又是列头最后一个元素，换成真实
+   数字时不推前面任何东西，只有一个「数字终于来了」的落位。 */
+.board-col__count-bone {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
 }
 /* `position: relative`：走掉的那张卡在淡出期间要脱离文档流（见下面的过渡），不然
    它下面那几张得等它消失才补位，那就是一次跳而不是一次移动。 */

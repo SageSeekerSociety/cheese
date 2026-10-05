@@ -337,7 +337,7 @@ def periodic_jobs(
     *,
     chat: "ChatService",
     machines: Sweeper,
-    vms: Sweeper,
+    sandboxes: Sweeper,
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     """Every periodic job the platform runs, in one list.
@@ -446,12 +446,13 @@ def periodic_jobs(
             settings.machine_enroll_interval_seconds,
             machines.sweep,
         ),
-        # Idle whole cloud VMs are pushed and released, in a loop of its own
-        # because a push can take minutes (machine/cloud_vm.py).
+        # Idle cloud sandboxes go to sleep and long-asleep homes are archived:
+        # the pool's plumbing, on its switch, in a loop of its own because an
+        # archive takes minutes (machine/runner.py).
         PeriodicRunner(
-            "cloud vm idle release",
+            "cloud sandbox lifecycle",
             settings.machine_enroll_interval_seconds,
-            vms.sweep,
+            sandboxes.sweep,
         ),
         PeriodicRunner(
             "cloud warm pool",

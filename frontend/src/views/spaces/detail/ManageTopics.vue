@@ -31,7 +31,7 @@
       </v-list-item>
     </v-list>
 
-    <p v-else class="settings-empty">{{ t('spaces.detail.manageTopics.noTopics') }}</p>
+    <BaseEmptyState v-else size="inline" class="settings-empty" :title="t('spaces.detail.manageTopics.noTopics')" />
   </div>
 </template>
 
@@ -44,6 +44,7 @@ import { storeToRefs } from 'pinia'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import TopicSelector from '@/components/common/TopicSelector.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'

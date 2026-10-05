@@ -195,3 +195,62 @@ it('an escape from the current frame and session is handed back to the host', as
   // 交回控制权不是就绪信号：注入的页面从没报过 ready，它就绪状态仍是未确认。
   expect(host.displayed.value?.runtime).toBe('unconfirmed')
 })
+
+it('an element pick from the current frame and session is handed to the host', async () => {
+  const picked = vi.fn()
+  const { frame, hello } = await setup({ onPick: picked })
+  const dispatch = (
+    data: unknown,
+    source: MessageEventSource | null = frame.contentWindow,
+    origin = 'https://preview-fixed.example'
+  ) => window.dispatchEvent(new MessageEvent('message', { origin, source, data }))
+  const pick = {
+    ...hello,
+    type: 'pick',
+    selection: false,
+    selector: 'body > main > p:nth-of-type(2)',
+    tag: 'p',
+    text: '这一句说错了',
+    prefix: '',
+    suffix: '',
+    rect: { x: 1, y: 2, w: 3, h: 4 },
+    viewport: { w: 800, h: 600 },
+  }
+  // 别的窗口、别的来源、别的会话发来的圈选都不算。
+  dispatch(pick, window)
+  dispatch(pick, frame.contentWindow, 'https://wrong.example')
+  dispatch({ ...pick, sessionId: 'old' })
+  expect(picked).not.toHaveBeenCalled()
+  dispatch(pick)
+  expect(picked).toHaveBeenCalledTimes(1)
+  expect(picked.mock.calls[0]![0]).toEqual({
+    selection: false,
+    selector: 'body > main > p:nth-of-type(2)',
+    tag: 'p',
+    text: '这一句说错了',
+    prefix: '',
+    suffix: '',
+    rect: { x: 1, y: 2, w: 3, h: 4 },
+    viewport: { w: 800, h: 600 },
+  })
+  // 认不出的位置（选择器空）、或者「选中的一段」却没报原文：都不当一处。
+  dispatch({ ...pick, selector: '' })
+  dispatch({ ...pick, selection: true, text: '' })
+  expect(picked).toHaveBeenCalledTimes(1)
+})
+
+it('turning pick mode on is posted to the frame with the current session and origin', async () => {
+  const { host, hello, send } = await setup()
+  host.setPickMode(true)
+  const last = send.mock.calls.at(-1)!
+  expect(last[0]).toEqual({
+    channel: 'cheese-preview-runtime',
+    version: 1,
+    sessionId: hello.sessionId,
+    type: 'pick-mode',
+    on: true,
+  })
+  expect(last[1]).toBe('https://preview-fixed.example')
+  host.setPickMode(false)
+  expect(send.mock.calls.at(-1)![0].on).toBe(false)
+})

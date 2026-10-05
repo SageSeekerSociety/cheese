@@ -32,12 +32,19 @@ async def _line(
 
 
 async def tell_preparing(
-    session: AsyncSession, home: CloudHostHome, whole_machine: bool = False
+    session: AsyncSession,
+    home: CloudHostHome,
+    sentence: str = "sandboxPreparing",
+    *,
+    whole_machine: bool = False,
 ) -> dict | None:
+    """The first line of a sandbox getting ready: being prepared, woken
+    (``sandboxWaking``) or restored from its archive (``sandboxRestoring``).
+    A session's whole cloud VM is only ever prepared."""
     return await _line(
         session,
         home,
-        say("cloudVmPreparing" if whole_machine else "sandboxPreparing"),
+        say("cloudVmPreparing" if whole_machine else sentence),
         {"event_type": "cloud_startup", "severity": "info", **_vm(whole_machine)},
     )
 
@@ -66,6 +73,26 @@ async def tell_replaced(
         home,
         say("cloudVmReplaced" if whole_machine else "sandboxReplaced"),
         {"event_type": "cloud_startup", "severity": "info", **_vm(whole_machine)},
+    )
+
+
+async def tell_asleep(
+    session: AsyncSession, home: CloudHostHome, minutes: int
+) -> dict | None:
+    return await _line(
+        session,
+        home,
+        say("sandboxAsleep", minutes=minutes),
+        {"event_type": "sandbox_asleep", "severity": "info"},
+    )
+
+
+async def tell_archive_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
+    return await _line(
+        session,
+        home,
+        say("sandboxArchiveLost"),
+        {"event_type": "cloud_startup", "severity": "warn"},
     )
 
 

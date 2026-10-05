@@ -153,7 +153,11 @@ def _machines(monkeypatch):
     monkeypatch.setattr(
         work_lease,
         "device_hub",
-        SimpleNamespace(is_online=lambda d: True, exec=AsyncMock(side_effect=install)),
+        SimpleNamespace(
+            target=lambda _device: "linux-amd64",
+            is_online=lambda d: True,
+            exec=AsyncMock(side_effect=install),
+        ),
     )
     monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
 

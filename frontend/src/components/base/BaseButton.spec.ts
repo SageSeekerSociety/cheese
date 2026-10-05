@@ -1,5 +1,9 @@
 /** BaseButton 只做两件事：把「角色 + 大小」翻成 v-btn 的样子，其余属性原样交给 v-btn。
  *  这里锁住第二件：透传最容易在没人注意时坏掉，坏了也不会报错。 */
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -7,6 +11,8 @@ import { cleanup, render } from '@testing-library/vue'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import BaseButton from './BaseButton.vue'
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 afterEach(cleanup)
 
@@ -74,5 +80,18 @@ describe('BaseButton', () => {
   it('ignores solid on roles other than danger', () => {
     const button = mount({ kind: 'ghost', solid: true }).getByRole('button')
     expect(button.classList.contains('bg-error')).toBe(false)
+  })
+
+  it('触屏上自己把能点的范围撑到 44×44，不用每个调用处记着加 .tap-target', () => {
+    // jsdom 没有布局引擎，也读不了 pointer: coarse，只能钉源码（同
+    // AdminGrid.spec.ts 的「卡片模式的触发条件是容器宽度」那条）。注释先剥掉：
+    // 注释里提到 pointer: coarse 和 44px 都不算数，钉的是真的那几条声明。
+    const src = readFileSync(join(here, 'BaseButton.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const at = src.indexOf('@media (pointer: coarse)')
+    expect(at, '撑开范围要挂在 pointer: coarse 上：鼠标下撑开会盖住并排的邻居').toBeGreaterThan(-1)
+    const block = src.slice(at, src.indexOf('}', src.indexOf('}', at) + 1))
+    expect(block).toContain('position: absolute')
+    expect(block).toContain('width: max(100%, 44px)')
+    expect(block).toContain('height: max(100%, 44px)')
   })
 })

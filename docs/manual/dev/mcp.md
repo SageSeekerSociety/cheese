@@ -32,8 +32,9 @@ covers:
 | 资料 | `cheese_fetch`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
 | 锁 | `cheese_lock`、`cheese_unlock` |
 | 房间状态 | `cheese_members`、`cheese_status` |
-| 机器与调度 | `cheese_machine`、`cheese_note`、`cheese_deliver_at` |
+| 机器与调度 | `cheese_machine`、`cheese_wait_machine`、`cheese_note`、`cheese_deliver_at` |
 | 定时与触发 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |
+| 项目技能 | `cheese_skill_draft`、`cheese_skill_update` |
 | 反馈 | `cheese_feedback_propose` |
 | 其余的平台接口 | `platform_request` |
 

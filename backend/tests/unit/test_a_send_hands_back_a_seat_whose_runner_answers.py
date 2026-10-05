@@ -1,16 +1,16 @@
-"""A send hands the channel the seat's session only while its runner answers.
+"""A send reuses the seat's session as it is only while its runner answers.
 
-The real runtime, runner and reads against a scripted session
-(``StubChannel``). A runner that holds reads says on every answer whether its
-agent process is still there, so a send that follows one can skip asking the
-machine again — and must not, once a read has said otherwise or failed.
+The real room sessions, session core, runner and reads against a scripted
+session (``StubChannel``). A runner that holds reads says on every answer
+whether its agent process is still there, so a send that follows one can skip
+asking the machine again — and must not, once a read has said otherwise or
+failed.
 """
 
 import asyncio
 import time
 import uuid
 
-from app.domain.agent.harness import Opening
 from tests.unit.test_driven_liveness import Room, Scripted, _until
 
 _REAL_SLEEP = asyncio.sleep
@@ -24,15 +24,14 @@ def _answers(channel: Scripted, topic: uuid.UUID, prompt: str) -> None:
 
 
 class Remembering(Scripted):
-    """Remembers the live handle each ensure was given."""
+    """Remembers whether each start was told the seat's runner answers."""
 
     def __init__(self) -> None:
         super().__init__(_answers)
-        self.given: list[object] = []
 
-    async def ensure(self, session, opening, live=None):
-        self.given.append(live)
-        return await super().ensure(session, opening, live)
+    @property
+    def given(self) -> list[bool]:
+        return [screen["runner_alive"] for screen in self.screens]
 
 
 async def _send(room: Room, text: str) -> None:
@@ -42,7 +41,8 @@ async def _send(room: Room, text: str) -> None:
     await room.runtime.send(
         room.session,
         text,
-        Opening(system_prompt="", agent_handle="cheese"),
+        system_prompt="",
+        acting="cheese",
         work_id=room.work,
         on_mark=lambda _: None,
         register_input=room.register_input(text),
@@ -61,7 +61,11 @@ async def _stops_vouching(room: Room) -> None:
     still one whose runner answers. How soon that read comes back is the
     machine's speed, not the code's, so the test waits for it instead of a
     fixed 0.3 s a loaded runner can outlast."""
-    await _until(lambda: (room.topic, "cheese") not in room.runtime.answering)
+
+    def vouched() -> bool:
+        return any(running.answering for running in room.channel.host._running.values())
+
+    await _until(lambda: not vouched())
 
 
 async def test_a_second_send_to_a_seat_whose_runner_answers_hands_its_session_back():
@@ -70,10 +74,7 @@ async def test_a_second_send_to_a_seat_whose_runner_answers_hands_its_session_ba
     try:
         await _first_turn(room)
         await _send(room, "and the signup page")
-        first, second = channel.given
-        assert first is None
-        assert second is not None
-        assert second == room.runtime.live[(room.topic, "cheese")]
+        assert channel.given == [False, True]
     finally:
         await room.close()
 
@@ -87,7 +88,7 @@ async def test_a_seat_whose_agent_process_ended_is_ensured_again():
         await _stops_vouching(room)
         channel.alive = True
         await _send(room, "and the signup page")
-        assert channel.given == [None, None]
+        assert channel.given == [False, False]
     finally:
         await room.close()
 
@@ -100,7 +101,7 @@ async def test_a_seat_whose_runner_is_gone_is_ensured_again():
         channel.drop_session(room.topic)
         await _stops_vouching(room)
         await _send(room, "and the signup page")
-        assert channel.given == [None, None]
+        assert channel.given == [False, False]
     finally:
         await room.close()
 
@@ -120,6 +121,6 @@ async def test_a_seat_whose_runner_is_closing_is_ensured_again():
         # Its replacement, for the send that follows.
         runner.closing = False
         await _send(room, "and the signup page")
-        assert channel.given == [None, None]
+        assert channel.given == [False, False]
     finally:
         await room.close()

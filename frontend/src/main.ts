@@ -44,7 +44,7 @@ import { watchInstallPrompt } from '@/lib/pwaInstall'
 import { registerPlugins } from '@/plugins'
 import vuetify from '@/plugins/vuetify'
 import AccountService from '@/services/account'
-import { clearStaleBuildGuard, watchForStaleBuild } from '@/services/staleBuild'
+import { watchForStaleBuild } from '@/services/staleBuild'
 
 AccountService.init()
 
@@ -73,9 +73,11 @@ watch(
 registerPlugins(app)
 app.mount('#app')
 
-// Mounting is the proof that a reload recovered the tab, so the one-shot
-// guard reopens for the next release.
-clearStaleBuildGuard()
+// The cold-start skeleton shell lives in index.html and is only there to cover
+// the gap before this line. Mounting has just painted the real shell, so drop
+// it now — a fresh node with fresh token values arriving in the same frame
+// means no flash even on a fast connection. See index.html for the markup.
+document.getElementById('sx-boot-skeleton')?.remove()
 registerPwa(router)
 // 安装机会（beforeinstallprompt）来得比任何页面都早——早到用户还没来得及打开
 // 下载页。所以在启动时就把它接住，下载页上的「添加到主屏幕」才有得用。

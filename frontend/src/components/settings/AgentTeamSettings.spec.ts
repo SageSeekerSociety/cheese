@@ -1,9 +1,9 @@
 // 「AI 队友」—— 项目设置里的一节。五件事值得被盯着，都是渲染不会失败但人会被误导的：
-//   1. 一行里那个数字要真的对上这个队友（记忆条数）
+//   1. 一行写着这个队友跑在哪个模型上、思考强度是哪一档；跟随项目时写出项目那个模型
 //   2. 后端那一半还没上线时，这一节得说「还没上线」，不能是白屏也不能是报错
 //   3. 空名册要说清楚队友是什么、能拿它干嘛，不能只画个空盒子
-//   4. 停用必须先问一遍，并且说明「已经在用的话题照常工作、记忆保留」
-//   5. 一行上不出现模型 —— 模型是一条活的事，卡是它唯一的住处
+//   4. 停用必须先问一遍，并且说明「已经在用的话题照常工作」
+//   5. 记忆不在这一页：它由平台统一管理，不是队友的一项设置
 import type { ProjectAgent } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -14,7 +14,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const listProjectAgents = vi.fn()
 const listAgentTypes = vi.fn()
-const listMemory = vi.fn()
+const getProjectDefaultModel = vi.fn()
 const setProjectDefaultAgent = vi.fn()
 const deactivateProjectAgent = vi.fn()
 
@@ -27,7 +27,7 @@ vi.mock('@/api', async (importOriginal) => {
     ...actual,
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
     listAgentTypes: (...a: unknown[]) => listAgentTypes(...a),
-    listMemory: (...a: unknown[]) => listMemory(...a),
+    getProjectDefaultModel: (...a: unknown[]) => getProjectDefaultModel(...a),
     setProjectDefaultAgent: (...a: unknown[]) => setProjectDefaultAgent(...a),
     deactivateProjectAgent: (...a: unknown[]) => deactivateProjectAgent(...a),
   }
@@ -96,7 +96,12 @@ beforeEach(() => {
   clearPageCache()
   listProjectAgents.mockReset()
   listAgentTypes.mockReset().mockResolvedValue({ data: [], total: 0 })
-  listMemory.mockReset().mockResolvedValue({ data: [], total: 0 })
+  getProjectDefaultModel.mockReset().mockResolvedValue({
+    choices: [
+      { id: 'glm-5.2', label: 'GLM-5.2', default: true, allowed: true, requires_plan: null, efforts: [] },
+      { id: 'kimi-k3', label: 'Kimi K3', default: false, allowed: true, requires_plan: null, efforts: ['low', 'high'] },
+    ],
+  })
   setProjectDefaultAgent.mockReset()
   deactivateProjectAgent.mockReset()
 })
@@ -104,9 +109,7 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('队友名册', () => {
-  // 一行说的是「这是谁、它是什么角色」。用哪个模型不在这里 —— 那是一条活的
-  // 事，写在卡上；把它印在名册上等于给了它第二个住处。
-  it('每一行说清这个队友是谁、什么角色，不说模型', async () => {
+  it('每一行说清这个队友是谁、什么角色', async () => {
     listAgentTypes.mockResolvedValue({
       data: [
         { name: 'reviewer', title: '代码评审', description: '', body: '', skills: [], mcp_servers: [], builtin: false },
@@ -123,53 +126,29 @@ describe('队友名册', () => {
     mountPage()
     expect(await screen.findByText('@cheese · 通用')).toBeTruthy()
     expect(await screen.findByText('@reviewer · 代码评审')).toBeTruthy()
-    expect(screen.queryByText(/sonnet/)).toBeNull()
   })
 
-  it('每一行带上这个队友自己的记忆条数和在用话题数', async () => {
+  it('每一行写着模型和思考强度，跟随项目时写出项目那个模型', async () => {
     listProjectAgents.mockResolvedValue({
       data: [
         agent({ id: 'a1', handle: 'cheese' }),
-        agent({ id: 'a2', handle: 'reviewer', display_name: '评审', is_default: false }),
+        agent({
+          id: 'a2',
+          handle: 'reviewer',
+          display_name: '评审',
+          is_default: false,
+          configuration: { body: '', skills: [], model: 'kimi-k3', effort: 'high' },
+        }),
       ],
       total: 2,
     })
-    listMemory.mockResolvedValue({
-      data: [
-        {
-          id: 'm1',
-          scope: 'agent_project',
-          scope_id: `${PROJECT}:cheese`,
-          content: '沙箱里跑 jj 会打停全项目',
-          created_at: '',
-        },
-        { id: 'm2', scope: 'agent_project', scope_id: `${PROJECT}:cheese`, content: '闸门只跑 lint', created_at: '' },
-        { id: 'm3', scope: 'project', scope_id: PROJECT, content: '这条属于项目，不属于任何队友', created_at: '' },
-      ],
-      total: 3,
-    })
     mountPage()
 
-    expect(await screen.findByText('芝士')).toBeTruthy()
-    // 芝士 owns two facts; the project-pool one is nobody's.
-    expect(await screen.findByText('2 条记忆')).toBeTruthy()
-    expect(await screen.findByText('0 条记忆')).toBeTruthy()
-  })
-
-  it('点开记忆能看到这个队友学到的东西', async () => {
-    listProjectAgents.mockResolvedValue({ data: [agent()], total: 1 })
-    listMemory.mockResolvedValue({
-      data: [
-        { id: 'm1', scope: 'agent_project', scope_id: `${PROJECT}:cheese`, content: '闸门只跑 lint', created_at: '' },
-      ],
-      total: 1,
-    })
-    mountPage()
-
-    const toggle = await screen.findByText('1 条记忆')
-    expect(screen.queryByText('闸门只跑 lint')).toBeNull()
-    await fireEvent.click(toggle)
-    expect(await screen.findByText('闸门只跑 lint')).toBeTruthy()
+    expect(await screen.findByText('模型：跟随项目（GLM-5.2）')).toBeTruthy()
+    expect(await screen.findByText('思考：自动')).toBeTruthy()
+    expect(await screen.findByText('模型：Kimi K3')).toBeTruthy()
+    expect(await screen.findByText('思考：高')).toBeTruthy()
+    expect(screen.queryByText(/记忆/)).toBeNull()
   })
 
   it('只有默认那一个不显示「设为默认」', async () => {
@@ -230,7 +209,7 @@ describe('停用', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
     expect(await screen.findByText('停用「评审」')).toBeTruthy()
-    expect(screen.getByText(/已在用它的话题照常工作，记忆全部保留/)).toBeTruthy()
+    expect(screen.getByText(/已在用它的话题照常工作/)).toBeTruthy()
     expect(deactivateProjectAgent).not.toHaveBeenCalled()
   })
 
@@ -247,7 +226,7 @@ describe('停用', () => {
   })
 
   it('已停用的还列在名册上，标出来，并且不再给「停用」和「设为默认」', async () => {
-    // 管理页要能看到它们 —— 一个队友攒下的记忆还在，它只是不接新活了。
+    // 管理页要能看到它们 —— 一个停用的队友还在，它只是不接新活了。
     listProjectAgents.mockResolvedValue({
       data: [agent({ id: 'a2', handle: 'reviewer', display_name: '评审', is_default: false, is_active: false })],
       total: 1,

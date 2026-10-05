@@ -17,6 +17,8 @@ import type { UserRefTarget } from '@/lib/userRef'
 import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import NavLink from '../common/NavLink.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -131,10 +133,25 @@ function rowActions(): MenuAction[] {
 }
 /** 手机上摆在 ⋯ 里的那几件（桌面摆在行里）。 */
 const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
+// 桌面上操作摆在行里，右键一行弹的是同一份，弹在鼠标那一点上。
+const rowMenu = useRowMenu<'row'>()
 </script>
 
 <template>
-  <li class="routine-row" :class="{ 'routine-row--draft': draft }" :data-routine="routine.id">
+  <li
+    class="routine-row"
+    :class="{ 'routine-row--draft': draft }"
+    :data-routine="routine.id"
+    @contextmenu="mdAndUp && routine.can_manage && rowMenu.open('row', $event)"
+  >
+    <AdaptiveMenu
+      v-if="mdAndUp && routine.can_manage"
+      v-bind="rowMenu.bind('row')"
+      :actions="rowActions()"
+      :title="routine.title"
+    >
+      <template #activator />
+    </AdaptiveMenu>
     <div class="routine-row__head">
       <div class="routine-row__id">
         <div class="t-body routine-row__title">{{ routine.title }}</div>

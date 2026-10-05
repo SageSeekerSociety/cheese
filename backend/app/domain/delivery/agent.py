@@ -21,6 +21,11 @@ from app.domain.delivery.ask_receipt_wait import (
     ASK_RECEIPT_WAIT,
     AskReceiptPending,
 )
+from app.domain.delivery.ask_session_wait import (
+    ASK_SESSION_RETRY_SECONDS,
+    ASK_SESSION_WAIT,
+    ASK_SESSION_WAIT_REASON,
+)
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
@@ -294,9 +299,21 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
             if row is not None:
                 if row.state == "claimed":
                     row.state = "pending"
-                    row.retry_at = now() + timedelta(seconds=RETRY_SECONDS)
+                    # An answer waiting for the conversation that asked is not a
+                    # failed admission: it is admissible nowhere yet, and asking
+                    # again in 30 s only spends attempts (``ask_session_wait``).
+                    waiting_for_session = ASK_SESSION_WAIT in (row.payload or {})
+                    row.retry_at = now() + timedelta(
+                        seconds=(
+                            ASK_SESSION_RETRY_SECONDS
+                            if waiting_for_session
+                            else RETRY_SECONDS
+                        )
+                    )
                     row.last_error = (
-                        "Input was not dispatched; "
+                        ASK_SESSION_WAIT_REASON
+                        if waiting_for_session
+                        else "Input was not dispatched; "
                         "admission or preparation did not complete"
                     )
                     if (

@@ -318,6 +318,9 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: var(--z-overlay);
+  /* 放映是整屏的：顶上那条工具栏（上一页 / 页码 / 下一页 / 退出）钻进刘海。让出顶部
+     安全区；底边不补，幻灯片照旧铺满——Home 横杠压在画面上是放映的常态。 */
+  padding-top: env(safe-area-inset-top, 0px);
 }
 .slides__toolbar {
   display: flex;

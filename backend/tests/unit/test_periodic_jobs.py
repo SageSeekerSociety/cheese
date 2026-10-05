@@ -185,7 +185,7 @@ def _jobs():
             session_factory=lambda: None,
         ),
         machines=SimpleNamespace(sweep=_noop),
-        vms=SimpleNamespace(sweep=_noop),
+        sandboxes=SimpleNamespace(sweep=_noop),
         sessions=lambda: None,
     )
 
@@ -231,11 +231,10 @@ def test_the_timed_delivery_alarm_is_scheduled():
     assert any(job.name == "timed deliveries" for job in _jobs())
 
 
-def test_idle_whole_cloud_vms_are_released_on_a_clock():
-    """Nothing else releases the VM of a session that stopped working: without
-    this job it is held, and counts against the pool's cap, until its room is
-    archived."""
-    assert any(job.name == "cloud vm idle release" for job in _jobs())
+def test_idle_cloud_sandboxes_are_put_to_sleep_on_a_clock():
+    """Nothing else stops an idle sandbox or archives a home: without this
+    job the pool's slots stay taken and its hosts are never released."""
+    assert any(job.name == "cloud sandbox lifecycle" for job in _jobs())
 
 
 def test_forge_accounts_left_by_failed_creations_are_swept():

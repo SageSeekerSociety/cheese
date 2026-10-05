@@ -11,10 +11,10 @@
 这条的一个实例）。
 
 曾经它们散在 `chat.py` 里，夹在 `_assemble_turn`（读数据的那半边）与落库之间。
-调用它们的是 chat.py 自己：`_assemble_turn`、`has_unread_input`、
-`_pending_receipts` 一族、`_restate_note`，以及 `post_system_event` 的两个
-compaction 分支。搬出来时按原样搬——入参出参就是它们与调用方之间全部的约定，
-所以行为一格没动。
+调用它们的是房间那一侧：`room/turn.py` 的 `_assemble_turn`，chat.py 的
+`has_unread_input`、`_pending_receipts` 一族、`_restate_note`，以及
+`post_system_event` 的两个 compaction 分支。搬出来时按原样搬——入参出参就是
+它们与调用方之间全部的约定，所以行为一格没动。
 
 唯一改了形状的是 `_project_overview`：它是 `ChatService` 的方法却不碰 `self`——
 只拿一个 session 和已经读好的行——于是改成收参数的模块级 `project_overview`，

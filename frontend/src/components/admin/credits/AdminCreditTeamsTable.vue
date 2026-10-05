@@ -4,9 +4,9 @@ import type { CreditTeamPage, CreditTeamRow, Plan } from '@/lib/adminCredits'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
-import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
 import { availableCredits, fmtCredits, meterTone, periodUse, teamTitle } from '@/lib/adminCredits'
 
 // 团队一览：挂在哪个方案上、本月方案额度用了多少、手上还能花多少。点一行打开这个团队。
@@ -83,7 +83,7 @@ function balanceText(row: CreditTeamRow): string {
 </script>
 
 <template>
-  <AdminGrid
+  <BaseTable
     class="act"
     :label="t('credits.teams.label')"
     :cols="[null, '140px', '280px', '120px']"
@@ -110,13 +110,11 @@ function balanceText(row: CreditTeamRow): string {
     </template>
 
     <template #error>
-      <AdminEmptyState
-        compact
-        tone="error"
+      <BaseLoadError
         :title="t('credits.teams.loadFailed')"
-        :desc="props.error || undefined"
-        :action="t('credits.teams.retry')"
-        @action="emit('retry')"
+        :error="props.error || undefined"
+        :retry-label="t('credits.teams.retry')"
+        @retry="emit('retry')"
       />
     </template>
 
@@ -158,7 +156,7 @@ function balanceText(row: CreditTeamRow): string {
         @update:model-value="emit('page', $event)"
       />
     </template>
-  </AdminGrid>
+  </BaseTable>
 </template>
 
 <style scoped>

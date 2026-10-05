@@ -11,13 +11,18 @@ from app.api.doc_store import store
 from app.core.errors import ConflictError
 from app.domain.block.documents import DocumentWriter
 from app.domain.block.models import Block, BlockKind
-from app.domain.living_doc.models import DocumentOperation, DocumentVersion
+from app.domain.living_doc.models import (
+    DocumentNode,
+    DocumentOperation,
+    DocumentVersion,
+)
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.project.services import ProjectService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered, session_auth_headers
 from tests.integration.test_docs import _topic
+from tests.support.living_doc import document_of
 
 
 async def seed(factory):
@@ -28,12 +33,23 @@ async def seed(factory):
         return project.root_topic_id
 
 
+async def room_doc(session, room):
+    """The room's document, made the way an editor's ticket makes it."""
+    topics = TopicService(session)
+    return await topics.room_doc(room, (await topics.get(room)).project_id)
+
+
+async def history(session, room):
+    doc = await TopicService(session).get_doc(room)
+    return await DocumentJournal(session).history(doc.id) if doc else []
+
+
 async def stored(factory, room, content, *actors, operation=None):
     """One store from the collaboration service, as its own transaction."""
     async with factory() as session:
         result = await store(
             session,
-            room,
+            await room_doc(session, room),
             state=b"yjs",
             content=content,
             actors=list(actors) or ["alice"],
@@ -41,6 +57,11 @@ async def stored(factory, room, content, *actors, operation=None):
         )
         await session.commit()
         return result.answer
+
+
+def _doc(client, room) -> str:
+    """The room's document, as its routes address it."""
+    return f"/documents/{document_of(client, room)}"
 
 
 @pytest.mark.anyio
@@ -59,9 +80,9 @@ async def test_concurrent_stores_each_record_a_version_in_order(business_db_fact
     await asyncio.gather(*tasks)
     async with factory() as session:
         doc = await TopicService(session).get_doc(room)
-        versions = await DocumentJournal(session).history(room)
+        versions = await history(session, room)
         assert [row["version"] for row in versions] == [1, 2, 3]
-        assert doc.doc_version == 3
+        assert doc.version == 3
         assert doc.content == versions[-1]["content"]
         assert versions[-1]["content_hash"] == content_hash(doc.content)
         assert {row["content"] for row in versions[1:]} == {"第二版", "第三版"}
@@ -75,9 +96,10 @@ async def test_a_store_that_changes_no_text_records_no_version(business_db_facto
     await stored(factory, room, "同一句")
     await stored(factory, room, "同一句", "bob")
     async with factory() as session:
-        versions = await DocumentJournal(session).history(room)
+        versions = await history(session, room)
         assert [row["content"] for row in versions] == ["同一句"]
-        assert await DocumentJournal(session).state(room) == b"yjs"
+        doc = await TopicService(session).get_doc(room)
+        assert await DocumentJournal(session).state(doc.id) == b"yjs"
 
 
 @pytest.mark.anyio
@@ -87,7 +109,7 @@ async def test_a_store_names_everyone_whose_changes_it_holds(business_db_factory
     await stored(factory, room, "第一句", "alice")
     await stored(factory, room, "第一句\n\n第二句", "bob", "alice")
     async with factory() as session:
-        versions = await DocumentJournal(session).history(room)
+        versions = await history(session, room)
         assert versions[-1]["actor"] == "bob"
         events = [
             block
@@ -108,27 +130,28 @@ def test_lost_response_replays_original_receipt_without_second_effect(client):
         "expected_version": 0,
         "operation_id": operation,
     }
-    first = client.put(f"/topics/{room}/doc", json=body)
+    first = client.put(_doc(client, room), json=body)
     assert first.status_code == 200
     # Treat the response as lost: recover it after another writer has advanced.
     later = client.put(
-        f"/topics/{room}/doc", json={"content": "后来", "expected_version": 1}
+        _doc(client, room),
+        json={"content": "后来", "expected_version": 1},
     )
     assert later.status_code == 200
-    replay = client.put(f"/topics/{room}/doc", json=body)
+    replay = client.put(_doc(client, room), json=body)
     assert replay.status_code == 200
     assert replay.json() == first.json()
-    queried = client.get(f"/topics/{room}/doc/operations/{operation}")
+    queried = client.get(f"{_doc(client, room)}/operations/{operation}")
     assert queried.json() == first.json()
-    assert client.get(f"/topics/{room}/doc").json()["data"]["doc_version"] == 2
-    history = client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]
+    assert client.get(_doc(client, room)).json()["data"]["doc_version"] == 2
+    history = client.get(f"{_doc(client, room)}/history").json()["data"]["versions"]
     assert len(history) == 2
     assert history[0]["content"] == body["content"]
     assert history[0]["content_hash"] == content_hash(body["content"])
-    different = client.put(f"/topics/{room}/doc", json={**body, "content": "别的"})
+    different = client.put(_doc(client, room), json={**body, "content": "别的"})
     assert different.status_code == 409
     assert (
-        len(client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]) == 2
+        len(client.get(f"{_doc(client, room)}/history").json()["data"]["versions"]) == 2
     )
 
 
@@ -138,19 +161,22 @@ def test_history_lists_the_latest_versions_first_and_pages_back(client):
     for base, content in enumerate(["一", "二", "三"]):
         assert (
             client.put(
-                f"/topics/{room}/doc",
+                _doc(client, room),
                 json={"content": content, "expected_version": base},
             ).status_code
             == 200
         )
-    latest = client.get(f"/topics/{room}/doc/history?newest=true").json()["data"]
+    latest = client.get(f"{_doc(client, room)}/history?newest=true").json()["data"]
     assert [row["content"] for row in latest["versions"]] == ["三", "二", "一"]
+    before = latest["versions"][0]["version"]
     older = client.get(
-        f"/topics/{room}/doc/history?newest=true&before={latest['versions'][0]['version']}"
+        f"{_doc(client, room)}/history?newest=true&before={before}"
     ).json()["data"]
     assert [row["content"] for row in older["versions"]] == ["二", "一"]
     assert older["versions"][0]["actor"] == "owner"
-    last = client.get(f"/topics/{room}/doc/history?newest=true&limit=1").json()["data"]
+    last = client.get(f"{_doc(client, room)}/history?newest=true&limit=1").json()[
+        "data"
+    ]
     assert [row["content"] for row in last["versions"]] == ["三"]
 
 
@@ -161,24 +187,24 @@ def test_restore_adds_new_version_and_replays_without_rewriting_raw(client):
     for base, content in enumerate([raw, "后来"]):
         assert (
             client.put(
-                f"/topics/{room}/doc",
+                _doc(client, room),
                 json={"content": content, "expected_version": base},
             ).status_code
             == 200
         )
     operation = str(uuid.uuid4())
     payload = {"version": 1, "expected_version": 2, "operation_id": operation}
-    response = client.post(f"/topics/{room}/doc/restore", json=payload)
+    response = client.post(f"{_doc(client, room)}/restore", json=payload)
     assert response.status_code == 200
     assert response.json()["data"]["doc_version"] == 3
     assert response.json()["data"]["content"] == raw
     assert (
-        client.post(f"/topics/{room}/doc/restore", json=payload).json()
+        client.post(f"{_doc(client, room)}/restore", json=payload).json()
         == response.json()
     )
-    receipt = client.get(f"/topics/{room}/doc/operations/{operation}?action=restore")
+    receipt = client.get(f"{_doc(client, room)}/operations/{operation}?action=restore")
     assert receipt.json() == response.json()
-    versions = client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]
+    versions = client.get(f"{_doc(client, room)}/history").json()["data"]["versions"]
     assert [row["version"] for row in versions] == [1, 2, 3]
     assert versions[0]["content"] == versions[2]["content"] == raw
     assert versions[2]["previous_version"] == versions[2]["base_version"] == 2
@@ -192,31 +218,23 @@ async def test_rollback_leaves_no_document_nodes_event_history_or_claim(
     room = await seed(factory)
     operation_id = uuid.uuid4()
     async with factory() as session:
+        doc = await room_doc(session, room)
         journal = DocumentJournal(session)
         await journal.claim(
-            room_id=room,
+            document_id=doc.id,
             actor="alice",
             action="replace",
             operation_id=operation_id,
             payload={"content": "未提交", "expected_version": 0},
         )
         await DocumentWriter(session, summarize_doc_change).record(
-            room_id=room,
-            project_id=(await TopicService(session).get(room)).project_id,
-            content="未提交",
-            actors=["alice"],
-            operation_id=operation_id,
+            doc, content="未提交", actors=["alice"], operation_id=operation_id
         )
         await session.rollback()
     async with factory() as session:
         assert await TopicService(session).get_doc(room) is None
-        assert await DocumentJournal(session).history(room) == []
-        assert (
-            await DocumentJournal(session).receipt(
-                room_id=room, actor="alice", action="replace", operation_id=operation_id
-            )
-            is None
-        )
+        for table in (DocumentVersion, DocumentOperation, DocumentNode):
+            assert await session.scalar(select(func.count()).select_from(table)) == 0
         assert (
             await session.scalar(
                 select(func.count()).select_from(Block).where(Block.topic_id == room)
@@ -240,7 +258,7 @@ async def test_platform_brief_seed_has_raw_history_without_contribution_event(
     async with factory() as session:
         doc = await TopicService(session).get_doc(room)
         assert doc.content == raw
-        versions = await DocumentJournal(session).history(room)
+        versions = await history(session, room)
         assert len(versions) == 1
         assert versions[0]["content"] == raw
         assert versions[0]["actor"] == "system"
@@ -265,29 +283,30 @@ async def test_database_rejects_history_mutation_and_incomplete_receipts(
     ]:
         async with factory() as session:
             with pytest.raises(IntegrityError, match="history is immutable"):
-                await session.execute(mutation.where(DocumentVersion.room_id == room))
+                doc = await TopicService(session).get_doc(room)
+                await session.execute(
+                    mutation.where(DocumentVersion.document_id == doc.id)
+                )
             await session.rollback()
     operation_id = uuid.uuid4()
     async with factory() as session:
+        doc = await room_doc(session, room)
         await DocumentJournal(session).claim(
-            room_id=room,
+            document_id=doc.id,
             actor="alice",
             action="replace",
             operation_id=operation_id,
             payload={"content": "不能提交", "expected_version": 1},
         )
         await DocumentWriter(session, summarize_doc_change).record(
-            room_id=room,
-            project_id=(await TopicService(session).get(room)).project_id,
-            content="不能提交",
-            actors=["alice"],
+            doc, content="不能提交", actors=["alice"]
         )
         with pytest.raises(IntegrityError, match="must commit its receipt"):
             await session.commit()
         await session.rollback()
     async with factory() as session:
-        assert (await TopicService(session).get_doc(room)).doc_version == 1
-        assert len(await DocumentJournal(session).history(room)) == 1
+        assert (await TopicService(session).get_doc(room)).version == 1
+        assert len(await history(session, room)) == 1
         assert (
             await session.scalar(select(func.count()).select_from(DocumentOperation))
             == 0
@@ -330,8 +349,8 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
     else:
         assert results[0] == results[1]
     async with factory() as session:
-        assert (await TopicService(session).get_doc(room)).doc_version == 1
-        assert len(await DocumentJournal(session).history(room)) == 1
+        assert (await TopicService(session).get_doc(room)).version == 1
+        assert len(await history(session, room)) == 1
         assert (
             await session.scalar(select(func.count()).select_from(DocumentOperation))
             == 1
@@ -340,7 +359,8 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
             await session.scalars(select(Block).where(Block.topic_id == room))
         )
         assert sum((block.meta or {}).get("action") == "doc" for block in blocks) == 1
-        assert sum(block.kind == BlockKind.doc_node for block in blocks) == 1
+        doc = await TopicService(session).get_doc(room)
+        assert len(await TopicService(session).doc_nodes(doc)) == 1
 
 
 @pytest.mark.anyio
@@ -351,9 +371,10 @@ async def test_completed_receipt_and_claim_identity_cannot_be_rewritten(
     room = await seed(factory)
     operation_id = uuid.uuid4()
     async with factory() as session:
+        doc = await room_doc(session, room)
         journal = DocumentJournal(session)
         operation = await journal.claim(
-            room_id=room,
+            document_id=doc.id,
             actor="alice",
             action="replace",
             operation_id=operation_id,
@@ -376,7 +397,10 @@ async def test_completed_receipt_and_claim_identity_cannot_be_rewritten(
             await session.rollback()
     async with factory() as session:
         assert await DocumentJournal(session).receipt(
-            room_id=room, actor="alice", action="replace", operation_id=operation_id
+            document_id=doc.id,
+            actor="alice",
+            action="replace",
+            operation_id=operation_id,
         ) == {"version": 1, "content": "原回执"}
 
 
@@ -394,30 +418,36 @@ def test_operation_requires_real_owner_and_ignores_claimed_author(client, monkey
         "operation_id": operation,
         "author": "owner",
     }
-    assert client.put(f"/topics/{room}/doc", json=payload).status_code == 401
+    assert client.put(_doc(client, room), json=payload).status_code == 401
     outsider = session_auth_headers("outsider")
     assert (
-        client.put(f"/topics/{room}/doc", json=payload, headers=outsider).status_code
+        client.put(_doc(client, room), json=payload, headers=outsider).status_code
         == 403
     )
     owner = session_auth_headers("owner")
     saved = client.put(
-        f"/topics/{room}/doc", json={**payload, "author": "outsider"}, headers=owner
+        _doc(client, room),
+        json={**payload, "author": "outsider"},
+        headers=owner,
     )
     assert saved.status_code == 200
     assert saved.json()["data"]["author"] == "owner"
     assert (
         client.get(
-            f"/topics/{room}/doc/operations/{operation}", headers=outsider
+            f"{_doc(client, room)}/operations/{operation}",
+            headers=outsider,
         ).status_code
         == 403
     )
     assert (
-        client.get(f"/topics/{room}/doc/operations/{operation}", headers=owner).json()
+        client.get(
+            f"{_doc(client, room)}/operations/{operation}",
+            headers=owner,
+        ).json()
         == saved.json()
     )
     assert (
-        client.get(f"/topics/{room}/doc/history", headers=outsider).status_code == 403
+        client.get(f"{_doc(client, room)}/history", headers=outsider).status_code == 403
     )
 
 
@@ -439,14 +469,14 @@ def test_committed_response_failure_replays_one_persisted_effect(client, monkeyp
 
     # The store committed; telling the room failed, so the writer never heard.
     monkeypatch.setattr(doc_store.get_broker(), "publish", failed_publish)
-    assert client.put(f"/topics/{room}/doc", json=payload).status_code != 200
+    assert client.put(_doc(client, room), json=payload).status_code != 200
     monkeypatch.setattr(doc_store.get_broker(), "publish", original)
-    queried = client.get(f"/topics/{room}/doc/operations/{operation}")
+    queried = client.get(f"{_doc(client, room)}/operations/{operation}")
     assert queried.status_code == 200
-    replay = client.put(f"/topics/{room}/doc", json=payload)
+    replay = client.put(_doc(client, room), json=payload)
     assert replay.status_code == 200
     assert queried.json() == replay.json()
-    assert client.get(f"/topics/{room}/doc").json()["data"]["doc_version"] == 1
+    assert client.get(_doc(client, room)).json()["data"]["doc_version"] == 1
     assert (
-        len(client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]) == 1
+        len(client.get(f"{_doc(client, room)}/history").json()["data"]["versions"]) == 1
     )

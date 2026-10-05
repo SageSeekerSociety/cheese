@@ -9,30 +9,10 @@ from typing import Any, BinaryIO, cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.core.storage import S3StorageBackend, StorageBackend
+from app.core.storage import StorageBackend, private_storage
 from app.domain.room_task.models import Task, TaskSnapshot
-
-
-def private_storage() -> StorageBackend:
-    # Bundles hold working files, so they go to the private bucket only; with no
-    # private bucket configured this refuses rather than use the public one.
-    if (
-        not settings.s3_endpoint_url
-        or not settings.s3_access_key
-        or not settings.s3_secret_key
-        or not settings.transcript_s3_bucket
-    ):
-        raise RuntimeError("Private object storage is not configured")
-    return S3StorageBackend(
-        bucket=settings.transcript_s3_bucket,
-        endpoint_url=settings.s3_endpoint_url,
-        access_key=settings.s3_access_key,
-        secret_key=settings.s3_secret_key,
-        region=settings.s3_region,
-    )
 
 
 async def save(

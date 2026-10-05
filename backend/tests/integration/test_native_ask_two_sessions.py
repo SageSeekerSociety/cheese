@@ -17,9 +17,7 @@ from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.claude_code.runner import Runner
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime, Handle
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import Delivery, NativeInput
 from app.main import app
@@ -31,6 +29,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.seat_channel import SeatChannel
 from tests.unit.test_claude_runner import Machine
 
 
@@ -56,55 +55,36 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                 return lambda _body: self.tools[index]
             return super().__getitem__(index)
 
-    class Channel:
+    class Seat:
+        """A seat the fixture's runners sit in."""
+
+        def __init__(self, session, agent):
+            self.session, self.agent_handle = session, agent
+
+    class Channel(SeatChannel):
         name = "native-ask-two-sessions"
-        deferred_work = False
-        builds_model_env = False
+        device = "isolated-device"
 
-        def available(self):
-            return True
-
-        async def ensure(self, session, opening, live=None):
-            seat = opening.agent_handle or session.agent_handle
-            assert seat in machines
-            if live is not None:
-                return live
-            if seat not in handles:
-                machine = machines[seat]
-                runner = runners[seat] = Runner(machine.state)
-                native = await runner.start(
+        async def open(self, session, agent, launch):
+            assert agent in machines
+            if agent not in handles:
+                machine = machines[agent]
+                runner = runners[agent] = Runner(machine.state)
+                await runner.start(
                     command=machine.command,
                     env=machine.env,
                     resume=None,
-                    agent_handle=seat,
+                    agent_handle=agent,
                 )
-                handles[seat] = Handle(
-                    session,
-                    "isolated-device",
-                    str(machine.state),
-                    native,
-                    seat,
-                    machine.root / "mirror.sqlite",
-                    INPUT_PROTOCOL,
-                    frozenset(runner.capabilities),
-                )
-            assert handles[seat].session == session
-            return handles[seat]
+                handles[agent] = Seat(session, agent)
+            assert handles[agent].session == session
 
         async def call(self, held, method, params):
             seat = held.agent_handle
-            assert held is handles[seat]
             operations[seat].append(
                 (method, params.get("input_id"), params.get("work_id"))
             )
             return await runners[seat].dispatch(method, params)
-
-        async def discover(self, device_id):
-            return list(handles.values())
-
-        async def images(self, held, images):
-            assert not images
-            return []
 
     def input_calls(seat):
         return [
@@ -135,7 +115,7 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
             resources.callback(machines[seat].close)
             machines[seat].server.state["actions"] = PlannedTools()
             operations[seat] = []
-        runtime = ClaudeCodeRuntime(Channel())
+        runtime = Channel().runtime
         chat = ChatService(
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
@@ -265,9 +245,6 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
         async def b_inputs():
             async with asyncio.timeout(10):
                 while True:
-                    await runtime.subscriptions[
-                        (topic, handles[seat_b].session.agent_handle)
-                    ].drain()
                     async with client.test_request_factory() as session:
                         rows = list(
                             await session.scalars(
@@ -283,9 +260,12 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
                             assert len(rows) == 1
                             row = rows[0]
                             assert row.native_session_id == native_b
-                            assert row.execution_work_id == uuid.UUID(work_b)
                             assert not row.completed_at
+                            # Registered before the send, owned at the echo:
+                            # the executing work is stamped only once the
+                            # session's echo has been read.
                             if row.echoed_at and row.settled_at:
+                                assert row.execution_work_id == uuid.UUID(work_b)
                                 return (
                                     row.id,
                                     row.input_id,
@@ -336,10 +316,6 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
         async def wait_for_answer():
             async with asyncio.timeout(90):
                 while True:
-                    subscription = runtime.subscriptions[
-                        (topic, handles[seat_a].session.agent_handle)
-                    ]
-                    await subscription.drain()
                     response = await asyncio.to_thread(
                         client.get,
                         f"/topics/asks/{group['group']['id']}",

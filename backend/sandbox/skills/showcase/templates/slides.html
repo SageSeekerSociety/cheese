@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 幻灯片模板 · 知是设计系统（--cx-* token）。一份自包含的 HTML 演示文稿：
+     每张幻灯片一个 <section class="slide" id="...">，演讲者备注是该 section 的最后一个
+     <aside class="notes">（屏幕上不显示，按 N 进入备注模式）。槽位与用法见
+     references/slides.md，token 与组件见 references/design-system.md。 -->
+<title>幻灯片</title>
+<style>
+:root {
+  color-scheme: light;
+
+  /* 中性色阶（暖冷灰）：每档按「信息离读者多远」选，不跳档 */
+  --cx-ink: #191a1c;      /* 标题 */
+  --cx-text: #36383c;     /* 正文 */
+  --cx-muted: #5a5e66;    /* 次要：副标题、说明、轴标签、表头 */
+  --cx-faint: #747a82;    /* 元信息：时间戳、ID、计数 */
+
+  --cx-line: #ecedef;     /* 发丝分隔线 */
+  --cx-line-2: #e2e3e6;   /* 更明显的分隔线，也是选中行底色 */
+  --cx-fill: #f4f5f7;     /* 悬停、内嵌区块 */
+  --cx-fill-2: #eeeff1;   /* 比 fill 重一档 */
+
+  --cx-canvas: #f7f8fa;   /* 页面底色 */
+  --cx-surface: #ffffff;  /* 内容区、卡片 */
+  --cx-raised: #ffffff;   /* 浮层：菜单、弹窗、抽屉 */
+
+  /* 琥珀：全页只给一处 */
+  --cx-accent: #f57f17;
+  --cx-accent-press: #d96e0a;
+  --cx-accent-ink: #9a5413;   /* 琥珀色文字（--cx-accent 写字对比度不够） */
+  --cx-accent-wash: #fdf1e2;  /* 极浅琥珀底，罕用 */
+  --cx-on-accent: #ffffff;    /* 琥珀实心上的字 */
+
+  /* 状态三件套：记号 / 文字 / 底，不可换用 */
+  --cx-ok: #1f9d55;     --cx-ok-ink: #12703a;     --cx-ok-wash: #e8f6ee;
+  --cx-warn: #e8901c;   --cx-warn-ink: #8f5406;   --cx-warn-wash: #faf0dc;
+  --cx-danger: #dc2626; --cx-danger-ink: #b91c1c; --cx-danger-wash: #fdecec;
+
+  /* 图表系列：分类用，最多六条。两条以内优先用 --cx-text / --cx-muted 加线型 */
+  --cx-chart-1: #3d6bb3;
+  --cx-chart-2: #2a9d8f;
+  --cx-chart-3: #d9822b;
+  --cx-chart-4: #8a63c2;
+  --cx-chart-5: #c9506f;
+  --cx-chart-6: #6b7b8c;
+
+  /* 代码块：两套主题下都反色 */
+  --cx-code-bg: #212121;
+  --cx-code-ink: #e0e0e0;
+
+  /* 圆角：三档加胶囊 */
+  --cx-radius-sm: 6px;     /* 标签、chip、小徽章 */
+  --cx-radius-md: 8px;     /* 按钮、输入框、卡片内的小块 */
+  --cx-radius-lg: 12px;    /* 卡片、面板、callout、图 */
+  --cx-radius-pill: 999px; /* 胶囊、状态标签、圆点 */
+
+  /* 投影：只给浮层，卡片只描边 */
+  --cx-shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
+  --cx-shadow-2: 0 4px 12px rgba(25, 26, 28, 0.1), 0 12px 32px rgba(25, 26, 28, 0.1);
+  --cx-focus-ring: #c2570a; /* 键盘焦点环，别移除 */
+
+  /* 字体：只用系统中文字体栈，不引外部字体（CJK 网络字体每字重好几兆，也连不上） */
+  --cx-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --cx-font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 前四个 Windows 上没有，落到裸 monospace 会被映射成宋体；垫上自带的 Cascadia Mono / Consolas */
+  --cx-font-mono: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas,
+    "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --cx-ink: #f3f4f6;
+    --cx-text: #d3d6db;
+    --cx-muted: #aeb4bd;
+    --cx-faint: #888ea0;
+
+    --cx-line: #2b2e33;
+    --cx-line-2: #3a3e45;
+    --cx-fill: #212429;
+    --cx-fill-2: #282c31;
+
+    --cx-canvas: #141517;   /* 不用纯黑：纯黑之下没有更暗的一档，卡片浮不起来 */
+    --cx-surface: #1b1d20;
+    --cx-raised: #212429;   /* 比 surface 亮一档，浮层靠亮度而非投影分开 */
+
+    --cx-accent: #ffa733;   /* 深色下必须提亮，否则按钮上的字读不出 */
+    --cx-accent-press: #ffbc5e; /* 深色下按下变亮，不像亮色那样变深 */
+    --cx-accent-ink: #ffc670;
+    --cx-accent-wash: #2e2216;
+    --cx-on-accent: #191a1c; /* 浅琥珀上的字要用深色 */
+
+    --cx-ok: #3fbf7f;     --cx-ok-ink: #6fd9a0;     --cx-ok-wash: #14261d;
+    --cx-warn: #f0a94a;   --cx-warn-ink: #f7c078;   --cx-warn-wash: #2a2114;
+    --cx-danger: #f0625c; --cx-danger-ink: #f79490; --cx-danger-wash: #2e1a1a;
+
+    --cx-chart-1: #7aa2e3;
+    --cx-chart-2: #4fb8aa;
+    --cx-chart-3: #eba25a;
+    --cx-chart-4: #ad8fe2;
+    --cx-chart-5: #e57f99;
+    --cx-chart-6: #9eacba;
+
+    --cx-code-bg: #282c31;  /* 反色块在深色下改用 fill-2，否则和卡片糊在一起 */
+    --cx-code-ink: #d3d6db;
+
+    --cx-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --cx-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+    --cx-focus-ring: rgba(255, 167, 51, 0.65);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --cx-ink: #f3f4f6;
+  --cx-text: #d3d6db;
+  --cx-muted: #aeb4bd;
+  --cx-faint: #888ea0;
+
+  --cx-line: #2b2e33;
+  --cx-line-2: #3a3e45;
+  --cx-fill: #212429;
+  --cx-fill-2: #282c31;
+
+  --cx-canvas: #141517;
+  --cx-surface: #1b1d20;
+  --cx-raised: #212429;
+
+  --cx-accent: #ffa733;
+  --cx-accent-press: #ffbc5e;
+  --cx-accent-ink: #ffc670;
+  --cx-accent-wash: #2e2216;
+  --cx-on-accent: #191a1c;
+
+  --cx-ok: #3fbf7f;     --cx-ok-ink: #6fd9a0;     --cx-ok-wash: #14261d;
+  --cx-warn: #f0a94a;   --cx-warn-ink: #f7c078;   --cx-warn-wash: #2a2114;
+  --cx-danger: #f0625c; --cx-danger-ink: #f79490; --cx-danger-wash: #2e1a1a;
+
+  --cx-chart-1: #7aa2e3;
+  --cx-chart-2: #4fb8aa;
+  --cx-chart-3: #eba25a;
+  --cx-chart-4: #ad8fe2;
+  --cx-chart-5: #e57f99;
+  --cx-chart-6: #9eacba;
+
+  --cx-code-bg: #282c31;
+  --cx-code-ink: #d3d6db;
+
+  --cx-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --cx-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+  --cx-focus-ring: rgba(255, 167, 51, 0.65);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--cx-canvas); /* body 必须显式设背景，透明会露出宿主底色还不报警 */
+  color: var(--cx-text);
+  font-family: var(--cx-font-sans);
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible { outline: 2px solid var(--cx-focus-ring); outline-offset: 2px; border-radius: var(--cx-radius-sm); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ===== 幻灯片：舞台 + 版式。全部通过 --cx-* 变量上色。 ===== */
+
+/* 16:9 舞台等比缩放到视口，四周留边（letterbox）。--deck-scale 由脚本按视口算。 */
+html, body { height: 100%; }
+body { overflow: hidden; background: var(--cx-canvas); }
+
+.deck {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  background: var(--cx-canvas);
+}
+/* 舞台容器：缩放后的舞台居中；顶部 chrome 与左右翻页区都以它为定位参照 */
+.deck__fit {
+  position: relative; flex: 1 1 auto; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.stage {
+  position: relative; flex: none;
+  width: 1280px; height: 720px;
+  background: var(--cx-surface);
+  border: 1px solid var(--cx-line);
+  transform: scale(var(--deck-scale, 1));
+  transform-origin: center center;
+  overflow: hidden;
+}
+
+/* 一张幻灯片贴满舞台；屏幕上只显示 active 那张 */
+.slide {
+  position: absolute; inset: 0;
+  display: none;
+  flex-direction: column;
+  gap: 18px;
+  padding: 56px 80px;
+  background: var(--cx-surface);
+}
+.slide.active { display: flex; }
+
+.slide__kicker { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; color: var(--cx-muted); }
+.slide__title { margin: 0; font-size: 38px; line-height: 1.22; font-weight: 650; color: var(--cx-ink); text-wrap: balance; }
+.slide__sub { margin: 0; font-size: 22px; line-height: 1.5; color: var(--cx-muted); }
+.slide__body { flex: 1 1 auto; min-height: 0; display: flex; }
+.slide__foot { margin: 0; font-size: 15px; line-height: 21px; color: var(--cx-faint); }
+
+/* 备注：屏幕上隐藏，notes 模式（按 N）显示在舞台下方 */
+.notes { display: none; }
+
+/* 幻灯片外壳上的 chrome：页码、翻页、提示、备注条 —— 打印时全部隐藏 */
+.zone {
+  position: absolute; top: 0; bottom: 0; z-index: 2;
+  border: 0; padding: 0; margin: 0; background: transparent; cursor: pointer;
+}
+.zone--prev { left: 0; width: 22%; }
+.zone--next { right: 0; width: 78%; }
+.zone:focus-visible { outline: 2px solid var(--cx-focus-ring); outline-offset: -3px; }
+
+.chrome { z-index: 3; }
+.chrome--deck {
+  position: absolute; top: 18px; left: 24px;
+  padding: 6px 12px; border-radius: var(--cx-radius-pill);
+  background: var(--cx-raised); border: 1px solid var(--cx-line);
+}
+.chrome__title { margin: 0; font-size: 14px; line-height: 18px; font-weight: 600; color: var(--cx-muted); }
+.chrome--nav {
+  position: absolute; right: 24px; bottom: 18px;
+  display: flex; align-items: center; gap: 10px;
+}
+.navbtn {
+  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--cx-line-2); border-radius: var(--cx-radius-md);
+  background: var(--cx-raised); color: var(--cx-text); font-size: 17px; line-height: 1;
+  cursor: pointer; font-family: inherit;
+}
+.navbtn:hover { background: var(--cx-fill); }
+.counter {
+  font-size: 14px; line-height: 18px; color: var(--cx-muted);
+  font-variant-numeric: tabular-nums; min-width: 58px; text-align: center;
+}
+.hint { font-size: 12px; line-height: 18px; color: var(--cx-faint); }
+
+.notesbar {
+  flex: none; z-index: 4;      /* 在舞台下方占位，不覆盖幻灯片 */
+  display: none;
+  padding: 16px 24px 18px;
+  background: var(--cx-raised);
+  border-top: 1px solid var(--cx-line-2);   /* 中性发丝线，不占琥珀 */
+  box-shadow: var(--cx-shadow-2);
+  max-height: 40vh; overflow-y: auto;
+}
+.notesbar__label { margin: 0 0 6px; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--cx-muted); }
+.notesbar__text { margin: 0; font-size: 15px; line-height: 1.6; color: var(--cx-text); }
+body.show-notes .notesbar { display: block; }
+
+/* ---------- 版式：封面 ---------- */
+.slide--cover { justify-content: center; gap: 20px; padding: 72px 88px; }
+.cover__eyebrow { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; color: var(--cx-muted); }
+.cover__title { margin: 0; font-size: 62px; line-height: 1.12; font-weight: 700; color: var(--cx-ink); text-wrap: balance; max-width: 30ch; }
+.cover__title .nb { white-space: nowrap; }   /* 数字+量词挤在一行，别被断开 */
+.cover__sub { margin: 0; font-size: 24px; line-height: 1.5; color: var(--cx-muted); max-width: 40ch; }
+.stat-hero { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.stat-hero__row { display: flex; align-items: baseline; gap: 18px; }
+.stat-hero__from { font-size: 38px; line-height: 1; color: var(--cx-muted); text-decoration: line-through; text-decoration-thickness: 2px; font-variant-numeric: tabular-nums; }
+.stat-hero__arrow { font-size: 30px; line-height: 1; color: var(--cx-faint); }
+.stat-hero__to { font-size: 76px; line-height: 1; font-weight: 700; color: var(--cx-accent-ink); font-variant-numeric: tabular-nums; }
+.stat-hero__cap { margin: 0; font-size: 16px; line-height: 22px; color: var(--cx-faint); }
+.cover__meta { margin: 0; font-size: 16px; line-height: 22px; color: var(--cx-faint); }
+
+/* ---------- 版式：分节页 ---------- */
+.slide--section { justify-content: center; gap: 16px; padding: 72px 88px; background: var(--cx-fill); }
+.section__num { margin: 0; font-size: 96px; line-height: 1; font-weight: 700; color: var(--cx-ink); font-variant-numeric: tabular-nums; }
+.section__title { margin: 0; font-size: 52px; line-height: 1.15; font-weight: 700; color: var(--cx-ink); text-wrap: balance; }
+.section__note { margin: 0; font-size: 22px; line-height: 1.5; color: var(--cx-muted); max-width: 40ch; }
+.dirlist { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; max-width: 560px; }
+.dir { display: flex; align-items: center; gap: 12px; font-size: 20px; color: var(--cx-text); }
+.dir__mark { width: 12px; height: 12px; border-radius: 3px; flex: none; background: transparent; border: 2px solid var(--cx-faint); }
+.dir--go .dir__mark { background: var(--cx-ink); border-color: var(--cx-ink); }
+.dir--stop .dir__mark { background: transparent; border-color: var(--cx-faint); }
+.dir__tag { margin-left: auto; font-size: 14px; color: var(--cx-faint); font-variant-numeric: tabular-nums; }
+
+/* ---------- 版式：大字陈述 / 单个数 ---------- */
+.slide--statement { justify-content: center; }
+.statement { display: flex; flex-direction: column; gap: 12px; }
+.statement__label { margin: 0; font-size: 22px; line-height: 30px; font-weight: 600; color: var(--cx-muted); }
+.statement__value { margin: 0; font-size: 132px; line-height: 1; font-weight: 700; color: var(--cx-accent-ink); font-variant-numeric: tabular-nums; }
+.statement__unit { font-size: 44px; font-weight: 600; color: var(--cx-muted); margin-left: 10px; }
+.statement__note { margin: 0; font-size: 24px; line-height: 1.5; color: var(--cx-text); max-width: 44ch; }
+
+/* ---------- 版式：要点 + 视觉 ---------- */
+.slide--bullets .slide__body { display: grid; grid-template-columns: 1.02fr 0.98fr; gap: 52px; align-items: center; }
+.bullets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 20px; }
+.bullets li { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: baseline; font-size: 22px; line-height: 1.45; color: var(--cx-text); }
+.bullets__num { font-size: 18px; font-weight: 600; color: var(--cx-faint); font-variant-numeric: tabular-nums; }
+.bullets__k { font-weight: 650; color: var(--cx-ink); }
+.visual { display: flex; justify-content: center; }
+.visual svg { width: 100%; height: auto; display: block; }
+
+/* ---------- 版式：两栏对照 ---------- */
+.slide--compare .slide__body { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
+.compare__col { display: flex; flex-direction: column; gap: 0; padding: 0 44px; }
+.compare__col:first-child { padding-left: 0; }
+.compare__col:last-child { padding-right: 0; border-left: 1px solid var(--cx-line); }
+.compare__head { margin: 0 0 10px; font-size: 20px; line-height: 28px; font-weight: 600; color: var(--cx-muted); }
+.compare__row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid var(--cx-line); }
+.compare__row:last-child { border-bottom: 0; }
+.compare__k { font-size: 22px; color: var(--cx-text); }
+.compare__v { font-size: 23px; font-weight: 650; color: var(--cx-ink); font-variant-numeric: tabular-nums; }
+.compare__v--accent { color: var(--cx-accent-ink); }
+.compare__v--none { color: var(--cx-faint); font-weight: 400; }
+
+/* ---------- 版式：图表 + 结论 ---------- */
+.slide--chart .slide__body { display: grid; grid-template-columns: 1.45fr 1fr; gap: 56px; align-items: center; }
+.chart svg { width: 100%; height: auto; display: block; }
+.takeaway { display: flex; flex-direction: column; gap: 12px; }
+.takeaway__num { margin: 0; font-size: 60px; line-height: 1; font-weight: 700; color: var(--cx-accent-ink); font-variant-numeric: tabular-nums; }
+.takeaway__text { margin: 0; font-size: 22px; line-height: 1.5; color: var(--cx-text); }
+
+/* ---------- 版式：表格 ---------- */
+.slide--table .slide__body { align-items: stretch; }
+.slide-table { width: 100%; border-collapse: collapse; font-size: 22px; }
+.slide-table th, .slide-table td { text-align: left; padding: 15px 18px; border-bottom: 1px solid var(--cx-line); }
+.slide-table thead th { font-size: 16px; line-height: 22px; color: var(--cx-muted); font-weight: 600; }
+.slide-table tbody tr:last-child td { border-bottom: 0; }
+.slide-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.slide-table .code { font-family: var(--cx-font-mono); color: var(--cx-ink); font-weight: 600; }
+
+/* ---------- 版式：时间线 / 计划 ---------- */
+.slide--timeline .slide__body { flex-direction: column; justify-content: center; }
+.timeline { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 0; }
+.tl { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 0 22px; }
+.tl::before { content: ""; position: absolute; top: 5px; height: 2px; left: 0; right: 0; background: var(--cx-line-2); }
+.tl:first-child::before { left: 28px; }
+.tl:last-child::before { right: calc(100% - 28px); }
+.tl__dot { width: 12px; height: 12px; border-radius: var(--cx-radius-pill); background: var(--cx-surface); border: 2px solid var(--cx-faint); position: relative; z-index: 1; }
+.tl--now .tl__dot { background: var(--cx-accent); border-color: var(--cx-accent); }
+.tl__when { margin: 0; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--cx-faint); }
+.tl__what { margin: 0; font-size: 22px; line-height: 1.45; color: var(--cx-text); }
+
+/* ---------- 版式：收尾 / 请拍板 ---------- */
+.slide--closing .slide__body { align-items: center; }
+.roles { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 24px; width: 100%; }
+.role { display: flex; flex-direction: column; gap: 8px; padding: 26px; border: 1px solid var(--cx-line); border-radius: var(--cx-radius-lg); background: var(--cx-fill); }
+.role--accent { border-color: var(--cx-accent); }
+.role__label { margin: 0; font-size: 16px; line-height: 22px; font-weight: 600; color: var(--cx-muted); }
+.role__name { margin: 0; font-size: 30px; line-height: 1.2; font-weight: 650; color: var(--cx-ink); }
+.role__note { margin: 0; font-size: 16px; line-height: 22px; color: var(--cx-faint); }
+
+/* ---------- 窄屏（≤720px）：不缩放舞台，改成纵向堆叠的阅读视图 ----------
+   缩放的 16:9 舞台在手机宽会把整页缩到读不清；这里停掉缩放，把每张幻灯片按自然
+   尺寸一块一块排下来，正文字号保持可读（≥15px）。左右翻页区、页码在堆叠视图里
+   没有意义，一起隐藏；键盘翻页与 N 备注仍然可用。 */
+@media screen and (max-width: 720px) {
+  body { overflow: auto; }
+  .deck { position: static; display: block; overflow: visible; }
+  .deck__fit { display: block; overflow: visible; }
+  .stage { width: auto; height: auto; transform: none; border: 0; overflow: visible; }
+  .slide, .slide.active {
+    position: static; inset: auto; display: flex; gap: 14px;
+    padding: 28px 20px 34px; border-bottom: 1px solid var(--cx-line);
+  }
+  .slide--cover, .slide--section { padding: 34px 20px; }
+
+  /* 按 1280×720 设计的大字号，缩到手机一栏的尺寸 */
+  .cover__eyebrow { font-size: 15px; }
+  .cover__title { font-size: 34px; }
+  .cover__sub { font-size: 17px; }
+  .stat-hero__from { font-size: 24px; }
+  .stat-hero__to { font-size: 44px; }
+  .stat-hero__cap, .cover__meta { font-size: 15px; }
+  .slide__kicker { font-size: 15px; }
+  .slide__title { font-size: 26px; }
+  .section__num { font-size: 52px; }
+  .section__title { font-size: 30px; }
+  .section__note { font-size: 17px; }
+  .statement__label { font-size: 17px; }
+  .statement__value { font-size: 68px; }
+  .statement__unit { font-size: 30px; }
+  .statement__note { font-size: 17px; }
+  .bullets, .bullets__num { font-size: 16px; }
+  .takeaway__num { font-size: 30px; }
+  .tl__when { font-size: 14px; }
+  .tl__what { font-size: 17px; }
+  .dir { font-size: 16px; }
+  .role__label, .role__note { font-size: 15px; }
+  .role__name { font-size: 24px; }
+
+  /* 并排的两栏都折成一列 */
+  .slide--bullets .slide__body,
+  .slide--compare .slide__body,
+  .slide--chart .slide__body { grid-template-columns: 1fr; gap: 20px; }
+  .compare__col + .compare__col { border-top: 1px solid var(--cx-line); padding-top: 16px; }
+  .chart svg, .visual svg { max-width: 100%; height: auto; }
+
+  /* 角色卡、时间线在窄屏竖排，表格放不下就在自己的框里横滑，不撑破页面 */
+  .roles { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: 1fr; gap: 12px; }
+  .tl { flex-direction: column; align-items: stretch; gap: 14px; }
+  .slide-table { display: block; max-width: 100%; overflow-x: auto; }
+  .slide-table { font-size: 16px; }
+  .slide-table th, .slide-table td { padding: 10px 12px; }
+  .slide-table thead th { font-size: 13px; }
+
+  .zone, .chrome--nav { display: none; }
+  .chrome--deck { position: static; display: inline-block; margin: 14px 20px 0; }
+  .notesbar { max-height: none; }
+}
+
+/* ---------- 打印：每张幻灯片一页，16:9 页面，固定亮色 ---------- */
+@media print {
+  @page { size: 1280px 720px; margin: 0; }
+  html, body { height: auto; background: #ffffff; }
+  body { overflow: visible; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .deck { position: static; display: block; overflow: visible; background: #ffffff; }
+  .deck__fit { display: block; overflow: visible; }
+  .stage {
+    width: 1280px; height: auto; border: 0; overflow: visible;
+    transform: none !important;
+  }
+  .slide {
+    position: relative; display: flex !important;
+    width: 1280px; height: 720px;
+    break-after: page; page-break-after: always;
+  }
+  .slide:last-child { break-after: auto; page-break-after: auto; }
+  .chrome, .zone, .notes, .notesbar { display: none !important; }
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    color-scheme: light;
+    --cx-ink: #191a1c;
+    --cx-text: #36383c;
+    --cx-muted: #5a5e66;
+    --cx-faint: #747a82;
+    --cx-line: #ecedef;
+    --cx-line-2: #e2e3e6;
+    --cx-fill: #f4f5f7;
+    --cx-fill-2: #eeeff1;
+    --cx-canvas: #ffffff;
+    --cx-surface: #ffffff;
+    --cx-raised: #ffffff;
+    --cx-accent: #f57f17;
+    --cx-accent-press: #d96e0a;
+    --cx-accent-ink: #9a5413;
+    --cx-accent-wash: #fdf1e2;
+    --cx-on-accent: #ffffff;
+    --cx-ok: #1f9d55;     --cx-ok-ink: #12703a;     --cx-ok-wash: #e8f6ee;
+    --cx-warn: #e8901c;   --cx-warn-ink: #8f5406;   --cx-warn-wash: #faf0dc;
+    --cx-danger: #dc2626; --cx-danger-ink: #b91c1c; --cx-danger-wash: #fdecec;
+    --cx-chart-1: #3d6bb3;
+    --cx-chart-2: #2a9d8f;
+    --cx-chart-3: #d9822b;
+    --cx-chart-4: #8a63c2;
+    --cx-chart-5: #c9506f;
+    --cx-chart-6: #6b7b8c;
+    --cx-code-bg: #212121;
+    --cx-code-ink: #e0e0e0;
+    --cx-shadow-2: none;
+  }
+}
+</style>
+</head>
+<body>
+<script type="application/json" id="deck-index">
+{"title": "幻灯片", "slides": [{"id": "cover", "title": "幻灯片 1"}, {"id": "statement", "title": "幻灯片 2"}, {"id": "bullets", "title": "幻灯片 3"}, {"id": "compare", "title": "幻灯片 4"}, {"id": "chart", "title": "幻灯片 5"}, {"id": "table", "title": "幻灯片 6"}, {"id": "section", "title": "幻灯片 7"}, {"id": "timeline", "title": "幻灯片 8"}, {"id": "closing", "title": "幻灯片 9"}]}
+</script>
+<div class="deck" id="deck">
+  <div class="deck__fit">
+    <div class="stage" id="stage">
+<!-- CONTENT:START -->
+  <section class="slide slide--cover" id="cover">
+    <p class="cover__eyebrow"><!-- SLOT: COVER_EYEBROW — 汇报场合与日期，如「季度评审 · 2026 年 6 月」 -->汇报场合与日期</p>
+    <h1 class="cover__title"><!-- SLOT: COVER_TITLE — 这份演示的名字：一个两到四词的专名，或那句要回答的问题本身；不接破折号/冒号解释 -->演示标题</h1>
+    <p class="cover__sub"><!-- SLOT: COVER_SUB — 一句话说清这次汇报要让人记住什么 -->一句话结论，把最要紧的判断放在最前面。</p>
+    <div class="stat-hero">
+      <div class="stat-hero__row"><span class="stat-hero__from"><!-- SLOT: HERO_FROM — 改前/旧的数，带单位 -->14.0 s</span><span class="stat-hero__arrow">&#8594;</span><span class="stat-hero__to"><!-- SLOT: HERO_TO — 改后/新的数，带单位；这是全页唯一的琥珀 -->1.0 s</span></div>
+      <p class="stat-hero__cap"><!-- SLOT: HERO_CAP — 这两个数是什么、同一口径 -->这个数字指的是什么（同口径对比）</p>
+    </div>
+    <p class="cover__meta"><!-- SLOT: COVER_META — 负责人 / 拍板人 / 日期，缺的写「未定」 -->负责人 · 拍板 · 日期</p>
+    <aside class="notes"><!-- SLOT: NOTES — 每页的演讲者备注，屏幕上不显示，按 N 看。写你要说的话，不是把幻灯片再抄一遍 -->开场备注。</aside>
+  </section>
+  <section class="slide slide--statement" id="statement">
+    <p class="slide__kicker"><!-- SLOT: STATEMENT_KICKER — 这一页的定位，如「结论」 -->结论</p>
+    <div class="slide__body"><div class="statement">
+      <p class="statement__label"><!-- SLOT: STATEMENT_LABEL — 这个数是什么 -->要让人记住的那一个数</p>
+      <p class="statement__value">0<span class="statement__unit"><!-- SLOT: STATEMENT_UNIT — 单位，如 s / % / GB；没有就留空 -->s</span></p>
+      <p class="statement__note"><!-- SLOT: STATEMENT_NOTE — 从哪来、跟什么比、哪些还没测 -->这个数从哪来、跟什么比，其余未测的写「未测」。</p>
+    </div></div>
+    <aside class="notes"><!-- SLOT: NOTES -->这一页只讲一个数，别再加第二个。</aside>
+  </section>
+  <section class="slide slide--bullets" id="bullets">
+    <p class="slide__kicker"><!-- SLOT: BULLETS_KICKER -->进度</p>
+    <h2 class="slide__title"><!-- SLOT: BULLETS_TITLE — 一句结论，不只是一个类名 -->这一页要说的结论</h2>
+    <div class="slide__body">
+      <ul class="bullets">
+      <li><span class="bullets__num">01</span><span><span class="bullets__k"><!-- SLOT: ITEM_KEY -->要点一</span>　<!-- SLOT: ITEM_REST -->一句话说明</span></li>
+      <li><span class="bullets__num">02</span><span><span class="bullets__k">要点二</span>　一句话说明</span></li>
+      <li><span class="bullets__num">03</span><span><span class="bullets__k">要点三</span>　一句话说明</span></li>
+      </ul>
+      <div class="visual"><!-- SLOT: BULLETS_VISUAL — 右栏一个视觉：内联 SVG（手写，颜色走 style 里的 var()），或一张截图 -->
+      <svg viewBox="0 0 640 180" role="img" aria-label="示意图">
+        <rect x="0" y="0" width="640" height="180" style="fill:var(--cx-fill)"/>
+        <text x="320" y="98" style="fill:var(--cx-muted)" font-size="20" text-anchor="middle">右栏视觉（内联 SVG）</text>
+      </svg></div>
+    </div>
+    <aside class="notes"><!-- SLOT: NOTES -->逐条讲，一次一个意思。</aside>
+  </section>
+  <section class="slide slide--compare" id="compare">
+    <p class="slide__kicker"><!-- SLOT: COMPARE_KICKER -->对照</p>
+    <h2 class="slide__title"><!-- SLOT: COMPARE_TITLE -->改前与改后</h2>
+    <div class="slide__body">
+      <div class="compare__col">
+      <p class="compare__head"><!-- SLOT: COMPARE_HEAD_A -->改前</p>
+      <div class="compare__row"><span class="compare__k"><!-- SLOT -->第一项</span><span class="compare__v">0</span></div>
+      <div class="compare__row"><span class="compare__k">第二项</span><span class="compare__v">0</span></div>
+      <div class="compare__row"><span class="compare__k">第三项</span><span class="compare__v">0</span></div>
+      </div>
+      <div class="compare__col">
+      <p class="compare__head"><!-- SLOT: COMPARE_HEAD_B -->改后</p>
+      <div class="compare__row"><span class="compare__k">第一项</span><span class="compare__v compare__v--accent">0</span></div>
+      <div class="compare__row"><span class="compare__k">第二项</span><span class="compare__v compare__v--none">未测</span></div>
+      <div class="compare__row"><span class="compare__k">第三项</span><span class="compare__v compare__v--none">未测</span></div>
+      </div>
+    </div>
+    <aside class="notes"><!-- SLOT: NOTES -->左旧右新，同一口径；未测的写「未测」，别拿估算填。</aside>
+  </section>
+  <section class="slide slide--chart" id="chart">
+    <p class="slide__kicker"><!-- SLOT: CHART_KICKER -->耗时</p>
+    <h2 class="slide__title"><!-- SLOT: CHART_TITLE -->各路径的耗时</h2>
+    <div class="slide__body">
+      <div class="chart"><!-- SLOT: CHART_SVG — 手写内联 SVG 条状图；柱用中性灰（最快的一根可加深），全页琥珀留给右侧结论里的那个数 -->
+<svg viewBox="0 0 640 190" role="img" aria-label="示例条状图：第一项 54 秒、第二项 17 秒、第三项约 4 秒，第一项最长">
+  <g style="stroke:var(--cx-line)" stroke-width="1">
+    <line x1="298.0" y1="10" x2="298.0" y2="160"/>
+    <line x1="400.0" y1="10" x2="400.0" y2="160"/>
+    <line x1="502.0" y1="10" x2="502.0" y2="160"/>
+    <line x1="604.0" y1="10" x2="604.0" y2="160"/>
+  </g>
+  <line x1="196" y1="10" x2="196" y2="160" style="stroke:var(--cx-line-2)" stroke-width="1"/>
+  <rect x="196" y="29.0" width="367.2" height="22" rx="3" style="fill:var(--cx-text)"/>
+  <text x="178" y="46.0" style="fill:var(--cx-muted)" font-size="17" text-anchor="end">第一项</text>
+  <text x="571.2" y="46.0" style="fill:var(--cx-ink);font-variant-numeric:tabular-nums" font-size="17" text-anchor="start">54 s</text>
+  <rect x="196" y="77.0" width="115.6" height="22" rx="3" style="fill:var(--cx-text)"/>
+  <text x="178" y="94.0" style="fill:var(--cx-muted)" font-size="17" text-anchor="end">第二项</text>
+  <text x="319.6" y="94.0" style="fill:var(--cx-ink);font-variant-numeric:tabular-nums" font-size="17" text-anchor="start">17 s</text>
+  <rect x="196" y="125.0" width="27.2" height="22" rx="3" style="fill:var(--cx-text)"/>
+  <text x="178" y="142.0" style="fill:var(--cx-muted)" font-size="17" text-anchor="end">第三项</text>
+  <text x="231.2" y="142.0" style="fill:var(--cx-ink);font-variant-numeric:tabular-nums" font-size="17" text-anchor="start">约 4 s</text>
+  <g style="fill:var(--cx-faint)" font-size="15" text-anchor="middle">
+    <text x="196.0" y="184">0</text>
+    <text x="298.0" y="184">15</text>
+    <text x="400.0" y="184">30</text>
+    <text x="502.0" y="184">45</text>
+    <text x="604.0" y="184">60</text>
+  </g>
+</svg></div>
+      <div class="takeaway">
+        <p class="takeaway__num"><!-- SLOT: TAKEAWAY_NUM — 结论里的那个数，琥珀 -->0 s</p>
+        <p class="takeaway__text"><!-- SLOT: TAKEAWAY_TEXT — 一句结论 -->一句话点出这张图里最要紧的那件事。</p>
+      </div>
+    </div>
+    <aside class="notes"><!-- SLOT: NOTES -->先指结论，再顺着柱子讲。</aside>
+  </section>
+  <section class="slide slide--table" id="table">
+    <p class="slide__kicker"><!-- SLOT: TABLE_KICKER -->明细</p>
+    <h2 class="slide__title"><!-- SLOT: TABLE_TITLE -->明细</h2>
+    <div class="slide__body">
+      <table class="slide-table">
+        <thead><tr><th scope="col"><!-- SLOT: TABLE_H -->名称</th><th scope="col" class="num">数值</th><th scope="col">状态</th></tr></thead>
+        <tbody>
+        <tr><td><!-- SLOT: ROW -->第一行</td><td class="num">0</td><td>在办</td></tr>
+        <tr><td>第二行</td><td class="num">0</td><td>已完成</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <aside class="notes"><!-- SLOT: NOTES -->表太多行就精简，一行一个要点。</aside>
+  </section>
+  <section class="slide slide--section" id="section">
+    <p class="slide__kicker"><!-- SLOT: SECTION_KICKER -->方向</p>
+    <p class="section__num"><!-- SLOT: SECTION_NUM — 一个关键词或数，做成分节页的大字 -->方向</p>
+    <h2 class="section__title"><!-- SLOT: SECTION_TITLE -->接下来往哪走</h2>
+    <p class="section__note"><!-- SLOT: SECTION_NOTE -->一句话说清这个方向，谁定的。</p>
+      <div class="dirlist">
+      <div class="dir dir--<!-- SLOT: DIR -->go"><span class="dir__mark"></span>继续做的部分<span class="dir__tag"><!-- 状态词 -->继续</span></div>
+      <div class="dir dir--stop"><span class="dir__mark"></span>停下的部分<span class="dir__tag">不再继续</span></div>
+      </div>
+    <aside class="notes"><!-- SLOT: NOTES -->这是拍板意见，讲清是谁定的。</aside>
+  </section>
+  <section class="slide slide--timeline" id="timeline">
+    <p class="slide__kicker"><!-- SLOT: TL_KICKER -->下一步</p>
+    <h2 class="slide__title"><!-- SLOT: TL_TITLE -->下一步</h2>
+    <div class="slide__body"><div class="timeline">
+      <div class="tl tl--now"><span class="tl__dot"></span><p class="tl__when"><!-- SLOT: WHEN -->第一步</p><p class="tl__what"><!-- SLOT: WHAT -->第一件事</p></div>
+      <div class="tl"><span class="tl__dot"></span><p class="tl__when">第二步</p><p class="tl__what">第二件事</p></div>
+      <div class="tl"><span class="tl__dot"></span><p class="tl__when">第三步</p><p class="tl__what">第三件事</p></div>
+    </div></div>
+    <aside class="notes"><!-- SLOT: NOTES -->第一步用琥珀点亮（tl--now），其余中性。</aside>
+  </section>
+  <section class="slide slide--closing" id="closing">
+    <p class="slide__kicker"><!-- SLOT: CLOSE_KICKER -->收尾</p>
+    <h2 class="slide__title"><!-- SLOT: CLOSE_TITLE -->请拍板</h2>
+    <div class="slide__body"><div class="roles">
+      <div class="role"><p class="role__label"><!-- SLOT: ROLE_LABEL -->主要负责人</p><p class="role__name"><!-- SLOT: ROLE_NAME -->名字</p><p class="role__note"><!-- SLOT: ROLE_NOTE -->职责</p></div>
+      <div class="role role--accent"><p class="role__label">拍板</p><p class="role__name">名字</p><p class="role__note">做决定的人</p></div>
+      <div class="role"><p class="role__label">日期</p><p class="role__name">未定</p><p class="role__note">以拍板结果为准</p></div>
+    </div></div>
+    <aside class="notes"><!-- SLOT: NOTES -->收尾：要谁做什么决定，日期未定就写未定。</aside>
+  </section>
+    </div>
+<!-- CONTENT:END -->
+    <button class="zone zone--prev" id="zone-prev" aria-label="上一张" tabindex="-1"></button>
+    <button class="zone zone--next" id="zone-next" aria-label="下一张" tabindex="-1"></button>
+    <div class="chrome chrome--deck"><p class="chrome__title">幻灯片</p></div>
+    <div class="chrome chrome--nav">
+      <button class="navbtn" id="btn-prev" aria-label="上一张">&#8249;</button>
+      <span class="counter" id="counter">01 / 9</span>
+      <button class="navbtn" id="btn-next" aria-label="下一张">&#8250;</button>
+      <span class="hint">&#8592; &#8594; 翻页 &middot; N 备注</span>
+    </div>
+  </div>
+  <div class="notesbar" id="notesbar">
+    <p class="notesbar__label">演讲者备注</p>
+    <p class="notesbar__text" id="notesbar-text"></p>
+  </div>
+</div>
+<script>
+(() => {
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const stage = document.getElementById('stage');
+  const fitBox = document.querySelector('.deck__fit');
+  const counter = document.getElementById('counter');
+  const notesText = document.getElementById('notesbar-text');
+  const total = slides.length;
+  let i = 0;
+
+  function fit() {
+    // 16:9 等比缩放到舞台容器（备注条展开时容器变矮，舞台跟着缩小）
+    const k = Math.min(fitBox.clientWidth / 1280, fitBox.clientHeight / 720);
+    stage.style.setProperty('--deck-scale', k);
+  }
+
+  function notesOf(n) {
+    const a = slides[n] && slides[n].querySelector('.notes');
+    return a ? a.textContent.trim() : '';
+  }
+
+  function paint() {
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    counter.textContent = String(i + 1).padStart(2, '0') + ' / ' + String(total).padStart(2, '0');
+    notesText.textContent = notesOf(i);
+  }
+
+  function show(n, writeHash) {
+    i = Math.max(0, Math.min(total - 1, n));
+    paint();
+    if (writeHash !== false) {
+      const id = slides[i].id;
+      if (id) { try { history.replaceState(null, '', '#' + id); } catch (err) {} }
+    }
+  }
+
+  function fromHash() {
+    const id = decodeURIComponent((location.hash || '').slice(1));
+    const k = slides.findIndex(s => s.id === id);
+    if (k >= 0) i = k;
+  }
+
+  const next = () => show(i + 1);
+  const prev = () => show(i - 1);
+
+  document.getElementById('zone-prev').addEventListener('click', prev);
+  document.getElementById('zone-next').addEventListener('click', next);
+  document.getElementById('btn-prev').addEventListener('click', prev);
+  document.getElementById('btn-next').addEventListener('click', next);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    switch (e.key) {
+      case 'ArrowRight': case 'PageDown': case ' ': case 'Spacebar':
+        e.preventDefault(); next(); break;
+      case 'ArrowLeft': case 'PageUp':
+        e.preventDefault(); prev(); break;
+      case 'Home': e.preventDefault(); show(0); break;
+      case 'End': e.preventDefault(); show(total - 1); break;
+      case 'n': case 'N':
+        document.body.classList.toggle('show-notes'); fit(); break;
+      default: break;
+    }
+    // 故意不绑定 Escape：预览用它
+  });
+
+  window.addEventListener('hashchange', () => { fromHash(); paint(); });
+  window.addEventListener('resize', fit);
+
+  fit();
+  fromHash();
+  paint();
+})();
+
+</script>
+</body>
+</html>

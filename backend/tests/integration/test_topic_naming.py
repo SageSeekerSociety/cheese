@@ -31,6 +31,7 @@ from app.domain.topic import naming
 from app.domain.topic.models import TitleSource, Topic, TopicTitle
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project
+from tests.support.living_doc import document_of
 
 
 @pytest.fixture
@@ -548,10 +549,11 @@ def test_a_rewritten_goal_and_a_split_are_signals(client, alice, gateway, monkey
     )
     pid = _project(client, alice)
     rid = _room(client, alice, pid)
-    doc = client.get(f"/topics/{rid}/doc", headers=alice).json()["data"] or {}
+    document = document_of(client, rid, headers=alice)
+    doc = client.get(f"/documents/{document}", headers=alice).json()["data"] or {}
     version = doc.get("doc_version", 0)
     r = client.put(
-        f"/topics/{rid}/doc",
+        f"/documents/{document}",
         json={"content": "## 目标\n改成 gateway 限流", "expected_version": version},
         headers=alice,
     )

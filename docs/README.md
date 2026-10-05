@@ -53,7 +53,7 @@
 | 知是愿景 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Xr8rwqIrKiqQaVkGFnScJxYCnkb) — 产品方向，去那评论 |
 | 产品定位（对谁、给什么） | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Xfm5wBpIwieCtjkM11SchWELnXg) — 现阶段为谁服务，以及一件事该不该做 |
 | 产品方向反馈 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/PtVAwDevmiKFnbkQiVAcuqNvnZf) |
-| 机器形态（Cloud / Hosted Sandbox / Hosted Machine） | **#358**——三类里两类还没传输，是演进中的设计 |
+| 执行环境（沙箱 / 整台机器，云机或用户电脑） | **#2320**——设计与实施步骤；现状见 `where-a-turn-runs.md` §四 |
 | 算力模型为何是这个样子 | **#282**（一个字段挤着四件事）、**#442**（两种机器被建模成一种加两个开关） |
 
 约定：产品/方向类文档住飞书（多人评论）；改代码时需要同步改的文档住 repo。

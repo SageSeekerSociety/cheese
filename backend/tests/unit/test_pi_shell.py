@@ -8,7 +8,7 @@ import importlib.util
 import uuid
 from pathlib import Path
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.runner import Runner
 from tests.pinned_claude import claude_binary
 from tests.support.room_machine import RUNTIME, room_machine
@@ -58,7 +58,7 @@ def test_pi_runs_a_command_in_the_users_shell_as_codex_does(tmp_path):
             tmp_path / "machine", home=_home(tmp_path), claude=claude_binary()
         ) as target:
             await runner.start(
-                Opening("system prompt", None, agent_handle="teammate"),
+                SessionStart("system prompt", None, agent_handle="teammate"),
                 binary=shim(tmp_path),
                 cwd=str(tmp_path),
                 env={"PATH": "/usr/bin:/bin"},

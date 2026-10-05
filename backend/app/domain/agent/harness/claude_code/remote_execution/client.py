@@ -76,11 +76,6 @@ NATIVE_TOOLS = (
     "Write",
     "NotebookEdit",
 )
-REMOTE_CONTROLS = {
-    "read_file",
-    "file_suggestions",
-    "get_workspace_diff",
-}
 # What the build adds to its shell children's environment, forwarded to a
 # command on the executor because a native session there would set the same.
 # Nothing else of this host's environment leaves it — its credentials are in
@@ -1068,9 +1063,9 @@ def _deliver_stop(target, command_id, pipe):
     client = RemoteClient(_current_target(target))
 
     def send(signalled):
-        deadline = time.monotonic() + 600
+        started = time.monotonic()
         nonlocal client
-        while time.monotonic() < deadline:
+        while time.monotonic() < started + 600:
             try:
                 return client.call(
                     "control",
@@ -1081,9 +1076,9 @@ def _deliver_stop(target, command_id, pipe):
                         "signal": int(signalled),
                     },
                 )
-            except Exception:  # noqa: BLE001 — the link may be down; retry
+            except Exception:  # noqa: BLE001 — link down or refused: retry, backing off
                 client = RemoteClient(_current_target(target))
-                time.sleep(1)
+                time.sleep(min(30.0, max(1.0, time.monotonic() - started)))
         return {}
 
     send(number)

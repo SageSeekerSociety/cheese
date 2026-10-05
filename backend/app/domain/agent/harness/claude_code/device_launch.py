@@ -16,7 +16,6 @@ launch; ``machine_launcher`` owns the other half and joins the two.
 
 import base64
 import dataclasses
-import gzip
 import hashlib
 import json
 import shlex
@@ -31,7 +30,11 @@ from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.place import SEATS_DIR, seat_name
-from app.domain.project_skill.service import project_skill_names, session_skill_files
+from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
+from app.domain.project_skill.service import (
+    project_skill_names,
+    publish_session_skill_bundle,
+)
 
 # --- the version this session is pinned to ----------------------------------
 # The runner drives Claude Code over its stream-json pipes, a protocol no
@@ -132,20 +135,44 @@ echo down
 """
 
 
-def project_skill_prune(shipped: list[str]) -> str:
+def platform_skill_prune(shipped: list[str], project: list[str]) -> str:
+    """Shell that removes the platform skills this seat got last time and is no
+    longer shipped, then records what ships now.
+
+    A seat's config directory is the platform's, but files are only ever
+    written into it, so a retired skill would stay listed to the agent for good.
+    A seat with no list yet is taken to have the skills shipped before there was
+    one. A project skill of the same name is the project's and stays."""
+    listed = '"$CLAUDE_CONFIG_DIR/skills/.cheese-platform-skills"'
+    return (
+        f"ship={shlex.quote(' '.join(shipped))}\n"
+        f"own={shlex.quote(' '.join(project))}\n"
+        'mkdir -p "$CLAUDE_CONFIG_DIR/skills"\n'
+        f"[ -f {listed} ] || printf '%s\\n' "
+        f"{shlex.join(SKILLS_SHIPPED_BEFORE_THE_LIST)} > {listed}\n"
+        "while IFS= read -r stale; do\n"
+        '  case "$stale" in ""|*/*|.|..) continue ;; esac\n'
+        '  case " $ship $own " in *" $stale "*) ;; '
+        '*) rm -rf "$CLAUDE_CONFIG_DIR/skills/$stale" ;; esac\n'
+        f"done < {listed}\n"
+        f"printf '%s\\n' {shlex.join(shipped)} > {listed}"
+    )
+
+
+def project_skill_prune(shipped: list[str], platform: list[str]) -> str:
     """Shell that removes the project skills a machine got last time and no
     longer ships, then records what ships now. Nothing at all for a project
-    that never had one."""
+    that never had one. The platform's own folders are never touched here."""
     listed = '"$CLAUDE_CONFIG_DIR/skills/.cheese-project-skills"'
     return (
         f"keep={shlex.quote(' '.join(shipped))}\n"
+        f"platform={shlex.quote(' '.join(platform))}\n"
         f'if [ -n "$keep" ] || [ -f {listed} ]; then\n'
         '  mkdir -p "$CLAUDE_CONFIG_DIR/skills"\n'
         f"  touch {listed}\n"
         "  while IFS= read -r stale; do\n"
-        '    case "$stale" in ""|*/*|.|..|documents|cheese|cheese-docs|chat-detail)'
-        " continue ;; esac\n"
-        '    case " $keep " in *" $stale "*) ;; '
+        '    case "$stale" in ""|*/*|.|..) continue ;; esac\n'
+        '    case " $keep $platform " in *" $stale "*) ;; '
         '*) rm -rf "$CLAUDE_CONFIG_DIR/skills/$stale" ;; esac\n'
         f"  done < {listed}\n"
         f"  printf '%s\\n' {shlex.join(shipped)} > {listed}\n"
@@ -216,24 +243,98 @@ def launch_holes(
 export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
-    prune = project_skill_prune(project_skill_names(project_id))
-    # Compressed: written out as heredocs the skills alone outgrew what one
-    # shell argument may hold, and they only grow. Base64 has no quote in it.
-    skills = base64.b64encode(
-        gzip.compress(json.dumps(session_skill_files(project_id)).encode(), mtime=0)
-    ).decode()
+    platform = shipped_skill_names()
+    project = project_skill_names(project_id)
+    prune = (
+        platform_skill_prune(platform, project)
+        + "\n"
+        + project_skill_prune(project, platform)
+    )
+    # The skills, by content address. The digest is the sha256 of the bundle
+    # frozen for this launch (``publish_session_skill_bundle``), which
+    # `/connector/skill-bundles/<digest>` serves back byte for byte even if the
+    # project's skills change before the machine asks; a change to the skills
+    # moves the digest, and with it the launch contract.
+    #
+    # The bytes are NOT carried inline any more: the platform set alone is
+    # ~250KB compressed and rode inside every launch script for every session,
+    # so a machine that already had them was re-sent them on every launch. The
+    # script instead carries the digest and fetches once per machine, caching
+    # under the MACHINE home ($REAL_HOME, like the pinned claude beside it):
+    # the platform skills are the same for every project and room on the
+    # machine, so a per-session cache would only refetch them per new room.
+    #
+    # Fetched with python3 (already required below) rather than curl, which
+    # not every machine has. A fetch that still fails starts the session
+    # without the skills and says so loudly in the launch log — the same
+    # policy as the pinned claude download above: a machine that cannot reach
+    # the platform for a moment must not become one where nothing starts.
+    # A screen with no CHEESE_API (a probe, a fixture) has no platform to ask.
+    skill_digest = publish_session_skill_bundle(project_id)
     skill_setup = f"""{prune}
-python3 - "$CLAUDE_CONFIG_DIR" <<'CHEESE_SKILLS'
-import base64, gzip, json, os, sys
-files = json.loads(gzip.decompress(base64.b64decode("{skills}")))
-for name, content in files.items():
+_cache="$REAL_HOME/.cheese/skill-bundles"
+python3 - "$CLAUDE_CONFIG_DIR" "$_cache" "{skill_digest}" <<'CHEESE_SKILLS'
+import gzip, hashlib, json, os, sys, time, urllib.request
+config, cache, want = sys.argv[1], sys.argv[2], sys.argv[3]
+bundle = os.path.join(cache, want + ".json.gz")
+
+
+def warn(text):
+    sys.stderr.write("cheese-launch: " + text + "\\n")
+
+
+def intact(blob):
+    return blob is not None and hashlib.sha256(blob).hexdigest() == want
+
+
+blob = None
+try:
+    with open(bundle, "rb") as cached:
+        blob = cached.read()
+except OSError:
+    pass
+if blob is not None and not intact(blob):
+    # A corrupt or truncated cache must not stick: drop it and fetch again.
+    warn("cached skill bundle " + want + " is damaged; fetching it again")
+    os.remove(bundle)
+    blob = None
+api = os.environ.get("CHEESE_API", "").rstrip("/")
+if blob is None and api:
+    request = urllib.request.Request(
+        api + "/connector/skill-bundles/" + want,
+        headers={{"X-Cheese-Token": os.environ.get("CHEESE_TOKEN", "")}},
+    )
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as answer:
+                fetched = answer.read()
+        except Exception as exc:  # noqa: BLE001
+            reason = type(exc).__name__ + ": " + str(exc)[:200]
+            warn("skill bundle fetch failed (" + reason + ")")
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+            continue
+        if intact(fetched):
+            blob = fetched
+            os.makedirs(cache, exist_ok=True)
+            partial = bundle + "." + str(os.getpid()) + ".part"
+            with open(partial, "wb") as out:
+                out.write(blob)
+            os.replace(partial, bundle)
+            break
+        warn("fetched skill bundle does not hash to " + want)
+if blob is None:
+    where = "could not be fetched from " + api if api else "is not cached, no API"
+    warn("STARTING WITHOUT THIS PROJECT'S SKILLS: bundle " + want + " " + where)
+    sys.exit(0)
+for name, content in json.loads(gzip.decompress(blob)).items():
     # An earlier session may have linked the repository's skill of this name
     # here, into the project; the platform's is written in its place, never
     # through the link.
-    top = os.path.join(sys.argv[1], *name.split("/")[:2])
+    top = os.path.join(config, *name.split("/")[:2])
     if os.path.islink(top):
         os.unlink(top)
-    path = os.path.join(sys.argv[1], name)
+    path = os.path.join(config, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as out:
         out.write(content)
@@ -301,8 +402,6 @@ WEBFETCH_PRELOAD="$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"
 # Quote the whole first option: Bun skips quoted paths after another option
 # and rejects quotes after the equals sign in --preload="path".
 export BUN_OPTIONS="\\"--preload=$WEBFETCH_PRELOAD\\"${{BUN_OPTIONS:+ $BUN_OPTIONS}}"
-# Chat guidance is now in the system prompt. Retire the generated skill on reuse.
-rm -f "$CLAUDE_CONFIG_DIR/skills/cheese-chat/SKILL.md"
 {skill_setup}
 {ca_block}
 # This seat's own directory, and everything below that belongs to one session

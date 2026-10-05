@@ -20,6 +20,13 @@ vi.mock('@/api', () => ({
   registerDeviceForTeam: vi.fn(),
   unregisterDeviceFromTeam: vi.fn(),
 }))
+vi.mock('@/network/api/teams', () => ({
+  TeamsApi: { getComputeProfile: vi.fn(async () => ({ data: { current: 'cloud', profiles: [] } })) },
+}))
+// 确认框一律说「是」，这样点主操作就直接往下走。
+vi.mock('@/plugins/dialog', () => ({
+  useDialog: () => ({ confirm: () => ({ wait: async () => true }), custom: vi.fn() }),
+}))
 
 beforeAll(() => {
   setLocale('zh-CN')

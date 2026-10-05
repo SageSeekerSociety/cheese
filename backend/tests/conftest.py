@@ -29,6 +29,7 @@ import uuid
 import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -71,7 +72,6 @@ os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
 # engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
 from tests import isolation  # noqa: E402
-from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.hang import HANG_S  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
@@ -111,18 +111,19 @@ from app.core.db import Base, get_db  # noqa: E402
 from app.core.db import engine as app_engine  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
+from app.domain.agent.central_provider import Placed  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
 from app.domain.agent.device_hub import DeviceCallError  # noqa: E402
-from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef  # noqa: E402
-from app.domain.agent.harness.claude_code import ClaudeCodeRuntime  # noqa: E402
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef  # noqa: E402
 from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
     Journal as ClaudeJournal,
 )
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
-from app.domain.agent.harness.claude_code.runtime import Handle  # noqa: E402
 from app.main import app  # noqa: E402
+from tests.support.collab import install as install_collab  # noqa: E402
+from tests.support.seat_channel import SeatChannel  # noqa: E402
 
 # Tests exercise the real authz enforcement regardless of the dev .env (which
 # ships it OFF for the conservative dogfood rollout): the .env value must not
@@ -222,7 +223,7 @@ def retire_topic(client: TestClient, topic_id) -> None:
         for channel in list(_CHANNELS):
             for key in [seat for seat in channel.sessions if seat[0] == topic]:
                 channel.sessions.pop(key, None)
-            for seat in list(channel.runtime.subscriptions):
+            for seat in list(channel.runtime.tasks):
                 if seat[0] == topic:
                     await channel.runtime._detach(seat)
 
@@ -338,25 +339,27 @@ class ScriptedSession(Runner):
 
     async def dispatch(self, method: str, params: dict) -> dict:
         if method == "ping":
+            gone = (self.topic_id, self.actor, self.session_id) in self.channel.gone
             return {
                 "session_id": self.session_id,
                 "input_protocol": INPUT_PROTOCOL,
                 "working": self.working,
                 "work_id": self.work if self.working else None,
                 "tasks": dict(self.tasks),
-                "alive": self.channel.alive,
+                "alive": self.channel.alive and not gone,
                 "capabilities": list(self.capabilities),
             }
         return await super().dispatch(method, params)
 
 
-class StubChannel:
-    """A channel with no machine behind it.
+class StubChannel(SeatChannel):
+    """A machine pool with no machine behind it.
 
-    The turn flow tests exercise is the one production runs: the prompt is
-    handed to a session, and what the session says comes back later through the
-    runtime's reader, not through the caller's iterator. So this stub supplies
-    the only thing a real session supplies — its stream-json records — and every
+    The turn flow tests exercise is the one production runs: the room places
+    the session, the session core starts it and hands it the prompt, and what
+    the session says comes back later through the seat's reading, not through
+    the caller's iterator. So this stub supplies the only things a real one
+    supplies — the placement, and the session's stream-json records — and every
     layer above (stamping, translation, attribution, receipts, turn close) is
     the real one.
 
@@ -366,25 +369,23 @@ class StubChannel:
     """
 
     name = "stub-session"
-    deferred_work = False
-    builds_model_env = False
+    device = "stub-device"
     #: The id a new session's runner is started with (``--session-id``): known
     #: before the process has written anything, which is why the runtime can
     #: announce it the moment the session is opened.
     new_session_id = "sess-test-1"
 
     def __init__(self, **policy: float) -> None:
-        # ``policy`` is the runtime's liveness settings (no_progress_s,
+        # ``policy`` is the room's liveness settings (no_progress_s,
         # unread_grace_s, hard_ceiling_s), so a test about a session that stops
         # does not have to wait the production half hour for it.
-        self.runtime = ClaudeCodeRuntime(self, **policy)
+        super().__init__(**policy)
         # (topic_id, agent_handle, session_id) triples the TEST has determined
         # gone (FB-56 legacy③): the same optional per-conversation observation
         # the real channels report from their I/O boundary. Nothing lands here
         # by filtering a session list — a fixture states a deletion by name,
         # and a channel without the probe means "unknown", never "dead".
         self.gone: set[tuple[uuid.UUID, str, str]] = set()
-        self.root = Path(tempfile.mkdtemp(prefix="stub-sessions-"))
         # One runner per SEAT: a room with several agents seated runs their
         # sessions side by side, each with its own journal and mirror — the
         # single-agent suite never notices because its rooms have one seat.
@@ -399,6 +400,13 @@ class StubChannel:
         self.on_start: Callable[[], None] | None = None
         self.calls: dict[str, str] = {}
         _CHANNELS.add(self)
+
+    @property
+    def told(self) -> str:
+        """What the session last heard: its system prompt and the message it was
+        sent. Project state rides the message (a new conversation's first one
+        carries it whole), so the system prompt alone is not what it knows."""
+        return f"{self.last_system_prompt or ''}\n\n{self.last_prompt or ''}"
 
     @property
     def alive(self) -> bool:
@@ -419,12 +427,10 @@ class StubChannel:
     def available(self) -> bool:
         return True
 
-    async def ensure(
-        self, session: SessionRef, opening: Opening, live: Handle | None = None
-    ) -> Handle:
-        self.last_system_prompt = opening.system_prompt
-        self.last_resume_session_id = opening.resume_token
-        agent = opening.agent_handle or session.agent_handle or "cheese"
+    async def open(self, session: SessionRef, agent: str, launch) -> None:
+        """The seat's runner, started the first time the seat starts."""
+        self.last_system_prompt = launch.system_prompt
+        self.last_resume_session_id = launch.resume_session_id
         key = (session.topic_id, agent)
         runner = self.sessions.get(key)
         if runner is None:
@@ -432,23 +438,32 @@ class StubChannel:
                 self.root / str(session.topic_id) / agent / "runner",
                 self,
                 session.topic_id,
-                opening.resume_token or self.new_session_id,
+                launch.resume_session_id or self.new_session_id,
                 agent,
             )
-            runner.project_id = session.project_id
-            runner.session_agent = session.agent_handle
-            runner.actor = agent
             self.sessions[key] = runner
-        return Handle(
-            session,
-            "stub-device",
-            str(session.topic_id),
-            runner.session_id,
-            agent,
-            self.root / str(session.topic_id) / agent / "mirror.sqlite",
-            INPUT_PROTOCOL,
-            frozenset(runner.capabilities),
-        )
+        runner.placement = self.seats[key]
+        runner.project_id = session.project_id
+        runner.session_agent = session.agent_handle
+
+    def at(self, state: str) -> SimpleNamespace | None:
+        """The seat whose runner is at ``state``: kept on the runner, so a
+        channel standing in for a restarted backend that took over the
+        runners (``sessions``) reaches them where they are."""
+        if state.startswith("$HOME/.cheese/gone/"):
+            *_, agent, session_id = state.split("/")
+            return SimpleNamespace(agent_handle=agent, gone=session_id)
+        for runner in self.sessions.values():
+            session, placed = runner.placement
+            if placed == state:
+                return SimpleNamespace(
+                    session=session,
+                    agent_handle=runner.actor,
+                    session_id=runner.session_id,
+                    state=state,
+                    runner=runner,
+                )
+        return None
 
     def _session_for(
         self, topic_id: uuid.UUID, agent: str | None = None
@@ -482,11 +497,14 @@ class StubChannel:
         dropped.announce()  # ``ScriptedSession.closing``
         return dropped
 
-    async def call(self, handle: Handle, method: str, params: dict) -> dict:
-        runner = self.sessions.get((handle.session.topic_id, handle.agent_handle))
-        if runner is None:
-            raise DeviceCallError(f"no session for {handle.session.topic_id}")
-        return await runner.dispatch(method, params)
+    async def call(self, handle: SimpleNamespace, method: str, params: dict) -> dict:
+        """One call to a seat's runner, as the session host relays it. A
+        runner declared gone answers only that its process is."""
+        if gone := getattr(handle, "gone", None):
+            if method != "ping":
+                raise DeviceCallError("the runner is gone")
+            return {"alive": False, "session_id": gone}
+        return await handle.runner.dispatch(method, params)
 
     def report_gone(
         self, topic_id: uuid.UUID, agent_handle: str, session_id: str
@@ -501,34 +519,41 @@ class StubChannel:
         """Retract a declaration: the conversation is here again."""
         self.gone.discard((topic_id, agent_handle, session_id))
 
-    async def discover(self, device_id: str | None) -> list[Handle]:
-        """Every session still running here — what a restarted backend finds."""
-        self.last_outcomes = {key: "dead" for key in self.gone}
-        return [
-            Handle(
-                SessionRef(
-                    session.project_id,
-                    topic_id,
-                    session.session_agent,
-                    harness=CLAUDE_CODE,
-                ),
-                "stub-device",
-                str(topic_id),
-                session.session_id,
-                session.actor,
-                self.root / str(topic_id) / session.actor / "mirror.sqlite",
-                INPUT_PROTOCOL,
-                frozenset(session.capabilities),
+    async def placed(self, harness: str, device_id: str | None = None) -> list[Placed]:
+        """Every seat whose runner is here — what a restarted backend reads
+        again. A conversation the test declared gone (``report_gone``) is placed
+        with the resume token its runner's terminal answer names; one whose
+        runner is not here at all answers that its process is gone."""
+        if harness != CLAUDE_CODE:
+            return []
+        found = []
+        seen = set()
+        for (topic_id, _), runner in self.sessions.items():
+            session, state = runner.placement
+            key = (topic_id, session.agent_handle, runner.session_id)
+            seen.add(key)
+            found.append(
+                Placed(
+                    session,
+                    self.device,
+                    state,
+                    str(topic_id),
+                    runner.actor,
+                    runner.session_id if key in self.gone else None,
+                )
             )
-            for (topic_id, _), session in self.sessions.items()
-            if self.alive
-        ]
-
-    async def images(self, handle: Handle, images: list[dict]) -> list[dict]:
-        return [
-            {"type": "image", "source": {"type": "path", "path": image["path"]}}
-            for image in images
-        ]
+        for topic_id, handle, session_id in self.gone - seen:
+            found.append(
+                Placed(
+                    SessionRef(uuid.UUID(int=0), topic_id, handle, harness=CLAUDE_CODE),
+                    self.device,
+                    f"$HOME/.cheese/gone/{topic_id}/{handle}/{session_id}",
+                    str(topic_id),
+                    handle,
+                    session_id,
+                )
+            )
+        return found
 
     def controlled(self, topic_id: uuid.UUID, request: dict) -> dict:
         """What the scripted session answers a control with."""
@@ -546,14 +571,21 @@ class StubChannel:
             journal.close()
         if not written:
             return False
-        mirror = self.root / str(topic_id) / session.actor / "mirror.sqlite"
-        if not mirror.exists():
+        mirror = self.mirror(topic_id, session.actor)
+        if mirror is None or not mirror.exists():
             return True
         journal = ClaudeJournal(mirror)
         try:
             return int(journal.recall("landed") or 0) < written
         finally:
             journal.close()
+
+    def mirror(self, topic_id: uuid.UUID, agent: str) -> Path | None:
+        """Where the backend mirrors the seat's journal."""
+        runner = self.sessions.get((topic_id, agent))
+        if runner is None:
+            return None
+        return self._mirror_of(runner.placement[0], agent)
 
     # --- what the session prints ------------------------------------------
 
@@ -821,9 +853,15 @@ async def drain_hooks(screen: StubChannel, topic_id: uuid.UUID) -> None:
     to end: it asks whether what the session already said has landed, not
     whether the session is done saying things.
     """
-    for seat, subscription in screen.runtime.subscriptions.items():
-        if seat[0] == topic_id:
-            await subscription.drain()
+    for _ in range(2000):
+        if not any(
+            screen.unlanded(topic, session)
+            for (topic, _), session in list(screen.sessions.items())
+            if topic == topic_id
+        ):
+            return
+        await _REAL_SLEEP(0.01)
+    raise AssertionError(f"what the session on {topic_id} said never landed")
 
 
 async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
@@ -835,10 +873,6 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
     that, the same way a room does.
     """
     for _ in range(tries):
-        for runtime in service._compute._runtimes():
-            for seat, subscription in getattr(runtime, "subscriptions", {}).items():
-                if seat[0] == topic_id:
-                    await subscription.drain()
         if not any(t == topic_id for t, _ in service._hook_work) and not any(
             str(topic_id) == pending for pending in _topics_with_pending_records()
         ):
@@ -852,7 +886,7 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
 async def close_topic_subscriptions(service, topic_id) -> None:
     """Explicitly stop the runtimes' readers at a test boundary."""
     for runtime in service._compute._runtimes():
-        for seat in list(getattr(runtime, "subscriptions", {})):
+        for seat in list(getattr(runtime, "tasks", {})):
             if seat[0] == topic_id:
                 await runtime._detach(seat)
 
@@ -1126,8 +1160,13 @@ def stub_project_forge(monkeypatch, tmp_path):
             )
         if route.startswith("/git/trees/"):
             revision = route.removeprefix("/git/trees/")
+            # As GitHub: `recursive` lists every entry below, trees included,
+            # by its full path.
+            recursive = ["-rt"] if "recursive" in parse_qs(urlsplit(path).query) else []
             tree = []
-            for row in git_store.git(repo, "ls-tree", "-zl", revision).split("\0"):
+            for row in git_store.git(
+                repo, "ls-tree", "-zl", *recursive, revision
+            ).split("\0"):
                 if not row:
                     continue
                 metadata, name = row.split("\t", 1)
@@ -1946,7 +1985,10 @@ async def _fail_on_background_work(label: str) -> None:
     _, still_pending = await asyncio.wait(pending, timeout=HANG_S)
     if not still_pending:
         return
-    offenders = sorted(t.get_coro().__qualname__ for t in still_pending)
+    offenders = sorted(
+        f"{getattr(t.get_coro(), '__qualname__', None)}<{t.get_name()}>"
+        for t in still_pending
+    )
     for t in still_pending:
         t.cancel()
     # Give the cancellation itself a moment to actually unwind (rollback +

@@ -1,14 +1,14 @@
 """A session's whole cloud VM is released once the session is idle.
 
 A VM is disposable: nothing on it outlives the session's use of it, and code
-is truth in git. So it is not kept around asleep the way a sandbox's home is,
-and the session's next tool call prepares a new one.
+is truth in git. So it is not kept asleep the way a sandbox's home is, and the
+session's next tool call prepares a new one.
 
-**Idle** is a sandbox's definition: the room runs no turn, and the session has
-asked for no tool for ``cloud_vm_idle_release_s``, counted from the later of
-its last tool call (``CloudHostHome.active_at``) and the end of the room's
-last turn. Turns are recorded per room, so any turn in the room keeps every
-VM of it.
+**Idle** is a sandbox's definition (``SandboxLifecycle._idle_since``), held for
+``cloud_vm_idle_release_s``: the room runs no turn, the session has asked for
+no tool since, counted from the later of its last tool call and the end of the
+room's last turn, and no command the executor runs for it in the background
+keeps it up (up to ``cloud_sandbox_background_cap_s``).
 
 **Before it goes**, the session's work is pushed exactly as a switch of work
 computer pushes it (``session_work.push_before_switch``, ``cheese sync
@@ -18,18 +18,18 @@ reached to push, is kept and asked again ``RETRY_AFTER`` later: work that is
 only there is never released with it. Once pushed, the session's lease and
 home go, the room is told, and the pool sweep deletes the VM
 (``HostPool.maintain``).
+
+The sandbox sweep runs this (``runner.SandboxSweeper``).
 """
 
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.db import SessionFactory
 from app.core.errors import ConflictError
-from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import session_work
 from app.domain.machine.models import CloudHost, CloudHostHome
@@ -51,24 +51,9 @@ PER_SWEEP = 5
 _push_failed: dict[uuid.UUID, datetime] = {}
 
 
-class CloudVmSweeper:
-    """The clock that releases idle VMs (``app.core.background``)."""
-
-    def __init__(self, session_factory: SessionFactory) -> None:
-        self._sessions = session_factory
-
-    async def sweep(self) -> dict[str, int]:
-        from app.domain.machine.microcloud import MicroCloudClient
-
-        # Not the VM offering: VMs made before an operator unset it still go.
-        if not MicroCloudClient().configured:
-            return {"released": 0}
-        async with self._sessions() as session:
-            return {"released": await release_idle(session)}
-
-
-async def release_idle(db) -> int:
-    """Push and release every idle VM; returns how many were released."""
+async def release_idle(db, lifecycle) -> int:
+    """Push and release every idle VM; returns how many were released.
+    ``lifecycle`` is the ``SandboxLifecycle`` whose idle measure is used."""
     now = datetime.now(UTC)
     idle_for = timedelta(seconds=settings.cloud_vm_idle_release_s)
     candidates = (
@@ -77,6 +62,7 @@ async def release_idle(db) -> int:
                 CloudHostHome.id,
                 CloudHostHome.session_id,
                 CloudHostHome.topic_id,
+                CloudHostHome.left_at,
                 CloudHostHome.active_at,
                 CloudHost.device_id,
             )
@@ -103,32 +89,14 @@ async def release_idle(db) -> int:
         failed = _push_failed.get(home.id)
         if failed is not None and now - failed < RETRY_AFTER:
             continue
-        if not await _idle(db, home.topic_id, home.active_at, now - idle_for):
-            await db.commit()
+        if await lifecycle._idle_since(home, now, idle_for) is None:
             continue
-        if await _release(db, home, now - idle_for):
+        if await _release(db, lifecycle, home, idle_for):
             released += 1
     return released
 
 
-async def _idle(db, topic_id, active_at: datetime, before: datetime) -> bool:
-    """Whether the session has been idle since before ``before``: no turn
-    running in its room, and neither its last tool call nor the room's last
-    turn later than that."""
-    running, last_stop = (
-        await db.execute(
-            select(
-                func.count().filter(AgentTurn.stopped_at.is_(None)),
-                func.max(AgentTurn.stopped_at),
-            ).where(AgentTurn.topic_id == topic_id)
-        )
-    ).one()
-    if running:
-        return False
-    return max(active_at, last_stop or active_at) < before
-
-
-async def _release(db, home, before: datetime) -> bool:
+async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     row = await AgentSessionService(db).by_id(home.session_id)
     lease = row.work_lease if row is not None else None
     if lease is not None and lease.get("device_id") != home.device_id:
@@ -169,13 +137,23 @@ async def _release(db, home, before: datetime) -> bool:
         current is None
         or current.left_at is not None
         or current.active_at != home.active_at
-        or not await _idle(db, home.topic_id, current.active_at, before)
     ):
+        await db.commit()
+        return False
+    # Looked at with the room locked: no turn has started since.
+    from app.domain.agent.models import AgentTurn
+
+    running = await db.scalar(
+        select(AgentTurn.id)
+        .where(AgentTurn.topic_id == home.topic_id, AgentTurn.stopped_at.is_(None))
+        .limit(1)
+    )
+    if running is not None:
         await db.commit()
         return False
     if row is not None and (row.work_lease or {}).get("device_id") == home.device_id:
         row.work_lease = None
-    minutes = int(settings.cloud_vm_idle_release_s // 60)
+    minutes = int(idle_for.total_seconds() // 60)
     line = await tell_vm_released(db, current, minutes)
     await HostPool(db).leave(home.session_id, kept_work=False)
     await db.commit()

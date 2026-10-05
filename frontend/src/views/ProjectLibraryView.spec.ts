@@ -16,7 +16,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { setLocale } from '../i18n'
+import { setLocale, t } from '../i18n'
 
 import ProjectLibraryView from './ProjectLibraryView.vue'
 
@@ -94,7 +94,7 @@ beforeEach(() => {
 
 const Blank = defineComponent({ render: () => h('div') })
 
-async function mount(url = '/projects/p1/library') {
+async function renderRaw(url = '/projects/p1/library') {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -108,8 +108,13 @@ async function mount(url = '/projects/p1/library') {
   const view = render(Host, {
     global: { plugins: [createVuetify({ components, directives }), router, createPinia()] },
   })
-  await waitFor(() => expect(view.container.textContent).toContain('预算表.xlsx'))
   return { ...view, router }
+}
+
+async function mount(url = '/projects/p1/library') {
+  const view = await renderRaw(url)
+  await waitFor(() => expect(view.container.textContent).toContain('预算表.xlsx'))
+  return view
 }
 
 const rowNames = (container: Element) =>
@@ -229,5 +234,43 @@ describe('资料库', () => {
       global: { plugins: [createVuetify({ components, directives }), router, createPinia()] },
     })
     await waitFor(() => expect(container.textContent).toContain('暂无资料'))
+  })
+})
+
+/** 名单整块没读出来：就地换成错误 + 重试（docs/design-system.md §3.10），不能退化
+ *  成一个红色的「暂无资料」——那是「本来就没有」，不是「没读到」。
+ */
+describe('资料库读不到时', () => {
+  it('就地显示原因和重试，而不是装作「暂无资料」', async () => {
+    vi.mocked(listProjectLibrary).mockRejectedValueOnce(new Error('服务器错误'))
+    const { container } = await renderRaw()
+
+    await waitFor(() => expect(container.textContent).toContain('无法读取资料库'))
+    expect(container.textContent).toContain('服务器错误')
+    expect(container.textContent).not.toContain('暂无资料')
+    expect(screen.getByRole('button', { name: t('global.loadError.retry') })).toBeTruthy()
+  })
+
+  it('点重试真的再问一遍服务端', async () => {
+    vi.mocked(listProjectLibrary).mockRejectedValueOnce(new Error('服务器错误'))
+    const { container } = await renderRaw()
+    await waitFor(() => expect(container.textContent).toContain('无法读取资料库'))
+    expect(listProjectLibrary).toHaveBeenCalledTimes(1)
+
+    vi.mocked(listProjectLibrary).mockResolvedValueOnce({ data: [file('结题报告.docx')], total: 1 })
+    await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
+
+    await waitFor(() => expect(listProjectLibrary).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(rowNames(container)).toEqual(['结题报告.docx']))
+  })
+
+  it('有资料但被筛掉了：说的是「筛掉了」并给一键清除，和「暂无资料」分开', async () => {
+    const { container } = await mount()
+    await fireEvent.update(screen.getByRole('searchbox'), '对不上的名字')
+    await waitFor(() => expect(container.textContent).toContain('暂无匹配的资料'))
+    expect(container.textContent).not.toContain('暂无资料')
+
+    await fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
+    await waitFor(() => expect(rowNames(container)).toEqual(['预算表(2).xlsx', '预算表.xlsx', '结题报告.docx']))
   })
 })

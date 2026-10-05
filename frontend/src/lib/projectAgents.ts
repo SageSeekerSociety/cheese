@@ -1,10 +1,6 @@
-// 「AI 队友」页面上那个数字 —— 记忆条数 —— 的算法。
-//
-// 它不是随页面一起长出来的展示逻辑，是这一页存在的理由：光看名字和类型，
-// 分不出哪个队友真的在学、哪个是建完就没人用的空壳。所以这里单独成文件，
-// 由测试直接盯着，而不是埋在组件里靠渲染结果间接验证。
-import type { MemoryEntryOut } from '../api'
-import type { AgentType } from '../cx_types'
+// 「AI 队友」设置页上不放进组件里的那几样：随机名字、名字和标识的校验、类型的显示名、
+// 思考强度的档位与叫法。单独成文件，由测试直接盯着，而不是埋在组件里靠渲染结果间接验证。
+import type { AgentConfiguration, AgentType } from '../cx_types'
 
 import { t } from '../i18n'
 
@@ -23,20 +19,6 @@ export function randomTeammateName(current = ''): string {
 
 // 每个队友攒下了多少条记忆，按 handle 归。
 //
-// 记忆存的是一个扁平的 `{项目}:{handle}` 字符串，所以只能把 handle 切回来认领；
-// 认不出来的（关于某个人的那些池）不属于任何一个队友，不计入任何一行。
-export function memoryCountsByHandle(entries: MemoryEntryOut[], projectId: string): Record<string, number> {
-  const counts: Record<string, number> = {}
-  const prefix = `${projectId}:`
-  for (const e of entries) {
-    if (e.scope !== 'agent_project') continue
-    if (!e.scope_id.startsWith(prefix)) continue
-    const handle = e.scope_id.slice(prefix.length)
-    if (!handle) continue
-    counts[handle] = (counts[handle] ?? 0) + 1
-  }
-  return counts
-}
 // 一个队友用的是哪个类型。类型可能已经被删掉，或者目录本身没读到 —— 那时
 // 只有名字可用，不该因此让整行显示成「通用」，那是另一件事。
 export function findType(types: AgentType[], name: string | null | undefined): AgentType | null {
@@ -64,4 +46,20 @@ export function displayNameError(name: string): string | null {
   if (!trimmed) return t('work.projectSettings.agents.editor.nameRequired')
   if (trimmed.length > 64) return t('work.projectSettings.agents.editor.nameTooLong', { max: 64 })
   return null
+}
+
+export type AgentEffort = NonNullable<AgentConfiguration['effort']>
+
+// 思考强度，从低到高；和后端 `AgentConfiguration.effort`、网关 `cheese_efforts` 同一套词。
+export const EFFORT_LEVELS: AgentEffort[] = ['low', 'medium', 'high', 'max']
+
+const EFFORT_KEYS: Record<AgentEffort, string> = {
+  low: 'work.projectSettings.agents.editor.effortLow',
+  medium: 'work.projectSettings.agents.editor.effortMedium',
+  high: 'work.projectSettings.agents.editor.effortHigh',
+  max: 'work.projectSettings.agents.editor.effortMax',
+}
+
+export function effortLabel(effort: AgentEffort | null | undefined): string {
+  return effort ? t(EFFORT_KEYS[effort]) : t('work.projectSettings.agents.editor.effortAuto')
 }

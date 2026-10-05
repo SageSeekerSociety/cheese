@@ -168,9 +168,12 @@ useCommands(() => {
 
 <template>
   <!-- 章程是一整篇文档，自己带工具条、自己滚、评论栏停在它旁边：这一页不滚，把高度让给它。 -->
+  <!-- The weekly report and the memory log are prose the person reads through, so
+       they take the reading column (`--page-w-read`), not the wider form / card-list
+       width. Lists and forms elsewhere stay on `--page-w`. -->
   <AppPage
     :title="t('navigation.project.docs')"
-    :width="kind === 'charter' ? 'full' : 'read'"
+    :width="kind === 'charter' ? 'full' : 'prose'"
     :fill="kind === 'charter'"
   >
     <div :class="kind === 'charter' ? 'docs-head docs-head--page' : 'mb-6'">
@@ -240,6 +243,7 @@ useCommands(() => {
           :activity-tick="0"
           :agent-name="workspace?.agentName"
           :agent-handle="workspace?.agentHandle"
+          :members="workspace?.members ?? []"
           :topic-list="workspace?.topics ?? []"
           @open-topic="(id: string) => router.push(topicTo(id))"
         />
@@ -312,11 +316,12 @@ useCommands(() => {
 }
 
 /* 章程：编辑器整页宽、占满剩下的高度、自己滚；页签那一行仍摆在阅读宽度的那一栏里，
-   切到周报集、记忆时不跳。 */
+   切到周报集、记忆时不跳。周报集、记忆那一档走 --page-w-read（AppPage 的 prose），
+   所以这里也跟着用 --page-w-read——两处对不上，切页签时那一行就会横跳一下。 */
 .docs-head--page {
   box-sizing: border-box;
   width: 100%;
-  max-width: calc(var(--page-w) + 32px);
+  max-width: calc(var(--page-w-read) + 32px);
   margin-inline: auto;
   padding: 24px 16px 8px;
 }
@@ -330,13 +335,30 @@ useCommands(() => {
 .weekly-card {
   /* 正文里的长表格/代码块不许冲出 12px 圆角。 */
   overflow: hidden;
+  /* 离屏的卡片不渲染（正文、表格、代码块都省下），但留在 DOM 里 —— Ctrl+F、
+     读屏、选中都还找得到它，这是「不虚拟化」。`auto 120px` 是「窗口 + 标题 + 一段
+     正文」的估计高度，只在这张卡**从未渲染过**时用来占位；`auto` 让渲染过的卡
+     记住真实高度，于是常态滚动不因估计值漂。见 lib/contentVisibility。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 </style>
 
 <style scoped>
+/* 记忆和正文一样是一篇读的长文：一条记忆是一块。离屏的那一块不渲染，但留在
+   DOM 里（Ctrl+F、读屏、选中都还找得到它）。`auto` 让渲染过的卡记住真实高度，
+   只对从未渲染过的那几张用估计值占位。这一页没有测量（没有翻页、没有 scrollIntoView），
+   但把测量帧的关掉一并写上：`.cv-measure` 挂在滚动容器上时（AppPage 的 body），
+   这一页的块按真实高度铺开 —— 见 lib/contentVisibility。 */
 .memory-card {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+.cv-measure .memory-card,
+.cv-measure .weekly-card {
+  content-visibility: visible;
 }
 .memory-card__content {
   font-size: 0.9rem;

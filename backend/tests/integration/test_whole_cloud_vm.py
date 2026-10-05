@@ -30,6 +30,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import cloud_vm
 from app.domain.machine import session_work as work_lease
+from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
@@ -239,9 +240,11 @@ def _sweep(case):
 
 
 def _release_idle(case) -> int:
+    """The sandbox sweep's turn at idle VMs."""
+
     async def go():
         async with case.client.test_request_factory() as db:
-            return await cloud_vm.release_idle(db)
+            return await cloud_vm.release_idle(db, SandboxLifecycle(db, hub=case.hub))
 
     return case.client.portal.call(go)
 

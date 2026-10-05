@@ -8,7 +8,8 @@
 平台不按时间杀任何一轮。结束一轮的只有三种「卡住」的证据（进程没了、只说话不干活、发给它
 的话它不读）加一种明确的失败（API 拒绝）。跑得再久，只要还在干活，就不动它。
 
-前三种由 `harness/driven/runtime.py` 判，对每种骨架都一样：它们读的是房间自己的事件词汇
+前三种对每种骨架都一样判：进程没了由会话核心（`agent/session_host/host.py`）判，后两种由房间
+的会话账（`agent/room/sessions.py`）判。它们读的是房间自己的事件词汇
 （说了话、调了工具、工具返回、一轮结束），不读任何骨架私有的东西。第四种是骨架自己报的
 失败，平台只负责把它原话交给房间。
 
@@ -24,10 +25,10 @@
 三条「卡住」的判定互不重叠，一条长前台命令（跑 20 分钟的 pytest）一条都不触发：进程在，
 它不输出，也没有人给它发消息。
 
-它们读的时钟（`Clock`）由订阅在读到每批记录时推（`pulse`）：订阅把记录翻成房间事件，
-`subscription.marks_of` 从事件里认出「说了话」「有动作」「哪个工具开始 / 返回了」，runtime
-按这些标记更新时钟。判定在读循环每次读完之后做。runner 收到一次读，要等有新东西才回答（最长
-`READ_WAIT_S`）；一轮开着时，这个等待不超过后两条判定各自时限的四分之一，判定最多晚这么久。
+后两条读的时钟（`Clock`）在房间拿到会话核心读到的每一条时推（`pulse`）：订阅把记录翻成房间
+事件，`subscription.marks_of` 从事件里认出「说了话」「有动作」「哪个工具开始 / 返回了」，房间
+按这些标记更新时钟。判定在每拿到一条之后做，没有新东西时每 `CLOCK_READ_S`（25 秒）也做一次，
+所以判定最多晚这么久。
 
 第二条只看「最近在说话」的会话：安静下来的会话不归它管，那由进程是否还在来回答。
 
@@ -74,13 +75,15 @@ assistant 文本、也没有一次工具调用，就按「环境没起来」结�
 | `RUNNER_GONE_S`（常量） | 120 | 一轮开着时 runner 够不着多久算没了 |
 | `TALKING_S`（常量） | 300 | 多近的输出算「正在说话」 |
 
-数值和它们的取舍理由都写在 `backend/app/core/config.py` 各项的注释和 `driven/runtime.py`
+数值和它们的取舍理由都写在 `backend/app/core/config.py` 各项的注释和 `room/sessions.py`
 常量旁的注释里；改数值先读那段注释。
 
 ## 相关
 
-- `backend/app/domain/agent/harness/driven/runtime.py`：`Clock`、`verdict`、`_gone`、`_died`，
-  三条判定所在。
+- `backend/app/domain/agent/session_host/host.py`：读循环，进程退出或 runner 够不着太久时交出
+  `Ended`。
+- `backend/app/domain/agent/room/sessions.py`：`Clock`、`verdict`、`_died`，后两条判定和结束
+  一轮所在。
 - `backend/app/domain/agent/harness/driven/subscription.py`：`marks_of`，时钟读的标记。
 - `backend/app/domain/agent/harness/claude_code/events.py`：出错的 `result` 在这里翻译成一次
   失败的结束。

@@ -9,6 +9,7 @@ import type { ArtifactVersion } from '@/api'
 import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -39,6 +40,10 @@ function previous(version: ArtifactVersion): ArtifactVersion | undefined {
 
 <template>
   <div class="versions">
+    <!-- Deliberately not an AppPage: this is a section inside ProjectArtifactView,
+         which already owns the page frame (AppPage width="full"). It renders in
+         that page's history pane (desktop) or bottom sheet (phone), so a page
+         frame here would nest a second header and re-centre the column. -->
     <ul v-if="shown.length" class="versions__list">
       <li v-for="version in shown" :key="version.card_id" class="version">
         <span class="version__no t-meta">{{ t('tasks.artifactComparison.version', { number: version.number }) }}</span>
@@ -96,7 +101,7 @@ function previous(version: ArtifactVersion): ArtifactVersion | undefined {
         </div>
       </li>
     </ul>
-    <p v-else class="t-body c-muted versions__empty">{{ t('tasks.artifact.noVersions') }}</p>
+    <BaseEmptyState v-else size="inline" class="versions__empty" :title="t('tasks.artifact.noVersions')" />
     <BaseButton v-if="hidden > 0" size="sm" @click="all = true">
       {{ t('tasks.artifact.showEarlier', { n: hidden }) }}
     </BaseButton>

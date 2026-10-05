@@ -11,6 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.domain.agent.device_hub import HubScreen, device_hub
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, session_auth_headers, session_token
+from tests.support.living_doc import document_of
 
 
 def _login(client, handle: str) -> str:
@@ -144,9 +145,11 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
         ).status_code
         == 200
     )
+    alice = session_auth_headers("alice")
+    document = document_of(client, topic["id"], headers=alice)
     try:
         r = client.put(
-            f"/topics/{topic['id']}/doc",
+            f"/documents/{document}",
             json={"content": "# hi", "expected_version": 0},
             headers={"X-Cheese-Screen": screen.token},
         )
@@ -163,8 +166,9 @@ def test_cheese_call_without_screen_header_is_not_the_agent(client):
     ).json()["data"]
     # No X-Cheese-Screen → the screen attribution never fires: the write is the
     # signed-in person's.
+    alice = session_auth_headers("alice")
     r = client.put(
-        f"/topics/{topic['id']}/doc",
+        f"/documents/{document_of(client, topic['id'], headers=alice)}",
         json={"content": "# hi", "expected_version": 0},
         headers=session_auth_headers("alice"),
     )

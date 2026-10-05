@@ -1,6 +1,6 @@
 """Real Ask HTTP answers return to the native executor that asked.
 
-The local provider is deterministic and discovery is a saved Handle. HTTP actor
+The local provider is deterministic and discovery is the fixture's own seat. HTTP actor
 resolution, durable delivery admission, native pipes and PostgreSQL settlement
 are real. This does not cover runner upgrades or production device discovery.
 """
@@ -18,9 +18,7 @@ from app.api.deps import get_chat_service, get_work_runner
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.claude_code.runner import Runner
-from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime, Handle
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.models import Block, consumed_turn
@@ -37,6 +35,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.integration.test_claude_session_records import _until
+from tests.support.seat_channel import SeatChannel
 from tests.unit.test_claude_runner import Machine
 
 
@@ -72,51 +71,39 @@ def test_http_answer_continues_original_native_executor(
     handle = None
     operations = []
 
-    class Channel:
+    class Seat:
+        """The seat the fixture's one runner sits in."""
+
+        def __init__(self, session, agent):
+            self.session, self.agent_handle = session, agent
+
+        @property
+        def mirror(self):
+            return channel.mirror(self.session.topic_id, self.agent_handle)
+
+    class Channel(SeatChannel):
         name = "native-ask-fixture"
-        deferred_work = False
-        builds_model_env = False
+        device = "isolated-device"
 
-        def available(self):
-            return True
-
-        async def ensure(self, session, opening, live=None):
+        async def open(self, session, agent, launch):
             nonlocal native_runner, handle
             if native_runner is None:
                 native_runner = Runner(machine.state)
-                native = await native_runner.start(
+                await native_runner.start(
                     command=machine.command,
                     env=machine.env,
                     resume=None,
-                    agent_handle=opening.agent_handle or session.agent_handle,
+                    agent_handle=agent,
                 )
-                handle = Handle(
-                    session,
-                    "isolated-device",
-                    str(machine.state),
-                    native,
-                    opening.agent_handle or session.agent_handle,
-                    tmp_path / "mirror.sqlite",
-                    INPUT_PROTOCOL,
-                    frozenset(native_runner.capabilities),
-                )
+                handle = Seat(session, agent)
             assert session == handle.session
-            return handle
 
         async def call(self, held, method, params):
-            assert held is handle
             operations.append(method)
             return await native_runner.dispatch(method, params)
 
-        async def discover(self, device_id):
-            return [handle] if handle is not None else []
-
-        async def images(self, held, images):
-            assert not images
-            return []
-
     channel = Channel()
-    runtime = ClaudeCodeRuntime(channel)
+    runtime = channel.runtime
     gate = tmp_path / "continue-ask"
     try:
         project = post_project(
@@ -264,9 +251,8 @@ def test_http_answer_continues_original_native_executor(
             native_runner.process,
         )
         if mode.startswith("history-multi"):
-            from app.domain.agent.harness import Opening
             from app.domain.agent.harness.claude_code.journal import Journal
-            from app.domain.agent.harness.driven import runtime as driven_runtime
+            from app.domain.agent.room import sessions as room_sessions
             from app.domain.delivery.input_identity import InputEffects
 
             high = uuid.UUID("ffffffff-ffff-4fff-bfff-ffffffffffff")
@@ -291,9 +277,8 @@ def test_http_answer_continues_original_native_executor(
                 await runtime.send(
                     ref,
                     directive,
-                    Opening(
-                        system_prompt="你是芝士。", agent_handle=handle.agent_handle
-                    ),
+                    system_prompt="你是芝士。",
+                    acting=handle.agent_handle,
                     work_id=high,
                     on_mark=lambda _work: None,
                     register_input=registrar,
@@ -305,8 +290,8 @@ def test_http_answer_continues_original_native_executor(
                 try:
                     # Change only the newly constructed steer's UUID. Runner
                     # admission, pipes, echoes and result remain unmodified.
-                    monkeypatch.setattr(driven_runtime.uuid, "uuid4", lambda: low)
-                    assert await runtime.deliver(
+                    monkeypatch.setattr(room_sessions.uuid, "uuid4", lambda: low)
+                    assert await runtime.steer(
                         topic,
                         "同轮追加输入",
                         expected_work_id=high,
@@ -314,10 +299,39 @@ def test_http_answer_continues_original_native_executor(
                         register_input=registrar,
                     )
                 finally:
-                    monkeypatch.setattr(driven_runtime.uuid, "uuid4", real_uuid4)
+                    monkeypatch.setattr(room_sessions.uuid, "uuid4", real_uuid4)
                 gate.touch()
+
+                async def settled() -> list[NativeInput]:
+                    async with client.test_request_factory() as session:
+                        return list(
+                            await session.scalars(
+                                select(NativeInput).where(
+                                    NativeInput.topic_id == topic,
+                                    NativeInput.execution_work_id == high,
+                                    NativeInput.completed_at.is_not(None),
+                                )
+                            )
+                        )
+
+                # Both inputs were read by the one execution and settled with
+                # it: what the first process saw before it let go.
                 async with asyncio.timeout(90):
-                    while native_runner.working:
+                    while {row.input_id for row in await settled()} != {high, low}:
+                        await asyncio.sleep(0.05)
+
+                def landed_all() -> bool:
+                    mirror = Journal(handle.mirror)
+                    try:
+                        landed = int(mirror.recall("landed") or 0)
+                    finally:
+                        mirror.close()
+                    return landed >= native_runner.journal.last()
+
+                # And everything the runner wrote after it is landed too, so
+                # the next process has nothing of its own left to land.
+                async with asyncio.timeout(90):
+                    while not landed_all():
                         await asyncio.sleep(0.05)
                 await settle_turn(chat, topic)
                 await runtime.stop_listening()
@@ -331,7 +345,6 @@ def test_http_answer_continues_original_native_executor(
                         )
                     )
                     assert {row.input_id for row in rows} == {high, low}
-                    assert all(row.completed_at for row in rows)
                     for row in rows:
                         row.completed_at = None
                     await session.commit()
@@ -380,7 +393,7 @@ def test_http_answer_continues_original_native_executor(
                         )
             finally:
                 journal.close()
-            runtime = ClaudeCodeRuntime(channel)
+            runtime = channel.next_process()
             chat = ChatService(
                 session_factory=client.test_request_factory,
                 base_system_prompt="你是芝士。",
@@ -399,7 +412,7 @@ def test_http_answer_continues_original_native_executor(
                 refusal = None
                 if mode != "history-multi":
                     try:
-                        await runtime.replay(handle.session, known_texts=set())
+                        await runtime.replay(handle.session)
                     except ValueError as exc:
                         refusal = str(exc)
                 async with client.test_request_factory() as session:
@@ -463,7 +476,7 @@ def test_http_answer_continues_original_native_executor(
                     journal.prune("9999-01-01T00:00:00Z")
             finally:
                 journal.close()
-            runtime = ClaudeCodeRuntime(channel)
+            runtime = channel.next_process()
             chat = ChatService(
                 session_factory=client.test_request_factory,
                 base_system_prompt="你是芝士。",

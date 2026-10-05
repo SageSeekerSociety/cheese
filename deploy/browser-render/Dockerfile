@@ -11,7 +11,11 @@ FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
+# Noto CJK because `/inspect` screenshots and prints pages written in Chinese:
+# a face without the glyphs renders them as boxes and says nothing, and the
+# fonts Playwright's own dependencies bring are not the ones pages ask for.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+      fonts-noto-cjk \
  && rm -rf /var/lib/apt/lists/*
 
 # Browsers go somewhere every user can read. The default is $HOME/.cache, which

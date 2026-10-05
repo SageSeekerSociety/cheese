@@ -100,6 +100,11 @@ NATIVE_TOOLS = {
 # link drop a deploy of the device connection causes, which the prefix waits
 # out and then reattaches.
 COMMAND_ABANDONED_S = 600.0
+# The stops a session's host sends, by their POSIX numbers: SIGHUP, SIGINT,
+# SIGKILL, SIGTERM. Not spelled through `signal`: Windows has no SIGHUP or
+# SIGKILL, so there every stop failed on the name before `signal_command`,
+# which stops the whole tree on Windows whatever the number.
+STOP_SIGNALS = frozenset({1, 2, 9, 15})
 # The longest one `shell` read waits for output before answering with none.
 COMMAND_READ_WAIT_S = 25.0
 # The most one `shell` read answers with per stream, before base64.
@@ -1005,12 +1010,7 @@ class Executor:
             )
         if operation == "signal":
             number = int(params["signal"])
-            if number not in (
-                signal.SIGTERM,
-                signal.SIGINT,
-                signal.SIGHUP,
-                signal.SIGKILL,
-            ):
+            if number not in STOP_SIGNALS:
                 raise ValueError("Unsupported signal")
             return self.signal_command(command_id, number)
         if operation == "forget":
@@ -1838,20 +1838,20 @@ class Executor:
             files = {}
             if manifest.exists():
                 for name in json.loads(manifest.read_text()):
-                    path = self.programs / name
-                    if path.is_file():
+                    if (path := self.programs / name).is_file():
                         files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
             return {
                 "pid": os.getpid(),
                 "workspace": str(self.root),
-                # Where the platform's skills are on this machine: the files a
-                # skill's text names beside it (`bootstrap.plant_native_skills`).
+                # Where the skills are here (`bootstrap.plant_native_skills`).
                 "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
                 "files": files,
                 "runtime_sha256": SOURCE_SHA256,
                 "protocol_version": PROTOCOL_VERSION,
                 "release": self.config.get("release"),
+                "sandbox": bool(self.config.get("sandbox")),  # launch.can_prepare
                 "upgrading": self.upgrading,
+                "running_commands": len(self.running),
                 "capabilities": [
                     "prepare",
                     "idle_upgrade",
@@ -2036,10 +2036,9 @@ def bridge(state, server, *, call=None):
 
 def terminate_unrequested(state, named):
     """Stop an executor that refused `shutdown`: one started before stopping was
-    a request. Those only ever ran unsandboxed, so the pid one reports is a pid
-    this side can signal, but only once it is seen running this state's service:
-    whatever answers on a room's socket is not proof of who is behind it. `named`
-    is the state as the caller spelled it, as the service was started with it."""
+    a request. Signal the pid it reports once it is seen running this state's
+    service: whatever answers on a room's socket is not proof of who is behind
+    it, and a sandboxed room names the state `/proc/self/fd/N`, resolved here."""
     try:
         pid = request(state, "ping")["pid"]
     except (OSError, RuntimeError):
@@ -2050,7 +2049,8 @@ def terminate_unrequested(state, named):
         text=True,
         check=False,
     ).stdout.rstrip()
-    if any(running.endswith(f"serve --state {path}") for path in (named, state)):
+    spellings = {str(named), str(state), str(Path(state).resolve())}
+    if any(running.endswith(f"serve --state {path}") for path in spellings):
         os.kill(pid, signal.SIGTERM)
 
 

@@ -4,7 +4,7 @@ import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const machines = vi.hoisted(() => ({ get: vi.fn() }))
@@ -125,6 +125,17 @@ beforeEach(() => {
 })
 
 describe('成员名册', () => {
+  it('右键一位成员：改角色和移出，弹在鼠标那一点上', async () => {
+    await openRoster()
+    const bob = Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('@bob'))!
+    await fireEvent.contextMenu(bob, { clientX: 20, clientY: 40 })
+    await waitFor(() =>
+      expect(
+        Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim())
+      ).toEqual(['设为拥有者', '设为管理员', '移出话题'])
+    )
+  })
+
   it('队友和人一样能被移出，但房间没有「换队友」这种开关', async () => {
     await openRoster()
     const rows = Array.from(document.querySelectorAll('.roster__item'))

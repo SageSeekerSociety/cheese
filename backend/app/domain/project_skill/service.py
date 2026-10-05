@@ -8,7 +8,10 @@ from the confirmed revisions; each session launch reads that folder.
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
+import os
 import re
 import shutil
 import uuid
@@ -21,17 +24,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import listing, say
+from app.core.storage import StorageBackend, get_storage_backend
 from app.domain.agent.skills import (
     RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
     native_skill_files,
 )
+from app.domain.project_skill import blobs
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
 MAX_FILE_BYTES = 200_000
 MAX_FILES = 30
-FIELDS = ("title", "description", "inputs", "steps", "outputs", "files")
+#: How many methods a project may hold before an AI teammate stops proposing new
+#: ones and proposes merging or editing instead. It bounds the teammate's own
+#: initiative, not people: past about twenty skills a model picks the right one
+#: noticeably less often, and a person adding one more has weighed that.
+PROPOSAL_LIMIT = 20
+FIELDS = ("title", "description", "body", "files")
 
 
 def _now() -> datetime:
@@ -40,6 +50,12 @@ def _now() -> datetime:
 
 def mirror_root(project_id: uuid.UUID | str) -> Path:
     return Path(settings.workspace_root) / ".project-skills" / str(project_id)
+
+
+def _plain(raw: str) -> bool:
+    """No character a path on some machine reads differently: a backslash is a
+    separator on Windows, a control character is not a name anywhere."""
+    return "\\" not in raw and not any(ord(c) < 0x20 or ord(c) == 0x7F for c in raw)
 
 
 def _validate_files(files: dict) -> dict[str, str]:
@@ -51,7 +67,8 @@ def _validate_files(files: dict) -> dict[str, str]:
     for raw, content in files.items():
         path = PurePosixPath(str(raw))
         if (
-            path.is_absolute()
+            not _plain(str(raw))
+            or path.is_absolute()
             or ".." in path.parts
             or not path.parts
             or path.name == "SKILL.md"
@@ -67,6 +84,12 @@ def _validate_files(files: dict) -> dict[str, str]:
                 say("skillFileTooLarge", path=raw, kb=MAX_FILE_BYTES // 1000)
             )
         out[path.as_posix()] = content
+    # A file and a folder of one name cannot both be written out; the folder
+    # would fail every publish after the save, for every skill in the project.
+    for path in out:
+        for parent in PurePosixPath(path).parents:
+            if parent.as_posix() in out:
+                raise ValidationError(say("skillFilePathInvalid", path=path))
     return out
 
 
@@ -74,15 +97,22 @@ def _content(row: ProjectSkill) -> dict:
     return {key: getattr(row, key) for key in FIELDS}
 
 
-def render_skill(name: str, content: dict, *, revision: int, confirmed_by: str) -> str:
-    """The SKILL.md a session reads: a method, with this run's inputs left open."""
+def render_skill(
+    name: str,
+    content: dict,
+    *,
+    skill_id: uuid.UUID | str,
+    revision: int,
+    confirmed_by: str,
+) -> str:
+    """The SKILL.md a session reads: the skill's body, framed as the project's."""
     files = sorted(content.get("files") or {})
     lines = [
         "---",
         f"name: {name}",
         "description: "
         + json.dumps(
-            f"{content['description']}（项目工作方法「{content['title']}」）",
+            f"{content['description']}（项目技能「{content['title']}」）",
             ensure_ascii=False,
         ),
         "---",
@@ -91,31 +121,30 @@ def render_skill(name: str, content: dict, *, revision: int, confirmed_by: str) 
         "",
         content["description"],
         "",
-        f"项目成员保存的工作方法，第 {revision} 版，由 {confirmed_by} 确认。"
+        f"项目成员保存的技能，第 {revision} 版，由 {confirmed_by} 确认。"
         "每次使用都以这一次用户给的输入为准，不沿用以前某一次的具体材料；"
         "缺少必需的输入就先问用户。",
         "",
-        "## 需要的输入",
-        "",
-        content.get("inputs") or "（按用户这次给的材料）",
-        "",
-        "## 步骤与规则",
-        "",
-        content["steps"],
-        "",
-        "## 输出要求",
-        "",
-        content.get("outputs") or "（按用户这次的要求）",
+        content["body"],
     ]
     if files:
         lines += ["", "## 配套文件", ""]
         lines += [f"- `$CLAUDE_CONFIG_DIR/skills/{name}/{path}`" for path in files]
+    lines += [
+        "",
+        "## 用的时候",
+        "",
+        "照这份做时被用户纠正了、或者发现它哪里不对，就用 "
+        f'`cheese_skill_update(skill="{skill_id}", …)` 提议修改这一份，'
+        "`reason` 写用户纠正的原话或者哪里不对。确认之前大家继续用这一版。",
+    ]
     return "\n".join(lines) + "\n"
 
 
 class ProjectSkillService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, storage: StorageBackend | None = None):
         self._session = session
+        self._storage = storage or get_storage_backend()
 
     async def get(self, skill_id: uuid.UUID) -> ProjectSkill:
         row = await self._session.get(ProjectSkill, skill_id)
@@ -124,13 +153,46 @@ class ProjectSkillService:
         return row
 
     async def list(self, project_id: uuid.UUID) -> list[ProjectSkill]:
+        """The project's methods; a declined proposal is not one of them."""
         return list(
             await self._session.scalars(
                 select(ProjectSkill)
-                .where(ProjectSkill.project_id == project_id)
+                .where(
+                    ProjectSkill.project_id == project_id,
+                    ProjectSkill.state != "declined",
+                )
                 .order_by(ProjectSkill.created_at)
             )
         )
+
+    async def _admit_proposal(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID | None, name: str
+    ) -> None:
+        """The bounds on a teammate proposing a new method.
+
+        It may not propose a method a person already declined, may not have two
+        proposals waiting in one room (a person answers one before the next),
+        and stops at ``PROPOSAL_LIMIT``, where merging or editing is the move.
+        """
+        rows = await self.list(project_id)
+        declined = await self._session.scalar(
+            select(ProjectSkill.id).where(
+                ProjectSkill.project_id == project_id,
+                ProjectSkill.name == name,
+                ProjectSkill.state == "declined",
+            )
+        )
+        if declined is not None:
+            raise ValidationError(say("skillProposalDeclined", name=name))
+        if topic_id is not None and any(
+            r.source_topic_id == topic_id
+            and r.state == "draft"
+            and r.shipped_revision == 0
+            for r in rows
+        ):
+            raise ValidationError(say("skillProposalWaiting"))
+        if len(rows) >= PROPOSAL_LIMIT:
+            raise ValidationError(say("skillProposalLimit", limit=PROPOSAL_LIMIT))
 
     async def revisions(self, skill_id: uuid.UUID) -> list[ProjectSkillRevision]:
         return list(
@@ -141,13 +203,19 @@ class ProjectSkillService:
             )
         )
 
-    def _apply(self, row: ProjectSkill, changes: dict) -> None:
-        for key in ("title", "description", "inputs", "steps", "outputs"):
+    async def contents(self, row: ProjectSkill) -> dict[str, str]:
+        """The skill's files as text, for a person to read or edit."""
+        return await blobs.read(self._storage, row.files or {})
+
+    async def _apply(self, row: ProjectSkill, changes: dict) -> None:
+        for key in ("title", "description", "body"):
             if changes.get(key) is not None:
                 setattr(row, key, str(changes[key]).strip())
         if changes.get("files") is not None:
-            row.files = _validate_files(changes["files"])
-        if not row.title or not row.description or not row.steps:
+            row.files = await blobs.store(
+                self._storage, _validate_files(changes["files"])
+            )
+        if not row.title or not row.description or not row.body:
             raise ValidationError(say("skillFieldsRequired"))
 
     async def create(
@@ -159,18 +227,26 @@ class ProjectSkillService:
         by_agent: bool,
         name: str,
         fields: dict,
+        proposal: dict | None = None,
+        imported: bool = False,
     ) -> ProjectSkill:
         name = (name or "").strip().lower()
         if not NAME.match(name):
             raise ValidationError(say("skillNameInvalid"))
         if name in RESERVED_SKILL_NAMES:
-            raise ValidationError(say("skillNameReserved", name=name))
+            raise ValidationError(say("skillNameReserved"))
+        if by_agent:
+            await self._admit_proposal(project_id, topic_id, name)
         taken = await self._session.scalar(
-            select(ProjectSkill.id).where(
+            select(ProjectSkill).where(
                 ProjectSkill.project_id == project_id, ProjectSkill.name == name
             )
         )
-        if taken is not None:
+        if taken is not None and taken.state == "declined":
+            # A person may write a method a teammate's proposal was declined for.
+            await self._session.delete(taken)
+            await self._session.flush()
+        elif taken is not None:
             raise ValidationError(say("skillNameTaken", name=name))
         row = ProjectSkill(
             id=uuid.uuid4(),
@@ -178,13 +254,15 @@ class ProjectSkillService:
             name=name,
             title="",
             description="",
-            steps="",
+            body="",
             files={},
             state="draft",
             source_topic_id=topic_id,
             proposed_by=by,
+            proposal=proposal if by_agent else None,
+            origin="cheese" if by_agent else "import" if imported else "person",
         )
-        self._apply(row, fields)
+        await self._apply(row, fields)
         self._session.add(row)
         await self._session.flush()
         if not by_agent:
@@ -192,12 +270,19 @@ class ProjectSkillService:
         return row
 
     async def update(
-        self, row: ProjectSkill, *, by: str, by_agent: bool, changes: dict
+        self,
+        row: ProjectSkill,
+        *,
+        by: str,
+        by_agent: bool,
+        changes: dict,
+        proposal: dict | None = None,
     ):
-        self._apply(row, changes)
+        await self._apply(row, changes)
         if by_agent:
             row.state = "draft"
             row.proposed_by = by
+            row.proposal = proposal
             await self._session.flush()
         else:
             await self.confirm(row, by=by, note="修改")
@@ -232,6 +317,23 @@ class ProjectSkillService:
         row.shipped_revision = revision
         row.confirmed_by = by
         row.confirmed_at = _now()
+        row.proposal = None
+        await self._session.flush()
+        return row
+
+    async def decline(self, row: ProjectSkill, *, by: str) -> ProjectSkill:
+        """A person turns a teammate's pending proposal down.
+
+        A new method is kept as declined, so the teammate does not propose it
+        again; a person can still write one by that name. An edit of a saved
+        method goes back to the saved version.
+        """
+        if row.state != "draft":
+            raise ValidationError(say("skillNothingToDecline"))
+        if row.shipped_revision:
+            return await self.restore(row, row.shipped_revision, by=by)
+        row.state = "declined"
+        row.proposal = None
         await self._session.flush()
         return row
 
@@ -275,12 +377,14 @@ class ProjectSkillService:
                 render_skill(
                     skill.name,
                     revision.content,
+                    skill_id=skill.id,
                     revision=revision.revision,
                     confirmed_by=revision.confirmed_by,
                 ),
                 encoding="utf-8",
             )
-            for path, text in (revision.content.get("files") or {}).items():
+            manifest = revision.content.get("files") or {}
+            for path, text in (await blobs.read(self._storage, manifest)).items():
                 target = folder / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(text, encoding="utf-8")
@@ -313,3 +417,63 @@ def project_skill_names(project_id: uuid.UUID | str | None) -> list[str]:
 def session_skill_files(project_id: uuid.UUID | str | None) -> dict[str, str]:
     """Everything a session in this project gets: the platform's, then its own."""
     return {**native_skill_files(), **project_skill_files(project_id)}
+
+
+def session_skill_bundle(project_id: uuid.UUID | str | None) -> bytes:
+    """``session_skill_files`` as the bytes a session downloads and sha256s.
+
+    The launcher no longer carries the skills inline: the platform skill set
+    alone is ~250KB compressed, and it rode inside every launch script for every
+    session (device_launch). A session instead carries the digest of these bytes
+    and fetches them from the platform only when its machine has never seen that
+    digest. Both sides compute the digest from THIS function, so a change in the
+    files or in the serialization moves the digest and the launch contract with
+    it; the gzip carries no timestamp (``mtime=0``) and the JSON is key-sorted
+    so the same skills always hash to the same address."""
+    payload = json.dumps(
+        session_skill_files(project_id), sort_keys=True, ensure_ascii=False
+    ).encode("utf-8")
+    return gzip.compress(payload, mtime=0)
+
+
+def _stored_bundle_path(project_id: uuid.UUID | str | None, digest: str) -> Path:
+    owner = str(project_id) if project_id else "_platform"
+    return (
+        Path(settings.workspace_root) / ".skill-bundles" / owner / f"{digest}.json.gz"
+    )
+
+
+def publish_session_skill_bundle(project_id: uuid.UUID | str | None) -> str:
+    """Freeze this project's bundle under its digest and return the digest.
+
+    The launcher names the digest when it is built and the machine fetches it
+    later; recomputing at fetch time 404'd any launch whose project skills were
+    edited (or mid-``publish``) in between, and the launch failed with it. The
+    bytes are kept here, beside the published skills, so the fetch serves what
+    the launcher was built from. One file per distinct skill set; nothing prunes
+    them yet, and each is a few hundred KB.
+    """
+    bundle = session_skill_bundle(project_id)
+    digest = hashlib.sha256(bundle).hexdigest()
+    path = _stored_bundle_path(project_id, digest)
+    if not path.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            partial = path.with_name(f"{path.name}.{os.getpid()}.part")
+            partial.write_bytes(bundle)
+            os.replace(partial, path)
+        except OSError:
+            # The fetch still recomputes when no frozen copy is there.
+            pass
+    return digest
+
+
+def stored_session_skill_bundle(
+    project_id: uuid.UUID | str | None, digest: str
+) -> bytes | None:
+    """The bundle a launcher was built with, if it was frozen and is intact."""
+    try:
+        bundle = _stored_bundle_path(project_id, digest).read_bytes()
+    except OSError:
+        return None
+    return bundle if hashlib.sha256(bundle).hexdigest() == digest else None

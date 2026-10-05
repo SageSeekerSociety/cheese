@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 
 // 看板上的「按 X 拆」小表（用量那两块：按模型、按通路）。
 //
@@ -49,9 +49,9 @@ function widthOf(value: number): string {
       <v-skeleton-loader type="image" class="abt__skel abt__skel--plot" />
     </div>
 
-    <AdminEmptyState
+    <BaseEmptyState
       v-else-if="empty"
-      compact
+      size="compact"
       :title="t('feedback.dashboard.empty.title')"
       :desc="t('feedback.dashboard.empty.desc')"
     />

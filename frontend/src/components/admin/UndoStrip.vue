@@ -73,7 +73,12 @@ onBeforeUnmount(clearTimers)
       <span class="ustrip__msg">{{ props.message }}</span>
       <button type="button" class="ustrip__undo" @click="emit('undo')">{{ t('feedback.undo.action') }}</button>
       <!-- 关闭是纯图标，名字只能挂在 aria-label 上。 -->
-      <button type="button" class="ustrip__close" :aria-label="t('navigation.shell.close')" @click="emit('dismiss')">
+      <button
+        type="button"
+        class="ustrip__close tap-target"
+        :aria-label="t('navigation.shell.close')"
+        @click="emit('dismiss')"
+      >
         <v-icon icon="mdi-close" size="16" />
       </button>
     </div>
@@ -82,11 +87,14 @@ onBeforeUnmount(clearTimers)
 
 <style scoped>
 /* 固定在视口底部 16px、水平居中。用 fixed 而不是 absolute：这条横幅由队列页渲染，
-   而队列页的滚动容器长什么样是那一线的事 —— 钉在视口上，挂在哪棵 DOM 里都对。 */
+   而队列页的滚动容器长什么样是那一线的事 —— 钉在视口上，挂在哪棵 DOM 里都对。
+
+   下面要再让出 `safe-area-inset-bottom`：16px 落在 iPhone 那条 Home 横杠里，撤销
+   那颗按钮会被压住点不到。桌面和没有安全区的设备上 `env()` 是 0，长度不变。 */
 .ustrip {
   display: flex;
   position: fixed;
-  bottom: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   z-index: var(--z-shell);
   align-items: center;
@@ -141,6 +149,8 @@ onBeforeUnmount(clearTimers)
 }
 
 .ustrip__close {
+  /* 相对定位给 .tap-target：20px 的关闭，手指要点得中（§3.6）。 */
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;

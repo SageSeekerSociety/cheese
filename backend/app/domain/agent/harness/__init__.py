@@ -1,62 +1,26 @@
-"""AgentRuntime — 在一条通道上跑一个 agent，吐结构化事件。
+"""Harnesses: which ones this deployment runs, what each can be pointed at, and
+the shapes every one of them is read in.
 
-Two questions were one question until now. *Where does this turn run* — a cloud
-machine, the user's own laptop, a container next to the backend — is a
-``ComputeProvider``. *What runs there* — Claude Code today, something else next
-— is an ``AgentRuntime``. They were the same switch because the only harness we
-drive is also the only thing that knows how to reach its own machine.
-
-The contract's core is deliberately NOT 「跑一轮，返回一个事件迭代器」. Whoever
-holds such an iterator OWNS that turn, and when that process dies the turn is
-gone — which is where every piece of salvage machinery came from. Feeding and
-reading are separate here:
-
-    ensure     在不在；不在就起
-    send       送一条消息进去，回一个「收到了」。不返回事件
-    backlog    从游标往后读它说过什么。可重连、可续、可以有多个读者
-    interrupt  停手
-    close      这条会话不要了
-
-The agent was never the fragile part: claude keeps working inside its machine
-while the backend is replaced. What used to die was our BOOKKEEPING, because it
-hung off an iterator that died with the process. Reading from a cursor is what
-makes recovery a reconnect instead of a salvage operation.
-
-``run_turn`` does hand back an iterator, and is safe for the same reason:
-what it iterates is a session that outlives it. Dropping it loses the READING,
-never the work — the agent keeps going and ``backlog`` picks the tail up again.
-That is the whole difference from the shape this contract replaced, where the
-process holding the iterator was the process running the turn.
-
-``send`` is also how a person interrupts with words — a message that arrives
-mid-work is not a special case here, it is one more send. ``interrupt`` is the
-other thing: take the work away without saying anything.
-
-Three verbs of this contract already had implementations under other names, and
-the fourth was a hole with consequences. The platform could stop LISTENING to a
-session (drop the subscription) and it could DESTROY one (kill the screen), and
-between those two there was nothing — so a turn judged wedged had its backend
-coroutine cancelled while the claude on the screen kept going, which is the
-whole reason the orphan sweep has to go and ask whether that screen is still
-alive. ``interrupt`` is that missing middle.
+A harness is what runs in a session — Claude Code, pi, Codex. Where a turn runs
+is a separate question (``ComputePool``), and so is driving a session: the
+session core starts, talks to and reads every harness the same way
+(`session_host`), and asks each only what its protocol spells differently
+(`session_host/driver.py`). What lives here is what both sides need to name a
+harness by: the registry (``HARNESSES``) and the facts on each entry, how a
+room's conversation is keyed (``SessionRef``), and what one harness record is
+before the platform reads it (``HarnessEvent``, ``Backlog``).
 """
 
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from app.domain.agent.service import AgentEvent
-from app.domain.delivery.input_identity import InputRegistrar
 
-if TYPE_CHECKING:
-    from app.domain.agent.compute import ComputeProvider
-    from app.domain.agent.reads import Read
-
-
-# How a runtime's subscription hands what it read to the runtime, which keeps
-# its own books on it before the room hears it (``DrivenRuntime._consume``).
+# How a subscription hands what it read to the reading it serves
+# (`session_host/host.py`'s ``read``).
 #
 # (project, topic, work id, event, event id, final text already seen, unsolicited)
 EventConsumer = Callable[
@@ -72,35 +36,6 @@ EventConsumer = Callable[
     Awaitable[None],
 ]
 
-
-# Where the room hears its sessions: one item at a time, each for the session
-# that produced it, in the order the runtime read them. What the session said
-# and did, when it started and stopped working, which inputs it took in, how
-# its work ended, whether the machine under it is reachable, and what it is in
-# the middle of writing all arrive here (``reads.Read``); the
-# room decides what each one means for it.
-RoomReader = Callable[["SessionRef", "Read"], Awaitable[None]]
-
-
-# (topic) — lay this room's memory tree down in its session, and take back what
-# the agent wrote into it. Asked at two moments, and both ask the same question:
-# just before an input goes in (so the session reads the platform's version)
-# and just after a turn ends (so what it wrote comes back in the turn it was
-# written in). It takes only the topic because everything else it needs — the
-# project, who is speaking, the reach to the session — lives on the side that
-# owns the room (`chat.ChatService`).
-MemoryConsumer = Callable[[uuid.UUID], Awaitable[None]]
-
-# (topic) → the loop-clock reading at which the OLDEST message we injected and
-# have not seen consumed was written, or None when nothing is waiting.
-#
-# A receipt (``Received``) answers "did this one land"; this answers "is anything still
-# unanswered, and since when". A session that has stopped reading its input can
-# go on producing output indefinitely, so nothing else in the liveness picture
-# notices it: the hooks keep arriving and the screen stays alive. What it cannot
-# do is take the next thing somebody typed, and that is a failure with a person
-# on the other end of it.
-UnreadProbe = Callable[[uuid.UUID], float | None]
 
 # The harnesses this deployment can run, by name — and the ONLY place in
 # ``backend/app`` where a harness name is written down (不变量 I5). Declared here
@@ -257,34 +192,6 @@ class HarnessEvent:
     age_s: float
 
 
-@dataclass(frozen=True, slots=True)
-class Opening:
-    """What a session is started with and cannot be told afterwards.
-
-    Carried on every ``send`` rather than set once, because a harness that reads
-    its system prompt at launch (Claude Code does) keeps whatever it started
-    with — so the opening only matters on the call that turns out to be a cold
-    start, and no caller can know in advance which one that is.
-    """
-
-    system_prompt: str
-    resume_token: str | None = None
-    # An Ask answer may use only this existing conversation, never a cold one.
-    expected_native_session: str | None = None
-    model: str | None = None
-    env: dict[str, str] | None = None
-    memory_scope: str | None = None
-    owner: str | None = None
-    agent_handle: str | None = None
-    # 这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：先解析被点名的参与者、
-    # 取到会话，再问这一问题，需要了才去租。False 的一轮只有对话、记忆和平台工具
-    # ——仓库文件和项目命令都不在它桌上，所以它在所有执行机离线时也必须答得出来。
-    #
-    # 它是这一轮的属性，不是这条会话的：同一条会话可以这一轮只聊天、下一轮动文件。
-    # 所以它随 ``Opening`` 每次送进来，而不落在 ``SessionRef`` 上。
-    needs_place: bool = True
-
-
 class SubagentRequirement(StrEnum):
     """派一条活是 agent 对骨架原生 subagent 的工具调用，不走平台（结论 43）。
 
@@ -315,277 +222,6 @@ class Capability(StrEnum):
     """
 
     REMOTE_EXECUTION = "会话在一台机器上，工具调用交给另一台机器上的执行环境去跑"
-
-
-@runtime_checkable
-class AgentRuntime(Protocol):
-    """One harness, driven over whatever channel the compute side opened.
-
-    四条硬性要求（``SubagentRequirement``，结论 43）不是这里的第七个动词，因为平台
-    不起子 agent：它们是这个骨架的事实，各写一句「怎么做到的」，落在注册表那一条
-    （``HARNESSES[harness].subagents``）上，和 ``carries_subscription`` 那几个事实
-    同一个地方。写在这里就是同一个事实两份声明。
-
-    平台这一侧只有两个动词参与其中，而且已经在下面了：``deliver`` 把人对卡的操作
-    送进**父**会话，``interrupt`` 停的也是**父**会话——子线程的指令由起它的父线程
-    自己改，子 agent 与父进程同生同死。
-    """
-
-    # WHICH harness this is — a key in ``HARNESSES``, and what an agent type's
-    # ``harness`` field names. Deliberately not ``name``: the objects that
-    # implement this today also carry a ``name`` that answers a different
-    # question ("which machine pool"), and one attribute cannot mean both.
-    harness: str
-
-    async def ask_origin(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str
-    ) -> dict | None:
-        """Read the exact live native seat without starting or sending work."""
-        ...
-
-    async def ensure(
-        self, session: SessionRef, opening: Opening, *, work_id: uuid.UUID | None = None
-    ) -> object:
-        """Is this session live? Start it if not."""
-        ...
-
-    async def send(
-        self,
-        session: SessionRef,
-        message: str,
-        opening: Opening,
-        *,
-        work_id: uuid.UUID,
-        on_mark: Callable[[uuid.UUID], None],
-        register_input: InputRegistrar,
-        images: list[dict] | None = None,
-        owes_reply: bool = False,
-    ) -> bool | None:
-        """Put a message into the session. True = the transport took it.
-
-        An ack, not an answer. What the agent does about it arrives through
-        ``read`` — possibly minutes later, possibly to a different process than
-        the one that sent this.
-
-        ``owes_reply``: a person wrote this, and the session answers them in
-        the room before it does anything else (`driven/runner.py`).
-
-        ``work_id`` and ``on_mark`` do not belong to this contract and are
-        declared anyway, because every caller passes them and a signature
-        that pretended otherwise would be a promise no second harness could
-        keep. They are the platform's turn bookkeeping — a turn is still what
-        the room shows and what gets billed — and they leave when a turn stops
-        being how work is tracked. Same for ``ensure``'s ``work_id``.
-        """
-        ...
-
-    def backlog(self, session: SessionRef) -> "Backlog":
-        """What this session has said that the platform has not landed yet.
-
-        A fresh reader each call, starting from the one cursor the harness keeps
-        for the platform. Reading never consumes, so a second reader that keeps
-        its own position sees the same tail — that is the whole point of the log
-        being a log.
-        """
-        ...
-
-    async def deliver(
-        self,
-        topic_id: uuid.UUID,
-        text: str,
-        images: list[dict] | None = None,
-        *,
-        register_input: InputRegistrar,
-        expected_work_id: uuid.UUID | None = None,
-        agent_handle: str | None = None,
-        owes_reply: bool = False,
-    ) -> bool:
-        """Put text into a session that is already working, with no turn opened
-        for it. True = it landed; False = there is no live session here.
-
-        ``owes_reply`` as for ``send``: a person's message does, a platform
-        notice does not.
-
-        The bare form of ``send``: no opening, no bookkeeping, nothing to start.
-        It is how a person's mid-turn message reaches 芝士, and how the platform
-        tells a working session that the world changed under it. The two will be
-        one call once a turn stops being how work is tracked; today ``send``
-        opens a turn and this does not, so they are still two.
-
-        Keyed by topic rather than by ``SessionRef`` because the caller is on the
-        hot path with a person waiting and has no project id in hand — the same
-        reason ``close`` is topic-keyed underneath. ``agent_handle`` names the
-        seat inside the room when the caller knows it: a room seats one session
-        per agent, and a delivery with no seat named lands only when the room
-        has just one working seat (or the expected work id names it).
-        """
-        ...
-
-    async def interrupt(self, session: SessionRef) -> bool:
-        """Take the work away. True = the stop signal reached the session.
-
-        Not a message — ``send`` is how you interrupt with words. This is for
-        when the platform has decided the work should not continue and has
-        nothing to say about it: a turn judged wedged, a ceiling reached, a
-        person pressing stop.
-
-        Weaker than ``close``, deliberately: the session stays, its conversation
-        stays, and the next ``send`` continues it. Killing the screen would take
-        the conversation with it.
-        """
-        ...
-
-    async def close(self, session: SessionRef) -> None:
-        """Let this session go: stop listening, forget the channel."""
-        ...
-
-    @property
-    def hard_ceiling_s(self) -> float:
-        """How long a turn on this harness may run before it is called dead.
-
-        A harness fact, not a machine one: how long "no output" may last before
-        it means something is wrong depends on what is producing the output. The
-        turn path reschedules its own outer wall clock to this rather than to a
-        deployment-wide default, so a harness that thinks longer is not killed
-        for it.
-        """
-        ...
-
-    def run_turn(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID | None,
-        prompt: str,
-        system_prompt: str,
-        resume_session_id: str | None,
-        register_input: InputRegistrar,
-        model: str | None = None,
-        env: dict[str, str] | None = None,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-        turn_id: uuid.UUID | None = None,
-        images: list[dict] | None = None,
-        agent_handle: str | None = None,
-        session_agent: str,
-    ) -> AsyncIterator[AgentEvent]:
-        """One turn, start to finish, as the events it produced.
-
-        ``session_agent`` is the conversation's key — :attr:`ResolvedAgent.handle`
-        — which is what the machines this turn runs on are recorded under. It is
-        required rather than optional because a turn with no key resolves no
-        place, and the errand would silently rent a second machine every time.
-
-        ``ensure`` + ``send`` + read, for a caller that has nothing to recover
-        to: the platform's OWN errand — the memory consolidation (dream) — has
-        no room waiting on it and no timeline to backfill, so the turn is worth
-        exactly as much as the iterator that reads it.
-
-        A room's turn does NOT go through here. It sends, and reads what comes
-        back through the subscription and the backlog, because there the work
-        has to survive the reader.
-        """
-        ...
-
-    def bind_reader(self, reader: RoomReader) -> None:
-        """Where the room hears everything its sessions say and do."""
-        ...
-
-    def bind_unread_probe(self, probe: UnreadProbe) -> None:
-        """Where 「还有没有消息在等着被读」 is asked."""
-        ...
-
-    def bind_memory(self, consumer: MemoryConsumer) -> None:
-        """Where 「记忆该对账了」 goes: before an input, and after a turn."""
-        ...
-
-    # 这个 harness 的会话会不会把记忆存成文件、并答得了对账（``memory()`` 有没有
-    # 真答事）。系统提示词里那一段「记忆」按它注不注入：写下来的文件永远同步不回
-    # 来的骨架，那份说明书只会让 agent 以为自己在写项目记忆。和 ``harness`` 一样
-    # 是事实，不是开关——每一条通道都答得出自己这一侧有没有这条回路。
-    keeps_memory: bool
-
-    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
-        """Relay one memory reconciliation to this room's session.
-
-        ``None`` is the answer of a runtime whose sessions keep no memory files
-        (and of a room with no live session): 「这事这里没有」, not a failure —
-        the caller has nothing to fall back to and writing memory twice would be
-        worse than not writing it at all.
-        """
-        ...
-
-    def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
-        """Is there a session here this runtime can still reach?
-
-        This is what "the work survived" means after a backend restart: the
-        coroutine waiting on the turn died with the process, the agent in the
-        execution environment did not, and ``recover`` found it again.
-        ``agent_handle`` narrows the question to one seat of the room.
-        """
-        ...
-
-    def work_in_flight(
-        self, topic_id: uuid.UUID, agent_handle: str | None = None
-    ) -> uuid.UUID | None:
-        """The work this runtime's live seat in the room is running, if one is.
-
-        With the agent named the answer is exact; without it only a room with
-        exactly one working seat gets one — between two working teammates a
-        guess would aim the caller at the wrong conversation.
-        """
-        ...
-
-    async def recover(self, device_id: str | None = None) -> list[SessionRef]:
-        """Sessions of ours that outlived this process, listening again.
-
-        Called on the way up, and again whenever a machine reconnects. What
-        they SAID while nobody was listening is ``replay``'s job — this only
-        establishes that we are listening.
-        """
-        ...
-
-    async def stop_listening(self) -> None:
-        """Stop reading every session this process listens to, leaving the
-        sessions themselves running — the way out of a process that hands its
-        work to another (`app.core.ownership`). Two readers of one session land
-        what it says twice."""
-        ...
-
-    async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
-        """Land the tail a recovered session produced while nobody listened.
-
-        ``known_texts`` is what the room already shows, so a message the live
-        path did persist before the process died is not landed twice. The
-        platform supplies it because the room is the platform's; which of the
-        harness's own records are still unlanded is the harness's.
-        """
-        ...
-
-
-@runtime_checkable
-class SessionControls(Protocol):
-    """A runtime whose live session answers what the room asks to see.
-
-    Not one of the verbs: a harness with no control channel is still a
-    harness, and the room then simply shows less of it. Every control here
-    only reads; the room watches its session and never steers it. Asked of
-    the runtime that holds a room (``ComputePool.session_controls``).
-    """
-
-    #: What the room may ask a session, by subtype.
-    controls: tuple[str, ...]
-    #: Which of those the room's executor answers rather than the session: the
-    #: files and commands live on the executor.
-    executor_controls: frozenset[str]
-
-    async def control_state(self, topic_id: uuid.UUID) -> dict:
-        """What the room shows of the session: its id, its tasks, its state."""
-        ...
-
-    async def control(self, topic_id: uuid.UUID, request: dict) -> dict:
-        """One control request to the live session, to its response."""
-        ...
 
 
 @runtime_checkable
@@ -641,24 +277,6 @@ class Backlog(Protocol):
         ...
 
 
-def runtime_for(provider: "ComputeProvider") -> AgentRuntime:
-    """The harness behind this provider.
-
-    Every provider has one — ``ComputePool`` refuses one that does not, so this
-    is where that guarantee is stated rather than a question each caller has to
-    handle a None for. It reads structurally instead of by class so the rest of
-    the code can ask 「这台机器上跑的是什么」 without naming Claude Code to find
-    out.
-
-    There used to be backends with no runtime at all: a subprocess that starts a
-    model, streams its output and exits has no session to ensure, nothing to
-    send into afterwards, and no log to read from a cursor. That shape is gone.
-    """
-    if not isinstance(provider, AgentRuntime):
-        raise TypeError(f"{type(provider).__name__} runs no harness")
-    return provider
-
-
 # --- which harness ----------------------------------------------------------
 #
 # The names themselves are declared at the top of this module, because
@@ -693,7 +311,8 @@ class Harness:
     # 反引号里写的是**本仓库的东西**：带 `/` 的（或者以 `.py`、`.md` 结尾的）是路
     # 径，从 `app/domain/` 起算；其余的是符号名，每个都要在同一句引的某个文件里找
     # 得到。规矩不限于代码文件——一条要求的做法写在哪儿就引哪儿，
-    # `agent/skill_library/` 下那几份发给 agent 的说明也算数。
+    # `agent/skill_library/` 下和 `../../sandbox/skills/` 里那几份发给 agent 的
+    # 说明也算数。
     # ``test_subagent_requirements.py`` 两样都核，而且核符号那一样要求它**参与了代
     # 码**：被定义、被赋值、被读。只核「文件里有这串字」是不够的——一张
     # ``merged.pop`` 的删除名单里也有这串字，而一张删除名单证明的恰好是这句话的反
@@ -714,6 +333,20 @@ class Harness:
     # minted for ONE harness; no other can carry it, whatever it can otherwise
     # drive.
     carries_subscription: bool = False
+    # Do its sessions keep memory as files the platform can reconcile? The
+    # system prompt's memory section is given only to a harness that does: it
+    # says 「写进这里，平台下一轮就有一份」, which is a lie for a harness whose
+    # files never come back. Claude Code's are files under the session host's
+    # `~/.cheese/memory/` (`remote_execution/proxy.js`'s `memoryPath`), and its
+    # runner answers the reconciliation.
+    keeps_memory: bool = False
+    # What a room may ask its session, by subtype, and which of those the
+    # room's executor answers rather than the session: the files and commands
+    # live on the executor. Each only reads; the room watches its session and
+    # never steers it. Empty for a harness with no control channel, which is
+    # still a harness: the room then shows less of it.
+    controls: tuple[str, ...] = ()
+    executor_controls: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         """答不全四条的，根本造不出来——这就是「摘掉」的可判形式。
@@ -766,19 +399,19 @@ HARNESSES: dict[str, Harness] = {
             ),
             SubagentRequirement.PARENT_RETASKS_IT: (
                 "改指令的是起它的父线程，做法写在 "
-                "`agent/skill_library/stage_delegating.md`：还在跑的，父线程直接给"
+                "`../../sandbox/skills/cheese/SKILL.md`：还在跑的，父线程直接给"
                 "这条子线程发消息；已经停了的，在房间会话里用同一个线程标识重新派"
                 "一条——所以换了要求还是那条活、还归那张卡。平台这一侧只有 "
-                "`agent/harness/__init__.py` 上的 `AgentRuntime.deliver`，它把人对"
+                "`agent/room/sessions.py` 上的 `RoomSessions.steer`，它把人对"
                 "卡的操作送进**父**会话，父线程读到之后才去做上面那件事；平台不认"
                 "子线程，也不直接对它说话。"
             ),
             SubagentRequirement.PARENT_STOPS_IT: (
                 "停的是**一条**子线程，做法和改指令写在同一处 "
-                "`agent/skill_library/stage_delegating.md`：父线程调 TaskStop，按起"
+                "`../../sandbox/skills/cheese/SKILL.md`：父线程调 TaskStop，按起"
                 "它时给的那个名字停那一条，同一条会话里的其他分身照跑。平台这一侧"
-                "的 `agent/harness/__init__.py` 上 `AgentRuntime.interrupt` 与 "
-                "`AgentRuntime.close` 停的都是整条会话——那是结论 43 的另一句「子 "
+                "的 `agent/room/sessions.py` 上 `RoomSessions.interrupt` 与 "
+                "`RoomSessions.close` 停的都是整条会话——那是结论 43 的另一句「子 "
                 "agent 与父进程同生同死」，不是这一条，拿它来答这一条等于这条要求"
                 "恒真。这一手在房间里落不落得了地由 "
                 "`agent/harness/claude_code/remote_execution/proxy.js` 决定：一个停"
@@ -800,6 +433,23 @@ HARNESSES: dict[str, Harness] = {
             ),
         },
         carries_subscription=True,
+        keeps_memory=True,
+        # Each is a ``control_request`` on the session's stdin
+        # (`scripts/remote_execution/headless_contract.py` checks them against
+        # the pinned build), except the file ones the room's executor answers
+        # (``routes/agent_control.py``).
+        controls=(
+            "initialize",
+            "file_suggestions",
+            "read_file",
+            "get_workspace_diff",
+            "get_context_usage",
+            "get_usage",
+            "mcp_status",
+        ),
+        executor_controls=frozenset(
+            {"read_file", "file_suggestions", "get_workspace_diff"}
+        ),
     ),
     PI: Harness(
         PI,
@@ -825,11 +475,11 @@ HARNESSES: dict[str, Harness] = {
             ),
             SubagentRequirement.PARENT_RETASKS_IT: (
                 "改指令的是起它的父线程，做法写在 "
-                "`agent/skill_library/stage_delegating.md`：还在跑的，父线程调 "
+                "`../../sandbox/skills/cheese/SKILL.md`：还在跑的，父线程调 "
                 "SendMessage，`agent/harness/pi/subagents.py` 的 `Subagent.send` "
                 "把消息 steer 进那条子会话；已经收工或停了的不再接指令，照原来的简报"
-                "用同一个线程标识重派。平台这一侧只有 `agent/harness/__init__.py` 上"
-                "的 `AgentRuntime.deliver`，把人对卡的操作送进父会话。"
+                "用同一个线程标识重派。平台这一侧只有 `agent/room/sessions.py` 上"
+                "的 `RoomSessions.steer`，把人对卡的操作送进父会话。"
             ),
             SubagentRequirement.PARENT_STOPS_IT: (
                 "停的是一条子会话：父线程调 TaskStop，"

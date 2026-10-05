@@ -12,9 +12,10 @@ from app.core.config import settings
 from app.core.sandbox_auth import token_agent_handle
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.codex.channel import CodexChannel
-from app.domain.agent.harness.pi.channel import PiChannel
+from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.driven.runner import LONG_POLL
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.identity.services import IdentityService
 from tests.integration.conftest import post_project, session_auth_headers
 
@@ -42,7 +43,10 @@ async def test_invited_teammate_is_the_startup_identity(
     assert joined.status_code == 200, joined.text
     project_id, room_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
-    hub = SimpleNamespace(is_online=lambda host: host in {"center", "executor"})
+    hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
+        is_online=lambda host: host in {"center", "executor"},
+    )
     device = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
     async with client.test_factory() as db:
         default = await IdentityService(db).ensure_room_agent_user(room_id)
@@ -64,7 +68,6 @@ async def test_invited_teammate_is_the_startup_identity(
     assert placement.deferred is needs_place
 
     ref = SessionRef(project_id, room_id, "reviewer", harness=harness)
-    opening = Opening(system_prompt="Trial", agent_handle=seat, needs_place=needs_place)
     if harness in ("pi", "codex"):
         launched = []
 
@@ -74,6 +77,8 @@ async def test_invited_teammate_is_the_startup_identity(
             kwargs["runtime_factory"](str(room_id))
             yield SimpleNamespace(
                 device_id="center",
+                agent_user_id=1,
+                agent_handle=token_agent_handle(kwargs["token"]),
                 token=kwargs["token"],
                 env={
                     "CHEESE_RESOURCE_ID": str(room_id),
@@ -88,12 +93,22 @@ async def test_invited_teammate_is_the_startup_identity(
         hub.exec = AsyncMock(
             return_value={
                 "exit": 0,
-                "stdout": '{"thread_id":"trial","session_id":"trial","alive":true}',
+                "stdout": json.dumps(
+                    {
+                        "thread_id": "trial",
+                        "session_id": "trial",
+                        "alive": True,
+                        "capabilities": [LONG_POLL],
+                    }
+                ),
             }
         )
-        harness_channel = PiChannel if harness == "pi" else CodexChannel
-        handle = client.portal.call(
-            lambda: harness_channel(channel, SimpleNamespace()).ensure(ref, opening)
+        host = SessionHost(hub, session_factory=client.test_request_factory)
+        sessions = RoomSessions(channel, harness, host)
+        live = client.portal.call(
+            lambda: sessions.ensure(
+                ref, system_prompt="Trial", acting=seat, needs_place=needs_place
+            )
         )
-        assert handle.agent_handle == seat
+        assert live.acting == seat
         assert token_agent_handle(launched[0]["token"]) == seat

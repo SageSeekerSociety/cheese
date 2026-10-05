@@ -3,7 +3,7 @@
 // 能做的事，这几处同时有。
 //
 // 重命名的做法各处不一样——侧栏里是就地改，房间里另起一页，命令面板里是在输入框里
-// 改——所以由调用的地方传进来。复制链接、标为已读、归档在哪都一样，写在这里。
+// 改——所以由调用的地方传进来。复制链接、标为已读、静音、归档在哪都一样，写在这里。
 import type { Router } from 'vue-router'
 import type { Topic } from '@/cx_types'
 import type { MenuCommand } from '.'
@@ -39,6 +39,15 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
       icon: 'mdi-check-all',
       run: () => store.markRead(topic.id),
     })
+  // 静音：这间房的未读不再计入任何角标和总数。AI 队友说话频繁，一间一直在跑的房间
+  // 会让总数一直亮着，亮久了就没人看了。
+  const muted = store.isMuted(topic.id)
+  actions.push({
+    id: muted ? 'topic.unmute' : 'topic.mute',
+    title: muted ? t('work.room.menu.unmute') : t('work.room.menu.mute'),
+    icon: muted ? 'mdi-bell-outline' : 'mdi-bell-off-outline',
+    run: () => void store.setMuted(topic.id, !muted),
+  })
   // 项目本体不是一件事：没有名字可改，也不能归档。
   if (topic.kind === 'root') return actions
   if (topic.status === 'archived') {

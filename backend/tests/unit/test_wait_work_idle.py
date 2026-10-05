@@ -3,16 +3,22 @@ import uuid
 import weakref
 from types import SimpleNamespace
 
-from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from tests import conftest
 
 
 async def _session_that_said_something(channel: conftest.StubChannel):
+    """A seat whose session said something nobody has read yet."""
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese", harness=CLAUDE_CODE)
-    handle = await channel.ensure(session, Opening(system_prompt=""))
-    await channel.runtime._attach(handle)
+    await channel.runtime.ensure(session, system_prompt="")
     channel.starts(session.topic_id)
     return session.topic_id, "cheese"
+
+
+async def _read(channel: conftest.StubChannel, seat) -> None:
+    """Read the seat as the room does, until what it said has landed."""
+    channel.runtime._listen(seat)
+    await conftest.drain_hooks(channel, seat[0])
 
 
 async def test_pending_records_are_the_ones_the_room_has_not_landed(monkeypatch):
@@ -21,11 +27,11 @@ async def test_pending_records_are_the_ones_the_room_has_not_landed(monkeypatch)
     quiet = conftest.StubChannel()
     topic = await _session_that_said_something(channel)
     idle = await _session_that_said_something(quiet)
-    await quiet.runtime.subscriptions[idle].drain()
+    await _read(quiet, idle)
     try:
         assert conftest._topics_with_pending_records() == {str(topic[0])}
 
-        await channel.runtime.subscriptions[topic].drain()
+        await _read(channel, topic)
         assert conftest._topics_with_pending_records() == set()
     finally:
         await channel.runtime._detach(topic)
@@ -46,9 +52,13 @@ def test_wait_work_idle_waits_for_records_but_not_an_idle_lifecycle(monkeypatch)
     monkeypatch.setattr(conftest, "get_work_runner", lambda: runner)
     sleeps = []
 
+    async def read_and_let_go() -> None:
+        await _read(channel, topic)
+        await channel.runtime._detach(topic)
+
     def the_reader_lands_it(seconds):
         sleeps.append(seconds)
-        asyncio.run(channel.runtime.subscriptions[topic].drain())
+        asyncio.run(read_and_let_go())
 
     monkeypatch.setattr(conftest.time, "sleep", the_reader_lands_it)
     conftest.wait_work_idle()

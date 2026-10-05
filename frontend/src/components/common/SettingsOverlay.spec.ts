@@ -88,4 +88,24 @@ describe('设置浮层', () => {
     mount(390, 'security')
     expect(await screen.findByText('这一页的内容')).toBeTruthy()
   })
+
+  it('目录里按名字搜：只剩对得上的；都对不上时说一句', async () => {
+    mount(1280, 'profile')
+    const box = document.querySelector('.so__search input') as HTMLInputElement
+    await fireEvent.update(box, '安全')
+    expect(screen.queryByText('个人资料')).toBeNull()
+    expect(screen.getByText('密码与安全')).toBeTruthy()
+    await fireEvent.update(box, '没有这一项')
+    expect(screen.queryByText('密码与安全')).toBeNull()
+    expect(document.body.textContent).toContain('No settings named “没有这一项”')
+  })
+
+  it('搜索框里有字时 Esc 只清字，不关设置', async () => {
+    const onClose = mount(1280, 'profile')
+    const box = document.querySelector('.so__search input') as HTMLInputElement
+    await fireEvent.update(box, '安全')
+    await fireEvent.keyDown(box, { key: 'Escape' })
+    expect(box.value).toBe('')
+    expect(onClose).not.toHaveBeenCalled()
+  })
 })

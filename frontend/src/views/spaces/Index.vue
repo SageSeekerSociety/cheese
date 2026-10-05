@@ -92,19 +92,18 @@
               :loading="loadingMore"
               :initial-loading="refreshing"
               :is-empty="spaces.length === 0"
+              :shown="spaces.length"
+              :total="total"
               @load-more="loadMore"
             >
               <template #empty>
-                <div class="empty-state-container py-6">
-                  <v-empty-state
-                    :title="t('spaces.index.noSpaces')"
-                    icon="mdi-google-maps"
-                    class="custom-empty-state"
-                  />
-                </div>
+                <BaseEmptyState icon="mdi-google-maps" :title="t('spaces.index.noSpaces')" />
               </template>
               <v-row>
-                <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4">
+                <!-- Three cards across a wide screen stretches each one far too wide:
+                     four per row from `lg`, six from `xl`, so a card stays at a
+                     readable size instead of growing with the window. -->
+                <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4" lg="3" xl="2">
                   <v-card flat rounded="lg" class="space-card elevation-0 border" :to="spaceEntryRoute(space)">
                     <v-card-item>
                       <!-- 首字母走 text-surface 而不是 text-white：底色是琥珀，深色主题下
@@ -201,7 +200,7 @@
           <span class="invite-code-text">{{ createdInviteCode }}</span>
           <BaseButton
             kind="ghost"
-            :icon="codeCopied ? 'mdi-check' : 'mdi-content-copy'"
+            icon="mdi-content-copy"
             size="sm"
             :title="t('spaces.inviteCodes.copy')"
             @click="copyCreatedCode"
@@ -235,7 +234,9 @@ import { usePaging } from '@/utils/paging'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
@@ -288,7 +289,6 @@ const createError = ref('')
 // 把整个响应丢掉，于是创建者根本不知道自己的码是什么。留住它，建完当场给他看。
 const createdInviteCode = ref<string | null>(null)
 const codeDialog = ref(false)
-const codeCopied = ref(false)
 // 刚建出来的版：建完要落到这块板上，不是回到名录页干看着一个空版。
 const createdSpace = ref<Space | null>(null)
 
@@ -300,15 +300,10 @@ function enterCreatedSpace() {
   void router.push(spaceEntryRoute(space))
 }
 
+// 复制成的说法交给共享的复制助手（一条 toast），按钮不再自己换成「已复制」。
 async function copyCreatedCode() {
   if (!createdInviteCode.value) return
-  try {
-    await navigator.clipboard.writeText(createdInviteCode.value)
-    codeCopied.value = true
-    setTimeout(() => (codeCopied.value = false), 1600)
-  } catch {
-    // 剪贴板被拒（非安全上下文 / 没授权）——码还留在框里，手工选中复制即可。
-  }
+  await copyText(createdInviteCode.value, t('navigation.copy.done'))
 }
 
 function openCreateSpace() {
@@ -338,7 +333,6 @@ async function createSpace() {
       const { data } = await SpacesApi.create(payload)
       createdInviteCode.value = data.inviteCode?.code ?? null
       createdSpace.value = data.space ?? null
-      codeCopied.value = false
       // 有码先把码给他（建版时就发好了），收起那张卡再进这门课；
       // 没码就直接进。
       if (createdInviteCode.value) codeDialog.value = true
@@ -369,6 +363,7 @@ const {
   refresh,
   refreshing,
   loadingMore,
+  total,
 } = usePaging(async (pageStart) => {
   const { data } = await SpacesApi.list({
     sort_by: 'createdAt',
@@ -485,16 +480,5 @@ onMounted(async () => {
   background-color: rgba(var(--v-theme-primary), 0.04);
   border-color: rgba(var(--v-theme-primary), 0.1);
   transform: translateY(-2px);
-}
-
-.empty-state-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.custom-empty-state:deep(.v-empty-state__icon) {
-  color: var(--v-theme-primary);
-  opacity: 0.9;
 }
 </style>

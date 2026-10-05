@@ -7,6 +7,7 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_user
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.living_doc import document_of
 
 
 def _project(client, owner: str = "owner", **kw) -> dict:
@@ -108,13 +109,13 @@ def _card_messages(client, room_id: str, task_id: str) -> list[dict]:
 def _record_screens(stub_hooks) -> list[str]:
     """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
     seen: list[str] = []
-    original = stub_hooks.ensure
+    original = stub_hooks.precheck
 
-    async def _spy(session, opening, live=None):
+    async def _spy(session, *, needs_place):
         seen.append(str(session.topic_id))
-        return await original(session, opening, live)
+        return await original(session, needs_place=needs_place)
 
-    stub_hooks.ensure = _spy
+    stub_hooks.precheck = _spy
     return seen
 
 
@@ -221,46 +222,6 @@ def test_a_room_names_its_own_thread(client):
     )
 
 
-def test_upgrade_doc_node_to_subtopic(client):
-    # 自上而下拆解 (eval A2): a paragraph in the room's doc is upgraded into a
-    # thread of work, and the node stays in place as a live-ref (its
-    # upgraded_to_task_id points at the new thread).
-    p = _project(client)
-    topic = client.post(
-        "/topics", json={"project_id": p["id"], "title": "推荐系统"}
-    ).json()["data"]
-    # A doc with a 拆解 section; each line becomes a doc node.
-    client.put(
-        f"/topics/{topic['id']}/doc",
-        json={
-            "content": "## 拆解\n\n数据清洗\n\n特征工程\n\n模型训练",
-            "expected_version": 0,
-        },
-    )
-    nodes = client.get(f"/topics/{topic['id']}/docs").json()["data"]["data"]
-    target = next(n for n in nodes if n["content"] == "特征工程")
-    assert target["upgraded_to_topic_id"] is None
-
-    r = client.post(
-        f"/blocks/{target['id']}/upgrade",
-        json={"reviewer_handle": "alice"},
-    )
-    assert r.status_code == 200
-    _wait_work_idle()
-    sub = r.json()["data"]
-    assert sub["room_id"] == topic["id"]
-
-    # The doc node is now a live-ref to the subtopic, in place.
-    nodes2 = client.get(f"/topics/{topic['id']}/docs").json()["data"]["data"]
-    ref = next(n for n in nodes2 if n["id"] == target["id"])
-    # The link points at the THREAD now. Two columns rather than one holding
-    # either kind of id: both are real foreign keys, and a single untyped column
-    # would be a pointer the database cannot check into a table it cannot name.
-    assert ref["upgraded_to_task_id"] == sub["id"]
-    assert ref["upgraded_to_topic_id"] is None
-    assert ref["content"] == "特征工程"  # text unchanged; only the link is added
-
-
 def test_archived_topic_is_frozen(client):
     # 归档后工作面冻结: no split, no doc edit on an archived topic.
     #
@@ -290,7 +251,7 @@ def test_archived_topic_is_frozen(client):
     assert r.status_code == 422
     # Editing the frozen topic's doc is rejected.
     r = client.put(
-        f"/topics/{topic['id']}/doc",
+        f"/documents/{document_of(client, topic['id'])}",
         json={"content": "改一下", "expected_version": 0},
     )
     assert r.status_code == 422
@@ -338,7 +299,7 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     assert topic["parent_id"] == p["root_topic_id"]
     assert topic["kind"] == "topic"
     # Privacy: the private chat's doc is never copied into the public topic.
-    doc = client.get(f"/topics/{topic['id']}/doc").json()["data"]
+    doc = client.get(f"/documents/{document_of(client, topic['id'])}").json()["data"]
     assert doc is not None
     assert "我们其实该单独做个数据清洗模块" in doc["content"]  # source block
     assert "父话题当时还没有实况文档" in doc["content"]
@@ -355,7 +316,7 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
         "/topics", json={"project_id": p["id"], "title": "推荐系统"}
     ).json()["data"]
     client.put(
-        f"/topics/{topic['id']}/doc",
+        f"/documents/{document_of(client, topic['id'])}",
         json={
             "content": "## 目标\n\n给校园二手书平台做推荐",
             "expected_version": 0,
@@ -380,7 +341,7 @@ def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
     assert sub["brief"] == "把 10 万条借阅日志去重、去空值，产出干净数据集"
     assert sub["conclusion"] is None
     # 活没有文档地址可言 —— 它不是地点。
-    assert client.get(f"/topics/{sub['id']}/doc").status_code == 404
+    assert client.get(f"/topics/{sub['id']}/document").status_code == 404
 
     # 那张卡: the ROOM's main line says a piece of work left, and names which.
     room_blocks = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
@@ -409,7 +370,7 @@ def test_split_without_a_brief_leaves_the_brief_empty(client):
     ).json()["data"]
     _wait_work_idle()
     assert sub["brief"] == ""
-    assert client.get(f"/topics/{sub['id']}/doc").status_code == 404
+    assert client.get(f"/topics/{sub['id']}/document").status_code == 404
 
 
 def test_split_and_conclude(client):
@@ -450,7 +411,7 @@ def test_split_and_conclude(client):
 
     # 结论住在卡上, so the room's own living doc is not rewritten behind its back
     # — the room keeps its doc, the way every other place does.
-    doc = client.get(f"/topics/{topic['id']}/doc").json()["data"]
+    doc = client.get(f"/documents/{document_of(client, topic['id'])}").json()["data"]
     assert doc is None or "数据清洗完成" not in doc["content"]
 
 

@@ -1,22 +1,22 @@
 """A seat's session is read when it writes, not on a timer.
 
-The real Claude Code runtime, runner, mirror and translation, against a scripted
-session (``StubChannel``): the runner holds each read until its session writes
-something, so a quiet seat costs one read per wait, and what the session writes
-— a record, or the block it is in the middle of writing — reaches the room at
+The real room sessions, session core, Claude Code runner, mirror and
+translation, against a scripted session (``StubChannel``): the runner holds each
+read until its session writes something, so a quiet seat costs one read per
+wait, and what the session writes — a record, or the block it is in the middle
+of writing — reaches the room at
 once.
 """
 
 import asyncio
-import dataclasses
 import time
 import uuid
 
 import pytest
 
-from app.domain.agent.harness.driven import runtime as driven_runtime
-from app.domain.agent.harness.driven.runtime import RunnerUnsupported
 from app.domain.agent.service import AgentMessage, AgentToolUse
+from app.domain.agent.session_host import host as session_host
+from app.domain.agent.session_host.host import RunnerUnsupported
 from tests.support.room_reader import room_reader
 from tests.unit.test_driven_liveness import Room, Scripted, _until
 
@@ -43,9 +43,11 @@ class Counting(Scripted):
 class OldRunners(Counting):
     """Runners that say nothing, when greeted, of holding a read."""
 
-    async def ensure(self, session, opening, live=None):
-        handle = await super().ensure(session, opening, live)
-        return dataclasses.replace(handle, capabilities=frozenset())
+    async def call(self, handle, method, params):
+        answer = await super().call(handle, method, params)
+        if method == "ping":
+            answer = {**answer, "capabilities": []}
+        return answer
 
 
 def _said(room: Room) -> list[str]:
@@ -55,7 +57,7 @@ def _said(room: Room) -> list[str]:
 async def test_a_seat_with_a_turn_open_and_nothing_new_costs_one_read_per_wait(
     monkeypatch,
 ):
-    monkeypatch.setattr(driven_runtime, "READ_WAIT_S", 1.0)
+    monkeypatch.setattr(session_host, "READ_WAIT_S", 1.0)
     channel = Counting()
     room = Room(channel)
     try:
@@ -120,7 +122,7 @@ async def test_a_runner_that_cannot_hold_a_read_is_refused_with_a_clear_error():
             await room.send("fix the login page")
         # Refused before it is read or given anything to do.
         assert not any(method in ("events", "send") for method, _ in channel.asked)
-        assert room.runtime.subscriptions == {}
+        assert room.runtime.tasks == {}
     finally:
         await room.close()
 
@@ -134,7 +136,7 @@ async def test_what_the_agent_is_writing_reaches_the_room_as_it_grows_and_goes_w
         assert topic == room.topic
         shown.append((work, agent, blocks, _said(room)))
 
-    room.runtime.bind_reader(room_reader(live=live, rest=room.runtime.reader))
+    room.runtime.reader = room_reader(live=live, rest=room.runtime.reader)
     try:
         await room.send("fix the login page")
         await _until(lambda: _said(room) == ["on it"])
@@ -197,7 +199,7 @@ async def test_a_subagents_writing_and_reasoning_are_not_shown():
     async def live(topic, work, agent, blocks):
         shown.append(blocks)
 
-    room.runtime.bind_reader(room_reader(live=live, rest=room.runtime.reader))
+    room.runtime.reader = room_reader(live=live, rest=room.runtime.reader)
     try:
         await room.send("fix the login page")
         await _until(lambda: _said(room) == ["on it"])

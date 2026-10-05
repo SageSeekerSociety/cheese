@@ -1,8 +1,7 @@
 """A session can have a whole cloud VM of its own.
 
 ``cloud_hosts`` learns which rows are such VMs and whose project each was
-created for; ``cloud_host_homes`` learns when its session last asked for a
-tool, which with the room's turns says when a VM is idle.
+created for.
 """
 
 import sqlalchemy as sa
@@ -10,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "7d3a9c61e2b4"
-down_revision = "c4e7a2d91f30"
+down_revision = "5b8e1f04c2a7"
 branch_labels = None
 depends_on = None
 
@@ -34,15 +33,6 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    op.add_column(
-        "cloud_host_homes",
-        sa.Column(
-            "active_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text("now()"),
-        ),
-    )
 
 
 def downgrade() -> None:
@@ -55,6 +45,5 @@ def downgrade() -> None:
         )
     ):
         raise RuntimeError("Release every whole cloud VM before downgrading")
-    op.drop_column("cloud_host_homes", "active_at")
     op.drop_column("cloud_hosts", "project_id")
     op.drop_column("cloud_hosts", "whole_machine")

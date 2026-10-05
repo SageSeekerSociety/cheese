@@ -1,13 +1,14 @@
-"""Real PostgreSQL commit faults at both sides of a scripted channel call.
+"""Real PostgreSQL commit faults at both sides of a scripted session host's call.
 
-The channel counts admitted input IDs. It is not a native harness or model; these
-cases prove runtime failure classification and durable receipt retry only.
+The host counts admitted input IDs. It is not a native harness or model; these
+cases prove the room's failure classification and durable receipt retry only.
 """
 
 import uuid
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import event, select, text
@@ -15,8 +16,10 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_chat_service
-from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.driven.runtime import DrivenRuntime
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.room.sessions import Live, RoomSessions
+from app.domain.agent.session_host.contract import SessionRef as CoreRef
+from app.domain.agent.session_host.contract import SessionStatus
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -28,48 +31,47 @@ from app.main import app
 from tests.support.room_reader import room_reader
 
 _COMMIT_PHASE = ContextVar("input_send_fault_phase", default=None)
+# The commit listener is process-wide, and the app's periodic jobs commit too.
+# A fault is injected only into commits made inside the call under test.
+_UNDER_TEST = ContextVar("input_send_fault_scope", default=False)
 
 
-class Channel:
-    name = "fault-channel"
+class Host:
+    """A session host whose runner takes every input it is handed, working."""
 
-    def __init__(self, handle):
-        self.handle = handle
-        self.admitted = []
+    def __init__(self, work: uuid.UUID):
+        self.work = work
+        self.admitted: list[dict] = []
 
-    async def call(self, handle, method, params):
-        assert handle is self.handle
-        if method == "ping":
-            return {"working": True}
-        self.admitted.append(params.copy())
-        return {"input_id": params["input_id"]}
+    def reads_on_accept(self, ref) -> bool:
+        return True
 
-    async def images(self, handle, images):
-        return images
+    async def send(self, ref, prompt, *, work_id):
+        self.admitted.append(
+            {"input_id": str(prompt.id), "work_id": str(work_id), "text": prompt.text}
+        )
+
+    steer = send
+
+    async def status(self, ref):
+        return SessionStatus(working=True, model="", work_id=str(self.work))
 
 
-class Runtime(DrivenRuntime):
-    harness = "claude_code"
-    steer = "steer"
-
-    async def ensure(self, session, opening, *, work_id=None):
-        return self.channel.handle
-
-    def conversation(self, handle):
-        return handle.native_session_id
-
-    def working(self, status):
-        return status["working"]
-
-    async def _consume(self, *args):
-        pass
-
-    async def reconcile_memory(self, topic):
-        pass
-
-    def _listen(self, seat):
+class Runtime(RoomSessions):
+    def _listen(self, seat, *, recovered=False):
         # No reader/model is started by this fault-classification test.
         pass
+
+
+def _seated(ref: SessionRef, host: Host) -> Runtime:
+    """A room whose seat ``ref`` has a live session, working on the host's work."""
+    runtime = Runtime(SimpleNamespace(name="fault-channel"), CLAUDE_CODE, host)
+    seat = (ref.topic_id, ref.agent_handle)
+    runtime.live[seat] = Live(
+        ref, CoreRef(CLAUDE_CODE, "fault"), ref.agent_handle, "conversation"
+    )
+    runtime.work[seat] = host.work
+    return runtime
 
 
 @pytest.mark.parametrize("mode", ["initial", "busy"])
@@ -80,20 +82,10 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
     async def run():
         factory = client.test_request_factory
         chat = app.dependency_overrides[get_chat_service]()
-        ref = SessionRef(
-            uuid.uuid4(), uuid.uuid4(), "cheese-test", harness="claude_code"
-        )
+        ref = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-test", harness=CLAUDE_CODE)
         work = uuid.uuid4()
-        handle = SimpleNamespace(
-            session=ref,
-            agent_handle=ref.agent_handle,
-            native_session_id=str(uuid.uuid4()),
-        )
-        channel = Channel(handle)
-        runtime = Runtime(channel)
-        seat = (ref.topic_id, ref.agent_handle)
-        runtime.live[seat] = handle
-        runtime.work[seat] = work
+        channel = Host(work)
+        runtime = _seated(ref, channel)
         delivery_id, attempt = uuid.uuid4(), uuid.uuid4()
         async with factory() as session:
             session.add(
@@ -132,7 +124,11 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
             finally:
                 _COMMIT_PHASE.reset(token)
 
-        runtime.bind_reader(room_reader(receipts=receipt))
+        runtime.report_to(
+            room_reader(receipts=receipt),
+            unread=lambda _topic: None,
+            memory=AsyncMock(),
+        )
         injected = []
 
         def fail_commit(session):
@@ -154,13 +150,14 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
                     await runtime.send(
                         ref,
                         "answer the grouped question",
-                        Opening(system_prompt=""),
+                        system_prompt="",
+                        expected_native_session="conversation",
                         work_id=work,
                         on_mark=lambda _: None,
                         register_input=register,
                     )
                 else:
-                    await runtime.deliver(
+                    await runtime.steer(
                         ref.topic_id,
                         "correct the prior answer",
                         expected_work_id=work,
@@ -222,24 +219,23 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
         chat = app.dependency_overrides[get_chat_service]()
         factory = client.test_request_factory
         ref = SessionRef(
-            uuid.UUID(project), uuid.UUID(topic), "cheese-test", harness="claude_code"
+            uuid.UUID(project), uuid.UUID(topic), "cheese-test", harness=CLAUDE_CODE
         )
         work = uuid.uuid4()
-        handle = SimpleNamespace(
-            session=ref,
-            agent_handle=ref.agent_handle,
-            native_session_id=str(uuid.uuid4()),
+        channel = Host(work)
+        runtime = _seated(ref, channel)
+        runtime.report_to(
+            room_reader(receipts=chat.confirm_prompt_receipt),
+            unread=lambda _topic: None,
+            memory=AsyncMock(),
         )
-        channel = Channel(handle)
-        runtime = Runtime(channel)
-        runtime.live[(ref.topic_id, ref.agent_handle)] = handle
-        runtime.work[(ref.topic_id, ref.agent_handle)] = work
-        runtime.bind_reader(room_reader(receipts=chat.confirm_prompt_receipt))
         monkeypatch.setattr(chat._compute, "_runtimes", lambda: [runtime])
         chat._active_turn_ids[ref.topic_id] = {work}
         injected = []
 
         def fail_commit(session):
+            if not _UNDER_TEST.get():
+                return
             phase = (
                 "accepted"
                 if any(
@@ -257,9 +253,13 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
         try:
             # The real ChatService -> ComputePool -> runtime -> channel ->
             # ChatService commit path is retained, not a fake exception result.
-            delivered = await chat.merge_into_running_turn(
-                ref.topic_id, [], "new answer", "user-1"
-            )
+            scope = _UNDER_TEST.set(True)
+            try:
+                delivered = await chat.merge_into_running_turn(
+                    ref.topic_id, [], "new answer", "user-1"
+                )
+            finally:
+                _UNDER_TEST.reset(scope)
         finally:
             event.remove(Session, "before_commit", fail_commit)
         assert injected == [fault]

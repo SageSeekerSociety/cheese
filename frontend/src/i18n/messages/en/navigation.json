@@ -10,7 +10,7 @@
     "settings": "Project settings",
     "general": "General",
     "routines": "Routines",
-    "skills": "Methods"
+    "skills": "Skills"
   },
   "spaces": "Spaces",
   "teams": "Teams",
@@ -70,6 +70,7 @@
     "all": "All",
     "viewAll": "View all {n}",
     "failed": "Search failed. Try again later.",
+    "clear": "Clear",
     "loading": "Searching"
   },
   "palette": {
@@ -112,7 +113,9 @@
     "weekly": "Weekly report"
   },
   "sidebar": {
-    "resize": "Drag to resize"
+    "resize": "Drag to resize",
+    "expand": "Expand sidebar",
+    "collapse": "Collapse sidebar"
   },
   "backTo": {
     "own": "your projects"

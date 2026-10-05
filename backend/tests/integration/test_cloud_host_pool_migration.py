@@ -29,7 +29,7 @@ from app.domain.user.repositories import UserRepository
 from tests.conftest import _PG_BASE, _admin_recreate_db
 
 _REVISION = "c4e7a2d91f30"
-_PREVIOUS = "c455bd47d0ac"
+_PREVIOUS = "d72d0f566149"
 _BACKEND = Path(__file__).resolve().parents[2]
 _SPEC = {"cores": 8, "memory_mb": 16384, "disk_gb": 100}
 

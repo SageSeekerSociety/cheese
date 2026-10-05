@@ -1,8 +1,9 @@
 """How an open turn is ended when the session will not end it.
 
-Every case runs the real Claude Code runtime, runner stamping, journal mirror
-and translation against a scripted session (``StubChannel``); only the clocks
-are shortened. What the room receives is what the bound consumer receives.
+Every case runs the real room sessions, session core, Claude Code runner
+stamping, journal mirror and translation against a scripted session
+(``StubChannel``); only the clocks are shortened. What the room receives is
+what its reader receives.
 """
 
 import asyncio
@@ -12,20 +13,21 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
-from app.domain.agent.harness.driven import runtime as driven_runtime
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_CODE,
     TURN_TIMEOUT_CODE,
 )
+from app.domain.agent.room import sessions as room_sessions
 from app.domain.agent.service import AgentResult
+from app.domain.agent.session_host import host as session_host
 from app.domain.delivery.input_identity import (
     InputIdentity,
     InputReceipt,
     WorkCompletion,
     WorkTermination,
 )
-from tests.conftest import StubChannel
+from tests.conftest import StubChannel, drain_hooks
 from tests.support.room_reader import room_reader
 
 _REAL_SLEEP = asyncio.sleep
@@ -141,15 +143,16 @@ class Room:
         def oldest_unread(_topic):
             return min(self.unread.values(), default=None)
 
-        self.runtime.bind_reader(
+        self.runtime.report_to(
             room_reader(
                 events=consume,
                 receipts=receipt,
                 completions=completion,
                 terminations=termination,
-            )
+            ),
+            unread=oldest_unread,
+            memory=AsyncMock(),
         )
-        self.runtime.bind_unread_probe(oldest_unread)
 
     def results(self) -> list[AgentResult]:
         return [event for _, event in self.events if isinstance(event, AgentResult)]
@@ -166,7 +169,7 @@ class Room:
         await self.runtime.send(
             self.session,
             text,
-            Opening(system_prompt=""),
+            system_prompt="",
             work_id=self.work,
             on_mark=lambda _: None,
             register_input=self.register_input(text),
@@ -174,12 +177,12 @@ class Room:
 
     async def steer(self, text: str) -> None:
         self.unread[text] = time.monotonic()
-        assert await self.runtime.deliver(
+        assert await self.runtime.steer(
             self.topic, text, register_input=self.register_input(text)
         )
 
     async def close(self) -> None:
-        for seat in list(self.runtime.subscriptions):
+        for seat in list(self.runtime.tasks):
             if seat[0] == self.topic:
                 await self.runtime._detach(seat)
 
@@ -193,7 +196,7 @@ async def _until(check, timeout: float = 8.0) -> None:
 
 @pytest.fixture
 def quick_retries(monkeypatch):
-    """The poller's two-second wait between failed reads, cut short."""
+    """The reading's two-second wait between failed reads, cut short."""
 
     class Quick:
         def __getattr__(self, name):
@@ -202,7 +205,7 @@ def quick_retries(monkeypatch):
         async def sleep(self, seconds):
             await _REAL_SLEEP(min(seconds, 0.02))
 
-    monkeypatch.setattr(driven_runtime, "asyncio", Quick())
+    monkeypatch.setattr(session_host, "asyncio", Quick())
 
 
 def _talks(channel: Scripted, topic: uuid.UUID, prompt: str) -> None:
@@ -226,7 +229,7 @@ async def test_talking_without_working_ends_the_turn_once():
         assert room.work in room.runtime.closed
 
         room.channel.stops(room.topic, "late news")
-        await room.runtime.subscriptions[(room.topic, "cheese")].drain()
+        await drain_hooks(room.channel, room.topic)
         assert room.results() == [ended]
     finally:
         await room.close()
@@ -299,7 +302,7 @@ async def test_a_session_whose_process_exited_ends_the_turn_visibly():
 
 @pytest.mark.usefixtures("quick_retries")
 async def test_a_runner_out_of_reach_too_long_ends_the_turn(monkeypatch):
-    monkeypatch.setattr(driven_runtime, "RUNNER_GONE_S", 0.5)
+    monkeypatch.setattr(room_sessions, "RUNNER_GONE_S", 0.5)
     room = Room(Scripted(_talks))
     try:
         await room.send("fix the login page")
@@ -323,7 +326,7 @@ async def test_a_runner_out_of_reach_too_long_ends_the_turn(monkeypatch):
 
 @pytest.mark.usefixtures("quick_retries")
 async def test_a_runner_back_within_the_limit_keeps_its_turn(monkeypatch):
-    monkeypatch.setattr(driven_runtime, "RUNNER_GONE_S", 0.5)
+    monkeypatch.setattr(room_sessions, "RUNNER_GONE_S", 0.5)
     room = Room(Scripted(_talks))
     try:
         await room.send("fix the login page")
@@ -351,7 +354,7 @@ async def test_an_input_is_read_when_its_echo_comes_back_not_when_it_is_taken():
     try:
         await room.send("fix the login page")
         await _until(lambda: room.channel._session_for(room.topic).working)
-        await room.runtime.subscriptions[(room.topic, "cheese")].drain()
+        await drain_hooks(room.channel, room.topic)
         assert room.receipts == []
 
         room.channel.acknowledges(room.topic, "fix the login page")
@@ -359,7 +362,7 @@ async def test_an_input_is_read_when_its_echo_comes_back_not_when_it_is_taken():
 
         await room.steer("use the new theme")
         await _REAL_SLEEP(0.3)
-        await room.runtime.subscriptions[(room.topic, "cheese")].drain()
+        await drain_hooks(room.channel, room.topic)
         assert room.receipts == ["fix the login page"]
 
         room.channel.acknowledges(room.topic, "use the new theme")
@@ -384,7 +387,8 @@ async def test_a_message_read_mid_turn_is_not_failed_when_the_session_goes_idle(
         await room.runtime.send(
             room.session,
             "and the linter too",
-            Opening(system_prompt="", agent_handle="cheese"),
+            system_prompt="",
+            acting="cheese",
             work_id=second,
             on_mark=lambda _: None,
             register_input=room.register_input("and the linter too"),
@@ -397,15 +401,21 @@ async def test_a_message_read_mid_turn_is_not_failed_when_the_session_goes_idle(
 
         seat = (room.topic, "cheese")
         room.channel.alive = False
-        await _until(lambda: seat not in room.runtime.answering)
+        await _until(lambda: room.runtime.tasks[seat].done())
         await _REAL_SLEEP(0.3)
 
-        # The running turn ended cleanly, and so did the message it took in.
+        # The running turn ended cleanly, and the session's echo told the room
+        # it read the message inside that turn: what ends the message with it.
         assert {
             work: event.is_error
             for work, event in room.events
             if isinstance(event, AgentResult)
-        } == {room.work: False, second: False}
+        } == {room.work: False}
+        assert [
+            receipt.execution_work_id
+            for receipt in room.native_receipts.values()
+            if receipt.identity.work_id == second
+        ] == [room.work]
         assert "session process exited" not in str(room.results())
     finally:
         await room.close()
@@ -423,18 +433,20 @@ async def test_a_platform_turn_taken_into_the_running_turn_still_ends():
         ending: list = []
 
         async def platform_turn() -> None:
-            async for event in room.runtime.run_turn(
-                project_id=room.session.project_id,
-                topic_id=room.topic,
-                prompt="tidy the notes",
-                system_prompt="",
-                resume_session_id=None,
-                register_input=room.register_input("tidy the notes"),
-                agent_handle="cheese",
-                session_agent="cheese",
-            ):
-                if isinstance(event, AgentResult):
-                    ending.append(event)
+            work = uuid.uuid4()
+            async with room.runtime.reading(work) as events:
+                await room.runtime.send(
+                    room.session,
+                    "tidy the notes",
+                    system_prompt="",
+                    acting="cheese",
+                    work_id=work,
+                    on_mark=lambda _: None,
+                    register_input=room.register_input("tidy the notes"),
+                )
+                async for event in events:
+                    if isinstance(event, AgentResult):
+                        ending.append(event)
 
         waiting = asyncio.create_task(platform_turn())
         await _until(

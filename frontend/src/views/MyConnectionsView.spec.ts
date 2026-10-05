@@ -45,6 +45,10 @@ vi.mock('../api/feishu', async () => ({
   feishuAuthorizeUrl: (id: string) => feishuAuthorizeUrl(id),
 }))
 
+// 授权回调是一次性动作，结果走全局 toast（§3.11）：这里只验它说了什么。
+const sonner = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
+vi.mock('vuetify-sonner', () => ({ toast: { success: sonner.success, error: sonner.error } }))
+
 import MyConnectionsView from './MyConnectionsView.vue'
 
 import { setLocale } from '@/i18n'
@@ -110,6 +114,8 @@ beforeEach(() => {
   feishuAvailability.mockReset().mockResolvedValue({ configured: true, app_id: 'cli_p', domain: 'feishu' })
   connectFeishu.mockReset()
   feishuAuthorizeUrl.mockReset()
+  sonner.success.mockReset()
+  sonner.error.mockReset()
 })
 
 afterEach(cleanup)
@@ -177,25 +183,27 @@ describe('从飞书授权回来', () => {
   it("in English the outcome code and Feishu's own words are said in English", async () => {
     setLocale('en')
     await mount('/?feishu=denied&feishu_detail=access_denied')
-    expect(await screen.findByText('Authorization was not granted: access_denied')).toBeTruthy()
+    await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith('Authorization was not granted: access_denied'))
   })
 
   it('a refusal of ours arrives as its sentence key', async () => {
     setLocale('en')
     await mount('/?feishu=feishuAppNotConfigured')
-    expect(
-      await screen.findByText("An admin hasn't set up the Feishu app yet, so Feishu can't be connected for now")
-    ).toBeTruthy()
+    await vi.waitFor(() =>
+      expect(sonner.error).toHaveBeenCalledWith(
+        "An admin hasn't set up the Feishu app yet, so Feishu can't be connected for now"
+      )
+    )
   })
 
   it('a code this build does not know says only that authorizing did not complete', async () => {
     setLocale('en')
     await mount('/?feishu=something_new')
-    expect(await screen.findByText('Feishu authorization did not complete')).toBeTruthy()
+    await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith('Feishu authorization did not complete'))
   })
 
   it('成功了说成功', async () => {
     await mount('/?feishu=ok')
-    expect(await screen.findByText('飞书授权成功')).toBeTruthy()
+    await vi.waitFor(() => expect(sonner.success).toHaveBeenCalledWith('飞书授权成功'))
   })
 })

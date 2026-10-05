@@ -11,9 +11,12 @@
       <LearningQuoteItem v-for="excerpt in section.excerpts" :key="excerpt.blockId" :excerpt="excerpt" />
     </div>
 
-    <p v-if="!outline.sections.length" class="outline-card__empty">
-      {{ t('spaces.analytics.learning.outline.empty') }}
-    </p>
+    <BaseEmptyState
+      v-if="!outline.sections.length"
+      size="inline"
+      class="outline-card__empty"
+      :title="t('spaces.analytics.learning.outline.empty')"
+    />
 
     <p v-if="outline.missing.length" class="outline-card__missing">
       {{ t('spaces.analytics.learning.outline.missing', { n: outline.missing.length }) }}
@@ -27,6 +30,8 @@ import type { SpaceLearningOutline } from '@/network/api/spaces/types'
 import { useI18n } from 'vue-i18n'
 
 import LearningQuoteItem from './LearningQuoteItem.vue'
+
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 
 const { t } = useI18n()
 
@@ -72,9 +77,6 @@ defineProps<{
 
 .outline-card__empty {
   margin: 16px 0 0;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--muted);
 }
 
 .outline-card__missing {

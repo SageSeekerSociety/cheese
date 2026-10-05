@@ -94,6 +94,7 @@ class Room:
             self.resource,
             {"CHEESE_API": api, "CHEESE_TOKEN": "test"},
             sandbox=True,
+            platform_machine=True,
         )
         try:
             bootstrap.configure(payload)
@@ -252,14 +253,15 @@ def test_the_teardown_ends_everything_a_sandbox_started(rooms, machine_service):
         runtime.request(room.state, "ping")
 
 
-def _sandboxed_home(owner: Path) -> Path:
-    """A room's home on a machine that recorded it as sandboxed."""
+def _sandboxed_home(owner: Path, release: Path | None = None) -> Path:
+    """A room's home on a machine that recorded it as sandboxed, started from
+    `release` (one that does not exist when not given)."""
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = owner / ".cheese/home" / project / resource
     (home / ".cheese").mkdir(parents=True)
     marker = owner / ".cheese/sandboxes" / project / resource
     marker.parent.mkdir(parents=True)
-    marker.write_text(str(owner / "release"))
+    marker.write_text(str(release or owner / "release"))
     return home
 
 
@@ -340,6 +342,7 @@ def _unsandboxed_install(tmp_path, monkeypatch):
         resource,
         {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
         sandbox=False,
+        platform_machine=False,
     )
     return home, outside, payload
 
@@ -415,6 +418,7 @@ def test_the_install_writes_no_executor_state_through_a_link_in_the_room(
             "CHEESE_ENVIRONMENT": json.dumps(environment),
         },
         sandbox=False,
+        platform_machine=False,
     )
     (outside / "config.json").write_text("another room's")
     (home / linked).symlink_to(outside)
@@ -434,7 +438,8 @@ def neighbour(tmp_path, monkeypatch, capsys):
     bootstrap.configure(payload)
     started = json.loads(capsys.readouterr().out)
     state, release = Path(started["state"]), Path(started["release"])
-    room = _sandboxed_home(tmp_path / "owner")
+    # Started from the release the teardown takes its programs from.
+    room = _sandboxed_home(tmp_path / "owner", release)
     (room / ".cheese/executor").symlink_to(state)
     # As the room's own install wrote it, naming the room: the room can.
     (room / ".cheese/execution-owner.json").write_text(

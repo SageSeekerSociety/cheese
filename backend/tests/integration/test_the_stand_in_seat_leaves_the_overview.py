@@ -77,9 +77,9 @@ def _say(conn, *, project_id: uuid.UUID, root_id: uuid.UUID, author: str) -> uui
     conn.execute(
         sa.text(
             "INSERT INTO blocks (id, project_id, topic_id, kind, author_type,"
-            " author, content, doc_version, refs, created_at, updated_at)"
+            " author, content, refs, created_at, updated_at)"
             " VALUES (:id, :p, :t, 'message', 'participant', :a, '这句是替身说的',"
-            " 1, CAST('[]' AS json), now(), now())"
+            " CAST('[]' AS json), now(), now())"
         ),
         {"id": block_id, "p": project_id, "t": root_id, "a": author},
     )

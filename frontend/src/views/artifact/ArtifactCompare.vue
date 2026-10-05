@@ -95,6 +95,10 @@ const modes = computed(() => [
 
 <template>
   <div class="compare">
+    <!-- Deliberately not an AppPage: this is a section inside ProjectArtifactView,
+         which already owns the page frame (AppPage width="full"). It is the
+         two-pane comparison view that page swaps its column to, so a page frame
+         here would nest a second header and re-centre the column. -->
     <div class="compare__bar">
       <label class="compare__pick t-meta">
         {{ t('tasks.artifact.compareTo') }}
@@ -194,7 +198,9 @@ const modes = computed(() => [
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
+@use '../../styles/breakpoints.scss' as bp;
+
 .compare {
   display: flex;
   flex-direction: column;
@@ -300,7 +306,8 @@ const modes = computed(() => [
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
-@media (max-width: 700px) {
+// 断点收进共享 token（`styles/breakpoints.scss`）：700 → 768（`$bp-phone`）。
+@include bp.below(bp.$bp-phone) {
   .compare__side {
     grid-template-columns: minmax(0, 1fr);
   }

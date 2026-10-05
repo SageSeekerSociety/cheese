@@ -12,6 +12,7 @@ import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../a
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '../components/common/AdaptiveMenu.vue'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
+import { useRowMenu } from '../composables/useRowMenu'
 import {
   connectThisComputer,
   desktopBridge,
@@ -22,7 +23,9 @@ import {
 } from '../lib/desktop'
 
 import { useCommands } from '@/commands'
+import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import accountService from '@/services/account'
@@ -76,17 +79,11 @@ const installCommands = computed(() => [
   { os: t('account.devices.os.unix'), command: `curl -fsSL ${window.location.origin}/connector/install.sh | sh` },
   { os: t('account.devices.os.windows'), command: `irm ${window.location.origin}/connector/install.ps1 | iex` },
 ])
-const copied = ref<string | null>(null)
 
+// 复制成的说法交给共享的复制助手（一条 toast），按钮不再自己换成「已复制」——
+// 全站复制只有这一种反馈（docs/design-system.md §3.11）。
 async function copyInstall(command: string) {
-  try {
-    await navigator.clipboard.writeText(command)
-    copied.value = command
-    setTimeout(() => (copied.value = null), 1600)
-  } catch {
-    // Clipboard blocked (insecure context / permissions) — leave the command
-    // visible so the user can still select and copy it by hand.
-  }
+  await copyText(command, t('account.devices.copied'))
 }
 
 // Inside the desktop app (desktop/) this computer connects on its own at sign-in
@@ -184,6 +181,8 @@ const unbindTitle = computed(() =>
 // 手机上一台设备的操作（改名、解绑）收进行尾的 ⋯（底部面板）：名字旁那颗小铅笔和
 // 行尾的「解绑」都比手指小，挨着「在线」两个字也容易按错。
 const { mdAndUp } = useDisplay()
+// 桌面上改名、解绑摆在行里；右键一台设备弹的是同一份，弹在鼠标那一点上。
+const rowMenu = useRowMenu<string>()
 function deviceActions(d: MyDevice): MenuAction[] {
   return [
     { key: 'rename', label: t('account.devices.rename'), icon: 'mdi-pencil-outline', onSelect: () => startRename(d) },
@@ -237,6 +236,13 @@ useCommands(() =>
 
 <template>
   <div class="settings-page">
+    <!-- Deliberately not an AppPage: this view is one page of the user settings
+         overlay (layouts/user/Settings.vue, meta.settingsOverlay). The overlay
+         already owns the content column (components/common/SettingsOverlay,
+         `.so__content` — 720 centred, 24 in), so a page frame here would nest a
+         second header and a second column; the shared settings-card shell
+         (styles/settings-card.css) is this kind of page's frame
+         (docs/design-system.md §3.5). -->
     <header class="devices__head">
       <div>
         <h1 class="t-page-title">{{ t('account.settings.devices') }}</h1>
@@ -257,7 +263,7 @@ useCommands(() =>
       </div>
     </header>
 
-    <p v-if="!isLoggedIn" class="settings-empty">{{ t('account.devices.signInFirst') }}</p>
+    <BaseEmptyState v-if="!isLoggedIn" size="inline" class="settings-empty" :title="t('account.devices.signInFirst')" />
 
     <template v-else>
       <v-alert v-if="error" type="error" density="comfortable" closable @click:close="error = null">
@@ -273,8 +279,12 @@ useCommands(() =>
           <v-progress-circular indeterminate size="24" />
         </div>
 
-        <div v-else-if="devices.length === 0" class="settings-empty devices__empty">
-          <span>{{ t('account.devices.empty') }}</span>
+        <BaseEmptyState
+          v-else-if="devices.length === 0"
+          size="inline"
+          class="settings-empty devices__empty"
+          :title="t('account.devices.empty')"
+        >
           <!-- 在桌面 app 里，最直接的是把这台电脑接进来。 -->
           <template v-if="desktop">
             <BaseButton kind="secondary" :loading="thisComputer.connecting" @click="connectThisMachine">
@@ -283,9 +293,17 @@ useCommands(() =>
             <span v-if="thisComputer.connecting">{{ thisComputer.step }}</span>
             <span v-if="thisComputer.error" class="c-danger">{{ thisComputer.error }}</span>
           </template>
-        </div>
+        </BaseEmptyState>
 
-        <div v-for="d in devices" :key="d.device_id" class="device">
+        <div
+          v-for="d in devices"
+          :key="d.device_id"
+          class="device"
+          @contextmenu="mdAndUp && renaming !== d.device_id && rowMenu.open(d.device_id, $event)"
+        >
+          <AdaptiveMenu v-if="mdAndUp" v-bind="rowMenu.bind(d.device_id)" :actions="deviceActions(d)" :title="d.name">
+            <template #activator />
+          </AdaptiveMenu>
           <div class="device__line">
             <span class="device__dot" :class="{ 'device__dot--on': d.online }" aria-hidden="true" />
             <v-text-field
@@ -367,13 +385,8 @@ useCommands(() =>
           <span class="srow__k">{{ c.os }}</span>
           <div class="install-cmd">
             <code class="install-cmd__code">{{ c.command }}</code>
-            <BaseButton
-              kind="ghost"
-              size="sm"
-              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-              @click="copyInstall(c.command)"
-            >
-              {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+            <BaseButton kind="ghost" size="sm" prepend-icon="mdi-content-copy" @click="copyInstall(c.command)">
+              {{ t('account.devices.copy') }}
             </BaseButton>
           </div>
         </div>
@@ -422,13 +435,8 @@ useCommands(() =>
         <div class="t-caption c-muted mb-1">{{ c.os }}</div>
         <div class="install-cmd">
           <code class="install-cmd__code">{{ c.command }}</code>
-          <BaseButton
-            kind="ghost"
-            size="sm"
-            :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-            @click="copyInstall(c.command)"
-          >
-            {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+          <BaseButton kind="ghost" size="sm" prepend-icon="mdi-content-copy" @click="copyInstall(c.command)">
+            {{ t('account.devices.copy') }}
           </BaseButton>
         </div>
       </div>
@@ -604,7 +612,9 @@ useCommands(() =>
   line-height: var(--lh-14);
 }
 
-@media (max-width: 599.98px) {
+/* 断点对齐共享 token（`styles/breakpoints.scss`）：599.98 → 767.98，和这一页
+   一起加载的 `settings-card.css` 同一条线。 */
+@media (max-width: 767.98px) {
   .device {
     padding: 12px 16px 14px;
   }

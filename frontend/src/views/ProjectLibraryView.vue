@@ -19,31 +19,42 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
+import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
+import VirtualList from '@/components/common/VirtualList.vue'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { usePageTitleStore } from '@/stores/title'
+import LibraryVersionsDialog from '@/views/library/LibraryVersionsDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
 
 const route = useRoute()
 const router = useRouter()
 const { mdAndUp } = useDisplay()
+const rowMenu = useRowMenu<string>()
 
 const files = ref<LibraryFile[]>([])
 const loading = ref(false)
-const loadError = ref('')
+// 列表整块没读出来时：就地换成 BaseLoadError + 重试（docs/design-system.md §3.10），
+// 不再是一行裸红字。`loadReason` 是服务端那句真实原因，有就照原样显示。
+const loadFailed = ref(false)
+const loadReason = ref('')
 const actionError = ref('')
 const busy = ref('')
 const uploading = ref(false)
@@ -51,20 +62,25 @@ const confirming = ref<LibraryFile | null>(null)
 const replacing = ref<{ target: LibraryFile; file: File } | null>(null)
 // 同一个名字被替换以后，预览要重新读：换一次，这个数加一。
 const revision = ref(0)
+// 文件那一列自己的滚动容器（`.library__list` 上写着 overflow-y: auto）。行数过门槛
+// 时交给 VirtualList，得把这份容器递给它——见 lib/virtualList.ts 的门槛那段。
+const listEl = ref<HTMLElement | null>(null)
 
 // ---- 读 --------------------------------------------------------------------
 
 async function load() {
   const projectId = props.projectId
   loading.value = true
-  loadError.value = ''
+  loadFailed.value = false
+  loadReason.value = ''
   try {
     const listed = await listProjectLibrary(projectId)
     if (props.projectId !== projectId) return
     files.value = listed.data
   } catch (e) {
     if (props.projectId !== projectId) return
-    loadError.value = e instanceof Error ? e.message : t('work.library.loadError')
+    loadFailed.value = true
+    loadReason.value = e instanceof Error ? e.message : ''
   } finally {
     if (props.projectId === projectId) loading.value = false
   }
@@ -120,6 +136,11 @@ function kindLabel(kind: Kind): string {
 
 const query = ref('')
 const kind = ref<Kind>('all')
+// 「筛选空」那句下面的一键清除：清掉搜索框和类型筛选，列表自己回来（§8.1）。
+function clearFilters() {
+  query.value = ''
+  kind.value = 'all'
+}
 const shown = computed(() => {
   const q = query.value.trim().toLowerCase()
   return files.value.filter(
@@ -226,6 +247,14 @@ async function replace() {
   }
 }
 
+// 「版本…」开着的是哪一份（null = 关着）。恢复了一版：预览换新、清单重读。
+const versionsOf = ref<string | null>(null)
+function onRestored(_path: string, version: number) {
+  revision.value++
+  toast(t('work.library.restoredDone', { n: version }))
+  void load()
+}
+
 async function download(file: LibraryFile) {
   actionError.value = ''
   try {
@@ -271,6 +300,12 @@ function fileActions(file: LibraryFile): MenuAction[] {
       onSelect: () => pickReplacement(file),
     },
     {
+      key: 'versions',
+      label: t('work.library.versions'),
+      icon: 'mdi-history',
+      onSelect: () => (versionsOf.value = file.path),
+    },
+    {
       key: 'delete',
       label: t('work.library.delete'),
       icon: 'mdi-delete-outline',
@@ -293,6 +328,14 @@ useCommands(() => {
         palette: false as const,
         header: {},
         run: () => pickReplacement(open),
+      },
+      {
+        id: 'library.versions',
+        title: t('work.library.versions'),
+        icon: 'mdi-history',
+        palette: false as const,
+        header: {},
+        run: () => (versionsOf.value = open.path),
       },
       {
         id: 'library.delete',
@@ -334,6 +377,12 @@ function rowMeta(file: LibraryFile): string {
   return [file.added_by ?? t('work.library.unknownSource'), when(file), fmtBytes(file.bytes)].join(' · ')
 }
 
+// 行的身份（和 v-for 的 key 同义）：路径。同名不覆盖，所以路径唯一。写成具名函数而
+// 不是模板里的箭头：模板里那个箭头参数没有类型来源，strict 下会报隐式 any。
+function fileRowKey(row: unknown): string {
+  return (row as LibraryFile).path
+}
+
 function read(file: LibraryFile) {
   return (asPdf: boolean) => libraryFileBytes(props.projectId, file.path, asPdf)
 }
@@ -352,9 +401,17 @@ function read(file: LibraryFile) {
       <input ref="replacePicker" type="file" hidden @change="onReplacementPicked" />
 
       <!-- 列表：手机上看着一份文件时让出整页。 -->
-      <section v-if="mdAndUp || !selected" class="library__list">
+      <section v-if="mdAndUp || !selected" ref="listEl" class="library__list">
         <p class="t-body c-muted library__intro" :title="t('work.library.dropHint')">{{ t('work.library.intro') }}</p>
-        <p v-if="loadError" role="alert" class="t-body c-danger">{{ loadError }}</p>
+        <!-- The list failed to load: replace it in place with an error and a
+             retry, not a red empty list. -->
+        <BaseLoadError
+          v-if="loadFailed"
+          class="library__load-error"
+          :title="t('work.library.loadError')"
+          :error="loadReason || null"
+          @retry="load"
+        />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
 
         <div v-if="files.length" class="library__tools">
@@ -394,36 +451,70 @@ function read(file: LibraryFile) {
         </div>
 
         <ul v-else-if="shown.length" class="library__rows">
-          <li
-            v-for="file in shown"
-            :key="file.path"
-            class="library-row"
-            :class="{ 'library-row--on': file.path === selectedPath }"
+          <!-- Long libraries go through VirtualList: past VIRTUAL_LIST_CONTENT_THRESHOLD
+               (lib/virtualList.ts) only the rows in view stay mounted, below it this is
+               the plain list it always was. `item-as="li"` keeps the ul > li structure
+               in both paths — virtua only wraps each row; the row itself carries the
+               flex layout, the buttons and the actions menu, so keyboard focus and the
+               ⋯ menu work exactly as before. virtua owns the li, so the right-click
+               handler sits on the row div it wraps. -->
+          <VirtualList
+            :items="shown"
+            :item-key="fileRowKey"
+            :scroll-parent="listEl"
+            :threshold="VIRTUAL_LIST_CONTENT_THRESHOLD"
+            :estimated-size="58"
+            item-as="li"
+            item-role="listitem"
           >
-            <button type="button" class="library-row__open" @click="open(file)">
-              <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="library-row__icon" />
-              <span class="library-row__id">
-                <span class="library-row__name t-body">{{ file.path }}</span>
-                <span class="t-meta c-faint">{{ rowMeta(file) }}</span>
-              </span>
-            </button>
-            <AdaptiveMenu :actions="fileActions(file)" :title="file.path">
-              <template #activator="{ props: menuProps }">
-                <BaseButton
-                  v-bind="menuProps"
-                  icon="mdi-dots-horizontal"
-                  size="sm"
-                  class="tap-target"
-                  :loading="busy === file.path"
-                  :aria-label="t('work.library.actionsOf', { name: file.path })"
-                />
-              </template>
-            </AdaptiveMenu>
-          </li>
+            <template #item="{ item: file }">
+              <div
+                class="library-row"
+                :class="{ 'library-row--on': file.path === selectedPath }"
+                @contextmenu="rowMenu.open(file.path, $event)"
+              >
+                <button type="button" class="library-row__open" @click="open(file)">
+                  <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="library-row__icon" />
+                  <span class="library-row__id">
+                    <span class="library-row__name t-body">{{ file.path }}</span>
+                    <span class="t-meta c-faint">{{ rowMeta(file) }}</span>
+                  </span>
+                </button>
+                <AdaptiveMenu v-bind="rowMenu.bind(file.path)" :actions="fileActions(file)" :title="file.path">
+                  <template #activator="{ props: menuProps }">
+                    <BaseButton
+                      v-bind="menuProps"
+                      icon="mdi-dots-horizontal"
+                      size="sm"
+                      class="tap-target"
+                      :loading="busy === file.path"
+                      :aria-label="t('work.library.actionsOf', { name: file.path })"
+                    />
+                  </template>
+                </AdaptiveMenu>
+              </div>
+            </template>
+          </VirtualList>
         </ul>
 
-        <p v-else-if="files.length" class="t-body c-muted library__empty">{{ t('work.library.noMatch') }}</p>
-        <p v-else-if="!loadError && !loading" class="t-body c-muted library__empty">{{ t('work.library.empty') }}</p>
+        <!-- Files exist but the search/type filter hid them: say "filtered out",
+             distinct from "no files yet", and offer one-click clear (§8.1). -->
+        <BaseEmptyState
+          v-else-if="files.length"
+          size="inline"
+          align="center"
+          class="library__empty"
+          :title="t('work.library.noMatch')"
+          :action="t('work.library.clearFilters')"
+          @action="clearFilters"
+        />
+        <BaseEmptyState
+          v-else-if="!loadFailed && !loading"
+          size="inline"
+          align="center"
+          class="library__empty"
+          :title="t('work.library.empty')"
+        />
       </section>
 
       <!-- 这一份：桌面上在右边一栏，手机上是整一页。 -->
@@ -476,6 +567,15 @@ function read(file: LibraryFile) {
       </section>
     </div>
 
+    <LibraryVersionsDialog
+      :project-id="projectId"
+      :path="versionsOf"
+      :can-restore="true"
+      :fmt-bytes="fmtBytes"
+      @close="versionsOf = null"
+      @restored="onRestored"
+    />
+
     <!-- Replace changes what every message referencing this file reads, so say it before acting. -->
     <ConfirmDialog
       :model-value="!!replacing"
@@ -511,9 +611,11 @@ function read(file: LibraryFile) {
   outline-offset: -8px;
   transition: outline-color var(--dur-quick) var(--ease-standard);
 }
+
 .library--dragging {
   outline-color: var(--accent);
 }
+
 .library__list {
   display: flex;
   flex: 1 1 auto;
@@ -523,19 +625,27 @@ function read(file: LibraryFile) {
   padding: 20px 24px 32px;
   overflow-y: auto;
 }
+
 .library__intro {
   margin: 0;
 }
+
+.library__load-error {
+  padding: 8px 0;
+}
+
 .library__tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
+
 .library__search {
   flex: 1 1 240px;
   min-width: 0;
 }
+
 /* 一行排不下就换行，不横着滑：手机上六个筛选横滑时右边那几个被切在屏幕外，又没
    有滚动条告诉你还有，看上去像少了两个筛选。折成两行多占一行列表的高度，但六个
    都在。 */
@@ -545,35 +655,40 @@ function read(file: LibraryFile) {
   gap: 8px;
   max-width: 100%;
 }
+
 .library__kind {
-  flex: none;
   height: 28px;
   padding: 0 12px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-pill);
-  background: none;
   color: var(--muted);
   cursor: pointer;
+  background: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  flex: none;
   transition:
     background-color var(--dur-quick) var(--ease-standard),
     color var(--dur-quick) var(--ease-standard);
 }
+
 .library__kind:hover {
   background: var(--fill);
 }
+
 .library__kind[aria-pressed='true'] {
-  border-color: var(--ink);
-  background: var(--ink);
   color: var(--surface);
+  background: var(--ink);
+  border-color: var(--ink);
 }
+
 .library__rows {
   display: flex;
+  padding: 0;
+  margin: 0;
+  list-style: none;
   flex-direction: column;
   gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }
+
 .library-row {
   display: flex;
   align-items: center;
@@ -582,44 +697,52 @@ function read(file: LibraryFile) {
   border-radius: var(--radius-md);
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
+
 .library-row:hover {
   background: var(--fill);
 }
+
 .library-row--on {
   background: var(--line-2);
 }
+
 .library-row__open {
   display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 12px;
   min-width: 0;
   min-height: 56px;
   padding: 8px 12px;
-  border: 0;
-  background: none;
   color: inherit;
   text-align: left;
   cursor: pointer;
+  background: none;
+  border: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 12px;
 }
+
 .library-row__icon {
   flex: none;
   color: var(--muted);
 }
+
 .library-row__id {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
+
 .library-row__name {
   color: var(--ink);
   overflow-wrap: anywhere;
 }
+
 .library__empty {
   padding: 32px 0;
   text-align: center;
 }
+
 .library__detail {
   display: flex;
   flex: none;
@@ -629,11 +752,13 @@ function read(file: LibraryFile) {
   min-height: 0;
   border-left: 1px solid var(--line);
 }
+
 .library__detail--phone {
   flex: 1 1 auto;
   width: auto;
   border-left: 0;
 }
+
 .library__detail-head {
   display: flex;
   flex: none;
@@ -642,36 +767,70 @@ function read(file: LibraryFile) {
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--line);
 }
+
 .library__detail--phone .library__detail-head {
   padding: 10px 16px;
 }
+
 .library__detail-name {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
 .library__detail-meta {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
 .library__detail-meta a {
   color: var(--accent-ink);
   text-decoration: none;
 }
+
 .library__detail-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin: 4px 0 0 -8px;
 }
+
 .library__preview {
   flex: 1 1 auto;
   min-height: 0;
   background: var(--canvas);
 }
+
 .library__bar {
   flex: none;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: var(--surface);
+}
+
+/* 手指点得中（设计系统 §10.1）。筛选是一排 28px 的小药丸、搜索框只有 40px 高，
+   触屏上都够不到 44。撑开能点的范围、把搜索框抬到 44 高；药丸之间因此先拉开，
+   撑开的部分互不盖住，一次点中一个筛选。 */
+@media (pointer: coarse) {
+  .library__kinds {
+    gap: 16px;
+  }
+
+  .library__kind {
+    position: relative;
+  }
+
+  .library__kind::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    content: '';
+    transform: translate(-50%, -50%);
+  }
+
+  .library__search :deep(.v-field) {
+    min-height: 44px;
+  }
 }
 </style>

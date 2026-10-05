@@ -17,6 +17,7 @@ import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { openShortcutSheet } from '@/components/common/shortcutSheet'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -93,6 +94,11 @@ const extras = computed<MenuAction[]>(() => {
   return list
 })
 const extrasCollapsed = computed(() => !!props.collapseExtras && extras.value.length > 1)
+// 收进 ⋯ 时，键盘快捷键那颗也跟进去（平板接了键盘照样用得上），但不算进「要不要收」。
+const menuExtras = computed<MenuAction[]>(() => [
+  ...extras.value,
+  { key: 'shortcuts', label: t('global.shortcuts.open'), icon: 'mdi-keyboard-outline', onSelect: openShortcutSheet },
+])
 
 // 那颗按钮上的字。窄屏收掉名字，只留「交给」；读屏读的一直是全名。
 const summonText = computed(() => ({
@@ -110,9 +116,19 @@ const summonText = computed(() => ({
     <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
              iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
              毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
-             看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。 -->
-    <input ref="fileInput" type="file" multiple class="visually-hidden" @change="onFilePicked" />
-    <input ref="imageInput" type="file" accept="image/*" multiple class="visually-hidden" @change="onFilePicked" />
+             看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。
+             They are opened only by script from the visible buttons below, so
+             keep them out of the Tab order. -->
+    <input ref="fileInput" type="file" multiple class="visually-hidden" tabindex="-1" @change="onFilePicked" />
+    <input
+      ref="imageInput"
+      type="file"
+      accept="image/*"
+      multiple
+      class="visually-hidden"
+      tabindex="-1"
+      @change="onFilePicked"
+    />
     <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
            时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
     <BaseButton
@@ -134,7 +150,7 @@ const summonText = computed(() => ({
       :title="t('work.room.composer.sendPhotos')"
       @click="pickImages"
     />
-    <AdaptiveMenu v-if="extrasCollapsed" :actions="extras" location="top start">
+    <AdaptiveMenu v-if="extrasCollapsed" :actions="menuExtras" location="top start">
       <template #activator="{ props: menu }">
         <BaseButton
           v-bind="menu"
@@ -170,6 +186,17 @@ const summonText = computed(() => ({
       :aria-label="t('work.room.reminder.open')"
       @click="emit('remind')"
     />
+    <!-- The visible way into the shortcut sheet: Enter / Shift+Enter / Cmd+Enter used to live only in a title tooltip. -->
+    <BaseButton
+      v-if="!extrasCollapsed"
+      kind="ghost"
+      class="composer-icon"
+      icon="mdi-keyboard-outline"
+      size="sm"
+      :title="t('global.shortcuts.open')"
+      :aria-label="t('global.shortcuts.open')"
+      @click="openShortcutSheet"
+    />
     <v-spacer />
     <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
            「这条消息本身」的动作并列。它是设置不是动作，所以最安静。 -->
@@ -194,13 +221,15 @@ const summonText = computed(() => ({
       <span class="summon-btn-short" aria-hidden="true">{{ summonText.short }}</span>
     </button>
     <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
-           按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
+           按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。
+           附件还在传时是例外：这一刻发出去会少带附件，所以要等，并在 title 里说清
+           为什么按不动（灰着不解释，看起来像是它坏了）。 -->
     <BaseButton
       class="composer-send"
       kind="primary"
       icon="mdi-send"
       size="sm"
-      :title="t('work.room.composer.send')"
+      :title="uploading ? t('work.room.composer.sendUploading') : t('work.room.composer.send')"
       :disabled="uploading || !canSend"
       @click="emit('send')"
     />

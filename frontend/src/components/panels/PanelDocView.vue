@@ -7,6 +7,7 @@
 // 在协同文档（`session`）上，没有一个「保存」要这一层去管。
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
+import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, Topic } from '../../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
 import type { CommentSpot } from '../../lib/docCommentSpots'
@@ -20,6 +21,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { scrollBehavior } from '@/utils/motion'
 
 import { useDocAgent } from '../../composables/useDocAgent'
+import { useDocFind } from '../../composables/useDocFind'
+import { useDocOutline } from '../../composables/useDocOutline'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { anchorComment } from '../../lib/docCommentSpots'
@@ -28,6 +31,7 @@ import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
+import DocFindBar from './doc/DocFindBar.vue'
 import DocHistory from './doc/DocHistory.vue'
 import DocReviewStrip from './doc/DocReviewStrip.vue'
 import DocSuggestionStrip from './doc/DocSuggestionStrip.vue'
@@ -47,7 +51,11 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle：评论里点它的名写成它的名字。 */
     agentHandle?: string | null
-    /** 项目话题表：正文里的支线徽章、`<#id>` chip 都靠它认名字与状态。 */
+    /** 账号 → 名字：正文和评论里的 `<@账号>` 标签上写的字。 */
+    mentionNames?: Record<string, string>
+    /** 正文里打 @ 时列出来的人。 */
+    mentionPeople?: MentionPoolEntry[]
+    /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
     /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
@@ -73,11 +81,10 @@ const props = withDefaults(
     threadState: DocThreadState
     threadActions: DocThreadActions
     /** 发一条评论（评的是 `quote` 那几个字）；回执里有它的 id，标记由这一层放到字上。 */
-    sendComment?: (topicId: string, content: string, quote: string) => Promise<{ id: string }>
+    sendComment?: (content: string, quote: string) => Promise<{ id: string }>
     /** 重读评论串。 */
     refreshThreads?: () => Promise<void>
     // ---- 装饰的原料（原样递给正文那一半） ----
-    liveRefIndex: Map<number, string>
     /** 修改建议的理由（建议 id → 理由），卡上写出来。 */
     suggestionReasons?: Record<string, string>
     /** 文档里有了新的修改建议时调一下：读它们的理由。 */
@@ -108,6 +115,8 @@ const props = withDefaults(
   {
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
+    mentionNames: undefined,
+    mentionPeople: () => [],
     topicList: () => [],
     bare: false,
     barTo: undefined,
@@ -181,9 +190,9 @@ function openComment(spot: CommentSpot) {
   commentsRef.value?.open(spot)
 }
 /** 发出一条评论，再把它的标记放到评的那几个字上。 */
-const postComment: SendDocComment = async (topicId, content, spot) => {
+const postComment: SendDocComment = async (_topicId, content, spot) => {
   if (!props.sendComment) throw new Error(t('work.room.comments.unavailable'))
-  const posted = await props.sendComment(topicId, content, spot.quote)
+  const posted = await props.sendComment(content, spot.quote)
   const ed = surfaceRef.value?.editor
   if (ed && spot.quote) anchorComment(ed, spot, posted.id)
   openId.value = posted.id
@@ -201,9 +210,25 @@ function revealThread(id: string) {
   surfaceRef.value?.revealThread(id)
 }
 
-// 评论里的点名（`<@handle>`）读成名字。
-const mentionNames = computed<Record<string, string>>(() =>
-  props.agentHandle ? { [props.agentHandle]: props.agentName } : {}
+// 大纲与文档内查找：都只读正文那一半的编辑器（正文编辑器住在 DocSurface 里），这一
+// 层拿着它算出标题、匹配，并把点击 / 上下跳落成滚动。逻辑本身在各自的 composable 与
+// lib 里，这里只有接线。
+const editorOf = () => surfaceRef.value?.editor ?? null
+const { headings: outlineHeadings, go: goHeading } = useDocOutline(editorOf)
+const {
+  query: findQuery,
+  open: findOpen,
+  total: findTotal,
+  current: findCurrent,
+  setQuery: setFindQuery,
+  step: stepFind,
+  setOpen: setFindOpen,
+  toggle: toggleFind,
+} = useDocFind(editorOf)
+
+// 点名（`<@handle>`）读成名字：外面给了名册就用名册，没给至少认得 AI 队友。
+const mentionNames = computed<Record<string, string>>(
+  () => props.mentionNames ?? (props.agentHandle ? { [props.agentHandle]: props.agentName } : {})
 )
 
 const agentOptions = {
@@ -269,6 +294,7 @@ watch([() => props.topic?.id, () => props.commentAuthor], () => {
   docAgent.close()
   suggestionsOpen.value = false
   historyOpen.value = false
+  setFindOpen(false)
 })
 
 // 编辑器里现在这一版正文（开发时的探针读它），只有这里知道编辑器在哪。
@@ -320,14 +346,28 @@ defineExpose({
             :agent-handle="agentHandle"
             :agent="canAskDocument ? docAgent : undefined"
             :mention-names="mentionNames"
+            :headings="outlineHeadings"
+            :find-open="findOpen"
             @toggle-suggestions="toggleSuggestions"
             @toggle-comments="commentsRef?.toggle()"
             @toggle-editable="toggleEditable"
             @history="historyOpen = true"
             @export="exportDoc"
             @open-thread="locateComment"
+            @toggle-find="toggleFind"
+            @outline-select="goHeading"
           />
         </Teleport>
+        <DocFindBar
+          :open="findOpen"
+          :query="findQuery"
+          :total="findTotal"
+          :current="findCurrent"
+          @update:query="setFindQuery"
+          @next="stepFind(1)"
+          @prev="stepFind(-1)"
+          @close="setFindOpen(false)"
+        />
         <DocReviewStrip
           v-if="review.request.value"
           :agent-name="agentName"
@@ -382,7 +422,7 @@ defineExpose({
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
                 :mention-names="mentionNames"
-                :live-ref-index="liveRefIndex"
+                :mention-people="mentionPeople"
                 :can-comment="!readOnly"
                 :open-threads="openThreads"
                 :active-thread="openId"

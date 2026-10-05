@@ -13,11 +13,8 @@ from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.chat import (
-    ChatService,
-    _pending_platform_notices,
-    _platform_preamble,
-)
+from app.domain.agent.chat import ChatService
+from app.domain.agent.prompt import _pending_platform_notices, _platform_preamble
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.models import Delivery
 from app.main import app
@@ -288,7 +285,7 @@ class _Screen:
     def __init__(self) -> None:
         self.pushed: list[str] = []
 
-    async def deliver(
+    async def steer(
         self,
         topic_id,
         text,
@@ -316,7 +313,7 @@ def running_turn(client):
             compute=stub_compute(),
         )
         service._active_turn_ids[uuid.UUID(room)] = {uuid.uuid4()}
-        service._compute.deliver = screen.deliver  # type: ignore[method-assign]
+        service._compute.steer = screen.steer  # type: ignore[method-assign]
         app.dependency_overrides[get_chat_service] = lambda: service
         return screen
 

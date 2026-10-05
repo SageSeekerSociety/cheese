@@ -5,8 +5,14 @@ host of the pool that has a free slot, whichever project it is from. Only when
 none has room does the pool take a warm machine, and only when the warm pool is
 empty does it create one, and the session waits for it. Every host is the
 platform's: created under the platform's own MicroCloud customer, enrolled as a
-device nobody's team can see, released once it has carried no home for
-``cloud_host_idle_hold_s``.
+device nobody's team can see, released once it has run no sandbox for
+``cloud_host_idle_hold_s`` and its sleeping homes have been archived.
+
+A slot is a running sandbox. A sandbox asleep (``lifecycle``) keeps its home on
+the host's disk and no slot, so it does not keep anyone else off the host; the
+disk bounds how many homes a host keeps (``disk_capacity``). A sleeping home
+wakes on the same host when that host has a slot for it, and otherwise is
+archived and restored where there is one.
 
 A session that asks for a whole machine is given a host of its own: a whole
 cloud VM created for it from ``microcloud_vm_offering_id``, which carries no
@@ -41,6 +47,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
+from app.domain.machine.lifecycle import SandboxBusy
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
@@ -55,9 +62,10 @@ from app.domain.machine.models import (
     CloudHostHome,
     MachineStatus,
     capacity,
+    disk_capacity,
 )
 from app.domain.machine.progress import publish_line, tell_replaced
-from app.domain.machine.repositories import CloudHostRepository
+from app.domain.machine.repositories import CloudHostRepository, Load
 from app.domain.machine.supply import pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicStatus
@@ -95,6 +103,26 @@ class CloudPoolFull(Exception):
 
     def __init__(self, *, whole_machine: bool = False) -> None:
         super().__init__(say("cloudVmBusy" if whole_machine else "cloudBusy"))
+
+
+class SandboxMustMove(Exception):
+    """The session's sandbox is asleep on a host that has no slot to wake it
+    in: its home is archived from there and restored on a host that has."""
+
+    def __init__(self, home_id: uuid.UUID) -> None:
+        super().__init__(str(home_id))
+        self.home_id = home_id
+
+
+def free_slots(host: CloudHost, load: dict[uuid.UUID, Load]) -> int:
+    """How many more sandboxes a host can be given: a slot to run in, and
+    room on its disk for the home."""
+    running, stored = load.get(host.id, Load(0, 0))
+    return max(0, min(capacity(host) - running, disk_capacity(host) - stored))
+
+
+def _busy(home: CloudHostHome, now: datetime) -> bool:
+    return home.busy_until is not None and home.busy_until > now
 
 
 def accepting(host: CloudHost) -> bool:
@@ -194,6 +222,11 @@ class HostPool:
         ``resource_id`` names the directory the session will work in there. A
         host the provider failed before it was enrolled holds nothing of the
         session's, so the session is placed again; any other host keeps it.
+
+        A sandbox asleep wakes where its home is when that host has a slot
+        (``SandboxMustMove`` when it has none); an archived home is placed like
+        a new one and keeps its archive, which the caller restores from. Raises
+        ``SandboxBusy`` while something else is moving the home.
         With ``whole_machine`` a session with no home is given a whole cloud
         VM of its own instead of a slot on a shared host.
         """
@@ -207,7 +240,7 @@ class HostPool:
         await self.require_use_authority(topic.project_id, actor)
 
         home = await self._repo.current_home(session_id)
-        if home is not None:
+        if home is not None and home.host_id is not None:
             host = await self._repo.get(home.host_id)
             assert host is not None
             if host.warm_claim_pending:
@@ -216,6 +249,7 @@ class HostPool:
                 await self._warm_pool.finish_claim(host)
                 topic = await self._lock_room(topic_id)
                 await self._session.refresh(host)
+                await self._session.refresh(home)
             elif host.machine_id is None and host.released_at is None:
                 # Another admission is at the provider for this host. Let go of
                 # the locks so it can record its answer, wait for it, then look
@@ -226,25 +260,36 @@ class HostPool:
                     pass
                 topic = await self._lock_room(topic_id)
                 await self._session.refresh(host)
+                await self._session.refresh(home)
             if _still_moving(host) and host.released_at is None:
                 await self.refresh(host)
             # Every tool call of the session comes through here: a sandbox that
-            # is where it was is answered without taking the pool.
-            if _keeps(host):
+            # is where it was, and running, is answered without the pool.
+            if _keeps(host) and home.stopped_at is None:
+                if _busy(home, datetime.now(UTC)):
+                    raise SandboxBusy()
                 _touch(home)
                 return host
 
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
         if home is not None:
+            # Locked: a sweep stopping or archiving it takes the row's lock.
+            home = await self._repo.lock_home(home.id)
+        if home is not None and home.host_id is not None:
             host = await self._repo.get(home.host_id)
             assert host is not None
             await self._session.refresh(host)
             if host.status in GONE:
-                # Gone upstream: what was there is gone with it.
+                # Gone upstream: what was there is gone with it — except a home
+                # it was only to be restored on, whose work is in its archive
+                # and which is placed again from there.
                 await self.forget(host)
+                home = await self._repo.current_home(session_id)
+                if home is not None:
+                    home = await self._repo.lock_home(home.id)
             elif _keeps(host):
-                _touch(home)
+                await self._wake(home, host)
                 return host
             else:
                 await self._fail(host)
@@ -255,14 +300,21 @@ class HostPool:
                     resource_id=resource_id,
                     whole_machine=whole_machine,
                 )
-        home = {
-            "project_id": topic.project_id,
-            "topic_id": topic.id,
-            "room_resource_id": str(topic.resource_id or topic.id),
-            "resource_id": resource_id,
-            "session_id": session_id,
-        }
-        if whole_machine:
+        if home is not None:
+            # Archived: placed like a new home, restored once it is there.
+            if _busy(home, datetime.now(UTC)):
+                raise SandboxBusy()
+            _touch(home)
+            home.stopped_at = None
+        else:
+            home = {
+                "project_id": topic.project_id,
+                "topic_id": topic.id,
+                "room_resource_id": str(topic.resource_id or topic.id),
+                "resource_id": resource_id,
+                "session_id": session_id,
+            }
+        if whole_machine and isinstance(home, dict):
             return await self._place_on_own_vm(session_id, topic_id, home)
         host = await self._place_on_free(home)
         if host is not None:
@@ -274,13 +326,39 @@ class HostPool:
         body = await self._host_body()
         await self._lock_room(topic_id)
         await self._repo.lock_pool()
-        if await self._repo.current_home(session_id) is not None:
+        current = await self._repo.current_home(session_id)
+        if current is not None and (
+            current.host_id is not None or not isinstance(home, CloudHostHome)
+        ):
             return await self.place(session_id, actor=actor, resource_id=resource_id)
+        if current is not None:
+            home = current
         host = await self._place_on_free(home)
         if host is not None:
             return host
         await self._require_room_to_grow()
         return await self._acquire(body, home)
+
+    async def _wake(self, home: CloudHostHome, host: CloudHost) -> None:
+        """Let the session's sandbox run where its home is. Called holding the
+        pool, which the count of the host's running sandboxes needs."""
+        if _busy(home, datetime.now(UTC)):
+            raise SandboxBusy()
+        if home.stopped_at is not None:
+            from app.domain.machine.lifecycle import archives_configured
+
+            running = (await self._repo.occupancy()).get(host.id, Load(0, 0)).running
+            # With no bucket to move it through, it wakes where its files are,
+            # one over the host's slots, rather than not at all.
+            if running >= capacity(host) and archives_configured():
+                raise SandboxMustMove(home.id)
+            home.stopped_at = None
+        _touch(home)
+        host.idle_since = None
+        await self._session.flush()
+
+    async def current_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
+        return await self._repo.current_home(session_id)
 
     async def _place_on_own_vm(
         self, session_id: uuid.UUID, topic_id: uuid.UUID, home: dict
@@ -293,7 +371,7 @@ class HostPool:
         await self._lock_room(topic_id)
         await self._repo.lock_pool()
         existing = await self._repo.current_home(session_id)
-        if existing is not None:
+        if existing is not None and existing.host_id is not None:
             # Another tool call of the session placed it meanwhile.
             host = await self._repo.get(existing.host_id)
             assert host is not None
@@ -302,14 +380,14 @@ class HostPool:
         await self._require_room_to_grow(whole_machine=True)
         return await self._create(body, home, whole_machine=True)
 
-    async def _place_on_free(self, home: dict) -> CloudHost | None:
+    async def _place_on_free(self, home: dict | CloudHostHome) -> CloudHost | None:
         """Put ``home`` on a host with a free slot, if there is one. Called
         holding the pool; commits when it placed."""
-        used = await self._repo.occupancy()
+        load = await self._repo.occupancy()
         free = [
             host
             for host in await self._repo.live()
-            if accepting(host) and used.get(host.id, 0) < capacity(host)
+            if accepting(host) and free_slots(host, load)
         ]
         if not free:
             return None
@@ -318,10 +396,10 @@ class HostPool:
         # the fewest free slots, so the others can empty and be released.
         def rank(host: CloudHost):
             ready = host.device_id is not None and self._hub.is_online(host.device_id)
-            return (not ready, capacity(host) - used.get(host.id, 0), host.created_at)
+            return (not ready, free_slots(host, load), host.created_at)
 
         host = min(free, key=rank)
-        await self._repo.add_home(host_id=host.id, **home)
+        await self._repo.put_home(host.id, home)
         host.idle_since = None
         await self._session.commit()
         return host
@@ -384,7 +462,9 @@ class HostPool:
             **spec,
         }
 
-    async def _acquire(self, body: dict, home: dict | None) -> CloudHost:
+    async def _acquire(
+        self, body: dict, home: dict | CloudHostHome | None
+    ) -> CloudHost:
         """One more host for the pool, holding ``home`` if given: a warm machine
         when one is ready, else a new one. Called holding the pool; returns
         with no transaction open."""
@@ -394,7 +474,11 @@ class HostPool:
         return await self._create(body, home)
 
     async def _create(
-        self, body: dict, home: dict | None, *, whole_machine: bool = False
+        self,
+        body: dict,
+        home: dict | CloudHostHome | None,
+        *,
+        whole_machine: bool = False,
     ) -> CloudHost:
         host_id = uuid.uuid4()
         prefix = "vm" if whole_machine else "host"
@@ -430,10 +514,12 @@ class HostPool:
             ai_status=AiStatus.unknown,
             bootstrap_key=bootstrap_private,
             whole_machine=whole_machine,
-            project_id=home["project_id"] if whole_machine and home else None,
+            project_id=(
+                home["project_id"] if whole_machine and isinstance(home, dict) else None
+            ),
         )
         if home is not None:
-            await self._repo.add_home(host_id=host.id, **home)
+            await self._repo.put_home(host.id, home)
         async with _create_locks.setdefault(host.id, asyncio.Lock()):
             await self._session.commit()
             logger.info("cloud pool creating host %s", host.hostname)
@@ -474,7 +560,8 @@ class HostPool:
     async def leave(self, session_id: uuid.UUID, *, kept_work: bool) -> None:
         """The session moves off its host. Its home goes, unless the session
         did work there that it did not push (``kept_work``): then the home
-        stays, and with it the host, until the room's cleanup removes it."""
+        stays, on its host or in its archive, until the room's cleanup removes
+        it."""
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
         if home is None:
@@ -483,19 +570,36 @@ class HostPool:
             home.left_at = datetime.now(UTC)
             home.waiting_since = None
             await self._session.flush()
-        else:
-            await self._repo.delete_home(home)
+            return
+        key = home.archive_key
+        await self._repo.delete_home(home)
+        if key is not None:
+            from app.domain.machine.lifecycle import delete_archive
 
-    async def tell_waiting(self, session_id: uuid.UUID) -> dict | None:
-        """Tell the session's room, once, that its sandbox is being prepared.
-        Returns what to publish once committed."""
+            await delete_archive(key)
+
+    async def archived(self, session_id: uuid.UUID) -> bool:
+        """Whether the session's work is in its archive: archived, or placed
+        on a host and not restored there yet. Whatever that host has of it is
+        not the work, so nothing there is to be pushed."""
+        home = await self._repo.current_home(session_id)
+        return home is not None and home.archive_key is not None
+
+    async def tell_waiting(
+        self, session_id: uuid.UUID, sentence: str = "sandboxPreparing"
+    ) -> dict | None:
+        """Tell the session's room, once, that its sandbox is being prepared —
+        or woken, or restored (``sentence``). Returns what to publish once
+        committed."""
         from app.domain.machine.progress import tell_preparing
 
         home = await self._locked_home(session_id)
         if home is None or home.waiting_since is not None:
             return None
         home.waiting_since = datetime.now(UTC)
-        return await tell_preparing(self._session, home, await self._vm(home))
+        return await tell_preparing(
+            self._session, home, sentence, whole_machine=await self._vm(home)
+        )
 
     async def tell_ready(self, session_id: uuid.UUID) -> dict | None:
         """Close the room's preparing line, if it was told one."""
@@ -508,7 +612,7 @@ class HostPool:
         return await tell_ready(self._session, home, await self._vm(home))
 
     async def _vm(self, home: CloudHostHome) -> bool:
-        host = await self._repo.get(home.host_id)
+        host = None if home.host_id is None else await self._repo.get(home.host_id)
         return host is not None and host.whole_machine
 
     async def _locked_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
@@ -540,51 +644,75 @@ class HostPool:
     async def forget_room_homes(
         self, topic_id: uuid.UUID, room_resource_id: str
     ) -> None:
-        """A room's cleanup finished: none of that generation's homes remain."""
+        """A room's cleanup finished: none of that generation's homes remain,
+        on a host or in the bucket."""
+        from app.domain.machine.lifecycle import delete_archive
+
+        for home in await self._repo.room_archives(topic_id, room_resource_id):
+            await delete_archive(home.archive_key, missing_ok=False)
         await self._repo.delete_room_homes(topic_id, room_resource_id)
+
+    async def archived_resources(self, topic_id: uuid.UUID) -> set[str]:
+        """The room's session directories whose work is in the bucket: a
+        room's cleanup has nothing to ask the machine their lease names about
+        them. A copy half restored on a host is found by that host's
+        inventory, like any directory there."""
+        return {home.resource_id for home in await self._repo.room_archives(topic_id)}
 
     # --- the sweep -----------------------------------------------------------
 
     async def maintain(self) -> None:
         """Keep the pool the size its sessions need.
 
-        Releases hosts that held no home for ``cloud_host_idle_hold_s`` — while
-        the free slots left behind stay at least ``cloud_pool_min_free_slots``
-        — gives up on hosts the provider failed, closes the preparing line of
-        every room whose sandbox's host is up, and adds a host when the free
-        slots fall below that floor.
+        A host that has run no sandbox for ``cloud_host_idle_hold_s`` is let
+        go — while the free slots left behind stay at least
+        ``cloud_pool_min_free_slots``. One with no home on it is released; one
+        whose sleeping homes are still on its disk is set draining, and the
+        sandbox sweep archives them (``lifecycle``), after which it is
+        released here. Also gives up on hosts the provider failed, closes the
+        preparing line of every room whose sandbox's host is up, and adds a
+        host when the free slots fall below that floor.
         """
+        from app.domain.machine.lifecycle import archives_configured
+
         now = datetime.now(UTC)
         await self._repo.lock_pool()
         hosts = await self._repo.live()
-        used = await self._repo.occupancy()
+        load = await self._repo.occupancy()
         failed = [
             host
             for host in hosts
             if _failed_unenrolled(host) or await self._silent(host, now)
         ]
         live = [host for host in hosts if host not in failed]
-        free = sum(
-            capacity(host) - used.get(host.id, 0) for host in live if accepting(host)
-        )
+        free = sum(free_slots(host, load) for host in live if accepting(host))
         hold = timedelta(seconds=settings.cloud_host_idle_hold_s)
         idle: list[CloudHost] = []
         for host in live:
-            if used.get(host.id) or host.machine_id is None or host.warm_claim_pending:
+            running, stored = load.get(host.id, Load(0, 0))
+            if host.whole_machine:
+                # A whole VM goes the moment no home is on it: nobody else will
+                # be placed on it, and it was never part of the floor.
+                if not stored and host.machine_id is not None:
+                    host.released_at = now
+                    idle.append(host)
+                continue
+            if running or host.machine_id is None or host.warm_claim_pending:
                 host.idle_since = None
                 continue
             idle_since = host.idle_since = host.idle_since or now
-            if host.whole_machine:
-                # Its one session is gone from it, and nobody else will be
-                # placed on it: it goes now, and was never part of the floor.
-                host.released_at = now
-                idle.append(host)
-                continue
             if now - idle_since < hold:
                 continue
             # Draining hosts take no new session, so their slots are no buffer.
-            spare = 0 if not accepting(host) else capacity(host)
+            spare = free_slots(host, load) if accepting(host) else 0
             if free - spare < settings.cloud_pool_min_free_slots:
+                continue
+            if stored:
+                # Its homes are asleep there. Archived, they no longer keep it;
+                # without a bucket to archive to, they do.
+                if not host.draining and archives_configured():
+                    host.draining = True
+                    free -= spare
                 continue
             free -= spare
             host.released_at = now
@@ -616,13 +744,9 @@ class HostPool:
         try:
             body = await self._host_body()
             await self._repo.lock_pool()
-            used = await self._repo.occupancy()
+            load = await self._repo.occupancy()
             hosts = await self._repo.live()
-            free = sum(
-                capacity(host) - used.get(host.id, 0)
-                for host in hosts
-                if accepting(host)
-            )
+            free = sum(free_slots(host, load) for host in hosts if accepting(host))
             if free >= settings.cloud_pool_min_free_slots:
                 await self._session.commit()
                 return
@@ -669,6 +793,7 @@ class HostPool:
             # before the pool says nothing about how the provider does now.
             host.failed_at = host.failed_at or now
         lines = []
+        await self._repo.unplace_archived(host.id)
         for home in await self._repo.homes_on(host.id):
             if home.waiting_since is not None:
                 lines.append(

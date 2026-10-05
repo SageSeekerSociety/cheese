@@ -89,11 +89,10 @@ HOME 必须各自独立（会话的配置、记录和凭证都在它下面）—
 236GB。
 
 **按项目分，不按机器分。** 同一个项目的房间本来就共用一个仓库、能读彼此的 checkout，
-store 在这条线以内；跨项目则是一条真实存在的线。今天设备房间之间其实毫无隔离
-（`device/supply.py`：每个 screen 都是 `host`），所以这么分眼下不多挡什么——是为 #358
-留的挂载点。但 #358 要自己解决一件事：**硬链接跨不过 bind mount**（`link(2)` → EXDEV，
-同一个文件系统内也一样，dev 上实测过），所以把 store 只读挂进隔离房间会把去重原样还
-回去。隔离和去重不是同一个开关。
+store 在这条线以内；跨项目则是一条真实存在的线，沙箱里只挂进本项目的 store（§四）。
+**硬链接跨不过 bind mount**（`link(2)` → EXDEV，同一个文件系统内也一样，dev 上实测过）：
+沙箱里会话目录和 store 是两个挂载点，所以那里 uv 直接复制（`UV_LINK_MODE=copy`）。
+隔离和去重不是同一个开关。
 
 **存量房间会在下一次启动时回收掉自己那份死缓存。** 重定向之后，房间 HOME 里原来那几份
 就没有任何东西再读了，而房间是不会自己消失的（今天没有东西回收闲置房间）。所以做重定向
@@ -140,7 +139,7 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 `build_compute_pool` 拿的就是这个值。**这两个答案必须是一个函数**：分开写就会分家，而分家之后看不出来——界面上写着一台机器，话题跑在另一台上，两边各自都是自洽的。
 
-一轮活的落点按这个顺序定（`chat.py` 的 `_resolve_compute_id`）：
+一轮活的落点按这个顺序定（`agent/work_policy.py` 的 `resolve_compute_id`，轮次组装 `room/turn.py` 里问它）：
 
 1. 话题自己选的（第一轮跑完就钉住）
 2. 项目记住的上一次选择
@@ -159,20 +158,24 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 这条话进房间，是一条明确的失败，不是一次静默的降级。市场页的算力选择器同时是空的——`available` 两条都是假，没有东西可选。两边说的是同一件事。
 
-配了 Cloud 的部署则相反：默认是 Cloud。一条会话第一次要动手时，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。选了整台云虚拟机的房间，每条会话第一次要动手时都现开一台，房间里收到的是「正在准备云虚拟机」。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。
+配了 Cloud 的部署则相反：默认是 Cloud。一条会话第一次要动手时，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。沙箱空闲一段时间后休眠，文件留在宿主机上，下一次工具调用把它唤醒；休眠很久的沙箱归档到对象存储，下次用时在任意一台宿主机上恢复（见 `docs/microcloud.md`）。选了整台云虚拟机的房间，每条会话第一次要动手时都现开一台，房间里收到的是「正在准备云虚拟机」；虚拟机不休眠，会话闲置后推送、释放，下次要用再开一台。
 
-## 四、可见性：云机器上是沙箱，自托管设备上是整机
+## 四、可见性：默认是沙箱，整台机器由机主给
 
 选定机器之后还有第二个问题：这一轮能看见那台机器上的多少东西。
 
 | 档 | 意思 | 在哪里能跑 |
 |---|---|---|
-| `host` | 看得见整台机器，能操作上面的服务、进得去其他房间的目录 | 任何机器；自托管设备上只有这一档 |
-| `isolated` | 每条会话的执行器在自己的沙箱里，只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目和机器主人自己的文件；连得上公网，连不上内网、机器本身和别的沙箱；内存、CPU、进程数有上限 | 只有云机器 |
+| `isolated` | 每条会话的执行器在自己的沙箱里，只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目和机器主人自己的文件（自托管设备上主人用户目录里装的工具也在其中）；云机器上连得上公网，连不上内网、机器本身和别的沙箱，内存、CPU、进程数有上限，自托管设备上和机器共用网络、不设上限 | 云机器；Linux 自托管设备（要有 bubblewrap 和非特权用户命名空间） |
+| `host` | 看得见整台机器，能操作上面的服务、进得去其他房间的目录 | 自托管设备，机主为某个房间选的 |
 
-整台云虚拟机上的会话是 `host`：虚拟机就是这条会话自己的，执行器不进沙箱，有 sudo 和 Docker（`session_work._sandboxed`）。那台机器上没有别的会话、别的房间可看。沙箱的网络规则也不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以它能连到的内网只能由云平台那一侧限制，而云平台今天没有这一层：2026-10-04 在 dev 的 MicroCloud 上实测，虚拟机 offering 开出的虚拟机连得上所在私网里的 MicroCloud 接口和部署的服务器。云平台给虚拟机隔开网络之前，部署不打开这一档（`MICROCLOUD_VM_OFFERING_ID` 留 0）。
+档记在房间和机器的绑定上（`device_topic.visibility`），按房间、不按机器：同一台设备上有的房间在沙箱里，有的看得见整台机器。没人选时是 `isolated`（`device/supply.py` 的 `default_visibility`），每个绑定点都问这一句。`host` 只有机主本人以人的身份登录时能给（`PUT /topics/{id}/compute-profile` 的 `visibility`），会话凭据给不了——那是沙箱里的房间自己把自己放出来；改回 `isolated` 谁都可以。房间换到另一台机器，在那台上从 `isolated` 开始。档变了，执行器在下一次工具调用时重装（`launch.can_prepare` 比对它跑在不在沙箱里）。
 
-档由机器的供给决定（`device/supply.py` 的 `binding_visibility`）：云机器上的会话除整台云虚拟机外一律是 `isolated`；自托管设备的默认档从「那里哪档真能跑」推导出来（`default_visibility`），所以今天**自托管设备上的每个话题都是整机可见**。自托管设备上的沙箱是 #2320 的第二步。沙箱怎么搭见 `docs/remote-execution.md`。
+沙箱出现之前就在自托管设备上跑过的房间保持整台机器：点名过机器的房间当时就绑成了 `host`；「系统挑一台」的房间没有绑定，由迁移 `d72d0f566149` 绑成 `host`，绑在它最近一条会话租着的那台自托管设备上（下一条会话回到的就是那台）。用过几台的房间只绑那一台，回到别的那几台算一次新的选择，从 `isolated` 开始；最近一次落在云机器上、或者房间选的已经是云的，不绑。从没在自托管设备上跑过的房间，按默认进沙箱。
+
+macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`）：规则跟着命令行传进去，不落在房间能改的文件里。它没有 pid 命名空间，所以信号只能发给同一个沙箱里的进程，Unix socket 只能连房间自己的目录，LaunchServices 和剪贴板也不给用，这几样都会替沙箱在外面办事。Windows 没有沙箱（`device/supply.py` 的 `sandbox_unavailable`，按连接器 `hello` 报的 `<系统>-<架构>`）：那里 `isolated` 的房间开工时拿到一句话，说清楚可以怎么办（装 WSL，把 WSL 接成一台设备，或者请机主给整台机器），**不会退成整机去跑**。Linux 上缺 bubblewrap 或不许建用户命名空间时，安装程序在动房间之前就拒绝，同样带一句话。沙箱怎么搭见 `docs/remote-execution.md`。
+
+整台云虚拟机上的会话看得见整台机器（`host`）：虚拟机就是这条会话自己的，执行器不进沙箱，有 sudo 和 Docker（`session_work._sandboxed`），那台机器上没有别的会话、别的房间。沙箱的网络规则不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以虚拟机连得到哪里由云平台那一侧限制。MicroCloud 把新开的虚拟机和它所在的私网隔开：MicroCloud 的接口和控制台、私网里部署的服务器、Proxmox 的内网地址和别的虚拟机都连不上，公网、DNS、apt 照常，平台经 SSH 反向转发连接器的那条路也照常。Proxmox 的公网地址（8006 和 22 端口）从虚拟机里还连得上。这一档默认不开（`MICROCLOUD_VM_OFFERING_ID` 为 0），由部署配置打开。
 
 ## 五、能从这些机器上拿回来什么
 
@@ -230,8 +233,9 @@ that it must finish confirmation first. Once deletion is claimed, reopening allo
 a new resource UUID and drops only obsolete session-resume pointers. Published Git
 branches, platform memory, room messages and task records remain. Old cleanup commands
 keep their original UUID and parked backend worktree path; they cannot target the
-replacement. On a cloud host, cleanup removes the room's directories; the host
-itself is the pool's, and the pool releases it once no session's home is left on it.
+replacement. On a cloud host, cleanup removes the room's directories; a session
+home archived to the bucket is deleted from there. The host itself is the pool's,
+and the pool releases it once it runs no sandbox and no home is left on it.
 A session's whole cloud VM is released by the next pool sweep once cleanup has removed
 its directory.
 Reopening restores no transcripts: the new generation starts new sessions, and a

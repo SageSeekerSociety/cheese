@@ -10,6 +10,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.project.services import ProjectService
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.models import (
     ApplicationStatus,
@@ -63,6 +64,12 @@ class PatchTeamMemberRoleRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     role: str = Field(..., min_length=1)
+
+
+class TransferTeamOwnerRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: int = Field(..., ge=1, alias="userId")
 
 
 class AddTeamMemberRequest(BaseModel):
@@ -748,8 +755,16 @@ async def delete_team(
         Action.DELETE, Resource.TEAM, "teamId"
     ),
     service: TeamService = Depends(get_team_service),
+    db=Depends(get_db),
 ) -> Response:
-    await service.delete_team(team_id=team_id, actor_user_id=auth_user.user_id)
+    await service.delete_team(
+        team_id=team_id,
+        actor_user_id=auth_user.user_id,
+        has_live_projects=any(
+            p.archived_at is None
+            for p in await ProjectService(db).list_for_team(team_id)
+        ),
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -795,6 +810,45 @@ async def patch_team_member_role(
         # TeamMemberRole is a namespace of int constants, not an enum; mapped_role is
         # the int value the service/DB expect (see other call sites typed as int).
         new_role=mapped_role,  # type: ignore[arg-type]
+    )
+    team = await service.get_team(team_id)
+    if team is None:
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "id": team_id}
+        )
+    members = list(await service.get_team_members(team_id=team_id))
+    users_map, profiles_map = await _load_team_user_maps(db, members)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "team": _team_to_api_model(
+                team,
+                members=members,
+                current_user_id=auth_user.user_id,
+                users_map=users_map,
+                profiles_map=profiles_map,
+            )
+        },
+    }
+
+
+@router.put(
+    "/{teamId}/owner",
+    summary="Transfer Team Ownership",
+)
+async def put_team_owner(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    payload: TransferTeamOwnerRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeamService = Depends(get_team_service),
+    db=Depends(get_db),
+) -> dict:
+    """把团队交给另一位成员：他成为所有者，原所有者降为管理员。只有所有者能交。"""
+    await service.transfer_team_owner(
+        team_id=team_id,
+        new_owner_user_id=payload.user_id,
+        actor_user_id=auth_user.user_id,
     )
     team = await service.get_team(team_id)
     if team is None:

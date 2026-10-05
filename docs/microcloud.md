@@ -21,21 +21,55 @@ user-facing route lists hosts. The admin dashboard counts them.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `CLOUD_HOST_SLOTS_PER_CORE` | 2 | Sandbox slots per host core. A home holds its slot from placement until its work is pushed away or its room's cleanup removes it, idle or not. |
-| `CLOUD_POOL_MIN_FREE_SLOTS` | 2 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. An idle host is not released if that would take the free slots below it. |
-| `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host with no home is kept before it is released. |
+| `CLOUD_HOST_SLOTS_PER_CORE` | 2 | Sandbox slots per host core. A slot is a running sandbox; one asleep holds none. |
+| `CLOUD_SANDBOX_DISK_GB` | 5 | The disk budgeted to one home. A host keeps at most `disk_gb // this` homes, running or asleep, and never fewer than its slots. |
+| `CLOUD_SANDBOX_IDLE_STOP_S` | 600 | A sandbox whose room runs no turn and whose session asked for no tool this long is put to sleep. |
+| `CLOUD_SANDBOX_BACKGROUND_CAP_S` | 3600 | A command the executor still runs for the session (a Bash call sent to the background) keeps an idle sandbox up, until this long after the session's last activity. |
+| `CLOUD_SANDBOX_ARCHIVE_AFTER_S` | 604800 | A home asleep this long is archived to the private bucket and deleted from its host. |
+| `CLOUD_POOL_MIN_FREE_SLOTS` | 2 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. An idle host is not let go if that would take the free slots below it. |
+| `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that runs no sandbox is kept. Then its sleeping homes are archived and it is released. |
 | `CLOUD_POOL_MAX_HOSTS` | 20 | The platform's cap on hosts, protecting the cluster. Draining hosts do not count. A session that finds the pool full and every host full is told capacity is tight and to try later. |
 
 Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (clamped into the
-offering), so a host has `cores × CLOUD_HOST_SLOTS_PER_CORE` slots. There is no team or
-project quota on cloud. Compute is not billed in credits yet.
+offering), so a host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at once. A host has a
+free slot for a new session when it has both a slot to run in and room on its disk for the
+home. There is no team or project quota on cloud. Compute is not billed in credits yet.
 
-A host is released only when it holds no home. A session that switches away after pushing
-gives its home back; one that leaves without pushing (`abandon_unpushed`) keeps its home,
-and so the host, until its room's cleanup has removed the directory. A host the provider
-fails before it is enrolled holds nothing of anyone's: the pool gives it up, deletes it, and
-places its sessions again; after three such failures within an hour it stops creating hosts
-for the rest of the hour. An enrolled host in `error` keeps its sessions.
+### Sleep, wake, archive
+
+`backend/app/domain/machine/lifecycle.py`; the host side is `machine/sandbox_home.py`.
+
+- **Idle** is no turn running in the session's room and no tool asked for in
+  `CLOUD_SANDBOX_IDLE_STOP_S`, counted from the later of the session's last tool call and
+  the end of the room's last turn. Turns are per room, so any turn keeps every sandbox of
+  the room awake. A command the executor still runs for the session (a Bash call sent to
+  the background; the executor reports `running_commands`) keeps it up, but only until
+  `CLOUD_SANDBOX_BACKGROUND_CAP_S`. A process the agent detached itself, such as a dev
+  server started with `nohup … &`, keeps nothing up.
+- **Asleep**: the executor is stopped and whatever still holds the home (a dev server) is
+  ended. The home stays on the host and holds no slot. The room hears
+  「沙箱 N 分钟没有活动，已休眠……」. The next tool call starts the executor again on the same
+  host through the ordinary install path, and the room hears 「正在唤醒沙箱」, then
+  「沙箱已就绪」. When that host has no free slot, the home is archived from it and restored
+  on a host that has one.
+- **Archived**: the host writes the home to one `.tar.gz` and PUTs it to the private bucket
+  (`TRANSCRIPT_S3_BUCKET`) through a URL signed for that one object; the backend compares the
+  size and MD5 the host wrote with the bucket's size and ETag, and only then deletes the home
+  from the host. An archive that does not verify is deleted and the home stays; a home that cannot be archived (a file the host cannot read, over 4 GiB compressed) is tried again after six hours, not on every sweep. The archive also carries the Python interpreters uv installed into the project's package store, which the home's venvs link to by absolute path; a restore puts back the ones the new host lacks. The next tool
+  call places the session on any host, which downloads and checks the archive and unpacks it
+  before the executor starts (「正在从归档恢复沙箱」); the object is deleted once restored.
+  Code is truth in git — every turn's Stop checkpoint has already run `cheese sync --all` —
+  and the archive is a cache of the rest: uncommitted files, the environment, the build. With
+  no private bucket configured nothing is archived and homes stay on their hosts.
+
+A host is released once it has run no sandbox for `CLOUD_HOST_IDLE_HOLD_S` and holds no
+home. One whose sleeping homes are still on its disk is set *draining* at that point: it takes
+no new session, its homes are archived, and then it is released. A session that switches away
+after pushing gives its home back; one that leaves without pushing (`abandon_unpushed`) keeps
+its home, on its host or in its archive, until its room's cleanup removes it. A host the
+provider fails before it is enrolled holds nothing of anyone's: the pool gives it up, deletes
+it, and places its sessions again; after three such failures within an hour it stops creating
+hosts for the rest of the hour. An enrolled host in `error` keeps its sessions.
 
 ### Whole cloud VMs
 
@@ -52,21 +86,22 @@ never the machine.
 |---|---|---|
 | `MICROCLOUD_VM_OFFERING_ID` | 0 | The offering VMs are created from. 0: the deployment does not offer whole cloud VMs, and the choice is refused. |
 | `CLOUD_VM_CORES` / `_MEMORY_MB` / `_DISK_GB` | 4 / 8192 / 40 | The one VM size, clamped into the offering. Recorded on the row with the project the VM was created for. |
-| `CLOUD_VM_IDLE_RELEASE_S` | 1800 | A VM is pushed and released once its room runs no turn and its session has asked for no tool for this long. |
+| `CLOUD_VM_IDLE_RELEASE_S` | 1800 | A VM is pushed and released once its session has been idle this long, by the measure a sandbox sleeps by (no turn in the room, no tool call, no background command still running). |
 
-A VM is released by the pool sweep as soon as no home is left on it, with no idle hold:
-when its room switches away after pushing, when the room's cleanup removed its directory, or
-when its session was idle (`machine/cloud_vm.py`, its own periodic job, `cloud vm idle
-release`). The idle release runs the same push as a switch first; a VM whose push fails or
-cannot run is kept and asked again ten minutes later. A session that leaves without pushing
-keeps its VM until its room's cleanup, like a home on a host.
+A VM is never put to sleep or archived. The pool sweep releases it as soon as no home is
+left on it, with no idle hold: when its room switches away after pushing, when the room's
+cleanup removed its directory, or when its session was idle (`machine/cloud_vm.py`, run by
+the sandbox sweep). The idle release runs the same push as a switch first; a VM whose push
+fails or cannot run is kept and asked again ten minutes later. A session that leaves
+without pushing keeps its VM until its room's cleanup, like a home on a host. Releasing a
+VM logs its spec, project and lifetime (`services._vm_released`), the point where it will
+be charged.
 
-The VM's network is not filtered: the sandbox's rules live inside a host, and a session
-with root on its own VM could remove any rule there. On dev on 2026-10-04 a VM from
-the VM offering reached the MicroCloud API and the deployment's servers on its private
-network. Leave `MICROCLOUD_VM_OFFERING_ID` at 0 until MicroCloud puts
-VMs on a network of their own. Releasing a VM logs its spec,
-project and lifetime (`services._vm_released`), the point where it will be charged.
+A session has root on its VM, so no rule inside the VM can bound its network; MicroCloud
+does that. It keeps a new VM off its private network: the MicroCloud API and console, the
+servers there, Proxmox's internal address and other guests are unreachable, while the
+internet, DNS, apt and the SSH reverse forward the connector's control link uses work.
+Proxmox's public addresses (ports 8006 and 22) are still reachable from a VM.
 
 Machines that a room or a session rented for itself before the pool were adopted as
 *draining* hosts by the migration that introduced it: they keep the sessions on them, take
@@ -94,7 +129,9 @@ changing, re-check settled ones every `MICROCLOUD_RECONCILE_INTERVAL_S` (120 s),
 host that is `running` (mint a device credential owned by the platform's pool identity, ssh
 in with the bootstrap key, install the connector as a service), then size the pool: release
 idle hosts, give up on failed ones, add one ahead of demand, and tell every room still
-waiting on a sandbox whose host is up.
+waiting on a sandbox whose host is up. Putting sandboxes to sleep and archiving homes is a
+second loop on the same interval (`SandboxSweeper`), so an archive that takes minutes does
+not hold up enrolment.
 
 Timings on dev, MicroCloud main after micro-cloud#82, #83 and #84 (2026-09-03): an LXC
 machine is `running` 25 s after the create call (event log of machine 752: `pct create`

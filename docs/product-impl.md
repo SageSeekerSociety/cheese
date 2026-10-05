@@ -30,17 +30,16 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **新建话题默认挂到项目根话题下**（`TopicService.create`，Batch A 修），树形：本体 ▸ 话题 ▸ 分身。
 - 实现位置：`TopicService`（`backend/app/domain/topic/services.py`）。
 
-### 1.2 万物皆块（双树 + 引用）
+### 1.2 块（对话树 + 引用）
 
-`Block`（`backend/app/domain/block/models.py`）是最小单元，同时挂在两棵树上 + 引用列表：
+`Block`（`backend/app/domain/block/models.py`）是对话里的最小单元，挂在对话树上 + 引用列表。文档不是块，见 `backend/app/domain/living_doc/models.py`（`Document`）：
 
 | 字段 | 作用 | 视图 |
 |---|---|---|
 | `reply_to` | 对话树 | 群聊回复线程 |
-| `struct_parent` | 文档树 | 结构化文档（🟡 列已存在，暂未被写入逻辑使用） |
 | `refs[]` | 引用 | 决策/结论指回来源（如 `return_conclusion` 写 `refs=[sub_id]`） |
 | `upgraded_to_topic_id` | 活引用 | 升级过的块指向其新话题 |
-| `kind` | 块类型 | `message`/`doc`/`decision`/`event`/`attachment` |
+| `kind` | 块类型 | `message`/`decision`/`event`/`attachment`/`artifact`/`weekly` 等（文档上的评论在 `document_comments`，不是块） |
 | `author_type` | 作者 | `participant`（人和 agent 都是参与者）/ `platform`（平台自己）。「是人还是芝士」看 `author` 这条 handle |
 
 这些字段经 `BlockOut`（Batch A）全部暴露给前端。
@@ -100,11 +99,11 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.2 芝士（Agent）  ✅ 链路 / 🟡 部分能力
 
-- **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件经 Claude Code hooks 回流（`AgentRuntime`，`backend/app/domain/agent/harness/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
+- **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件由会话核心从 runner 的日志读回来（`backend/app/domain/agent/session_host/`，房间那一份在 `agent/room/sessions.py`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记记忆、派活、发通知/决策请求、递验收卡、回流结论）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
 - **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。
-- **记忆**：会话目录里一棵文件树（会话机上的 `~/.cheese/memory/`），数据库是真相、树是副本，输入前铺下去、一轮结束后收回来。每轮把 L1 索引（`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`）和一段说明书拼进 system prompt，正文让 agent 自己读；只对会把文件对账回平台的 harness 注入（`AgentRuntime.keeps_memory`）。agent 自己用 Write/Edit 改这棵树，`cheese remember` 那个工具已经撤掉。详见 `docs/manual/dev/memory.md`；🟡 整理（dream）与旧表迁移未做。
+- **记忆**：会话目录里一棵文件树（会话机上的 `~/.cheese/memory/`），数据库是真相、树是副本，输入前铺下去、一轮结束后收回来。每轮把 L1 索引（`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`）和一段说明书拼进 system prompt，正文让 agent 自己读；只对会把文件对账回平台的 harness 注入（注册表的 `Harness.keeps_memory`）。agent 自己用 Write/Edit 改这棵树，`cheese remember` 那个工具已经撤掉。详见 `docs/manual/dev/memory.md`；🟡 整理（dream）与旧表迁移未做。
 
 ### 3.3 话题升级 / 拆分 / 回流  ✅ 主干 / 🟡 活引用回写
 
@@ -123,8 +122,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
 
 - **行为**：右栏是芝士维护的 markdown 实况文档（状态，不是流水账）；用户可直接编辑，**改了等于给芝士下指令**——正在跑的那一轮当场收到「第几版 + 一句改了哪」的通知，不在跑就由下一轮开头读到最新文档。
-- **实现**：文档是协同服务（`frontend/collab/`，Hocuspocus）里的一份 Yjs 文档，几个人同时编辑、看得到彼此的光标；协同服务停手几秒后把它存回后端，那一次存回才记一版（`api/doc_store.py`）。doc 块 `kind=doc` 里的 Markdown 是从它导出的。归档话题文档只读。细节见 `docs/docs-canonical-data-map.md`。
-- **编辑器以外的写入都经过协同服务**：`PUT /api/topics/{id}/doc` 带 `expected_version`（读到的那一版，0 = 还没有文档），协同服务只在实时文档还是那一版时应用，否则 409。芝士侧 `cheese_doc_get` 记住它给出的版本、`cheese_doc_set` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
+- **实现**：文档是协同服务（`frontend/collab/`，Hocuspocus）里的一份 Yjs 文档，几个人同时编辑、看得到彼此的光标；协同服务停手几秒后把它存回后端，那一次存回才记一版（`api/doc_store.py`），`documents.content` 里的 Markdown 是从它导出的。归档话题文档只读。细节见 `docs/docs-canonical-data-map.md`。
+- **编辑器以外的写入都经过协同服务**：`PUT /api/documents/{文档}` 带 `expected_version`（读到的那一版，0 = 还没有文档），协同服务只在实时文档还是那一版时应用，否则 409。芝士侧 `cheese_doc_get` 记住它给出的版本、`cheese_doc_set` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
 - 🟡 未做：编辑文档后对话流出现「编辑了文档」系统事件（存回时已写 event 块，但前端对话流过滤了 ai-event；human/system event 会显示）。
 
 ### 3.5 验收 / 采纳（状态机）  ✅

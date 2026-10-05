@@ -7,11 +7,11 @@ import { useI18n } from 'vue-i18n'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { addPlatformAdmin, listPlatformAdmins, removePlatformAdmin, searchAdminCandidates } from '@/api'
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
-import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
@@ -43,14 +43,14 @@ import { relTime } from '@/lib/relTime'
 //   3. **who 列加 agent 徽章**。agent 做不了管理动作，一个 agent 行也是死权限。它
 //      只会从根配置混进来（页面加人服务端拒 agent），所以徽章实际上只可能出现在根
 //      那几行 —— 但判据按行画、不按组画：数据哪天从别处混进 added，这里照样画得出。
-//   4. **刷新有 busy 态**：手上已有名单时再取数只把旧名单压暗（AdminGrid 既有能力，
+//   4. **刷新有 busy 态**：手上已有名单时再取数只把旧名单压暗（BaseTable 既有能力，
 //      这页以前没用），不闪骨架。
 //
 // 这一版换的是**壳**，不是做法：页头改用后台共用的那一份（五个后台页各写一份页头，
 // 字号和内边距各不相同，切分区时页头会跳）、错误与提示改用 token 画的一条横条（`v-alert`
 // 的默认样和这一页的表格不是一套）、头像从 `components/feedback/FeedbackAuthorAvatar`
 // 换成 `components/common/UserAvatar`（后台不该依赖反馈那个目录；这里只用到「有 id 就
-// 拼 URL、没有就彩色首字母」那一半），窄屏交给 `AdminGrid` 的卡片模式（390px 下六列
+// 拼 URL、没有就彩色首字母」那一半），窄屏交给 `BaseTable` 的卡片模式（390px 下六列
 // 定宽合计 772px，横着滚的表在手机上是读不到右边那几列的）。
 //
 // 确认框正文是全仓第一处 `<i18n-t>`：「把 {handle} 移出名单？…」要回显 handle 加粗，
@@ -312,7 +312,7 @@ onMounted(load)
         />
 
         <div class="am__gridwrap">
-          <AdminGrid
+          <BaseTable
             :label="t('members.table.label')"
             :cols="COLS"
             :bone-widths="BONE_WIDTHS"
@@ -338,13 +338,11 @@ onMounted(load)
                  长句撑得不像标题，也把「是哪一页出的事」盖掉了。原话取不到时（`error` 里
                  只剩兜底那句）不再重复一遍标题。 -->
             <template #error>
-              <AdminEmptyState
-                compact
-                tone="error"
+              <BaseLoadError
                 :title="t('members.error.loadFailed')"
-                :desc="error && error !== t('members.error.loadFailed') ? error : undefined"
-                :action="t('members.error.retry')"
-                @action="load"
+                :error="error && error !== t('members.error.loadFailed') ? error : undefined"
+                :retry-label="t('members.error.retry')"
+                @retry="load"
               />
             </template>
 
@@ -518,7 +516,7 @@ onMounted(load)
             <tr v-if="!added.length" class="am__row" data-card="flat">
               <td colspan="6" class="am__cell am__none">{{ t('members.empty.added') }}</td>
             </tr>
-          </AdminGrid>
+          </BaseTable>
         </div>
       </div>
     </AdminPage>
@@ -626,7 +624,7 @@ onMounted(load)
   min-height: 0;
 }
 
-/* 1440 下这一页的容器只有约 1051px，而 `AdminGrid` 默认的 1080 表格下限比它宽
+/* 1440 下这一页的容器只有约 1051px，而 `BaseTable` 默认的 1080 表格下限比它宽
    29px —— 最后一列「操作」被裁掉一截，「不可移出」显示成「不可移」。成员表六列
    的定宽合计只有 770，1000 就排得下，剩下的 230 给自适应的「添加信息」那一列。 */
 .am :deep(.agrid__table) {
@@ -663,7 +661,7 @@ onMounted(load)
 }
 
 /* 行的内边距、下边线、悬停底色、圆角都由表壳给
-   （`components/admin/AdminGrid.vue` 的 `.agrid__body :deep(td)` 那一段），
+   （`components/base/BaseTable.vue` 的 `.agrid__body :deep(td)` 那一段），
    这里只写「这一格里的字怎么排」。**别在这里重复写内边距**：表壳那条规则按
    `tbody td` 选，压得过这一层的 `.am__cell`，写了也是白写 —— 反而会让下一个人
    以为行高是从这儿来的（第一版就是这样，页面里写着 4px、页面上跑的是 8px）。 */
@@ -727,7 +725,7 @@ onMounted(load)
 }
 
 /* 空态那一格想要比一行高一点，所以**真的需要**压过表壳那 8px —— 多写一层 `.am`
-   （三个类 `(0,3,0)` > 表壳的 `(0,2,1)`，理由写在 `AdminGrid.vue` 顶上那段注释里）。
+   （三个类 `(0,3,0)` > 表壳的 `(0,2,1)`，理由写在 `BaseTable.vue` 顶上那段注释里）。
    这是这个写法在本仓库的实例，照着写就行。 */
 .am .am__none {
   padding: 20px 12px;
@@ -741,8 +739,10 @@ onMounted(load)
   text-align: right;
 }
 
-/* 窄屏：上下内边距收一档，左右仍是 16，和页头标题同一条左沿。 */
-@media (max-width: 700px) {
+/* 窄容器：上下内边距收一档，左右仍是 16，和页头标题同一条左沿。后台页的断点挂在
+   内容列上（§3.5），不用视口媒体查询。容器是 `.app-page__column--admin`（名字
+   `admin`）—— 指名查询，免得 `.am__grouplabel` 落在更近的 `agrid` 容器上。 */
+@container admin (max-width: 719.98px) {
   .am__body {
     padding: 12px 16px 16px;
   }

@@ -146,7 +146,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       },
     },
     {
-      // 工作方法：这个项目存下来的做法。项目级，因为存下来就是给之后每个房间用的。
+      // 技能：这个项目存下来的做法。项目级，因为存下来就是给之后每个房间用的。
       name: 'project-skills',
       path: 'skills',
       component: () => import('@/views/ProjectSkillsView.vue'),
@@ -174,7 +174,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       redirect: (to) => ({ name: 'project-settings', params: { projectId: to.params.projectId, section: 'agents' } }),
     },
     {
-      // 盖在整个窗口上的一层，八栏各有地址（`settings/agents`…）。不带栏时桌面落到第一
+      // 盖在整个窗口上的一层，九栏各有地址（`settings/agents`…）。不带栏时桌面落到第一
       // 栏，手机上是目录。
       name: 'project-settings',
       path: 'settings/:section?',

@@ -7,6 +7,11 @@
     "message": "This part couldn't be displayed",
     "retry": "Retry"
   },
+  "loadError": {
+    "title": "Couldn't load",
+    "page": "That page didn't open. The connection may be unstable.",
+    "retry": "Try again"
+  },
   "cheese": "Cheese",
   "copyright": "© {year} Cheese",
   "transportReadFailure": "Service temporarily unavailable. Please try again later. (HTTP {status})",
@@ -19,6 +24,14 @@
     "windows": "Windows"
   },
   "save": "Save",
+  "saveState": {
+    "saved": "Saved",
+    "failed": "Save failed",
+    "failedWith": "Save failed: {reason}",
+    "saving": "Saving…",
+    "unsaved": "Unsaved changes",
+    "revert": "Revert"
+  },
   "request": {
     "timeout": "The request timed out. Please try again",
     "canceled": "Request canceled",
@@ -38,5 +51,40 @@
   },
   "unknownError": "Unknown error",
   "listItemQuoted": "“{item}”",
-  "confirm": "Confirm"
+  "confirm": "Confirm",
+  "table": {
+    "pager": "Pagination",
+    "range": "{from}–{to} of {total}",
+    "prev": "Previous page",
+    "next": "Next page"
+  },
+  "settingsSearch": {
+    "placeholder": "Search settings",
+    "label": "Search settings by name",
+    "none": "No settings named “{text}”"
+  },
+  "shortcuts": {
+    "then": "then",
+    "title": "Keyboard shortcuts",
+    "open": "Keyboard shortcuts (?)",
+    "scope": {
+      "global": "Everywhere",
+      "timeline": "Conversation",
+      "composer": "Message box"
+    },
+    "palette": "Open the command palette",
+    "railSwitch": "Go to sidebar item N",
+    "openSheet": "Open this sheet",
+    "notInInputs": "Not while typing",
+    "within1s": "Second key within 1s",
+    "scrollTimeline": "Scroll the conversation",
+    "timelineFocus": "Tab to the conversation first",
+    "send": "Send",
+    "newline": "New line",
+    "summon": "Send and hand to {name}",
+    "mentionPick": "Pick from the {'@'} list",
+    "mentionClose": "Close the {'@'} list",
+    "touchNewline": "On touch screens Enter adds a new line",
+    "markAllRead": "Mark all rooms read"
+  }
 }

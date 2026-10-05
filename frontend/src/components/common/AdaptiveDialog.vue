@@ -18,6 +18,8 @@
 import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import { useFocusReturn } from '@/composables/useFocusReturn'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH, type DialogSize } from '@/components/base/dialogSize'
 import { t } from '@/i18n'
@@ -70,6 +72,12 @@ defineSlots<{
 
 const { mdAndUp } = useDisplay()
 const width = computed(() => props.maxWidth ?? DIALOG_WIDTH[props.size])
+
+// 两个 v-dialog 都没有 activator，Vuetify 因此不会在关掉（Esc / 取消 / ✕）时把焦点
+// 还回去——不收这一步，焦点就掉到 body 上，键盘用户下一格 Tab 从页面开头重来。在
+// 共享对话框这一层补上，用到它的弹窗都受益：还给打开它的那一颗按钮，那一颗已经随
+// 操作一起没了就退到主内容区（App.vue 的 <main id="main-content">）。
+useFocusReturn(open, () => document.getElementById('main-content'))
 
 function close() {
   if (props.closeDisabled) return

@@ -76,6 +76,58 @@ export interface PreviewFrameOptions {
    * 焦点收回面板），这一层只管把这件事报上来。
    */
   onEscape?: () => void
+  /**
+   * 帧里圈选了一处（点中一个元素、或者选了一段文字）时叫一次。帧的桥把这一处量好
+   * 报上来，画不画标注条、发不发引用由画的那一半决定。
+   */
+  onPick?: (pick: FramePick) => void
+}
+
+/** 帧的桥报上来的一处圈选：位置（选择器 / 标签）和当时量出来的几何。
+ *
+ *  `selection` 区别「点了一个元素」和「选了一段文字」：后者多带两侧各 32 个字符，
+ *  用来分辨同一句话在页面上的哪一处出现。`rect` 是视口像素坐标，`viewport` 是量它
+ *  当时的视口大小——页面按视口重排，少了它 `rect` 说的哪一版就说不准了。 */
+export interface FramePick {
+  selection: boolean
+  selector: string
+  tag: string
+  text: string
+  prefix: string
+  suffix: string
+  rect: { x: number; y: number; w: number; h: number }
+  viewport: { w: number; h: number }
+}
+
+/** 帧是另一个源上的文档，报上来的东西一律当数据看：截长、丢怪形状，认不出就答 null。 */
+function frameText(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.slice(0, max) : ''
+}
+function frameNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+/** 一处圈选，或者认不出位置时答 null。 */
+export function framePick(value: unknown): FramePick | null {
+  if (!value || typeof value !== 'object') return null
+  const data = value as Record<string, unknown>
+  const selector = frameText(data.selector, 256)
+  const text = frameText(data.text, 500)
+  const selection = data.selection === true
+  // 位置认不出（选择器空），或者说是选中的一段却没报原文：都不算一处。
+  if (!selector) return null
+  if (selection && !text) return null
+  const rect = (data.rect ?? {}) as Record<string, unknown>
+  const viewport = (data.viewport ?? {}) as Record<string, unknown>
+  return {
+    selection,
+    selector,
+    tag: frameText(data.tag, 32),
+    text,
+    prefix: frameText(data.prefix, 64),
+    suffix: frameText(data.suffix, 64),
+    rect: { x: frameNumber(rect.x), y: frameNumber(rect.y), w: frameNumber(rect.w), h: frameNumber(rect.h) },
+    viewport: { w: frameNumber(viewport.w), h: frameNumber(viewport.h) },
+  }
 }
 
 /** Incoming navigation never destroys the last observed loaded browsing context. */
@@ -133,6 +185,10 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     } else if (data.type === 'escape') {
       // 帧里按了 ESC：把控制权要回宿主。不改变就绪状态——注入的页面从不报 ready。
       options.onEscape?.()
+    } else if (data.type === 'pick') {
+      // 帧里圈选了一处。形状不对的丢掉，别让另一份文档塞进来的怪东西走到标注条。
+      const pick = framePick(data)
+      if (pick) options.onPick?.(pick)
     } else if (data.type === 'ready') {
       frame.runtime = 'ready'
       frame.runtimeError = ''
@@ -142,6 +198,27 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     }
   }
   window.addEventListener('message', runtimeMessage)
+
+  /** 让帧进/出圈选。帧那边的桥收到才描边收鼠标；没有注入桥的页面（应用）根本收不到，
+   *  那一档由宿主自己在 iframe 上盖一层。 */
+  function setPickMode(on: boolean) {
+    const frame = displayed.value
+    if (!frame || !runtimeWindow) return
+    try {
+      runtimeWindow.postMessage(
+        {
+          channel: 'cheese-preview-runtime',
+          version: 1,
+          sessionId: runtimeSession,
+          type: 'pick-mode',
+          on: on === true,
+        },
+        new URL(frame.url).origin
+      )
+    } catch {
+      // A replaced or opaque document cannot receive it; nothing to turn on.
+    }
+  }
 
   function observeConnection(instance: string | null | undefined, online: boolean): ConnectionChange {
     const frame = displayed.value
@@ -318,5 +395,6 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     fail,
     pause,
     reset,
+    setPickMode,
   }
 }

@@ -13,6 +13,8 @@
  * - 确认键的字写动作本身（「移出」「删除」「替换」），不写「确定」。
  * - `danger` 时确认键是实心红（BaseButton kind="danger" solid），否则是琥珀主操作。
  */
+import { useFocusReturn } from '@/composables/useFocusReturn'
+
 import BaseButton from './BaseButton.vue'
 import { DIALOG_WIDTH } from './dialogSize'
 
@@ -36,6 +38,10 @@ const props = withDefaults(
 const emit = defineEmits<{ confirm: []; cancel: [] }>()
 
 defineSlots<{ default?: () => unknown }>()
+
+// 和 AdaptiveDialog 一样：没有 activator 的 v-dialog，Vuetify 不会在关掉时还焦点。
+// 还给打开确认框的那颗按钮，按钮没了就退到主内容区。
+useFocusReturn(open, () => document.getElementById('main-content'))
 
 function cancel() {
   if (props.loading) return

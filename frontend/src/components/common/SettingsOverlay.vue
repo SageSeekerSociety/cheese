@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 设置的外框：盖在整个窗口上的一层，个人设置、空间设置、项目设置三处共用。
 //
-// 桌面上左边灰底是目录（上面写这是谁的设置），右边白底是这一页，右上角一颗 × 关掉。
+// 桌面上左边灰底是目录（上面写这是谁的设置），右边白底是这一页，左上角一颗 ← 关掉：
+// 和全站的返回同款（无底无框、同一个箭头），只是这颗点了关掉整层，不下去别的页。
 // 手机上是整屏：先是目录，点进一项是那一页，左上角返回目录；在目录上返回就是关掉。
 //
 // 这一层不是弹窗：它有自己的地址，每一项是一条路由，刷新、分享链接都照旧。关掉去
@@ -16,7 +17,10 @@ import { useDisplay } from 'vuetify'
 
 import { useFocusReturn } from '@/composables/useFocusReturn'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
+import { t } from '@/i18n'
 
 export interface SettingsItem {
   key: string
@@ -65,6 +69,23 @@ const activeItem = computed(() => {
   return null
 })
 
+// 目录里按名字找（同 VS Code 设置的搜索框）：只筛这一层的目录，组里一项都不剩就整组不画。
+const search = ref('')
+const shownGroups = computed<SettingsGroup[]>(() => {
+  const needle = search.value.trim().toLocaleLowerCase()
+  if (!needle) return props.groups
+  return props.groups
+    .map((group) => ({ ...group, items: group.items.filter((i) => i.label.toLocaleLowerCase().includes(needle)) }))
+    .filter((group) => group.items.length)
+})
+
+/** 搜索框里有字时 Esc 先清掉字，不关掉整层（这一层的 Esc 看 defaultPrevented）。 */
+function clearSearch(event: KeyboardEvent) {
+  if (!search.value) return
+  event.preventDefault()
+  search.value = ''
+}
+
 /** 手机上没选中哪一项就是停在目录。 */
 const showIndex = computed(() => !mdAndUp.value && !activeItem.value)
 
@@ -73,6 +94,11 @@ const layer = ref<HTMLElement | null>(null)
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented) return
   if (document.querySelector('.v-overlay--active')) return
+  // 目录搜索还有字：这一下先清字（焦点不在搜索框里也一样，比如已经 Tab 到了某一项上）。
+  if (search.value) {
+    search.value = ''
+    return
+  }
   emit('close')
 }
 
@@ -101,7 +127,25 @@ useFocusReturn(ref(true))
         <div class="so__side">
           <nav class="so__nav" :aria-label="label">
             <slot name="head" />
-            <div v-for="group in groups" :key="group.key" class="so__group">
+            <!-- Search the settings index by item name (like VS Code settings); groups with no match hide. -->
+            <label class="so__search">
+              <v-icon icon="mdi-magnify" size="16" aria-hidden="true" />
+              <input
+                v-model="search"
+                type="search"
+                autocomplete="off"
+                :placeholder="t('global.settingsSearch.placeholder')"
+                :aria-label="t('global.settingsSearch.label')"
+                @keydown.esc="clearSearch"
+              />
+            </label>
+            <BaseEmptyState
+              v-if="!shownGroups.length"
+              size="inline"
+              class="so__search-none"
+              :title="t('global.settingsSearch.none', { text: search.trim() })"
+            />
+            <div v-for="group in shownGroups" :key="group.key" class="so__group">
               <div v-if="group.title" class="so__group-title">{{ group.title }}</div>
               <NavLink
                 v-for="item in group.items"
@@ -118,12 +162,16 @@ useFocusReturn(ref(true))
             </div>
           </nav>
         </div>
+        <BaseButton
+          class="so__close"
+          icon="mdi-arrow-left"
+          kind="ghost"
+          size="sm"
+          :aria-label="closeLabel"
+          :title="closeTitle"
+          @click="emit('close')"
+        />
         <main class="so__main">
-          <div class="so__close-layer">
-            <button type="button" class="so__close" :aria-label="closeLabel" :title="closeTitle" @click="emit('close')">
-              <v-icon icon="mdi-close" size="20" />
-            </button>
-          </div>
           <div class="so__content">
             <slot />
           </div>
@@ -143,7 +191,25 @@ useFocusReturn(ref(true))
         <div class="so__phone">
           <nav v-if="showIndex" class="so__index" :aria-label="label">
             <slot name="head" />
-            <div v-for="group in groups" :key="group.key" class="so__group">
+            <!-- Search the settings index by item name (like VS Code settings); groups with no match hide. -->
+            <label class="so__search">
+              <v-icon icon="mdi-magnify" size="16" aria-hidden="true" />
+              <input
+                v-model="search"
+                type="search"
+                autocomplete="off"
+                :placeholder="t('global.settingsSearch.placeholder')"
+                :aria-label="t('global.settingsSearch.label')"
+                @keydown.esc="clearSearch"
+              />
+            </label>
+            <BaseEmptyState
+              v-if="!shownGroups.length"
+              size="inline"
+              class="so__search-none"
+              :title="t('global.settingsSearch.none', { text: search.trim() })"
+            />
+            <div v-for="group in shownGroups" :key="group.key" class="so__group">
               <div v-if="group.title" class="so__group-title">{{ group.title }}</div>
               <div class="so__index-card">
                 <NavLink
@@ -199,17 +265,16 @@ useFocusReturn(ref(true))
   }
 }
 
-/* 桌面：「目录 + 内容列」作为一组在窗口里居中。灰栏从窗口左缘铺到分界线，目录（216）
-   贴着分界线靠右；内容列（border-box 720，内距已含在内）贴着分界线靠左。灰栏宽取
-   max(264, (窗口 − 720) / 2)：窗口够宽时左边灰栏和右边留白一样宽，这一组正好居中；
-   窄到 1248 以下就守住 264（目录 216 + 两侧各 24）。
-   以前灰栏封顶 440、内容列再贴左，1920 宽时右边空出 660px；第一版改成灰栏定宽 264、
-   内容列在剩下的地方居中，又让目录和内容之间隔出 500 多 px，两边看着不是一页。 */
+/* 桌面：目录灰栏钉在窗口左缘、定宽 264（目录 216 + 两侧内距各 24），不随窗口变宽；
+   内容列（border-box 720，内距已含在内）在「窗口减目录」剩下的地方居中（见 .so__content）。
+   于是目录与内容之间的留白 = 内容列右侧留白 = (窗口 − 984) / 2，天然对称。
+   和 app 壳是同一条规则：左轨（LeftAppRail，64）钉窗口左缘，页面内容在主区居中。
+   以前灰栏随窗口长到 440、内容列贴着灰栏靠左，1920 宽时右边空出一大片；后来改成
+   「目录 + 内容列」一组居中，又让目录和内容之间隔出 500 多 px，两边看着不是一页。 */
 .so__side {
   display: flex;
   flex: 0 0 auto;
-  justify-content: flex-end;
-  width: max(264px, calc((100% - 720px) / 2));
+  width: 264px;
   padding: 48px 24px 24px;
   overflow-y: auto;
   border-right: 1px solid var(--line);
@@ -283,57 +348,30 @@ useFocusReturn(ref(true))
   scrollbar-gutter: stable;
 }
 
-/* 关闭按钮单独一层：它得跟着内容列右缘走，又不能随内容滚走。这一层粘在滚动口顶上
-   （sticky，高 0 不占地方），和 `.so__content` 同宽同位置，所以按钮右缘始终贴着内容
-   列右缘，往下滚一屏也钉在原处。pointer-events 关掉，只让按钮自己收点击，别的一层
-   空着的地方点击照旧落到底下。 */
-.so__close-layer {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-raised);
-  height: 0;
-  max-width: 720px;
-  pointer-events: none;
-}
-
-/* 设置各页共用的一条内容列：最宽 720、贴着分界线、四边内距统一 24，正好容下一行设置
-   （672 卡片宽，见 settings-card.css）。各页自己不再设宽度和水平内距，都交给这一条。
-   居中由灰栏的宽度负责（见 .so__side）。 */
+/* 设置各页共用的一条内容列：最宽 720、四边内距统一 24，正好容下一行设置（672 卡片宽，
+   见 settings-card.css）。各页自己不再设宽度和水平内距，都交给这一条。在「窗口减目录」
+   剩下的主区里 margin-inline:auto 居中（和 app 壳页面内容一样）；剩余宽度不够 720 时
+   先收窄，两侧各留 24。 */
 .so__content {
   max-width: 720px;
+  margin-inline: auto;
   padding: 24px;
 }
 
+/* 关掉这一颗落在灰栏顶上那条空当里：灰栏的内距上是 48（`.so__side` 的 padding-top），
+   正好是 app 壳顶栏那一条，按钮在这里竖向居中、左缘对着灰栏的内容内距 24。长什么样交给
+   `BaseButton`（ghost + sm），和顶栏那颗返回同一款。它绝对定位在 `.so` 上（这一层整屏不
+   动），所以右边的目录和内容怎么滚它都不动；抬一层 z-index，免得被后面画的兄弟盖住。
+
+   竖向居中要算渲染出来的盒子，不是 `sm` 名义上的 28：图标按钮的尺寸是
+   `--v-btn-height + 12`（vuetify 的 VBtn.css），sm 的 28 落到这里是 40 高。所以
+   (48 - 40) / 2 = 4，按钮占 4..44，正好待在 48 那条空当里、碰不到下面的目录。
+   `e2e/tests/layout-invariants.spec.ts` 量的就是这件事（底边 <= 目录顶 + 1）。 */
 .so__close {
-  /* 落在内容列上方的内距里（页头从 48 开始：内容列 24 + 页面 24），右缘对齐内容列
-     右缘。放在 48 那一条会压住页头右边的主操作（我的设备页的「添加设备」）。 */
   position: absolute;
-  top: 6px;
-  right: 0;
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background-color var(--dur-quick) var(--ease-standard),
-    color var(--dur-quick) var(--ease-standard);
-}
-
-.so__close:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-
-.so__close:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  top: calc((48px - 40px) / 2);
+  left: 24px;
+  z-index: var(--z-raised);
 }
 
 /* 手机：整屏，一条顶栏加下面会滚的一块。 */
@@ -345,8 +383,10 @@ useFocusReturn(ref(true))
   display: flex;
   gap: 4px;
   align-items: center;
-  height: 52px;
-  padding: 0 8px;
+  /* 手机上这层整屏铺开：这条栏钻进刘海，← 和标题会被状态栏压住。让出顶部安全区，
+     栏自己长高那一截（`.so__phone` 跟着往下让同一截）。桌面上 `env()` 是 0。 */
+  height: calc(52px + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 8px 0;
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
 }
@@ -374,7 +414,7 @@ useFocusReturn(ref(true))
 
 .so__phone {
   position: absolute;
-  inset: 52px 0 0;
+  inset: calc(52px + env(safe-area-inset-top, 0px)) 0 0;
   overflow-y: auto;
 }
 
@@ -383,7 +423,8 @@ useFocusReturn(ref(true))
   flex-direction: column;
   gap: 20px;
   min-height: 100%;
-  padding: 16px;
+  /* 目录页自己铺到底：末尾几条不会被 Home 横杠压住。 */
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
   background: var(--canvas);
 }
@@ -420,24 +461,50 @@ useFocusReturn(ref(true))
 }
 
 /* 手机外壳（窄于 960，和 mdAndUp 同一条线）：进到某一页时内容列照旧最宽 720 居中，
-   水平内距由这一层给，页面自己只留竖向的。平板 768–959 因此不再贴着左边。 */
+   水平内距由这一层给，页面自己只留竖向的。平板 768–959 因此不再贴着左边。
+   居中沿用上面那条 margin-inline:auto，这里只改水平内距。 */
 @media (max-width: 959.98px) {
   .so__content {
-    margin-inline: auto;
-    padding: 0 16px;
+    /* 底部让出安全区，最后一行设置不会被 Home 横杠压住。 */
+    padding: 0 16px env(safe-area-inset-bottom, 0px);
   }
 }
 
-/* 触屏上手指点得中（docs/design-system.md §4、§10.1）：目录项从 36px 提到 44px，
-   关闭按钮撑到 44×44。 */
+/* 触屏上手指点得中（docs/design-system.md §4、§10.1）：目录项从 36px 提到 44px。
+   关闭按钮那颗是 `BaseButton`，44×44 的触点它自己带（见 BaseButton 的 pointer: coarse）。 */
 @media (pointer: coarse) {
   .so__item {
     min-height: 44px;
   }
+}
 
-  .so__close {
-    width: 44px;
-    height: 44px;
-  }
+.so__search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0 8px 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+}
+
+.so__search:focus-within {
+  border-color: var(--focus-ring);
+}
+
+.so__search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.so__search-none {
+  padding: 4px 12px;
 }
 </style>

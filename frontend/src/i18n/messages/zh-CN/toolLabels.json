@@ -78,6 +78,7 @@
   "cheeseTemplateList": "查看文档模板",
   "cheeseTemplateNew": "从模板新建文件",
   "cheeseConvert": "转换文档格式",
+  "cheeseCheck": "检查页面渲染",
   "cheeseRecalc": "重算表格公式",
   "cheeseFeedbackPropose": "提交反馈提案",
   "cheeseFeedbackList": "查看反馈列表",
@@ -85,6 +86,7 @@
   "cheeseFeedbackClaim": "领取反馈",
   "cheeseFeedbackRelease": "放弃领取的反馈",
   "cheeseMachine": "申请设备",
+  "cheeseWaitMachine": "等工作电脑就绪",
   "cheeseNote": "留下便条",
   "cheeseRoutineDraft": "起草周期任务",
   "cheeseRoutineList": "查看周期任务",
@@ -97,5 +99,7 @@
   "bashRead": "读取任务输出",
   "bashWrite": "向任务输入",
   "bashKill": "终止后台任务",
-  "bashList": "列出后台任务"
+  "bashList": "列出后台任务",
+  "cheeseSkillDraft": "起草技能",
+  "cheeseSkillUpdate": "提议修改技能"
 }

@@ -48,6 +48,11 @@ vi.mock('../api', async () => {
   }
 })
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
+vi.mock('../api/docCollab', async () => ({
+  ...(await vi.importActual<typeof import('../api/docCollab')>('../api/docCollab')),
+  // 测试里房间的文档就用房间的 id 来认：fakeDocCollab 按它预置文档。
+  getRoomDocument: async (topicId: string) => ({ id: topicId }),
+}))
 vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
 }))
@@ -86,7 +91,7 @@ describe('周报集', () => {
     })
     // 窗口是这一行的身份：并排摆着的几份周报，是它把它们分开的。
     expect(view.getByText('8月31日 – 9月6日')).toBeTruthy()
-    expect(view.getByText('本周交付了产物页预览。')).toBeTruthy()
+    expect(await view.findByText('本周交付了产物页预览。')).toBeTruthy()
     expect(view.getByText('来自话题')).toBeTruthy()
     view.unmount()
   })

@@ -4,7 +4,7 @@
 // 协同服务由 src/test/fakeDocCollab.ts 代替：每个房间一份「服务端」文档，面板打开
 // 时拿到一份和它保持同步的客户端文档 —— 没有 socket，其余和真的一样。
 import type { Component } from 'vue'
-import type { Block, Topic } from '../../cx_types'
+import type { Topic } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -36,6 +36,11 @@ vi.mock('../../api', async () => {
     getDocNodes: (...a: unknown[]) => mocks.getDocNodes(...a),
   }
 })
+vi.mock('../../api/docCollab', async () => ({
+  ...(await vi.importActual<typeof import('../../api/docCollab')>('../../api/docCollab')),
+  // 测试里房间的文档就用房间的 id 来认：fakeDocCollab 按它预置文档。
+  getRoomDocument: async (topicId: string) => ({ id: topicId }),
+}))
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))

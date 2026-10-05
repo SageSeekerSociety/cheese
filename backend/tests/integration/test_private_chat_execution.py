@@ -22,6 +22,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import registered
+from tests.support.living_doc import document_of
 
 pytestmark = pytest.mark.anyio
 
@@ -34,23 +35,22 @@ class PrivateScreen(StubChannel):
         self.prompts = []
         self.openings = []
 
-    async def ensure(self, session, opening, live=None):
-        # What the channel is started with, and the scoped credential it hands
-        # the session's `cheese` CLI: the room's place, signed for the agent
-        # acting in it (`claude_code/channel.py` mints the same shape).
+    async def open(self, session, agent, launch):
+        # The scoped credential the session's `cheese` CLI is handed: the
+        # room's place, signed for the agent acting in it (the room mints the
+        # same shape, `mint_session_token`).
         self.openings.append(
             {
-                "memory_scope": opening.memory_scope,
                 "token": mint_scoped_token(
                     project_id=str(session.project_id),
                     topic_id=str(session.topic_id),
                     ttl_s=SESSION_TOKEN_TTL_S,
                     access_scope="project",
-                    agent_handle=opening.agent_handle or session.agent_handle,
+                    agent_handle=agent,
                 ),
             }
         )
-        return await super().ensure(session, opening, live)
+        return await super().open(session, agent, launch)
 
     def emit_turn(
         self,
@@ -126,7 +126,6 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # 工具表里 `cheese_remember` 那一行——工具没了，换这段。
         assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         assert not central.prompts
-        assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
         async with factory() as session:
             blocks = await BlockRepository(session).list_for_topic(topic_id)
         assert any(
@@ -146,8 +145,9 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # Exercise the same scoped credential given to Cheese CLI, against the
         # real document API and database rather than the shell HTTP fixture.
         headers = {"X-Cheese-Token": screen.openings[0]["token"]}
+        doc = document_of(client, topic_id, headers=headers)
         saved = client.put(
-            f"/topics/{topic_id}/doc",
+            f"/documents/{doc}",
             headers=headers,
             json={
                 "content": "# Private draft",
@@ -155,6 +155,6 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
             },
         )
         assert saved.status_code == 200, saved.text
-        loaded = client.get(f"/topics/{topic_id}/doc", headers=headers)
+        loaded = client.get(f"/documents/{doc}", headers=headers)
         assert loaded.status_code == 200, loaded.text
         assert loaded.json()["data"]["content"] == "# Private draft"

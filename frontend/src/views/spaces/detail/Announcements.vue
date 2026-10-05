@@ -24,6 +24,7 @@ import AnnouncementCard from './AnnouncementCard.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
@@ -126,7 +127,12 @@ async function togglePin(a: SpaceAnnouncement) {
 }
 
 async function remove(a: SpaceAnnouncement) {
-  const ok = await dialog.confirm(t('spaces.announcements.confirmDelete')).wait()
+  const ok = await dialog
+    .confirm(t('spaces.announcements.confirmDelete'), {
+      confirmLabel: t('spaces.announcements.delete'),
+      danger: true,
+    })
+    .wait()
   if (!ok) return
   try {
     await SpacesApi.deleteAnnouncement(spaceId(), a.id)
@@ -182,9 +188,11 @@ async function remove(a: SpaceAnnouncement) {
       />
     </template>
 
-    <p v-if="loaded && !current.length && !expired.length" class="ann__empty t-body">
-      {{ t('spaces.announcements.empty') }}
-    </p>
+    <BaseEmptyState
+      v-if="loaded && !current.length && !expired.length"
+      size="inline"
+      :title="t('spaces.announcements.empty')"
+    />
 
     <AdaptiveDialog
       v-model="editing"
@@ -237,13 +245,11 @@ async function remove(a: SpaceAnnouncement) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* 宽屏下封顶居中了，不再左贴：以前 max-width 之外没有 auto，右边会空出一条
+     随窗口变宽的边。 */
   max-width: 880px;
+  margin-inline: auto;
   padding: 16px;
-}
-
-.ann__empty {
-  margin: 0;
-  color: var(--muted);
 }
 
 .ann__fold {

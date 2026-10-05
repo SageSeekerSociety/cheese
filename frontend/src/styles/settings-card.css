@@ -123,15 +123,19 @@
   padding-inline: 16px 8px;
 }
 
+/* 卡片里「暂无 X」那一行的内距。长相（灰字、字号）由 BaseEmptyState size="inline" 给，
+   这里只让它和卡片标题、设置行对齐。 */
 .settings-empty {
   padding: 16px 24px;
   margin: 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
 }
 
-@media (max-width: 599.98px) {
+/* 手机外壳（窄于 768 —— 共享 token，解释见 `styles/breakpoints.scss`）：这一页自己的
+   竖向节奏、一行设置、卡片标题与说明的内距都收一档。
+   判据是外壳有多宽，所以是视口媒体查询：一行设置自己的宽度折法（672 的容器查询）在
+   `SettingsRow`（components/base/SettingsRow.vue，§3.9）里，这里的是没有容器祖先的
+   老 `.srow` 节奏，页面也查不了自己。 */
+@media (max-width: 767.98px) {
   .settings-page {
     padding: 16px 0 32px;
   }

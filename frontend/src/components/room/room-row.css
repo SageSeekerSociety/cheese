@@ -17,6 +17,18 @@
      同一个人连着说的那几条仍然贴在一起（.im-row--cont），两档差出来的就是
      「这是另一个人开口了」。 */
   margin-top: 16px;
+  /* 离屏的那一行不渲染（Markdown、代码块、头像都省下），但仍留在 DOM 里 —— Ctrl+F、
+     读屏、选中都找得到它，这是「不虚拟化」。48px 是「名字 + 一行正文」这一档的估计
+     高度，只在这一行**从未渲染过**时用；`auto` 让渲染过的行记住真实高度，于是常态
+     滚动和向上翻页都不因估计值漂。向上翻页、折叠判定这类「必须按真实高度量」的地方，
+     由 lib/contentVisibility 挂 .cv-measure 临时关掉它。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
+}
+/* 测量帧（向上翻页补偿、折叠判定）：这一窗里的行按真实高度铺开。见 lib/contentVisibility。
+   选择器带 .cv-measure 前缀，胜过上面没带的那条。 */
+.cv-measure .im-row {
+  content-visibility: visible;
 }
 /* continuation rows of the same author sit tight under the first */
 .im-row--cont {

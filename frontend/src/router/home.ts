@@ -1,6 +1,10 @@
 import type { RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
-async function landingForMember(): Promise<RouteLocationRaw> {
+/** 登录的人该落在哪：上次待的项目，读不到清单就落在待办。
+ *
+ *  根路由守卫用它，会话恢复层（components/common/SessionRestoreGate.vue）也用它
+ *  ——弱网下恢复成功时首屏那次导航早就结束了，得把这份决定重走一遍。 */
+export async function landingForMember(): Promise<RouteLocationRaw> {
   const [{ listProjects }, { workspaceProject }, { lastOpenedProjectId }] = await Promise.all([
     import('@/api'),
     import('@/components/common/Navigation/destinations'),

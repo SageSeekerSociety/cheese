@@ -1,5 +1,6 @@
 """Product guidance for native Claude skills and API-only conversations."""
 
+import functools
 import json
 from pathlib import Path
 
@@ -20,15 +21,6 @@ def _parse(path: Path) -> tuple[dict[str, str], str]:
     return meta, body.strip()
 
 
-def _parse_tags(value: str) -> list[str]:
-    """`scenarios: [accept, stage:working]` → `["accept", "stage:working"]`.
-
-    Brackets optional, so both the existing `[accept]` style and a bare
-    comma-separated list work.
-    """
-    return [tag.strip() for tag in value.strip().strip("[]").split(",") if tag.strip()]
-
-
 def available_skills() -> dict[str, Path]:
     """Map skill `name` (from frontmatter) → file path."""
     result: dict[str, Path] = {}
@@ -36,38 +28,6 @@ def available_skills() -> dict[str, Path]:
         meta, _ = _parse(path)
         result[meta.get("name", path.stem)] = path
     return result
-
-
-def skills_for_scenario(scenario: str) -> list[str]:
-    """Skill names whose frontmatter `scenarios:` lists `scenario`, in filename
-    order.
-
-    The `scenarios:` field has existed on every skill since the library was
-    written but nothing ever read it — `load_skills` only ever took explicit
-    names. This makes it the real selector, so one skill can serve several
-    scenarios (e.g. the 递卡/token guidance applies to more than one stage)
-    without duplicating it into several hardcoded name lists.
-    """
-    return [name for name, _ in _matching(scenario)]
-
-
-def load_scenario(scenario: str) -> str:
-    """Concatenated bodies of every skill tagged with `scenario` (may be "").
-
-    Runs on every chat turn, so it reads the library in ONE pass rather than
-    resolving names and then re-parsing the files to get their bodies.
-    """
-    return "\n\n---\n\n".join(body for _, body in _matching(scenario))
-
-
-def _matching(scenario: str) -> list[tuple[str, str]]:
-    """[(name, body)] for the skills tagged with `scenario`, in filename order."""
-    hits: list[tuple[str, str]] = []
-    for path in sorted(_SKILL_DIR.glob("*.md")):
-        meta, body = _parse(path)
-        if scenario in _parse_tags(meta.get("scenarios", "")):
-            hits.append((meta.get("name", path.stem), body))
-    return hits
 
 
 def load_skills(names: list[str]) -> str:
@@ -82,24 +42,9 @@ def load_skills(names: list[str]) -> str:
     return "\n\n---\n\n".join(chunks)
 
 
-# Direct API callers have no native Skill loader — both halves stay inline.
-DEFAULT_CHAT_SKILLS = ["chat", "chat-detail", "doc-form"]
-
-# The resident half (timing rules) is always inline; the rest of the guide is a
-# lazily-loaded native skill (chat-detail), so the pointer has to say so rather
-# than claim the whole guide is below. NOT named "cheese-chat": device_launch
-# rm -f's that exact path on every reuse — it is the retired legacy name.
-NATIVE_CHAT_GUIDANCE = (
-    "普通输出和最终答复不会发布到聊天；用 chat_send 工具主动发送。"
-    "平台操作用同名的 cheese_* 工具，没有对应工具的平台 API 用 platform_request。"
-    "聊天协作的其余细则（语气、发布调用、与文档配合）用 Skill 工具加载 chat-detail。"
-    "编写或更新话题文档时加载 cheese-docs；写方案、报告、纪要这类给人读的文档时加载 "
-    "cheese-writing。"
-    "能直接回答就发送答案，需要继续处理就先发送你理解的意思和下一步。"
-    "排队或执行中追加的用户消息也按此处理。"
-    "分身向主 agent 回报。\n\n"
-    + load_skills(["chat"]).replace("doc-form", "cheese-docs")
-)
+# The room's chat guide is in every turn: nearly every turn speaks, so a guide
+# loaded on demand was loaded on 3% of the turns that sent a message.
+NATIVE_CHAT_GUIDANCE = load_skills(["chat"])
 
 
 #: Skills that are already written as native Claude skills, shipped verbatim.
@@ -111,7 +56,7 @@ NATIVE_CHAT_GUIDANCE = (
 #: container and stale on a device is exactly the kind of split nobody notices,
 #: because both machines run and only one of them is right.
 _NATIVE_SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
-_SHIPPED_NATIVE_SKILLS = ("documents", "wolfram")
+_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram")
 
 #: What can travel. A skill is not one markdown file: `documents` ships the
 #: scripts that do the editing and the reference files they are explained in,
@@ -124,24 +69,51 @@ _SHIPPED_NATIVE_SKILLS = ("documents", "wolfram")
 #: rather than fail. Anything added to a skill outside this list is caught by
 #: `tests/unit/test_native_skill_files.py` at build time instead of silently
 #: not being shipped.
-SKILL_FILE_SUFFIXES = (".md", ".py", ".sh", ".txt", ".json", ".typ")
+SKILL_FILE_SUFFIXES = (
+    ".md",
+    ".txt",
+    ".py",
+    ".sh",
+    ".js",
+    ".mjs",
+    ".ts",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".csv",
+    ".html",
+    ".css",
+    ".xml",
+    ".xsd",
+    ".typ",
+)
 
 
 #: Folder names a project's own skill may not take: the platform ships these.
-RESERVED_SKILL_NAMES = frozenset(
-    {
-        *_SHIPPED_NATIVE_SKILLS,
-        "cheese",
-        "cheese-docs",
-        "cheese-writing",
-        "chat-detail",
-        "cheese-chat",
-    }
-)
+RESERVED_SKILL_NAMES = frozenset({*_SHIPPED_NATIVE_SKILLS, "cheese-docs"})
+
+#: Platform skills machines received before each one kept a list of what it was
+#: shipped (`.cheese-platform-skills`). A machine with no list yet is treated as
+#: having been shipped these, so the ones no longer shipped are removed there too.
+SKILLS_SHIPPED_BEFORE_THE_LIST = ("cheese-chat", "chat-detail", "cheese-writing")
+
+
+def shipped_skill_names() -> list[str]:
+    """The platform skill folders a session is shipped now."""
+    return sorted({path.split("/")[1] for path in native_skill_files()})
 
 
 def native_skill_files() -> dict[str, str]:
     """Files relative to the session's CLAUDE_CONFIG_DIR, never its worktree."""
+    return dict(_native_skill_files())
+
+
+# Read once per process: these files ship inside the image and cannot change
+# while it runs, and every tool call a session makes asks for them again
+# (`machine.session_work`), each time on the event loop every request shares.
+@functools.cache
+def _native_skill_files() -> dict[str, str]:
     files: dict[str, str] = {}
     for name in _SHIPPED_NATIVE_SKILLS:
         root = _NATIVE_SKILL_SRC / name
@@ -152,24 +124,14 @@ def native_skill_files() -> dict[str, str]:
                 continue
             relative = source.relative_to(_NATIVE_SKILL_SRC).as_posix()
             files[f"skills/{relative}"] = source.read_text(encoding="utf-8")
-    for source, name in (
-        ("doc_form.md", "cheese-docs"),
-        ("doc_writing.md", "cheese-writing"),
-        ("chat_detail.md", "chat-detail"),
-    ):
-        meta, body = _parse(_SKILL_DIR / source)
-        body = body.replace("doc-form", "cheese-docs").replace(
-            "doc-writing", "cheese-writing"
-        )
-        description = (
-            meta["description"]
-            .replace("doc-form", "cheese-docs")
-            .replace("doc-writing", "cheese-writing")
-        )
-        description = description.replace("chat 技能", "会话内的聊天说明")
-        files[f"skills/{name}/SKILL.md"] = (
-            f"---\nname: {name}\n"
-            f"description: {json.dumps(description, ensure_ascii=False)}\n"
-            f"---\n\n{body}\n"
-        )
+    # The document guide is written here rather than as a native skill folder
+    # because the document agent inlines the same files (`document/question.py`).
+    meta, body = _parse(_SKILL_DIR / "doc_writing.md")
+    files["skills/cheese-docs/SKILL.md"] = (
+        f"---\nname: cheese-docs\n"
+        f"description: {json.dumps(meta['description'], ensure_ascii=False)}\n"
+        f"---\n\n{body}\n"
+    )
+    _, blocks = _parse(_SKILL_DIR / "doc_blocks.md")
+    files["skills/cheese-docs/references/blocks.md"] = blocks + "\n"
     return files

@@ -1,9 +1,10 @@
 // 资料库的接口：一份资料是什么样、怎么放进来、怎么换新、怎么读它的字节。
 //
-// 列清单、下载、删除还在 api.ts 里（别处早就在用）；这里是资料库页自己的那几样。
+// 列清单、下载、删除还在 api.ts 里（别处早就在用）；这里是资料库页自己的那几样：上传、
+// 替换、读字节、版本列表、按版本下载、恢复旧版。
 import type { ApiEnvelope } from '@/cx_types'
 
-import { authToken, BASE, libraryFileRawUrl } from '../api'
+import { authToken, BASE, libraryFileRawUrl, request } from '../api'
 import { t } from '../i18n'
 
 import { refusalWords } from './noticeText'
@@ -76,4 +77,36 @@ export async function libraryFileBytes(projectId: string, path: string, asPdf = 
     /* Keep the HTTP error when the server sent no JSON. */
   }
   throw new Error(message || t('files.library.readFailed', { status: response.status }))
+}
+
+/** 一份资料的一版（版本列表里的一行）。 */
+export interface LibraryVersion {
+  /** 记录 id；记录表之前就在、从没被替换过的那一份没有 id。 */
+  id: string | null
+  /** 按放进来的先后从 1 数。 */
+  version: number
+  bytes: number
+  /** 谁放进来的（这一版是谁换上的）。 */
+  added_by: string | null
+  added_at: string | null
+  current: boolean
+}
+
+/** 一份资料的每一版，新的在前。 */
+export async function listLibraryVersions(projectId: string, path: string): Promise<LibraryVersion[]> {
+  const out = await request<{ versions: (Omit<LibraryVersion, 'added_at'> & { created_at: string | null })[] }>(
+    `/projects/${encodeURIComponent(projectId)}/library/versions?path=${encodeURIComponent(path)}`
+  )
+  return out.versions.map(({ created_at, ...rest }) => ({ ...rest, added_at: created_at }))
+}
+
+/** 某一版的字节地址（给 `downloadFile`）。 */
+export function libraryVersionRawUrl(projectId: string, path: string, versionId: string): string {
+  return `${libraryFileRawUrl(projectId, path)}&version=${encodeURIComponent(versionId)}`
+}
+
+/** 把旧的一版恢复成现在这一份：复制成新的一版，历史只增不减。 */
+export function restoreLibraryVersion(projectId: string, path: string, versionId: string): Promise<unknown> {
+  const query = `path=${encodeURIComponent(path)}&version=${encodeURIComponent(versionId)}`
+  return request(`/projects/${encodeURIComponent(projectId)}/library/restore?${query}`, { method: 'POST' })
 }
