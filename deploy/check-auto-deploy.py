@@ -76,11 +76,12 @@ def should_skip(candidate: str) -> bool:
     healthy_services = set()
     all_healthy = True
     for service in ("backend", "frontend"):
-        # Each runs in one of two slots on a box that releases without downtime
-        # (`backend` or `backend-b`, deploy/deploy-docker.sh), so both are read.
+        # The backend runs in one of two slots on a box that releases without
+        # downtime (`backend` or `backend-b`, deploy/deploy-docker.sh).
+        slots = (service, f"{service}-b") if service == "backend" else (service,)
         containers = [
             container
-            for slot in (service, f"{service}-b")
+            for slot in slots
             for container in command(
                 "docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={project}",
                 "--filter", f"label=com.docker.compose.service={slot}",

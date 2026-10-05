@@ -13,6 +13,13 @@ name: Deploy (dev/test box)
 # commit ran in the merge queue before the commit reached main, so it has already
 # finished by then; the eligibility job still checks both for the candidate SHA
 # without occupying the deployment runner.
+# A manual release of a commit from before the two backend slots
+# (deploy/deploy-docker.sh, "Two backend slots") runs that commit's own script,
+# which starts its one-off successor on BACKEND_PORT_NEXT and refuses while
+# app-router's backend.conf names that port — as it does whenever `backend-b`
+# serves, before it moves any traffic. To release such a commit,
+# release any current commit first when the last deploy's log ends with
+# "backend-b serves this release": that moves the backend to the first slot.
 on:
   workflow_dispatch:
     inputs:

@@ -274,7 +274,7 @@ migrate_project_repositories() {
   mkdir -p "$(dirname "$FORGE_CUTOVER_PENDING")"
   touch "$FORGE_CUTOVER_PENDING"
   # shellcheck disable=SC2046 # one word per slot
-  dc stop $(slot_services backend) || fail "could not stop repository writers"
+  dc stop $(backend_services) || fail "could not stop repository writers"
   # Native sessions can share the legacy worktrees without a Docker mount.
   # Retain the restart receipt across failures, just like the cutover guard.
   if command -v systemctl >/dev/null && systemctl is-active --quiet cheese.service; then
@@ -316,19 +316,23 @@ ensure_journal_retention() {
 
 ensure_application_router() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
-  local config backup frontend_backup changed=false router_changed=false port
+  local config backup frontend_backup changed=false router_changed=false frontend_upstream
   local owner_port routing_backup sites_backup site_domain
   config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
   [ -f "$config" ] || fail "api-front config not found: $config"
-  # Seed from the actual serving frontend, including a successor left serving
-  # by an interrupted rollout. Never guess the target during migration.
-  if [ ! -f "$ACTIVE_BACKEND_DIR/frontend.conf" ]; then
-    port="${FRONTEND_PORT:-8080}"
-    if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
-      port="$(sed -n 's/^upstream frontend_active { server 127\.0\.0\.1:\([0-9]*\); }.*/\1/p' "$ACTIVE_FRONTEND_DIR/sites-frontend.conf")"
-      [ -n "$port" ] || fail "cannot identify the serving frontend before ingress migration"
+  # A rolling frontend is always the compose `frontend` on its own port, with the
+  # temporary one a release starts (rollout_app) as the backup, so replacing it
+  # in place needs no reload: while it restarts, app-router's connection to it
+  # is refused and the request goes to the backup. refuse_interrupted_release
+  # has already made sure no older rollout left a successor serving.
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    frontend_upstream="upstream frontend_active { server 127.0.0.1:$FRONTEND_PORT; server 127.0.0.1:$FRONTEND_PORT_NEXT backup; }"
+    if [ "$(cat "$ACTIVE_BACKEND_DIR/frontend.conf" 2>/dev/null || true)" != "$frontend_upstream" ]; then
+      [ ! -f "$ACTIVE_BACKEND_DIR/frontend.conf" ] || router_changed=true
+      printf '%s\n' "$frontend_upstream" > "$ACTIVE_BACKEND_DIR/frontend.conf"
     fi
-    printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "$port" > "$ACTIVE_BACKEND_DIR/frontend.conf"
+  elif [ ! -f "$ACTIVE_BACKEND_DIR/frontend.conf" ]; then
+    printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "$FRONTEND_PORT" > "$ACTIVE_BACKEND_DIR/frontend.conf"
   fi
   if ! cmp -s "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"; then
     [ ! -f "$ACTIVE_BACKEND_DIR/app-router.conf" ] || router_changed=true
@@ -532,30 +536,31 @@ for _f in $COMPOSE_OVERLAYS; do
   log "overlay: $_f"
 done
 
-# ---- Two slots per application service (boxes with an app-router) ----
-# A release moves traffic from the running backend and frontend to new ones
-# exactly once. That needs the new containers to be the ones that stay, so each
-# service has two compose services, `backend` and `backend-b` (and `frontend`,
-# `frontend-b`), on two loopback ports, and every release starts the idle one,
-# switches app-router to it and stops the other. The container a service runs
-# in therefore alternates between cheese-backend-1 and cheese-backend-b-1;
-# deploy/app-container.sh names the running one.
+# ---- Two backend slots (boxes with an app-router) ----
+# A release moves backend traffic from the running backend to a new one exactly
+# once. That needs the new container to be the one that stays, so the backend
+# has two compose services, `backend` and `backend-b`, on two loopback ports,
+# and every release starts the idle one, switches app-router to it and stops
+# the other. The container the backend runs in therefore alternates between
+# cheese-backend-1 and cheese-backend-b-1; deploy/app-container.sh names the
+# running one.
 #
-# The `-b` services are written here, from compose's own merged model of
-# `backend` and `frontend` after every overlay, so they cannot drift from the
-# service they copy: `extends` reads one file only and would miss what an overlay
-# adds (the subscription overlay's docker socket, for one). Only the published
-# port differs, plus the `backend` network name the other services dial
-# (device-connection, office-editor), which both slots answer to.
+# `backend-b` is written here, from compose's own merged model of `backend`
+# after every overlay, so it cannot drift from the service it copies: `extends`
+# reads one file only and would miss what an overlay adds (the subscription
+# overlay's docker socket, for one). Only the published port differs, plus the
+# `backend` network name the other services dial (device-connection,
+# office-editor), which both slots answer to.
 #
 # The copy is interpolated — compose cannot print this model uninterpolated —
-# so it carries this run's images and is rewritten whenever they change (the
-# rollback below). Compose prints the env file merged into `environment`, so the
-# model is read with an empty one and the copy names the real file again: the
-# backend's secrets stay in that file, and compose's own `environment` entries
-# still win over it, as they do for the original. The two values compose itself
-# interpolates from ops/ (office editor, collab) are in the copy, hence a
-# private file that the exit trap removes.
+# so it carries the values this run exports and is written only once all of
+# them are (the office editor and collab secrets below), and again whenever
+# they change (the rollback). Compose prints the env file merged into
+# `environment`, so the model is read with an empty one and the copy names the
+# real file again: the backend's secrets stay in that file, and compose's own
+# `environment` entries still win over it, as they do for the original. The two
+# secrets compose interpolates itself are in the copy, hence a private file that
+# the exit trap removes.
 ACTIVE_BACKEND_DIR="${ACTIVE_BACKEND_DIR:-}"
 BACKEND_PORT="${BACKEND_PORT:-8081}"
 BACKEND_PORT_NEXT="${BACKEND_PORT_NEXT:-18082}"
@@ -570,29 +575,19 @@ write_slots_overlay() {
   BACKEND_ENV_FILE="$no_env" docker compose -f "$COMPOSE" ${_overlay_args[@]+"${_overlay_args[@]}"} \
     -p "$PROJECT" config --format json \
     | ENV_FILE="${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
-      BACKEND_PORT_NEXT="$BACKEND_PORT_NEXT" FRONTEND_PORT_NEXT="$FRONTEND_PORT_NEXT" python3 -c '
+      BACKEND_PORT_NEXT="$BACKEND_PORT_NEXT" python3 -c '
 import json, os, sys
 services = json.load(sys.stdin)["services"]
 backend = dict(services["backend"])
 backend["env_file"] = [os.environ.get("ENV_FILE")]
 backend["ports"] = ["127.0.0.1:" + os.environ.get("BACKEND_PORT_NEXT") + ":8081"]
 backend["networks"] = {"default": {"aliases": ["backend"]}}
-frontend = dict(services["frontend"])
-frontend["ports"] = ["127.0.0.1:" + os.environ.get("FRONTEND_PORT_NEXT") + ":80"]
-# Started only with --no-deps: the original waits for the `backend` slot, which
-# is the stopped one half of the time.
-frontend.pop("depends_on", None)
-json.dump({"services": {"backend-b": backend, "frontend-b": frontend}}, sys.stdout, indent=1)
+json.dump({"services": {"backend-b": backend}}, sys.stdout, indent=1)
 ' > "$SLOTS_OVERLAY" \
     || { rm -f "$no_env"; fail "could not write the second application slot; running services were not touched"; }
   rm -f "$no_env"
 }
 _slot_args=()
-if [ -n "$ACTIVE_BACKEND_DIR" ]; then
-  write_slots_overlay
-  trap 'rm -f "$SLOTS_OVERLAY"' EXIT
-  _slot_args=(-f "$SLOTS_OVERLAY")
-fi
 
 # An unpinned SANDBOX_TOKEN makes every restart deafen every sandbox.
 #
@@ -648,6 +643,13 @@ if [ -z "${COLLAB_SECRET:-}" ]; then
   fi
   COLLAB_SECRET="$(cat "$_collab_secret")"
   export COLLAB_SECRET
+fi
+
+# Only now: the second backend slot carries the values exported above.
+if [ -n "$ACTIVE_BACKEND_DIR" ]; then
+  write_slots_overlay
+  trap 'rm -f "$SLOTS_OVERLAY"' EXIT
+  _slot_args=(-f "$SLOTS_OVERLAY")
 fi
 
 case "$PULL_ATTEMPTS" in
@@ -812,19 +814,19 @@ retry_pull() {
 service_container() {
   dc ps -q "$1" 2>/dev/null | head -n 1 || true
 }
-# The services one part of the app tier runs as: both slots on a box with an
-# app-router (see "Two slots" above), the one service elsewhere.
-slot_services() {
+# The services the backend runs as: both slots on a box with an app-router
+# (see "Two backend slots" above), the one service elsewhere.
+backend_services() {
   if [ -n "$ACTIVE_BACKEND_DIR" ]; then
-    printf '%s %s-b\n' "$1" "$1"
+    printf 'backend backend-b\n'
   else
-    printf '%s\n' "$1"
+    printf 'backend\n'
   fi
 }
-# The running container of that part, whichever slot it is in.
-running_container() {
+# The running backend container, whichever slot it is in.
+running_backend() {
   local service container
-  for service in $(slot_services "$1"); do
+  for service in $(backend_services); do
     container="$(service_container "$service")"
     if [ -n "$container" ]; then
       printf '%s\n' "$container"
@@ -838,8 +840,26 @@ service_image() {
   docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null || true
 }
 
-PREV_BACKEND_CONTAINER="$(running_container backend)"
-PREV_FRONTEND_CONTAINER="$(running_container frontend)"
+NEXT_BACKEND="${PROJECT}-backend-next"
+NEXT_FRONTEND="${PROJECT}-frontend-next"
+# A successor the rollout before this one started — the one-off backend of an
+# older release, or a temporary frontend — still exists only if that release was
+# interrupted, and it may be what app-router is sending traffic to. This release
+# would start a slot on the same port, so it stops here and says what to check.
+refuse_interrupted_release() {
+  local leftover
+  for leftover in "$NEXT_BACKEND" "$NEXT_FRONTEND"; do
+    if docker container inspect "$leftover" >/dev/null 2>&1; then
+      fail "$leftover is left from an interrupted release, on the port this release would start a slot on; nothing was changed. If app-router's backend.conf names its port it is serving: start the compose backend, point backend.conf at it and reload app-router. Then remove $leftover (docker stop, then docker rm) and release again"
+    fi
+  done
+}
+
+# Before anything is pulled, migrated or switched.
+[ -z "$ACTIVE_BACKEND_DIR" ] || refuse_interrupted_release
+
+PREV_BACKEND_CONTAINER="$(running_backend)"
+PREV_FRONTEND_CONTAINER="$(service_container frontend)"
 PREV_BACKEND_IMAGE="$(service_image "$PREV_BACKEND_CONTAINER")"
 PREV_FRONTEND_IMAGE="$(service_image "$PREV_FRONTEND_CONTAINER")"
 PREV_SHA=""
@@ -1012,11 +1032,11 @@ migrate_project_repositories
 # ---- Application rollout without downtime (boxes with an app-router) ----
 # ACTIVE_BACKEND_DIR names the directory app-router reads its upstreams from;
 # the persistent api-front routes business traffic to that separate nginx.
-# When it is set, nothing is recreated in place. The idle slot of the backend
-# (and of the frontend, with ACTIVE_FRONTEND_DIR) comes up on the new image
-# beside the running one and answers its health check, app-router is pointed at
-# both in ONE reload, the old backend hands its running work over, and after a
-# drain the old slots are stopped. That reload is the release's only cutover:
+# When it is set, the idle backend slot comes up on the new image beside the
+# running one and answers its health check, app-router is pointed at it in ONE
+# reload, the frontend is replaced in place behind a temporary backup (see
+# rollout_app), the old backend hands its running work over, and after a drain
+# it is stopped. That reload is the release's only cutover:
 # every reload retires a generation of app-router workers and, with them, the
 # WebSockets they carry, and every backend switch is a handover of the running
 # work, so a second switch would be a second disconnect and a second handover.
@@ -1025,11 +1045,11 @@ migrate_project_repositories
 # runs, gap included.
 API_FRONT_CONTAINER="${API_FRONT_CONTAINER:-cheese-api-front}"
 BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
-# How long the slots traffic left keep answering what they already have before
-# they are stopped. App-router's old workers do not cut those requests off at
+# How long the backend traffic left keeps answering what it already has before
+# it is stopped. App-router's old workers do not cut those requests off at
 # this point: its worker_shutdown_timeout is set well above this drain plus the
 # backend's stop grace (deploy/llm-tunnel/app-router.conf), so what ends a
-# connection on the old slots is the old slot stopping, once.
+# connection on the old backend is the old backend stopping, once.
 DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-31}"
 # Matches the backend's stop_grace_period in the compose files.
 BACKEND_STOP_GRACE_SECONDS="${DEPLOY_BACKEND_STOP_GRACE_SECONDS:-60}"
@@ -1066,45 +1086,36 @@ check_session_base_survives_release() {
   esac
 }
 
-# Which slot of a service app-router sends its traffic to, read from the file it
-# reads that from. Sets SLOT_FROM (serving now) and SLOT_TO/SLOT_TO_PORT (the
-# idle one this release starts).
+# Which backend slot app-router sends traffic to, read from the file it reads
+# that from. Sets SLOT_FROM (serving now) and SLOT_TO/SLOT_TO_PORT (the idle one
+# this release starts).
 read_slots() {
-  local file="$1" service="$2" port_a="$3" port_b="$4"
-  if grep -Fq "server 127.0.0.1:$port_a;" "$file"; then
-    SLOT_FROM="$service" SLOT_TO="$service-b" SLOT_TO_PORT="$port_b"
-  elif grep -Fq "server 127.0.0.1:$port_b;" "$file"; then
-    SLOT_FROM="$service-b" SLOT_TO="$service" SLOT_TO_PORT="$port_a"
+  local file="$ACTIVE_BACKEND_DIR/backend.conf"
+  if grep -Fq "server 127.0.0.1:$BACKEND_PORT;" "$file"; then
+    SLOT_FROM=backend SLOT_TO=backend-b SLOT_TO_PORT="$BACKEND_PORT_NEXT"
+  elif grep -Fq "server 127.0.0.1:$BACKEND_PORT_NEXT;" "$file"; then
+    SLOT_FROM=backend-b SLOT_TO=backend SLOT_TO_PORT="$BACKEND_PORT"
   else
-    fail "$file names neither :$port_a nor :$port_b ($(cat "$file")); point it at the $service that is serving before redeploying"
+    fail "$file names neither :$BACKEND_PORT nor :$BACKEND_PORT_NEXT ($(cat "$file")); point it at the backend that is serving before redeploying"
   fi
 }
 
-write_upstream() {
-  local file="$1" name="$2" port="$3" tmp
-  tmp="$(mktemp "$file.XXXXXX")" || fail "cannot write into $(dirname "$file")"
-  printf 'upstream %s { server 127.0.0.1:%s; }\n' "$name" "$port" > "$tmp"
+# One reload, which retires one generation of app-router workers: the release's
+# only switch.
+switch_app_router() {
+  local port="$1" before tmp
+  before="$(cat "$ACTIVE_BACKEND_DIR/backend.conf")"
+  tmp="$(mktemp "$ACTIVE_BACKEND_DIR/backend.conf.XXXXXX")" \
+    || fail "cannot write into $ACTIVE_BACKEND_DIR"
+  printf 'upstream backend_active { server 127.0.0.1:%s; }\n' "$port" > "$tmp"
   # Rename, never rewrite in place: nginx re-reads the file on reload and a
   # half-written one would take the whole server config down with it.
-  mv -f "$tmp" "$file"
-}
-
-# Both upstreams in one reload: one reload is one generation of workers retired,
-# so the release moves its connections once. $2 is empty when the frontend is
-# not rolled (no ACTIVE_FRONTEND_DIR).
-switch_app_router() {
-  local backend_port="$1" frontend_port="$2" backend_before frontend_before
-  backend_before="$(cat "$ACTIVE_BACKEND_DIR/backend.conf")"
-  frontend_before="$(cat "$ACTIVE_BACKEND_DIR/frontend.conf" 2>/dev/null || true)"
-  write_upstream "$ACTIVE_BACKEND_DIR/backend.conf" backend_active "$backend_port"
-  [ -z "$frontend_port" ] \
-    || write_upstream "$ACTIVE_BACKEND_DIR/frontend.conf" frontend_active "$frontend_port"
+  mv -f "$tmp" "$ACTIVE_BACKEND_DIR/backend.conf"
   if ! docker exec cheese-app-router nginx -t || ! docker exec cheese-app-router nginx -s reload; then
-    printf '%s\n' "$backend_before" > "$ACTIVE_BACKEND_DIR/backend.conf"
-    [ -z "$frontend_port" ] || printf '%s\n' "$frontend_before" > "$ACTIVE_BACKEND_DIR/frontend.conf"
+    printf '%s\n' "$before" > "$ACTIVE_BACKEND_DIR/backend.conf"
     return 1
   fi
-  log "app-router now sends backend traffic to :$backend_port${frontend_port:+ and frontend traffic to :$frontend_port}, in one reload"
+  log "app-router now sends backend traffic to :$port, in one reload"
 }
 
 # $1 = host port, $2 = what is expected there. Polls the published port from
@@ -1185,67 +1196,69 @@ wait_for_frontend() {
   return 1
 }
 
-# Removes the slots this release started, when it cannot switch to them. The
-# running ones were not touched, and app-router still points at them.
-discard_new_slots() {
-  local service
-  for service in "$@"; do
-    [ -n "$service" ] || continue
-    dc rm -f -s "$service" >/dev/null 2>&1 || true
-  done
-}
-
 rollout_app() {
-  local backend_from backend_to backend_port old_backend
-  local frontend_from="" frontend_to="" frontend_port="" collab_failed=false
-  read_slots "$ACTIVE_BACKEND_DIR/backend.conf" backend "$BACKEND_PORT" "$BACKEND_PORT_NEXT"
+  local backend_from backend_to backend_port old_backend handover collab_failed=false
+  read_slots
   backend_from="$SLOT_FROM" backend_to="$SLOT_TO" backend_port="$SLOT_TO_PORT"
-  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
-    [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
-    read_slots "$ACTIVE_BACKEND_DIR/frontend.conf" frontend "$FRONTEND_PORT" "$FRONTEND_PORT_NEXT"
-    frontend_from="$SLOT_FROM" frontend_to="$SLOT_TO" frontend_port="$SLOT_TO_PORT"
-  fi
   old_backend="$(service_container "$backend_from")"
 
   log "starting $backend_to on :$backend_port beside the serving ${backend_from}…"
   if ! dc up -d --no-deps --force-recreate "$backend_to"; then
-    discard_new_slots "$backend_to"
+    dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
     fail "could not start $backend_to; the running backend was not touched"
   fi
   if ! wait_for_healthz "$backend_port" "$backend_to"; then
     docker logs --tail 40 "$(service_container "$backend_to")" 2>&1 | sed 's/^/  next| /' || true
-    discard_new_slots "$backend_to"
+    dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
     fail "$backend_to never answered /healthz within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
   fi
-  if [ -n "$frontend_to" ]; then
-    if ! dc up -d --no-deps --force-recreate "$frontend_to" \
-      || ! wait_for_frontend "$frontend_port" "$(service_container "$frontend_to")"; then
-      discard_new_slots "$backend_to" "$frontend_to"
-      fail "next frontend ($frontend_to) is unhealthy; the running backend and frontend were not touched"
+  # The frontend keeps its compose service and its ports (:8080 and :80, which
+  # the edge can reach directly). A temporary one on the new image is app-router's
+  # backup while the compose frontend is replaced in place, so that needs no
+  # reload of its own.
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
+    if ! dc run -d --no-deps --name "$NEXT_FRONTEND" -p "127.0.0.1:$FRONTEND_PORT_NEXT:80" frontend >/dev/null \
+      || ! wait_for_frontend "$FRONTEND_PORT_NEXT" "$NEXT_FRONTEND"; then
+      docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+      dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
+      fail "the temporary frontend is unhealthy; the running backend and frontend were not touched"
     fi
   fi
 
-  if ! switch_app_router "$backend_port" "$frontend_port"; then
-    discard_new_slots "$backend_to" "$frontend_to"
-    fail "app-router did not take the switch; its upstream files are restored and traffic stays on $backend_from${frontend_from:+ and $frontend_from}"
+  if ! switch_app_router "$backend_port"; then
+    docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+    dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
+    fail "app-router did not take the switch; backend.conf is restored and traffic stays on $backend_from"
   fi
-  hand_over_running_work "$old_backend"
-  sleep "$DRAIN_SECONDS"
+  # The handover keeps its own clock from the switch while the frontend is
+  # replaced beside it.
+  hand_over_running_work "$old_backend" &
+  handover=$!
 
-  # Replaced here, before the old frontend stops, so a document's socket closes
-  # once: the editors it drops reconnect through the new frontend to the new
-  # collab. It loads documents from and stores them to the backend, which the
-  # new slot already is. Every change is stored before it stops
-  # (stop_grace_period) and the editors reconnect on their own.
+  # Everything a browser holds through the frontend container — its room,
+  # notification and document sockets — moves now, together with the switch:
+  # the old frontend stops, the editors and rooms reconnect through the new one
+  # to the new backend and a new collab. collab loads documents from and stores
+  # them to the backend, which the new slot already is; every change is stored
+  # before it stops (stop_grace_period).
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    dc up -d --no-deps frontend \
+      || fail "compose up frontend failed; $NEXT_FRONTEND keeps serving as app-router's backup on :$FRONTEND_PORT_NEXT"
+    wait_for_frontend "$FRONTEND_PORT" "$(service_container frontend)" \
+      || fail "the recreated frontend is unhealthy; $NEXT_FRONTEND keeps serving as app-router's backup on :$FRONTEND_PORT_NEXT"
+  fi
   if [ "$COLLAB_EXPECTED" = true ]; then
     log "bringing up the collaboration service…"
     dc up -d --no-deps collab || collab_failed=true
   fi
-
-  if [ -n "$frontend_from" ]; then
-    dc stop "$frontend_from" >/dev/null 2>&1 || true
-    dc rm -f "$frontend_from" >/dev/null 2>&1 || true
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    docker stop "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+    docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
   fi
+
+  wait "$handover" || true
+  sleep "$DRAIN_SECONDS"
   # Stopped before it is removed: on SIGTERM it hands whatever running work it
   # still holds to the backend just switched to (backend/app/core/ownership.py),
   # and `rm -f` alone is a SIGKILL that cuts that handover off.
@@ -1254,7 +1267,12 @@ rollout_app() {
   fi
   dc rm -f "$backend_from" >/dev/null 2>&1 || true
   [ "$collab_failed" = false ] || fail "compose up collab failed"
-  log "$backend_from${frontend_from:+ and $frontend_from} stopped; $backend_to${frontend_to:+ and $frontend_to} serve this release"
+  log "$backend_from stopped; $backend_to serves this release"
+  if [ "$backend_to" = backend-b ]; then
+    # The script before the two slots starts its one-off successor on this port
+    # and refuses while backend.conf names it, so it cannot be released now.
+    log "note: a manual release of a commit older than the two backend slots refuses to start while backend-b serves; release any current commit once to move the backend to the first slot, then that one"
+  fi
 }
 
 # First installation must use the backend image this deploy just pulled or

@@ -198,31 +198,40 @@ no content domain, or one the operator disabled, is left alone. The owner's
 internal RPC path (`/_internal/preview/`) is reachable only inside the compose
 network, never through nginx.
 
-A release switches app-router once. The backend and the frontend each have
-two slots, compose services `backend` and `backend-b` (`frontend`,
-`frontend-b`) on two loopback ports (`BACKEND_PORT`/`BACKEND_PORT_NEXT`,
-`FRONTEND_PORT`/`FRONTEND_PORT_NEXT`). The deploy starts the idle slot of each
-on the new image and waits for it to answer its health check, writes both
-`backend.conf` and `frontend.conf`, and reloads app-router once. It then signals
-the old backend to hand its work over, waits 31 seconds (`DEPLOY_DRAIN_SECONDS`)
-while the old slots answer what they already have, replaces collab, and stops
-the old slots. The next release goes back into the slots this one left. The
-`-b` services are written at deploy time from compose's merged model of
-`backend` and `frontend`, so they carry every overlay and differ only in port.
-Both backend slots answer to the `backend` network name, which the owners and
-office editor dial.
+A release switches app-router once. The backend has two slots, compose
+services `backend` and `backend-b` on two loopback ports (`BACKEND_PORT` and
+`BACKEND_PORT_NEXT`). The deploy starts the idle slot on the new image, waits
+for it to answer its health check, rewrites `backend.conf` and reloads
+app-router once. The old backend is told to hand its work over 5 seconds after
+that switch; it then answers what it already has for 31 seconds
+(`DEPLOY_DRAIN_SECONDS`) and is stopped. The next release goes back into the
+slot this one left. `backend-b` is written at deploy time from compose's merged
+model of `backend`, after every value the deploy exports, so it carries every
+overlay and differs only in its port and in answering to the `backend` network
+name, which `device-connection` and the office editor dial.
 
-The container a service runs in therefore alternates between `cheese-backend-1`
-and `cheese-backend-b-1` (likewise for the frontend). Anything that needs it
-asks `deploy/app-container.sh backend`.
+The backend container therefore alternates between `cheese-backend-1` and
+`cheese-backend-b-1`; anything that needs it asks
+`deploy/app-container.sh backend`. A manual release of a commit from before the
+two slots runs that commit's script, which refuses while `backend.conf` names
+`BACKEND_PORT_NEXT`; release any current commit once to move the backend to the
+first slot, then that one.
+
+The frontend keeps its single compose service and its ports. With
+`ACTIVE_FRONTEND_DIR`, `frontend.conf` names it and, as `backup`, a temporary
+frontend on `FRONTEND_PORT_NEXT`. A release starts the temporary one on the new
+image and, right after the backend switch, recreates `frontend` in place: while
+it restarts, app-router's connections to it are refused and go to the backup,
+so the frontend needs no reload of its own. `collab` is replaced at the same
+moment, and the temporary frontend is then removed. Every socket a browser holds
+through the frontend container moves then, together with the switch.
 
 App-router's `worker_shutdown_timeout` is 180 seconds, longer than the handover
-pause, the drain and the old backend's stop grace together. The workers a
-reload retires therefore keep their connections until the old slot they lead
-to stops, and that stop is when a room's socket moves: once per release. Device
-and model connections bypass these workers. `ACTIVE_FRONTEND_DIR` puts the
-frontend behind the persistent **:18080** entry and into the same switch.
-Frontends still reach APIs through `API_UPSTREAM=host.docker.internal:8081`.
+pause, the drain and the old backend's stop grace together, so the workers the
+one reload retires keep their connections until the container they lead to
+stops. Device and model connections bypass these workers. The persistent
+**:18080** entry routes to app-router's frontend upstream. Frontends still reach
+APIs through `API_UPSTREAM=host.docker.internal:8081`.
 
 Each backend switch is also a handover of the running work. One backend at a
 time owns it (the sessions it listens to, the turns it watches, the periodic
