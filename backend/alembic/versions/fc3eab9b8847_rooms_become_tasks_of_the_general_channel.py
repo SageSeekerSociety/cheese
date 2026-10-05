@@ -37,8 +37,12 @@ What a room had moves with it, or to 综合:
   notifications, feedback, library file origins, skills, routines, proposals,
   mail drafts, memory passes, and the people and AI seats of an active room's
   roster.
-- **Gone with the room:** read states, title history, room locks, dismissed
-  feedback proposals, finished cleanup records, its device pin and its roster.
+- **Kept as they are:** read cursors. A cursor now belongs to a conversation
+  (``topic_read_states.topic_id`` references ``conversations``), so a
+  person who had read the room has read the task, and only what is said
+  after counts as unread.
+- **Gone with the room:** title history, room locks, dismissed feedback
+  proposals, finished cleanup records, its device pin and its roster.
 
 A session that was running in a converted room is stopped: its process
 answers to the room's generation, which is now 综合's. Its turn ends, its
@@ -100,6 +104,19 @@ def _lock(tables: str) -> None:
         END
         $$
     """)
+
+
+def _cursors_follow_conversations() -> None:
+    """A read cursor is a person's place in one conversation, a room's or a
+    task's. Pointed at ``conversations`` before any room row goes, so the
+    cursors of converted rooms survive their ``topics`` row."""
+    op.execute(
+        "ALTER TABLE topic_read_states DROP CONSTRAINT topic_read_states_topic_id_fkey"
+    )
+    op.execute(
+        "ALTER TABLE topic_read_states ADD CONSTRAINT topic_read_states_topic_id_fkey"
+        " FOREIGN KEY (topic_id) REFERENCES conversations (id) ON DELETE CASCADE"
+    )
 
 
 def _choose() -> None:
@@ -395,7 +412,8 @@ def _copy_files(workspace: Path) -> None:
 
 
 def upgrade() -> None:
-    _lock("topics, tasks, conversations")
+    _lock("topics, tasks, conversations, topic_read_states")
+    _cursors_follow_conversations()
     _choose()
     _delete_the_empty()
     op.execute("ALTER TABLE tasks DISABLE TRIGGER tasks_conversation_registered")

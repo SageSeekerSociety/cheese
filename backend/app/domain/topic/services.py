@@ -582,9 +582,10 @@ class TopicService:
             raise NotFoundError("Project not found")
         return await self._repo.private_unread_counts(project_id, user_handle)
 
-    async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
-        await self.get_or_404(topic_id)
-        await self._repo.mark_read(topic_id, user_handle)
+    async def mark_read(self, conversation_id: uuid.UUID, user_handle: str) -> None:
+        """Bump the cursor on a room's own conversation or on one of its tasks."""
+        await self.get_or_404(await room_of(self._session, conversation_id))
+        await self._repo.mark_read(conversation_id, user_handle)
 
     async def mark_all_read(
         self, project_id: uuid.UUID, user_handle: str

@@ -464,6 +464,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :key="task.id"
                 :task="task"
                 :selected="task.id === selectedTaskId"
+                :unread="unreadOf(task.id)"
                 @select="emit('select-task', $event)"
               />
               <TopicRailAllTasksRow
@@ -580,6 +581,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :task="task"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
+                        :unread="unreadOf(task.id)"
                         @select="emit('select-task', $event)"
                       />
                       <TopicRailAllTasksRow

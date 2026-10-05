@@ -554,7 +554,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // Opening a topic = reading it: bump the server-side cursor and clear the
   // badge locally (optimistic — the next refresh agrees).
   //
-  // 卡下的消息**故意**不计进未读（否则每条活说句话就把房间标红，红点变噪音）。
+  // `topicId` 是一段对话：频道自己的，或一个任务的（任务的未读只亮给负责人和协作者）。
   function markRead(topicId: string) {
     const me = myHandle()
     if (!me) return

@@ -6,6 +6,8 @@ import type { RoomTask } from '@/cx_types'
 
 import { computed } from 'vue'
 
+import TopicRailBadge from './TopicRailBadge.vue'
+
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
 
@@ -13,10 +15,12 @@ const props = withDefaults(
   defineProps<{
     task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>
     selected: boolean
+    /** 任务里别人说了几句我还没读（只对负责人和协作者算，只算人说的）。 */
+    unread?: number
     // 它的频道在树里的第几层：竖线跟着频道的图标列走。
     depth?: number
   }>(),
-  { depth: 0 }
+  { depth: 0, unread: 0 }
 )
 
 const emit = defineEmits<{
@@ -39,7 +43,8 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
     :aria-current="selected ? 'page' : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
   >
-    <span class="rail-task__title">{{ taskTitle(task) }}</span>
+    <span class="rail-task__title" :class="{ 'rail-task__title--unread': unread > 0 }">{{ taskTitle(task) }}</span>
+    <TopicRailBadge v-if="unread > 0" :count="unread" />
     <span
       v-if="mark"
       class="rail-task__dot"
@@ -96,6 +101,9 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.rail-task__title--unread {
+  font-weight: 650;
 }
 .rail-task__dot {
   flex: none;

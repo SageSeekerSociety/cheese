@@ -58,7 +58,9 @@ it('连点只建一个，建好后打开它', async () => {
   expect(store.create).toHaveBeenCalledTimes(1)
   expect(store.create).toHaveBeenCalledWith('设计')
   resolve(topic('new'))
-  await vi.waitFor(() => expect(view.emitted('open-channel')?.[0]?.[0]).toMatchObject({ id: 'new' }))
+  await vi.waitFor(() =>
+    expect((view.emitted('open-channel') as unknown[][] | undefined)?.[0]?.[0]).toMatchObject({ id: 'new' })
+  )
 })
 
 it('综合不能归档，别的频道可以', async () => {

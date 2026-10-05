@@ -41,6 +41,7 @@ from app.domain.block.models import (
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard
+from app.domain.conversation.services import room_of
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -1121,20 +1122,20 @@ async def record_weekly(
 async def mark_topic_read(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """话题级已读位: bump the caller's read cursor (opening a topic clears its
-    unread badge, Feishu-style).
+    """已读位: bump the caller's read cursor on a room or on one of its tasks
+    (opening either clears its unread badge, Feishu-style). ``topic_id`` is
+    the conversation's id; the door is its room's.
 
     The cursor is per person, so whose it is comes from the verified
     credential — ``handle`` in the body is only an assertion checked against
     it (it used to BE the identity, letting anyone move anyone's cursor)."""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
+    room_id = await room_of(db, topic_id)
+    topic = await TopicService(db).get_or_404(room_id)
+    actor = await resolver.resolve(topic_id=room_id, project_id=topic.project_id)
+    await resolver.authorize_topic(actor, project_id=topic.project_id, topic_id=room_id)
     handle = await resolver.resolve_recipient(
         requested=(body.get("handle") or "").strip() or None,
-        project_id=await resolver.project_of_topic(topic_id),
+        project_id=topic.project_id,
         allow_anonymous=False,
     )
     await TopicService(db).mark_read(topic_id, handle)

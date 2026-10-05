@@ -416,6 +416,13 @@ def test_what_a_room_had_follows_it(migrated):
         )
     }
     assert {"alice", "bob", AGENT} <= roster
+    # Whoever had read the room has read the task: the cursor stays.
+    assert (
+        db.fetchval(
+            "SELECT user_handle FROM topic_read_states WHERE topic_id = $1", r["solo"]
+        )
+        == "alice"
+    )
 
 
 def test_a_running_session_keeps_its_machine_and_starts_again(migrated):

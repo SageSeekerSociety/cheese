@@ -147,14 +147,20 @@ const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId
 // ---- 任务页 ----
 // 页头、总览、能不能说话都读这一份；对话和面板的其余几格按任务的 id 自己读。
 const taskPage = useTaskPage({ taskId: () => props.taskId, roomMembers: () => roomMembers.value })
+// 第一次由 openPlace 记已读；之后在同一个频道里进出任务，页面不重建，换到哪段对话
+// 就是读了哪段。
+let placeOpened = false
 watch(
   () => props.taskId,
-  () => {
+  (taskId) => {
     taskPage.reset()
     void taskPage.load()
+    if (placeOpened) store.markRead(taskId ?? props.topicId)
   },
   { immediate: true }
 )
+/** 正在看的这一段对话：任务页是任务的，否则是频道自己的。已读游标记在它上面。 */
+const conversationId = computed(() => props.taskId ?? props.topicId)
 const {
   task: currentTask,
   loading: taskLoading,
@@ -375,7 +381,7 @@ function handleTurnDone() {
   // 芝士's reply landed after our read cursor — the user is watching this
   // topic, so re-bump the cursor before refreshing badges (other topics that
   // got messages in the background DO light up).
-  store.markRead(props.topicId)
+  store.markRead(conversationId.value)
   void store.refreshUnread()
 }
 
@@ -487,7 +493,8 @@ const redirecting = ref(false)
 async function openPlace() {
   await store.loadPlace(props.topicId)
   if (store.placeById(props.topicId)) {
-    store.markRead(props.topicId)
+    placeOpened = true
+    store.markRead(conversationId.value)
     return
   }
   if (props.taskId) return
