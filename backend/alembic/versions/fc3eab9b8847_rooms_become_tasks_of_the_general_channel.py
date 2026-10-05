@@ -121,11 +121,12 @@ def _cursors_follow_conversations() -> None:
 
 def _choose() -> None:
     """``room_fate``: every shared room that is not a root, and what becomes
-    of it."""
+    of it. A username is unique only among live accounts, so a deleted
+    account can share one with a live account; a handle is a person once."""
     unfinished = ", ".join(f"'{state}'" for state in UNFINISHED_CLEANUP)
     op.execute("""
         CREATE TEMP TABLE people ON COMMIT DROP AS
-        SELECT u.username AS handle FROM "user" u
+        SELECT DISTINCT u.username AS handle FROM "user" u
         WHERE NOT EXISTS (SELECT 1 FROM agent_bindings b WHERE b.user_id = u.id)
     """)
     op.execute("CREATE UNIQUE INDEX ON people (handle)")
