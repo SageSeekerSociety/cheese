@@ -171,8 +171,8 @@ def _session_opening_lines(
     if earlier_messages:
         lines.append(
             f"- 这个房间里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
-            "动手之前先用 `cheese chat list` 读最近的记录；"
-            "要找某句原话或某个决定，用 `cheese chat search <关键词>`。"
+            "动手之前先用 `cheese_chat_list` 读最近的记录；"
+            "要找某句原话或某个决定，用 `cheese_chat_search`。"
         )
     return lines
 
