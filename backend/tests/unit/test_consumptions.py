@@ -283,8 +283,17 @@ async def test_a_viewer_reconnecting_from_where_it_was_gets_only_the_rest(
     backends, platform
 ):
     kind, ((old, before), _) = backends
-    platform([{"text": ANSWER}])
+    release = threading.Event()
+    platform([{"text": ANSWER}], rest_held_until=release)
     work = await _begin(old, kind)
+
+    async def started() -> bool:
+        return _words(before) > 0
+
+    # The rest is written only once the first words were told, so the answer
+    # reaches viewers in more than one piece wherever a slow reader picks it up.
+    await _until(started)
+    release.set()
     await _until(lambda: _ended(before))
     consumption = await old.get(work)
     assert consumption is not None
