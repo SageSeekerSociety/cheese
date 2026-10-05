@@ -101,19 +101,26 @@ def read_binding(args: argparse.Namespace) -> dict:
     ``--child-model``, when set, asks admission to resolve a subagent's model
     (the ``x-cheese-subagent`` path); the seat's own binding is asked otherwise.
     """
-    headers = {"authorization": f"Bearer {_token()}"}
+    # Ask with the CONNECT credential when it is readable: that is the token the
+    # metering proxy presents to admission for a real turn, and FB-73 is that
+    # token naming the wrong seat. CHEESE_TOKEN is the fallback, said as such.
+    connect = binding_mod.connect_credential()
+    headers = {"authorization": f"Bearer {connect or _token()}"}
     child_model = getattr(args, "child_model", "") or ""
     if child_model:
         headers["x-cheese-subagent"] = "1"
         headers["x-cheese-child-model"] = child_model
-    with httpx.Client(timeout=60, trust_env=False) as client:
-        response = client.post(
-            f"{_backend().rstrip('/')}/llm/admission", headers=headers, json={}
-        )
+    try:
+        with httpx.Client(timeout=60, trust_env=False) as client:
+            response = client.post(
+                f"{_backend().rstrip('/')}/llm/admission", headers=headers, json={}
+            )
+    except httpx.HTTPError as exc:
+        # A third party that cannot be read is not fatal: the verdict just
+        # loses this cross-check (and says so), like an unreachable wire.
+        return {"error": f"admission unreachable: {type(exc).__name__}"}
     if response.status_code != 200:
-        raise SystemExit(
-            f"admission refused: HTTP {response.status_code} {response.text[:200]}"
-        )
+        return {"error": f"admission refused: HTTP {response.status_code}"}
     data = response.json().get("data", {})
     supply = data.get("supply") or {}
     return {
@@ -121,6 +128,7 @@ def read_binding(args: argparse.Namespace) -> dict:
         "model": supply.get("model"),
         "pool": supply.get("pool"),
         "reason": data.get("reason"),
+        "credential": "connect" if connect else "CHEESE_TOKEN",
     }
 
 
@@ -144,6 +152,10 @@ def read_seat_config_binding(args: argparse.Namespace) -> DeclaredBinding:
         with httpx.Client(timeout=30, trust_env=False) as client:
             response = client.get(
                 f"{_backend().rstrip('/')}/topics/{topic}/agent/control",
+                # No ``agent`` parameter: the route keys seats by the agent
+                # TYPE handle (e.g. ``cheesex-opus-cc``), not the room handle
+                # ``--seat`` carries. In a room with several seats it answers
+                # an empty state, and this source is then simply empty.
                 headers={"X-Cheese-Token": _token()},
             )
     except httpx.HTTPError:
@@ -253,8 +265,8 @@ def cmd_enroll(args: argparse.Namespace) -> int:
         # and the tokenizer probes must use it, and its name goes in the notes
         # so a later reader can compare two fingerprints' conditions.
         adapter = detect_adapter(endpoint, next(iter(cells)))
-        temperature_note = "omitted" if adapter.omit_temperature else str(
-            PROBE_TEMPERATURE
+        temperature_note = (
+            "omitted" if adapter.omit_temperature else str(PROBE_TEMPERATURE)
         )
         reference = reference_mod.new_reference(
             endpoint.model,
@@ -323,13 +335,25 @@ def cmd_verify(args: argparse.Namespace) -> int:
     # The seat check: the credential's own seat claim vs the seat this session
     # is. FB-73's root cause is exactly this disagreement (R3-1/2), and it is a
     # mismatch on its own, independent of any wire or admission answer.
-    seat = check_seat(_token(), getattr(args, "seat", ""), None)
+    seat = check_seat(
+        _token(),
+        getattr(args, "seat", ""),
+        None,
+        connect_token=binding_mod.connect_credential(),
+    )
 
     # Admission, read only as a third party (see read_binding). Its disagreement
     # with the declaration is a mismatch in `combine`.
     admission = None
     if args.mode == "seat":
-        admission = report.AdmissionReading.from_mapping(read_binding(args))
+        reading = read_binding(args)
+        if "error" in reading:
+            print(
+                f"[verify] {reading['error']}; no admission cross-check",
+                file=sys.stderr,
+            )
+        else:
+            admission = report.AdmissionReading.from_mapping(reading)
 
     references = {}
     for model in args.models:
@@ -452,9 +476,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--seat",
         default="",
         help=(
-            "the seat this session IS (its handle). Compared against the seat "
-            "the credential's own 'a' claim names; a disagreement is the FB-73 "
-            "mismatch. Defaults to CHEESE_AUTHOR from the environment."
+            "the handle this turn was addressed to (the seat the agent posts "
+            "as). The only seat declaration not written by the session's own "
+            "launch: without it a verdict is capped at uncertain, because "
+            "FB-73's relaunch wrote the wrong seat into every other one."
         ),
     )
     common.add_argument(

@@ -195,6 +195,39 @@ def combine(
     admission: AdmissionReading | None = None,
     seat: SeatCheck | None = None,
 ) -> tuple[str, str]:
+    """Return (verdict, reason); see ``_combine`` for the evidence order.
+
+    A seat check that is not independent caps the verdict at uncertain: every
+    seat declaration a session can read on its own is written by its launch,
+    and FB-73's relaunch picked the wrong seat for all of them at once. The
+    wire then faithfully serves that wrong seat's model, and every signal
+    below agrees with itself. Only the seat the turn was addressed to
+    (``--seat``) can say the whole chain is the right one.
+    """
+    verdict, reason = _combine(
+        provenance,
+        behaviour,
+        tokenizer,
+        expected_pool=expected_pool,
+        expected_model=expected_model,
+        admission=admission,
+        seat=seat,
+    )
+    if verdict == MATCH and seat is not None and not seat.independent:
+        return UNCERTAIN, f"{reason}; but {seat.reason}"
+    return verdict, reason
+
+
+def _combine(
+    provenance: ProvenanceEvidence | None,
+    behaviour: BehaviourEvidence | None,
+    tokenizer: TokenizerEvidence | None,
+    *,
+    expected_pool: str | None = None,
+    expected_model: str | None = None,
+    admission: AdmissionReading | None = None,
+    seat: SeatCheck | None = None,
+) -> tuple[str, str]:
     """Return (verdict, reason).
 
     Precedence, weakest-to-strongest evidence, and the one rule each corner
@@ -249,8 +282,13 @@ def combine(
         if provenance is None:
             return INSUFFICIENT, "no signal was available"
         if provenance.verdict == MATCH:
+            pool_note = (
+                "and the pool matches"
+                if expected_pool and provenance.pool
+                else "(the pool was not compared)"
+            )
             return MATCH, (
-                "the wire named the claimed model and the pool matches "
+                f"the wire named the claimed model {pool_note} "
                 "(no behavioural reference was available)"
             )
         return UNCERTAIN, (
@@ -266,9 +304,7 @@ def combine(
         self_check = (
             "no split-half statistic was computed"
             if behaviour.split_half_mean is None
-            else (
-                f"{behaviour.split_half_mean:.4f} > {SPLIT_HALF_WARN_THRESHOLD}"
-            )
+            else (f"{behaviour.split_half_mean:.4f} > {SPLIT_HALF_WARN_THRESHOLD}")
         )
         return UNCERTAIN, (
             "the answer distribution matches on average, but the split-half "

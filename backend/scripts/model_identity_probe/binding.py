@@ -12,8 +12,13 @@ sources that do not reduce to a single admission answer:
   platform's secret) and nothing here prints the token or its signature: the
   claim is a declaration, exactly the kind that can be wrong in the FB-73 way.
 * **the session's own seat** -- the platform writes ``CHEESE_AUTHOR`` into the
-  session environment (``machine_launcher.screen_env``). It is the handle the
-  session's turns author under, and it does not come from the credential.
+  session environment (``machine_launcher.screen_env``), from the same launch
+  that minted both credentials. It can disagree with a credential, but it
+  cannot vouch for the launch: FB-73's relaunch picked the seat from the
+  roster, so all three said the default seat together.
+* **the seat the turn was addressed to** -- the operator's ``--seat``, i.e. the
+  handle the agent posts under. It is the only declaration from outside the
+  launch, which is why a verdict without it never reaches ``match``.
 * **the seat's declared model** -- ``GET /topics/{topic}/agent/control`` answers
   with the session's ``state.init.model``: the model the session was launched
   with. A room credential may read it; ``GET /projects/{id}/agents`` may not
@@ -35,7 +40,9 @@ import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 #: The claim a scoped credential carries for the seat it acts as (FB-73: this is
 #: what got signed for the wrong seat). ``sandbox_auth.mint_scoped_token``.
@@ -95,55 +102,124 @@ def session_seat(env: Mapping[str, str] | None = None) -> str | None:
 
 @dataclass(frozen=True)
 class SeatCheck:
-    """The credential-vs-session seat comparison, and its verdict evidence."""
+    """The seat declarations compared, and the verdict evidence.
+
+    ``independent`` is true only when the operator named the seat the turn was
+    addressed to (``--seat``). Every other declaration -- ``CHEESE_AUTHOR`` and
+    both credentials' ``a`` claims -- is written by the same launch, and FB-73's
+    relaunch computed that launch's seat from the roster: all of them can agree
+    with each other and still name the wrong seat. Without ``--seat`` the check
+    can catch two credentials that disagree, but it cannot confirm the seat.
+    """
 
     ok: bool
     credential_seat: str | None
     session_seat: str | None
     reason: str
+    connect_seat: str | None = None
+    dispatched_seat: str | None = None
+    independent: bool = False
+
+
+def connect_credential(env: Mapping[str, str] | None = None) -> str | None:
+    """The credential the seat's model traffic actually authenticates with.
+
+    It is NOT ``CHEESE_TOKEN``: the launcher mints a separate session token for
+    the metering proxy's CONNECT (``device_provider._ensure_screen``), carried as
+    the password of ``HTTPS_PROXY`` (direct listener) or in
+    ``CHEESE_CONNECT_TOKEN`` / the tunnel helper's token file. Admission
+    resolves the model from THIS token's ``a`` claim, so it is the one the seat
+    check has to read. Returned to the caller only to decode its claims; never
+    printed.
+    """
+    source = os.environ if env is None else env
+    proxy = (source.get("HTTPS_PROXY") or "").strip()
+    if proxy:
+        try:
+            password = urlsplit(proxy).password
+        except ValueError:
+            password = None
+        if password:
+            return unquote(password)
+    token = (source.get("CHEESE_CONNECT_TOKEN") or "").strip()
+    if token:
+        return token
+    token_file = Path(
+        source.get("CHEESE_CONNECT_TOKEN_FILE")
+        or os.path.join(os.path.expanduser("~"), ".cheese", "cheese-tunnel.token")
+    )
+    try:
+        token = token_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return token or None
 
 
 def check_seat(
     token: str,
     seat: str | None = None,
     env: Mapping[str, str] | None = None,
+    connect_token: str | None = None,
 ) -> SeatCheck:
-    """Compare the credential's seat against the session's own seat.
+    """Compare every declaration of who this session is.
 
-    ``seat`` (the operator's ``--seat``) wins over the environment when given:
-    when the platform sets no independent seat variable, the operator is the
-    only independent source, and a mismatch means the credential was signed for
-    a *different* seat than the one the operator names -- the FB-73 disease.
+    Four declarations, any two of which disagreeing is a mismatch:
 
-    A check that cannot see one of the two seats is ``ok`` with a reason saying
-    so: an unreadable claim is not evidence of a wrong seat.
+    * ``seat`` -- the operator's ``--seat``: the seat the turn was addressed to
+      (the handle the agent posts under). The only one not written by the
+      session's launch, so the only one that makes the check *independent*;
+    * ``CHEESE_AUTHOR`` -- the seat the launch was for;
+    * the ``a`` claim of ``CHEESE_TOKEN`` (the platform-API credential);
+    * the ``a`` claim of the CONNECT credential -- the one admission resolves the
+      model from, so a wrong seat here is FB-73 itself.
+
+    A declaration that cannot be read is skipped, never a mismatch on its own.
     """
+    dispatched = (seat or "").strip() or None
+    session = session_seat(env)
     cred = credential_seat(token)
-    session = (seat or "").strip() or session_seat(env)
-    if cred is None:
+    connect = credential_seat(connect_token) if connect_token else None
+    named = [
+        ("--seat", dispatched),
+        ("CHEESE_AUTHOR", session),
+        ("the CONNECT credential", connect),
+        ("CHEESE_TOKEN", cred),
+    ]
+    seen = [(label, value) for label, value in named if value]
+
+    def result(ok: bool, reason: str) -> SeatCheck:
         return SeatCheck(
-            True,
+            ok,
             cred,
-            session,
-            "the credential names no seat; the seat check is inactive",
+            dispatched or session,
+            reason,
+            connect_seat=connect,
+            dispatched_seat=dispatched,
+            independent=dispatched is not None,
         )
-    if not session:
-        return SeatCheck(
-            True,
-            cred,
-            None,
-            "no independent seat to compare against (set --seat); the seat "
-            "check is inactive",
+
+    if not seen:
+        return result(True, "no seat declaration was readable; the check is inactive")
+    first_label, first = seen[0]
+    for label, value in seen[1:]:
+        if value != first:
+            return result(
+                False,
+                f"{label} names seat {value!r} but {first_label} names {first!r}: "
+                "the credential was signed for another seat",
+            )
+    if connect is None:
+        missing = "the CONNECT credential was not readable here"
+    else:
+        missing = ""
+    if dispatched is None:
+        note = (
+            "all readable declarations agree, but none is independent of the "
+            "launch (pass --seat with the handle this turn was addressed to)"
         )
-    if cred != session:
-        return SeatCheck(
-            False,
-            cred,
-            session,
-            f"the credential was signed for another seat ({cred!r}); this "
-            f"session is {session!r}",
-        )
-    return SeatCheck(True, cred, session, "the credential names this session's seat")
+    else:
+        note = "every readable declaration names the seat this turn was addressed to"
+    return result(True, f"{note}{'; ' + missing if missing else ''}")
 
 
 # --- the expected binding, from independent sources --------------------------
@@ -221,9 +297,7 @@ def declared_from_card(blocks: list[Mapping[str, Any]] | None) -> DeclaredBindin
         model = meta.get("model")
         if isinstance(model, str) and model.strip():
             route = meta.get("route")
-            pool = (
-                route.strip() if isinstance(route, str) and route.strip() else None
-            )
+            pool = route.strip() if isinstance(route, str) and route.strip() else None
             return DeclaredBinding(
                 model=model.strip(),
                 pool=pool,

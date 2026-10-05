@@ -317,9 +317,7 @@ def test_unstable_routing_downgrades_a_behavioural_match() -> None:
     behaviour = _behaviour(MATCH, 8)
     behaviour.unstable_routing = True
     behaviour.split_half_mean = 0.9
-    verdict, reason = combine(
-        _provenance(MATCH), behaviour, TokenizerEvidence(MATCH)
-    )
+    verdict, reason = combine(_provenance(MATCH), behaviour, TokenizerEvidence(MATCH))
     assert verdict == UNCERTAIN
     assert "split-half" in reason
 
@@ -331,9 +329,7 @@ def test_unstable_routing_without_a_statistic_does_not_raise() -> None:
     behaviour = _behaviour(MATCH, 8)
     behaviour.unstable_routing = True
     behaviour.split_half_mean = None
-    verdict, reason = combine(
-        _provenance(MATCH), behaviour, TokenizerEvidence(MATCH)
-    )
+    verdict, reason = combine(_provenance(MATCH), behaviour, TokenizerEvidence(MATCH))
     assert verdict == UNCERTAIN
     assert "split-half" in reason
 
@@ -341,9 +337,7 @@ def test_unstable_routing_without_a_statistic_does_not_raise() -> None:
 def test_a_credential_signed_for_another_seat_is_a_mismatch() -> None:
     # Fix #1: the credential's own seat claim vs the session's own seat. The
     # wire and pool here agree completely; only the seat disagreement decides.
-    seat = SeatCheck(
-        False, "default-seat", "cheese-opus", "signed for another seat"
-    )
+    seat = SeatCheck(False, "default-seat", "cheese-opus", "signed for another seat")
     verdict, reason = combine(_provenance(MATCH), None, None, seat=seat)
     assert verdict == MISMATCH
     assert "seat" in reason
@@ -962,9 +956,11 @@ def _scoped(payload: dict, sig: str = "sig", prefix: str = "") -> str:
     import base64
     import json
 
-    body = base64.urlsafe_b64encode(
-        json.dumps(payload, separators=(",", ":")).encode()
-    ).decode().rstrip("=")
+    body = (
+        base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode())
+        .decode()
+        .rstrip("=")
+    )
     return f"{prefix}{body}.{sig}"
 
 
@@ -1003,14 +999,147 @@ def test_the_session_seat_comes_from_cheese_author() -> None:
     assert check.ok is True
 
 
-def test_the_operator_seat_overrides_the_environment() -> None:
-    # With both an operator seat and an environment seat, --seat wins.
+def test_a_launch_seat_that_disagrees_with_the_addressed_seat_is_a_mismatch() -> None:
+    # --seat does not paper over the environment: the launch naming another
+    # seat than the one the turn was addressed to is the FB-73 relaunch itself.
     check = check_seat(
         _scoped({"a": "cheese-opus"}),
         seat="cheese-opus",
         env={"CHEESE_AUTHOR": "someone-else"},
     )
-    assert check.ok is True
+    assert check.ok is False
+    assert check.independent is True
+
+
+# --- FB-73 as it really happened ---------------------------------------------
+#
+# The relaunch picked the seat from the roster, so EVERYTHING the session can
+# read on its own names the default seat: CHEESE_AUTHOR, CHEESE_TOKEN's claim
+# and the CONNECT credential's claim. Admission then answers deepseek-flash and
+# the wire faithfully serves it. Every launch-side signal agrees with itself.
+
+FB73_LAUNCH_ENV = {"CHEESE_AUTHOR": "default-seat"}
+
+
+def test_fb73_launch_side_agreement_is_never_a_match(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+
+    seat = check_seat(
+        _scoped({"a": "default-seat"}),
+        env=FB73_LAUNCH_ENV,
+        connect_token=_scoped({"a": "default-seat"}),
+    )
+    assert seat.ok is True and seat.independent is False
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "deepseek-flash",
+        None,
+        sample_tokenizer=False,
+        admission=FB73_ADMISSION,
+        seat=seat,
+    )
+    assert verification.verdict == UNCERTAIN
+    assert "--seat" in verification.reason
+
+
+def test_fb73_with_the_addressed_seat_is_a_mismatch(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+
+    seat = check_seat(
+        _scoped({"a": "default-seat"}),
+        seat="cheese-eeb5ebc073fc",
+        env=FB73_LAUNCH_ENV,
+        connect_token=_scoped({"a": "default-seat"}),
+    )
+    assert seat.ok is False
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "deepseek-flash",
+        None,
+        sample_tokenizer=False,
+        admission=FB73_ADMISSION,
+        seat=seat,
+    )
+    assert verification.verdict == MISMATCH
+
+
+def test_the_connect_credential_disagreeing_with_cheese_token_is_a_mismatch() -> None:
+    # The API credential is right, the model traffic's credential is not: the
+    # seat check must read the one admission resolves the model from.
+    check = check_seat(
+        _scoped({"a": "cheese-opus"}),
+        seat="cheese-opus",
+        env={"CHEESE_AUTHOR": "cheese-opus"},
+        connect_token=_scoped({"a": "default-seat"}),
+    )
+    assert check.ok is False
+    assert check.connect_seat == "default-seat"
+
+
+def test_the_connect_credential_is_found_where_a_real_turn_keeps_it(tmp_path) -> None:
+    from scripts.model_identity_probe.binding import connect_credential
+
+    assert connect_credential({"HTTPS_PROXY": "http://cheese:tok-1@10.0.0.1:8444"}) == (
+        "tok-1"
+    )
+    assert connect_credential({"CHEESE_CONNECT_TOKEN": "tok-2"}) == "tok-2"
+    token_file = tmp_path / "cheese-tunnel.token"
+    token_file.write_text("tok-3\n", encoding="utf-8")
+    assert connect_credential({"CHEESE_CONNECT_TOKEN_FILE": str(token_file)}) == "tok-3"
+    assert (
+        connect_credential({"CHEESE_CONNECT_TOKEN_FILE": str(tmp_path / "none")})
+        is None
+    )
+
+
+def test_a_match_without_an_independent_seat_is_capped_at_uncertain() -> None:
+    seat = SeatCheck(True, "s", "s", "launch only")
+    verdict, _ = combine(_provenance(MATCH), None, None, seat=seat)
+    assert verdict == UNCERTAIN
+    independent = SeatCheck(True, "s", "s", "addressed", independent=True)
+    verdict, _ = combine(_provenance(MATCH), None, None, seat=independent)
+    assert verdict == MATCH
+
+
+def test_a_no_reference_match_does_not_claim_the_pool_was_compared() -> None:
+    _, reason = combine(_provenance(MATCH), None, None)
+    assert "pool was not compared" in reason
+    _, reason = combine(_provenance(MATCH), None, None, expected_pool="gateway")
+    assert "pool matches" in reason
+
+
+def test_an_unreadable_admission_is_not_fatal(monkeypatch) -> None:
+    import argparse
+
+    import httpx
+
+    from scripts import probe_model_identity as cli
+
+    class _Refusing:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> None:
+            return None
+
+        def post(self, *args, **kwargs):
+            return httpx.Response(403, text="nope")
+
+    monkeypatch.setenv("CHEESE_TOKEN", _scoped({"a": "s"}))
+    monkeypatch.setenv("CHEESE_API", "http://backend.invalid")
+    monkeypatch.setattr(cli.httpx, "Client", _Refusing)
+    reading = cli.read_binding(argparse.Namespace(child_model=""))
+    assert reading == {"error": "admission refused: HTTP 403"}
+
+
+def test_a_malformed_proxy_url_does_not_leak_the_credential() -> None:
+    endpoint = Endpoint(mode="proxy", model="m", proxy_url="cheese:S3CRET@127.0.0.1:1")
+    result = endpoint.complete("s", "p")
+    assert result.error is not None
+    assert "S3CRET" not in result.error
 
 
 def test_the_operator_declaration_is_the_highest_trust_source() -> None:
@@ -1032,9 +1161,7 @@ def test_seat_config_reads_the_model_the_session_launched_with() -> None:
 
 
 def test_a_merged_declaration_fills_gaps_without_overwriting() -> None:
-    seat = declared_from_seat_config(
-        {"state": {"init": {"model": "claude-opus-5-5"}}}
-    )
+    seat = declared_from_seat_config({"state": {"init": {"model": "claude-opus-5-5"}}})
     # A pool-only operator declaration keeps the seat's model and adds the pool.
     merged = declared_from_operator("", "subscription").merged(seat)
     assert merged.model == "claude-opus-5-5"
@@ -1198,6 +1325,7 @@ def test_the_openai_chat_stream_dispatch_parses_chunks() -> None:
 
 
 # --- helpers -----------------------------------------------------------------
+
 
 def _cell(counts: dict[str, int]) -> CellSamples:
     samples = CellSamples()

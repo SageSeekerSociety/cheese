@@ -125,9 +125,7 @@ class Endpoint:
         return cls(
             mode="gateway",
             model=model,
-            backend=backend
-            or os.environ.get("CHEESE_API")
-            or "http://172.17.0.1:8081",
+            backend=backend or os.environ.get("CHEESE_API") or "http://172.17.0.1:8081",
         )
 
     @classmethod
@@ -284,6 +282,12 @@ class Endpoint:
                 last_error = result.error
             except httpx.HTTPError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
+            except ValueError as exc:
+                # httpx raises ValueError for a malformed proxy URL and puts the
+                # whole URL -- credential included -- in the message. Keep the
+                # type only; retrying a malformed URL cannot help.
+                last_error = f"{type(exc).__name__}: the proxy URL is malformed"
+                break
             time.sleep(0.4 * (attempt + 1))
         return Completion(
             text="",
@@ -448,9 +452,7 @@ def _discover_connect(proxy_url: str | None, connect_host: str | None) -> Connec
             token = token_file.read_text(encoding="utf-8").strip()
             source = str(token_file)
     host = (
-        connect_host
-        or os.environ.get("CHEESE_CONNECT_HOST", "")
-        or "172.17.0.1:8444"
+        connect_host or os.environ.get("CHEESE_CONNECT_HOST", "") or "172.17.0.1:8444"
     )
     if not token:
         # No credential: still return the address, so the failure names the

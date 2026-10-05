@@ -128,9 +128,7 @@ def build_provenance(
     # ``anthropic/claude-opus-5-5-20250915`` are one model), and a header that
     # was compared strictly while the echo was compared loosely let the two
     # disagree on paper without any check noticing.
-    echo_matches = (
-        None if echo is None else normalize_model_name(echo) == claimed_norm
-    )
+    echo_matches = None if echo is None else normalize_model_name(echo) == claimed_norm
     if upstream:
         upstream_norm = normalize_model_name(upstream)
         if upstream_norm == claimed_norm:
