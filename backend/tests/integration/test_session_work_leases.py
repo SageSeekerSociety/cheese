@@ -1426,6 +1426,11 @@ async def test_an_installation_whose_backend_is_gone_does_not_hold_the_next_star
         return response.json()["data"]
 
     assert ask(timeout=0.001).get("preparing") is True
+    # The answer comes back before the installation it set off has reached the
+    # machine; wait for it to, or there is nothing yet to be cut off.
+    reached = time.monotonic() + 5
+    while hub.exec.await_count == 0 and time.monotonic() < reached:
+        await asyncio.sleep(0.05)
     assert hub.exec.await_count == 1
     # The process goes: every installation it ran stops where it was, and
     # whatever would have ended its claim never runs.
