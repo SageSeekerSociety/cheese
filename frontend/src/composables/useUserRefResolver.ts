@@ -23,10 +23,15 @@ export function useUserRefResolver() {
   const app = getCurrentInstance()?.appContext.config.globalProperties
   const store = app?.$pinia ? useWorkspaceStore() : null
 
-  function resolve(handle: string | null | undefined): ResolvedUserRef {
+  /**
+   * @param handle 认人的唯一依据。为空就没有去处。
+   * @param projectId 不传（undefined）时取当前路由上的 projectId；传 null 表示这句话
+   *   不属于眼下这个项目，去个人主页。这一条与 `useUserRef` 一致。
+   */
+  function resolve(handle: string | null | undefined, projectId?: string | null): ResolvedUserRef {
     if (!handle || !app?.$router) return { name: handle ?? '', to: null }
     const row = store?.members.find((m) => m.user_handle === handle)
-    const pid = app.$route?.params?.projectId as string | undefined
+    const pid = projectId !== undefined ? projectId : (app.$route?.params?.projectId as string | undefined)
     return { name: memberName(row) || handle, to: userRefRoute(handle, pid) }
   }
 
