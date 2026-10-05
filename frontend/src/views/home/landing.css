@@ -278,51 +278,43 @@
   gap: 12px 32px;
 }
 
-/* ---- Manifesto: clauses light up one by one on arrival, beside the film ---- */
+/* ---- Manifesto: clauses light up one by one on arrival, over the film ---- */
 
-/* The film runs off the right edge of the screen, so the section keeps a gutter
-   on the left only, and clips sideways so the film's glow past that edge does
-   not make the page scroll. The film takes the right half of the screen. */
+/* The words on the left; the film in the right half, running off the right
+   edge of the screen and reaching a little past the middle, so its long soft
+   fade passes under the end of the words. The section clips sideways so the
+   film's glow past the screen edge does not make the page scroll. */
 .manifesto {
   display: grid;
   min-height: 100dvh;
   padding: 64px 0 64px var(--gutter);
   overflow-x: clip;
   grid-template-columns: minmax(0, 1fr) 50vw;
-  align-content: center;
-  gap: 64px;
+  align-items: center;
 }
 
-/* The film sets the row's height; the clauses spread over it, so the first
-   starts on the film's caption line and the last ends on the picture's foot. */
 .manifesto-text {
   display: flex;
+  position: relative;
+  z-index: 1;
   flex-direction: column;
-  gap: 0.6em;
-  font-size: max(28px, 3.2vw);
+  gap: 0.5em;
+  font-size: clamp(32px, 3.4vw, 60px);
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.3;
   color: var(--ink);
-}
 
-/* Beside the film the type is sized to its column: the second clause, the
-   longest that keeps to one line, fills it exactly, the first sits on one
-   line too, and the third folds into two lines at its comma. */
-.manifesto:has(.film) .manifesto-text {
-  container-type: inline-size;
-  justify-content: space-between;
-  gap: 4cqi;
+  /* Chinese breaks only at its punctuation, so each clause folds at a comma,
+     into lines of even length rather than leaving a word on its own. */
   word-break: keep-all;
 }
 
-.manifesto:has(.film) .manifesto-clause {
-  font-size: 4.4cqi;
-  white-space: nowrap;
+.manifesto-clause {
+  text-wrap: balance;
 }
 
-.manifesto:has(.film) .manifesto-clause:nth-child(3) {
-  white-space: normal;
-  text-wrap: balance;
+.manifesto .film {
+  margin-left: -10vw;
 }
 
 /* The English page has no film, so the clauses take the row at their full size. */
@@ -366,13 +358,8 @@
     font-size: 28px;
   }
 
-  .manifesto:has(.film) .manifesto-text {
-    gap: 0.6em;
-  }
-
-  .manifesto:has(.film) .manifesto-clause {
-    font-size: inherit;
-    white-space: normal;
+  .manifesto .film {
+    margin-left: 0;
   }
 }
 

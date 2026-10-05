@@ -67,8 +67,12 @@ function rewind() {
 }
 
 /* The caption is the film's way in: the line says what it shows, and the arrow
-   says it plays. */
+   says it plays. It sits under the picture's right-hand side, clear of the
+   words. */
 .film-caption {
+  order: 1;
+  align-self: flex-end;
+  padding-right: var(--gutter, 48px);
   font-size: clamp(18px, 1.5vw, 22px);
   font-weight: 500;
   line-height: 1.4;
@@ -125,14 +129,13 @@ function rewind() {
   height: 100%;
   cursor: pointer;
   object-fit: cover;
-  object-position: 75% 50%;
   filter: var(--film-dim, none);
 
-  /* Feathered all round, widest on the left where it meets the words, so no
-     edge of the frame ever shows; short at the top and foot, so the picture
-     visibly reaches the lines the manifesto starts and ends on. */
-  mask-image: linear-gradient(to right, transparent, var(--ink) 22%, var(--ink) 90%, transparent),
-    linear-gradient(to bottom, transparent, var(--ink) 10%, var(--ink) 92%, transparent);
+  /* A long, soft fade on the left, where it passes under the words, and soft
+     edges top and foot, so no edge of the frame ever shows; the right runs off
+     the screen. */
+  mask-image: linear-gradient(to right, transparent, var(--ink) 35%),
+    linear-gradient(to bottom, transparent, var(--ink) 16%, var(--ink) 84%, transparent);
   mask-composite: intersect;
   transition: filter var(--dur-slow) var(--ease-out);
 }
@@ -150,6 +153,12 @@ function rewind() {
 }
 
 @media (width <= 900px) {
+  .film-caption {
+    order: 0;
+    align-self: flex-start;
+    padding-right: 0;
+  }
+
   .film-video {
     mask-image: linear-gradient(to right, transparent, var(--ink) 16%, var(--ink) 84%, transparent),
       linear-gradient(to bottom, transparent, var(--ink) 20%, var(--ink) 80%, transparent);
