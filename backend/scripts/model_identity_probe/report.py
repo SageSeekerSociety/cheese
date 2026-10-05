@@ -11,11 +11,12 @@ a model's self-report is the one thing an impostor controls for free.
 from __future__ import annotations
 
 import random
-import re
 from dataclasses import dataclass
 
 from . import battery
+from .binding import SeatCheck
 from .collect import collect
+from .model_names import alias_ambiguous, normalize_model_name
 from .reference import Reference
 from .stats import (
     DEFAULT_CONCURRENCY,
@@ -35,50 +36,16 @@ from .verdict import (
     MATCH,
     MISMATCH,
     UNCERTAIN,
+    AdmissionReading,
     BehaviourEvidence,
     ProvenanceEvidence,
     combine,
     decide_jsd_verdict,
 )
 
-#: A trailing snapshot/date suffix a provider pastes onto a model id, like
-#: ``claude-opus-5-5-20250915`` or ``gpt-6-astra-2026-05-01``. The claim the
-#: platform holds ("claude-opus-5-5") is never dated, so a dated wire name is an
-#: alias of the claim, not a different model.
-_SNAPSHOT_SUFFIX = re.compile(r"[-_.]\d{4}(?:[-_.]?\d{2}){1,2}$")
-
-
-def normalize_model_name(name: str | None) -> str | None:
-    """Fold a model id down to the part that must agree.
-
-    Strips a provider prefix (``openai/`` in ``openai/gpt-6-astra``) and a
-    trailing dated snapshot, lowercases, and drops dots/underscores so
-    ``gpt-6.1-sol`` and ``gpt-6-1-sol`` fold together. What is left is the
-    family/stem a claim and a wire name have to share; anything past that
-    (a version, a build) is what the alias rule handles.
-    """
-    if not name:
-        return None
-    base = name.strip().rsplit("/", 1)[-1]
-    base = _SNAPSHOT_SUFFIX.sub("", base)
-    base = base.lower().replace("_", "-").replace(".", "-")
-    return base or None
-
-
-def _alias_ambiguous(claimed: str | None, wire: str | None) -> bool:
-    """Whether two *different* normalized names could still be one model under
-    an alias the tool cannot resolve: one is a token-boundary prefix of the
-    other, e.g. ``claude-opus-5-5`` vs ``claude-opus-5-5-preview`` or
-    ``gpt-6-astra`` vs ``gpt-6-astra-latest``. Those are reported uncertain,
-    never a mismatch -- a naming a human has to settle is not a wrong identity.
-    The boundary check keeps a genuine neighbour (``claude-opus-5-5`` vs
-    ``claude-opus-5-50``) out of the alias bucket."""
-    if not claimed or not wire or claimed == wire:
-        return False
-    shorter, longer = sorted((claimed, wire), key=len)
-    if not longer.startswith(shorter):
-        return False
-    return longer[len(shorter)] == "-"
+#: The name-folding rule lives in ``model_names`` so the wire comparison here
+#: and the admission cross-check in ``verdict`` fold names identically.
+_alias_ambiguous = alias_ambiguous
 
 
 @dataclass
@@ -94,6 +61,7 @@ class Verification:
     tokenizer_samples: int
     expected_pool: str | None = None
     expected_model: str | None = None
+    seat: SeatCheck | None = None
     protocol: str = PROBE_PROTOCOL
 
     def to_json(self) -> dict:
@@ -107,6 +75,16 @@ class Verification:
                 "expected_pool": self.expected_pool,
                 "expected_model": self.expected_model,
             },
+            "seat": (
+                None
+                if self.seat is None
+                else {
+                    "ok": self.seat.ok,
+                    "credential_seat": self.seat.credential_seat,
+                    "session_seat": self.seat.session_seat,
+                    "reason": self.seat.reason,
+                }
+            ),
             "samples": {
                 "behaviour_requests": self.behaviour_samples,
                 "tokenizer_requests": self.tokenizer_samples,
@@ -139,18 +117,30 @@ def build_provenance(
     echo = completion.model_echo
     claimed_norm = normalize_model_name(claimed)
 
+    # Both branches compare with the same normalized rule: an exact string match
+    # and a normalized one are the same judgement (``claude-opus-5-5`` and
+    # ``anthropic/claude-opus-5-5-20250915`` are one model), and a header that
+    # was compared strictly while the echo was compared loosely let the two
+    # disagree on paper without any check noticing.
+    echo_matches = (
+        None if echo is None else normalize_model_name(echo) == claimed_norm
+    )
     if upstream:
-        wire = upstream.rsplit("/", 1)[-1]
-        exact = normalize_model_name(wire) == claimed_norm
-        if exact:
-            verdict = MATCH
-        elif _alias_ambiguous(claimed_norm, normalize_model_name(wire)):
+        upstream_norm = normalize_model_name(upstream)
+        if upstream_norm == claimed_norm:
+            # The header named the claim, but the body echoed something else:
+            # the response is internally inconsistent about its own model, and
+            # the header agreeing must not paper over the body's disagreement.
+            # This is the FB-73 shape seen through a single response.
+            if echo is not None and not echo_matches:
+                verdict = MISMATCH
+            else:
+                verdict = MATCH
+        elif _alias_ambiguous(claimed_norm, upstream_norm):
             verdict = UNCERTAIN
         else:
             verdict = MISMATCH
-        echo_matches = None if echo is None else (echo == claimed)
     elif echo is not None:
-        echo_matches = echo == claimed or normalize_model_name(echo) == claimed_norm
         if echo_matches:
             verdict = MATCH
         elif _alias_ambiguous(claimed_norm, normalize_model_name(echo)):
@@ -161,7 +151,6 @@ def build_provenance(
             # a mismatch, not a hedge.
             verdict = MISMATCH
     else:
-        echo_matches = None
         verdict = UNCERTAIN
     return ProvenanceEvidence(
         claimed_model=claimed,
@@ -202,8 +191,13 @@ def verify(
     seed: int = 20261005,
     expected_pool: str | None = None,
     expected_model: str | None = None,
+    admission: AdmissionReading | None = None,
+    seat: SeatCheck | None = None,
     progress=None,
 ) -> Verification:
+    # The expectation the wire is judged against: the independently-declared
+    # model (operator / seat config) when there is one, else the one under test.
+    # Admission never sets this (R3-1) -- it is only cross-checked below.
     expected_model = expected_model or claimed_model
     cells = (
         tuple(reference.cells)
@@ -254,14 +248,23 @@ def verify(
         temperature=adapter.temperature if adapter is not None else PROBE_TEMPERATURE,
         extra_body=adapter.extra_body if adapter else None,
     )
-    provenance = build_provenance(claimed_model, completion, expected_pool)
+    # The wire is judged against the EXPECTED model -- the independent claim --
+    # not merely the id under test: an --expected-model the wire contradicts is a
+    # mismatch on the wire's own terms (R3-4).
+    provenance = build_provenance(expected_model, completion, expected_pool)
 
     verdict, reason = combine(
-        provenance, behaviour, tokenizer, expected_pool=expected_pool
+        provenance,
+        behaviour,
+        tokenizer,
+        expected_pool=expected_pool,
+        expected_model=expected_model,
+        admission=admission,
+        seat=seat,
     )
     target = f"{endpoint.mode}:{endpoint.model}"
     return Verification(
-        claimed_model,
+        expected_model,
         target,
         verdict,
         reason,
@@ -272,6 +275,7 @@ def verify(
         tokenizer_samples,
         expected_pool=expected_pool,
         expected_model=expected_model,
+        seat=seat,
     )
 
 

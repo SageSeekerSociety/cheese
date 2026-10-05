@@ -2,20 +2,37 @@
 """Is each model really the model it is billed as? -- CLI.
 
 Run from ``backend/`` so the package on ``scripts/`` imports and so the
-backend's own settings resolve the way the server's do:
+backend's own settings resolve the way the server's do. The default mode is
+``seat``: a probe goes over the seat's OWN road (the metering proxy's CONNECT
+listener), which is the road a real turn takes.
 
     cd backend && uv run python scripts/probe_model_identity.py catalog
     cd backend && uv run python scripts/probe_model_identity.py enroll \\
         --models deepseek-flash,mimo-v2.6-pro,gpt-6-astra --preset quick
     cd backend && uv run python scripts/probe_model_identity.py verify \\
-        --models deepseek-flash --reference-dir scripts/model_identity_probe/reference
-    cd backend && uv run python scripts/probe_model_identity.py explain --seat <handle>
+        --expected-model claude-opus-5-5 --expected-pool subscription
+    cd backend && uv run python scripts/probe_model_identity.py explain
 
-``catalog`` / ``enroll`` / ``verify`` speak to the platform's model gateway over
-the same machine path a Codex or Pi harness uses: the seat's own scoped cheese
-token as the Bearer on ``{backend}/llm/v1/...``. Nothing here reads, prints or
-forwards a credential beyond the header it is supposed to ride in, and no probe
-asks a model what it is.
+``verify`` on a seat needs no ``--models``: it takes the model and pool from an
+independent declaration, in this order --
+
+  1. ``--expected-model`` / ``--expected-pool`` on the command line;
+  2. the seat's own saved config, ``GET /topics/{topic}/agent/control``
+     (``state.init.model``), which a room credential may read;
+  3. (last, and today usually empty) the room's own turn record.
+
+``/llm/admission`` is read too, but only as a third party: it is the SAME call
+the metering proxy makes to rewrite the request body and pick the pool, so an
+expectation taken from it would make ``expected == wire`` by construction and
+the FB-73 false response would read as a match. Admission disagreeing with the
+independent declaration is a mismatch, not the declaration.
+
+``catalog`` / ``enroll`` / ``verify`` in ``seat`` mode go over the seat's own
+CONNECT road (``HTTPS_PROXY``, ``CHEESE_CONNECT_TOKEN`` or the tunnel's token
+file); ``--mode gateway`` samples the gateway pool directly with the seat's
+scoped cheese token as the Bearer on ``{backend}/llm/v1/...``. Nothing here
+reads, prints or forwards a credential beyond the header it is supposed to ride
+in, and no probe asks a model what it is.
 """
 
 from __future__ import annotations
@@ -31,7 +48,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx  # noqa: E402
 
 from scripts.model_identity_probe import battery, report  # noqa: E402
+from scripts.model_identity_probe import binding as binding_mod  # noqa: E402
 from scripts.model_identity_probe import reference as reference_mod
+from scripts.model_identity_probe.binding import (  # noqa: E402
+    DeclaredBinding,
+    check_seat,
+)
 from scripts.model_identity_probe.collect import collect  # noqa: E402
 from scripts.model_identity_probe.stats import (  # noqa: E402
     DEFAULT_CONCURRENCY,
@@ -50,13 +72,11 @@ from scripts.model_identity_probe.transport import (  # noqa: E402
 
 
 def _backend() -> str:
-    # CHEESE_API is what the platform injects for the harness's own calls.
-    # CHEESE_BACKEND is not a variable the platform ever sets.
-    return (
-        os.environ.get("CHEESE_API")
-        or os.environ.get("CHEESE_BACKEND")
-        or "http://172.17.0.1:8081"
-    )
+    # CHEESE_API is what the platform injects for the harness's own calls and is
+    # the only base the platform ever supplies. CHEESE_BACKEND is not a variable
+    # the platform sets, so reading it only ever dialled a box-local address that
+    # exists on the backend's host and nowhere else.
+    return os.environ.get("CHEESE_API") or "http://172.17.0.1:8081"
 
 
 def _token() -> str:
@@ -69,20 +89,23 @@ def _token() -> str:
 
 
 def read_binding(args: argparse.Namespace) -> dict:
-    """What the platform says this seat's credential resolves to.
+    """What ``/llm/admission`` says this credential resolves to -- a third party.
 
-    This is the declaration the card and ``agent_turns.route`` are supposed to
-    match: admission resolves the seat named in the credential and answers with
-    the pool and the wire model the turn will actually run on (``supply``). The
-    probe compares that answer -- not the caller's claim -- against what comes
-    back from the wire. It is read, never trusted blindly: the whole point is
-    that this declaration and the wire can disagree (FB-73).
+    Admission resolves the seat named in the credential and answers with the
+    pool and the wire model the turn will run on (``supply``). It is NOT the
+    expectation (R3-1): the metering proxy asks the same endpoint to rewrite the
+    request body and pick the pool, so ``expected == wire`` from this answer
+    would be a tautology, and FB-73's false response would read as a match. Here
+    it is read so it can be cross-checked against the independent declaration.
+
+    ``--child-model``, when set, asks admission to resolve a subagent's model
+    (the ``x-cheese-subagent`` path); the seat's own binding is asked otherwise.
     """
     headers = {"authorization": f"Bearer {_token()}"}
-    seat = getattr(args, "seat", "") or ""
-    if seat:
+    child_model = getattr(args, "child_model", "") or ""
+    if child_model:
         headers["x-cheese-subagent"] = "1"
-        headers["x-cheese-child-model"] = seat
+        headers["x-cheese-child-model"] = child_model
     with httpx.Client(timeout=60, trust_env=False) as client:
         response = client.post(
             f"{_backend().rstrip('/')}/llm/admission", headers=headers, json={}
@@ -99,6 +122,79 @@ def read_binding(args: argparse.Namespace) -> dict:
         "pool": supply.get("pool"),
         "reason": data.get("reason"),
     }
+
+
+def _room_topic(args: argparse.Namespace) -> str:
+    return (getattr(args, "topic", "") or os.environ.get("CHEESE_TOPIC", "")).strip()
+
+
+def read_seat_config_binding(args: argparse.Namespace) -> DeclaredBinding:
+    """The model the seat's own session says it was launched with.
+
+    ``GET /topics/{topic}/agent/control`` answers with the session's
+    ``state.init.model`` -- the "card" side of the binding, and the one a room
+    credential can read (the project-agents route is 403 for it). No pool rides
+    this payload. A failure here is not fatal: it just leaves this source empty
+    and the caller leans on the operator's declaration.
+    """
+    topic = _room_topic(args)
+    if not topic:
+        return DeclaredBinding()
+    try:
+        with httpx.Client(timeout=30, trust_env=False) as client:
+            response = client.get(
+                f"{_backend().rstrip('/')}/topics/{topic}/agent/control",
+                headers={"X-Cheese-Token": _token()},
+            )
+    except httpx.HTTPError:
+        return DeclaredBinding()
+    if response.status_code != 200:
+        return DeclaredBinding()
+    return binding_mod.declared_from_seat_config(response.json().get("data") or {})
+
+
+def read_card_binding(args: argparse.Namespace) -> DeclaredBinding:
+    """The model a room's own turn record declares, if any.
+
+    ``GET /topics/{topic}/blocks`` is readable by a room credential; today the
+    block payload carries no model, so this is usually empty (the room records a
+    turn's *route*, not its model). Read best-effort, and never fatal.
+    """
+    topic = _room_topic(args)
+    if not topic:
+        return DeclaredBinding()
+    try:
+        with httpx.Client(timeout=30, trust_env=False) as client:
+            response = client.get(
+                f"{_backend().rstrip('/')}/topics/{topic}/blocks",
+                params={"limit": 50},
+                headers={"X-Cheese-Token": _token()},
+            )
+    except httpx.HTTPError:
+        return DeclaredBinding()
+    if response.status_code != 200:
+        return DeclaredBinding()
+    body = response.json().get("data") or {}
+    blocks = body.get("data") if isinstance(body, dict) else None
+    return binding_mod.declared_from_card(blocks or [])
+
+
+def read_declared_binding(args: argparse.Namespace) -> DeclaredBinding:
+    """The expected binding, from independent sources -- never from admission.
+
+    Precedence, most trusted first: the operator's ``--expected-model`` /
+    ``--expected-pool``; the seat's own saved config (``agent/control``); the
+    room's turn record/card. Each fills only the fields the ones before it left
+    empty.
+    """
+    declared = binding_mod.declared_from_operator(
+        getattr(args, "expected_model", ""), getattr(args, "expected_pool", "")
+    )
+    if not (declared.model and declared.pool):
+        declared = declared.merged(read_seat_config_binding(args))
+    if not (declared.model and declared.pool):
+        declared = declared.merged(read_card_binding(args))
+    return declared
 
 
 def cmd_catalog(args: argparse.Namespace) -> int:
@@ -201,25 +297,39 @@ def cmd_enroll(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    # The pool/model the platform declares for this credential. On the seat
-    # road this is the whole comparison: admission rewrites the request body to
-    # ``supply.model`` on the way out, so a response that comes back from the
-    # other pool, or under another model, is the FB-73 disagreement -- caught
-    # with no reference fingerprint at all.
-    expected_pool = args.expected_pool
-    expected_model = args.expected_model
-    if args.mode == "seat" and (not expected_pool or not expected_model):
-        binding = read_binding(args)
-        expected_pool = expected_pool or binding.get("pool")
-        expected_model = expected_model or binding.get("model")
-        if not args.models and expected_model:
-            # No --models given: verify the model the binding names.
-            args.models = [expected_model]
+    # The expectation comes from an INDEPENDENT source, never from admission
+    # (R3-1): admission is the same call the metering proxy makes to rewrite the
+    # request body and pick the pool, so taking it as the expectation makes
+    # expected == wire by construction and FB-73's false response a match.
+    declared = read_declared_binding(args)
+    expected_pool = declared.pool
+    expected_model = declared.model
+    if not expected_model and args.models:
+        # No independent model declared: the operator's --models IS the claim.
+        expected_model = args.models[0]
+        if declared.source == "none":
+            declared = DeclaredBinding(
+                model=expected_model, pool=None, source="operator"
+            )
+    if not args.models and expected_model:
+        # No --models given: verify the model the declaration names.
+        args.models = [expected_model]
     if args.mode == "seat" and not args.models:
         raise SystemExit(
-            "seat mode needs a model: pass --models, or a binding admission "
-            "can resolve (the credential's seat)"
+            "seat mode needs a model: pass --models or --expected-model, or a "
+            "seat whose saved config names one"
         )
+
+    # The seat check: the credential's own seat claim vs the seat this session
+    # is. FB-73's root cause is exactly this disagreement (R3-1/2), and it is a
+    # mismatch on its own, independent of any wire or admission answer.
+    seat = check_seat(_token(), getattr(args, "seat", ""), None)
+
+    # Admission, read only as a third party (see read_binding). Its disagreement
+    # with the declaration is a mismatch in `combine`.
+    admission = None
+    if args.mode == "seat":
+        admission = report.AdmissionReading.from_mapping(read_binding(args))
 
     references = {}
     for model in args.models:
@@ -241,14 +351,43 @@ def cmd_verify(args: argparse.Namespace) -> int:
             concurrency=args.concurrency,
             seed=args.seed,
             expected_pool=expected_pool,
-            expected_model=expected_model,
+            expected_model=expected_model or endpoint.model,
+            admission=admission,
+            seat=seat,
         ).to_json()
         results.append(result)
         print(
             f"[verify] {result['model']}: {result['verdict']} -- {result['reason']}",
             file=sys.stderr,
         )
-    print(json.dumps({"results": results}, ensure_ascii=False, indent=2))
+    payload = {
+        "declaration": {
+            "expected_model": expected_model,
+            "expected_pool": expected_pool,
+            "source": declared.source,
+        },
+        "seat": (
+            None
+            if seat is None
+            else {
+                "ok": seat.ok,
+                "credential_seat": seat.credential_seat,
+                "session_seat": seat.session_seat,
+                "reason": seat.reason,
+            }
+        ),
+        "admission": (
+            None
+            if admission is None
+            else {
+                "model": admission.model,
+                "pool": admission.pool,
+                "allow": admission.allow,
+            }
+        ),
+        "results": results,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if all(r["verdict"] != "mismatch" for r in results) else 2
 
 
@@ -296,12 +435,43 @@ def build_parser() -> argparse.ArgumentParser:
         "--expected-pool",
         default="",
         choices=["", "subscription", "gateway"],
-        help="override the pool the binding names (seat mode reads it by default)",
+        help=(
+            "the pool this seat is declared to run on (highest-trust source; "
+            "defaults to the seat's saved config)"
+        ),
     )
     common.add_argument(
         "--expected-model",
         default="",
-        help="override the model the binding names (seat mode reads it by default)",
+        help=(
+            "the model this seat is declared to run on (highest-trust source; "
+            "defaults to the seat's saved config). Enters the verdict."
+        ),
+    )
+    common.add_argument(
+        "--seat",
+        default="",
+        help=(
+            "the seat this session IS (its handle). Compared against the seat "
+            "the credential's own 'a' claim names; a disagreement is the FB-73 "
+            "mismatch. Defaults to CHEESE_AUTHOR from the environment."
+        ),
+    )
+    common.add_argument(
+        "--child-model",
+        default="",
+        help=(
+            "ask admission to resolve a subagent's model instead of the seat's "
+            "own binding (the x-cheese-subagent path)"
+        ),
+    )
+    common.add_argument(
+        "--topic",
+        default="",
+        help=(
+            "the conversation whose seat config/record to read for the expected "
+            "binding; defaults to CHEESE_TOPIC"
+        ),
     )
     common.add_argument(
         "--preset", choices=sorted(battery.PROBE_PRESETS), default="quick"
@@ -316,11 +486,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "verify", parents=[common], help="verify endpoints against references"
     )
-    explain = sub.add_parser(
-        "explain", help="ask admission which pool/model a seat resolves to"
-    )
-    explain.add_argument(
-        "--seat", default="", help="catalog model id; omit for the seat's own binding"
+    sub.add_parser(
+        "explain",
+        parents=[common],
+        help="ask admission which pool/model a seat resolves to",
     )
     return parser
 

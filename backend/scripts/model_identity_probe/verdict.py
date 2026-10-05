@@ -23,8 +23,12 @@ tokenizer alone can differ across two deployments of the same model family.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
+from .binding import SeatCheck
+from .model_names import alias_ambiguous, normalize_model_name
 from .stats import (
     JSD_MATCH_THRESHOLD,
     JSD_MISMATCH_THRESHOLD,
@@ -39,6 +43,38 @@ UNCERTAIN = "uncertain"
 INSUFFICIENT = "insufficient"
 
 _RANK = {MATCH: 0, INSUFFICIENT: 1, UNCERTAIN: 2, MISMATCH: 3}
+
+
+def _admission_conflict(
+    admission: AdmissionReading | None,
+    expected_model: str | None,
+    expected_pool: str | None,
+) -> str | None:
+    """A mismatch reason when admission resolved elsewhere than expected, else None.
+
+    Admission drives the metering proxy's body rewrite and pool choice, so if it
+    answers with a different model or pool than the seat is declared to be, the
+    turn will run as the admission's answer -- the FB-73 disease, whatever the
+    credential was signed for. An unknown on either side is not a conflict; only
+    a positive disagreement is.
+    """
+    if admission is None:
+        return None
+    if expected_model and admission.model:
+        want = normalize_model_name(expected_model)
+        got = normalize_model_name(admission.model)
+        if want != got and not alias_ambiguous(want, got):
+            return (
+                f"the seat is declared as {expected_model!r} but admission "
+                f"resolved it to {admission.model!r} (the credential or its "
+                "resolution is wrong, and the turn will run as the admission's)"
+            )
+    if expected_pool and admission.pool and admission.pool != expected_pool:
+        return (
+            f"the seat is declared on the {expected_pool} pool but admission "
+            f"resolved it to the {admission.pool} pool"
+        )
+    return None
 
 
 def decide_jsd_verdict(mean: float | None, comparable_cells: int) -> str:
@@ -120,12 +156,44 @@ class ProvenanceEvidence:
         }
 
 
+@dataclass(frozen=True)
+class AdmissionReading:
+    """What ``/llm/admission`` answered, kept as a third party -- not the truth.
+
+    Admission is the same call the metering proxy makes to rewrite the request
+    body and pick the pool, so an expectation taken from it is a tautology:
+    ``expected == wire`` by construction and FB-73's false answer reads as a
+    match (R3-1). It is compared *against* the independent expectation instead,
+    and a disagreement is a mismatch -- the credential resolved to one thing
+    while the seat is declared to be another.
+    """
+
+    model: str | None = None
+    pool: str | None = None
+    allow: bool | None = None
+
+    @classmethod
+    def from_mapping(cls, binding: Mapping[str, Any] | None) -> AdmissionReading | None:
+        if not isinstance(binding, Mapping):
+            return None
+        model = binding.get("model")
+        pool = binding.get("pool")
+        return cls(
+            model=model if isinstance(model, str) and model else None,
+            pool=pool if isinstance(pool, str) and pool else None,
+            allow=binding.get("allow"),
+        )
+
+
 def combine(
     provenance: ProvenanceEvidence | None,
     behaviour: BehaviourEvidence | None,
     tokenizer: TokenizerEvidence | None,
     *,
     expected_pool: str | None = None,
+    expected_model: str | None = None,
+    admission: AdmissionReading | None = None,
+    seat: SeatCheck | None = None,
 ) -> tuple[str, str]:
     """Return (verdict, reason).
 
@@ -141,10 +209,23 @@ def combine(
         downgraded to uncertain;
       * otherwise the behavioural and tokenizer signals decide, as before.
 
-    ``expected_pool`` is the pool the *binding* names (subscription/gateway). A
-    response whose headers say a different pool is the FB-73 shape caught
-    without any reference fingerprint.
+    ``expected_pool`` / ``expected_model`` are what the *independent* source
+    (the operator, or the seat's own saved config) declares the seat should be.
+    They are the expectation; ``admission`` is only a third party cross-checked
+    against them. A response whose headers say a different pool than the seat is
+    bound to is the FB-73 shape caught without any reference fingerprint.
+
+    Two deterministic disagreements are FB-73's own, and each is a mismatch on
+    its own -- either one alone catches the case, which is what keeps the probe
+    honest when the other source is unavailable:
+
+      * the credential was signed for a different seat than this session is
+        (``seat``); and
+      * admission resolved the request to a different model or pool than the
+        seat is declared to be (``admission`` vs ``expected_*``).
     """
+    if seat is not None and not seat.ok:
+        return MISMATCH, seat.reason
     if provenance is not None and provenance.verdict == MISMATCH:
         return MISMATCH, "the upstream named a different model than the one claimed"
     if (
@@ -157,6 +238,9 @@ def combine(
             f"the seat is bound to the {expected_pool} pool but the response "
             f"came back from the {provenance.pool} pool"
         )
+    conflict = _admission_conflict(admission, expected_model, expected_pool)
+    if conflict is not None:
+        return MISMATCH, conflict
     if behaviour is None:
         # No reference: the deterministic signals still decide. The wire model
         # and pool agreeing is weaker than a behavioural match, but it is a
@@ -176,11 +260,20 @@ def combine(
     if behaviour.verdict == MISMATCH:
         return MISMATCH, "the answer distribution differs from the reference"
     if behaviour.verdict == MATCH and behaviour.unstable_routing:
+        # A hand-built evidence may set the flag without the statistic; the
+        # threshold is on the statistic, so format it defensively rather than
+        # raise on ``None``.
+        self_check = (
+            "no split-half statistic was computed"
+            if behaviour.split_half_mean is None
+            else (
+                f"{behaviour.split_half_mean:.4f} > {SPLIT_HALF_WARN_THRESHOLD}"
+            )
+        )
         return UNCERTAIN, (
             "the answer distribution matches on average, but the split-half "
             "self-check is above the instability threshold "
-            f"({behaviour.split_half_mean:.4f} > {SPLIT_HALF_WARN_THRESHOLD}); "
-            "the endpoint may be rotating between backends"
+            f"({self_check}); the endpoint may be rotating between backends"
         )
     if (
         behaviour.verdict == MATCH
