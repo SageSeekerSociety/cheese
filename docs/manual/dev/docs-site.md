@@ -34,6 +34,8 @@ covers:
 - **空**：平台的 server 在 `/docs/` 下发 `/docs` 那份（`under-platform.conf`）。
 - **设了**：文档站自己一个 server（`host.conf`，`server_name` 是那个域名），只放行 `/api/docs/` 这一段接口；平台的 `/docs/…` 一律 301 到文档站同一页（`redirect.conf`，查询串照带，`#小节` 浏览器自己保留）。网上只有一份在发，旧链接全落到新地址。
 
+okcheese.com 这个部署配的是 `DOCS_ORIGIN=https://docs.okcheese.com`：文档站在 `https://docs.okcheese.com/`，`https://okcheese.com/docs/…` 一律 301 到那里。这个域名从公网怎么进来（DNS、香港机器上的 Caddy）见 `docs/infrastructure.md` 的「Public edge」一节。
+
 后端读的也是正在发的那一份：`sections.json` 里的 `url` 都是站内路径（`/accept#is-merge`），两份构建一样，后端要给人看的链接再拼上文档站的地址（`docs_site/site.py`）。
 
 - 每个地址都是一个预渲染好的 HTML 文件，`src/app.js` 只负责交互：搜索、问芝士、深浅色和交互演示。
