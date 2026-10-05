@@ -11,7 +11,6 @@ import type {
   BranchProtectionRules,
   ChatAttachment,
   DocumentRevision,
-  DocumentTemplate,
   EnvironmentConfig,
   EnvironmentStatus,
   FeedbackCard,
@@ -53,7 +52,6 @@ import type {
   ProjectSite,
   ProjectSiteInfo,
   ReactionAgg,
-  RoomOutput,
   RoomTask,
   Topic,
   TopicMemberRow,
@@ -68,6 +66,7 @@ import type {
 import type { DocComment } from './lib/docThreadTypes'
 import type { AgentFieldChoice } from './lib/modelChoices'
 import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from './types/compute'
+import type { DocumentTemplate, RoomOutput } from './types/roomOutput'
 import type { SitePage } from './types/site'
 
 import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'

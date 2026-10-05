@@ -11,7 +11,7 @@
  * 所以这里喂数据、递替身，不看请求。「一轮结束时重读列表」在那只组合式函数的用例里。
  */
 import type { Component } from 'vue'
-import type { DocumentTemplate, RoomOutput } from '@/cx_types'
+import type { DocumentTemplate, RoomOutput } from '@/types/roomOutput'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'

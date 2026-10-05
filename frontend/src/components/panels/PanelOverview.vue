@@ -10,8 +10,9 @@
 import type { DocPeopleBundle } from '../../composables/useDocPeople'
 import type { DocThreadsBundle } from '../../composables/useDocThreads'
 import type { PanelDocBundle } from '../../composables/usePanelDoc'
-import type { Block, DocumentTemplate, RoomOutput, RoomTask, TodoItem, Topic } from '../../cx_types'
+import type { Block, RoomTask, TodoItem, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
+import type { DocumentTemplate, RoomOutput } from '../../types/roomOutput'
 
 import { defineAsyncComponent, ref, watch } from 'vue'
 

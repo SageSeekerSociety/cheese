@@ -9,7 +9,8 @@
 // - 看板：切到这一格、或者一轮结束时重取（`active` / `refreshTick`）。
 // - 进度：进房间取一次，之后每轮结束重取一次。
 // - 产物：进房间取一次、换房间重取、每轮结束重取——一轮结束时房间里可能刚摆出一样东西。
-import type { Block, DocumentTemplate, RoomOutput, RoomTask, TodoItem, Topic } from '../cx_types'
+import type { Block, RoomTask, TodoItem, Topic } from '../cx_types'
+import type { DocumentTemplate, RoomOutput } from '../types/roomOutput'
 
 import { ref, watch } from 'vue'
 

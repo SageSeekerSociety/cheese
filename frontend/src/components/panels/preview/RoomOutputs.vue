@@ -17,7 +17,7 @@
 // 在预览那一格的底部，和预览抢高度；预览那一格现在只放预览。小标题那一行是折叠开
 // 关，摊开后列表有高度上限、自己滚，不把上面的文档挤没。
 import type { MenuAction } from '@/components/common/menuAction'
-import type { DocumentTemplate, RoomOutput } from '@/cx_types'
+import type { DocumentTemplate, RoomOutput } from '@/types/roomOutput'
 
 import { computed, ref, useId, watch } from 'vue'
 

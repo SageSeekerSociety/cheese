@@ -14,12 +14,12 @@ import type {
   BoardPhrase,
   FileContent,
   PreviewInfo,
-  RoomOutput,
   RoomTask,
   TodoItem,
   TopicProgress,
   WorkspaceFile,
 } from '@/cx_types'
+import type { RoomOutput } from '@/types/roomOutput'
 import type { ChangesScene, Frame, OverviewScene, PreviewScene, SceneTask } from './demoScene'
 
 import { answer } from './demoBackend'

@@ -7,7 +7,7 @@
 // 结果（三包状态和动作）原样递下去。
 //
 // 外壳只能待在这儿：`components/panels/**` 底下每个 SFC 都是场景，包括外壳自己，所以它
-// 得站在场景之外；`components/**` 又不许直接 import 接口层（`pnpm run lint:boundary`），
+// 得站在场景之外；`components/**` 又不许直接连接口层（`pnpm run lint:boundary`），
 // 所以取数走 `composables/`。同一条理由见 `components/routine/RoutinePanelHost.vue`。
 //
 // 三个调用点：工作面板自由区的资料库文档页签（一个页签一只，所以外壳按页签渲染）、
