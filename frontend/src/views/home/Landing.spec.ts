@@ -135,17 +135,68 @@ describe('公开首页', () => {
     expect(solutions.getByRole('link', { name: '方案' }).getAttribute('aria-current')).toBe('page')
   })
 
-  it('shows the film silently, and plays it from the start with sound when asked', async () => {
+  it('types one kind of project after another in front of 项目, and always comes back to the sentence', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const t = (key: string) => i18n.global.t(`publicSite.${key}`)
+      const sentence = t('positioning')
+      const home = await mount()
+      const line = home.getByText(sentence).closest('p')!
+      const visible = () => line.querySelector('[aria-hidden="true"]:not(.hero-mod-sizer)')!.textContent!
+      expect(visible()).toBe(sentence)
+
+      const frames: string[] = []
+      for (let ms = 0; ms < 40000; ms += 100) {
+        await vi.advanceTimersByTimeAsync(100)
+        frames.push(visible())
+      }
+      // Only the word in front of 项目 ever changes.
+      for (const frame of frames) {
+        expect(frame.startsWith(t('heroBefore'))).toBe(true)
+        expect(frame.endsWith(t('heroAfter'))).toBe(true)
+      }
+      const shown = [1, 2, 3, 4, 5, 6].map((i) => frames.indexOf(t('heroBefore') + t(`heroKind${i}`) + t('heroAfter')))
+      expect(shown.every((at) => at >= 0)).toBe(true)
+      expect(frames.indexOf(sentence, Math.max(...shown))).toBeGreaterThan(Math.max(...shown))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('starts the sentence over in the new language when the language changes mid-cycle', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const home = await mount()
+      const zh = i18n.global.t('publicSite.positioning')
+      const line = home.getByText(zh).closest('p')!
+      const visible = () => line.querySelector('[aria-hidden="true"]:not(.hero-mod-sizer)')!.textContent!
+      await vi.advanceTimersByTimeAsync(6000)
+      expect(visible()).not.toBe(zh)
+      await fireEvent.click(home.getByRole('button', { name: 'Switch to English' }))
+      expect(visible()).toBe(i18n.global.t('publicSite.positioning'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the film on its poster, and plays it from the start with sound and no player controls when asked', async () => {
     const home = await mount()
-    const video = home.getByRole('region', { name: '影片：众智成事' }).querySelector('video')!
-    expect(video.muted).toBe(true)
+    const video = home.getByRole('figure', { name: '影片：众智成事' }).querySelector('video')!
+    expect(video.paused).toBe(true)
     expect(video.controls).toBe(false)
     video.currentTime = 12
-    await fireEvent.click(home.getByRole('button', { name: /有声观看/ }))
+    const caption = i18n.global.t('publicSite.filmCaption')
+    await fireEvent.click(home.getByRole('button', { name: caption }))
     expect(video.muted).toBe(false)
     expect(video.currentTime).toBe(0)
-    expect(video.controls).toBe(true)
-    expect(home.queryByRole('button', { name: /有声观看/ })).toBeNull()
+    expect(video.controls).toBe(false)
+    expect(home.queryByRole('button', { name: caption })).toBeNull()
+  })
+
+  it('leaves the Chinese-only film off the English page', async () => {
+    setLocale('en')
+    const home = await mount()
+    expect(home.queryByRole('figure', { name: /Film/ })).toBeNull()
   })
 
   it('leads to the download page, which offers every build from this site, not from GitHub', async () => {
