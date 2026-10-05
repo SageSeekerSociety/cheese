@@ -47,7 +47,7 @@ function toolEvent(content: string, meta?: Record<string, unknown>): Block {
   return {
     id: 'e1',
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-t1',
@@ -75,7 +75,7 @@ beforeEach(() => {
 async function verbOf(block: Block): Promise<{ verb: string; arg: string; text: string }> {
   getTranscript.mockResolvedValue({ data: [block], total: 1 })
   const { container } = render(Site, {
-    props: { topic, active: true },
+    props: { topicId: topic.id, active: true },
     global: { plugins: [vuetify] },
   })
   await waitFor(() => expect(container.querySelector('.site-act__verb')).not.toBeNull())

@@ -24,7 +24,6 @@
 
 import hashlib
 import re
-import uuid
 from dataclasses import dataclass
 
 from app.domain.agent.skills import load_skills
@@ -299,8 +298,9 @@ PLATFORM_RULES = (
     "只传 `find`。不要自己提取凭据拼 curl 或裸 HTTP 请求，不翻 home、会话文件、"
     "`.git` 内部和系统目录。参数拿不准就看工具的定义或 `--help`，不要瞎试。\n"
     f"{SHARED_CHECKOUT}\n"
-    "- 改项目仓库里的文件、要交出任何东西之前，先开一条任务。怎么开、怎么交，在 "
-    "`cheese` 技能里，开任务前先加载它。\n"
+    "- 改项目仓库里的文件、交出东西，在任务里做。任务由人创建：你在房间里时，"
+    "用 `cheese_task` 提议一个，等人创建。怎么提议、怎么交，在 `cheese` 技能里，"
+    "先加载它。\n"
     "- 用户问这个平台怎么用，先用 `cheese_docs_search` 查官方说明书再答，不凭印象。\n"
     "- 会话可能是新开的：不记得之前聊过什么时，用 `cheese_chat_list`、"
     "`cheese_chat_search` 读记录，不要猜，也不要问人「之前说到哪了」。\n"
@@ -335,7 +335,8 @@ DOC_SECTION = (
     "提醒你，改之前先用 `cheese_doc_get` 读最新一版。还没有文档时，由在这个话题里"
     "干活的 AI 队友来建，不论你是哪个队友：等话题的目标或第一条结论清楚了（通常就在"
     "当轮），先 `cheese_doc_get`，再用 `cheese_doc_set` 建第一版。只是寒暄或一句话"
-    "就答完的问题不用建。"
+    "就答完的问题不用建。有人要一份单独的文档（调研、方案、清单）时，用 "
+    "`cheese_doc_new` 建在项目资料库里，别写进实况文档。"
 )
 
 
@@ -572,25 +573,26 @@ def build_session_opening(
     return SessionOpening(sections)
 
 
-def thread_relay_prompt(
-    *, task_id: uuid.UUID, task_title: str, author: str, message: str
-) -> str:
-    """The ROOM's wake-up instruction when a person says something on one of its
-    threads — a chat message, a comment on its living doc.
-
-    Same reason as 补证据 and 讨论升级: the person is looking at the thread, but
-    the worker doing it lives in the room's session, so the room is the only
-    thing that can hear them. What was said stays where it was said — this only
-    says who has to act on it.
-    """
+def task_opening_prompt(*, title: str, owner: str | None, source: str) -> str:
+    """What a new task's agent is told first: where the task came from, and to
+    draft the task's document from it before anything else."""
+    who = f"负责人是 @{owner}。" if owner else ""
     return (
-        f"有人在活「{task_title}」（task id `{task_id}`）上说话了：\n\n"
-        f"---\n[{author}] {message}\n---\n\n"
-        "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
-        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身，新分身的"
-        "prompt 里照旧写这条活的线程标识。"
-        "回话说在这条活上（`cheese_tell`），别只在房间里说，"
-        "问话的人看的是那边。"
+        f"这里是任务「{title}」，{who}它从房间里的讨论中创建：\n\n"
+        f"---\n{source}\n---\n\n"
+        "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入：目标、现状、"
+        "需要谁做什么、已确定、待决；讨论里否掉的做法写进已确定，标明不采用及原因。"
+        "任务还没有名字的话，用 cheese_title 起一个。然后用 chat_send 在任务里和负责人"
+        "确认还没定的细节。负责人点「开始」之前，你只讨论、写文档，不改动项目。"
+    )
+
+
+def task_started_prompt(*, title: str, actor: str) -> str:
+    """What a task's agent is told when its owner starts it."""
+    return (
+        f"@{actor} 开始了任务「{title}」。从现在起你可以改动项目：按实况文档动手，"
+        "在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
+        "做的过程中要求变了，就改实况文档；要人决定的事，在任务里问负责人。"
     )
 
 
@@ -612,7 +614,6 @@ def publication_prompt(content: str) -> str:
             "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
             "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
             "重要进展、改方向、阻碍和完成结果也要主动发消息。"
-            "分身向主 agent 回报。"
         )
     )
 

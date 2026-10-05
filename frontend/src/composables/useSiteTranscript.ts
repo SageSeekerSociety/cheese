@@ -16,7 +16,7 @@ import { t } from '@/i18n'
 
 /** 外面那一格和这一窗之间的接线：谁在滚、现在读的是谁、读回来的人往哪儿记。 */
 export interface SiteTranscriptHooks {
-  /** 现在开着哪个话题（没开就是 null）。 */
+  /** 现在开着哪段对话：房间的，或者任务的（没开就是 null）。 */
   topicId: () => string | null
   /** 现在看的是谁：null = 全部（同 PanelSite 的 `viewing`）。 */
   viewing: () => string | null
@@ -224,11 +224,12 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
 
   /**
    * socket 上来的一行（对话栏收到，一路转过来）：新的接在末尾，已有的原地换掉。
-   * 别的话题的、分身卡上的、不是事件的，都不归这一栏。只看一个队友时，别人的行
+   * 别的话题的、别的对话（房间或任务）的、不是事件的，都不归这一栏。只看一个队友时，别人的行
    * 也不归这一栏——手上这条时间线就是那个人的。
    */
   function receive(block: Block): void {
-    if (block.topic_id !== hooks.topicId() || block.kind !== 'event' || block.task_id) return
+    // 一行属于哪段对话：任务里的带着任务的 id，房间自己的没有。
+    if (block.conversation_id !== hooks.topicId() || block.kind !== 'event') return
     // 名册先记上：别的队友在干活，tab 得出现（切过去时才读得到它的记录）。
     hooks.noteAgents([block])
     const viewing = hooks.viewing()

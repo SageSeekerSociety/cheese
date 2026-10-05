@@ -30,7 +30,7 @@ import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import dayjs from 'dayjs'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -246,10 +246,31 @@ describe('取数', () => {
     expect(view.container.textContent).not.toContain('请尝试调整筛选条件')
   })
 
-  it('取数失败退成空态，不是一直转圈', async () => {
+  // 这一条原来说的是「取数失败退成空态，不是一直转圈」。空态是**替服务端说**了一
+  // 句「这个团队一条资料都没有」—— 而它其实什么都没读到。现在失败留在原地：说没
+  // 读到、给一条重试的路，空态那句话不再出现。
+  it('取数失败留在原地说明并给重试，不是一直转圈、也不是「暂无内容」', async () => {
     listMock.mockRejectedValue(new Error('炸了'))
     const view = mount()
-    expect(await view.findByText('知识库暂无内容')).toBeTruthy()
+
+    await waitFor(() => expect(view.container.querySelector('.base-load-error')).toBeTruthy())
+    const block = view.container.querySelector('.base-load-error') as HTMLElement
+    expect(view.queryByText('知识库暂无内容')).toBeNull()
+    expect(view.container.querySelector('.loading-container')).toBeNull()
+
+    await fireEvent.click(within(block).getByRole('button'))
+    await waitFor(() => expect(listMock).toHaveBeenCalledTimes(2))
+  })
+
+  it('403 说的是「没权限」，并且不给一颗按不动的重试', async () => {
+    listMock.mockRejectedValue(Object.assign(new Error('nope'), { status: 403 }))
+    const view = mount()
+
+    await waitFor(() => expect(view.container.querySelector('.base-load-error')).toBeTruthy())
+    const block = view.container.querySelector('.base-load-error') as HTMLElement
+    expect(block.textContent).toContain('你没有权限查看')
+    expect(within(block).queryByRole('button')).toBeNull()
+    expect(view.queryByText('知识库暂无内容')).toBeNull()
   })
 })
 

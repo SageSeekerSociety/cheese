@@ -51,7 +51,7 @@ def _merge_card(client, room_id: str, *, again=False, **body):
     """递一张交出去这次合并本身的卡 —— `deliver` / `deliver_url` 都不给。"""
     task = delivery_task(client, room_id, new=again)
     response = client.post(
-        f"/topics/{room_id}/tasks/{task.id}/accept-card",
+        f"/topics/{task.id}/accept-card",
         headers=delivery_headers(client, room_id),
         json={
             "change_subject": "feat(space): members and invite codes",

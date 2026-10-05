@@ -111,7 +111,8 @@ async def upload_attachment(
     `origin="clipboard"` says the bytes came off the clipboard — they stay in
     this room, because a pasted screenshot has no name of its own to be filed
     under."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await TopicService(db).place_or_404(topic_id)).room
     await resolver.require_verified_caller(
         project_id=topic.project_id, topic_id=topic_id
     )
@@ -119,6 +120,7 @@ async def upload_attachment(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    topic_id = topic.id
     if (file is None) == (library_path is None):
         raise ValidationError(say("attachmentOneSource"))
     if library_path is not None:
@@ -169,7 +171,8 @@ async def attachment_raw(
 ) -> Response:
     """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
     to images so this can never serve executable HTML from the worktree."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await TopicService(db).place_or_404(topic_id)).room
     if download:
         await resolver.require_verified_caller(
             project_id=topic.project_id, topic_id=topic_id
@@ -178,6 +181,7 @@ async def attachment_raw(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    topic_id = topic.id
     clean = clean_artifact_path(path)
     suffix = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
     mime = _EXT_IMAGE_MIME.get(suffix)
@@ -221,11 +225,13 @@ async def attachment_as_pdf(
     apart and throws away the cell addresses, which are the only thing anyone can
     point at afterwards. Those are drawn from the original bytes instead.
     """
-    topic = await TopicService(db).get_or_404(topic_id)
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await TopicService(db).place_or_404(topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    topic_id = topic.id
     clean = clean_artifact_path(path)
     if not is_renderable(clean):
         raise ValidationError(say("previewFormatUnsupported"))

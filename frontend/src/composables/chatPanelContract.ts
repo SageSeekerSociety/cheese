@@ -6,6 +6,7 @@
 // list of events is neither.
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest } from '../lib/docReview'
+import type { OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 
 /** The events this panel surfaces to whoever owns the address it is rendered at. */
@@ -48,16 +49,19 @@ export interface ChatPanelEmit {
   // topic/doc → open that topic).
   (e: 'mention-click', name: string): void
   // A <&path> file chip was clicked — the parent opens it in the 文件 drawer.
-  (e: 'open-file', path: string, taskId?: string | null): void
+  (e: 'open-file', path: string): void
   // An action card's button (doc → highlight the turn, or review the changes
   // someone asked the agent for; changes → diff tab…).
-  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
 }
 
 /** Everything the panel reads off its props, as accessors: a composable is not
  *  re-run when a prop changes, it reads the current value when it needs it. */
 export interface ChatPanelOptions {
   topic: () => Topic | null
+  /** 读的是这个房间里的一段别的对话（一个任务）：消息、连接、发送都走它；名册、
+   *  附件仍是房间的。没有就是房间自己。 */
+  conversationId?: () => string | null
   alwaysSummon: () => boolean
   showComposer: () => boolean
   members: () => ProjectMemberRow[]

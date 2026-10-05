@@ -12,27 +12,27 @@ materials（引用校验）,所以它按 `ensure_teaching_references` 交代的�
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.spaces import TeachingRequest
+from app.api.routes.spaces import TeachingRequest, teaching_to_api
 from app.core.errors import BadRequestError
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService
 from app.domain.space.services import ensure_teaching_references
 from app.domain.task.models import Task
+from app.domain.task.protocol import Teaching
 
 
 def read_task_teaching(task: Task) -> dict:
-    """This 题目's own 「给 AI 队友的指导」(#944), or `{}`.
+    """This 题目's own 「给 AI 队友的指导」(#944), in the response shape.
 
-    Read straight off `protocol_override["teaching"]` — the raw stored dict, the
-    same shape `Space.teaching` and `SpaceCategory.teaching` are reported in.
-    `protocol_override` is free-form and may hold other keys, so only the one
-    this feature owns is reported; anything else stays internal.
+    Read off `protocol_override["teaching"]` — this level's own override, not
+    the resolved winner — and reported through `teaching_to_api`, as
+    `Space.teaching` and `SpaceCategory.teaching` are. `protocol_override` is
+    free-form and may hold other keys, so only the one this feature owns is
+    reported; anything else stays internal.
     """
     override = getattr(task, "protocol_override", None)
-    if not isinstance(override, dict):
-        return {}
-    teaching = override.get("teaching")
-    return teaching if isinstance(teaching, dict) else {}
+    raw = override.get("teaching") if isinstance(override, dict) else None
+    return teaching_to_api(Teaching.from_json(raw))
 
 
 def coerce_teaching(raw: object) -> dict | None:

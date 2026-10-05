@@ -109,7 +109,7 @@ def test_a_platform_command_called_as_a_tool_is_platform():
     outside the machine — the one distinction the dot exists to draw, drawn
     backwards, in the rooms where it mattered.
     """
-    assert _is_platform_tool("cheese_doc_set", {"path": "notes.md"})
+    assert _is_platform_tool("cheese_doc_set", {"content": "# 实况"})
     assert _is_platform_tool("cheese_accept_request", {"subject": "fix: x"})
     # The alias the room's own system prompt names on every turn.
     assert _is_platform_tool("chat_send", {"content": "第一版好了"})

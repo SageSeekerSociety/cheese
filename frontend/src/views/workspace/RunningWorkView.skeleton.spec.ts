@@ -94,10 +94,10 @@ describe('活还在路上的看板', () => {
       expect(
         container.querySelectorAll('.board-col [role="status"][aria-busy="true"]').length,
         '每一列都该说出自己在等'
-      ).toBe(3)
+      ).toBe(4)
     )
     // 板的框架和活无关，所以它没有理由等：列头在这一刻就已经是最终的样子。
-    expect(columnNames(container)).toEqual(['施工中', '交付中', '待处理', '做出了什么'])
+    expect(columnNames(container)).toEqual(['未开始', '进行中', '检查中', '待处理', '做出了什么'])
     expect(container.querySelector('.v-progress-circular'), '板的形状是已知的，不该用转圈').toBeNull()
 
     gate.resolve({ data: [task()], total: 1 })

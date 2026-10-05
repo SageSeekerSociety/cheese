@@ -36,7 +36,8 @@ import { vRovingTabs } from '@/lib/rovingTabs'
 
 const props = withDefaults(
   defineProps<{
-    topic: Topic | null
+    // 这段对话的 id：房间的，或者任务的。
+    topicId: string | null
     // This tab is the one on screen. Load happens on the rising edge, exactly
     // like opening the old drawer did.
     active?: boolean
@@ -71,7 +72,7 @@ const props = withDefaults(
 const logId = `site-log-${useId()}`
 
 const emit = defineEmits<{
-  (e: 'open-file', path: string, taskId: string | null): void
+  (e: 'open-file', path: string): void
   (e: 'open-topic', id: string): void
   (e: 'mention-click', handle: string): void
 }>()
@@ -151,7 +152,7 @@ const viewing = computed(() =>
 // （.claude/rules/architecture.md）。递进去的是「现在读的是谁」和这一窗自己的滚动
 // 容器；读回来的人由 noteAgents / noteStarts 记到这一栏自己的名册和轮次上。
 const { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive } = useSiteTranscript({
-  topicId: () => props.topic?.id ?? null,
+  topicId: () => props.topicId,
   viewing: () => viewing.value,
   scrollRef,
   noteAgents,
@@ -254,14 +255,14 @@ function isSay(b: Block): boolean {
 // 对话栏展开成 chip —— 光看 `<@handle>` `<&path>` 是认不出人的。
 const sayRefs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 
-// chip 是 v-html 塞进来的，点击只能从容器上委派（同对话栏）。文件 chip 带上这条
-// 消息自己的 task_id：现场读的是别的任务的记录时，路径要在那个任务的目录里找。
-function onSayClick(event: MouseEvent, b: Block): void {
+// chip 是 v-html 塞进来的，点击只能从容器上委派（同对话栏）。文件在哪一份里找，由
+// 面板按它此刻读的那段对话决定。
+function onSayClick(event: MouseEvent): void {
   const chip = (event.target as HTMLElement | null)?.closest('.mention') as HTMLElement | null
   if (!chip) return
   if (chip.dataset.handle) emit('mention-click', chip.dataset.handle)
   else if (chip.dataset.topic) emit('open-topic', chip.dataset.topic)
-  else if (chip.dataset.file) emit('open-file', chip.dataset.file, b.task_id ?? null)
+  else if (chip.dataset.file) emit('open-file', chip.dataset.file)
 }
 
 // 在跑的那一轮，这一页读回来时可能还没登记：对话栏从 socket 上知道它从什么时候开始。
@@ -292,7 +293,7 @@ function isLive(index: number): boolean {
 
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
-      <SessionInspector v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
+      <SessionInspector v-if="topicId" :topic-id="topicId" :active="active" :pushed="agentControl" />
       <div
         v-if="agents.length > 1"
         v-roving-tabs
@@ -402,8 +403,8 @@ function isLive(index: number): boolean {
               </button>
               <!-- 摊开的这一步打印了什么：收着，点了才取。 -->
               <SiteStepOutput
-                v-if="topic && expandedSite.has(b.id) && b.meta?.output_bytes"
-                :topic-id="topic.id"
+                v-if="topicId && expandedSite.has(b.id) && b.meta?.output_bytes"
+                :topic-id="topicId"
                 :block-id="b.id"
                 :bytes="b.meta.output_bytes"
               />
@@ -436,7 +437,7 @@ function isLive(index: number): boolean {
                     :source="b.content"
                     as="chat"
                     :names="sayRefs"
-                    @click="onSayClick($event, b)"
+                    @click="onSayClick($event)"
                   />
                 </div>
                 <!-- 过长时不直接摊开：一条几千字的输出会把它前后的所有东西挤出

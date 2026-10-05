@@ -34,9 +34,10 @@ class SingleAnswerWake:
 
 
 async def single_answer_wake(
-    session, *, project_id, topic_id, block_id, asked_by, entry
+    session, *, project_id, room_id, block_id, asked_by, entry
 ) -> SingleAnswerWake:
     """Resolve a legacy single answer's destination and immutable wake values.
+    Who may be woken is the room's roster, whichever conversation asked.
 
     Caller has authorized the answer and holds its question lock. Reads only;
     returned UUIDs/text/metadata contain no ORM rows and imply no delivery yet.
@@ -44,8 +45,8 @@ async def single_answer_wake(
     members = TopicMemberService(session)
     seat = (
         asked_by
-        if asked_by in await members.agent_handles(topic_id)
-        else await members.addressable_agent_handle(topic_id)
+        if asked_by in await members.agent_handles(room_id)
+        else await members.addressable_agent_handle(room_id)
     )
     instance = (
         await instance_for_seat(session, project_id, seat) if seat is not None else None
@@ -75,8 +76,11 @@ async def single_answer_wake(
     return SingleAnswerWake(event_id, instance.id if instance else None, text, meta)
 
 
-async def record_single_answer_wake(session, *, topic_id, block_id, version, wake):
+async def record_single_answer_wake(
+    session, *, conversation_id, block_id, version, wake
+):
     """Record intent after the timeline write, in the caller's authorized transaction.
+    The wake goes to the conversation the question was asked in.
 
     Flush only, no commit or native I/O; absent legacy asker creates no delivery.
     """
@@ -89,17 +93,19 @@ async def record_single_answer_wake(session, *, topic_id, block_id, version, wak
                 payload={"answer_to": str(block_id), "v": version},
                 occurred_at=datetime.now(UTC),
             ),
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             instance_id=wake.instance_id,
             content=wake.content,
         )
 
 
 async def record_ask_wake(
-    session, *, project_id, topic_id, origin, event_id, content, payload
+    session, *, project_id, room_id, conversation_id, origin, event_id, content, payload
 ):
+    """Wake the agent that asked, in the conversation it asked in, if it still
+    sits on the room's roster."""
     seat = origin["recipient_handle"]
-    if seat not in await TopicMemberService(session).agent_handles(topic_id):
+    if seat not in await TopicMemberService(session).agent_handles(room_id):
         return None
     instance = await instance_for_seat(session, project_id, seat)
     if instance is None:
@@ -112,7 +118,7 @@ async def record_ask_wake(
             payload={**payload, "ask_origin": origin},
             occurred_at=datetime.now(UTC),
         ),
-        topic_id=topic_id,
+        conversation_id=conversation_id,
         instance_id=instance.id,
         content=content,
     )

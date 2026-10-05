@@ -852,14 +852,20 @@ function announceExits(pi: any, spec: Manifest) {
 // The runner writes down when a person's message is waiting on an answer
 // (driven/runner.py, which owns the rule: what owes one, what answers it, what
 // the refusal says, when it lapses) and names the file in this variable. Until
-// the session has answered, every other tool is refused with the runner's
-// words. A subagent is a pi of its own, started without this variable
+// the session has answered, every tool but those reading the room is refused
+// with the runner's words. A subagent is a pi of its own, started without this variable
 // (subagents.py), so every call held here is the session's own: a subagent
 // reports to the agent that started it, not to the room.
 
 const REPLY_OWED_ENV = "CHEESE_REPLY_OWED";
 
-type Debt = { id: string; answers: string[]; reason: string; answered: string };
+type Debt = {
+  id: string;
+  answers: string[];
+  reads: string[];
+  reason: string;
+  answered: string;
+};
 
 // What the runner's file says is owed right now, answered or not.
 function debtOnFile(): Debt | null {
@@ -888,7 +894,9 @@ function holdToAnswering(pi: any) {
   pi.on("tool_call", async (event: any) => {
     const debt = unanswered();
     if (!debt) return;
+    // Reading the room is on the way to answering it, and answers nothing.
     if (!debt.answers.includes(event.toolName)) {
+      if (debt.reads.includes(event.toolName)) return;
       return { block: true, reason: debt.reason };
     }
     answered = debt.id;

@@ -40,7 +40,9 @@ async def authorized_place(
     place = await TopicService(db).place_or_404(topic_id)
     if place.project_id != project_id:
         raise ForbiddenError(say("topicNotInUrlProject"))
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=project_id
+    )
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
     return place, actor
 
@@ -73,3 +75,22 @@ async def readable_rooms(
         actor, project_id=project_id, topics=rooms
     )
     return {room.id: room_ref(room) for room in rooms if room.id in readable}
+
+
+async def task_conversation(
+    db: AsyncSession, resolver: ActorResolver, conversation_id: uuid.UUID
+):
+    """The task this conversation id names, with who is calling — whoever may
+    see its room; 404 when the id is a room's or nobody's."""
+    from app.core.errors import NotFoundError
+
+    place = await TopicService(db).place_or_404(conversation_id)
+    if place.task is None:
+        raise NotFoundError(say("taskNotFound"))
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
+    return place, actor, place.task

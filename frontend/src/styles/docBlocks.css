@@ -8,8 +8,7 @@
    show while the text can be edited; `.doc-reading` marks a page that is
    read (the editor while it cannot be edited, and the reader). */
 
-.doc-reading
-  :is(.doc-callout__kind, .doc-tl__dot, .doc-stat__remove, .doc-stats__add, .doc-column__menu) {
+.doc-reading :is(.doc-callout__kind, .doc-tl__dot, .doc-stat__remove, .doc-stats__add, .doc-column__menu) {
   pointer-events: none;
 }
 
@@ -59,8 +58,8 @@
   --doc-callout: var(--usage-write);
   --doc-callout-ink: var(--usage-write);
 
-  margin: 12px 0;
-  padding: 8px 16px;
+  margin: 16px 0;
+  padding: 12px 16px;
   border-left: 4px solid var(--doc-callout);
   border-top-right-radius: var(--radius-md);
   border-bottom-right-radius: var(--radius-md);
@@ -95,7 +94,11 @@
   margin-bottom: 0;
 }
 
-.doc-callout__kind {
+/* The controls a block carries are buttons, and style.css resets every raw
+   button with `button:not(.v-btn) { font: inherit }` — a weight (0,1,1) that
+   outranks a single class. Their rules start from the page they sit in, or
+   their own size and weight never apply and they take the body's. */
+:is(.doc-prose, .doc-reading) .doc-callout__kind {
   padding: 0 4px;
   margin-left: -4px;
   border: 0;
@@ -117,10 +120,12 @@
 /* ---- Status tag --------------------------------------------------------- */
 
 [data-status] {
+  /* One tag is one word: it never breaks inside. */
+  white-space: nowrap;
   padding: 1px 6px;
   margin: 0 1px;
   border-radius: var(--radius-sm);
-  font-size: 0.9em;
+  font-size: 14px;
   font-weight: 500;
   color: var(--ok-ink);
   background: var(--ok-wash);
@@ -239,6 +244,29 @@
   content: '';
 }
 
+/* A narrow page has no room for a time column: the time goes above its title. */
+@container (max-width: 480px) {
+  [data-item='timeline'] {
+    padding-left: 24px;
+  }
+
+  [data-item='timeline'] [data-field='when'] {
+    position: static;
+    width: auto;
+    line-height: var(--lh-13);
+    text-align: left;
+  }
+
+  [data-item='timeline'] .doc-tl__dot {
+    left: 0;
+  }
+
+  /* The dot sits on the time's line now, not the title's. */
+  [data-item='timeline'] .doc-tl__dot::after {
+    top: 4px;
+  }
+}
+
 [data-item='timeline']:last-child .doc-tl__dot::before {
   bottom: auto;
   height: 14px;
@@ -250,7 +278,7 @@
   left: 3px;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--muted);
   box-shadow: 0 0 0 3px var(--surface);
   content: '';
@@ -263,11 +291,13 @@
 
 /* ---- Stat cards --------------------------------------------------------- */
 
+/* The cards share the row between them, edge to edge with the column, like
+   every other block; on a narrow page two to a row. */
 [data-block='stats'] {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 8px;
-  margin: 12px 0;
+  margin: 16px 0;
 }
 
 .doc-stats__cards {
@@ -277,7 +307,7 @@
 [data-item='stat'] {
   position: relative;
   min-width: 0;
-  padding: 8px 12px;
+  padding: 12px 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
@@ -311,7 +341,7 @@
   content: '▼ ';
 }
 
-.doc-stat__remove {
+:is(.doc-prose, .doc-reading) .doc-stat__remove {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -333,12 +363,12 @@
 }
 
 @media (hover: none) {
-  .doc-stat__remove {
+  :is(.doc-prose, .doc-reading) .doc-stat__remove {
     opacity: 0.6;
   }
 }
 
-.doc-stats__add {
+:is(.doc-prose, .doc-reading) .doc-stats__add {
   display: none;
   min-height: 72px;
   border: 1px dashed var(--line-2);
@@ -407,8 +437,11 @@
 
 [data-block='details'] {
   position: relative;
-  margin: 12px 0;
+  margin: 16px 0;
   padding-left: 24px;
+  /* The body's height animates to and from auto where the browser can; where
+     it cannot, it opens and closes at once. */
+  interpolate-size: allow-keywords;
 }
 
 [data-block='details'] [data-field='summary'] {
@@ -416,17 +449,32 @@
   color: var(--ink);
 }
 
-[data-block='details']:not(.doc-details--open) [data-field='details'] {
-  display: none;
+/* Opening grows the body out of the summary (base / ease-out); closing folds it
+   back a step faster (quick / ease-in). Folded, it keeps no height and is not
+   drawn. */
+[data-block='details'] [data-field='details'] {
+  height: auto;
+  margin-top: 4px;
+  overflow: clip;
+  transition:
+    height var(--dur-base) var(--ease-out),
+    margin-top var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    content-visibility var(--dur-base) allow-discrete;
 }
 
-[data-block='details'] [data-field='details'] {
-  margin-top: 4px;
+[data-block='details']:not(.doc-details--open) [data-field='details'] {
+  height: 0;
+  margin-top: 0;
+  opacity: 0;
+  content-visibility: hidden;
+  transition-duration: var(--dur-quick);
+  transition-timing-function: var(--ease-in);
 }
 
 .doc-details__toggle {
   position: absolute;
-  top: 2px;
+  top: 4px;
   left: 0;
   width: 20px;
   height: 20px;
@@ -572,46 +620,195 @@ div[data-footnote]::before {
 .hljs-strong {
   font-weight: 600;
 }
-/* ---- Popovers the blocks open ------------------------------------------- */
+/* ---- Between two blocks ------------------------------------------------
+   Two blocks with their own structure can sit with no line between them
+   (blocks/blockEditing.ts, BlockGap). The gap cursor a click leaves there is a
+   line across the column in the caret's colour, blinking like it; hovering
+   such a gap first draws a faint line saying it can be clicked. The gap
+   cursor's rules outrank the ones the editor library injects. */
 
-.doc-pop {
+.doc-prose .ProseMirror-gapcursor {
+  right: 0;
+  left: 0;
+}
+
+.doc-prose .ProseMirror-gapcursor::after {
+  top: -9px;
+  right: 0;
+  left: 0;
+  width: auto;
+  border-top: 2px solid var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-prose .ProseMirror-gapcursor::after {
+    animation: none;
+  }
+}
+
+.doc-gap-hint {
   position: absolute;
-  z-index: var(--z-overlay);
-  display: grid;
+  z-index: var(--z-raised-2);
+  height: 2px;
+  margin-top: -1px;
+  border-radius: var(--radius-pill);
+  background: var(--line-2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+
+.doc-gap-hint.is-shown {
+  opacity: 1;
+}
+
+:has(> .doc-gap-hint.is-shown) > .doc-prose {
+  cursor: text;
+}
+
+/* ---- Menus and popovers the editor opens ---------------------------------
+   One shell for every menu in the document (design-system §3.4): the slash
+   menu, the block handle's, the selection bar's, a code block's language, and
+   the popovers the blocks open (a callout's kind, a timeline item, a chart's
+   kind, a formula, a footnote). Rows are 36px, 44px under a finger; hover is
+   --fill, the chosen row --line-2 and heavier.
+
+   They come in from just above where they open and settle (base / ease-out)
+   and leave a step faster (quick / ease-in, design-system §9.3). A Vue menu
+   leaves through <Transition name="doc-menu">; a popover built in script
+   takes .is-leaving and is removed when its transition ends (blocks/popover.ts). */
+
+.doc-menu,
+.doc-pop {
+  display: flex;
+  flex-direction: column;
   min-width: 180px;
   max-width: min(360px, calc(100vw - 16px));
   padding: 4px;
   border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--text);
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--ink);
   background: var(--raised);
   box-shadow: var(--shadow-2);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 
-.doc-pop button {
+@starting-style {
+  .doc-menu,
+  .doc-pop {
+    opacity: 0;
+    transform: translateY(var(--doc-menu-from, -4px));
+  }
+}
+
+/* The same way in for a Vue piece that is not a menu (the find bar, the link
+   card, the review strips): <Transition name="doc-menu">. */
+.doc-menu-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+
+.doc-menu-enter-from {
+  opacity: 0;
+  transform: translateY(var(--doc-menu-from, -4px));
+}
+
+.doc-menu-leave-active,
+.doc-pop.is-leaving {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+
+.doc-menu-leave-to,
+.doc-pop.is-leaving {
+  opacity: 0;
+  transform: translateY(calc(var(--doc-menu-from, -4px) / 2));
+  pointer-events: none;
+}
+
+.doc-pop {
+  position: absolute;
+  z-index: var(--z-overlay);
+}
+
+.doc-menu__item {
   display: flex;
-  gap: 12px;
-  align-items: baseline;
-  padding: 6px 12px;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font: inherit;
-  color: var(--text);
+  color: inherit;
   text-align: left;
+  white-space: nowrap;
   background: none;
   cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
-.doc-pop button span {
-  font-size: 12px;
+.doc-menu__item:hover,
+.doc-menu__item.is-active {
+  background: var(--fill);
+}
+
+.doc-menu__item[aria-checked='true'] {
+  font-weight: 600;
+  background: var(--line-2);
+}
+
+.doc-menu__item > .v-icon {
+  flex: none;
   color: var(--muted);
 }
 
-.doc-pop button:hover,
-.doc-pop button[aria-checked='true'] {
-  background: var(--fill);
+.doc-menu__label {
+  flex: 1 1 auto;
+}
+
+/* A hint at the right end of the row (the slash menu's markdown shortcut). */
+.doc-menu__hint {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: var(--lh-12);
+  color: var(--faint);
+}
+
+/* A row that explains itself: the hint is a line under the label. */
+.doc-menu__item--described {
+  flex-direction: column;
+  gap: 0;
+  align-items: flex-start;
+  justify-content: center;
+  padding-block: 6px;
+  white-space: normal;
+}
+
+.doc-menu__item--described .doc-menu__hint {
+  font-family: inherit;
+  color: var(--muted);
+}
+
+.doc-menu__sep {
+  flex: none;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+
+@media (pointer: coarse) {
+  .doc-menu__item {
+    min-height: 44px;
+  }
 }
 
 .doc-pop input,
@@ -619,9 +816,10 @@ div[data-footnote]::before {
   margin: 4px;
   padding: 4px 8px;
   border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-family: var(--font-mono);
   font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--text);
   background: var(--surface);
 }
@@ -647,22 +845,28 @@ div[data-footnote]::before {
   padding: 4px;
 }
 
-.doc-pop__kinds button {
+.doc-pop__kinds .doc-menu__item {
   flex: 1;
   justify-content: center;
 }
 
-.doc-pop__kinds button[aria-pressed='true'] {
-  background: var(--fill-2);
+.doc-pop__kinds .doc-menu__item[aria-pressed='true'] {
+  font-weight: 600;
+  background: var(--line-2);
 }
 
 /* ---- Tables --------------------------------------------------------------
    The editor's (.doc-prose) and every reader's. Browsers give a table no
    borders, so without this it reads as loose words. */
 
+/* One rounded frame like the other blocks; inside it only the rules between
+   cells (the table's own outer edge is hidden). The head reads as labels, and
+   a column of figures lines up on the right (./tableShape.ts, ./reader.ts). */
 :is(.doc-prose, .doc-reading) .tableWrapper {
   max-width: 100%;
-  margin: 12px 0;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
   /* A wide table scrolls inside its own box instead of pushing the column wider
      than the reading width. The chat column is --page-w-read; without this the
      row would stretch and take the reader's line width with it. */
@@ -672,8 +876,9 @@ div[data-footnote]::before {
 :is(.doc-prose, .doc-reading) table {
   width: 100%;
   border-collapse: collapse;
+  border-style: hidden;
   font-size: 14px;
-  line-height: 1.7;
+  line-height: var(--lh-14-loose);
 }
 
 :is(.doc-prose, .doc-reading) :is(th, td) {
@@ -684,8 +889,17 @@ div[data-footnote]::before {
 }
 
 :is(.doc-prose, .doc-reading) th {
+  font-size: 12px;
   font-weight: 600;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  vertical-align: bottom;
   background: var(--canvas);
+}
+
+:is(.doc-prose, .doc-reading) :is(th, td)[data-num] {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* ---- A reader's table on a phone ---------------------------------------- */
@@ -693,6 +907,7 @@ div[data-footnote]::before {
 @media (max-width: 600px) {
   .doc-reading .tableWrapper[data-shape='cards'] {
     overflow: visible;
+    border: 0;
   }
 
   .doc-reading .tableWrapper[data-shape='cards'] :is(table, tbody, tr, td) {
@@ -748,8 +963,21 @@ div[data-footnote]::before {
 
 /* ---- Chart -------------------------------------------------------------- */
 
-[data-block='chart'] {
+/* A chart and a diagram are cards like the stat cards: the drawing, and under
+   a rule the table it is drawn from. */
+:is([data-block='chart'], [data-block='mermaid']) {
   margin: 16px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+[data-block='chart'] .tableWrapper {
+  max-width: none;
+  margin: 12px -16px -12px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .doc-chart__bar {
@@ -759,9 +987,9 @@ div[data-footnote]::before {
   min-height: 24px;
 }
 
-.doc-chart__kind,
-.doc-chart__toggle,
-.doc-mermaid__bar button {
+:is(.doc-prose, .doc-reading) .doc-chart__kind,
+:is(.doc-prose, .doc-reading) .doc-chart__toggle,
+:is(.doc-prose, .doc-reading) .doc-mermaid__bar button {
   padding: 0 6px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -773,7 +1001,7 @@ div[data-footnote]::before {
   cursor: pointer;
 }
 
-.doc-chart__kind {
+:is(.doc-prose, .doc-reading) .doc-chart__kind {
   margin-left: -6px;
   font-weight: 600;
   color: var(--text);
@@ -829,7 +1057,7 @@ div[data-footnote]::before {
 }
 
 .doc-chart__data {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .doc-chart__data table {
@@ -838,15 +1066,26 @@ div[data-footnote]::before {
 
 /* ---- Mermaid diagram ---------------------------------------------------- */
 
-[data-block='mermaid'] {
-  margin: 16px 0;
-}
-
 .doc-mermaid__bar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 4px;
   min-height: 24px;
+}
+
+/* The bar reads like a chart's: what it is on the left, what to do on the right. */
+.doc-mermaid__label {
+  margin-right: auto;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-13);
+  color: var(--text);
+}
+
+/* Boxes with the document's corners. */
+.doc-mermaid__figure svg .node rect {
+  rx: 6px;
+  ry: 6px;
 }
 
 .doc-reading .doc-mermaid__bar {
@@ -857,6 +1096,11 @@ div[data-footnote]::before {
   overflow-x: auto;
   text-align: center;
   cursor: zoom-in;
+}
+
+/* While editing, a press selects the diagram; full screen is the bar's button. */
+.ProseMirror[contenteditable='true'] .doc-mermaid__figure {
+  cursor: default;
 }
 
 .doc-mermaid__figure--scroll {

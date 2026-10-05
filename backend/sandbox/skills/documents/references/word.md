@@ -13,8 +13,7 @@
 ## 怎么改
 
 ```bash
-SKILL=skills/documents
-[ -d "$SKILL" ] || SKILL="$CLAUDE_CONFIG_DIR/skills/documents"
+SKILL="<这个技能的目录>"   # 加载 documents 技能时给出的那个目录
 
 uv run --with lxml python3 "$SKILL/scripts/office.py" text 报告.docx
 uv run --with lxml python3 "$SKILL/scripts/office.py" edit 报告.docx -o 改后.docx \

@@ -55,7 +55,7 @@ const AGENT = 'agent-cheese'
 function checklistAt(step: number): Block {
   return {
     id: 'list-1',
-    topic_id: roomA.id,
+    conversation_id: roomA.id,
     kind: 'message',
     author_type: 'participant',
     author: AGENT,
@@ -77,7 +77,7 @@ function checklistAt(step: number): Block {
 function event(n: number): Block {
   return {
     id: `ev-${n}`,
-    topic_id: roomA.id,
+    conversation_id: roomA.id,
     kind: 'event',
     author_type: 'participant',
     author: AGENT,

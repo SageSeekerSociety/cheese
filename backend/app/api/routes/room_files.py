@@ -49,7 +49,9 @@ async def _in_room(
     db: AsyncSession, resolver: ActorResolver, topic_id: uuid.UUID
 ) -> tuple[Place, Actor]:
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
@@ -190,7 +192,7 @@ async def copy_into_room(
     shown = await add_shown_block(
         db,
         project_id=place.project_id,
-        room_id=place.room_id,
+        conversation_id=place.room_id,
         path=target,
         author=actor.handle,
         mime=ARTIFACT_MIME[artifact_kind_for(target)],
@@ -253,7 +255,7 @@ async def new_from_template(
     shown = await add_shown_block(
         db,
         project_id=place.project_id,
-        room_id=place.room_id,
+        conversation_id=place.room_id,
         path=target,
         author=actor.handle,
         mime=ARTIFACT_MIME[artifact_kind_for(target)],
@@ -406,7 +408,7 @@ async def editor_saves_file(
         shown = await add_shown_block(
             db,
             project_id=place.project_id,
-            room_id=place.room_id,
+            conversation_id=place.room_id,
             path=aside,
             author=author,
             mime=ARTIFACT_MIME[artifact_kind_for(aside)],

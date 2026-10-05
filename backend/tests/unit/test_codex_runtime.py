@@ -39,6 +39,7 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
         (
             project,
             uuid.uuid4(),
+            None,
             "a",
             "codex",
             None,

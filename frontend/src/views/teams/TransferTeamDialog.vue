@@ -86,7 +86,7 @@ async function transfer() {
             />
           </template>
           <v-list-item-title class="t-body">{{ m.user.nickname || m.user.username }}</v-list-item-title>
-          <v-list-item-subtitle class="t-meta">@{{ m.user.username }}</v-list-item-subtitle>
+          <v-list-item-subtitle class="t-meta">{{ m.user.username }}</v-list-item-subtitle>
         </v-list-item>
       </v-list>
       <v-alert v-if="error" type="error" density="comfortable" class="mt-4">{{ error }}</v-alert>

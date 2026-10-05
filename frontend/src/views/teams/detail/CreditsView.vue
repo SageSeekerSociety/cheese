@@ -11,7 +11,7 @@ import UsagePeriodCard from '@/components/usage/UsagePeriodCard.vue'
 import UsageShareList from '@/components/usage/UsageShareList.vue'
 import { fmtMonth } from '@/lib/creditUsage'
 
-// 团队的「额度」：本月用了多少、其他额度、每天用量、各项目占多少。只有比例，也不按人分。
+// 团队的「额度」：本月用了多少（按协作、算力分）、其他额度、每天用量、各项目占多少。不按人分。
 defineOptions({ name: 'TeamCreditsView' })
 
 const props = defineProps<{
@@ -58,9 +58,10 @@ const otherCredits = computed(() => (props.usage?.packs ?? []).reduce((sum, p) =
         :month="month"
         :windows="usage.windows"
         :other-credits="otherCredits"
+        :lines="usage.lines"
       />
       <UsagePackList v-if="usage.packs.length" :packs="usage.packs" />
-      <UsageDailyChart :days="usage.days" />
+      <UsageDailyChart :days="usage.days" stacked />
       <UsageShareList :title="t('usage.projects.byProject')" :items="projects" />
     </template>
   </div>

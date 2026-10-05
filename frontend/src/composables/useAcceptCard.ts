@@ -14,6 +14,8 @@ import type { CardPhase } from '@/lib/topicState'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 
+import { useUserRef } from '@/composables/useUserRef'
+
 import {
   acceptCard,
   approveCard,
@@ -160,6 +162,12 @@ export function useAcceptCard(props: AcceptCardHost) {
   const expanded = ref(false)
   const showDetail = computed(() => !props.docked || expanded.value)
 
+  // The bar line is a plain string and cannot hold a UserRef, so the person is named
+  // here with the same display name a UserRef would draw (#2764); a handle the roster
+  // does not know stays a handle.
+  const reviewerName = useUserRef(() => pendingCard.value?.reviewer_handle).label
+  const deciderName = useUserRef(() => acceptedCard.value?.decided_by).label
+
   // 横条上那一行说什么。顺序和下面卡片的 v-if 链一致：同一时刻只有一张卡在台面上。
   const bar = computed<{ icon: string; color: string; title: string; sub: string }>(() => {
     const gate = gateCard.value
@@ -192,7 +200,7 @@ export function useAcceptCard(props: AcceptCardHost) {
         sub:
           pending.reviewer_handle === AUTHOR
             ? t('work.room.accept.waitingOnYou')
-            : t('work.room.accept.waitingOn', { handle: pending.reviewer_handle }),
+            : t('work.room.accept.waitingOn', { name: reviewerName.value }),
       }
     if (deliveringCard.value)
       return { icon: 'mdi-history', color: 'warning', title: t('work.room.accept.delivering'), sub: '' }
@@ -200,9 +208,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     return {
       icon: 'mdi-check-circle-outline',
       color: 'success',
-      title: accepted
-        ? t('work.room.accept.decidedBy', { handle: accepted.decided_by })
-        : t('work.room.accept.accepted'),
+      title: accepted ? t('work.room.accept.decidedBy', { name: deciderName.value }) : t('work.room.accept.accepted'),
       sub: '',
     }
   })
@@ -235,7 +241,8 @@ export function useAcceptCard(props: AcceptCardHost) {
     const task = props.taskId
     if (!tid) return
     try {
-      const payload = await getAcceptCards(tid, task)
+      // A task's cards are read through the task's own conversation.
+      const payload = await getAcceptCards(task ?? tid)
       if (props.topicId === tid && props.taskId === task) {
         acceptCards.value = payload.data.filter((card) =>
           props.taskId ? card.task_id === props.taskId : !card.task_id
@@ -260,7 +267,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     const task = props.taskId
     if (!prCheckCard.value?.pr_number) return
     try {
-      const payload = await getPrChecks(tid, task)
+      const payload = await getPrChecks(task ?? tid)
       if (props.topicId === tid && props.taskId === task) prChecks.value = payload
     } catch {
       // Best-effort; the PR row just shows the link without CI state.

@@ -67,7 +67,7 @@ def _file_card(client, room_id: str, **artifact):
         **artifact,
     }
     response = client.post(
-        f"/topics/{room_id}/tasks/{delivery_task_id(client, room_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, room_id)}/accept-card",
         headers=delivery_headers(client, room_id),
         json=body,
     )

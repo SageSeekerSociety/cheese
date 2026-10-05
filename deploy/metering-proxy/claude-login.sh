@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Log the platform in to Claude, or out, for every Cheese session at once.
+# Manage the platform's Claude subscription accounts.
 #
-# The metering proxy holds the platform's only Claude credential in
-# <proxy home>/claude-credential/credential and puts it on each session's
-# requests; it re-reads the file on every request, so each command here takes
-# effect at the next request of every running session. Run it on the box, as
-# the user that owns the metering proxy's directory.
+# The primary credential lives in <proxy home>/claude-credential/credential.
+# Prefix any command with --account NAME to manage an additional account.
+# The proxy keeps conversations on their selected account and re-reads its
+# credential on every request. Run as the owner of the proxy's directory.
 #
 #   claude-login.sh status        what the proxy holds now, and until when
 #   claude-login.sh setup-token   store a one-year token from `claude setup-token`
@@ -15,11 +14,25 @@
 #                                 send this credential's requests through a proxy
 #   claude-login.sh egress clear  send them direct again
 #   claude-login.sh egress test [n]  compare reaching Anthropic through it and direct
+#   claude-login.sh cooldown-reset  re-enable an account after resolving its quota
 set -euo pipefail
 umask 077
 
 home="${METERING_PROXY_HOME:-$HOME/cheese-proxy-new/deploy/metering-proxy}"
 dir="${CLAUDE_CREDENTIAL_DIR:-$home/claude-credential}"
+root="$dir"
+account=primary
+if [[ "${1:-}" == --account ]]; then
+  account="${2:?usage: claude-login.sh --account NAME command}"
+  [[ "$account" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] || {
+    echo 'Account names must contain only letters, digits, underscores and hyphens.' >&2
+    exit 2
+  }
+  if [[ "$account" != primary ]]; then
+    dir="$root/accounts/$account"
+  fi
+  shift 2
+fi
 file="$dir/credential"
 egress="$dir/egress"
 
@@ -32,6 +45,19 @@ install_credential() {
 }
 
 case "${1:-}" in
+  cooldown-reset)
+    python3 - "$root/cooldowns.json" "$account" <<'PY'
+import json, os, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+if path.exists():
+    state = json.loads(path.read_text())
+    state.pop(sys.argv[2], None)
+    tmp = path.with_suffix('.operator.tmp')
+    tmp.write_text(json.dumps(state))
+    os.replace(tmp, path)
+print('cooldown cleared for', sys.argv[2])
+PY
+    ;;
   status)
     if [[ -s "$egress" ]]; then
       echo "egress: $(sed -E 's#//[^@/]*@#//***@#' "$egress")"
@@ -39,7 +65,7 @@ case "${1:-}" in
       echo "egress: direct"
     fi
     if [[ ! -s "$file" ]]; then
-      echo "logged out: sessions run on the API-key pool only"
+      echo "logged out: account $account has no credential"
       exit 0
     fi
     python3 - "$file" <<'PY'
@@ -73,7 +99,7 @@ PY
     tmp="$(mktemp)"
     printf '%s\n' "$token" > "$tmp"
     install_credential "$tmp"
-    echo "stored: every session uses it from its next request"
+    echo "stored: account $account is available to new conversations"
     ;;
   login)
     claude="${CLAUDE_BIN:-$(command -v claude || true)}"
@@ -94,11 +120,11 @@ PY
       exit 1
     }
     install_credential "$tmp/.credentials.json"
-    echo "logged in: every session uses it from its next request"
+    echo "logged in: account $account is available to new conversations"
     ;;
   logout)
     rm -f "$file"
-    echo "logged out: subscription requests are refused from the next request"
+    echo "logged out: account $account is no longer available"
     ;;
   egress)
     case "${2:-}" in

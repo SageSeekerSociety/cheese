@@ -241,12 +241,11 @@ def test_talking_in_a_room_moves_it_to_the_top(client, bearer):
 # The exact predicate `TopicRepository.unread_counts` applies to `blocks`:
 # one room's own line, messages only, written by somebody else.
 _UNREAD_PREDICATE = """
-    SELECT topic_id, count(*) FROM blocks
-    WHERE topic_id = :topic_id
+    SELECT conversation_id, count(*) FROM blocks
+    WHERE conversation_id = :conversation_id
       AND kind = 'message'
-      AND task_id IS NULL
       AND author <> :handle
-    GROUP BY topic_id
+    GROUP BY conversation_id
 """
 
 
@@ -274,7 +273,7 @@ async def _seed_blocks(session, *, topics: int = 40, blocks: int = 4000) -> None
     )
     await session.execute(
         text(
-            "INSERT INTO blocks (project_id,topic_id,kind,author_type,author,"
+            "INSERT INTO blocks (project_id,conversation_id,kind,author_type,author,"
             "content,refs,id,created_at,updated_at) SELECT :pid,"
             "('00000000-0000-0000-0000-'||lpad(((g%:t)+1)::text,12,'0'))::uuid,"
             "CASE WHEN g%3=0 THEN 'event' ELSE 'message' END,'participant','u'||(g%7),"
@@ -293,12 +292,12 @@ async def _plan(session, sql: str, params: dict) -> str:
 
 
 @pytest.mark.anyio
-async def test_the_badge_query_matches_kind_and_task_in_the_index(db_factory):
-    """The database must narrow on kind and task_id itself, not by reading rows.
+async def test_the_badge_query_matches_kind_in_the_index(db_factory):
+    """The database must narrow on kind itself, not by reading rows.
 
     This is the difference the index makes, and it is invisible in the answer:
-    the badge numbers were always right. With only a ``topic_id``-leading index
-    the plan carried ``kind`` and ``task_id`` as a ``Filter``, which means
+    the badge numbers were always right. With only a ``conversation_id``-leading index
+    the plan carried ``kind`` as a ``Filter``, which means
     fetching every one of a topic's blocks and discarding most of them — the
     read amplification that made this poll cost more as the whole platform
     grew. Carried as an index condition, only matching entries are ever
@@ -317,22 +316,21 @@ async def test_the_badge_query_matches_kind_and_task_in_the_index(db_factory):
         plan = await _plan(
             session,
             _UNREAD_PREDICATE.strip(),
-            {"topic_id": TOPIC_ONE, "handle": "nobody"},
+            {"conversation_id": TOPIC_ONE, "handle": "nobody"},
         )
 
     assert "Seq Scan on blocks" not in plan, f"reads the whole table:\n{plan}"
     conditions = "\n".join(line for line in plan.splitlines() if "Cond:" in line)
     assert "kind" in conditions, f"kind is not matched by an index:\n{plan}"
-    assert "task_id" in conditions, f"task_id is not matched by an index:\n{plan}"
 
 
 @pytest.mark.anyio
 async def test_a_topics_timeline_is_still_indexed_without_the_single_column_index(
     db_factory,
 ):
-    """Dropping ``ix_blocks_topic_id`` must not make a topic lookup a scan.
+    """Dropping the single-column conversation index must not make a lookup a scan.
 
-    Two composite indexes lead with ``topic_id``, so either can answer a
+    Two composite indexes lead with ``conversation_id``, so either can answer a
     topic-only lookup — including the sweep a cascading delete performs when a
     topic or a whole project goes away. That path has no test of its own and
     degrades from milliseconds to minutes if it ever loses its index.
@@ -343,7 +341,7 @@ async def test_a_topics_timeline_is_still_indexed_without_the_single_column_inde
             row[0]
             for row in (
                 await session.execute(
-                    text("EXPLAIN SELECT id FROM blocks WHERE topic_id = :t"),
+                    text("EXPLAIN SELECT id FROM blocks WHERE conversation_id = :t"),
                     {"t": "00000000-0000-0000-0000-000000000001"},
                 )
             ).all()

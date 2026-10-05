@@ -463,7 +463,9 @@ async def test_a_release_is_acknowledged_once_the_session_has_reconnected(
     ready = _released_home(tmp_path, monkeypatch)
     hub = _Runner()
 
-    assert await _channel(hub)._refresh_resident(SCREEN, str(tmp_path), STATE, {})
+    assert await _channel(hub)._refresh_resident(
+        SCREEN, str(tmp_path), STATE, {}, seat=SCREEN.agent_handle
+    )
 
     assert [call for call in hub.calls if call[0] != "exec"] == [
         ("command", "/reload-plugins"),
@@ -490,7 +492,9 @@ async def test_a_release_the_session_did_not_take_is_not_acknowledged(
     ready = _released_home(tmp_path, monkeypatch)
 
     with pytest.raises(ScreenSetupError, match=failed):
-        await _channel(hub)._refresh_resident(SCREEN, str(tmp_path), STATE, {})
+        await _channel(hub)._refresh_resident(
+            SCREEN, str(tmp_path), STATE, {}, seat=SCREEN.agent_handle
+        )
 
     assert not ready.exists()
 
@@ -504,6 +508,6 @@ async def test_a_release_already_in_place_asks_the_session_nothing(
     version = release.digest(release.sources())
 
     assert not await _channel(hub)._refresh_resident(
-        SCREEN, str(tmp_path), STATE, {"version": version}
+        SCREEN, str(tmp_path), STATE, {"version": version}, seat=SCREEN.agent_handle
     )
     assert hub.calls == []

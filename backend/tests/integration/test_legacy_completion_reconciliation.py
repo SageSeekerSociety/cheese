@@ -4,6 +4,7 @@ This is protocol reconciliation evidence, not a native binary or full executor.
 Missing main-era receipt identity intentionally remains unresolved.
 """
 
+import asyncio
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -92,7 +93,14 @@ def test_legacy_completion_failure_keeps_cursor_and_reconstructed_reader_settles
             chat._sessions, chat._unread_inputs = factory, {}
 
             async def complete(value):
+                # The listener is on every Session in the process, and the
+                # app's periodic jobs commit too: only this task's commits are
+                # the completion's.
+                completing = asyncio.current_task()
+
                 def abort(session):
+                    if asyncio.current_task() is not completing:
+                        return
                     session.flush()
                     session.execute(text("SELECT 1 / 0"))
 

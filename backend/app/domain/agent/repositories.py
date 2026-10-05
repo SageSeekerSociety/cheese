@@ -24,6 +24,7 @@ class TurnRecord:
     """
 
     turn_id: uuid.UUID
+    #: The conversation the turn ran in — a room's id, or a task's.
     topic_id: uuid.UUID
     continuation_id: uuid.UUID
     author: str
@@ -57,7 +58,7 @@ class AgentTurnRepository:
         self,
         *,
         turn_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         continuation_id: uuid.UUID,
         author: str,
         content: str,
@@ -80,7 +81,7 @@ class AgentTurnRepository:
                 insert(AgentTurn)
                 .values(
                     id=turn_id,
-                    topic_id=topic_id,
+                    conversation_id=conversation_id,
                     continuation_id=continuation_id,
                     author=author,
                     content=content,
@@ -97,7 +98,7 @@ class AgentTurnRepository:
         self._session.add(
             AgentTurn(
                 id=turn_id,
-                topic_id=topic_id,
+                conversation_id=conversation_id,
                 continuation_id=continuation_id,
                 author=author,
                 content=content,
@@ -189,16 +190,12 @@ class AgentTurnRepository:
         finds the interval that place names, so a credits refusal can be
         stamped on the turn it actually refused.
 
-        The room's OWN line, which is where every turn now runs; the rows a
-        thread left behind before work stopped being a place are excluded by
-        the same clause that used to select them.
+        Turns are matched by the conversation they ran in.
         """
         stmt = (
             select(AgentTurn.id)
             .where(
-                AgentTurn.topic_id == topic_id,
-                AgentTurn.task_id.is_(None),
-                AgentTurn.stopped_at.is_(None),
+                AgentTurn.conversation_id == topic_id, AgentTurn.stopped_at.is_(None)
             )
             .order_by(AgentTurn.started_at.desc())
             .limit(1)
@@ -223,9 +220,7 @@ class AgentTurnRepository:
         stmt = (
             select(AgentTurn.author)
             .where(
-                AgentTurn.topic_id == topic_id,
-                AgentTurn.task_id.is_(None),
-                AgentTurn.stopped_at.is_(None),
+                AgentTurn.conversation_id == topic_id, AgentTurn.stopped_at.is_(None)
             )
             .order_by(AgentTurn.started_at.desc())
             .limit(1)
@@ -253,7 +248,7 @@ class AgentTurnRepository:
             select(AgentTurn.id)
             .where(
                 AgentTurn.id == turn_id,
-                AgentTurn.topic_id == topic_id,
+                AgentTurn.conversation_id == topic_id,
                 AgentTurn.stopped_at.is_not(None),
             )
             .exists()
@@ -302,7 +297,7 @@ class AgentTurnRepository:
         return list(
             await self._session.scalars(
                 select(AgentTurn.id).where(
-                    AgentTurn.topic_id == topic_id,
+                    AgentTurn.conversation_id == topic_id,
                     AgentTurn.id.in_(turn_ids),
                     AgentTurn.stopped_at.is_(None),
                 )
@@ -336,11 +331,10 @@ class AgentTurnRepository:
             update(AgentTurn)
             .where(
                 AgentTurn.id == turn_id,
-                AgentTurn.topic_id == topic_id,
-                # The room's own line. A Stop is the room's session finishing,
-                # and the intervals a thread left behind when work was still a
-                # place are not this session's to close.
-                AgentTurn.task_id.is_(None),
+                # The session's own conversation: a Stop is that session
+                # finishing, and another conversation's interval is not its
+                # to close.
+                AgentTurn.conversation_id == topic_id,
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )
@@ -359,24 +353,20 @@ class AgentTurnRepository:
             return {}
         rows = await self._session.execute(
             select(AgentTurn.id, AgentTurn.started_at).where(
-                AgentTurn.topic_id == topic_id, AgentTurn.id.in_(ids)
+                AgentTurn.conversation_id == topic_id, AgentTurn.id.in_(ids)
             )
         )
         return {turn_id: _aware(started) for turn_id, started in rows}
 
     async def open_on(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None
+        self, conversation_id: uuid.UUID
     ) -> list[tuple[str, float, str | None]]:
-        """The delivered turns still open on one line — the room's own
-        (``task_id`` None) or one thread's: ``(turn id, started at as epoch
-        seconds, agent seat)``. A turn not yet delivered has not reached its
-        session, so nobody is working on it yet."""
+        """The delivered turns still open in one conversation: ``(turn id,
+        started at as epoch seconds, agent seat)``. A turn not yet delivered
+        has not reached its session, so nobody is working on it yet."""
         rows = await self._session.execute(
             select(AgentTurn.id, AgentTurn.started_at, AgentTurn.agent_handle).where(
-                AgentTurn.topic_id == topic_id,
-                AgentTurn.task_id.is_(None)
-                if task_id is None
-                else AgentTurn.task_id == task_id,
+                AgentTurn.conversation_id == conversation_id,
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )
@@ -398,10 +388,10 @@ class AgentTurnRepository:
         return [
             TurnRecord(
                 turn_id=row.id,
-                # The PLACE this turn ran in — the thread when it had one. The
-                # sweep re-addresses work by this id, and re-addressing a
-                # thread's turn to its room would resume the wrong conversation.
-                topic_id=row.task_id or row.topic_id,
+                # The conversation this turn ran in. The sweep re-addresses work
+                # by this id, and re-addressing a task's turn to its room would
+                # resume the wrong conversation.
+                topic_id=row.conversation_id,
                 continuation_id=row.continuation_id,
                 author=row.author,
                 content=row.content,

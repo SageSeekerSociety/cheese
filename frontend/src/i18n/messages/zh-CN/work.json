@@ -4,7 +4,7 @@
     "description": "AI 队友默认使用项目主模型，也可以为每位队友单独指定",
     "main": "项目主模型",
     "subagent": "默认分身模型",
-    "subagentHint": "分身执行任务时使用的模型",
+    "subagentHint": "Claude Code 在一轮里派出分身时使用的模型",
     "inheritMain": "跟随项目主模型",
     "chooseAvailable": "选择当前项目可用的模型",
     "loadError": "加载模型列表失败",
@@ -66,6 +66,8 @@
     "abandonTitle": "不推送直接更换？"
   },
   "roomMachine": {
+    "taskHeading": "这个任务的工作电脑",
+    "taskHint": "更换时先把这个任务的改动推送到分支，推上去才换；推不上去就不换，并说明原因。",
     "edit": "改",
     "heading": "这个话题的工作电脑",
     "hint": "房间里所有 AI 队友共用这一台。更换时每个队友先把改动推送到分支，全部推上去才换；推不上去就整个不换，并说明原因。",
@@ -303,6 +305,8 @@
       "more": "更多",
       "focus": "专注模式",
       "exitFocus": "退出专注模式",
+      "newTask": "新建任务",
+      "newTaskFailed": "未能新建任务，稍后重试",
       "rename": "重命名",
       "copyLink": "复制链接",
       "markRead": "标为已读",
@@ -343,9 +347,9 @@
       "gateBlocked": "平台检查未能执行",
       "delivering": "已采纳，合并未完成",
       "accepted": "已采纳",
-      "waitingOn": "待 {'@'}{handle} 审阅",
+      "waitingOn": "待 {'@'}{name} 审阅",
       "waitingOnYou": "待你审阅",
-      "decidedBy": "{'@'}{handle} 已采纳",
+      "decidedBy": "{'@'}{name} 已采纳",
       "review": "审阅",
       "expand": "展开详情",
       "collapse": "收起详情",
@@ -432,7 +436,13 @@
       "added": "新增",
       "removed": "删除",
       "docEditCount": "改了 {n} 处",
-      "viewSuggestions": "查看"
+      "viewSuggestions": "查看",
+      "docCard": {
+        "created": "新文档 · 资料库",
+        "open": "打开",
+        "suggested": "提了 {n} 处建议",
+        "updated": "已更新"
+      }
     },
     "message": {
       "copy": "复制",
@@ -447,7 +457,8 @@
       "saveFailed": "保存失败",
       "reply": "回复",
       "react": "添加表情",
-      "upgrade": "转为话题",
+      "upgrade": "转为任务",
+      "upgradeToTopic": "转为话题",
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
       "upgradedToTask": "已转为任务",
@@ -769,21 +780,13 @@
       "needsYou": "{count} 件待处理",
       "row": "第 {n} 件：{title}"
     },
-    "card": {
-      "loadFailed": "无法加载这个任务",
-      "sendFailed": "留言未发送，稍后重试",
-      "notFound": "这个房间里没有这个任务",
-      "retry": "重试",
-      "brief": "简报",
-      "conclusion": "结论",
-      "noMessages": "暂无消息",
-      "subagent": "分身",
-      "steps": "{count} 步操作",
-      "stepFailed": "有步骤失败",
-      "sayPlaceholder": "给分身留言",
-      "send": "发送"
-    },
+    "card": {},
     "doc": {
+      "delete": "删除文档",
+      "deleted": "这份文档已被删除",
+      "untitled": "未命名文档",
+      "titlePlaceholder": "标题",
+      "titleLabel": "文档标题",
       "pickTopic": "选择一个话题查看文档",
       "outdated": "页面已更新，刷新后继续编辑",
       "reload": "刷新",
@@ -795,13 +798,15 @@
       "options": "文档选项",
       "setReadOnly": "设为只读",
       "insertBelow": "在下方插入块",
-      "blockHandle": "拖动可移动，点击可更改格式",
+      "blockHandle": "拖动可移动，点击可更改格式或删除",
       "language": "语言",
       "copyFailed": "复制失败",
       "commentOnSelection": "评论选中内容",
       "copied": "已复制",
       "copyCode": "复制代码",
       "emptyPlaceholder": "AI 队友会在这里维护文档，你也可以直接编辑",
+      "emptyPlaceholderLibrary": "输入正文，或输入 / 插入标题、表格、图表",
+      "deleteBlock": "删除",
       "format": {
         "bold": "加粗",
         "italic": "斜体",
@@ -930,6 +935,7 @@
         "chartCategory": "类别",
         "chartValue": "数值",
         "chartSlice": "{name}：{value}（{percent}%）",
+        "chartOther": "其他",
         "diagramSource": "源码",
         "askAgent": "让{name}改",
         "emptyDiagram": "暂无内容",
@@ -997,7 +1003,7 @@
     "gettingStarted": {
       "title": "开始清单",
       "dismiss": "不再提示",
-      "talk": "跟芝士说第一句话",
+      "talk": "跟{agent}说第一句话",
       "talkHint": "就在下面那个输入框里",
       "materials": "把要用的材料放进来",
       "materialsAction": "打开资料库",
@@ -1047,6 +1053,11 @@
         "owner": "拥有者",
         "admin": "管理员",
         "member": "成员"
+      },
+      "roleHint": {
+        "owner": "管理房间与成员",
+        "admin": "管理成员与角色",
+        "member": "参与房间讨论"
       },
       "failed": "操作失败",
       "title": "话题成员",
@@ -1200,25 +1211,26 @@
       "allRestored": "{requester}让{agent}改的几处都已还原",
       "close": "收起改动",
       "position": "第 {i}/{n} 处",
-      "restore": "还原这处"
+      "restore": "还原这处",
+      "titleOwn": "{agent}改的 {n} 处",
+      "allRestoredOwn": "{agent}改的几处都已还原"
     }
   },
   "board": {
     "column": {
-      "building": "施工中",
-      "delivering": "交付中",
+      "not_started": "未开始",
+      "building": "进行中",
+      "delivering": "检查中",
       "needs_you": "待处理",
       "done": "已完成",
       "archived": "已归档"
     },
     "phrase": {
+      "discussing": "讨论中",
       "running": "运行中",
-      "started": "已动工",
-      "not_started": "待开工",
-      "returned": "已交回",
+      "started": "已开始",
       "idle": "空闲",
       "draft": "草稿",
-      "lost": "失联",
       "gate_running": "检查运行中",
       "awaiting_checks": "等待检查",
       "fixing_checks": "修复检查",
@@ -1230,7 +1242,8 @@
       "awaiting_answer": "待回答",
       "accepted": "已采纳",
       "closed": "已关闭",
-      "archived": "已归档"
+      "archived": "已归档",
+      "completed": "已完成"
     },
     "loadFailed": "加载失败",
     "unknownRoom": "未知房间",
@@ -1334,7 +1347,9 @@
     "empty": "暂无话题",
     "workingTip": "{name}正在这里工作",
     "expandWorking": "展开：里面有队友在工作",
-    "moreMembers": "+{count}"
+    "moreMembers": "+{count}",
+    "taskNeedsYou": "需要你处理",
+    "taskRunning": "运行中"
   },
   "members": {
     "leave": "退出项目",
@@ -1419,12 +1434,12 @@
     }
   },
   "library": {
-    "intro": "你给这个项目的文件。每个对话都能引用，AI 队友只读不改",
+    "intro": "项目里的文档和文件，每个对话都能引用。文档大家都能改，上传的文件只读",
     "dropHint": "把文件拖到这里即可上传",
     "upload": "上传文件",
     "uploaded": "已上传 {n} 份文件",
     "uploadFailed": "上传失败",
-    "search": "按文件名搜索",
+    "search": "搜索标题和内容",
     "kindsLabel": "按类型筛选",
     "kinds": {
       "all": "全部",
@@ -1454,6 +1469,7 @@
     "delete": "删除",
     "deleteTitle": "删除《{name}》",
     "deleteBody": "删除后无法恢复，已经引用过它的消息也将打不开这份文件",
+    "deleteDocBody": "删除后无法恢复，文档的历史版本和评论也会一起删除",
     "deleteFailed": "删除失败",
     "close": "关闭",
     "actionsOf": "{name} 的操作",
@@ -1472,7 +1488,18 @@
     "restoreTitle": "把第 {n} 版恢复为当前？",
     "restoreBody": "会把这一版复制成新的一版，之前的各版都保留。引用这份文件的消息之后读到的是它。",
     "restoreFailed": "没能恢复这一版",
-    "restoredDone": "已把第 {n} 版恢复为当前"
+    "restoredDone": "已把第 {n} 版恢复为当前",
+    "newDoc": "新建文档",
+    "docMeta": "文档 · {who} {when}改过",
+    "hits": {
+      "library": "资料库里的文档",
+      "libraryCount": "资料库 · {n}",
+      "rooms": "对话里的文档",
+      "roomsCount": "对话里的文档 · {n}",
+      "roomDoc": "「{room}」的文档",
+      "keep": "另存为文档"
+    },
+    "newDocFailed": "新建文档失败"
   },
   "projectSettings": {
     "title": "项目设置",
@@ -1817,7 +1844,7 @@
     "lookupTeam": "团队里没人可交？直接找一个人：",
     "lookupOwn": "输入接手人的用户名或邮箱：",
     "lookupLabel": "用户名或邮箱（要写完整）",
-    "movingOut": "转让会把项目整个搬到 {'@'}{handle} 名下。转完你就不再是项目成员，也看不到它的任何话题。"
+    "movingOut": "转让会把项目整个搬到 {who} 名下。转完你就不再是项目成员，也看不到它的任何话题。"
   },
   "skills": {
     "awaiting": "待确认",
@@ -1960,5 +1987,42 @@
       "archived": "已归档",
       "draft": "草稿"
     }
+  },
+  "task": {
+    "agent": "AI 队友",
+    "machine": "工作电脑",
+    "followsRoom": "跟随话题",
+    "details": "任务信息",
+    "ownerOnlyNotice": "只有负责人可以在这里和{name}对话",
+    "closedNotice": "任务已关闭",
+    "backToRoom": "回到 # {room}",
+    "notFound": "这个房间里没有这个任务",
+    "loadFailed": "无法加载这个任务",
+    "owner": "负责人",
+    "ownerChip": "{name} 负责",
+    "start": "开始",
+    "startFailed": "未能开始，稍后重试",
+    "reviewer": "审阅人",
+    "reviewerNone": "选择审阅人",
+    "startedLine": "{who} {when}开始",
+    "compare": "与开始时相比",
+    "compareBack": "返回文档",
+    "compareFailed": "无法读取开始时的文档",
+    "compareSame": "开始后文档没有改动",
+    "conclusion": "结论",
+    "proposal": {
+      "byline": "{name} 提议了一个任务",
+      "accept": "创建任务",
+      "dismiss": "不用",
+      "failed": "操作失败，稍后重试"
+    },
+    "more": "更多操作",
+    "close": "关闭任务",
+    "closeTitle": "关闭这个任务？",
+    "closeBody": "写下结论表示已经做完；不写表示不再做。",
+    "handOver": "转交",
+    "handOverTitle": "转交给谁？",
+    "handOverTo": "选择新的负责人",
+    "actionFailed": "操作失败，稍后重试"
   }
 }

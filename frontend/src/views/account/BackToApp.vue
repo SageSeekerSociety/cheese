@@ -8,43 +8,19 @@
   A sign-in is handed over only once the person says so, naming the account:
   any program on the computer can open this page with a challenge of its own,
   and someone already signed in here would otherwise hand it a sign-in unasked.
+  What it shows is BackToAppView.vue.
 -->
 <template>
-  <div>
-    <template v-if="failed">
-      <AccountHeading :title="t('account.oauth.error.title')" />
-      <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
-        {{ t('account.oauth.app.handOffFailed') }}
-      </v-alert>
-    </template>
-
-    <template v-else-if="link">
-      <AccountHeading :title="t('account.oauth.app.backTitle')" :lede="t('account.oauth.app.backLede')" />
-      <BaseButton block kind="primary" size="lg" class="account-submit" :href="link">
-        {{ t('account.oauth.app.open') }}
-      </BaseButton>
-    </template>
-
-    <template v-else-if="asking">
-      <AccountHeading
-        :title="t('account.oauth.app.confirmTitle')"
-        :lede="t('account.oauth.app.confirmLede', account)"
-      />
-      <BaseButton block kind="primary" size="lg" class="account-submit" :loading="handing" @click="handOver">
-        {{ t('account.oauth.app.confirm') }}
-      </BaseButton>
-      <div class="back-to-app__other">
-        <BaseButton kind="ghost" :disabled="handing" @click="switchAccount">
-          {{ t('account.oauth.app.switchAccount') }}
-        </BaseButton>
-        <BaseButton kind="ghost" :disabled="handing" @click="cancel">
-          {{ t('account.oauth.app.cancel') }}
-        </BaseButton>
-      </div>
-    </template>
-
-    <v-progress-linear v-else indeterminate color="primary" height="2" />
-  </div>
+  <BackToAppView
+    :failed="failed"
+    :link="link"
+    :asking="asking"
+    :handing="handing"
+    :account="account"
+    @hand-over="handOver"
+    @switch-account="switchAccount"
+    @cancel="cancel"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -52,10 +28,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { forgetAppChallenge, pendingAppChallenge } from './appSignIn'
+import BackToAppView from './BackToAppView.vue'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
-import { t } from '@/i18n'
 import { appLink } from '@/lib/desktopApp'
 import { myId } from '@/me'
 import { UserApi } from '@/network/api/users'
@@ -132,12 +106,3 @@ onMounted(() => {
   asking.value = true
 })
 </script>
-
-<style scoped>
-.back-to-app__other {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 12px;
-}
-</style>

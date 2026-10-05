@@ -83,7 +83,7 @@ function countSlots(container: Element): Element[] {
 }
 
 describe('计数到货之前不写 0', () => {
-  it('四列的计数槽在数据到达前都没有数字，到了才写', async () => {
+  it('每一列的计数槽在数据到达前都没有数字，到了才写', async () => {
     const tasks = pending<{ data: RoomTask[]; total: number }>()
     const artifacts = pending<{ data: ProjectArtifact[]; total: number }>()
     listProjectTasks.mockReturnValue(tasks.promise)
@@ -91,10 +91,10 @@ describe('计数到货之前不写 0', () => {
 
     const { container } = render(Board, { props: { projectId: 'p1' }, global: { plugins: [vuetify] } })
 
-    // 四列（三条任务列 + 做出什么）都已经就位，计数槽也都在。
-    await waitFor(() => expect(container.querySelectorAll('.board-col').length).toBe(4))
+    // 五列（四条任务列 + 做出什么）都已经就位，计数槽也都在。
+    await waitFor(() => expect(container.querySelectorAll('.board-col').length).toBe(5))
     const before = countSlots(container)
-    expect(before, '四列的计数槽都该在').toHaveLength(4)
+    expect(before, '五列的计数槽都该在').toHaveLength(5)
     for (const slot of before) {
       expect(slot.textContent?.trim() ?? '', '数据没到，计数槽里不该有数字').not.toMatch(/\d/)
     }
@@ -103,7 +103,7 @@ describe('计数到货之前不写 0', () => {
     tasks.resolve({
       data: [
         task({ id: 'a', presentation: { column: 'building', phrase: 'running' } }),
-        task({ id: 'b', presentation: { column: 'building', phrase: 'not_started' } }),
+        task({ id: 'b', presentation: { column: 'building', phrase: 'started' } }),
         task({ id: 'c', presentation: { column: 'needs_you', phrase: 'awaiting_review' } }),
       ],
       total: 3,
@@ -125,7 +125,7 @@ describe('计数到货之前不写 0', () => {
     listProjectArtifacts.mockReturnValue(artifacts.promise)
 
     const { container } = render(Board, { props: { projectId: 'p1' }, global: { plugins: [vuetify] } })
-    await waitFor(() => expect(container.querySelectorAll('.board-col').length).toBe(4))
+    await waitFor(() => expect(container.querySelectorAll('.board-col').length).toBe(5))
     for (const slot of countSlots(container)) {
       expect(slot.textContent?.trim() ?? '', '数据没到，计数槽里不该有数字').not.toMatch(/\d/)
     }

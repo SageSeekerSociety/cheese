@@ -158,6 +158,9 @@ async def preview_tunnel(
     seat = claims.get("a")
     issued = claims.get("iat")
     try:
+        # The conversation the helper serves: a room, or one of its tasks. A
+        # room and its task can seat the same teammate, and each has its own
+        # preview.
         topic_id = uuid.UUID(str(claims.get("t")))
     except (TypeError, ValueError):
         topic_id = None

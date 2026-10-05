@@ -79,19 +79,25 @@ async def main() -> int:
     with urllib.request.urlopen(req, timeout=60) as resp:
         topic_id = uuid.UUID(json.loads(resp.read())["data"]["id"])
 
-    req = urllib.request.Request(
-        f"{BASE}/topics/{topic_id}/split",
-        data=json.dumps(
-            {"title": "Device capability probe", "reviewer_handle": USER_HANDLE}
-        ).encode(),
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
+    def post(path: str, body: dict) -> dict:
+        req = urllib.request.Request(
+            f"{BASE}{path}",
+            data=json.dumps(body).encode(),
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read())["data"]
+
+    # A person creates the task and starts it; the probe works it from there.
+    created = post(f"/topics/{topic_id}/tasks", {"title": "Device capability probe"})
+    task = post(
+        f"/topics/{topic_id}/tasks/{created['id']}/start",
+        {"reviewer_handle": USER_HANDLE},
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        task = json.loads(resp.read())["data"]
 
     scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(topic_id))
     print(f"PROJECT={project.id}")

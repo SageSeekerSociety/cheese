@@ -17,9 +17,9 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.domain.agent_session.models import AgentSession
 from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.project.models import Project
@@ -141,36 +141,66 @@ async def _seed(db_name: str) -> dict:
             await db.flush()
             db.add(DeviceTeamRow(device_id=device_id, team_id=team.id))
         resource = str(room.resource_id or room.id)
-        working, pending, leaving = (
-            AgentSession(topic_id=room.id, agent_handle=h, harness="claude-code")
-            for h in ("working", "pending", "leaving")
-        )
-        working.execution_request = {"generation": "g-working", "choice": cloud_choice}
-        working.work_lease = {
-            "kind": "device",
-            "device_id": "dev-shared",
-            "resource_id": "r-working",
-            "room_resource_id": resource,
-            "status": "ready",
+        # Written as rows, not through today's model: the table is at the
+        # revision before the pool, and the model has moved on since.
+        sessions = {
+            "working": (
+                {"generation": "g-working", "choice": cloud_choice},
+                {
+                    "kind": "device",
+                    "device_id": "dev-shared",
+                    "resource_id": "r-working",
+                    "room_resource_id": resource,
+                    "status": "ready",
+                },
+            ),
+            "pending": ({"generation": "g-pending", "choice": cloud_choice}, None),
+            "leaving": (
+                {
+                    "generation": "g-leaving",
+                    "choice": {
+                        "profile": "device",
+                        "device_id": "dev-laptop",
+                        "name": None,
+                    },
+                    "retained_leases": [
+                        {
+                            "device_id": "dev-left",
+                            "resource_id": "r-left",
+                            "kind": "device",
+                        }
+                    ],
+                },
+                None,
+            ),
         }
-        pending.execution_request = {"generation": "g-pending", "choice": cloud_choice}
-        leaving.execution_request = {
-            "generation": "g-leaving",
-            "choice": {"profile": "device", "device_id": "dev-laptop", "name": None},
-            "retained_leases": [
-                {"device_id": "dev-left", "resource_id": "r-left", "kind": "device"}
-            ],
-        }
-        db.add_all([working, pending, leaving])
+        session_ids = {handle: uuid.uuid4() for handle in sessions}
+        for handle, (request, lease) in sessions.items():
+            await db.execute(
+                text(
+                    "INSERT INTO agent_sessions (id, topic_id, agent_handle, "
+                    "harness, execution_request, work_lease, created_at, "
+                    "updated_at) VALUES (:id, :topic, :handle, 'claude-code', "
+                    "CAST(:request AS json), CAST(:lease AS json), :now, :now)"
+                ),
+                {
+                    "id": session_ids[handle],
+                    "topic": room.id,
+                    "handle": handle,
+                    "request": json.dumps(request),
+                    "lease": None if lease is None else json.dumps(lease),
+                    "now": now,
+                },
+            )
         await db.commit()
         ids.update(
             project=project.id,
             room=room.id,
             old_room=old_room.id,
             room_resource=resource,
-            working=working.id,
-            pending=pending.id,
-            leaving=leaving.id,
+            working=session_ids["working"],
+            pending=session_ids["pending"],
+            leaving=session_ids["leaving"],
             team=team.id,
         )
 

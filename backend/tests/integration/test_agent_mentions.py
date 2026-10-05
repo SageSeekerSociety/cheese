@@ -164,7 +164,9 @@ def _deliveries(client, room_id):
         async with client.test_factory() as session:
             return list(
                 await session.scalars(
-                    select(Delivery).where(Delivery.topic_id == uuid.UUID(room_id))
+                    select(Delivery).where(
+                        Delivery.conversation_id == uuid.UUID(room_id)
+                    )
                 )
             )
 

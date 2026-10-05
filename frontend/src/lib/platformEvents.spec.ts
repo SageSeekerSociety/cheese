@@ -7,7 +7,7 @@ import { platformErrorPresentation } from './platformEvents'
 function eventBlock(meta: Record<string, unknown> | null, content = '平台事件'): Block {
   return {
     id: 'event-1',
-    topic_id: 'topic-1',
+    conversation_id: 'topic-1',
     kind: 'event',
     author_type: 'platform',
     author: 'system',

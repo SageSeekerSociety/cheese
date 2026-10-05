@@ -83,7 +83,7 @@ covers:
 
 - **错过了就不补**：计划时刻晚于现在超过 `MISSED_GRACE`（15 分钟）的，落一行 `skipped`，理由写「平台当时没有运行，这一次不补跑」。补跑一条几小时前的定时任务，通常比不跑更糟。
 - **不重复**：唯一约束那一步返回空就说明这个时刻已经响过了，`_fire` 直接返回。
-- **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；另外由周期任务自己跑出来的活（`task.execution_turn_id` 在那条规则自己的 `turn_id` 里）不会被再算成一次触发 —— 否则「任务完成触发工作、工作又开任务」就是个正反馈环。
+- **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；「任务完成触发工作、工作又开任务」也绕不起来：任务只能由人创建，周期任务跑出来的一轮最多提议任务。
 - **扫描是并发的**：`_fire_schedules` / `_fire_events` / `announce_archived_rooms` / `_settle_open_runs` / `_announce_finished` 都 `with_for_update(skip_locked=True)`，多个后端进程同时在跑也不会互相排队或重复处理。
 
 ## 平台自己的钟：PeriodicRunner {#sweep}

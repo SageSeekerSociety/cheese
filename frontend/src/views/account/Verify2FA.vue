@@ -1,88 +1,39 @@
+<!--
+  The second-factor step: it reads where the sign-in came from, sends the code
+  to the backend, decides where to land next and runs the passkey upgrade.
+  What it shows is Verify2FAView.vue, which is handed the code state.
+-->
 <template>
-  <div>
-    <AccountHeading
-      :title="t('account.twoFactor.title')"
-      :lede="codeType === 'totp' ? t('account.twoFactor.totpLede') : t('account.twoFactor.backupLede')"
-    />
-
-    <v-alert v-if="errorMessage" type="error" variant="tonal" density="comfortable" class="mb-6">
-      {{ errorMessage }}
-    </v-alert>
-
-    <v-form @submit.prevent="handleVerify">
-      <!-- 放在验证码之前：填满最后一位就自动提交，放在后面的话来不及勾选。 -->
-      <v-checkbox v-model="trustDevice" density="compact" hide-details class="verify-trust">
-        <template #label>
-          <span class="verify-trust__label">{{ t('account.twoFactor.trustDevice') }}</span>
-        </template>
-      </v-checkbox>
-
-      <v-otp-input
-        v-if="codeType === 'totp'"
-        v-model="totpCode"
-        length="6"
-        type="number"
-        class="account-otp"
-        @update:model-value="handleTOTPInput"
-      />
-
-      <v-otp-input
-        v-else
-        v-model="backupCode"
-        length="8"
-        type="text"
-        class="account-otp"
-        @update:model-value="handleBackupInput"
-      />
-
-      <p class="account-hint">{{ t('account.twoFactor.lockout') }}</p>
-
-      <BaseButton
-        block
-        kind="primary"
-        size="lg"
-        type="submit"
-        class="account-submit"
-        :loading="loading"
-        :disabled="!validateCode(codeType === 'totp' ? totpCode : backupCode)"
-      >
-        {{ codeType === 'totp' ? t('account.twoFactor.totpSubmit') : t('account.twoFactor.backupSubmit') }}
-      </BaseButton>
-
-      <div class="account-foot account-foot--split">
-        <button type="button" class="account-link" @click="toggleCodeType">
-          {{ codeType === 'totp' ? t('account.twoFactor.useBackup') : t('account.twoFactor.useTotp') }}
-        </button>
-        <router-link :to="backToSignIn()" class="account-link account-link--quiet">
-          {{ t('account.backToSignIn') }}
-        </router-link>
-      </div>
-    </v-form>
-
-    <ConfirmDialog
-      v-model="showBackupCodeDialog"
-      :title="t('account.twoFactor.backupUsedTitle')"
-      :confirm-label="t('account.twoFactor.regenerate')"
-      :cancel-label="t('account.twoFactor.later')"
-      @confirm="handleGoToSecurity"
-      @cancel="handleLater"
-    >
-      {{ t('account.twoFactor.backupUsedBody') }}
-    </ConfirmDialog>
-  </div>
+  <Verify2FAView
+    :code-type="codeType"
+    :error-message="errorMessage"
+    :loading="loading"
+    :submit-disabled="submitDisabled"
+    :trust-device="trustDevice"
+    :totp-code="totpCode"
+    :backup-code="backupCode"
+    :back-to="backTo"
+    :show-backup-code-dialog="showBackupCodeDialog"
+    @submit="handleVerify"
+    @toggle="toggleCodeType"
+    @confirm="handleGoToSecurity"
+    @cancel="handleLater"
+    @update:trust-device="trustDevice = $event"
+    @update:totp-code="handleTOTPInput"
+    @update:backup-code="handleBackupInput"
+    @update:show-backup-code-dialog="showBackupCodeDialog = $event"
+  />
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { attemptMessage } from './attemptWait'
 import { landingAfterSignIn, takeFirstStep, upgradeAfterSecondStep } from './passkeyEnrollment'
+import Verify2FAView from './Verify2FAView.vue'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
-import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { postLoginTarget, takeOAuthRedirect } from '@/router/loginRedirect'
@@ -100,6 +51,7 @@ function afterSignIn(): string {
 
 // 退回登录页时，来路跟着走。
 const backToSignIn = () => ({ name: 'SignIn', query: { redirect: route.query.redirect } })
+const backTo = computed(() => backToSignIn())
 
 const codeType = ref<'totp' | 'backup'>('totp')
 // 默认不勾：在公用电脑上勾选，之后任何人只凭密码就能登录这个账号。
@@ -182,7 +134,10 @@ const validateCode = (code: string) => {
   return /^[a-zA-Z0-9]{8}$/.test(code)
 }
 
+const submitDisabled = computed(() => !validateCode(codeType.value === 'totp' ? totpCode.value : backupCode.value))
+
 const handleTOTPInput = (value: string) => {
+  totpCode.value = value
   backupCode.value = ''
   if (value.length === 6) {
     handleVerify()
@@ -190,6 +145,7 @@ const handleTOTPInput = (value: string) => {
 }
 
 const handleBackupInput = (value: string) => {
+  backupCode.value = value
   totpCode.value = ''
   if (value.length === 8) {
     handleVerify()
@@ -219,15 +175,3 @@ onMounted(() => {
   }
 })
 </script>
-
-<style scoped>
-.verify-trust {
-  margin-bottom: 8px;
-}
-
-.verify-trust__label {
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--text);
-}
-</style>

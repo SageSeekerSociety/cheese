@@ -19,9 +19,9 @@ function task(over: Partial<Parameters<typeof compareTasks>[0]> = {}) {
 }
 
 describe('BOARD_COLUMNS', () => {
-  it('板面只并排「还需要人看」的三列', () => {
-    // 已完成收进底部折叠行，板面留给还没了结的；活不归档，所以 archived 落不到板上。
-    expect(BOARD_COLUMNS.map((c) => c.key)).toEqual(['building', 'delivering', 'needs_you'])
+  it('板面只并排「还没了结」的四列', () => {
+    // 已完成收进底部折叠行，板面留给还没了结的；任务不归档，所以 archived 落不到板上。
+    expect(BOARD_COLUMNS.map((c) => c.key)).toEqual(['not_started', 'building', 'delivering', 'needs_you'])
   })
 
   it('列的先后是「离交付多远」，不跟着数据变', () => {
@@ -31,10 +31,11 @@ describe('BOARD_COLUMNS', () => {
 })
 
 describe('columnLabel', () => {
-  it('五列各有名字，包括板面上不出现的那两列', () => {
+  it('每一列各有名字，包括板面上不出现的那两列', () => {
     // done 在折叠行上、archived 在房间上，两者都要有名字可写。
-    expect(columnLabel('building')).toBe('施工中')
-    expect(columnLabel('delivering')).toBe('交付中')
+    expect(columnLabel('not_started')).toBe('未开始')
+    expect(columnLabel('building')).toBe('进行中')
+    expect(columnLabel('delivering')).toBe('检查中')
     expect(columnLabel('needs_you')).toBe('待处理')
     expect(columnLabel('done')).toBe('已完成')
     expect(columnLabel('archived')).toBe('已归档')

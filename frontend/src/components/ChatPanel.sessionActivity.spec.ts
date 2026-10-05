@@ -61,7 +61,7 @@ class FakeWebSocket {
 
 const assistantBlock: Block = {
   id: 'assistant-1',
-  topic_id: topic.id,
+  conversation_id: topic.id,
   kind: 'message',
   author_type: 'participant',
   author: 'cheese-session',

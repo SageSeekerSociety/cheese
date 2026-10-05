@@ -242,19 +242,20 @@ async function seed(page: Page): Promise<Seed> {
     data: { id: string; owner_handle: string }[];
   };
   const projectId = projects.data.find((p) => p.owner_handle === "alice")!.id;
-  // A room with a dispatched task: the split leaves platform notices in the
-  // room, and the task's card is what the accept card is filed against.
+  // A room with a started task: creating and starting it leaves platform
+  // notices in the room, and the task is what the accept card is filed against.
   const room = (await api(page, "post", "/topics", {
     project_id: projectId,
     title: "Release checklist",
   })) as { id: string };
-  const task = (await api(page, "post", `/topics/${room.id}/split`, {
+  const created = (await api(page, "post", `/topics/${room.id}/tasks`, {
     title: "Write the release notes",
-    created_by: "alice",
+  })) as { id: string };
+  const task = (await api(page, "post", `/topics/${created.id}/start`, {
     reviewer_handle: "alice",
   })) as { id: string; branch_name: string };
   await pushToTaskBranch(page, projectId, task.branch_name);
-  await api(page, "post", `/topics/${room.id}/tasks/${task.id}/accept-card`, {
+  await api(page, "post", `/topics/${task.id}/accept-card`, {
     reviewer_handle: "alice",
     change_subject: "docs: add the release notes",
   });
@@ -310,9 +311,9 @@ test("workspace: inbox, board, room, accept card, library, project settings", as
     {
       name: "room with platform notices",
       path: `${project}/topics/${roomId}`,
-      // The platform's line for the dispatch (roomNotice `taskDispatched`).
+      // The platform's line for the new task (roomNotice `taskCreated`).
       ready: (page) =>
-        page.getByText("Sent out a task").first().waitFor({ timeout: 45_000 }),
+        page.getByText("created the task").first().waitFor({ timeout: 45_000 }),
     },
     {
       name: "room's members and work computer",

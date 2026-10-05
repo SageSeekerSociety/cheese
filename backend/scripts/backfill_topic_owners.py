@@ -135,7 +135,7 @@ async def _first_human_author(session, topic_id: uuid.UUID) -> list[str]:
             await session.execute(
                 select(Block.author)
                 .where(
-                    Block.topic_id == topic_id,
+                    Block.conversation_id == topic_id,
                     participant_blocks(),
                     ~agent_handle_column(Block.author),
                 )

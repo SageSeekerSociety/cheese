@@ -40,7 +40,7 @@ from app.domain.policy.proposals import propose
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -124,18 +124,39 @@ async def session_agent_in_room(
     return await _session_agent(AgentInstanceService(session), topic, project, handle)
 
 
-async def _agent_at(session: AsyncSession, place: Place) -> ResolvedAgent:
-    """Which agent works in *place* — the THREAD's own pick when it is one.
+async def conversation_seat(
+    session: AsyncSession, conversation_id: uuid.UUID, handle: str | None
+) -> tuple[ResolvedAgent, str] | None:
+    """Who answers in a conversation, and the seat it authors under.
 
-    The room's pick, because the room is the only thing that runs a
-    session: every 分身 in it is a worker inside that one conversation, so
-    there is no second agent to resolve and a per-card pin would name one
-    that never speaks.
-    """
+    In a room it is the agent the message named (or the room's), seated on the
+    room's roster. In a task it is the task's own agent, which need not sit on
+    the room's roster: only the owner talks to it. None for a conversation that
+    no longer exists."""
+    place = await PlaceResolver(session).conversation(conversation_id)
+    if place is None:
+        return None
+    if place.task is not None:
+        agent = await _agent_at(session, place)
+        return agent, agent_instance_handle(agent.instance_id)
+    agent = await session_agent_in_room(session, place.room_id, handle)
+    if agent is None:
+        return None
+    return agent, await _acting_handle(session, place.room_id, agent)
+
+
+async def _agent_at(session: AsyncSession, place: Place) -> ResolvedAgent:
+    """Which agent works in *place*: the teammate a task was given, else the
+    room's — which is the project's unless the room has its own."""
     project = await ProjectRepository(session).get(place.project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    return await AgentInstanceService(session).for_topic(place.room, project)
+    agents = AgentInstanceService(session)
+    if place.task is not None and place.task.agent_handle:
+        return agents.resolved(
+            await agents.for_handle(project, place.task.agent_handle)
+        )
+    return await agents.for_topic(place.room, project)
 
 
 async def _agent_handle(session: AsyncSession, topic_id: uuid.UUID) -> str:
@@ -245,8 +266,7 @@ async def _bail_notice(
     landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
     block = await BlockRepository(session).add(
         project_id=landed.project_id,
-        topic_id=landed.topic_id,
-        task_id=landed.task_id,
+        conversation_id=landed.conversation_id,
         author="system",
         author_type=AuthorType.platform,
         content=text,

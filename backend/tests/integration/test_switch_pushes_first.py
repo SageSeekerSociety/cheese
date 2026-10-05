@@ -609,7 +609,7 @@ async def _room_events(client, room, event_type):
     async with client.test_factory() as db:
         blocks = await db.scalars(
             select(Block).where(
-                Block.topic_id == room.topic_id, Block.kind == BlockKind.event
+                Block.conversation_id == room.topic_id, Block.kind == BlockKind.event
             )
         )
         return [b for b in blocks if (b.meta or {}).get("event_type") == event_type]

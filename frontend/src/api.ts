@@ -603,11 +603,9 @@ export function unarchiveTopic(topicId: string): Promise<Topic> {
   })
 }
 
-// 把一条消息升级成它自己的地点 (eval A1)。`blockId` 是那条消息的 block id。
-// 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
-// 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
-/** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
- *  私聊里的变成一个新房间（回来的是 Topic）。升级的人由会话认，不由请求体说。 */
+/** 把一条消息转为任务。房间里的消息变成这个房间的一个任务（回来的是 RoomTask，
+ *  点的人是负责人）；私聊里的变成一个新房间（回来的是 Topic）——私聊不在话题树
+ *  里，任务挂在那儿没人打得开。升级的人由会话认，不由请求体说。 */
 export function upgradeBlock(blockId: string): Promise<Topic | RoomTask> {
   return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
@@ -644,6 +642,7 @@ export function getResourceLimits(): Promise<ResourceLimits> {
 }
 
 // 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
+// A task's id: that task's own work computer.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
@@ -686,7 +685,11 @@ export interface ComputeProposal {
 export function setTopicComputeChoice(
   topicId: string,
   choice: ComputeChoice,
-  options: { abandonUnpushed?: boolean; ifIdle?: boolean; visibility?: 'host' | 'isolated' } = {}
+  options: {
+    abandonUnpushed?: boolean
+    ifIdle?: boolean
+    visibility?: 'host' | 'isolated'
+  } = {}
 ): Promise<{ choice: ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
@@ -1381,11 +1384,10 @@ export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
 // Read on topic open — between turns there is no WS stream to carry it, and
 // "做到哪了" has to be visible without summoning anyone. `items` is [] for a
-// topic that never had a checklist. With `taskId`, that card's list — the one
-// its 分身 wrote — instead of the room's.
-export function getProgress(topicId: string, taskId?: string): Promise<TopicProgress> {
-  const q = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
-  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
+// topic that never had a checklist. A task's id reads the list its own session
+// wrote.
+export function getProgress(topicId: string): Promise<TopicProgress> {
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
 }
 
 // A document's top-level blocks (heading/paragraph/list/…), in order: which
@@ -1597,18 +1599,15 @@ export function getAppVersion(): Promise<AppVersion> {
 // ---- 采纳卡 / 验收 (eval C5/A3) ----
 
 // Accept cards for a topic, newest first.
-export function getAcceptCards(topicId: string, taskId?: string | null): Promise<ListPayload<AcceptCard>> {
-  return request<ListPayload<AcceptCard>>(
-    `/topics/${encodeURIComponent(topicId)}/accept-card${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
-  )
+// A task's id lists that task's cards; a room's, every card of its tasks.
+export function getAcceptCards(topicId: string): Promise<ListPayload<AcceptCard>> {
+  return request<ListPayload<AcceptCard>>(`/topics/${encodeURIComponent(topicId)}/accept-card`)
 }
 
 // 采纳 PR 化 (#188 §5.1): live CI state of the newest card's PR. Safe to poll —
 // answers {available:false} when the topic has no PR-riding card.
-export function getPrChecks(topicId: string, taskId?: string | null): Promise<PrChecks> {
-  return request<PrChecks>(
-    `/topics/${encodeURIComponent(topicId)}/pr-checks${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
-  )
+export function getPrChecks(topicId: string): Promise<PrChecks> {
+  return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
 }
 
 /** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
@@ -1745,14 +1744,13 @@ export function inviteExternalMember(projectId: string, handle: string): Promise
 }
 
 export interface LookedUpUser {
+  id: number // what a team invitation names the person by
   handle: string
   name: string
   avatar_id: number | null
 }
 
-// 按用户名或邮箱**精确**找一个人（像飞书加外部联系人那样）：只认完整的用户名或邮箱，
-// 不做模糊搜索——邀请是把人放进项目的动作，「搜出来一串相似的名字再挑」正是加错人
-// 的来路。找不到是 404。
+// 按完整的用户名或邮箱**精确**找一个人，不做模糊搜索（为什么见 useAccountLookup）。找不到是 404。
 export function lookupUser(q: string): Promise<LookedUpUser> {
   return request<LookedUpUser>(`/users/lookup?q=${encodeURIComponent(q)}`)
 }
@@ -1792,34 +1790,10 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
 // 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
 export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
 
-// 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
-// `getRoomTask`（房间的地址 + 卡的 id）。
+// 一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`
+// 的 `getTask`（`/topics/{task}/task`）。
 export function getTopic(topicId: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}`)
-}
-
-/** 一张卡，连着它自己的对话。`limit` 只截对话，卡本身照常整份回来。 */
-export function getRoomTask(
-  roomId: string,
-  taskId: string,
-  opts?: { limit?: number; through?: string }
-): Promise<RoomTask & { blocks: Block[] }> {
-  const q = new URLSearchParams()
-  if (opts?.limit != null) q.set('limit', String(opts.limit))
-  if (opts?.through) q.set('through', opts.through)
-  const query = q.toString() ? `?${q.toString()}` : ''
-  return request<RoomTask & { blocks: Block[] }>(
-    `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}${query}`
-  )
-}
-
-/** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
- *  房间的会话里，只有房间的芝士递得到话。 */
-export function sayOnRoomTask(roomId: string, taskId: string, content: string): Promise<Block> {
-  return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ content }),
-  })
 }
 
 // ---- 反馈 (feedback) ----

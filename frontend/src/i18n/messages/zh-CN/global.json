@@ -10,7 +10,8 @@
   "loadError": {
     "title": "加载失败",
     "page": "页面没能打开，网络可能不稳定",
-    "retry": "重试"
+    "retry": "重试",
+    "forbidden": "你没有权限查看"
   },
   "cancel": "取消",
   "cheese": "知是",

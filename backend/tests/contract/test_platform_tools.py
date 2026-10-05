@@ -13,9 +13,7 @@
 
 import json
 import os
-import re
 import shlex
-import subprocess
 import sys
 import threading
 import uuid
@@ -32,11 +30,14 @@ from app.domain.agent.harness.claude_code.remote_execution import mcp_process
 from app.domain.agent.market import compute_listings
 
 TASK = "9f8e7d6c-0000-4000-8000-000000000000"
+#: The conversation these sessions run in (CHEESE_TOPIC): a task's own
+#: session, so the task tools act on it.
+TOPIC = TASK
 
 #: 每一样调得通的那一次调用，和它该落在平台的哪个地址上。写死在用例里，不从被测模块
 #: 读回来 —— 从表里读一遍再断言它等于自己，删掉一整行也是绿的。
 CALLS = {
-    "chat_send": ({"content": "这一轮我在这里"}, "POST", "/topics/fixture/messages"),
+    "chat_send": ({"content": "这一轮我在这里"}, "POST", f"/topics/{TOPIC}/messages"),
     "chat_edit": (
         {"message_id": "m-1", "content": "改过的这一句"},
         "PATCH",
@@ -45,45 +46,48 @@ CALLS = {
     "todo_write": (
         {"todos": [{"content": "读现有实现", "status": "in_progress"}]},
         "PUT",
-        "/topics/fixture/progress",
+        f"/topics/{TOPIC}/progress",
     ),
-    "cheese_chat_list": ({}, "GET", "/topics/fixture/history"),
-    "cheese_chat_search": ({"query": "口径"}, "GET", "/topics/fixture/history"),
+    "cheese_chat_list": ({}, "GET", f"/topics/{TOPIC}/history"),
+    "cheese_chat_search": ({"query": "口径"}, "GET", f"/topics/{TOPIC}/history"),
     "cheese_chat_get": (
         {"message_id": "m-1"},
         "GET",
-        "/topics/fixture/history/m-1",
+        f"/topics/{TOPIC}/history/m-1",
     ),
     "cheese_chat_replies": (
         {"message_id": "m-1"},
         "GET",
-        "/topics/fixture/history",
+        f"/topics/{TOPIC}/history",
     ),
     # The room's document: the fixture platform names every id "fixture-id".
     "cheese_doc_get": ({}, "GET", "/documents/fixture-id"),
+    # 不碰机器：任务开始前机器只读，起草实况文档正是那时要做的事。
+    "cheese_doc_set": ({"content": "# 实况\n"}, "PUT", "/documents/fixture-id"),
     "cheese_doc_edit": (
         {"edits": [{"old": "第一段", "new": "第一段，改过"}]},
         "POST",
         "/documents/fixture-id/edits",
     ),
-    "cheese_task": ({"title": "数据清洗"}, "POST", "/topics/fixture/split"),
-    "cheese_close_task": (
-        {"task": TASK},
+    "cheese_doc_new": (
+        {"title": "竞品定价对比"},
         "POST",
-        f"/topics/fixture/tasks/{TASK}/close",
+        "/projects/fixture-project/documents",
     ),
+    "cheese_doc_list": ({}, "GET", "/projects/fixture-project/documents"),
+    "cheese_task": (
+        {"title": "数据清洗", "summary": "按新口径重算"},
+        "POST",
+        f"/topics/{TOPIC}/task-proposals",
+    ),
+    "cheese_close_task": ({}, "POST", f"/topics/{TOPIC}/close"),
     "cheese_describe": (
-        {"task": TASK, "subject": "fix: x"},
+        {"subject": "fix: x"},
         "POST",
-        f"/topics/fixture/tasks/{TASK}/accept-card/describe",
+        f"/topics/{TOPIC}/accept-card/describe",
     ),
-    "cheese_ready": ({"task": TASK}, "POST", f"/topics/fixture/tasks/{TASK}/ready"),
-    "cheese_tell": (
-        {"target": TASK, "message": "口径改了"},
-        "POST",
-        f"/topics/fixture/tasks/{TASK}/messages",
-    ),
-    "cheese_title": ({"text": "推荐原型"}, "POST", "/topics/fixture/title"),
+    "cheese_ready": ({}, "POST", f"/topics/{TOPIC}/ready"),
+    "cheese_title": ({"text": "推荐原型"}, "POST", f"/topics/{TOPIC}/title"),
     "cheese_notify": (
         {"title": "看一眼"},
         "POST",
@@ -92,10 +96,10 @@ CALLS = {
     "cheese_fetch": ({"url": "https://example.test"}, "POST", "/fetch"),
     "cheese_docs_search": ({"query": "验收"}, "POST", "/docs/agent/search"),
     "cheese_docs_read": ({"page": "accept"}, "POST", "/docs/agent/read"),
-    "cheese_lock": ({"task": TASK}, "POST", "/topics/fixture/lock"),
-    "cheese_unlock": ({"task": TASK}, "POST", "/topics/fixture/unlock"),
-    "cheese_members": ({}, "GET", "/topics/fixture/members"),
-    "cheese_status": ({}, "GET", "/topics/fixture/status"),
+    "cheese_lock": ({}, "POST", f"/topics/{TOPIC}/lock"),
+    "cheese_unlock": ({}, "POST", f"/topics/{TOPIC}/unlock"),
+    "cheese_members": ({}, "GET", f"/topics/{TOPIC}/members"),
+    "cheese_status": ({}, "GET", f"/topics/{TOPIC}/status"),
     "cheese_library_ls": ({}, "GET", "/projects/fixture-project/library"),
     "cheese_ask": (
         {
@@ -107,7 +111,7 @@ CALLS = {
             ]
         },
         "POST",
-        "/topics/fixture/asks",
+        f"/topics/{TOPIC}/asks",
     ),
     "cheese_feedback_propose": (
         {
@@ -117,7 +121,7 @@ CALLS = {
             "user_said": "用户没有就这个问题说过话",
         },
         "POST",
-        "/topics/fixture/feedback-proposals",
+        f"/topics/{TOPIC}/feedback-proposals",
     ),
     "cheese_feedback_list": ({"query": "保存"}, "GET", "/feedback"),
     "cheese_feedback_get": ({"feedback": "FB-12"}, "GET", "/feedback/FB-12"),
@@ -134,17 +138,17 @@ CALLS = {
     "cheese_machine": (
         {"profile": "cloud"},
         "PUT",
-        "/topics/fixture/compute-profile",
+        f"/topics/{TOPIC}/compute-profile",
     ),
     "cheese_note": (
         {"thread": "9f8e7d6c-0000-0000-0000-000000000000", "content": "口径改了"},
         "POST",
-        "/topics/fixture/note",
+        f"/topics/{TOPIC}/note",
     ),
     "cheese_deliver_at": (
         {"at": "2026-09-21T14:00:00+00:00", "content": "回来看一眼那条 PR"},
         "POST",
-        "/topics/fixture/deliveries",
+        f"/topics/{TOPIC}/deliveries",
     ),
     "cheese_routine_draft": (
         {
@@ -153,7 +157,7 @@ CALLS = {
             "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
         },
         "POST",
-        "/topics/fixture/routines",
+        f"/topics/{TOPIC}/routines",
     ),
     "cheese_routine_list": ({}, "GET", "/projects/fixture-project/routines"),
     "cheese_routine_update": (
@@ -177,7 +181,7 @@ CALLS = {
             "accepted": "用户说就这样",
         },
         "POST",
-        "/topics/fixture/skills",
+        f"/topics/{TOPIC}/skills",
     ),
     "cheese_skill_update": (
         {"skill": "m-1", "body": "先写变坏的指标", "reason": "顺序反了"},
@@ -187,21 +191,20 @@ CALLS = {
     "platform_request": (
         {
             "method": "PUT",
-            "path": "/topics/fixture/members/bob",
+            "path": f"/topics/{TOPIC}/members/bob",
             "body": {"role": "admin"},
         },
         "PUT",
-        "/topics/fixture/members/bob",
+        f"/topics/{TOPIC}/members/bob",
     ),
 }
 
-#: 要机器上一份东西的那两样：读一个文件、推一条任务分支。
+#: 要机器的那一样：推一条任务分支。
 NEEDS_THE_MACHINE = {
-    "cheese_doc_set": ({"path": "notes/doc.md"}, "PUT", "/documents/fixture-id"),
     "cheese_accept_request": (
-        {"task": TASK, "subject": "fix(x): y"},
+        {"subject": "fix(x): y"},
         "POST",
-        f"/topics/fixture/tasks/{TASK}/accept-card",
+        f"/topics/{TOPIC}/accept-card",
     ),
 }
 
@@ -255,7 +258,7 @@ def _serve(executor):
                 "revision": 1,
                 **payload,
             }
-            if self.path == "/topics/fixture/asks":
+            if self.path == f"/topics/{TOPIC}/asks":
                 data = {
                     "group": {
                         "topic_id": "fixture",
@@ -295,7 +298,7 @@ def _session(tmp_path, server, target):
             "NO_PROXY": "127.0.0.1",
             "CHEESE_TOKEN": "fixture",
             "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
-            "CHEESE_TOPIC": "fixture",
+            "CHEESE_TOPIC": TOPIC,
             "CHEESE_PROJECT": "fixture-project",
         },
         log,
@@ -328,25 +331,13 @@ DOC = "# 实况\n\n数据口径定为新版。\n"
 
 @pytest.fixture
 def machine_is_here(tmp_path):
-    """机器在：它上面有一份文档，推分支的那条命令答成功。
-
-    读文件的命令在这里真的跑一遍（机器上的路径换成本地那份文档），所以测到的是
-    文件完整读回来了，不是某一种命令写法。"""
-    doc = tmp_path / "machine-doc.md"
-    doc.write_text(DOC)
+    """机器在：推分支的那条命令和等机器的空命令答成功。"""
 
     def executor(payload):
         command = payload["params"]["args"]["command"]
-        if command in ("cheese sync --task " + shlex.quote(TASK), "true"):
-            stdout = ""
-        elif re.search(r"/\S*/notes/doc\.md", command):
-            local = re.sub(r"/\S*/notes/doc\.md", str(doc), command)
-            stdout = subprocess.run(
-                ["sh", "-c", local], capture_output=True, text=True, check=True
-            ).stdout
-        else:
+        if command not in ("cheese sync --task " + shlex.quote(TOPIC), "true"):
             return 500, b""
-        return 200, json.dumps({"value": {"stdout": stdout}}).encode()
+        return 200, json.dumps({"value": {"stdout": ""}}).encode()
 
     server, platform_calls, executor_calls = _serve(executor)
     process, log = _session(
@@ -423,6 +414,25 @@ def test_each_platform_tool_reaches_the_platform_without_the_machine(
     assert executor_calls == [], f"{tool} 经过了那台机器"
 
 
+def test_a_named_document_is_read_and_changed_instead_of_the_rooms(
+    machine_is_gone,
+):
+    """点了名的文档（项目资料库里的那一份）就读写那一份，不去碰话题的实况文档。"""
+    process, platform_calls, _ = machine_is_gone
+
+    _call(process, "cheese_doc_get", {"document": "library-doc"})
+    _call(
+        process,
+        "cheese_doc_edit",
+        {"document": "library-doc", "edits": [{"old": "旧", "new": "新"}]},
+    )
+
+    reached = [(m, p) for m, p, _ in platform_calls]
+    assert ("GET", "/documents/library-doc") in reached
+    assert ("POST", "/documents/library-doc/edits") in reached
+    assert ("GET", f"/topics/{TOPIC}/document") not in reached
+
+
 @pytest.mark.parametrize(
     ("arguments", "said"),
     [
@@ -467,12 +477,10 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
 
 
 @pytest.mark.parametrize("tool", sorted(NEEDS_THE_MACHINE))
-def test_a_tool_that_needs_a_file_from_the_machine_says_it_is_out_of_reach(
-    machine_is_gone, tool
-):
-    """读文件、推分支要那台机器：它不在，当场说不在，而且什么都没写到平台上。
+def test_a_tool_that_needs_the_machine_says_it_is_out_of_reach(machine_is_gone, tool):
+    """推分支要那台机器：它不在，当场说不在，而且什么都没写到平台上。
 
-    写上去的话，递出去的是一张照着旧提交的卡，或者一份空文档 —— 没人会发现。
+    写上去的话，递出去的是一张照着旧提交的卡 —— 没人会发现。
     """
     process, platform_calls, _ = machine_is_gone
     arguments, method, path = NEEDS_THE_MACHINE[tool]
@@ -504,30 +512,10 @@ def test_waiting_for_a_machine_that_is_here_returns_ready(machine_is_here):
     assert [c["params"]["args"]["command"] for c in executor_calls] == ["true"]
 
 
-def test_the_living_doc_is_read_off_the_machine(machine_is_here):
-    process, platform_calls, executor_calls = machine_is_here
-
-    outcome = _call(process, "cheese_doc_set", {"path": "notes/doc.md"})
-
-    assert "deny" not in outcome, outcome
-    [put] = [
-        body
-        for m, p, body in platform_calls
-        if (m, p) == ("PUT", "/documents/fixture-id")
-    ]
-    assert put["content"] == DOC
-    # 没读过就写，出示的是 0 —— 只有还没有文档时平台才收。
-    assert put["expected_version"] == 0
-    # 相对路径锚在机器的工作区上，不是会话这一侧的哪个目录。
-    assert executor_calls
-    for call in executor_calls:
-        assert "/notes/doc.md" in call["params"]["args"]["command"]
-
-
 def test_a_write_after_a_read_carries_the_version_it_read(machine_is_here):
     process, platform_calls, _ = machine_is_here
     _call(process, "cheese_doc_get", {})
-    _call(process, "cheese_doc_set", {"path": "notes/doc.md"})
+    _call(process, "cheese_doc_set", {"content": DOC})
     [put] = [body for m, p, body in platform_calls if m == "PUT"]
     assert put["expected_version"] == 1
 
@@ -538,17 +526,15 @@ def test_acceptance_pushes_the_work_before_it_files_the_card(machine_is_here):
     outcome = _call(
         process,
         "cheese_accept_request",
-        {"task": TASK, "subject": "fix(x): y", "reviewer": "lisi"},
+        {"subject": "fix(x): y", "reviewer": "lisi"},
     )
 
     assert "deny" not in outcome, outcome
     assert "已把验收卡递给 lisi" in outcome["result"]["stdout"]
     [sync] = executor_calls
-    assert sync["params"]["args"]["command"] == f"cheese sync --task {TASK}"
+    assert sync["params"]["args"]["command"] == f"cheese sync --task {TOPIC}"
     [card] = [
-        body
-        for m, p, body in platform_calls
-        if p == f"/topics/fixture/tasks/{TASK}/accept-card"
+        body for m, p, body in platform_calls if p == f"/topics/{TOPIC}/accept-card"
     ]
     assert card["change_subject"] == "fix(x): y"
     assert card["reviewer_handle"] == "lisi"

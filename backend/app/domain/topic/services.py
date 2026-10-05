@@ -35,6 +35,7 @@ from app.domain.block.models import (
     BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import (
     CHEESE_NAME,
     agent_instance_handle,
@@ -112,45 +113,20 @@ logger = logging.getLogger("cheesex.topic")
 
 
 def _brief_doc(
-    *,
-    child_title: str,
-    parent_title: str,
-    brief: str | None,
-    parent_doc: str | None,
-    created_by: str | None,
-    source_block: str | None = None,
+    *, child_title: str, parent_title: str, created_by: str | None, source_block: str
 ) -> str:
-    """The newborn sub-topic's initial living doc: a task brief.
-
-    Pure assembly of EXISTING text — the splitter's brief (AI- or human-written),
-    the upgraded block (for 讨论升级), and the parent's living doc, all copied
-    verbatim under fixed structural headings. No semantics are derived from
-    prose and nothing speaks as 芝士 (CLAUDE.md red line); the 分身 rewrites
-    this into its own status summary on its kickoff turn."""
+    """A room upgraded out of a private chat starts its living doc from the
+    message it came from, copied verbatim under fixed headings. No semantics
+    are derived from prose and nothing speaks as 芝士 (CLAUDE.md red line)."""
     by = f"由 {created_by} " if created_by else ""
-    origin = "升级" if source_block is not None else "拆出"
-    parts = [
-        f"# {child_title}",
-        f"> 任务简报（{by}从「{parent_title}」{origin}时自动预置；"
-        "分身开工后会把这份文档改写成状态摘要）",
-    ]
-    if source_block is not None:
-        # 讨论升级: the upgraded block IS the task statement.
-        parts += ["## 升级来源（这段讨论就是任务）", source_block.strip() or "（空）"]
-    else:
-        parts += [
-            "## 拆分意图",
-            brief.strip()
-            if brief and brief.strip()
-            else "（拆分时没有附说明——任务以标题和下面的父话题文档为准）",
+    return "\n\n".join(
+        [
+            f"# {child_title}",
+            f"> 从「{parent_title}」的一条消息{by}转来时自动预置",
+            "## 来源",
+            source_block.strip() or "（空）",
         ]
-    parts += [
-        "## 父话题当时的实况文档（快照，供参考）",
-        parent_doc.strip()
-        if parent_doc and parent_doc.strip()
-        else "（父话题当时还没有实况文档）",
-    ]
-    return "\n\n".join(parts)
+    )
 
 
 def _is_mid_turn_block(block: Block) -> bool:
@@ -558,8 +534,8 @@ class TopicService:
         alive = live_turn is not None and (
             heartbeat_s is not None and heartbeat_s <= threshold_s
         )
-        # The room's OWN line: a card's chatter is its 分身 working, and a
-        # room that has gone quiet while one of them talks is still quiet.
+        # The room's OWN line: a task's conversation is its own, and a room
+        # that has gone quiet while one of its tasks talks is still quiet.
         last = await self._blocks.latest_for_topic(place.room_id)
         silent_for_s = (
             None
@@ -684,8 +660,7 @@ class TopicService:
             )
             await self._blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=by,
                 author_type=AuthorType.platform,
                 content=say("threadArchivedWithRoom", room=topic.title),
@@ -757,8 +732,7 @@ class TopicService:
         )
         await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=by,
             author_type=AuthorType.platform,
             content=note,
@@ -801,8 +775,7 @@ class TopicService:
         )
         await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=by,
             author_type=AuthorType.platform,
             content=say("roomUnarchived", actor=f"<@{by}>", room=topic.title),
@@ -850,28 +823,24 @@ class TopicService:
         *,
         block_id: uuid.UUID,
         created_by: str | None = None,
-        reviewer_handle: str | None = None,
     ) -> tuple[Topic, Task | None, bool]:
         """讨论升级 (eval A1): turn a block into work of its own; the original
-        position becomes a live link. The upgraded block itself is the task
-        statement, preset (with a room-doc snapshot) as the new place's living
-        doc; the 分身's auto-kickoff writes its own opening — same mechanics as
-        dispatch, no canned template.
+        position becomes a live link.
 
         WHICH place depends on where the block is, and the two answers are not
         interchangeable:
 
-        - in a room, the message becomes a piece of WORK — a thread in the same
-          room. That is what upgrading a message has always meant in practice
-          ("this needs doing"), and it no longer costs a room to say it.
+        - in a room, the message becomes a TASK in the same room, owned by
+          whoever upgraded it. Its agent drafts the task's document from the
+          message and what was said around it (the caller hands it that).
         - in a private chat, it becomes a real room under the project root.
           Private chats are not in the topic tree (`list_for_project` hides
           them), so a thread there would be a thread nobody but its owner could
           ever open.
 
-        Returns (room, card, created): `card` is None when the upgrade made a
+        Returns (room, task, created): `task` is None when the upgrade made a
         room; created=False on an idempotent re-upgrade, so the caller doesn't
-        kick the 分身 off twice."""
+        start the task's agent twice."""
         block = await self._blocks.get(block_id)
         if block is None:
             raise NotFoundError("Block not found")
@@ -888,7 +857,9 @@ class TopicService:
             existing_room = await self._repo.get(block.upgraded_to_topic_id)
             if existing_room is not None:
                 return existing_room, None, False
-        parent = await self._repo.get(block.topic_id)
+        parent = await self._repo.get(
+            await room_of(self._session, block.conversation_id)
+        )
         if parent is None:
             raise NotFoundError("Parent topic not found")
         # 归档后工作面冻结 (spec §6.3) — consistent with dispatch/edit_doc.
@@ -898,34 +869,10 @@ class TopicService:
         project = await self._projects.get(block.project_id)
 
         if not parent.is_private:
-            from app.domain.project.protection import branch_protection_of
-
-            reviewer_handle = (reviewer_handle or "").strip() or (
-                branch_protection_of(project).default_reviewer or None
-            )
-            if reviewer_handle is None:
-                raise ValidationError(say("reviewerRequired"))
-            task = await tasks.open_thread(
-                project_id=block.project_id,
-                room_id=parent.id,
-                # Opened unnamed: the room names it later (topics_tasks.py).
-                title=PLACEHOLDER_TITLE,
-                title_source=TaskTitleSource.placeholder,
-                reviewer_handle=reviewer_handle,
-                owner_handle=await self._resolve_owner(
-                    created_by,
-                    project_id=block.project_id,
-                    parent_id=parent.id,
-                    project_owner=project.owner_handle if project else None,
-                ),
-                created_by=created_by,
-            )
+            # Opened unnamed: its agent names it (`cheese_title`).
+            task = await self.create_task(room_id=parent.id, created_by=created_by)
             task.upgraded_from_block_id = block.id
-            # 升级来的活，任务陈述就是那条消息本身 —— stored on the card, the
-            # same place a dispatched brief goes.
-            task.brief = block.content
             await self._blocks.set_upgraded_to_place(block, task_id=task.id)
-            await self._card_block(parent, task)
             return parent, task, True
 
         # 私聊不是话题树的父节点 (spec §1).
@@ -934,8 +881,6 @@ class TopicService:
         brief = _brief_doc(
             child_title=PLACEHOLDER_TITLE,
             parent_title=parent.title,
-            brief=None,
-            parent_doc=None,
             created_by=created_by,
             source_block=block.content,
         )
@@ -975,161 +920,98 @@ class TopicService:
         `system`: the platform assembled it from existing text — nothing here
         speaks as 芝士 (the room's kickoff turn writes the real opening).
 
-        A room only. A piece of work used to get one of these too, and it was
-        the one document on the platform nobody could maintain: the worker doing
-        the work is a subagent holding the ROOM's token, which cannot reach a
-        thread's document address at all. So the brief froze at the moment of
-        dispatch and stayed there while the work moved on. A brief belongs on
-        the card (`Task.brief`), where being unchangeable is the point.
+        A room only: a task's document is its own (`TaskService.ensure_document`),
+        written by the task's session.
         """
         doc = await self.room_doc(topic.id, topic.project_id)
         await DocumentJournal(self._session).lock(doc.id)
         await DocumentWriter(self._session, summarize_doc_change).seed(doc, content)
 
-    async def _card_block(self, room: Topic, task: Task) -> Block:
-        """那张卡 —— the room's timeline says a piece of work went out from here.
-
-        This is the edge #184 asked for and #314 had to work around: dispatch
-        wrote nothing at all on the main line, so the frontend derived a marker
-        from the thread's `room_id` + `created_at` and could only ever say
-        "something was dispatched around now". A block can say which one.
+    async def _card_block(self, room: Topic, task: Task, *, actor: str) -> Block:
+        """The room's timeline says a task was created here, and whose it is.
 
         The task id rides in `meta`, and the STATUS does not: a block is a fixed
         record of a moment, and a piece of work that reads `running` forever
         after it finished is worse than no status at all. Whoever renders this
-        reads the live row (`GET /topics/{id}/tasks`) for that, which is also
-        where the derived markers get theirs — one answer, not two.
+        reads the live row (`GET /topics/{id}/tasks`) for that.
         """
-        # The ROOM's main line: the whole point is that the room sees the work
-        # leave. Filing it on the thread would put it exactly where everyone not
-        # doing the work is not looking.
+        # The ROOM's main line: the whole point is that the room sees the task.
         landed = landing(EventAbout.room, project_id=room.project_id, room_id=room.id)
         return await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author="system",
             author_type=AuthorType.platform,
-            content=say("taskDispatched", title=task.title),
+            content=say(
+                "taskCreated",
+                actor=f"<@{actor}>",
+                title=task.title,
+                owner=f"<@{task.owner_handle}>" if task.owner_handle else "",
+            ),
             kind=BlockKind.event,
-            meta={"platform": True, "action": "split", "task_id": str(task.id)},
+            meta={"platform": True, "action": "task_created", "task_id": str(task.id)},
         )
 
-    async def dispatch_task(
+    async def create_task(
         self,
         *,
-        place_id: uuid.UUID,
-        title: str,
-        created_by: str | None = None,
-        brief: str | None = None,
-        base_task_id: uuid.UUID | None = None,
-        triggered_by: str | None = None,
-        reviewer_handle: str | None = None,
-        reporter_handle: str | None = None,
-        contributor_handles: list[str] | None = None,
+        room_id: uuid.UUID,
+        created_by: str | None,
+        title: str | None = None,
+        owner_handle: str | None = None,
     ) -> Task:
-        """从上往下拆解 (eval A2): open a new thread of work in a room.
+        """Open a task in a room: a conversation of its own, owned by one person,
+        with an empty living document for its agent to draft.
 
-        The thread is born with a TASK BRIEF as its living doc (分身靠文档保持
-        一致, spec §8.4): the splitter's `brief` plus a verbatim snapshot of the
-        ROOM's living doc. No canned opening message: the worker writes its own
-        (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md).
-
-        No worker is started here, and none is started for us. The caller spawns
-        one in its own session carrying this thread's label, so a thread exists
-        for a moment with nobody on it — which is also the state a thread stays
-        in if the caller never gets around to it.
-
-        `place_id` is wherever the splitter was standing, which may itself be a
-        thread: 芝士 working on one piece of work often finds a second. Work does
-        not nest, so the new thread hangs in the same ROOM either way — the same
-        answer `_child_kind` used to give by refusing to look at whether a parent
-        was itself work, except now it is stated rather than accidental.
-
-        `triggered_by` is the human whose turn asked for this split, which the
-        caller reads off the runner (`AgentWorkRunner.turn_author_for`) — see the
-        ownership ladder below for why it outranks the room's owner."""
-        place = await PlaceResolver(self._session).resolve(place_id)
+        The owner is the person named, else the person creating it, else — when
+        no person is identifiable — the room's owner, then the project's. A task
+        belongs to someone; a task nobody owns is one nobody can start or answer
+        for. Who reviews its changes is decided when it is started, not here.
+        """
+        place = await PlaceResolver(self._session).resolve(room_id)
         if place is None:
             raise NotFoundError(say("topicNotFound"))
         room = place.room
-        # 归档后工作面冻结 (spec §6.3): no new work in a frozen room —
-        # follow-up work starts a new topic from the conclusion (升级), not here.
+        # 归档后工作面冻结 (spec §6.3): no new work in a frozen room.
         if room.status == TopicStatus.archived:
             raise ValidationError(say("topicArchivedFrozen"))
-        # The roster is read for the ownership ladder below and for nothing else.
-        # A thread does NOT get one: 唯一的主 is the whole difference between a
-        # piece of work and the room it happens in, and copying the room's roster
-        # onto it would be re-buying the cost this design exists to drop.
-        parent_members, _ = await self._members.list_for_topic(room.id)
-        parent_owner = next(
-            (m.member_handle for m in parent_members if m.role == TopicRole.owner),
-            None,
-        )
-        # 归属跟推进者走: WHO the child belongs to, most specific answer first.
-        #
-        # 1. `created_by`, when a real human called split — they said what they
-        #    wanted. Both this rung and the next screen for an actual person
-        #    (`names_a_person`) rather than merely "not 芝士": a 分身 splits under
-        #    its OWN handle (``cheese-<topic hex>``), and `anonymous`/`system` name
-        #    nobody either. Letting any of them through is not a cosmetic mistake —
-        #    `seed()` refuses to make 芝士 an owner, so the room lands ownerless and
-        #    nobody can manage its roster, which is the bug this ladder exists for.
-        # 2. `triggered_by` — the human driving the turn 芝士 split from. A room
-        #    stalls, someone else picks it up, and the work that comes out of THEIR
-        #    turn is theirs: the child ends in an accept card, and handing that card
-        #    to whoever opened the parent room months ago strands it a second time.
-        #    Ownership routes work; code contribution credits are declared separately.
-        # 3. The room's owner, then the project's — an autonomous 分身 split
-        #    and a platform-initiated turn identify no person at all, and a room
-        #    born before any of this has no owner to inherit, so the emptiness
-        #    stops cascading down the tree here.
         project = await self._projects.get(room.project_id)
-        owner_handle = (
-            created_by
+        owner = (
+            owner_handle
+            if names_a_person(owner_handle)
+            else created_by
             if names_a_person(created_by)
-            else triggered_by
-            if names_a_person(triggered_by)
-            else parent_owner or (project.owner_handle if project else None)
+            else await self._resolve_owner(
+                None,
+                project_id=room.project_id,
+                parent_id=room.id,
+                project_owner=project.owner_handle if project else None,
+            )
         )
-        # 谁来验收这条活 (#718 设置表): 显式指定优先，没指定就用项目的默认验收人。
-        # Resolved HERE, at dispatch, and stored on the row — see
-        # `Task.reviewer_handle` for why it is not read back out of the setting
-        # when the card is filed. Work must have a reviewer before it starts.
-        from app.domain.project.protection import branch_protection_of
-
-        reviewer_handle = (reviewer_handle or "").strip() or (
-            branch_protection_of(project).default_reviewer or None
-        )
-        if reviewer_handle is None:
-            raise ValidationError(say("reviewerRequired"))
-        task = await TaskService(self._session).open_thread(
+        tasks = TaskService(self._session)
+        named = (title or "").strip()
+        task = await tasks.open_thread(
             project_id=room.project_id,
             room_id=room.id,
-            title=title,
-            base_task_id=base_task_id,
-            owner_handle=owner_handle,
-            reviewer_handle=reviewer_handle,
-            reporter_handle=reporter_handle,
-            contributor_handles=contributor_handles,
+            title=named[:300] or PLACEHOLDER_TITLE,
+            title_source=TaskTitleSource.human
+            if named
+            else TaskTitleSource.placeholder,
+            owner_handle=owner,
             created_by=created_by,
         )
-        # 简报进卡, not into a document of its own — see `seed_brief_doc` for
-        # why the document could not be kept up to date. The worker gets these
-        # same words a second way, in the prompt the room hands its subagent;
-        # this copy is the record of what was asked for.
-        task.brief = (brief or "").strip()
-        await self._card_block(room, task)
+        await tasks.ensure_document(task)
+        await self._card_block(room, task, actor=created_by or "system")
         return task
 
     async def clone_from(
         self, *, target_topic_id: uuid.UUID, source_topic_id: uuid.UUID
     ) -> Topic:
         """Deep-copy the source topic's Claude conversation onto the target topic
-        (transcript-fork, fusion-design §6 clone — distinct from 分身/split).
+        (transcript-fork, fusion-design §6 clone — distinct from a task).
 
-        分身 (dispatch_task) starts a FRESH session with a task brief; clone
-        instead forks the source's full conversation state so the target resumes
+        A task (create_task) starts a FRESH session of its own; clone instead
+        forks the source's full conversation state so the target resumes
         exactly where the source is."""
         target = await self.get_or_404(target_topic_id)
         source = await self.get_or_404(source_topic_id)
@@ -1172,7 +1054,7 @@ class TopicService:
             raise ValidationError(say("topicCloneRecordMissing")) from exc
         # Point the target at the forked session so its next turn --resume's it.
         await sessions.remember(
-            topic_id=target.id,
+            conversation_id=target.id,
             agent_handle=target_agent.handle,
             resume_token=new_sid,
             harness=harness,
@@ -1180,12 +1062,13 @@ class TopicService:
         return target
 
     async def place_or_404(self, place_id: uuid.UUID) -> Place:
-        """The room this id names, plus the tree it is writing to, or 404.
+        """The conversation this id names — a room, or one of its tasks — or 404.
 
-        The route-level counterpart of `get_or_404`, and the difference is the
-        tree: nearly every handler that has a place goes on to want files.
+        The route-level counterpart of `get_or_404`. A task's place carries its
+        room: the roster, files and work computer are the room's, the history
+        and the session are the task's.
         """
-        place = await PlaceResolver(self._session).resolve(place_id)
+        place = await PlaceResolver(self._session).conversation(place_id)
         if place is None:
             raise NotFoundError("Topic not found")
         return place
@@ -1318,7 +1201,7 @@ class TopicService:
         }
 
     async def get_progress(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+        self, conversation_id: uuid.UUID
     ) -> tuple[list[dict], datetime | None]:
         """进度层 (#187): the checklist this topic's work left behind.
 
@@ -1326,10 +1209,7 @@ class TopicService:
         checklist and no checklist are the same thing to a reader, and making
         the caller handle a null row buys nothing.
         """
-        place = await self.place_or_404(topic_id)
-        row = await TopicProgressRepository(self._session).get(
-            place.room_id, task_id=task_id
-        )
+        row = await TopicProgressRepository(self._session).get(conversation_id)
         if row is None:
             return [], None
         return [dict(item) for item in row.items], row.updated_at

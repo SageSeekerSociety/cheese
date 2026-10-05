@@ -70,7 +70,7 @@ function written(frame: LiveFrame): { call: string | null; text: string; closed:
 export function previewBlock(p: TypingPreview, topicId: string): Block {
   return {
     id: `typing:${p.agent}`,
-    topic_id: topicId,
+    conversation_id: topicId,
     kind: 'message',
     author_type: 'participant',
     author: p.agent,

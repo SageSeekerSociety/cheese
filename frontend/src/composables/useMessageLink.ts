@@ -23,12 +23,13 @@ export function useMessageLink() {
     const params = nav?.route?.params
     const projectId = params?.projectId
     const topicId = params?.topicId
+    const taskId = params?.taskId
     if (!nav || typeof projectId !== 'string' || typeof topicId !== 'string') return null
-    const path = nav.href({
-      name: 'workspace-topic',
-      params: { projectId, topicId },
-      query: block.task_id ? { tab: 'overview', card: block.task_id, block: block.id } : { block: block.id },
-    })
+    const path = nav.href(
+      typeof taskId === 'string'
+        ? { name: 'workspace-task', params: { projectId, topicId, taskId }, query: { block: block.id } }
+        : { name: 'workspace-topic', params: { projectId, topicId }, query: { block: block.id } }
+    )
     // `href` gives a router path; the thing a person pastes needs the origin on it.
     return path ? new URL(path, window.location.origin).href : null
   }

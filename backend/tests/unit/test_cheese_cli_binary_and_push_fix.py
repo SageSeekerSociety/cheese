@@ -108,7 +108,7 @@ def test_push_fix_forwards_explicit_drop_dependency(monkeypatch):
     cli.main()
     assert calls == [
         ("sync", "task"),
-        ("POST", "/topics/room/tasks/task/push-fix?drop_dependency=true"),
+        ("POST", "/topics/task/push-fix?drop_dependency=true"),
     ]
 
 

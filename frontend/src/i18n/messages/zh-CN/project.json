@@ -67,6 +67,11 @@
       "title": "打开网站",
       "membersOnly": "这个网站仅项目成员可访问，请先登录",
       "opening": "正在打开网站"
+    },
+    "docs": {
+      "failed": "文档打开失败",
+      "title": "打开文档",
+      "opening": "正在打开文档"
     }
   },
   "docs": {

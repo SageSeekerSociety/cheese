@@ -26,10 +26,9 @@ here: the runner writes what pi decided into the same log right behind it
 (``journal.RETRYING`` / ``journal.GAVE_UP``), and the turn ends on the second.
 
 A subagent's entries are in the same log (``subagents.py``), each carrying its
-thread (``journal.THREAD``): what it says and calls comes out labelled with the
-card its work lands on, and nothing it does starts or ends the session's turn
-or counts towards it. That it started and how it ended are the runner's
-records. What a ``Task`` call hands back is the conclusion, and becomes an
+thread (``journal.THREAD``): what it says and calls comes out as the session's
+work, and nothing it does starts or ends the session's turn or counts towards
+it. What a ``Task`` call hands back is the conclusion, and becomes an
 event of its own rather than a line on the step (``AgentToolResult``).
 """
 
@@ -41,8 +40,6 @@ from app.domain.agent.harness.pi.journal import (
     COMPACTING,
     GAVE_UP,
     RETRYING,
-    SUBAGENT_STARTED,
-    SUBAGENT_STOPPED,
     THREAD,
 )
 from app.domain.agent.service import (
@@ -54,8 +51,6 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentStepFailed,
     AgentStepOutput,
-    AgentSubagentStart,
-    AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
@@ -157,7 +152,7 @@ class Assembler:
     def accept(self, entry: dict) -> list[AgentEvent]:
         thread = thread_of(entry)
         if thread is not None:
-            return self._subagent(entry, thread)
+            return self._subagent(entry)
         if entry.get("type") == RETRYING:
             return [
                 AgentRetrying(
@@ -285,31 +280,13 @@ class Assembler:
             )
         return events
 
-    def _subagent(self, entry: dict, thread: dict) -> list[AgentEvent]:
-        """One record of a subagent's thread: what it said and called, on its
-        card, and never anything that starts, ends or bills the session's turn."""
-        agent = str(thread.get("id") or "")
-        label = str(thread.get("label") or "")
-        if entry.get("type") == SUBAGENT_STARTED:
-            return [
-                AgentSubagentStart(
-                    agent_id=agent, thread_label=label, session_id=self.session_id
-                )
-            ]
-        if entry.get("type") == SUBAGENT_STOPPED:
-            return [
-                AgentSubagentStop(
-                    agent_id=agent,
-                    text=str(entry.get("text") or ""),
-                    thread_label=label,
-                    session_id=self.session_id,
-                )
-            ]
+    def _subagent(self, entry: dict) -> list[AgentEvent]:
+        """One record of a subagent's thread: what it said and called, and
+        never anything that starts, ends or bills the session's turn."""
         if entry.get("type") != "message":
             return []
         message = entry.get("message") or {}
         role = message.get("role")
-        on = label or None
         if role == "toolResult":
             call = message.get("toolCallId")
             if not isinstance(call, str):
@@ -318,15 +295,9 @@ class Assembler:
             steps: list[AgentEvent] = []
             if message.get("isError"):
                 text = " ".join(returned.split())
-                steps.append(
-                    AgentStepFailed(
-                        call_id=call, text=text[-STEP_ERROR_MAX:], thread_label=on
-                    )
-                )
+                steps.append(AgentStepFailed(call_id=call, text=text[-STEP_ERROR_MAX:]))
             if returned.strip():
-                steps.append(
-                    AgentStepOutput(call_id=call, text=returned, thread_label=on)
-                )
+                steps.append(AgentStepOutput(call_id=call, text=returned))
             return steps
         if role != "assistant" or message.get("stopReason") == FAILED:
             return []
@@ -340,7 +311,6 @@ class Assembler:
                         eid=eid,
                         eids=(eid,),
                         at=_stamp(entry),
-                        thread_label=on,
                     )
                 )
             elif part.get("type") == "toolCall":
@@ -351,7 +321,6 @@ class Assembler:
                         session_id=self.session_id,
                         eid=eid,
                         call_id=part.get("id"),
-                        thread_label=on,
                     )
                 )
         return events

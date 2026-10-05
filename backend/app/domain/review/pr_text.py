@@ -13,32 +13,23 @@ from app.domain.review import commit_message
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
 
-#: What `Cheese-Task:` writes where a 分身 id would go, for work no worker was
-#: ever bound to. A placeholder rather than a shorter line, so every one of these
-#: trailers has the same three fields and can be split on whitespace twice.
-NO_SUBAGENT = "-"
-
 #: How much of a task's title a trailer carries. Titles run to 300 characters and
-#: a commit message is read in an 80-column terminal; the id and the 分身 in front
-#: of it are what identify the work, the title is there to be recognised.
+#: a commit message is read in an 80-column terminal; the link in front of it is
+#: what identifies the work, the title is there to be recognised.
 MAX_TASK_TITLE = 120
 
 
 def task_trailer(topic: Topic, item: identity.WorkItem) -> str:
-    """One `Cheese-Task:` line — which piece of work, which 分身 did it, and a
-    URL that opens that work.
+    """One `Cheese-Task:` line — a URL that opens the task, and its title.
 
-    The URL is the room's page with `?tab=overview&card=<task_id>` — the exact
-    query the room writes when somebody clicks that piece of work, so following
-    it lands where clicking lands. Both halves are needed: the page reads `card`
-    to know WHICH work to drill into and `tab` to know which panel to be on, and
-    a link with only `card` opens whichever tab the reader last had. That is the
-    whole difference from `Cheese-Card`, which stays a bare id — an accept card
-    has no route, so a URL built from one would look clickable and open nothing.
+    The URL is the task's own page, under its room
+    (`/projects/<p>/topics/<room>/tasks/<task>`), the page clicking the task
+    opens. That is the whole difference from `Cheese-Card`, which stays a bare
+    id — an accept card has no route, so a URL built from one would look
+    clickable and open nothing.
 
-    The id is still greppable out of permanent history: `card=` is a fixed
-    prefix in front of it, so `grep -o 'card=[0-9a-f-]*'` gets what
-    `Cheese-Task: <uuid>` used to hand over directly.
+    The id is still greppable out of permanent history: `/tasks/` is a fixed
+    prefix in front of it, so `grep -o 'tasks/[0-9a-f-]*'` gets it.
 
     Squashed onto one line, always. A trailer block ends at the first line that
     is not a trailer, so a newline inside a task's title would not merely look
@@ -49,12 +40,9 @@ def task_trailer(topic: Topic, item: identity.WorkItem) -> str:
     title = " ".join(item.title.split())
     if len(title) > MAX_TASK_TITLE:
         title = f"{title[: MAX_TASK_TITLE - 1]}…"
-    # Still three whitespace-separated fields, so two splits still take the line
-    # apart: a URL has no spaces in it, and the 分身 id keeps having its own
-    # stripped out — one there would silently push the title into its place.
-    subagent = "".join((item.subagent_id or "").split()) or NO_SUBAGENT
-    where = f"{_room_url(topic)}?tab=overview&card={item.task_id}"
-    return f"Cheese-Task: {where} {subagent} {title}".rstrip()
+    # A URL has no spaces in it, so one split takes the line apart.
+    where = f"{_room_url(topic)}/tasks/{item.task_id}"
+    return f"Cheese-Task: {where} {title}".rstrip()
 
 
 def fallback_subject(topic: Topic) -> str:
@@ -127,9 +115,9 @@ def pr_trailers(
     lines.append(f"Cheese-Topic: {_room_url(topic)} {room_title}".rstrip())
     if card is not None:
         # The CARD stays a bare id, deliberately. There is no route that opens an
-        # accept card: `?card=` on the room's page takes a TASK id
-        # (TopicView.vue), so hanging the card's id off it would produce a link
-        # that looks clickable and opens nothing — worse than an id, because an
+        # accept card: `/tasks/<id>` under the room takes a TASK id, so hanging
+        # the card's id off it would produce a link that looks clickable and
+        # opens nothing — worse than an id, because an
         # id is honestly a lookup key while a dead link is a claim. Making it a
         # URL is a frontend change (a deep link that resolves an accept card),
         # not a string change here.

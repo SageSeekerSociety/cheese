@@ -390,7 +390,7 @@ def room_lines(case, seat) -> list[str]:
                 await db.scalars(
                     select(Block.content)
                     .where(
-                        Block.topic_id == seat.room,
+                        Block.conversation_id == seat.room,
                         Block.kind == BlockKind.event,
                         Block.meta["event_type"]
                         .as_string()
@@ -442,7 +442,7 @@ def test_a_sandbox_is_not_idle_while_its_room_runs_a_turn_or_it_was_just_used(cl
             db.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=seat.room,
+                    conversation_id=seat.room,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     started_at=datetime.now(UTC) - timedelta(hours=1),
@@ -744,7 +744,7 @@ def test_a_room_mid_turn_does_not_keep_other_sandboxes_awake(cloud, monkeypatch)
             db.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=busy.room,
+                    conversation_id=busy.room,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     started_at=datetime.now(UTC),
@@ -879,3 +879,100 @@ def test_an_archived_rooms_sandbox_sleeps_and_frees_its_host(cloud):
     maintain(cloud)
     assert home_of(cloud, archived_room).host_id is None
     assert machine in cloud.provider.deleted
+
+
+def room_cleanup_after_its_home_left(case, seat, monkeypatch) -> dict:
+    """The room is archived and its cleanup is due. The home went to the
+    bucket and its host was released before the cleanup reached it, but the
+    cleanup recorded the home on that host when it took its inventory — the
+    rooms PR #2749 left waiting on "device … is offline". Returns what one
+    sweep of room cleanups answered."""
+    from app.domain.topic import retire
+    from app.domain.topic.services import TopicService
+
+    resource = home_of(case, seat).resource_id
+    monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
+
+    async def archive():
+        async with case.client.test_request_factory() as db:
+            await TopicService(db).archive(seat.room, by="alice")
+            await db.commit()
+
+    run(case, archive)
+
+    async def recorded(_session, _operation, _inventory):
+        return [{"kind": "device", "device_id": "host-a", "resource_id": resource}]
+
+    async def exec_(device_id, argv, *, stdin=None, timeout=60, **kwargs):
+        if not case.hosts.is_online(device_id):
+            raise RuntimeError(f"device {device_id} is offline")
+        return await case.hosts.exec(
+            device_id, argv, stdin=stdin, timeout=timeout, **kwargs
+        )
+
+    monkeypatch.setattr(retire, "_inventory", recorded)
+    monkeypatch.setattr(retire.device_hub, "exec", exec_)
+    return run(
+        case, lambda: retire.sweep_retired_storage(case.client.test_request_factory)
+    )
+
+
+def cleanup_of(case, seat) -> dict:
+    return case.client.get(
+        f"/topics/{seat.room}/cleanup", headers=session_auth_headers("alice")
+    ).json()["data"]
+
+
+def test_an_archived_rooms_unpushed_work_waits_in_the_bucket_and_comes_back(
+    cloud, monkeypatch
+):
+    """FB-68: an archived room's unpushed work kept its cleanup retrying and
+    its cloud machines held for 31 hours. The home now leaves its host for
+    the bucket, and the host is released; the cleanup must neither delete
+    that archive — it is the only copy — nor wait on the gone host. It waits
+    on the work, says so, and unarchiving the room brings the work back."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    asleep(cloud, seat)
+    key = archived(cloud, seat)
+    cloud.hosts.online.discard("host-a")
+
+    assert room_cleanup_after_its_home_left(cloud, seat, monkeypatch) == {
+        "completed": 0,
+        "pending": 1,
+    }
+    status = cleanup_of(cloud, seat)
+    assert status["state"] == "pending"
+    assert "not pushed" in status["reason"]
+    assert key in cloud.bucket.objects
+
+    response = cloud.client.post(
+        f"/topics/{seat.room}/unarchive", headers=session_auth_headers("alice")
+    )
+    assert response.status_code == 200, response.text
+    assert tool_call(cloud, seat).get("preparing")
+    host_comes_up(cloud, seat, "host-b")
+    assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"
+    restored = sandbox_dir(cloud, seat, "host-b")
+    assert (restored / "room" / "notes.md").read_text() == "not committed anywhere\n"
+
+
+def test_an_archived_rooms_pushed_home_in_the_bucket_lets_its_cleanup_finish(
+    cloud, monkeypatch
+):
+    """The same room with everything pushed: the cleanup does not wait on the
+    released host, finishes, and the archive goes with it."""
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-a")
+    (home / "room" / "notes.md").unlink()
+    asleep(cloud, seat)
+    key = archived(cloud, seat)
+    assert key in cloud.bucket.objects
+    cloud.hosts.online.discard("host-a")
+
+    assert room_cleanup_after_its_home_left(cloud, seat, monkeypatch) == {
+        "completed": 1,
+        "pending": 0,
+    }
+    assert cleanup_of(cloud, seat)["state"] in {"complete", "retained"}
+    assert cloud.bucket.objects == {}

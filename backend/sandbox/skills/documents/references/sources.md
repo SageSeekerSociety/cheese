@@ -7,8 +7,7 @@
 ## 一、读材料：先用 read.py，让每一段都带着位置
 
 ```bash
-SKILL=skills/documents
-[ -d "$SKILL" ] || SKILL="$CLAUDE_CONFIG_DIR/skills/documents"
+SKILL="<这个技能的目录>"   # 加载 documents 技能时给出的那个目录
 uv run --with pdfplumber --with pymupdf --with python-docx --with python-pptx \
     --with openpyxl \
     python3 "$SKILL/scripts/read.py" 材料一.pdf 方案.docx 汇报.pptx 预算.xlsx --media 图片

@@ -42,7 +42,7 @@ function fixture(): AskGroupData {
     receipt: null,
     blocks: group.members.map((id, index) => ({
       id,
-      topic_id: 'room',
+      conversation_id: 'room',
       kind: 'message',
       author_type: 'participant',
       author: 'agent',
