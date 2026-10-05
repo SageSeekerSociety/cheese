@@ -1,94 +1,38 @@
+<!--
+  Verifying the address a new account was registered under: the code goes to the
+  server with the password and the agreements the sign-up flow still needs, a
+  session comes back, and a refused attempt holds the form back for as long as
+  the server asked. What it shows is VerifyEmailView.vue.
+-->
 <template>
-  <div>
-    <AccountHeading
-      :title="t('account.verifyEmail.title')"
-      :lede="t('account.verifyEmail.sentTo', { email: signupStore.email })"
-    />
-
-    <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-6">
-      {{ error }}
-    </v-alert>
-
-    <v-form @submit.prevent="submit">
-      <AccountField v-if="needsPassword" :label="t('account.field.password')" input-id="verify-password">
-        <PasswordField
-          id="verify-password"
-          v-model="password"
-          name="password"
-          autocomplete="new-password"
-          :hint="t('account.verifyEmail.passwordAgain')"
-          persistent-hint
-          v-bind="passwordProps"
-        />
-      </AccountField>
-
-      <v-otp-input
-        v-model="otp"
-        length="6"
-        type="number"
-        v-bind="otpProps"
-        class="account-otp"
-        @update:model-value="handleOtpInput"
-      />
-
-      <LegalConsent
-        v-if="needsConsent"
-        ref="consentRef"
-        :action-label="t('account.agreeAndSignUp')"
-        :documents="consentDocuments"
-        :load-error="consentLoadError"
-        class="mb-4"
-      />
-
-      <BaseButton
-        block
-        kind="primary"
-        size="lg"
-        type="submit"
-        class="account-submit"
-        :loading="submitting"
-        :disabled="otp?.length !== 6 || waiting"
-      >
-        {{ t('account.verifyEmail.submit') }}
-      </BaseButton>
-
-      <div class="account-foot account-foot--split">
-        <span>
-          {{ t('account.verifyEmail.noCode') }}
-          <span v-if="resendWait > 0" class="account-foot__wait">
-            {{ t('account.verifyEmail.resendIn', { seconds: resendWait }) }}
-          </span>
-          <button v-else type="button" class="account-link" :disabled="resending" @click="handleResend">
-            {{ t('account.verifyEmail.resend') }}
-          </button>
-        </span>
-        <router-link to="/account/signin" class="account-link account-link--quiet">
-          {{ t('account.backToSignIn') }}
-        </router-link>
-      </div>
-    </v-form>
-  </div>
+  <VerifyEmailView
+    ref="viewRef"
+    :email="signupStore.email"
+    :error="error"
+    :needs-password="needsPassword"
+    :needs-consent="needsConsent"
+    :waiting="waiting"
+    :submitting="submitting"
+    :resend-wait="resendWait"
+    :resending="resending"
+    :consent-documents="consentDocuments"
+    :consent-load-error="consentLoadError"
+    @submit="submit"
+    @resend="handleResend"
+  />
 </template>
 
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
-import { toTypedSchema } from '@vee-validate/zod'
-import { useForm } from 'vee-validate'
-import { z } from 'zod'
-
-import { vuetifyConfig } from '@/utils/form'
 
 import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
 import { attemptMessage, useAttemptWait } from '../attemptWait'
 
-import AccountField from '@/components/account/AccountField.vue'
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import LegalConsent from '@/components/account/LegalConsent.vue'
-import PasswordField from '@/components/account/PasswordField.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
+import VerifyEmailView from './VerifyEmailView.vue'
+
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
@@ -106,46 +50,24 @@ const needsPassword = !signupStore.password
 // The consent chosen on the form is kept across a refresh; if it did not come
 // back intact, it is asked for here instead of being assumed.
 const needsConsent = !signupStore.consent
-const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
+
+const viewRef = ref<InstanceType<typeof VerifyEmailView> | null>(null)
 const { documents: consentDocuments, loadError: consentLoadError, load: loadConsentDocuments } = useConsentDocuments()
 // 同意要交后端当前的协议版本；一进页面就取，提交时 `confirm()` 才有东西可交。
 onMounted(() => {
   void loadConsentDocuments()
 })
 
-const { handleSubmit, defineField } = useForm({
-  validationSchema: computed(() =>
-    toTypedSchema(
-      z.object({
-        otp: z
-          .string()
-          .length(6, { message: t('account.verifyEmail.codeInvalid') })
-          .default(''),
-        password: needsPassword ? z.string().min(1) : z.string().optional(),
-      })
-    )
-  ),
-})
-
-const [otp, otpProps] = defineField('otp', vuetifyConfig)
-const [password, passwordProps] = defineField('password', vuetifyConfig)
 const error = ref('')
 const { waiting, waitFor } = useAttemptWait()
-
-// Validation only; the request is sent by `submit` below. The form is not
-// "submitting" while the consent prompt waits for an answer, so the button
-// shows loading only once the request is really on its way.
-const validated = handleSubmit((value) => value)
 const submitting = ref(false)
 
-const submit = async () => {
+const submit = async (value: { otp: string; password?: string }) => {
   if (submitting.value || waiting.value) return
-  const value = await validated()
-  if (!value) return
   error.value = ''
   if (needsConsent) {
     await loadConsentDocuments()
-    const consent = await consentRef.value?.confirm()
+    const consent = await viewRef.value?.confirmConsent()
     if (!consent) return
     signupStore.consent = consent
   }
@@ -163,12 +85,6 @@ const submit = async () => {
     waitFor(e)
   } finally {
     submitting.value = false
-  }
-}
-
-const handleOtpInput = (value: string) => {
-  if (value.length === 6 && (!needsPassword || password.value)) {
-    submit()
   }
 }
 
