@@ -1057,6 +1057,11 @@
         "admin": "Admin",
         "member": "Member"
       },
+      "roleHint": {
+        "owner": "Manage the room and its members",
+        "admin": "Manage members and their roles",
+        "member": "Take part in the room"
+      },
       "failed": "Something went wrong",
       "title": "Topic members",
       "remove": "Remove from topic",

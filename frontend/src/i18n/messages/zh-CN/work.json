@@ -1057,6 +1057,11 @@
         "admin": "管理员",
         "member": "成员"
       },
+      "roleHint": {
+        "owner": "管理房间与成员",
+        "admin": "管理成员与角色",
+        "member": "参与房间讨论"
+      },
       "failed": "操作失败",
       "title": "话题成员",
       "remove": "移出话题",
