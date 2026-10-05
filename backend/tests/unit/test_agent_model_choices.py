@@ -39,9 +39,8 @@ def _pool_models(project_settings: dict | None = None) -> set[str]:
 def _running(monkeypatch, name: str, **bits: bool) -> None:
     """这套部署跑的是哪个骨架。它是部署设置，不是谁的属性（结论 28）。
 
-    骨架当场造一个注册上去：注册表里今天只有 Claude Code（结论 43，答不出四条硬性
-    要求的骨架留着代码不注册），而下面这几条问的是「跑着一个指不到订阅、或者不说
-    网关那套话的骨架时，列出来的是哪一批」——那件事跟谁答得出四条无关。
+    骨架当场造一个注册上去：注册表里今天只有 Claude Code，而下面这几条问的是「跑着
+    一个指不到订阅、或者不说网关那套话的骨架时，列出来的是哪一批」。
     """
     registered(monkeypatch, name, **bits)
     monkeypatch.setattr(settings, "agent_harnesses", [name])

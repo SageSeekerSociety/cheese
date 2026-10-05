@@ -28,6 +28,9 @@ export interface EntityInfo {
   avatarUrl?: string
   // A user entity's handle, so the name can link to that person.
   handle?: string | null
+  // Where the entity stands now, for the kinds that have a state (a team
+  // invitation or join request: PENDING, ACCEPTED, DECLINED, ...).
+  status?: string | null
 }
 
 export interface Notification {

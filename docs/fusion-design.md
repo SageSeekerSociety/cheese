@@ -119,9 +119,9 @@
 
 ## 6. 分身 / clone（纠正：另起会话是对的）
 
-- **分身 = 标准 subagent（fresh 会话 + 任务简报）**，不 fork。依据：spec §8.4 分身专注、
-  彼此不感知、靠文档对齐；Claude Code 默认 subagent 也是 fresh，委派 prompt 是唯一通道。
-  我们"子话题带简报 + 父文档快照"就是对的，**不改**。
+- **分身 = 骨架的标准 subagent（fresh 会话 + 委派 prompt）**，不 fork；Claude Code 默认
+  subagent 也是 fresh，委派 prompt 是唯一通道。任务不是分身：一条任务是它自己的一段会话，
+  见 `docs/manual/dev/tasks.md`。
 - **transcript-fork（他们 clone.py）是另一个功能**："整体克隆一个 agent"或"从当前状态并行
   探索"（对应 Claude Code `/fork`）。未来做"克隆 agent"时再嫁接。
 

@@ -118,7 +118,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 项目表、读额度。拆模块没有新增跨包的边，只是发起方从 chat.py 换成了
         # work_policy.py，所以按同一笔债入账。
         ("app.domain.agent.work_policy", "app.domain.project.repositories"),
-        ("app.domain.agent.work_policy", "app.domain.topic.repositories"),
         # agent.memory_ledger 是从 agent.chat 里拆出来的那一块（这一间房的记忆
         # 账：每轮对一次账、以及平台自己过一遍的整理）。它摸的三个 repository
         # 正是原先 chat.py 那一组里跟着它走的：读话题表（这一间房是谁的）、读
@@ -295,7 +294,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.topics", "app.domain.block.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
         ("app.api.routes.topics", "app.domain.review.repositories"),
-        ("app.api.routes.topics", "app.domain.room_task.repositories"),
         ("app.api.routes.topics", "app.domain.topic.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
         # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读

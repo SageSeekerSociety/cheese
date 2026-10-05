@@ -15,6 +15,7 @@ from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.living_doc.models import Document, DocumentComment, DocumentNode
+from app.domain.living_doc.repositories import project_own
 from app.domain.search import bm25
 
 KINDS = ("doc", "doc_node", "comment")
@@ -48,11 +49,7 @@ async def own(
     session: AsyncSession, project_id: uuid.UUID
 ) -> dict[uuid.UUID, Document]:
     """The project's own documents, written or not, by id."""
-    rows = await session.scalars(
-        select(Document).where(
-            Document.project_id == project_id, Document.room_id.is_(None)
-        )
-    )
+    rows = await session.scalars(select(Document).where(project_own(project_id)))
     return {row.id: row for row in rows}
 
 

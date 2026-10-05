@@ -89,10 +89,6 @@ const props = withDefaults(
     // 看哪一格」，但不写地址、也不把浮层拉起来——那是「你打开它」，不是「有人打开了
     // 这一格」。宽档里面板常驻、手机上又是另一套（`withChat`），都不经过这里。
     compact?: boolean
-    // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
-    openCardId?: string | null
-    // 地址里的 `?block=`，而且开着一张卡：卡打开时停在它里面的这一条。
-    cardFocusBlock?: string | null
     // 房间名册 handle → 名字。现场那一格用它给每一行署名。一路透传：漏掉它不
     // 报错，只是那一格里写的是 handle。
     memberNames?: Record<string, string>
@@ -111,8 +107,6 @@ const props = withDefaults(
     agentControl: null,
     siteTurns: () => ({}),
     topicList: () => [],
-    openCardId: null,
-    cardFocusBlock: null,
     memberNames: () => ({}),
     tab: undefined,
     cardPhase: undefined,
@@ -127,9 +121,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
-  (e: 'open-card', taskId: string | null): void
-  /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
-  (e: 'review'): void
+  (e: 'open-card', taskId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层；图上画过东西时
@@ -825,12 +817,8 @@ defineExpose({
             :topic-list="topicList"
             :active="active === 'overview'"
             :refresh-tick="refreshTick"
-            :open-card-id="openCardId"
-            :card-focus-block="cardFocusBlock"
-            :member-names="memberNames"
             @open-topic="emit('open-topic', $event)"
             @open-card="emit('open-card', $event)"
-            @review="emit('review')"
             @mention-click="emit('mention-click', $event)"
             @open-file="openFile"
             @open-output="openFileTab"
@@ -841,7 +829,7 @@ defineExpose({
             ref="siteRef"
             :class="enterClass('site')"
             :agent-name="agentName"
-            :topic="topic"
+            :topic-id="topic?.id ?? null"
             :active="active === 'site'"
             :running-turns="siteTurns"
             :refresh-tick="refreshTick"
@@ -859,7 +847,6 @@ defineExpose({
             ref="changesRef"
             :class="enterClass('changes')"
             :topic-id="topicId"
-            :task-id="openCardId"
             :read-only="topic?.status === 'archived'"
             :project-id="projectId"
             :active="active === 'changes'"

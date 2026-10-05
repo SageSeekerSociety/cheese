@@ -65,7 +65,7 @@
       <div class="srow srow--field">
         <span class="srow__k">{{ t('account.profile.username') }}</span>
         <div class="srow__stack">
-          <span class="handle">@{{ user.username }}</span>
+          <span class="handle">{{ user.username }}</span>
           <span class="field-note">{{ t('account.profile.usernameNote') }}</span>
         </div>
       </div>

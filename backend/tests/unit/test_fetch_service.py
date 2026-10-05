@@ -189,7 +189,9 @@ async def test_a_sandbox_token_is_accepted_when_the_room_is_named(monkeypatch):
 
     def resolver():
         return auth_mod.ActorResolver(
-            session=MagicMock(), bearer=None, cheese_token=token
+            session=MagicMock(scalar=AsyncMock(return_value=None)),
+            bearer=None,
+            cheese_token=token,
         )
 
     # What the endpoint used to do: no room named. Refused — which of the two

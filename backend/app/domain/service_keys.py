@@ -8,6 +8,13 @@ person who asked it. Minting is not
 idempotent on the gateway, so a key is minted once — concurrent first calls
 across processes serialise on an advisory lock, and the loser reads the
 winner's key — and kept in ``service_credentials``.
+
+The gateway takes each alias once and never shows a key's secret again, so a
+key under the alias with no row here (its row was dropped so the key would be
+re-minted with new limits) is of no use and blocks every later mint. Minting
+therefore deletes whatever key holds the alias first: the alias belongs to
+this deployment, and only the holder of the advisory lock, having found no
+row, ever gets that far.
 """
 
 import logging
@@ -68,9 +75,22 @@ async def service_key(
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(15.0), transport=transport
         ) as client:
+            admin = {"Authorization": f"Bearer {settings.llm_gateway_admin_key}"}
+            # 404 is the gateway saying no key holds the alias.
+            freed = await client.post(
+                f"{gateway_base()}/key/delete",
+                headers=admin,
+                json={"key_aliases": [spec.alias]},
+            )
+            if freed.status_code != 404:
+                freed.raise_for_status()
+                logger.warning(
+                    "deleted the %s gateway key, which had no stored secret",
+                    spec.alias,
+                )
             r = await client.post(
                 f"{gateway_base()}/key/generate",
-                headers={"Authorization": f"Bearer {settings.llm_gateway_admin_key}"},
+                headers=admin,
                 json={
                     "key_alias": spec.alias,
                     "models": [spec.model],
@@ -92,4 +112,5 @@ async def service_key(
         return None
     session.add(ServiceCredential(name=spec.name, secret=key))
     await session.commit()
+    logger.info("minted the %s gateway key", spec.alias)
     return key

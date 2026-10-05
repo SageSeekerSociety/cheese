@@ -11,8 +11,9 @@
 
 这是整件事的核心，不是给现有状态换个分组：
 
-- `building` 施工中 —— 还没递出交付。
-- `delivering` 交付中 —— 下一步在**平台/芝士**手上。
+- `not_started` 未开始 —— 任务还在讨论，负责人还没点「开始」。
+- `building` 进行中 —— 开始了，还没递出交付。
+- `delivering` 检查中 —— 下一步在**平台/芝士**手上。
 - `needs_you` 待处理 —— 下一步在**人**手上。
 - `done` 已完成 —— 已采纳，或已关闭且没交付。
 - `archived` 已归档 —— 房间才有；活不归档。
@@ -37,7 +38,7 @@ import enum
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from app.core.errors import ValidationError
@@ -94,32 +95,10 @@ class CardSignals(Protocol):
     def auto_merge_armed_by(self) -> str | None: ...
 
 
-#: 一行说自己 `running`、却已经这么久没有任何动静 —— 那就不能说它在跑。
-#:
-#: 这个数是量出来的，不是拍的。信号取的是**这条活最后一个 block 的时间**（见
-#: `TaskRepository.last_block_at_for_tasks`）：一轮里每一步都落 block，在真实的一
-#: 条活上实测，轮内间隔中位数 8 秒、p90 34 秒。10 分钟是 p90 的十几倍，一段安静的
-#: 工具活动撑不到它；而一条真的停住的活，10 分钟就在看板上现形，不用等两小时。
-#:
-#: 为什么不能拿 `Task.last_turn_at` 当信号：它只在**平台看见分身开工**那一刻盖一
-#: 次，之后不再刷新，所以按它算，宽限期必须长过最长的一条活。它只作兜底 —— 一条
-#: 刚开工、还没来得及说第一句话的活，靠的是它。
-#:
-#: 这个数只在**没人知道那个分身还在不在**的时候说话。知道的时候听知道的
-#: （`TaskFacts.worker_live`）：一个闷头干了四十分钟、一个 block 都没吐的分身，和
-#: 一个同样安静的死分身，在时间戳上长得一模一样 —— 只拿时间戳当裁判，前者就会被
-#: 误报成失联。安静不是证据，缺席才是。
-#:
-#: 那个「知道的」也会忘 —— 后端一重启、房间换一个会话、分身交回一次话，跑轮次的
-#: 进程就答不上话了，而这三件事都说明不了那个分身死没死。所以它现在有两处：进程记
-#: 得的那份，和这条活**开工那一轮还开不开**（`Task.execution_turn_id`，见
-#: `agent.liveness`）。两处都答不出来，才轮到这个数。
-LOST_SIGNAL_AFTER = timedelta(minutes=10)
-
-
 class Column(enum.StrEnum):
     """看板的列。判据是「该谁动」，见模块开头。"""
 
+    not_started = "not_started"
     building = "building"
     delivering = "delivering"
     needs_you = "needs_you"
@@ -127,32 +106,22 @@ class Column(enum.StrEnum):
     archived = "archived"
 
 
+class NotStarted(enum.StrEnum):
+    """任务才有：还在讨论，负责人还没点「开始」。"""
+
+    discussing = "discussing"
+
+
 class Building(enum.StrEnum):
-    """还没递出交付。"""
+    """开始了，还没递出交付。"""
 
     running = "running"
-    #: 活才有：这条活上有人动过手，但此刻没有人在做它，也还没递出交付 —— 做了一半
-    #: 停在原地。和「待开工」分开，是因为「有人碰过、停下来了」和「从来没人碰过」
-    #: 对看的人是两件事：前者的下一步多半是接着做，后者是决定要不要开。
-    #:
-    #: 判据只有 `TaskFacts.has_progress` 一条，而它读的是**平台看得见的痕迹**（草稿
-    #: PR / 工作树），所以这一格不是「有人在上面干活」的证据 —— 那是「运行中」的
-    #: 活。主 agent 自己动手的那条路，平台今天看不见过程，只看得见留下的东西。
+    #: 任务才有：开始了，此刻没有在跑的一轮，也还没递出交付。
     started = "started"
-    #: 活才有：没有人在做它，而且它上面一点痕迹都没有。还没派出去、排着队等空位，
-    #: 都是这一格：下一步是有人动手。
-    not_started = "not_started"
-    #: 活才有：做它的分身已经交回了结论，在等房间把卡递出去。和「待开工」分开，
-    #: 是因为东西已经做出来了，看的人不该以为还没人碰过它。
-    returned = "returned"
-    #: 房间才有：这一轮说完了，在等下一句话。活不用这个词：它放在「施工中」这一列
-    #: 里读起来像自相矛盾。
+    #: 房间才有：这一轮说完了，在等下一句话。
     idle = "idle"
-    #: 房间才有：还没开工。活没有草稿态。
+    #: 房间才有：还没开工。
     draft = "draft"
-    #: 说在跑，但没有任何东西最近确认过。和「空闲」分开，是因为一条隧道断掉的活
-    #: 和一条真的没人找它的活，对看的人意味着完全相反的下一步。
-    lost = "lost"
 
 
 class Delivering(enum.StrEnum):
@@ -181,6 +150,9 @@ class NeedsYou(enum.StrEnum):
 
 class Done(enum.StrEnum):
     accepted = "accepted"
+    #: 关闭时留下了结论：做成了，产出不是一次合并（调研、讨论出的结论）。
+    completed = "completed"
+    #: 关闭时什么都没留下：不做了。
     closed = "closed"
 
 
@@ -191,10 +163,11 @@ class Archived(enum.StrEnum):
 #: 短语的值是码，不是字：卡面上那句话由读者的屏幕按他选的语言画
 #: （前端词条 `work.board.phrase.<码>`）。一个看板同时被说不同语言的人看，所以
 #: 后端说「是哪一句」，不替任何人挑语言。
-Phrase = Building | Delivering | NeedsYou | Done | Archived
+Phrase = NotStarted | Building | Delivering | NeedsYou | Done | Archived
 
 #: 短语 → 它属于哪一列。**唯一**一处把两者关联起来的地方。
 _COLUMN_OF: dict[type[enum.StrEnum], Column] = {
+    NotStarted: Column.not_started,
     Building: Column.building,
     Delivering: Column.delivering,
     NeedsYou: Column.needs_you,
@@ -253,36 +226,13 @@ class CardFacts:
 @dataclass(frozen=True, slots=True)
 class TaskFacts:
     status: str
-    #: 最后一次有东西确认这条活还在动。见 `LOST_SIGNAL_AFTER`：优先是它最后一个
-    #: block 的时间，没说过话就退回平台是什么时候看见它开工的。
-    last_signal_at: datetime | None
     accepted_at: datetime | None
     card: CardFacts | None
-    #: 有没有分身在做这条活（`Task.subagent_id`）。
-    has_worker: bool = False
-    #: 这条活上有没有人动过手的痕迹 —— 问的是「它被碰过」，不是「此刻有人在动它」。
-    #: 两个来源，都是平台看得见的那几个动作：`Task.pr_number` 非空（平台已经为它开
-    #: 出了草稿 PR，而那要等它的分支上真有提交才开得出来），或 `Task.author_handle`
-    #: 非空（有人开过它的工作树）。
-    #:
-    #: 为什么只有这两样：主 agent 自己动手那条路，平台看不见过程 —— 提交是直接推去
-    #: GitHub 的、工作树是在沙箱里自己开的，都不经过这里。所以这一位只够把「做了一半
-    #: 停着」和「还没人碰过」分开，不够说明「正在做」（那是 `worker_live` 那一组），
-    #: 也不够说明做到了哪一步。
-    has_progress: bool = False
-    #: 那个分身活在**房间的**会话里，所以房间的屏幕没了，它一定也没了 —— 这一位
-    #: 是跑轮次的进程当下的事实（`ChatService.has_live_screen`），不是一列时间戳，
-    #: 所以它得从外面喂进来（这一层不碰 I/O）。
-    room_screen_live: bool = True
-    #: 那个分身此刻还在不在做（`agent.liveness`）。True = 有人报过它还在做 —— 跑
-    #: 轮次的进程记得它，或它开工的那一轮还没收尾；None = 关于它一个字都没有过。
-    #: False 今天没有来源（收工只是把声明收回去，`_note_worker_agent`）。和
-    #: `room_screen_live` 一样不是这一层能自己算的，所以从外面喂进来。它比
-    #: `last_signal_at` 强：一个埋头干了四十分钟的分身本来就不该有 block。
-    worker_live: bool | None = None
-    #: 分身已经交回过一句结论（`Task.conclusion`）。它是干完了在等房间收卡，
-    #: 不是断了 —— 但它也可能只是把一条长命令停在后台就先交了一次话，所以这一位
-    #: 只用来解释安静，从不用来说这条活结束了。
+    #: 负责人点过「开始」（`Task.started_at`）。
+    started: bool = False
+    #: 任务自己的会话此刻有一轮在跑 —— 跑轮次的进程当下的事实，从外面喂进来。
+    running: bool = False
+    #: 关闭时留下过结论（`Task.conclusion`）。
     has_conclusion: bool = False
     #: 最近一条提问消息还没有回答（`BlockRepository.tasks_awaiting_an_answer`）。
     #: 回答记在提问那一块上，所以这一位不需要新增存储；但它要查一次库，所以和别的
@@ -330,29 +280,17 @@ def facts_for_card(card: "AcceptCard | CardSignals | None") -> CardFacts | None:
 def facts_for_task(
     task: Task,
     card: "AcceptCard | CardSignals | None" = None,
-    last_block_at: datetime | None = None,
     *,
-    room_screen_live: bool = True,
-    worker_live: bool | None = None,
+    running: bool = False,
     awaiting_answer: bool = False,
 ) -> TaskFacts:
-    """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
-
-    两个信号取晚的那个，因为它们各自会缺：一条刚开工、还没说第一句话的活只有
-    `last_turn_at`；一条干了很久的活，`last_turn_at` 停在开工那一刻，真正在动的
-    证据在 block 上。取晚的 = 「有任何一个东西确认过它还活着」。
-    """
-    signals = [t for t in (last_block_at, task.last_turn_at) if t is not None]
+    """把一行 `Task`（加上它的卡）折成这层要读的事实。"""
     return TaskFacts(
         status=str(task.status),
-        last_signal_at=max(signals) if signals else None,
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
-        has_worker=bool(task.subagent_id),
-        # 两个来源都是「有人做过这件事」的痕迹，不是「有人在做事」——见 TaskFacts。
-        has_progress=bool(task.pr_number is not None or task.author_handle),
-        room_screen_live=room_screen_live,
-        worker_live=worker_live,
+        started=task.started_at is not None,
+        running=running,
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
     )
@@ -551,106 +489,33 @@ _BOUNCED_TO_AGENT = frozenset({"rejected", "gate_failed", "gate_blocked"})
 def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     """一条活此刻在哪一列、显示哪句话。
 
-    两条优先级规矩，都是从今天前端那两份里原样搬来的，不是新发明的：
+    三条优先级规矩：
 
     1. **已交付压过一切**。交付和 open/closed 不是同一个问题：一条活可以已交付却
        还开着（有人继续往同一条分支推），也可以关掉却什么都没交付。
-    2. **活的事实压过纸面**。`running` 压过验收卡说的一切 —— 卡描述的是它可能马上
+    2. **待回答压过「在跑」**：进程可能还在，但它不会自己往下走了，而看板显示
+       「运行中」正是让人不来看的那一句。
+    3. **活的事实压过纸面**。`running` 压过验收卡说的一切 —— 卡描述的是它可能马上
        就要顶掉的那一版，而「在跑」是此刻真的成立的那件事。
+
+    `now` 收在签名里是为了和 `room_presentation` 同一个形状。
     """
+    del now
     if facts.accepted_at is not None:
         return _show(Done.accepted)
-
-    # 芝士提出了待确认问题 —— **压过「运行中」**。这是规矩 2 唯一的例外，而它正是
-    # 规矩 2 的道理：进程可能还在，但「在跑」已经不是此刻成立的事实，它不会自己往下
-    # 走。而看板显示「运行中」，正是让人不来看的那一句，所以这一格必须排在前面。
-    #
-    # 也压过卡：一条活同时有未回答的提问和一张待验收的卡，两者都在等人，而提问是挡
-    # 住其余所有事的那一件。
+    if facts.status == TaskStatus.closed:
+        return _show(Done.completed if facts.has_conclusion else Done.closed)
     if facts.awaiting_answer:
         return _show(NeedsYou.awaiting_answer)
-
-    # 有分身在做这条活。它住在**房间的**会话里，所以「它还在不在」有两个答案，
-    # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。屏幕还在，
-    # 再问跑轮次的进程：这些子 agent 的生死它看得见（`_worker_alive`）。
-    #
-    # 已经交回过结论的不算在内：那是干完了在等房间收卡，不是还在做。
-    worker_on_it = (
-        facts.has_worker
-        and facts.status == TaskStatus.open
-        and not facts.has_conclusion
-    )
-    alive = facts.room_screen_live and _worker_alive(facts, now=now)
-    # 规矩 2：在跑压过纸面。
-    if worker_on_it and alive:
+    if not facts.started:
+        return _show(NotStarted.discussing)
+    if facts.running:
         return _show(Building.running)
-
     if facts.card is not None:
         shown = _card_presentation(facts.card)
         if shown is not None:
             return shown
-
-    # 说自己有人在做，却没有任何东西确认过 —— **在卡说完之后才轮到这一句**。一条
-    # 递了卡、安静地等人验收的活，安静得理直气壮：它不是断了联系，它在等人来看。分身
-    # 干完活并不会把 `subagent_id` 抹掉，所以抢在卡前面说，等于把每一条等验收的活
-    # 都误报成失联。
-    if worker_on_it:
-        return _show(Building.lost)
-
-    # 放在最后：一条已交付的活即使关掉了，它首先是已交付的（规矩 1 已经拦了它）。
-    if facts.status == TaskStatus.closed:
-        return _show(Done.closed)
-    # 被驳回的卡说明交回来的那一版不算数，所以它压过「已交回」。它压不过「已动工」：
-    # 那一版不算数，但分支上留下的痕迹还在，看的人该看到的仍是「做了一半停着」。
-    if facts.card is not None and facts.card.status in _SETTLED_CARD:
-        return _show(_parked(facts))
-    if facts.has_conclusion:
-        return _show(Building.returned)
-    return _show(_parked(facts))
-
-
-def _parked(facts: TaskFacts) -> Building:
-    """没人在做、也没递出交付时，这条活停在「施工中」的哪一格。
-
-    只有一条判据：它上面有没有人动过手的痕迹（`TaskFacts.has_progress`）。有，就是
-    「已动工」——东西做了一半停在原地；一点痕迹都没有，才是「待开工」。
-    """
-    return Building.started if facts.has_progress else Building.not_started
-
-
-def _worker_alive(facts: TaskFacts, *, now: datetime) -> bool:
-    """那个分身现在还在不在做？
-
-    先问知道这件事的人。跑轮次的进程看着这些子 agent 出生和收工，它说还在做，
-    那就是在跑 —— 不用等这个分身再吐一个 block 来证明自己没死。现场本来就是
-    稀疏的：一个分身埋头跑四十分钟长命令、一条 block 都不落，是完全正常的干法
-    （实测：真实会话里就是这么干的），而这四十分钟里它的时间戳和死掉一模一样。
-    拿时间戳当唯一裁判，沉默就被当成了死。
-
-    这一位是**两处证据的合成**，不是一处：跑轮次进程的记忆，和这条活开工那一轮还
-    开不开。前者会忘（重启、换会话、交回一次话），忘掉之后还得有人答得上话 ——
-    为什么是这两处，在 `agent.liveness` 里。
-
-    它说收工了，那就是收工了 —— 这是**缺席**的证据，不是沉默的推论，所以这里
-    立刻算失联，不用等宽限期。
-
-    关于它一个字都没有过（None），才退回时间戳那条老规矩：没有证据不能读成
-    一切正常。
-    """
-    if facts.worker_live is not None:
-        return facts.worker_live
-    return not _lost_signal(facts.last_signal_at, now=now)
-
-
-def _lost_signal(last_signal_at: datetime | None, *, now: datetime) -> bool:
-    """这一行说自己在跑，但还有东西确认这件事吗？
-
-    一个信号都没有过也算失联：那意味着既没说过话、也没有一次开跑被记下来，而
-    「没有证据」不能读成「一切正常」。
-    """
-    if last_signal_at is None:
-        return True
-    return now - last_signal_at > LOST_SIGNAL_AFTER
+    return _show(Building.started)
 
 
 # —— 一个房间 ——————————————————————————————————————————————————

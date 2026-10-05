@@ -38,7 +38,9 @@ Chat = Annotated[ChatService, Depends(get_chat_service)]
 async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
     """Whoever is in this room may look at a session here."""
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
+    actor = await resolver.resolve(
+        project_id=place.project_id, topic_id=place.conversation_id
+    )
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to view a session")
     await resolver.authorize_topic(

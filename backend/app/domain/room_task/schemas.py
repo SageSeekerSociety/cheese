@@ -3,10 +3,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.room_task.models import TaskStatus
-from app.domain.room_task.thread_label import thread_label
 
 
 class PresentationOut(BaseModel):
@@ -37,7 +36,7 @@ class TaskOut(BaseModel):
     status: TaskStatus
     # 唯一的主. A room answers this with a roster; a task with one handle.
     owner_handle: str | None = None
-    # 新任务在创建时确定验收人；历史记录可能为空。
+    # 开始时确定验收人；还没开始的任务和历史记录可能为空。
     reviewer_handle: str | None = None
     reporter_handle: str | None = None
     contributor_handles: list[str] = Field(default_factory=list)
@@ -49,17 +48,20 @@ class TaskOut(BaseModel):
     pr_number: int | None = None
     pr_url: str | None = None
     delivered_head: str | None = None
-    # 哪个分身在做它. NULL = 还没有分身开工——开卡写下这一行，平台看见分身开工
-    # 才写上它的 id，中间这段时间是正常状态，不是错误。
-    subagent_id: str | None = None
+    # 哪位 AI 队友在做它；None = 项目的默认队友。
+    agent_handle: str | None = None
+    # 这件事的实况文档。
+    document_id: uuid.UUID | None = None
+    # 负责人点「开始」的那一刻、点的人、实况文档当时的版本。
+    started_at: datetime | None = None
+    started_by: str | None = None
+    started_doc_version: int | None = None
     # Acceptance closes the task; closing a task alone does not imply delivery.
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     closed_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
-    # 派它出去时说的那份简报，和分身交回来的最后一句话。写在卡上而不是一份文档
-    # 里：做这条活的分身拿的是房间的 token，够不着一份属于活自己的文档。
-    brief: str = ""
+    # 关闭时留下的一句话。
     conclusion: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -67,13 +69,3 @@ class TaskOut(BaseModel):
     # 端点会填（见 tasks 列表和 `GET /topics/{id}`），别处保持 None —— 意思是
     # 「没人算过」，不是「没有」。ORM 行上没有这个属性，from_attributes 会留默认值。
     presentation: PresentationOut | None = None
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def thread_label(self) -> str:
-        """起子 agent 时把这个字符串带上，它干的每件事就落在这张卡上（结论 43）。
-
-        算出来的，不是库里的一列：一列要有人去写、去和卡对上，而它对不上的那天，
-        卡上写着一个标识、事件上带着另一个，没有任何地方能说出哪份是对的。
-        """
-        return thread_label(self.id)

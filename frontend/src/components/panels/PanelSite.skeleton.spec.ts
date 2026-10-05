@@ -79,7 +79,7 @@ beforeEach(() => {
 
 function open(memberNames: Record<string, string> = { 'cheese-t1': '芝士' }) {
   return render(Site, {
-    props: { topic, active: true, memberNames },
+    props: { topicId: topic.id, active: true, memberNames },
     global: { plugins: [vuetify] },
   })
 }

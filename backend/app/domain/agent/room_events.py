@@ -28,7 +28,6 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.event_lines import (
     _change_summary_meta,
@@ -42,8 +41,6 @@ from app.domain.agent.event_lines import (
 )
 from app.domain.agent.queries import _agent_handle, _block_payload
 from app.domain.agent.service import (
-    AgentSubagentStart,
-    AgentSubagentStop,
     AgentToolResult,
 )
 from app.domain.agent.step_output import output_tail
@@ -52,7 +49,6 @@ from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.room_task.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +78,7 @@ async def post_system_event(
     turn_id: uuid.UUID | None = None,
     *,
     meta: dict | None = None,
+    task_id: uuid.UUID | None = None,
 ) -> dict | None:
     """Persist a system event into the room (e.g. a turn failure): visible in
     the conversation, scrolls with it, and survives a reload — unlike a
@@ -100,6 +97,7 @@ async def post_system_event(
             content=content,
             meta=meta,
             turn_id=turn_id,
+            task_id=task_id,
         )
         if block is None:
             return None
@@ -150,7 +148,10 @@ async def _persist_room_event(
         meta = {**meta, "platform_unsolicited": True}
     # 这一步是这一轮的执行者做的，署它的名。房间的默认队友只是没有这一轮账目
     # 时的回落：几位队友同坐一间房时，拿默认那位署名会把现场整轮记到别人头上。
-    state = hook_work.get((topic_id, turn_id)) if turn_id is not None else None
+    # A turn is kept under its conversation: the task's when there is one.
+    state = (
+        hook_work.get((task_id or topic_id, turn_id)) if turn_id is not None else None
+    )
     async with sessions() as session:
         blocks = BlockRepository(session)
         if eid and await blocks.has_eid(topic_id, eid):
@@ -259,91 +260,6 @@ async def _persist_subagent_result(
     )
 
 
-async def _persist_worker_event(
-    sessions: async_sessionmaker,
-    hook_work: Mapping[TurnKey, _TurnActor],
-    active_turn_ids: Mapping[uuid.UUID, set[uuid.UUID]],
-    *,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    event: AgentSubagentStart | AgentSubagentStop,
-    task_id: uuid.UUID | None,
-    turn_id: uuid.UUID | None,
-    eid: str | None = None,
-    platform_unsolicited: bool = False,
-) -> dict | None:
-    """A worker started, or handed something back — on ITS thread's line.
-
-    Nothing is written for a sub-thread whose label names no card here, and
-    that is not tidiness. Measured twice on 2.1.224: after the session's own
-    Stop, a SubagentStop arrives with an id matching no worker we saw, an
-    empty label, and a fragment of a prompt where the closing message is —
-    something inside Claude Code, not work anybody dispatched. Writing those
-    would put a stranger's half-sentence in a room as if 芝士 had said it.
-
-    A Stop is "handed something back", never "done": the same worker reports
-    finished again after it resumes. So this is an event on the timeline and
-    nothing more: acceptance closes delivered work, while an explicit close
-    abandons a task. This event does neither.
-    """
-    if task_id is None:
-        return None
-    if isinstance(event, AgentSubagentStart):
-        # 谁在做这张卡，是平台看见它开工的时候记下来的 —— 这条事件是第一个说
-        # 出这个分身 id 的东西（id 在容器里才诞生，派活的时候没有任何东西能提
-        # 前说出它）。卡上从此有一个分身在做，看板也就能问它还活着没有。
-        await _note_worker(
-            sessions,
-            hook_work,
-            active_turn_ids,
-            task_id,
-            event.agent_id,
-            topic_id=topic_id,
-            turn_id=turn_id,
-            parent_session_id=event.session_id,
-        )
-        # The platform's own sentence about a worker, not anybody's words —
-        # so `platform`, the same as every other line the platform says out
-        # loud. Attributing it to 芝士 would make the room's history contain
-        # a remark 芝士 never made.
-        content, author_type = say("subagentStart"), AuthorType.platform
-        meta: dict = {"event_type": "subagent_start"}
-    else:
-        # The closing message in full, and it IS the worker's own words. It
-        # reaches the platform exactly once, here — the room's transcript
-        # does not contain it and the worker's dies with its container.
-        content = event.text.strip() or say("subagentStopEmpty")
-        author_type = AuthorType.participant
-        meta = {"event_type": "subagent_stop"}
-        if event.transcript_path:
-            meta["transcript_path"] = event.transcript_path
-        # 结论落在卡上, overwriting the previous stop's — the newest is what
-        # the room reads when it decides whether the work is done. Only for
-        # a sub-thread whose label names this card (`task_id` is that check,
-        # above), so the fragments Claude Code's own internal agents stop
-        # with never become anybody's conclusion.
-        await _record_conclusion(sessions, task_id, event.text.strip())
-    meta["agent_id"] = event.agent_id
-    if event.thread_label:
-        meta["thread_label"] = event.thread_label
-    return await _persist_room_event(
-        sessions,
-        hook_work,
-        project_id=project_id,
-        topic_id=topic_id,
-        content=content,
-        meta=meta,
-        turn_id=turn_id,
-        eid=eid,
-        platform_unsolicited=platform_unsolicited,
-        task_id=task_id,
-        author_type=author_type,
-        # Shown in the thread rather than kept to 现场: what a worker handed
-        # back is the whole reason anybody opens the thread.
-        in_room=True,
-    )
-
-
 async def _persist_change_summary(
     sessions: async_sessionmaker,
     hook_work: Mapping[TurnKey, _TurnActor],
@@ -413,62 +329,6 @@ async def _record_step_output(
     except Exception:  # noqa: BLE001 — a step's output is not worth a turn
         logger.warning("could not record the output of step %s", block_id)
         return None
-
-
-async def _note_worker(
-    sessions: async_sessionmaker,
-    hook_work: Mapping[TurnKey, _TurnActor],
-    active_turn_ids: Mapping[uuid.UUID, set[uuid.UUID]],
-    task_id: uuid.UUID,
-    subagent_id: str,
-    *,
-    topic_id: uuid.UUID,
-    turn_id: uuid.UUID | None,
-    parent_session_id: str | None,
-) -> None:
-    """把做这条活的分身记在卡上。"""
-    from app.domain.delivery.agent import instance_for_seat
-    from app.domain.room_task.services import TaskService
-
-    if turn_id is None or not parent_session_id:
-        return
-    async with sessions() as session:
-        tasks = TaskService(session)
-        task = await session.get(Task, task_id, with_for_update=True)
-        state = hook_work.get((topic_id, turn_id))
-        if (
-            task is None
-            or task.room_id != topic_id
-            or state is None
-            or not parent_session_id
-        ):
-            return
-        instance = await instance_for_seat(session, task.project_id, state.acting_agent)
-        # A delayed start from a replaced parent may remain historical
-        # evidence, but cannot acquire control of the task's current worker.
-        if turn_id not in active_turn_ids.get(topic_id, ()) or instance is None:
-            return
-        task.execution_agent_instance_id = instance.id
-        task.execution_parent_session_id = parent_session_id
-        task.execution_turn_id = turn_id
-        await tasks.note_worker(task, subagent_id)
-        await session.commit()
-
-
-async def _record_conclusion(
-    sessions: async_sessionmaker, task_id: uuid.UUID, text: str
-) -> None:
-    from app.domain.room_task.services import TaskService
-
-    if not text:
-        return
-    async with sessions() as session:
-        tasks = TaskService(session)
-        task = await tasks.get(task_id)
-        if task is None:
-            return
-        await tasks.record_conclusion(task, text)
-        await session.commit()
 
 
 async def _turn_changeset(

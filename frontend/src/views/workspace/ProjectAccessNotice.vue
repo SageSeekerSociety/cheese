@@ -10,6 +10,7 @@
 import { computed, onMounted, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AccessNotice from '@/components/common/AccessNotice.vue'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -61,42 +62,18 @@ const said = computed(() => {
 </script>
 
 <template>
-  <div class="access-notice">
-    <v-icon size="40" class="c-faint mb-4">{{ said.icon }}</v-icon>
-    <h1 class="t-title mb-2">{{ said.title }}</h1>
-    <p class="t-body c-muted mb-6">{{ said.body }}</p>
-    <div class="access-notice__actions">
-      <!-- 所有者面前主操作是把它取消归档；离开退成次要的那一颗。 -->
+  <AccessNotice :icon="said.icon" :title="said.title" :body="said.body">
+    <template #actions>
+      <!-- The owner's primary action is to unarchive it; leaving stays the secondary one. -->
       <BaseButton v-if="reason === 'archived' && isOwner" kind="primary" :loading="restoring" @click="restore">
         {{ t('work.room.menu.unarchive') }}
       </BaseButton>
       <BaseButton :kind="reason === 'archived' && isOwner ? 'ghost' : 'primary'" :to="said.action.to">
         {{ said.action.label }}
       </BaseButton>
-    </div>
-    <p v-if="store.error && reason === 'archived'" class="t-body c-danger mt-4">{{ store.error }}</p>
-  </div>
+    </template>
+    <template #extra>
+      <p v-if="store.error && reason === 'archived'" class="t-body c-danger mt-4">{{ store.error }}</p>
+    </template>
+  </AccessNotice>
 </template>
-
-<style scoped>
-.access-notice {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: 24px;
-  text-align: center;
-}
-
-.access-notice p {
-  max-width: 32em;
-}
-
-.access-notice__actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-}
-</style>

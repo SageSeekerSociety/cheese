@@ -6,7 +6,7 @@ import uuid
 
 from sqlalchemy import or_, select
 
-from app.domain.block.models import Block
+from app.domain.block.models import Block, in_conversation
 from app.domain.delivery.ask_receipt_wait import ASK_RECEIPT_WAIT, _has_group_receipt
 from app.domain.delivery.models import Delivery, NativeInput
 
@@ -95,7 +95,7 @@ async def wake_ask_receipts(chat, identity, *, runner):
                 select(Block)
                 .where(
                     Block.project_id == identity.project_id,
-                    Block.topic_id == identity.topic_id,
+                    in_conversation(identity.topic_id),
                     or_(
                         Block.id.in_(held_ids),
                         Block.meta["delivery_event_id"]

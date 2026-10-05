@@ -700,7 +700,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         ) == requester_credit
         assert f"Cheese-Card: {card.id}" in message
         assert f"/topics/{room.id}" in message
-        assert f"card={task.id}" in message
+        assert f"/tasks/{task.id}" in message
         assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in message
         async with db_factory() as session:
             files = ProjectFiles(session, binding.project_id, None)

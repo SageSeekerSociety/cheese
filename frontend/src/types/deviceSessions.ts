@@ -6,6 +6,9 @@ export interface DeviceSession {
   topic_id: string
   topic_title: string
   topic_title_source?: string
+  // A task's own session: it moves with the task's work computer, not the room's.
+  task_id?: string | null
+  task_title?: string | null
   agent_handle: string
   agent_name: string
   agent_name_source?: string

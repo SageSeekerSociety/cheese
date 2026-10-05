@@ -9,7 +9,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 
 
 def _room(client) -> tuple[str, str]:
@@ -23,11 +23,7 @@ def _room(client) -> tuple[str, str]:
 
 
 def _card(client, room: str, title: str) -> str:
-    r = client.post(
-        f"/topics/{room}/split", json={"reviewer_handle": "alice", "title": title}
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["id"]
+    return open_task(client, room, title, start=False)["id"]
 
 
 def _say(client, pid: str, room: str, card: str, text: str) -> str:
@@ -49,7 +45,7 @@ def _say(client, pid: str, room: str, card: str, text: str) -> str:
 
 
 def _open(client, room: str, card: str, **params):
-    return client.get(f"/topics/{room}/tasks/{card}", params=params)
+    return client.get(f"/topics/{card}/task", params=params)
 
 
 def test_a_card_opened_at_an_old_message_reaches_back_to_it(client):

@@ -67,26 +67,15 @@ export function useRoomTabHistory(phone: Ref<boolean>) {
   }
 
   /**
-   * 打开总览里的一张卡（或退出来）。桌面上这是往下钻一层，推一条历史，Back 退回看
-   * 板。手机上它和换页签同一个规矩：卡也在对话以外，Back 一下回到对话。
-   */
-  function openCard(taskId: string | null) {
-    const query = { ...route.query, tab: 'overview', card: taskId ?? undefined }
-    if (!phone.value) void router.push({ query })
-    else if (onChat.value) void router.push({ query, state: { [DEPTH_KEY]: 1 } })
-    else void router.replace({ query })
-  }
-
-  /**
    * 直接从链接打开了一个非对话页签（身后没有这个话题的对话）：在它下面垫一条对话，
    * 让 Back 先回到对话。刷新不算——那一条的 state 还在。
    */
   async function ensureChatBehind() {
     if (!phone.value || onChat.value || depthOf(router) > 0) return
     const here = { ...route.query }
-    await router.replace({ query: { ...here, tab: CHAT, card: undefined } })
+    await router.replace({ query: { ...here, tab: CHAT } })
     await router.push({ query: here, state: { [DEPTH_KEY]: 1 } })
   }
 
-  return { onChat, goTab, openCard, toChat, ensureChatBehind }
+  return { onChat, goTab, toChat, ensureChatBehind }
 }

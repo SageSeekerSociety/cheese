@@ -248,29 +248,14 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         }
     }
     from app.domain.agent_instance.models import AgentInstance
-    from app.domain.room_task.models import Task
 
     async with client.test_factory() as db:
-        instance = AgentInstance(project_id=project_id, handle="ada", configuration={})
-        db.add(instance)
+        db.add(AgentInstance(project_id=project_id, handle="ada", configuration={}))
         db.add(AgentInstance(project_id=project_id, handle="bob", configuration={}))
         await db.flush()
         first = await AgentSessionService(db).by_id(first_id)
         second = await AgentSessionService(db).by_id(second_id)
         first.resume_token, second.resume_token = "native-ada", "native-bob"
-        child = Task(
-            project_id=project_id,
-            room_id=topic_id,
-            title="Ada's background child",
-            owner_handle="bob",
-            subagent_id="ada-child",
-            execution_agent_instance_id=instance.id,
-            execution_parent_session_id="native-ada",
-            execution_turn_id=uuid.uuid4(),
-        )
-        db.add(child)
-        await db.flush()
-        child_id = child.id
         await db.commit()
     bob_tools = client.post(
         f"/topics/{topic_id}/sessions/{second_id}/work-lease",
@@ -301,28 +286,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]
         is old_online
     )
-    from app.domain.room_task.models import Task, TaskStatus
-
-    async with client.test_factory() as db:
-        db.add(
-            Task(
-                project_id=project_id,
-                room_id=topic_id,
-                title="Finished child",
-                subagent_id="historical-child",
-                status=TaskStatus.closed,
-            )
-        )
-        db.add(
-            Task(
-                project_id=project_id,
-                room_id=topic_id,
-                title="Concluded child",
-                subagent_id="concluded-child",
-                conclusion="Handed back",
-            )
-        )
-        await db.commit()
     # An agent may change its own work destination once its work is pushed on
     # the machine it leaves. Away from a machine that cannot be reached for
     # that, only a person may switch, and says so explicitly.
@@ -409,8 +372,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         for call in remote.await_args_list
         if call.args[1] == "control"
     )
-    async with client.test_factory() as db:
-        assert (await db.get(Task, child_id)).conclusion is None
     async with client.test_factory() as db:
         # 整个房间一起搬：发起的这一条和房间里的另一条都把手交了出来。
         for sid in (first_id, second_id):

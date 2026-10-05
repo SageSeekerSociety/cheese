@@ -13,19 +13,17 @@
 //     random string this browser made up and keeps in localStorage) and `page`
 //     (the slug of the page they landed on). The backend stores those and
 //     nothing else — so adding a header here would be putting it in the row.
-//   * **Signed in is better, and optional.** With a token the backend counts
-//     the account instead of the browser string, so the same person on two
+//   * **Signed in is better, and optional.** A reader signed in to the docs
+//     carries the site's own sign-in cookie, and the backend counts the
+//     account instead of the browser string, so the same person on two
 //     browsers is one visitor (the report asks 「有多少人来了」, and a person is
-//     one person). We send the token *only if it is already in storage*: a
-//     refresh round-trip on every page load is not a beacon, it is a request
-//     the reader waits on. An expired token is simply an anonymous visit.
+//     one person). Nothing is done to get signed in for this: a reader without
+//     the cookie is simply an anonymous visit.
 //   * **Once a day is the backend's job.** We send on every page load; the row
 //     is keyed `(day, visitor)` and the backend keeps the first one. That is
 //     where 「记的是今天落地的第一页」 comes from — and it is why there is no
 //     day bookkeeping here (a client that remembers what it sent is wrong the
 //     first time the tab is duplicated or storage is cleared).
-import { accessToken } from './session.js'
-
 const ENDPOINT = '/api/docs/visit'
 const KEY = 'cheese:docs-visitor'
 
@@ -99,27 +97,22 @@ export function pageSlug(page) {
 }
 
 /** The two fields the backend gets, or null when this page is not a visit. */
-export function beaconBody(page, { storage = store(), token = accessToken() } = {}) {
+export function beaconBody(page, { storage = store() } = {}) {
   if (!COUNTED.has(page?.kind)) return null
   return { visitor: visitorKey(storage), page: pageSlug(page) }
 }
 
 /** Send it. Resolves either way; the caller never has to handle a rejection. */
-export function recordVisit(page, { storage, token, send } = {}) {
+export function recordVisit(page, { storage, send } = {}) {
   return Promise.resolve()
     .then(() => {
-      const held = token === undefined ? accessToken() : token
-      const body = beaconBody(page, { storage: storage === undefined ? store() : storage, token: held })
+      const body = beaconBody(page, { storage: storage === undefined ? store() : storage })
       if (!body) return null
-      const headers = { 'Content-Type': 'application/json' }
-      // Only what is already in storage — see the header comment. The backend
-      // ignores a token it cannot verify, so an expired one costs a round-trip
-      // and records an anonymous visit.
-      if (held) headers.Authorization = `Bearer ${held}`
       const post = send || ((url, init) => fetch(url, init))
       return post(ENDPOINT, {
         method: 'POST',
-        headers,
+        // The sign-in cookie, if there is one, rides along; see the header comment.
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         credentials: 'same-origin',
         // The reader may leave the page before this lands; keepalive lets the

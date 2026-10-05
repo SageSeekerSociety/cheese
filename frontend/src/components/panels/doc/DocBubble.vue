@@ -16,7 +16,7 @@ import { useFocusReturn } from '@/composables/useFocusReturn'
 
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { STATUS_KINDS } from '../../../lib/docSchema/blocks'
-import { BLOCK_ITEMS, blockKeyOf } from '../../../lib/docSlashMenu'
+import { BLOCK_ITEMS, blockKeyOf, convertsInPlace, removeBlock, topBlockAt } from '../../../lib/docSlashMenu'
 import { canSetStatus, currentStatus, statusTransaction } from '../../../lib/docStatus'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
@@ -116,16 +116,27 @@ function applyStatus(kind: keyof typeof STATUS_KINDS | null) {
 
 // ---- 「正文 ▾」：把选中的这一块（或者这几块）换成别的块。和 slash 菜单是同一张表，
 // 去掉插入新东西的那几项（表格、分隔线）。
-const blockMenu = computed(() => {
-  if (props.restyle !== undefined) return props.restyle
+/** 选区所在的那一整块。 */
+const topBlock = computed(() => {
   void revision.value
-  return toRaw(props.editor).state.selection.$from.depth > 0
+  return topBlockAt(toRaw(props.editor).state.selection)
 })
+/** 这一块能换成别的块：图表、表格这类有结构的块不能，换了结构就丢了。 */
+const converts = computed(() => convertsInPlace(topBlock.value?.node))
+const blockMenu = computed(() => {
+  if (props.restyle !== undefined) return props.restyle && converts.value
+  return !!topBlock.value && converts.value
+})
+/** 键盘上方那一条（手机上没有行首手柄）：整块删掉的入口也在这里。 */
+const canRemove = computed(() => props.variant === 'bar' && !!topBlock.value)
+function removeThis() {
+  blockOpen.value = false
+  const block = topBlock.value
+  if (block) removeBlock(toRaw(props.editor), block.pos)
+}
 const blockOpen = ref(false)
 const currentBlock = computed(() => {
-  void revision.value
-  const { $from } = toRaw(props.editor).state.selection
-  const key = blockKeyOf($from.depth > 0 ? $from.node(1) : null)
+  const key = blockKeyOf(topBlock.value?.node)
   return BLOCK_ITEMS.find((item) => item.key === key) ?? BLOCK_ITEMS[0]
 })
 function pickBlock(run: (chain: ChainedCommands) => ChainedCommands) {
@@ -205,21 +216,40 @@ useFocusReturn(blockOpen)
             {{ currentBlock.label }}
             <v-icon size="14">mdi-chevron-down</v-icon>
           </button>
-          <div v-if="blockOpen" class="doc-bubble__menu" role="menu">
-            <button
-              v-for="item in BLOCK_ITEMS"
-              :key="item.key"
-              type="button"
-              role="menuitemradio"
-              :aria-checked="item.key === currentBlock.key"
-              class="doc-bubble__item"
-              @click="pickBlock(item.run)"
-            >
-              <v-icon size="16">{{ item.icon }}</v-icon>
-              {{ item.label }}
-            </button>
-          </div>
+          <Transition name="doc-menu">
+            <div v-if="blockOpen" class="doc-menu doc-bubble__menu" role="menu">
+              <button
+                v-for="item in BLOCK_ITEMS"
+                :key="item.key"
+                type="button"
+                role="menuitemradio"
+                :aria-checked="item.key === currentBlock.key"
+                class="doc-menu__item"
+                @click="pickBlock(item.run)"
+              >
+                <v-icon size="16">{{ item.icon }}</v-icon>
+                {{ item.label }}
+              </button>
+              <template v-if="canRemove">
+                <div class="doc-menu__sep" role="separator" />
+                <button type="button" role="menuitem" class="doc-menu__item" @click="removeThis">
+                  <v-icon size="16">mdi-trash-can-outline</v-icon>
+                  {{ t('work.room.doc.deleteBlock') }}
+                </button>
+              </template>
+            </div>
+          </Transition>
         </div>
+        <button
+          v-else-if="canRemove"
+          type="button"
+          class="doc-bubble__icon"
+          :aria-label="t('work.room.doc.deleteBlock')"
+          :title="t('work.room.doc.deleteBlock')"
+          @click="removeThis"
+        >
+          <v-icon size="18">mdi-trash-can-outline</v-icon>
+        </button>
         <button
           v-for="item in marks"
           :key="item.key"
@@ -297,12 +327,13 @@ useFocusReturn(blockOpen)
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);
   font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--text);
   background: var(--raised);
   box-shadow: var(--shadow-2);
   white-space: nowrap;
 }
-.doc-bubble button {
+.doc-bubble button:not(.doc-menu__item) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -315,9 +346,9 @@ useFocusReturn(blockOpen)
   cursor: pointer;
   transition: background var(--dur-quick) var(--ease-standard);
 }
-.doc-bubble button:hover:not(:disabled),
-.doc-bubble button[aria-pressed='true'],
-.doc-bubble button[aria-expanded='true'] {
+.doc-bubble button:not(.doc-menu__item):hover:not(:disabled),
+.doc-bubble button:not(.doc-menu__item)[aria-pressed='true'],
+.doc-bubble button:not(.doc-menu__item)[aria-expanded='true'] {
   background: var(--fill);
 }
 .doc-bubble button[aria-pressed='true'] {
@@ -328,7 +359,7 @@ useFocusReturn(blockOpen)
   cursor: default;
 }
 .doc-bubble button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .doc-bubble .doc-bubble__icon {
@@ -377,6 +408,7 @@ useFocusReturn(blockOpen)
 }
 /* 键盘上方那一条在屏幕最下面：块样式的菜单往上开。 */
 .doc-bubble--bar .doc-bubble__menu {
+  --doc-menu-from: 4px;
   position: fixed;
   top: auto;
   bottom: calc(var(--doc-keyboard-bar-bottom, 0px) + 52px);
@@ -391,32 +423,10 @@ useFocusReturn(blockOpen)
 .doc-bubble__blocks {
   position: relative;
 }
-/* 块样式的菜单是浅色的一张，和 slash 菜单一个样子。 */
+/* 块样式的菜单：外观在 styles/docBlocks.css 的 .doc-menu，这里只管摆在哪。 */
 .doc-bubble__menu {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  display: flex;
-  flex-direction: column;
-  min-width: 168px;
-  padding: 4px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  background: var(--raised);
-  box-shadow: var(--shadow-2);
-}
-.doc-bubble .doc-bubble__item {
-  justify-content: flex-start;
-  gap: 10px;
-  height: 32px;
-  color: var(--ink);
-  font-size: 13px;
-}
-.doc-bubble .doc-bubble__item:hover,
-.doc-bubble .doc-bubble__item[aria-checked='true'] {
-  background: var(--fill);
-}
-.doc-bubble__item .v-icon {
-  color: var(--muted);
 }
 </style>

@@ -64,6 +64,8 @@ const props = withDefaults(
     topicList?: Topic[]
     /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
+    /** 任务的实况文档：界面上不给它固定标题，正文自己说。 */
+    untitled?: boolean
     /** 顶栏画到页面上的这个位置（CSS 选择器），和页面自己的那一行并成一行。 */
     barTo?: string
     // ---- 这一篇现在是什么状态 ----
@@ -126,6 +128,7 @@ const props = withDefaults(
     mentionPeople: () => [],
     topicList: () => [],
     bare: false,
+    untitled: false,
     barTo: undefined,
     outdated: false,
     commentAuthor: '',
@@ -389,25 +392,29 @@ defineExpose({
           @prev="stepFind(-1)"
           @close="setFindOpen(false)"
         />
-        <DocReviewStrip
-          v-if="review.request.value"
-          :agent-name="agentName"
-          :requester="review.request.value.requester"
-          :count="review.live.value.length"
-          @step="review.step"
-          @close="review.close"
-        />
-        <DocSuggestionStrip
-          v-if="suggestionsOpen"
-          :agent-name="agentName"
-          :count="suggestions.list.value.length"
-          :decided="suggestions.decided.value"
-          :editable="editable"
-          @step="suggestions.step"
-          @accept-all="suggestions.decideAll(true)"
-          @reject-all="suggestions.decideAll(false)"
-          @dismiss="dismissSuggestions"
-        />
+        <Transition name="doc-menu">
+          <DocReviewStrip
+            v-if="review.request.value"
+            :agent-name="agentName"
+            :requester="review.request.value.requester"
+            :count="review.live.value.length"
+            @step="review.step"
+            @close="review.close"
+          />
+        </Transition>
+        <Transition name="doc-menu">
+          <DocSuggestionStrip
+            v-if="suggestionsOpen"
+            :agent-name="agentName"
+            :count="suggestions.list.value.length"
+            :decided="suggestions.decided.value"
+            :editable="editable"
+            @step="suggestions.step"
+            @accept-all="suggestions.decideAll(true)"
+            @reject-all="suggestions.decideAll(false)"
+            @dismiss="dismissSuggestions"
+          />
+        </Transition>
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <DocCommentPanel
           ref="commentsRef"
@@ -444,7 +451,7 @@ defineExpose({
                 @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
                 @blur="emit('rename', ($event.target as HTMLInputElement).value.trim())"
               />
-              <h1 v-else-if="!bare" class="doc-page__title">{{ docTitle }}</h1>
+              <h1 v-else-if="!bare && !untitled" class="doc-page__title">{{ docTitle }}</h1>
               <!-- 正文本身。 -->
               <DocSurface
                 ref="surfaceRef"
@@ -452,6 +459,7 @@ defineExpose({
                 :loading="loading"
                 :session="session"
                 :title="docTitle"
+                :placeholder="document ? t('work.room.doc.emptyPlaceholderLibrary') : ''"
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
                 :mention-names="mentionNames"
@@ -587,9 +595,9 @@ defineExpose({
   max-width: 720px;
   margin: 0 auto 24px;
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 23px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: var(--lh-23);
   letter-spacing: -0.02em;
   color: var(--ink);
 }
@@ -608,12 +616,19 @@ defineExpose({
 
 /* B1 Phase 2: a brief highlight when a chat action points at the doc. */
 .doc-pulse {
-  animation: docPulse 1.2s ease-out;
+  animation: docPulse 1.2s var(--ease-out);
+}
+/* 不动的时候：整页框一下，直到脚本收回（pulse）。 */
+@media (prefers-reduced-motion: reduce) {
+  .doc-pulse {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 45%, transparent);
+  }
 }
 @keyframes docPulse {
   0% {
-    box-shadow: 0 0 0 3px var(--accent);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 45%, transparent);
+    background: var(--ok-wash);
   }
   100% {
     box-shadow: 0 0 0 0 transparent;
@@ -649,7 +664,7 @@ defineExpose({
 .md-content :deep(pre) {
   background: var(--fill);
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow-x: auto;
 }
 

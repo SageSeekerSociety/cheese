@@ -10,7 +10,7 @@ import pytest
 from app.domain.agent.harness import Backlog
 from app.domain.agent.harness.codex.backlog import CodexBacklog, receive
 from app.domain.agent.harness.codex.journal import Journal
-from app.domain.agent.service import AgentMessage, AgentSubagentStop
+from app.domain.agent.service import AgentMessage
 
 
 @pytest.fixture
@@ -117,11 +117,9 @@ async def test_reconnect_completes_partial_child_after_start_record_is_pruned(
     await receive(path, AsyncMock(return_value={"events": [complete, stop]}), on_disk)
     second = CodexBacklog(path)
     events = [event for row in second.unread() for event in second.assemble(row)]
+    assert len(events) == 1
     assert isinstance(events[0], AgentMessage)
     assert events[0].text == "whole"
-    assert events[0].thread_label == "explorer"
-    assert isinstance(events[1], AgentSubagentStop)
-    assert events[1].session_id == "root"
     assert not second.unfinished()
     third = CodexBacklog(path)
     replayed = [event for row in third.unread() for event in third.assemble(row)]

@@ -232,11 +232,6 @@ class MemberService:
         )
 
 
-# The two answers on an invitee's decision card, affirmative first. Choosing one
-# on the card is the answer itself (``routes/alerts.resolve_notification``).
-INVITATION_OPTIONS = ("接受", "拒绝")
-
-
 class InvitationService:
     """邀请 —— 加人这件事的另一半。
 
@@ -309,27 +304,42 @@ class InvitationService:
             invitee_handle=invitee_handle,
             inviter_handle=actor.handle or "",
         )
-        # 一条强提醒，而且是**待办**：decision_request 在被答复之前不会从收件箱里
-        # 消失（resolved_at 才让它消失），正好是「等你回一句」这种东西该有的样子。
-        # 函数体里 import：`notification.services` 在模块头 import 本模块（广播
-        # 要按名册展开），两边都写在模块头就是一个导入环。
-        from app.domain.notification.models import NotificationLevel, NotificationType
-        from app.domain.notification.services import ProjectNotificationService
-
-        await ProjectNotificationService(self._session).create(
-            project_id=project_id,
-            level=NotificationLevel.strong,
-            kind=NotificationType.DECISION_REQUEST,
-            title=f"{actor.handle} 邀请你加入项目「{project.name}」",
-            body="接受之后你会以外部成员的身份加入这个项目，能看到它的公开房间。",
-            target_handle=invitee_handle,
-            payload={
-                "invitation_id": str(invitation.id),
-                "project_name": project.name,
-                "options": list(INVITATION_OPTIONS),
-            },
-        )
+        await self._notify_invitee(invitation, project)
         return invitation
+
+    async def _notify_invitee(
+        self, invitation: ProjectInvitation, project: Project
+    ) -> None:
+        """Tell the invitee in their own mail — the bell, email — not the project's.
+
+        They are not on the roster yet, so the project inbox is the one place they
+        cannot open. The row carries the invitation id so it can be answered from
+        the notification itself, and is settled once the invitation is
+        (``_settle_notification``).
+        """
+        from app.domain.delivery.addressing import Event, Hand, address
+        from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+        from app.domain.notification.models import NotificationType
+        from app.domain.user.services import user_by_handle
+
+        payload: dict = {
+            "project": {"type": "project", "id": str(project.id)},
+            "projectName": project.name,
+            "invitationId": str(invitation.id),
+        }
+        inviter = await user_by_handle(self._session, invitation.inviter_handle)
+        if inviter is not None:
+            payload["inviter"] = {"type": "user", "id": str(inviter.id)}
+        await deliver(
+            self._session,
+            DeliveryEvent(
+                id=event_id_for(NotificationType.PROJECT_INVITE, str(invitation.id)),
+                type=NotificationType.PROJECT_INVITE,
+                payload=payload,
+                occurred_at=invitation.created_at,
+            ),
+            address(Event(reviewers=(invitation.invitee_handle,)), Hand.participant),
+        )
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectInvitation]:
         await self._project_or_404(project_id)
@@ -392,7 +402,7 @@ class InvitationService:
             invitation,
             InvitationStatus.accepted if accept else InvitationStatus.declined,
         )
-        await self._resolve_alert(settled)
+        await self._settle_notification(settled)
         return settled
 
     async def revoke(
@@ -401,7 +411,7 @@ class InvitationService:
         invitation = await self._pending_or_404(invitation_id)
         await MemberService(self._session).require_manager(invitation.project_id, actor)
         settled = await self._repo.settle(invitation, InvitationStatus.revoked)
-        await self._resolve_alert(settled)
+        await self._settle_notification(settled)
         return settled
 
     async def revoke_all_pending(self, project_id: uuid.UUID) -> None:
@@ -409,29 +419,19 @@ class InvitationService:
         it does, as its owner. Authorized by the caller, like the archive is."""
         for invitation in await self._repo.list_pending_for_project(project_id):
             settled = await self._repo.settle(invitation, InvitationStatus.revoked)
-            await self._resolve_alert(settled)
+            await self._settle_notification(settled)
 
-    async def _resolve_alert(self, invitation: ProjectInvitation) -> None:
-        """把收件箱里那条待办结掉。
+    async def _settle_notification(self, invitation: ProjectInvitation) -> None:
+        """The invitee's notification stops asking once the invitation is over.
 
-        不做的话，一张已经答复（或已经撤回）的邀请会永远挂在对方的收件箱里等他回
-        答一个已经没有答案的问题。
+        Answered or withdrawn, it is marked read and records how it ended, so it
+        no longer offers to accept an invitation that has no answer left.
         """
-        from datetime import UTC, datetime
+        from app.domain.delivery.ledger import event_id_for, settle
+        from app.domain.notification.models import NotificationType
 
-        from sqlalchemy import select
-
-        from app.domain.notification.models import Notification
-
-        stmt = select(Notification).where(
-            Notification.project_id == invitation.project_id,
-            Notification.recipient_handle == invitation.invitee_handle,
-            Notification.resolved_at.is_(None),
+        await settle(
+            self._session,
+            event_id_for(NotificationType.PROJECT_INVITE, str(invitation.id)),
+            {"status": invitation.status.value},
         )
-        for row in (await self._session.scalars(stmt)).all():
-            if (row.metadata_payload or {}).get("invitation_id") == str(invitation.id):
-                row.resolved_at = datetime.now(UTC)
-                payload = dict(row.metadata_payload or {})
-                payload["resolved_choice"] = invitation.status.value
-                row.metadata_payload = payload
-        await self._session.flush()

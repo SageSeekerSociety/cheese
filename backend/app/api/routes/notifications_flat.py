@@ -32,6 +32,7 @@ from app.domain.notification.dto import NotificationDTO
 from app.domain.notification.entity_resolvers import (
     ProjectEntityResolver,
     TeamEntityResolver,
+    TeamMembershipApplicationEntityResolver,
     UserEntityResolver,
 )
 from app.domain.notification.models import NotificationType
@@ -107,6 +108,7 @@ def _read_service(db: AsyncSession) -> NotificationQueryService:
         TeamEntityResolver(TeamService(TeamRepository(db)), avatar_url),
         UserEntityResolver(UserService(UserProfileRepository(db)), avatar_url),
         ProjectEntityResolver(ProjectService(db)),
+        TeamMembershipApplicationEntityResolver(TeamService(TeamRepository(db))),
     ]
     return NotificationQueryService(NotificationRepository(db), resolvers=resolvers)
 

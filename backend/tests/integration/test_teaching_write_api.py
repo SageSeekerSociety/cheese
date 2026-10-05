@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task import teaching as teaching_context
-from app.domain.task.protocol import Teaching
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
@@ -33,6 +32,28 @@ SPACE_WEEK = {
     "systemPrompt": "空间默认：第 {current_week} 周",
     "currentWeek": 1,
     "allowedTopics": ["空间话题"],
+}
+
+#: All six fields set, in the request's spelling — what the settings form sends.
+#: No 课件 / 知识 ids: naming one needs a real row, and the reference check has
+#: its own tests (`test_teaching_references.py`).
+FULL_TEACHING = {
+    "systemPrompt": "第 {current_week} 周，只做 {allowed_topics}。",
+    "currentWeek": 3,
+    "allowedTopics": ["循环", "数组"],
+    "avoidInCode": ["递归"],
+    "materialIds": [],
+    "knowledgeIds": [],
+}
+
+#: What a level that says nothing reads back as.
+EMPTY_TEACHING = {
+    "systemPrompt": None,
+    "currentWeek": None,
+    "allowedTopics": [],
+    "avoidInCode": [],
+    "materialIds": [],
+    "knowledgeIds": [],
 }
 
 
@@ -145,23 +166,22 @@ def _for_project(portal, session, project_id: str):
 # ── 空间级：读 + 写 ─────────────────────────────────────────────────────────
 
 
-def test_the_space_default_is_written_and_read_back(
+def test_the_space_default_reads_back_exactly_as_the_form_wrote_it(
     api_client: TestClient, user_client: UserCreator, db_session
 ):
+    """设置页把读回来的这一份原样填回表单、再原样存回去，所以读和写必须是同一套
+    键。读回来换了拼写，表单就是一片空白，再点一次保存就把存着的那份抹掉。"""
     board = _new_board(user_client, api_client)
 
     resp = api_client.patch(
         f"/spaces/{board['space_id']}",
-        json={"teaching": SPACE_WEEK},
+        json={"teaching": FULL_TEACHING},
         headers=_auth(board["token"]),
     )
     assert resp.status_code == 200, resp.text
 
-    stored = _space_teaching_of(api_client, board)
-    # 落库用 snake_case（`Teaching.from_json` 读的那套拼写），请求体用 camelCase。
-    assert stored["system_prompt"] == SPACE_WEEK["systemPrompt"]
-    assert stored["current_week"] == 1
-    assert stored["allowed_topics"] == ["空间话题"]
+    assert resp.json()["data"]["space"]["teaching"] == FULL_TEACHING
+    assert _space_teaching_of(api_client, board) == FULL_TEACHING
 
 
 def test_a_space_patch_that_omits_teaching_leaves_it_alone(
@@ -180,7 +200,7 @@ def test_a_space_patch_that_omits_teaching_leaves_it_alone(
         headers=_auth(board["token"]),
     )
     assert renamed.status_code == 200, renamed.text
-    assert _space_teaching_of(api_client, board)["current_week"] == 1
+    assert _space_teaching_of(api_client, board)["currentWeek"] == 1
 
 
 def test_an_empty_object_clears_the_space_default(
@@ -199,9 +219,8 @@ def test_an_empty_object_clears_the_space_default(
         headers=_auth(board["token"]),
     )
     assert cleared.status_code == 200, cleared.text
-    # 「清空」在读取侧的意思 = `is_empty`：字段还在，但全是空的，于是下一级（或
-    # 没有下一级时）说了算 —— 与 `resolve` 那套语义同一个判据。
-    assert Teaching.from_json(_space_teaching_of(api_client, board)).is_empty
+    # 「清空」在读取侧的意思 = 六格全空，于是下一级（或没有下一级时）说了算。
+    assert _space_teaching_of(api_client, board) == EMPTY_TEACHING
 
 
 def test_a_non_admin_cannot_write_the_space_default(
@@ -217,7 +236,7 @@ def test_a_non_admin_cannot_write_the_space_default(
         headers=_auth(outsider_token),
     )
     assert resp.status_code == 403, resp.text
-    assert _space_teaching_of(api_client, board) == {}
+    assert _space_teaching_of(api_client, board) == EMPTY_TEACHING
 
 
 def test_a_space_default_naming_a_missing_material_is_refused(
@@ -246,11 +265,10 @@ def test_a_task_override_is_written_on_create_and_read_back(
         api_client,
         board,
         name="带指导的题",
-        teaching={"systemPrompt": "题目的", "currentWeek": 3},
+        teaching=FULL_TEACHING,
     )
 
-    assert task["teaching"]["system_prompt"] == "题目的"
-    assert task["teaching"]["current_week"] == 3
+    assert task["teaching"] == FULL_TEACHING
 
 
 def test_patching_a_task_writes_its_override(
@@ -258,17 +276,15 @@ def test_patching_a_task_writes_its_override(
 ):
     board = _new_board(user_client, api_client)
     task = _publish_task(api_client, board, name="先没指导的题")
-    assert task["teaching"] == {}
+    assert task["teaching"] == EMPTY_TEACHING
 
     resp = api_client.patch(
         f"/tasks/{task['id']}",
-        json={"teaching": {"systemPrompt": "补上的", "currentWeek": 4}},
+        json={"teaching": FULL_TEACHING},
         headers=_auth(board["token"]),
     )
     assert resp.status_code == 200, resp.text
-    stored = resp.json()["data"]["task"]["teaching"]
-    assert stored["system_prompt"] == "补上的"
-    assert stored["current_week"] == 4
+    assert resp.json()["data"]["task"]["teaching"] == FULL_TEACHING
 
 
 def test_a_stranger_cannot_write_a_task_override(

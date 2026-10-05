@@ -2,7 +2,7 @@
 // 整段删掉的各算各的；没改的段不列出来。
 import { describe, expect, it } from 'vitest'
 
-import { inlineDiff, paragraphDiff } from './paragraphDiff'
+import { compareTexts, inlineDiff, paragraphDiff } from './paragraphDiff'
 
 const DIFF = [
   '--- a/报告.docx',
@@ -62,5 +62,26 @@ describe('文档两版按段比', () => {
     const segments = inlineDiff('the quick fox', 'the slow fox')
     expect(segments.filter((s) => s.kind === 'del').map((s) => s.text)).toEqual(['quick'])
     expect(segments.filter((s) => s.kind === 'add').map((s) => s.text)).toEqual(['slow'])
+  })
+})
+
+describe('compareTexts', () => {
+  it('pairs an edited paragraph and lists a new one, leaving unchanged ones out', () => {
+    const before = '# 目标\n\n先做导出。\n\n不变的一段'
+    const after = '# 目标\n\n先做导入。\n\n不变的一段\n\n新加的一段'
+    const diff = compareTexts(before, after)
+    expect(diff.changed).toBe(1)
+    expect(diff.added).toBe(1)
+    expect(diff.removed).toBe(0)
+    const changed = diff.paragraphs.find((p) => p.kind === 'changed')
+    expect(
+      changed && changed.kind === 'changed' && changed.segments.filter((s) => s.kind === 'add').map((s) => s.text)
+    ).toEqual(['入'])
+  })
+
+  it('treats everything as new when the document started empty', () => {
+    const diff = compareTexts('', '第一段\n\n第二段')
+    expect(diff.added).toBe(2)
+    expect(diff.changed).toBe(0)
   })
 })

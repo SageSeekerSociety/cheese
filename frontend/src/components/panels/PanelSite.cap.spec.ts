@@ -130,7 +130,7 @@ function args(pane: Element): string[] {
 
 async function openSite() {
   const view = render(Site, {
-    props: { topic, active: true, memberNames: {} },
+    props: { topicId: topic.id, active: true, memberNames: {} },
     global: { plugins: [vuetify] },
   })
   const pane = view.container.querySelector<HTMLElement>('.panel-site')

@@ -3,6 +3,9 @@
 // columns and scrolls sideways with the first column held in place. Which is
 // which is read from the cells, so nobody has to choose.
 //
+// It also marks the columns of figures, which line up on the right while
+// editing and reading alike.
+//
 // This only labels the table and its cells (./shapes.ts reads which shape);
 // the stylesheet does the rest, and only for a reader on a narrow screen.
 // Editing keeps the plain grid.
@@ -12,7 +15,7 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
-import { tableFit } from './shapes'
+import { numberColumns, tableFit } from './shapes'
 
 function tableDecorations(doc: PMNode): DecorationSet {
   const out: Decoration[] = []
@@ -20,13 +23,22 @@ function tableDecorations(doc: PMNode): DecorationSet {
     if (node.type.name !== 'table') return true
     const { shape, labels } = tableFit(node)
     out.push(Decoration.node(pos, pos + node.nodeSize, { 'data-shape': shape }))
-    if (shape === 'numbers') return false
+    const texts: string[][] = []
+    node.forEach((row) => {
+      const cells: string[] = []
+      row.forEach((cell) => cells.push(cell.textContent))
+      texts.push(cells)
+    })
+    const numbers = numberColumns(texts)
     node.forEach((row, rowOffset, rowIndex) => {
-      if (rowIndex === 0) return
       const rowPos = pos + 1 + rowOffset
       row.forEach((cell, cellOffset, col) => {
+        const attrs: Record<string, string> = {}
+        if (numbers.has(col)) attrs['data-num'] = ''
+        if (shape === 'cards' && rowIndex > 0) attrs['data-label'] = labels[col] ?? ''
+        if (!Object.keys(attrs).length) return
         const at = rowPos + 1 + cellOffset
-        out.push(Decoration.node(at, at + cell.nodeSize, { 'data-label': labels[col] ?? '' }))
+        out.push(Decoration.node(at, at + cell.nodeSize, attrs))
       })
     })
     return false

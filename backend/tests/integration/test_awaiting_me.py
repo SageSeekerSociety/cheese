@@ -39,7 +39,7 @@ def _room(client, project: str, handle: str, title: str = "预算复核") -> str
 
 def _file_card(client, room: str, reviewer: str) -> None:
     r = client.post(
-        f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
+        f"/topics/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
             "change_subject": "chore(test): file a card",

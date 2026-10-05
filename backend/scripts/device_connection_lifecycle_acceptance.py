@@ -515,8 +515,10 @@ INSERT INTO topics (id,project_id,title,kind,status,is_private,created_at,update
 VALUES ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',
         'Acceptance','room','active',false,now(),now());
 INSERT INTO agent_sessions
- (id,topic_id,agent_handle,harness,runtime_location,work_lease,created_at,updated_at)
+ (id,conversation_id,topic_id,agent_handle,harness,runtime_location,work_lease,
+  created_at,updated_at)
 VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-222222222222',
+        '22222222-2222-2222-2222-222222222222',
         'acceptance-agent','claude-code',:'lease'::json,:'lease'::json,now(),now());
 """,
             )

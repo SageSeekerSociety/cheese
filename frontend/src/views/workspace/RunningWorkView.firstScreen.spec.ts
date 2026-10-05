@@ -111,7 +111,7 @@ it('a project that has rooms keeps the board, even with every column empty', asy
   store.topics = [ROOT, ROOM]
   mount()
 
-  await waitFor(() => expect(screen.getByText('施工中')).toBeTruthy())
+  await waitFor(() => expect(screen.getByText('进行中')).toBeTruthy())
   expect(screen.queryByText('暂无任务')).toBeNull()
 })
 

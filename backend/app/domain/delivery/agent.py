@@ -100,30 +100,34 @@ async def record_agent(
 async def record_task_instruction(
     session, event: DeliveryEvent, *, task: Task, content: str
 ):
-    """Keep a card instruction even before a worker's parent is known."""
-    instance_id = task.execution_agent_instance_id
-    seat = agent_instance_handle(instance_id) if instance_id else ""
+    """Keep an instruction for a task's own session until it is delivered.
+
+    Addressed to the conversation, not the room: ``topic_id`` is the task's id,
+    which is what the runner runs a turn in, and the agent is the one working
+    the task (its own pick, else the project's).
+    """
+    from app.domain.agent_instance.services import AgentInstanceService
+    from app.domain.project.models import Project
+
+    project = await session.get(Project, task.project_id)
+    if project is None:
+        return
+    instance = await AgentInstanceService(session).for_handle(
+        project, task.agent_handle
+    )
     await session.execute(
         insert(Delivery)
         .values(
             id=uuid.uuid4(),
             event_id=event.id,
-            recipient_handle=seat,
+            recipient_handle=agent_instance_handle(instance.id),
             receiver_id=None,
-            agent_instance_id=instance_id,
-            topic_id=task.room_id,
+            agent_instance_id=instance.id,
+            topic_id=task.id,
             task_id=task.id,
-            dedup_key=f"{event.id}:task-parent",
+            dedup_key=f"{event.id}:task",
             type=event.type.value,
-            payload={
-                **event.payload,
-                "content": content,
-                "worker_id": task.subagent_id,
-                "parent_session_id": task.execution_parent_session_id,
-                "parent_turn_id": str(task.execution_turn_id)
-                if task.execution_turn_id
-                else None,
-            },
+            payload={**event.payload, "content": content},
             event_at=event.occurred_at,
             recorded_at=now(),
             state="pending",
@@ -163,55 +167,40 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 row.state = "uncertain"
                 row.last_error = "Sender stopped before recording the receiver result"
                 continue
+            agent = await session.get(AgentInstance, row.agent_instance_id)
             if row.task_id is not None:
-                # A later parent turn can resume the same child. Its turn ID is
-                # hook provenance, not a different execution target.
+                # A task's own session: the task must still be open, and the
+                # agent still the project's. It sits on no room's roster.
                 task = await session.get(Task, row.task_id)
-                if task is None or task.status != TaskStatus.open:
+                topic = task and await session.get(Topic, task.room_id)
+                if (
+                    task is None
+                    or task.status != TaskStatus.open
+                    or topic is None
+                    or topic.status == TopicStatus.archived
+                    or agent is None
+                    or not agent.is_active
+                    or agent.project_id != task.project_id
+                ):
                     row.state = "failed"
                     row.last_error = "The task is no longer open"
                     continue
-                if row.agent_instance_id is None:
-                    if task.execution_agent_instance_id is None:
-                        row.last_error = (
-                            "Waiting for the task's observed execution parent"
-                        )
-                        row.retry_at = stamp + timedelta(seconds=RETRY_SECONDS)
-                        continue
-                    row.agent_instance_id = task.execution_agent_instance_id
-                    row.recipient_handle = agent_instance_handle(row.agent_instance_id)
-                    row.payload = {
-                        **row.payload,
-                        "worker_id": task.subagent_id,
-                        "parent_session_id": task.execution_parent_session_id,
-                        "parent_turn_id": str(task.execution_turn_id),
-                    }
+            else:
+                topic = await session.get(Topic, row.topic_id)
                 if (
-                    task.execution_agent_instance_id != row.agent_instance_id
-                    or task.subagent_id != row.payload.get("worker_id")
-                    or task.execution_parent_session_id
-                    != row.payload.get("parent_session_id")
+                    topic is None
+                    or topic.status == TopicStatus.archived
+                    or agent is None
+                    or not agent.is_active
+                    or agent.project_id != topic.project_id
+                    or row.recipient_handle
+                    not in await TopicMemberService(session).agent_handles(topic.id)
                 ):
                     row.state = "failed"
                     row.last_error = (
-                        "The addressed worker was replaced; "
-                        "a new instruction must name its replacement"
+                        "Recipient no longer has an active seat in this room"
                     )
                     continue
-            topic = await session.get(Topic, row.topic_id)
-            agent = await session.get(AgentInstance, row.agent_instance_id)
-            if (
-                topic is None
-                or topic.status == TopicStatus.archived
-                or agent is None
-                or not agent.is_active
-                or agent.project_id != topic.project_id
-                or row.recipient_handle
-                not in await TopicMemberService(session).agent_handles(topic.id)
-            ):
-                row.state = "failed"
-                row.last_error = "Recipient no longer has an active seat in this room"
-                continue
             # A new attempt must not reuse an earlier receipt-wait marker.
             row.payload = {
                 key: value
@@ -223,15 +212,6 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
             row.lease_until = stamp + timedelta(seconds=LEASE_SECONDS)
             row.attempts += 1
             content = row.payload["content"]
-            if row.task_id is not None:
-                content += (
-                    f"\nExecution target: task={row.task_id}; "
-                    f"native child={row.payload.get('worker_id')}; "
-                    f"parent session={row.payload.get('parent_session_id')}. "
-                    "Apply child control only to this worker in this parent session; "
-                    "if it has been replaced or cannot be identified, "
-                    "report that instead of controlling another child."
-                )
             claimed.append(
                 (
                     row.id,
@@ -352,14 +332,12 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
         chat.nudge_ask_receipts(waiting.identity)
 
 
-async def begin_send(sessions, delivery_id, attempt_id, *, parent_session_id=None):
+async def begin_send(sessions, delivery_id, attempt_id):
     """Fence stale queued runners immediately before they contact the receiver."""
     rejected: DeliveryTargetChanged | None = None
     async with sessions() as session:
         try:
-            await fence_send(
-                session, delivery_id, attempt_id, parent_session_id=parent_session_id
-            )
+            await fence_send(session, delivery_id, attempt_id)
         except DeliveryTargetChanged as exc:
             rejected = exc
         await session.commit()
@@ -367,7 +345,7 @@ async def begin_send(sessions, delivery_id, attempt_id, *, parent_session_id=Non
         raise rejected
 
 
-async def fence_send(session, delivery_id, attempt_id, *, parent_session_id=None):
+async def fence_send(session, delivery_id, attempt_id):
     """Fence in the caller's identity-registration transaction; never commit here."""
     row = await session.scalar(
         select(Delivery)
@@ -384,18 +362,8 @@ async def fence_send(session, delivery_id, attempt_id, *, parent_session_id=None
         raise ValidationError("Delivery attempt no longer owns this input")
     if row.task_id is not None:
         task = await session.get(Task, row.task_id)
-        if (
-            task is None
-            or task.status != TaskStatus.open
-            or task.execution_agent_instance_id != row.agent_instance_id
-            or task.subagent_id != row.payload.get("worker_id")
-            or task.execution_parent_session_id != row.payload.get("parent_session_id")
-            or (
-                row.payload.get("parent_session_id") is not None
-                and parent_session_id != row.payload["parent_session_id"]
-            )
-        ):
-            message = "The target worker or native parent changed before delivery"
+        if task is None or task.status != TaskStatus.open:
+            message = "The task closed before delivery"
             result = await session.execute(
                 update(Delivery)
                 .where(

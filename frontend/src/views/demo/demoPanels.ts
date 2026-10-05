@@ -60,7 +60,6 @@ export function roomTask(task: SceneTask, index: number): RoomTask & { blocks: B
     created_by: 'wang',
     // 有分支才是有改动可看的那一条（`PanelChanges` 按它过滤）。
     branch_name: `cheese/demo-${index + 1}`,
-    brief: '',
     conclusion: null,
     base_branch: 'main',
     created_at: since(HOUR * (2 + index)),

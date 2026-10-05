@@ -19,7 +19,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-    const width = this.classList.contains('doc-reading') ? 1000 : 300
+    const width = this.classList.contains('doc-pane') ? 1000 : 300
     return { x: 0, y: 0, left: 0, top: 0, width, right: width, height: 600, bottom: 600, toJSON: () => ({}) }
   })
 })

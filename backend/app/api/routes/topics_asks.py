@@ -75,7 +75,9 @@ async def group_data(db, rows, *, operation=None):
 
 
 async def authorize_group(resolver, place):
-    actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
+    actor = await resolver.resolve(
+        project_id=place.project_id, topic_id=place.conversation_id
+    )
     if not actor.authenticated:
         raise ForbiddenError(say("askSignIn"))
     await resolver.authorize_topic(

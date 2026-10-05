@@ -9,7 +9,7 @@ import type { AgentHook } from './mermaidView'
 import { Extension } from '@tiptap/core'
 import { Plugin } from '@tiptap/pm/state'
 
-import { BlockEditing } from './blockEditing'
+import { BlockEditing, BlockSelect } from './blockEditing'
 import { withBlockViews } from './blockViews'
 import { READING } from './shapes'
 import { TableHandles } from './tableHandles'
@@ -34,5 +34,5 @@ const Reading = Extension.create({
 /** The document's extensions as the document panel's editor runs them. `agent`
  *  says whether a diagram can be handed to the AI teammate, and how. */
 export function editorBlocks(schema: AnyExtension[], agent: AgentHook = () => null): AnyExtension[] {
-  return [...withBlockViews(schema, agent), BlockEditing, TableShape, TableHandles, Reading]
+  return [...withBlockViews(schema, agent), BlockEditing, BlockSelect, TableShape, TableHandles, Reading]
 }

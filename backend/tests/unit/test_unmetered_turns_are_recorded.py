@@ -26,11 +26,11 @@ class _Session:
     async def flush(self) -> None:
         return None
 
-    async def get(self, _model, _pk):
-        """No such task — spend attributed to a room's own main line.
+    async def scalar(self, _statement):
+        """No such task — spend attributed to a room's own line.
 
-        The repository resolves the place id it is handed into (room, thread),
-        and a place that is not a task IS the room. Returning None says that.
+        The repository resolves the conversation it is handed into (room, task),
+        and a conversation that is not a task IS the room. None says that.
         """
         return None
 

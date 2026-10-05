@@ -74,12 +74,20 @@ jobs:
         run: |
           python3 deploy/tests/test_metering_release.py
           python3 deploy/tests/test_claude_login.py
+          python3 deploy/tests/test_claude_accounts.py
           python3 deploy/tests/test_chatgpt_login.py
           python3 deploy/tests/test_metering_health.py
           python3 deploy/tests/test_gateway_release.py
           python3 deploy/tests/test_gateway_health_workflow.py
           python3 backend/scripts/test_gateway_supply_probe.py
           bash .github/scripts/test-plan-image-builds.sh
+
+      - name: Claude failover preserves HTTP/1.1 and HTTP/2 streaming
+        run: |
+          docker run --rm --network none --memory 512m --entrypoint python \
+            -v "$GITHUB_WORKSPACE:/work:ro" -w /work \
+            mitmproxy/mitmproxy:12.1.2@sha256:0d7b2a14b4a71a908cd6f31b8f50e29bbc5c8720fe6caa706acf782da558e5c7 \
+            deploy/tests/test_claude_retry.py
 
       # The ratchet collection step is read out of arch-metrics.yml and run
       # under `bash -e`, the shell GitHub gives a `run:` body — the reading that

@@ -1,7 +1,8 @@
-"""The docs site's server side: the admin pass for /docs/dev/, and 问芝士.
+"""The docs site's server side: its sign-in, the admin gate for dev/, and 问芝士.
 
 See ``app.domain.docs_site`` for why each exists. Mounted under /api like every
-route (``/api/docs/...``); the pages themselves are static files nginx serves.
+route (``/api/docs/...``), on the platform and on the docs' own host alike; the
+pages themselves are static files nginx serves.
 """
 
 import asyncio
@@ -10,20 +11,23 @@ import re
 import time
 import uuid
 from typing import Annotated, Literal
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
-from app.api.routes.admin_common import DbSession, PlatformAdminDep
+from app.api.routes.admin_common import DbSession
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.config import settings
+from app.common.auth import get_current_session_id
+from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import async_session_factory
 from app.core.errors import (
     AuthenticationRequiredError,
+    BadRequestError,
     ForbiddenError,
     NotFoundError,
     SystemBusyError,
@@ -33,11 +37,12 @@ from app.core.errors import (
 from app.core.redis import get_redis_client
 from app.core.sentences import exception_text, say
 from app.domain.admin.services import AdminService
-from app.domain.docs_site import access, assistant, library, retrieval, tools
+from app.domain.docs_site import access, assistant, library, retrieval, site, tools
 from app.domain.docs_site.limits import AskLimits
 from app.domain.feature_stats import pricing
 from app.domain.topic.services import TopicService
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
+from app.domain.user.sessions import SessionService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/docs", tags=["docs"])
@@ -53,37 +58,133 @@ def ask_limits() -> AskLimits:
     return _limits
 
 
-# ---------- /docs/dev/: platform admins only ----------
+# ---------- signing in to the docs: through the platform ----------
 
 
-@router.post("/dev-access", status_code=204)
-async def grant_dev_access(handle: PlatformAdminDep) -> Response:
-    """Trade the caller's sign-in for a pass to /docs/dev/ (admins only)."""
-    token, ttl = access.issue(handle)
-    response = Response(status_code=204)
+@router.post("/grant")
+async def docs_grant(
+    response: Response,
+    auth: Annotated[AuthUserInfo, Depends(require_auth_user)],
+    sid: Annotated[uuid.UUID | None, Depends(get_current_session_id)],
+) -> dict:
+    """On the platform: a 30-second, one-use grant for the docs host, and where
+    to post it. The docs sign-in it becomes lasts no longer than this sign-in."""
+    if sid is None:
+        raise BadRequestError(say("signInFirst"))
+    response.headers["Cache-Control"] = "no-store"
+    return ok(
+        {
+            "url": f"{site.origin()}{GATEWAY_MOUNT}/docs/session",
+            "grant": access.mint_grant(auth.user_id, sid),
+        }
+    )
+
+
+@router.get("/signin", include_in_schema=False)
+async def docs_sign_in(path: str = "/") -> Response:
+    """On the docs host: off to the platform's sign-in page, which comes back
+    with a grant (``views/DocsSignIn.vue``). The docs pages are the same
+    files on every deployment, so where the platform is comes from here."""
+    if not _destination(path):
+        path = "/"
+    return RedirectResponse(
+        f"{site.platform_origin()}/docs-signin?{urlencode({'path': path})}",
+        status_code=303,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _destination(path: str) -> bool:
+    return (
+        path.startswith("/")
+        and not path.startswith("//")
+        and "\\" not in path
+        and not any(ord(char) < 32 for char in path)
+    )
+
+
+@router.post("/session", include_in_schema=False)
+async def open_docs_session(request: Request, db: DbSession) -> Response:
+    """On the docs host: spend a grant, set the docs cookie, go back to the page.
+
+    A plain form post the platform page submits, so the grant stays out of
+    URLs, history and referrers. It must come from the platform's own origin:
+    the two hosts are same-site, and nothing else may sign a reader in."""
+    if not site.on_docs_host(request.headers.get("host")):
+        return Response(status_code=404)
+    if request.headers.get("origin") != site.platform_origin():
+        return Response(status_code=403)
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 8192:
+            return Response(status_code=413)
+    values = parse_qs(body.decode("utf-8", errors="replace"))
+    destination = values.get("path", ["/"])[0] or "/"
+    if not _destination(destination):
+        return Response(status_code=400)
+    try:
+        spent = await access.spend_grant(values.get("grant", [""])[0], get_redis_client)
+    except access.GrantStoreUnavailable:
+        return Response(status_code=503, headers={"Retry-After": "10"})
+    if spent is None:
+        return Response(status_code=401)
+    user_id, sid = spent
+    if await SessionService(db).live_handle(user_id, sid) is None:
+        return Response(status_code=401)
+    response = RedirectResponse(destination, status_code=303)
+    response.headers["Cache-Control"] = "no-store"
     response.set_cookie(
-        access.COOKIE,
-        token,
-        max_age=ttl,
-        path=access.COOKIE_PATH,
+        access.cookie_name(),
+        access.mint_session(user_id, sid),
+        max_age=settings.docs_session_seconds,
+        path="/",
         httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="strict",
+        secure=access.cookie_secure(),
+        # Lax, not Strict: a developer page opened from a link elsewhere is a
+        # cross-site navigation, and Strict would show it the sign-in gate.
+        # Lax still keeps the cookie off cross-site POSTs; same-site ones are
+        # stopped by the Origin check in `docs_reader`.
+        samesite="lax",
     )
     return response
 
 
+async def docs_reader(request: Request, db: DbSession) -> access.Reader:
+    """The reader a docs-host request comes from, by the docs' own cookie.
+
+    A request that changes something must also carry the docs' own Origin: the
+    docs and the platform are same-site, so SameSite alone lets a page on any
+    other okcheese.com host send the cookie along."""
+    if request.method not in ("GET", "HEAD") and (
+        request.headers.get("origin") != site.origin()
+    ):
+        raise ForbiddenError("Not from the docs site")
+    who = await access.reader(
+        db, request.cookies.get(access.cookie_name()), request.headers.get("host")
+    )
+    if who is None:
+        raise AuthenticationRequiredError("Login required")
+    return who
+
+
+# ---------- dev/: platform admins only ----------
+
+
 @router.get("/dev-access/check", include_in_schema=False)
 async def check_dev_access(request: Request, db: DbSession) -> Response:
-    """nginx's ``auth_request`` for every file under /docs/dev/: 204 lets it through."""
-    token = request.cookies.get(access.COOKIE)
+    """nginx's ``auth_request`` for every file under dev/: 204 lets it through.
+
+    Whether the holder is still signed in, and still an admin, is asked again
+    on every file, so the door closes without waiting for the cookie to expire."""
+    token = request.cookies.get(access.cookie_name())
     if access.is_internal(token):
         return Response(status_code=204, headers={"Cache-Control": "no-store"})
-    handle = access.holder(token)
-    if handle is None:
-        return Response(status_code=401)
-    if not await access.admins.contains(handle, AdminService(db).admin_handles):
-        return Response(status_code=403)
+    who = await access.reader(db, token, request.headers.get("host"))
+    if who is None:
+        return Response(status_code=401, headers={"Cache-Control": "no-store"})
+    if not await access.admins.contains(who.handle, AdminService(db).admin_handles):
+        return Response(status_code=403, headers={"Cache-Control": "no-store"})
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
@@ -133,7 +234,7 @@ def _refuse(status: int, message: str, retry_after: int = 0) -> JSONResponse:
 async def ask(
     body: AskRequest,
     db: DbSession,
-    auth: Annotated[AuthUserInfo, Depends(require_auth_user)],
+    auth: Annotated[access.Reader, Depends(docs_reader)],
 ) -> Response:
     """Answer one question from the public docs, streamed as server-sent events:
     ``sources`` (what the answer may cite), ``tool`` (what it is looking at),
@@ -197,7 +298,7 @@ async def ask(
     # A quoted passage says what the question is about; search with both.
     query = f"{body.quote}\n{body.question}" if body.quote else body.question
     hits = retrieval.relevant(
-        index.search(query, page_url=f"/docs/{body.page}" if body.page else None)
+        index.search(query, page_url=site.page_path(body.page) if body.page else None)
     )
     result = assistant.Outcome(sources=[h.section.url for h in hits])
 
@@ -318,7 +419,9 @@ async def _agent_scope(
             raise AuthenticationRequiredError("Login required")
         return False
     place = await TopicService(db).place_or_404(body.topic)
-    who = await actor.resolve(topic_id=place.room_id, project_id=place.project_id)
+    who = await actor.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await actor.authorize_topic(
         who, project_id=place.project_id, topic_id=place.room_id
     )
@@ -344,7 +447,7 @@ async def agent_search_docs(
                     "title": f.title,
                     "heading": f.heading,
                     # Absolute, so the agent can hand the link to a person as is.
-                    "url": settings.frontend_url.rstrip("/") + f.url,
+                    "url": site.public_url(f.url),
                     "excerpt": f.excerpt,
                     "dev": f.dev,
                 }

@@ -68,7 +68,6 @@ const ARG_KEY: Record<string, string> = {
   cheese_ask: 'question',
   cheese_accept_request: 'subject',
   cheese_describe: 'subject',
-  cheese_tell: 'message',
   cheese_milestone: 'title',
   cheese_serve: 'note',
   cheese_show: 'path',

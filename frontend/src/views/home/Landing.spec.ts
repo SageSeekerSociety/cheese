@@ -225,6 +225,16 @@ describe('公开首页', () => {
     expect(view.getByRole('link', { name: 'Docs' }).getAttribute('href')).toBe('/docs/')
   })
 
+  it('links the docs on their own host once the deployment has one', async () => {
+    vi.stubEnv('VITE_DOCS_ORIGIN', 'https://docs.example.test')
+    try {
+      const view = await mount('/solutions')
+      expect(view.getByRole('link', { name: '文档' }).getAttribute('href')).toBe('https://docs.example.test/')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('says how to get past the system’s first-launch block only once a download has started', async () => {
     const view = await mount('/download')
     const download = await view.findByRole('link', { name: /下载 Mac 版/ })
@@ -261,6 +271,42 @@ describe('公开首页', () => {
     await view.router.push('/')
     expect(view.router.currentRoute.value.path).toBe('/')
     expect(view.getAllByRole('link', { name: /开始使用/ }).length).toBeGreaterThan(0)
+  })
+})
+
+// The solutions page is read by whoever decides to adopt the platform, so it may
+// only offer what the product does. Courses and teaching units are gone, nobody
+// joins a project as a mentor, and the off-site database backup means data does
+// leave the mainland.
+describe('what the solutions page offers', () => {
+  async function solutionsText(tabs: string[]) {
+    const view = await mount('/solutions')
+    let text = document.body.textContent ?? ''
+    for (const name of tabs) {
+      const tab = view.getByRole('tab', { name })
+      await fireEvent.click(tab)
+      // The panel swaps out-in, so the old one lingers after the tab is selected.
+      await waitFor(() => expect(view.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(tab.id))
+      text += view.getByRole('tabpanel').textContent ?? ''
+    }
+    return { view, text }
+  }
+
+  it('offers no courses, teaching units, mentors or data residency, in Chinese', async () => {
+    const { view, text } = await solutionsText(['高校与机构', '企业', '科研与创新团队'])
+    for (const claim of ['教学单元', '导师', '开设课程', '出境']) expect(text).not.toContain(claim)
+
+    // The sample problem card names the space it was posted in and when it is due.
+    const card = view.getByText('校园知识检索助手').closest('.topic') as HTMLElement
+    expect(within(card).getByText('空间')).toBeTruthy()
+    expect(within(card).getByText('截止')).toBeTruthy()
+    expect(within(card).queryByText('课程')).toBeNull()
+  })
+
+  it('offers no courses, teaching units, mentors or data residency, in English', async () => {
+    setLocale('en')
+    const { text } = await solutionsText(['Universities and institutions', 'Companies', 'Research teams'])
+    for (const claim of [/\bunits?\b/i, /mentor/i, /open a course/i, /mainland/i]) expect(text).not.toMatch(claim)
   })
 })
 

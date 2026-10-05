@@ -6,8 +6,8 @@ import { avatarColor, avatarInitial } from '@/utils/avatar'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
 
-// One topic as the public site shows it: who posted it, which course took it
-// up, and how each group working on it is doing. Sample data, drawn with the
+// One problem as the public site shows it: who posted it, which space it is in,
+// when it is due, and how each group working on it is doing. Sample data, drawn with the
 // product's own avatars.
 
 const people = computed(() => t('publicSite.topicCard.members').split(','))
@@ -50,12 +50,12 @@ const groups = computed(() => [
         <dd>{{ t('publicSite.topicCard.company') }}</dd>
       </div>
       <div>
-        <dt>{{ t('publicSite.topicCard.course') }}</dt>
-        <dd>{{ t('publicSite.topicCard.courseName') }}</dd>
+        <dt>{{ t('publicSite.topicCard.space') }}</dt>
+        <dd>{{ t('publicSite.topicCard.spaceName') }}</dd>
       </div>
       <div>
-        <dt>{{ t('publicSite.topicCard.mentor') }}</dt>
-        <dd>{{ t('publicSite.room.li') }}</dd>
+        <dt>{{ t('publicSite.topicCard.deadline') }}</dt>
+        <dd>{{ t('publicSite.topicCard.deadlineDate') }}</dd>
       </div>
     </dl>
     <ul class="topic-groups">

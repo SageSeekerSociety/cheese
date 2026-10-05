@@ -219,7 +219,7 @@
       "handOffFailed": "无法把这次登录交给 Cheese app，在 app 中重新登录",
       "expired": "这次登录已失效，重新登录",
       "confirmTitle": "登录 Cheese app",
-      "confirmLede": "将以 {name}（{'@'}{handle}）的身份登录 Cheese app。如果不是你刚才在 app 里发起的，点击取消。",
+      "confirmLede": "将以 {name}（{handle}）的身份登录 Cheese app。如果不是你刚才在 app 里发起的，点击取消。",
       "confirm": "继续",
       "switchAccount": "换个账号",
       "cancel": "取消"

@@ -274,3 +274,27 @@ def test_cheese_suggesting_changes_to_a_document_tells_the_room_so(client):
     [line] = _room_lines(client, room)
     assert line["meta"]["doc_suggested"] is True
     assert len(line["meta"]["doc_suggestions"]) == 1
+
+
+def test_a_tasks_document_is_the_tasks_not_the_librarys(client):
+    """A task's living document sits in no room, like the project's own, but
+    it is the task's: the library neither lists nor finds it."""
+    from tests.integration.conftest import open_task
+
+    [(room, project, _)] = _setup(client)
+    task = open_task(client, room, owner="owner", reviewer="owner")
+    task_doc = client.get(f"/topics/{task['id']}/document", headers=OWNER)
+    assert task_doc.status_code == 200, task_doc.text
+    task_doc_id = task_doc.json()["data"]["id"]
+    written = client.put(
+        f"/documents/{task_doc_id}",
+        json={"content": "这个任务里的定价草稿", "expected_version": 0},
+        headers=OWNER,
+    )
+    assert written.status_code == 200, written.text
+
+    assert task_doc_id not in {d["id"] for d in _listed(client, project)}
+    found = client.get(
+        f"/projects/{project}/documents/search", params={"q": "定价"}, headers=OWNER
+    ).json()["data"]
+    assert task_doc_id not in {d["id"] for d in found["library"]}

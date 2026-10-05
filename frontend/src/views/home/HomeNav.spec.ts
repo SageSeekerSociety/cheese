@@ -59,6 +59,8 @@ function team(handle: string, name: string, role: Team['role'] = 'MEMBER'): Team
   }
 }
 
+const mounted: { router?: ReturnType<typeof createRouter> } = {}
+
 async function mount(path: string) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -82,6 +84,7 @@ async function mount(path: string) {
   })
   await router.push(path)
   await router.isReady()
+  mounted.router = router
   return render(HomeNav as unknown as Component, {
     props: { inbox: true },
     global: {
@@ -265,6 +268,46 @@ describe('首页目录', () => {
     getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'MEMBER')] } })
     await mount('/teams/crew')
     await waitFor(() => expect(hrefs()).toContain('/teams/crew/credits'))
+  })
+
+  // 侧栏跨页面一直挂着：名单要是只在挂载时读一次，刚建的、刚被批准加入的团队
+  // 都得整页刷新才出现。
+  it('刚建好的团队，跳过去的那一下就出现在侧栏里', async () => {
+    await mount('/teams/explore')
+    await screen.findByText('知是开发组')
+    getMyTeams.mockResolvedValue({
+      data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('fresh', '刚建的团队', 'OWNER')] },
+    })
+    await mounted.router!.push('/teams/fresh')
+    expect(await screen.findByText('刚建的团队')).toBeTruthy()
+  })
+
+  it('在别处被批准加入的团队，回到这个窗口就出现在侧栏里', async () => {
+    await mount('/inbox')
+    await screen.findByText('知是开发组')
+    getMyTeams.mockResolvedValue({
+      data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('joined', '刚加入的团队')] },
+    })
+    window.dispatchEvent(new Event('focus'))
+    expect(await screen.findByText('刚加入的团队')).toBeTruthy()
+  })
+
+  it('退出团队时还在路上的那次重读，回来后不会把这个团队又画回去', async () => {
+    confirm.mockResolvedValue(true)
+    removeMember.mockResolvedValue({})
+    await mount('/inbox')
+    await screen.findByText('数据课第三组')
+    let answerOldRead: (value: unknown) => void = () => {}
+    getMyTeams.mockImplementationOnce(() => new Promise((resolve) => (answerOldRead = resolve)))
+    await mounted.router!.push('/teams/crew')
+
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 数据课第三组'), { clientX: 40, clientY: 80 })
+    await fireEvent.click(await screen.findByText('退出团队'))
+    await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
+
+    answerOldRead({ data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] } })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.queryByText('数据课第三组')).toBeNull()
   })
 
   it('空间点了就进那个空间', async () => {

@@ -7,6 +7,7 @@ The worker never starts or stops the runner/native process.
 import asyncio
 import json
 import sys
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -145,10 +146,22 @@ async def run(descriptor):
             async with asyncio.timeout(90):
                 while work_runner.turn_pending(turn):
                     await asyncio.sleep(0.05)
+        # Settled, not merely idle. In the busy HTTP case the gate-waiting Bash
+        # is in the background (see below) and can outlast the work's result;
+        # its notification then starts one more turn of the session's own a
+        # moment later, after `working` has already gone false once. So wait
+        # for nothing running in the foreground or the background, held for a
+        # second: a turn row that stays open past that is the bug asserted
+        # below, not a turn about to close.
+        quiet_since = None
         async with asyncio.timeout(90):
             while True:
                 status = await channel.call(channel.handle, "ping", {})
-                if not status["working"] and not chat._hook_work:
+                if status["working"] or status["tasks"] or chat._hook_work:
+                    quiet_since = None
+                elif quiet_since is None:
+                    quiet_since = time.monotonic()
+                elif time.monotonic() - quiet_since >= 1.0:
                     break
                 await asyncio.sleep(0.05)
         async with factory() as session:

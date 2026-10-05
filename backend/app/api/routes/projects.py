@@ -30,7 +30,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import (
     github_app_read_token_for_project,
 )
-from app.domain.agent.liveness import task_liveness
+from app.domain.agent.liveness import running_tasks
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.block.queries import (
     tasks_awaiting_an_answer,
@@ -380,18 +380,15 @@ async def list_project_tasks(
     tasks = await TaskService(db).list_in_project(project_id)
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
-    # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
-    # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
-    beats = await TaskService(db).last_block_at_for_tasks(task_ids)
-    # 哪几条停在一个未回答的提问上 —— 第四次批查询，走只收提问那几行的部分索引
+    # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
     # （`ix_blocks_task_questions`）。这是唯一会中断「运行中」的一格，所以不能留
     # 给调用方各自去问。
     asked = await tasks_awaiting_an_answer(db, task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
-    # 第五次批查询：这一屏每行的屏幕和分身（`agent.liveness`：分身那位不止看内存）。
-    live = await task_liveness(chat, db, tasks)
+    # 第四次批查询：哪几条此刻有一轮在跑（`agent.liveness`：不止看内存）。
+    running = await running_tasks(chat, db, tasks)
     items = []
     for task in tasks:
         card = cards.get(task.id)
@@ -399,9 +396,7 @@ async def list_project_tasks(
             presentation.facts_for_task(
                 task,
                 card,
-                beats.get(task.id),
-                room_screen_live=live[task.id].screen,
-                worker_live=live[task.id].worker,
+                running=task.id in running,
                 awaiting_answer=task.id in asked,
             ),
             now=now,

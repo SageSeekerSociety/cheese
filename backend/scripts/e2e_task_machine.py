@@ -156,7 +156,7 @@ async def main():
         await socket.send(json.dumps({"t": "hello", "executor": True}))
         async with async_session_factory() as session:
             await AgentSessionService(session).remember_place(
-                topic_id=room_id,
+                conversation_id=room_id,
                 agent_handle=actor,
                 work_lease={
                     "kind": "device",

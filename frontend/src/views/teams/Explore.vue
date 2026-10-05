@@ -41,6 +41,7 @@
                         searchQuery = ''
                         searchTeamsData = []
                         hasSearched = false
+                        searchError = null
                       }
                     "
                   />
@@ -51,9 +52,17 @@
 
           <!-- 动态内容区域 -->
           <v-card-text>
+            <!-- A search that failed is not "no results": it says so, in place, with a way to ask again. -->
+            <BaseLoadError
+              v-if="searchFailed"
+              :title="t('teams.explore.searchFailed')"
+              :error="loadFailureReason(searchError)"
+              :forbidden="isForbidden(searchError)"
+              @retry="fetchSearchResults(searchQuery)"
+            />
             <!-- 搜索结果 -->
             <v-fade-transition>
-              <div v-if="searchTeamsData.length" class="search-results">
+              <div v-if="!searchFailed && searchTeamsData.length" class="search-results">
                 <div class="d-flex align-center mb-3">
                   <v-icon icon="mdi-magnify" color="primary" class="mr-2"></v-icon>
                   <span class="text-h6">{{ t('teams.explore.results') }}</span>
@@ -79,7 +88,7 @@
             </v-fade-transition>
 
             <BaseEmptyState
-              v-if="hasSearched && !searchTeamsData.length"
+              v-if="!searchFailed && hasSearched && !searchTeamsData.length"
               icon="mdi-account-search-outline"
               :title="t('teams.explore.noResults')"
               :desc="t('teams.explore.noResultsHint')"
@@ -115,38 +124,46 @@
 <script setup lang="ts">
 import type { Team } from '@/types'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { t } from '@/i18n'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { TeamsApi } from '@/network/api/teams'
 
 const { mdAndUp } = useDisplay()
 const searchQuery = ref('')
 const searchTeamsData = ref<Team[]>([])
 const hasSearched = ref(false)
+/** 这一次搜索没读到的那个错。非空就说明「没有结果」是假的，是没读到。 */
+const searchError = ref<unknown>(null)
+const searchFailed = computed(() => searchError.value !== null)
 
 const fetchSearchResults = async (query: string) => {
   if (!query) {
     searchTeamsData.value = []
     hasSearched.value = false
+    searchError.value = null
     return
   }
 
   hasSearched.value = true
+  // 上一次的失败不许留到这一次：重新问一次，屏幕上先干净。
+  searchError.value = null
   try {
     const {
       data: { teams },
     } = await TeamsApi.search({ query })
     searchTeamsData.value = teams
   } catch (error) {
-    toast.error(t('teams.explore.searchFailed'))
+    // 不再弹红条：这一块就在原地换成失败的样子，同一件事不说两遍。
     console.error(error)
+    searchError.value = error
   }
 }
 </script>

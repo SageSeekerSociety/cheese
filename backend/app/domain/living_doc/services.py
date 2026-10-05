@@ -62,10 +62,11 @@ class Documents:
         return await self._repo.of_project(project_id)
 
     async def create(
-        self, *, project_id: uuid.UUID, title: str, author: str
+        self, *, project_id: uuid.UUID, title: str | None = None, author: str = "system"
     ) -> Document:
-        """A new document of the project's own, empty (version 0). What it
-        says is written the way every other write is, through the service."""
+        """A new document in no room, empty (version 0): the project's own, or
+        one a task points at. What it says is written the way every other
+        write is, through the service."""
         return await self._repo.create(
             project_id=project_id, title=title, author=author
         )

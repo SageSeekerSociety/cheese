@@ -91,7 +91,7 @@ def _tasks_matching(
     return bm25.match_all_words(
         Task.id,
         terms,
-        {"title": 2, "brief": 1, "conclusion": 1},
+        {"title": 2, "conclusion": 1},
         filters=[bm25.any_of("room_id", in_readable)],
     )
 
@@ -322,9 +322,7 @@ def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
         "title_source": str(t.title_source),
         "status": str(t.status.value),
         "closed_at": t.closed_at.isoformat() if t.closed_at else None,
-        "snippet": _snippet(
-            " ".join(filter(None, (t.title, t.brief, t.conclusion))), terms
-        ),
+        "snippet": _snippet(" ".join(filter(None, (t.title, t.conclusion))), terms),
     }
 
 
