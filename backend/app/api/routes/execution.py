@@ -100,6 +100,13 @@ async def execute(
         raise NotFoundError("Topic not found")
     if claims.get("p") != str(room.project_id):
         raise ForbiddenError("Execution belongs to another project")
+    # The credential outlives the agent's seat: an agent taken off the room
+    # keeps a signature that still verifies. An agent's only standing in a room
+    # is its row on the roster, asked through `owner_reads` because this route
+    # is served by the connection owner (see there).
+    seat = claims.get("a")
+    if seat and not await owner_reads.topic_member(db, topic_id, seat):
+        raise ForbiddenError(say("topicMemberOnly"))
     lease_generation = None
     if "session" in claims:
         try:

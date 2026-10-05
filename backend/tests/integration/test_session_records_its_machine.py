@@ -53,6 +53,13 @@ async def room(client):
     for handle in ("ada", "linus"):
         made = client.post(f"/projects/{project_id}/agents", json={"handle": handle})
         assert made.status_code == 200, made.text
+        # It sits in the room: a session runs only for a teammate seated there.
+        seated = client.post(
+            f"/topics/{topic['id']}/members",
+            json={"handle": made.json()["data"]["seat_handle"], "role": "member"},
+            headers=session_auth_headers("alice"),
+        )
+        assert seated.status_code == 200, seated.text
     async with client.test_factory() as db:
         owner = await db.scalar(select(User).where(User.username == "alice"))
         if owner is None:

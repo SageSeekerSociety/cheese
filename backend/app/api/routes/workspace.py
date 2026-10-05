@@ -9,7 +9,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolverDep, require_seated_in_its_room
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
 from app.core.db import get_db
@@ -68,6 +68,12 @@ async def require_project_access(
         if room_id is not None and str(work.room_id) != str(room_id):
             raise NotFoundError("Task not found")
         room_id = work.room_id
+    if scoped and room_id is None:
+        # The whole project's source, to an agent that still sits in the room
+        # its credential was minted in.
+        await require_seated_in_its_room(
+            db, x_cheese_token or "", project_id=project_id
+        )
     if room_id is not None:
         try:
             room_uuid = uuid.UUID(str(room_id))

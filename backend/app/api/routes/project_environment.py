@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import require_seated_agent
 from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.auth.checker import require_auth_user
@@ -262,7 +263,8 @@ async def apply_environment(
 
 
 async def overview_access(request: Request, db: Db, project_id: uuid.UUID):
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
+    token = request.headers.get("x-cheese-token", "")
+    claims = scoped_token_claims(token)
     project = await db.get(Project, project_id)
     if (
         not claims
@@ -272,6 +274,9 @@ async def overview_access(request: Request, db: Db, project_id: uuid.UUID):
         or claims.get("t") != str(project.root_topic_id)
     ):
         raise ForbiddenError(say("envRepairOverviewOnly"))
+    await require_seated_agent(
+        db, token, project_id=project_id, topic_id=project.root_topic_id
+    )
     return project
 
 
