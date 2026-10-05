@@ -662,6 +662,8 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-prose) {
   outline: none;
   min-height: 240px;
+  /* 最后一块下面留一条能点的空白：点在这里，光标落到最后一块后面（见 blocks/blockEditing.ts）。 */
+  padding-bottom: 32px;
   max-width: 720px;
   margin: 0 auto;
   font-size: 16px;
@@ -914,8 +916,8 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   display: block;
   margin: 0.6em 0;
 }
-/* 整块被选中（在图表、表格这类块后面按一下退格，或点了图片）：框出来，再按一下退格
-   删掉的就是它。 */
+/* 整块被选中（点了图表或图片，或在图表、表格这类块后面按一下退格）：框出来，再按
+   退格删掉的就是它。 */
 .doc-editor :deep(img.ProseMirror-selectednode),
 .doc-editor :deep(.doc-prose > .ProseMirror-selectednode) {
   outline: 2px solid rgb(var(--v-theme-primary));

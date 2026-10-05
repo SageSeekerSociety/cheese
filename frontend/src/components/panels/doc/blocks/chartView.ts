@@ -14,6 +14,8 @@ import type { NodeView } from '@tiptap/pm/view'
 import type { ChartKind } from '../../../../lib/docSchema/blocks'
 import type { ChartTheme } from './chartOption'
 
+import { NodeSelection } from '@tiptap/pm/state'
+
 import { CHART_HORIZONTAL, CHART_KINDS } from '../../../../lib/docSchema/blocks'
 
 import { chartData, chartHeight, chartOption } from './chartOption'
@@ -171,6 +173,20 @@ export function chartView({ node, editor, getPos }: NodeViewRendererProps): Node
   }
   paintBar()
 
+  // Pressing the chart itself, or the bar beside its buttons, selects the whole
+  // block: the caret never stays behind in a cell of the table, where the next
+  // Backspace would eat a character instead of the chart.
+  const select = (e: MouseEvent) => {
+    const pos = posOf(getPos)
+    if (e.button !== 0 || pos === null || !editor.isEditable) return
+    if (e.target !== bar && !canvas.contains(e.target as Node)) return
+    e.preventDefault()
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos)))
+    editor.view.focus()
+  }
+  canvas.addEventListener('mousedown', select)
+  bar.addEventListener('mousedown', select)
+
   kind.addEventListener('click', () => {
     const pos = posOf(getPos)
     if (pos === null || !editor.isEditable) return
@@ -209,7 +225,7 @@ export function chartView({ node, editor, getPos }: NodeViewRendererProps): Node
       (m.type === 'attributes' && (m.target === dom || m.target === data)) ||
       bar.contains(m.target) ||
       canvas.contains(m.target),
-    stopEvent: (e) => canvas.contains(e.target as Node),
+    stopEvent: (e) => e.target === bar || canvas.contains(e.target as Node),
     destroy,
   }
 }

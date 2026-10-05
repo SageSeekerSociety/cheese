@@ -16,7 +16,7 @@ import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
 import { emptyItem } from '../../../../lib/docSchema/blocks'
-import { slashPluginKey } from '../../../../lib/docSlashMenu'
+import { convertsInPlace, slashPluginKey } from '../../../../lib/docSlashMenu'
 import { setStatus } from '../../../../lib/docStatus'
 
 import { trendOf } from './shapes'
@@ -224,6 +224,31 @@ export const BlockEditing = Extension.create({
       new Plugin({
         key: new PluginKey('docBlockFields'),
         props: { decorations: (state) => fieldDecorations(state.doc, state.selection) },
+      }),
+      // A click under the last block puts the caret on a line there. After a
+      // chart, a table or another block with its own structure there is no such
+      // line (a shared document keeps no empty paragraph after its last block),
+      // so the click makes one.
+      new Plugin({
+        key: new PluginKey('docBlockBelow'),
+        props: {
+          handleDOMEvents: {
+            mousedown(view, event) {
+              if (!view.editable || event.button !== 0 || event.target !== view.dom) return false
+              const { doc } = view.state
+              const last = doc.lastChild
+              if (!last || convertsInPlace(last)) return false
+              const dom = view.nodeDOM(doc.content.size - last.nodeSize)
+              if (!(dom instanceof HTMLElement) || event.clientY <= dom.getBoundingClientRect().bottom) return false
+              event.preventDefault()
+              const tr = view.state.tr.insert(doc.content.size, view.state.schema.nodes.paragraph.create())
+              tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
+              view.dispatch(tr.scrollIntoView())
+              view.focus()
+              return true
+            },
+          },
+        },
       }),
       // A click beside a line that ends in a formula or a footnote lands, in
       // Chrome, outside the line; put the caret where ProseMirror's own hit
