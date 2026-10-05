@@ -175,7 +175,7 @@ describe('公开首页', () => {
     }
   })
 
-  it('shows the film on its poster, and plays it from the start with sound when asked', async () => {
+  it('shows the film on its poster, and plays it from the start with sound and no player controls when asked', async () => {
     const home = await mount()
     const video = home.getByRole('figure', { name: '影片：众智成事' }).querySelector('video')!
     expect(video.paused).toBe(true)
@@ -185,7 +185,7 @@ describe('公开首页', () => {
     await fireEvent.click(home.getByRole('button', { name: caption }))
     expect(video.muted).toBe(false)
     expect(video.currentTime).toBe(0)
-    expect(video.controls).toBe(true)
+    expect(video.controls).toBe(false)
     expect(home.queryByRole('button', { name: caption })).toBeNull()
   })
 

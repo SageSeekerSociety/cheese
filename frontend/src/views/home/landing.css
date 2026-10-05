@@ -287,12 +287,15 @@
   min-height: 100dvh;
   padding: 64px 0 64px var(--gutter);
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  align-items: center;
+  align-content: center;
   gap: 64px;
+  view-timeline: --manifesto;
 }
 
+/* It ends on the line where the film's picture beside it ends. */
 .manifesto-text {
   display: flex;
+  align-self: end;
   flex-direction: column;
   gap: 0.6em;
   font-size: clamp(28px, 3.2vw, 48px);
@@ -311,12 +314,22 @@
   font-size: clamp(28px, 3.6vw, 56px);
 }
 
+/* The clauses light one after another on the section's own timeline, so the
+   last is lit by the time the section has arrived; timed by each clause's own
+   place on the screen, the last one was still grey with the section in place. */
 @supports (animation-timeline: view()) {
-  /* Fully lit by the time the section fills the screen. */
   .manifesto-clause {
     animation: clause-light linear both;
-    animation-timeline: view();
-    animation-range: cover 10% cover 32%;
+    animation-timeline: --manifesto;
+    animation-range: entry 30% entry 55%;
+  }
+
+  .manifesto-clause:nth-child(2) {
+    animation-range: entry 45% entry 70%;
+  }
+
+  .manifesto-clause:nth-child(3) {
+    animation-range: entry 60% entry 85%;
   }
 }
 
