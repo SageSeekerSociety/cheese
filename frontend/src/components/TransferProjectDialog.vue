@@ -25,7 +25,9 @@ import { computed, ref, watch } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { listProjectMembers, lookupUser, setProjectOwner } from '@/api'
+import { useAccountLookup } from '@/composables/useAccountLookup'
+
+import { listProjectMembers, setProjectOwner } from '@/api'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
@@ -71,37 +73,9 @@ const ownProject = computed(() => {
 })
 
 // ---- 直接找一个人（用户名或邮箱，精确匹配）--------------------------------
-const query = ref('')
-const found = ref<LookedUpUser | null>(null)
-const lookingUp = ref(false)
-const lookupError = ref<string | null>(null)
-let lookupTimer: ReturnType<typeof setTimeout> | null = null
-let lookupSeq = 0
-
-async function runLookup(raw: string) {
-  const q = raw.trim()
-  found.value = null
-  lookupError.value = null
-  if (!q) return
-  const seq = ++lookupSeq
-  lookingUp.value = true
-  try {
-    const user = await lookupUser(q)
-    // 打字比请求快：只认最后一次发出去的那个，否则先回来的旧结果会盖掉新的。
-    if (seq !== lookupSeq) return
-    found.value = user
-  } catch (e) {
-    if (seq !== lookupSeq) return
-    lookupError.value = e instanceof Error ? e.message : t('work.projectTransfer.lookupFailed')
-  } finally {
-    if (seq === lookupSeq) lookingUp.value = false
-  }
-}
-
-watch(query, (raw) => {
-  if (lookupTimer) clearTimeout(lookupTimer)
-  lookupTimer = setTimeout(() => void runLookup(raw), 350)
-})
+const { query, found, lookingUp, lookupError } = useAccountLookup((e) =>
+  e instanceof Error ? e.message : t('work.projectTransfer.lookupFailed')
+)
 
 const foundIsMe = computed(() => !!found.value && found.value.handle === myHandle())
 

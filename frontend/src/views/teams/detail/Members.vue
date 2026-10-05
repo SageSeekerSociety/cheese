@@ -20,15 +20,30 @@
           <v-form @submit.prevent="confirmInvite">
             <v-card :title="t('teams.members.invite')">
               <v-card-text>
-                <div class="text-caption mb-2">{{ t('teams.members.inviteUidHint') }}</div>
                 <v-text-field
-                  v-model.number="inviteUidInput"
+                  v-model="inviteQuery"
                   autocomplete="off"
-                  label="UID"
+                  :label="t('teams.members.inviteLabel')"
+                  :placeholder="t('teams.members.invitePlaceholder')"
                   variant="outlined"
-                  hide-details
+                  :loading="lookingUp"
+                  :error-messages="lookupError ? [lookupError] : []"
+                  :hide-details="!lookupError"
                   class="mb-4"
                 />
+                <!-- 先把查到的人摆出来：邀请的是这一位，按下按钮之前就看得见。 -->
+                <div v-if="found" class="d-flex align-center mb-4" data-testid="found-user">
+                  <UserAvatar
+                    :name="found.name || found.handle"
+                    :avatar="found.avatar_id == null ? '' : getAvatarUrl(found.avatar_id)"
+                    :size="32"
+                    class="mr-3"
+                  />
+                  <div class="min-w-0">
+                    <div class="t-body">{{ found.name || found.handle }}</div>
+                    <div class="t-meta c-muted">@{{ found.handle }}</div>
+                  </div>
+                </div>
                 <v-select
                   v-model="inviteRoleInput"
                   autocomplete="off"
@@ -53,7 +68,9 @@
               <v-card-actions>
                 <v-spacer></v-spacer>
                 <BaseButton type="button" @click="isActive.value = false">{{ t('teams.members.cancel') }}</BaseButton>
-                <BaseButton type="submit" kind="primary">{{ t('teams.members.inviteSubmit') }}</BaseButton>
+                <BaseButton type="submit" kind="primary" :disabled="!found">{{
+                  t('teams.members.inviteSubmit')
+                }}</BaseButton>
               </v-card-actions>
             </v-card>
           </v-form>
@@ -349,14 +366,17 @@ import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useAccountLookup } from '@/composables/useAccountLookup'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
+import { ApiError } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
@@ -479,7 +499,22 @@ watch(
   { immediate: true }
 )
 
-const inviteUidInput = ref<number>()
+// 按完整的用户名或邮箱找人，邀请查到的那一位。以前这里是一格 UID：没人知道别人的
+// UID，打进去的用户名原样当 userId 发出去，被参数校验挡回来；以数字开头的用户名还会
+// 被截成一个数，请到另一个人。
+const {
+  query: inviteQuery,
+  found,
+  lookingUp,
+  lookupError,
+  reset: resetInviteLookup,
+} = useAccountLookup((e) =>
+  e instanceof ApiError && e.status === 404
+    ? t('teams.members.inviteNotFound')
+    : e instanceof Error && e.message
+      ? e.message
+      : t('teams.members.inviteLookupFailed')
+)
 const inviteRoleInput = ref('MEMBER')
 const inviteMessageInput = ref('')
 
@@ -567,13 +602,14 @@ const pendingRequests = computed(() => {
 // 下面几个操作成功时有的回 204，响应体是空串：失败只认 withErrorHandling 给的 undefined，
 // 拿真假判断会把成功当失败——不提示、不刷新，那一行还挂着，再点一次就是「找不到」。
 const confirmInvite = async () => {
-  if (!teamData.value || !inviteUidInput.value) {
+  const invitee = found.value
+  if (!teamData.value || !invitee) {
     return
   }
 
   const result = await errorHandler.withErrorHandling(async () => {
     return await TeamsApi.createInvitation(teamData.value!.id, {
-      userId: inviteUidInput.value!,
+      userId: invitee.id,
       role: inviteRoleInput.value as any,
       message: inviteMessageInput.value || undefined,
     })
@@ -581,7 +617,7 @@ const confirmInvite = async () => {
 
   if (result !== undefined) {
     toast.success(t('teams.members.inviteSent'))
-    inviteUidInput.value = undefined
+    resetInviteLookup()
     inviteRoleInput.value = 'MEMBER'
     inviteMessageInput.value = ''
     isInviteDialogActive.value = false

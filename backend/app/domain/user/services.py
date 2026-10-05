@@ -110,12 +110,14 @@ async def set_language(session: AsyncSession, user_id: int, language: str) -> bo
 
 
 async def lookup_account(session: AsyncSession, q: str) -> dict | None:
-    """``{handle, name, avatar_id}`` for an exact username or email, or None."""
+    """``{id, handle, name, avatar_id}`` for an exact username or email, or None.
+
+    The id is what a team invitation names the person by."""
     found = await UserRepository(session).lookup_account(q)
     if found is None:
         return None
-    handle, name, avatar_id = found
-    return {"handle": handle, "name": name, "avatar_id": avatar_id}
+    user_id, handle, name, avatar_id = found
+    return {"id": user_id, "handle": handle, "name": name, "avatar_id": avatar_id}
 
 
 async def search_accounts(
