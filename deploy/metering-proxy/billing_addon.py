@@ -50,8 +50,10 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -371,13 +373,14 @@ def _refuse(
     )
 
 
-def _refuse_spent_budget(
+def _refuse_reached_cap(
     flow: http.HTTPFlow, message: str, reopens_at: int | None
 ) -> None:
-    """Refuse a turn whose project has spent its budget, in the shape Claude
-    Code's gateway contract gives a reached spend cap: 429 ``billing_error``
-    with ``x-should-retry: false`` and the ``anthropic-ratelimit-unified-*``
-    rejection headers.
+    """Refuse a turn that a spent allowance stops — the project's budget, or
+    the usage limit of the subscription account behind its model — in the
+    shape Claude Code's gateway contract gives a reached spend cap: 429
+    ``billing_error`` with ``x-should-retry: false`` and the
+    ``anthropic-ratelimit-unified-*`` rejection headers.
 
     A bare 429 is what it used to be, and Claude Code reads that as throttling:
     it retries the turn up to ten times and, for a session signed in the way
@@ -734,7 +737,7 @@ def _refuse_verdict(flow: http.HTTPFlow, verdict) -> None:
     if verdict.reason_kind == BINDING:
         _refuse(flow, 400, "invalid_request_error", verdict.reason)
         return
-    _refuse_spent_budget(
+    _refuse_reached_cap(
         flow, f"cheese project budget: {verdict.reason}", verdict.reopens_at
     )
 
@@ -1124,8 +1127,8 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         if resp.status_code == 429:
-            # Left buffered: response() replaces the gateway's spent-budget
-            # refusal with one Claude Code reads as a reached cap. A short
+            # Left buffered: response() replaces a 429 that reports a spent
+            # allowance with one Claude Code reads as a reached cap. A short
             # error body, so nothing is held for the length of a turn.
             return
         if "/v1/messages" in flow.request.path and "event-stream" in resp.headers.get(
@@ -1337,14 +1340,29 @@ def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
     return True
 
 
-def _answer_a_spent_gateway_budget(flow: http.HTTPFlow) -> bool:
-    """Re-render LiteLLM's ``max_budget`` refusal as the project's spent budget.
+_UPSTREAM_RESETS_AT = re.compile(r'"resets_at"\s*:\s*(\d+)')
+_GATEWAY_MODEL_GROUP = re.compile(r"Received Model Group=(\S+)")
+_BEIJING = timezone(timedelta(hours=8))
 
-    The ledger only learns a turn's spend when the turn ends, so near the end
-    of a budget it is the gateway's brake that stops a turn, not admission.
-    LiteLLM answers with an OpenAI-shaped 429 ``budget_exceeded`` naming the
-    key's hash, which Claude Code takes for throttling and retries; the
-    project's refusal has to read the same whichever brake caught it.
+
+def _answer_a_reached_gateway_cap(flow: http.HTTPFlow) -> bool:
+    """Re-render a gateway 429 that reports a spent allowance as a reached cap.
+
+    LiteLLM's ``/v1/messages`` gives every 429 the same Anthropic envelope,
+    ``error.type`` ``rate_limit_error``, whatever stopped the request; only
+    ``error.message`` says which. Claude Code takes that for throttling, retries
+    the turn ten times and prints "Server is temporarily limiting requests (not
+    your usage limit)". Two of those 429s are not throttling:
+
+    - LiteLLM's own ``max_budget`` brake ("Budget has been exceeded! Key=…"):
+      the ledger learns a turn's spend only when the turn ends, so near the end
+      of a budget this brake, not admission, stops the turn. Its message names
+      the key's hash and is not passed on.
+    - The subscription account behind a model has used up its plan (ChatGPT's
+      ``usage_limit_reached``, carried inside the message with ``resets_at``).
+      No retry within the turn can succeed; another model can.
+
+    Any other 429 is real throttling and is passed on as it came.
     """
     resp = flow.response
     if resp is None or resp.status_code != 429:
@@ -1354,9 +1372,28 @@ def _answer_a_spent_gateway_budget(flow: http.HTTPFlow) -> bool:
     except ValueError:
         return False
     error = body.get("error") if isinstance(body, dict) else None
-    if not isinstance(error, dict) or error.get("type") != "budget_exceeded":
+    if not isinstance(error, dict):
         return False
-    _refuse_spent_budget(flow, "cheese project budget: 额度已用完。", None)
+    said = error.get("message")
+    said = said if isinstance(said, str) else ""
+    if said.startswith("Budget has been exceeded"):
+        _refuse_reached_cap(flow, "cheese project budget: 额度已用完。", None)
+        return True
+    if "usage_limit_reached" not in said:
+        return False
+    group = _GATEWAY_MODEL_GROUP.search(said)
+    model = f"模型 {group.group(1)} " if group else "这个模型"
+    resets = _UPSTREAM_RESETS_AT.search(said)
+    reopens_at = int(resets.group(1)) if resets else None
+    when = ""
+    if reopens_at is not None:
+        at = datetime.fromtimestamp(reopens_at, _BEIJING)
+        when = f"，北京时间{at.month}月{at.day}日 {at:%H:%M} 恢复"
+    _refuse_reached_cap(
+        flow,
+        f"cheese: {model}背后的订阅账号用量已到上限{when}。换一个模型可以继续。",
+        reopens_at,
+    )
     return True
 
 
@@ -1390,7 +1427,7 @@ def response(flow: http.HTTPFlow) -> None:
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
-        if _answer_a_spent_gateway_budget(flow):
+        if _answer_a_reached_gateway_cap(flow):
             return
         _report_gateway_failure(flow)
         return
