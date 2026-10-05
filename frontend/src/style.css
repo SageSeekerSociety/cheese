@@ -185,15 +185,21 @@
   --usage-write: #3d5a80;
 
   /* ---- Chart series ----
-     The series of a document's chart block, in order. Six hues far enough
-     apart to tell bars and lines from each other, none of them the amber of
-     the primary action. */
-  --chart-1: #3d6bb3;
-  --chart-2: #2a9d8f;
-  --chart-3: #d9822b;
-  --chart-4: #8a63c2;
-  --chart-5: #c9506f;
-  --chart-6: #6b7b8c;
+     The series of a document's chart block, in this fixed order (design-system
+     §1.7): blue, teal, clay, violet, olive, rose, sky, ochre. One chroma and
+     two lightness steps, so they read as one family; the warm ones are earthy
+     rather than signal colours, away from amber and the status colours.
+     Validated with the dataviz checks against --surface: every neighbour
+     apart under protan/deutan (ΔE ≥ 13) and normal vision (ΔE ≥ 17), all
+     ≥ 3:1. A ninth series is never a new colour: it folds into 「其他」. */
+  --chart-1: #2863ab;
+  --chart-2: #0e9a94;
+  --chart-3: #9a4729;
+  --chart-4: #6f4fa1;
+  --chart-5: #8a8c34;
+  --chart-6: #9a3e67;
+  --chart-7: #1f93b8;
+  --chart-8: #ac7d1b;
 
   /* ---- Radius ladder ----
      Theme-independent (a corner does not change shape in the dark), so these
@@ -459,12 +465,14 @@
   --usage-ask: #4fb8aa;
   --usage-write: #7d9cc4;
 
-  --chart-1: #7aa2e3;
-  --chart-2: #4fb8aa;
-  --chart-3: #eba25a;
-  --chart-4: #ad8fe2;
-  --chart-5: #e57f99;
-  --chart-6: #9eacba;
+  --chart-1: #346fb8;
+  --chart-2: #18a7a1;
+  --chart-3: #a85334;
+  --chart-4: #7b5aae;
+  --chart-5: #969841;
+  --chart-6: #a74a72;
+  --chart-7: #32a0c5;
+  --chart-8: #b8892d;
 }
 
 /* Paint the root element itself, so the gap between "HTML parsed" and "Vue has

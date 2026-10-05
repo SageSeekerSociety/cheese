@@ -58,9 +58,9 @@ async function renderDiagram(source: string): Promise<string> {
     themeVariables: {
       background: 'transparent',
       fontSize: '14px',
-      primaryColor: token('--canvas'),
+      primaryColor: token('--fill'),
       primaryTextColor: token('--text'),
-      primaryBorderColor: token('--faint'),
+      primaryBorderColor: token('--line-2'),
       secondaryColor: token('--surface'),
       tertiaryColor: token('--surface'),
       lineColor: token('--muted'),
@@ -68,8 +68,8 @@ async function renderDiagram(source: string): Promise<string> {
       noteBkgColor: token('--canvas'),
       noteTextColor: token('--text'),
       noteBorderColor: token('--line'),
-      actorBkg: token('--canvas'),
-      actorBorder: token('--faint'),
+      actorBkg: token('--fill'),
+      actorBorder: token('--line-2'),
       actorTextColor: token('--text'),
       signalColor: token('--muted'),
       signalTextColor: token('--text'),
@@ -260,7 +260,10 @@ function mermaidView({ node, editor, getPos }: NodeViewRendererProps, agent: Age
   const ask = controlButton('doc-mermaid__ask', '')
   const full = controlButton('doc-mermaid__full', t('work.room.doc.blocks.openDiagram'))
   full.textContent = t('work.room.doc.blocks.openDiagram')
-  bar.append(edit, ask, full)
+  const label = document.createElement('span')
+  label.className = 'doc-mermaid__label'
+  label.textContent = t('work.room.doc.slash.diagram')
+  bar.append(label, edit, ask, full)
   // While editing, pressing the diagram selects the block (as a chart does), so
   // Backspace removes it and Enter opens a line after it; full screen is a button.
   const { figure, error, redraw, open, destroy } = diagramFigure(

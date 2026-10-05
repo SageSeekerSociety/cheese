@@ -943,6 +943,7 @@
         "chartCategory": "类别",
         "chartValue": "数值",
         "chartSlice": "{name}：{value}（{percent}%）",
+        "chartOther": "其他",
         "diagramSource": "源码",
         "askAgent": "让{name}改",
         "emptyDiagram": "暂无内容",

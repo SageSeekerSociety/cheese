@@ -193,6 +193,21 @@ export function footnoteNote(note: { text: string } | null, ...extra: HTMLElemen
 // A number with an optional sign, currency and a short unit: 1,274 / $410 / 2.1% / 6.1 秒.
 const NUMBER = /^[-+−]?[$¥€£]?\s?\d[\d.,]*\s?\S{0,3}$/
 
+/** The columns (after the first) whose cells are mostly numbers: they line up
+ *  on the right, as figures are compared. `rows` are the cell texts, head first. */
+export function numberColumns(rows: string[][]): Set<number> {
+  const out = new Set<number>()
+  const width = Math.max(0, ...rows.map((r) => r.length))
+  for (let col = 1; col < width; col++) {
+    const cells = rows
+      .slice(1)
+      .map((r) => r[col]?.trim() ?? '')
+      .filter(Boolean)
+    if (cells.length && cells.filter((c) => NUMBER.test(c)).length / cells.length >= 0.6) out.add(col)
+  }
+  return out
+}
+
 /** Whether the cells after the first column are mostly numbers. */
 export function isNumberTable(table: PMNode): boolean {
   let numbers = 0

@@ -943,6 +943,7 @@
         "chartCategory": "Category",
         "chartValue": "Value",
         "chartSlice": "{name}: {value} ({percent}%)",
+        "chartOther": "Other",
         "diagramSource": "Source",
         "askAgent": "Ask {name} to change it",
         "emptyDiagram": "No content",

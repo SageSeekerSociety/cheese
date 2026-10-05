@@ -58,8 +58,8 @@
   --doc-callout: var(--usage-write);
   --doc-callout-ink: var(--usage-write);
 
-  margin: 12px 0;
-  padding: 8px 16px;
+  margin: 16px 0;
+  padding: 12px 16px;
   border-left: 4px solid var(--doc-callout);
   border-top-right-radius: var(--radius-md);
   border-bottom-right-radius: var(--radius-md);
@@ -120,6 +120,8 @@
 /* ---- Status tag --------------------------------------------------------- */
 
 [data-status] {
+  /* One tag is one word: it never breaks inside. */
+  white-space: nowrap;
   padding: 1px 6px;
   margin: 0 1px;
   border-radius: var(--radius-sm);
@@ -242,6 +244,29 @@
   content: '';
 }
 
+/* A narrow page has no room for a time column: the time goes above its title. */
+@container (max-width: 480px) {
+  [data-item='timeline'] {
+    padding-left: 24px;
+  }
+
+  [data-item='timeline'] [data-field='when'] {
+    position: static;
+    width: auto;
+    line-height: var(--lh-13);
+    text-align: left;
+  }
+
+  [data-item='timeline'] .doc-tl__dot {
+    left: 0;
+  }
+
+  /* The dot sits on the time's line now, not the title's. */
+  [data-item='timeline'] .doc-tl__dot::after {
+    top: 4px;
+  }
+}
+
 [data-item='timeline']:last-child .doc-tl__dot::before {
   bottom: auto;
   height: 14px;
@@ -266,11 +291,13 @@
 
 /* ---- Stat cards --------------------------------------------------------- */
 
+/* The cards share the row between them, edge to edge with the column, like
+   every other block; on a narrow page two to a row. */
 [data-block='stats'] {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 8px;
-  margin: 12px 0;
+  margin: 16px 0;
 }
 
 .doc-stats__cards {
@@ -280,7 +307,7 @@
 [data-item='stat'] {
   position: relative;
   min-width: 0;
-  padding: 8px 12px;
+  padding: 12px 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
@@ -410,7 +437,7 @@
 
 [data-block='details'] {
   position: relative;
-  margin: 12px 0;
+  margin: 16px 0;
   padding-left: 24px;
   /* The body's height animates to and from auto where the browser can; where
      it cannot, it opens and closes at once. */
@@ -786,9 +813,14 @@ div[data-footnote]::before {
    The editor's (.doc-prose) and every reader's. Browsers give a table no
    borders, so without this it reads as loose words. */
 
+/* One rounded frame like the other blocks; inside it only the rules between
+   cells (the table's own outer edge is hidden). The head reads as labels, and
+   a column of figures lines up on the right (./tableShape.ts, ./reader.ts). */
 :is(.doc-prose, .doc-reading) .tableWrapper {
   max-width: 100%;
-  margin: 12px 0;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
   /* A wide table scrolls inside its own box instead of pushing the column wider
      than the reading width. The chat column is --page-w-read; without this the
      row would stretch and take the reader's line width with it. */
@@ -798,6 +830,7 @@ div[data-footnote]::before {
 :is(.doc-prose, .doc-reading) table {
   width: 100%;
   border-collapse: collapse;
+  border-style: hidden;
   font-size: 14px;
   line-height: var(--lh-14-loose);
 }
@@ -810,8 +843,17 @@ div[data-footnote]::before {
 }
 
 :is(.doc-prose, .doc-reading) th {
+  font-size: 12px;
   font-weight: 600;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  vertical-align: bottom;
   background: var(--canvas);
+}
+
+:is(.doc-prose, .doc-reading) :is(th, td)[data-num] {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* ---- A reader's table on a phone ---------------------------------------- */
@@ -819,6 +861,7 @@ div[data-footnote]::before {
 @media (max-width: 600px) {
   .doc-reading .tableWrapper[data-shape='cards'] {
     overflow: visible;
+    border: 0;
   }
 
   .doc-reading .tableWrapper[data-shape='cards'] :is(table, tbody, tr, td) {
@@ -874,8 +917,21 @@ div[data-footnote]::before {
 
 /* ---- Chart -------------------------------------------------------------- */
 
-[data-block='chart'] {
+/* A chart and a diagram are cards like the stat cards: the drawing, and under
+   a rule the table it is drawn from. */
+:is([data-block='chart'], [data-block='mermaid']) {
   margin: 16px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+[data-block='chart'] .tableWrapper {
+  max-width: none;
+  margin: 12px -16px -12px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .doc-chart__bar {
@@ -955,7 +1011,7 @@ div[data-footnote]::before {
 }
 
 .doc-chart__data {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .doc-chart__data table {
@@ -964,15 +1020,26 @@ div[data-footnote]::before {
 
 /* ---- Mermaid diagram ---------------------------------------------------- */
 
-[data-block='mermaid'] {
-  margin: 16px 0;
-}
-
 .doc-mermaid__bar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 4px;
   min-height: 24px;
+}
+
+/* The bar reads like a chart's: what it is on the left, what to do on the right. */
+.doc-mermaid__label {
+  margin-right: auto;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-13);
+  color: var(--text);
+}
+
+/* Boxes with the document's corners. */
+.doc-mermaid__figure svg .node rect {
+  rx: 6px;
+  ry: 6px;
 }
 
 .doc-reading .doc-mermaid__bar {

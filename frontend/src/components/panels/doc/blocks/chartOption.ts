@@ -40,6 +40,33 @@ export function chartData(rows: string[][]): ChartData {
   }
 }
 
+/** A pie's slices, one colour each. Past the palette's last colour the smallest
+ *  slices fold into one 「其他」 at the end, so no two slices share a colour. */
+export function pieSlices(
+  names: string[],
+  values: (number | null)[],
+  colors: number
+): { name: string; value: number; row: number; folded?: boolean }[] {
+  const all = names.map((name, row) => ({ name, value: values[row] ?? 0, row }))
+  if (all.length <= colors) return all
+  const kept = new Set(
+    [...all]
+      .sort((a, b) => b.value - a.value)
+      .slice(0, colors - 1)
+      .map((s) => s.row)
+  )
+  const rest = all.filter((s) => !kept.has(s.row))
+  return [
+    ...all.filter((s) => kept.has(s.row)),
+    {
+      name: t('work.room.doc.blocks.chartOther'),
+      value: rest.reduce((sum, s) => sum + s.value, 0),
+      row: -1,
+      folded: true,
+    },
+  ]
+}
+
 /** How tall the chart is: bars on their side need a row each. */
 export function chartHeight(kind: ChartKind, horizontal: boolean, data: ChartData): number {
   if (horizontal) return Math.max(160, data.categories.length * 32 + (data.series.length > 1 ? 72 : 40))
@@ -86,14 +113,15 @@ export function chartOption(
 
   if (kind === 'pie') {
     const first = data.series[0]
+    const slices = pieSlices(data.categories, first?.values ?? [], theme.colors.length)
     return {
       ...base,
       tooltip: {
         ...(base.tooltip as Option),
-        formatter: (p: { name: string; dataIndex: number; percent: number }) =>
+        formatter: (p: { name: string; dataIndex: number; percent: number; value: number }) =>
           t('work.room.doc.blocks.chartSlice', {
             name: p.name,
-            value: first?.texts[p.dataIndex] ?? '',
+            value: slices[p.dataIndex]?.folded ? p.value : first?.texts[slices[p.dataIndex]?.row ?? -1] ?? '',
             percent: p.percent,
           }),
       },
@@ -102,7 +130,7 @@ export function chartOption(
           type: 'pie',
           radius: narrow ? ['34%', '60%'] : ['40%', '68%'],
           center: ['50%', '58%'],
-          data: data.categories.map((name, i) => ({ name, value: first?.values[i] ?? 0 })),
+          data: slices,
           // On a phone the names are in the legend and the shares sit on the
           // slices: labels outside would run off a narrow screen.
           label: narrow

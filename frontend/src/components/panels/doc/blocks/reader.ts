@@ -29,6 +29,7 @@ import {
   footnoteNote,
   footnoteText,
   mathShape,
+  numberColumns,
   READING,
   statItemShape,
   statsShape,
@@ -283,6 +284,19 @@ function labelCards(root: HTMLElement): void {
   }
 }
 
+/** The columns of figures line up on the right (./tableShape.ts does the same while editing). */
+function markNumbers(root: HTMLElement): void {
+  for (const body of Array.from(root.querySelectorAll('.tableWrapper tbody'))) {
+    const rows = Array.from(body.children)
+    const numbers = numberColumns(rows.map((row) => Array.from(row.children).map((cell) => cell.textContent ?? '')))
+    for (const row of rows) {
+      Array.from(row.children).forEach((cell, col) => {
+        if (numbers.has(col)) (cell as HTMLElement).dataset.num = ''
+      })
+    }
+  }
+}
+
 /** Turn the reference tokens in the drawn text into chips (not inside code). */
 function chips(root: HTMLElement, names: RefNames): void {
   const texts: Text[] = []
@@ -328,6 +342,7 @@ export function mountMarkdown(host: HTMLElement, md: string, opts: ReadOptions =
   host.replaceChildren(fragment)
   separateBlocks(host)
   labelCards(host)
+  markNumbers(host)
   chips(host, opts.names ?? NO_NAMES)
 
   const stops: (() => void)[] = []

@@ -56,7 +56,7 @@ function loadECharts(): Promise<Init> {
 
 function chartTheme(): ChartTheme {
   return {
-    colors: [1, 2, 3, 4, 5, 6].map((i) => token(`--chart-${i}`)),
+    colors: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => token(`--chart-${i}`)),
     text: token('--text'),
     muted: token('--muted'),
     line: token('--line'),

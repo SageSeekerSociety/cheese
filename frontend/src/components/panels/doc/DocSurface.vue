@@ -873,11 +873,11 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(pre) {
   position: relative;
   background: var(--canvas);
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--line);
   padding: 12px 16px;
   border-radius: var(--radius-md);
   overflow-x: auto;
-  margin: 12px 0;
+  margin: 16px 0;
   font-size: 14px;
   line-height: var(--lh-14-loose);
 }
