@@ -25,9 +25,11 @@ import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 
@@ -43,7 +45,9 @@ const spaceId = () => Number(route.params.spaceId)
 // 谁是管理员是拿登录的人跟空间的管理员名单对出来的。
 useSpaceData().fetchSpace(spaceId())
 
-const { current, expired, notifyCount, loaded, reload } = useSpaceAnnouncements(spaceId)
+const { current, expired, notifyCount, loaded, error, reload } = useSpaceAnnouncements(spaceId)
+/** 一条都没读到、而且是读失败了：这时候「暂无公告」是假话。读到过的留在原地。 */
+const failedEmpty = computed(() => error.value !== null && !current.value.length && !expired.value.length)
 
 const showExpired = ref(false)
 
@@ -188,8 +192,15 @@ async function remove(a: SpaceAnnouncement) {
       />
     </template>
 
+    <BaseLoadError
+      v-if="failedEmpty"
+      :title="t('spaces.announcements.loadFailed')"
+      :error="loadFailureReason(error)"
+      :forbidden="isForbidden(error)"
+      @retry="reload"
+    />
     <BaseEmptyState
-      v-if="loaded && !current.length && !expired.length"
+      v-else-if="loaded && !current.length && !expired.length"
       size="inline"
       :title="t('spaces.announcements.empty')"
     />
