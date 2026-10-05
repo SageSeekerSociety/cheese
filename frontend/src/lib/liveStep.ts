@@ -55,7 +55,6 @@ const ARG_KEY: Record<string, string> = {
   chat_send: 'content',
   chat_edit: 'content',
   cheese_chat_search: 'query',
-  cheese_doc_set: 'path',
   cheese_doc_edit: 'reason',
   cheese_task: 'title',
   cheese_close_task: 'conclusion',

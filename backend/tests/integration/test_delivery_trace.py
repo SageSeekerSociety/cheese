@@ -57,12 +57,13 @@ def _dispatch(client, room_id: str, title: str) -> str:
     room = client.get(f"/topics/{room_id}").json()["data"]
     from app.core.sandbox_auth import mint_scoped_token
 
+    # The task's own session opens it, with the credential of its conversation.
     opened = client.post(
         f"/projects/{room['project_id']}/git/tasks/{task_id}",
         headers={
             "X-Cheese-Token": mint_scoped_token(
                 project_id=room["project_id"],
-                topic_id=room_id,
+                topic_id=task_id,
                 agent_handle=room_agent_seat(client, room_id),
             )
         },

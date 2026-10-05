@@ -152,13 +152,6 @@ def bind_resource_token(
     return f"{body}.{_sign(body)}"
 
 
-def token_task(token: str) -> str | None:
-    """The task a valid scoped token is narrowed to (claim ``k``), if any."""
-    claims = scoped_token_claims(token) if token else None
-    task = (claims or {}).get("k")
-    return str(task) if task else None
-
-
 def token_agent_handle(token: str) -> str | None:
     """The 分身 handle a VALID scoped token acts as, or ``None``.
 

@@ -226,9 +226,9 @@ class PlatformHost:
     when the session is not on the machine (结论 63).
 
     The backend is reached from here, directly — that is why the table is whole
-    while the machine is gone. The two things a tool can need from the machine
-    (a file's bytes, a task's commits pushed) go through ``invoke`` and so share
-    its breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
+    while the machine is gone. The one thing a tool can need from the machine
+    (a task's commits pushed) goes through ``invoke`` and so shares its
+    breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
     """
 
     def __init__(self, client, invoke, call_id, doc_versions):
@@ -241,15 +241,6 @@ class PlatformHost:
     def request(self, plan):
         stdout = self.client.platform_request(plan)["value"]["stdout"]
         return json.loads(stdout) if stdout else {}
-
-    def read_file(self, path):
-        # The agent spells paths as it was shown them: the workspace's own path,
-        # or relative to it.
-        workspace = session_path(self.client.config.get("workspace") or "")
-        machine = path
-        if workspace and not machine.startswith("/"):
-            machine = f"{workspace.rstrip('/')}/{machine}"
-        return read_file_on_the_machine(self.invoke, machine, f"{self.call_id}-read")
 
     def wait_machine(self):
         # A command that does nothing, so the wait is the one every tool call

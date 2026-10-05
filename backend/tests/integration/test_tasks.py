@@ -17,6 +17,8 @@ The rules a person could state before any of this was built:
 
 import uuid
 
+from sqlalchemy import text
+
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from tests.conftest import StubChannel, settle_turn, stub_compute
@@ -143,11 +145,69 @@ def test_a_proposal_becomes_a_task_owned_by_whoever_accepts_it(client):
     assert len(client.get(f"/topics/{room_id}/tasks").json()["data"]["data"]) == 1
 
 
+def _told(client, task_id: str) -> str:
+    """Everything the platform has handed the task's own session so far."""
+
+    async def read():
+        async with client.test_factory() as db:
+            rows = await db.execute(
+                text(
+                    "SELECT payload->>'content' FROM deliveries "
+                    "WHERE conversation_id = :task ORDER BY recorded_at"
+                ),
+                {"task": task_id},
+            )
+            return "\n".join(content for (content,) in rows)
+
+    return client.portal.call(read)
+
+
+def test_a_task_made_from_a_proposal_is_handed_the_discussion_behind_it(client):
+    """The task's own session never reads the room, so what was agreed there
+    reaches the task with the proposal or not at all. On dev (2026-10-05) a
+    task proposed with no summary started knowing none of the five changes
+    agreed in its room."""
+    _project_id, room_id = _room(client)
+    post_message(
+        client, room_id, "alice", {"content": "删场次的通知选 B：发布时一起发"}
+    )
+    block_id = client.post(
+        f"/topics/{room_id}/task-proposals",
+        json={"title": "通知改到发布时", "summary": "发布时按人汇总变更"},
+        headers=room_agent_headers(client, room_id),
+    ).json()["data"]["id"]
+
+    task = client.post(
+        f"/topics/{room_id}/task-proposals/{block_id}/accept",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+
+    told = _told(client, task["id"])
+    assert "发布时按人汇总变更" in told
+    assert "删场次的通知选 B" in told
+
+
+def test_a_proposal_that_says_nothing_of_the_work_is_refused(client):
+    _project_id, room_id = _room(client)
+
+    r = client.post(
+        f"/topics/{room_id}/task-proposals",
+        json={"title": "顺手重构", "summary": ""},
+        headers=room_agent_headers(client, room_id),
+    )
+
+    assert r.status_code == 400
+    proposals = client.get(
+        f"/topics/{room_id}/task-proposals", headers=session_auth_headers("alice")
+    ).json()["data"]
+    assert proposals == []
+
+
 def test_a_dismissed_proposal_cannot_be_accepted_later(client):
     _project_id, room_id = _room(client)
     block_id = client.post(
         f"/topics/{room_id}/task-proposals",
-        json={"title": "顺手重构"},
+        json={"title": "顺手重构", "summary": "把重复的两段合成一个函数"},
         headers=room_agent_headers(client, room_id),
     ).json()["data"]["id"]
 
@@ -169,7 +229,9 @@ def test_an_ai_teammate_cannot_accept_its_own_proposal(client):
     _project_id, room_id = _room(client)
     agent = room_agent_headers(client, room_id)
     block_id = client.post(
-        f"/topics/{room_id}/task-proposals", json={"title": "自己批"}, headers=agent
+        f"/topics/{room_id}/task-proposals",
+        json={"title": "自己批", "summary": "改一处文案"},
+        headers=agent,
     ).json()["data"]["id"]
 
     r = client.post(

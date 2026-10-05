@@ -30,7 +30,7 @@ from app.api.routes.topics import (
     ProjectRepository,
     UsageRepository,
 )
-from app.api.task_instructions import dispatch, tell_task
+from app.api.task_instructions import dispatch, proposal_source_text, tell_task
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
@@ -281,7 +281,9 @@ class TaskUpdateIn(BaseModel):
 class TaskProposalIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     #: What the task is for, in the agent's words: the start of its document.
-    summary: str = Field(default="", max_length=20000)
+    #: Required: a task created from a proposal has nothing else of the
+    #: discussion but this and the messages just before it.
+    summary: str = Field(min_length=1, max_length=20000)
 
 
 @router.post("/{topic_id}/tasks")
@@ -502,7 +504,9 @@ async def accept_task_proposal(
         db,
         task,
         task_opening_prompt(
-            title=task.title, owner=task.owner_handle, source=proposal.summary
+            title=task.title,
+            owner=task.owner_handle,
+            source=await proposal_source_text(db, proposal),
         ),
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")

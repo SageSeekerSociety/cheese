@@ -35,9 +35,7 @@ cheese = _load()
 class Host:
     """Records what a tool asked for; answers with `answers[(method, path)]`."""
 
-    def __init__(
-        self, answers=None, *, files=None, environ=None, sync=None, envelope=None
-    ):
+    def __init__(self, answers=None, *, environ=None, sync=None, envelope=None):
         # `envelope` 是后端在 `data` 之外捎回来的东西（今天只有文档的格式警告）。
         # 记在这里而不是塞进 `answers`：`answers` 是「这个地址答什么数据」，而
         # 警告跟的是哪一次响应，不是哪一个地址。
@@ -49,12 +47,10 @@ class Host:
             **(environ or {}),
         }
         self.answers = answers or {}
-        self.files = files or {}
         self.sync = sync
         self.doc_versions: dict = {}
         self.requests: list[dict] = []
         self.synced: list[str] = []
-        self.read: list[str] = []
 
     def request(self, plan):
         self.requests.append(plan)
@@ -62,12 +58,6 @@ class Host:
         if isinstance(answer, Exception):
             raise answer
         return {"data": answer, **self.envelope}
-
-    def read_file(self, path):
-        self.read.append(path)
-        if path not in self.files:
-            raise RuntimeError(cheese_out_of_reach)
-        return self.files[path].encode()
 
     def sync_task(self, task_id):
         self.synced.append(task_id)
@@ -240,7 +230,7 @@ def test_invalid_read_arguments_fail_before_any_request(tool, args):
 # which document is its own, then act on that.
 
 
-def _doc_host(files=None, envelope=None, environ=None):
+def _doc_host(envelope=None, environ=None):
     return Host(
         {
             ("GET", f"/topics/{_ROOM}/document"): {"id": _DOC},
@@ -250,7 +240,6 @@ def _doc_host(files=None, envelope=None, environ=None):
             },
             ("PUT", f"/documents/{_DOC}"): {"doc_version": 8},
         },
-        files={"notes/d.md": "# 我写的"} if files is None else files,
         envelope=envelope,
         environ=environ,
     )
@@ -264,7 +253,7 @@ def test_a_set_without_a_read_claims_no_version():
     """Never having read the doc is version 0 — which the platform accepts only
     when there is no doc yet."""
     host = _doc_host()
-    run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert _puts(host)[-1]["expected_version"] == 0
     assert _puts(host)[-1]["content"] == "# 我写的"
 
@@ -272,7 +261,7 @@ def test_a_set_without_a_read_claims_no_version():
 def test_a_set_writes_against_the_version_get_showed():
     host = _doc_host()
     assert "# 现在的文档" in run("cheese_doc_get", {}, host)
-    run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert _puts(host)[-1]["expected_version"] == 7
 
 
@@ -281,8 +270,8 @@ def test_a_won_set_remembers_the_version_it_produced():
     produced."""
     host = _doc_host()
     run("cheese_doc_get", {}, host)
-    run("cheese_doc_set", {"path": "notes/d.md"}, host)
-    run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    run("cheese_doc_set", {"content": "# 我写的"}, host)
+    run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert [put["expected_version"] for put in _puts(host)] == [7, 8]
 
 
@@ -294,7 +283,7 @@ def test_a_refused_set_says_how_to_recover():
         409, json.dumps({"error": {"data": {"doc_version": 9}}})
     )
     with pytest.raises(cheese.PlatformToolError) as refused:
-        run("cheese_doc_set", {"path": "notes/d.md"}, host)
+        run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert "第 9 版" in str(refused.value)
     assert "cheese_doc_get" in str(refused.value)
 
@@ -311,7 +300,7 @@ def test_a_set_that_would_lose_text_shows_the_platforms_reason():
         422, json.dumps({"error": {"message": reason, "data": {"line": 3}}})
     )
     with pytest.raises(cheese.PlatformToolError) as refused:
-        run("cheese_doc_set", {"path": "notes/d.md"}, host)
+        run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert reason in str(refused.value)
     assert "没有变" in str(refused.value)
 
@@ -329,7 +318,7 @@ def test_an_empty_doc_says_so_instead_of_answering_nothing():
 def test_a_turn_in_a_room_reads_and_writes_the_rooms_document():
     host = _doc_host()
     run("cheese_doc_get", {}, host)
-    run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert [(p["method"], p["path"]) for p in host.requests] == [
         ("GET", f"/topics/{_ROOM}/document"),
         ("GET", f"/documents/{_DOC}"),
@@ -343,7 +332,7 @@ def test_a_session_opened_on_a_document_needs_no_room():
     document and no room at all."""
     host = _doc_host(environ={"CHEESE_DOCUMENT": _DOC, "CHEESE_TOPIC": ""})
     assert "# 现在的文档" in run("cheese_doc_get", {}, host)
-    run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert [(p["method"], p["path"]) for p in host.requests] == [
         ("GET", f"/documents/{_DOC}"),
         ("PUT", f"/documents/{_DOC}"),
@@ -358,7 +347,7 @@ def test_a_write_back_says_what_does_not_read_like_state():
     """
     host = _doc_host(envelope={"warnings": ["正文 9000 字，超过 6000 字。"]})
 
-    said = run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    said = run("cheese_doc_set", {"content": "# 我写的"}, host)
 
     assert "已更新实况文档（第 8 版）" in said
     assert "正文 9000 字" in said
@@ -367,16 +356,23 @@ def test_a_write_back_says_what_does_not_read_like_state():
 def test_a_clean_write_back_carries_no_warning():
     host = _doc_host()
 
-    said = run("cheese_doc_set", {"path": "notes/d.md"}, host)
+    said = run("cheese_doc_set", {"content": "# 我写的"}, host)
 
     assert said == "已更新实况文档（第 8 版）。"
 
 
-def test_a_file_the_machine_cannot_give_writes_nothing():
-    host = _doc_host(files={})
-    with pytest.raises(RuntimeError, match=cheese_out_of_reach):
-        run("cheese_doc_set", {"path": "notes/d.md"}, host)
-    assert _puts(host) == []
+def test_a_document_is_written_with_the_machine_out_of_reach():
+    """A task before its owner starts it reads its machine and writes nothing
+    there, yet drafting its document is what it is there to do. A document is
+    the platform's, so writing one asks nothing of the machine."""
+    host = _doc_host()
+    host.sync = RuntimeError(cheese_out_of_reach)
+
+    said = run("cheese_doc_set", {"content": "# 我写的"}, host)
+
+    assert said.startswith("已更新实况文档")
+    assert _puts(host)[-1]["content"] == "# 我写的"
+    assert host.synced == []
 
 
 # --- tasks and acceptance --------------------------------------------------
@@ -390,7 +386,7 @@ def test_task_only_proposes_and_touches_nothing_else():
     [plan] = host.requests
     assert plan["path"] == f"/topics/{_ROOM}/task-proposals"
     assert plan["body"] == {"title": "查一下分页", "summary": "干这个"}
-    assert host.synced == [] and host.read == []
+    assert host.synced == []
     assert "查一下分页" in out
 
 

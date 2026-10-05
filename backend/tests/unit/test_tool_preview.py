@@ -356,8 +356,8 @@ def test_a_platform_command_shows_the_argument_that_says_which_one():
     assert proposed.text == "数据清洗"
 
 
-def test_a_platform_command_writing_a_file_is_cut_to_the_workspace():
-    preview = tool_preview("cheese_doc_set", {"path": f"{ABS}/notes.md"}, work_dir=WORK)
+def test_a_platform_command_naming_a_file_is_cut_to_the_workspace():
+    preview = tool_preview("cheese_show", {"path": f"{ABS}/notes.md"}, work_dir=WORK)
     assert preview == ToolPreview("notes.md")
 
 
