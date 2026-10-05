@@ -231,8 +231,11 @@ def test_a_member_watching_a_task_sees_its_workers_checklist(client):
     agent = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
 
     with client.websocket_connect(chat_ws_url(card, "alice")) as ws:
+        # The pong says the subscription is live; the task's own session may
+        # already be talking on the channel ahead of it.
         ws.send_json({"type": "ping"})
-        assert ws.receive_json() == {"type": "pong"}
+        while ws.receive_json()["type"] != "pong":
+            pass
         response = client.put(
             f"/topics/{room}/progress",
             json={
