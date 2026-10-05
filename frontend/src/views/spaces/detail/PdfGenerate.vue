@@ -1,20 +1,24 @@
 <script setup lang="ts">
 // 发题页「从 PDF 生成」那条路：上传一份 PDF，逐条读出草稿，改完、勾好再一起发出去。
 // 确认之后**不跳走**，就地给回执。
-import type { PdfPublishAttachmentsData, PdfTaskDraftData } from '@/network/api/tasks/types'
-import type { SpaceTeaching } from '@/types'
+import type {
+  ConfirmTaskFromPdfRequestData,
+  ConfirmTaskFromPdfResponseData,
+  CreateTaskFromPdfRequestData,
+  PdfPublishAttachmentsData,
+  PdfTaskDraftData,
+  PreviewTaskFromPdfResponseData,
+} from '@/network/api/tasks/types'
+import type { SpaceCategory, SpaceTeaching } from '@/types'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
 
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import { publishDoneRoute, TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { TasksApi } from '@/network/api/tasks'
-import { useSpaceStore } from '@/stores/space'
 
 const props = defineProps<{
   /** 用哪份题目模板读 PDF；-1 是空白模板。 */
@@ -25,12 +29,19 @@ const props = defineProps<{
    * 让空间（与项目集）的默认生效。
    */
   teaching?: SpaceTeaching
+  /** 这块板的空间 id（路由上那一个）。出处标记与回执里的跳转都照它走。 */
+  spaceId: number
+  /** 请求里带的那个 id —— 页面上装着的空间（容器那边的 `spaceStore.currentSpaceId`）。 */
+  currentSpaceId: number | null
+  /** 这块板的分类（含归档的那几档），草稿的 `categoryId` 拿它换名字。 */
+  categories: SpaceCategory[]
+  /** 解析预览（`POST /tasks/publish/from-pdf/preview`），容器从上面递进来。 */
+  previewFromPdf: (payload: CreateTaskFromPdfRequestData) => Promise<{ data: PreviewTaskFromPdfResponseData }>
+  /** 确认批量发布（`POST /tasks/publish/from-pdf/confirm`），容器从上面递进来。 */
+  confirmFromPdf: (payload: ConfirmTaskFromPdfRequestData) => Promise<{ data: ConfirmTaskFromPdfResponseData }>
 }>()
 
-const route = useRoute()
 const { t, locale } = useI18n()
-const spaceStore = useSpaceStore()
-const spaceId = computed(() => Number(route.params.spaceId))
 
 const fileInput = ref<File | File[] | null>(null)
 const parsing = ref(false)
@@ -127,7 +138,7 @@ function templateLabel(used: unknown): string {
 /** 分类名。草稿带回的是 `categoryId`，名字要自己从这块板的分类里换。 */
 function categoryLabel(id?: number): string {
   if (id === undefined) return t('spaces.detail.pdfGenerate.noCategory')
-  return spaceStore.categories.find((c) => c.id === id)?.name ?? t('spaces.detail.pdfGenerate.categoryFallback', { id })
+  return props.categories.find((c) => c.id === id)?.name ?? t('spaces.detail.pdfGenerate.categoryFallback', { id })
 }
 
 /** 失败时给人看的话，尽量用后端自己的措辞（业务错误都在 `response.data.message`）。 */
@@ -152,7 +163,7 @@ function resetPdf() {
 }
 
 async function parsePdf() {
-  const id = spaceStore.currentSpaceId
+  const id = props.currentSpaceId
   const file = selectedPdf.value
   pdfError.value = ''
   receipt.value = null
@@ -181,7 +192,7 @@ async function parsePdf() {
   attachPdf.value = true
   attachImages.value = true
   try {
-    const { data } = await TasksApi.previewFromPdf({
+    const { data } = await props.previewFromPdf({
       spaceId: id,
       file,
       templateIndex: props.pdfTemplateIndex,
@@ -231,7 +242,7 @@ function toDraftPayload(draft: PdfDraft): PdfTaskDraftData {
     name: draft.name.trim(),
     intro: `${originTag(draft.page)}${draft.intro.trim()}`,
     description: draft.description.trim(),
-    space: spaceId.value,
+    space: props.spaceId,
   }
   if (draft.categoryId !== undefined) payload.categoryId = draft.categoryId
   return payload
@@ -239,7 +250,7 @@ function toDraftPayload(draft: PdfDraft): PdfTaskDraftData {
 
 async function confirmPdf() {
   const picked = pickedDrafts.value
-  const id = spaceStore.currentSpaceId
+  const id = props.currentSpaceId
   if (!picked.length || !id) return
 
   confirming.value = true
@@ -248,7 +259,7 @@ async function confirmPdf() {
   // 路今天那份参数（后端读到没有 `attachmentIds` 就一道题都不挂材料）。
   const ids = attachmentIdsForPdf.value
   try {
-    const { data } = await TasksApi.confirmFromPdf({
+    const { data } = await props.confirmFromPdf({
       drafts: picked.map(toDraftPayload),
       taskOptions: {
         // 这是**每道题共用**的那一半参数：后端把它和每条草稿合起来

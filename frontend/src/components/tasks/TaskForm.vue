@@ -11,7 +11,7 @@
 // 它不是场景（`docs/manual/dev/scenes.md` 里 scene 的定义：路由到得了的页、
 // `components/panels/` 下的一件、或者页的 `<Page>View.vue`），所以 `lint:scenes` 里
 // 没有它一格。按 `frontend_grade.py` 的口径它是 A 级：这一层只吃 props、只往上发事件，
-// 读 `inject` 那一手在 composable 里，而且是可选的（`inject(PUBLISH_CHECKS_SINK, null)`）。
+// 读 `PUBLISH_CHECKS_SINK` 那一手在 composable 里，而且是可选的。
 // 拆出来的那几件都各自在预览站里有位置（`views/demo/catalogTaskForm.ts`），整张表自己也
 // 在那儿有一格。
 import type { DomainGroup, SpaceCategory, TaskFormSubmitData, Topic } from '@/types'

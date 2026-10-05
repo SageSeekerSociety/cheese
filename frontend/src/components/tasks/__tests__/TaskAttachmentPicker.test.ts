@@ -16,7 +16,20 @@ import i18n, { setLocale } from '@/i18n'
 
 const pdf = (name = '讲义.pdf', bytes = 2048) => new File([new Uint8Array(bytes)], name, { type: 'application/pdf' })
 
-const mount = () => render(TaskAttachmentPicker, { global: { plugins: [createVuetify(), i18n] } })
+/** 这一件自己不取数了：上传与上限两道接口由容器递进来（发题页给的就是这两只回调）。
+ *  这里照那条口径接上同一批 mock，量的仍旧是「拿到回调之后它怎么用」。 */
+const pickerProps = () => ({
+  loadLimit: async () => {
+    const { data } = await mocks.limits()
+    return data.maxFileBytes
+  },
+  upload: async (file: File) => {
+    const { data } = await mocks.upload({ type: 'file', file })
+    return { id: data.id }
+  },
+})
+
+const mount = () => render(TaskAttachmentPicker, { props: pickerProps(), global: { plugins: [createVuetify(), i18n] } })
 
 const fileInputOf = (view: ReturnType<typeof render>) =>
   view.container.querySelector('input[type="file"]') as HTMLInputElement
