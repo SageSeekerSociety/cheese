@@ -127,8 +127,12 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: longer record decisions or add milestones (the 「记录了决策」 and 「添加了里程碑」
 #: lines stay on old rooms). A comment naming the agent is answered in its
 #: thread, not by a turn of the room (「在文档评论里提到了」 stays on old rooms).
+#: An answer to an agent's question is an ordinary message now and has no
+#: conversation of its own to miss (「一条答案没能送达」 stays on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        "askAnswerUndelivered",
+        "askAnswerUndeliveredDetail",
         "docCommented",
         "docCommentedHandedTo",
         "docCommentMentioned",

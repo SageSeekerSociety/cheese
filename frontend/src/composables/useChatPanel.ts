@@ -51,10 +51,8 @@ import { placeSplitMarkers } from '../lib/splitMarkers'
 import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
+import { currentUserName } from '../services/account'
 
-import { useAskAnswers } from './useAskAnswers'
-import { useAskGroups } from './useAskGroups'
-import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
@@ -148,24 +146,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (b.kind === 'event' && !b.task_id) emit('site-block', b)
   }
 
-  const { askStates, askAction, askViewer, askAccount } = useAskAnswers({
-    blocks: () => messages.value,
-    replace: replaceShown,
-  })
-
-  const {
-    askGroups,
-    askGroupAction,
-    openRoom: openAskGroups,
-  } = useAskGroups({
-    blocks: () => messages.value,
-    account: () => askAccount.value,
-    viewer: () => askViewer.value,
-    replace: replaceShown,
-  })
-  // 提问接管输入框：面板与 composer 互斥地驻留在同一格（见 useAskTakeover）。
-  const takeover = useAskTakeover({ groups: askGroups, viewer: () => askViewer.value })
-  const { askTakeover, askReturn, dismissAsk, restoreAsk } = takeover
+  // 看着这间房的人：表情里哪几个是自己点的，靠它认。
+  const viewer = computed(() => currentUserName.value ?? myHandle())
   /** 把这一条换进时间线（在的话）。 */
   function replaceShown(block: Block) {
     if (!timeline.find(block.id)) return
@@ -439,9 +421,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // Recovery keeps its history-first reconciliation for lost message echoes.
       await ensureFreshToken()
       if (!stillHere()) return
-      // 一进房间就问一次：这一间里我还欠哪些组的回答，不等它们在时间线里滚出来。
-      // 早先发的组可能不在默认加载的那一屏里，靠块登记的话面板要往上翻才接管。
-      void openAskGroups(room.id)
       const parallelSocket = entering && outbox.value.length === 0
       if (parallelSocket) connectSocket(room.id)
       // 打开话题的那次导航已经替它起了头（router/index.ts），它往往比下面这一条先
@@ -631,6 +610,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (summon) awaitingReply.value = true
     scrollToBottom()
     return true
+  }
+
+  // 点一道题的快捷回复：把那几个字作为对这道题的回复发出去 —— 和在输入框里打字是
+  // 同一条消息，提问的那位队友因此开下一轮（后端认它是回这道题的）。输入框里写到
+  // 一半的话不动。
+  function replyToQuestion(question: Block, text: string) {
+    errorMsg.value = null
+    paging.backToNewest()
+    sentNow.add(enqueue({ content: text, replyTo: question.id }))
+    awaitingReply.value = true
+    scrollToBottom()
   }
 
   // The conversation stream shows messages + lightweight system lines only.
@@ -963,15 +953,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
     connected,
     send,
-    askGroups,
-    askGroupAction,
-    askStates,
-    askTakeover,
-    askReturn,
-    dismissAsk,
-    restoreAsk,
-    askAction,
-    askViewer,
+    replyToQuestion,
+    viewer,
     postChecklist,
     changeChecklist,
     onReact,

@@ -262,18 +262,7 @@ def _serve(executor):
                 **payload,
             }
             if self.path == "/topics/fixture/asks":
-                data = {
-                    "group": {
-                        "topic_id": "fixture",
-                        "asked_by": "cheese",
-                        "id": "fixture-group",
-                        "members": ["fixture-id"],
-                        "total": 1,
-                    },
-                    "blocks": [{"id": "fixture-id"}],
-                    "settlement": None,
-                    "receipt": None,
-                }
+                data = {"blocks": [{"id": "fixture-id"}], "request_id": "fixture"}
             self._answer(200, json.dumps({"data": data}).encode())
 
         do_GET = _serve

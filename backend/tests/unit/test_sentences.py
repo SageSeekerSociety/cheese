@@ -150,8 +150,10 @@ def test_an_unknown_orphan_is_not_exempted(monkeypatch):
         test_every_sentence_in_the_catalog_is_said_somewhere()
 
 
-def test_only_the_retired_comment_decision_and_milestone_notices_are_historical():
+def test_only_retired_notices_are_historical():
     assert HISTORICAL_NOTICE_KEYS == {
+        "askAnswerUndelivered",
+        "askAnswerUndeliveredDetail",
         "docCommented",
         "docCommentedHandedTo",
         "docCommentMentioned",

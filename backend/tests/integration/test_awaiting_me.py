@@ -62,12 +62,12 @@ def _set_reporter(client, room: str, handle: str) -> None:
     client.portal.call(go)
 
 
-def _ask(client, room: str, headers: dict[str, str], *, group_id=None) -> None:
+def _ask(client, room: str, headers: dict[str, str], *, request_id=None) -> None:
     """芝士在这一轮里问出口的题 —— 凭据是这轮自己的那位队友。"""
     r = client.post(
         f"/topics/{room}/asks",
         json={
-            **({"ask_group": group_id} if group_id is not None else {}),
+            **({"request_id": request_id} if request_id is not None else {}),
             "questions": [
                 {
                     "question": "预算按哪个口径统计",
@@ -198,16 +198,16 @@ def test_an_idle_room_is_not_something_to_process(client):
     assert _mine(client, "alice") == []
 
 
-def test_equal_group_names_in_two_rooms_both_remain_on_my_list(
-    client, stub_hooks, monkeypatch
-):
+def test_one_request_id_in_two_rooms_asks_in_both(client, stub_hooks, monkeypatch):
+    """A retry key is the asking room's: the same one elsewhere is a new question."""
     project = _project(client, "alice")
     rooms = [_room(client, project, "alice", title) for title in ("预算", "发布")]
+    request_id = str(uuid.uuid4())
     for room in rooms:
         with active_ask(
             client, stub_hooks, monkeypatch, room, actor="alice"
         ) as headers:
-            _ask(client, room, headers, group_id="decision")
+            _ask(client, room, headers, request_id=request_id)
 
     questions = [
         item

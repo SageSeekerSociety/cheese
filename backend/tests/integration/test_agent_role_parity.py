@@ -120,7 +120,6 @@ def test_cross_room_access_requires_membership_and_preserves_identity(
     with active_ask(client, stub_hooks, monkeypatch, other, actor="alice", seat=handle):
         response = client.post(f"/topics/{other}/asks", json=question, headers=auth)
         assert response.status_code == 200, response.text
-        assert response.json()["data"]["group"]["asked_by"] == handle
         assert [row["author"] for row in response.json()["data"]["blocks"]] == [handle]
     assert (
         client.delete(
@@ -396,7 +395,7 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
         )
 
 
-def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions(
+def test_people_and_agents_record_weeklies_but_only_agents_create_questions(
     client, stub_hooks, monkeypatch
 ):
     project, origin, _ = _rooms(client)
@@ -411,22 +410,20 @@ def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions
         assert response.status_code == 200, response.text
         assert response.json()["data"]["author"] == handle
         assert response.json()["data"]["author_type"] == "participant"
-        # Membership alone cannot invent the native executor that owns an Ask.
-        assert (
-            client.post(
-                f"/topics/{origin}/asks",
-                json={
-                    "questions": [
-                        {
-                            "question": "Which?",
-                            "options": [{"text": "A"}, {"text": "B"}],
-                        }
-                    ]
-                },
-                headers=auth,
-            ).status_code
-            == 403
-        )
+        # A question is the agent's quick-reply message: a person's credential
+        # cannot post one, and an agent's needs no turn running to.
+        assert client.post(
+            f"/topics/{origin}/asks",
+            json={
+                "questions": [
+                    {
+                        "question": "Which?",
+                        "options": [{"text": "A"}, {"text": "B"}],
+                    }
+                ]
+            },
+            headers=auth,
+        ).status_code == (403 if handle == "alice" else 200)
     seat = _seated_agent(client, origin)
     if setup_token is not None:
         client.headers["X-Cheese-Token"] = setup_token
@@ -441,7 +438,6 @@ def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions
             headers=_agent(client, project, origin),
         )
         assert response.status_code == 200, response.text
-        assert response.json()["data"]["group"]["asked_by"] == seat
         assert [row["author"] for row in response.json()["data"]["blocks"]] == [seat]
         assert response.json()["data"]["blocks"][0]["author_type"] == "participant"
 

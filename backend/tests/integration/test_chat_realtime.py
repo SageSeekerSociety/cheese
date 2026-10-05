@@ -1372,7 +1372,7 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
     from app.domain.agent.compute import ComputePool
     from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
     from app.domain.block.models import consumed_turn
-    from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+    from app.domain.delivery.input_holds import seat_has_unfinished_input
     from tests.conftest import close_topic_subscriptions
 
     factory = business_db_factory  # type: ignore[attr-defined]

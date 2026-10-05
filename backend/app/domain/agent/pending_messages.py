@@ -17,7 +17,7 @@ from app.domain.block.models import (
     prompt_attempts,
 )
 from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
 
 DEFERRED_INPUT = "deferred_native_input"
@@ -125,7 +125,6 @@ async def resume_messages(runner, chat, *, topic_id=None):
             and consumed_turn(block) is None
             and prompt_attempts(block) == 0
             and "delivery_event_id" not in (block.meta or {})
-            and "answer_to" not in (block.meta or {})
         ]
         if not mentioned:
             return 0

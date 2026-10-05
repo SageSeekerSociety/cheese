@@ -16,7 +16,6 @@ import type { Component } from 'vue'
 import { avatarColor } from '@/utils/avatar'
 
 import { ACCEPT_ENTRIES } from './catalogAccept'
-import { ASK_ENTRIES } from './catalogAsk'
 import { BASE_ENTRIES } from './catalogBase'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
@@ -206,27 +205,14 @@ export const CATALOG: CatalogEntry[] = [
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '提问：还没答（选择后提交）',
-        note: '选项先保存在草稿里，明确提交后才作答。',
-        props: roomMessageProps(ASK_OPEN, {
-          viewer: 'wang',
-          askState: {
-            draft: { kind: null, option: '', note: '', later: false },
-            pending: null,
-            editing: false,
-            busy: false,
-            fresh: true,
-            saved: false,
-            error: null,
-            conflict: false,
-            storageBlocked: false,
-          },
-        }),
+        name: '提问：还没答（快捷回复）',
+        note: '题就是一条消息，下面一排快捷回复；点一个就是回了那一句，也可以直接在输入框里回。',
+        props: roomMessageProps(ASK_OPEN, { viewer: 'wang' }),
         expect: '课程平台收文件',
       },
       {
         name: '提问：已经有人答了（回执）',
-        note: '显示真实答案日志，执行者是否接续仍需回执确认。',
+        note: '有人答过之后，快捷回复收成「谁说了什么」。',
         props: roomMessageProps(ASK_ANSWERED),
         expect: '课程平台收文件',
       },
@@ -958,8 +944,7 @@ export const CATALOG: CatalogEntry[] = [
       },
     ],
   },
-  // 提案那两件、文档里的块、基础组件各在自己的文件里：`catalogAsk.ts`、`catalogDoc.ts`、`catalogBase.ts`。
-  ...ASK_ENTRIES,
+  // 文档里的块、基础组件各在自己的文件里：`catalogDoc.ts`、`catalogBase.ts`。
   ...DOC_BLOCK_ENTRIES,
   ...BASE_ENTRIES,
 ]

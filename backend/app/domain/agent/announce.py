@@ -52,8 +52,10 @@ from app.domain.delivery.addressing import (
     address,
 )
 from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.topic_membership.services import TopicMemberService
 
 #: `who` 码 → 下一步在谁手上。`who` 回答的是「谁在管这件事」，那正是投递要问的那一
 #: 句，只是用的是通知契约的词，所以这里不做第二次判断，只把同一个答案翻成投递这一
@@ -153,7 +155,7 @@ async def notify_question(
     asker: str,
     asked: str | None,
 ) -> None:
-    """芝士提出待确认问题，本轮停止等待 —— 通知等这个回答的人。
+    """芝士问了一个问题、这一轮就此结束 —— 通知等这个回答的人。
 
     **不走 `announce`。** 提问本身就是时间线上那条消息（`kind=message`，作者是
     芝士），再 announce 一次等于同一件事在房间里说两遍。所以这里只做投递这一半。
@@ -162,8 +164,8 @@ async def notify_question(
     由平台决定。这一条是芝士自己的话，长度取决于它怎么问，两者不是一种东西 ——
     共用一个码，前端就无法区分该按哪一种渲染。
 
-    这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：本轮**停在这个问题上
-    了**，在他回答之前没有任何一方能往下走。`asked` 是那个人，None 是「这个问题指
+    这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：这件事**停在这个问题
+    上了**，在他回答之前没有任何一方能往下走。`asked` 是那个人，None 是「这个问题指
     不到具体的人」（平台发起的轮次），那就谁也不通知。
     """
     await deliver(
@@ -180,8 +182,7 @@ async def notify_question(
                 "topicTitleSource": str(place.room.title_source),
                 "question": question,
                 "asker": asker,
-                # 提问固定在对话末尾（本轮停在它这里），所以进入房间即可看到 ——
-                # 这个 id 留给「定位到该条消息」用，当前不依赖它也能找到。
+                # 那条提问消息：通知据它定位到房间里的那一行。
                 "blockId": str(block.id),
             },
             # 问出口的那一刻，不是走到这一行的那一刻 —— 收下整个 block 而不是它的
@@ -192,28 +193,84 @@ async def notify_question(
     )
 
 
-#: 通知里引一句打字的回答，最多这么长 —— 那是一行说明，不是聊天记录。
+#: 通知里引一句回答，最多这么长 —— 那是一行说明，不是聊天记录。
 ANSWER_EXCERPT_CHARS = 40
 
 
-async def settle_questions_answered_by(session: AsyncSession, reply: Block) -> None:
-    """被问的人没点选项、直接打字回了一句 —— 那几道题的通知跟着结掉。
+async def answer_questions(
+    session: AsyncSession, reply: Block, recipient: dict
+) -> list[Block]:
+    """``reply`` 答掉了哪几道题：记在题上、结掉题的通知，并把它送到提问的那位手上。
 
-    点选项的那条路自己会 `settle`（`answer_options`）；打字这条路以前没人去碰
-    通知，于是房间和待处理都已经不再等他，通知却还写着「待你回答」。哪几道题算被
-    这句话答了，由 `questions_a_reply_answers` 定，和看板读的是同一条判据。
+    点选项就是回一句话（选项文字，回复那道题），打字也是回一句话，两条走的是同一扇
+    门；哪几道题算被这句话答了由 `BlockRepository.questions_a_reply_answers` 定，和
+    看板读的是同一条判据。每一句回答都追加进题上的 `answer_log`，几个人都答了就记
+    几条。
 
-    通知里写的是他说的话本身：点他队友名字的 `<@handle>` 不是回答的一部分，太长
-    的截到 `ANSWER_EXCERPT_CHARS`。
+    这句话没点任何 agent 的名、却答了题，它就是说给提问的那位听的：``recipient``
+    （这条消息的 `agent_recipient`，原地改）指到那个席位并记为点了名，于是它开的
+    就是那位的下一轮 —— 和人 @ 它一模一样。提问的那一轮早就结束了也没关系，这里
+    不找任何一轮。提问的那位已经不在房间里，答案照样记下，只是没人可送。
     """
     questions = await BlockRepository(session).questions_a_reply_answers(reply)
+    named = set(_MENTION_RE.findall(reply.content or ""))
+    if reply.reply_to is None and named:
+        # Typed to someone else, it is talk; typed to the one who asked, it is
+        # the answer.
+        questions = [question for question in questions if named == {question.author}]
     if not questions:
-        return
+        return []
     said = " ".join(_MENTION_RE.sub("", reply.content or "").split())
-    if len(said) > ANSWER_EXCERPT_CHARS:
-        said = said[:ANSWER_EXCERPT_CHARS] + "…"
     for question in questions:
-        await settle(session, question.id, {"answered": said})
+        meta = dict(question.meta or {})
+        # A click sends the option as shown, without the model's own
+        # " (Recommended)" mark; either spelling is that option.
+        offered = {
+            text.removesuffix(" (Recommended)"): text
+            for text in (option.get("text") for option in meta.get("options") or [])
+            if isinstance(text, str)
+        }
+        picked = offered.get(said) or (said if said in offered.values() else None)
+        meta["answer_log"] = [
+            *(meta.get("answer_log") or []),
+            {
+                # One of its options (what a click sends), or words of his own.
+                "kind": "option" if picked else "note",
+                "option": picked,
+                "note": None if picked else said,
+                "by": reply.author,
+                "at": reply.created_at.isoformat(),
+                "reply_id": str(reply.id),
+            },
+        ]
+        question.meta = meta
+        excerpt = said[:ANSWER_EXCERPT_CHARS] + (
+            "…" if len(said) > ANSWER_EXCERPT_CHARS else ""
+        )
+        await settle(session, question.id, {"answered": excerpt})
+    seat = questions[-1].author
+    if not recipient.get("mentioned") and seat in await TopicMemberService(
+        session
+    ).agent_handles(reply.topic_id):
+        instance = await instance_of_seat(session, reply.project_id, seat)
+        if instance is not None:
+            recipient["instance_id"] = str(instance.id)
+            recipient["handle"] = instance.handle
+        # A seat still under the room-derived handle names no instance, and that
+        # seat IS the agent the room points at: the recipient already names it.
+        recipient["mentioned"] = True
+        reply.meta = {**(reply.meta or {}), "agent_recipient": dict(recipient)}
+    return questions
+
+
+async def instance_of_seat(session: AsyncSession, project_id, seat: str):
+    """The agent instance behind ``seat`` in this project, or None."""
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    for instance in await AgentInstanceService(session).list_for_project(project_id):
+        if agent_instance_handle(instance.id) == seat:
+            return instance
+    return None
 
 
 async def _notify(

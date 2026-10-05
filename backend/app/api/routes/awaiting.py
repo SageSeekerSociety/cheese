@@ -101,8 +101,8 @@ async def waiting_items(
     task_cards = await AcceptCardRepository(db).latest_by_task(task_ids)
     room_cards = await _room_cards(db, topic_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
-    # {地点: 这道题在等谁}。一个待确认问题只有**发起那一轮的人**能回答，提问那一刻
-    # 就记在题上——不是事后去问轮次：芝士问完就收尾，那一轮早就关了。
+    # {地点: 这道题在等谁}。一个待确认问题在等**发起那一轮的人**，提问那一刻就记在
+    # 题上——不是事后去问轮次：芝士问完就收尾，那一轮早就关了。
     room_questions, task_questions = await blocks.awaiting_answer_blocks(
         topic_ids, task_ids
     )

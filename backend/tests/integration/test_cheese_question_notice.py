@@ -1,19 +1,15 @@
-"""芝士提出待回答的问题后本轮停止等待 —— 看板要显示它，等回答的人要收到通知。
+"""芝士问了一个问题、这一轮就此结束 —— 看板要显示它，等回答的人要收到通知。
 
-这是「下一步在人手上」里唯一**会中断运行**的一种：其余几种都是一轮结束之后的状态
-（验收卡已提交、检查未通过、已退回），而一个待回答的问题把这一轮停在中途。中断
-本身在界面上没有任何痕迹 —— 房间只是安静下来，而安静与正在运行无法区分。
+一个待回答的问题本身在界面上没有别的痕迹 —— 芝士问完就收工，房间只是安静下来，
+而安静与正在运行无法区分。所以两件事一起做：房间与任务进「待处理 · 待回答」，同时
+通知发起那一轮的人。芝士是代他执行这件事的，这个问题在等的是他。
 
-所以两件事一起做：房间与任务进「待处理 · 待回答」，同时通知发起这一轮的人。芝士
-是代他执行这件事的，这个问题也只有他能回答。
-
-判据分两套，看题是哪种形状存的（`_awaiting_an_answer`）：组题看这一组还有没有未答
-成员；非组题是 #1084 定的那一条，不新增存储 —— **最近一条提问消息没有作答记录**
+判据是 #1084 定的那一条，不新增存储 —— **最近一条提问消息没有作答记录**
 （`answer_log` 或上游点选的 `answered`，两种形状并存），且此后没人给过回应。回应有
-三条出路：被问的人点了选项（追加作答记录）、他直接打字回了一句、或者**芝士自己又
-接着说了一句**（#2046：芝士问完没等人答就自己把活做完又发了几条进展，房间却一直
-停在「待回答」）。后两条只管非组题，也只管芝士自己问出口的题 —— 人问的那道题，
-芝士在不在房间里说话都与它无关。
+三条出路：有人点了选项（就是回复那道题的一句话）、被问的人直接打字回了一句、或者
+**芝士自己又接着说了一句**（#2046：芝士问完没等人答就自己把活做完又发了几条进展，
+房间却一直停在「待回答」）。最后一条只管芝士自己问出口的题 —— 人问的那道题，芝士
+在不在房间里说话都与它无关。
 """
 
 import uuid
@@ -24,10 +20,11 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
-from tests.ask_fixtures import active_ask, legacy_question, wait_turn_idle
+from tests.ask_fixtures import active_ask, question_row, wait_turn_idle
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
+    post_message,
     post_project,
     room_agent_headers,
     room_agent_seat,
@@ -51,7 +48,7 @@ def _ask(
     headers: dict[str, str],
     question: str = "预算按哪个口径统计",
 ) -> dict:
-    """芝士在这一轮里问出口的一组题 —— 凭据是这轮自己的那位队友。"""
+    """芝士在这一轮里问出口的一道题 —— 凭据是这轮自己的那位队友。"""
     r = client.post(
         f"/topics/{room}/asks",
         json={
@@ -68,31 +65,10 @@ def _ask(
     return r.json()["data"]
 
 
-def _settle(client, data: dict, *, by: str = "alice") -> None:
-    """整组交一次：一题一题交不进去，组题必须整组结算。"""
-    (member,) = data["group"]["members"]
-    r = client.post(
-        f"/topics/asks/{data['group']['id']}/settle",
-        json={
-            "topic_id": data["group"]["topic_id"],
-            "asked_by": data["group"]["asked_by"],
-            "client_op_id": f"settle-{uuid.uuid4()}",
-            "expect_version": 0,
-            "answered": [
-                {
-                    "block_id": member,
-                    "kind": "option",
-                    "option": "按部门",
-                    "client_op_id": f"answer-{uuid.uuid4()}",
-                    "expect_version": 0,
-                }
-            ],
-            "later": [],
-            "unanswered": [],
-        },
-        headers=session_auth_headers(by),
-    )
-    assert r.status_code == 200, r.text
+def _click(client, room: str, data: dict, *, by: str = "alice") -> None:
+    """点「按部门」：浏览器把选项文字作为对那道题的回复发出去，和打字是同一扇门。"""
+    (question,) = data["blocks"]
+    post_message(client, room, by, {"content": "按部门", "reply_to": question["id"]})
 
 
 def _agent_says(client, room: str, text: str) -> None:
@@ -152,7 +128,7 @@ def test_answering_it_takes_the_room_back_out(client, stub_hooks, monkeypatch):
         data = _ask(client, room, headers)
     assert _shown(client, pid, room)["column"] == "needs_you"
 
-    _settle(client, data)
+    _click(client, room, data)
     # 作答会把芝士叫起来；等那一轮收尾再看板，免得量到的是「正在跑」。
     wait_turn_idle(client, room)
 
@@ -162,12 +138,12 @@ def test_answering_it_takes_the_room_back_out(client, stub_hooks, monkeypatch):
 def test_a_second_question_after_an_answered_one_still_counts(
     client, stub_hooks, monkeypatch
 ):
-    """一组答完不等于房间没题在等 —— 后面新问的那组还没答，仍然停在待回答。"""
+    """一道答完不等于房间没题在等 —— 后面新问的那道还没答，仍然停在待回答。"""
     seed_user(client, "alice")
     pid, room = _room(client)
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
         data = _ask(client, room, headers)
-    _settle(client, data)
+    _click(client, room, data)
     wait_turn_idle(client, room)
 
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
@@ -182,15 +158,10 @@ def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
     实况：芝士在房间里问「截图里那个灰底圆角块是哪一处」，没等人答就自己找到根因、
     把活做完、又发了几条进展，而房间从 01:36 一直停在「待回答」，直到人真去点一下
     才灭。提问的人自己往前走了，球就不在他手上了。
-
-    这条规则只管非组题（`legacy_question` 是那一种形状）：组的答案要整组明确提交，
-    一句进展不作数。
     """
     seed_user(client, "alice")
     pid, room = _room(client)
-    legacy_question(
-        client, room, question="截图里那个灰底圆角块是哪一处？", asked="alice"
-    )
+    question_row(client, room, question="截图里那个灰底圆角块是哪一处？", asked="alice")
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
     _agent_says(client, room, "找到根因了，改完推上去了")
@@ -206,7 +177,7 @@ def test_a_question_a_person_asked_still_waits_while_the_agent_works(client):
     """
     seed_user(client, "alice")
     pid, room = _room(client)
-    legacy_question(
+    question_row(
         client,
         room,
         question="周会挪到周四行吗",
@@ -265,14 +236,14 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
     assert _questions(client, bob) == []
 
 
-def test_a_question_with_no_turn_at_all_reaches_nobody(client):
-    """没有进行中的轮次 —— 这个问题问不出去，因此不通知任何人。
+def test_a_question_with_no_turn_at_all_is_asked_and_reaches_nobody(client):
+    """没有进行中的轮次也问得出去 —— 提问不靠任何一轮，只是没有名字可通知。
 
-    「这道题在等谁」要从在跑的那一轮读。读不到就不猜人，提问直接被拒（403）：
-    以前那条「退到最近点了芝士名的人」的退路随旧的单题路由一起拆了。
+    「这道题在等谁」从那位队友开着的那一轮读；一轮都没开着，就不猜人：题照样落进
+    房间，谁回都算，只是不通知任何人。
     """
     alice = seed_user(client, "alice")
-    _pid, room = _room(client)
+    pid, room = _room(client)
 
     r = client.post(
         f"/topics/{room}/asks",
@@ -286,10 +257,12 @@ def test_a_question_with_no_turn_at_all_reaches_nobody(client):
         },
         headers=room_agent_headers(client, room),
     )
-    assert r.status_code == 403, r.text
-    assert "无法确认原生提问会话和执行区间" in r.text
+    assert r.status_code == 200, r.text
+    (question,) = r.json()["data"]["blocks"]
+    assert question["meta"]["asked"] is None
 
     assert _questions(client, alice) == []
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_answering_the_question_settles_its_notification(
@@ -307,7 +280,8 @@ def test_answering_the_question_settles_its_notification(
     (before,) = _questions(client, alice)
     assert before["read"] is False
 
-    _settle(client, data, by="alice")
+    _click(client, room, data, by="alice")
+    wait_turn_idle(client, room)
 
     (row,) = _questions(client, alice)
     assert row["read"] is True
@@ -326,17 +300,18 @@ def _say(client, room: str, text: str, handle: str = "alice") -> None:
         headers=session_auth_headers(handle),
     )
     assert r.status_code == 200, r.text
+    # A reply that answers the question wakes the agent; let that turn finish.
+    wait_turn_idle(client, room)
 
 
 def _ask_an_old_question(
     client, room: str, *, asked: str, question: str = "预算按哪个口径统计"
 ) -> dict:
-    """迁移留下的非组题，连它那条通知一起 —— 旧代码问出口时通知就落下了。
+    """一道问 ``asked`` 的题，连它那条通知一起，不经过任何一轮。
 
-    合并后的提问入口一律建组，非组形状只剩数据库里已有的行，所以这道题和它的通知
-    都由测试摆出来；通知仍走生产那条路（`notify_question`），不是手写一条记录。
+    题由测试摆出来，通知仍走生产那条路（`notify_question`），不是手写一条记录。
     """
-    block = legacy_question(client, room, question=question, asked=asked)
+    block = question_row(client, room, question=question, asked=asked)
 
     async def notify() -> None:
         async with client.test_factory() as session:
@@ -356,11 +331,11 @@ def _ask_an_old_question(
     return block
 
 
-def test_typing_a_reply_settles_a_legacy_question(client):
+def test_typing_a_reply_settles_the_question(client):
     """没点选项、直接打字回了一句，也是回答：通知不再是未读，也不再说「待你回答」。
 
     实况：被问的人在房间里打字答了，首页「动态」里那条还是未读，还写着「已暂停，
-    待你回答」。组题不走这条路（整组明确提交才算），所以这里用迁移留下的非组形状。
+    待你回答」。
     """
     alice = seed_user(client, "alice")
     pid, room = _room(client)

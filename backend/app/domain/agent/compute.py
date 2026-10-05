@@ -295,43 +295,11 @@ class ComputePool:
         }
         return works.pop() if len(works) == 1 else None
 
-    async def ask_origin(self, project_id, topic_id, agent_handle):
-        """Read exactly one owning runtime; ambiguity never chooses a seat."""
-        candidates = [
-            runtime
-            for runtime in self._runtimes()
-            if runtime.holds(topic_id, agent_handle)
-        ]
-        if len(candidates) != 1:
-            from app.domain.agent.ask_origin import refused
-
-            refused(
-                "runtimes holding the seat",
-                topic_id,
-                agent_handle,
-                count=len(candidates),
-            )
-            return None
-        return await candidates[0].ask_origin(project_id, topic_id, agent_handle)
-
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Does any backend still hold a live session for this topic — for
         this agent's seat in it, when one is named?"""
         return any(
             runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
-        )
-
-    def holds_conversation(
-        self, topic_id: uuid.UUID, harness: str, conversation: str
-    ) -> bool:
-        """Is that exact conversation still attached somewhere in this room?
-
-        ``holds`` answers for a seat, and a seat outlives its conversations: an
-        Ask answer may enter only the conversation that asked it, never
-        whichever replaced it (``room/sessions.py``)."""
-        return any(
-            runtime.holds_conversation(topic_id, harness, conversation)
-            for runtime in self._runtimes()
         )
 
     async def recover_sessions(

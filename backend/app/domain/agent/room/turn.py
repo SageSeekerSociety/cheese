@@ -65,8 +65,6 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.repositories import BlockRepository
-from app.domain.delivery.ask_session_wait import waiting_ask_blocks
-from app.domain.delivery.ask_wake import expected_ask_session
 from app.domain.delivery.input_identity import InputEffects, InputOutcomeUnconfirmed
 from app.domain.delivery.receipts import held_blocks
 from app.domain.identity.actor import Actor
@@ -570,14 +568,6 @@ class RoomTurns:
                 topic_id=place.room_id,
                 recipient_handle=acting_agent,
             )
-            # An answer whose Ask conversation is gone belongs to no prompt:
-            # carrying it would fail this turn on the fence that refuses it
-            # (`ask_session_wait`).
-            held |= await waiting_ask_blocks(
-                session,
-                topic_id=place.room_id,
-                recipient_handle=acting_agent,
-            )
             pending = [block for block in pending if block.id not in held]
             notices = [block for block in notices if block.id not in held]
             prompt_pending_ids = [b.id for b in pending]
@@ -1014,7 +1004,6 @@ class RoomTurns:
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
-        expected_session = await expected_ask_session(self._sessions, delivery_id)
         preparation_started = time.monotonic()
         prepared = await self._assemble_turn(
             topic_id=topic_id,
@@ -1289,7 +1278,6 @@ class RoomTurns:
                 resume_token=resume_session_id,
                 session_opening=opening.text,
                 opening_changes=opening_changes(opening, told),
-                expected_native_session=expected_session,
                 model=model_kwargs.get("model"),
                 env=model_kwargs.get("env"),
                 acting=acting_agent,
@@ -1304,17 +1292,15 @@ class RoomTurns:
                 ),
                 owes_reply=summoned,
             )
-            # 这一轮把现状说到了：下一轮只补在这之后变了的。回答一道 Ask 的那一轮
-            # 接着原来的对话，runtime 不往里放现状（`RoomSessions.send`），所以不算。
-            if expected_session is None:
-                async with self._sessions() as session:
-                    await AgentSessionService(session).remember_told(
-                        topic_id=topic_id,
-                        agent_handle=prepared.agent.handle,
-                        harness=prepared.harness,
-                        told=opening.digests(),
-                    )
-                    await session.commit()
+            # 这一轮把现状说到了：下一轮只补在这之后变了的。
+            async with self._sessions() as session:
+                await AgentSessionService(session).remember_told(
+                    topic_id=topic_id,
+                    agent_handle=prepared.agent.handle,
+                    harness=prepared.harness,
+                    told=opening.digests(),
+                )
+                await session.commit()
         except InputOutcomeUnconfirmed as exc:
             # The session still owns this work. Its structured echo can settle
             # the committed identity even after this ChatService is replaced.

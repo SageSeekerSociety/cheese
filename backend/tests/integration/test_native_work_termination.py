@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.core.errors import ValidationError
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputIdentity,

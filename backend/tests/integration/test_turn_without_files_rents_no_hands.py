@@ -42,7 +42,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
-from tests.ask_fixtures import legacy_question
+from tests.ask_fixtures import question_row
 from tests.conftest import StubChannel, finish_turn, settle_turn
 from tests.integration.conftest import (
     post_project,
@@ -346,8 +346,8 @@ async def test_the_platform_still_works_with_no_machines_at_all(client, room):
     project, topic = room
     alice = session_auth_headers("alice")
     # 一道等人回答的题：它同时走时间线、通知投递和 `/awaiting-me` 三条路。
-    # 直插一条历史行 —— 这里要的是「有题在等」这个状态，不是提问这条路本身。
-    said = legacy_question(client, topic, question="先记一句", asked="alice")
+    # 直插一条题 —— 这里要的是「有题在等」这个状态，不是提问这条路本身。
+    said = question_row(client, topic, question="先记一句", asked="alice")
     assert said["id"]
 
     async with client.test_factory() as session:

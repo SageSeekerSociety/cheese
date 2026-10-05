@@ -10,7 +10,6 @@
 import type { Ref } from 'vue'
 import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
-import type { AskAction, AskFormState } from '../../lib/askPresentation'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
@@ -72,7 +71,6 @@ const props = defineProps<{
   typing: { block: Block; edge: RunEdge }[]
   editingId: string | null
   editSaving: boolean
-  askStates?: Record<string, AskFormState>
   /** Bound with `:ref`, so the pane the panel measures is this one. */
   scrollRef: Ref<HTMLElement | null>
   contentRef: Ref<HTMLElement | null>
@@ -106,7 +104,7 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
-  (e: 'ask-action', block: Block, action: AskAction): void
+  (e: 'ask-reply', block: Block, text: string): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -211,8 +209,8 @@ function faceStatus(face: AgentFace | undefined): string | null {
 function emitReact(block: Block, emoji: string) {
   emit('react', block, emoji)
 }
-function emitAskAction(block: Block, action: AskAction) {
-  emit('ask-action', block, action)
+function emitAskReply(block: Block, text: string) {
+  emit('ask-reply', block, text)
 }
 // ---- 读屏播报：新到的一整条消息念一句「谁：开头一段」 ----
 // 整条时间线不做 aria-live：历史加载、翻页、流式输出都会让读屏一直念。只在一条别人
@@ -395,7 +393,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :refs="refs"
             :viewer="viewer"
             :active="bar.shown && bar.id === m.id"
-            :ask-state="askStates?.[m.id]"
             :live="liveChecklists.has(m.id)"
             :face="faceRows.get(m.id)?.state ?? null"
             :face-label="faceLabel(faceRows.get(m.id))"
@@ -409,7 +406,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
             @open-topic="emit('open-topic', $event)"
             @open-card="emit('open-card', $event)"
             @react="emitReact"
-            @ask-action="emitAskAction"
+            @ask-reply="emitAskReply"
             @checklist="emitChecklist"
             @download="emit('download', $event)"
             @jump="emit('jump', $event)"

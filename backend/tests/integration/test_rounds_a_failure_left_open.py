@@ -22,7 +22,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
 
-from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+from app.domain.delivery.input_holds import seat_has_unfinished_input
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_project,
