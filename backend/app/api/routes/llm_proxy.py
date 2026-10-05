@@ -55,7 +55,7 @@ from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
-from app.domain.agent_instance.repositories import AgentInstanceRepository
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
@@ -206,10 +206,10 @@ async def _projects_own_agent(
     project = await ProjectRepository(db).get(project_id)
     if project is None or project.default_agent_instance_id is None:
         return False
-    agent = await AgentInstanceRepository(db).get(project.default_agent_instance_id)
-    return agent is not None and handle in (
-        agent.handle,
-        agent_instance_handle(agent.id),
+    return any(
+        handle in (agent.handle, agent_instance_handle(agent.id))
+        for agent in await AgentInstanceService(db).list_for_project(project_id)
+        if agent.id == project.default_agent_instance_id
     )
 
 
@@ -279,8 +279,6 @@ async def admission(
     # model for this project has no second pool to quietly serve the request
     # from — that silent swap is what one control point exists to remove — so
     # the refusal carries the resolver's own words and the turn stops here.
-    from app.domain.agent_instance.services import AgentInstanceService
-
     is_subagent = request.headers.get("x-cheese-subagent") == "1"
     # 主 agent 开分身时指定的模型：CC 把它写进分身请求体的顶层 model 成员，计量
     # 代理解析出来随本调用带上来。只在分身路径上读 —— 主对话的模型从来由绑定
