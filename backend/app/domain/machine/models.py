@@ -308,6 +308,12 @@ class CloudHostHome(UuidPk, Timestamps, Base):
     archive_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     archive_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     archive_md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Whether the host found everything in the home on its remote when it wrote
+    # the archive. The room's cleanup deletes an archive only when this is
+    # true: one that holds unpushed work keeps the cleanup waiting, and
+    # unarchiving the room brings the home back from it. NULL — an archive
+    # written before the host was asked — counts as not pushed.
+    archive_published: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # The last archive of this home failed, and why; it is not tried again
     # until ``lifecycle.ARCHIVE_RETRY`` has passed. Cleared by one that works.
     archive_failed_at: Mapped[datetime | None] = mapped_column(
