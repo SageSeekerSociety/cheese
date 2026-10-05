@@ -3,13 +3,14 @@
 // 另一页签是历史版本。动作放在底部：等人确认的那一份是「不保存 / 修改 / 保存」，已保存
 // 的是「删除 / 修改」。数据和动作都在页面那一层，这里只画、只发事件。
 import type { ProjectSkill, ProjectSkillRevision } from '@/lib/projectSkill'
+import type { UserRefTarget } from '@/lib/userRef'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import i18n, { t } from '@/i18n'
 
 const props = defineProps<{
@@ -21,6 +22,9 @@ const props = defineProps<{
   /** 正在做的那件事：`save` / `decline` / `discard` / `restore:<n>`。 */
   busy: string
   error: string
+  /** 句子里那个人的名字和去处：名册/路由判断在页面那一层（useUserRef 的同一套），
+   *  这里只画。 */
+  userOf: (handle?: string | null) => { name: string; to: UserRefTarget | null }
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +35,7 @@ const emit = defineEmits<{
   edit: []
   delete: []
   restore: [revision: number]
+  navigate: [target: UserRefTarget | null]
 }>()
 
 const markdown = new MarkdownRenderer()
@@ -86,7 +91,14 @@ function fmt(iso: string | null): string {
           <div class="t-meta c-faint sdd__byline">
             <template v-if="isDraft">
               <i18n-t :keypath="isEdit ? 'work.skills.list.draftEdit' : 'work.skills.list.draftNew'" tag="span">
-                <template #name><UserRef :handle="s.proposed_by" /></template>
+                <template #name>
+                  <UserRef
+                    :handle="s.proposed_by"
+                    :name="userOf(s.proposed_by).name"
+                    :to="userOf(s.proposed_by).to"
+                    @navigate="$emit('navigate', userOf(s.proposed_by).to)"
+                  />
+                </template>
               </i18n-t>
             </template>
             <template v-else>
@@ -162,7 +174,14 @@ function fmt(iso: string | null): string {
                   <i18n-t keypath="work.skills.revisionLine" tag="span">
                     <template #revision>{{ r.revision }}</template>
                     <template #note>{{ r.note }}</template>
-                    <template #user><UserRef :handle="r.confirmed_by" /></template>
+                    <template #user>
+                      <UserRef
+                        :handle="r.confirmed_by"
+                        :name="userOf(r.confirmed_by).name"
+                        :to="userOf(r.confirmed_by).to"
+                        @navigate="$emit('navigate', userOf(r.confirmed_by).to)"
+                      />
+                    </template>
                     <template #time>{{ fmt(r.created_at) }}</template>
                   </i18n-t>
                 </div>
