@@ -237,7 +237,7 @@ class SessionHost:
     async def _api(self, host: str) -> str:
         """The platform as ``host`` reaches it."""
         from app.core.db import async_session_factory
-        from app.domain.agent.device_provider import device_api_base
+        from app.domain.agent.machine_address import device_api_base
 
         factory = self._session_factory or async_session_factory
         async with factory() as db:
