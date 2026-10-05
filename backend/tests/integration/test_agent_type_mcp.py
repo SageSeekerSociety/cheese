@@ -95,6 +95,16 @@ def _teammate(client, pid: uuid.UUID, handle: str, type_name: str) -> str:
     return made.json()["data"]["seat_handle"]
 
 
+def _seat(client, tid: str, seat: str) -> None:
+    """Invite the teammate into the room; a session acts only where it sits."""
+    response = client.post(
+        f"/topics/{tid}/members",
+        json={"handle": seat, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+
+
 def _call_as(client, tid: str, pid, seat: str, name: str, method: str, params=None):
     response = client.post(
         f"/topics/{tid}/mcp/{name}",
@@ -124,6 +134,8 @@ def test_a_types_remote_server_uses_the_projects_connection_for_its_teammates(
     tid = _topic(client, pid)
     tracer = _teammate(client, pid, "tracer-1", "tracer")
     plain = _teammate(client, pid, "plain-1", "plain")
+    for seat in (tracer, plain):
+        _seat(client, tid, seat)
 
     # Project settings list it beside the `.mcp.json` servers, to connect once.
     listed = _servers(client, pid)

@@ -54,7 +54,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolverDep, require_seated_agent
 from app.api.deps import project_device_online
 from app.api.response import ok
 from app.api.routes.topics import DbSession, ProjectRepository
@@ -246,6 +246,10 @@ async def acquire_session_work_lease(
     claims = scoped_token_claims(token)
     if claims is None:
         raise AuthenticationRequiredError("A session execution credential is required")
+    topic = await TopicService(db).get_or_404(topic_id)
+    await require_seated_agent(
+        db, token, project_id=topic.project_id, topic_id=topic_id
+    )
     try:
         # body.timeout caps how long the caller waits for a machine being
         # prepared (wait_s). It is not the time to answer: a session that will

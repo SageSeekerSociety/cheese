@@ -37,7 +37,10 @@ const BASELINE = resolve(ROOT, 'stylelint-baseline.json')
 const update = process.argv.includes('--update')
 const ID = 'stylelint-tokens'
 
-const TARGETS = 'src/**/*.{vue,css,scss}'
+// The docs site (docs/site) takes its colours from src/style.css too, so its one
+// stylesheet is held to the same rules. It sits outside this directory, where
+// stylelint would not find this config on its own; hence --config below.
+const TARGETS = ['src/**/*.{vue,css,scss}', '../docs/site/src/style.css']
 
 // Resolve the binary explicitly rather than trusting PATH: `pnpm run` puts
 // node_modules/.bin there but `node scripts/stylelint-ratchet.mjs` does not, and
@@ -50,12 +53,16 @@ const BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : 'stylelint'
 // (browserslist, deprecations) does not parse.
 const REPORT_PATH = resolve(tmpdir(), `stylelint-ratchet-${process.pid}.json`)
 
-const run = spawnSync(BIN, [TARGETS, '--formatter', 'json', '--output-file', REPORT_PATH], {
-  cwd: ROOT,
-  encoding: 'utf8',
-  shell: process.platform === 'win32',
-  maxBuffer: 64 * 1024 * 1024,
-})
+const run = spawnSync(
+  BIN,
+  [...TARGETS, '--config', 'stylelint.config.cjs', '--formatter', 'json', '--output-file', REPORT_PATH],
+  {
+    cwd: ROOT,
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+    maxBuffer: 64 * 1024 * 1024,
+  }
+)
 
 if (run.error) {
   console.error(`could not run stylelint: ${run.error.message}`)

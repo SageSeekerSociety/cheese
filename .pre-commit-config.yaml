@@ -109,7 +109,7 @@ repos:
         entry: bash -c 'cd frontend && pnpm run lint:style'
         language: system
         pass_filenames: false
-        files: ^frontend/
+        files: ^(frontend/|docs/site/src/style\.css$)
 
       - id: i18n-cjk
         name: hardcoded Chinese (i18n)

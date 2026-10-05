@@ -17,6 +17,7 @@ const I = {
   warn:'<path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/>',
   copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   down:'<path d="m6 9 6 6 6-6"/>',
+  download:'<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   md:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15V9l2.5 3L12 9v6M17 9v6M15 13l2 2 2-2"/>',
   up:'<path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.4 21H7V10l4-8a2.5 2.5 0 0 1 4 3.9Z"/>',
   dn:'<path d="M17 14V3M9 18.1 10 14H4.2a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5.6 3H17v11l-4 8a2.5 2.5 0 0 1-4-3.9Z"/>',
@@ -37,12 +38,4 @@ const ic=(n,s)=>`<svg class="ico" viewBox="0 0 24 24"${s?` style="${s}"`:''}>${I
 
 const TAG={feat:'新功能',imp:'改进',fix:'修复'};
 
-// 一件事怎么走完：[标题, 说明, 示意]
-const STEPS=[
- ['描述目标','在话题里说清要什么、给谁、什么时候要。','<div class="bub">帮我把这三份材料整理成一页周报</div>'],
- ['芝士去做','芝士会先说它理解的意思和下一步，然后动手。','<div class="bot">明白，我先读材料，十分钟后给你初稿</div>'],
- ['看进度、补要求','随时插话，它会接着干，不用重来。','<div class="bar"><i></i></div><div class="bub">标题用本周日期</div>'],
- ['验收采纳','检查结果，采纳就合进项目；不满意就退回。','<div><span class="chip">查看改动</span> <span class="chip ok">采纳</span></div>'],
-];
-
-export { I, ic, TAG, STEPS };
+export { I, ic, TAG };

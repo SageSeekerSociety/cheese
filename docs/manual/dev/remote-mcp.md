@@ -54,7 +54,7 @@ covers:
 
 **没有任何路由回一个凭据值。** `settings_view()` 对每个变量只给 `set: true/false` 加 `updated_by`、`updated_at`；`room_view()` 只给名字、主机、谁授权、什么时候。两份都带 `declared_by`，说这个服务从哪来：项目 `.mcp.json` 里的是 `null`，否则是声明它的那几个队友类型（`name` 与 `title`）；设置页和现场的列表据此在每一行标出来源。管理路由全过 `member()`：登录、且是项目成员——**任何成员都能连、能断、能填值**，因为这份连接是项目的；房间侧那份只读（`GET /topics/{id}/mcp/servers`）。
 
-会话那条路是 `POST /topics/{id}/mcp/{name}`（`include_in_schema=False`）：用**房间的凭据**认证（`x-cheese-token`，`t` 必须是这个房间、`p` 必须是它所属的项目），服务凭据由平台在这里附上。失败一律写成工具的回答（`ok({"error": ...})`）而不是 HTTP 错误：对 agent 来说，没连接、名字不对、服务没答复，下一步能做的事都一样。
+会话那条路是 `POST /topics/{id}/mcp/{name}`（`include_in_schema=False`）：用**房间的凭据**认证（`x-cheese-token`，`t` 必须是这个房间、`p` 必须是它所属的项目，凭据上的队友还得在这个房间的名册上，`require_seated_agent`），服务凭据由平台在这里附上。凭据不过关是 HTTP 401/403；过了关之后的失败一律写成工具的回答（`ok({"error": ...})`）而不是 HTTP 错误：对 agent 来说，没连接、名字不对、服务没答复，下一步能做的事都一样。
 
 出网的每一个请求都过 `remote_mcp/http.py` 这一个客户端：非 HTTPS 直接拒、不跟随跳转、主机落在平台自己的网段就拒（`refuse_internal_host`）。`remote_mcp_allow_private_hosts` 只给本地测试服务器开。
 

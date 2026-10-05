@@ -59,6 +59,12 @@ tasks:
       - git config --local merge.autoStash false
       - git config --local rebase.autoStash false
 
+  lark:setup:
+    desc: Connect this machine to the team's Feishu (lark-cli, --profile cheese)
+    interactive: true
+    cmds:
+      - bash scripts/setup-lark-cli.sh
+
   dev:
     desc: Start backend + frontend dev servers (+ infrastructure)
     deps: [dev:backend, dev:frontend, dev:collab]
