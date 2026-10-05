@@ -218,6 +218,14 @@ def normalize_nickname(raw: str) -> str:
     return nickname
 
 
+def user_service(session: AsyncSession) -> "UserService":
+    """接在这个 session 上的 ``UserService`` —— 和 ``team.services.team_service``
+    同一个用意：别的领域要用户资料就走这里，不必为了接线去 import
+    ``user.repositories``（守卫见 ``tests/unit/test_domain_import_guard.py``）。
+    """
+    return UserService(UserProfileRepository(session))
+
+
 class UserService:
     """Read-only operations for user profiles (used by other domains)."""
 

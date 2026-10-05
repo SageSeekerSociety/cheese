@@ -16,11 +16,9 @@ from app.domain.notification.entity_resolvers import (
 from app.domain.notification.letter import letter_for, render_html, render_text
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.notification.services import NotificationQueryService
-from app.domain.team.repositories import TeamRepository
-from app.domain.team.services import TeamService
+from app.domain.team.services import team_service
 from app.domain.user.models import User
-from app.domain.user.repositories import UserProfileRepository
-from app.domain.user.services import UserService
+from app.domain.user.services import user_service
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +35,8 @@ async def _names(session: AsyncSession, payload: Any) -> dict[str, str]:
     resolved = await NotificationQueryService(
         NotificationRepository(session),
         resolvers=[
-            TeamEntityResolver(TeamService(TeamRepository(session)), avatar_url),
-            UserEntityResolver(UserService(UserProfileRepository(session)), avatar_url),
+            TeamEntityResolver(team_service(session), avatar_url),
+            UserEntityResolver(user_service(session), avatar_url),
         ],
     ).resolve_entities_from_metadata([payload])
     return {path: info.name for path, info in resolved.items() if info and info.name}
