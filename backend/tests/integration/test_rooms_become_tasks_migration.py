@@ -62,6 +62,13 @@ class World:
                 " WHERE lower(username) = lower($1::varchar))",
                 handle,
             )
+        # A deleted account may share a name with a live one (the name is free
+        # again once its account is gone); alice is still one person.
+        await conn.execute(
+            'INSERT INTO "user" (username, email, created_at, updated_at,'
+            " deleted_at) VALUES ('alice', 'alice-gone@example.test', now(),"
+            " now(), now())"
+        )
         await conn.execute(
             "INSERT INTO agent_bindings (id, user_id, kind, created_at, updated_at)"
             " SELECT $1, id, 'platform', now(), now() FROM \"user\""
