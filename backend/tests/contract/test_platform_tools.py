@@ -13,9 +13,7 @@
 
 import json
 import os
-import re
 import shlex
-import subprocess
 import sys
 import threading
 import uuid
@@ -64,6 +62,8 @@ CALLS = {
     ),
     # The room's document: the fixture platform names every id "fixture-id".
     "cheese_doc_get": ({}, "GET", "/documents/fixture-id"),
+    # 不碰机器：任务开始前机器只读，起草实况文档正是那时要做的事。
+    "cheese_doc_set": ({"content": "# 实况\n"}, "PUT", "/documents/fixture-id"),
     "cheese_doc_edit": (
         {"edits": [{"old": "第一段", "new": "第一段，改过"}]},
         "POST",
@@ -199,9 +199,8 @@ CALLS = {
     ),
 }
 
-#: 要机器上一份东西的那两样：读一个文件、推一条任务分支。
+#: 要机器的那一样：推一条任务分支。
 NEEDS_THE_MACHINE = {
-    "cheese_doc_set": ({"path": "notes/doc.md"}, "PUT", "/documents/fixture-id"),
     "cheese_accept_request": (
         {"subject": "fix(x): y"},
         "POST",
@@ -332,25 +331,13 @@ DOC = "# 实况\n\n数据口径定为新版。\n"
 
 @pytest.fixture
 def machine_is_here(tmp_path):
-    """机器在：它上面有一份文档，推分支的那条命令答成功。
-
-    读文件的命令在这里真的跑一遍（机器上的路径换成本地那份文档），所以测到的是
-    文件完整读回来了，不是某一种命令写法。"""
-    doc = tmp_path / "machine-doc.md"
-    doc.write_text(DOC)
+    """机器在：推分支的那条命令和等机器的空命令答成功。"""
 
     def executor(payload):
         command = payload["params"]["args"]["command"]
-        if command in ("cheese sync --task " + shlex.quote(TOPIC), "true"):
-            stdout = ""
-        elif re.search(r"/\S*/notes/doc\.md", command):
-            local = re.sub(r"/\S*/notes/doc\.md", str(doc), command)
-            stdout = subprocess.run(
-                ["sh", "-c", local], capture_output=True, text=True, check=True
-            ).stdout
-        else:
+        if command not in ("cheese sync --task " + shlex.quote(TOPIC), "true"):
             return 500, b""
-        return 200, json.dumps({"value": {"stdout": stdout}}).encode()
+        return 200, json.dumps({"value": {"stdout": ""}}).encode()
 
     server, platform_calls, executor_calls = _serve(executor)
     process, log = _session(
@@ -490,12 +477,10 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
 
 
 @pytest.mark.parametrize("tool", sorted(NEEDS_THE_MACHINE))
-def test_a_tool_that_needs_a_file_from_the_machine_says_it_is_out_of_reach(
-    machine_is_gone, tool
-):
-    """读文件、推分支要那台机器：它不在，当场说不在，而且什么都没写到平台上。
+def test_a_tool_that_needs_the_machine_says_it_is_out_of_reach(machine_is_gone, tool):
+    """推分支要那台机器：它不在，当场说不在，而且什么都没写到平台上。
 
-    写上去的话，递出去的是一张照着旧提交的卡，或者一份空文档 —— 没人会发现。
+    写上去的话，递出去的是一张照着旧提交的卡 —— 没人会发现。
     """
     process, platform_calls, _ = machine_is_gone
     arguments, method, path = NEEDS_THE_MACHINE[tool]
@@ -527,30 +512,10 @@ def test_waiting_for_a_machine_that_is_here_returns_ready(machine_is_here):
     assert [c["params"]["args"]["command"] for c in executor_calls] == ["true"]
 
 
-def test_the_living_doc_is_read_off_the_machine(machine_is_here):
-    process, platform_calls, executor_calls = machine_is_here
-
-    outcome = _call(process, "cheese_doc_set", {"path": "notes/doc.md"})
-
-    assert "deny" not in outcome, outcome
-    [put] = [
-        body
-        for m, p, body in platform_calls
-        if (m, p) == ("PUT", "/documents/fixture-id")
-    ]
-    assert put["content"] == DOC
-    # 没读过就写，出示的是 0 —— 只有还没有文档时平台才收。
-    assert put["expected_version"] == 0
-    # 相对路径锚在机器的工作区上，不是会话这一侧的哪个目录。
-    assert executor_calls
-    for call in executor_calls:
-        assert "/notes/doc.md" in call["params"]["args"]["command"]
-
-
 def test_a_write_after_a_read_carries_the_version_it_read(machine_is_here):
     process, platform_calls, _ = machine_is_here
     _call(process, "cheese_doc_get", {})
-    _call(process, "cheese_doc_set", {"path": "notes/doc.md"})
+    _call(process, "cheese_doc_set", {"content": DOC})
     [put] = [body for m, p, body in platform_calls if m == "PUT"]
     assert put["expected_version"] == 1
 

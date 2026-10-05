@@ -117,9 +117,9 @@ class ToolTable:
     了」。这件事付过三轮（2026-09-13、-14、-15）。
 
     表在这里，它就不再问任何人。表上是**纯平台动作**：它们要的是平台，不是那台机器，
-    所以从会话直接打后端，机器离线时一样不少——对话、文档、任务卡、验收都在。有两样
-    还要机器上的一份东西：`cheese_doc_set` 读机器上那个文件，`cheese_accept_request`
-    先让机器把任务的提交推上去；机器够不着时它们当场说够不着，不等超时。
+    所以从会话直接打后端，机器离线时一样不少——对话、文档、任务卡、验收都在。只有
+    `cheese_accept_request` 还要机器：它先让机器把任务的提交推上去；机器够不着时当场
+    说够不着，不等超时。
 
     必须在机器上作为进程跑的（任务目录、同步与恢复、预览、读写工作区文件的转换、git
     凭据）才是这个文件的 CLI 子命令，跟文件、命令、项目 `.mcp.json` 一样随机器在、随
@@ -383,14 +383,15 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_set",
-            "把机器上一个文件的全文设为一份文档：整块覆盖，不是补丁。"
-            "先 cheese_doc_get；期间别人改过会被拒，拒了就重读、把改动合进文件再写，"
-            "别原样重试。文档标题会渲染成大标题，正文别再用一级标题重复。",
+            "把一份文档的全文设为 content：整块覆盖，不是补丁。不用机器，"
+            "任务开始前也能写。先 cheese_doc_get；期间别人改过会被拒，拒了就重读、"
+            "把别人的改动合进你的正文再写，别原样重试。文档标题会渲染成大标题，"
+            "正文别再用一级标题重复。",
             {
-                "path": _text("机器上 markdown 文件的绝对路径；草稿别放在任务工作目录里"),
+                "content": _text("文档的全文，Markdown"),
                 "document": _DOCUMENT_ARG,
             },
-            ["path"],
+            ["content"],
         ),
         _tool(
             "cheese_doc_edit",
@@ -426,11 +427,11 @@ PLATFORM_TOOLS = ToolTable(
             "cheese_doc_new",
             "在项目资料库里新建一份文档，项目成员都能看、能改，本话题里会出现这份"
             "文档，点开就在对话旁边。有人要一份独立的文档（调研、方案、清单）时用它；"
-            "本话题的实况文档用 cheese_doc_set。给 path 就把那个文件的全文写成第一版。"
+            "本话题的实况文档用 cheese_doc_set。给 content 就把它写成第一版。"
             "返回文档编号，之后读写都带上 document。",
             {
                 "title": _text("文档标题，正文里别再用一级标题重复"),
-                "path": _text("机器上 markdown 文件的绝对路径；省略就建一份空文档"),
+                "content": _text("第一版的全文，Markdown；省略就建一份空文档"),
             },
             ["title"],
         ),
@@ -1490,10 +1491,10 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     """Run one tool from `PLATFORM_TOOLS` or `DELEGATED_TOOLS` and say, in
     text, what came of it.
 
-    `host` is where the session runs, and supplies the four things a tool can
+    `host` is where the session runs, and supplies the three things a tool can
     need: `environ` (the room's CHEESE_* values), `request(plan)` (one backend
     request, the parsed JSON back, `PlatformHTTPError` otherwise),
-    `read_file(path)` and `sync_task(task_id)` (the two that need the machine),
+    `sync_task(task_id)` (the one that needs the machine),
     plus a `doc_versions` dict that outlives a single call. The text is what the
     agent acts on — ids, the next call to make — so it is written for that
     reader, not dumped JSON."""
@@ -1744,12 +1745,8 @@ def _doc_new(args: dict, host) -> str:
     if not project:
         raise PlatformToolError("Missing CHEESE_PROJECT")
     body: dict = {"title": str(args["title"])}
-    if args.get("path"):
-        raw = host.read_file(args["path"])
-        try:
-            body["content"] = raw.decode("utf-8")
-        except UnicodeError as exc:
-            raise PlatformToolError(f"{args['path']} 不是 UTF-8 文本: {exc}") from exc
+    if args.get("content"):
+        body["content"] = str(args["content"])
     try:
         answer = host.request(
             {"method": "POST", "path": f"/projects/{project}/documents", "body": body}
@@ -1762,7 +1759,7 @@ def _doc_new(args: dict, host) -> str:
         except (ValueError, KeyError, TypeError):
             raise exc from None
         raise PlatformToolError(
-            f"没建成，资料库里没有多出文档：{why} 改好 {args['path']} 再 cheese_doc_new。"
+            f"没建成，资料库里没有多出文档：{why} 改好正文再 cheese_doc_new。"
         ) from exc
     doc = answer.get("data") or {}
     host.doc_versions[doc["id"]] = doc.get("doc_version", 0)
@@ -1775,11 +1772,7 @@ def _doc_new(args: dict, host) -> str:
 
 def _doc_set(args: dict, host) -> str:
     document = _document(host, args)["CHEESE_DOCUMENT"]
-    raw = host.read_file(args["path"])
-    try:
-        content = raw.decode("utf-8")
-    except UnicodeError as exc:
-        raise PlatformToolError(f"{args['path']} 不是 UTF-8 文本: {exc}") from exc
+    content = str(args["content"])
     # 0 —— 「我没读过」—— 是没有读过时的值，也是唯一允许**新建**文档的版本：
     # 没读过一份已经存在的文档，正是写入必须被拒的时候。
     based_on = host.doc_versions.get(document, 0)
@@ -1799,7 +1792,7 @@ def _doc_set(args: dict, host) -> str:
         # `PlatformHTTPError`, or the transport's, which this file cannot import).
         status = getattr(exc, "status", None)
         if status == 422:
-            # The document is blocks and this file is Markdown: a write that
+            # The document is blocks and this text is Markdown: a write that
             # would lose text on the way in is refused, and the platform says
             # which line and what to write instead. Nothing was changed.
             try:
@@ -1807,7 +1800,7 @@ def _doc_set(args: dict, host) -> str:
             except (ValueError, KeyError, TypeError):
                 raise exc from None
             raise PlatformToolError(
-                f"没写进去，文档没有变：{why} 改好 {args['path']} 再 cheese_doc_set。"
+                f"没写进去，文档没有变：{why} 改好正文再 cheese_doc_set。"
             ) from exc
         if status != 409:
             raise
@@ -1817,7 +1810,7 @@ def _doc_set(args: dict, host) -> str:
             current = "?"
         raise PlatformToolError(
             f"没写进去：文档现在是第 {current} 版，你这份是照第 {based_on} 版改的。"
-            "先 cheese_doc_get 重新读一遍，把别人的改动合进你的文件，再 "
+            "先 cheese_doc_get 重新读一遍，把别人的改动合进你的正文，再 "
             "cheese_doc_set。直接重试会原样被拒。"
         ) from exc
     version = (result.get("data") or {}).get("doc_version", 0)
@@ -2537,13 +2530,11 @@ _SAY = {
 
 class LocalHost:
     """A host for a session that runs ON the machine (the pi harness): the backend
-    over plain HTTP, the file from this disk, the sync as this CLI's own
-    subcommand."""
+    over plain HTTP, the sync as this CLI's own subcommand."""
 
-    def __init__(self, environ=None, doc_versions=None, cwd=None):
+    def __init__(self, environ=None, doc_versions=None):
         self.environ = dict(os.environ if environ is None else environ)
         self.doc_versions = {} if doc_versions is None else doc_versions
-        self.cwd = cwd or os.getcwd()
 
     def request(self, plan: dict) -> dict:
         api = self.environ.get("CHEESE_API", "").rstrip("/")
@@ -2570,10 +2561,6 @@ class LocalHost:
             raise PlatformHTTPError(
                 exc.code, exc.read().decode(errors="replace")
             ) from None
-
-    def read_file(self, path: str) -> bytes:
-        with open(os.path.join(self.cwd, path), "rb") as stream:
-            return stream.read()
 
     def wait_machine(self) -> None:
         """This session runs on its machine: it is there."""

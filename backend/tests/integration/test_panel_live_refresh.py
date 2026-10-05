@@ -195,7 +195,7 @@ class _CallsATool(StubChannel):
     reaches the platform: this stub runs nothing, which is the point."""
 
     tool = "mcp__native__cheese_doc_set"
-    arguments: dict = {"path": "/tmp/x.md"}
+    arguments: dict = {"content": "# 实况\n"}
 
     def emit_turn(
         self,
@@ -235,7 +235,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
-        ("mcp__native__cheese_doc_set", {"path": "/tmp/x.md"}),
+        ("mcp__native__cheese_doc_set", {"content": "# 实况\n"}),
         ("mcp__native__cheese_accept_request", {"task": "t", "subject": "fix: x"}),
         ("mcp__native__cheese_notify", {"title": "中期汇报"}),
     ],
