@@ -19,7 +19,8 @@ covers:
 
 `docs/site/build.mjs` 把 `docs/manual/` 下的 Markdown 构建成 `frontend/public/docs/`，随前端镜像一起发布，由前端 nginx 在 `/docs/` 下提供。
 
-- 每个地址都是一个预渲染好的 HTML 文件，`src/app.js` 只负责交互：搜索、问芝士、深浅色、首页动效。
+- 每个地址都是一个预渲染好的 HTML 文件，`src/app.js` 只负责交互：搜索、问芝士、深浅色和交互演示。
+- 样式用产品自己的设计系统：构建时把 `frontend/src/style.css` 的 `:root` 和深色两段 token 原样放在 `src/style.css` 前面，颜色、圆角、字体、动效都只在那一处定义；深色是 `<html data-theme="dark">`，偏好和产品共用 `cheesex.theme`。
 - 站点结构写在 `docs/site/src/structure.mjs`，这是导航和分组的唯一来源。
 - 开发文档每页开头必须声明类型和摘要；「流程」「概念」和「参考」三类还要列出涉及的代码路径（`covers`）。缺字段、类型不在五类之内、或 `covers` 指向不存在的路径，构建都会失败；站内链接和锚点也必须全部有效。
 - 构建同时产出：公开和开发两份搜索索引、`llms.txt` 与每页的 `.md` 原文、全部文档的压缩包、更新日志 RSS，以及问芝士和 AI 队友检索用的 `ask-index.json`（公开页）与 `dev/ask-index.json`（开发文档，在门后）。
@@ -137,11 +138,9 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 
 ## 首页与截图 {#home}
 
-首页（`docs/site/src/home.mjs`）不写死内容：分组来自 `structure.mjs`，常见问题来自 `troubleshooting.md`，更新来自 git 历史，`build.mjs` 只负责把数据传进去。
+首页（`docs/site/src/home.mjs`）不写死内容：分区卡片来自 `structure.mjs`，常见问题来自 `troubleshooting.md`，更新来自 git 历史，`build.mjs` 只负责把数据传进去。
 
-- 「问芝士」导览每一屏对应一类文档的一页。左侧那一页不是截图，是用站点自己的侧栏和正文组件现场渲染的开头几节（`inert`，只看不能点），所以文档改了它跟着变，暗色也自动跟随；开发文档那一屏只画锁住的轮廓，不把内容放进公开首页。
 - 使用文档里的界面截图由 `shots/shots.mjs` 在 `shots/fixture.py` 造出的示例项目里拍（需要本地全套服务），落到 `docs/manual/public/images/`。截图是真实界面，页面上的本地地址会换成 `https://okcheese.com`。
-- 首页标题用一份切过子集的显示字体（三极行楷简体，免费商用）：`gen/font.sh` 只保留首页标题用到的字，生成 `src/fonts/display.woff2`。改了首页标题文案要重跑，否则新字会回落成普通字体。
 
 ## 开发文档只给平台管理员 {#dev-access}
 
