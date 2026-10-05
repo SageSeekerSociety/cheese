@@ -1,12 +1,10 @@
 <!--
-  这个控件的三处固定调色板名（占位底的固定深灰 + 两处白字工具类）是**有意保留**的，
-  别换成语义 token —— 见 docs/design-system.md §1.2 的例外条款：
-  底色本身不随主题变的地方，压在上面的前景色也不该变。
+  取景蒙版（下面的 .uploader：暗底 + 白色虚线框）是**有意保留**写死的 rgba 的，
+  别换成语义 token —— 见 docs/design-system.md §1.2 的例外条款：它和相机 App 的
+  取景框一样，两套主题下同一个样子，换成语义色反而会让某一套下的取景框露馅。
 
-  它整体是「一张照片 + 一层暗色蒙版 + 白色提示文字」，和相机 App 的取景蒙版一样，
-  两套主题下都长这样。占位底 grey-darken-1(#757575) 是没传头像时垫在蒙版下面的那层，
-  它必须够暗，白字才读得出来：#757575 上叠 25% 黑得到 #585858，白字 6.8:1。
-  换成 surface-variant（浅色 #EEEFF1）的话，白字会掉到约 1.9:1，浅色主题当场就坏了。
+  占位底和提示文字则按 §1.2 的映射表走语义 token：占位底取 surface-light（填充块），
+  提示文字取 on-surface；它们叠在照片上，跟着主题各取一档，不会在某一套下字看不清。
 -->
 <template>
   <div class="avatar-upload" :class="{ 'avatar-upload--empty': !avatarFile }">
@@ -16,7 +14,7 @@
       class="rounded-lg avatar"
       rounded="0"
       size="180"
-      color="grey-darken-1"
+      color="surface-light"
     />
     <file-select
       v-model="files"
@@ -27,9 +25,9 @@
       content-class="uploader-inner"
       @error="onError"
     >
-      <div class="rounded-lg d-flex flex-column align-center justify-center gap-4 pa-4 text-white uploader-inner">
+      <div class="rounded-lg d-flex flex-column align-center justify-center gap-4 pa-4 text-on-surface uploader-inner">
         <v-icon size="32">mdi-camera</v-icon>
-        <div class="text-body-1 text-white">
+        <div class="text-body-1 text-on-surface">
           {{ avatarFile || src ? t('shell.avatar.change') : t('shell.avatar.upload') }}
         </div>
       </div>

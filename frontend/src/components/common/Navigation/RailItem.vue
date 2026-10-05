@@ -255,22 +255,18 @@ function warmDestination() {
         opacity var(--dur-quick) var(--ease-standard);
     }
 
-    // Brand paint. These two literals are deliberate and identical in both
-    // themes: the 知是 mark is the brand, not a surface, so it must not shift
-    // with the theme any more than a printed logo would. What DID have to
-    // change is the ink on top — it used to be `on-primary`, a value Vuetify
-    // derives from `primary`, which differs between the themes (#F57F17 vs the
-    // lightened #FFA733) and could flip the glyph to white on this bright
-    // amber. Pinning it to one dark ink keeps the logo at 7.7:1 against the
-    // brand colour, in BOTH themes.
-    &:hover,
-    &[aria-current] {
-      background: #ffa20f;
+    // Hover is a neutral --fill (§9.1 — hover changes colour, not position).
+    // The selected tile paints the amber into the mark itself and carries no
+    // amber fill: §1.6.3 keeps --accent for the current nav icon and bars the
+    // tinted background that used to sit here (#ffa20f), whose dark ink
+    // (#23242a) then existed only to survive that amber ground.
+    &:hover {
+      background-color: var(--fill);
+    }
 
-      .cheese-icon {
-        fill: #23242a;
-        opacity: var(--v-high-emphasis-opacity);
-      }
+    &[aria-current] .cheese-icon {
+      fill: var(--accent);
+      opacity: var(--v-high-emphasis-opacity);
     }
   }
 }
