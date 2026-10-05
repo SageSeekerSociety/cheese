@@ -1,27 +1,11 @@
+<!--
+  Where a third-party sign-in comes back to: the refresh cookie its redirect
+  set is traded for a session, this device remembers the way it signed in, and
+  the person goes on to wherever they were headed. What it shows is
+  OAuthSuccessView.vue.
+-->
 <template>
-  <div>
-    <template v-if="error">
-      <AccountHeading :title="t('account.oauth.error.title')" />
-      <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
-        {{ error }}
-      </v-alert>
-      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
-        {{ t('account.backToSignIn') }}
-      </BaseButton>
-    </template>
-
-    <template v-else>
-      <AccountHeading
-        :title="processing ? t('account.oauth.success.processing') : t('account.oauth.success.done')"
-        :lede="
-          processing
-            ? t('account.oauth.success.processingLede', { provider: providerName })
-            : t('account.oauth.success.doneLede')
-        "
-      />
-      <v-progress-linear indeterminate color="primary" height="2" />
-    </template>
-  </div>
+  <OAuthSuccessView :processing="processing" :error="error" :provider-name="providerName" />
 </template>
 
 <script lang="ts" setup>
@@ -31,9 +15,8 @@ import { toast } from 'vuetify-sonner'
 
 import { rememberSignIn } from './lastSignIn'
 import { oauthProviderName } from './oauthProvider'
+import OAuthSuccessView from './OAuthSuccessView.vue'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { takeOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'

@@ -62,6 +62,8 @@ covers:
 
 今天就能单独跑的那 2 页：`views/404.vue`、`views/user/settings/General.vue`。
 
+2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。
+
 ## 从今天起它是一条闸门 {#ratchet}
 
 2026-09-30 起，「能单独跑」不只是一张表上的状态：`pnpm run lint:scenes` 会逐场景重新判一遍，该红的红、该退 2 的退 2，commit 和 CI 都跑（`--self-test` 在 `repo-guards.yml` 里）。产品定的规则是**只拦新增**：今天能单独跑的冻结下来只许多，今天跑不起来的允许继续躺着，**从今往后新加的每一个场景必须第一天就能单独跑**。
@@ -143,23 +145,23 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/ProjectSkillsView.vue` | D | 读路由；直接取数（`api.ts`） |
 | `views/SiteOpenView.vue` | D | 读路由；直接取数（`api.ts`） |
 | `views/TeamInviteView.vue` | D | 读路由；直接取数（`api.ts`）；直接取数（`network/api/teams`） |
-| `views/account/AddEmail.vue` | D | 读路由；直接取数（`network/api/users`）；直接取数（`services/account.ts`） |
-| `views/account/AppSignInFinish.vue` | D | 读路由；直接取数（`network/api/users`）；直接取数（`services/account.ts`） |
-| `views/account/AppSignInStart.vue` | D | 读路由；直接取数（`network/api/users`） |
-| `views/account/BackToApp.vue` | D | 读路由；直接取数（`network/api/users`） |
-| `views/account/OAuthComplete.vue` | D | 读路由；直接取数（`network/api/users`） |
-| `views/account/OAuthError.vue` | D | 读路由；直接取数（`network/api/users`） |
-| `views/account/OAuthSuccess.vue` | D | 读路由；直接取数（`services/account.ts`） |
-| `views/account/OAuthVerify.vue` | D | 读路由；直接取数（`network/api/users`） |
-| `views/account/PasskeyOffer.vue` | D | 读路由；直接取数（`network/api/users`）；经 `utils/sudo.ts` 取数；经 `views/account/passkeyEnrollment.ts` 取数 |
-| `views/account/SignIn.vue` | D | 读路由；直接取数（`network/api/users`）；直接取数（`services/account.ts`）；经 `views/account/passkeyEnrollment.ts` 取数 |
-| `views/account/Verify2FA.vue` | D | 读路由；直接取数（`network/api/users`）；直接取数（`services/account.ts`）；经 `views/account/passkeyEnrollment.ts` 取数 |
-| `views/account/emailCode/Request.vue` | D | 读路由；直接取数（`network/api/users`） |
-| `views/account/emailCode/Verify.vue` | D | 读路由；直接取数（`network/api/users`）；直接取数（`services/account.ts`）；经 `views/account/passkeyEnrollment.ts` 取数 |
-| `views/account/recover/password/Start.vue` | C | 直接取数（`network/api/users`） |
-| `views/account/recover/password/Verify.vue` | D | 读路由；直接取数（`network/api/users`） |
-| `views/account/signup/Start.vue` | D | 读路由；直接取数（`network/api/users`）；读 store（signup） |
-| `views/account/signup/VerifyEmail.vue` | D | 读路由；直接取数（`services/account.ts`）；读 store（signup） |
+| `views/account/AddEmail.vue` | 容器 | 画面在 `AddEmailView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/AppSignInFinish.vue` | 容器 | 画面在 `AppSignInFinishView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/AppSignInStart.vue` | 容器 | 画面在 `AppSignInStartView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/BackToApp.vue` | 容器 | 画面在 `BackToAppView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/OAuthComplete.vue` | 容器 | 画面在 `OAuthCompleteView.vue`（A 级）；取数、路由、同意弹窗的取版本留在本页 |
+| `views/account/OAuthError.vue` | 容器 | 画面在 `OAuthErrorView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/OAuthSuccess.vue` | 容器 | 画面在 `OAuthSuccessView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/OAuthVerify.vue` | 容器 | 画面在 `OAuthVerifyView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/PasskeyOffer.vue` | 容器 | 画面在 `PasskeyOfferView.vue`（A 级）；取数、路由、passkey 助手留在本页 |
+| `views/account/SignIn.vue` | 容器 | 画面在 `SignInView.vue`（A 级）；取数、路由、passkey 助手留在本页 |
+| `views/account/Verify2FA.vue` | 容器 | 画面在 `Verify2FAView.vue`（A 级）；取数、路由、passkey 助手留在本页 |
+| `views/account/emailCode/Request.vue` | 容器 | 画面在 `RequestView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/emailCode/Verify.vue` | 容器 | 画面在 `VerifyView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/recover/password/Start.vue` | 容器 | 画面在 `StartView.vue`（A 级）；取数留在本页 |
+| `views/account/recover/password/Verify.vue` | 容器 | 画面在 `VerifyView.vue`（A 级）；取数、路由留在本页 |
+| `views/account/signup/Start.vue` | 容器 | 画面在 `StartView.vue`（A 级）；取数、路由、signup store 留在本页 |
+| `views/account/signup/VerifyEmail.vue` | 容器 | 画面在 `VerifyEmailView.vue`（A 级）；取数、路由、signup store 留在本页 |
 | `views/admin/AdminDashboardPage.vue` | D | 读路由；读 store（feedback） |
 | `views/admin/AdminFeaturePage.vue` | D | 读路由；经 `views/admin/features/registry.ts` 取数 |
 | `views/admin/AdminFeatureStatsPage.vue` | D | 读路由；经 `views/admin/features/featureApi.ts` 取数；经 `views/admin/features/registry.ts` 取数 |
@@ -178,7 +180,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/home/Landing.vue` | A | 只吃 props 和事件 |
 | `views/home/MyWork.vue` | D | 读路由；直接取数（`api.ts`）；直接取数（`network/api/spaces`）；直接取数（`network/api/tasks`）；读 store（workspace） |
 | `views/home/Solutions.vue` | A | 只吃 props 和事件 |
-| `views/legal/LegalDocumentView.vue` | D | 读路由；直接取数（`network/api/legal`） |
+| `views/legal/LegalDocument.vue` | 容器 | 画面在 `LegalDocumentView.vue`（A 级）；取数留在本页（路由指向本页） |
 | `views/question/Ask.vue` | D | 读路由；直接取数（`network/api/questions`） |
 | `views/question/Detail.vue` | D | 读路由；直接取数（`network/api/answers`）；直接取数（`network/api/questions`）；`provide()` / `inject()` |
 | `views/question/DetailAnswer.vue` | D | 读路由；直接取数（`network/api/answers`） |
@@ -241,9 +243,9 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/teams/detail/Members.vue` | D | 读路由；直接取数（`network/api/teams`）；直接取数（`services/account.ts`）；直接取数（`services/ErrorHandler.ts`）；`provide()` / `inject()` |
 | `views/teams/detail/TeamProjects.vue` | D | 读路由；直接取数（`api.ts`）；`provide()` / `inject()` |
 | `views/user/settings/General.vue` | A | 只吃 props 和事件 |
-| `views/user/settings/Profile.vue` | C | 直接取数（`network/api/avatars`）；直接取数（`network/api/users`）；直接取数（`services/account.ts`）；经 `composables/useChosenAvatar.ts` 取数 |
-| `views/user/settings/RealName.vue` | C | 直接取数（`network/api/users`）；直接取数（`network/api/users/types.ts`）；直接取数（`services/account.ts`）；经 `utils/sudo.ts` 取数；经 `composables/useChosenAvatar.ts` 取数 |
-| `views/user/settings/Security.vue` | C | 直接取数（`api.ts`）；直接取数（`network/api/users`）；直接取数（`services/account.ts`）；经 `utils/sudo.ts` 取数 |
+| `views/user/settings/Profile.vue` | 容器 | 画面在 `ProfileView.vue`（A 级）；取数、头像上传留在本页 |
+| `views/user/settings/RealName.vue` | 容器 | 画面在 `RealNameView.vue`（A 级）；取数、sudo、日志分页留在本页 |
+| `views/user/settings/Security.vue` | 容器 | 画面在 `SecurityView.vue`（A 级）；取数、sudo、对话框流程留在本页 |
 | `views/workspace/DmView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
 | `views/workspace/ProjectMembersView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
 | `views/workspace/ProjectShell.vue` | D | 读路由；读 store（workspace） |
@@ -303,7 +305,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 - **直接取数（100 页）** 是「把这一段挪出去」的问题，机械，但要一页一页做。`usePanelDoc.ts` 那条路（外壳取数、视图收 props）是可复制的样板。
 - **读路由（86 页）** 是「这个页面怎么知道自己是谁」的问题。`views/spaces/board/` 已经有一套答案（命名路由 + `loadBoard(spaceId)` 在守卫里），`/spaces/:id/board` 那棵树 43 页里 12 页 C、30 页 D，是最大的一块。
-- **`views/account/`（17 页里 16 页 D）** 和 **`views/workspace/`（7 页全 D）** 是两块最硬的骨头。前者的输入几乎就是地址里的参数——OAuth 回调码、邀请令牌、验证码——所以先要把这几个参数从 `useRoute` 挪成 props，才谈得上后面的取数。后者 7 页每一页都是「读路由 + 读 workspace store」，`ProjectShell` 那一页本身就是外壳，动它是动整个 `/workspace` 那棵路由。
+- **`views/workspace/`（7 页全 D）** 是剩下最硬的骨头：7 页每一页都是「读路由 + 读 workspace store」，`ProjectShell` 那一页本身就是外壳，动它是动整个 `/workspace` 那棵路由。`views/account/` 那 17 页的输入——OAuth 回调码、邀请令牌、验证码——2026-10-05 已经改成 props 进视图，整条线拆完。
 
 ## 这份清单怎么来的 {#how}
 
@@ -319,5 +321,5 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 1. **已经拆出来的三个视图挂上目录**：`PanelChangesView`、`PanelPreviewView`、`PanelDocView`，每个带 loading / 空 / 有数据 / 出错几种状态。上一版已经做了。
 2. **A 档的先补目录**，成本几乎为零：`--list` 现在会打出 15 个没挂的（7 个页面 + 8 个面板：`ChangesFileTree`、`PanelOverview`、`TodoChecklist`、`doc/DocOverlays`、`doc/DocSlashMenu`、`doc/DocSurface`、`preview/PreviewPages`、`preview/PreviewSheet`）。挂上去之后，改外观和改排版就有地方看效果。
 3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；每拆出一个就跑 `pnpm run lint:scenes:update` 把它从 `debt` 搬进 `ready`。
-4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/`、`views/workspace/`、`views/spaces/` 三块各要一个方案，动哪块由产品定。
-5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：128 → 0。
+4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/` 已按「参数当 props 进视图」拆完（2026-10-05），`views/workspace/`、`views/spaces/` 两块各还要一个方案，动哪块由产品定。
+5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：97 → 0。
