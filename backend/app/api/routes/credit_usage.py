@@ -6,9 +6,10 @@ nothing split by person inside a team's projects (#394). Each names the models
 its plan allows, so a member can see what the plan includes.
 
 - ``GET /users/me/credits/usage``: the caller's personal team, split by product
-  line, and the shared teams they are in with what is left of each.
-- ``GET /teams/{teamId}/credits/usage``: a team's month, for any of its
-  members.
+  line (协作, 问答, 写作, 算力), and the shared teams they are in with what is
+  left of each.
+- ``GET /teams/{teamId}/credits/usage``: a team's month, split into 协作 and
+  算力, for any of its members.
 """
 
 import uuid
@@ -27,7 +28,7 @@ from app.domain.agent_instance.configuration import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.team.services import team_service
-from app.domain.usage.report import UsageReport
+from app.domain.usage.report import LINES, UsageReport
 
 router = APIRouter(tags=["credits"])
 
@@ -78,7 +79,7 @@ async def my_credit_usage(
     personal = await teams.ensure_personal_team(auth_user.user_id)
     report = UsageReport(db)
     out = await _named(
-        db, await report.team(personal.id, personal.plan_key, lines=True)
+        db, await report.team(personal.id, personal.plan_key, lines=LINES)
     )
     shared = [
         t

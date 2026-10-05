@@ -71,6 +71,7 @@ from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.topic.models import TopicKind
 from app.domain.topic.services import TopicService
+from app.domain.usage.compute import ComputeRefused
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
@@ -1048,7 +1049,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
                 resource_id=work_resource,
                 whole_machine=choice.whole_machine,
             )
-        except (CloudKeepsFailing, CloudPoolFull) as refused:
+        except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
             await db.commit()
             return {"unavailable": str(refused)}
         except SandboxBusy:

@@ -959,6 +959,8 @@
   "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知",
   "cloudBusy": "云端资源紧张，暂时无法准备沙箱，请稍后再试。对话和平台工具仍可用。",
   "cloudVmBusy": "云端资源紧张，暂时无法准备云虚拟机，请稍后再试。对话和平台工具仍可用。",
+  "cloudComputeUnpriced": "云端沙箱暂时无法启动：平台还没有设定云端算力的价格。对话和平台工具仍可用。",
+  "cloudVmUnpriced": "云虚拟机暂时无法启动：平台还没有设定这种规格的价格。对话和平台工具仍可用。",
   "cloudMembersOnly": "只有项目成员可以使用云端沙箱",
   "envSandboxFailed": "云端沙箱准备失败，尚未就绪。",
   "skillProposalDeclined": "「{name}」这项技能用户拒绝过，不要再提议；用户要的话会自己说",

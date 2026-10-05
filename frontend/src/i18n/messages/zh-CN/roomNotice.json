@@ -351,6 +351,7 @@
   "sandboxWaking": "正在唤醒沙箱",
   "sandboxRestoring": "正在从归档恢复沙箱",
   "sandboxAsleep": "沙箱 {minutes} 分钟没有活动，已休眠。文件都留着，下一条消息会唤醒它。",
+  "sandboxStoppedNoCredits": "额度已用完，沙箱已停止。文件都留着，有了额度后下一条消息会唤醒它。",
   "sandboxArchiveLost": "沙箱的归档已经不在，沙箱从仓库里已推送的内容重新开始",
   "cloudVmPreparing": "正在准备云虚拟机",
   "cloudVmReady": "云虚拟机已就绪",

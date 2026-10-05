@@ -351,6 +351,7 @@
   "sandboxWaking": "Waking the sandbox",
   "sandboxRestoring": "Restoring the sandbox from its archive",
   "sandboxAsleep": "The sandbox went to sleep after {minutes} minutes without activity. Its files are kept, and the next message wakes it.",
+  "sandboxStoppedNoCredits": "Credits ran out, so the sandbox was stopped. Its files are kept, and once there are credits again the next message wakes it.",
   "sandboxArchiveLost": "The sandbox's archive is gone, so it starts again from what is pushed to the repository",
   "cloudVmPreparing": "Preparing the cloud VM",
   "cloudVmReady": "The cloud VM is ready",

@@ -756,6 +756,15 @@ class Settings(BaseSettings):
     # tool call prepares a new one, which takes minutes, so this is longer
     # than a sandbox's idle stop.
     cloud_vm_idle_release_s: int = Field(default=1800, ge=60, le=7 * 86400)
+    # Credits one cloud sandbox costs per hour it runs, from start to idle stop
+    # (usage/compute.py). Unset on purpose: the price is the product owner's to
+    # set, and with none set no cloud sandbox starts, so cloud compute never
+    # runs free by accident. 0 is an explicit "free".
+    cloud_sandbox_credits_per_hour: float | None = Field(default=None, ge=0)
+    # Credits per hour of a whole cloud VM, by its size as cores and GiB of
+    # memory, e.g. `{"4c8g": 30}` (usage.compute.vm_spec). A size not named
+    # here cannot be started.
+    cloud_vm_credits_per_hour: dict[str, float] = Field(default_factory=dict)
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud by the sweep. Never would let a machine destroyed upstream sit
     # here as `running` forever (which happened, and also consumed the

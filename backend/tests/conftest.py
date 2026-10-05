@@ -66,6 +66,11 @@ for _k in [
 # Keep the suite hermetic instead of depending on a developer or CI secret.
 os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
 os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
+# Cloud compute has no default price, and without one no cloud sandbox or VM
+# starts (usage/compute.py). The suite prices both, the VM at its default size;
+# the tests of an unset price unset it.
+os.environ["CLOUD_SANDBOX_CREDITS_PER_HOUR"] = "12"
+os.environ["CLOUD_VM_CREDITS_PER_HOUR"] = '{"4c8g": 30}'
 
 # Bind the app engine (app.core.db — the single pool; app.db.session re-exports
 # it) to THIS worker's integration DB — must happen before any app import (the

@@ -150,7 +150,11 @@ async def lifespan(_: FastAPI):
     from app.core.db import async_session_factory
     from app.core.job_runs import JobRuns
     from app.core.ownership import keep_holding
-    from app.domain.machine.runner import CloudPoolSweeper, SandboxSweeper
+    from app.domain.machine.runner import (
+        CloudPoolSweeper,
+        ComputeMeterSweeper,
+        SandboxSweeper,
+    )
     from app.domain.topic.retire import sweep_retired_storage
 
     # The running work — sessions to listen to, turns to watch, sweeps on a
@@ -243,6 +247,7 @@ async def lifespan(_: FastAPI):
             chat=get_chat_service(),
             machines=CloudPoolSweeper(async_session_factory),
             sandboxes=SandboxSweeper(async_session_factory),
+            compute=ComputeMeterSweeper(async_session_factory),
             sessions=async_session_factory,
         )
         runs = JobRuns(async_session_factory)

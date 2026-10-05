@@ -3,10 +3,11 @@
 
 Amounts are in credits, which people see as 点 (a hundredth of a dollar): this
 month's plan pack, every other pack, and what each day, project or product
-line spent. A windowed plan's windows are ratios with when each resets. No
-tokens leave this module, and nothing is split by person: spend inside a
-team's projects belongs to the team (#394). A person's own page reads only
-their personal team's spend.
+line spent. Cloud compute (算力, ``usage.compute``) is a line next to the
+model calls on both pages. A windowed plan's windows are ratios with when
+each resets. No tokens leave this module, and nothing is split by person:
+spend inside a team's projects belongs to the team (#394). A person's own
+page reads only their personal team's spend.
 """
 
 import uuid
@@ -16,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.usage.compute import SANDBOX, VM
 from app.domain.usage.ledger import (
     _TZ,
     Ledger,
@@ -29,25 +31,32 @@ from app.domain.usage.ledger import (
 from app.domain.usage.models import ComputeGrant, GrantSource, Plan
 from app.domain.usage.repositories import UsageRepository
 
-#: The product line a call outside any project belongs to, by usage kind. A
-#: call inside a project is 协作 whatever its kind.
+#: The product line a usage row belongs to. Cloud compute (算力) is its own
+#: line wherever it ran. A model call outside any project goes by its usage
+#: kind; one inside a project is 协作 whatever its kind.
 LINE_COLLAB = "collab"
 LINE_ASK = "ask"
 LINE_WRITE = "write"
-LINES = (LINE_COLLAB, LINE_ASK, LINE_WRITE)
+LINE_COMPUTE = "compute"
+LINES = (LINE_COLLAB, LINE_ASK, LINE_WRITE, LINE_COMPUTE)
+#: The lines a shared team's page shows: it has no 问答 or 写作 of its own.
+TEAM_LINES = (LINE_COLLAB, LINE_COMPUTE)
 KIND_LINES: dict[str, str] = {
     "assistant": LINE_ASK,
     "docs_ask": LINE_ASK,
     "task_pdf_draft": LINE_WRITE,
+    SANDBOX: LINE_COMPUTE,
+    VM: LINE_COMPUTE,
 }
 
 
 def line_of(kind: str, project_id: uuid.UUID | None) -> str | None:
     """The product line a usage row counts towards; None when it is none of
     them."""
-    if project_id is not None:
-        return LINE_COLLAB
-    return KIND_LINES.get(kind.split(":", 1)[0])
+    line = KIND_LINES.get(kind.split(":", 1)[0])
+    if line == LINE_COMPUTE or project_id is None:
+        return line
+    return LINE_COLLAB
 
 
 def _ratio(part: float, whole: float) -> float:
@@ -147,10 +156,10 @@ class UsageReport:
         ]
 
     async def _month(
-        self, team_id: int, month: date, *, lines: bool
+        self, team_id: int, month: date, *, lines: tuple[str, ...]
     ) -> tuple[list[dict], dict[uuid.UUID, float], dict[str, float]]:
-        """The month's spend in credits: per day, per project and per product
-        line."""
+        """The month's spend in credits: per day, per project and per each of
+        ``lines``."""
         start = datetime(month.year, month.month, 1, tzinfo=_TZ)
         end = month_end(month)
         rows = await UsageRepository(self._session).team_spend_by_day(
@@ -158,11 +167,13 @@ class UsageReport:
         )
         by_day: dict[date, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         by_project: dict[uuid.UUID, float] = defaultdict(float)
-        by_line: dict[str, float] = {line: 0.0 for line in LINES}
+        by_line: dict[str, float] = {line: 0.0 for line in lines}
         for day, project_id, kind, credits in rows:
             if project_id is not None:
                 by_project[project_id] += credits
-            line = line_of(kind, project_id) if lines else None
+            line = line_of(kind, project_id)
+            if line not in by_line:
+                line = None
             if line is not None:
                 by_line[line] += credits
             by_day[day][line or "all"] += credits
@@ -176,16 +187,18 @@ class UsageReport:
                 entry["credits"] = None
             else:
                 entry["credits"] = sum(spent.values())
-                if lines:
-                    entry["lines"] = {line: spent.get(line, 0.0) for line in LINES}
+                entry["lines"] = {line: spent.get(line, 0.0) for line in lines}
             days.append(entry)
             day += timedelta(days=1)
         return days, dict(by_project), by_line
 
-    async def team(self, team_id: int, plan_key: str, *, lines: bool = False) -> dict:
+    async def team(
+        self, team_id: int, plan_key: str, *, lines: tuple[str, ...] = TEAM_LINES
+    ) -> dict:
         """A team's month: its plan and what it offers, this period, windows,
-        other packs, and what each day and each project spent. ``lines`` splits
-        it by product line too, for a person's own page (their personal team)."""
+        other packs, and what each day, each project and each of ``lines``
+        spent: 协作 and 算力 for a shared team, every line for a person's own
+        page (their personal team)."""
         month = month_of(datetime.now(UTC))
         terms = (await terms_of(self._session, [plan_key]))[plan_key]
         plan = await self._plan(plan_key)
@@ -215,9 +228,8 @@ class UsageReport:
                 {"id": str(pid), "credits": credits}
                 for pid, credits in sorted(projects.items(), key=lambda kv: -kv[1])
             ],
+            "lines": by_line,
         }
-        if lines:
-            out["lines"] = by_line
         return out
 
     async def teams_left(self, teams: list) -> list[dict]:
