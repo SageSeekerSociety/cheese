@@ -865,6 +865,61 @@ sockets, device connectors, preview tunnels); with it, sockets open at the
 reload stay up for up to ten minutes, and clients reconnect on their own
 schedule.
 
+## Beijing edge (pre-filing): the mainland entry for okcheese, hand-managed
+
+A second edge sits in the mainland so that visitors in China stop paying the
+Beijing → Hong Kong → Beijing detour. It is the Hong Kong design moved to
+Beijing: an Aliyun lightweight server (`47.95.114.66`, Ubuntu 24.04) whose
+Caddy ends TLS and sends plain HTTP into two reverse SSH tunnels from the dev
+box, each landing on the dev front door's `127.0.0.1:18080`. The client address
+travels in `X-Forwarded-For`, as through Hong Kong.
+
+**It serves nothing public until the ICP filing for `okcheese.cn` is approved.**
+A mainland server may not serve an unfiled domain on 80/443, so:
+
+- Caddy listens only on `:8443` with its internal CA (`scripts/ops/Caddyfile.beijing`).
+- Both firewalls (Aliyun's instance firewall and ufw) allow `:8443` only from a
+  few test addresses; 80 and 443 are disabled in the Aliyun firewall, not deleted.
+- No DNS record points at the box.
+
+When the filing is approved: give the site a public certificate, move it to
+`:443`, re-enable 80/443 in the Aliyun firewall, drop the `:8443` rules, and point
+`okcheese.cn` at the box.
+
+The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
+Kong tunnels inside TLS on `:443` do not apply inside the mainland.
+
+| Box | Path | What it is |
+|---|---|---|
+| dev | `/etc/systemd/system/cheese-bj-relay-a.service` | tunnel A: Beijing `127.0.0.1:18463` → dev `127.0.0.1:18080` |
+| dev | `/etc/systemd/system/cheese-bj-relay-b.service` | tunnel B: Beijing `127.0.0.1:18464` → dev `127.0.0.1:18080` |
+| dev | `/usr/local/libexec/cheese-bj-relay/tcp-proxy.py` | the tunnels' `ProxyCommand`; binds a source port from `TCP_PROXY_SOURCE_PORTS` |
+| dev | `/home/nictheboy/.ssh/id_bjrelay` | the tunnels' login key, used for nothing else |
+| Beijing | `/etc/caddy/Caddyfile` | `scripts/ops/Caddyfile.beijing` |
+| Beijing | `~bjrelay/.ssh/authorized_keys` | `restrict,port-forwarding`, may only listen on `127.0.0.1:18463` and `:18464` |
+| Beijing | `/etc/ssh/sshd_config.d/60-bjrelay.conf` | no passwords; `bjrelay` gets remote forwarding only, 10 s × 2 keepalive |
+
+Both tunnels currently leave through the default (Unicom) line. From the campus
+exit that Hong Kong's tunnel B uses (table 18443 via 119pve), the Beijing address
+times out on every port while Hong Kong answers, which points at 119pve's
+raw-table rules being keyed to the Hong Kong address. Giving Beijing tunnel B the
+campus line needs those rules extended on 119pve. Until then the two tunnels still
+cover a port held by a dead session, but not a failed line.
+
+Measured on 2026-10-05, new connection / reused connection, median of 12:
+
+| From | Hong Kong edge | Beijing edge |
+|---|---|---|
+| a Beijing Mobile line | 263 / 121 ms | 77 / 35 ms |
+| a Beijing Unicom line | 273 / 130 ms | 97 / 43 ms |
+
+A reused request through one Beijing tunnel costs 18–20 ms. Through Hong Kong it
+costs 117–152 ms.
+
+Rollback, on the dev box: `sudo systemctl disable --now cheese-bj-relay-a
+cheese-bj-relay-b`. Nothing else depends on the Beijing box, and the Hong Kong
+units are untouched by it.
+
 ## Access
 
 - **ghg private net (dev/prod boxes)**: reachable via the OpenVPN split-tunnel

@@ -395,6 +395,7 @@ defineExpose({ send, connected, submitQuestion })
         v-if="showGettingStarted && topic.project_id"
         :steps="gettingStartedSteps"
         :project-id="topic.project_id"
+        :agent-name="agentName"
         @dismiss="dismissGettingStarted"
       />
 

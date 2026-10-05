@@ -13,6 +13,7 @@ import type { Team } from '@/types'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
+import { useEventListener } from '@vueuse/core'
 
 import { getAvatarUrl } from '@/utils/materials'
 
@@ -52,9 +53,19 @@ const groups = computed(() => [
   { key: 'teams', heading: true, teams: teams.value.filter((team) => !team.personal) },
 ])
 
+// 名单会被重读很多次（见下面的换页面、拿回焦点）。只认最后发出的那一次，而这里
+// 自己改过名单（退出、解散、转让、改资料）也算一次更新：早发的读晚回来，会把刚退出
+// 的团队又画回去。
+let teamsRead = 0
+function setTeamsHere(next: Team[]) {
+  teamsRead += 1
+  teams.value = next
+}
 async function loadTeams() {
+  const read = ++teamsRead
   try {
-    teams.value = (await TeamsApi.getMyTeams()).data.teams
+    const mine = (await TeamsApi.getMyTeams()).data.teams
+    if (read === teamsRead) teams.value = mine
   } catch {
     // 读不到就不列：这是一份目录，不是这一页的内容。
   }
@@ -73,6 +84,15 @@ onMounted(() => {
   void loadTeams()
   void loadSpaces()
 })
+
+// 侧栏跨页面一直挂着，只在挂载时读一次的话，刚建的团队、刚被批准加入的团队要整页
+// 刷新才出现。没有推送告诉它名单变了，于是在人做了点什么的时候重读：换页面（建完
+// 团队就是跳进那个团队）、窗口重新拿到焦点（批准往往是在别处等来的）。
+watch(
+  () => route.path,
+  () => void loadTeams()
+)
+useEventListener(window, 'focus', () => void loadTeams())
 
 // 哪些团队是展开的：记在这台浏览器上，下次打开还是那样。存不进去也不要紧。
 const OPEN_KEY = 'cheesex.homeNav.openTeams'
@@ -189,7 +209,7 @@ const transferOpen = computed({
   },
 })
 function onTransferred(updated: Team) {
-  teams.value = teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated, role: 'ADMIN' } : team))
+  setTeamsHere(teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated, role: 'ADMIN' } : team)))
 }
 
 // 解散团队：撤不回，所以要把团队名打一遍才按得下去（DisbandTeamDialog）。后端拒绝时
@@ -231,7 +251,7 @@ async function leaveTeam(team: Team) {
 // 这个团队不再是我的了：这一行消失；它的项目也不再是我的，rail 上那几格跟着项目清单走；
 // 正看着它的某一页的话回待办。
 function forgetTeam(team: Team) {
-  teams.value = teams.value.filter((row) => row.id !== team.id)
+  setTeamsHere(teams.value.filter((row) => row.id !== team.id))
   void useWorkspaceStore().refreshProjects()
   if (currentHandle.value?.toLowerCase() === team.handle.toLowerCase()) void router.replace({ name: 'inbox' })
 }
@@ -242,7 +262,7 @@ const editOpen = computed({
   },
 })
 function onTeamUpdated(updated: Team) {
-  teams.value = teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated } : team))
+  setTeamsHere(teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated } : team)))
 }
 
 const joinOpen = ref(false)

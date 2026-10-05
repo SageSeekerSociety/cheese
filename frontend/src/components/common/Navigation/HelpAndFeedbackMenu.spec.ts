@@ -143,6 +143,19 @@ describe('帮助与反馈入口', () => {
     expect(link?.getAttribute('href')).toBe('/docs/')
   })
 
+  it('文档站有自己的域名时，使用文档那一项直接去那里', async () => {
+    vi.stubEnv('VITE_DOCS_ORIGIN', 'https://docs.example.test')
+    try {
+      const { container } = await mount()
+      await fireEvent.click(container.querySelector('.help-entry') as HTMLElement)
+      await waitFor(() => expect(document.body.textContent).toContain('使用文档'))
+      const link = Array.from(document.querySelectorAll('a')).find((a) => a.textContent?.includes('使用文档'))
+      expect(link?.getAttribute('href')).toBe('https://docs.example.test/')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('compact（手机）不画文字标签，但仍然是一颗点得开的按钮', async () => {
     const { container } = await mount({ compact: true }, { admin: true })
     const entry = container.querySelector('.help-entry') as HTMLElement
@@ -194,5 +207,22 @@ describe('帮助与反馈，在桌面 app 里', () => {
     ) as HTMLElement
     await fireEvent.click(item)
     expect(open).toHaveBeenCalledWith(`${window.location.origin}/docs/`, '_blank')
+  })
+
+  it('文档站有自己的域名时，浏览器打开的是那个域名', async () => {
+    vi.stubEnv('VITE_DOCS_ORIGIN', 'https://docs.example.test')
+    try {
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      const { container } = await mount()
+      await fireEvent.click(container.querySelector('.help-entry') as HTMLElement)
+      await waitFor(() => expect(document.body.textContent).toContain('使用文档'))
+      const item = Array.from(document.querySelectorAll('.v-list-item')).find((el) =>
+        el.textContent?.includes('使用文档')
+      ) as HTMLElement
+      await fireEvent.click(item)
+      expect(open).toHaveBeenCalledWith('https://docs.example.test/', '_blank')
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })
