@@ -870,7 +870,7 @@ class TestCreateInvitation:
         team_repo.is_team_at_least_admin.return_value = True
         team_repo.is_team_member.return_value = True
 
-        with pytest.raises(ConflictError, match="already a member"):
+        with pytest.raises(ConflictError, match="已经是这个团队的成员"):
             await svc.create_team_invitation(
                 initiator_user_id=42,
                 team_id=1,

@@ -10,6 +10,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.core.sentences import say
 from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.notification.models import NotificationType
@@ -91,9 +92,9 @@ class TeamMembershipService:
         if result.scalar_one_or_none() is None:
             raise NotFoundError(f"User {user_id} does not exist")
         if await self._team_repo.is_team_member(team_id, user_id):
-            raise ConflictError("User is already a member of this team.")
+            raise ConflictError(say("teamAlreadyMember"))
         if await self._app_repo.exists_pending_for_user_and_team(user_id, team_id):
-            raise ConflictError("There is already a pending application for this team.")
+            raise ConflictError(say("teamApplicationPending"))
 
     async def _update_status(
         self,

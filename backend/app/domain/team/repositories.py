@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ConflictError
+from app.core.sentences import say
 from app.domain.team.models import (
     PERSONAL_TEAM_ROW,
     ApplicationStatus,
@@ -366,7 +367,7 @@ class TeamRepository:
         existing = await self.get_member_relation(team_id, user_id)
         if existing is not None:
             raise ConflictError(
-                "User is already a member of this team",
+                say("teamAlreadyMember"),
                 data={"teamId": team_id, "userId": user_id},
             )
         now = datetime.now(UTC)
