@@ -278,18 +278,31 @@ def test_a_change_answers_with_the_task_as_its_page_reads_it(client):
         r = client.get(f"/topics/{task['id']}/task", headers=alice)
         return r.json()["data"]["presentation"]
 
-    started = client.post(
-        f"/topics/{task['id']}/start", json={"reviewer_handle": "alice"}, headers=alice
-    ).json()["data"]
-    assert started["presentation"] == read()
-    handed = client.patch(
-        f"/topics/{task['id']}/task", json={"agent_handle": None}, headers=alice
-    ).json()["data"]
-    assert handed["presentation"] == read()
-    closed = client.post(
-        f"/topics/{task['id']}/close", json={"conclusion": "做完了"}, headers=alice
-    ).json()["data"]
-    assert closed["presentation"] == read()
+    def answers_as_read(change) -> None:
+        # The start's message reaches the task's session on its own time, so
+        # the task may begin running between the answer and a read of it: the
+        # answer agrees with the page as it stood just before or just after.
+        before = read()
+        answered = change().json()["data"]["presentation"]
+        assert answered in (before, read())
+
+    answers_as_read(
+        lambda: client.post(
+            f"/topics/{task['id']}/start",
+            json={"reviewer_handle": "alice"},
+            headers=alice,
+        )
+    )
+    answers_as_read(
+        lambda: client.patch(
+            f"/topics/{task['id']}/task", json={"agent_handle": None}, headers=alice
+        )
+    )
+    answers_as_read(
+        lambda: client.post(
+            f"/topics/{task['id']}/close", json={"conclusion": "做完了"}, headers=alice
+        )
+    )
 
 
 # —— 在任务里说话 ——————————————————————————————————————————————————————————
