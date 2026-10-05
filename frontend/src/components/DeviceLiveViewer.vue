@@ -15,10 +15,12 @@ import { useEventListener } from '@vueuse/core'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 
-import { screenWsUrl } from '../api'
 import { t } from '../i18n'
 
-const props = defineProps<{ sid: string; readonly?: boolean }>()
+// 现场 socket 的地址不在这里拼：`make-url` 由调用方给（api 的 screenWsUrl 是个
+// 纯函数，拼出带 token 的 ws://…/connector/session/{sid}/screen）。每次连/重连都在
+// 原来调它的那个时机现调，token 的取值时机和以前一模一样。
+const props = defineProps<{ sid: string; makeUrl: (sid: string) => string; readonly?: boolean }>()
 
 const host = ref<HTMLDivElement | null>(null)
 const status = ref<'connecting' | 'open' | 'closed'>('connecting')
@@ -44,7 +46,7 @@ function fitAndResize(): void {
 function connect(sid: string): void {
   teardownSocket()
   status.value = 'connecting'
-  const ws = new WebSocket(screenWsUrl(sid))
+  const ws = new WebSocket(props.makeUrl(sid))
   ws.binaryType = 'arraybuffer'
   socket = ws
   ws.onopen = () => {
