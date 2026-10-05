@@ -286,7 +286,7 @@ async def test_a_pointer_writer_and_a_bind_serialize_on_the_row(db_factory):
         await writer.execute(
             select(AgentSession.id)
             .where(
-                AgentSession.topic_id == topic,
+                AgentSession.conversation_id == topic,
                 AgentSession.agent_handle == seat,
                 AgentSession.harness == "pi",
             )

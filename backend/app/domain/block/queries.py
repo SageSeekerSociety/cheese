@@ -30,12 +30,12 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 
 
-async def latest_preview_for_room(
-    db: AsyncSession, room_id: uuid.UUID, task_id: uuid.UUID | None = None
+async def latest_preview(
+    db: AsyncSession, conversation_id: uuid.UUID
 ) -> BlockOut | None:
-    """Return the room's (or its task's) latest artifact through the block read
+    """Return the conversation's latest artifact through the block read
     boundary."""
-    block = await BlockRepository(db).latest_artifact(room_id, task_id=task_id)
+    block = await BlockRepository(db).latest_artifact(conversation_id)
     return BlockOut.model_validate(block) if block is not None else None
 
 
@@ -55,20 +55,20 @@ async def weeklies_for_project(
     return [BlockOut.model_validate(block) for block in blocks]
 
 
-async def tasks_awaiting_an_answer(
-    db: AsyncSession, task_ids: Iterable[uuid.UUID]
+async def awaiting_an_answer(
+    db: AsyncSession, conversation_ids: Iterable[uuid.UUID]
 ) -> dict[uuid.UUID, str | None]:
-    """这些活里，哪几条停在一个未回答的提问上，各自在等谁 —— 一次查完。
+    """这些对话里，哪几段停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
     看板「待回答」那一格问的就是它：这是唯一一种会中断「运行中」的状态，所以它
     和别的批次事实一样，从外面喂进纯函数（见 `room_task/presentation.py`）。
-    主语是活、不是房间，所以判据在 `BlockRepository.tasks_awaiting_an_answer`
-    里，这里只把路由和那条查询之间的名字固定下来。
+    判据在 `BlockRepository.awaiting_an_answer` 里，这里只把路由和那条查询之间的
+    名字固定下来。
 
     Callers authorize and own this session and its transaction. This read
     does not explicitly begin, commit or roll back.
     """
-    return await BlockRepository(db).tasks_awaiting_an_answer(list(task_ids))
+    return await BlockRepository(db).awaiting_an_answer(list(conversation_ids))
 
 
 async def reaction_summaries_for_blocks(

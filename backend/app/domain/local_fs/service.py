@@ -83,8 +83,7 @@ class AuthorizeRequest:
     owner_user_id: int
     project_id: uuid.UUID | None = None
     actor_handle: str | None = None
-    topic_id: uuid.UUID | None = None
-    task_id: uuid.UUID | None = None
+    conversation_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,8 +372,7 @@ class LocalDirectoryService:
             grant_id=grant.id if grant else None,
             actor_handle=request.actor_handle,
             project_id=request.project_id,
-            topic_id=request.topic_id,
-            task_id=request.task_id,
+            conversation_id=request.conversation_id,
             detail=detail,
         )
         # Written before the verdict is returned, and without swallowing a

@@ -30,7 +30,7 @@ from tests.integration.test_same_handle_note_and_timed_delivery import _project,
 def _state(identity):
     return _HookWorkState(
         project_id=identity.project_id,
-        topic_id=identity.topic_id,
+        topic_id=identity.conversation_id,
         work_id=identity.work_id,
         pending_ids=set(),
         reply_to=None,

@@ -45,7 +45,7 @@ async def _spend(session, project_id, tokens: int, *, at: datetime, kind: str = 
 
     row = await UsageRepository(session).add(
         project_id=project_id,
-        topic_id=None,
+        conversation_id=None,
         model="m",
         input_tokens=0,
         output_tokens=tokens,

@@ -50,7 +50,7 @@ def _say(project: str, room: str, text: str, kind=BlockKind.message):
         db.add(
             Block(
                 project_id=uuid.UUID(project),
-                topic_id=uuid.UUID(room),
+                conversation_id=uuid.UUID(room),
                 kind=kind,
                 author_type=AuthorType.participant,
                 author=OWNER,
@@ -139,7 +139,7 @@ def test_a_private_room_and_another_project_stay_out(client):
         db.add(
             Block(
                 project_id=uuid.UUID(project),
-                topic_id=room.id,
+                conversation_id=room.id,
                 kind=BlockKind.message,
                 author_type=AuthorType.participant,
                 author=OWNER,
@@ -391,7 +391,7 @@ def test_counts_leave_out_rooms_the_caller_cannot_read(client):
         db.add(
             Block(
                 project_id=uuid.UUID(project),
-                topic_id=room.id,
+                conversation_id=room.id,
                 kind=BlockKind.message,
                 author_type=AuthorType.participant,
                 author=OWNER,

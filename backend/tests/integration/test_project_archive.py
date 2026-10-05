@@ -196,7 +196,7 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
             }
             await UsageRepository(session).add(
                 project_id=project.id,
-                topic_id=None,
+                conversation_id=None,
                 model="m",
                 input_tokens=0,
                 output_tokens=10,

@@ -277,8 +277,7 @@ class DocumentWriter:
         else:
             notice = await self._blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=author,
                 author_type=AuthorType.platform,
                 content=line,
@@ -345,8 +344,7 @@ class DocumentWriter:
             return earlier
         return await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=actor,
             author_type=AuthorType.platform,
             content=line,
@@ -360,9 +358,7 @@ class DocumentWriter:
     ) -> Block | None:
         """The room's last line, if it is this document's notice of the same
         ``kind`` (see ``_notice_kind``), recent enough to extend."""
-        last = await self._blocks.latest_for_topic(
-            landed.topic_id, task_id=landed.task_id
-        )
+        last = await self._blocks.latest_for_topic(landed.conversation_id)
         if last is None or last.kind != BlockKind.event:
             return None
         meta = last.meta or {}
@@ -409,7 +405,7 @@ async def tell_room_of_document(
         task_id=task_id,
     )
     changed = [{"old": e["old"], "new": e["new"]} for e in edits or []]
-    last = await blocks.latest_for_topic(landed.topic_id, task_id=landed.task_id)
+    last = await blocks.latest_for_topic(landed.conversation_id)
     meta_of_last = (last.meta or {}) if last is not None else {}
     if (
         last is not None
@@ -443,8 +439,7 @@ async def tell_room_of_document(
         line = say("docEditedInLibrary", actor=who, title=title)
     block = await blocks.add(
         project_id=landed.project_id,
-        topic_id=landed.topic_id,
-        task_id=landed.task_id,
+        conversation_id=landed.conversation_id,
         author=actor,
         author_type=AuthorType.platform,
         content=line,

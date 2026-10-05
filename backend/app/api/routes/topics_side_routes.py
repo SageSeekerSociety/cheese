@@ -61,6 +61,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.conversation.services import room_of
 from app.domain.delivery.addressing import Event as Addressee
 from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut
@@ -181,13 +182,13 @@ async def upgrade_block(
     open. The response says which by carrying either a task or a topic.
 
     这是一条**在房间里造东西**的写：凭据由 resolve/authorize_topic 认，房间由 block
-    自己带 —— block 的 `topic_id` 就是那个房间，不是它自己去请求体里说。升级的人也
+    自己带 —— block 的对话所在的房间就是那个房间，不是它自己去请求体里说。升级的人也
     由凭据说，而且只能是一个人：AI 队友只能提议任务。
     """
     block = await BlockRepository(db).get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
-    parent = await TopicService(db).get_or_404(block.topic_id)
+    parent = await TopicService(db).get_or_404(await room_of(db, block.conversation_id))
     actor = await resolver.resolve(topic_id=parent.id, project_id=parent.project_id)
     await resolver.authorize_topic(
         actor, project_id=parent.project_id, topic_id=parent.id

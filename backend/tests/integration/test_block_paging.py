@@ -159,7 +159,7 @@ def test_blocks_sharing_a_timestamp_are_neither_skipped_nor_repeated(client):
                     Block(
                         id=uuid.uuid4(),
                         project_id=uuid.UUID(pid),
-                        topic_id=uuid.UUID(tid),
+                        conversation_id=uuid.UUID(tid),
                         author="cheese",
                         author_type=AuthorType.participant,
                         content=f"b{i}",

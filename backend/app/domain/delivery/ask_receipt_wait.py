@@ -31,7 +31,7 @@ class AskReceiptPending(ValidationError):
 
 def _same_group(previous, delivery):
     return (
-        previous.topic_id == delivery.topic_id
+        previous.conversation_id == delivery.conversation_id
         and previous.recipient_handle == delivery.recipient_handle
         and previous.payload.get("ask_origin") == delivery.payload.get("ask_origin")
         and previous.payload.get("ask_group") == delivery.payload.get("ask_group")

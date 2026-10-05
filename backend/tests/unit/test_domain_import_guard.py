@@ -143,7 +143,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- platform_stats（看板的读模型聚合，和 dashboard 同构，单独还）。
         #     block 领域**没有** service 层（只有 repositories / models），
         #     pipeline 那一块问的是「哪几条活/房间停在未回答的提问上」——
-        #     正是 block.repositories.tasks_awaiting_an_answer 的那个读，
+        #     正是 block.repositories.awaiting_an_answer 的那个读，
         #     走不了「调对方的 service」。等 block 长出 service 就把这行删掉。
         ("app.domain.platform_stats.pipeline", "app.domain.block.repositories"),
         ("app.domain.dashboard.services", "app.domain.project.repositories"),

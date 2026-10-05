@@ -62,8 +62,8 @@ class Delivery(UuidPk, Base):
         Boolean, default=True, server_default="false"
     )
     agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    topic_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # The conversation, a room or a task, an agent delivery goes to.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     # Agent delivery attempts are leased independently of model-work completion.
     state: Mapped[str] = mapped_column(
         String(24), default="pending", server_default="pending"
@@ -107,7 +107,7 @@ class NativeInput(UuidPk, Base):
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
-    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     recipient_handle: Mapped[str] = mapped_column(String(64))
     harness: Mapped[str] = mapped_column(String(32))
     native_session_id: Mapped[str] = mapped_column(String(256))
@@ -169,8 +169,8 @@ class TimedDelivery(UuidPk, Base):
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
-    #: 请求它的那个地点，也是到点之后这条投递落回去的地方。
-    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    #: 请求它的那段对话，也是到点之后这条投递落回去的地方。
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     #: 收件人 —— 就是请求者自己（结论 17），所以这条原语没有第二条收件人规则。
     recipient_handle: Mapped[str] = mapped_column(String(64))
     content: Mapped[str] = mapped_column(Text)

@@ -161,7 +161,7 @@ def test_prompt_hold_rolls_back_answer_fence_before_external_io(client, monkeypa
             await complete_work_inputs(
                 session,
                 project_id=project,
-                topic_id=topic,
+                conversation_id=topic,
                 recipient_handle=initial.recipient_handle,
                 harness=initial.harness,
                 native_session_id=initial.native_session_id,

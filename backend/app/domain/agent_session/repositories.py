@@ -19,6 +19,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
+from app.domain.conversation.services import of_room, room_column
 from app.domain.topic.models import Topic
 
 # The two columns of ``tasks`` the upsert reads — which room a task hangs in.
@@ -35,8 +36,8 @@ _tasks = table(
 class AgentSessionRepository:
     """Keyed by the conversation — a room or a task — a session is in.
 
-    Each row also says which room the session works in (``topic_id``): every
-    room-wide question about sessions is asked of that column.
+    A room-wide question about sessions (every session of a room and its
+    tasks) is asked of the conversation column through ``of_room``.
     """
 
     def __init__(self, session: AsyncSession):
@@ -151,12 +152,8 @@ class AgentSessionRepository:
         # created. It says exactly that and nothing more — which session opened
         # the room's pane is `placed_at`, written only by `save_place`.
         values = {**values, "updated_at": datetime.now(UTC)}
-        room_id = await self._session.scalar(
-            select(_tasks.c.room_id).where(_tasks.c.id == conversation_id)
-        )
         stmt = insert(AgentSession).values(
             conversation_id=conversation_id,
-            topic_id=room_id or conversation_id,
             agent_handle=agent_handle,
             harness=harness,
             **values,
@@ -214,7 +211,7 @@ class AgentSessionRepository:
             )
         result = await self._session.execute(
             select(AgentSession.id)
-            .where(AgentSession.topic_id == room_id, on_choice)
+            .where(on_choice)
             .order_by(AgentSession.agent_handle, AgentSession.id)
         )
         return list(result.scalars())
@@ -232,15 +229,17 @@ class AgentSessionRepository:
         result = await self._session.execute(
             select(AgentSession)
             .where(
-                AgentSession.topic_id == room_id,
+                of_room(AgentSession.conversation_id, room_id),
                 AgentSession.runtime_location.is_not(None),
             )
             .order_by(AgentSession.placed_at.desc(), AgentSession.id)
         )
         return list(result.scalars())
 
-    async def placed_everywhere(self) -> list[tuple[AgentSession, uuid.UUID]]:
-        """Every placed session with its project, for a cold start.
+    async def placed_everywhere(
+        self,
+    ) -> list[tuple[AgentSession, uuid.UUID, uuid.UUID]]:
+        """Every placed session with its project and room, for a cold start.
 
         A channel re-adopts what outlived the backend, and to do that it needs
         the project each session belongs to; the room is the only thing that
@@ -256,17 +255,14 @@ class AgentSessionRepository:
         each row names is handed on as it stands; recognising it is the
         runtime's, not the channel's, since one channel carries several of them.
         """
+        room = room_column(AgentSession.conversation_id)
         result = await self._session.execute(
-            select(AgentSession, Topic.project_id)
-            .join(Topic, Topic.id == AgentSession.topic_id)
+            select(AgentSession, Topic.project_id, room)
+            .join(Topic, Topic.id == room)
             .where(AgentSession.runtime_location.is_not(None))
-            .order_by(
-                AgentSession.topic_id,
-                AgentSession.placed_at.desc(),
-                AgentSession.id,
-            )
+            .order_by(room, AgentSession.placed_at.desc(), AgentSession.id)
         )
-        return [(row[0], row[1]) for row in result.all()]
+        return [(row[0], row[1], row[2]) for row in result.all()]
 
     async def has_any(self, topic_id: uuid.UUID) -> bool:
         """Whether ANY agent has ever run in this room's own conversation — i.e.
@@ -292,5 +288,5 @@ class AgentSessionRepository:
 
     async def forget_room(self, topic_id: uuid.UUID) -> None:
         await self._session.execute(
-            delete(AgentSession).where(AgentSession.topic_id == topic_id)
+            delete(AgentSession).where(of_room(AgentSession.conversation_id, topic_id))
         )

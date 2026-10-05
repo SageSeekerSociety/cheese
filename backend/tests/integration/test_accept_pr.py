@@ -1781,7 +1781,7 @@ def _card_events(client, card_id):
             card = await session.get(AcceptCard, uuid.UUID(card_id))
             blocks = list(
                 await session.scalars(
-                    select(Block).where(Block.task_id == card.task_id)
+                    select(Block).where(Block.conversation_id == card.task_id)
                 )
             )
             return "\n".join(
@@ -1838,7 +1838,7 @@ def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub
         async with client.test_factory() as session:
             card = await session.get(AcceptCard, uuid.UUID(cid))
             row = await session.scalar(
-                select(Delivery).where(Delivery.task_id == card.task_id)
+                select(Delivery).where(Delivery.conversation_id == card.task_id)
             )
             assert row.state == "pending"
             return row.payload["content"]

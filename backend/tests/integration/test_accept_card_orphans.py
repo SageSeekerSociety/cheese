@@ -275,9 +275,9 @@ def test_poll_pause_note_does_not_swallow_a_later_ci_failure(
 
     from tests.delivery import delivery_task_id
 
-    blocks = client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
-        "blocks"
-    ]
+    blocks = client.get(f"/topics/{delivery_task_id(client, tid)}/blocks").json()[
+        "data"
+    ]["data"]
     assert "pytest: 7 failed" in room_text(blocks)
     note = _cards(client, tid)[0]["note"]
     assert "轮询暂停" not in note

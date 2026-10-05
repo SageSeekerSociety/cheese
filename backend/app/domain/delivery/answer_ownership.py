@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import and_, select
 
-from app.domain.block.models import Block, consumed_turn, in_conversation
+from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.agent import work_interval_is_over
 from app.domain.delivery.models import Delivery, NativeInput
 
@@ -34,7 +34,7 @@ async def reconcile_answer(session, delivery_id, attempt_id):
     candidates = list(
         await session.scalars(
             select(Block).where(
-                in_conversation(delivery.topic_id),
+                Block.conversation_id == delivery.conversation_id,
                 Block.meta["delivery_event_id"].as_string() == str(delivery.event_id),
                 Block.meta["answer_to"].as_string() == delivery.payload["answer_to"],
             )
@@ -56,7 +56,7 @@ async def reconcile_answer(session, delivery_id, attempt_id):
             select(NativeInput)
             .where(
                 NativeInput.project_id == project,
-                NativeInput.topic_id == delivery.topic_id,
+                NativeInput.conversation_id == delivery.conversation_id,
                 NativeInput.recipient_handle == delivery.recipient_handle,
                 *receiver,
             )
@@ -149,7 +149,7 @@ async def seat_has_unfinished_input(session, topic_id, recipient_handle):
     """
     rows = await session.scalars(
         select(NativeInput).where(
-            NativeInput.topic_id == topic_id,
+            NativeInput.conversation_id == topic_id,
             NativeInput.recipient_handle == recipient_handle,
             ~unread_input_with_over_work(),
         )

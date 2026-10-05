@@ -104,7 +104,7 @@ def _agent_says(client, room: str, text: str) -> None:
             topic = await session.get(Topic, uuid.UUID(room))
             await BlockRepository(session).add(
                 project_id=topic.project_id,
-                topic_id=topic.id,
+                conversation_id=topic.id,
                 author=agent,
                 author_type=AuthorType.participant,
                 content=text,
@@ -344,7 +344,7 @@ def _ask_an_old_question(
             assert row is not None
             await notify_question(
                 session,
-                place=await TopicService(session).place_or_404(row.topic_id),
+                place=await TopicService(session).place_or_404(row.conversation_id),
                 block=row,
                 question=row.content,
                 asker=row.author,

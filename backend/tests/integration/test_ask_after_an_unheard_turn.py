@@ -65,7 +65,7 @@ def _turns(client, room: str) -> list[AgentTurn]:
             return list(
                 await session.scalars(
                     select(AgentTurn)
-                    .where(AgentTurn.topic_id == uuid.UUID(room))
+                    .where(AgentTurn.conversation_id == uuid.UUID(room))
                     .order_by(AgentTurn.started_at)
                 )
             )

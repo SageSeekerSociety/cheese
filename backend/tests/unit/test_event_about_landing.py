@@ -20,18 +20,18 @@ OVERVIEW = uuid.uuid4()
 def test_a_card_event_lands_on_the_card():
     assert landing(
         EventAbout.task, project_id=PROJECT, room_id=ROOM, task_id=TASK
-    ) == Landing(project_id=PROJECT, topic_id=ROOM, task_id=TASK)
+    ) == Landing(project_id=PROJECT, conversation_id=TASK)
 
 
 def test_a_room_event_lands_on_the_room_timeline():
     assert landing(EventAbout.room, project_id=PROJECT, room_id=ROOM) == Landing(
-        project_id=PROJECT, topic_id=ROOM, task_id=None
+        project_id=PROJECT, conversation_id=ROOM
     )
 
 
 def test_a_project_event_lands_on_the_overview():
     assert landing(EventAbout.project, project_id=PROJECT, room_id=OVERVIEW) == Landing(
-        project_id=PROJECT, topic_id=OVERVIEW, task_id=None
+        project_id=PROJECT, conversation_id=OVERVIEW
     )
 
 

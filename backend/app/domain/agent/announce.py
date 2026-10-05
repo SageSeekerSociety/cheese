@@ -123,8 +123,7 @@ async def announce(
     )
     block = await BlockRepository(session).add(
         project_id=landed.project_id,
-        topic_id=landed.topic_id,
-        task_id=landed.task_id,
+        conversation_id=landed.conversation_id,
         author=author,
         author_type=AuthorType.platform,
         content=content,

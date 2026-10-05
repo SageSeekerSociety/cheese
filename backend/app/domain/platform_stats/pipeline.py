@@ -234,12 +234,13 @@ class PipelineRepository:
         open_rooms = list(open_room_rows)
 
         repo = BlockRepository(self._session)
-        task_ids = await repo.tasks_awaiting_an_answer([r.id for r in open_tasks])
-        room_ids = await repo.rooms_awaiting_an_answer([r.id for r in open_rooms])
+        awaiting = await repo.awaiting_an_answer(
+            [r.id for r in open_tasks] + [r.id for r in open_rooms]
+        )
 
         items: list[dict[str, Any]] = []
         for r in open_tasks:
-            if r.id in task_ids:
+            if r.id in awaiting:
                 items.append(
                     {
                         "kind": "task",
@@ -251,7 +252,7 @@ class PipelineRepository:
                     }
                 )
         for r in open_rooms:
-            if r.id in room_ids:
+            if r.id in awaiting:
                 items.append(
                     {
                         "kind": "room",
@@ -262,7 +263,7 @@ class PipelineRepository:
                         "at": r.updated_at.isoformat(),
                     }
                 )
-        return {"count": len(task_ids) + len(room_ids), "items": items[:limit]}
+        return {"count": len(awaiting), "items": items[:limit]}
 
     async def turn_failures(
         self, *, since: datetime, until: datetime

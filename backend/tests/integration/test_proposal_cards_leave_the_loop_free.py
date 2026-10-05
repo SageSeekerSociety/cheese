@@ -62,7 +62,8 @@ async def test_a_long_worked_room_finds_its_cards_without_holding_the_loop(
         await session.flush()
         await session.execute(
             text(
-                "INSERT INTO blocks (project_id,topic_id,kind,author_type,author,"
+                "INSERT INTO blocks (project_id,conversation_id,kind,author_type,"
+                "author,"
                 "content,refs,meta,id,created_at,updated_at) "
                 "SELECT :pid,:tid,'event','participant','cheese',"
                 "repeat('output of the command ', 20),'[]',"
@@ -76,7 +77,7 @@ async def test_a_long_worked_room_finds_its_cards_without_holding_the_loop(
         def card(fingerprint, **extra):
             return Block(
                 project_id=project.id,
-                topic_id=room.id,
+                conversation_id=room.id,
                 kind=BlockKind.message,
                 author_type=AuthorType.participant,
                 author="cheese",

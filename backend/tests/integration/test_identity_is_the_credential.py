@@ -166,8 +166,8 @@ def test_a_task_and_a_message_in_it_belong_to_the_caller(client):
         headers=_as(A),
     )
     assert said.status_code == 200, said.text
-    blocks = client.get(f"/topics/{task['id']}/task", headers=_as(A)).json()["data"][
-        "blocks"
+    blocks = client.get(f"/topics/{task['id']}/blocks", headers=_as(A)).json()["data"][
+        "data"
     ]
     mine = [b for b in blocks if b.get("content") == "先跑小样本"]
     assert [b["author"] for b in mine] == [A]

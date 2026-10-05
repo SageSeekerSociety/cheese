@@ -397,7 +397,7 @@ def _mail_outcome(draft: MailDraft, by: str) -> Block | None:
     return Block(
         id=uuid.uuid4(),
         project_id=draft.project_id,
-        topic_id=draft.topic_id,
+        conversation_id=draft.topic_id,
         author="system",
         author_type=AuthorType.platform,
         kind=BlockKind.event,
@@ -577,7 +577,7 @@ async def mail_draft(
         Block(
             id=block_id,
             project_id=project,
-            topic_id=room,
+            conversation_id=room,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,

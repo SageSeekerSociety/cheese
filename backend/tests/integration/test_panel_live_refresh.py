@@ -306,7 +306,7 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
     async def cards() -> int:
         async with client.test_factory() as session:
             rows = await session.scalars(
-                select(Block).where(Block.topic_id == uuid.UUID(topic_id))
+                select(Block).where(Block.conversation_id == uuid.UUID(topic_id))
             )
             return sum((row.meta or {}).get("action") == "notify" for row in rows)
 

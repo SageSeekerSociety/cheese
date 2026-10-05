@@ -120,8 +120,8 @@ class LocalFsAccessRow(Base):
 
     actor_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     project_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    topic_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # The conversation, a room or a task, whose agent made the access.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True

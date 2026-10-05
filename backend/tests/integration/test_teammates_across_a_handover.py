@@ -105,7 +105,9 @@ def _turns(client, room: str) -> list[AgentTurn]:
         async with client.test_factory() as session:
             return list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == uuid.UUID(room))
+                    select(AgentTurn).where(
+                        AgentTurn.conversation_id == uuid.UUID(room)
+                    )
                 )
             )
 

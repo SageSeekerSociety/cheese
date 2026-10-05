@@ -455,7 +455,7 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
         session.add(
             AgentSession(
                 id=session_id,
-                topic_id=topic.id,
+                conversation_id=topic.id,
                 agent_handle="cheese",
                 harness=harness_for(None),
                 runtime_location={
@@ -712,7 +712,7 @@ async def test_old_room_token_only_addresses_unique_unupgraded_lease(
     assert (await _invoke(owner_client, topic, legacy_token)).status_code == 409
     async with db_factory() as db:
         row = await db.scalar(
-            select(AgentSession).where(AgentSession.topic_id == topic)
+            select(AgentSession).where(AgentSession.conversation_id == topic)
         )
         lease = dict(row.work_lease)
         lease.pop("generation")
@@ -723,11 +723,11 @@ async def test_old_room_token_only_addresses_unique_unupgraded_lease(
     ).status_code == 200
     async with db_factory() as db:
         row = await db.scalar(
-            select(AgentSession).where(AgentSession.topic_id == topic)
+            select(AgentSession).where(AgentSession.conversation_id == topic)
         )
         db.add(
             AgentSession(
-                topic_id=topic,
+                conversation_id=topic,
                 agent_handle="other",
                 harness=harness_for(None),
                 runtime_location=dict(row.runtime_location),

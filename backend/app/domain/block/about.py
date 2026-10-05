@@ -1,22 +1,22 @@
 """一条事件「关于什么」，以及它因此落在哪里（结论 14，不变量 I10）。
 
-事件从前没有「关于什么」这一栏：每个产生事件的调用点自己挑一个 `topic_id`（有时
-再挑一个 `task_id`），于是同一个问题在十几处各答了一遍，没有一处答得出别处的答案
-是什么。**落点不是每个调用点的自由，是一张封闭表上的三行**：
+事件从前没有「关于什么」这一栏：每个产生事件的调用点自己挑一个落点，于是同一个问题
+在十几处各答了一遍，没有一处答得出别处的答案是什么。**落点不是每个调用点的自由，
+是一张封闭表上的三行**：
 
 | 事件关于 | 落在哪 | 例子 |
 |---|---|---|
-| 一件活 | 那张卡（房间 + `task_id`） | 检查红了、上游冲突、这一轮换了模型 |
-| 一个房间 | 房间时间线（`task_id` 空） | 机器离线、成员加入、有人说话 |
+| 一件活 | 那张卡（任务自己的对话） | 检查红了、上游冲突、这一轮换了模型 |
+| 一个房间 | 房间时间线（房间自己的对话） | 机器离线、成员加入、有人说话 |
 | 一个项目 | 项目总览（`TopicKind.root` 那个房间） | 巡检到点、名册变化 |
 
 调用点改说**它关于什么**，落点由 `landing()` 给。三档是封闭的：多出第四种事件时
 这里会缺一行，而不是某个调用点又自己挑一个房间。
 
-**架在现有的两列上，不新开列。**「关于什么」能从 `topic_id` / `task_id` 推出来
-（有 `task_id` 就是卡的事，没有就是房间的事），再存一份 `about_kind` + `about_id`
-就是同一个事实的第二份声明：两份一旦对不上，没有哪一份是对的。所以这里只有一张表
-和一个函数，`blocks` 一列不加，一条迁移不写。
+**架在现有的列上，不新开列。**「关于什么」能从对话 id 推出来（任务的 id 就是卡的
+事，房间的 id 就是房间的事），再存一份 `about_kind` + `about_id` 就是同一个事实的
+第二份声明：两份一旦对不上，没有哪一份是对的。所以这里只有一张表和一个函数，
+`blocks` 一列不加，一条迁移不写。
 
 **总览是哪个房间，这里不校验。**项目那一档要的房间由调用点从
 `Project.root_topic_id` 取；`landing()` 是个纯函数，读不到项目行，也就无从分辨递
@@ -41,11 +41,10 @@ class EventAbout(enum.StrEnum):
 
 @dataclass(frozen=True)
 class Landing:
-    """一条事件的落点：写进 `blocks` 的那三个 id。"""
+    """一条事件的落点：写进 `blocks` 的项目 id 和对话 id。"""
 
     project_id: uuid.UUID
-    topic_id: uuid.UUID
-    task_id: uuid.UUID | None
+    conversation_id: uuid.UUID
 
 
 def landing(
@@ -65,7 +64,7 @@ def landing(
             if room_id is None or task_id is None:
                 # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError("卡的事要有房间和卡：room_id 与 task_id 都不能空")
-            return Landing(project_id=project_id, topic_id=room_id, task_id=task_id)
+            return Landing(project_id=project_id, conversation_id=task_id)
         case EventAbout.room:
             if room_id is None:
                 # i18n-exempt: developer declaration check, never shown to a user
@@ -73,7 +72,7 @@ def landing(
             if task_id is not None:
                 # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError("房间的事不落在卡上：带了 task_id 就该说 task")
-            return Landing(project_id=project_id, topic_id=room_id, task_id=None)
+            return Landing(project_id=project_id, conversation_id=room_id)
         case EventAbout.project:
             if room_id is None:
                 # i18n-exempt: developer declaration check, never shown to a user
@@ -83,4 +82,4 @@ def landing(
             if task_id is not None:
                 # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError("项目的事不落在卡上：带了 task_id 就该说 task")
-            return Landing(project_id=project_id, topic_id=room_id, task_id=None)
+            return Landing(project_id=project_id, conversation_id=room_id)

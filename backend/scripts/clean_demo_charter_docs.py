@@ -57,7 +57,7 @@ async def clean() -> None:
                     await s.execute(
                         select(Block)
                         .where(
-                            Block.topic_id == p.root_topic_id,
+                            Block.conversation_id == p.root_topic_id,
                             Block.kind == BlockKind.doc,
                         )
                         .order_by(Block.created_at)
@@ -74,7 +74,7 @@ async def clean() -> None:
                 (
                     await s.execute(
                         select(Block).where(
-                            Block.topic_id == p.root_topic_id,
+                            Block.conversation_id == p.root_topic_id,
                             Block.kind == BlockKind.doc_node,
                         )
                     )

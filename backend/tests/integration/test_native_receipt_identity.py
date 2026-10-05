@@ -20,7 +20,7 @@ from app.domain.delivery.receipts import record_receipt, register_input
 async def _registered(factory):
     identity = InputIdentity(
         project_id=uuid.uuid4(),
-        topic_id=uuid.uuid4(),
+        conversation_id=uuid.uuid4(),
         recipient_handle="cheese-test",
         harness="claude_code",
         native_session_id=str(uuid.uuid4()),
@@ -34,7 +34,7 @@ async def _registered(factory):
                 id=delivery_id,
                 event_id=event_id,
                 recipient_handle=identity.recipient_handle,
-                topic_id=identity.topic_id,
+                conversation_id=identity.conversation_id,
                 dedup_key=str(uuid.uuid4()),
                 type="mention",
                 payload={},
@@ -62,7 +62,7 @@ async def _registered(factory):
     "field",
     [
         "project_id",
-        "topic_id",
+        "conversation_id",
         "recipient_handle",
         "harness",
         "native_session_id",
