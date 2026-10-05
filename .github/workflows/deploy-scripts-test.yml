@@ -57,6 +57,11 @@ jobs:
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
 
+      # Fetches the last commit before the two slots per service and runs its
+      # deploy script against the state the slots leave.
+      - name: A release of an older commit keeps the box's frontend ports
+        run: bash deploy/tests/test-pre-slot-release.sh
+
       - name: Automatic release ordering
         run: python3 deploy/tests/test_auto_deploy.py
 

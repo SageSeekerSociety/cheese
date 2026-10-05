@@ -19,7 +19,7 @@
 #   PROJECT            compose project name              (default cheese)
 #   ACTIVE_FRONTEND_DIR  optional api-front active directory. Enable only after
 #                      ingress targets FRONTEND_PROXY_PORT (default 18080).
-#   FRONTEND_PORT_NEXT  temporary frontend port (default 18084, loopback only)
+#   FRONTEND_PORT_NEXT  the second frontend slot's port (default 18084, loopback only)
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE, FRONTEND_IMAGE and COLLAB_IMAGE must name
 #                      existing images.
@@ -325,15 +325,6 @@ ensure_application_router() {
   if [ ! -f "$ACTIVE_BACKEND_DIR/frontend.conf" ]; then
     printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "$FRONTEND_PORT" > "$ACTIVE_BACKEND_DIR/frontend.conf"
   fi
-  # While app-router still serves the compose frontend on its published port,
-  # that frontend holds the box's :8080 and :80, and app-router must not try to
-  # bind them: a frontend-ports.conf left from before a revert would fail every
-  # reload. enable_frontend_ports writes it again once that frontend has gone.
-  if grep -Fq "server 127.0.0.1:$FRONTEND_PORT;" "$ACTIVE_BACKEND_DIR/frontend.conf" \
-    && [ -f "$ACTIVE_BACKEND_DIR/frontend-ports.conf" ]; then
-    log "removing frontend-ports.conf: the compose frontend still publishes :$FRONTEND_PORT"
-    rm -f "$ACTIVE_BACKEND_DIR/frontend-ports.conf"
-  fi
   if ! cmp -s "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"; then
     [ ! -f "$ACTIVE_BACKEND_DIR/app-router.conf" ] || router_changed=true
     cp "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"
@@ -545,8 +536,8 @@ done
 # The containers therefore alternate between cheese-backend-1 and
 # cheese-backend-b-1 (and the frontend likewise); deploy/app-container.sh names
 # the running one. The box's own :8080 and :80, which the frontend container
-# used to publish, are app-router's (enable_frontend_ports), so they answer
-# whichever frontend slot serves.
+# used to publish, are app-router's (frontend.conf, see take_frontend_ports), so
+# they answer whichever frontend slot serves.
 #
 # The `-b` services are written here, from compose's own merged model after
 # every overlay, so they cannot drift from the services they copy: `extends`
@@ -1083,7 +1074,7 @@ DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-31}"
 # Matches the backend's stop_grace_period in the compose files.
 BACKEND_STOP_GRACE_SECONDS="${DEPLOY_BACKEND_STOP_GRACE_SECONDS:-60}"
 # How long the old frontend's nginx may take to finish its requests after the
-# drain: they then had 31 + 120 s, inside app-router's 180 s worker deadline.
+# drain: they then had 5 + 31 + 120 s, inside app-router's 240 s worker deadline.
 FRONTEND_STOP_GRACE_SECONDS="${DEPLOY_FRONTEND_STOP_GRACE_SECONDS:-120}"
 # Opt in only after the public ingress uses the standing frontend proxy.
 ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
@@ -1144,16 +1135,32 @@ write_upstream() {
   mv -f "$tmp" "$file"
 }
 
+# frontend.conf names the frontend app-router serves and, once app-router owns
+# them, carries the box's :8080 and :80 (deploy/llm-tunnel/configure-frontend-upstream.sh).
+frontend_conf_has_ports() {
+  grep -Fq "listen 0.0.0.0:$FRONTEND_PORT;" "$ACTIVE_BACKEND_DIR/frontend.conf" 2>/dev/null
+}
+
+write_frontend_conf() {
+  local port="$1" with_ports="$2"
+  if [ "$with_ports" = true ]; then
+    bash "$HERE/llm-tunnel/configure-frontend-upstream.sh" "$ACTIVE_BACKEND_DIR" "$port" \
+      "$FRONTEND_PORT" "${FRONTEND_PORT_DIRECT:-0.0.0.0:80}"
+  else
+    bash "$HERE/llm-tunnel/configure-frontend-upstream.sh" "$ACTIVE_BACKEND_DIR" "$port"
+  fi || fail "could not write $ACTIVE_BACKEND_DIR/frontend.conf"
+}
+
 # Both upstreams in one reload, which retires one generation of app-router
 # workers: the release's only switch. $2 is empty when the frontend is not
-# rolled (no ACTIVE_FRONTEND_DIR).
+# rolled (no ACTIVE_FRONTEND_DIR); $3 says whether frontend.conf carries the
+# box's ports, which it cannot while the old frontend still publishes them.
 switch_app_router() {
-  local backend_port="$1" frontend_port="$2" backend_before frontend_before
+  local backend_port="$1" frontend_port="$2" with_ports="${3:-false}" backend_before frontend_before
   backend_before="$(cat "$ACTIVE_BACKEND_DIR/backend.conf")"
   frontend_before="$(cat "$ACTIVE_BACKEND_DIR/frontend.conf" 2>/dev/null || true)"
   write_upstream "$ACTIVE_BACKEND_DIR/backend.conf" backend_active "$backend_port"
-  [ -z "$frontend_port" ] \
-    || write_upstream "$ACTIVE_BACKEND_DIR/frontend.conf" frontend_active "$frontend_port"
+  [ -z "$frontend_port" ] || write_frontend_conf "$frontend_port" "$with_ports"
   if ! docker exec cheese-app-router nginx -t || ! docker exec cheese-app-router nginx -s reload; then
     printf '%s\n' "$backend_before" > "$ACTIVE_BACKEND_DIR/backend.conf"
     [ -z "$frontend_port" ] || printf '%s\n' "$frontend_before" > "$ACTIVE_BACKEND_DIR/frontend.conf"
@@ -1162,24 +1169,25 @@ switch_app_router() {
   log "app-router now sends backend traffic to :$backend_port${frontend_port:+ and frontend traffic to :$frontend_port}, in one reload"
 }
 
-# The box's own frontend ports, which the edge reaches directly, belong to
-# app-router from the release whose old frontend was the last to publish them:
-# a server on them forwards to whichever frontend slot serves. Written once,
-# after that frontend has stopped, because nginx cannot bind them before; that
-# release reloads app-router a second time, and the ports are closed from the
-# old frontend's stop to this reload.
-enable_frontend_ports() {
-  local file="$ACTIVE_BACKEND_DIR/frontend-ports.conf" direct
-  [ ! -f "$file" ] || return 0
-  direct="${FRONTEND_PORT_DIRECT:-0.0.0.0:80}"
-  bash "$HERE/llm-tunnel/configure-frontend-ports.sh" "$ACTIVE_BACKEND_DIR" "$FRONTEND_PORT" "$direct" \
-    || fail "could not write $file"
-  if ! docker exec cheese-app-router nginx -t || ! docker exec cheese-app-router nginx -s reload; then
-    rm -f "$file"
-    docker exec cheese-app-router nginx -s reload >/dev/null 2>&1 || true
-    fail "app-router could not take the box's frontend ports :$FRONTEND_PORT and $direct; nothing serves them now — see the nginx error above"
+# The release whose old frontend was the compose one still publishing the box's
+# :8080 and :80 hands them to app-router once that frontend has stopped: nginx
+# cannot bind them before. That is a second reload, on that release only, and
+# the ports are closed from the old frontend's stop to it. If app-router cannot
+# take them, frontend.conf goes back to the upstream alone and the stopped
+# frontend is started again, so the ports are served as before; $1 is its
+# container, $2 the port of the frontend that now serves.
+take_frontend_ports() {
+  local old_frontend="$1" port="$2"
+  write_frontend_conf "$port" true
+  if docker exec cheese-app-router nginx -t && docker exec cheese-app-router nginx -s reload; then
+    log "app-router now serves the box's frontend ports :$FRONTEND_PORT and ${FRONTEND_PORT_DIRECT:-0.0.0.0:80}"
+    return 0
   fi
-  log "app-router now serves the box's frontend ports :$FRONTEND_PORT and $direct"
+  write_frontend_conf "$port" false
+  docker exec cheese-app-router nginx -s reload >/dev/null 2>&1 || true
+  docker start "$old_frontend" >/dev/null 2>&1 \
+    || log "WARNING: could not start $old_frontend again; nothing serves :$FRONTEND_PORT now"
+  return 1
 }
 
 # $1 = host port, $2 = what is expected there. Polls the published port from
@@ -1263,6 +1271,7 @@ wait_for_frontend() {
 rollout_app() {
   local backend_from backend_to backend_port old_backend handover
   local frontend_from="" frontend_to="" frontend_port="" old_frontend="" collab_failed=false
+  local frontend_holds_ports=false frontend_stop_grace="$FRONTEND_STOP_GRACE_SECONDS" ports_failed=false
   read_slots "$ACTIVE_BACKEND_DIR/backend.conf" backend "$BACKEND_PORT" "$BACKEND_PORT_NEXT"
   backend_from="$SLOT_FROM" backend_to="$SLOT_TO" backend_port="$SLOT_TO_PORT"
   old_backend="$(service_container "$backend_from")"
@@ -1271,6 +1280,15 @@ rollout_app() {
     read_slots "$ACTIVE_BACKEND_DIR/frontend.conf" frontend "$FRONTEND_SLOT_PORT" "$FRONTEND_PORT_NEXT" "$FRONTEND_PORT"
     frontend_from="$SLOT_FROM" frontend_to="$SLOT_TO" frontend_port="$SLOT_TO_PORT"
     old_frontend="$(service_container "$frontend_from")"
+    # The compose frontend app-router has served since before the two slots
+    # still publishes the box's ports itself.
+    if [ "$frontend_from" = frontend ] && ! frontend_conf_has_ports \
+      && grep -Fq "server 127.0.0.1:$FRONTEND_PORT;" "$ACTIVE_BACKEND_DIR/frontend.conf"; then
+      frontend_holds_ports=true
+      # Its traffic has moved and its drain is over by the time it stops; the
+      # ports are closed while it stops, so it does not wait on open sockets.
+      frontend_stop_grace=5
+    fi
   fi
 
   log "starting $backend_to on :$backend_port beside the serving ${backend_from}…"
@@ -1291,7 +1309,9 @@ rollout_app() {
     fi
   fi
 
-  if ! switch_app_router "$backend_port" "$frontend_port"; then
+  local ports_now=false
+  [ -z "$frontend_to" ] || [ "$frontend_holds_ports" = true ] || ports_now=true
+  if ! switch_app_router "$backend_port" "$frontend_port" "$ports_now"; then
     dc rm -f -s "$backend_to" ${frontend_to:+"$frontend_to"} >/dev/null 2>&1 || true
     fail "app-router did not take the switch; its upstream files are restored and traffic stays on $backend_from${frontend_from:+ and $frontend_from}"
   fi
@@ -1318,20 +1338,29 @@ rollout_app() {
   # SIGKILL that cuts that off). Both stop at once.
   sleep "$DRAIN_SECONDS"
   if [ -n "$old_frontend" ]; then
-    docker stop --time "$FRONTEND_STOP_GRACE_SECONDS" "$old_frontend" >/dev/null 2>&1 &
+    docker stop --time "$frontend_stop_grace" "$old_frontend" >/dev/null 2>&1 &
   fi
   if [ -n "$old_backend" ]; then
     docker stop --time "$BACKEND_STOP_GRACE_SECONDS" "$old_backend" >/dev/null 2>&1 || true
   fi
   wait || true
-  dc rm -f "$backend_from" ${frontend_from:+"$frontend_from"} >/dev/null 2>&1 || true
-  [ -z "$frontend_to" ] || enable_frontend_ports
+  if [ "$frontend_holds_ports" = true ] && ! take_frontend_ports "$old_frontend" "$frontend_port"; then
+    ports_failed=true
+  fi
+  dc rm -f "$backend_from" >/dev/null 2>&1 || true
+  # A frontend started again to keep the ports is left for the next release,
+  # which replaces it in its slot and takes the ports over at that switch.
+  if [ -n "$frontend_from" ] && [ "$ports_failed" = false ]; then
+    dc rm -f "$frontend_from" >/dev/null 2>&1 || true
+  fi
+  [ "$ports_failed" = false ] \
+    || fail "app-router could not take the box's ports :$FRONTEND_PORT and ${FRONTEND_PORT_DIRECT:-0.0.0.0:80} (see the nginx error above); $old_frontend serves them again, and the next release takes them over"
   [ "$collab_failed" = false ] || fail "compose up collab failed"
   log "$backend_from${frontend_from:+ and $frontend_from} stopped; $backend_to${frontend_to:+ and $frontend_to} serve this release"
   if [ "$backend_to" = backend-b ]; then
     # The script before the two slots starts its one-off successors on these
-    # ports and refuses while app-router names them, so it cannot be released now.
-    log "note: a manual release of a commit older than the two slots refuses to start while backend-b serves; release any current commit once to move back to the first slots, then that one"
+    # ports and refuses while app-router names them.
+    log "note: a release of a commit older than the two slots refuses to switch while backend-b serves; release any current commit once to move back to the first slots, then that one"
   fi
 }
 

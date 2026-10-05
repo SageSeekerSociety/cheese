@@ -958,9 +958,6 @@ test_frontend_rollout_switches_with_the_backend() {
   # A box already behind app-router, its frontend still the compose one on :8080.
   bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087
   printf 'upstream frontend_active { server 127.0.0.1:8080; }\n' > "$run_dir/active/frontend.conf"
-  # Left from before a revert: app-router must not bind the ports while the
-  # compose frontend still publishes them.
-  printf 'server { listen 0.0.0.0:8080; }\n' > "$run_dir/active/frontend-ports.conf"
   grep -Fq 'location ~ ^/api/topics/[^/]+/execution/[^/]+$' "$run_dir/active/sites-frontend.conf" \
     || fail "stable frontend ingress still sends public execution through the rolling frontend"
   rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_BACKEND_CONTAINER=blue-container \
@@ -970,32 +967,36 @@ test_frontend_rollout_switches_with_the_backend() {
   reload="$(log_line "$docker_log" 'exec cheese-app-router nginx -s reload')"
   collab="$(log_line "$docker_log" 'up -d --no-deps collab')"
   drain="$(log_line "$docker_log" 'sleep 31')"
-  stopped="$(log_line "$docker_log" 'stop --time 120 green-frontend')"
-  removed="$(log_line "$docker_log" ' rm -f backend frontend$')"
+  # Its traffic has moved, and the box's ports are closed while it stops.
+  stopped="$(log_line "$docker_log" 'stop --time 5 green-frontend')"
+  removed="$(log_line "$docker_log" ' rm -f frontend$')"
   ports_reload="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
   [ -n "$frontend_up" ] || fail "the idle frontend slot was never started"
-  grep -q 'removing frontend-ports.conf' "$run_dir/deploy.log" \
-    || fail "a frontend-ports.conf left from before was kept while the compose frontend publishes the ports"
   [ "$backend_up" -lt "$reload" ] && [ "$frontend_up" -lt "$reload" ] \
     || fail "app-router was switched before both new slots were up"
   grep -q 'curl -fsS -m 3 http://127.0.0.1:18084/' "$docker_log" || fail "the new frontend was not checked"
   [ "$reload" -lt "$collab" ] && [ "$collab" -lt "$drain" ] || fail "collab was not replaced between the switch and the old frontend's stop"
   [ -n "$stopped" ] && [ "$drain" -lt "$stopped" ] && [ "$stopped" -lt "$removed" ] \
     || fail "the old frontend was not stopped gracefully after the drain, before removal"
-  [ -n "$ports_reload" ] && [ "$removed" -lt "$ports_reload" ] \
-    || fail "app-router took the box's frontend ports before the old frontend let go of them"
+  [ -n "$ports_reload" ] && [ "$stopped" -lt "$ports_reload" ] && [ "$ports_reload" -lt "$removed" ] \
+    || fail "app-router took the box's frontend ports before the old frontend let go of them, or after it was removed"
   [ "$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log")" = 2 ] \
     || fail "the first release did not reload exactly twice (switch, ports)"
   grep -Fq 'server 127.0.0.1:18084;' "$run_dir/active/frontend.conf" || fail "frontend proxy did not move to the new slot"
   grep -Fq 'server 127.0.0.1:18082;' "$run_dir/active/backend.conf" || fail "backend did not move in the same switch"
-  grep -Fq 'listen 0.0.0.0:8080;' "$run_dir/active/frontend-ports.conf" && grep -Fq 'listen 0.0.0.0:80;' "$run_dir/active/frontend-ports.conf" \
+  # In frontend.conf, which every app-router.conf includes, so a release of an
+  # older commit installing its own keeps them.
+  grep -Fq 'listen 0.0.0.0:8080;' "$run_dir/active/frontend.conf" && grep -Fq 'listen 0.0.0.0:80;' "$run_dir/active/frontend.conf" \
     || fail "app-router does not serve the box's :8080 and :80"
   ! grep -q -E '(run|up) .*cheese-frontend-next' "$docker_log" || fail "a temporary frontend was started"
 
   # The next release goes back into the first slots, on loopback, with one reload.
   : > "$docker_log"
-  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >/dev/null 2>&1 || fail "second rollout failed"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_FRONTEND_B_CONTAINER=frontend-b-container \
+    >/dev/null 2>&1 || fail "second rollout failed"
   grep -q -- 'up -d --no-deps --force-recreate frontend$' "$docker_log" || fail "the second release did not use the first frontend slot"
+  grep -q 'stop --time 120 frontend-b-container' "$docker_log" || fail "the old frontend slot was not given its full graceful stop"
+  grep -Fq 'listen 0.0.0.0:8080;' "$run_dir/active/frontend.conf" || fail "the second release dropped the box's ports"
   grep -q 'curl -fsS -m 3 http://127.0.0.1:18088/' "$docker_log" || fail "the first frontend slot was not checked on its loopback port"
   [ "$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log")" = 1 ] || fail "the second release did not switch exactly once"
   grep -Fq 'server 127.0.0.1:18088;' "$run_dir/active/frontend.conf" || fail "frontend proxy did not return to the first slot"
@@ -1015,12 +1016,41 @@ test_frontend_rollout_rejects_unhealthy_next() {
   fi
   ! grep -q 'exec cheese-app-router nginx -s reload' "$run_dir/docker.log" || fail "app-router was switched without a healthy frontend"
   grep -q 'rm -f -s backend-b frontend-b' "$run_dir/docker.log" || fail "the new slots were left running beside the old ones"
-  ! grep -q ' rm -f backend frontend$' "$run_dir/docker.log" || fail "the serving slots were removed"
+  ! grep -q -E ' rm -f (backend|frontend)$' "$run_dir/docker.log" || fail "the serving slots were removed"
   grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/frontend.conf" || fail "frontend proxy moved to unhealthy successor"
   grep -Fq 'server 127.0.0.1:18081;' "$run_dir/active/backend.conf" || fail "backend moved although the frontend could not"
-  [ ! -f "$run_dir/active/frontend-ports.conf" ] || fail "app-router took the frontend ports although the old frontend still holds them"
+  ! grep -q 'listen' "$run_dir/active/frontend.conf" || fail "app-router took the frontend ports although the old frontend still holds them"
   rm -rf "$run_dir"
   echo "PASS: failed frontend startup leaves the old frontend and backend serving"
+}
+
+# If app-router cannot take the box's ports once the old frontend has let go of
+# them, the ports go back to that frontend, and the next release retries at its
+# switch, once the slot it replaces has freed them.
+test_failed_port_takeover_gives_the_ports_back() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087
+  printf 'upstream frontend_active { server 127.0.0.1:8080; }\n' > "$run_dir/active/frontend.conf"
+  if rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_FRONTEND_CONTAINER=green-frontend \
+      APP_TIER_ROUTER_RELOAD_FAIL_FROM=2 >"$run_dir/deploy.log" 2>&1; then
+    fail "a release whose port takeover failed reported success"
+  fi
+  grep -q 'green-frontend serves them again' "$run_dir/deploy.log" || { cat "$run_dir/deploy.log"; fail "the failure did not say who serves the ports"; }
+  [ "$(log_line "$docker_log" 'stop --time 5 green-frontend')" -lt "$(log_line "$docker_log" 'start green-frontend')" ] \
+    || fail "the old frontend was not started again after the failed takeover"
+  ! grep -q ' rm -f .*frontend$' "$docker_log" || fail "the frontend that serves the ports again was removed"
+  ! grep -q 'listen' "$run_dir/active/frontend.conf" || fail "frontend.conf still claims the ports app-router could not take"
+  grep -Fq 'server 127.0.0.1:18084;' "$run_dir/active/frontend.conf" || fail "app-router lost the new frontend"
+  : > "$docker_log"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; fail "the next release did not recover"; }
+  grep -q -- 'up -d --no-deps --force-recreate frontend$' "$docker_log" || fail "the next release did not replace the restarted frontend"
+  grep -Fq 'listen 0.0.0.0:8080;' "$run_dir/active/frontend.conf" || fail "the next release did not take the ports at its switch"
+  [ "$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log")" = 1 ] || fail "the recovering release did not switch exactly once"
+  rm -rf "$run_dir"
+  echo "PASS: a failed port takeover gives the ports back, and the next release takes them"
 }
 
 # A one-off successor an interrupted release before the two slots left behind:
@@ -1718,6 +1748,7 @@ case "$CASE" in
   rollout-rollback) test_rollout_rollback_returns_to_the_previous_slot ;;
   frontend-rollout) test_frontend_rollout_switches_with_the_backend ;;
   rollout-leftovers) test_rollout_clears_an_interrupted_release ;;
+  port-takeover-failure) test_failed_port_takeover_gives_the_ports_back ;;
   second-slot) test_second_slot_matches_the_first ;;
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
@@ -1771,6 +1802,7 @@ case "$CASE" in
     test_rollout_rollback_returns_to_the_previous_slot
     test_frontend_rollout_switches_with_the_backend
     test_rollout_clears_an_interrupted_release
+    test_failed_port_takeover_gives_the_ports_back
     test_second_slot_matches_the_first
     test_frontend_rollout_rejects_unhealthy_next
     test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up

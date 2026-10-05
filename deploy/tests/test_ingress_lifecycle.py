@@ -122,11 +122,17 @@ def main():
             "127.0.0.1:8093": f"127.0.0.1:{owner.server_port}",
         }
 
+        # The box's own frontend ports live in frontend.conf, which every
+        # app-router.conf includes, and follow every frontend switch.
+        box_port, box_direct = free_port(), free_port()
+
         def configure(target):
-            for name in ("backend", "frontend"):
-                (active / f"{name}.conf").write_text(
-                    f"upstream {name}_active {{ server 127.0.0.1:{target.server_port}; }}\n"
-                )
+            (active / "backend.conf").write_text(
+                f"upstream backend_active {{ server 127.0.0.1:{target.server_port}; }}\n"
+            )
+            subprocess.run(["bash", str(ROOT / "deploy/llm-tunnel/configure-frontend-upstream.sh"),
+                            str(active), str(target.server_port), str(box_port),
+                            f"127.0.0.1:{box_direct}"], check=True)
 
         configure(old)
         # The front door carries the preview tunnel to the owner too (its 4th
@@ -150,12 +156,6 @@ def main():
         sites.write_text(sites.read_text()
                          .replace("listen 8081;", f"listen 127.0.0.1:{api};")
                          .replace("127.0.0.1:18085", f"127.0.0.1:{app_api}"))
-        # The box's own frontend ports, served by app-router once a release has
-        # handed them over: they follow every frontend switch with no reload of
-        # their own.
-        box_port, box_direct = free_port(), free_port()
-        subprocess.run(["bash", str(ROOT / "deploy/llm-tunnel/configure-frontend-ports.sh"),
-                        str(active), str(box_port), f"127.0.0.1:{box_direct}"], check=True)
         try:
             for name in ("app-router", "nginx"):
                 content = (ROOT / f"deploy/llm-tunnel/{name}.conf").read_text()

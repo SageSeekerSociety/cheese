@@ -206,8 +206,8 @@ The deploy starts the idle slot of each on the new image, waits for its health
 check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
 `collab` is replaced at once, while the old frontend still runs. After a
-31-second drain (`DEPLOY_DRAIN_SECONDS`) the old slots stop gracefully and at
-once: the frontend's nginx gets up to 120 seconds to finish its requests, the
+31-second drain (`DEPLOY_DRAIN_SECONDS`) the old slots stop gracefully, in
+parallel: the frontend's nginx gets up to 120 seconds to finish its requests, the
 backend 60 seconds to finish its handover. The next release goes back into the
 slots this one left. The `-b` services are written at deploy time from
 compose's merged model, after every value the deploy exports, so they carry
@@ -217,23 +217,34 @@ network name (`backend`, dialled by `device-connection` and the office editor;
 
 The containers therefore alternate between `cheese-backend-1` and
 `cheese-backend-b-1` (likewise for the frontend); anything that needs one asks
-`deploy/app-container.sh backend`. A manual release of a commit from before the
-two slots runs that commit's script, which refuses while app-router names
-`BACKEND_PORT_NEXT` or `FRONTEND_PORT_NEXT`; release any current commit once to
-move back to the first slots, then that one.
+`deploy/app-container.sh backend`. A release of a commit from before the two
+slots, a revert or a manual dispatch, runs that commit's script. It installs
+its own `app-router.conf` and reloads, which ends app-router's sockets 30
+seconds later at that config's deadline, and then refuses to switch while
+app-router names `BACKEND_PORT_NEXT` or `FRONTEND_PORT_NEXT`; release any
+current commit once to move back to the first slots, then that one. From the
+first slots it releases as it always did. `deploy/tests/test-pre-slot-release.sh`
+runs the last such commit's script against both states.
 
 The box's own frontend ports, :8080 and :80, which the edge reaches directly,
-belong to app-router: `frontend-ports.conf`, written by
-`deploy/llm-tunnel/configure-frontend-ports.sh`, forwards them to whichever
-frontend slot serves. The first release with two frontend slots writes it once
-the frontend that still published those ports has stopped, which closes them
-from that stop until app-router's second reload of that release. A one-off
+belong to app-router: `frontend.conf`, written by
+`deploy/llm-tunnel/configure-frontend-upstream.sh`, carries a server on them
+that forwards to whichever frontend slot serves. They live in that file because
+every `app-router.conf`, an older commit's included, includes it, so an older
+commit's release keeps them; its own frontend switch drops them just before it
+recreates the compose frontend on them, 31 seconds later. The first release with
+two frontend slots adds them once the compose frontend that still published
+them has stopped, which it gives 5 seconds since its traffic has moved; the
+ports are closed from that stop to app-router's second reload of that release.
+If app-router cannot take them, that frontend is started again to serve them
+and the next release takes them at its switch. A one-off
 `cheese-backend-next` or `cheese-frontend-next` left by an interrupted release
 from before the slots is removed by the next release when app-router does not
 send traffic to it, and stops the release when it does.
 
-App-router's `worker_shutdown_timeout` is 180 seconds, longer than the drain
-and the old slots' graceful stops together, so the workers the one reload
+App-router's `worker_shutdown_timeout` is 240 seconds, longer than the
+handover pause, the drain and the longer graceful stop together (5 + 31 + 120),
+so the workers the one reload
 retires keep their connections until the container they lead to stops. Device
 and model connections bypass these workers. The persistent **:18080** entry
 routes to app-router's frontend upstream. Frontends still reach APIs through

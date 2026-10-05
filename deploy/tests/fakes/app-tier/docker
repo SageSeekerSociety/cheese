@@ -45,6 +45,12 @@ fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1
 fi
+# APP_TIER_ROUTER_RELOAD_FAIL_FROM=N: app-router's Nth reload (counting from 1) and every one
+# after it fail, as when nginx cannot bind a port the new config listens on.
+if [ -n "${APP_TIER_ROUTER_RELOAD_FAIL_FROM:-}" ] && [ "$*" = "exec cheese-app-router nginx -s reload" ]; then
+  reloads="$(grep -c '^exec cheese-app-router nginx -s reload$' "${APP_TIER_DOCKER_LOG:?}" || true)"
+  [ "$reloads" -lt "$APP_TIER_ROUTER_RELOAD_FAIL_FROM" ] || exit 1
+fi
 
 # A successor an interrupted earlier release left behind exists only when a
 # test names it in APP_TIER_LEFTOVERS.
@@ -202,6 +208,9 @@ if [ "${1:-}" = "compose" ]; then
       fi
       if [ "${2:-}" = -q ] && [ "${3:-}" = frontend ] && [ -n "${APP_TIER_FRONTEND_CONTAINER:-}" ]; then
         printf '%s\n' "$APP_TIER_FRONTEND_CONTAINER"
+      fi
+      if [ "${2:-}" = -q ] && [ "${3:-}" = frontend-b ] && [ -n "${APP_TIER_FRONTEND_B_CONTAINER:-}" ]; then
+        printf '%s\n' "$APP_TIER_FRONTEND_B_CONTAINER"
       fi
       if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
         case "${3:-}" in
