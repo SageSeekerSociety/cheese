@@ -23,7 +23,7 @@
         density="compact"
         hide-details
         class="verify-trust"
-        @update:model-value="emit('update:trustDevice', $event)"
+        @update:model-value="(value: boolean | null) => emit('update:trustDevice', value ?? false)"
       >
         <template #label>
           <span class="verify-trust__label">{{ t('account.twoFactor.trustDevice') }}</span>
@@ -36,7 +36,7 @@
         length="6"
         type="number"
         class="account-otp"
-        @update:model-value="emit('update:totpCode', $event)"
+        @update:model-value="(value: string) => emit('update:totpCode', value)"
       />
 
       <v-otp-input
@@ -45,7 +45,7 @@
         length="8"
         type="text"
         class="account-otp"
-        @update:model-value="emit('update:backupCode', $event)"
+        @update:model-value="(value: string) => emit('update:backupCode', value)"
       />
 
       <p class="account-hint">{{ t('account.twoFactor.lockout') }}</p>
@@ -77,7 +77,7 @@
       :title="t('account.twoFactor.backupUsedTitle')"
       :confirm-label="t('account.twoFactor.regenerate')"
       :cancel-label="t('account.twoFactor.later')"
-      @update:model-value="emit('update:showBackupCodeDialog', $event)"
+      @update:model-value="(value: boolean) => emit('update:showBackupCodeDialog', value)"
       @confirm="emit('confirm')"
       @cancel="emit('cancel')"
     >
