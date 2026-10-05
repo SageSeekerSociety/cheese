@@ -234,9 +234,10 @@ Do not raise a baseline to make a gate green. Baselines only go down.
 ## 哪些检查在小机器上跑不动
 
 `pnpm exec vitest run --dir src`、`pnpm run lint`、`pnpm run lint:style` 轻量,
-到哪都能跑,是基线组合(前两者也已接进 `.claude/scripts/check.sh`)。
+到哪都能跑。`pnpm run build` 和 `pnpm run typecheck` 吃内存,能不能跑取决于这台机器有多大。
 
-`pnpm run build` 和 `pnpm run typecheck` 吃内存,能不能跑取决于这台机器有多大——
-**先试一次再下结论**,别预先宣布跑不了。被 OOM 杀掉时怎么办(不要调
-`--max-old-space-size`、要明说没跑成、记得删 core dump)是平台层的事,写在
-`backend/sandbox/skills/cheese/SKILL.md` 里,对每个被托管的仓库都一样。
+## 在预览里跑这个前端
+
+`frontend/vite.config.ts` 的 `server.proxy` 把 `/api` 和 `/connector` 转到后端,默认
+`http://127.0.0.1:8081`,`BACKEND_URL` 指到别的后端。没有单独的 `preview` 配置,
+所以 `vite preview` 用的是同一份代理,起预览时一样带上 `BACKEND_URL`。
