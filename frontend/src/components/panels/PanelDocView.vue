@@ -161,6 +161,21 @@ const docTitle = computed(() =>
   props.document ? props.document.title || t('work.room.doc.untitled') : props.topic ? topicTitle(props.topic) : ''
 )
 
+// 资料库文档的标题框里正在打的字。框里的字属于打字的人：页面在这时重画（编辑器连上、
+// 能不能改变了）不能把它换回文档原来的名字；没人在框里时，才跟着文档的名字走。
+const titleDraft = ref(props.document?.title ?? '')
+const titleEditing = ref(false)
+watch(
+  () => [props.document?.id, props.document?.title] as const,
+  ([id, name], [beforeId]) => {
+    if (id !== beforeId || !titleEditing.value) titleDraft.value = name ?? ''
+  }
+)
+function commitTitle() {
+  titleEditing.value = false
+  emit('rename', titleDraft.value.trim())
+}
+
 // 评论区自己是一个组件：列表、折叠、写评论的输入框都在里面。这一层只负责把它开出来 ——
 // 抛上去的那两件事（锚点 + 引文）它自己接，因为 ref 就在这一层。
 const commentsRef = ref<InstanceType<typeof DocCommentPanel> | null>(null)
@@ -441,15 +456,16 @@ defineExpose({
               <!-- Large document title (Feishu Docs): the topic's, or the library document's own. -->
               <input
                 v-if="document && !bare"
-                :value="document.title"
+                v-model="titleDraft"
                 class="doc-page__title doc-page__title--input"
                 autocomplete="off"
                 :placeholder="t('work.room.doc.titlePlaceholder')"
                 :aria-label="t('work.room.doc.titleLabel')"
                 :readonly="!editable"
                 maxlength="200"
+                @focus="titleEditing = true"
                 @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
-                @blur="emit('rename', ($event.target as HTMLInputElement).value.trim())"
+                @blur="commitTitle"
               />
               <h1 v-else-if="!bare && !untitled" class="doc-page__title">{{ docTitle }}</h1>
               <!-- 正文本身。 -->
