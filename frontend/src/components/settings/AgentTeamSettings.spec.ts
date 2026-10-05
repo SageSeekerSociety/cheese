@@ -209,7 +209,7 @@ describe('停用', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
     expect(await screen.findByText('停用「评审」')).toBeTruthy()
-    expect(screen.getByText(/已在用它的话题照常工作/)).toBeTruthy()
+    expect(screen.getByText(/已在用它的频道照常工作/)).toBeTruthy()
     expect(deactivateProjectAgent).not.toHaveBeenCalled()
   })
 

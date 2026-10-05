@@ -35,8 +35,8 @@ class ReplayDatabase:
         self.url = f"{_PG_BASE}/{name}"
         self._dsn = self.url.replace("+asyncpg", "")
 
-    def upgrade(self, revision: str) -> None:
-        _alembic(self.url, revision)
+    def upgrade(self, revision: str, env: dict[str, str] | None = None) -> None:
+        _alembic(self.url, revision, env)
 
     def downgrade(self, revision: str) -> None:
         """Step back to ``revision`` so the migration above it can run again."""

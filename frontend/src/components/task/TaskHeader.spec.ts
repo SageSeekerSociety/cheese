@@ -54,16 +54,19 @@ const MACHINE = {
   follows_room: true,
 } as unknown as TopicComputeProfile
 
+const PEOPLE = ['alice', 'bob', 'carol'].map((member_handle) => ({ member_handle, agent: false }))
+
 function mount(over: Partial<RoomTask> = {}) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
+  const setCollaborators = vi.fn(async () => true)
   const view = render(TaskHeader as Component, {
     props: {
       room: ROOM,
       task: task(over),
       memberNames: {},
       agentName: '芝士',
-      people: [],
+      people: PEOPLE,
       machine: MACHINE,
       machineError: false,
       starting: false,
@@ -72,11 +75,12 @@ function mount(over: Partial<RoomTask> = {}) {
       start,
       close: async () => true,
       handOver: async () => true,
+      setCollaborators,
       loadMachine,
     },
     global: { plugins: [vuetify] },
   })
-  return { ...view, start, loadMachine }
+  return { ...view, start, loadMachine, setCollaborators }
 }
 
 async function openDetails(container: Element) {
@@ -134,5 +138,30 @@ describe('任务页头', () => {
     const row = document.querySelector('[data-testid="task-machine"]')!
     expect(row.textContent).toContain('王宁的笔记本')
     expect(row.querySelector('button')).toBeNull()
+  })
+
+  it('负责人把名册上的人加为协作者', async () => {
+    const { container, setCollaborators } = mount({ contributor_handles: ['bob'] })
+    await openDetails(container)
+    const row = document.querySelector('[data-testid="task-collaborators"]')!
+    const pick = row.querySelector('select')!
+    // 能加的只有还不在任务里的人：负责人自己和已经在协作的不在里面。
+    expect([...pick.options].map((o) => o.value).filter(Boolean)).toEqual(['carol'])
+    await fireEvent.update(pick, 'carol')
+    const add = [...row.querySelectorAll('button')].find((b) => b.textContent?.includes('添加协作者'))!
+    await fireEvent.click(add)
+    expect(setCollaborators).toHaveBeenCalledWith(['bob', 'carol'])
+  })
+
+  it('协作者只能把自己去掉，不能加别人', async () => {
+    me = 'bob'
+    const { container, setCollaborators } = mount({ contributor_handles: ['bob', 'carol'] })
+    await openDetails(container)
+    const row = document.querySelector('[data-testid="task-collaborators"]')!
+    expect(row.querySelector('select')).toBeNull()
+    const buttons = [...row.querySelectorAll('button')]
+    expect(buttons).toHaveLength(1)
+    await fireEvent.click(buttons[0])
+    expect(setCollaborators).toHaveBeenCalledWith(['carol'])
   })
 })

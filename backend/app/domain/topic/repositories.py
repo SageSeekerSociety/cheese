@@ -4,7 +4,21 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Select, Uuid, and_, case, column, func, or_, select, table
+from sqlalchemy import (
+    JSON,
+    Select,
+    String,
+    Uuid,
+    and_,
+    case,
+    cast,
+    column,
+    func,
+    or_,
+    select,
+    table,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -15,10 +29,11 @@ from sqlalchemy.sql.elements import (
 )
 
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     agent_dm_key,
+    agent_handle_column,
     agent_instance_handle,
     looks_like_agent_handle,
 )
@@ -38,8 +53,17 @@ TopicSortField = Literal["updated_at", "title", "last_activity_at"]
 SortOrder = Literal["asc", "desc"]
 
 
-# Which room a task is in. A bare table: `room_task` depends on this domain.
-_tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
+# Which room a task is in, and who takes part in it. A bare table: `room_task`
+# depends on this domain.
+_tasks = table(
+    "tasks",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("project_id", Uuid),
+    column("status", String),
+    column("owner_handle", String),
+    column("contributor_handles", JSON),
+)
 
 
 def _last_activity() -> ColumnElement[datetime]:
@@ -379,22 +403,20 @@ class TopicRepository:
     async def unread_counts(
         self, project_id: uuid.UUID, user_handle: str
     ) -> dict[uuid.UUID, int]:
-        """Unread message count per topic for one user, in one query.
+        """Unread message count per conversation for one user: rooms and tasks.
 
-        Unread = message blocks authored by OTHERS on the room's OWN line,
-        created after the user's read cursor (no cursor = all of them). Only
+        Unread = message blocks authored by OTHERS in that conversation, created
+        after the user's read cursor on it (no cursor = all of them). Only
         kind=message counts — doc edits / events / weeklies have their own
         surfaces. Other people's private chats are excluded.
 
-        Tasks are excluded (their blocks carry the task's own id, which names no
-        room), and that is the opposite call from `last_activity_at` one screen
-        over, which DOES count them. The two
-        answer different questions: a room with work running in it is alive and
-        should sort up, but a badge that lights every time any 分身 says anything
-        is a badge people learn to ignore. Reading the room does not mean you
-        read every thread in it either — the cursor is the room's.
+        A task counts only for the people who take part in it (its owner and
+        collaborators), and only what PEOPLE said there: the AI teammate talks
+        on every step, and a badge that lights each time is a badge nobody
+        reads. When it needs the person, the task's own mark says so. Everyone
+        else follows a task they do not take part in from the channel.
         """
-        stmt = (
+        rooms = (
             select(Block.conversation_id, func.count())
             .join(Topic, Topic.id == Block.conversation_id)
             .outerjoin(
@@ -416,8 +438,39 @@ class TopicRepository:
             )
             .group_by(Block.conversation_id)
         )
-        rows = (await self._session.execute(stmt)).all()
-        return {topic_id: int(count) for topic_id, count in rows}
+        tasks = (
+            select(Block.conversation_id, func.count())
+            .join(_tasks, _tasks.c.id == Block.conversation_id)
+            .outerjoin(
+                TopicReadState,
+                and_(
+                    TopicReadState.topic_id == Block.conversation_id,
+                    TopicReadState.user_handle == user_handle,
+                ),
+            )
+            .where(
+                _tasks.c.project_id == project_id,
+                _tasks.c.status == "open",
+                or_(
+                    _tasks.c.owner_handle == user_handle,
+                    cast(_tasks.c.contributor_handles, JSONB).contains([user_handle]),
+                ),
+                Block.kind == BlockKind.message,
+                Block.author != user_handle,
+                Block.author_type == AuthorType.participant,
+                ~agent_handle_column(Block.author),
+                or_(
+                    TopicReadState.last_read_at.is_(None),
+                    Block.created_at > TopicReadState.last_read_at,
+                ),
+            )
+            .group_by(Block.conversation_id)
+        )
+        counts: dict[uuid.UUID, int] = {}
+        for stmt in (rooms, tasks):
+            for conversation_id, count in (await self._session.execute(stmt)).all():
+                counts[conversation_id] = int(count)
+        return counts
 
     async def private_unread_counts(
         self, project_id: uuid.UUID, user_handle: str

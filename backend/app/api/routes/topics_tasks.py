@@ -276,6 +276,8 @@ class TaskStartIn(BaseModel):
 class TaskUpdateIn(BaseModel):
     owner_handle: str | None = Field(default=None, max_length=64)
     agent_handle: str | None = Field(default=None, max_length=64)
+    #: Everyone who works the task beside its owner, as the whole new list.
+    contributor_handles: list[str] | None = Field(default=None, max_length=50)
 
 
 class TaskProposalIn(BaseModel):
@@ -356,12 +358,26 @@ async def update_task(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """转交：the owner hands the task to another member, or to another AI
-    teammate."""
+    teammate, and brings collaborators in or lets them go. A collaborator may
+    only take themself off the list."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
-    if not actor.authenticated or actor.handle != task.owner_handle:
+    if not actor.authenticated:
         raise ForbiddenError(say("taskOwnerOnly"))
     TaskService.require_open(task)
     tasks = TaskService(db)
+    if actor.handle != task.owner_handle:
+        leaving = [h for h in task.contributor_handles or [] if h != actor.handle]
+        if (
+            body.model_fields_set != {"contributor_handles"}
+            or actor.handle not in (task.contributor_handles or [])
+            or body.contributor_handles != leaving
+        ):
+            raise ForbiddenError(say("taskOwnerOnly"))
+        await tasks.set_contributors(task, leaving)
+        out = await _task_out(db, chat, task)
+        await db.commit()
+        await announce_stale(place.room_id, "topics")
+        return ok(out)
     if "owner_handle" in body.model_fields_set and body.owner_handle:
         if body.owner_handle not in await TopicMemberService(db).people_handles(
             place.room_id
@@ -373,6 +389,14 @@ async def update_task(
         await tasks.hand_over(task, owner_handle=body.owner_handle)
     if "agent_handle" in body.model_fields_set:
         await tasks.give_agent(task, agent_handle=body.agent_handle)
+    if body.contributor_handles is not None:
+        people = await TopicMemberService(db).people_handles(place.room_id)
+        wanted = list(dict.fromkeys(body.contributor_handles))
+        if any(h not in people for h in wanted):
+            raise ValidationError(say("contributorNotInRoom"))
+        await tasks.set_contributors(
+            task, [h for h in wanted if h != task.owner_handle]
+        )
     out = await _task_out(db, chat, task)
     await db.commit()
     await announce_stale(place.room_id, "topics")

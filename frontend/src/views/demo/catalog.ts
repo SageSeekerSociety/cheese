@@ -909,7 +909,7 @@ export const CATALOG: CatalogEntry[] = [
         name: '没有话题',
         note: '这一格属于一个话题；没有话题时说的话和「文档是空的」不一样。',
         props: docPanelProps({ topic: null }),
-        expect: '选择一个话题查看文档',
+        expect: '选择一个频道查看文档',
       },
       {
         name: '文档还在路上的时候',

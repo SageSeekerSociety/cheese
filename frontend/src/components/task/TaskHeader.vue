@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 任务页的页头，和房间页头是同一条线：同样的高度和底线，手机上同样填进顶栏那一格。
-// 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人（点开看谁在做、在哪台
-// 电脑上做），以及负责人自己才有的「开始」和 ⋯（转交、关闭）。
+// 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人和协作者（点开看谁在做、
+// 在哪台电脑上做，负责人在这里增减协作者），以及负责人自己才有的「开始」和 ⋯（转交、
+// 关闭）。
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { TopicComputeProfile } from '@/types/compute'
 
@@ -34,6 +35,7 @@ const props = defineProps<{
   start: (reviewer: string | null) => Promise<void>
   close: (conclusion: string) => Promise<boolean>
   handOver: (owner: string) => Promise<boolean>
+  setCollaborators: (handles: string[]) => Promise<boolean>
   loadMachine: () => Promise<void>
 }>()
 
@@ -54,6 +56,22 @@ const taskAgentName = computed(() => {
   return (handle && props.memberNames[handle]) || props.agentName
 })
 const otherPeople = computed(() => props.people.filter((m) => m.member_handle !== ME))
+const collaborators = computed(() => props.task?.contributor_handles ?? [])
+const nameOf = (handle: string) => props.memberNames[handle] || handle
+// 还能拉进来的人：名册上的人，除了负责人和已经在协作的。
+const addable = computed(() =>
+  props.people.filter(
+    (m) => m.member_handle !== props.task?.owner_handle && !collaborators.value.includes(m.member_handle)
+  )
+)
+const adding = ref('')
+async function addCollaborator() {
+  if (!adding.value) return
+  if (await props.setCollaborators([...collaborators.value, adding.value])) adding.value = ''
+}
+function removeCollaborator(handle: string) {
+  void props.setCollaborators(collaborators.value.filter((h) => h !== handle))
+}
 
 const detailsOpen = ref(false)
 watch(detailsOpen, (open) => {
@@ -117,6 +135,15 @@ async function confirmHandOver() {
           >
             <UserAvatar :size="20" :name="ownerName" />
             <span class="task-header__owner-name">{{ t('work.task.ownerChip', { name: ownerName }) }}</span>
+            <span v-if="collaborators.length" class="task-header__helpers" aria-hidden="true">
+              <UserAvatar
+                v-for="handle in collaborators.slice(0, 3)"
+                :key="handle"
+                :size="18"
+                :name="nameOf(handle)"
+                class="task-header__helper"
+              />
+            </span>
           </button>
         </template>
         <v-card class="task-details">
@@ -124,6 +151,41 @@ async function confirmHandOver() {
             <div class="task-details__row">
               <dt>{{ t('work.task.owner') }}</dt>
               <dd><UserRef :handle="task.owner_handle" /></dd>
+            </div>
+            <div
+              v-if="collaborators.length || (isOwner && isOpen)"
+              class="task-details__row"
+              data-testid="task-collaborators"
+            >
+              <dt :title="t('work.task.collaboratorsHint')">{{ t('work.task.collaborators') }}</dt>
+              <dd class="task-details__people">
+                <span v-for="handle in collaborators" :key="handle" class="task-details__person">
+                  <UserRef :handle="handle" />
+                  <button
+                    v-if="isOpen && (isOwner || handle === ME)"
+                    type="button"
+                    class="task-details__retry"
+                    @click="removeCollaborator(handle)"
+                  >
+                    {{ handle === ME ? t('work.task.leaveCollaboration') : t('work.task.removeCollaborator') }}
+                  </button>
+                </span>
+                <span v-if="isOwner && isOpen && addable.length" class="task-details__person">
+                  <select
+                    v-model="adding"
+                    class="task-notice__select t-meta"
+                    :aria-label="t('work.task.addCollaborator')"
+                  >
+                    <option value="">{{ t('work.task.addCollaborator') }}</option>
+                    <option v-for="m in addable" :key="m.member_handle" :value="m.member_handle">
+                      {{ nameOf(m.member_handle) }}
+                    </option>
+                  </select>
+                  <button v-if="adding" type="button" class="task-details__retry" @click="addCollaborator">
+                    {{ t('work.task.addCollaborator') }}
+                  </button>
+                </span>
+              </dd>
             </div>
             <div class="task-details__row">
               <dt>{{ t('work.task.agent') }}</dt>
@@ -231,6 +293,23 @@ async function confirmHandOver() {
 </template>
 
 <style scoped>
+.task-header__helpers {
+  display: inline-flex;
+  margin-left: 2px;
+}
+.task-header__helper + .task-header__helper {
+  margin-left: -6px;
+}
+.task-details__people {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.task-details__person {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .task-header {
   display: flex;
   flex: 0 0 auto;

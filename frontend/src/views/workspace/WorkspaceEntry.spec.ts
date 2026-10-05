@@ -60,7 +60,6 @@ const OTHER = {
   name: 'my-shell',
   home: 'project-library',
   nav: { rail: [], tabs: [], project: [] },
-  hidden: [],
   terms: {},
 }
 

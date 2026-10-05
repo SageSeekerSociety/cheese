@@ -603,11 +603,10 @@ export function unarchiveTopic(topicId: string): Promise<Topic> {
   })
 }
 
-/** 把一条消息转为任务。房间里的消息变成这个房间的一个任务（回来的是 RoomTask，
- *  点的人是负责人）；私聊里的变成一个新房间（回来的是 Topic）——私聊不在话题树
- *  里，任务挂在那儿没人打得开。升级的人由会话认，不由请求体说。 */
-export function upgradeBlock(blockId: string): Promise<Topic | RoomTask> {
-  return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
+/** 把频道里的一条消息转为这个频道的一个任务，点的人是负责人（由会话认，不由
+ *  请求体说）。私聊里的消息不能转。 */
+export function upgradeBlock(blockId: string): Promise<RoomTask> {
+  return request<RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
     body: JSON.stringify({}),
   })

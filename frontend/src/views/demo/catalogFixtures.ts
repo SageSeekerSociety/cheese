@@ -637,11 +637,10 @@ export const RAIL_ROOT_TOPIC: Topic = {
   created_at: '2026-09-20T08:00:00Z',
 }
 
-/** 这个项目的壳摆出来的那几页（顺序就是壳说的顺序，见 `lib/shell.ts`）。 */
+/** 项目名下那两行（看板、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
 export const RAIL_PAGES = [
+  { key: 'workspace-running', label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
   { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
-  { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
-  { key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
 ]
 
 /** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */

@@ -160,6 +160,9 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "taskDispatched",
         "blockUpgradedToTask",
         "blockUpgradedTaskId",
+        "blockUpgradedToRoom",
+        "blockUpgradedRoomId",
+        "labelUpgradedTo",
         "subagentStart",
         "subagentStopEmpty",
     }

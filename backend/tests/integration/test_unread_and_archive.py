@@ -242,4 +242,4 @@ def test_archive_cascades_to_the_work_in_the_room(client):
         assert cards[tid]["status"] == "closed", tid
     # The cascaded task records why it went — on its own timeline, so whoever
     # opens it later sees why the work stopped mid-sentence.
-    assert any("随父话题" in (b.get("content") or "") for b in cards[c1]["blocks"])
+    assert any("随所在频道" in (b.get("content") or "") for b in cards[c1]["blocks"])

@@ -2,7 +2,7 @@
   "_comment": "Frozen src/components -> API layer / vue-router imports. The ratchet blocks any NEW violation; these are pre-existing and may only go down. Regenerate with `pnpm run lint:boundary:update`. The rule and its messages live in scripts/import-boundary-ratchet-core.mjs.",
   "files": {
     "src/components/account/ConsentGate.vue": 6,
-    "src/components/account/LegalConsent.vue": 2,
+    "src/components/account/LegalConsent.vue": 1,
     "src/components/account/SudoDialog.vue": 4,
     "src/components/admin/AdminAssigneeSelect.vue": 2,
     "src/components/admin/AdminModelDetailDrawer.vue": 1,

@@ -23,8 +23,8 @@ import { copyMessage, QUICK_EMOJIS } from './messageActions'
 import { t } from '@/i18n'
 
 const props = defineProps<{
-  /** 私聊里转出去的是一个新话题，别处是任务。 */
-  upgradeToTopic?: boolean
+  /** 私聊里的消息不能转为任务：不给「转为任务」。 */
+  noUpgrade?: boolean
   /** 停在哪条消息上。收起时还留着上一条，淡出的那一下里按钮不会先没了。 */
   block: Block | null
   shown: boolean
@@ -158,12 +158,13 @@ const menuActions = computed<MenuAction[]>(() => {
       icon: 'mdi-pencil-outline',
       onSelect: () => emit('edit', block),
     })
-  actions.push({
-    key: 'upgrade',
-    label: props.upgradeToTopic ? t('work.room.message.upgradeToTopic') : t('work.room.message.upgrade'),
-    icon: 'mdi-comment-arrow-right-outline',
-    onSelect: () => emit('upgrade', block.id),
-  })
+  if (!props.noUpgrade)
+    actions.push({
+      key: 'upgrade',
+      label: t('work.room.message.upgrade'),
+      icon: 'mdi-comment-arrow-right-outline',
+      onSelect: () => emit('upgrade', block.id),
+    })
   return actions
 })
 function menuReact(emoji: string) {
@@ -262,9 +263,10 @@ function onFocusOut(event: FocusEvent) {
           <v-icon size="15">{{ linkCopied ? 'mdi-check' : 'mdi-link-variant' }}</v-icon>
         </button>
         <button
+          v-if="!noUpgrade"
           type="button"
           class="hover-bar__act"
-          :title="upgradeToTopic ? t('work.room.message.upgradeToTopic') : t('work.room.message.upgrade')"
+          :title="t('work.room.message.upgrade')"
           @click="emit('upgrade', block.id)"
         >
           <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
