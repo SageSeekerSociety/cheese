@@ -21,9 +21,12 @@ from tests.integration.test_doc_agent import sessions as sessions  # noqa: F401
 from tests.integration.test_doc_agent_box import _ask, _done, _selection
 from tests.integration.test_doc_edits import _document
 
+#: Taken before `model_pool` swaps `httpx.AsyncClient` for the fake upstream.
+_Client = httpx.AsyncClient
+
 
 async def _model_call(credential: str) -> int:
-    async with httpx.AsyncClient(
+    async with _Client(
         transport=httpx.ASGITransport(app=app), base_url="http://platform"
     ) as platform:
         response = await platform.post(
