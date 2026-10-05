@@ -13,7 +13,7 @@
 import type { AnnotateDraft, UploadAnnotation } from '../../composables/usePanelPreview'
 import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
 import type { ChatAttachment, FileContent } from '../../cx_types'
-import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
+import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentIdentity'
 import type { FileKind } from '../../lib/fileKind'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 import type { RasterSelection } from './preview/designRegion'

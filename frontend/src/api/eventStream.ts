@@ -7,6 +7,9 @@
 // A refusal comes before the stream starts, as an ordinary JSON error body; it
 // rejects with `StreamRefused`, carrying that body for the caller to word.
 import { authToken, BASE, ensureFreshToken, refreshNow } from '@/api'
+// 它抛在流的这一层，接在文档助手那一层——那层不许够得着接口层，所以这个信号本身
+// 住在 lib 里。见 lib/streamCut.ts。
+import { StreamCut } from '@/lib/streamCut'
 
 export class StreamRefused extends Error {
   constructor(
@@ -94,13 +97,6 @@ async function open(
       const id = /^id: (.+)$/m.exec(raw)?.[1]
       if (event && data !== undefined) onEvent(event, JSON.parse(data) as Record<string, unknown>, id)
     }
-  }
-}
-
-/** The answer's stream ended before the answer did, and could not be read on. */
-export class StreamCut extends Error {
-  constructor() {
-    super('the answer stopped arriving')
   }
 }
 

@@ -7,7 +7,7 @@
  */
 import type { ComponentPublicInstance } from 'vue'
 import type { PreviewFrame } from '../../composables/usePreviewFrames'
-import type { DocumentIdentity } from '../../lib/documentBytes'
+import type { DocumentIdentity } from '../../lib/documentIdentity'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { defineComponent, h, nextTick } from 'vue'

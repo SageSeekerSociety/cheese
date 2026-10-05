@@ -11,7 +11,7 @@
 // 那一页的字节是哪一版。用哪种查看器画、空态写哪句话、全屏按钮在不在，是画的那一半
 // 的事（判据都在递下去的 props 里）。
 import type { ChatAttachment, FileContent, PreviewInfo } from '../cx_types'
-import type { DocumentIdentity } from '../lib/documentBytes'
+import type { DocumentIdentity } from '../lib/documentIdentity'
 import type { FramePick } from './usePreviewFrames'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -24,7 +24,8 @@ import {
   requestPreviewSession,
   uploadAttachment,
 } from '../api'
-import { sameDocumentIdentity, useDocumentBytes } from '../lib/documentBytes'
+import { useDocumentBytes } from '../lib/documentBytes'
+import { sameDocumentIdentity } from '../lib/documentIdentity'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
 import { warmPreviewPointer } from '../lib/previewPointer'
 import { roomFileDestination } from '../lib/previewSession'
