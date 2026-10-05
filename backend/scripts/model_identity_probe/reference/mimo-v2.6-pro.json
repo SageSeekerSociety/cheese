@@ -1,0 +1,138 @@
+{
+  "format_version": 1,
+  "protocol": "one-token/v1",
+  "model": "mimo-v2.6-pro",
+  "source": "gateway:mimo-v2.6-pro",
+  "collected_at": "2026-10-05T08:54:45Z",
+  "samples_per_cell": 20,
+  "cells": {
+    "coin-flip:en": {
+      "counts": {
+        "heads": 19,
+        "tails": 1
+      },
+      "valid": 20,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-animal:en": {
+      "counts": {
+        "giraffe": 2,
+        "elephant": 4,
+        "axolotl": 1,
+        "lemur": 1,
+        "aardvark": 1,
+        "fox": 2,
+        "pangolin": 4,
+        "ferret": 2,
+        "dog": 1,
+        "platypus": 1,
+        "dolphin": 1
+      },
+      "valid": 20,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-color:en": {
+      "counts": {
+        "teal": 10,
+        "crimson": 1,
+        "blue": 5,
+        "azure": 1,
+        "turquoise": 1,
+        "indigo": 1,
+        "vermilion": 1
+      },
+      "valid": 20,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-color:zh": {
+      "counts": {
+        "靛蓝": 1,
+        "蓝": 12,
+        "紫": 1,
+        "青": 5,
+        "天蓝": 1
+      },
+      "valid": 20,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-letter:en": {
+      "counts": {
+        "q": 8,
+        "m": 5,
+        "k": 5,
+        "h": 1,
+        "r": 1
+      },
+      "valid": 20,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-100:en": {
+      "counts": {
+        "42": 6,
+        "47": 12,
+        "37": 1
+      },
+      "valid": 19,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 1,
+      "error": 0
+    },
+    "random-number-1-100:zh": {
+      "counts": {
+        "47": 6,
+        "42": 10,
+        "57": 2,
+        "37": 1,
+        "73": 1
+      },
+      "valid": 20,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-10:en": {
+      "counts": {
+        "7": 20
+      },
+      "valid": 20,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    }
+  },
+  "tokenizer": {
+    "base_input_tokens": 19,
+    "deltas": {
+      "latin": 9,
+      "chinese": 12,
+      "japanese": 12,
+      "korean": 19,
+      "russian": 15,
+      "emoji": 8,
+      "code": 18,
+      "unicode-mix": 15,
+      "digits": 40,
+      "whitespace": 6,
+      "long-latin": 37
+    }
+  },
+  "notes": "preset=standard protocol=Answer with exactly one ..."
+}

@@ -1,0 +1,117 @@
+{
+  "format_version": 1,
+  "protocol": "one-token/v1",
+  "model": "gpt-6-luna",
+  "source": "gateway:gpt-6-luna",
+  "collected_at": "2026-10-05T09:00:06Z",
+  "samples_per_cell": 20,
+  "cells": {
+    "coin-flip:en": {
+      "counts": {
+        "heads": 18
+      },
+      "valid": 18,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 2,
+      "error": 0
+    },
+    "random-animal:en": {
+      "counts": {
+        "otter": 16,
+        "capybara": 2
+      },
+      "valid": 18,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 2,
+      "error": 0
+    },
+    "random-color:en": {
+      "counts": {
+        "teal": 15,
+        "cerulean": 1,
+        "turquoise": 1,
+        "purple": 1
+      },
+      "valid": 18,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 2,
+      "error": 0
+    },
+    "random-color:zh": {
+      "counts": {
+        "蓝": 17
+      },
+      "valid": 17,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 3,
+      "error": 0
+    },
+    "random-letter:en": {
+      "counts": {
+        "r": 1,
+        "q": 14,
+        "m": 4
+      },
+      "valid": 19,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 1,
+      "error": 0
+    },
+    "random-number-1-100:en": {
+      "counts": {
+        "47": 11,
+        "37": 3,
+        "73": 1
+      },
+      "valid": 15,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 5,
+      "error": 0
+    },
+    "random-number-1-100:zh": {
+      "counts": {
+        "37": 11,
+        "47": 5,
+        "57": 2
+      },
+      "valid": 18,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 2,
+      "error": 0
+    },
+    "random-number-1-10:en": {
+      "counts": {
+        "7": 19
+      },
+      "valid": 19,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 1,
+      "error": 0
+    }
+  },
+  "tokenizer": {
+    "base_input_tokens": 18,
+    "deltas": {
+      "latin": 9,
+      "chinese": 13,
+      "japanese": 15,
+      "korean": 14,
+      "russian": 10,
+      "emoji": 17,
+      "code": 18,
+      "unicode-mix": 15,
+      "digits": 14,
+      "whitespace": 6,
+      "long-latin": 37
+    }
+  },
+  "notes": "preset=standard protocol=Answer with exactly one ..."
+}
