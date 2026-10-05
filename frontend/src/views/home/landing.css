@@ -278,7 +278,7 @@
   gap: 12px 32px;
 }
 
-/* ---- Manifesto: clauses light up as they cross the viewport, beside the film ---- */
+/* ---- Manifesto: clauses light up one by one on arrival, beside the film ---- */
 
 /* The film runs off the right edge of the screen, so the section keeps a gutter
    on the left only. */
@@ -289,16 +289,17 @@
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   align-content: center;
   gap: 64px;
-  view-timeline: --manifesto;
 }
 
-/* It ends on the line where the film's picture beside it ends. */
+/* The text sets the row's height and the film's picture fills it, so their
+   tops and feet line up. The size keeps growing with the screen, with no
+   cap, so the text and the picture beside it keep their proportions at
+   every width and the picture is never cropped by much. */
 .manifesto-text {
   display: flex;
-  align-self: end;
   flex-direction: column;
   gap: 0.6em;
-  font-size: clamp(28px, 3.2vw, 48px);
+  font-size: max(28px, 3.2vw);
   font-weight: 600;
   line-height: 1.35;
   color: var(--ink);
@@ -314,33 +315,24 @@
   font-size: clamp(28px, 3.6vw, 56px);
 }
 
-/* The clauses light one after another on the section's own timeline, so the
-   last is lit by the time the section has arrived; timed by each clause's own
-   place on the screen, the last one was still grey with the section in place. */
-@supports (animation-timeline: view()) {
-  .manifesto-clause {
-    animation: clause-light linear both;
-    animation-timeline: --manifesto;
-    animation-range: entry 30% entry 55%;
-  }
-
-  .manifesto-clause:nth-child(2) {
-    animation-range: entry 45% entry 70%;
-  }
-
-  .manifesto-clause:nth-child(3) {
-    animation-range: entry 60% entry 85%;
-  }
+/* Once the text is on screen the clauses light one after another, and dim
+   again once it has left, so it replays. Timed rather than tied to the scroll,
+   so the sequence is seen wherever the text sits and always ends fully lit. */
+.manifesto-clause {
+  color: var(--line-2);
+  transition: color 700ms var(--ease-out);
 }
 
-@keyframes clause-light {
-  from {
-    color: var(--line-2);
-  }
+.manifesto-lit .manifesto-clause {
+  color: var(--ink);
+}
 
-  to {
-    color: var(--ink);
-  }
+.manifesto-lit .manifesto-clause:nth-child(2) {
+  transition-delay: 450ms;
+}
+
+.manifesto-lit .manifesto-clause:nth-child(3) {
+  transition-delay: 900ms;
 }
 
 @media (width <= 900px) {
@@ -348,6 +340,10 @@
     padding-right: var(--gutter);
     grid-template-columns: minmax(0, 1fr);
     gap: 32px;
+  }
+
+  .manifesto-text {
+    font-size: 28px;
   }
 }
 
@@ -1010,9 +1006,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero-scene,
-  .manifesto-clause {
+  .hero-scene {
     animation: none;
+  }
+
+  .manifesto-clause {
+    color: var(--ink);
+    transition: none;
   }
 
   .solution-swap-enter-active,

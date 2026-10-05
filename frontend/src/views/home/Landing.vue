@@ -9,9 +9,11 @@ import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
 
-// The manifesto lights up clause by clause as it scrolls through the viewport,
-// beside the film that shows it happening.
+// The manifesto lights up clause by clause once it is on screen, beside the film
+// that shows it happening, and goes dim again once it has left, to replay.
 const manifesto = computed(() => [t('publicSite.manifesto1'), t('publicSite.manifesto2'), t('publicSite.manifesto3')])
+const manifestoEl = ref<HTMLElement>()
+const manifestoLit = ref(false)
 
 const steps = computed(() => [
   { title: t('publicSite.memoryTitle'), body: t('publicSite.memoryBody') },
@@ -129,6 +131,7 @@ watch(() => i18n.global.locale.value, restartTyping)
 const step = ref(0)
 const stepEls = ref<HTMLElement[]>([])
 let observer: IntersectionObserver | null = null
+let manifestoObserver: IntersectionObserver | null = null
 
 onMounted(() => {
   observer = new IntersectionObserver(
@@ -140,11 +143,20 @@ onMounted(() => {
     { rootMargin: '-45% 0px -45% 0px' }
   )
   for (const el of stepEls.value) observer.observe(el)
+  manifestoObserver = new IntersectionObserver(
+    ([entry]) => {
+      if (entry.intersectionRatio >= 0.6) manifestoLit.value = true
+      else if (!entry.isIntersecting) manifestoLit.value = false
+    },
+    { threshold: [0, 0.6] }
+  )
+  if (manifestoEl.value) manifestoObserver.observe(manifestoEl.value)
   restartTyping()
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
+  manifestoObserver?.disconnect()
   run += 1
   clearTimeout(typingTimer)
 })
@@ -187,7 +199,7 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="manifesto" :aria-label="t('publicSite.manifestoLabel')">
-      <p class="manifesto-text">
+      <p ref="manifestoEl" class="manifesto-text" :class="{ 'manifesto-lit': manifestoLit }">
         <span v-for="(clause, i) in manifesto" :key="i" class="manifesto-clause">{{ clause }}</span>
       </p>
       <!-- The film is in Chinese, with no subtitles yet. -->

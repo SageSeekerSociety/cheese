@@ -68,7 +68,7 @@ function rewind() {
 
 /* The caption is the film's way in: the line says what it shows, and the arrow
    says it plays. It sits above the picture, outside the row, so the picture
-   alone spans the manifesto beside it. */
+   alone spans the manifesto beside it, top to foot. */
 .film-caption {
   position: absolute;
   bottom: calc(100% + 16px);
@@ -104,14 +104,13 @@ function rewind() {
   transform: translateX(3px);
 }
 
-/* At least 16:9, and as tall as the manifesto beside it when that is taller; the
-   extra height is cropped off the sides, more off the left, where the picture is
-   empty and feathered anyway. */
+/* Exactly as tall as the manifesto beside it, which sets the row, and as wide
+   as its column; whatever does not fit is cropped, more off the left, where the
+   picture is empty and feathered anyway. */
 .film-frame {
-  position: relative;
+  position: absolute;
   isolation: isolate;
-  flex: 1;
-  aspect-ratio: 16 / 9;
+  inset: 0;
 }
 
 /* The glow: the poster itself, blurred and spread past the frame. */
@@ -137,10 +136,10 @@ function rewind() {
   filter: var(--film-dim, none);
 
   /* Feathered all round, widest on the left where it meets the words, so no
-     edge of the frame ever shows; shortest at the foot, so the picture reaches
-     the line the manifesto ends on. */
+     edge of the frame ever shows; short at the top and foot, so the picture
+     visibly reaches the lines the manifesto starts and ends on. */
   mask-image: linear-gradient(to right, transparent, var(--ink) 22%, var(--ink) 90%, transparent),
-    linear-gradient(to bottom, transparent, var(--ink) 20%, var(--ink) 92%, transparent);
+    linear-gradient(to bottom, transparent, var(--ink) 10%, var(--ink) 92%, transparent);
   mask-composite: intersect;
   transition: filter var(--dur-slow) var(--ease-out);
 }
@@ -157,6 +156,7 @@ function rewind() {
   filter: none;
 }
 
+/* Below the text on a phone, the picture keeps its own shape. */
 @media (width <= 900px) {
   .film {
     gap: 16px;
@@ -164,6 +164,12 @@ function rewind() {
 
   .film-caption {
     position: static;
+  }
+
+  .film-frame {
+    position: relative;
+    inset: auto;
+    aspect-ratio: 16 / 9;
   }
 
   .film-video {
