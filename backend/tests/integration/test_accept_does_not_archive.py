@@ -52,7 +52,7 @@ def _card(
     subject: str = "chore(test): file an accept card",
 ):
     response = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             **delivery_artifact(client, topic_id),
@@ -83,7 +83,7 @@ def _commit_next_task(client, project_id: str, topic_id: str, text: str) -> None
 
 def _task_state(client, topic_id: str) -> dict:
     response = client.get(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}",
+        f"/topics/{delivery_task_id(client, topic_id)}/task",
         headers=delivery_headers(client, topic_id),
     )
     assert response.status_code == 200, response.text

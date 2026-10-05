@@ -224,11 +224,8 @@ def test_a_gap_expires_when_the_pin_moves(monkeypatch) -> None:
 def test_every_difference_code_is_one_some_declaration_fills_in() -> None:
     """没有人填的差异码，是一句替谁也没读过的一格印好的答案。
 
-    这条守卫同时是结论 43 的那一条：四条硬性要求
-    （``harness.SubagentRequirement``）在这张表上没有格子——答不出的骨架不在注册
-    表里——所以一条「本骨架不支持子 agent」的码进来之后，没有任何一份声明用得上
-    它，红在这里。名单封闭的意义就在这儿：一条填不进任何一格的码，是给一件本来
-    不该发生的事先备好的说法。
+    名单封闭的意义就在这儿：一条填不进任何一格的码，是给一件本来不该发生的事先
+    备好的说法。
     """
     used = {
         cell

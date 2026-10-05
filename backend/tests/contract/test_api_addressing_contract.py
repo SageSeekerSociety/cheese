@@ -229,7 +229,7 @@ def test_the_profiled_app_expands_exactly_the_effective_routes(profiled_route_ro
         "the seven WebSocket routes are collected despite having no methods"
     )
     assert (
-        "/topics/{topic_id}/tasks/{task_id}/accept-card",
+        "/topics/{topic_id}/accept-card",
         "app.api.routes.accept.create_accept_card",
     ) in {(row["path"], row["endpoint"]) for row in rows}
     assert (

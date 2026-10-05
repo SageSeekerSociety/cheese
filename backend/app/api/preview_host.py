@@ -29,9 +29,8 @@ from app.core.errors import AppError, BaseError, NotFoundError
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_origin
-from app.domain.topic.services import TopicService
 
 AUTH_PATH = "/_cheese/session"
 # 房间文件在这个内容域上的地址。它和 `AUTH_PATH` 同住 `/_cheese/` 这个命名空间：
@@ -152,7 +151,11 @@ def cookie_name() -> str:
 async def require_preview_access(
     session: AsyncSession, topic_id: uuid.UUID, handle: str
 ) -> Place:
-    place = await TopicService(session).place_or_404(topic_id)
+    """The conversation a preview belongs to — a room's, or one of its tasks' —
+    once ``handle`` may see its room."""
+    place = await PlaceResolver(session).conversation(topic_id)
+    if place is None:
+        raise NotFoundError("Preview unavailable")
     resolver = ActorResolver(session=session, bearer=None, cheese_token="")
     actor = Actor(handle=handle, user_id=None, via="token")
     if not await resolver.can_access_topic(
@@ -365,7 +368,9 @@ class PreviewHostMiddleware:
                 return response
             artifact = None
             if target is None and resource is None:
-                artifact = await BlockRepository(session).latest_artifact(place.room_id)
+                artifact = await BlockRepository(session).latest_artifact(
+                    place.room_id, task_id=place.task_id
+                )
                 if artifact is None:
                     return Response("Preview unavailable", status_code=404)
             if exchange:
@@ -390,12 +395,13 @@ class PreviewHostMiddleware:
                     # embedded session usable when third-party cookies are blocked.
                     response.headers["set-cookie"] += "; Partitioned"
                 return response
-            project = place.project_id
+            # A task's files are its room's.
+            project, room = place.project_id, place.room_id
         if target is not None:
             if request.method not in {"GET", "HEAD"}:
                 return Response(status_code=405)
             data = await asyncio.to_thread(
-                library.read_room_file, project, topic_id, target
+                library.read_room_file, project, room, target
             )
             media = mimetypes.guess_type(target)[0]
             body = _served_body(data, media)
@@ -420,7 +426,7 @@ class PreviewHostMiddleware:
             return Response(status_code=405)
         relative = request.url.path.lstrip("/") or PurePosixPath(entry).name
         data = await asyncio.to_thread(
-            library.read_preview_file, project, topic_id, entry, relative
+            library.read_preview_file, project, room, entry, relative
         )
         if (
             resource
@@ -467,7 +473,7 @@ class PreviewHostMiddleware:
                     seat = resource["seat"]
                 else:
                     artifact = await BlockRepository(session).latest_artifact(
-                        place.room_id
+                        place.room_id, task_id=place.task_id
                     )
                     if artifact is None or artifact.mime_type != APP_MIME:
                         raise NotFoundError("Preview unavailable")

@@ -209,7 +209,7 @@ async def test_an_entry_from_a_superseded_session_moves_nothing(db_factory):
     # The seat's current session is sess-new; the entry drains from sess-old.
     async with db_factory() as session:
         await AgentSessionService(session).remember(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle=seat,
             resume_token="sess-new",
             harness="pi",
@@ -272,7 +272,7 @@ async def test_a_pointer_writer_and_a_bind_serialize_on_the_row(db_factory):
 
     async with db_factory() as session:
         await AgentSessionService(session).remember(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle=seat,
             resume_token="sess-old",
             harness="pi",
@@ -293,7 +293,7 @@ async def test_a_pointer_writer_and_a_bind_serialize_on_the_row(db_factory):
             .with_for_update()
         )
         await AgentSessionService(writer).remember(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle=seat,
             resume_token="sess-new",
             harness="pi",
@@ -468,7 +468,7 @@ async def test_a_reader_stalled_through_a_stop_and_reattach_moves_nothing(db_fac
     # through the stop and the re-attach (same session, resumed journal).
     async with db_factory() as session:
         await AgentSessionService(session).remember(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle=seat,
             resume_token="sess-1",
             harness="pi",

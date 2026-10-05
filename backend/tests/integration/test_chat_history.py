@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domain.block.models import AuthorType, Block, BlockKind
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.unit.test_platform_tool_runner import cheese as tools
 
 
@@ -173,18 +173,9 @@ def test_every_block_kind_can_be_read_with_its_complete_fields(client, kind):
     assert _history(client, room, kind=kind.value)["data"][0] == block
 
 
-def test_room_history_and_task_card_history_have_separate_scopes(client):
+def test_room_history_and_task_history_have_separate_scopes(client):
     project, room = _room(client)
-    result = client.post(
-        f"/topics/{room}/split",
-        json={
-            "title": "Investigate",
-            "brief": "Read the logs",
-            "reviewer_handle": "alice",
-        },
-    )
-    assert result.status_code == 200, result.text
-    task = result.json()["data"]["id"]
+    task = open_task(client, room, "Investigate", start=False)["id"]
     parent, child = uuid.uuid4(), uuid.uuid4()
     ids = _seed(
         client,
@@ -202,10 +193,9 @@ def test_room_history_and_task_card_history_have_separate_scopes(client):
         ],
     )
     assert ids[1] not in [b["id"] for b in _history(client, room)["data"]]
-    assert [
-        b["id"] for b in _history(client, room, task_id=task, q="Task")["data"]
-    ] == ids[1:]
-    replies = _history(client, room, reply_to=str(parent))
+    assert [b["id"] for b in _history(client, task, q="Task")["data"]] == ids[1:]
+    assert ids[0] not in [b["id"] for b in _history(client, task)["data"]]
+    replies = _history(client, task, reply_to=str(parent))
     assert replies["data"][0]["id"] == str(child)
     assert replies["data"][0]["task_id"] == task
     assert (

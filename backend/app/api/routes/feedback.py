@@ -136,7 +136,9 @@ async def _in_room(
     if topic is None:
         return await resolver.resolve(), None
     place = await TopicService(db).place_or_404(topic)
-    who = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    who = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         who, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )

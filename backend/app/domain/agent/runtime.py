@@ -129,7 +129,7 @@ async def _instance_of(
     from app.domain.room_task.place import PlaceResolver
 
     async with session_factory() as session:
-        place = await PlaceResolver(session).resolve(place_id)
+        place = await PlaceResolver(session).conversation(place_id)
         if place is None:
             return None
         return await session.scalar(
@@ -1491,7 +1491,7 @@ class AgentWorkRunner:
         cannot know, sending again is the riskier side.
 
         Whose turn it was does not enter into it. A deploy that strands 平台's
-        own work — a 分身's kickoff, 验收卡被驳回, CI 红了 — strands it just as
+        own work — a task's kickoff, 验收卡被驳回, CI 红了 — strands it just as
         permanently as a person's message, and the room shows nothing either
         way. Re-sending it is what keeps the platform working rather than merely
         quiet.

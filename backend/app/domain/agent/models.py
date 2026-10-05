@@ -79,8 +79,8 @@ class AgentTurn(Base):
     is_resume: Mapped[bool] = mapped_column(Boolean, default=False)
     # May this turn be re-delivered by re-submitting `content`?
     #
-    # Yes for anything whose content IS the task: a person's message, a 分身's
-    # kickoff prompt, and every platform nudge (验收卡被驳回、上游合并冲突、CI
+    # Yes for anything whose content IS the task: a person's message, a task's
+    # opening prompt, and every platform nudge (验收卡被驳回、上游合并冲突、CI
     # 红了、后台任务跑完了). Each is a standalone instruction, and re-sending it
     # verbatim is the whole of what "the work still happens" means.
     #

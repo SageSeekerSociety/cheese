@@ -7,11 +7,11 @@ learned there, and a **session** is one conversation that may be thrown away.
 Until now the third layer was a single ``topics.session_id`` column, which said —
 structurally, not by policy — that a place hosts at most one agent.
 
-Keyed by ``(room, agent_handle, harness)`` — so a room can host several agents at
-once and each keeps its own conversation. A ROOM and nothing smaller: 开一条活
-留下的是一个分支、一张卡和一个负责人（结论 31），做它的是这个房间某条会话里的一个
-原生子 agent，用的是父进程的那双手（结论 43），所以一条活既不开第二条会话，也不
-另租一份地点。``agent_handle`` is
+Keyed by ``(conversation, agent_handle, harness)`` — so a room can host several
+agents at once and each keeps its own conversation, and a task is worked in a
+conversation of its own rather than inside the room's. A conversation is a room
+or a task (:mod:`app.domain.conversation.models`); its id is the room's or the
+task's own. ``agent_handle`` is
 :attr:`~app.domain.agent_instance.services.ResolvedAgent.handle`, the same key the
 agent's memory pool is named by — not the instance's uuid, because a project that
 never configured an agent has no instance row at all and NULL does not compare
@@ -30,12 +30,12 @@ looks up a key that has no row and starts fresh, and handing it back finds the
 old row still there.
 
 A row also carries WHERE this conversation's process runs, and a copy of the
-room's work computer. 一个话题一个容器（2026-09-28 决定，推翻结论 60 的后半）：
-**一间房只有一条算力选择**，房间里坐着的每一条会话都工作在它算出来的那台机器上，
-所以那一列（``execution_request`` / ``work_lease``）是房间的决定的副本，必须与房间
-一致，解析的时候也不问它——问的是房间那一项（``machine/session_work._attempt``）。
-进程在哪台会话机上仍然是这条会话自己的事：一块屏归一间房，屏上的几条会话各自落在
-自己那条会话机上（``runtime_location``）。
+work computer it was given. 一个话题一个容器（2026-09-28 决定）：一间房只有一条
+算力选择，房间里的会话都工作在它算出来的那台机器上；一个任务没有自己的选择时也用
+它所在房间的那一项，有就用自己的（``tasks.compute_config``）。所以那一列
+（``execution_request`` / ``work_lease``）是那项选择的副本，解析的时候问的是选择
+本身（``machine/session_work._attempt``）。进程在哪台会话机上仍然是这条会话自己的
+事（``runtime_location``）。
 """
 
 import uuid
@@ -47,6 +47,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+
+# The registry `conversation_id` points at: mapped wherever a session is, so the
+# foreign key resolves in a process that never imports `app.models`.
+from app.domain.conversation.models import Conversation  # noqa: F401
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,19 +81,27 @@ class SessionPlace:
 
 class AgentSession(UuidPk, Timestamps, Base):
     __tablename__ = "agent_sessions"
-    # One session per agent per ROOM. A plain unique index: every row here is a
-    # room's own, so there is no predicate left for it to carry.
+    # One session per agent per conversation.
     __table_args__ = (
         Index(
-            "uq_agent_sessions_room",
-            "topic_id",
+            "uq_agent_sessions_conversation",
+            "conversation_id",
             "agent_handle",
             "harness",
             unique=True,
         ),
     )
 
-    # THE ROOM this conversation happens in — the only address a session has.
+    # The conversation this session is in: a room's or a task's id. A row
+    # written with only its room is the room's own session.
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        default=lambda context: context.get_current_parameters()["topic_id"],
+    )
+    # The room this session works in: the conversation itself when that is a
+    # room, the task's room when it is a task. Written with the row
+    # (``AgentSessionRepository._upsert``), so a room-wide question — the room's
+    # machine, its switch, its cleanup — reads one column.
     topic_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )

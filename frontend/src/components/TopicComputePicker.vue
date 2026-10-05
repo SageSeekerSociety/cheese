@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 房间这一项：这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻结论
 // 60）：改它就是整个房间一起搬，房间里的每个 AI 队友都换过去。挂在成员名册里房间
-// 那一行上。
+// 那一行上。给的是任务的 id 时改的是那个任务自己的那一项，只有它的会话搬；机器访问
+// 范围是房间的，任务这里不给改。
 import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { computed, ref } from 'vue'
@@ -23,6 +24,8 @@ const proposal = ref('')
 // 原来那台够不着、推不上去：人唯一可以不推就换的情况，这时把「仍然更换」给他，
 // 并记住他刚选的是哪一台。
 const unreachable = ref<ComputeChoice | null>(null)
+// 任务的那一份带 `follows_room`，房间的没有。
+const isTask = computed(() => props.profile.follows_room != null)
 const menuOpen = ref(false)
 const more = ref(false)
 const choices = computed(() => compactChoices(props.profile.project_default, props.profile.choice))
@@ -36,7 +39,7 @@ function online(choice: ComputeChoice): string {
 // 房间在自己登记的那台机器上能看到什么：隔离环境（默认），或者整台机器——只有
 // 机主本人能给。说的是房间点了名、或者第一轮已经钉下的那一台。
 const machine = computed(() => {
-  if (props.profile.current !== 'device') return null
+  if (isTask.value || props.profile.current !== 'device') return null
   const id = props.profile.device_id ?? props.profile.choice.device_id
   return props.profile.devices.find((d) => d.device_id === id) ?? null
 })
@@ -87,8 +90,8 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?:
       <button type="button" class="cp-action" v-bind="menuProps">{{ t('work.roomMachine.edit') }}</button>
     </template>
     <v-card class="cp-menu">
-      <div class="cp-heading">{{ t('work.roomMachine.heading') }}</div>
-      <p class="cp-hint">{{ t('work.roomMachine.hint') }}</p>
+      <div class="cp-heading">{{ isTask ? t('work.roomMachine.taskHeading') : t('work.roomMachine.heading') }}</div>
+      <p class="cp-hint">{{ isTask ? t('work.roomMachine.taskHint') : t('work.roomMachine.hint') }}</p>
       <button
         v-for="choice in choices"
         :key="choiceKey(choice)"

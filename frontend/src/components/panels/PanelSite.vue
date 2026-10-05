@@ -36,7 +36,8 @@ import { vRovingTabs } from '@/lib/rovingTabs'
 
 const props = withDefaults(
   defineProps<{
-    topic: Topic | null
+    // 这段对话的 id：房间的，或者任务的。
+    topicId: string | null
     // This tab is the one on screen. Load happens on the rising edge, exactly
     // like opening the old drawer did.
     active?: boolean
@@ -151,7 +152,7 @@ const viewing = computed(() =>
 // （.claude/rules/architecture.md）。递进去的是「现在读的是谁」和这一窗自己的滚动
 // 容器；读回来的人由 noteAgents / noteStarts 记到这一栏自己的名册和轮次上。
 const { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive } = useSiteTranscript({
-  topicId: () => props.topic?.id ?? null,
+  topicId: () => props.topicId,
   viewing: () => viewing.value,
   scrollRef,
   noteAgents,
@@ -292,7 +293,7 @@ function isLive(index: number): boolean {
 
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
-      <SessionInspector v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
+      <SessionInspector v-if="topicId" :topic-id="topicId" :active="active" :pushed="agentControl" />
       <div
         v-if="agents.length > 1"
         v-roving-tabs
@@ -402,8 +403,8 @@ function isLive(index: number): boolean {
               </button>
               <!-- 摊开的这一步打印了什么：收着，点了才取。 -->
               <SiteStepOutput
-                v-if="topic && expandedSite.has(b.id) && b.meta?.output_bytes"
-                :topic-id="topic.id"
+                v-if="topicId && expandedSite.has(b.id) && b.meta?.output_bytes"
+                :topic-id="topicId"
                 :block-id="b.id"
                 :bytes="b.meta.output_bytes"
               />

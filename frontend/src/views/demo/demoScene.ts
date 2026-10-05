@@ -26,7 +26,7 @@ export interface OverviewScene {
 export interface SceneTask {
   id?: string
   title: string
-  // 下一步该谁动。不写就是 施工中。
+  // 下一步该谁动。不写就是 进行中。
   column?: 'building' | 'delivering' | 'needs_you' | 'done'
   // 这一列里那句话的码。不写按列给一句。
   phrase?: BoardPhrase

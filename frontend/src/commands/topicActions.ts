@@ -12,6 +12,7 @@ import { toast } from 'vuetify-sonner'
 
 import { copyLink, linkOf } from './copy'
 
+import { createRoomTask } from '@/api/tasks'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -48,6 +49,15 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
     icon: muted ? 'mdi-bell-outline' : 'mdi-bell-off-outline',
     run: () => void store.setMuted(topic.id, !muted),
   })
+  // 没归档的房间（包括综合）都能新建任务。
+  if (topic.status !== 'archived') {
+    actions.push({
+      id: 'topic.newTask',
+      title: t('work.room.menu.newTask'),
+      icon: 'mdi-checkbox-marked-circle-plus-outline',
+      run: () => void newTask(topic, router),
+    })
+  }
   // 项目本体不是一件事：没有名字可改，也不能归档。
   if (topic.kind === 'root') return actions
   if (topic.status === 'archived') {
@@ -70,6 +80,20 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
       run: () => void archiveTopic(topic, router),
     })
   return actions
+}
+
+/** 新建任务：建的人就是负责人，建好就去任务页，在那里和 AI 队友说清楚要做什么。 */
+export async function newTask(topic: Topic, router: Router): Promise<void> {
+  const store = useWorkspaceStore()
+  try {
+    const task = await createRoomTask(topic.id)
+    void router.push({
+      name: 'workspace-task',
+      params: { projectId: topic.project_id, topicId: topic.id, taskId: task.id },
+    })
+  } catch (e) {
+    store.reportError(e, t('work.room.menu.newTaskFailed'))
+  }
 }
 
 /** 归档一个话题。正开着的就是它的话，回到项目首页：不把一个冻住的房间留在内容区。 */

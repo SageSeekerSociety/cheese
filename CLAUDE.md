@@ -44,6 +44,10 @@ Retiring something means deleting its code; adopting a replacement means deletin
 
 Judge a mechanism by what it does now, not by why it was created. A check written after an incident points at where that incident surfaced; the code that causes it moves on.
 
+## One table holds one kind of thing
+
+A new kind of data does not go into an existing table as one more type value or one more `meta` key. A column only some kind of row would ever fill says that kind needs a table of its own. Different things share interfaces — references, search, permissions, events — not tables.
+
 ## Assume other agents are working right now
 
 Concurrently, in this repo, on adjacent files. Before starting a fix, look for an open PR already making it. Before handing work off, review every path your change touches; a cache directory in that list is a stop sign.

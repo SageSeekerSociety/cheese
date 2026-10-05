@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.domain.agent_instance.services import ResolvedAgent
+    from app.domain.room_task.place import Place
     from app.domain.topic.models import Topic
 
 
@@ -63,6 +64,21 @@ class WorkChat:
         from app.domain.agent.queries import _resolved_agent
 
         return await _resolved_agent(session, topic)
+
+    async def _agent_at(self, session: AsyncSession, place: Place) -> ResolvedAgent:
+        from app.domain.agent.queries import _agent_at
+
+        return await _agent_at(session, place)
+
+    async def _room_of_conversation(
+        self, conversation_id: uuid.UUID
+    ) -> tuple[uuid.UUID, uuid.UUID | None]:
+        from app.domain.agent.chat import ChatService
+
+        self.__dict__.setdefault("_conversation_rooms", {})
+        return await ChatService._room_of_conversation(
+            cast(ChatService, self), conversation_id
+        )
 
     async def _acting_handle(
         self, session: AsyncSession, topic_id: uuid.UUID, agent: ResolvedAgent

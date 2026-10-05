@@ -84,7 +84,7 @@ beforeEach(() => {
 async function openSite(blocks: Block[], props: Record<string, unknown> = {}) {
   getTranscript.mockResolvedValue({ data: blocks, total: blocks.length })
   const view = render(Site, {
-    props: { topic, active: true, memberNames: NAMES, ...props },
+    props: { topicId: topic.id, active: true, memberNames: NAMES, ...props },
     global: { plugins: [vuetify] },
   })
   await waitFor(() => expect(view.container.querySelector('.site-act')).not.toBeNull())

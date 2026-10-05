@@ -181,7 +181,7 @@ def _topics_with_pending_records() -> set[str]:
 
 
 def wait_work_idle() -> None:
-    """Block until background turns (e.g. the 分身 kickoff a /split submits)
+    """Block until background turns (e.g. a new task's kickoff)
     finish: they run on the TestClient portal loop and write to this worker's DB —
     if a turn is still writing when the next test truncates, the test flakes.
     Returns as soon as they're idle; the generous ceiling only matters under heavy
@@ -431,13 +431,13 @@ class StubChannel(SeatChannel):
         """The seat's runner, started the first time the seat starts."""
         self.last_system_prompt = launch.system_prompt
         self.last_resume_session_id = launch.resume_session_id
-        key = (session.topic_id, agent)
+        key = (session.conversation_id, agent)
         runner = self.sessions.get(key)
         if runner is None:
             runner = ScriptedSession(
-                self.root / str(session.topic_id) / agent / "runner",
+                self.root / str(session.conversation_id) / agent / "runner",
                 self,
-                session.topic_id,
+                session.conversation_id,
                 launch.resume_session_id or self.new_session_id,
                 agent,
             )
@@ -777,41 +777,6 @@ class StubChannel(SeatChannel):
                 ],
             },
             tool_use_result={"content": [{"type": "text", "text": text}]},
-        )
-
-    def spawns(
-        self,
-        topic_id: uuid.UUID,
-        *,
-        thread_label: str,
-        agent_id: str = "worker-1",
-        call: str = "call-1",
-        agent: str | None = None,
-    ) -> None:
-        """房间起一个分身去做某张卡：派它的那次 Agent 调用，和它开始的那条记录。
-
-        标识写在交给分身的 prompt 里——Claude Code 的记录上没有第二个地方装得下它
-        （`claude_code/events.py` 的 `bind`）。从这里起，这个分身在 stdout 上的每
-        条记录（`parent_tool_use_id` 是这次调用）都是这张卡的。
-        """
-        self.uses(
-            topic_id,
-            "Agent",
-            eid=call,
-            agent=agent,
-            description="去做这条活",
-            prompt=f"简报见下。线程标识：{thread_label}",
-            subagent_type="general-purpose",
-        )
-        self.record(
-            topic_id,
-            agent=agent,
-            type="system",
-            subtype="task_started",
-            task_id=agent_id,
-            tool_use_id=call,
-            task_type="local_agent",
-            description="去做这条活",
         )
 
     def stops(
@@ -1303,7 +1268,7 @@ def client(
         with TestClient(app) as c:
             # The cheese write-API is token-gated (app.main.cheese_token_gate); send
             # the secret on every test request so contract tests exercising those
-            # endpoints (doc/split/weekly/...) aren't rejected with 401.
+            # endpoints (doc/weekly/...) aren't rejected with 401.
             c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]

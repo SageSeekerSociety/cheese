@@ -29,6 +29,7 @@ import { topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
+import TaskPane from '@/views/workspace/TaskPane.vue'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 
 // 话题视图: ONE topic header, then the chat | 工作面板 split. The input bar is
@@ -39,7 +40,8 @@ import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 // any child — can carry one topic's state into the next.
 defineOptions({ name: 'TopicView' })
 
-const props = defineProps<{ projectId: string; topicId: string }>()
+// `taskId`：地址指着这个房间里的一个任务时，画的是任务页（`TaskPane`）。
+const props = defineProps<{ projectId: string; topicId: string; taskId?: string }>()
 const { mdAndUp } = useDisplay()
 // 平板横放那一档（960–1180）：对话占满整宽，工作面板是从右边拉进来的浮层。
 const compact = useCompactDesktop()
@@ -66,13 +68,6 @@ useTopBarBack(() =>
 )
 void tabHistory.ensureChatBehind()
 
-// 看板上点开的那张卡。**一件活不是地点**：做它的分身住在这个房间的会话里，所以
-// 打开一张卡不离开房间，只是总览那一格往下钻一层——地址里记的就是这一层，于是
-// 「你看一下这条活」是一条能发出去的链接。
-const openCardId = computed(() => {
-  const q = route.query.card
-  return typeof q === 'string' && q ? q : null
-})
 // 「去验收」：决策在聊天，审查在面板 —— 它不把人带去任何地方，只把右栏切到
 // 「改动」那一格。对话栏末尾那张验收卡和总览里那张卡上的按钮是同一个动作，所以
 // 只有这一处定义（`chatEvents.review` 和 `<WorkPanel @review>` 都指过来）。
@@ -85,23 +80,33 @@ const focusBlock = computed(() => {
   const q = route.query.block
   return typeof q === 'string' && q ? q : null
 })
-// 同时开着一张卡时，点名的是卡里的那一条（卡里的对话不在房间的对话里）。
-const chatFocusBlock = computed(() => (openCardId.value ? null : focusBlock.value))
-const cardFocusBlock = computed(() => (openCardId.value ? focusBlock.value : null))
-
-function onOpenCard(taskId: string | null) {
-  if (openCardId.value === taskId) return
-  // 桌面上是 push：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
-  tabHistory.openCard(taskId)
+// 任务有自己的页面：点开一个任务就去那里，浏览器的返回退回房间。
+function onOpenCard(taskId: string) {
+  void router.push({ name: 'workspace-task', params: { projectId: props.projectId, topicId: props.topicId, taskId } })
+}
+// 已经写进提交历史的旧链接（`?card=<任务>`）：那一层下钻已经没有了，任务有自己
+// 的页面，照着链接来的人直接送过去。
+watch(
+  () => route.query.card,
+  (card) => {
+    if (typeof card !== 'string' || !card) return
+    void router.replace({
+      name: 'workspace-task',
+      params: { projectId: props.projectId, topicId: props.topicId, taskId: card },
+    })
+  },
+  { immediate: true }
+)
+function backToRoom() {
+  void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: props.topicId } })
 }
 
 // ---- 平板横放：工作面板的收 / 开 ----
 // 这一档里对话占满整宽，面板是一只从右边拉进来的浮层，默认收起。「面板开着」这件事
-// 就写在地址里——`?tab=` 或 `?card=` 就是「有人打开了这一格」，于是对话里点「查看改
-// 动」、点开一张卡、别人发来的链接，全走同一条路（`onPanelTab` / `onOpenCard` 本来就
-// 在改地址）。宽档里面板一直开着（就在对话旁边），手机上是 tab 栏的第一格，两处都不
+// 就写在地址里——`?tab=` 就是「有人打开了这一格」，于是对话里点「查看改动」、别人发
+// 来的链接，全走同一条路（`onPanelTab` 本来就在改地址）。宽档里面板一直开着（就在对话旁边），手机上是 tab 栏的第一格，两处都不
 // 经过这里。
-const panelOpen = computed(() => !compact.value || !!panelTab.value || !!openCardId.value)
+const panelOpen = computed(() => !compact.value || !!panelTab.value)
 // 收起之后从页头那颗开关再打开时回到哪一格：面板此刻在画哪一格。这一格未必来自地址
 // ——平板横放里进房间时自动选中的那一格（芝士在干活就是「现场」、卡等你验收就是「改
 // 动」）只留在面板里、没写进地址，收起再打开要回到它。量不到就落在总览。
@@ -111,9 +116,9 @@ function openPanel() {
 }
 function closePanel() {
   if (!compact.value) return
-  // 清掉地址里的 tab / card：面板收起了，地址就不该再写着一格开着——不然下一次点
+  // 清掉地址里的 tab：面板收起了，地址就不该再写着一格开着——不然下一次点
   // 「查看改动」时 goTab 会因为「已经在 changes」而什么都不做，面板打不开。
-  void router.replace({ query: { ...route.query, tab: undefined, card: undefined } })
+  void router.replace({ query: { ...route.query, tab: undefined } })
   // Esc 关掉浮层，焦点回到打开它那颗开关（键盘和读屏用户必须回得去）。
   void nextTick(() => document.querySelector<HTMLElement>('[data-panel-toggle]')?.focus())
 }
@@ -226,6 +231,7 @@ const chatColumn = ref<{
   reloadAccept: (silent?: boolean) => void
   reloadFeedback: () => void
   reloadSkills: () => void
+  reloadProposals: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
@@ -341,6 +347,8 @@ function handleStateChanged(resource: string) {
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   // 技能的提议落下、被保存或被拒：那张卡跟着变。
   else if (resource === 'skills') chatColumn.value?.reloadSkills()
+  // AI 队友提议了任务，或者有人创建、不用了一条：提议卡跟着变。
+  else if (resource === 'task-proposals') chatColumn.value?.reloadProposals()
   else activityTick.value += 1 // doc / notify → reload
 }
 
@@ -388,8 +396,8 @@ function handleMentionClick(handle: string) {
   void router.push(userRefRoute(handle, props.projectId))
 }
 
-// ⤴ 升级 from a message bubble (eval A1). 房间里的消息变成这个房间的一张卡，
-// 私聊里的变成一个新房间——两种落点，两种去处。
+// 转为任务 from a message bubble. 房间里的消息变成这个房间的一个任务，私聊里的
+// 变成一个新房间——两种落点，两种去处。
 async function handleUpgradeMessage(messageId: string) {
   const upgraded = await store.upgradeMessage(messageId)
   if (!upgraded) return
@@ -445,6 +453,24 @@ void openPlace()
       </div>
     </div>
 
+    <TaskPane
+      v-else-if="taskId"
+      :key="taskId"
+      :room="selectedTopic"
+      :task-id="taskId"
+      :members="store.members"
+      :room-members="roomMembers"
+      :member-names="memberNames"
+      :agent-name="store.agentName"
+      :agent-handle="store.agentHandle"
+      :topic-list="store.topics"
+      :focus-block="focusBlock"
+      :phone="!mdAndUp"
+      @open-room="backToRoom"
+      @open-topic="openTopic"
+      @mention-click="handleMentionClick"
+    />
+
     <template v-else>
       <!-- Screen-reader heading for the room. Text from `topicTitle`, the same
            source as the `workspace-topic` dynamic title the top bar reads. The
@@ -487,7 +513,7 @@ void openPlace()
             :members="store.members"
             :topic-list="store.topics"
             :unread-on-open="unreadOnOpen"
-            :focus-block="chatFocusBlock"
+            :focus-block="focusBlock"
             v-on="chatEvents"
           />
         </Transition>
@@ -506,7 +532,7 @@ void openPlace()
 
         <!-- 工作面板。宽档里它是对分里右边那一栏（今天的样子，行内排布）；
              平板横放里它是一只从右边拉进来的浮层：对话占满整宽，面板默认收起，
-             打开它的是页头那颗开关（或地址里的 ?tab= / ?card=）。收起时 visibility
+             打开它的是页头那颗开关（或地址里的 ?tab=）。收起时 visibility
              一并藏掉，浮层里的东西不进 tab 序、也不进读屏的树。 -->
         <div
           :id="compact ? 'topic-panel' : undefined"
@@ -531,12 +557,9 @@ void openPlace()
             :card-phase="cardPhase"
             :with-chat="!mdAndUp"
             :compact="compact"
-            :open-card-id="openCardId"
-            :card-focus-block="cardFocusBlock"
             :member-names="memberNames"
             @open-topic="openTopic"
             @open-card="onOpenCard"
-            @review="onReview"
             @mention-click="handleMentionClick"
             @update:tab="onPanelTab"
             @locate="onLocate"
@@ -550,7 +573,7 @@ void openPlace()
                 :members="store.members"
                 :topic-list="store.topics"
                 :unread-on-open="unreadOnOpen"
-                :focus-block="chatFocusBlock"
+                :focus-block="focusBlock"
                 v-on="chatEvents"
               />
             </template>

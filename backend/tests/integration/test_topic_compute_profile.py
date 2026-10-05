@@ -52,7 +52,7 @@ def _mark_started(client, tid: str) -> None:
     async def _run() -> None:
         async with client.test_factory() as s:
             await AgentSessionRepository(s).save(
-                topic_id=uuid.UUID(tid),
+                conversation_id=uuid.UUID(tid),
                 agent_handle=CHEESE_HANDLE,
                 resume_token="sess-1",
                 harness="claude-code",

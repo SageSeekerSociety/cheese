@@ -62,7 +62,12 @@ def mint_scoped_token(
     resource_id: str | None = None,
     document_id: str | None = None,
 ) -> str:
-    """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
+    """Mint an HMAC token scoped to a project (+ optional conversation), expiring
+    in ttl_s.
+
+    ``topic_id`` (claim ``t``) names the conversation: a room, or one of its
+    tasks. A task's session holds its task's id there, and so acts in that task
+    and in no other conversation.
 
     The token also names WHO acts with it (claim ``a``): ``agent_handle``, the
     handle of the agent this turn runs as. Without it a token said only "which
@@ -145,6 +150,13 @@ def bind_resource_token(
         # The signed prefix cannot be stripped to obtain an older credential.
         body = "cxss_" + body
     return f"{body}.{_sign(body)}"
+
+
+def token_task(token: str) -> str | None:
+    """The task a valid scoped token is narrowed to (claim ``k``), if any."""
+    claims = scoped_token_claims(token) if token else None
+    task = (claims or {}).get("k")
+    return str(task) if task else None
 
 
 def token_agent_handle(token: str) -> str | None:

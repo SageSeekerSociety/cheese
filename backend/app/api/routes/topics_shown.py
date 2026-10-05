@@ -125,7 +125,8 @@ async def show_in_room(
     """芝士 摆一份东西出来给这个房间里的人看 —— `cheese show` (#1085 结论四)。
 
     摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
-    （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
+    （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。
+    任务的会话摆的是那个任务的：进任务的列表、成为任务的预览；文件仍存在房间里。"""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     # The teammate that showed it, when a teammate did. A room may seat several,
@@ -135,14 +136,14 @@ async def show_in_room(
     # same claim of the same credential.
     seat = resolver.credential_agent() if actor.via == "cheese" else None
     author = seat or await TopicMemberService(db).resolve_agent_handle(
-        topic_id, room_id=place.room_id
+        place.room_id, room_id=place.room_id
     )
     declared = (body.get("as") or "").strip().lower()
     if declared == "app":
         # An app artifact points at the running server, not a file — the stored
         # content is a human note ("Vue dev server"), not a path.
         path = (body.get("path") or "app").strip()[:120]
-        await _reject_unreachable_app(topic_id, author)
+        await _reject_unreachable_app(place.conversation_id, author)
     else:
         path = clean_artifact_path(body.get("path") or "")
     as_ = declared or artifact_kind_for(path)
@@ -203,10 +204,11 @@ async def show_in_room(
         path=path,
         author=author,
         mime=mime,
+        task_id=place.task_id,
     )
     payload = block.model_dump(mode="json")
     await get_broker().publish(
-        str(place.room_id), {"type": "assistant_block", "block": payload}
+        str(place.conversation_id), {"type": "assistant_block", "block": payload}
     )
     return ok(payload)
 
@@ -223,7 +225,9 @@ async def list_shown(
     部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    shown = await BlockRepository(db).shown_in_room(place.room_id)
+    shown = await BlockRepository(db).shown_in_room(
+        place.room_id, task_id=place.task_id
+    )
     items = [
         {
             "path": block.content,

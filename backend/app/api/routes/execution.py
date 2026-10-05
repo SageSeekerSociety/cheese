@@ -87,12 +87,15 @@ async def execute(
     claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
     if not claims or claims.get("t") != str(topic_id):
         raise AuthenticationRequiredError("A credential for this room is required")
+    # `topic_id` is the conversation the credential works — a room or a task;
+    # the machine, roster and dispatch log are its room's.
+    room_id = await owner_reads.room_of(db, topic_id)
     # The connection owner survives app releases. Loading the full Topic model
     # makes an unrelated column removal break every tool call on the old owner.
     room = (
         await db.execute(
             select(Topic.id, Topic.project_id, Topic.resource_id).where(
-                Topic.id == topic_id
+                Topic.id == room_id
             )
         )
     ).one_or_none()
@@ -105,7 +108,7 @@ async def execute(
     # is its row on the roster, asked through `owner_reads` because this route
     # is served by the connection owner (see there).
     seat = claims.get("a")
-    if seat and not await owner_reads.topic_member(db, topic_id, seat):
+    if seat and not await owner_reads.topic_member(db, room_id, seat):
         raise ForbiddenError(say("topicMemberOnly"))
     lease_generation = None
     if "session" in claims:
@@ -116,9 +119,12 @@ async def execute(
             raise AuthenticationRequiredError(
                 "An execution session is required"
             ) from None
-        owned = await owner_reads.session_execution(db, topic_id, session_id)
+        owned = await owner_reads.session_execution(db, room_id, session_id)
+        # A credential reaches only a session of its own conversation.
+        if owned is not None and owned.conversation_id != topic_id:
+            raise ForbiddenError("This credential works another conversation")
     else:
-        owned = await owner_reads.legacy_execution(db, topic_id)
+        owned = await owner_reads.legacy_execution(db, room_id)
         session_id = owned.id if owned is not None else None
     lease = owned.work_lease if owned is not None else None
     if (
@@ -175,7 +181,7 @@ async def execute(
     dispatch = (
         dispatch_log.record(
             db,
-            place_id=topic_id,
+            place_id=room_id,
             key=str(key),
             tool=str(tool) if tool else payload.method,
             session_id=session_id,

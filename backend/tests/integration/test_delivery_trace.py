@@ -7,8 +7,11 @@ import uuid
 
 import pytest
 
-from tests.delivery import delivery_artifact, delivery_headers
+from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import wait_work_idle
+from tests.delivery import delivery_artifact
 from tests.integration.conftest import (
+    open_task,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -22,16 +25,15 @@ def remote_delivery(client, request):
     client.trace_forge = request.getfixturevalue("app_world")["fake"]
 
 
-def _task_line(pid: str, room: str, task: str, subagent: str, title: str) -> str:
-    """`Cheese-Task:` 一条活写一行：**打得开的地址**、分身、标题。
+def _task_line(pid: str, room: str, task: str, title: str) -> str:
+    """`Cheese-Task:` 一个任务写一行：**打得开的地址**、标题。
 
-    地址是房间页面加 `?tab=overview&card=<task_id>` —— 点开一条活时房间页写进地址
-    栏的就是这两个查询串。活的 id 仍在地址里，`card=` 后面那一段就是。
+    地址是那个任务自己的页面，任务的 id 就在地址末尾。
     """
     from app.core.config import settings
 
     where = f"{settings.frontend_url.rstrip('/')}/projects/{pid}/topics/{room}"
-    return f"Cheese-Task: {where}?tab=overview&card={task} {subagent} {title}"
+    return f"Cheese-Task: {where}/tasks/{task} {title}"
 
 
 def _project(client) -> str:
@@ -49,13 +51,9 @@ def _room(client, project_id: str) -> str:
 
 
 def _dispatch(client, room_id: str, title: str) -> str:
-    """One piece of work in the room, through the only door that makes one."""
-    r = client.post(
-        f"/topics/{room_id}/split",
-        json=dict(reviewer_handle="alice", **{"title": title}),
-    )
-    assert r.status_code == 200, r.text
-    task_id = r.json()["data"]["id"]
+    """One task in the room, opened and started by alice, with its branch."""
+    task_id = open_task(client, room_id, title)["id"]
+    wait_work_idle()
     room = client.get(f"/topics/{room_id}").json()["data"]
     from app.core.sandbox_auth import mint_scoped_token
 
@@ -74,31 +72,17 @@ def _dispatch(client, room_id: str, title: str) -> str:
     return task_id
 
 
-def _worker_starts(client, task_id: str, agent_id: str) -> None:
-    """平台看见一个分身在这条活上开工，把它的 id 记在卡上。
-
-    它就是 `Cheese-Task:` 那一行里说出「哪台机器干的」的那个字串。真实路径上写它的是
-    分身的开工事件（`ChatService._note_worker`）；这里的测试不跑轮次，所以直接踩同一
-    个缝。
-    """
-    from app.domain.room_task.services import TaskService
-
-    async def _write() -> None:
-        async with client.test_factory() as session:
-            tasks = TaskService(session)
-            task = await tasks.get(uuid.UUID(task_id))
-            assert task is not None
-            await tasks.note_worker(task, agent_id)
-            await session.commit()
-
-    asyncio.run(_write())
-
-
 def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = None):
     assert tasks and len(tasks) == 1
+    project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     return client.post(
-        f"/topics/{room_id}/tasks/{tasks[0]}/accept-card",
-        headers=delivery_headers(client, room_id),
+        f"/topics/{tasks[0]}/accept-card",
+        # Filed by that task's own session.
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=project_id, topic_id=str(tasks[0])
+            )
+        },
         json={
             **delivery_artifact(client, room_id),
             "change_subject": subject,
@@ -172,13 +156,11 @@ def _batch(client, pid: str, room: str, subject: str, tasks: list[str]) -> str:
     return landed
 
 
-def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
+def test_the_landed_commit_names_the_agent_and_the_task_delivered(client):
     pid = _project(client)
     room = _room(client, pid)
     mine = _dispatch(client, room, "补 trailer")
     theirs = _dispatch(client, room, "顺手修 flaky 测试")
-    _worker_starts(client, mine, "ac2c038d44616a2f2")
-    _worker_starts(client, theirs, "9f1b7c22e0d341a80")
     machine_commits(uuid.UUID(pid), uuid.UUID(mine), {"a.txt": "one\n"})
 
     card = _deliver(client, room, "feat: deliver one task", [mine])
@@ -186,11 +168,8 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
 
     body = _landed_body(client)
     assert f"Cheese-Agent: {room_agent_seat(client, room)}" in body
-    assert _task_line(pid, room, mine, "ac2c038d44616a2f2", "补 trailer") in body
-    assert (
-        _task_line(pid, room, theirs, "9f1b7c22e0d341a80", "顺手修 flaky 测试")
-        not in body
-    )
+    assert _task_line(pid, room, mine, "补 trailer") in body
+    assert _task_line(pid, room, theirs, "顺手修 flaky 测试") not in body
     # The trailers that were already there did not move over to make room.
     assert f"/topics/{room}" in body
     assert f"Cheese-Card: {card['id']}" in body
@@ -214,36 +193,30 @@ def _two_batches(client) -> tuple[str, str, str, str]:
     room = _room(client, pid)
     earlier = _dispatch(client, room, "上一批写完的活")
     later = _dispatch(client, room, "代码走下一批的活")
-    _worker_starts(client, earlier, "aaaa0000aaaa0000a")
-    _worker_starts(client, later, "bbbb1111bbbb1111b")
     return pid, room, earlier, later
 
 
 def test_work_delivered_in_a_later_batch_is_named_on_that_batch(client):
     """The task rides a tree that finished batches ago; its code is in THIS one.
     Enumerating the delivering tree misses it entirely — its tree is not this
-    tree — and the 分身 that wrote the change vanishes from the history."""
+    tree — and the work that wrote the change vanishes from the history."""
     pid, room, earlier, later = _two_batches(client)
 
     _batch(client, pid, room, "feat: the first batch", [earlier])
     second = _batch(client, pid, room, "feat: the second batch", [later])
 
-    assert (
-        _task_line(pid, room, later, "bbbb1111bbbb1111b", "代码走下一批的活") in second
-    )
+    assert _task_line(pid, room, later, "代码走下一批的活") in second
 
 
 def test_the_earlier_batch_is_not_signed_by_work_that_had_not_landed_yet(client):
     """The other direction of the same bug, and the worse one: the first
-    delivery would be signed by a worker whose code was not in it, and an audit
+    delivery would be signed by work whose code was not in it, and an audit
     reading `git log` has no way to tell that from a real signature."""
     pid, room, earlier, later = _two_batches(client)
 
     first = _batch(client, pid, room, "feat: the first batch", [earlier])
 
-    assert (
-        _task_line(pid, room, earlier, "aaaa0000aaaa0000a", "上一批写完的活") in first
-    )
+    assert _task_line(pid, room, earlier, "上一批写完的活") in first
     assert later not in first
 
 
@@ -256,45 +229,29 @@ def test_a_placeholder_task_that_wrote_no_code_is_never_signed_on(client):
     room = _room(client, pid)
     placeholder = _dispatch(client, room, "只是个占位")
     real = _dispatch(client, room, "真的写了代码")
-    _worker_starts(client, real, "cccc2222cccc2222c")
 
     body = _batch(client, pid, room, "feat: deliver only what was written", [real])
 
-    assert _task_line(pid, room, real, "cccc2222cccc2222c", "真的写了代码") in body
+    assert _task_line(pid, room, real, "真的写了代码") in body
     assert placeholder not in body
 
 
 def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
-    """The sibling case: another thread is live in the same room right now and
-    its changes go out next time. It is open, bound, on the delivering tree and
+    """The sibling case: another task is live in the same room right now and
+    its changes go out next time. It is open, started, on the delivering tree and
     unclaimed by anything — and it belongs in neither this commit nor this
     reader's idea of who wrote it."""
     pid = _project(client)
     room = _room(client, pid)
     done = _dispatch(client, room, "这批做完的活")
     running = _dispatch(client, room, "还在跑的活")
-    _worker_starts(client, done, "dddd3333dddd3333d")
-    _worker_starts(client, running, "eeee4444eeee4444e")
 
     now = _batch(client, pid, room, "feat: land only the finished half", [done])
-    assert _task_line(pid, room, done, "dddd3333dddd3333d", "这批做完的活") in now
+    assert _task_line(pid, room, done, "这批做完的活") in now
     assert running not in now
 
     later = _batch(client, pid, room, "feat: land the other half", [running])
-    assert _task_line(pid, room, running, "eeee4444eeee4444e", "还在跑的活") in later
-
-
-def test_work_no_worker_ever_took_still_appears_when_it_is_declared(client):
-    """`subagent_id` is NULL until a worker starts, and a room can write a
-    change itself. Dropping the row would make the batch in the commit smaller
-    than the batch the room said it delivered."""
-    pid = _project(client)
-    room = _room(client, pid)
-    unclaimed = _dispatch(client, room, "没人认领的活")
-
-    body = _batch(client, pid, room, "feat: deliver work nobody claimed", [unclaimed])
-
-    assert _task_line(pid, room, unclaimed, "-", "没人认领的活") in body
+    assert _task_line(pid, room, running, "还在跑的活") in later
 
 
 def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatch):
@@ -328,15 +285,24 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
 
 
 def test_work_from_another_room_cannot_be_signed_onto_this_change(client):
-    """An id pasted out of another room's brief would otherwise credit that
-    room's worker for a change they never saw."""
+    """A session working one conversation cannot file a change for a task it
+    is not: a room's credential reaching another room's task would credit that
+    task for a change it never saw."""
     pid = _project(client)
     room = _room(client, pid)
     elsewhere = _room(client, pid)
     theirs = _dispatch(client, elsewhere, "别的房间的活")
 
-    r = _file_card(client, room, "feat: claim someone else's work", [theirs])
-    assert r.status_code == 404, r.text
+    r = client.post(
+        f"/topics/{theirs}/accept-card",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=room)},
+        json={
+            "change_subject": "feat: claim someone else's work",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
+    )
+    assert r.status_code == 403, r.text
 
 
 def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):
@@ -351,7 +317,6 @@ def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):
     pid = _project(client)
     room = _room(client, pid)
     mine = _dispatch(client, room, "写了这一批")
-    _worker_starts(client, mine, "ac2c038d44616a2f2")
 
     landed = _batch(client, pid, room, "feat: parse me with real git", [mine])
 

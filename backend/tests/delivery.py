@@ -1,8 +1,9 @@
 """Explicit task fixtures for tests of delivery and workspace consumers."""
 
 import uuid
+from datetime import UTC, datetime
 
-from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
 from tests.machine_work import machine_commits
@@ -31,6 +32,10 @@ def delivery_task(client, room_id, *, new=False, commit=True):
                 created_by="alice",
                 reviewer_handle="alice",
             )
+            # A task with something to deliver is one its owner has started.
+            task.started_at = datetime.now(UTC)
+            task.started_by = "alice"
+            task.started_doc_version = 0
             await session.commit()
             return task
 
@@ -84,15 +89,15 @@ def delivery_artifact(client, room_id, name="报告", *, hands_over=False):
 
 def delivery_headers(client, room_id):
     """Authenticate delivery setup without changing decision-request identity."""
-    if client.headers.get("Authorization") or scoped_token_claims(
-        client.headers.get("X-Cheese-Token", "")
-    ):
+    # A person signed in on the client files as themselves.
+    if client.headers.get("Authorization"):
         return {}
     task = delivery_task(client, room_id)
     if task is None:
         return {}
+    # Delivering is the task's own session's act: its credential names the task.
     return {
         "X-Cheese-Token": mint_scoped_token(
-            project_id=str(task.project_id), topic_id=str(task.room_id)
+            project_id=str(task.project_id), topic_id=str(task.id)
         )
     }

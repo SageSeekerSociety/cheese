@@ -41,6 +41,8 @@ export interface PanelDocument {
 
 export interface PanelDocProps {
   topic: Topic | null
+  /** 打开的是这个房间里某个任务的实况文档，而不是房间自己的。 */
+  taskId?: string | null
   /** 有它就打开这一份，`topic` 不再决定是哪份文档。 */
   document?: PanelDocument | null
   /** 父层在 AI 动过之后加一：已存的那一版据此重读。 */
@@ -171,10 +173,11 @@ export function usePanelDoc(props: PanelDocProps) {
     return workspaceFileRawUrl(pid, src.replace(/^\.\//, ''), props.topic?.id)
   }
 
-  async function resolveDocument(tid: string) {
+  async function resolveDocument(tid: string, taskId: string | null) {
     const sequence = ++documentSequence
     try {
-      const { id } = await getRoomDocument(tid)
+      // A task's document is its own conversation's.
+      const id = (await getRoomDocument(taskId ?? tid)).id
       if (disposed || props.topic?.id !== tid || sequence !== documentSequence) return
       documentId.value = id
     } catch (cause) {
@@ -184,8 +187,8 @@ export function usePanelDoc(props: PanelDocProps) {
   }
 
   watch(
-    () => [props.document?.id ?? null, props.topic?.id ?? null] as const,
-    ([given, topicId]) => {
+    () => [props.document?.id ?? null, props.topic?.id ?? null, props.taskId ?? null] as const,
+    ([given, topicId, taskId]) => {
       documentSequence++
       resolveError.value = null
       if (given) {
@@ -193,7 +196,7 @@ export function usePanelDoc(props: PanelDocProps) {
         return
       }
       documentId.value = null
-      if (topicId) void resolveDocument(topicId)
+      if (topicId) void resolveDocument(topicId, taskId)
     },
     { immediate: true }
   )

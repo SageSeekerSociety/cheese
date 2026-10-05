@@ -118,9 +118,9 @@ function docDiffText(line: string): string {
   return /^(?:\s|&nbsp;)*$/.test(text) ? '' : text
 }
 
-// 「派出一条活」那一行带着它派出去的那件活：一件活不是地点，按钮打开的是这个房间里的那张卡。
+// 「创建了任务」那一行（更早的叫「派出一条活」）带着那个任务，按钮打开它。
 const splitTask = computed(() => {
-  if (props.notice.mode !== 'action' || props.notice.resource !== 'split') return null
+  if (props.notice.mode !== 'action' || !['split', 'task_created'].includes(props.notice.resource)) return null
   const id = (props.block.meta as Record<string, unknown> | null | undefined)?.task_id
   return typeof id === 'string' && id ? id : null
 })
@@ -160,6 +160,7 @@ const ACTION_META: Record<string, { btn: string }> = {
   doc: { btn: 'work.room.notice.action.doc' },
   topics: { btn: '' },
   split: { btn: 'work.room.notice.action.split' },
+  task_created: { btn: 'work.room.notice.action.split' },
   // 平台自动改了标题：行尾是撤销，不是「去看看」，见下面的模板分支。
   title: { btn: 'work.room.notice.action.undo' },
   accept: { btn: 'work.room.notice.action.accept' },

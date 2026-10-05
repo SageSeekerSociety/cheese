@@ -24,7 +24,7 @@ covers:
 
 卡钉在**一个房间**上（`AcceptCard.topic_id`）：给一条活递的卡记下 `task_id`，给房间本身递的卡留 NULL。卡上写着递给**哪一个**人（`reviewer_handle`，不是广播），以及这次交付更新了清单上哪一项产物（`artifact_id`）。
 
-硬规矩：协作模式（`AiMode.collaborative`）下 AI 不能采纳或批准自己的改动，必须由人操作（`_forbid_ai`）。判据认的是整个 `cheese-` handle 命名空间而不是 `cheese` 这个字符串——每个房间的分身以 `cheese-<hex>` 的身份行动，只比字符串会让任何分身直接走过去。
+硬规矩：协作模式（`AiMode.collaborative`）下 AI 不能采纳或批准自己的改动，必须由人操作（`_forbid_ai`）。判据认的是整个 `cheese-` handle 命名空间而不是 `cheese` 这个字符串——每个房间的芝士以 `cheese-<hex>` 的身份行动，只比字符串会让它们直接走过去。
 
 ## 状态机 {#status}
 

@@ -33,7 +33,7 @@ used to read is dropped a release later still.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
@@ -87,6 +87,19 @@ async def project_member(
     )
 
 
+# Which room a task hangs in, read as two bare columns for the same reason as
+# everything else here.
+_tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
+
+
+async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUID:
+    """The room a conversation is in: itself for a room, its room for a task."""
+    room = await session.scalar(
+        select(_tasks.c.room_id).where(_tasks.c.id == conversation_id)
+    )
+    return room or conversation_id
+
+
 async def topic_member(session: AsyncSession, topic_id: uuid.UUID, handle: str) -> bool:
     return (
         await session.scalar(
@@ -137,7 +150,11 @@ async def session_execution(
     """Read exactly the session named by the signed execution credential."""
     return (
         await session.execute(
-            select(AgentSession.runtime_location, AgentSession.work_lease)
+            select(
+                AgentSession.runtime_location,
+                AgentSession.work_lease,
+                AgentSession.conversation_id,
+            )
             .where(AgentSession.topic_id == place_id, AgentSession.id == session_id)
             .with_for_update()
         )

@@ -88,6 +88,7 @@ async function mount({ withRoomCommand = ref(false) } = {}) {
         children: [
           { path: '', name: 'workspace-project', component: Blank },
           { path: 'topics/:topicId', name: 'workspace-topic', component: Blank },
+          { path: 'topics/:topicId/tasks/:taskId', name: 'workspace-task', component: Blank },
           { path: 'members/:handle', name: 'member', component: Blank },
           { path: 'dm/:peer', name: 'workspace-dm', component: Blank },
           { path: 'search', name: 'project-search', component: Blank },
@@ -302,7 +303,7 @@ describe('命令面板', () => {
     expect(router.currentRoute.value.query.block).toBe('b1')
   })
 
-  it('搜到一件任务，选中就进房间并打开那张卡', async () => {
+  it('搜到一件任务，选中就打开那个任务', async () => {
     searchProject.mockResolvedValue(
       hits({
         tasks: [
@@ -316,11 +317,10 @@ describe('命令面板', () => {
     await waitFor(() => expect(options().some((text) => text.includes('写登录接口'))).toBe(true))
     const row = screen.getAllByRole('option').find((el) => el.textContent?.includes('写登录接口'))!
     await fireEvent.click(row)
-    await waitFor(() => expect(router.currentRoute.value.fullPath).toContain('/projects/p1/topics/t2'))
-    expect(router.currentRoute.value.query.card).toBe('k9')
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t2/tasks/k9'))
   })
 
-  it('说在一件活卡片里的消息，选中就打开那张卡，停在那一条上', async () => {
+  it('说在任务里的消息，选中就打开那个任务，停在那一条上', async () => {
     searchProject.mockResolvedValue(hits({ records: [{ ...MESSAGE, snippet: '卡片里说过的缓存方案', task_id: 'k2' }] }))
     const { router } = await mount()
     await open()
@@ -328,9 +328,8 @@ describe('命令面板', () => {
     await waitFor(() => expect(options().some((text) => text.includes('卡片里说过的缓存方案'))).toBe(true))
     const row = screen.getAllByRole('option').find((el) => el.textContent?.includes('卡片里说过的缓存方案'))!
     await fireEvent.click(row)
-    await waitFor(() => expect(router.currentRoute.value.query.card).toBe('k2'))
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3/tasks/k2'))
     expect(router.currentRoute.value.query.block).toBe('b1')
-    expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3')
   })
 
   it('? 只看内容，话题名对上了也不列', async () => {

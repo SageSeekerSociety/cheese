@@ -85,6 +85,7 @@ class _Chat:
     _turn_seat_handle = ChatService._turn_seat_handle
     _seat_lock_for = ChatService._seat_lock_for
     _resolved_agent = ChatService._resolved_agent
+    _agent_at = ChatService._agent_at
     _session_agent = staticmethod(ChatService._session_agent)
     _acting_handle = ChatService._acting_handle
 

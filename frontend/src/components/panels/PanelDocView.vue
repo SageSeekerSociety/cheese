@@ -64,6 +64,8 @@ const props = withDefaults(
     topicList?: Topic[]
     /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
+    /** 任务的实况文档：界面上不给它固定标题，正文自己说。 */
+    untitled?: boolean
     /** 顶栏画到页面上的这个位置（CSS 选择器），和页面自己的那一行并成一行。 */
     barTo?: string
     // ---- 这一篇现在是什么状态 ----
@@ -126,6 +128,7 @@ const props = withDefaults(
     mentionPeople: () => [],
     topicList: () => [],
     bare: false,
+    untitled: false,
     barTo: undefined,
     outdated: false,
     commentAuthor: '',
@@ -444,7 +447,7 @@ defineExpose({
                 @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
                 @blur="emit('rename', ($event.target as HTMLInputElement).value.trim())"
               />
-              <h1 v-else-if="!bare" class="doc-page__title">{{ docTitle }}</h1>
+              <h1 v-else-if="!bare && !untitled" class="doc-page__title">{{ docTitle }}</h1>
               <!-- 正文本身。 -->
               <DocSurface
                 ref="surfaceRef"
