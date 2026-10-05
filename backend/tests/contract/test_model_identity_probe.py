@@ -7,6 +7,7 @@ exercised by running the CLI, not by a unit test.
 
 from __future__ import annotations
 
+import json
 import random
 
 import pytest
@@ -1021,14 +1022,19 @@ def test_the_operator_declaration_is_the_highest_trust_source() -> None:
 
 
 def test_seat_config_reads_the_model_the_session_launched_with() -> None:
-    declared = declared_from_seat_config({"init": {"model": "claude-opus-5-5"}})
+    declared = declared_from_seat_config(
+        {"state": {"init": {"model": "claude-opus-5-5"}}}
+    )
     assert declared.model == "claude-opus-5-5"
     assert declared.source == "seat-config"
+    assert declared_from_seat_config({"state": {}}).source == "none"
     assert declared_from_seat_config({}).source == "none"
 
 
 def test_a_merged_declaration_fills_gaps_without_overwriting() -> None:
-    seat = declared_from_seat_config({"init": {"model": "claude-opus-5-5"}})
+    seat = declared_from_seat_config(
+        {"state": {"init": {"model": "claude-opus-5-5"}}}
+    )
     # A pool-only operator declaration keeps the seat's model and adds the pool.
     merged = declared_from_operator("", "subscription").merged(seat)
     assert merged.model == "claude-opus-5-5"
@@ -1099,6 +1105,42 @@ def test_verify_takes_the_model_from_the_operator_declaration(
     assert cli.cmd_verify(args) == 0
     out = capsys.readouterr().out
     assert '"source": "operator"' in out
+
+
+def test_a_probe_that_could_not_be_made_surfaces_the_transport_error(
+    monkeypatch, capsys
+) -> None:
+    # Without HTTPS_PROXY/token a seat's CONNECT is refused, so no wire evidence
+    # exists. That must read as "the probe failed", not as a bare inconclusive
+    # sample a reader could mistake for a real uncertain result.
+    from scripts import probe_model_identity as cli
+    from scripts.model_identity_probe import transport as transport_mod
+
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "",
+            None,
+            {},
+            {},
+            0.0,
+            error="ProxyError: 407 ",
+        ),
+    )
+    monkeypatch.setenv(
+        "CHEESE_TOKEN", "cxss_" + _scoped({"a": "seat-1"}).split(".")[0] + ".sig"
+    )
+    monkeypatch.setenv("CHEESE_AUTHOR", "seat-1")
+    monkeypatch.delenv("CHEESE_TOPIC", raising=False)
+    args = cli.build_parser().parse_args(
+        ["verify", "--mode", "gateway", "--expected-model", "claude-opus-5-5"]
+    )
+    args.models = ["claude-opus-5-5"]
+    cli.cmd_verify(args)
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["verdict"] == "uncertain"
+    assert result["wire_error"] == "ProxyError: 407 "
 
 
 # --- transport: the openai-chat stream dispatch ------------------------------

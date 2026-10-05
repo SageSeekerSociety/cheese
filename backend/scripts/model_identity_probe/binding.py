@@ -189,15 +189,16 @@ def declared_from_operator(
     return DeclaredBinding(model=model, pool=pool, source=source)
 
 
-def declared_from_seat_config(state: Mapping[str, Any] | None) -> DeclaredBinding:
+def declared_from_seat_config(payload: Mapping[str, Any] | None) -> DeclaredBinding:
     """The model a session's own control state declares it was launched with.
 
-    ``state`` is the ``data`` of ``GET /topics/{topic}/agent/control``; the
-    model lives at ``state.init.model``. Only the model is available here -- the
-    pool is not on this payload -- so the pool is left ``None`` for the operator
-    or the wire's own headers to answer.
+    ``payload`` is the ``data`` of ``GET /topics/{topic}/agent/control``; the
+    model lives at ``data.state.init.model``. Only the model is available here --
+    the pool is not on this payload -- so the pool is left ``None`` for the
+    operator or the wire's own headers to answer.
     """
-    init = (state or {}).get("init")
+    state = (payload or {}).get("state")
+    init = state.get("init") if isinstance(state, Mapping) else None
     model = init.get("model") if isinstance(init, Mapping) else None
     model = model.strip() if isinstance(model, str) and model.strip() else None
     return DeclaredBinding(

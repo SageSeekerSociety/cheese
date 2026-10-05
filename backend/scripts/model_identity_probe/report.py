@@ -62,6 +62,11 @@ class Verification:
     expected_pool: str | None = None
     expected_model: str | None = None
     seat: SeatCheck | None = None
+    #: Set when the one wire probe could not be made at all (a refused CONNECT,
+    #: an unreachable listener): the wire evidence is then absent, not agreeing,
+    #: and a reader must not mistake an unreachable endpoint for an inconclusive
+    #: one.
+    wire_error: str | None = None
     protocol: str = PROBE_PROTOCOL
 
     def to_json(self) -> dict:
@@ -71,6 +76,7 @@ class Verification:
             "verdict": self.verdict,
             "reason": self.reason,
             "protocol": self.protocol,
+            "wire_error": self.wire_error,
             "binding": {
                 "expected_pool": self.expected_pool,
                 "expected_model": self.expected_model,
@@ -276,6 +282,7 @@ def verify(
         expected_pool=expected_pool,
         expected_model=expected_model,
         seat=seat,
+        wire_error=completion.error,
     )
 
 
