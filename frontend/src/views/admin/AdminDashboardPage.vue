@@ -1,21 +1,10 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { useAdminDashboard } from '@/composables/useAdminDashboard'
 
-import AdminPage from '@/components/admin/AdminPage.vue'
-import AdminDashboardFeedback from '@/components/admin/dashboard/AdminDashboardFeedback.vue'
-import AdminDashboardHeader from '@/components/admin/dashboard/AdminDashboardHeader.vue'
-import AdminDashboardIntegrations from '@/components/admin/dashboard/AdminDashboardIntegrations.vue'
-import AdminDashboardKinds from '@/components/admin/dashboard/AdminDashboardKinds.vue'
-import AdminDashboardPerformance from '@/components/admin/dashboard/AdminDashboardPerformance.vue'
-import AdminDashboardPipeline from '@/components/admin/dashboard/AdminDashboardPipeline.vue'
-import AdminDashboardPlatform from '@/components/admin/dashboard/AdminDashboardPlatform.vue'
-import AdminDashboardProduct from '@/components/admin/dashboard/AdminDashboardProduct.vue'
-import AdminDashboardUsage from '@/components/admin/dashboard/AdminDashboardUsage.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { queue } from '@/lib/adminStats'
+import AdminDashboardPageView from '@/views/admin/AdminDashboardPageView.vue'
 
 // 管理后台的看板（§4.2）。**它读的是整个平台，不只是反馈。**
 //
@@ -52,14 +41,14 @@ import { queue } from '@/lib/adminStats'
 // 现在这一只改的只是**它由谁画**。它是一只薄容器，和 `PanelChanges` / `PanelPreview`
 // / `PanelDoc` 同一个形状，三件事各归各位：
 //   - 取数（分类、窗口、轮询、时效戳、重试）→ `composables/useAdminDashboard.ts`；
-//   - 画（每屏的数、拆分、曲线、表）→ `components/admin/dashboard/*.vue`，只吃 props、
-//     只往上发事件（八件能单独摆进预览站，见 `views/demo/catalogDashboard.ts`）；
+//   - 画（页头、分类导轨、每屏的数、拆分、曲线、表）→ 同目录 `AdminDashboardPageView.vue`
+//     只吃 props、只往上发事件，接住各屏的事件转出来（八屏能单独摆进预览站，
+//     见 `views/demo/catalogDashboard.ts`）；
 //   - 接线（路由那一条）→ 这里。
-// 加取数动作在组合式函数里加，加画法在某一屏里加，这一只基本不再长。
+// 加取数动作在组合式函数里加，加画法在视图里加，这一只基本不再长。
 
 defineOptions({ name: 'AdminDashboardPage' })
 
-const { t } = useI18n()
 const router = useRouter()
 
 const {
@@ -97,57 +86,30 @@ function onSelectDay(date: string | null) {
 </script>
 
 <template>
-  <AdminPage :title="t('navigation.admin.dashboard')" :sub="t('feedback.dashboard.sub')">
-    <template #tools>
-      <AdminDashboardHeader :windowed="windowed" :days="days" :stamp="stampText" @set-days="setDays" />
-    </template>
-    <template #extra>
-      <AdminDashboardKinds
-        :kinds="kinds"
-        :tabs="tabs"
-        :titles="titles"
-        :pulse="pulse"
-        :current="kind"
-        @select="selectKind"
-      />
-    </template>
-
-    <div class="ad__body admin-page__body">
-      <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
-             正文是**服务端原话**（不改写），重试是唯一主操作，而且真重拉 —— 不是把
-             错误状态清掉装没事。块换成了共用的 `BaseEmptyState`（和队列、模型页的
-             出错态同一个形状），这一页不再自己画一套 `ad__none-*`。 -->
-      <BaseLoadError
-        v-if="failed"
-        :title="t('feedback.dashboard.error.title')"
-        :error="error ?? undefined"
-        :retry-label="t('feedback.dashboard.retry')"
-        @retry="retry"
-      />
-
-      <!-- 一屏一类。取数在上面那一半，画法在各屏自己那里。 -->
-      <AdminDashboardPipeline v-else-if="kind === 'pipeline'" :data="pipeline" :loading="loading" />
-      <AdminDashboardProduct v-else-if="kind === 'product'" :data="product" :days="days" :loading="loading" />
-      <AdminDashboardIntegrations v-else-if="kind === 'integrations'" :data="integrations" :loading="loading" />
-      <AdminDashboardFeedback
-        v-else-if="kind === 'feedback'"
-        :data="feedback"
-        :pending="pending"
-        :list-loading="listLoading"
-        :days="days"
-        :loading="loading"
-        @select-day="onSelectDay"
-      />
-      <AdminDashboardUsage v-else-if="kind === 'usage'" :data="usage" :days="days" :loading="loading" />
-      <AdminDashboardPerformance v-else-if="kind === 'performance'" :data="performance" :loading="loading" />
-      <AdminDashboardPlatform v-else :data="platform" :days="days" :loading="loading" />
-    </div>
-  </AdminPage>
+  <AdminDashboardPageView
+    :kinds="kinds"
+    :tabs="tabs"
+    :titles="titles"
+    :pulse="pulse"
+    :kind="kind"
+    :days="days"
+    :windowed="windowed"
+    :loading="loading"
+    :error="error"
+    :failed="failed"
+    :stamp="stampText"
+    :pending="pending"
+    :list-loading="listLoading"
+    :pipeline="pipeline"
+    :product="product"
+    :feedback="feedback"
+    :usage="usage"
+    :platform="platform"
+    :performance="performance"
+    :integrations="integrations"
+    @set-days="setDays"
+    @select="selectKind"
+    @retry="retry"
+    @select-day="onSelectDay"
+  />
 </template>
-
-<style scoped>
-/* 各屏第一块（指标条）自带 16px 上外边距，正文不再加一层。 */
-.ad__body {
-  padding-top: 0;
-}
-</style>
