@@ -122,7 +122,13 @@
               tag="span"
               class="log-row__what"
             >
-              <template #name><UserRef :handle="row.entry.accessor.username" :name="row.name" /></template>
+              <template #name
+                ><UserRef
+                  :handle="row.entry.accessor.username"
+                  :name="row.name"
+                  :to="row.to"
+                  @navigate="emit('visitUser', row.to)"
+              /></template>
             </i18n-t>
             <span v-if="row.entry.accessEntityName" class="log-row__where">
               {{
@@ -153,13 +159,14 @@
 </template>
 
 <script setup lang="ts">
+import type { UserRefTarget } from '@/lib/userRef'
 import type { RealNameInfo, UserIdentityAccessLog } from '@/network/api/users/types'
 
 import { computed, reactive, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import i18n, { t } from '@/i18n'
 
 type Field = keyof RealNameInfo
@@ -173,12 +180,14 @@ const FIELDS: { key: Field; label: string; optional: boolean }[] = [
 ]
 
 /** One line of the read log, with the reading already done: who it was, what
- *  avatar, and whether it was the person themselves (the page works that out
- *  from the signed-in account and the access type). */
+ *  avatar, where their name goes, and whether it was the person themselves (the
+ *  page works that out from the signed-in account and the access type). */
 export interface RealNameLogRow {
   entry: UserIdentityAccessLog
   name: string
   avatarUrl: string
+  /** Where clicking the person's name goes. Null when there is no handle to follow. */
+  to: UserRefTarget | null
   isOwn: boolean
   isExport: boolean
 }
@@ -209,6 +218,7 @@ const emit = defineEmits<{
   toggleFull: []
   remove: []
   loadMore: []
+  visitUser: [target: UserRefTarget | null]
 }>()
 
 function emptyRecord(): RealNameInfo {

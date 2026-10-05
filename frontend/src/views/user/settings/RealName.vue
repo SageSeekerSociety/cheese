@@ -25,14 +25,17 @@
     @toggle-full="toggleFull"
     @remove="remove"
     @load-more="loadLogs(false)"
+    @visit-user="visitUser"
   />
 </template>
 
 <script setup lang="ts">
+import type { UserRefTarget } from '@/lib/userRef'
 import type { RealNameInfo, UserIdentityAccessLog } from '@/network/api/users/types'
 import type { RealNameLogRow } from './RealNameView.vue'
 
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -43,6 +46,7 @@ import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAv
 import RealNameView from './RealNameView.vue'
 
 import { t } from '@/i18n'
+import { userRefRoute } from '@/lib/userRef'
 import { UserApi } from '@/network/api/users'
 import { UserIdentityAccessType } from '@/network/api/users/types'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -205,12 +209,24 @@ const nameOf = (entry: UserIdentityAccessLog) => entry.accessor.nickname || entr
 const avatarOf = (entry: UserIdentityAccessLog) =>
   isChosenAvatar(entry.accessor.avatarId) ? getAvatarUrl(entry.accessor.avatarId) : ''
 
+const route = useRoute()
+const router = useRouter()
+
+/** Where a reader's name goes: their seat in this project, or their page outside one. */
+const toOf = (entry: UserIdentityAccessLog): UserRefTarget | null =>
+  entry.accessor.username ? userRefRoute(entry.accessor.username, route.params.projectId as string | undefined) : null
+
+function visitUser(to: UserRefTarget | null) {
+  if (to) void router.push(to)
+}
+
 /** The log lines, with everything the view needs to draw one worked out here. */
 const rows = computed<RealNameLogRow[]>(() =>
   logs.value.map((entry) => ({
     entry,
     name: nameOf(entry),
     avatarUrl: avatarOf(entry),
+    to: toOf(entry),
     isOwn: isOwnView(entry),
     isExport: entry.accessType === UserIdentityAccessType.EXPORT,
   }))
