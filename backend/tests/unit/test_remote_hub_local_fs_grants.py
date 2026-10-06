@@ -132,7 +132,8 @@ async def test_an_owner_that_does_not_know_the_call_yet_is_reported() -> None:
         await remote.close()
 
     assert outcome.delivered is False
-    assert outcome.reason == "device_error"
+    assert outcome.reason == "platform_error"
+    assert "http" not in outcome.detail
 
 
 @pytest.mark.anyio

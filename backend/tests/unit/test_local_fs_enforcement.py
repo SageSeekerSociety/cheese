@@ -153,11 +153,15 @@ async def test_a_machine_that_does_not_answer_is_reported_not_raised():
 
 async def test_an_unreachable_connection_owner_is_reported_not_raised():
     service = service_with(InMemoryLocalFsRepository())
-    link = FakeLink(raises=httpx.ConnectError("connection refused"))
+    link = FakeLink(
+        raises=httpx.ConnectError("refused: http://owner:8082/internal/call")
+    )
     outcome = await push_grants(service, link, DEVICE)
 
     assert outcome.delivered is False
-    assert outcome.reason == "device_error"
+    assert outcome.reason == "platform_error"
+    # The owner's address is the platform's own; the person reads this.
+    assert "owner:8082" not in outcome.detail
 
 
 async def test_a_fault_in_this_code_is_raised_not_blamed_on_the_machine():

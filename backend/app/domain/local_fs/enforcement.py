@@ -23,6 +23,7 @@ work has to go on somewhere.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -32,6 +33,8 @@ import httpx
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.local_fs.records import DirectoryGrant
 from app.domain.local_fs.service import LocalDirectoryService
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DeviceLink",
@@ -120,21 +123,37 @@ async def push_grants(
             reason="device_offline",
             detail="这台电脑现在不在线，授权已记录；它下次连上来时会自动生效",
         )
-    except (DeviceCallError, TimeoutError, httpx.HTTPError) as exc:
+    except (DeviceCallError, TimeoutError) as exc:
         # The grant is already recorded and is the authoritative record; a device
         # that answered badly has not made the grant wrong, it has only not been
         # told yet. Reported rather than raised for the same reason as offline.
         #
-        # Only the ways the trip itself fails: the machine refusing the set, the
-        # machine (or the connection owner) not answering in time, the owner
-        # unreachable or answering with a status of its own. Anything else is a
-        # fault in this code, and caught here it read to the owner of the
-        # directory as a machine that answered badly: a backend whose hub had no
-        # `push_local_fs_grants` at all said that on every grant made on dev.
+        # Only the ways the trip itself fails are caught, here and below.
+        # Anything else is a fault in this code, and caught here it read to the
+        # owner of the directory as a machine that answered badly: a backend
+        # whose hub had no `push_local_fs_grants` at all said that on every grant
+        # made on dev.
         return PushOutcome(
             delivered=False,
             reason="device_error",
             detail=f"已记录授权，但下发给这台电脑时出错（{exc}），它下次连上来时会重试",
+        )
+    except httpx.HTTPError:
+        # The connection owner unreachable, or answering with a status of its
+        # own (an owner older than this call answers 404). Not the machine's
+        # doing, and the error names the owner's internal address, so it goes to
+        # the log and the person is told only that the platform did not get it
+        # there. The whole set travels on every push, so the next grant or
+        # revoke on this machine carries this one too.
+        logger.warning(
+            "local grants push to %s did not reach the owner",
+            device_id,
+            exc_info=True,
+        )
+        return PushOutcome(
+            delivered=False,
+            reason="platform_error",
+            detail="已记录授权，但平台这边没能把它下发给这台电脑；下次授权或撤销时会一并下发",
         )
 
     fingerprint = None
