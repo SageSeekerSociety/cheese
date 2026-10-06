@@ -169,12 +169,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {layer: pure, shard: '0/1', floor: 4000, timeout: 10}
-          - {layer: contract, shard: '0/1', floor: 200, timeout: 5}
-          - {layer: integration, shard: '0/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '1/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '2/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '3/4', floor: 2400, timeout: 15}
+          - {layer: pure, shard: '0/1', floor: 4000, timeout: 45}
     # Floors apply to the complete layer before sharding, not each runner.
     env:
       REDIS_URL: redis://localhost:6389/0
@@ -369,6 +364,22 @@ jobs:
             export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
             export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
           fi
+          # DIAGNOSTIC BRANCH ONLY (never merged): loop the session tests.
+          fails=0
+          for i in $(seq 1 20); do
+            echo "=== round $i"
+            uv run python -m pytest tests/unit/test_consumptions.py tests/unit/test_personal_sessions.py \
+              tests/unit/test_a_person_is_answered_before_anything_else.py tests/unit/test_pi_subagents.py \
+              -n "$CHEESE_CI_TEST_WORKERS" --dist worksteal --tb=long -q -p no:cacheprovider \
+              --show-capture=all > "$RUNNER_TEMP/round.log" 2>&1 || {
+              fails=$((fails+1))
+              grep -E "^FAILED|AssertionError|no words in" "$RUNNER_TEMP/round.log" | head -20
+              sed -n "/= FAILURES =/,/short test summary/p" "$RUNNER_TEMP/round.log" | grep -vE "InsecureKey|jws.encode|decode_complete" | head -150
+            }
+            tail -1 "$RUNNER_TEMP/round.log"
+          done
+          echo "rounds failed: $fails/20"
+          exit $(( fails > 0 ))
           observe=()
           if [ "$TEST_LAYER" = integration ]; then
             observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" --)
