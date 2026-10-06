@@ -1660,17 +1660,10 @@ export const useFeedbackStore = defineStore('feedback', {
       }
     },
 
-    /** 记下一次「不用」。服务端没记下就返回 false —— 卡要放回屏幕上，不然人以为
-     *  它收起来了，下次进来又看到它，而自己上次那一下其实没算数（任务里的卡就是
-     *  这样一直被拒的）。 */
-    async dismissProposal(topicId: string, blockId: string): Promise<boolean> {
-      try {
-        await dismissFeedbackProposal(topicId, blockId)
-        return true
-      } catch (error) {
-        this.error = message(error, t('feedback.errors.actionFailed'))
-        return false
-      }
+    /** 记下一次「不用」。服务端没记下就抛出去 —— 不在这里咽下：卡要把这一下放回
+     *  屏幕上（人上次那一下没算数，他还得知道），咽下它等于装作成功。 */
+    async dismissProposal(topicId: string, blockId: string): Promise<void> {
+      await dismissFeedbackProposal(topicId, blockId)
     },
 
     /* ---- 内部小工具（下划线开头：不是给页面用的 API） ---- */

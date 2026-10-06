@@ -130,11 +130,14 @@ function openForm(proposal: FeedbackProposal) {
  *  人下次进来又看到同一张卡，还不知道自己上次那一下没算数。 */
 async function dismiss(proposal: FeedbackProposal) {
   dismissed.value = new Set([...dismissed.value, proposal.block_id])
-  if (await store.dismissProposal(props.topicId, proposal.block_id)) return
-  const back = new Set(dismissed.value)
-  back.delete(proposal.block_id)
-  dismissed.value = back
-  toast.error(store.error ?? t('feedback.errors.actionFailed'))
+  try {
+    await store.dismissProposal(props.topicId, proposal.block_id)
+  } catch (error) {
+    const back = new Set(dismissed.value)
+    back.delete(proposal.block_id)
+    dismissed.value = back
+    toast.error(error instanceof Error && error.message ? error.message : t('feedback.errors.actionFailed'))
+  }
 }
 
 /** 去看刚发出去的那条反馈。没有路由（这个组件也能在没装路由的宿主里渲染）就不动。 */
