@@ -11,6 +11,16 @@ import errno
 import os
 import stat
 import sys
+import time
+
+#: How long an answer about a directory outside the context tree stands.
+#: The mount keeps the kernel's caches off (``attr_timeout=0``) so context
+#: files are never stale, which sends every path lookup here; a walk of the
+#: tree then asked the executor about each directory several times over. On
+#: 2026-10-06 one `find` across a seat that held this mount reached
+#: ``node_modules`` on the machine and sent ~100 executor calls a second,
+#: which exhausted the connection owner's database pool for everyone.
+LOOKUP_TTL_S = 1.0
 
 
 class ForwardedProject:
@@ -20,6 +30,24 @@ class ForwardedProject:
         self.mountpoint = mountpoint
         self.generation = None
         self.entries = {}
+        self._looked_up = {}
+
+    def _ask(self, operation, path):
+        """The executor's answer about ``path``, reused for ``LOOKUP_TTL_S``.
+        A failed call is not kept: the next lookup asks again."""
+        key = (operation, path)
+        now = time.monotonic()
+        kept = self._looked_up.get(key)
+        if kept is not None and now - kept[0] < LOOKUP_TTL_S:
+            return kept[1]
+        answer = self.call("context_fs", {"operation": operation, "path": path})
+        self._looked_up[key] = (now, answer)
+        return answer
+
+    def _changed(self):
+        """A write here can make or remove a directory: ask again."""
+        self._looked_up.clear()
+        self.refresh()
 
     def refresh(self):
         tree = self.call("context_fs", {"operation": "tree"})
@@ -90,7 +118,7 @@ class ForwardedProject:
         if name == ".git" or name.startswith(".git/"):
             raise OSError(errno.ENOENT, name)
         try:
-            found = self.call("context_fs", {"operation": "directory", "path": name})
+            found = self._ask("directory", name)
         except Exception as exc:
             raise OSError(errno.EIO, name) from exc
         if found.get("missing"):
@@ -108,7 +136,7 @@ class ForwardedProject:
         }
         if parent != ".git" and not parent.startswith(".git/"):
             try:
-                listed = self.call("context_fs", {"operation": "list", "path": parent})
+                listed = self._ask("list", parent)
             except Exception as exc:
                 raise OSError(errno.EIO, parent) from exc
             children.update(listed.get("directories", []))
@@ -162,13 +190,13 @@ class ForwardedProject:
     def mkdir(self, path, mode):
         name = self._workflow_name(path, allow_claude=True)
         self.call("context_fs", {"operation": "mkdir", "path": name})
-        self.refresh()
+        self._changed()
         return 0
 
     def create(self, path, mode, handle=None):
         name = self._workflow_name(path)
         self.call("context_fs", {"operation": "create", "path": name})
-        self.refresh()
+        self._changed()
         return 0
 
     def write(self, path, data, offset, handle=None):
@@ -182,13 +210,13 @@ class ForwardedProject:
                 "data": base64.b64encode(data).decode(),
             },
         )
-        self.refresh()
+        self._changed()
         return result["written"]
 
     def truncate(self, path, size, handle=None):
         name = self._workflow_name(path)
         self.call("context_fs", {"operation": "truncate", "path": name, "size": size})
-        self.refresh()
+        self._changed()
         return 0
 
     def rename(self, old, new):
@@ -198,19 +226,19 @@ class ForwardedProject:
             "context_fs",
             {"operation": "rename", "path": source, "destination": destination},
         )
-        self.refresh()
+        self._changed()
         return 0
 
     def unlink(self, path):
         name = self._workflow_name(path)
         self.call("context_fs", {"operation": "unlink", "path": name})
-        self.refresh()
+        self._changed()
         return 0
 
     def rmdir(self, path):
         name = self._workflow_name(path)
         self.call("context_fs", {"operation": "rmdir", "path": name})
-        self.refresh()
+        self._changed()
         return 0
 
     def opendir(self, path):
@@ -244,12 +272,22 @@ def mount(target_path, mountpoint):
     target = json.loads(target_path.read_text())
     tree_path = target_path.with_name("context-tree.json")
     client = RemoteClient(target)
+    parsed = {}
+
+    def current(path):
+        # Every lookup on the mount reads both files; parse one again only
+        # when it was rewritten, not once per lookup.
+        stamp = path.stat().st_mtime_ns
+        kept = parsed.get(path)
+        if kept is None or kept[0] != stamp:
+            kept = parsed[path] = (stamp, json.loads(path.read_text()))
+        return kept[1]
 
     def call(method, params):
-        client.config = json.loads(target_path.read_text())
+        client.config = current(target_path)
         view.remote_root = client.config["workspace"]
         if method == "context_fs" and params["operation"] == "tree":
-            return json.loads(tree_path.read_text())
+            return current(tree_path)
         return client.call(method, params)
 
     class FuseProject(ForwardedProject, Operations):

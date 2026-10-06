@@ -2,6 +2,7 @@ import base64
 import errno
 import os
 import stat
+import time
 
 import pytest
 
@@ -142,3 +143,52 @@ def test_the_view_looks_up_directories_on_the_executor():
         view.getattr("/.git/HEAD")
     assert asked == []
     assert set(view.readdir("/")) == {".", "..", ".git", "made"}
+
+
+def test_a_walk_asks_the_executor_once_per_directory_while_its_answer_stands(
+    monkeypatch,
+):
+    """A lookup outside the context tree is a call to the executor, and the
+    mount keeps the kernel from caching it: without a cache of its own, every
+    lookup a walk made of the same directory went to the machine again."""
+    asked = []
+    now = [100.0]
+    failing = {"down": True}
+
+    def call(method, params):
+        if params["operation"] == "tree":
+            return {"generation": "g", "entries": {}}
+        asked.append((params["operation"], params["path"]))
+        if params["path"] == "flaky" and failing["down"]:
+            raise RuntimeError("link down")
+        if params["operation"] == "list":
+            return {"directories": ["deps"]}
+        if params["operation"] == "mkdir":
+            return {}
+        return {"mode": 0o755, "mtime_ns": 5, "nlink": 2}
+
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    view = ForwardedProject(call)
+    for _ in range(6):
+        view.getattr("/deps")
+        view.readdir("/deps")
+    assert asked == [("directory", "deps"), ("list", "deps")]
+
+    # The answer stands for a second; after that the machine is asked again.
+    now[0] += 1.5
+    view.getattr("/deps")
+    assert asked[-1] == ("directory", "deps")
+    assert len(asked) == 3
+
+    # A failed lookup is not kept: the next one asks again and can succeed.
+    with pytest.raises(OSError) as broken:
+        view.getattr("/flaky")
+    assert broken.value.errno == errno.EIO
+    failing["down"] = False
+    assert stat.S_ISDIR(view.getattr("/flaky")["st_mode"])
+
+    # A write through the mount can make a directory: lookups ask again.
+    before = len(asked)
+    view.mkdir("/.claude/workflows", 0o755)
+    view.getattr("/deps")
+    assert asked[before:] == [("mkdir", ".claude/workflows"), ("directory", "deps")]
