@@ -255,18 +255,18 @@ onBeforeUnmount(() => {
   margin: -24px;
   padding: 24px;
   overflow: hidden;
-  transition: height 200ms cubic-bezier(0.2, 0, 0, 1);
+  transition: height var(--dur-base) var(--ease-standard);
 }
 .doc-edit-layer__inner {
   pointer-events: auto;
 }
 .doc-edit-layer-enter-active {
   transition:
-    opacity 140ms ease-out,
-    transform 160ms cubic-bezier(0.2, 0, 0, 1);
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 .doc-edit-layer-leave-active {
-  transition: opacity 100ms ease-in;
+  transition: opacity var(--dur-quick) var(--ease-in);
 }
 .doc-edit-layer-enter-from {
   opacity: 0;

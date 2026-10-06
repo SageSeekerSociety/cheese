@@ -24,7 +24,7 @@
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, ProjectMemberRow, Topic } from '../cx_types'
-import type { DocReviewRequest } from '../lib/docReview'
+import type { DocReviewRequest, OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
@@ -42,6 +42,7 @@ import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import PanelChanges from './panels/PanelChanges.vue'
+import PanelDoc from './panels/PanelDoc.vue'
 import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
@@ -58,6 +59,11 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    // 画的是这个房间里的一个任务：现场、改动、预览都是这个任务的，总览由 `overview`
+    // 插槽填（任务的实况文档），没有「定时与触发」。
+    taskId?: string | null
+    // 任务页上，改动只读（不是负责人，或任务已关）。
+    taskReadOnly?: boolean
     submitQuestion?: SubmitPreviewQuestion
     // Bumped by the parent on AI activity (turn-done / a platform resource the
     // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
@@ -88,10 +94,6 @@ const props = withDefaults(
     // 看哪一格」，但不写地址、也不把浮层拉起来——那是「你打开它」，不是「有人打开了
     // 这一格」。宽档里面板常驻、手机上又是另一套（`withChat`），都不经过这里。
     compact?: boolean
-    // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
-    openCardId?: string | null
-    // 地址里的 `?block=`，而且开着一张卡：卡打开时停在它里面的这一条。
-    cardFocusBlock?: string | null
     // 房间名册 handle → 名字。现场那一格用它给每一行署名。一路透传：漏掉它不
     // 报错，只是那一格里写的是 handle。
     memberNames?: Record<string, string>
@@ -103,15 +105,17 @@ const props = withDefaults(
     members?: ProjectMemberRow[]
     // 此刻谁在这个房间里忙（对话栏从 socket 上学来）。现场那一格画其中在干活的队友。
     activity?: MemberActivityLine[]
+    // 「支线」那一格里有我没读过的回复：页签上挂一个点。
+    threadsNew?: boolean
   }>(),
   {
+    taskId: null,
+    taskReadOnly: false,
     submitQuestion: undefined,
     working: false,
     agentControl: null,
     siteTurns: () => ({}),
     topicList: () => [],
-    openCardId: null,
-    cardFocusBlock: null,
     memberNames: () => ({}),
     tab: undefined,
     cardPhase: undefined,
@@ -126,9 +130,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
-  (e: 'open-card', taskId: string | null): void
-  /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
-  (e: 'review'): void
+  (e: 'open-card', taskId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层；图上画过东西时
@@ -148,6 +150,8 @@ const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview'
 // 一份文件一个页签，键是 `file:<路径>`，地址里的 `?tab=` 用的也是它——「你看一下
 // 这份报告」得是一条能发出去的链接。
 const FILE_TAB = 'file:'
+// 自由区里的资料库文档，路径写成 `doc:<编号>`：和文件同一排页签，打开的是文档。
+const DOC_TAB = 'doc:'
 function fileKey(path: string): string {
   return FILE_TAB + path
 }
@@ -168,7 +172,10 @@ function tabFromUrl(): string | null {
 function ensureFileFromUrl(key: string | null) {
   if (!key?.startsWith(FILE_TAB)) return
   const path = key.slice(FILE_TAB.length)
-  if (!openFiles.value.some((f) => f.path === path)) placeFile(path)
+  if (openFiles.value.some((f) => f.path === path)) return
+  // 资料库文档的页签：名字等它自己读到了再补上。
+  if (path.startsWith(DOC_TAB)) placeFile(path, { id: path.slice(DOC_TAB.length), title: '' })
+  else placeFile(path)
 }
 
 // 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
@@ -273,6 +280,8 @@ const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
+// 这一面板读的那段对话：任务页上是任务，否则是房间自己。
+const conversationId = computed(() => props.taskId ?? topicId.value)
 const projectId = computed(() => props.topic?.project_id ?? null)
 
 // A turn just ended: that is the moment 芝士's commits, its working tree and
@@ -318,7 +327,7 @@ function markPreviewSeen(id?: string | null) {
 // 状态），`undefined` 是「这一问没成」（没话题 id，或者网络断了）——两者不能混，兜
 // 底轮询要拿它分「变了」和「没问成、下次再比」。
 async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string | null | undefined> {
-  const tid = props.topic?.id
+  const tid = conversationId.value
   if (!tid) return undefined
   let art: PreviewInfo | null = null
   try {
@@ -422,7 +431,7 @@ const summary = ref<{ changedFiles: string[]; hasRun: boolean }>({ changedFiles:
 const summaryLoaded = ref(false)
 
 async function pollWorkSummary(opts: { seen?: boolean } = {}) {
-  const tid = props.topic?.id
+  const tid = conversationId.value
   const pid = props.topic?.project_id
   if (!tid || !pid) return
   let next: { changed_files: string[]; has_run: boolean }
@@ -465,7 +474,7 @@ function countThreads(rows: { status: string }[]) {
 
 async function pollThreads(opts: { fresh?: boolean } = {}) {
   const roomId = props.topic?.id
-  if (!roomId) return
+  if (!roomId || props.taskId) return
   // Show the count from last time (e.g. switching back to a room) while the fresh one loads.
   const cached = cachedTopicPanel('roomTasks', roomId)
   if (cached) countThreads(cached.data)
@@ -480,7 +489,7 @@ async function pollThreads(opts: { fresh?: boolean } = {}) {
 }
 
 function hasContent(key: TabKey): boolean {
-  if (key === 'chat' || key === 'overview') return true
+  if (key === 'chat' || key === 'overview' || key === 'threads') return true
   // 「定时与触发」也是永远有得看的一格：没有规则时它写的是「还没有规则，点新建」——
   // 那一格自己是让人动手建一条的地方，不是一个「暂无」。数有几条要现问后端，而这一格
   // 关着的时候不该为此多打一个请求。
@@ -494,7 +503,9 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-const tabs = computed(() => workPanelTabs(props.withChat))
+const tabs = computed(() =>
+  workPanelTabs(props.withChat).filter((tab) => !(props.taskId && (tab.key === 'routines' || tab.key === 'threads')))
+)
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
 useCommands(() =>
   tabs.value.map((tab) => ({
@@ -526,6 +537,7 @@ function tabTitle(tab: TabDef): string {
 function signalFor(key: TabKey): PanelTab['signal'] {
   if (key === 'site' && props.working) return { kind: 'pulse' }
   if (key === 'preview' && previewHasNew.value) return { kind: 'dot' }
+  if (key === 'threads' && props.threadsNew) return { kind: 'dot' }
   if (key === 'overview' && threads.value.total) return { kind: 'count', count: threads.value.total }
   if (key === 'changes' && summary.value.changedFiles.length) {
     return { kind: 'count', count: summary.value.changedFiles.length, fresh: changesHasNew.value }
@@ -560,7 +572,7 @@ const panelTabs = computed<PanelTab[]>(() =>
 // straight onto 预览 from someone's link — never greets you with a hint for work
 // that was there before you arrived.
 {
-  const id = props.topic?.id
+  const id = conversationId.value
   openFiles.value = (id && filesByTopic.get(id)) || []
   const asked = tabFromUrl()
   ensureFileFromUrl(asked)
@@ -661,10 +673,11 @@ async function openFile(path: string, taskId?: string | null) {
   // 一次没有落地、也没人知道的假动作。
   if (!(await setTab('changes'))) return
   await nextTick()
-  // `undefined`, not `null`: a message under no card says nothing about which
+  // `undefined`, not `null`: a message that names no task says nothing about which
   // source holds the file, while `null` means 「项目当前代码」 — and a file this
-  // room is still working on is not on main yet.
-  await changesRef.value?.openFile(want, taskId ?? undefined)
+  // room is still working on is not on main yet. On a task's page the file is the
+  // task's.
+  await changesRef.value?.openFile(want, taskId ?? props.taskId ?? undefined)
 }
 
 /** 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。 */
@@ -681,13 +694,33 @@ async function inRoomFiles(path: string): Promise<boolean> {
 
 // 放进自由区，不切过去：开着的就不动，否则占临时位——有一格临时的就在原位换掉它，
 // 没有就排到最后。
-function placeFile(path: string) {
+function placeFile(path: string, document?: { id: string; title: string }) {
   if (openFiles.value.some((f) => f.path === path)) return
   const next = [...openFiles.value]
+  const tab = document ? { path, pinned: false, document } : { path, pinned: false }
   const temp = next.findIndex((f) => !f.pinned)
-  if (temp >= 0) next.splice(temp, 1, { path, pinned: false })
-  else next.push({ path, pinned: false })
+  if (temp >= 0) next.splice(temp, 1, tab)
+  else next.push(tab)
   setFiles(next)
+}
+
+// 聊天里那张文档卡：资料库里的这份文档在自由区开一格，改过的一处处标出来。
+const docRefs = new Map<string, InstanceType<typeof PanelDoc>>()
+async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
+  const path = DOC_TAB + document.id
+  placeFile(path, { ...document })
+  if (!(await setTab(fileKey(path)))) return
+  if (!review) return
+  // 编辑器要等文档到了才找得到那几处；面板自己会等，这里只要它已经挂上。
+  await nextTick()
+  docRefs.get(document.id)?.reviewEdits(review)
+}
+function keepDocRef(id: string, el: unknown) {
+  if (el) docRefs.set(id, el as InstanceType<typeof PanelDoc>)
+  else docRefs.delete(id)
+}
+function retitle(id: string, title: string) {
+  setFiles(openFiles.value.map((f) => (f.document?.id === id ? { ...f, document: { ...f.document, title } } : f)))
 }
 
 function openFileTab(path: string) {
@@ -721,7 +754,7 @@ async function closeFile(path: string) {
 
 function setFiles(next: OpenFileTab[]) {
   openFiles.value = next
-  const tid = props.topic?.id
+  const tid = conversationId.value
   if (tid) filesByTopic.set(tid, next)
 }
 
@@ -734,7 +767,16 @@ function siteBlock(block: Block) {
 
 // 面板此刻在画哪一格。地址不一定写得出来——平板横放里自动挑中的那一格就没写进地址，
 // 而收起浮层再打开要回到它，所以这里是那份记忆的出处（TopicView 打开浮层时来问）。
-defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShown, activeTab: () => active.value })
+defineExpose({
+  pulse,
+  highlightTurn,
+  reviewDoc,
+  openFile,
+  openDocument,
+  siteBlock,
+  previewShown,
+  activeTab: () => active.value,
+})
 </script>
 
 <template>
@@ -778,7 +820,14 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
           <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
             <slot name="chat" />
           </div>
+          <div v-if="taskId" v-show="active === 'overview'" class="tabpane-slot" :class="enterClass('overview')">
+            <slot name="overview" />
+          </div>
+          <div v-if="!taskId" v-show="active === 'threads'" class="tabpane-slot" :class="enterClass('threads')">
+            <slot name="threads" />
+          </div>
           <PanelOverview
+            v-if="!taskId"
             v-show="active === 'overview'"
             ref="overviewRef"
             :class="enterClass('overview')"
@@ -790,12 +839,8 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
             :topic-list="topicList"
             :active="active === 'overview'"
             :refresh-tick="refreshTick"
-            :open-card-id="openCardId"
-            :card-focus-block="cardFocusBlock"
-            :member-names="memberNames"
             @open-topic="emit('open-topic', $event)"
             @open-card="emit('open-card', $event)"
-            @review="emit('review')"
             @mention-click="emit('mention-click', $event)"
             @open-file="openFile"
             @open-output="openFileTab"
@@ -806,7 +851,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
             ref="siteRef"
             :class="enterClass('site')"
             :agent-name="agentName"
-            :topic="topic"
+            :topic-id="conversationId"
             :active="active === 'site'"
             :running-turns="siteTurns"
             :refresh-tick="refreshTick"
@@ -824,8 +869,8 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
             ref="changesRef"
             :class="enterClass('changes')"
             :topic-id="topicId"
-            :task-id="openCardId"
-            :read-only="topic?.status === 'archived'"
+            :task-id="taskId"
+            :read-only="topic?.status === 'archived' || taskReadOnly"
             :project-id="projectId"
             :active="active === 'changes'"
             :refresh-tick="refreshTick"
@@ -835,7 +880,7 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
             v-show="active === 'preview'"
             :submit-question="submitQuestion"
             :class="enterClass('preview')"
-            :topic-id="topicId"
+            :topic-id="conversationId"
             :project-id="projectId"
             :active="active === 'preview'"
             :refresh-tick="refreshTick"
@@ -854,12 +899,28 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
             :refresh-tick="refreshTick"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
+            <PanelDoc
+              v-if="f.document && mounted.has(fileKey(f.path))"
+              v-show="active === fileKey(f.path)"
+              :ref="(el: unknown) => keepDocRef(f.document!.id, el)"
+              :class="enterClass(fileKey(f.path))"
+              :topic="null"
+              :document="{ ...f.document, projectId: projectId ?? topic?.project_id ?? '' }"
+              :activity-tick="activityTick"
+              :agent-name="agentName"
+              :agent-handle="agentHandle"
+              :members="members"
+              :topic-list="topicList"
+              @titled="retitle(f.document!.id, $event)"
+              @open-topic="emit('open-topic', $event)"
+              @mention-click="emit('mention-click', $event)"
+            />
             <PanelPreview
-              v-if="mounted.has(fileKey(f.path))"
+              v-else-if="mounted.has(fileKey(f.path))"
               v-show="active === fileKey(f.path)"
               :submit-question="submitQuestion"
               :class="enterClass(fileKey(f.path))"
-              :topic-id="topicId"
+              :topic-id="conversationId"
               :project-id="projectId"
               :path="f.path"
               :active="active === fileKey(f.path)"
@@ -890,6 +951,13 @@ defineExpose({ pulse, highlightTurn, reviewDoc, openFile, siteBlock, previewShow
   min-width: 0;
   min-height: 0;
   height: 100%;
+}
+.tabpane-slot {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 .tabpane-in {
   animation: tabpane-in var(--dur-base) var(--ease-standard);

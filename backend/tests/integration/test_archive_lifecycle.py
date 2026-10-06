@@ -20,7 +20,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import registered, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -392,6 +392,7 @@ async def test_inventory_retains_every_session_work_allocation(client, monkeypat
     current, retained = str(uuid.uuid4()), str(uuid.uuid4())
     monkeypatch.setattr(retire.device_hub, "is_online", lambda _: True)
     async with client.test_factory() as session:
+        await enrolled(session, "new-hands", "old-hands")
         conversation = await AgentSessionService(session).ensure(
             room_id, "worker", harness="claude-code"
         )
@@ -416,6 +417,91 @@ async def test_inventory_retains_every_session_work_allocation(client, monkeypat
         }
         with pytest.raises(RuntimeError, match="inventory failed"):
             await retire._inventory(session, operation, {"new-hands": []})
+
+
+async def enrolled(session, *device_ids: str) -> None:
+    """Give each machine a device record, as enrolling one does."""
+    from app.domain.device.models import DeviceRow
+    from app.domain.device.supply import Supply
+
+    owner = await registered(session, "owner")
+    for device_id in device_ids:
+        session.add(
+            DeviceRow(
+                device_id=device_id,
+                name=device_id,
+                token=f"{device_id}-token",
+                owner_user_id=owner,
+                supply=Supply.cloud,
+                created_at=datetime.now(UTC),
+            )
+        )
+    await session.flush()
+
+
+async def _room_with_lease(client, monkeypatch, lease: dict):
+    from app.domain.agent_session.services import AgentSessionService
+
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    async with client.test_factory() as session:
+        conversation = await AgentSessionService(session).ensure(
+            room_id, "worker", harness="claude-code"
+        )
+        conversation.work_lease = lease
+        await session.commit()
+    return cleanup_id
+
+
+async def test_a_lease_on_a_removed_machine_does_not_hold_the_cleanup(
+    client, monkeypatch
+):
+    resource = str(uuid.uuid4())
+    cleanup_id = await _room_with_lease(
+        client,
+        monkeypatch,
+        {"device_id": "removed", "resource_id": resource, "kind": "device"},
+    )
+    monkeypatch.setattr(retire.device_hub, "is_online", lambda device: False)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        entries = await retire._inventory(session, operation, {})
+        assert all(entry["device_id"] != "removed" for entry in entries)
+
+
+async def test_a_lease_on_an_offline_machine_still_waits_for_it(client, monkeypatch):
+    cleanup_id = await _room_with_lease(
+        client,
+        monkeypatch,
+        {"device_id": "away", "resource_id": str(uuid.uuid4()), "kind": "device"},
+    )
+    monkeypatch.setattr(retire.device_hub, "is_online", lambda device: False)
+    async with client.test_factory() as session:
+        await enrolled(session, "away")
+        operation = await session.get(RoomCleanup, cleanup_id)
+        with pytest.raises(RuntimeError, match="offline"):
+            await retire._inventory(session, operation, {})
+
+
+async def test_a_lease_without_its_home_is_cleaned_by_the_rooms_inventory(
+    client, monkeypatch
+):
+    cleanup_id = await _room_with_lease(
+        client,
+        monkeypatch,
+        {"device_id": "center", "state": "/work/.runtime", "kind": "device"},
+    )
+    monkeypatch.setattr(retire.device_hub, "is_online", lambda device: True)
+    async with client.test_factory() as session:
+        await enrolled(session, "center")
+        operation = await session.get(RoomCleanup, cleanup_id)
+        home = str(operation.resource_id)
+        inventory = {"center": [("home", str(operation.project_id), home)]}
+        entries = await retire._inventory(session, operation, inventory)
+        assert {(entry["device_id"], entry["resource_id"]) for entry in entries} == {
+            ("center", home)
+        }
+        with pytest.raises(RuntimeError, match="inventory failed"):
+            await retire._inventory(session, operation, {})
 
 
 class LocalDevice:
@@ -675,12 +761,16 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
         assert (await session.get(CloudHost, host_id)).released_at is None
 
 
-async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_from_the_bucket(
-    client, monkeypatch
+@pytest.mark.parametrize("pushed", [True, False, None])
+async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_only_once_pushed(
+    client, monkeypatch, pushed
 ):
     """A session whose home was archived holds no directory on any machine:
-    its host may be gone. The room's cleanup does not wait for that host, and
-    the archive goes with the room."""
+    its host may be gone. The room's cleanup does not wait for that host. The
+    archive goes with the room when its host found everything in it pushed;
+    otherwise it is the only copy of that work, and the cleanup waits, still
+    cancellable by unarchiving the room. An archive with no answer (written
+    before hosts were asked) is not taken for pushed."""
     from app.domain.agent_session.services import AgentSessionService
     from app.domain.machine import lifecycle
 
@@ -719,16 +809,37 @@ async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_from_the_bucket(
                 archive_key="sandbox-archives/home.tar.gz",
                 archive_size=13,
                 archive_md5="0" * 32,
+                archive_published=pushed,
             )
         )
         await session.commit()
 
-    assert _sweep(client) == {"completed": 1, "pending": 0}
+    if pushed:
+        assert _sweep(client) == {"completed": 1, "pending": 0}
+        assert bucket.objects == {}
+        async with client.test_factory() as session:
+            assert (
+                await session.scalar(
+                    select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
+                )
+            ) is None
+        return
 
-    assert bucket.objects == {}
+    assert _sweep(client) == {"completed": 0, "pending": 1}
+    assert _sweep(client) == {"completed": 0, "pending": 1}
+    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
+    status = client.get(
+        f"/topics/{room_id}/cleanup", headers=session_auth_headers("owner")
+    ).json()["data"]
+    assert status["state"] == "pending"
+    assert "not pushed" in status["reason"]
     async with client.test_factory() as session:
-        assert (
-            await session.scalar(
-                select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
-            )
-        ) is None
+        await TopicService(session).unarchive(room_id, by="owner")
+        await session.commit()
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, cleanup_id)).state == "cancelled"
+        kept = await session.scalar(
+            select(CloudHostHome).where(CloudHostHome.topic_id == room_id)
+        )
+        assert kept.archive_key == "sandbox-archives/home.tar.gz"
+    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}

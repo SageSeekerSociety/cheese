@@ -20,7 +20,7 @@ function days(): CreditUsage['days'] {
   return Array.from({ length: 31 }, (_, i) => ({
     date: `2026-10-${String(i + 1).padStart(2, '0')}`,
     credits: i < 2 ? 145 : i < 20 ? 0 : null,
-    lines: { collab: i < 2 ? 145 : 0, ask: 0, write: 0 },
+    lines: { collab: i < 2 ? 145 : 0, ask: 0, write: 0, compute: 0 },
   }))
 }
 
@@ -61,7 +61,7 @@ function usage(over: Partial<CreditUsage> = {}): CreditUsage {
     packs: [],
     days: days(),
     projects: [{ id: 'p1', name: '空气质量看板', credits: 290 }],
-    lines: { collab: 174, ask: 87, write: 29 },
+    lines: { collab: 134, ask: 87, write: 29, compute: 40 },
     teams: [
       {
         id: 3,
@@ -161,7 +161,15 @@ describe('芝士额度', () => {
     const month = await view.findByRole('region', { name: '本月' })
     expect(within(month).getByText(/290\D+500/)).toBeTruthy()
     expect(within(month).getByText(/210/)).toBeTruthy()
-    for (const spent of ['174', '87', '29']) expect(within(month).getByText(new RegExp(`^${spent}\\D`))).toBeTruthy()
+    for (const spent of ['134', '87', '29', '40'])
+      expect(within(month).getByText(new RegExp(`^${spent}\\D`))).toBeTruthy()
+  })
+
+  it('cloud compute is a line of its own, next to the model lines', async () => {
+    const view = show(usage())
+    const month = await view.findByRole('region', { name: '本月' })
+    const compute = within(month).getByText(/算力/)
+    expect(compute.textContent).toMatch(/40/)
   })
 
   it("the plan's name opens what the plan includes", async () => {

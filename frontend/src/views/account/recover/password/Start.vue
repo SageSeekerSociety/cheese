@@ -1,86 +1,34 @@
+<!--
+  Asking for a password reset: the address is sent to the server and the form
+  gives way to the mail-is-out confirmation. What it shows is StartView.vue.
+-->
 <template>
-  <div>
-    <!-- Once the mail is out the form has done its job, so it gives way to
-         what happens next rather than staying up with a banner over it. -->
-    <template v-if="sent">
-      <AccountHeading :title="t('account.recover.sentTitle')" :lede="t('account.recover.sent')" />
-      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
-        {{ t('account.backToSignIn') }}
-      </BaseButton>
-    </template>
-
-    <template v-else>
-      <AccountHeading :title="t('account.recover.title')" :lede="t('account.recover.lede')" />
-
-      <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-6">
-        {{ error }}
-      </v-alert>
-
-      <v-form @submit.prevent="submit">
-        <AccountField :label="t('account.recover.email')" input-id="recover-email">
-          <v-text-field
-            id="recover-email"
-            v-model="email"
-            autocomplete="email"
-            autocapitalize="none"
-            autocorrect="off"
-            spellcheck="false"
-            name="email"
-            type="email"
-            v-bind="emailProps"
-          />
-        </AccountField>
-
-        <BaseButton block kind="primary" size="lg" type="submit" class="account-submit" :loading="isSubmitting">
-          {{ t('account.recover.submit') }}
-        </BaseButton>
-
-        <p class="account-foot">
-          {{ t('account.recover.rememberPassword') }}
-          <router-link to="/account/signin" class="account-link">{{ t('account.backToSignIn') }}</router-link>
-        </p>
-      </v-form>
-    </template>
-  </div>
+  <StartView :error="error" :sent="sent" :submitting="submitting" @submit="submit" />
 </template>
 
 <script lang="ts" setup>
-import { computed, ref } from 'vue'
-import { toTypedSchema } from '@vee-validate/zod'
-import { useForm } from 'vee-validate'
-import { z } from 'zod'
+import { ref } from 'vue'
 
-import { vuetifyConfig } from '@/utils/form'
+import StartView from './StartView.vue'
 
-import AccountField from '@/components/account/AccountField.vue'
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const error = ref('')
 const sent = ref(false)
+const submitting = ref(false)
 
-const { handleSubmit, defineField, isSubmitting } = useForm({
-  validationSchema: computed(() =>
-    toTypedSchema(
-      z.object({
-        email: z.string().email(),
-      })
-    )
-  ),
-})
-
-const [email, emailProps] = defineField('email', vuetifyConfig)
-
-const submit = handleSubmit(async (value) => {
+const submit = async (email: string) => {
   error.value = ''
+  submitting.value = true
   try {
-    await UserApi.recoverPasswordRequest(value.email)
+    await UserApi.recoverPasswordRequest(email)
     sent.value = true
   } catch (e) {
     error.value = requestErrorMessage(e, t('account.recover.failed'))
+  } finally {
+    submitting.value = false
   }
-})
+}
 </script>

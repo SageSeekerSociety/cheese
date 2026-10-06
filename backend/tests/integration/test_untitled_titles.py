@@ -1,10 +1,8 @@
-"""An unnamed task or room is flagged, so each screen names it in its reader's
-language instead of showing the stored placeholder 「新话题」.
+"""An unnamed task is flagged, so each screen names it in its reader's
+language instead of showing the stored placeholder.
 
 A message upgraded into a task opens it unnamed; a title given later, by
-anyone, ends that. Listings that name a room or a task outside its own
-endpoint (the cross-project topic names, the profile's topics) carry the
-same flag beside the title.
+anyone, ends that.
 
 The migration that adds the flag to tasks is run as ``alembic upgrade`` runs
 it, on rows written before it: a never-renamed upgraded task becomes
@@ -32,7 +30,7 @@ _MIGRATION = (
 
 
 def _room(client) -> tuple[str, str]:
-    project = post_project(client, json={"name": "P"}).json()["data"]
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     room = client.post(
         "/topics", json={"project_id": project["id"], "title": "讨论"}
     ).json()["data"]
@@ -42,7 +40,7 @@ def _room(client) -> tuple[str, str]:
 def _upgraded_task(client, project_id: str, room_id: str) -> dict:
     block_id = _insert_block(client, project_id, room_id, "把导入这段单独拆出来做")
     task = client.post(
-        f"/blocks/{block_id}/upgrade", json={"reviewer_handle": "alice"}
+        f"/blocks/{block_id}/upgrade", headers=session_auth_headers("alice")
     ).json()["data"]
     wait_work_idle()
     return task
@@ -61,7 +59,9 @@ def test_an_upgraded_task_is_unnamed_until_it_is_given_a_title(client):
     assert _listed(client, room_id, task["id"])["title_source"] == "placeholder"
 
     renamed = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/title", json={"title": "拆导入"}
+        f"/topics/{task['id']}/title",
+        json={"title": "拆导入"},
+        headers=session_auth_headers("alice"),
     )
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["data"]["title_source"] == "human"
@@ -74,28 +74,13 @@ def test_a_task_named_by_a_person_who_typed_the_placeholder_is_still_named(clien
     task = _upgraded_task(client, project_id, room_id)
 
     renamed = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/title", json={"title": "新话题"}
+        f"/topics/{task['id']}/title",
+        json={"title": "新任务"},
+        headers=session_auth_headers("alice"),
     )
 
-    assert renamed.json()["data"]["title"] == "新话题"
+    assert renamed.json()["data"]["title"] == "新任务"
     assert renamed.json()["data"]["title_source"] == "human"
-
-
-def test_topic_names_carry_the_flag(client):
-    project = post_project(
-        client, json={"name": "P"}, headers=session_auth_headers("user-1")
-    ).json()["data"]
-    unnamed = client.post("/topics", json={"project_id": project["id"]}).json()["data"]
-    named = client.post(
-        "/topics", json={"project_id": project["id"], "title": "周报"}
-    ).json()["data"]
-
-    names = client.get("/topics/names", headers=session_auth_headers("user-1"))
-
-    assert names.status_code == 200, names.text
-    sources = {t["id"]: t["title_source"] for t in names.json()["data"]["topics"]}
-    assert sources[unnamed["id"]] == "placeholder"
-    assert sources[named["id"]] == "human"
 
 
 def _upgrade(client) -> None:
@@ -110,6 +95,13 @@ def _upgrade(client) -> None:
 
     async def _run() -> None:
         async with client.test_factory() as s:
+            # Before it, an unnamed task was stored under the room placeholder.
+            await s.execute(
+                text(
+                    "UPDATE tasks SET title = '新话题'"
+                    " WHERE title_source = 'placeholder'"
+                )
+            )
             await s.execute(text("ALTER TABLE tasks DROP COLUMN title_source"))
             await (await s.connection()).run_sync(_apply)
             await s.commit()
@@ -121,7 +113,11 @@ def test_the_migration_marks_tasks_that_were_never_named(client):
     project_id, room_id = _room(client)
     untouched = _upgraded_task(client, project_id, room_id)
     named = _upgraded_task(client, project_id, room_id)
-    client.post(f"/topics/{room_id}/tasks/{named['id']}/title", json={"title": "拆"})
+    client.post(
+        f"/topics/{named['id']}/title",
+        json={"title": "拆"},
+        headers=session_auth_headers("alice"),
+    )
 
     _upgrade(client)
 

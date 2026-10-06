@@ -12,10 +12,11 @@ from app.domain.device.supply import Supply
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
 
 
-def mint_session_token(project_id, topic_id, agent_handle: str) -> str:
-    """The credential a session launches with, for ``agent_handle`` in the room
-    ``topic_id``: the one every harness starts its agent with, and the one a
-    session's executor is started again with when no turn is starting it.
+def mint_session_token(project_id, conversation_id, agent_handle: str) -> str:
+    """The credential a session launches with, for ``agent_handle`` in the
+    conversation ``conversation_id`` (a room, or one of its tasks): the one
+    every harness starts its agent with, and the one a session's executor is
+    started again with when no turn is starting it.
 
     Whatever holds it may hold it for the life of the session (a process reads
     it once, an idle executor keeps it until it is next prepared), so it lasts
@@ -23,7 +24,7 @@ def mint_session_token(project_id, topic_id, agent_handle: str) -> str:
     platform call made from there — its push included — was refused."""
     return mint_scoped_token(
         project_id=str(project_id),
-        topic_id=str(topic_id),
+        topic_id=str(conversation_id),
         ttl_s=SESSION_TOKEN_TTL_S,
         access_scope="project",
         agent_handle=agent_handle,

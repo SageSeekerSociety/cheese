@@ -848,11 +848,26 @@ def stop_executor(home: Path, resource: str) -> None:
             if result.returncode:
                 raise RuntimeError("sandbox has not stopped: " + result.stderr)
         runner = runpy.run_path(str(platform_program(home, "cheese-environment.py")))
-        runner["end_sandbox"](home)
+        # Not a compatibility path: rooms keep running from the release they
+        # started with. A release without `end_sandbox` predates sandboxes on
+        # enrolled machines and only ever started one on a cloud host, inside
+        # the helper's cgroup that `down` just took down.
+        end_sandbox = runner.get("end_sandbox")
+        if end_sandbox is not None:
+            end_sandbox(home)
         return
     # Both helpers can outlive the agent, including launches without an executor.
-    for name in ("cheese-preview", "cheese-tunnel"):
-        marker = home / ".cheese" / (name + ".pid")
+    # The tunnel helper's files are per SEAT — a room may seat several agents and
+    # each has its own helper, because one helper carries one credential and the
+    # credential names the teammate — so its markers live under each seat's
+    # directory. The room-level one is the shape from before seats had
+    # directories of their own, and a machine that still has one is worth
+    # stopping too.
+    markers = [home / ".cheese" / "cheese-preview.pid"]
+    markers += sorted((home / ".cheese" / SEATS_DIR).glob("cheese-tunnel.pid"))
+    markers.append(home / ".cheese" / "cheese-tunnel.pid")
+    for marker in markers:
+        name = marker.name[: -len(".pid")]
         if not marker.exists():
             continue
         pid = int(marker.read_text())

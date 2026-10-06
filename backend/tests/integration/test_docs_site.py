@@ -1,7 +1,10 @@
 """The docs site's server side over the real HTTP stack, database and Valkey.
 
-/docs/dev/ is for platform admins: the pass is issued only to them, every
-check re-asks, and losing admin closes the door. 问芝士 needs a signed-in
+The docs live on a host of their own here (``docs_host``), and a reader signs
+in to it through the platform: a grant from the platform, spent once on the
+docs host for a cookie that only that host takes, which lasts no longer than
+the platform sign-in it came from. dev/ is for platform admins: every check
+re-asks, and losing admin closes the door. 问芝士 needs a signed-in
 person, mints its gateway key once, records every question, and charges it to
 the asker's personal credits at the model's price. Over the model's own
 searches it reads the public pages and answers from them
@@ -21,29 +24,36 @@ from sqlalchemy import func, select
 
 from app.api.routes import docs_site as route
 from app.core.config import settings
-from app.domain.docs_site import access, assistant, retrieval
+from app.domain.docs_site import access, assistant, retrieval, site
 from app.domain.docs_site.limits import AskLimits
 from app.domain.docs_site.models import DocsQuestion, ServiceCredential
 from app.domain.feature_stats import pricing
 from app.domain.team.models import Team
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
-from tests.conftest import seed_user
-from tests.integration.conftest import free_plan_credits, session_auth_headers
+from tests.integration.conftest import (
+    DOCS_HOST,
+    PLATFORM_ORIGIN,
+    docs_cookie,
+    docs_sign_in,
+    free_plan_credits,
+    on_docs,
+    sign_in,
+)
 
 ADMIN = "docs-admin"
 INDEX = [
     {
         "title": "验收与采纳",
         "heading": "采纳交付",
-        "url": "/docs/accept#is-merge",
+        "url": "/accept#is-merge",
         "text": "确认改动符合要求后，在任务面板中点击「采纳」。"
         "采纳并合并成功后，改动进入项目主线。",
     },
     {
         "title": "团队",
         "heading": "邀请成员",
-        "url": "/docs/teams#invite-member",
+        "url": "/teams#invite-member",
         "text": "队长和管理员可以通过 UID 邀请成员。",
     },
 ]
@@ -71,13 +81,15 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
     answers, which is the shape a gateway that does not want tools replies in."""
     seen: dict = {
         "mints": 0,
+        # The gateway's keys by alias; it takes each alias once.
+        "keys": {},
         "completions": [],
         "index": 0,
         "pages": [],
         "tool_rounds": 0,
         "script": [],
         "answer": "文档里没有讲到。",
-        "deltas": ("采纳就是合并，", "见 [验收与采纳](/docs/accept#is-merge)。"),
+        "deltas": ("采纳就是合并，", "见 [验收与采纳](/accept#is-merge)。"),
         "usage": (300, 20),
         # Of the prompt tokens, how many the provider served from its cache.
         "cached": 0,
@@ -87,7 +99,7 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path == "/docs/ask-index.json":
+        if path.endswith("/sections.json"):
             seen["index"] += 1
             return httpx.Response(200, json=INDEX)
         if path == "/model/info":
@@ -106,15 +118,39 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
                 )
             return httpx.Response(200, json={"data": rows})
         if path == "/key/generate":
+            body = json.loads(request.content)
+            if body["key_alias"] in seen["keys"]:
+                # As LiteLLM refuses a second key under an alias.
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": f"Key with alias '{body['key_alias']}' "
+                            "already exists. Unique key aliases across all keys "
+                            "are required."
+                        }
+                    },
+                )
             seen["mints"] += 1
-            seen["mint_body"] = json.loads(request.content)
-            return httpx.Response(200, json={"key": "sk-docs-virtual"})
+            seen["mint_body"] = body
+            key = f"sk-docs-virtual-{seen['mints']}"
+            seen["keys"][body["key_alias"]] = key
+            return httpx.Response(200, json={"key": key})
+        if path == "/key/delete":
+            aliases = json.loads(request.content).get("key_aliases") or []
+            gone = [a for a in aliases if seen["keys"].pop(a, None) is not None]
+            if not gone:
+                return httpx.Response(404, json={"error": "No keys found"})
+            return httpx.Response(200, json={"deleted_keys": gone})
         if path.endswith(".md"):
             seen["pages"].append(path)
             return httpx.Response(
                 200, text=PAGE_MD, headers={"content-type": "text/markdown"}
             )
         if path == "/v1/chat/completions":
+            held = request.headers["authorization"].removeprefix("Bearer ")
+            if held not in seen["keys"].values():
+                return httpx.Response(401, json={"error": {"message": "bad key"}})
             sent = json.loads(request.content)
             seen["completions"].append((request.headers["authorization"], sent))
             prompt, completion = seen["usage"]
@@ -174,11 +210,8 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", Stubbed)
-    monkeypatch.setattr(
-        retrieval,
-        "source",
-        retrieval.IndexSource("http://frontend/docs/ask-index.json"),
-    )
+    # A fresh copy: the cached index belongs to whichever test read it first.
+    monkeypatch.setattr(retrieval, "source", retrieval.IndexSource(site.index_url))
     monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway")
     monkeypatch.setattr(settings, "llm_gateway_admin_key", "sk-master")
     pricing.forget()
@@ -199,9 +232,9 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
 
 
 @pytest.fixture
-def asker(client) -> dict[str, str]:
-    """A signed-in person who exists in the database the questions are recorded in."""
-    return {"Authorization": f"Bearer {seed_user(client, 'docs-asker')}"}
+def asker(client, docs_host) -> dict[str, str]:
+    """A person signed in to the docs, as the docs page's requests carry it."""
+    return on_docs(docs_cookie(docs_sign_in(client, sign_in(client, "docs-asker"))))
 
 
 def _events(text: str) -> list[tuple[str, dict]]:
@@ -232,52 +265,233 @@ def _rows(client, more_than: int = 0) -> list[DocsQuestion]:
     return []
 
 
-# ---------- /docs/dev/ ----------
+# ---------- signing in to the docs ----------
 
 
-def test_the_pass_is_for_platform_admins_only(client, as_admin):
+def test_a_signed_in_person_gets_a_docs_cookie_for_the_docs_host_alone(
+    client, docs_host
+):
+    r = docs_sign_in(client, sign_in(client, "docs-reader"), path="/quickstart#talk")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/quickstart#talk"
+    [cookie] = [
+        c
+        for c in r.headers.get_list("set-cookie")
+        if c.startswith(f"{access.cookie_name()}=")
+    ]
+    # __Host-: Secure, Path=/ and no Domain, so the browser keeps it to this
+    # one host and never sends it to the platform's.
+    assert access.cookie_name().startswith("__Host-")
+    assert "Domain" not in cookie and "Path=/" in cookie
+    assert "HttpOnly" in cookie and "Secure" in cookie and "SameSite=lax" in cookie
     assert (
-        client.post(
-            "/docs/dev-access", headers=session_auth_headers("stranger")
+        client.get(
+            "/docs/dev-access/check", headers=on_docs(docs_cookie(r))
         ).status_code
         == 403
     )
-    r = client.post("/docs/dev-access", headers=session_auth_headers(ADMIN))
-    assert r.status_code == 204
-    cookie = r.headers["set-cookie"]
-    assert cookie.startswith(f"{access.COOKIE}=")
-    assert (
-        "Path=/docs/dev" in cookie
-        and "HttpOnly" in cookie
-        and "SameSite=strict" in cookie
+
+
+def test_the_docs_send_a_reader_to_the_platform_to_sign_in(client, docs_host):
+    r = client.get(
+        "/docs/signin",
+        params={"path": "/quickstart#talk"},
+        headers=on_docs(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == (
+        f"{PLATFORM_ORIGIN}/docs-signin?path=%2Fquickstart%23talk"
+    )
+    # Somewhere off the site is not a page to come back to.
+    elsewhere = client.get(
+        "/docs/signin",
+        params={"path": "//evil.example/x"},
+        headers=on_docs(),
+        follow_redirects=False,
+    )
+    assert elsewhere.headers["location"] == f"{PLATFORM_ORIGIN}/docs-signin?path=%2F"
+
+
+def test_the_platform_hands_out_grants_only_to_someone_signed_in(client, docs_host):
+    assert client.post("/docs/grant").status_code == 401
+    granted = client.post(
+        "/docs/grant",
+        headers={"Authorization": f"Bearer {sign_in(client, 'docs-g').token}"},
+    )
+    assert granted.status_code == 200
+    assert granted.json()["data"]["url"] == f"{docs_host}/api/docs/session"
+    assert granted.headers["cache-control"] == "no-store"
+
+
+def _post_grant(
+    client, grant: str, *, origin: str = PLATFORM_ORIGIN, host: str = DOCS_HOST
+):
+    return client.post(
+        "/docs/session",
+        content=f"grant={grant}&path=/",
+        headers={
+            "host": host,
+            "origin": origin,
+            "content-type": "application/x-www-form-urlencoded",
+        },
+        follow_redirects=False,
     )
 
 
-def test_every_check_reasks_and_losing_admin_closes_the_door(
-    client, as_admin, monkeypatch
+def _grant(client, person) -> str:
+    return client.post(
+        "/docs/grant", headers={"Authorization": f"Bearer {person.token}"}
+    ).json()["data"]["grant"]
+
+
+def test_a_grant_is_spent_once(client, docs_host):
+    grant = _grant(client, sign_in(client, "docs-once"))
+    assert _post_grant(client, grant).status_code == 303
+    assert _post_grant(client, grant).status_code == 401
+
+
+def test_an_expired_grant_is_refused(client, docs_host, monkeypatch):
+    person = sign_in(client, "docs-late")
+    # Handed out longer ago than a grant lasts, as if the browser sat on it.
+    earlier = time.time() - access.GRANT_TTL - 5
+    with monkeypatch.context() as m:
+        m.setattr(access.time, "time", lambda: earlier)
+        grant = _grant(client, person)
+    assert _post_grant(client, grant).status_code == 401
+
+
+def test_a_grant_counts_only_from_the_platform_and_only_on_the_docs_host(
+    client, docs_host
 ):
-    assert client.get("/docs/dev-access/check").status_code == 401
-    token, _ = access.issue(ADMIN)
-    client.cookies.set(access.COOKIE, token)
-    assert client.get("/docs/dev-access/check").status_code == 204
+    person = sign_in(client, "docs-where")
+    # Another okcheese.com host is same-site, so it is the Origin that tells.
+    assert (
+        _post_grant(
+            client, _grant(client, person), origin=f"https://{DOCS_HOST}"
+        ).status_code
+        == 403
+    )
+    # Posted to the platform's own host, the cookie would land there.
+    assert (
+        _post_grant(client, _grant(client, person), host="example.test").status_code
+        == 404
+    )
 
+
+def test_the_docs_cookie_is_not_taken_on_the_platform_host(client, docs_host, as_admin):
+    cookie = docs_cookie(docs_sign_in(client, sign_in(client, ADMIN)))
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(cookie)).status_code == 204
+    )
+    assert (
+        client.get(
+            "/docs/dev-access/check", headers=on_docs(cookie, host="example.test")
+        ).status_code
+        == 401
+    )
+
+
+def test_signing_out_of_the_platform_signs_out_of_the_docs(client, docs_host, as_admin):
+    person = sign_in(client, ADMIN)
+    cookie = docs_cookie(docs_sign_in(client, person))
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(cookie)).status_code == 204
+    )
+    out = client.post(
+        "/users/auth/logout",
+        headers={
+            "origin": PLATFORM_ORIGIN,
+            "cookie": f"cheese_refresh={person.refresh}",
+        },
+    )
+    assert out.status_code == 200, out.text
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(cookie)).status_code == 401
+    )
+
+
+def test_the_docs_sign_in_ends_when_its_time_is_up(client, docs_host, monkeypatch):
+    monkeypatch.setattr(settings, "docs_session_seconds", 1)
+    cookie = docs_cookie(docs_sign_in(client, sign_in(client, "docs-timed")))
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(cookie)).status_code == 403
+    )
+    time.sleep(2.1)
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(cookie)).status_code == 401
+    )
+
+
+# ---------- dev/: platform admins ----------
+
+
+def test_dev_pages_are_for_admins_and_losing_admin_closes_the_door(
+    client, docs_host, as_admin, monkeypatch
+):
+    assert client.get("/docs/dev-access/check", headers=on_docs()).status_code == 401
+    stranger = docs_cookie(docs_sign_in(client, sign_in(client, "stranger")))
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(stranger)).status_code
+        == 403
+    )
+
+    admin = docs_cookie(docs_sign_in(client, sign_in(client, ADMIN)))
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(admin)).status_code == 204
+    )
     monkeypatch.setattr(settings, "platform_admin_handles", [])
-    access.admins.forget()  # the one-minute cache, run out
-    assert client.get("/docs/dev-access/check").status_code == 403
-    client.cookies.clear()
+    # Within the minute the list is cached, the door is still open ...
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(admin)).status_code == 204
+    )
+    access.admins.forget()  # ... and once it has run out, it is shut.
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(admin)).status_code == 403
+    )
 
 
-def test_a_pass_for_someone_else_or_a_forged_one_is_refused(client, as_admin):
-    client.cookies.set(access.COOKIE, "forged.token.value")
-    assert client.get("/docs/dev-access/check").status_code == 401
-    client.cookies.clear()
+def test_a_forged_cookie_is_refused(client, docs_host, as_admin):
+    forged = f"{access.cookie_name()}=forged.token.value"
+    assert (
+        client.get("/docs/dev-access/check", headers=on_docs(forged)).status_code == 401
+    )
+
+
+def test_the_docs_still_work_under_the_platform_with_no_docs_host(
+    client, monkeypatch, as_admin
+):
+    """No docs host configured: the same sign-in, on the platform's own host."""
+    monkeypatch.setattr(settings, "frontend_url", PLATFORM_ORIGIN)
+    monkeypatch.setattr(settings, "docs_origin", "")
+    r = docs_sign_in(client, sign_in(client, ADMIN), path="/dev/turn")
+    assert r.status_code == 303 and r.headers["location"] == "/dev/turn"
+    cookie = docs_cookie(r)
+    assert (
+        client.get(
+            "/docs/dev-access/check", headers=on_docs(cookie, host="example.test")
+        ).status_code
+        == 204
+    )
 
 
 # ---------- 问芝士 ----------
 
 
-def test_asking_needs_a_signed_in_person(client, gateway):
-    assert client.post("/docs/ask", json={"question": "怎么采纳"}).status_code == 401
+def test_asking_needs_a_signed_in_person(client, docs_host, gateway):
+    r = client.post("/docs/ask", json={"question": "怎么采纳"}, headers=on_docs())
+    assert r.status_code == 401
+
+
+def test_a_question_from_another_page_is_refused_even_with_the_cookie(
+    client, asker, gateway
+):
+    # Any okcheese.com page is same-site with the docs and may send the cookie
+    # along; only the docs' own pages may spend the reader's credits.
+    elsewhere = {**asker, "origin": PLATFORM_ORIGIN}
+    r = client.post("/docs/ask", json={"question": "怎么采纳"}, headers=elsewhere)
+    assert r.status_code == 403
+    assert gateway["completions"] == []
 
 
 def test_a_question_the_docs_do_not_cover_never_reaches_the_model(
@@ -314,16 +528,16 @@ def test_an_answer_is_grounded_streamed_and_recorded(
     events = _events(first.text)
     assert (
         events[0][0] == "sources"
-        and events[0][1]["sources"][0]["url"] == "/docs/accept#is-merge"
+        and events[0][1]["sources"][0]["url"] == "/accept#is-merge"
     )
     assert (
         "".join(d["text"] for e, d in events if e == "delta")
-        == "采纳就是合并，见 [验收与采纳](/docs/accept#is-merge)。"
+        == "采纳就是合并，见 [验收与采纳](/accept#is-merge)。"
     )
     assert events[-1] == ("done", {})
 
     auth, sent = gateway["completions"][0]
-    assert auth == "Bearer sk-docs-virtual"
+    assert auth == "Bearer sk-docs-virtual-1"
     assert (
         sent["model"] == settings.docs_assistant_model
         and sent["max_tokens"] == assistant.MAX_ANSWER_TOKENS
@@ -340,7 +554,7 @@ def test_an_answer_is_grounded_streamed_and_recorded(
         300,
         20,
     )
-    assert row.sources[0] == "/docs/accept#is-merge"
+    assert row.sources[0] == "/accept#is-merge"
 
     assert client.post("/docs/ask", json=body, headers=asker).status_code == 200
     assert gateway["mints"] == 1
@@ -352,14 +566,37 @@ def test_an_answer_is_grounded_streamed_and_recorded(
     assert asyncio.run(keys()) == 1
 
 
+def test_a_key_the_gateway_still_holds_without_a_stored_secret_is_replaced(
+    client, asker, gateway, monkeypatch
+):
+    # The gateway keeps 问芝士's old key, but its secret is no longer stored here
+    # (the row was dropped so the key would be re-minted without a budget), and
+    # the gateway takes each alias only once.
+    monkeypatch.setattr(settings, "docs_assistant_agentic", False)
+    gateway["keys"]["docs-assistant"] = "sk-lost"
+    body = {"question": "采纳和合并是一回事吗", "page": "accept"}
+
+    r = client.post("/docs/ask", json=body, headers=asker)
+    assert r.status_code == 200, r.text
+    assert _events(r.text)[-1] == ("done", {})
+    # The old key is gone and the new one carries today's limits.
+    assert gateway["keys"] == {"docs-assistant": "sk-docs-virtual-1"}
+    assert gateway["mint_body"]["rpm_limit"] == 120
+    assert "max_budget" not in gateway["mint_body"]
+
+    assert client.post("/docs/ask", json=body, headers=asker).status_code == 200
+    assert gateway["mints"] == 1
+    assert {auth for auth, _ in gateway["completions"]} == {"Bearer sk-docs-virtual-1"}
+
+
 def test_the_model_searches_reads_and_answers_from_the_page_it_read(
     client, asker, gateway
 ):
     gateway["script"] = [
         ("search_docs", {"query": "采纳 合并"}),
-        ("fetch_doc", {"url": "/docs/accept#is-merge"}),
+        ("fetch_doc", {"url": "/accept#is-merge"}),
     ]
-    gateway["answer"] = "采纳就是合并，见 [验收与采纳](/docs/accept#is-merge)。"
+    gateway["answer"] = "采纳就是合并，见 [验收与采纳](/accept#is-merge)。"
     gateway["usage"] = (100, 10)
 
     r = client.post(
@@ -381,18 +618,18 @@ def test_the_model_searches_reads_and_answers_from_the_page_it_read(
     assert events[1][1] == {
         "kind": "fetch",
         "title": "验收与采纳",
-        "url": "/docs/accept",
+        "url": "/accept",
     }
     # The pages it actually read: once before the answer is finished, again
     # under it, so a reader who joined late still gets the list.
-    read = {"sources": [{"title": "验收与采纳", "heading": "", "url": "/docs/accept"}]}
+    read = {"sources": [{"title": "验收与采纳", "heading": "", "url": "/accept"}]}
     assert events[2][1] == read and events[4][1] == read
     assert events[3][1] == {"text": gateway["answer"]}
     assert events[5] == ("done", {})
 
     # The tools went out with the round; the fetch went to the page's public
     # .md twin; the page came back to the model as data.
-    assert gateway["pages"] == ["/docs/accept.md"]
+    assert gateway["pages"] == ["/accept.md"]
     first, second, third = (sent for _, sent in gateway["completions"])
     assert [t["function"]["name"] for t in first["tools"]] == [
         "search_docs",
@@ -408,7 +645,7 @@ def test_the_model_searches_reads_and_answers_from_the_page_it_read(
     [row] = _rows(client)
     assert (row.outcome, row.page) == ("answered", "accept")
     assert (row.prompt_tokens, row.completion_tokens) == (300, 30)
-    assert row.sources == ["/docs/accept"]
+    assert row.sources == ["/accept"]
 
 
 def test_a_question_the_docs_do_not_cover_is_refused_without_reading_anything(
@@ -589,3 +826,17 @@ def test_one_question_at_a_time_per_person(client, gateway):
 )
 def test_malformed_questions_are_rejected(client, asker, gateway, bad):
     assert client.post("/docs/ask", json=bad, headers=asker).status_code == 400
+
+
+def test_a_question_asked_from_a_default_port_origin_still_counts(
+    client, monkeypatch, gateway
+):
+    # Browsers leave :443 out of Origin; a DOCS_ORIGIN written with it must not
+    # turn every question into a cross-site refusal.
+    monkeypatch.setattr(settings, "frontend_url", PLATFORM_ORIGIN + ":443")
+    monkeypatch.setattr(settings, "docs_origin", "https://docs.example.test:443")
+    headers = on_docs(docs_cookie(docs_sign_in(client, sign_in(client, "docs-port"))))
+    r = client.post(
+        "/docs/ask", json={"question": "采纳和合并是一回事吗"}, headers=headers
+    )
+    assert r.status_code == 200, r.text

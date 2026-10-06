@@ -45,7 +45,7 @@ function msg(id: string, author: string, content = id): Block {
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author_type: 'participant',
     author,

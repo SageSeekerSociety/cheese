@@ -24,16 +24,18 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
-    Index,
     String,
     UniqueConstraint,
     Uuid,
-    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+
+# The registry `conversation_id` points at: mapped wherever this is, so the
+# foreign key resolves in a process that never imports `app.models`.
+from app.domain.conversation.models import Conversation  # noqa: F401
 
 
 class TopicStatus(enum.StrEnum):
@@ -61,33 +63,9 @@ class TopicKind(enum.StrEnum):
     subtopic = "subtopic"  # 历史值: task 的前身
 
 
-# What an unnamed room is called until someone — usually the platform — names it.
-PLACEHOLDER_TITLE = "新话题"
-
-
-class TitleSource(enum.StrEnum):
-    """Who decided a room's current title — and so whether the platform may
-    still change it (app/domain/topic/naming.py).
-
-    ``human`` is final: a person typed it (the sidebar), asked 芝士 for it
-    (`cheese_title`), or undid a rename. Nothing writes over it after that —
-    not even a person, who can only give the room another human name.
-    """
-
-    placeholder = "placeholder"  # still 「新话题」
-    auto = "auto"  # the platform named it
-    human = "human"
-
-
 def room_ref(room: "Topic") -> dict:
-    """A room named inside another listing: its id and title, and whether the
-    title is still the placeholder, which each screen renders in its reader's
-    language."""
-    return {
-        "id": str(room.id),
-        "title": room.title,
-        "title_source": TitleSource(room.title_source).value,
-    }
+    """A room named inside another listing: its id and title."""
+    return {"id": str(room.id), "title": room.title}
 
 
 class TopicRole(enum.StrEnum):
@@ -138,26 +116,6 @@ class Topic(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
     )
     title: Mapped[str] = mapped_column(String(300))
-    # Title bookkeeping for the platform's naming (app/domain/topic/naming.py).
-    # `title_version` moves on every rename, by anyone: an automatic rename is
-    # written only if it still matches the version it was computed from, so a
-    # person who renames mid-generation always wins.
-    title_source: Mapped[TitleSource] = mapped_column(
-        Enum(TitleSource, native_enum=False, length=16),
-        default=TitleSource.placeholder,
-        server_default=TitleSource.placeholder.value,
-    )
-    title_version: Mapped[int] = mapped_column(default=0, server_default="0")
-    # When the platform last judged this title (named it, or decided to keep
-    # it); later messages are what a follow-up judgement reads.
-    title_checked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # The title has been re-read against the first turn's conversation, not
-    # just the opening message. Later changes are follow-ups.
-    title_calibrated: Mapped[bool] = mapped_column(
-        default=False, server_default="false"
-    )
     kind: Mapped[TopicKind] = mapped_column(
         Enum(TopicKind, native_enum=False, length=16), default=TopicKind.topic
     )
@@ -212,32 +170,6 @@ class Topic(UuidPk, Timestamps, Base):
     cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
 
-class TopicTitle(UuidPk, Base):
-    """Every title a room has had, newest last, and who gave it.
-
-    Read to undo an automatic rename, to find a room by a name it used to have,
-    and to see how often automatic names get overridden by people.
-    """
-
-    __tablename__ = "topic_titles"
-
-    topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE")
-    )
-    title: Mapped[str] = mapped_column(String(300))
-    source: Mapped[TitleSource] = mapped_column(
-        Enum(TitleSource, native_enum=False, length=16)
-    )
-    # name | calibrate | follow | rename | undo
-    reason: Mapped[str] = mapped_column(String(16))
-    by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text("now()")
-    )
-
-    __table_args__ = (Index("ix_topic_titles_topic_created", "topic_id", "created_at"),)
-
-
 class RoomCleanup(UuidPk, Timestamps, Base):
     __tablename__ = "room_cleanups"
 
@@ -273,12 +205,13 @@ class RawTranscript(UuidPk, Timestamps, Base):
 
 
 class TopicReadState(UuidPk, Timestamps, Base):
-    """Per-user read cursor on a topic (话题级未读, Feishu-style).
+    """Per-user read cursor on a conversation: a room's or a task's.
 
-    One row per (topic, user); last_read_at is bumped whenever the user opens
-    the topic. Unread = message blocks by OTHERS created after this cursor
+    One row per (conversation, user); last_read_at is bumped whenever the user
+    opens it. Unread = message blocks by OTHERS created after this cursor
     (no row = everything by others is unread). Deliberately a cursor, not a
-    per-message read table — cheap to bump, cheap to count against.
+    per-message read table — cheap to bump, cheap to count against. Which
+    conversations count for whom is `TopicRepository.unread_counts`.
     """
 
     __tablename__ = "topic_read_states"
@@ -286,8 +219,9 @@ class TopicReadState(UuidPk, Timestamps, Base):
         UniqueConstraint("topic_id", "user_handle", name="uq_topic_read_user"),
     )
 
+    # A conversation id (`conversations`): the room's own, or a task's.
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -309,8 +243,8 @@ class TopicProgress(UuidPk, Timestamps, Base):
 
     This row is that missing layer, and it is deliberately NOT memory: memory is
     stable facts injected into every prompt, and a running checklist would both
-    bloat it and go stale. One row per PLACE — a room's own main line, or one
-    thread in it — overwritten in place: the current state of the work, not its
+    bloat it and go stale. One row per conversation — a room or a task —
+    overwritten in place: the current state of the work, not its
     history (the timeline already keeps history).
 
     ``items`` is the checklist as the UI renders it: ``[{"id", "subject",
@@ -321,32 +255,9 @@ class TopicProgress(UuidPk, Timestamps, Base):
     """
 
     __tablename__ = "topic_progress"
-    # `topic_id` used to BE the primary key. It cannot be any more: a thread's
-    # row is identified by (room, thread), and a primary key cannot hold the
-    # NULL that says "the room's own main line". The pair of partial unique
-    # indexes says what the old primary key said, once per half — one wider
-    # index over (topic_id, task_id) would not, because NULL is not equal to
-    # NULL in a unique index and every room row would stop being exclusive.
-    __table_args__ = (
-        Index(
-            "uq_topic_progress_room",
-            "topic_id",
-            unique=True,
-            postgresql_where=text("task_id IS NULL"),
-        ),
-        Index(
-            "uq_topic_progress_thread",
-            "task_id",
-            unique=True,
-            postgresql_where=text("task_id IS NOT NULL"),
-        ),
-    )
 
-    topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
-    )
-    task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), unique=True
     )
     items: Mapped[list[dict]] = mapped_column(JSON, default=list)
     # The turn that last wrote this, for telling "left over from a turn that

@@ -7,6 +7,7 @@ POST /attachments 把字节收进项目的资料库，并在这个房间的文�
 
 import base64
 import threading
+import time
 import uuid
 from urllib.parse import quote
 
@@ -19,6 +20,7 @@ from app.main import app
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     room_agent_seat,
@@ -41,6 +43,12 @@ def _create_project_and_topic(client) -> tuple[str, str]:
         json={"project_id": project_id, "title": "图片话题"},
     )
     return project_id, tr.json()["data"]["id"]
+
+
+def _create_project_and_thread(client) -> tuple[str, str]:
+    """A project and a 支线 in its channel: where 芝士 answers when called."""
+    project_id, topic_id = _create_project_and_topic(client)
+    return project_id, in_thread(client, topic_id, "user-1")
 
 
 def _upload(client, topic_id: str) -> dict:
@@ -138,7 +146,7 @@ def test_upload_and_download_documents(client, filename, content, mime):
     ],
 )
 def test_document_reaches_agent_as_file(client, stub_hooks, filename, content, mime):
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
     att = client.post(
         f"/topics/{topic_id}/attachments",
         files={"file": (filename, content, mime)},
@@ -193,7 +201,7 @@ OFFICE_MIMES = [
 @pytest.mark.parametrize(("filename", "mime"), OFFICE_MIMES)
 def test_office_document_lands_in_the_room(client, stub_hooks, filename, mime):
     """发一个 .docx 进房间，它要真的出现在时间线上。"""
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
     att = client.post(
         f"/topics/{topic_id}/attachments",
         files={"file": (filename, b"PK\x03\x04", mime)},
@@ -280,37 +288,45 @@ def test_raw_rejects_non_image_and_traversal(client):
 
 
 def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_hooks):
+    """An image sent with a call to 芝士 in the main line reaches 芝士 in the
+    message's 支线: the files stay with the message, and the 支线's first
+    turn reads both."""
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        post_message(
+        asked = post_message(
             client,
             topic_id,
             "user-1",
             {"content": "@芝士 看看这张截图", "attachments": [att]},
         )
-        frames = _drain_until_done(ws)
+        user_frames = [ws.receive_json()["block"] for _ in range(2)]
 
-    # Both the text block and the attachment block stream as user_block frames.
-    user_frames = [f["block"] for f in frames if f["type"] == "user_block"]
+    # Both the text block and the attachment block land in the main line.
     assert [b["kind"] for b in user_frames] == ["message", "attachment"]
     att_block = user_frames[1]
     assert att_block["content"] == att["path"]
     assert att_block["mime_type"] == "image/png"
     assert not att_block["author"].startswith("cheese")
 
+    thread = client.post(f"/blocks/{asked['id']}/thread").json()["data"]["id"]
+    deadline = time.monotonic() + 30
+    while att["path"] not in (stub_hooks.last_prompt or ""):
+        assert time.monotonic() < deadline, stub_hooks.last_prompt
+        time.sleep(0.2)
+
     # The prompt tells 芝士 the image is attached INLINE (images= carries the
     # content to the model) and where the file lives in its workspace.
     prompt = stub_hooks.last_prompt or ""
     assert f"[user-1]: <@{room_agent_seat(client, topic_id)}> 看看这张截图" in prompt
-    assert att["path"] in prompt
     assert "已附在本条消息里" in prompt
 
-    # Persisted: message + attachment + terminal activity.
-    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    assert [b["kind"] for b in blocks] == ["message", "attachment", "event"]
-    assert blocks[2]["meta"]["in_room"] is False
+    main = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    assert [b["kind"] for b in main] == ["message", "attachment"]
+    answer = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+    assert [b["kind"] for b in answer] == ["event"]
+    assert answer[0]["meta"]["in_room"] is False
 
 
 def test_image_only_message_allowed(client, stub_hooks):
@@ -320,7 +336,7 @@ def test_image_only_message_allowed(client, stub_hooks):
     能把芝士叫起来。点名写进正文之后（I13），没点名的图只是落在房间里 —— 输入框
     上对着一张图按 ⌘Enter，发出去的正是下面这一条。
     """
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
     att = _upload(client, topic_id)
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
@@ -346,7 +362,7 @@ def test_image_only_message_allowed(client, stub_hooks):
 @pytest.mark.parametrize("midturn", [False, True])
 def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
     """The actual session input carries one image, not ZIP/PDF/unknown bytes."""
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
     image = _upload(client, topic_id)
     files = [
         client.post(
@@ -451,7 +467,7 @@ def _run_on_non_embedding_backend(client, tmp_path) -> _NoEmbedScreen:
 
 
 def test_prompt_does_not_claim_attachment_when_backend_drops_images(client, tmp_path):
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
     att = _upload(client, topic_id)
     screen = _run_on_non_embedding_backend(client, tmp_path)
 
@@ -478,7 +494,7 @@ def test_embedding_backend_still_says_the_image_is_attached(client, stub_hooks):
     """Per-provider capability, not a global downgrade: a screen resolves an
     @-mentioned path into a native image block, so it must keep telling 芝士
     the image is inline."""
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
     att = _upload(client, topic_id)
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
@@ -496,7 +512,7 @@ def test_a_deleted_library_file_does_not_wedge_the_room(client, stub_hooks):
     """A message whose attachment has since left the library still gets its
     turn: the turn finishes, 芝士 is told the file is gone instead of being
     handed an image, and the next message is not held behind it."""
-    project_id, topic_id = _create_project_and_topic(client)
+    project_id, topic_id = _create_project_and_thread(client)
     att = _upload(client, topic_id)
     gone = client.delete(
         f"/projects/{project_id}/library", params={"path": "screenshot.png"}

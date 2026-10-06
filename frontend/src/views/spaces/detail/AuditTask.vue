@@ -1,7 +1,16 @@
 <template>
   <PageHeader :title="t('spaces.detail.auditTasks.title')" show-on-mobile />
   <div class="audit">
+    <!-- A failed read leaves `tasks` empty, so the list would say "nothing to review" — the same shape as a queue that really is empty. Replace it instead. -->
+    <BaseLoadError
+      v-if="failed"
+      :title="t('spaces.detail.auditTasks.loadFailed')"
+      :error="loadFailureReason(error)"
+      :forbidden="isForbidden(error)"
+      @retry="refresh"
+    />
     <infinite-scroll
+      v-else
       :loading="loadingMore"
       :has-more="hasMore"
       :initial-loading="refreshing"
@@ -29,7 +38,7 @@
 <script setup lang="ts">
 import type { Task } from '@/types'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
@@ -41,8 +50,10 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import AuditTaskRow from './AuditTaskRow.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { TasksApi } from '@/network/api/tasks'
 import { CancelError, useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
@@ -58,6 +69,7 @@ const dialogs = useDialog()
 
 const {
   data: tasks,
+  error,
   refresh,
   loadMore,
   hasMore,
@@ -82,6 +94,10 @@ const {
   })
   return { data: data.tasks as Task[], page: data.page }
 })
+
+// 读失败时 `tasks` 是空的，光看 `is-empty` 分不出「读失败」和「一条都没有」。
+// 只有在**没有东西可显示**时才替换列表：翻页失败时上面那些条目还在。
+const failed = computed(() => error.value !== null && tasks.value.length === 0)
 
 const toggleExpand = (taskId: number) => {
   expandedTaskId.value = expandedTaskId.value === taskId ? null : taskId

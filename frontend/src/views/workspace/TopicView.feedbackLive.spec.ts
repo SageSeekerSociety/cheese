@@ -37,6 +37,10 @@ function proposal(blockId: string, title: string): FeedbackProposal {
 const server = vi.hoisted(() => ({ live: [] as unknown[] }))
 
 // 聊天栏底部的技能提议卡也会读一次；这里没有提议。
+vi.mock('@/api/tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/tasks')>()),
+  listTaskProposals: vi.fn(async () => []),
+}))
 vi.mock('@/api/projectSkills', () => ({
   listProjectSkills: vi.fn(() => Promise.resolve({ data: [], total: 0 })),
   confirmProjectSkill: vi.fn(),
@@ -52,6 +56,8 @@ vi.mock('@/api', async (importOriginal) => ({
 const store = vi.hoisted(() => ({ value: null as unknown }))
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store.value }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
+// 频道的支线清单：这几条测试不看它。
+vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
 
 // The real panel turns a `{type: 'state', resource}` socket message into this
 // event; the button stands in for that message arriving.

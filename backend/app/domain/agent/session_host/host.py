@@ -384,6 +384,16 @@ class SessionHost:
                 host,
                 exc,
             )
+            if missing and _no_runner(exc):
+                # FB-56 forbids reading a question nobody answered as death:
+                # an offline machine, a timeout, a connector not ready yet. This
+                # is not that. The machine is online and answered that the
+                # runner's socket does not exist, and a runner lives exactly as
+                # long as its harness process (``driven.runner``), so the
+                # conversation it ran is over.
+                return SessionStatus(
+                    working=False, model="", alive=False, runner_gone=True
+                )
             return None
         alive = status.get("alive")
         found = SessionStatus(
@@ -853,6 +863,13 @@ class SessionHost:
             for reading in stuck:
                 reading.cancel()
             await asyncio.gather(*stuck, return_exceptions=True)
+
+
+def _no_runner(exc: Exception) -> bool:
+    """The connector's own answer that the runner's socket is not there
+    (``cli/internal/host/executor_unix.go`` dials it by name)."""
+    text = str(exc)
+    return "cheese-execution-" in text and "no such file or directory" in text
 
 
 def _waiting_for(exc: Exception) -> str:

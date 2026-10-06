@@ -109,7 +109,7 @@ class ProjectService:
         project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         root = await self._topics.add(
             project_id=project.id,
-            title=f"{name} · 项目总览",
+            title="综合",
             kind=TopicKind.root,
             created_by=owner_handle,
         )

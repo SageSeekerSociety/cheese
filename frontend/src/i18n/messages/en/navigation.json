@@ -10,13 +10,14 @@
     "settings": "Project settings",
     "general": "General",
     "routines": "Routines",
-    "skills": "Skills"
+    "skills": "Skills",
+    "pages": "Project pages"
   },
   "spaces": "Spaces",
   "teams": "Teams",
   "term": {
     "project": "project",
-    "topic": "topic"
+    "topic": "channel"
   },
   "workspace": "Workspace",
   "feedback": {
@@ -81,7 +82,7 @@
     "archived": "Archived",
     "recent": "Recent",
     "best": "Best match",
-    "topics": "Topics",
+    "topics": "Channels",
     "projects": "Projects",
     "members": "Members",
     "pages": "Pages",
@@ -89,7 +90,7 @@
     "close": "Close",
     "theme": "Appearance: {mode}",
     "showTab": "Show {tab}",
-    "newTopic": "New topic",
+    "newTopic": "New channel",
     "messages": "Messages",
     "tasks": "Tasks",
     "docs": "Documents",
@@ -105,7 +106,7 @@
     "save": "Save",
     "back": "Back",
     "dm": "Message",
-    "openRoom": "Open topic",
+    "openRoom": "Open channel",
     "copyHandle": "Copy {'@'}{handle}",
     "searchIn": "Search in project",
     "leaveScope": "Remove project scope and search names across projects",
@@ -148,6 +149,7 @@
     "feedbackDetail": "Feedback details",
     "openPreview": "Open preview",
     "openSite": "Open site",
+    "openDocs": "Open docs",
     "connect": "Connect a device",
     "market": "Market",
     "notFound": "Page not found",

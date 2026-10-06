@@ -2,9 +2,9 @@
 
 This sits between a caller's Claude Code and the upstream. The caller is a
 session on the platform's central session host, and its Authorization is a
-placeholder that authenticates nothing. This proxy holds the platform's only
-Claude credential and puts it on each request bound for Anthropic, so logging
-the platform in or out reaches every running session at its next request.
+placeholder that authenticates nothing. This proxy holds the platform's
+Claude credentials and selects an account for each conversation bound for
+Anthropic, retaining that account until it is unavailable.
 
 That placement makes this the only point that can:
   - meter a subscription turn's real cost (the subscription path deliberately
@@ -50,8 +50,10 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -59,6 +61,8 @@ from urllib.request import Request, urlopen
 from mitmproxy import http, tls
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from claude_accounts import ClaudeAccounts  # noqa: E402
+from claude_retry import ATTEMPTS, Attempt, install as install_retry  # noqa: E402
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
     BINDING,
@@ -122,6 +126,13 @@ CREDENTIAL = PlatformCredential(
         )
     )
 )
+CLAUDE_ACCOUNTS = ClaudeAccounts(CREDENTIAL)
+
+
+def load(loader):
+    install_retry()
+
+
 # The proxy's own credential rides every admission call: only a caller holding
 # it is handed a gateway project's key (the session's bearer names the room,
 # and a session must never hold that key).
@@ -371,13 +382,14 @@ def _refuse(
     )
 
 
-def _refuse_spent_budget(
+def _refuse_reached_cap(
     flow: http.HTTPFlow, message: str, reopens_at: int | None
 ) -> None:
-    """Refuse a turn whose project has spent its budget, in the shape Claude
-    Code's gateway contract gives a reached spend cap: 429 ``billing_error``
-    with ``x-should-retry: false`` and the ``anthropic-ratelimit-unified-*``
-    rejection headers.
+    """Refuse a turn that a spent allowance stops — the project's budget, or
+    the usage limit of the subscription account behind its model — in the
+    shape Claude Code's gateway contract gives a reached spend cap: 429
+    ``billing_error`` with ``x-should-retry: false`` and the
+    ``anthropic-ratelimit-unified-*`` rejection headers.
 
     A bare 429 is what it used to be, and Claude Code reads that as throttling:
     it retries the turn up to ten times and, for a session signed in the way
@@ -438,15 +450,17 @@ def http_connect(flow: http.HTTPFlow) -> None:
     )
 
 
-def _leave_through_egress(flow: http.HTTPFlow) -> bool:
+def _leave_through_egress(flow: http.HTTPFlow, credential=None) -> bool:
     """Send a request carrying the platform's credential out through the
     credential's egress, when it has one. Only these requests: the gateway,
     the answers given here and everything tunnelled raw keep their own route.
     No egress reachable means no request: the upstream connection fails and
     the client is told so, never quietly sent direct instead. False when the
     request has been refused here instead."""
-    egress = CREDENTIAL.egress()
+    egress = (credential or CREDENTIAL).egress()
     if egress is None:
+        flow.server_conn.via = None
+        flow.metadata.pop("cheese_egress", None)
         return True
     if egress == _REFUSED_EGRESS.get("egress"):
         # Refused the proxy's credentials once, it will again until someone
@@ -458,6 +472,15 @@ def _leave_through_egress(flow: http.HTTPFlow) -> bool:
             f"cheese: the Claude credential's egress {egress.host}:"
             f"{egress.port} refused the proxy's credentials; fix them with "
             "`claude-login.sh egress set`",
+        )
+        return False
+    if EGRESS_HEALTH.unreachable(egress):
+        _refuse(
+            flow,
+            503,
+            "api_error",
+            EGRESS_OFFLINE_MESSAGE,
+            {"x-should-retry": "false"},
         )
         return False
     flow.server_conn.via = ("http", (egress.host, egress.port))
@@ -474,6 +497,109 @@ _REFUSED_EGRESS: dict[str, Egress] = {}
 # The Proxy-Authorization each client connection's egress wants, set when a
 # request is sent through it and read when the connection to it is opened.
 _EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
+
+# What a turn is told when the machine its credential must leave through does
+# not answer. 503 with x-should-retry: false is the one answer Claude Code
+# gives up on at once; a 502 from a connection that never opened was retried
+# ten times, each attempt waiting out a TCP connect timeout, and the room sat
+# silent for minutes. The backend recognises the phrase "subscription egress
+# is offline" and shows its own notice for it (`platform_failures`), which
+# takes only short lines: Claude Code prints this inside the JSON error body.
+EGRESS_OFFLINE_MESSAGE = (
+    "cheese: the subscription egress is offline, so no model call was made. "
+    "It works again once that machine is back online."
+)
+#: One attempt to open a connection to an egress may take this long. Over the
+#: tailnet a healthy one answers in well under a second.
+EGRESS_CONNECT_TIMEOUT_S = 4.0
+#: Attempts before an egress is called offline, and the pause between them: a
+#: blip of a few seconds must not fail a turn.
+EGRESS_ATTEMPTS = 3
+EGRESS_ATTEMPT_GAP_S = 1.0
+#: How long a verdict stands before a request asks again. An offline verdict
+#: is short so that a machine coming back is used within seconds.
+EGRESS_UP_FOR_S = 15.0
+EGRESS_DOWN_FOR_S = 5.0
+
+
+class EgressHealth:
+    """Whether each egress answers, asked before a request is sent through it.
+
+    One probe per egress at a time: the requests that arrive while it runs wait
+    for its answer instead of opening probes of their own."""
+
+    def __init__(self, *, clock=time.monotonic):
+        self._clock = clock
+        self._verdicts: dict[tuple[str, int], tuple[bool, float]] = {}
+        self._probes: dict[tuple[str, int], asyncio.Task] = {}
+
+    async def check(self, egress: Egress) -> None:
+        address = (egress.host, egress.port)
+        verdict = self._verdicts.get(address)
+        if verdict is not None and self._clock() < verdict[1]:
+            return
+        probe = self._probes.get(address)
+        if probe is None:
+            probe = asyncio.ensure_future(self._probe(address))
+            self._probes[address] = probe
+        try:
+            await asyncio.shield(probe)
+        finally:
+            if probe.done() and self._probes.get(address) is probe:
+                del self._probes[address]
+
+    async def _probe(self, address: tuple[str, int]) -> None:
+        for attempt in range(EGRESS_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(EGRESS_ATTEMPT_GAP_S)
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(*address), EGRESS_CONNECT_TIMEOUT_S
+                )
+            except (OSError, TimeoutError):
+                continue
+            writer.close()
+            self._verdicts[address] = (True, self._clock() + EGRESS_UP_FOR_S)
+            return
+        logger.warning(
+            "the Claude credential's egress %s:%s did not answer %d attempts",
+            *address,
+            EGRESS_ATTEMPTS,
+        )
+        self._verdicts[address] = (False, self._clock() + EGRESS_DOWN_FOR_S)
+
+    def unreachable(self, egress: Egress) -> bool:
+        """The last answer for this egress was that it is offline."""
+        verdict = self._verdicts.get((egress.host, egress.port))
+        return verdict is not None and not verdict[0]
+
+    def forget(self, egress: Egress) -> None:
+        """A connection through it failed: ask again before the next request."""
+        self._verdicts.pop((egress.host, egress.port), None)
+
+
+EGRESS_HEALTH = EgressHealth()
+
+
+async def _check_egresses(flow: http.HTTPFlow, verdict, is_messages: bool) -> None:
+    """Ask, before routing, whether the egresses of the platform's Claude
+    credentials answer — only for a request that will be sent on one of them.
+    A project the gateway serves never waits on an egress it does not use."""
+    if _caller_bearer(flow) != NO_LOGIN_PLACEHOLDER:
+        return
+    if (
+        is_messages
+        and verdict is not None
+        and verdict.allow
+        and verdict.pool == GATEWAY
+    ):
+        return
+    egresses = {
+        (egress.host, egress.port): egress
+        for credential in CLAUDE_ACCOUNTS.accounts().values()
+        if (egress := credential.egress()) is not None
+    }
+    await asyncio.gather(*(EGRESS_HEALTH.check(e) for e in egresses.values()))
 
 
 def http_connect_upstream(flow: http.HTTPFlow) -> None:
@@ -639,10 +765,12 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
 
 
 def client_disconnected(client) -> None:
-    """A long-lived proxy must not accumulate one entry per connection ever
-    made; the proven project does not outlive the connection that established
-    it — and a recycled connection id must not inherit the previous caller's
-    project."""
+    """Release request spools and attribution when their connection closes."""
+    for flow_id, attempt in list(ATTEMPTS.items()):
+        if attempt.flow.client_conn.id == client.id:
+            CLAUDE_ACCOUNTS.release(attempt.account, flow_id)
+            attempt.close()
+            ATTEMPTS.pop(flow_id)
     _SCOPED_BY_CLIENT.pop(getattr(client, "id", ""), None)
     _EGRESS_AUTH_BY_CLIENT.pop(getattr(client, "id", ""), None)
 
@@ -734,7 +862,7 @@ def _refuse_verdict(flow: http.HTTPFlow, verdict) -> None:
     if verdict.reason_kind == BINDING:
         _refuse(flow, 400, "invalid_request_error", verdict.reason)
         return
-    _refuse_spent_budget(
+    _refuse_reached_cap(
         flow, f"cheese project budget: {verdict.reason}", verdict.reopens_at
     )
 
@@ -855,6 +983,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         )
 
     await _refresh_credential()
+    await _check_egresses(flow, verdict, is_messages)
     _route(
         flow,
         verdict,
@@ -936,6 +1065,7 @@ async def request(flow: http.HTTPFlow) -> None:
             requested_model=requested,
         )
     await _refresh_credential()
+    await _check_egresses(flow, verdict, True)
     _route(
         flow,
         verdict,
@@ -951,8 +1081,37 @@ async def _refresh_credential() -> None:
     """Renew the platform's pair before a request needs it, off the event loop:
     the refresh is a blocking HTTP call, and one slow token endpoint must not
     stall every other flow through the proxy."""
-    if CREDENTIAL.refresh_due():
-        await asyncio.to_thread(CREDENTIAL.refresh_if_due)
+    for credential in CLAUDE_ACCOUNTS.accounts().values():
+        if credential.refresh_due():
+            await asyncio.to_thread(credential.refresh_if_due)
+
+
+def _retry_claude(attempt):
+    flow = attempt.flow
+    CLAUDE_ACCOUNTS.reject(
+        attempt.account, flow.response.headers, flow.response.content or b""
+    )
+    if attempt.replayed or not attempt.complete or attempt.size > 64 * 1024 * 1024:
+        return False
+    selected = CLAUDE_ACCOUNTS.select(
+        tuple(flow.metadata.get("cheese_attr", ())),
+        excluded=(attempt.account,),
+        request_id=flow.id,
+    )
+    if selected is None:
+        return False
+    name, credential = selected
+    # A different egress cannot reuse the first account's connection.
+    if not _leave_through_egress(flow, credential):
+        CLAUDE_ACCOUNTS.release(name, flow.id)
+        return False
+    token, _ = credential.token()
+    flow.request.headers["authorization"] = f"Bearer {token}"
+    logger.info(
+        "Claude request %s switches %s -> %s after 429", flow.id, attempt.account, name
+    )
+    attempt.account = name
+    return True
 
 
 def _refuse_without_credential(flow, verdict, missing: str) -> None:
@@ -1044,11 +1203,30 @@ def _route(
                 return
 
     # Everything from here goes to Anthropic, on the platform's credential.
+    selected = None
     if _caller_bearer(flow) == NO_LOGIN_PLACEHOLDER:
-        token, missing = CREDENTIAL.token()
+        if is_messages:
+            selected = CLAUDE_ACCOUNTS.select(
+                tuple(flow.metadata.get("cheese_attr", ())), request_id=flow.id
+            )
+            if selected is None and CLAUDE_ACCOUNTS.state:
+                _refuse(
+                    flow,
+                    429,
+                    "rate_limit_error",
+                    "cheese: all Claude accounts are cooling down",
+                )
+                wait = CLAUDE_ACCOUNTS.retry_after()
+                if wait is not None:
+                    flow.response.headers["retry-after"] = str(wait)
+                return
+        credential = selected[1] if selected else CREDENTIAL
+        token, missing = credential.token()
         if token:
             flow.request.headers["authorization"] = f"Bearer {token}"
-            if not _leave_through_egress(flow):
+            if not _leave_through_egress(flow, credential):
+                if selected:
+                    CLAUDE_ACCOUNTS.release(selected[0], flow.id)
                 return
         else:
             _refuse_without_credential(flow, verdict, missing)
@@ -1056,6 +1234,8 @@ def _route(
 
     if is_messages:
         if METER.would_exceed(TOKEN_CAP):
+            if selected:
+                CLAUDE_ACCOUNTS.release(selected[0], flow.id)
             used = METER.used()
             _refuse(
                 flow,
@@ -1075,6 +1255,23 @@ def _route(
 
     # A stale x-api-key would override the session's bearer upstream.
     flow.request.headers.pop("x-api-key", None)
+    if selected:
+        attempt = Attempt(flow, selected[0], _retry_claude)
+        ATTEMPTS[flow.id] = attempt
+        if buffered:
+            attempt.tee(flow.request.raw_content or b"")
+            attempt.complete = True
+        else:
+            rewrite = flow.request.stream
+
+            def retain(chunk):
+                out = rewrite(chunk) if callable(rewrite) else chunk
+                attempt.tee(out)
+                if not chunk:
+                    attempt.complete = True
+                return out
+
+            flow.request.stream = retain
 
 
 class GatewayStream(StreamingUsageExtractor):
@@ -1113,6 +1310,15 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None:
         return
+    attempt = ATTEMPTS.get(flow.id)
+    if attempt:
+        if resp.status_code == 429:
+            resp.stream = False
+            return
+        if resp.status_code == 200:
+            CLAUDE_ACCOUNTS.accepted(attempt.account, flow.id)
+        else:
+            CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
     if flow.metadata.get("cheese_chatgpt"):
         resp.stream = True
         return
@@ -1124,8 +1330,8 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         if resp.status_code == 429:
-            # Left buffered: response() replaces the gateway's spent-budget
-            # refusal with one Claude Code reads as a reached cap. A short
+            # Left buffered: response() replaces a 429 that reports a spent
+            # allowance with one Claude Code reads as a reached cap. A short
             # error body, so nothing is held for the length of a turn.
             return
         if "/v1/messages" in flow.request.path and "event-stream" in resp.headers.get(
@@ -1337,14 +1543,29 @@ def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
     return True
 
 
-def _answer_a_spent_gateway_budget(flow: http.HTTPFlow) -> bool:
-    """Re-render LiteLLM's ``max_budget`` refusal as the project's spent budget.
+_UPSTREAM_RESETS_AT = re.compile(r'"resets_at"\s*:\s*(\d+)')
+_GATEWAY_MODEL_GROUP = re.compile(r"Received Model Group=(\S+)")
+_BEIJING = timezone(timedelta(hours=8))
 
-    The ledger only learns a turn's spend when the turn ends, so near the end
-    of a budget it is the gateway's brake that stops a turn, not admission.
-    LiteLLM answers with an OpenAI-shaped 429 ``budget_exceeded`` naming the
-    key's hash, which Claude Code takes for throttling and retries; the
-    project's refusal has to read the same whichever brake caught it.
+
+def _answer_a_reached_gateway_cap(flow: http.HTTPFlow) -> bool:
+    """Re-render a gateway 429 that reports a spent allowance as a reached cap.
+
+    LiteLLM's ``/v1/messages`` gives every 429 the same Anthropic envelope,
+    ``error.type`` ``rate_limit_error``, whatever stopped the request; only
+    ``error.message`` says which. Claude Code takes that for throttling, retries
+    the turn ten times and prints "Server is temporarily limiting requests (not
+    your usage limit)". Two of those 429s are not throttling:
+
+    - LiteLLM's own ``max_budget`` brake ("Budget has been exceeded! Key=…"):
+      the ledger learns a turn's spend only when the turn ends, so near the end
+      of a budget this brake, not admission, stops the turn. Its message names
+      the key's hash and is not passed on.
+    - The subscription account behind a model has used up its plan (ChatGPT's
+      ``usage_limit_reached``, carried inside the message with ``resets_at``).
+      No retry within the turn can succeed; another model can.
+
+    Any other 429 is real throttling and is passed on as it came.
     """
     resp = flow.response
     if resp is None or resp.status_code != 429:
@@ -1354,13 +1575,36 @@ def _answer_a_spent_gateway_budget(flow: http.HTTPFlow) -> bool:
     except ValueError:
         return False
     error = body.get("error") if isinstance(body, dict) else None
-    if not isinstance(error, dict) or error.get("type") != "budget_exceeded":
+    if not isinstance(error, dict):
         return False
-    _refuse_spent_budget(flow, "cheese project budget: 额度已用完。", None)
+    said = error.get("message")
+    said = said if isinstance(said, str) else ""
+    if said.startswith("Budget has been exceeded"):
+        _refuse_reached_cap(flow, "cheese project budget: 额度已用完。", None)
+        return True
+    if "usage_limit_reached" not in said:
+        return False
+    group = _GATEWAY_MODEL_GROUP.search(said)
+    model = f"模型 {group.group(1)} " if group else "这个模型"
+    resets = _UPSTREAM_RESETS_AT.search(said)
+    reopens_at = int(resets.group(1)) if resets else None
+    when = ""
+    if reopens_at is not None:
+        at = datetime.fromtimestamp(reopens_at, _BEIJING)
+        when = f"，北京时间{at.month}月{at.day}日 {at:%H:%M} 恢复"
+    _refuse_reached_cap(
+        flow,
+        f"cheese: {model}背后的订阅账号用量已到上限{when}。换一个模型可以继续。",
+        reopens_at,
+    )
     return True
 
 
 def error(flow: http.HTTPFlow) -> None:
+    attempt = ATTEMPTS.pop(flow.id, None)
+    if attempt:
+        CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
+        attempt.close()
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
     chatgpt_account = flow.metadata.get("cheese_chatgpt_account")
@@ -1377,6 +1621,8 @@ def error(flow: http.HTTPFlow) -> None:
     if egress is not None:
         if "407" in str(flow.error):
             _REFUSED_EGRESS["egress"] = egress
+        else:
+            EGRESS_HEALTH.forget(egress)
         logger.warning(
             "request through the Claude credential's egress %s:%s failed: %s",
             egress.host,
@@ -1386,11 +1632,15 @@ def error(flow: http.HTTPFlow) -> None:
 
 
 def response(flow: http.HTTPFlow) -> None:
+    attempt = ATTEMPTS.pop(flow.id, None)
+    if attempt:
+        CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
+        attempt.close()
     if _answer_a_missed_binding(flow):
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
-        if _answer_a_spent_gateway_budget(flow):
+        if _answer_a_reached_gateway_cap(flow):
             return
         _report_gateway_failure(flow)
         return

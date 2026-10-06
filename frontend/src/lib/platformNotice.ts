@@ -259,6 +259,8 @@ export type PlatformNotice =
       docRequest?: { requestedBy: string; edits: DocEdit[] }
       /** 文档：AI 队友提的修改建议有几处。 */
       docSuggestions?: number
+      /** 项目资料库里的一份文档：AI 队友在这个对话里新建了它或者改了它。 */
+      libraryDoc?: LibraryDocCard
     }
   /**
    * 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么，外加它顺带动过的平台资源。
@@ -321,21 +323,51 @@ export function actionResource(block: Block): string | null {
   return r ? r.slice('action:'.length) : null
 }
 
+/** 聊天里那张文档卡：哪一份、是不是刚建的、这一串改了哪几处。 */
+export interface LibraryDocCard {
+  id: string
+  title: string
+  created: boolean
+  edits: DocEdit[]
+  /** 提了几处修改建议（没有直接改）。 */
+  suggestions: number
+}
+
+function docEdits(raw: unknown): DocEdit[] {
+  return Array.isArray(raw)
+    ? raw.flatMap((e: unknown) => {
+        const item = e as { old?: unknown; new?: unknown } | null
+        return typeof item?.old === 'string' && typeof item?.new === 'string' ? [{ old: item.old, new: item.new }] : []
+      })
+    : []
+}
+
 /** 文档那一行带的「谁让改的、改了哪几处」和「提了几处建议」（后端写在 meta 里）。 */
-function docChange(block: Block): { docRequest?: { requestedBy: string; edits: DocEdit[] }; docSuggestions?: number } {
+function docChange(block: Block): {
+  docRequest?: { requestedBy: string; edits: DocEdit[] }
+  docSuggestions?: number
+  libraryDoc?: LibraryDocCard
+} {
   const m = meta(block)
   if (!m) return {}
+  const doc = m.document as { id?: unknown; title?: unknown } | undefined
+  if (doc && typeof doc.id === 'string') {
+    return {
+      libraryDoc: {
+        id: doc.id,
+        title: typeof doc.title === 'string' ? doc.title : '',
+        created: m.doc_created === true,
+        edits: docEdits(m.doc_edits),
+        suggestions: m.doc_suggested === true && Array.isArray(m.doc_suggestions) ? m.doc_suggestions.length : 0,
+      },
+    }
+  }
   if (m.doc_suggested === true) {
     const ids = Array.isArray(m.doc_suggestions) ? m.doc_suggestions.filter((id) => typeof id === 'string') : []
     return { docSuggestions: ids.length }
   }
   const by = str(m.doc_requested_by)
-  const edits = Array.isArray(m.doc_edits)
-    ? m.doc_edits.flatMap((e: unknown) => {
-        const item = e as { old?: unknown; new?: unknown } | null
-        return typeof item?.old === 'string' && typeof item?.new === 'string' ? [{ old: item.old, new: item.new }] : []
-      })
-    : []
+  const edits = docEdits(m.doc_edits)
   return by && edits.length ? { docRequest: { requestedBy: by, edits } } : {}
 }
 
@@ -561,10 +593,13 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
       const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)
+      // 平台替一轮写的通知署名都是 system：是哪位队友的那一轮在 `seat` 上，两位的
+      // 并成一行，后一位的就署成了前一位。
       const sameAuthor =
         prevBlock.author === block.author &&
         prevBlock.author_type === block.author_type &&
-        str(meta(prevBlock)?.agent_id) === str(meta(block)?.agent_id)
+        str(meta(prevBlock)?.agent_id) === str(meta(block)?.agent_id) &&
+        str(meta(prevBlock)?.seat) === str(meta(block)?.seat)
       if (sameAuthor && (sameType || (bothPlain && prevBlock.content === block.content))) {
         prev.run.push(block)
         continue
@@ -599,7 +634,8 @@ export function rendersInRoom(block: Block): boolean {
 function summaryPart(row: NoticeRow): boolean {
   if (row.notice?.mode === 'action' && row.notice.detail) return false
   // 带着「查看改动 / 查看建议」的文档行要有自己的按钮，不折进摘要。
-  if (row.notice?.mode === 'action' && (row.notice.docRequest || row.notice.docSuggestions)) return false
+  if (row.notice?.mode === 'action' && (row.notice.docRequest || row.notice.docSuggestions || row.notice.libraryDoc))
+    return false
   return row.notice?.mode === 'action' || changeSummary(row.block) !== null
 }
 

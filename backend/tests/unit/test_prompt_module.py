@@ -53,7 +53,6 @@ MOVED = (
     "_sandbox_limits",
     "_session_opening_lines",
     "_topic_ref_lists",
-    "PLACEHOLDER_TITLE",
     "project_overview",
 )
 
@@ -285,7 +284,7 @@ async def test_the_overview_outside_the_overview_room_is_the_standalone_doc():
     text = await prompt.project_overview(
         None,
         project=SimpleNamespace(root_topic_id=uuid.uuid4(), id=uuid.uuid4()),
-        room_id=uuid.uuid4(),
+        conversation_id=uuid.uuid4(),
         room_doc="# 房间的实况文档\n\n这一间房在讨论什么（不该进总览）",
         overview_doc="# 项目是什么\n\n目标：把后端拆开",
         all_topics=[],

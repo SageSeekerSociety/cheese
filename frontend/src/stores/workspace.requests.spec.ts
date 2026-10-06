@@ -59,13 +59,12 @@ it('creating a room during navigation leaves the destination project intact', as
   expect(store.topics).toEqual([])
 })
 
-// 没打字就是没名字：不替它写一个标题，由后端记成「未命名」，每块屏幕按读者的语言叫它。
-it('a room created without a title is sent without one', async () => {
+// 频道要先起名：没打字就不建，也不替它写一个标题。
+it('a channel without a name is not created', async () => {
   const store = useWorkspaceStore()
   await store.openProject('a')
-  vi.mocked(createTopic).mockResolvedValueOnce(room('new', 'a'))
-  await store.create('   ')
-  expect(createTopic).toHaveBeenCalledWith('a', undefined)
+  expect(await store.create('   ')).toBeNull()
+  expect(createTopic).not.toHaveBeenCalled()
 })
 
 it('overlapping topic refreshes share one pending request', async () => {

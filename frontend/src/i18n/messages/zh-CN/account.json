@@ -219,7 +219,7 @@
       "handOffFailed": "无法把这次登录交给 Cheese app，在 app 中重新登录",
       "expired": "这次登录已失效，重新登录",
       "confirmTitle": "登录 Cheese app",
-      "confirmLede": "将以 {name}（{'@'}{handle}）的身份登录 Cheese app。如果不是你刚才在 app 里发起的，点击取消。",
+      "confirmLede": "将以 {name}（{handle}）的身份登录 Cheese app。如果不是你刚才在 app 里发起的，点击取消。",
       "confirm": "继续",
       "switchAccount": "换个账号",
       "cancel": "取消"
@@ -466,7 +466,7 @@
     "noTeams": "还没有提供给任何项目",
     "teamFallback": "团队 #{id}",
     "screens": "运行中的现场",
-    "watch": "查看现场 · {'@'}{handle}",
+    "watch": "查看现场 · {'@'}{name}",
     "commandsTitle": "用命令接入",
     "commandsDesc": "Mac 和 Windows 电脑可在「添加设备」里下载桌面端接入。其他机器运行对应系统的命令，再运行 cheesehost link connect 并按提示批准",
     "os": {
@@ -490,7 +490,7 @@
     "step2": "再运行 cheesehost link connect，在给出的链接里批准",
     "step3": "设备会出现在这一页，可查看现场、重命名或解绑",
     "done": "完成",
-    "liveTitle": "现场 · {'@'}{handle}",
+    "liveTitle": "现场 · {'@'}{name}",
     "unbindTitle": "解绑设备「{name}」",
     "unbindHint": "解绑后这台机器立即断开，需重新接入才能再次使用"
   },

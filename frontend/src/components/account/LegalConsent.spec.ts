@@ -1,12 +1,15 @@
 /** 注册类页面的同意环节（#1486）：默认不勾；不勾就提交，弹一次「请阅读并同意」，
- * 点同意 = 勾上并继续，点取消 = 不提交。提交出去的同意要带后端给的版本和方式。 */
-import { defineComponent, ref } from 'vue'
+ * 点同意 = 勾上并继续，点取消 = 不提交。提交出去的同意要带后端给的版本和方式。
+ * 取数在 `useConsentDocuments`（页面容器用它），这里连着它一起走一遍。 */
+import { defineComponent, onMounted, ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
 import LegalConsent from './LegalConsent.vue'
 
@@ -19,14 +22,20 @@ const Host = defineComponent({
   components: { LegalConsent },
   setup() {
     const consent = ref<InstanceType<typeof LegalConsent> | null>(null)
+    const { documents, loadError, load } = useConsentDocuments()
+    onMounted(() => {
+      void load()
+    })
     const result = ref<unknown>('none')
     const submit = async () => {
+      // 提交时再取一次：取失败过就还有一次机会。
+      await load()
       result.value = await consent.value?.confirm()
     }
-    return { consent, result, submit }
+    return { consent, result, submit, documents, loadError }
   },
   template: `<div>
-    <LegalConsent ref="consent" action-label="同意并注册" />
+    <LegalConsent ref="consent" action-label="同意并注册" :documents="documents" :load-error="loadError" />
     <button @click="submit">提交</button>
     <output data-testid="result">{{ JSON.stringify(result) }}</output>
   </div>`,

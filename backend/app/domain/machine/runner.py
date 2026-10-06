@@ -11,6 +11,10 @@ Putting idle sandboxes to sleep, archiving homes and releasing idle whole
 cloud VMs (``SandboxSweeper``) is the same plumbing on the same switch, in a
 loop of its own: an archive or a VM's push takes minutes, and a host that came
 up must not wait that long to be enrolled.
+
+Metering the sandboxes that run and charging their time
+(``ComputeMeterSweeper``) has a loop of its own for the same reason: a stop or
+a deletion is seen within one sweep only if no archive is in the way.
 """
 
 import logging
@@ -64,3 +68,17 @@ class SandboxSweeper:
             # A session's whole cloud VM is released by the same idle measure.
             result["vms_released"] = await cloud_vm.release_idle(session, lifecycle)
             return result
+
+
+class ComputeMeterSweeper:
+    def __init__(self, session_factory: SessionFactory) -> None:
+        self._sessions = session_factory
+
+    async def sweep(self) -> dict[str, int]:
+        from app.domain.machine import metering
+        from app.domain.usage.compute import ComputeMeter
+
+        async with self._sessions() as session:
+            seen = await metering.observe(session)
+            charged = await ComputeMeter(session).settle()
+        return {**seen, "charged": charged}

@@ -1015,17 +1015,23 @@ def test_the_tunnel_launch_is_valid_shell():
 def test_the_helper_and_its_token_are_written_every_launch():
     """The helper re-reads the token per connection, so rewriting this file is
     how a refreshed credential reaches a helper that is already running — the
-    thing that stops #385 repeating one layer down."""
+    thing that stops #385 repeating one layer down.
+
+    The token goes into THIS SEAT's directory. It names the teammate and the
+    meter reads the model off it, and a room may seat more than one agent — so a
+    room-level token file is one teammate's credential standing in for all of
+    them (test_two_seats_get_their_own_helper_and_their_own_token)."""
     script = _launch_with_tunnel()
     assert 'cat > "$HOME/.cheese/cheese-tunnel.py"' in script
     # The real module, not a paraphrase of it.
     assert "def open_tunnel(" in script and "Sec-WebSocket-Key" in script
     # Written atomically and mode-restricted: it holds a spendable token.
-    assert 'chmod 600 "$HOME/.cheese/cheese-tunnel.token.tmp"' in script
-    assert (
-        'mv "$HOME/.cheese/cheese-tunnel.token.tmp" "$HOME/.cheese/cheese-tunnel.token"'
-        in script
-    )
+    assert 'chmod 600 "$SEATD/cheese-tunnel.token.tmp"' in script
+    assert 'mv "$SEATD/cheese-tunnel.token.tmp" "$SEATD/cheese-tunnel.token"' in script
+    # The helper's CODE stays one file per room — it carries nothing. Its state
+    # and its credential do not: no room-level path of either survives.
+    assert "$HOME/.cheese/cheese-tunnel.token" not in script
+    assert 'SEATD="$HOME/.cheese/seats/${CHEESE_SEAT:-shared}"' in script
 
 
 def _run_tunnel_prefix(tmp_path, up_script: str):
@@ -1038,7 +1044,7 @@ def _run_tunnel_prefix(tmp_path, up_script: str):
     start = script.rindex(
         'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then',
         0,
-        script.index('TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up")"'),
+        script.index('TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up" "$SEATD")"'),
     )
     end = script.index("\nfi\n", start) + len("\nfi\n")
     (tmp_path / ".cheese").mkdir(exist_ok=True)
@@ -1048,9 +1054,17 @@ def _run_tunnel_prefix(tmp_path, up_script: str):
         for key, value in os.environ.items()
         if key.lower() not in ("https_proxy", "http_proxy", "all_proxy")
     }
+    # The launcher sets the seat's directory up before the block this runs; both
+    # lines here are its own, so what runs is what a launch runs.
+    seat = 'SEATD="$HOME/.cheese/seats/${CHEESE_SEAT:-shared}"; mkdir -p "$SEATD"\n'
     return subprocess.run(
-        ["sh", "-c", script[start:end] + 'printf "agent:%s" "$HTTPS_PROXY"\n'],
-        env={**env, "HOME": str(tmp_path), "CHEESE_TUNNEL_URL": "wss://x/y"},
+        ["sh", "-c", seat + script[start:end] + 'printf "agent:%s" "$HTTPS_PROXY"\n'],
+        env={
+            **env,
+            "HOME": str(tmp_path),
+            "CHEESE_TUNNEL_URL": "wss://x/y",
+            "CHEESE_SEAT": "46dd0e26bf01",
+        },
         capture_output=True,
         text=True,
         timeout=30,
@@ -1117,6 +1131,54 @@ def _tunnel_up_home(tmp_path, name: str = "home"):
     up.write_text(CHEESE_TUNNEL_UP)
     up.chmod(0o755)
     return home, up
+
+
+def test_two_seats_get_their_own_helper_and_their_own_token(tmp_path):
+    """A room may seat more than one agent, and the helper IS a credential: it
+    stamps the scoped token from `--token-file` onto every CONNECT it relays,
+    and the meter reads the seat — and therefore the model — off that token.
+
+    Room-level files made that one teammate's credential stand in for the whole
+    room. Whichever seat launched last won the token file, and every turn in the
+    room was then admitted as that teammate, on that teammate's model: measured
+    2026-10-04, a room's second agent (a deepseek-flash seat) silently replaced
+    the first one's Opus for as long as it stayed up."""
+    home, up = _tunnel_up_home(tmp_path)
+    seats = [home / ".cheese" / "seats" / name for name in ("aaaa", "bbbb")]
+    for seat in seats:
+        seat.mkdir(parents=True, exist_ok=True)
+        (seat / "cheese-tunnel.token").write_text("scoped\n")
+    ports, pids = [], []
+    try:
+        for seat in seats:
+            result = subprocess.run(
+                ["sh", str(up), str(seat)],
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "CHEESE_TUNNEL_URL": "ws://127.0.0.1:9/llm/tunnel",
+                },
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            port = int(result.stdout.strip())
+            assert (seat / "cheese-tunnel.port").read_text().strip() == str(port)
+            ports.append(port)
+            pids.append(int((seat / "cheese-tunnel.pid").read_text().strip()))
+    finally:
+        import signal
+
+        for pid in pids:
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
+    # Two seats, two helpers, two ports: had the files stayed per room, the
+    # second seat would have adopted the first one's helper — and with it the
+    # first one's credential.
+    assert ports[0] != ports[1]
+    assert pids[0] != pids[1]
+    assert not (home / ".cheese" / "cheese-tunnel.port").exists()
 
 
 def _listening(port: int) -> bool:
@@ -1622,9 +1684,11 @@ def test_nothing_in_the_settings_observes_the_session():
     """The runner reads what the session does from its stdout. A hook left here
     to report it would be a second, racing account of the same turn."""
     hooks = session_settings()["hooks"]
-    assert set(hooks) == {"SessionStart", "UserPromptSubmit"}
-    for entries in hooks.values():
-        (entry,) = entries
+    # SubagentStart's hook hands each new agent the step-title rule
+    # (test_every_agent_reads_the_step_title_rule); it reports nothing.
+    assert set(hooks) == {"SessionStart", "UserPromptSubmit", "SubagentStart"}
+    for event in ("SessionStart", "UserPromptSubmit"):
+        (entry,) = hooks[event]
         assert [hook["command"] for hook in entry["hooks"]] == [
             "cheese sync-agents || true"
         ]

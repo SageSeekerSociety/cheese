@@ -21,7 +21,6 @@ import {
   setTopicTitle,
   unarchiveProject,
   unarchiveTopic,
-  undoTopicTitle,
   upgradeBlock,
 } from '@/api'
 import { ApiError, isProjectArchivedError } from '@/api'
@@ -79,6 +78,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projects = ref<Project[]>([])
   const projectsSettled = ref(false)
   const topics = ref<Topic[]>([])
+  // 项目的任务清单变了（新建、改名、关闭）。任务清单不在这个 store 里，读它的地方
+  // （侧栏）看着这个数，一变就重读。
+  const tasksChanged = ref(0)
+  function noteTasksChanged() {
+    tasksChanged.value += 1
+  }
   const members = ref<ProjectMemberRow[]>([])
   // 名册上的外部成员（团队以外、被邀请进这个项目的人）。聊天署名、@ 候选、房间名册
   // 都拿它来挂「外部」那个标，所以放在 store 里算一次，谁问都是同一份。
@@ -554,7 +559,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // Opening a topic = reading it: bump the server-side cursor and clear the
   // badge locally (optimistic — the next refresh agrees).
   //
-  // 卡下的消息**故意**不计进未读（否则每条活说句话就把房间标红，红点变噪音）。
+  // `topicId` 是一段对话：频道自己的，或一个任务的（任务的未读只亮给负责人和协作者）。
   function markRead(topicId: string) {
     const me = myHandle()
     if (!me) return
@@ -595,11 +600,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (t) {
       topicRevision += 1
       t.title = updated.title
-      t.title_source = updated.title_source
     }
   }
 
-  // 人起的名字：平台之后不会再自动改它（见后端 topic/naming.py）。
   async function renameTopic(topicId: string, title: string) {
     try {
       applyTopic(await setTopicTitle(topicId, title))
@@ -609,14 +612,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   /** 撤销房间里那条「标题自动更新为…」：原来的名字回来，并且算人定的。 */
-  async function undoAutoTitle(topicId: string, eventId: string) {
-    try {
-      applyTopic(await undoTopicTitle(topicId, eventId))
-    } catch (e) {
-      reportError(e, t('shell.workspaceErrors.undo'))
-    }
-  }
-
   async function archive(topicId: string) {
     const topic = topics.value.find((row) => row.id === topicId)
     const prevStatus = topic?.status
@@ -673,12 +668,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 成员名册。
   async function create(title: string): Promise<Topic | null> {
     const pid = projectId.value
-    if (!pid) return null
+    const name = title.trim()
+    if (!pid || !name) return null
     const epoch = projectEpoch
     try {
-      // Untitled when nothing was typed: the backend stores its placeholder and
-      // flags it (`title_source`), and every screen names it in its own language.
-      const topic = await createTopic(pid, title.trim() || undefined)
+      const topic = await createTopic(pid, name)
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
       topics.value.unshift(topic)
@@ -690,17 +684,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  /** 升级出来的东西：房间里的消息变成这个房间的一张**卡**，私聊里的变成一个新
-   *  房间。调用方要据此决定去哪儿——钻进那张卡，还是跳进那个房间。 */
-  async function upgradeMessage(messageId: string): Promise<{ kind: 'card' | 'room'; id: string } | null> {
+  /** 转为任务：频道里的一条消息变成这个频道的一个任务，返回任务的 id。 */
+  async function upgradeMessage(messageId: string): Promise<string | null> {
     try {
       const made = await upgradeBlock(messageId)
       await refreshTopics()
-      // 卡带着「我挂在哪个房间」，房间没有这个问题——这就是分辨它们的那一位。
-      const kind = 'room_id' in made ? 'card' : 'room'
-      return { kind, id: made.id }
+      return made.id
     } catch (e) {
-      reportError(e, t('shell.workspaceErrors.convertToTopic'))
+      reportError(e, t('shell.workspaceErrors.convertMessage'))
       return null
     }
   }
@@ -712,6 +703,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     accessDenied,
     openedProject,
     topics,
+    tasksChanged,
+    noteTasksChanged,
     members,
     agentName,
     agentHandle,
@@ -748,7 +741,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     markRead,
     markDmRead,
     renameTopic,
-    undoAutoTitle,
     archive,
     unarchive,
     rememberTopic,

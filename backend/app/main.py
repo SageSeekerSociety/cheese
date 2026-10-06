@@ -50,6 +50,7 @@ from app.core.sandbox_auth import (
 )
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
+from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 
@@ -150,7 +151,11 @@ async def lifespan(_: FastAPI):
     from app.core.db import async_session_factory
     from app.core.job_runs import JobRuns
     from app.core.ownership import keep_holding
-    from app.domain.machine.runner import CloudPoolSweeper, SandboxSweeper
+    from app.domain.machine.runner import (
+        CloudPoolSweeper,
+        ComputeMeterSweeper,
+        SandboxSweeper,
+    )
     from app.domain.topic.retire import sweep_retired_storage
 
     # The running work — sessions to listen to, turns to watch, sweeps on a
@@ -215,7 +220,9 @@ async def lifespan(_: FastAPI):
             get_logger("cheesex.runtime").exception("orphan sweep failed")
 
         try:
-            n = await get_work_runner().resume_lost_messages(get_chat_service())
+            n = await get_work_runner().resume_lost_messages(
+                get_chat_service(), source="startup"
+            )
             if n:
                 get_logger("cheesex.runtime").info("lost_messages_resumed", turns=n)
         except Exception:  # noqa: BLE001 — never block startup
@@ -243,6 +250,7 @@ async def lifespan(_: FastAPI):
             chat=get_chat_service(),
             machines=CloudPoolSweeper(async_session_factory),
             sandboxes=SandboxSweeper(async_session_factory),
+            compute=ComputeMeterSweeper(async_session_factory),
             sessions=async_session_factory,
         )
         runs = JobRuns(async_session_factory)
@@ -315,6 +323,9 @@ async def lifespan(_: FastAPI):
         # here before anyone else reads them; only then is the lock let go.
         get_work_runner().hold_turns()
         get_work_runner().own_sessions(False)
+        # Browsers watching rooms through this process go to the next one now,
+        # rather than when app-router lets them go (`core/ws_handover.py`).
+        await business_sockets.end_all()
         taking_over.cancel()
         await asyncio.gather(taking_over, return_exceptions=True)
         for watch in held_the_work:
@@ -491,6 +502,7 @@ app = FastAPI(
 )
 
 app.add_middleware(LogRefusedWebSockets)
+app.add_middleware(EndBusinessSocketsAtHandover)
 
 # Inside CORS, so a refusal still carries the headers a cross-origin page needs
 # to read it; inside `request_context`, so a 429 is in the access log like any
@@ -519,8 +531,8 @@ register_all_permissions()
 # over the network, so its write-surface must not be open like the browser API.
 # These paths are cheese-only writes (the frontend only reads them); the gate
 # verifies a per-turn token scoped to the URL's project/topic (review R5).
-# doc/split/title are dual-use (the doc panel saves, the sidebar splits and
-# renames) so they stay open like the rest of the app, protected by
+# doc/title are dual-use (the doc panel saves, the sidebar renames) so they
+# stay open like the rest of the app, protected by
 # ActorResolverDep + authorize_topic instead — closing those needs browser
 # user-auth first.
 # Each pattern captures the scoping id as group "topic" or "project".

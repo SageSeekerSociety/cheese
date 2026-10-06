@@ -29,7 +29,7 @@ async def _blocks(factory, project_id, topic_id, count=2):
                 Block(
                     id=block_id,
                     project_id=project_id,
-                    topic_id=topic_id,
+                    conversation_id=topic_id,
                     kind=BlockKind.message,
                     author_type=AuthorType.participant,
                     author="user-1",
@@ -77,18 +77,20 @@ def test_new_process_finds_only_the_addressed_batch_and_echo_does_not_release_it
             uuid.uuid4(),
             uuid.uuid4(),
         )
-        blocks = await _blocks(factory, identity.project_id, identity.topic_id)
+        blocks = await _blocks(factory, identity.project_id, identity.conversation_id)
         effects = InputEffects(held_block_ids=blocks)
         async with factory() as session:
             await register_input(session, identity, effects)
             await session.commit()
         for field, value in [
             ("project_id", other_project),
-            ("topic_id", other_topic),
+            ("conversation_id", other_topic),
             ("recipient_handle", "another-seat"),
         ]:
             other = replace(identity, **{field: value, "input_id": uuid.uuid4()})
-            foreign = await _blocks(factory, other.project_id, other.topic_id, count=1)
+            foreign = await _blocks(
+                factory, other.project_id, other.conversation_id, count=1
+            )
             async with factory() as session:
                 await register_input(
                     session, other, InputEffects(held_block_ids=foreign)
@@ -104,7 +106,7 @@ def test_new_process_finds_only_the_addressed_batch_and_echo_does_not_release_it
                 _QUERY,
                 url,
                 str(identity.project_id),
-                str(identity.topic_id),
+                str(identity.conversation_id),
                 identity.recipient_handle,
                 env={**os.environ, "PYTHONPATH": "."},
                 stdout=asyncio.subprocess.PIPE,

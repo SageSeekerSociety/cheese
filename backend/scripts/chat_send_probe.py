@@ -60,22 +60,23 @@ async def _rows(sql: str, **params: object) -> list[dict]:
 
 
 async def inspect() -> int:
-    _say("== project_machines ==")
+    _say("== cloud_hosts ==")
     machines = await _rows(
         """
-        select m.id, m.project_id, m.machine_id, m.hostname, m.status, m.ai_mode,
-               m.ai_status, m.device_id, m.enrolled_at, m.enroll_error,
-               m.enroll_attempts, m.created_at, p.name as project_name
-          from project_machines m left join projects p on p.id = m.project_id
-         order by m.created_at desc
+        select h.id, h.machine_id, h.hostname, h.status, h.ai_mode, h.ai_status,
+               h.device_id, h.enrolled_at, h.enroll_error, h.enroll_attempts,
+               h.draining, h.created_at
+          from cloud_hosts h
+         where h.released_at is null
+         order by h.created_at desc
          limit 20
         """
     )
     if not machines:
-        _say("  (none — no project has a machine)")
+        _say("  (none — the pool holds no host)")
     for m in machines:
         _say(
-            f"  {m['hostname']} [{m['project_name']}] project={m['project_id']}"
+            f"  {m['hostname']} draining={m['draining']}"
             f" machine={m['machine_id']} status={m['status']}"
             f" ai={m['ai_mode']}/{m['ai_status']} device={m['device_id']}"
             f" enrolled={m['enrolled_at']} attempts={m['enroll_attempts']}"

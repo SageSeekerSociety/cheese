@@ -14,7 +14,6 @@ Per request:
 """
 
 import asyncio
-import hashlib
 import inspect
 import json
 import logging
@@ -59,13 +58,16 @@ from app.domain.agent.place import (
     CHECKOUT_DIR,
     SANDBOXES_DIR,
     footprint_root,
+    launcher_path,
     seat_dir,
+    seat_key,
     session_platform_dirs,
 )
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
 )
+from app.domain.conversation import services as conversations
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility, default_visibility
 from app.domain.device.wiring import sql_device_service
@@ -347,21 +349,6 @@ def device_store_dir(project_id: uuid.UUID) -> str:
     return f"{DEVICE_STORE_ROOT}/{project_id}"
 
 
-def launcher_path(topic_id: uuid.UUID, agent_handle: str = "") -> str:
-    """The launcher file a screen runs, where `_ship_launcher` writes it.
-
-    One per SEAT, not one per room. The file says where that seat's runner
-    keeps its state (``CLAUDE_STATE``), and a room's two teammates keep two of
-    those; a screen reads this file exactly once, at birth, and a second
-    teammate's turn writing it in between leaves the first one coming up on the
-    wrong state — its own socket, the one every later call dials, never bound.
-    ``agent_handle`` empty is the room's own file: a caller that has no seat
-    (recovery of a screen from before seats) asks for the room's.
-    """
-    who = hashlib.sha256(agent_handle.encode()).hexdigest()[:12]
-    return f"{DEVICE_ROOT}/launch/{topic_id}-{who}.sh"
-
-
 # Where a place's environment runner may have been left, relative to that
 # place's home, in precedence order: every root the platform has installed into
 # (`place.session_platform_dirs()`), since a place keeps the runner where its
@@ -430,9 +417,9 @@ async def environment_status(
     return json.loads(result.get("stdout") or '{"state":"pending"}')
 
 
-def _launcher_command(topic_id: uuid.UUID, agent_handle: str = "") -> list[str]:
+def _launcher_command(topic_id: uuid.UUID, seat: str = "") -> list[str]:
     """What a screen runs: the launcher file `_ship_launcher` wrote for this seat."""
-    return ["bash", "-lc", f'exec bash "{launcher_path(topic_id, agent_handle)}"']
+    return ["bash", "-lc", f'exec bash "{launcher_path(topic_id, seat)}"']
 
 
 class DeviceChannel(Channel):
@@ -732,7 +719,7 @@ class DeviceChannel(Channel):
         home_dir: str,
         release_state: dict | None = None,
         execution_token: str | None = None,
-        agent_handle: str = "",
+        seat: str = "",
     ) -> list[str]:
         """Write the launch script to a FILE on the device (over the link's one-shot
         ``exec``, script on stdin) and return a short command that runs it.
@@ -748,12 +735,12 @@ class DeviceChannel(Channel):
         ``_refresh_screen_files`` instead, since it never runs its launcher again."""
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
-        path = launcher_path(topic_id, agent_handle)
+        path = launcher_path(topic_id, seat)
         transfer, exec_env = self._screen_file_refresh(
             home_dir,
             release_state=release_state,
             execution_token=execution_token,
-            agent_handle=agent_handle,
+            seat=seat,
         )
         transfer = f'mkdir -p "{DEVICE_ROOT}/launch" && cat > "{path}" && ' + transfer
         started = time.monotonic()
@@ -792,7 +779,7 @@ class DeviceChannel(Channel):
             )
         if release_state is not None:
             release_state["version"] = result.get("stdout", "").strip()
-        return _launcher_command(topic_id, agent_handle)
+        return _launcher_command(topic_id, seat)
 
     @staticmethod
     def _screen_file_refresh(
@@ -800,7 +787,7 @@ class DeviceChannel(Channel):
         *,
         release_state: dict | None,
         execution_token: str | None,
-        agent_handle: str = "",
+        seat: str = "",
     ) -> tuple[str, dict[str, str] | None]:
         """The shell that brings a screen's per-turn files up to date: the
         forwarded-fs token (rotated every turn), and a read of the release
@@ -812,7 +799,7 @@ class DeviceChannel(Channel):
         and a roommate writing it here used to swap a running turn's credential
         for its own. Release readiness is seat-local for plugins and settings."""
         hook_dir = f"{home_dir}/{session_platform_dirs()[0]}"
-        session_dir = f"{seat_dir(home_dir, agent_handle)}/remote-session"
+        session_dir = f"{seat_dir(home_dir, seat)}/remote-session"
         transfer = f'mkdir -p "{hook_dir}"'
         if release_state is not None:
             transfer += (
@@ -837,7 +824,7 @@ class DeviceChannel(Channel):
         home_dir: str,
         release_state: dict | None = None,
         execution_token: str | None = None,
-        agent_handle: str = "",
+        seat: str = "",
     ) -> None:
         """A live screen keeps the session it was born with and never runs its
         launcher again, so a reused turn ships only what that process will
@@ -848,7 +835,7 @@ class DeviceChannel(Channel):
             home_dir,
             release_state=release_state,
             execution_token=execution_token,
-            agent_handle=agent_handle,
+            seat=seat,
         )
         try:
             result = await self._hub.exec(
@@ -911,9 +898,11 @@ class DeviceChannel(Channel):
         state: str,
         release: dict,
         session_id: str = "",
+        *,
+        seat: str,
     ) -> bool:
         """Release this seat's helpers, then reload its plugin and MCP."""
-        seat = seat_dir(home_dir, screen.agent_handle)
+        seat = seat_dir(home_dir, seat)
         sources = resident_release.sources()
         version = resident_release.digest(sources)
         if release.get("version") == version:
@@ -1023,11 +1012,15 @@ class DeviceChannel(Channel):
         )
         if screen is None or screen.project_id is None:
             return False
+        # A task's or a 支线's session sits on a seat of its own in the room.
+        if inner := screen.resource_id not in (None, topic_id):
+            async with self._sessions() as db:
+                inner = await conversations.is_inner(db, topic_id)
         state = machine_launcher.state_dir(
             screen.project_id,
             screen.resource_id or topic_id,
             CLAUDE_CODE,
-            screen.agent_handle,
+            seat_key(screen.agent_handle, topic_id if inner else None),
         )
         try:
             status = await self._control(screen.device_id, state, "mcp_status")
@@ -1079,6 +1072,7 @@ class DeviceChannel(Channel):
         launch: MachinePlan,
         environment_before: dict | None = None,
         runner_alive: bool = False,
+        seat: str = "",
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         the harness's runner (the device-side launcher creates its home/work
@@ -1103,8 +1097,10 @@ class DeviceChannel(Channel):
         None of that is asked of a screen a turn here already brought up to
         date with the same inputs while its runner has answered every read
         since (``runner_alive``): that runner is the process the checks
-        protect. A configured tunnel is still probed; its helper can die alone."""
+        protect. A configured tunnel is still probed; its helper can die alone.
+        ``seat``: `place.seat_key`, empty for the agent's own in the room."""
         started = time.monotonic()
+        seat = seat or agent_handle
 
         def mark(phase: str) -> None:
             logger.info(
@@ -1254,7 +1250,7 @@ class DeviceChannel(Channel):
             # and later derives a socket from it, so it is a fact about the
             # machine and belongs on this side of the seam.
             state=machine_launcher.state_dir(
-                project_id, resource_id, launch.harness, agent_handle
+                project_id, resource_id, launch.harness, seat
             ),
             api_base=api_base,
             project_id=str(project_id),
@@ -1262,6 +1258,7 @@ class DeviceChannel(Channel):
             agent_handle=agent_handle,
             execution_target=execution_target,
             ca_pem=ca_pem,
+            seat=seat,
         )
         settled_with = screen_identity.settled_with(
             agent_configuration=agent_configuration, place=place, token=token
@@ -1354,7 +1351,7 @@ class DeviceChannel(Channel):
                 execution_token=(
                     screen_env["CHEESE_TOKEN"] if execution_target is not None else None
                 ),
-                agent_handle=agent_handle,
+                seat=seat,
             )
         else:
             execution_token = (
@@ -1368,7 +1365,7 @@ class DeviceChannel(Channel):
                     home_dir,
                     release_state=release_state,
                     execution_token=execution_token,
-                    agent_handle=agent_handle,
+                    seat=seat,
                 ),
             )
             retire_reason = None
@@ -1396,6 +1393,7 @@ class DeviceChannel(Channel):
                             place.state,
                             release_state,
                             status.get("session_id", ""),
+                            seat=seat,
                         )
                     except ScreenSetupError:
                         logger.warning(
@@ -1419,14 +1417,14 @@ class DeviceChannel(Channel):
                     command,
                     home_dir,
                     execution_token=execution_token,
-                    agent_handle=agent_handle,
+                    seat=seat,
                 )
             else:
                 # The adopt-create below re-runs the launcher only for a session
                 # the connector lost; the file the previous turn wrote is still
                 # there for that, and the reuse gate retires a process born from
                 # an expired credential on the next turn.
-                command = _launcher_command(resource_id, agent_handle)
+                command = _launcher_command(resource_id, seat)
         mark("device_checks_complete")
         if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING session, which still holds the
@@ -1443,9 +1441,9 @@ class DeviceChannel(Channel):
             )
             if inspect.isawaitable(updated):
                 existing = await updated
-            seat = (topic_id, agent_handle)
+            ledger = (topic_id, agent_handle)
             self.screen_ledger.record(
-                existing.sid, seat, settled_with, token, settled=settled
+                existing.sid, ledger, settled_with, token, settled=settled
             )
             return existing
         screen = await self._hub.open_screen(
@@ -1606,26 +1604,21 @@ class DeviceChannel(Channel):
         stopped listening — the second half of the reuse gate, alongside
         `_credential_is_stale`.
 
-        Both answer the same question about different dependencies: `claude` reads
-        its HTTPS_PROXY exactly once at startup, and a reused screen is reasserted
-        rather than relaunched, so a dependency that dies under the running process
-        can never be repaired in place. For the credential that meant a permanent
-        407; for the tunnel helper it means a permanent ConnectionRefused, with the
-        runner reporting the process alive throughout.
+        `claude` reads HTTPS_PROXY once at startup and a reused screen is
+        reasserted rather than relaunched, so a dependency that dies under the
+        running process cannot be repaired in place: a permanent 407 for the
+        credential, a permanent ConnectionRefused for the helper, the runner
+        reporting the process alive throughout. A deployment with no tunnel skips
+        this — it has no helper to lose.
 
-        Skipped entirely on a deployment with no tunnel (the device dials the meter
-        directly, so there is no helper to lose) — that keeps the per-turn cost at
-        zero everywhere the failure cannot happen.
+        The port is the machine's answer: the probe reads it from the SEAT's own
+        directory, where that seat's helper recorded it — per seat, because a room
+        may seat several agents and one helper carries one credential.
 
-        Which port to ask about is the machine's answer, not ours: the helper
-        bound whatever the kernel gave it and recorded it in the room's home, so
-        the probe reads it from there.
-
-        Conservative in the same direction as the runner check: only an explicit
-        `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
-        (no /proc, no awk, no readable port file) is read as "still up", so a
-        probe hiccup never throws away a healthy screen and its in-progress
-        work."""
+        Conservative like the runner check: only an explicit `down` retires a
+        screen. A failed exec, a non-zero exit, or an `unknown` (unreadable port
+        file, no /proc) reads as "still up", so a probe hiccup never throws away
+        a healthy screen."""
         topic_id = screen.topic_id
         if topic_id is None:
             return False
@@ -1636,7 +1629,11 @@ class DeviceChannel(Channel):
             result = await self._hub.exec(
                 screen.device_id,
                 ["sh", "-c", DEVICE_TUNNEL_PROBE],
-                env={"CHEESE_TUNNEL_PROBE_HOME": home_dir},
+                env={
+                    "CHEESE_TUNNEL_PROBE_DIR": seat_dir(
+                        home_dir, screen.agent_handle or ""
+                    )
+                },
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death

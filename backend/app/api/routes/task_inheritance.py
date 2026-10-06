@@ -23,6 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 
+from app.api.routes.spaces import teaching_to_api
 from app.api.routes.tasks._common import _require_task
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -40,20 +41,17 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
 def _teaching_to_api(teaching, source: str | None, material_ids: list[int]) -> dict:
-    """合成后的教学指导摆成接口形状 —— 字段名与 ``TeachingRequest`` 同一套
-    camelCase，前端读回来的一份和它写进去的一份因此长得一样。
+    """合成后的教学指导摆成接口形状 —— 与空间、项目集、题目那几份读回来的同一套
+    camelCase（``teaching_to_api``）；``materialIds`` 换成过滤后的那份，再加一格
+    ``source``。
 
     ``material_ids`` 由调用方过滤后传入（见 ``get_task_inheritance``）：指导里
     点名、但只在「仅管理员」档里的课件，不该出现在这份「会继承什么」的预览里 ——
     否则点名的 id 说会继承、下面的清单里却没有，同一份响应自相矛盾。
     """
     return {
-        "systemPrompt": teaching.system_prompt,
-        "currentWeek": teaching.current_week,
-        "allowedTopics": list(teaching.allowed_topics),
-        "avoidInCode": list(teaching.avoid_in_code),
+        **teaching_to_api(teaching),
         "materialIds": list(material_ids),
-        "knowledgeIds": list(teaching.knowledge_ids),
         # 这一份来自哪一层：space / category / task / project，或 null（四层都没
         # 说）。界面据此写「来自项目集」，不是一个只有结果的字符串。
         "source": source,

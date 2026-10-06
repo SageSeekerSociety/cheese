@@ -37,7 +37,7 @@ const theirs = {
   id: 't1',
   parent_id: 'root',
   title: 'Launch plan',
-  kind: 'topic',
+  kind: 'channel',
   status: 'active',
   i_participate: false,
 } as Topic
@@ -122,21 +122,14 @@ describe('the topic sidebar in English', () => {
   })
 
   it('in a project with no topics yet', () => {
-    const { baseElement, getByText, getByLabelText } = mount({})
-    getByText('No topics yet')
-    getByLabelText('New topic')
-    expect(chineseIn(baseElement)).toEqual([])
-  })
-
-  it('while a topic is being created', () => {
-    const { baseElement, getByLabelText } = mount({ creatingTopic: true })
-    getByLabelText('Creating topic')
+    const { baseElement, getByText } = mount({})
+    getByText('No channels yet')
     expect(chineseIn(baseElement)).toEqual([])
   })
 
   it('when the only topics belong to other people', () => {
     const { baseElement, getByText } = mount({ topics: [root, theirs] })
-    getByText('No topics involve you yet')
+    getByText('General')
     expect(chineseIn(baseElement)).toEqual([])
   })
 })

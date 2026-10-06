@@ -49,8 +49,7 @@ command -v typst && command -v pandoc
 | 按模板做（标准模板，或「照这份的格式」） | `cheese template new`、`scripts/template.py inspect / fill` | `references/templates.md` |
 | `.doc` / `.ppt` / `.xls` | 先 `cheese convert` 升级格式，再改 | `references/reading.md` |
 
-参考文件在技能目录的 `references/` 下，和 `scripts/office.py` 在同一个地方（下一节有定位
-它们的两行命令）。要动手做哪一类活，先读对应的那一份。
+参考文件和脚本在这个技能目录下的 `references/`、`scripts/` 里（技能目录是什么见下一节）。要动手做哪一类活，先读对应的那一份。
 
 **这三种不能用同一套办法。** 尤其：改已有的文件不要用「打开再另存」——用 python-docx 打开
 一份别人排好的文档再保存，样式表、页眉页脚、编号、域、图表、文本框都可能在被读进内存又写
@@ -62,17 +61,18 @@ command -v typst && command -v pandoc
 
 ## 在已有的文件上改
 
-脚本在技能目录下。先在 shell 里定位它（每次新开一条命令都要重跑这两行）：
+脚本在这个技能自己的目录里，就是加载技能时给出的那个目录：Claude Code 的 Skill 工具在开头印出的
+Base directory；没有 Skill 工具时，是技能列表里这个 `SKILL.md` 所在的目录。不要用工作目录里同名的
+`skills/documents`，那是仓库自己的东西。每条命令开头都要设一次：
 
 ```bash
-SKILL=skills/documents
-[ -d "$SKILL" ] || SKILL="$CLAUDE_CONFIG_DIR/skills/documents"
-uv run --with lxml python3 "$SKILL/scripts/office.py" text 报告.docx
+SKILL="<这个技能的目录>"
 ```
 
 六个子命令，常用的三个按这个顺序：
 
 ```bash
+SKILL="<这个技能的目录>"
 # 1. 先看原文。段号是后面报错时唯一的坐标
 uv run --with lxml python3 "$SKILL/scripts/office.py" text 报告.docx
 
@@ -119,6 +119,7 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --bas
 做法是在他那一版上把你这一轮的改动重做一遍：
 
 ```bash
+SKILL="<这个技能的目录>"
 # 1. 取两份：他那一版（重做的起点），和两边共同的那一版（校验的基准）。
 #    你自己那一版留着别删——重做完两版要一起给人看
 git show "<目标分支>:报告.docx" > 他那一版.docx
@@ -209,13 +210,13 @@ for s in doc.sections:
 页码和原文，先跑 `office.py text` 定位到段，再用这段原文做 `--replace`。改完仍然要
 重新点名一次。
 
-### 用户可能在房间里直接改过它
+### 用户可能在网页上直接改过它
 
-摆出来的 Word、表格、幻灯片，用户能在房间里打开编辑、保存。**保存过的那一份才是依据**，
-你手上的可能已经旧了。所以在房间里已有的一份文件上接着改，顺序是：
+摆出来的 Word、表格、幻灯片，用户能在网页上打开编辑、保存。**保存过的那一份才是依据**，
+你手上的可能已经旧了。所以在文件区已有的一份文件上接着改，顺序是：
 
 ```bash
-cheese pull output/报告.docx            # 取房间里最新保存的一版，覆盖本地这份
+cheese pull output/报告.docx            # 取文件区里最新保存的一版，覆盖本地这份
 # ……在这一份上改……
 cheese show output/报告.docx --note "改了第三节的结论，其余未动"
 ```

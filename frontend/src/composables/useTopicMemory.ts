@@ -15,6 +15,8 @@ import { inject, provide, reactive, ref } from 'vue'
 export interface OpenFileTab {
   path: string
   pinned: boolean
+  /** 项目资料库里的一份文档（`path` 是 `doc:<编号>`），不是一份文件。 */
+  document?: { id: string; title: string }
 }
 
 export interface FileDraft {

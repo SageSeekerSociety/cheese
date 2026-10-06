@@ -13,7 +13,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -24,7 +24,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 
 const Sidebar = TopicSidebar as unknown as Component
 
-function topic(id: string, parentId: string | null, kind = 'topic'): Topic {
+function topic(id: string, parentId: string | null, kind = 'channel'): Topic {
   return {
     id,
     project_id: 'p1',
@@ -144,41 +144,30 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('侧栏上常驻的是每天要用的那几样：全局、资料库、成员和项目文档', () => {
+  it('项目名下面只有看板和资料库，综合是频道分组里的第一个频道', () => {
     const { container } = mount()
-    expect(container.querySelector('.proj-pages')).toBeNull()
-    // 看板不在这里——它就是首页，项目名那一行点下去就到。定时与触发不常用，收进了
-    // 项目名旁边那个菜单。成员留在外面不是因为它天天用，而是因为「退出项目」长在
-    // 成员页上——名册一收进 ⋯，没注意到那个 ⋯ 的人就连怎么退出都找不到了。项目
-    // 文档和它们排在一起，不压在话题列表底下：话题一多，那个位置就看不见了。
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档'])
+    // 其余的页在点项目名弹出的菜单里（.claude/rules/project-sidebar.md）。
+    expect(titlesIn(container, '[aria-label="项目页面"] .pinned-row')).toEqual(['看板', '资料库'])
+    // 综合排在「频道」标题下面，和别的频道同一组。
+    const heading = container.querySelector('.side-subhead')!
+    const general = container.querySelector('[data-row-actions="root"]')!
+    expect(general.textContent).toContain('综合')
+    expect(heading.compareDocumentPosition(general) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('点项目名回项目首页，不打开任何房间', async () => {
+  it('点项目名弹出项目菜单，不换页、不打开任何房间', async () => {
     const onSelectTopic = vi.fn()
     const push = vi.spyOn(router, 'push').mockResolvedValue(undefined)
-    const { container } = mount({ onSelectTopic })
-    const name = container.querySelector('.rail-header__home') as HTMLElement
+    const { container, baseElement } = mount({ onSelectTopic })
+    const name = container.querySelector('[aria-label="项目菜单"]') as HTMLElement
     expect(name.textContent?.trim()).toBe('P1')
 
     await fireEvent.click(name)
 
-    // 首页就是看板那一页（《项目名》/ 做出了什么 / 看板），项目名点下去就到。
-    expect(push).toHaveBeenCalledWith(expect.objectContaining({ name: 'workspace-running' }))
+    await waitFor(() => expect(baseElement.querySelector('.v-overlay--active .v-list-item')).not.toBeNull())
+    expect(push).not.toHaveBeenCalled()
     expect(onSelectTopic).not.toHaveBeenCalled()
     push.mockRestore()
-  })
-
-  it('名字和菜单是两个按钮，两个都够得着', () => {
-    const { container } = mount()
-    const home = container.querySelector('.rail-header__home') as HTMLElement
-    const more = container.querySelector('[aria-label="项目菜单"]') as HTMLElement
-    // 最常做的事（回首页）不该只能通过先开一个菜单达成，所以它自己是一个按钮。
-    expect(home.tagName).toBe('BUTTON')
-    expect(home.getAttribute('type')).toBe('button')
-    expect(more.tagName).toBe('BUTTON')
-    expect(more.getAttribute('type')).toBe('button')
-    expect(more.querySelector('.mdi-chevron-down')).not.toBeNull()
   })
 
   it('项目头高度走 48px 基线（.sidebar-header）', () => {
@@ -222,20 +211,29 @@ describe('私聊的未读落在项目名那一行上', () => {
 })
 
 describe('C4 项目文档', () => {
-  it('侧栏只占一行，点它去章程', async () => {
+  async function docsItem(container: Element, baseElement: Element): Promise<HTMLElement> {
+    await fireEvent.click(container.querySelector('[aria-label="项目菜单"]') as HTMLElement)
+    let found: HTMLElement | undefined
+    await waitFor(() => {
+      found = Array.from(baseElement.querySelectorAll('.v-overlay--active .v-list-item')).find(
+        (el) => el.textContent?.trim() === '项目文档'
+      ) as HTMLElement | undefined
+      expect(found).toBeTruthy()
+    })
+    return found!
+  }
+
+  it('在项目菜单里，点它去章程', async () => {
     const onSelectDocs = vi.fn()
-    const { container } = mount({ onSelectDocs })
-    const rows = container.querySelectorAll('.docs-row')
-    expect(rows.length).toBe(1)
-    expect(titlesIn(container, '.docs-row')).toEqual(['项目文档'])
-    ;(rows[0] as HTMLElement).click()
+    const { container, baseElement } = mount({ onSelectDocs })
+    ;(await docsItem(container, baseElement)).click()
     expect(onSelectDocs).toHaveBeenCalledWith('charter')
   })
 
-  it('三种文档里的任何一种打开时，这一行都是选中态', () => {
+  it('三种文档里的任何一种打开时，菜单里这一项都是选中态', async () => {
     for (const kind of ['charter', 'weeklies', 'memory']) {
-      const { container, unmount } = mount({ activeDocs: kind })
-      expect(container.querySelector('.docs-row')?.classList.contains('is-active')).toBe(true)
+      const { container, baseElement, unmount } = mount({ activeDocs: kind })
+      expect((await docsItem(container, baseElement)).classList.contains('v-list-item--active')).toBe(true)
       unmount()
     }
   })
@@ -264,20 +262,12 @@ describe('行左边那一个槽', () => {
     }
   })
 
-  it('话题行上那颗每行都一样的装饰图标已经不在了', () => {
-    const { container } = mount()
-    const row = topicRowFor(container, 'a')
-    expect(row.querySelector('.mdi-message-text-outline')).toBeNull()
-    expect(row.querySelector('.row-glyph')).toBeNull()
-    // 置顶行的图标留着：# 和资料库两个各不相同，是能区分行的信息
-    expect(container.querySelector('.pinned-row .row-glyph')).not.toBeNull()
-  })
-
-  it('没有子话题、也没有人等你的行，槽是空的', () => {
+  it('没有子频道、也没有人等你的频道行，槽里是 #，和综合同一个记号', () => {
     const { container } = mount()
     const slot = slotsOf(topicRowFor(container, 'a'))[0]
     expect(slot.querySelector('.await-dot')).toBeNull()
-    expect(slot.querySelector('.v-icon')).toBeNull()
+    expect(slot.querySelector('.mdi-pound')).not.toBeNull()
+    expect(container.querySelector('[data-row-actions="root"] .mdi-pound')).not.toBeNull()
   })
 
   it('房间没有「在跑」的点：在干活的是一位队友，画在右边，带它的名字', () => {
@@ -326,7 +316,7 @@ describe('行左边那一个槽', () => {
     expect(stalled.map((m) => m.getAttribute('data-state'))).toEqual(['stalled'])
     expect(stalled[0].getAttribute('title')).toMatch(/有人 @ 了.*分钟/)
     // 槽里没有房间级的红灯：卡住的是成员
-    expect(slotsOf(topicRowFor(container, 'a'))[0].children.length).toBe(0)
+    expect(slotsOf(topicRowFor(container, 'a'))[0].querySelector('[data-state], .await-dot')).toBeNull()
     expect(topicRowFor(container, 'b').querySelector('[data-state]')).toBeNull()
   })
 

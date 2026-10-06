@@ -63,6 +63,32 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
+      // 一条支线：频道主线上一条消息下面的回复。和频道页是同一个组件——桌面上频道
+      // 主线还在左边，支线占右边那一半；手机上支线是一整页，← 回到频道。
+      name: 'workspace-thread',
+      path: 'topics/:topicId/threads/:threadId',
+      component: () => import('@/views/workspace/TopicView.vue'),
+      props: true,
+      meta: { hideTabs: true, backTo: 'workspace-topic' },
+    },
+    {
+      // 一个频道的全部任务：侧栏只挂和我有关的几条，其余在这一页。
+      name: 'workspace-channel-tasks',
+      path: 'topics/:topicId/tasks',
+      component: () => import('@/views/workspace/ChannelTasks.vue'),
+      props: true,
+      meta: { hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
+      // 任务页：一个任务自己的对话和实况文档。和房间页是同一个组件——任务挂在房间下，
+      // 房间要先打开，任务页借它的名册和外框；地址里多出来的 taskId 决定画哪一边。
+      name: 'workspace-task',
+      path: 'topics/:topicId/tasks/:taskId',
+      component: () => import('@/views/workspace/TopicView.vue'),
+      props: true,
+      meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
+    },
+    {
       // 看板: 跨房间的一块板，按「该谁动」分列。房间总览答的是「这个房间在干什么」，
       // 而一个项目有上百个房间——「现在整个项目有什么在跑、有什么在等我」得一个个
       // 点进去才知道，于是没人知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回

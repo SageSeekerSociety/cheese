@@ -103,7 +103,7 @@ async def recalc_spreadsheet(
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     path = clean_artifact_path(body.get("path") or "")
-    raw = _document_bytes(body, place.project_id, topic_id, path)
+    raw = _document_bytes(body, place.project_id, place.room_id, path)
     try:
         book, bad = await recalculate(raw, path, settings.office_render_endpoint)
     except SpreadsheetRecalcUnavailable as exc:
@@ -137,7 +137,7 @@ async def convert_document(
     await _actor_in_place(resolver, place)
     path = clean_artifact_path(body.get("path") or "")
     target = str(body.get("to") or "").strip()
-    raw = _document_bytes(body, place.project_id, topic_id, path)
+    raw = _document_bytes(body, place.project_id, place.room_id, path)
     try:
         made = await convert(raw, path, target, settings.office_render_endpoint)
     except ConvertUnavailable as exc:
@@ -168,11 +168,13 @@ async def list_document_revisions(
     It is there to act on them: a reader can accept or reject one without
     opening Word.
     """
-    topic = await TopicService(db).get_or_404(topic_id)
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await TopicService(db).place_or_404(topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    topic_id = topic.id
     clean = clean_artifact_path(path)
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
@@ -211,11 +213,13 @@ async def decide_document_revisions(
     copy to a decision taken against the older one, so a moved file is a
     conflict here rather than an overwrite.
     """
-    topic = await TopicService(db).get_or_404(topic_id)
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await TopicService(db).place_or_404(topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    topic_id = topic.id
     clean = clean_artifact_path(body.get("path") or "")
     if library.library_name(clean) is not None:
         # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了

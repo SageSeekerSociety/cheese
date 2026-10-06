@@ -219,7 +219,7 @@
       "handOffFailed": "This sign-in could not be handed to the Cheese app. Sign in again in the app.",
       "expired": "This sign-in has expired. Sign in again.",
       "confirmTitle": "Sign in to the Cheese app",
-      "confirmLede": "You will be signed in to the Cheese app as {name} ({'@'}{handle}). If you did not just start this in the app, click Cancel.",
+      "confirmLede": "You will be signed in to the Cheese app as {name} ({handle}). If you did not just start this in the app, click Cancel.",
       "confirm": "Continue",
       "switchAccount": "Use another account",
       "cancel": "Cancel"
@@ -466,7 +466,7 @@
     "noTeams": "Not available to any project yet",
     "teamFallback": "Team #{id}",
     "screens": "Running sessions",
-    "watch": "Watch · {'@'}{handle}",
+    "watch": "Watch · {'@'}{name}",
     "commandsTitle": "Connect with a command",
     "commandsDesc": "On a Mac or Windows computer, download the desktop app under Add device. On other machines, run the command for the system, then run cheesehost link connect and approve when asked",
     "os": {
@@ -490,7 +490,7 @@
     "step2": "Then run cheesehost link connect and approve in the link it gives",
     "step3": "The device shows up on this page, where you can watch, rename or unlink it",
     "done": "Done",
-    "liveTitle": "Session · {'@'}{handle}",
+    "liveTitle": "Session · {'@'}{name}",
     "unbindTitle": "Unlink device \"{name}\"",
     "unbindHint": "The machine disconnects at once and has to connect again to be used"
   },

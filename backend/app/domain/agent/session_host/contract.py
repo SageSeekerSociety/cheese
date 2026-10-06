@@ -157,6 +157,9 @@ class Owner:
     #: The agent's account, to open its process as; not needed to reach one
     #: already running.
     user_id: int | None = None
+    #: Which seat of the place the session takes (`place.seat_key`), when the
+    #: agent may hold more than one there: empty is the agent's own.
+    seat: str = ""
 
 
 @dataclass(frozen=True)
@@ -220,6 +223,9 @@ class SessionStatus:
     takes_inputs: bool = True
     #: False when the runner answered that its harness process is gone.
     alive: bool = True
+    #: The machine answered that this session's runner is not there at all
+    #: (``host.attach``). Its process is gone with it.
+    runner_gone: bool = False
 
 
 class InputUnconfirmed(SessionError):

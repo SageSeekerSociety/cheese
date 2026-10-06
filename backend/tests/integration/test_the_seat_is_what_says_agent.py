@@ -23,6 +23,7 @@ from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_tok
 from app.domain.identity.handles import agent_instance_handle
 from tests.ask_fixtures import active_ask
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -234,6 +235,8 @@ def test_the_question_that_credential_asks_is_not_an_input_it_must_read(
     project = _project(client, "Project credential asks")
     room = _room(client, project, title="不是根房间")
     token, _ = _project_credential(client, project)
+    # 芝士在支线里回答，题也在那里问。
+    room = {**room, "id": in_thread(client, room["id"], "alice")}
 
     # 提问要有在跑的那一轮（它就是「这道题在等谁」的出处），所以题是在这一轮里
     # 问出口的，用的仍是那张项目凭证。

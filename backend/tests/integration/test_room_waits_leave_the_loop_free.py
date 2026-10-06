@@ -40,7 +40,7 @@ async def _project_with_failed_turns(session, count):
     room_ids = [room.id for room in rooms]
     await session.execute(
         text(
-            "INSERT INTO blocks (project_id,topic_id,kind,author_type,author,"
+            "INSERT INTO blocks (project_id,conversation_id,kind,author_type,author,"
             "content,refs,meta,turn_id,id,created_at,updated_at) "
             "SELECT :pid, (CAST(:rooms AS uuid[]))[g % :n + 1], 'event',"
             "'platform','platform','x','[]',"
@@ -121,8 +121,8 @@ async def test_a_project_with_many_failed_turns_is_read_without_holding_the_loop
         await waits.for_rooms(room_ids, now=datetime.now(UTC))
 
         async def the_rows():
-            rows = select(Block.topic_id, Block.turn_id, Block.created_at).where(
-                Block.topic_id.in_(room_ids)
+            rows = select(Block.conversation_id, Block.turn_id, Block.created_at).where(
+                Block.conversation_id.in_(room_ids)
             )
             return (await session.execute(rows)).all()
 

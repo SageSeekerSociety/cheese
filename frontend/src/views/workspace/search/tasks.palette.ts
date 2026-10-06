@@ -14,9 +14,8 @@ export const tasks: ContentKind = {
   itemsOf: ({ tasks: hits }, projectId, router) =>
     hits.map((hit) => {
       const to = {
-        name: 'workspace-topic',
-        params: { projectId, topicId: hit.room_id },
-        query: { tab: 'overview', card: hit.id },
+        name: 'workspace-task',
+        params: { projectId, topicId: hit.room_id, taskId: hit.id },
       }
       return {
         id: `task:${hit.id}`,

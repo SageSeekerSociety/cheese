@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
+import type { OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
@@ -10,11 +11,15 @@ import { useRouter } from 'vue-router'
 
 import { useSkillProposals } from './useSkillProposals'
 
+import { acceptTaskProposal, dismissTaskProposal, listTaskProposals, type TaskProposal } from '@/api/tasks'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
+import TaskProposalCard from '@/components/room/TaskProposalCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
+import { topicTitle } from '@/lib/topicState'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
 //
@@ -32,11 +37,17 @@ const props = defineProps<{
   unreadOnOpen?: number
   /** 打开时停在这一条（地址里的 `?block=`）。 */
   focusBlock?: string | null
+  /** 这一栏是房间里一个任务的对话：每句话都说给做它的 AI 队友，采纳卡是这个任务的，
+   *  房间才有的提议卡（技能、任务、反馈）不在这里。 */
+  taskId?: string | null
+  /** 这里此刻不能说话的原因，见 ChatPanel。 */
+  composerClosed?: string | null
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
 
 const emit = defineEmits<{
+  (e: 'open-room'): void
   (e: 'turn-done'): void
   // 芝士 开工 / 收工。必须一路透传：右边那格「现场」靠它在开工那一刻出现。
   (e: 'working', working: boolean): void
@@ -53,11 +64,13 @@ const emit = defineEmits<{
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
   (e: 'mention-click', handle: string): void
-  (e: 'open-file', path: string, taskId?: string | null): void
+  (e: 'open-file', path: string): void
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
   // 的那几处；只转第一个的话这两样都会静默降级成「整篇闪一下」。
-  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'upgrade-message', payload: unknown): void
+  // 「在支线中回复」、点开消息下面那一行：页面换到那条支线。
+  (e: 'open-thread', block: Block): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
@@ -90,6 +103,44 @@ function openSkill(skill: { id: string }) {
   })
 }
 
+// AI 队友提议的任务：列的是这个房间里还在等人决定的那些，接在对话后面。点「创建
+// 任务」的人就是负责人，创建好就去任务页。
+const store = useWorkspaceStore()
+const proposals = ref<TaskProposal[]>([])
+const deciding = ref<string | null>(null)
+async function loadProposals() {
+  const room = props.topic.id
+  try {
+    const rows = await listTaskProposals(room)
+    if (props.topic.id === room) proposals.value = Array.isArray(rows) ? rows : []
+  } catch {
+    // 拉不到就先不画，下一次房间有动静时再读。
+  }
+}
+onMounted(loadProposals)
+watch(() => props.topic.id, loadProposals)
+function proposerName(handle: string): string {
+  return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
+}
+async function decideProposal(proposal: TaskProposal, decision: 'accept' | 'dismiss') {
+  if (deciding.value) return
+  deciding.value = proposal.id
+  try {
+    if (decision === 'accept') {
+      const task = await acceptTaskProposal(props.topic.id, proposal.id)
+      emit('open-card', task.id)
+    } else {
+      await dismissTaskProposal(props.topic.id, proposal.id)
+    }
+    proposals.value = proposals.value.filter((p) => p.id !== proposal.id)
+  } catch (e) {
+    store.reportError(e, t('work.task.proposal.failed'))
+    void loadProposals()
+  } finally {
+    deciding.value = null
+  }
+}
+
 const connected = computed(() => !!chatRef.value?.connected)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
@@ -98,6 +149,7 @@ defineExpose({
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
   reloadFeedback: () => feedbackRef.value?.reload(),
   reloadSkills: () => skills.load(),
+  reloadProposals: () => loadProposals(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
   // submitQuestion 在正文点名。
   say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
@@ -110,6 +162,9 @@ defineExpose({
     <ChatPanel
       ref="chatRef"
       :topic="topic"
+      :conversation-id="taskId"
+      :composer-closed="composerClosed"
+      :always-summon="!!taskId"
       hide-header
       show-composer
       :members="members"
@@ -125,12 +180,13 @@ defineExpose({
       @state-changed="emit('state-changed', $event)"
       @preview-shown="emit('preview-shown')"
       @mention-click="emit('mention-click', $event)"
-      @open-file="(path, taskId) => emit('open-file', path, taskId)"
+      @open-file="(path) => emit('open-file', path)"
       @open-resource="
-        (resource: string, turnId?: string, review?: DocReviewRequest) =>
-          emit('open-resource', resource, turnId, review)
+        (resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) =>
+          emit('open-resource', resource, turnId, review, document)
       "
       @upgrade-message="emit('upgrade-message', $event)"
+      @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"
     >
@@ -142,12 +198,13 @@ defineExpose({
           class="chat-dock"
           docked
           :topic-id="topic.id"
+          :task-id="taskId ?? undefined"
           :topic-status="topic.status"
           @phase="emit('phase', $event)"
           @review="emit('review')"
         />
       </template>
-      <template #timeline-end>
+      <template v-if="!taskId" #timeline-end>
         <!-- Agent 反馈卡：「这一轮结束时，平台要人做的一个决定」，接在这一轮的
              对话后面。
              什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
@@ -166,10 +223,23 @@ defineExpose({
           @decline="skills.decline"
           @open="openSkill"
         />
+        <TaskProposalCard
+          v-for="proposal in proposals"
+          :key="proposal.id"
+          :proposal="proposal"
+          :proposer="proposerName(proposal.proposed_by)"
+          :busy="deciding === proposal.id"
+          @decide="decideProposal(proposal, $event)"
+        />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占
          位置：队友进了成员名册（它本来就是这个房间的成员），工作电脑在话题头的 ⋯ 里。 -->
+      <template #composer-closed>
+        <button v-if="taskId" type="button" class="back-to-room" @click="emit('open-room')">
+          {{ t('work.task.backToRoom', { room: topicTitle(topic) }) }}
+        </button>
+      </template>
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
           <span class="status-dot status-dot--muted" />{{ t('work.sidebar.archived') }}
@@ -182,6 +252,18 @@ defineExpose({
 <style scoped>
 .archived-chip {
   font-size: 12px;
+}
+.back-to-room {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.back-to-room:hover {
+  color: var(--ink);
+  text-decoration: underline;
 }
 /* 和对话同一栏：时间线（ChatTimeline）、输入框（ChatPanel）各把自己收成一栏居中，
    贴在输入框上的这一条（验收卡）跟着收同一个值，不然它比上下两块都宽。桌面上是读

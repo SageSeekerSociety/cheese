@@ -52,7 +52,7 @@ def test_a_recorded_report_is_what_the_project_documents_page_lists(client):
     assert listed[0]["meta"]["since"] == "2026-08-31T00:00:00+00:00"
     assert listed[0]["meta"]["until"] == "2026-09-06T23:59:59+00:00"
     # 而它写在哪，是那一行「来自话题」的落点。
-    assert listed[0]["topic_id"] == room
+    assert listed[0]["conversation_id"] == room
 
 
 def test_a_room_whose_title_says_weekly_is_not_a_report(client):

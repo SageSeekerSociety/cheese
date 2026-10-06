@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
+from app.api.place import task_conversation
 from app.api.response import ok, page
 from app.core.db import get_db, release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
@@ -40,10 +41,11 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import AcceptService, ReviewerAdmission
+from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
-from app.domain.topic import naming
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.accept")
 
@@ -77,17 +79,13 @@ async def _card_actor(
 
 
 async def _task_actor(
-    topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> Actor:
-    topic = await AcceptService(db)._topic_or_404(topic_id)
-    actor = await resolver.resolve(project_id=topic.project_id, topic_id=topic_id)
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> tuple[Actor, uuid.UUID, uuid.UUID]:
+    """Who acts on the task ``topic_id`` names, its room and the task."""
+    place, actor, task = await task_conversation(db, resolver, topic_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError()
-    await TaskService(db).require_in_room(topic_id, task_id)
-    return actor
+    return actor, place.room_id, task.id
 
 
 def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdmission:
@@ -106,16 +104,17 @@ def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdm
     return admits
 
 
-@router.post("/topics/{topic_id}/tasks/{task_id}/accept-card")
+@router.post("/topics/{topic_id}/accept-card")
 async def create_accept_card(
     topic_id: uuid.UUID,
-    task_id: uuid.UUID,
     resolver: ActorResolverDep,
     body: AcceptCardCreate,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    actor = await _task_actor(topic_id, task_id, db, resolver)
+    """Hand a task's change in for review; ``topic_id`` is the task's."""
+    actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
+    topic_id = room_id
     svc = AcceptService(db)
     card = await svc.create_card(
         # 一张卡只递给这道门会放进来的人：判据是采纳时那道门自己（同一份规则、同一
@@ -141,8 +140,8 @@ async def create_accept_card(
     # any more — see AcceptService.create_card).
     await db.commit()
     await announce_stale(topic_id, "accept")
-    # Work handed in for acceptance: a moment the room's direction may show.
-    naming.nudge(topic_id, "signal")
+    # Work handed in for acceptance: a moment the task's direction may show.
+    naming.nudge(task_id, "signal")
     if pr_publish.enabled():
         project_id = await svc.project_id_for_topic(topic_id)
         pr_publish.dispatch(
@@ -154,34 +153,32 @@ async def create_accept_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/topics/{topic_id}/tasks/{task_id}/push-fix")
+@router.post("/topics/{topic_id}/push-fix")
 async def push_fix(
     topic_id: uuid.UUID,
-    task_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
     drop_dependency: bool = False,
 ) -> dict:
-    await _task_actor(topic_id, task_id, db, resolver)
+    _actor, _room, task_id = await _task_actor(topic_id, db, resolver)
     result = await AcceptService(db).push_fix(task_id, drop_dependency=drop_dependency)
     await db.commit()
     return ok(result)
 
 
-@router.post("/topics/{topic_id}/tasks/{task_id}/ready")
+@router.post("/topics/{topic_id}/ready")
 async def mark_ready(
-    topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    await _task_actor(topic_id, task_id, db, resolver)
-    result = await AcceptService(db).mark_ready(topic_id, task_id)
+    _actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
+    result = await AcceptService(db).mark_ready(room_id, task_id)
     await db.commit()
     return ok(result)
 
 
-@router.post("/topics/{topic_id}/tasks/{task_id}/accept-card/describe")
+@router.post("/topics/{topic_id}/accept-card/describe")
 async def describe_card(
     topic_id: uuid.UUID,
-    task_id: uuid.UUID,
     body: AcceptCardDescribe,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -196,7 +193,7 @@ async def describe_card(
     署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
-    actor = await _task_actor(topic_id, task_id, db, resolver)
+    actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
     card = await AcceptService(db).redescribe(
         task_id,
         actor=actor.handle,
@@ -204,7 +201,7 @@ async def describe_card(
         change_body=body.change_body,
     )
     await db.commit()
-    await announce_stale(topic_id, "accept")
+    await announce_stale(room_id, "accept")
     return ok(await AcceptService(db).describe(card))
 
 
@@ -250,13 +247,15 @@ async def list_accept_cards(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    task: uuid.UUID | None = None,
 ) -> dict:
+    """A task's review cards, or for a room every card of its tasks."""
+    place = await TopicService(db).place_or_404(topic_id)
+    if place.task is not None:
+        await _task_actor(topic_id, db, resolver)
     svc = AcceptService(db)
-    cards, total = await svc.list_for_topic(topic_id)
-    if task is not None:
-        await _task_actor(topic_id, task, db, resolver)
-        cards = [card for card in cards if card.task_id == task]
+    cards, total = await svc.list_for_topic(place.room_id)
+    if place.task is not None:
+        cards = [card for card in cards if card.task_id == place.task.id]
         total = len(cards)
     # 卡面上的合并态是一份快照，而采纳按钮按它亮不亮：界面每 15s 来读这条路，
     # 读到的却可能是轮询器几分钟前写下的旧状态，于是「检查全绿、按钮点不动」。
@@ -270,7 +269,6 @@ async def topic_pr_checks(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    task: uuid.UUID | None = None,
 ) -> dict:
     """PR-based accept (#188 §5.1): live PR + check-run state for the newest
     card that rides a PR. Display only — never blocks anything. Answers
@@ -283,10 +281,11 @@ async def topic_pr_checks(
     posting a traceback into the room (`report_unhandled_to_room`). That is
     how a GitHub TLS blip turned into a wall of stack traces on 2026-08-17.
     The failure is still logged, and its reason is handed to the caller."""
-    if task is not None:
-        await _task_actor(topic_id, task, db, resolver)
+    place = await TopicService(db).place_or_404(topic_id)
+    if place.task is not None:
+        await _task_actor(topic_id, db, resolver)
     try:
-        return ok(await _pr_checks_payload(topic_id, db, task_id=task))
+        return ok(await _pr_checks_payload(place.room_id, db, task_id=place.task_id))
     except NotFoundError:
         raise  # 404 for a topic that does not exist stays a 404
     except Exception as exc:  # noqa: BLE001 — display-only endpoint, see above

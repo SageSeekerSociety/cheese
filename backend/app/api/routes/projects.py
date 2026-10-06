@@ -30,12 +30,9 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import (
     github_app_read_token_for_project,
 )
-from app.domain.agent.liveness import task_liveness
+from app.domain.agent.liveness import running_tasks
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.block.queries import (
-    tasks_awaiting_an_answer,
-    weeklies_for_project,
-)
+from app.domain.block.queries import awaiting_an_answer, weeklies_for_project
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
@@ -58,7 +55,7 @@ from app.domain.project.schemas import (
 )
 from app.domain.project.services import ProjectService
 from app.domain.review.queries import latest_cards_by_task
-from app.domain.room_task import presentation
+from app.domain.room_task import naming, presentation
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.shell.catalog import Shell
@@ -66,7 +63,6 @@ from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
 from app.domain.task.services import claim_backs_project
 from app.domain.team.services import team_service
-from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -380,28 +376,26 @@ async def list_project_tasks(
     tasks = await TaskService(db).list_in_project(project_id)
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
-    # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
-    # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
-    beats = await TaskService(db).last_block_at_for_tasks(task_ids)
-    # 哪几条停在一个未回答的提问上 —— 第四次批查询，走只收提问那几行的部分索引
-    # （`ix_blocks_task_questions`）。这是唯一会中断「运行中」的一格，所以不能留
+    # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
+    # （`ix_blocks_questions`）。这是唯一会中断「运行中」的一格，所以不能留
     # 给调用方各自去问。
-    asked = await tasks_awaiting_an_answer(db, task_ids)
+    asked = await awaiting_an_answer(db, task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
-    # 第五次批查询：这一屏每行的屏幕和分身（`agent.liveness`：分身那位不止看内存）。
-    live = await task_liveness(chat, db, tasks)
+    # 第四次批查询：哪几条此刻有一轮在跑（`agent.liveness`：不止看内存）。
+    running = await running_tasks(chat, db, tasks)
+    # 第五次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
+    last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
     items = []
     for task in tasks:
         card = cards.get(task.id)
+        said_at = last_said.get(task.id)
         shown = presentation.task_presentation(
             presentation.facts_for_task(
                 task,
                 card,
-                beats.get(task.id),
-                room_screen_live=live[task.id].screen,
-                worker_live=live[task.id].worker,
+                running=task.id in running,
                 awaiting_answer=task.id in asked,
             ),
             now=now,
@@ -410,6 +404,7 @@ async def list_project_tasks(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
                 "presentation": shown.as_dict(),
+                "last_activity_at": (said_at or task.created_at).isoformat(),
                 "card": None
                 if card is None
                 else {
@@ -540,13 +535,13 @@ async def save_forge_attribution(
     return await get_forge_attribution(project_id, db, resolver)
 
 
-@router.get("/{project_id}/topic-naming")
-async def get_topic_naming(
+@router.get("/{project_id}/task-naming")
+async def get_task_naming(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """话题命名: ``auto`` (the platform names rooms and renames them when their
-    direction changes; the default) or ``manual`` (rooms are named by people).
-    See ``topic/naming.py``."""
+    """任务命名: ``auto`` (the platform names tasks opened without a title and
+    renames them when their direction changes; the default) or ``manual``
+    (tasks are named by people). See ``room_task/naming.py``."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
@@ -564,11 +559,11 @@ async def get_topic_naming(
     )
 
 
-@router.put("/{project_id}/topic-naming")
-async def set_topic_naming(
+@router.put("/{project_id}/task-naming")
+async def set_task_naming(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Switch the project's rooms between automatic and manual naming. Rooms a
+    """Switch the project's tasks between automatic and manual naming. Tasks a
     person named keep their names either way."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -579,7 +574,7 @@ async def set_topic_naming(
     project = await ProjectService(db).get_or_404(project_id)
     project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
     await db.flush()
-    return await get_topic_naming(project_id, db, resolver)
+    return await get_task_naming(project_id, db, resolver)
 
 
 # --- Project stewardship: who answers for a project ---------------------------

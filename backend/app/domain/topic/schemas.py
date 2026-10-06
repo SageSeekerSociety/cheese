@@ -12,10 +12,8 @@ from app.domain.topic.models import TopicKind, TopicStatus
 
 class TopicCreate(BaseModel):
     project_id: uuid.UUID
-    # Left out (or blank) for a room nobody has named yet: the backend stores it
-    # as a placeholder, flagged by `title_source`, and each screen renders its
-    # own word for "untitled".
-    title: str | None = Field(default=None, max_length=300)
+    # A channel is named by whoever creates it.
+    title: str = Field(min_length=1, max_length=300)
     parent_id: uuid.UUID | None = None
 
 
@@ -43,9 +41,6 @@ class TopicOut(BaseModel):
     project_id: uuid.UUID
     parent_id: uuid.UUID | None
     title: str
-    # Who chose the title: "placeholder" (unnamed), "auto" (the platform, which
-    # may rename it) or "human" (kept as is). See topic/naming.py.
-    title_source: str = "human"
     kind: TopicKind
     status: TopicStatus
     created_at: datetime
@@ -101,25 +96,6 @@ class TopicOut(BaseModel):
     presentation: PresentationOut | None = None
 
 
-class UpgradeBlockIn(BaseModel):
-    reviewer_handle: str | None = Field(default=None, max_length=64)
-
-
-class SplitIn(BaseModel):
-    title: str = Field(min_length=1, max_length=300)
-    # 任务简报: what the 分身 is expected to do, in the splitter's own words.
-    # Preset as the child's living doc so the kickoff turn starts informed.
-    brief: str | None = None
-    base_task_id: uuid.UUID | None = None
-    # 谁来验收这条活 (#718 设置表「任务默认 reviewer」). Omitted means the
-    # project's default — resolved at dispatch and STORED, not re-derived at
-    # 递卡: the setting can change between the two, and the person a piece of
-    # work was handed to is a fact about that moment.
-    reviewer_handle: str | None = Field(default=None, max_length=64)
-    reporter_handle: str | None = Field(default=None, max_length=64)
-    contributor_handles: list[str] = Field(default_factory=list)
-
-
 class CheckResultIn(BaseModel):
     """What the quick check said (`cheese check`).
 
@@ -135,7 +111,8 @@ class LockIn(BaseModel):
     """Acquire or release the room's heavy-operation lane."""
 
     kind: str = Field(pattern="^heavy$")
-    task_id: uuid.UUID
+    #: The task holding it. Implied when the lock is asked for in a task.
+    task_id: uuid.UUID | None = None
     resource: str = Field(default="", max_length=0)
 
 

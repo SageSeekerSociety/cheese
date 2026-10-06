@@ -38,7 +38,7 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, **extra) -> str:
     r = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -349,7 +349,7 @@ def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):
     tid = _make_topic(client, pid)
 
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={"reviewer_handle": "alice", "change_subject": "做完了分页"},
     )
@@ -414,7 +414,7 @@ def test_a_card_with_no_subject_at_all_is_refused(client, monkeypatch):
     tid = _make_topic(client, pid)
 
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={"reviewer_handle": "alice"},
     )
@@ -435,7 +435,7 @@ def test_a_blank_subject_is_refused_like_a_missing_one(client, monkeypatch):
     tid = _make_topic(client, pid)
 
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={"reviewer_handle": "alice", "change_subject": "   "},
     )

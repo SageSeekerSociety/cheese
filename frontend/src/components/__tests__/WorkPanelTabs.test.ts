@@ -28,6 +28,10 @@ vi.mock('../../api/docThreads', () => ({
   listDocThreads: async () => ({ data: [], total: 0 }),
   writeDocThread: async () => ({}),
 }))
+vi.mock('../../api/projectDocuments', () => ({
+  getDocumentAbout: vi.fn(async (id: string) => ({ id, title: '竞品定价对比' })),
+  renameDocument: vi.fn(),
+}))
 vi.mock('../../api/docHistory', () => ({
   getDocVersions: async () => ({ versions: [], cursor: null }),
   restoreDocVersion: async () => ({}),
@@ -251,12 +255,12 @@ describe('工作面板 · Tab 容器', () => {
   // 和分支，按 kind 分只是猜。
   const isEmpty = (tab: Element | undefined) => !!tab?.classList.contains('tabbar__tab--empty')
 
-  it('谁也没在里面干过活的话题：五格都在，改动、现场、预览是浅的', async () => {
+  it('谁也没在里面干过活的话题：这几格都在，改动、现场、预览是浅的', async () => {
     getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: false })
     const { container } = mountPanel()
     await flush()
 
-    expect(tabLabels(container)).toEqual(['总览', '现场', '改动', '预览', '定时与触发'])
+    expect(tabLabels(container)).toEqual(['总览', '支线', '现场', '改动', '预览', '定时与触发'])
     expect(isEmpty(findTab(container, '总览'))).toBe(false)
     expect(['现场', '改动', '预览'].every((label) => isEmpty(findTab(container, label)))).toBe(true)
     expect(visible(container, '.panel-overview')).toBe(true)
@@ -489,5 +493,16 @@ describe('工作面板 · Tab 容器', () => {
 
     expect(container.querySelector('.doc-comments__draft')).toBeNull()
     expect(addComment).not.toHaveBeenCalled()
+  })
+})
+
+describe('资料库文档在自由区', () => {
+  it('地址点名的资料库文档开成一格：页签写它的标题，打开的是那一份', async () => {
+    seedRoom('topic-A', '对话自己的文档\n')
+    seedRoom('lib-doc', '三家都有年付\n')
+    const { container } = mountPanel('topic-A', { tab: 'file:doc:lib-doc' })
+    await flush()
+    expect(tabLabels(container)).toContain('竞品定价对比')
+    expect(container.textContent).toContain('三家都有年付')
   })
 })

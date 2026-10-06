@@ -17,6 +17,7 @@ from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.block.editing import edit_message
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import ReactionToggleIn
+from app.domain.conversation.services import room_of
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
 
@@ -45,9 +46,14 @@ async def edit_block(
     block = await BlockRepository(db).get(block_id)
     if block is None:
         raise NotFoundError("Message not found")
-    actor = await resolver.resolve(topic_id=block.topic_id, project_id=block.project_id)
+    actor = await resolver.resolve(
+        topic_id=block.conversation_id, project_id=block.project_id
+    )
     await resolver.authorize_topic(
-        actor, project_id=block.project_id, topic_id=block.topic_id, enforce=True
+        actor,
+        project_id=block.project_id,
+        topic_id=await room_of(db, block.conversation_id),
+        enforce=True,
     )
     payload = await edit_message(
         db,
@@ -87,9 +93,14 @@ async def toggle_reaction(
     block = await repo.get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
-    actor = await resolver.resolve(topic_id=block.topic_id, project_id=block.project_id)
+    actor = await resolver.resolve(
+        topic_id=block.conversation_id, project_id=block.project_id
+    )
     await resolver.authorize_topic(
-        actor, project_id=block.project_id, topic_id=block.topic_id, enforce=True
+        actor,
+        project_id=block.project_id,
+        topic_id=await room_of(db, block.conversation_id),
+        enforce=True,
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to react")
@@ -99,7 +110,7 @@ async def toggle_reaction(
     # never reads stale state.
     await db.commit()
     await broker.publish(
-        str(block.topic_id),
+        str(block.conversation_id),
         {"type": "reaction", "block_id": str(block_id), "reactions": reactions},
     )
     return ok({"toggled": "added" if added else "removed", "reactions": reactions})

@@ -103,6 +103,7 @@ class ClaudeCodeDriver:
             agent_handle=owner.handle,
             project_id=owner.project_id,
             topic_id=owner.place_id,
+            seat=owner.seat,
             token=access.credential,
             env=dict(spec.env),
             launch=ClaudeLaunch(

@@ -64,6 +64,8 @@ class Member:
     team_id: int | None = None
     # The handle of that team, which the row's 「来自团队」 link goes to.
     team_handle: str | None = None
+    # That team's name, which the link reads.
+    team_name: str | None = None
     created_at: str | None = None
     # A teammate's own handle, the one its sessions and turns are keyed by and a
     # message's recipient names (``AgentInstance.handle``). The row is found by
@@ -76,7 +78,7 @@ class Member:
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
 
-        键与字段同名，缺省的几个（``source``/``team_id``/``team_handle``/
+        键与字段同名，缺省的几个（``source``/``team_id``/``team_handle``/``team_name``/
         ``created_at``/``instance_handle``）为空时不出现。
         """
         row: dict = {
@@ -93,6 +95,8 @@ class Member:
             row["team_id"] = self.team_id
         if self.team_handle is not None:
             row["team_handle"] = self.team_handle
+        if self.team_name is not None:
+            row["team_name"] = self.team_name
         if self.created_at is not None:
             row["created_at"] = self.created_at
         if self.instance_handle is not None:
@@ -136,6 +140,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             source=person.get("source"),
             team_id=person.get("team_id"),
             team_handle=person.get("team_handle"),
+            team_name=person.get("team_name"),
             created_at=person.get("created_at"),
         )
         for person in await projects.people(project_id)
@@ -189,6 +194,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             source=held.source,
             team_id=held.team_id,
             team_handle=held.team_handle,
+            team_name=held.team_name,
             created_at=held.created_at,
             instance_handle=instance.handle,
             name_source=name_source,

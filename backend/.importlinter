@@ -111,7 +111,6 @@ ignore_imports =
     app.domain.project.environment_recovery -> app.api.deps
     app.domain.project.export -> app.api.auth
     app.domain.review.pr_poll -> app.api.deps
-    app.domain.topic.doc_nudge -> app.api.deps
 
 [importlinter:contract:routes-touch-no-models]
 # C2 — a route handler must not read another domain's model modules directly.
@@ -239,6 +238,11 @@ ancestors =
     app.domain
 unmatched_ignore_imports_alerting = warn
 
+# `app.domain.membership.services -> app.domain.delivery.*`: a project invitation
+# is told to the invitee through the delivery ledger, the one way a notification
+# leaves (I11) — the same two edges `team.membership_services` already has for
+# team invitations.
+#
 # 下面多一条 `app.domain.review.nudges -> app.domain.agent.platform_notices`：三条
 # 待发（CI 挂了、有人评审、和目标分支冲突）搬去 `review/nudges.py` 时，它们写的
 # `EVENT_*` 常量跟着搬了，review -> agent.platform_notices 这条边换了导入方。
@@ -288,6 +292,8 @@ ignore_imports =
     app.domain.feedback.repositories -> app.domain.platform_stats.windows
     app.domain.feedback.repositories -> app.domain.topic.models
     app.domain.identity.services -> app.domain.topic_membership.services
+    app.domain.membership.services -> app.domain.delivery.addressing
+    app.domain.membership.services -> app.domain.delivery.ledger
     app.domain.memory.migration_service -> app.domain.agent.announce
     app.domain.memory.migration_service -> app.domain.agent.platform_notices
     app.domain.memory.migration_service -> app.domain.membership.roster
@@ -366,6 +372,7 @@ ignore_imports =
     app.domain.room_task.binding -> app.domain.agent.supply
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
     app.domain.room_task.checkouts -> app.domain.agent.resource_cleanup
+    app.domain.room_task.naming -> app.domain.agent.runtime
     app.domain.room_task.checkouts -> app.domain.topic.models
     app.domain.room_task.place -> app.domain.topic.models
     app.domain.room_task.presentation -> app.domain.review.models
@@ -385,10 +392,6 @@ ignore_imports =
     app.domain.team.membership_services -> app.domain.delivery.ledger
     app.domain.team.membership_services -> app.domain.notification.models
     app.domain.team.services -> app.domain.task.repositories
-    app.domain.topic.doc_nudge -> app.domain.agent.platform_notices
-    app.domain.topic.doc_nudge -> app.domain.agent.runtime
-    app.domain.topic.naming -> app.domain.agent.announce
-    app.domain.topic.naming -> app.domain.agent.runtime
     app.domain.topic.retire -> app.domain.agent.device_hub
     app.domain.topic.retire -> app.domain.agent.device_provider
     app.domain.topic.retire -> app.domain.agent.models

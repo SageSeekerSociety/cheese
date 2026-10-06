@@ -117,7 +117,7 @@ beforeEach(() => {
   projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', can_manage_members: true }]
   members = [
     { user_handle: 'alice', name: '爱丽丝', source: 'owner' },
-    { user_handle: 'ligan', name: '李干', source: 'team', team_handle: 'zhishi' },
+    { user_handle: 'ligan', name: '李干', source: 'team', team_handle: 'zhishi', team_name: '知是小队' },
     { user_handle: 'mentor1', name: '管理员', source: 'external' },
     { user_handle: 'cheese-x', name: '芝士', source: 'agent', agent: true },
   ]
@@ -131,20 +131,24 @@ function section(container: Element, key: string): Element | null {
   return container.querySelector(`[data-section="${key}"]`)
 }
 
+// A row is found by the handle printed on it, as is: a bare handle, no `@`.
+function showsHandle(el: Element, handle: string): boolean {
+  return Array.from(el.querySelectorAll('*')).some((n) => n.children.length === 0 && n.textContent?.trim() === handle)
+}
+
 function rowFor(container: Element, handle: string): Element {
-  const row = Array.from(container.querySelectorAll('.member-row')).find((el) =>
-    (el.textContent ?? '').includes(`@${handle}`)
-  )
-  if (!row) throw new Error(`名册上没有 @${handle}`)
+  const row = Array.from(container.querySelectorAll('.member-row')).find((el) => showsHandle(el, handle))
+  if (!row) throw new Error(`名册上没有 ${handle}`)
   return row
 }
 
 describe('成员页：按来路分段', () => {
   it('所有者、团队成员、外部成员各一段，AI 队友不混进人里', () => {
     const { container } = mount()
-    expect(section(container, 'owner')?.textContent).toContain('@alice')
-    expect(section(container, 'team')?.textContent).toContain('@ligan')
-    expect(section(container, 'external')?.textContent).toContain('@mentor1')
+    expect(showsHandle(section(container, 'owner')!, 'alice')).toBe(true)
+    expect(showsHandle(section(container, 'team')!, 'ligan')).toBe(true)
+    expect(showsHandle(section(container, 'external')!, 'mentor1')).toBe(true)
+    expect(container.textContent).not.toContain('@alice')
     expect(() => rowFor(container, 'cheese-x')).toThrow()
   })
 
@@ -155,9 +159,10 @@ describe('成员页：按来路分段', () => {
     expect(rowFor(container, 'alice').textContent).not.toContain('外部')
   })
 
-  it('团队成员指回他所在的团队', () => {
+  it('团队成员指回他所在的团队，用团队的名字', () => {
     const { container } = mount()
-    expect(rowFor(container, 'ligan').textContent).toContain('来自团队 @zhishi')
+    const link = rowFor(container, 'ligan').querySelector('.member-team-link')!
+    expect(link.textContent?.trim()).toBe('来自团队 知是小队')
   })
 
   it('点私聊落在侧栏那条私聊行的同一个地址上', async () => {
@@ -290,9 +295,33 @@ describe('成员页：邀请外部成员', () => {
       total: 1,
     })
     const { container, findByText } = mount()
-    await findByText('@zhangheng')
+    await findByText('zhangheng')
     expect(section(container, 'pending')?.textContent).toContain('外部')
     await fireEvent.click(await findByText('撤回'))
     await waitFor(() => expect(revokeInvitation).toHaveBeenCalledWith('inv1'))
+  })
+
+  it('待答复的邀请写被邀请人的名字，handle 不带 @ 跟在下面', async () => {
+    listProjectInvitations.mockResolvedValue({
+      data: [
+        {
+          id: 'inv2',
+          project_id: 'p1',
+          invitee_handle: 'zhangheng',
+          invitee_name: '张衡',
+          invitee_avatar_id: 42,
+          inviter_handle: 'alice',
+          status: 'pending',
+          created_at: '',
+        },
+      ],
+      total: 1,
+    })
+    const { container, findByText } = mount()
+    await findByText('张衡')
+    const pending = section(container, 'pending')!
+    expect(showsHandle(pending, 'zhangheng')).toBe(true)
+    expect(pending.textContent).not.toContain('@zhangheng')
+    await waitFor(() => expect(pending.innerHTML).toContain('/avatars/42'))
   })
 })

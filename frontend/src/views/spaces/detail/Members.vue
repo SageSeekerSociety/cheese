@@ -109,6 +109,19 @@ function roleLabel(role: Role): string {
   return t(`spaces.members.role.${role.toLowerCase()}`)
 }
 
+/** 角色旁边那一句「这个角色能做什么」。裸标签说不出成员与管理员的差别，这里补上。 */
+function roleHint(role: Role): string {
+  if (role === 'OWNER') return t('spaces.members.role.ownerHint')
+  if (role === 'ADMIN') return t('spaces.members.role.adminHint')
+  return t('spaces.members.role.memberHint')
+}
+
+/** 邀请去哪：两处邀请入口都埋在设置里，页头这颗按钮把人送过去，不在这里重做一遍。 */
+const inviteTargets = {
+  codes: { name: 'SpacesDetailSettingsInviteCodes', params: { spaceId } },
+  domains: { name: 'SpacesDetailSettingsDomainGroups', params: { spaceId } },
+}
+
 /** 下面三件事只有所有者能做；store 那边成功失败都会给提示。 */
 async function run(action: () => Promise<void>) {
   busy.value = true
@@ -148,7 +161,31 @@ async function transferOwner(row: Row) {
 </script>
 
 <template>
-  <PageHeader :title="t('spaces.members.title')" show-on-mobile />
+  <PageHeader :title="t('spaces.members.title')" show-on-mobile>
+    <!-- Both ways to invite already live in the space settings. This entry points at
+         them instead of re-implementing the create/invalidate flows here. -->
+    <template #actions>
+      <v-menu location="bottom end">
+        <template #activator="{ props: activator }">
+          <BaseButton v-bind="activator" kind="secondary" size="sm" prepend-icon="mdi-account-plus">
+            {{ t('spaces.members.invite') }}
+          </BaseButton>
+        </template>
+        <v-list density="compact">
+          <v-list-item
+            :to="inviteTargets.codes"
+            prepend-icon="mdi-ticket-outline"
+            :title="t('spaces.members.inviteCodes')"
+          />
+          <v-list-item
+            :to="inviteTargets.domains"
+            prepend-icon="mdi-email-outline"
+            :title="t('spaces.members.inviteDomainGroups')"
+          />
+        </v-list>
+      </v-menu>
+    </template>
+  </PageHeader>
 
   <div class="mem">
     <BaseLoadError v-if="failed" :title="t('spaces.members.loadMembersFailed')" :error="errorDetail" @retry="refresh" />
@@ -189,7 +226,10 @@ async function transferOwner(row: Row) {
               </div>
             </div>
           </td>
-          <td>{{ roleLabel(row.role) }}</td>
+          <td>
+            <div>{{ roleLabel(row.role) }}</div>
+            <div class="mem__muted">{{ roleHint(row.role) }}</div>
+          </td>
           <td>
             <code v-if="row.viaCode" class="mem__code">{{ row.viaCode }}</code>
             <span v-else-if="row.role === 'OWNER'" class="mem__muted">{{ t('spaces.members.createdSpace') }}</span>

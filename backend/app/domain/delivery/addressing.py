@@ -82,6 +82,8 @@ class Hand(enum.StrEnum):
 #: 看板的列 → 下一步在谁手上。**封闭表**：`Column` 多一档而这里没跟上，查表当场
 #: 抛 `KeyError`，而不是让新的一列悄悄落进「不通知任何人」那一档。
 _HAND_OF_COLUMN: dict[Column, Hand] = {
+    # 还在讨论：下一步是负责人把事情说清楚、点「开始」。
+    Column.not_started: Hand.participant,
     Column.building: Hand.platform,
     Column.delivering: Hand.platform,
     Column.needs_you: Hand.participant,

@@ -142,22 +142,30 @@ ${PREVIEW_TUNNEL_LOCATION}
 }
 EOF
 
-# A TLS listener for the public names, for a relay that forwards the encrypted
-# stream by SNI and prepends a PROXY protocol header, so the client's address
-# still arrives. Public traffic does not use it while TLS ends at the Hong Kong
-# relay (docs/infrastructure.md, "Public edge"); the relay's watchdog probes
-# through it, and the passthrough route returns the public names to it.
-# Emitted only once a certificate is in place (see tls-renew.sh), so a box
-# without one keeps serving the plain listener alone.
+# TLS listeners for the public names, emitted only once a certificate is in
+# place (see tls-renew.sh), so a box without one keeps serving the plain
+# listener alone. Both pass the request to the plain listener above.
+#
+# 18443 is for a relay that forwards the encrypted stream by SNI and prepends
+# a PROXY protocol header, so the client's address still arrives. Public
+# traffic does not use it while TLS ends at the Hong Kong relay
+# (docs/infrastructure.md, "Public edge"); the relay's watchdog probes through
+# it, and the passthrough route returns the public names to it.
+#
+# 18445 is the same site for the platform's own Cloud machines, which reach it
+# through cloud-control's loopback forward (deploy/cloud-control.py) instead
+# of leaving through their default route to Hong Kong and coming back through
+# the relay's tunnels. The forward carries the client's bytes unchanged, so
+# there is no PROXY header, and the client is this box's own sshd.
 #
 # "listen ... http2" rather than "http2 on;": the latter is unknown before
 # nginx 1.25.1, and CI's distro nginx is older than the box's image.
-TLS_DIR="$ACTIVE_DIR/tls"
-if [[ -f "$TLS_DIR/fullchain.pem" && -f "$TLS_DIR/privkey.pem" ]]; then
-  cat >> "$CONFIG_TMP" <<EOF
+tls_server() {
+  local listen="$1" client="$2"
+  cat <<EOF
 
 server {
-  listen 127.0.0.1:18443 ssl http2 proxy_protocol;
+  listen $listen;
   ssl_certificate /etc/nginx/active/tls/fullchain.pem;
   ssl_certificate_key /etc/nginx/active/tls/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
@@ -175,7 +183,7 @@ server {
     proxy_pass http://127.0.0.1:$LISTEN_PORT;
     proxy_http_version 1.1;
     proxy_set_header Host \$http_host;
-    proxy_set_header X-Forwarded-For \$proxy_protocol_addr;
+    proxy_set_header X-Forwarded-For $client;
     proxy_set_header X-Forwarded-Proto https;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection \$connection_upgrade;
@@ -187,5 +195,10 @@ server {
   }
 }
 EOF
+}
+TLS_DIR="$ACTIVE_DIR/tls"
+if [[ -f "$TLS_DIR/fullchain.pem" && -f "$TLS_DIR/privkey.pem" ]]; then
+  tls_server "127.0.0.1:18443 ssl http2 proxy_protocol" '$proxy_protocol_addr' >> "$CONFIG_TMP"
+  tls_server "127.0.0.1:18445 ssl http2" '$proxy_add_x_forwarded_for' >> "$CONFIG_TMP"
 fi
 mv -f "$CONFIG_TMP" "$ACTIVE_DIR/sites-frontend.conf"

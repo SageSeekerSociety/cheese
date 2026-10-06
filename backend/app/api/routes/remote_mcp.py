@@ -14,7 +14,6 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
@@ -33,10 +32,10 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import exception_text, say
+from app.domain.conversation import services as conversations
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
 from app.domain.remote_mcp import oauth, service, upstream
-from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
 router = APIRouter(tags=["remote-mcp"])
@@ -181,7 +180,8 @@ async def proxy(
     claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
     if not claims or claims.get("t") != str(topic_id):
         raise AuthenticationRequiredError("A credential for this room is required")
-    project_id = await db.scalar(select(Topic.project_id).where(Topic.id == topic_id))
+    # The conversation the credential works: a room, or one of its tasks.
+    project_id = await conversations.project_of(db, topic_id)
     if project_id is None:
         raise NotFoundError("Topic not found")
     if claims.get("p") != str(project_id):
@@ -215,7 +215,9 @@ async def proxy(
 async def room_servers(topic_id: uuid.UUID, db: Db, resolver: ActorResolverDep) -> dict:
     """The room's read-only view: whose authorization its sessions act with."""
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
+    actor = await resolver.resolve(
+        project_id=place.project_id, topic_id=place.conversation_id
+    )
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required")
     await resolver.authorize_topic(

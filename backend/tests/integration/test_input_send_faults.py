@@ -93,7 +93,7 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
                     id=delivery_id,
                     event_id=uuid.uuid4(),
                     recipient_handle=ref.agent_handle,
-                    topic_id=ref.topic_id,
+                    conversation_id=ref.topic_id,
                     dedup_key=str(uuid.uuid4()),
                     type="mention",
                     payload={},

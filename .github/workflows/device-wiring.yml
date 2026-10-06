@@ -30,13 +30,18 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # The backend runs as cheese-backend-1 or cheese-backend-b-1 depending
+      # on the last release (deploy/deploy-docker.sh, "Two slots").
+      - name: Find the running backend container
+        run: echo "BACKEND=$(bash deploy/app-container.sh backend)" >> "$GITHUB_ENV"
+
       - name: Probe the sandbox routes the device depends on
         run: |
           set -uo pipefail
           fail=0
 
           # A scoped token, minted the same way a turn does.
-          TOK="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 python -c "
+          TOK="$(docker exec -w /app -e PYTHONPATH=/app "$BACKEND" python -c "
           from app.core.sandbox_auth import mint_scoped_token
           print(mint_scoped_token(project_id='00000000-0000-0000-0000-000000000001',
                                   topic_id='00000000-0000-0000-0000-000000000002'))" | tr -d '\r')"
@@ -44,7 +49,7 @@ jobs:
 
           # 1) The hooks route must EXIST (401 without a token, never 404 — a 404
           #    means the router is unmounted and every agent event is being lost).
-          code="$(docker exec cheese-backend-1 python -c "
+          code="$(docker exec "$BACKEND" python -c "
           import urllib.request, urllib.error, json
           req = urllib.request.Request('http://localhost:8081/sandbox/hooks/00000000-0000-0000-0000-000000000002',
                                        data=json.dumps({}).encode(), method='POST',
@@ -61,7 +66,7 @@ jobs:
           # 2) The CLI endpoint must serve the REAL script, not an error body: a
           #    short 200/404 body is what silently shipped a 100-byte 'cheese' to
           #    the device and made every platform action unavailable to the agent.
-          body="$(docker exec cheese-backend-1 python -c "
+          body="$(docker exec "$BACKEND" python -c "
           import urllib.request, urllib.error
           req = urllib.request.Request('http://localhost:8081/sandbox/cli/cheese', headers={'X-Cheese-Token': '$TOK'})
           try:
@@ -82,8 +87,8 @@ jobs:
           #    fragile: one non-zero exit aborted the whole step before it could
           #    report) and always prints a number, so `|| echo 0` can never mask
           #    a crash into a silent pass.
-          docker cp backend/scripts/device_online_probe.py cheese-backend-1:/tmp/ >/dev/null
-          online="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+          docker cp backend/scripts/device_online_probe.py "$BACKEND":/tmp/ >/dev/null
+          online="$(docker exec -w /app -e PYTHONPATH=/app "$BACKEND" \
             python /tmp/device_online_probe.py 2>/tmp/probe.err | tail -1 || echo 0)"
           echo "device detail: $(cat /tmp/probe.err 2>/dev/null | head -3)"
           if [ "${online:-0}" -gt 0 ] 2>/dev/null; then
@@ -109,10 +114,10 @@ jobs:
         run: |
           set -uo pipefail
           fail=0
-          docker cp backend/scripts/device_capability_setup.py cheese-backend-1:/tmp/ >/dev/null
-          docker cp backend/scripts/device_capability_verify.py cheese-backend-1:/tmp/ >/dev/null
+          docker cp backend/scripts/device_capability_setup.py "$BACKEND":/tmp/ >/dev/null
+          docker cp backend/scripts/device_capability_verify.py "$BACKEND":/tmp/ >/dev/null
 
-          setup="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+          setup="$(docker exec -w /app -e PYTHONPATH=/app "$BACKEND" \
             python /tmp/device_capability_setup.py 2>/dev/null || true)"
           eval "$(printf '%s\n' "$setup" | grep -E '^(PROJECT|TOPIC|TOKEN|BRANCH)=')"
           if [ -z "${TOPIC:-}" ] || [ -z "${TOKEN:-}" ] || [ -z "${BRANCH:-}" ]; then
@@ -167,7 +172,7 @@ jobs:
                    2>&1 || true)"
           echo "cli said: $(printf '%s' "$out" | head -c 200)"
 
-          verify="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+          verify="$(docker exec -w /app -e PYTHONPATH=/app "$BACKEND" \
             python /tmp/device_capability_verify.py "$TOPIC" "$MARKER" 2>/dev/null || true)"
           eval "$(printf '%s\n' "$verify" | grep -E '^(CARDS|MARKER)=')"
           if [ "${CARDS:-0}" -gt 0 ] 2>/dev/null; then
@@ -209,6 +214,6 @@ jobs:
           set -uo pipefail
           TOPIC="${CAP_TOPIC:-}"
           [ -n "$TOPIC" ] || { echo "no topic recorded by the capability step"; exit 1; }
-          docker cp backend/scripts/accept_topic_card.py cheese-backend-1:/tmp/ >/dev/null
-          docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+          docker cp backend/scripts/accept_topic_card.py "$BACKEND":/tmp/ >/dev/null
+          docker exec -w /app -e PYTHONPATH=/app "$BACKEND" \
             python /tmp/accept_topic_card.py "$TOPIC"

@@ -48,7 +48,7 @@ async def _run_turn(factory, pid, tid, turn_id, started_at: datetime) -> None:
     async with factory() as session:
         block = await BlockRepository(session).add(
             project_id=pid,
-            topic_id=tid,
+            conversation_id=tid,
             author="u",
             author_type=AuthorType.participant,
             content="做点事",
@@ -92,7 +92,7 @@ async def test_turns_counts_turns_not_rows(business_db_factory):
         for turn in turns:
             await repo.add(
                 project_id=pid,
-                topic_id=tid,
+                conversation_id=tid,
                 model="m",
                 input_tokens=100,
                 output_tokens=10,
@@ -104,7 +104,7 @@ async def test_turns_counts_turns_not_rows(business_db_factory):
         for turn in turns[:2]:
             await repo.add(
                 project_id=pid,
-                topic_id=tid,
+                conversation_id=tid,
                 model="m",
                 input_tokens=5,
                 output_tokens=1,
@@ -232,7 +232,7 @@ async def test_priced_turns_report_no_unpriced_tokens(business_db_factory):
     async with business_db_factory() as session:
         await UsageRepository(session).add(
             project_id=pid,
-            topic_id=tid,
+            conversation_id=tid,
             model="m",
             input_tokens=1000,
             output_tokens=100,
@@ -258,7 +258,7 @@ async def test_usage_endpoints_expose_turns_and_unpriced_tokens(client):
         for _ in range(2):  # two rows, ONE turn
             await repo.add(
                 project_id=pid,
-                topic_id=tid,
+                conversation_id=tid,
                 model="m",
                 input_tokens=10,
                 output_tokens=1,

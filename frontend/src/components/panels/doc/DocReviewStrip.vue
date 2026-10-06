@@ -24,8 +24,12 @@ const emit = defineEmits<{
     <CheeseAvatar :size="18" :name="agentName" />
     <span class="doc-review-strip__text">{{
       count > 0
-        ? t('work.room.docReview.title', { requester, agent: agentName, n: count })
-        : t('work.room.docReview.allRestored', { requester, agent: agentName })
+        ? requester
+          ? t('work.room.docReview.title', { requester, agent: agentName, n: count })
+          : t('work.room.docReview.titleOwn', { agent: agentName, n: count })
+        : requester
+          ? t('work.room.docReview.allRestored', { requester, agent: agentName })
+          : t('work.room.docReview.allRestoredOwn', { agent: agentName })
     }}</span>
     <template v-if="count > 0">
       <button

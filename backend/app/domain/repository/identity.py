@@ -32,22 +32,9 @@ CHEESE_IDENTITY = GitIdentity(CHEESE_NAME, CHEESE_EMAIL)
 
 @dataclass(frozen=True)
 class WorkItem:
-    """One piece of work that went into a delivery — a `tasks` row and the 分身
-    that did it.
-
-    A commit's `Co-authored-by` names people; this names MACHINES, which is a
-    different question and needs a different answer. `Claude Fable 5` is on every
-    commit any Claude Code writes anywhere, so it cannot tell you which worker in
-    which room typed this one. `subagent_id` can: it is the id the harness minted
-    for that worker inside the room's session, which the platform read off that
-    worker's start event, so a line of `git log` and a thread in the room name
-    the same machine."""
+    """One piece of work that went into a delivery — a `tasks` row."""
 
     task_id: uuid.UUID
-    #: NULL while no worker has started on it — a task row exists from the moment
-    #: the card is opened and a worker starts some time after, so a delivered
-    #: task can honestly have none.
-    subagent_id: str | None
     title: str
     reporter_handle: str | None = None
     contributor_handles: tuple[str, ...] = ()
@@ -209,7 +196,7 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
 
     It used to be derived: the batch was taken to be the membership of the tree
     the card delivered. That is wrong whenever a room works across two batches,
-    which is the ordinary case. A task's tree is fixed when `cheese_task` runs
+    which is the ordinary case. A task's tree is fixed when the task is created
     and records which batch was open THEN; which branch its code goes out on is
     decided when the room files a card. Run that inference over this project's
     own room/task/tree data as of 2026-09-08 and one delivery comes out wrong in
@@ -239,7 +226,6 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
     return tuple(
         WorkItem(
             task.id,
-            task.subagent_id or None,
             task.title or "",
             getattr(task, "reporter_handle", None),
             tuple(getattr(task, "contributor_handles", None) or ()),
@@ -298,7 +284,6 @@ async def attribution(
                     *tasks,
                     WorkItem(
                         task.id,
-                        task.subagent_id,
                         task.title,
                         task.reporter_handle,
                         tuple(task.contributor_handles or ()),

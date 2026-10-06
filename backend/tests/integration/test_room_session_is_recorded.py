@@ -1,7 +1,7 @@
 """一个房间跑过一轮，必须说得出自己跑过 —— 「现场」全靠这一个布尔值决定出不出。
 
-`has_run` 问的是「这个地点有没有哪个 agent 留下过会话行」，而地点只有房间：它派
-出去的每一件活都是这一个会话里的一个分身，不另开会话，也没有自己的 `--resume`。
+`has_run` 问的是「这个房间有没有哪个 agent 留下过会话行」。房间里的任务各有自己的
+会话，它们跑的轮次不算这个房间跑过。
 
 同一行代码还带着第二个用途：`resume_token`。`--resume` 只在**冷启动**时用得上
 （runner 那道守卫：只有 transcript 在的时候才 `--resume`，活着的会话本身就是
@@ -15,7 +15,7 @@ import uuid
 
 from app.domain.agent.chat import ChatService
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 
 
 class _Screen(StubChannel):
@@ -57,15 +57,11 @@ def _room(client) -> tuple[str, str]:
     return pid, rid
 
 
-def _dispatched(client, room_id: str, title: str = "一件活") -> str:
-    """派出去的一条活。派活不跑任何东西，所以它出来时是安静的。"""
-    r = client.post(
-        f"/topics/{room_id}/split",
-        json=dict(reviewer_handle="alice", **{"title": title}),
-    )
-    assert r.status_code == 200, r.text
+def _started(client, room_id: str, title: str = "一件活") -> str:
+    """房间里开始了的一条活。它在自己的会话里跑，等它那一轮跑完再看房间。"""
+    task = open_task(client, room_id, title)
     wait_work_idle()
-    return r.json()["data"]["id"]
+    return task["id"]
 
 
 def _service(client, tmp_path, screen: _Screen) -> ChatService:
@@ -104,25 +100,23 @@ def _has_run(client, project_id: str, place_id: str, bearer) -> bool:
 
 
 def test_a_freshly_opened_room_has_not_run(client, bearer):
-    """一步都还没走的房间说自己没跑过 —— 派活本身不算跑过一轮。"""
+    """一步都还没走的房间说自己没跑过 —— 里面的任务开始了，跑的是任务自己的会话，
+    不算房间跑过一轮。"""
     pid, room = _room(client)
-    _dispatched(client, room)
+    _started(client, room)
 
     assert _has_run(client, pid, room, bearer) is False
 
 
-def test_a_card_is_not_asked_whether_it_has_run(client, bearer):
-    """卡不是地点，这个问题对它不成立 —— 问了是 404，不是 False。
-
-    False 会更糟：那读起来像「这条活闲着」，而事实是这个问题问错了对象。
-    """
+def test_a_task_is_asked_about_its_own_session(client, bearer):
+    """任务是一段自己的对话：问它跑没跑过，答的是它自己的会话，不是房间的。"""
     pid, room = _room(client)
-    card = _dispatched(client, room)
+    card = _started(client, room)
 
-    r = client.get(
-        f"/projects/{pid}/topics/{card}/work-summary", headers=bearer("alice")
-    )
-    assert r.status_code == 404
+    # Answers (200, a boolean) about the task's own session; it is no longer a
+    # question put to the wrong object.
+    assert isinstance(_has_run(client, pid, card, bearer), bool)
+    assert _has_run(client, pid, room, bearer) is False
 
 
 def test_a_room_records_its_own_turn(client, tmp_path, bearer):

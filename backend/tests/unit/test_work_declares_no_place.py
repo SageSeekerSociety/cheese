@@ -1,9 +1,9 @@
-"""守卫：活、轮次和子 agent 的数据结构上没有地点（不变量 I18b）。
+"""守卫：任务和轮次的数据结构上没有地点（不变量 I18b）。
 
 手是 agent 的，不是房间的、更不是一条活的（结论 60）：地点由做这条活的那个 agent
-的**会话**解析出来，原生子 agent 用的是父进程那一份（结论 43）。所以「这条活在哪
-台机器上」这个问题在这几张结构上没有答案位可以写 —— 一旦有了，两处会各说各的，而
-解析的时候没有任何地方能说出该听谁的。
+的**会话**解析出来。任务可以记「想用哪台电脑」（`compute_config`），那是一个选择，
+不是地点。所以「这条活在哪台机器上」这个问题在这几张结构上没有答案位可以写
+—— 一旦有了，两处会各说各的，而解析的时候没有任何地方能说出该听谁的。
 
 这一条要拦的不是今天的代码，是下一次：加一列 `place_id` 到卡上，比起改地点解析，
 永远是更快的那条路，而且它能跑通一次 —— 真正的代价要等到第二个 agent 进同一个房
@@ -13,10 +13,7 @@
 `agent_sessions` 不在扫描范围内 —— 会话**应当**有地点，那两列正是它的。
 """
 
-import dataclasses
-
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.service import AgentSubagentStart, AgentSubagentStop
 from app.domain.room_task.models import Task
 from app.domain.room_task.schemas import TaskOut
 
@@ -45,12 +42,6 @@ def test_what_a_card_shows_has_no_place_either():
 def test_a_turn_has_no_place_of_its_own():
     """一轮只持有从会话那两列解析出来的租约句柄，自己不记地点。"""
     assert _offending(column.name for column in AgentTurn.__table__.columns) == []
-
-
-def test_a_subagent_declares_no_environment():
-    """子 agent 不声明独立环境：它跑在父进程里，手就是父进程那双。"""
-    for event in (AgentSubagentStart, AgentSubagentStop):
-        assert _offending(f.name for f in dataclasses.fields(event)) == [], event
 
 
 def test_the_guard_reads_whole_words():

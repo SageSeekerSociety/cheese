@@ -26,7 +26,6 @@ const ROW: Record<string, string> = {
   entry: '.skel__entry',
   card: '.skel__card',
   site: '.skel__site',
-  brief: '.skel__bblock',
   doc: '.skel__dsec',
   detail: '.skel__dt-sec',
   text: '.skel__text',
@@ -119,14 +118,6 @@ describe('每一行长得像它替代的那一行', () => {
     expect(row.querySelector('.skel__bone--arg'), '不画参数那一截，动作行就只剩一个动词').not.toBeNull()
     // 时间悬停才出现，静止时那一格是空的 —— 骨架画上它，记录到达时反而少一块。
     expect(row.querySelector('.skel__bone--when')).toBeNull()
-  })
-
-  it('一条活：标题 + 一行元信息 + 简报那一段，不画结论', () => {
-    // 结论只有交完活的卡才有。画上它等于对每一张卡都许诺一段它多半没有的东西。
-    const container = draw({ variant: 'brief' })
-    expect(container.querySelector('.skel__btitle .skel__bone--dot')).not.toBeNull()
-    expect(container.querySelector('.skel__bmeta')).not.toBeNull()
-    expect(container.querySelectorAll('.skel__bblock').length, '只画一段').toBe(1)
   })
 
   it('文档：一条小标题带着几段字', () => {

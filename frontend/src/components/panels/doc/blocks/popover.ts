@@ -35,6 +35,8 @@ export function popoverAt(anchor: DOMRect, el: HTMLElement, onClose?: () => void
   const top = below + height > window.innerHeight - 8 ? Math.max(8, anchor.top - height - 4) : below
   el.style.left = `${left + window.scrollX}px`
   el.style.top = `${top + window.scrollY}px`
+  // Opened above its anchor: it comes in from below.
+  if (top < anchor.top) el.style.setProperty('--doc-menu-from', '4px')
   const away = (e: MouseEvent) => {
     if (!el.contains(e.target as Node)) close()
   }
@@ -47,7 +49,7 @@ export function popoverAt(anchor: DOMRect, el: HTMLElement, onClose?: () => void
   const close = () => {
     if (open?.el !== el) return
     open = null
-    el.remove()
+    leave(el)
     document.removeEventListener('mousedown', away, true)
     document.removeEventListener('keydown', key, true)
     onClose?.()
@@ -57,6 +59,15 @@ export function popoverAt(anchor: DOMRect, el: HTMLElement, onClose?: () => void
   open = { el, close }
 }
 
+/** Play the popover's way out (docBlocks.css), then take it off the page. */
+function leave(el: HTMLElement): void {
+  el.classList.add('is-leaving')
+  const done = () => el.remove()
+  el.addEventListener('transitionend', done, { once: true })
+  // No transition ran (reduced motion, a hidden tab): don't leave it behind.
+  window.setTimeout(done, 200)
+}
+
 /** A menu of actions under `anchor`. */
 export function menuAt(anchor: HTMLElement, items: PopoverItem[]): void {
   const el = document.createElement('div')
@@ -64,11 +75,16 @@ export function menuAt(anchor: HTMLElement, items: PopoverItem[]): void {
   for (const item of items) {
     const button = document.createElement('button')
     button.type = 'button'
+    button.className = item.hint ? 'doc-menu__item doc-menu__item--described' : 'doc-menu__item'
     button.setAttribute('role', item.pressed === undefined ? 'menuitem' : 'menuitemradio')
     if (item.pressed !== undefined) button.setAttribute('aria-checked', String(item.pressed))
-    button.textContent = item.label
+    const label = document.createElement('span')
+    label.className = 'doc-menu__label'
+    label.textContent = item.label
+    button.append(label)
     if (item.hint) {
       const hint = document.createElement('span')
+      hint.className = 'doc-menu__hint'
       hint.textContent = item.hint
       button.append(hint)
     }

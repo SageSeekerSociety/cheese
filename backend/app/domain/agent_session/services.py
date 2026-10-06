@@ -1,10 +1,11 @@
-"""Reading and writing where an agent's conversation in a place got to.
+"""Reading and writing where an agent's session in a conversation got to.
 
 Thin over the repository on purpose — there is no policy here, only the one
-question every caller asks in the same words: given a place and an agent, what
-does its conversation resume by. It exists as a service because the callers are
-in other domains (the turn path in ``agent``, clone in ``topic``), and a domain
-reaching into another's repository is what the import guard forbids.
+question every caller asks in the same words: given a conversation (a room or a
+task, by its id) and an agent, what does its session resume by. It exists as a
+service because the callers are in other domains (the turn path in ``agent``,
+clone in ``topic``), and a domain reaching into another's repository is what
+the import guard forbids.
 """
 
 import uuid
@@ -20,10 +21,10 @@ class AgentSessionService:
         self._repo = AgentSessionRepository(session)
 
     async def ensure(
-        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
+        self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> AgentSession:
         """Create the conversation identity before any machine is acquired."""
-        return await self._repo.ensure(topic_id, agent_handle, harness)
+        return await self._repo.ensure(conversation_id, agent_handle, harness)
 
     async def by_id(
         self, session_id: uuid.UUID, *, lock: bool = False
@@ -31,57 +32,63 @@ class AgentSessionService:
         return await self._repo.by_id(session_id, lock=lock)
 
     async def resume_token(
-        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
+        self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> str | None:
-        """What this agent resumes its conversation in this topic by."""
-        return await self._repo.resume_token(topic_id, agent_handle, harness)
+        """What this agent resumes its session in this conversation by."""
+        return await self._repo.resume_token(conversation_id, agent_handle, harness)
 
     async def remember(
         self,
         *,
-        topic_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         agent_handle: str,
         resume_token: str,
         harness: str,
     ) -> None:
         """Record where this agent's conversation got to."""
         await self._repo.save(
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             agent_handle=agent_handle,
             resume_token=resume_token,
             harness=harness,
         )
 
     async def told(
-        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
+        self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> dict | None:
         """The project state this agent's conversation was last told, by section."""
-        row = await self._repo.get(topic_id, agent_handle, harness)
+        row = await self._repo.get(conversation_id, agent_handle, harness)
         return row.told if row is not None else None
 
     async def remember_told(
-        self, *, topic_id: uuid.UUID, agent_handle: str, harness: str, told: dict
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str, told: dict
     ) -> None:
         """Record the project state this agent's conversation now knows."""
         await self._repo.save_told(
-            topic_id=topic_id, agent_handle=agent_handle, harness=harness, told=told
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            told=told,
         )
 
     async def place(
-        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
+        self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> SessionPlace | None:
         """Where this agent's conversation here is — its machines, resolved."""
-        row = await self._repo.get(topic_id, agent_handle, harness)
+        row = await self._repo.get(conversation_id, agent_handle, harness)
         return row.place() if row is not None else None
 
-    async def ids_in_room(self, room_id: uuid.UUID) -> list[uuid.UUID]:
-        """Every session id in this room, started or not, in a stable order."""
-        return await self._repo.ids_in_room(room_id)
+    async def ids_on_choice(
+        self, room_id: uuid.UUID, task_id: uuid.UUID | None = None
+    ) -> list[uuid.UUID]:
+        """The sessions that move when this room's (or this task's) work
+        computer changes, in a stable order."""
+        return await self._repo.ids_on_choice(room_id, task_id)
 
     async def remember_place(
         self,
         *,
-        topic_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         agent_handle: str,
         harness: str,
         work_lease: dict | None,
@@ -89,7 +96,7 @@ class AgentSessionService:
     ) -> None:
         """Record the machines this session took."""
         await self._repo.save_place(
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
             work_lease=work_lease,
@@ -115,24 +122,31 @@ class AgentSessionService:
 
     async def placed_sessions(
         self,
-    ) -> list[tuple[uuid.UUID, uuid.UUID, str, str, str | None, SessionPlace]]:
-        """``(project_id, room_id, agent_handle, harness, resume_token, place)``
-        for every placed session — what a channel re-adopts after a restart.
+    ) -> list[
+        tuple[
+            uuid.UUID, uuid.UUID, uuid.UUID | None, str, str, str | None, SessionPlace
+        ]
+    ]:
+        """``(project_id, room_id, inner_id, agent_handle, harness, resume_token,
+        place)`` for every placed session — what a channel re-adopts after a
+        restart. ``inner_id`` is the task's or the 支线's, None for a room's
+        own session.
 
-        One per (room, agent, harness) seat, because a room seats as many
-        agents as it has and each one's session comes back on its own seat.
-        Every channel reads this same list and keeps the rows whose harness is
-        its own. The stored resume token travels because it is the provenance
-        a terminal answer has to match before it may close anything (FB-56).
+        One per (conversation, agent, harness) seat, and each comes back on its
+        own seat. Every channel reads this same list and keeps the rows whose
+        harness is its own. The stored resume token travels because it is the
+        provenance a terminal answer has to match before it may close anything
+        (FB-56).
         """
         found = []
-        for row, project_id in await self._repo.placed_everywhere():
+        for row, project_id, room_id in await self._repo.placed_everywhere():
             place = row.place()
             if place is not None:
                 found.append(
                     (
                         project_id,
-                        row.topic_id,
+                        room_id,
+                        row.conversation_id if row.conversation_id != room_id else None,
                         row.agent_handle,
                         row.harness,
                         row.resume_token,
@@ -141,9 +155,9 @@ class AgentSessionService:
                 )
         return found
 
-    async def has_run(self, topic_id: uuid.UUID) -> bool:
+    async def has_run(self, room_id: uuid.UUID) -> bool:
         """Whether ANY agent has ever run here — what the compute pin freezes on."""
-        return await self._repo.has_any(topic_id)
+        return await self._repo.has_any(room_id)
 
-    async def forget_room(self, topic_id: uuid.UUID) -> None:
-        await self._repo.forget_room(topic_id)
+    async def forget_room(self, room_id: uuid.UUID) -> None:
+        await self._repo.forget_room(room_id)

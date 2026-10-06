@@ -62,7 +62,7 @@ const DOC = { kind: 'doc', section: 'user', slug: 'quickstart', title: '快速�
 {
   const send = spy()
   const store = fakeStore()
-  await recordVisit(DOC, { send, storage: store, token: '' })
+  await recordVisit(DOC, { send, storage: store })
 
   eq(send.calls.length, 1, 'a public doc page sends exactly one beacon')
   const { url, init } = send.calls[0]
@@ -76,8 +76,8 @@ const DOC = { kind: 'doc', section: 'user', slug: 'quickstart', title: '快速�
 
   const sent = Object.keys(init.headers).map((h) => h.toLowerCase()).sort()
   eq(sent.join(','), 'content-type', 'no header rides along that could name the reader (no X-Forwarded, no UA, no Referer)')
-  hasNot(init.headers.Authorization || '', 'Bearer', 'signed out: no token is invented')
-  eq(init.credentials, 'same-origin', 'cookies are not attached to the counter')
+  hasNot(init.headers.Authorization || '', 'Bearer', 'no token is sent: the sign-in is the site cookie')
+  eq(init.credentials, 'same-origin', 'and that cookie rides along only to this site')
 }
 
 // ---------- one id per browser, reused ----------
@@ -98,20 +98,6 @@ const DOC = { kind: 'doc', section: 'user', slug: 'quickstart', title: '快速�
   ok(/^[A-Za-z0-9_-]{8,64}$/.test(visitorKey(junk)), 'a stored id the backend would refuse is replaced')
 }
 
-// ---------- signed in: the account, and only when the token is already here ----------
-{
-  const send = spy()
-  await recordVisit(DOC, { send, storage: fakeStore(), token: 'header.payload.sig' })
-  eq(send.calls[0].init.headers.Authorization, 'Bearer header.payload.sig', 'a token already in storage rides along')
-
-  // The beacon must not refresh a session: a refresh is a request the reader
-  // waits on, and this is a counter. With no token in storage there is none to
-  // send, so the visit is anonymous — which is a real answer, not a failure.
-  const anon = spy()
-  await recordVisit(DOC, { send: anon, storage: fakeStore(), token: '' })
-  ok(!('Authorization' in anon.calls[0].init.headers), 'no token in storage means an anonymous visit, not a refresh')
-}
-
 // ---------- pages that are not visits ----------
 {
   const send = spy()
@@ -121,8 +107,8 @@ const DOC = { kind: 'doc', section: 'user', slug: 'quickstart', title: '快速�
     {},
     undefined,
   ]) {
-    eq(beaconBody(page, { storage: fakeStore(), token: '' }), null, `nothing is sent for ${JSON.stringify(page)}`)
-    await recordVisit(page, { send, storage: fakeStore(), token: '' })
+    eq(beaconBody(page, { storage: fakeStore() }), null, `nothing is sent for ${JSON.stringify(page)}`)
+    await recordVisit(page, { send, storage: fakeStore() })
   }
   eq(send.calls.length, 0, 'not one request for the gate, a 404, or a page with no kind')
 
@@ -130,12 +116,12 @@ const DOC = { kind: 'doc', section: 'user', slug: 'quickstart', title: '快速�
   // them is a visit) but the slug does not travel: it is not a public name.
   const dev = { kind: 'doc', section: 'dev', slug: 'feature-stats', dev: true }
   eq(pageSlug(dev), null, 'a developer page records no slug')
-  const body = beaconBody(dev, { storage: fakeStore(), token: '' })
+  const body = beaconBody(dev, { storage: fakeStore() })
   ok(body, 'but the visit is still counted')
   eq(body.page, null, 'with the page left blank')
 
   // Home, changelog and download have no slug to record; the visit still counts.
-  const home = beaconBody({ kind: 'home' }, { storage: fakeStore(), token: '' })
+  const home = beaconBody({ kind: 'home' }, { storage: fakeStore() })
   ok(home, 'the home page is a visit')
   eq(home.page, null, 'and records no slug')
 }
@@ -145,7 +131,7 @@ const DOC = { kind: 'doc', section: 'user', slug: 'quickstart', title: '快速�
   const offline = spy({ throws: true })
   let threw = null
   try {
-    await recordVisit(DOC, { send: offline, storage: fakeStore(), token: '' })
+    await recordVisit(DOC, { send: offline, storage: fakeStore() })
   } catch (e) {
     threw = e
   }
@@ -161,14 +147,14 @@ const DOC = { kind: 'doc', section: 'user', slug: 'quickstart', title: '快速�
     },
   }
   const send = spy()
-  await recordVisit(DOC, { send, storage: refused, token: '' })
+  await recordVisit(DOC, { send, storage: refused })
   eq(send.calls.length, 1, 'storage being refused still counts the visit')
   eq(JSON.parse(send.calls[0].init.body).visitor, '', 'as an anonymous one — the backend drops it rather than inventing an id')
 
   // A backend that answers 500 is answered with silence too (the response is
   // never read: there is nothing to do with it).
   const error = spy({ status: 500, ok: false })
-  await recordVisit(DOC, { send: error, storage: fakeStore(), token: '' })
+  await recordVisit(DOC, { send: error, storage: fakeStore() })
   eq(error.calls.length, 1, 'an error response is not retried from the page')
 }
 

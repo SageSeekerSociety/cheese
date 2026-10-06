@@ -36,3 +36,5 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
+          # The docs host's copy, at the root (docs/site/src/where.mjs).
+          DOCS_BASE= OUT="$OUT-host" npm run build

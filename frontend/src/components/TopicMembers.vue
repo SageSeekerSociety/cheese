@@ -198,6 +198,13 @@ function roleLabel(role: string): string {
   return ROLES.includes(role as (typeof ROLES)[number]) ? t(`work.room.roster.role.${role}`) : role
 }
 
+/** What the role can do, shown beside each option in the role menu and as the tooltip on
+ *  the resting label. The roster row is only two lines tall, so the list keeps the label
+ *  and the explanation lives one hover away. */
+function roleHint(role: string): string {
+  return ROLES.includes(role as (typeof ROLES)[number]) ? t(`work.room.roster.roleHint.${role}`) : ''
+}
+
 async function guard<T>(fn: () => Promise<T>): Promise<void> {
   busy.value = true
   error.value = ''
@@ -305,7 +312,7 @@ async function onSetRole(handle: string, role: string) {
           }}</span>
           <span class="roster__who">
             <span class="roster__name">{{ memberName(m) || m.member_handle }}</span>
-            <span class="roster__handle">@{{ m.member_handle }}</span>
+            <span class="roster__handle">{{ m.member_handle }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />
@@ -316,7 +323,13 @@ async function onSetRole(handle: string, role: string) {
           <template v-if="canManage">
             <v-menu v-if="!m.agent" location="bottom end">
               <template #activator="{ props: rp }">
-                <button v-bind="rp" type="button" class="roster__role roster__role--btn" :disabled="busy">
+                <button
+                  v-bind="rp"
+                  type="button"
+                  class="roster__role roster__role--btn"
+                  :disabled="busy"
+                  :title="roleHint(m.role)"
+                >
                   {{ roleLabel(m.role) }}
                   <v-icon size="12">mdi-chevron-down</v-icon>
                 </button>
@@ -332,6 +345,7 @@ async function onSetRole(handle: string, role: string) {
                   <v-list-item-title class="text-body-2">
                     {{ roleLabel(r) }}
                   </v-list-item-title>
+                  <v-list-item-subtitle class="text-caption">{{ roleHint(r) }}</v-list-item-subtitle>
                 </v-list-item>
               </v-list>
             </v-menu>
@@ -346,7 +360,7 @@ async function onSetRole(handle: string, role: string) {
             </button>
           </template>
           <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义。 -->
-          <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
+          <span v-else-if="!m.agent" class="roster__role" :title="roleHint(m.role)">{{ roleLabel(m.role) }}</span>
         </li>
       </ul>
 
@@ -402,7 +416,7 @@ async function onSetRole(handle: string, role: string) {
               </template>
               <span class="roster__who">
                 <span class="roster__name">{{ item.raw.title }}</span>
-                <span class="roster__handle">@{{ item.raw.value }}</span>
+                <span class="roster__handle">{{ item.raw.value }}</span>
               </span>
               <template #append>
                 <span v-if="item.raw.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>

@@ -133,9 +133,10 @@ def harness_on(
 class SessionRef:
     """Which conversation this is, to the harness holding it.
 
-    A room hosts as many conversations as it seats agents, so a topic id does
-    not name one — ``(topic, agent_handle, harness)`` does, and it is the same
-    key ``agent_sessions`` is written under. Everything that resolves a
+    A room hosts as many conversations as it seats agents, and each of its
+    tasks is a conversation of its own, so a topic id does not name one —
+    ``(conversation, agent_handle, harness)`` does, and it is the same key
+    ``agent_sessions`` is written under. Everything that resolves a
     conversation starts from this.
 
     一个话题一个容器（2026-09-28 决定，推翻结论 60 的后半）：这个键仍然只认一条会
@@ -163,6 +164,16 @@ class SessionRef:
     topic_id: uuid.UUID
     agent_handle: str = ""
     harness: str = field(kw_only=True)
+    #: The conversation this session is in when it is one inside the room — a
+    #: task's or a 支线's own — rather than the room's line. ``topic_id`` is
+    #: still the room: they work there.
+    inner_id: uuid.UUID | None = field(default=None, kw_only=True)
+
+    @property
+    def conversation_id(self) -> uuid.UUID:
+        """The conversation this session is in — the key ``agent_sessions`` is
+        written under, and the seat a runtime keeps it on."""
+        return self.inner_id or self.topic_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,32 +203,11 @@ class HarnessEvent:
     age_s: float
 
 
-class SubagentRequirement(StrEnum):
-    """派一条活是 agent 对骨架原生 subagent 的工具调用，不走平台（结论 43）。
-
-    平台这一侧没有「派活」的路径：agent 先开卡，再用骨架自己的工具起一条子线程，
-    hook 按线程标识归卡，结束写结论，人对卡的操作投递给父线程执行。这四条是那条
-    路成立的前提，所以它们是骨架契约的**硬性要求**，不是能力位。
-
-    能力位（``speaks_gateway`` 那几个）答的是「这个骨架做不做得到，做不到就在功能
-    矩阵里填一条差异码」；硬性要求没有那一档——答得出的才进 ``HARNESSES``，答不出
-    的留着代码不注册，矩阵里也就不占一列。``Difference`` 里因此不许有一条码描述这
-    四项中的任何一项：一条能填进来的差异码就是一个「暂缺」，而暂缺的骨架本来就不
-    该在跑。
-    """
-
-    SPAWNS_WITH_A_MODEL = "起子 agent，并指定它跑哪个模型"
-    LABELS_ITS_THREAD = "子 agent 的每个事件带可归到卡的线程标识"
-    PARENT_RETASKS_IT = "父线程能改它的指令"
-    PARENT_STOPS_IT = "父线程能停掉它"
-
-
 class Capability(StrEnum):
     """骨架自己要提供、一部分场景才要的能力——可选的那一档。
 
-    和 ``SubagentRequirement`` 不同：答不出不妨碍注册，只是要它的地方用不了这个骨
-    架。每一项在 ``Harness.capabilities`` 里写一句「怎么做到的」，指得出代码在哪，
-    规矩和四条硬性要求一样（``test_subagent_requirements.py`` 核）；没有这一项就是
+    答不出不妨碍注册，只是要它的地方用不了这个骨架。每一项在
+    ``Harness.capabilities`` 里写一句「怎么做到的」，指得出代码在哪；没有这一项就是
     做不到。看图是模型的事，空闲退出是平台 runner 的事，都不在这里。
     """
 
@@ -304,23 +294,6 @@ class Harness:
     # What a person would call it. Not a display concern: this is the only
     # place the name a human sees is written down.
     label: str
-    # 四条硬性要求（结论 43），每条一句「怎么做到的」，指得出代码在哪。一句「已支
-    # 持」而指不出是哪一行做的，下一个人没有办法核，也没有办法在它失效的时候发现
-    # ——和 ``capability`` 那张表里的格子同一条规矩。
-    #
-    # 反引号里写的是**本仓库的东西**：带 `/` 的（或者以 `.py`、`.md` 结尾的）是路
-    # 径，从 `app/domain/` 起算；其余的是符号名，每个都要在同一句引的某个文件里找
-    # 得到。规矩不限于代码文件——一条要求的做法写在哪儿就引哪儿，
-    # `agent/skill_library/` 下和 `../../sandbox/skills/` 里那几份发给 agent 的
-    # 说明也算数。
-    # ``test_subagent_requirements.py`` 两样都核，而且核符号那一样要求它**参与了代
-    # 码**：被定义、被赋值、被读。只核「文件里有这串字」是不够的——一张
-    # ``merged.pop`` 的删除名单里也有这串字，而一张删除名单证明的恰好是这句话的反
-    # 面。上游的工具名（Task、Agent）不加反引号：那不是这里能核的东西。
-    #
-    # 值只能是一句话。``Difference`` 是 StrEnum，填进来照样是个 ``str``，所以
-    # ``__post_init__`` 认的是类型本身：硬性要求没有「这个骨架做不到」那一档。
-    subagents: Mapping[SubagentRequirement, str]
     # 可选能力（``Capability``），每项一句「怎么做到的」，引文规矩同上。不在这里
     # 的就是做不到。
     capabilities: Mapping[Capability, str] = field(default_factory=dict)
@@ -349,20 +322,11 @@ class Harness:
     executor_controls: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
-        """答不全四条的，根本造不出来——这就是「摘掉」的可判形式。
+        """声明了一项能力却说不出怎么做到的，根本造不出来。
 
         判在构造上而不是判在一条守卫测试上：注册表是一个字面量，一个造得出来的
         条目总会有人写进去。
         """
-        for requirement in SubagentRequirement:
-            answer = self.subagents.get(requirement)
-            if type(answer) is not str or not answer.strip():
-                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
-                raise ValueError(
-                    f"{self.name} 没有答「{requirement}」。这是硬性要求（结论 43）："
-                    "答得出的骨架才上注册表，答不出的留着代码不注册。"
-                    "一条差异码也不算答——硬性要求没有「暂缺」那一档。"
-                )
         for capability, answer in self.capabilities.items():
             if type(answer) is not str or not answer.strip():
                 # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
@@ -376,52 +340,6 @@ HARNESSES: dict[str, Harness] = {
     CLAUDE_CODE: Harness(
         CLAUDE_CODE,
         "Claude Code",
-        subagents={
-            SubagentRequirement.SPAWNS_WITH_A_MODEL: (
-                "Agent(model=...) selects a native child model. The pinned-binary "
-                "test_claude_child_models verifies general-purpose children: explicit "
-                "selection overrides CLAUDE_CODE_SUBAGENT_MODEL, which "
-                "`agent/chat.py` supplies from the project child default or project "
-                "main default. Admission validates "
-                "the catalog and tier policy before either supply pool forwards it. "
-                "The pinned tool schema says forks inherit the parent model; the "
-                "tested startup rejects the fork agent type with a visible tool "
-                "error. Fork model selection is not claimed as supported."
-            ),
-            SubagentRequirement.LABELS_ITS_THREAD: (
-                "`agent/harness/claude_code/events.py` 的 `bind`：标识由"
-                "`room_task/thread_label.py` 的 `thread_label` 算出来、写在起它的那"
-                "段 prompt 里；`bind` 在派发它的那次调用上读到它，钉在这次调用的 id "
-                "和 task_started 给这个 worker 的 agent id 上，此后这条子线程的每条"
-                "记录——stdout 上带 parent_tool_use_id 的，和 "
-                "`agent/harness/claude_code/runner.py` 的 `file_entry` 从它自己的 "
-                "transcript 文件读进来的——都带着它出来。"
-            ),
-            SubagentRequirement.PARENT_RETASKS_IT: (
-                "改指令的是起它的父线程，做法写在 "
-                "`../../sandbox/skills/cheese/SKILL.md`：还在跑的，父线程直接给"
-                "这条子线程发消息；已经停了的，在房间会话里用同一个线程标识重新派"
-                "一条——所以换了要求还是那条活、还归那张卡。平台这一侧只有 "
-                "`agent/room/sessions.py` 上的 `RoomSessions.steer`，它把人对"
-                "卡的操作送进**父**会话，父线程读到之后才去做上面那件事；平台不认"
-                "子线程，也不直接对它说话。"
-            ),
-            SubagentRequirement.PARENT_STOPS_IT: (
-                "停的是**一条**子线程，做法和改指令写在同一处 "
-                "`../../sandbox/skills/cheese/SKILL.md`：父线程调 TaskStop，按起"
-                "它时给的那个名字停那一条，同一条会话里的其他分身照跑。平台这一侧"
-                "的 `agent/room/sessions.py` 上 `RoomSessions.interrupt` 与 "
-                "`RoomSessions.close` 停的都是整条会话——那是结论 43 的另一句「子 "
-                "agent 与父进程同生同死」，不是这一条，拿它来答这一条等于这条要求"
-                "恒真。这一手在房间里落不落得了地由 "
-                "`agent/harness/claude_code/remote_execution/proxy.js` 决定：一个停"
-                "任务的 id 有两个主人，转给执行器的那条路只认执行机上后台跑着的命"
-                "令，执行器答「不认识」的那个 id 就是一条子线程，放手让骨架自己停；"
-                "`agent/harness/claude_code/remote_execution/client.py` 的 `guarded`"
-                " 把它从那道「插件没接住就拒掉」的闸门里摘出来，这次放手才到得了骨"
-                "架。"
-            ),
-        },
         capabilities={
             Capability.REMOTE_EXECUTION: (
                 "中心机上的会话启动时带一个插件，"
@@ -454,41 +372,6 @@ HARNESSES: dict[str, Harness] = {
     PI: Harness(
         PI,
         "pi",
-        subagents={
-            SubagentRequirement.SPAWNS_WITH_A_MODEL: (
-                "pi 核心没有子 agent，起它的是平台给 pi 的 extension："
-                "`agent/harness/pi/platform.ts` 的 `registerSubagentTools` 给会话一个 "
-                "Task(model=...)，runner 在中心机上起第二个 pi，"
-                "手在同一台执行机、同一个检出里。模型"
-                "由 `agent/harness/pi/subagents.py` 的 `admitted_model` 问平台准入"
-                "（/llm/admission，和 Claude Code 分身同一道目录、档位与预算校验），"
-                "没指定时答的就是项目的分身默认；`Subagent._configure` 用答出来的模型"
-                "照抄父会话的网关 provider，只换模型这一项。"
-            ),
-            SubagentRequirement.LABELS_ITS_THREAD: (
-                "`agent/harness/pi/subagents.py` 的 `Subagent.pull` 把子会话的每条"
-                "记录连同 `label_in_text` 从它的 prompt 里读出的线程标识，写进会话自"
-                "己的 journal（`agent/harness/pi/runner.py` 的 `note_page`），起停"
-                "各记一条 runner 自己的记录；`agent/harness/pi/events.py` 的 "
-                "`thread_of` 认出它，`Assembler._subagent` 把标识放在每个事件的 "
-                "`thread_label` 上。"
-            ),
-            SubagentRequirement.PARENT_RETASKS_IT: (
-                "改指令的是起它的父线程，做法写在 "
-                "`../../sandbox/skills/cheese/SKILL.md`：还在跑的，父线程调 "
-                "SendMessage，`agent/harness/pi/subagents.py` 的 `Subagent.send` "
-                "把消息 steer 进那条子会话；已经收工或停了的不再接指令，照原来的简报"
-                "用同一个线程标识重派。平台这一侧只有 `agent/room/sessions.py` 上"
-                "的 `RoomSessions.steer`，把人对卡的操作送进父会话。"
-            ),
-            SubagentRequirement.PARENT_STOPS_IT: (
-                "停的是一条子会话：父线程调 TaskStop，"
-                "`agent/harness/pi/subagents.py` 的 `Subagent.stop` 停下那一条，同"
-                "一条会话里的其他分身照跑。会话被 interrupt 或关掉时，"
-                "`agent/harness/pi/runner.py` 先用 `stop_all` 停掉它起过的每一条"
-                "——那是结论 43 的「子 agent 与父进程同生同死」，不是这一条。"
-            ),
-        },
         capabilities={
             Capability.REMOTE_EXECUTION: (
                 "pi 的 read、write、edit、bash、ls、find 都接受注入的文件与进程操作，"

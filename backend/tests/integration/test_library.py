@@ -363,7 +363,7 @@ def test_each_file_says_who_gave_it_and_in_which_room(client):
 
     [row] = _library(client, project_id)
     assert row["added_by"] == "user-1"
-    assert row["room"] == {"id": topic_id, "title": "数据分析", "title_source": "human"}
+    assert row["room"] == {"id": topic_id, "title": "数据分析"}
     assert row["added_at"]
 
 
@@ -467,7 +467,7 @@ def test_a_file_from_before_the_records_takes_its_source_from_the_message(client
             session.add(
                 Block(
                     project_id=uuid.UUID(project_id),
-                    topic_id=uuid.UUID(topic_id),
+                    conversation_id=uuid.UUID(topic_id),
                     kind=BlockKind.attachment,
                     author_type=AuthorType.participant,
                     author="user-1",
@@ -479,7 +479,7 @@ def test_a_file_from_before_the_records_takes_its_source_from_the_message(client
     asyncio.run(sent())
     [row] = _library(client, project_id)
     assert row["added_by"] == "user-1"
-    assert row["room"] == {"id": topic_id, "title": "需求讨论", "title_source": "human"}
+    assert row["room"] == {"id": topic_id, "title": "需求讨论"}
     assert row["references"] == 1
 
 

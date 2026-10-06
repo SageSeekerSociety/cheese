@@ -38,7 +38,7 @@ def _open_turn(session, room, *, turn_id, continuation_id, agent, delivered=True
     repo = AgentTurnRepository(session)
     return repo.open(
         turn_id=turn_id,
-        topic_id=room,
+        conversation_id=room,
         continuation_id=continuation_id,
         author=agent,
         content="work",
@@ -67,7 +67,7 @@ async def _states(session, room):
     rows = (
         await session.execute(
             select(AgentTurn.id, AgentTurn.stopped_at, AgentTurn.agent_handle).where(
-                AgentTurn.topic_id == room
+                AgentTurn.conversation_id == room
             )
         )
     ).all()

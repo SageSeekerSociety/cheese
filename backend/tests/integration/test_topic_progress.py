@@ -15,10 +15,11 @@ import pytest
 
 from app.api.deps import get_broker
 from app.core.sandbox_auth import mint_scoped_token
-from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
+    open_task,
     post_message,
     post_project,
     room_agent_seat,
@@ -33,15 +34,17 @@ PLAN = [
 
 
 def _room(client) -> tuple[str, dict]:
-    """A room, and the credentials its agent's session writes with."""
+    """A 支线 in a channel — where 芝士 answers — and the credentials its
+    session writes with."""
     p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题"},
         headers=session_auth_headers("user-1"),
     ).json()["data"]
-    token = mint_scoped_token(project_id=p["id"], topic_id=t["id"])
-    return t["id"], {"X-Cheese-Token": token}
+    thread = in_thread(client, t["id"], "user-1")
+    token = mint_scoped_token(project_id=p["id"], topic_id=thread)
+    return thread, {"X-Cheese-Token": token}
 
 
 def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
@@ -57,13 +60,12 @@ def _progress(client, topic_id: str, **params) -> list[tuple[str, str]]:
     return [(i["subject"], i["status"]) for i in data["items"]]
 
 
-def _card(client, room_id: str) -> str:
-    """One of the room's cards — a 分身 works it inside the room's session."""
-    task = client.post(
-        f"/topics/{room_id}/split", json={"title": "子活", "reviewer_handle": "alice"}
-    ).json()["data"]
-    wait_work_idle()
-    return task["id"]
+def _task(client, room_id: str) -> tuple[str, dict]:
+    """One of the room's tasks, and the credentials its own session writes
+    with."""
+    task = open_task(client, room_id, owner="user-1", start=False)
+    token = mint_scoped_token(project_id=task["project_id"], topic_id=task["id"])
+    return task["id"], {"X-Cheese-Token": token}
 
 
 def _chat(client, topic_id: str) -> list[dict]:
@@ -233,12 +235,12 @@ def test_a_new_session_is_told_where_the_work_got_to(client, stub_hooks):
     assert "- [ ] 补测试" in prompt
 
 
-def test_a_workers_checklist_stays_on_its_card(client, stub_hooks, monkeypatch):
-    """A 分身 runs in the room's session, on the room's credentials. Its plan is
-    its card's: the room's stored list, and what the room's next turn is handed
-    back, stay the room's own."""
+def test_a_tasks_checklist_stays_on_its_task(client, stub_hooks, monkeypatch):
+    """A task's session writes its list to its task's own conversation. That
+    plan is the task's: the room's stored list, and what the room's next turn
+    is handed back, stay the room's own."""
     topic, headers = _room(client)
-    card = _card(client, topic)
+    task, task_headers = _task(client, topic)
     _write(client, topic, headers, PLAN)
     broker = get_broker()
     published: list[tuple[str, dict]] = []
@@ -249,14 +251,14 @@ def test_a_workers_checklist_stays_on_its_card(client, stub_hooks, monkeypatch):
         await publish(channel, frame)
 
     monkeypatch.setattr(broker, "publish", spy)
-    worker = [{"content": "改卡片上的接口", "status": "in_progress"}]
-    response = _write(client, topic, headers, worker, task=card)
+    plan = [{"content": "改任务里的接口", "status": "in_progress"}]
+    response = _write(client, task, task_headers, plan)
     assert response.status_code == 200, response.text
 
-    assert _progress(client, topic, task=card) == [("改卡片上的接口", "in_progress")]
+    assert _progress(client, task) == [("改任务里的接口", "in_progress")]
     assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
-    assert [(c, f["type"]) for c, f in published] == [(card, "todo")], (
-        "the card's list goes to the card, and posts nothing in the room"
+    assert [(c, f["type"]) for c, f in published] == [(task, "todo")], (
+        "the task's list goes to the task, and posts nothing in the room"
     )
     assert len(_checklists(client, topic)) == 1, "only the room's own checklist"
 
@@ -264,16 +266,14 @@ def test_a_workers_checklist_stays_on_its_card(client, stub_hooks, monkeypatch):
     _chat(client, topic)
     prompt = stub_hooks.told
     assert "- [~] 写实现" in prompt
-    assert "改卡片上的接口" not in prompt
+    assert "改任务里的接口" not in prompt
 
 
-def test_a_card_from_another_room_is_refused(client):
+def test_a_room_session_does_not_write_a_tasks_checklist(client):
     topic, headers = _room(client)
-    other, _ = _room(client)
-    foreign = _card(client, other)
-    assert _write(client, topic, headers, PLAN, task=foreign).status_code == 404
-    assert _progress(client, topic) == []
-    assert _progress(client, other, task=foreign) == []
+    task, _ = _task(client, topic)
+    assert _write(client, task, headers, PLAN).status_code == 403
+    assert _progress(client, task) == []
 
 
 @pytest.mark.parametrize(
@@ -450,13 +450,13 @@ def test_a_persons_checklist_is_not_the_agents_plan(client, stub_hooks):
     assert agent_list["content"] == CHECKLIST
 
 
-def test_a_person_does_not_write_a_cards_checklist(client):
+def test_a_person_does_not_write_a_tasks_checklist(client):
     topic, _ = _room(client)
-    card = _card(client, topic)
+    task, _ = _task(client, topic)
     person = [{"content": "x", "status": "pending"}]
-    response = _write(client, topic, session_auth_headers("user-1"), person, task=card)
+    response = _write(client, task, session_auth_headers("user-1"), person)
     assert response.status_code == 403
-    assert _progress(client, topic, task=card) == []
+    assert _progress(client, task) == []
 
 
 def test_progress_is_per_topic(client):

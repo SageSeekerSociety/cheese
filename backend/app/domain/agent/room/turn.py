@@ -21,7 +21,7 @@ from app.core.sentences import exception_text, say
 from app.domain.agent import turn_inputs
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
-    UNTITLED_FIRST,
+    UNTITLED_TASK,
     build_session_opening,
     build_system_prompt,
     opening_changes,
@@ -53,6 +53,7 @@ from app.domain.agent.queries import (
     require_pinned_seat,
 )
 from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.room.thread_context import thread_context as _thread_context
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skills
@@ -77,11 +78,13 @@ from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task.place import PlaceResolver
+from app.domain.room_task import naming
+from app.domain.room_task.models import TaskStatus, TaskTitleSource
+from app.domain.room_task.place import Place, PlaceResolver, doc_text_of
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
-from app.domain.topic import naming
-from app.domain.topic.models import TitleSource, Topic, TopicStatus
+from app.domain.thread.services import thread_opening, threads_of_rooms
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.usage.ledger import team_terms
 
@@ -140,19 +143,6 @@ def _is_dm(topic: Topic) -> bool:
     return topic.is_private
 
 
-def _room_doc_text(doc_root, *, needs_place: bool) -> str | None:
-    """The room's living document as the system prompt is told about it.
-
-    A work room whose document is still empty answers `""`, not None: the
-    prompt then tells the teammate sitting down to write the first version
-    (`build_system_prompt`). A private chat has no such document to keep.
-    """
-    doc_text = doc_root.content if doc_root else None
-    if needs_place and not (doc_text or "").strip():
-        doc_text = ""
-    return doc_text
-
-
 @dataclass(frozen=True, slots=True)
 class _Launch:
     """What a seat's session is started with, read without opening a turn
@@ -181,6 +171,10 @@ class _TurnContext:
 
     # Who is here and what they are working under.
     project_id: uuid.UUID
+    # Where: the room, and the task or 支线 when the conversation is one of
+    # theirs.
+    room_id: uuid.UUID
+    inner_id: uuid.UUID | None
     acting_agent: str
     agent: ResolvedAgent
     agent_pool: tuple[MemoryScope, str] | None
@@ -220,6 +214,9 @@ class _TurnContext:
     prior_progress: list[dict]
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
+    # For a 支线: the message it hangs under, what the main line said just
+    # before it, and the channel's tasks still open. None elsewhere.
+    thread_context: str | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
     # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
@@ -235,6 +232,10 @@ class _TurnContext:
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
+    # A task's session only reads until its owner starts it: it discusses and
+    # writes the task's document, and changes nothing in the project. A 支线's
+    # always only reads: what changes the project is done in a task.
+    reads_only: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,7 +288,6 @@ class RoomTurns:
             *,
             probe_unread: bool = False,
             fence_delivery: bool = False,
-            parent_session_id: str | None = None,
         ) -> InputRegistrar: ...
 
         async def _unconnected_mcp(
@@ -325,6 +325,10 @@ class RoomTurns:
 
         async def _resolved_agent(
             self, session: AsyncSession, topic: Topic
+        ) -> ResolvedAgent: ...
+
+        async def _agent_at(
+            self, session: AsyncSession, place: Place
         ) -> ResolvedAgent: ...
 
         async def _acting_handle(
@@ -382,7 +386,7 @@ class RoomTurns:
             session: AsyncSession,
             *,
             project: Project,
-            room_id: uuid.UUID,
+            conversation_id: uuid.UUID,
             room_doc: str | None,
             overview_doc: str | None,
             all_topics: list[Topic],
@@ -399,8 +403,11 @@ class RoomTurns:
             agent = project and await AgentInstanceService(session).for_seat_handle(
                 project, seat
             )
+            # It sat in the room for the room's 支线 too: their work stops as well.
+            threads = list(await threads_of_rooms(session, [topic_id]))
         if agent is not None:
-            await self._compute.dismiss(topic_id, agent.handle)
+            for conversation in (topic_id, *threads):
+                await self._compute.dismiss(conversation, agent.handle)
 
     def _session_system_prompt(
         self, *, needs_place: bool, has_doc: bool, role: str | None, harness: str
@@ -452,10 +459,7 @@ class RoomTurns:
             agents = AgentInstanceService(session)
             agent = await self._session_agent(agents, topic, project, agent_handle)
             needs_place = not _is_dm(topic)
-            doc_text = _room_doc_text(
-                await Documents(session).of_room(place.room_id),
-                needs_place=needs_place,
-            )
+            doc_text = await doc_text_of(session, place, needs_place=needs_place)
             if project.root_topic_id == place.room_id:
                 # The overview room's document is the project overview it is
                 # handed instead (`_assemble_turn`).
@@ -511,23 +515,30 @@ class RoomTurns:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
 
-            # WHERE this turn runs. A room — the only thing a turn runs in.
-            place = await PlaceResolver(session).resolve(topic_id)
+            # WHERE this turn runs: a room's own line, or a task's conversation.
+            place = await PlaceResolver(session).conversation(topic_id)
             if place is None:
                 raise NotFoundError("Topic not found")
-            topic = place.room
+            topic, task = place.room, place.task
             if topic.status == TopicStatus.archived:
                 raise ValidationError(say("roomArchivedUnarchiveFirst"))
+            if task is not None and task.status == TaskStatus.closed:
+                raise ValidationError(say("taskClosedNoTurn"))
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on
             # the next summon (spec §7.1 所有消息 AI 都会收到), each tagged with
             # who said it so 芝士 can tell people apart in a group topic (§8.4).
             #
-            # The room's OWN line: its 分身 talk on their cards, and handing
-            # the room every card's chatter as its backlog would drown the
-            # messages actually addressed to it.
-            history = await blocks.turn_history(place.room_id)
+            # This conversation's OWN line: a room's history leaves out its
+            # tasks' conversations, and a task's is only its own.
+            history = await blocks.turn_history(place.conversation_id)
+            # A 支线's first input is the message it hangs under and its files,
+            # which stay in the channel's main line: read them in while no turn
+            # has read them.
+            opening = await thread_opening(session, place.conversation_id)
+            root = opening[0] if opening else None
+            history = [*opening, *history]
             phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_input_blocks(history)
             # Kept apart from `pending` on purpose: that list answers
@@ -546,13 +557,16 @@ class RoomTurns:
             pinned_seat = None
             if recipient_instance_id is not None:
                 recipient = {"instance_id": str(recipient_instance_id)}
-                pinned_seat = await require_pinned_seat(
-                    session, place.room_id, recipient_instance_id
-                )
+                # A seat on the room's roster: a task's agent works the task and
+                # sits on no roster.
+                if task is None:
+                    pinned_seat = await require_pinned_seat(
+                        session, place.room_id, recipient_instance_id
+                    )
             # 收件人是消息落库时记下来的。记的时候还没有实例行的那些旧消息，
             # 「收件人是项目的芝士」和今天的解析是同一个答案。
             if recipient is None or recipient.get("instance_id") is None:
-                agent = await self._resolved_agent(session, topic)
+                agent = await self._agent_at(session, place)
             else:
                 agent = agents.resolved(
                     await agents.get_in_project(
@@ -564,10 +578,12 @@ class RoomTurns:
                 session, topic.id, agent
             )
             pending = [block for block in pending if _addressed_to(block, agent.handle)]
+            # Holds and waiting answers are kept per conversation, as inputs
+            # are registered: a task's or a 支线's own, not its room's.
             held = await held_blocks(
                 session,
                 project_id=topic.project_id,
-                topic_id=place.room_id,
+                topic_id=place.conversation_id,
                 recipient_handle=acting_agent,
             )
             # An answer whose Ask conversation is gone belongs to no prompt:
@@ -575,7 +591,7 @@ class RoomTurns:
             # (`ask_session_wait`).
             held |= await waiting_ask_blocks(
                 session,
-                topic_id=place.room_id,
+                topic_id=place.conversation_id,
                 recipient_handle=acting_agent,
             )
             pending = [block for block in pending if block.id not in held]
@@ -594,7 +610,7 @@ class RoomTurns:
             # 消息各盖一个 consumed_turn，而谁都没答它的话却被所有人收走。
             claims_backlog = (
                 user_block_id is not None
-                or agent.handle == (await self._resolved_agent(session, topic)).handle
+                or agent.handle == (await self._agent_at(session, place)).handle
             )
             pending_ids = [
                 b.id
@@ -606,7 +622,7 @@ class RoomTurns:
             # the prompt is built below, after the provider is picked. A file
             # that is gone is not offered (`offered_attachments`).
             turn_images, gone_files = await asyncio.to_thread(
-                offered_attachments, pending, topic.project_id, topic_id
+                offered_attachments, pending, topic.project_id, place.room_id
             )
 
             # 私聊是名册两席的房间（结论 19）。这一轮凡是「私聊要不一样」的地
@@ -620,10 +636,7 @@ class RoomTurns:
             acting_agent = pinned_seat or await self._acting_handle(
                 session, topic.id, agent
             )
-            doc_text = _room_doc_text(
-                await Documents(session).of_room(place.room_id),
-                needs_place=needs_place,
-            )
+            doc_text = await doc_text_of(session, place, needs_place=needs_place)
             phases_ms["identity"] = (time.monotonic() - started) * 1000
             # 只加载「本轮发言人」的那一份 private 索引（team 那一份每间房都
             # 有）：一个项目里的人可以很多，而注入是每一轮都要付的。
@@ -661,7 +674,7 @@ class RoomTurns:
                 await Documents(session).of_room(project.root_topic_id)
                 if project is not None
                 and project.root_topic_id is not None
-                and project.root_topic_id != place.room_id
+                and project.root_topic_id != place.conversation_id
                 else None
             )
             overview_doc_text = overview_root.content if overview_root else None
@@ -671,7 +684,7 @@ class RoomTurns:
             # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
             # 各自解析一次就够把一条会话拆成两条。
             compute_id = resolve_compute_id(
-                project.settings if project else None, topic
+                project.settings if project else None, topic, task
             )
             wanted_harness, provider = self._compute.choose(
                 project.settings if project else None, compute_id
@@ -697,18 +710,20 @@ class RoomTurns:
                 # 来 + ②③ 从结构化数据现拼」的那一份。手抄进正文的旧内容因此读
                 # 不到——写在那儿的副本没人读，也就没人再写。
                 #
-                # 在总览房间它同时就是本房间的实况文档：同一份东西说两遍，模型会
-                # 以为是两份，所以那里把 `doc_text` 交出去（它只喂提示词）。
+                # 在「综合」的主线上它同时就是那里的实况文档：同一份东西说两遍，
+                # 模型会以为是两份，所以那里把 `doc_text` 交出去（它只喂提示词）。
+                # 问的是这段对话，不是它所在的频道：综合里的任务和支线读到的是
+                # 项目总览，任务自己的文档照旧是任务的。
                 overview_doc_text = await self._project_overview(
                     session,
                     project=project,
-                    room_id=place.room_id,
+                    conversation_id=place.conversation_id,
                     room_doc=doc_text,
                     overview_doc=overview_doc_text,
                     all_topics=all_topics,
                     roster=roster,
                 )
-                if project.root_topic_id == place.room_id:
+                if project.root_topic_id == place.conversation_id:
                     doc_text = None
             # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。不租地点的一轮里
             # 没有交付，那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，
@@ -737,27 +752,35 @@ class RoomTurns:
             # conversation, which is the failure this whole path prevents.
             session_agent = agent
             resume_session_id = await AgentSessionService(session).resume_token(
-                place.room_id,
+                place.conversation_id,
                 session_agent.handle,
                 harness=wanted_harness,
             )
-            # The platform names rooms itself (topic/naming.py). Only where it
-            # cannot — no gateway to call — is the agent still asked to, and
-            # never in a project that chose to name its rooms by hand.
+            # The platform names tasks itself (room_task/naming.py). Only where
+            # it cannot — no gateway to call — is the task's own session asked
+            # to, and never in a project that chose to name its tasks by hand.
             untitled = (
-                topic.title_source == TitleSource.placeholder
+                task is not None
+                and task.title_source == TaskTitleSource.placeholder
                 and not naming.available()
                 and naming.naming_mode(project.settings if project else None) == "auto"
             )
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.
-            progress_row = await TopicProgressRepository(session).get(place.room_id)
+            progress_row = await TopicProgressRepository(session).get(
+                place.conversation_id
+            )
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
             earlier_messages = await blocks.count_messages(
-                place.room_id, excluding=prompt_pending_ids
+                place.conversation_id, excluding=prompt_pending_ids
+            )
+            thread_context = (
+                await _thread_context(session, topic, root)
+                if root is not None
+                else None
             )
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
@@ -772,7 +795,7 @@ class RoomTurns:
                             "type": "event_block",
                             "block": await self._bail_notice(
                                 project_id=topic.project_id,
-                                topic_id=topic_id,
+                                topic_id=place.room_id,
                                 turn_id=turn_id,
                                 session=session,
                                 text=say("harnessNotDeployed", harness=wanted_harness),
@@ -790,15 +813,17 @@ class RoomTurns:
             # 里，不是 `PUT /topics/{id}/compute-profile`。那条路由是人主动去点的
             # 少数情形，它和这里问的是同一个闸门。
             if provider.deferred_work and project is not None and needs_place:
-                from app.domain.agent.compute_configs import room_choice
+                from app.domain.agent.compute_configs import place_choice
 
                 conversation = await AgentSessionService(session).ensure(
-                    topic_id, agent.handle, harness=wanted_harness
+                    place.conversation_id, agent.handle, harness=wanted_harness
                 )
                 if conversation.execution_request is None:
                     conversation.execution_request = {
                         "generation": str(uuid.uuid4()),
-                        "choice": room_choice(topic, project.settings).model_dump(),
+                        "choice": place_choice(
+                            topic, task, project.settings
+                        ).model_dump(),
                         "authorized_by": None,
                     }
                 if provision_actor is not None and provision_actor.via == "token":
@@ -824,17 +849,17 @@ class RoomTurns:
                 ):
                     from app.domain.agent.compute_configs import (
                         machine_policy_call,
-                        room_choice,
+                        place_choice,
                     )
 
                     proposed = await self._pass_policy_gate(
                         session,
-                        topic_id,
+                        place.room_id,
                         await machine_policy_call(
                             session,
                             project=project,
                             topic=topic,
-                            choice=room_choice(topic, project.settings),
+                            choice=place_choice(topic, task, project.settings),
                         ),
                         policy,
                         actor=actor_handle,
@@ -844,7 +869,7 @@ class RoomTurns:
                         return _TurnBail(_proposal_frames(proposed.landed))
                 proposed = await self._pass_policy_gate(
                     session,
-                    topic_id,
+                    place.room_id,
                     _model_policy_call(project, agent),
                     policy,
                     actor=actor_handle,
@@ -923,7 +948,7 @@ class RoomTurns:
             # "this one batch keeps failing" look identical, and the second one
             # is the diagnosis. Counting at prompt-build time is the only place
             # that sees a failed attempt at all.
-            if recipient_instance_id is not None:
+            if recipient_instance_id is not None and task is None:
                 await require_pinned_seat(session, place.room_id, recipient_instance_id)
             replay_n = await blocks.bump_prompt_attempts(prompt_pending_ids, turn_id)
             # Committed HERE and not left to ride the conditional commit further
@@ -942,6 +967,11 @@ class RoomTurns:
             # still kills at 900s.
             # 不租手的一轮身上不钉机器。钉了就是给一段永远不会用到机器的对话记上
             # 一台机器，而这一行本来是给「以后别换机器」用的。
+            if needs_place and provider is not None:
+                from app.domain.agent.compute_configs import fix_task_choice
+
+                if await fix_task_choice(session, topic, task, project):
+                    await session.commit()
             if needs_place and provider is not None and topic.compute_config is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later project-default change must
@@ -957,7 +987,7 @@ class RoomTurns:
                     topic, project.settings if project else None
                 ).model_dump()
                 await session.commit()
-            if recipient_instance_id is not None:
+            if recipient_instance_id is not None and task is None:
                 await require_pinned_seat(session, place.room_id, recipient_instance_id)
             phases_ms["committed"] = (time.monotonic() - started) * 1000
         logger.info(
@@ -968,6 +998,10 @@ class RoomTurns:
             phases_ms,
         )
         return _TurnContext(
+            room_id=place.room_id,
+            inner_id=place.inner_id,
+            reads_only=place.thread is not None
+            or (task is not None and task.started_at is None),
             acting_agent=acting_agent,
             agent=agent,
             agent_pool=agent_pool,
@@ -978,6 +1012,7 @@ class RoomTurns:
             notice_ids=[b.id for b in notices],
             prior_progress=prior_progress,
             earlier_messages=earlier_messages,
+            thread_context=thread_context,
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
@@ -1080,6 +1115,7 @@ class RoomTurns:
             harness=runtime.harness,
         )
         opening = build_session_opening(
+            thread=prepared.thread_context,
             doc=doc_text,
             memory=memory,
             # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前
@@ -1093,7 +1129,9 @@ class RoomTurns:
             teaching=teaching,
             environment=_session_opening_lines(
                 unconnected_mcp=(
-                    await self._unconnected_mcp(project_id, topic_id, acting_agent)
+                    await self._unconnected_mcp(
+                        project_id, prepared.room_id, acting_agent
+                    )
                     if needs_place
                     else ()
                 ),
@@ -1111,8 +1149,8 @@ class RoomTurns:
                 topic_id, prepared.agent.handle, harness=prepared.harness
             )
         if untitled:
-            # 起名是这一轮的第一件事，所以排在最前；起完名下一轮就不再说。
-            prompt_text = f"{platform_prompt(UNTITLED_FIRST)}\n\n{prompt_text}"
+            # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
+            prompt_text = f"{platform_prompt(UNTITLED_TASK)}\n\n{prompt_text}"
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
         prompt_text = publication_prompt(prompt_text)
@@ -1132,7 +1170,7 @@ class RoomTurns:
         model_kwargs, route = await self._model_kwargs(
             project_id,
             provider,
-            topic_id,
+            prepared.room_id,
             agent=prepared.agent,
             acting_agent=prepared.acting_agent,
         )
@@ -1193,7 +1231,9 @@ class RoomTurns:
         # enough. Both backends need it, and the hooks backend returns from this
         # function long before its turn ends — so it is started once here and
         # carried on the work state rather than read twice in two places.
-        known_commits = asyncio.ensure_future(self._known_commits(project_id, topic_id))
+        known_commits = asyncio.ensure_future(
+            self._known_commits(project_id, prepared.room_id)
+        )
         marked_work_ids: list[uuid.UUID] = []
 
         def _register_work(marked_work_id: uuid.UUID) -> None:
@@ -1251,6 +1291,17 @@ class RoomTurns:
             nonce=nonce,
             at=datetime.now(UTC),
         )
+        # From the interval opening (``started_at``) to the input stamped
+        # delivered: where the platform's own time goes on every turn.
+        delivery_ms: dict[str, float] = {}
+        delivery_mark = time.monotonic()
+
+        def _delivery_step(name: str) -> None:
+            nonlocal delivery_mark
+            now = time.monotonic()
+            delivery_ms[name] = round((now - delivery_mark) * 1000, 1)
+            delivery_mark = now
+
         # And on the turn itself: the backend that ends this turn may not be
         # this one (`_begin_self_started_turn`), and it remembers neither.
         await self._note_turn_context(
@@ -1259,6 +1310,7 @@ class RoomTurns:
             reply_to=user_block_id,
             agent_handle=prepared.agent.handle,
         )
+        _delivery_step("note_context")
         summoned = user_block_id is not None and not is_resume and not platform_turn
         effects = InputEffects(
             held_block_ids=tuple(consumed_ids),
@@ -1277,11 +1329,13 @@ class RoomTurns:
             # built from anything else resolves somebody else's machine.
             session_ref = SessionRef(
                 project_id,
-                topic_id,
+                prepared.room_id,
                 prepared.agent.handle,
                 harness=prepared.harness,
+                inner_id=prepared.inner_id,
             )
             await self._compute.activate(session_ref, runtime)
+            _delivery_step("activate")
             ready = await runtime.send(
                 session_ref,
                 prompt_text,
@@ -1294,27 +1348,29 @@ class RoomTurns:
                 env=model_kwargs.get("env"),
                 acting=acting_agent,
                 needs_place=needs_place,
+                reads_only=prepared.reads_only,
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,
                 register_input=self._input_registrar(
                     effects,
                     fence_delivery=delivery_id is not None,
-                    parent_session_id=resume_session_id,
                 ),
                 owes_reply=summoned,
             )
+            _delivery_step("send")
             # 这一轮把现状说到了：下一轮只补在这之后变了的。回答一道 Ask 的那一轮
             # 接着原来的对话，runtime 不往里放现状（`RoomSessions.send`），所以不算。
             if expected_session is None:
                 async with self._sessions() as session:
                     await AgentSessionService(session).remember_told(
-                        topic_id=topic_id,
+                        conversation_id=topic_id,
                         agent_handle=prepared.agent.handle,
                         harness=prepared.harness,
                         told=opening.digests(),
                     )
                     await session.commit()
+            _delivery_step("remember_told")
         except InputOutcomeUnconfirmed as exc:
             # The session still owns this work. Its structured echo can settle
             # the committed identity even after this ChatService is replaced.
@@ -1365,7 +1421,7 @@ class RoomTurns:
             if status is not None:
                 from app.domain.project.environment_recovery import report_failure
 
-                await report_failure(self, project_id, topic_id, status)
+                await report_failure(self, project_id, prepared.room_id, status)
             # The write never reached the transport, so the Stop consumer's
             # close_one rightly refuses this interval (undelivered). Its own
             # coroutine retires it HERE, by exact id — the same end the
@@ -1397,8 +1453,16 @@ class RoomTurns:
             await turn_inputs.stamp_delivered(
                 session, turn_id=turn_id, at=datetime.now(UTC)
             )
-            await close_recovery(session, topic_id)
+            await close_recovery(session, prepared.room_id)
             await session.commit()
+        _delivery_step("stamp_delivered")
+        logger.info(
+            "chat_delivery_timing topic=%s turn=%s elapsed_ms=%.1f phases_ms=%s",
+            topic_id,
+            turn_id,
+            sum(delivery_ms.values()),
+            delivery_ms,
+        )
         yield {"type": "prompt_delivered"}
         if ready is False:
             marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id

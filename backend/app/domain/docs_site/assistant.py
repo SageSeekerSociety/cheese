@@ -105,7 +105,7 @@ AGENT_SYSTEM_PROMPT = "\n".join(
         "",
         "你有三个工具：",
         "- search_docs：按关键词搜文档，返回最相关的几节（标题、小节、链接和摘录）。",
-        "- fetch_doc：读一页文档的正文，可以带 #小节（如 /docs/teams#invite-member）。",
+        "- fetch_doc：读一页文档的正文，可以带 #小节（如 /teams#invite-member）。",
         "- list_docs：列出全部公开文档页，想知道有哪些页时用它。",
         "",
         "怎么查：",
@@ -419,7 +419,7 @@ async def _tool_round(
         "max_tokens": MAX_ANSWER_TOKENS,
         "temperature": 0.2,
         # deepseek-flash thinks itself past the answer cap when it is allowed
-        # to; the same measurement is behind topic/naming.py's. Dropped and
+        # to; the same measurement is behind room_task/naming.py's. Dropped and
         # retried once if the gateway refuses the parameter.
         "thinking": {"type": "disabled"},
     }

@@ -153,7 +153,7 @@ function askRow(answered: { option: string; by: string } | null): RoomRow {
   }
   const block: Block = {
     id: answered ? 'ask-demo-answered' : 'ask-demo-open',
-    topic_id: 'demo',
+    conversation_id: 'demo',
     kind: 'message',
     author_type: 'participant',
     author: 'cheese',
@@ -179,8 +179,13 @@ export const ASK_ANSWERED = askRow({ option: ASK_OPTIONS[0].text, by: 'wang' })
  * （`demoBackend`），和 `DemoRoom.installPanelAnswers` 是同一件事。
  */
 export function installCatalogAnswers(): void {
-  answer('/topics/demo/accept-card', () => ({ data: ACCEPT_CARD ? [ACCEPT_CARD] : [], total: ACCEPT_CARD ? 1 : 0 }))
-  answer('/topics/demo/pr-checks', () => ACCEPT_CHECKS ?? { available: false })
+  // The card is read through its task's own conversation.
+  const conversation = ACCEPT_CARD?.task_id ?? 'demo'
+  answer(`/topics/${conversation}/accept-card`, () => ({
+    data: ACCEPT_CARD ? [ACCEPT_CARD] : [],
+    total: ACCEPT_CARD ? 1 : 0,
+  }))
+  answer(`/topics/${conversation}/pr-checks`, () => ACCEPT_CHECKS ?? { available: false })
 }
 
 // ---- 验收卡（TopicAcceptCard）拆出来的那几件 ----------------------------------
@@ -341,7 +346,7 @@ const LONG_TEXT = `我把这周的进度理了一遍，发在这里，谁有空�
 
 const LONG_BLOCK: Block = {
   id: 'catalog-long',
-  topic_id: 'demo',
+  conversation_id: 'demo',
   kind: 'message',
   author_type: 'participant',
   author: 'wang',
@@ -632,11 +637,10 @@ export const RAIL_ROOT_TOPIC: Topic = {
   created_at: '2026-09-20T08:00:00Z',
 }
 
-/** 这个项目的壳摆出来的那几页（顺序就是壳说的顺序，见 `lib/shell.ts`）。 */
+/** 项目名下那两行（看板、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
 export const RAIL_PAGES = [
+  { key: 'workspace-running', label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
   { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
-  { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
-  { key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
 ]
 
 /** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */

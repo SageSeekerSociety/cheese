@@ -59,7 +59,6 @@ from app.domain.agent.room_events import (
     _mark_step_failed,
     _persist_subagent_result,
     _persist_tool_event,
-    _persist_worker_event,
     _record_step_output,
     post_system_event,
 )
@@ -72,8 +71,6 @@ from app.domain.agent.service import (
     AgentSessionInfo,
     AgentStepFailed,
     AgentStepOutput,
-    AgentSubagentStart,
-    AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
     AgentUserEntry,
@@ -85,6 +82,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.memory.models import MemoryScope
+from app.domain.room_task.place import PlaceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -184,13 +182,9 @@ class _HookStream(Protocol):
         session_id: str | None = None,
     ) -> _HookWorkState | None: ...
 
-    async def _work_of_worker(
-        self, topic_id: uuid.UUID, thread_label: str | None
-    ) -> uuid.UUID | None: ...
-
-    def _note_room_session(self, topic_id: uuid.UUID, session_id: str) -> None: ...
-
-    def _note_worker_agent(self, topic_id: uuid.UUID, event: object) -> None: ...
+    async def _room_of_conversation(
+        self, conversation_id: uuid.UUID
+    ) -> tuple[uuid.UUID, uuid.UUID | None]: ...
 
     async def _save_session_pointer(
         self,
@@ -216,7 +210,7 @@ class _HookStream(Protocol):
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         publish: bool = False,
         author: str | None = None,
         publication_id: str | None = None,
@@ -447,7 +441,7 @@ async def _bind_user_entry(
                 current = await session.scalar(
                     select(AgentSession.resume_token)
                     .where(
-                        AgentSession.topic_id == topic_id,
+                        AgentSession.conversation_id == topic_id,
                         AgentSession.agent_handle == seat,
                         AgentSession.harness == event.harness,
                     )
@@ -535,21 +529,12 @@ async def _consume_hook_event(
             or room_session_agents.get(topic_id),
             session_id=getattr(event, "session_id", None),
         )
-    # Whose work this is. Deliberately NOT asked of AgentResult: that event
-    # is the turn ending, which is the session's business no matter what id
-    # rode in on it — re-addressing it would close a turn somewhere else.
-    task_id = (
-        None
-        if isinstance(event, AgentResult)
-        else await service._work_of_worker(
-            topic_id, getattr(event, "thread_label", None)
-        )
-    )
-    # A thread's own channel is what its view subscribes to, and it is the
-    # room's when there is no thread. Attributed frames must not go out on
-    # the room's channel: the block lands in the thread, so a live watcher
-    # would see an event that a reload then moves somewhere else.
-    channel = str(task_id) if task_id is not None else str(topic_id)
+    # `topic_id` names the session's conversation: a room's, or a task's own.
+    # What it says lands in the room's table, beside its task, and goes out on
+    # the conversation's channel — the one its view subscribes to.
+    conversation_id = topic_id
+    room_id, inner_id = await service._room_of_conversation(conversation_id)
+    channel = str(conversation_id)
     if not isinstance(event, AgentRetrying):
         # Anything else the turn does ends a streak of retries: the request
         # went through. The next retry is news of its own.
@@ -568,7 +553,6 @@ async def _consume_hook_event(
                 channel=channel,
             )
     if isinstance(event, AgentSessionInfo):
-        service._note_room_session(topic_id, event.session_id)
         if event.agent_handle:
             room_session_agents[topic_id] = event.agent_handle
         await service._save_session_pointer(
@@ -596,26 +580,10 @@ async def _consume_hook_event(
             seat=seat,
             event=event,
         )
-    elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
-        service._note_worker_agent(topic_id, event)
-        payload = await _persist_worker_event(
-            sessions,
-            hook_work,
-            active_turn_ids,
-            project_id=project_id,
-            topic_id=topic_id,
-            event=event,
-            task_id=task_id,
-            turn_id=turn_id,
-            eid=eid,
-            platform_unsolicited=platform_unsolicited,
-        )
-        if payload is not None:
-            frame = {"type": "event_block", "block": payload}
     elif isinstance(event, AgentMessage):
         payload = await service._persist_assistant_message(
             project_id=project_id,
-            topic_id=topic_id,
+            topic_id=room_id,
             text=event.text,
             turn_id=turn_id,
             reply_to=(
@@ -632,7 +600,7 @@ async def _consume_hook_event(
             at=event.at,
             author=event.agent_handle
             or (state.acting_agent if state is not None else None),
-            task_id=task_id,
+            inner_id=inner_id,
         )
         if payload is not None:
             frame = {"type": "event_block", "block": payload}
@@ -643,14 +611,14 @@ async def _consume_hook_event(
             sessions,
             hook_work,
             project_id=project_id,
-            topic_id=topic_id,
+            topic_id=room_id,
             name=name,
             tool_input=args,
             platform=_is_platform_tool(event.name, args),
             turn_id=turn_id,
             eid=eid or event.eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
             author=event.agent_handle,
             at=event.at,
         )
@@ -689,23 +657,23 @@ async def _consume_hook_event(
             await _keep_note(
                 sessions,
                 compact_notes,
-                topic_id,
+                room_id,
                 turn_id,
                 content,
                 meta,
                 author=state.acting_agent if state is not None else None,
-                task_id=task_id,
+                inner_id=inner_id,
                 channel=channel,
             )
     elif isinstance(event, AgentRetrying):
         await _note_retry(
             sessions,
             retry_notes,
-            topic_id,
+            room_id,
             turn_id,
             event,
             author=state.acting_agent if state is not None else None,
-            task_id=task_id,
+            inner_id=inner_id,
             channel=channel,
         )
     elif isinstance(event, AgentToolResult):
@@ -713,12 +681,12 @@ async def _consume_hook_event(
             sessions,
             hook_work,
             project_id=project_id,
-            topic_id=topic_id,
+            topic_id=room_id,
             event=event,
             turn_id=turn_id,
             eid=eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
         )
         if payload is not None:
             frame = {"type": "event_block", "block": payload}
@@ -771,7 +739,7 @@ async def _consume_hook_event(
                 )
             error_line, error_code = line, meta.get("code")
             payload = await post_system_event(
-                sessions, topic_id, line, turn_id, meta=meta
+                sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
             )
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
@@ -781,7 +749,7 @@ async def _consume_hook_event(
             # in a private chat exactly as in any other room.
             payload = await service._persist_assistant_message(
                 project_id=project_id,
-                topic_id=topic_id,
+                topic_id=room_id,
                 text=event.text,
                 turn_id=turn_id,
                 reply_to=state.reply_to if state is not None else None,
@@ -793,6 +761,7 @@ async def _consume_hook_event(
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
                 closing=result_text_seen,
+                inner_id=inner_id,
             )
             if payload is not None:
                 if state is not None:
@@ -812,7 +781,7 @@ async def _consume_hook_event(
         # if nothing had happened. A turn whose coroutine is alive closes the
         # same row a moment later and finds it already closed, which is the
         # correct answer either way.
-        await service._close_open_turns(topic_id, turn_id)
+        await close_on_stop(service, topic_id, turn_id)
         if state is not None:
             if event.taken_into is not None:
                 # Its commits are the turn's that read it, which reports them.
@@ -840,22 +809,21 @@ async def _consume_hook_event(
         if event.taken_into is not None:
             # The room was told when the turn that read it ended.
             return
-        if event.thread_label is None:
-            await _end_inputs_answered_inside(
-                service,
-                sessions,
-                hook_work,
-                retry_notes,
-                waiting_notes,
-                compact_notes,
-                room_session_agents,
-                active_turn_ids,
-                work_runner,
-                project_id,
-                topic_id,
-                turn_id,
-                event,
-            )
+        await _end_inputs_answered_inside(
+            service,
+            sessions,
+            hook_work,
+            retry_notes,
+            waiting_notes,
+            compact_notes,
+            room_session_agents,
+            active_turn_ids,
+            work_runner,
+            project_id,
+            topic_id,
+            turn_id,
+            event,
+        )
         if event.is_error and not event.late:
             frame_out = error_frame(
                 error_line or event.text, type="error", persisted=True
@@ -939,6 +907,17 @@ async def _end_inputs_answered_inside(
         )
 
 
+async def close_on_stop(service, topic_id: uuid.UUID, turn_id: uuid.UUID) -> None:
+    """A Stop ends the interval it names, and with it what may hold back a
+    message queued for the same seat. The Stop can land after the turn's
+    completion and its idle frame, whose own nudges then found the interval
+    still open, so the queue is looked at once more here."""
+    from app.domain.agent.pending_messages import nudge_messages
+
+    await service._close_open_turns(topic_id, turn_id)
+    nudge_messages(service, topic_id)
+
+
 async def _note_retry(
     sessions: async_sessionmaker,
     retry_notes: dict[uuid.UUID, uuid.UUID],
@@ -947,7 +926,7 @@ async def _note_retry(
     event: AgentRetrying,
     *,
     author: str | None,
-    task_id: uuid.UUID | None,
+    inner_id: uuid.UUID | None,
     channel: str,
 ) -> None:
     """Say the turn is retrying a failed request, on one line per streak.
@@ -1004,7 +983,7 @@ async def _note_retry(
         content,
         meta,
         author=author,
-        task_id=task_id,
+        inner_id=inner_id,
         channel=channel,
     )
 
@@ -1062,15 +1041,19 @@ async def _note_reachability(
         "state": "waiting",
         "at": datetime.now(UTC).isoformat(),
     }
+    # The line lands in the conversation the turn runs in: a task's or a
+    # 支线's own, under its room.
+    async with sessions() as session:
+        place = await PlaceResolver(session).conversation(topic_id)
     await _keep_note(
         sessions,
         waiting_notes,
-        topic_id,
+        place.room_id if place is not None else topic_id,
         work_id,
         say("deviceWaiting"),
         meta,
         author=state.acting_agent if state is not None else None,
-        task_id=None,
+        inner_id=place.inner_id if place is not None else None,
         channel=str(topic_id),
     )
 
@@ -1084,7 +1067,7 @@ async def _keep_note(
     meta: dict,
     *,
     author: str | None,
-    task_id: uuid.UUID | None,
+    inner_id: uuid.UUID | None,
     channel: str,
 ) -> None:
     """Land the turn's notice of this kind, or restate the one it has."""
@@ -1105,7 +1088,7 @@ async def _keep_note(
                 # work, and 现场 files it under whoever did the work.
                 author=author or "system",
                 turn_id=turn_id,
-                task_id=task_id,
+                task_id=inner_id,
             )
             if block is None:
                 return

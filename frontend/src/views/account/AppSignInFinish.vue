@@ -1,34 +1,18 @@
 <!--
   In the desktop app, the end of a sign-in made in the browser (BackToApp.vue):
   the code from the link and the secret this app kept (lib/desktopApp.ts) are
-  traded for a sign-in of its own.
+  traded for a sign-in of its own. What it shows is AppSignInFinishView.vue.
 -->
 <template>
-  <div>
-    <template v-if="failed">
-      <AccountHeading :title="t('account.oauth.error.title')" />
-      <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
-        {{ t('account.oauth.app.expired') }}
-      </v-alert>
-      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
-        {{ t('account.backToSignIn') }}
-      </BaseButton>
-    </template>
-
-    <template v-else>
-      <AccountHeading :title="t('account.oauth.success.processing')" />
-      <v-progress-linear indeterminate color="primary" height="2" />
-    </template>
-  </div>
+  <AppSignInFinishView :failed="failed" />
 </template>
 
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
-import { t } from '@/i18n'
+import AppSignInFinishView from './AppSignInFinishView.vue'
+
 import { takeSignInVerifier } from '@/lib/desktopApp'
 import { UserApi } from '@/network/api/users'
 import { postLoginTarget } from '@/router/loginRedirect'

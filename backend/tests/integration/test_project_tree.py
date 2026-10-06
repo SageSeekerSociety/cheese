@@ -3,10 +3,10 @@
 import asyncio
 import uuid
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, Block, BlockKind
-from tests.conftest import seed_user
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.support.living_doc import document_of
 
 
@@ -34,7 +34,7 @@ def _insert_block(client, project_id, topic_id, content) -> str:
         async with client.test_factory() as session:
             block = Block(
                 project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(topic_id),
+                conversation_id=uuid.UUID(topic_id),
                 kind=BlockKind.message,
                 author_type=AuthorType.participant,
                 author="user-1",
@@ -50,7 +50,7 @@ def _insert_block(client, project_id, topic_id, content) -> str:
     return holder["id"]
 
 
-def test_upgrade_block_to_topic(client):
+def test_upgrade_block_to_topic(client, stub_hooks):
     p = _project(client)
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "讨论"}
@@ -60,33 +60,29 @@ def test_upgrade_block_to_topic(client):
     )
 
     r = client.post(
-        f"/blocks/{block_id}/upgrade",
-        json={"reviewer_handle": "alice"},
+        f"/blocks/{block_id}/upgrade", headers=session_auth_headers("owner")
     )
     assert r.status_code == 200
     _wait_work_idle()
     new_topic = r.json()["data"]
     # Work inside the room, not a room of its own: upgrading a message in a room
-    # dispatches a thread, and a thread names its room rather than a parent in a
-    # tree — work does not nest, so there is no tree left to be in.
+    # makes a task, and a task names its room rather than a parent in a tree —
+    # work does not nest, so there is no tree left to be in.
     assert new_topic["room_id"] == topic["id"]
+    # Whoever upgraded the message owns the task it became.
+    assert new_topic["owner_handle"] == "owner"
 
-    # The upgraded block IS the task statement, kept verbatim on the card —
-    # the same place a dispatched brief goes.
-    listed = client.get(f"/topics/{topic['id']}/tasks").json()["data"]["data"]
-    card = next(t for t in listed if t["id"] == new_topic["id"])
-    assert "我们要不要单独做一个数据清洗的模块" in card["brief"]
+    # The upgraded message IS the task statement: the task's agent is handed it
+    # to draft the task's document from.
+    assert "我们要不要单独做一个数据清洗的模块" in stub_hooks.told
 
-    # 谁也没被点起来：卡上没有话，房间里也没有芝士说的话 —— 平台不发起一轮。
-    assert not _card_messages(client, topic["id"], new_topic["id"])
-    room_msgs = _messages(client, topic["id"])
-    assert room_msgs and all(not b["author"].startswith("cheese") for b in room_msgs)
-
-    # Re-upgrading the same block is idempotent: it returns the topic already
+    # Re-upgrading the same block is idempotent: it returns the task already
     # created (so a double-click just navigates), not an error — and it leaves
-    # no second event behind.
+    # nothing new in the room behind.
     before = len(client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"])
-    r2 = client.post(f"/blocks/{block_id}/upgrade", json={})
+    r2 = client.post(
+        f"/blocks/{block_id}/upgrade", headers=session_auth_headers("owner")
+    )
     assert r2.status_code == 200
     assert r2.json()["data"]["id"] == new_topic["id"]
     _wait_work_idle()
@@ -94,136 +90,65 @@ def test_upgrade_block_to_topic(client):
     assert len(after) == before
 
 
-def _messages(client, room_id: str) -> list[dict]:
-    blocks = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
-    return [b for b in blocks if b["kind"] == "message"]
+def test_a_task_is_named_by_its_own_session_or_its_owner(client):
+    """升级出来的任务没有标题；给它起名字的是它自己的会话，或者它的负责人。
 
-
-def _card_messages(client, room_id: str, task_id: str) -> list[dict]:
-    """一张卡上说过的话 —— 经过它所在的房间读，卡不是地点。"""
-    r = client.get(f"/topics/{room_id}/tasks/{task_id}")
-    assert r.status_code == 200, r.text
-    return [b for b in r.json()["data"]["blocks"] if b["kind"] == "message"]
-
-
-def _record_screens(stub_hooks) -> list[str]:
-    """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
-    seen: list[str] = []
-    original = stub_hooks.precheck
-
-    async def _spy(session, *, needs_place):
-        seen.append(str(session.topic_id))
-        return await original(session, needs_place=needs_place)
-
-    stub_hooks.precheck = _spy
-    return seen
-
-
-def test_upgrading_a_message_leaves_an_event_and_starts_no_turn(client, stub_hooks):
-    """升级出来的是一条活；房间里随之出现的是**一条事件**，不是一轮对话。
-
-    平台从不发起一轮（结论 13 / I12）。以前这里 kickoff 一轮：作者 `system`、提示词
-    是平台写的一段开工说明，房间被叫醒去给这条活起名字、起分身 —— 那一轮没有任何人
-    点过名，却要为它起一整块屏幕。按结论 31，开一条活剩下的只有分支、卡和负责人，谁
-    来做是负责人的事，所以平台在这里只做投递：事件落在房间的时间线上，收件人恰好是
-    这条活的负责人，一个人。
-    """
-    from sqlalchemy import select
-
-    from app.domain.delivery.models import Delivery
-
-    p = _project(client)
-    room = client.post("/topics", json={"project_id": p["id"], "title": "讨论"}).json()[
-        "data"
-    ]
-    seed_user(client, "alice")  # 收件人得是一个真的人，站内信才有地方放
-    block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
-
-    screens = _record_screens(stub_hooks)
-    r = client.post(
-        f"/blocks/{block_id}/upgrade",
-        json={"reviewer_handle": "alice"},
-    )
-    assert r.status_code == 200
-    thread = r.json()["data"]
-    _wait_work_idle()
-
-    assert screens == [], f"平台自己点起了一轮，还为它起了屏幕：{screens}"
-    assert _messages(client, room["id"]) == [
-        b for b in _messages(client, room["id"]) if not b["author"].startswith("cheese")
-    ], "房间里冒出了一句芝士说的话——没有人叫过它"
-
-    blocks = client.get(f"/topics/{room['id']}/blocks").json()["data"]["data"]
-    upgraded = [
-        b for b in blocks if (b.get("meta") or {}).get("event_type") == "block_upgraded"
-    ]
-    assert len(upgraded) == 1, f"升级没有在房间里留下一条事件：{blocks}"
-    assert thread["id"] in (upgraded[0]["meta"] or {}).get("detail", "")
-
-    async def _recipients() -> list[str]:
-        async with client.test_factory() as session:
-            rows = (await session.execute(select(Delivery))).scalars().all()
-            return [row.recipient_handle for row in rows]
-
-    assert asyncio.run(_recipients()) == ["alice"], "收件人不是这条活的负责人"
-
-
-def test_a_room_names_its_own_thread(client):
-    """升级出来的活是没有标题的，而唯一能给它起名字的是房间。
-
-    房间自己的地址是 `/{room}/tasks/{task}/title`：这一轮的 token 是按房间签的，
-    直接拿活的 id 当地址会被判成跨话题。
+    地址是房间的 `/{room}/tasks/{task}/title`：任务不是地点，拿任务的 id 当房间
+    的地址走不通。
     """
     p = _project(client)
     room = client.post("/topics", json={"project_id": p["id"], "title": "讨论"}).json()[
         "data"
     ]
     block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
-    thread = client.post(
-        f"/blocks/{block_id}/upgrade",
-        json={"reviewer_handle": "alice"},
+    task = client.post(
+        f"/blocks/{block_id}/upgrade", headers=session_auth_headers("owner")
     ).json()["data"]
     _wait_work_idle()
-    assert thread["title"] == "新话题"
+    assert task["title"] == "新任务"
+    title = f"/topics/{task['id']}/title"
 
-    r = client.post(
-        f"/topics/{room['id']}/tasks/{thread['id']}/title", json={"title": "拆导入"}
-    )
-    assert r.status_code == 200
+    # 房间自己的会话不替任务起名 —— 那是任务自己会话的事。
+    room_session = {
+        "X-Cheese-Token": mint_scoped_token(project_id=p["id"], topic_id=room["id"])
+    }
+    refused = client.post(title, json={"title": "别人起的"}, headers=room_session)
+    assert refused.status_code == 403
+
+    task_session = {
+        "X-Cheese-Token": mint_scoped_token(project_id=p["id"], topic_id=task["id"])
+    }
+    r = client.post(title, json={"title": "拆导入"}, headers=task_session)
+    assert r.status_code == 200, r.text
     assert r.json()["data"]["title"] == "拆导入"
 
     tasks = client.get(f"/topics/{room['id']}/tasks").json()["data"]["data"]
-    assert [t["title"] for t in tasks if t["id"] == thread["id"]] == ["拆导入"]
+    assert [t["title"] for t in tasks if t["id"] == task["id"]] == ["拆导入"]
     assert client.get(f"/topics/{room['id']}").json()["data"]["title"] == "讨论", (
-        "给一条活起名字改掉了整个房间的名字"
+        "给任务起名字改掉了整个房间的名字"
     )
 
-    # 人改名走的是同一条路 —— 活没有第二个地址，所以人和芝士说的是同一句话。
+    # 负责人改名走的是同一条路。
     renamed = client.post(
-        f"/topics/{room['id']}/tasks/{thread['id']}/title", json={"title": "导入"}
+        title, json={"title": "导入"}, headers=session_auth_headers("owner")
     )
     assert renamed.status_code == 200
     assert renamed.json()["data"]["title"] == "导入"
     assert client.get(f"/topics/{room['id']}").json()["data"]["title"] == "讨论"
 
-    # 拿活的 id 当房间的地址走不通：那个 id 名下没有地点。
+    # 一个谁都不是的 id 名下没有对话。
     assert (
         client.post(
-            f"/topics/{thread['id']}/tasks/{thread['id']}/title",
-            json={"title": "自己来"},
-        ).status_code
-        == 404
-    )
-    assert (
-        client.post(
-            f"/topics/{room['id']}/tasks/{uuid.uuid4()}/title", json={"title": "谁"}
+            f"/topics/{uuid.uuid4()}/title",
+            json={"title": "谁"},
+            headers=session_auth_headers("owner"),
         ).status_code
         == 404
     )
 
 
 def test_archived_topic_is_frozen(client):
-    # 归档后工作面冻结: no split, no doc edit on an archived topic.
+    # 归档后工作面冻结: no new task, no doc edit on an archived topic.
     #
     # 归档现在只有一条入口 —— 人点的那一下 (#442 decision 1)。这个测试以前借
     # 「采纳即归档」拿到归档状态；采纳不再归档之后，它显式走归档端点，测的东西
@@ -243,10 +168,11 @@ def test_archived_topic_is_frozen(client):
     got = client.get(f"/topics/{topic['id']}").json()["data"]
     assert got["status"] == "archived"
 
-    # Splitting a frozen topic is rejected.
+    # Opening a task in a frozen topic is rejected.
     r = client.post(
-        f"/topics/{topic['id']}/split",
-        json=dict(reviewer_handle="alice", **{"title": "续作"}),
+        f"/topics/{topic['id']}/tasks",
+        json={"title": "续作"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
     # Editing the frozen topic's doc is rejected.
@@ -258,7 +184,8 @@ def test_archived_topic_is_frozen(client):
 
 
 def test_upgrade_on_archived_topic_rejected(client):
-    # Consistent with split/edit_doc: a frozen topic accepts no new work (§6.3).
+    # Consistent with opening a task or editing the doc: a frozen topic accepts
+    # no new work (§6.3).
     p = _project(client, owner="alice")
     topic = client.post(
         "/topics",
@@ -276,14 +203,13 @@ def test_upgrade_on_archived_topic_rejected(client):
     )
     r = client.post(
         f"/blocks/{block_id}/upgrade",
-        json={"reviewer_handle": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
 
 
-def test_upgrade_from_private_chat_lands_under_root(client):
-    # 私聊不是话题树父节点 (spec §1): upgrading a private-chat block makes a topic
-    # under the project root, not an invisible orphan under the chat.
+def test_a_private_message_does_not_leave_the_chat(client):
+    # 私聊里的消息不转成任务，也不转成频道：它留在私聊里。
     p = _project(client, owner="user-1")
     priv = client.get(
         f"/projects/{p['id']}/private-chat", params={"user_handle": "user-1"}
@@ -291,117 +217,38 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     block_id = _insert_block(
         client, p["id"], priv["id"], "我们其实该单独做个数据清洗模块"
     )
-    topic = client.post(
-        f"/blocks/{block_id}/upgrade",
-        json={"reviewer_handle": "alice"},
-    ).json()["data"]
-    _wait_work_idle()
-    assert topic["parent_id"] == p["root_topic_id"]
-    assert topic["kind"] == "topic"
-    # Privacy: the private chat's doc is never copied into the public topic.
-    doc = client.get(f"/documents/{document_of(client, topic['id'])}").json()["data"]
-    assert doc is not None
-    assert "我们其实该单独做个数据清洗模块" in doc["content"]  # source block
-    assert "父话题当时还没有实况文档" in doc["content"]
-
-
-def test_split_records_the_brief_on_the_card_and_starts_nobody(client):
-    # 派活带简报: the brief is on the CARD, and the room's own timeline says the
-    # work went out. The thread is born with NOBODY on it — the worker is the
-    # caller's to spawn in its own session and to bind; a thread that has just
-    # been dispatched is legitimately empty and silent, and reading that as a
-    # failed dispatch is the mistake this asserts against.
-    p = _project(client)
-    topic = client.post(
-        "/topics", json={"project_id": p["id"], "title": "推荐系统"}
-    ).json()["data"]
-    client.put(
-        f"/documents/{document_of(client, topic['id'])}",
-        json={
-            "content": "## 目标\n\n给校园二手书平台做推荐",
-            "expected_version": 0,
-        },
+    before = client.get(f"/topics?project_id={p['id']}").json()["data"]["data"]
+    r = client.post(
+        f"/blocks/{block_id}/upgrade", headers=session_auth_headers("user-1")
     )
-
-    sub = client.post(
-        f"/topics/{topic['id']}/split",
-        json=dict(
-            reviewer_handle="alice",
-            **{
-                "title": "清洗数据",
-                "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
-            },
-        ),
-    ).json()["data"]
-    _wait_work_idle()
-
-    # 简报进卡. Not a document of its own: the worker is a subagent holding the
-    # ROOM's token and cannot reach a thread's doc address, so a document there
-    # would freeze at dispatch and never be corrected.
-    assert sub["brief"] == "把 10 万条借阅日志去重、去空值，产出干净数据集"
-    assert sub["conclusion"] is None
-    # 活没有文档地址可言 —— 它不是地点。
-    assert client.get(f"/topics/{sub['id']}/document").status_code == 404
-
-    # 那张卡: the ROOM's main line says a piece of work left, and names which.
-    room_blocks = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
-    cards = [b for b in room_blocks if (b.get("meta") or {}).get("action") == "split"]
-    assert len(cards) == 1
-    assert cards[0]["meta"]["task_id"] == sub["id"]
-    assert "清洗数据" in cards[0]["content"]
-
-    # 没人做，也没有套话开场白。The platform raises nothing on its own, and it
-    # does not write an opening in 芝士's voice either — 语义内容必须由 AI 生成.
-    assert sub["subagent_id"] is None
-    assert _card_messages(client, topic["id"], sub["id"]) == []
+    assert r.status_code == 422, r.text
+    after = client.get(f"/topics?project_id={p['id']}").json()["data"]["data"]
+    assert len(after) == len(before)
+    assert client.get(f"/projects/{p['id']}/tasks").json()["data"]["data"] == []
 
 
-def test_split_without_a_brief_leaves_the_brief_empty(client):
-    # A human split from the UI carries no brief, and the card says so by being
-    # empty rather than by carrying a paragraph explaining that it is empty.
-    # The title and the room are the whole statement of the work in that case.
-    p = _project(client)
-    topic = client.post(
-        "/topics", json={"project_id": p["id"], "title": "大话题"}
-    ).json()["data"]
-    sub = client.post(
-        f"/topics/{topic['id']}/split",
-        json=dict(reviewer_handle="alice", **{"title": "小任务"}),
-    ).json()["data"]
-    _wait_work_idle()
-    assert sub["brief"] == ""
-    assert client.get(f"/topics/{sub['id']}/document").status_code == 404
-
-
-def test_split_and_conclude(client):
+def test_open_and_conclude_a_task(client):
     p = _project(client)
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "大话题"}
     ).json()["data"]
 
-    # Split a todo into a sub-topic.
-    sub = client.post(
-        f"/topics/{topic['id']}/split",
-        json=dict(reviewer_handle="alice", **{"title": "实现数据清洗"}),
-    ).json()["data"]
-    # A thread in the room, not a room of its own: it names the room it hangs
+    sub = open_task(client, topic["id"], "实现数据清洗", owner="owner", start=False)
+    # A task in the room, not a room of its own: it names the room it hangs
     # in, and it opens as work that is still going.
     assert sub["room_id"] == topic["id"]
     assert sub["status"] == "open"
-    # Let the 分身's auto-kickoff finish before writing more to the shared
-    # in-memory DB (otherwise the two interleave on one SQLite connection).
-    _wait_work_idle()
 
     # It shows up in the room's task list — `children` is rooms under rooms,
-    # which is exactly what a thread is not.
+    # which is exactly what a task is not.
     tasks = client.get(f"/topics/{topic['id']}/tasks").json()["data"]["data"]
     assert any(t["id"] == sub["id"] for t in tasks)
 
-    # 收卡 is said BY the room about the worker it raised: that worker is a 分身
-    # in the room's own session and has no place of its own to file from.
+    # Its owner says it is over.
     r = client.post(
-        f"/topics/{topic['id']}/tasks/{sub['id']}/close",
+        f"/topics/{sub['id']}/close",
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
+        headers=session_auth_headers("owner"),
     )
     assert r.status_code == 200, r.text
     _wait_work_idle()
@@ -409,19 +256,17 @@ def test_split_and_conclude(client):
     assert closed["status"] == "closed"
     assert closed["conclusion"] == "数据清洗完成，去重后剩 8000 条"
 
-    # 结论住在卡上, so the room's own living doc is not rewritten behind its back
-    # — the room keeps its doc, the way every other place does.
+    # 结论住在任务上, so the room's own living doc is not rewritten behind its
+    # back — the room keeps its doc, the way every other place does.
     doc = client.get(f"/documents/{document_of(client, topic['id'])}").json()["data"]
     assert doc is None or "数据清洗完成" not in doc["content"]
 
 
-def test_concluding_something_that_is_not_a_thread_fails(client):
-    """房间不是活,收不了自己。"""
+def test_concluding_something_that_is_not_a_task_fails(client):
+    """房间不是任务,收不了自己。"""
     p = _project(client)
     root_id = _project_root(client, p["id"])
-    r = client.post(
-        f"/topics/{root_id}/tasks/{root_id}/close", json={"conclusion": "x"}
-    )
+    r = client.post(f"/topics/{root_id}/close", json={"conclusion": "x"})
     assert r.status_code == 404
 
 

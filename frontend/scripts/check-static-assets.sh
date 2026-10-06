@@ -2,6 +2,9 @@
 set -eu
 
 static_root="${1:-/usr/share/nginx/html}"
+# The docs built for a host of their own sit beside the html root, not in it
+# (frontend/Dockerfile).
+docs_host_root="${2:-$(dirname "$static_root")/docs-host}"
 index_file="$static_root/index.html"
 
 error() {
@@ -70,6 +73,14 @@ fi
 for required in docs/index.html docs/llms.txt; do
   if [ ! -f "$static_root/$required" ]; then
     error "missing $required — build it with \`task docs:build\` before the image"
+    failures=$((failures + 1))
+  fi
+done
+# The same, built for the docs' own host: a deployment with DOCS_ORIGIN set
+# serves only this one.
+for required in index.html llms.txt; do
+  if [ ! -f "$docs_host_root/$required" ]; then
+    error "missing docs-host/$required — build it with DOCS_BASE= (docs/site/build.mjs) before the image"
     failures=$((failures + 1))
   fi
 done

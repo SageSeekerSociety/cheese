@@ -5,6 +5,7 @@ import binascii
 import hashlib
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,6 +18,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # the API layer because the device launcher needs the same string to tell an
 # agent where its app will be mounted, and the domain cannot import the API.
 GATEWAY_MOUNT = "/api"
+
+
+def browser_origin(url: str) -> str:
+    """``scheme://host[:port]`` of ``url`` as a browser writes it in Origin:
+    lower case, and no port when it is the scheme's default."""
+    parts = urlsplit(url.strip().lower())
+    default = {"https": 443, "http": 80}.get(parts.scheme)
+    port = f":{parts.port}" if parts.port and parts.port != default else ""
+    return f"{parts.scheme}://{parts.hostname or ''}{port}"
+
 
 # What an unconfigured development machine or test run encrypts with. Public
 # by construction, so a deployment may never use it; see
@@ -353,14 +364,21 @@ class Settings(BaseSettings):
     llm_gateway_admin_key: str | None = None  # the LiteLLM master key
 
     # --- Docs site (app/domain/docs_site) ---
-    # Where 问芝士 reads the docs from: the frontend image serves the built
-    # site, so the backend asks its own deployment for the same version readers
-    # see. Unset, 问芝士 answers that it is unavailable.
-    docs_index_url: str | None = "http://frontend/docs/ask-index.json"
-    # The developer pages' index, behind the /docs/dev/ gate; the backend passes
-    # it with an internal pass (docs_site/access.py). Agents read it only in
+    # The docs' own host, as a browser origin: "https://docs.okcheese.com". Empty,
+    # the platform serves them under /docs/ on `frontend_url`. Set, the
+    # platform's /docs/ redirects there and readers sign in to it through the
+    # platform (docs_site/access.py). The frontend reads the same value
+    # (frontend/nginx/), so a compose deployment sets it once, in the deploy
+    # environment the compose file passes to both.
+    docs_origin: str = ""
+    # Where 问芝士 reads the docs from. Unset, the frontend container this
+    # deployment runs, so the backend reads the version readers see
+    # (docs_site/site.py works out the address).
+    docs_index_url: str | None = None
+    # The developer pages' index, behind the dev/ gate; the backend passes it
+    # with an internal pass (docs_site/access.py). Agents read it only in
     # projects whose repository is one of `docs_dev_repositories`.
-    docs_dev_index_url: str | None = "http://frontend/docs/dev/ask-index.json"
+    docs_dev_index_url: str | None = None
     # Projects working on this platform's own code ("owner/repo",
     # case-insensitive): their agents may read the developer docs, and their
     # members and agents may claim feedback (`FeedbackService.may_claim`).
@@ -381,23 +399,24 @@ class Settings(BaseSettings):
     # credits at what the gateway spent, so the model must be priced there.
     assistant_model: str = "deepseek-flash"
     docs_question_retention_days: int = 90
-    # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
-    docs_dev_session_seconds: int = 3600
+    # How long a docs sign-in lasts before the reader goes through the
+    # platform again. It also ends with the platform sign-in it came from.
+    docs_session_seconds: int = 8 * 3600
 
-    # --- Topic naming (app/domain/topic/naming.py) ---
-    # The platform names rooms itself, off the main agent's turn: a small model
+    # --- Task naming (app/domain/room_task/naming.py) ---
+    # The platform names tasks itself, off the agent's turn: a small model
     # through the gateway, on a virtual key of its own capped at this budget
-    # per 30 days. Unset gateway admin credentials = the main agent names the
-    # room with `cheese_title`, as before.
+    # per 30 days. Unset gateway admin credentials = an unnamed task's own
+    # session is reminded to name it with `cheese_title`.
     topic_naming_model: str = "deepseek-flash"
     topic_naming_budget_usd: float = 10.0
     topic_naming_timeout_seconds: float = 15.0
-    # A renamed room is re-judged no sooner than this, and at most this often a
-    # day: a title is how people find a room again, so it moves rarely.
+    # A named task is re-judged no sooner than this, and at most this often a
+    # day: a title is how people find a task again, so it moves rarely.
     topic_naming_follow_interval_seconds: int = 1800
     topic_naming_follow_daily_limit: int = 3
-    # Messages since the last judgement that make a room worth looking at again
-    # even without a signal (a task, an accept card, a changed goal).
+    # Messages since the last judgement that make a task worth looking at again
+    # even without a signal (an accept card, a changed document).
     topic_naming_follow_messages: int = 30
 
     # ExecutionProfile "claude-opus" (tier=testing): native Claude for the team's
@@ -496,7 +515,7 @@ class Settings(BaseSettings):
     agent_default_profile: str = "default"
     agent_system_prompt: str = (
         "你是「芝士」，知是平台里的 AI 队友。你贯穿一个项目的全过程，"
-        "了解项目的话题、决策和进展。用自然清楚的语言交流，"
+        "了解项目的频道、任务、决策和进展。用自然清楚的语言交流，"
         "根据读者补齐必要背景和陌生术语，少说废话。"
         "当你引用项目记忆里的事实时，自然地点明依据。"
     )
@@ -741,6 +760,15 @@ class Settings(BaseSettings):
     # tool call prepares a new one, which takes minutes, so this is longer
     # than a sandbox's idle stop.
     cloud_vm_idle_release_s: int = Field(default=1800, ge=60, le=7 * 86400)
+    # Credits one cloud sandbox costs per hour it runs, from start to idle stop
+    # (usage/compute.py). Unset on purpose: the price is the product owner's to
+    # set, and with none set no cloud sandbox starts, so cloud compute never
+    # runs free by accident. 0 is an explicit "free".
+    cloud_sandbox_credits_per_hour: float | None = Field(default=None, ge=0)
+    # Credits per hour of a whole cloud VM, by its size as cores and GiB of
+    # memory, e.g. `{"4c8g": 30}` (usage.compute.vm_spec). A size not named
+    # here cannot be started.
+    cloud_vm_credits_per_hour: dict[str, float] = Field(default_factory=dict)
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud by the sweep. Never would let a machine destroyed upstream sit
     # here as `running` forever (which happened, and also consumed the
@@ -851,6 +879,10 @@ class Settings(BaseSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # How long a message can wait for its turn past a missed wake-up
+    # (`background.periodic_jobs`). One indexed read of the few waiting
+    # messages per run (`ix_blocks_queued_messages`), owner process only.
+    queued_message_sweep_interval_s: int = 10
     # How long a backend on its way out waits for the prompts it is still
     # sending, and the receipts it is still expecting, before it hands its
     # sessions to the next backend anyway (`app.core.ownership`). It has to fit
@@ -1300,6 +1332,49 @@ class Settings(BaseSettings):
             "deploy/.env.prod.example). If you are sure nobody should, set it "
             "to a handle you control rather than leaving it empty."
         )
+
+    @model_validator(mode="after")
+    def _docs_origin_is_an_origin(self) -> "Settings":
+        """``docs_origin`` is a browser origin of its own, written as browsers do.
+
+        The docs sign-in cookie is minted for exactly this origin and the Origin
+        header of every docs request is compared with it, so it is normalised
+        the way browsers write one (lower case, no default port, no trailing
+        slash) and blank means unset, as the frontend container reads it too.
+        Plain http only on a loopback name, where browsers keep Secure cookies
+        off. And it must not be the platform's own host: the frontend's docs
+        server would then answer every platform request in the platform's place.
+        """
+        value = self.docs_origin.strip()
+        if not value:
+            self.docs_origin = ""
+            return self
+        parts = urlsplit(value.lower())
+        host = parts.hostname or ""
+        local = host == "localhost" or host.endswith(".localhost")
+        if (
+            parts.scheme not in ("https", "http")
+            or (parts.scheme == "http" and not local)
+            or not host
+            or parts.path not in ("", "/")
+            or parts.query
+            or parts.fragment
+            or parts.username
+        ):
+            raise RuntimeError(
+                f"DOCS_ORIGIN={self.docs_origin!r} is not an https origin. "
+                "Write the scheme and host only, e.g. https://docs.okcheese.com "
+                "(http is accepted for *.localhost)."
+            )
+        if host == (urlsplit(self.frontend_url.strip().lower()).hostname or ""):
+            raise RuntimeError(
+                f"DOCS_ORIGIN={self.docs_origin!r} is the platform's own host "
+                f"(FRONTEND_URL={self.frontend_url!r}). The docs need a host of "
+                "their own, such as docs.<platform domain>; leave DOCS_ORIGIN empty "
+                "to serve them under /docs/ on the platform."
+            )
+        self.docs_origin = browser_origin(value)
+        return self
 
     @model_validator(mode="after")
     def _require_data_encryption_key(self) -> "Settings":

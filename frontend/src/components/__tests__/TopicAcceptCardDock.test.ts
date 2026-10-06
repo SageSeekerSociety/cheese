@@ -10,7 +10,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, type Pinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAcceptCards = vi.fn()
@@ -28,6 +28,9 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => null }))
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { useWorkspaceStore } from '@/stores/workspace'
+
+let pinia: Pinia
 
 let seq = 0
 function card(over: Partial<AcceptCard>): AcceptCard {
@@ -78,12 +81,12 @@ async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-async function mountWith(cards: AcceptCard[], docked: boolean) {
+async function mountWith(cards: AcceptCard[], docked: boolean, topicStatus = 'active') {
   getAcceptCards.mockResolvedValue({ data: cards, has_more: false })
   const vuetify = createVuetify({ components, directives })
   const utils = render(TopicAcceptCard, {
-    props: { topicId: 't1', topicStatus: 'active', docked },
-    global: { plugins: [vuetify, i18n] },
+    props: { topicId: 't1', topicStatus, docked },
+    global: { plugins: [vuetify, i18n, pinia] },
   })
   await flush()
   return utils
@@ -91,7 +94,8 @@ async function mountWith(cards: AcceptCard[], docked: boolean) {
 
 beforeEach(() => {
   setLocale('zh-CN')
-  setActivePinia(createPinia())
+  pinia = createPinia()
+  setActivePinia(pinia)
   getAcceptCards.mockReset()
 })
 
@@ -102,6 +106,14 @@ describe('贴底的时候', () => {
     expect(bar.textContent).toContain('改动')
     expect(bar.textContent).toContain('待 @bob 审阅')
     expect(container.textContent).not.toContain('chore: do a thing')
+  })
+
+  it('等的那个人按显示名写，不按 handle', async () => {
+    useWorkspaceStore().members = [{ user_handle: 'bob', role: 'member', name: 'Bob Chen' }] as never
+    const { container } = await mountWith([card({ reviewer_handle: 'bob' })], true)
+    const bar = container.querySelector('.accept-bar')!.textContent
+    expect(bar).toContain('待 @Bob Chen 审阅')
+    expect(bar).not.toContain('@bob')
   })
 
   it('交一次合并时，横条上写的是这次改动的标题，不是「《仓库》第 N 版」', async () => {
@@ -167,5 +179,13 @@ describe('不贴底的时候（任务卡详情里）', () => {
     expect(container.querySelector('.accept-bar')).toBeNull()
     expect(container.textContent).toContain('改动')
     expect(container.textContent).toContain('chore: do a thing')
+  })
+
+  it('归档话题上那张已采纳的卡，标题按显示名写是谁采纳的', async () => {
+    useWorkspaceStore().members = [{ user_handle: 'bob', role: 'member', name: 'Bob Chen' }] as never
+    const { container } = await mountWith([card({ status: 'accepted', decided_by: 'bob' })], false, 'archived')
+    const head = container.querySelector('.accept-head')!.textContent
+    expect(head).toContain('@Bob Chen 已采纳')
+    expect(head).not.toContain('@bob')
   })
 })

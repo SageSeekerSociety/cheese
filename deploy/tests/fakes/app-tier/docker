@@ -28,6 +28,11 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
       "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
       >> "$APP_TIER_DOCKER_LOG"
   fi
+  if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps --force-recreate "* ]]; then
+    printf 'slot-up-env %s BACKEND_IMAGE=%s FRONTEND_IMAGE=%s IMAGE_TAG=%s\n' \
+      "${!#}" "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
+      >> "$APP_TIER_DOCKER_LOG"
+  fi
   if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps device-connection"* ]]; then
     printf 'owner-up-env DEVICE_CONNECTION_IMAGE=%s\n' \
       "${DEVICE_CONNECTION_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG"
@@ -39,6 +44,44 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
 fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1
+fi
+# APP_TIER_ROUTER_RELOAD_FAIL_FROM=N: app-router's Nth reload (counting from 1) and every one
+# after it fail, as when nginx cannot bind a port the new config listens on.
+if [ -n "${APP_TIER_ROUTER_RELOAD_FAIL_FROM:-}" ] && [ "$*" = "exec cheese-app-router nginx -s reload" ]; then
+  reloads="$(grep -c '^exec cheese-app-router nginx -s reload$' "${APP_TIER_DOCKER_LOG:?}" || true)"
+  [ "$reloads" -lt "$APP_TIER_ROUTER_RELOAD_FAIL_FROM" ] || exit 1
+fi
+
+# A successor an interrupted earlier release left behind exists only when a
+# test names it in APP_TIER_LEFTOVERS.
+if [ "${1:-}" = container ] && [ "${2:-}" = inspect ]; then
+  case "${3:-}" in
+    *-backend-next|*-frontend-next)
+      [[ " ${APP_TIER_LEFTOVERS:-} " == *" $3 "* ]]
+      exit
+      ;;
+  esac
+fi
+
+# With APP_TIER_REAL_DOCKER, compose's model comes from the real `docker compose
+# config`, which needs no daemon: the second backend slot is then written from
+# what compose really merges, and starting it records the model compose would
+# create it from in APP_TIER_SLOT_MODEL.
+if [ -n "${APP_TIER_REAL_DOCKER:-}" ] && [ "${1:-}" = compose ]; then
+  compose_files=()
+  args=("${@:2}")
+  while [ "${#args[@]}" -gt 0 ]; do
+    case "${args[0]}" in
+      -f|-p) compose_files+=("${args[0]}" "${args[1]}"); args=("${args[@]:2}") ;;
+      *) break ;;
+    esac
+  done
+  if [ "${args[0]:-}" = config ]; then
+    exec "$APP_TIER_REAL_DOCKER" compose "${compose_files[@]}" "${args[@]}"
+  fi
+  if [[ " ${args[*]} " == *" --force-recreate backend-b "* ]] && [ -n "${APP_TIER_SLOT_MODEL:-}" ]; then
+    "$APP_TIER_REAL_DOCKER" compose "${compose_files[@]}" config --format json > "$APP_TIER_SLOT_MODEL"
+  fi
 fi
 
 # The image names the daemon holds, as the containerd image store keeps them:
@@ -144,6 +187,10 @@ if [ "${1:-}" = "compose" ]; then
   done
 
   case "${1:-}" in
+    config)
+      # The merged model deploy-docker.sh copies the second slot from.
+      printf '{"services": {"backend": {"image": "repo/backend:x", "ports": ["127.0.0.1:18081:8081"]}, "frontend": {"image": "repo/frontend:x", "depends_on": {"backend": {"condition": "service_healthy"}}}}}\n'
+      ;;
     ps)
       if [ "${2:-}" = -q ] && [ "${3:-}" = forgejo ]; then
         printf 'forgejo-container\n'
@@ -158,6 +205,12 @@ if [ "${1:-}" = "compose" ]; then
       fi
       if [ "${2:-}" = -q ] && [ "${3:-}" = backend ] &&         [ -n "${APP_TIER_BACKEND_CONTAINER:-}" ]; then
         printf '%s\n' "$APP_TIER_BACKEND_CONTAINER"
+      fi
+      if [ "${2:-}" = -q ] && [ "${3:-}" = frontend ] && [ -n "${APP_TIER_FRONTEND_CONTAINER:-}" ]; then
+        printf '%s\n' "$APP_TIER_FRONTEND_CONTAINER"
+      fi
+      if [ "${2:-}" = -q ] && [ "${3:-}" = frontend-b ] && [ -n "${APP_TIER_FRONTEND_B_CONTAINER:-}" ]; then
+        printf '%s\n' "$APP_TIER_FRONTEND_B_CONTAINER"
       fi
       if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
         case "${3:-}" in
@@ -228,6 +281,13 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
     *com.cheese.image_tag*) printf 'oldsha\n' ;;
     *State.Running*) printf 'true\n' ;;
   esac
+  exit 0
+fi
+
+# deploy/app-container.sh: service and name of each running container.
+if [ "${1:-}" = ps ] && [[ "$*" == *'{{.Names}}'* ]]; then
+  printf 'backend %s\n' "${APP_TIER_BACKEND_CONTAINER:-cheese-backend-1}"
+  printf 'frontend cheese-frontend-1\n'
   exit 0
 fi
 

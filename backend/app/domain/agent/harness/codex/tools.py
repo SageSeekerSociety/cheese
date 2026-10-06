@@ -360,14 +360,17 @@ class RemoteTools:
         if session_call:
             owed = reply_owed(self.reply_file)
             if owed is not None and owed["id"] != self.answered:
-                if params["tool"] not in owed["answers"]:
+                # Reading the room is on the way to answering it, and answers
+                # nothing.
+                if params["tool"] in owed["answers"]:
+                    self.answered = owed["id"]
+                    # And where the runner reads it, to know the turn may end.
+                    Path(owed["answered"]).write_text(owed["id"])
+                elif params["tool"] not in owed["reads"]:
                     return {
                         "success": False,
                         "contentItems": [{"type": "inputText", "text": owed["reason"]}],
                     }
-                self.answered = owed["id"]
-                # And where the runner reads it, to know the turn may end.
-                Path(owed["answered"]).write_text(owed["id"])
         server, tool = self.routes[params["tool"]]
         # What the platform said while this call waited for its machine. Codex
         # hears a call only once it has run, so the agent reads it at the head

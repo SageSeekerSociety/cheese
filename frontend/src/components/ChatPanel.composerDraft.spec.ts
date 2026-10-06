@@ -37,7 +37,7 @@ function msg(id: string, author: string, at: Date, content = id): Block {
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author_type: 'participant',
     author,
@@ -134,7 +134,7 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
     // 悬停条跟着指针走：先把指针放到那条消息上。
     await fireEvent.mouseOver(container.querySelector('[data-mid="m1"] .im-text')!)
     const replyBtn = Array.from(container.querySelectorAll('.hover-bar button')).find(
-      (b) => b.getAttribute('title') === '回复'
+      (b) => b.getAttribute('title') === '引用回复'
     ) as HTMLButtonElement
     await fireEvent.click(replyBtn)
     expect(container.querySelector('.reply-chip')).toBeTruthy()

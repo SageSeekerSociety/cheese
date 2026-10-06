@@ -66,7 +66,7 @@ def test_a_pause_longer_than_ten_minutes_starts_a_new_line(client):
         async with client.test_factory() as session:
             await session.execute(
                 update(Block)
-                .where(Block.topic_id == uuid.UUID(room))
+                .where(Block.conversation_id == uuid.UUID(room))
                 .values(created_at=Block.created_at - timedelta(minutes=11))
             )
             await session.commit()

@@ -19,7 +19,6 @@
 // `DELETE /projects/{id}/membership` 认的恒是当前身份那个人），只有所有者不行——他
 // 换一颗「转让项目」（他一走项目就没人管，得先把手交出去）。团队成员退的也是**这个
 // 项目**：他还在小队里，小队别的项目照常，回来要人再请一次。
-import type { LookedUpUser } from '@/api'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
@@ -28,6 +27,7 @@ import { useRouter } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useAccountLookup } from '@/composables/useAccountLookup'
 import { provideRevealGate } from '@/composables/useRevealGate'
 import { useRowMenu } from '@/composables/useRowMenu'
 
@@ -37,7 +37,6 @@ import {
   inviteExternalMember,
   listProjectAgents,
   listProjectInvitations,
-  lookupUser,
   removeProjectMember,
   revokeInvitation,
 } from '@/api'
@@ -122,13 +121,16 @@ watch(
 )
 
 // 发出去还没被答复的邀请：这些人**还不在名册上**，要他们自己点头才进来。
-const invitations = ref<ProjectInvitation[]>([])
+// The list endpoint also returns who the invitee is (`InvitationService.describe`).
+// Declared here, not on `ProjectInvitation`: cx_types.ts is over its size cap and may only shrink.
+type PendingInvitation = ProjectInvitation & { invitee_name?: string; invitee_avatar_id?: number | null }
+const invitations = ref<PendingInvitation[]>([])
 const revoking = ref<string | null>(null)
 async function refreshInvitations() {
   const pid = props.projectId
   try {
     const payload = await listProjectInvitations(pid)
-    if (props.projectId === pid) invitations.value = payload.data
+    if (props.projectId === pid) invitations.value = payload.data as PendingInvitation[]
   } catch {
     // 同上：拿不到就不显示这一段。
   }
@@ -259,39 +261,15 @@ const canTransfer = computed(() => project.value !== null && (isOwner.value || c
 // 精确匹配——邀请是把人放进项目的动作，「我以为我请的是他」这种错必须在按下按钮之
 // 前就露出来。
 const inviteOpen = ref(false)
-const inviteQuery = ref('')
 const inviting = ref(false)
-const lookingUp = ref(false)
-const found = ref<LookedUpUser | null>(null)
-const lookupError = ref<string | null>(null)
-let lookupTimer: ReturnType<typeof setTimeout> | null = null
-let lookupSeq = 0
-
-async function runLookup(raw: string) {
-  const q = raw.trim()
-  found.value = null
-  lookupError.value = null
-  if (!q) return
-  const seq = ++lookupSeq
-  lookingUp.value = true
-  try {
-    const user = await lookupUser(q)
-    // 打字比请求快：只认最后一次发出去的那个，否则先回来的旧结果会盖掉新的。
-    if (seq !== lookupSeq) return
-    found.value = user
-  } catch (e) {
-    if (seq !== lookupSeq) return
-    lookupError.value =
-      e instanceof ApiError && e.status === 404 ? t('work.members.notFound') : messageOf(e, t('work.members.failed'))
-  } finally {
-    if (seq === lookupSeq) lookingUp.value = false
-  }
-}
-
-watch(inviteQuery, (raw) => {
-  if (lookupTimer) clearTimeout(lookupTimer)
-  lookupTimer = setTimeout(() => void runLookup(raw), 350)
-})
+const {
+  query: inviteQuery,
+  found,
+  lookingUp,
+  lookupError,
+} = useAccountLookup((e) =>
+  e instanceof ApiError && e.status === 404 ? t('work.members.notFound') : messageOf(e, t('work.members.failed'))
+)
 
 // 已经在项目里的人（团队成员、所有者、已有的外部成员）不用再邀请——后端也会拒，但那
 // 是按下按钮之后才知道。
@@ -397,13 +375,14 @@ useCommands(() => [
                 <ExternalTag v-if="s.key === 'external'" />
                 <span v-if="m.user_handle === me" class="chip-neutral">{{ t('work.members.me') }}</span>
               </div>
-              <div class="t-meta c-muted">@{{ m.user_handle }}</div>
+              <div class="t-meta c-muted">{{ m.user_handle }}</div>
               <router-link
                 v-if="s.key === 'team' && m.team_handle"
                 :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
                 class="t-meta-read member-team-link"
+                :data-user-content="m.team_name || undefined"
                 @click.stop
-                >{{ t('work.members.fromTeam', { handle: m.team_handle }) }}</router-link
+                >{{ t('work.members.fromTeam', { name: m.team_name || m.team_handle }) }}</router-link
               >
             </div>
             <v-spacer />
@@ -446,12 +425,18 @@ useCommands(() => [
         <div class="t-eyebrow mb-2">{{ t('work.members.sectionPending') }} · {{ invitations.length }}</div>
         <v-card v-for="inv in invitations" :key="inv.id" class="mb-2" variant="outlined">
           <div class="d-flex align-center pa-3">
-            <UserAvatar :name="inv.invitee_handle" :size="36" class="mr-3" />
+            <UserAvatar
+              :name="inv.invitee_name || inv.invitee_handle"
+              :avatar="inv.invitee_avatar_id == null ? '' : getAvatarUrl(inv.invitee_avatar_id)"
+              :size="36"
+              class="mr-3"
+            />
             <div class="min-w-0">
               <div class="d-flex align-center ga-2">
-                <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
+                <span class="t-title text-truncate">{{ inv.invitee_name || inv.invitee_handle }}</span>
                 <ExternalTag />
               </div>
+              <div v-if="inv.invitee_name" class="t-meta c-muted">{{ inv.invitee_handle }}</div>
               <i18n-t keypath="work.members.pendingBy" tag="div" class="t-meta c-muted">
                 <template #inviter><UserRef :handle="inv.inviter_handle" /></template>
               </i18n-t>
@@ -479,7 +464,7 @@ useCommands(() => [
                 {{ teammateName(a.display_name, a.name_source) || a.handle }}
                 <span v-if="a.is_default" class="chip-neutral">{{ t('work.members.agentDefault') }}</span>
               </div>
-              <div class="t-meta c-muted">@{{ a.handle }}</div>
+              <div class="t-meta c-muted">{{ a.handle }}</div>
             </div>
             <v-spacer />
             <span class="dm-slot">
@@ -550,7 +535,7 @@ useCommands(() => [
         />
         <div class="min-w-0">
           <div class="t-body found-user__name">{{ found.name || found.handle }}</div>
-          <div class="t-meta c-muted">@{{ found.handle }}</div>
+          <div class="t-meta c-muted">{{ found.handle }}</div>
         </div>
         <v-spacer />
         <span v-if="alreadyIn" class="t-meta c-muted">{{ t('work.members.alreadyIn') }}</span>
@@ -621,8 +606,8 @@ useCommands(() => [
   font-variant-numeric: tabular-nums;
 }
 
-/* 「来自团队 @x」是一行 14px 高的链接，触屏上够不到 44。撑开能点的那块（设计系统
-   §10.1），画出来的样子不变——它上面那行 @handle 是文字不是控件，压上去没有歧义。 */
+/* 「来自团队 X」是一行 14px 高的链接，触屏上够不到 44。撑开能点的那块（设计系统
+   §10.1），画出来的样子不变——它上面那行 handle 是文字不是控件，压上去没有歧义。 */
 @media (pointer: coarse) {
   .member-team-link {
     position: relative;

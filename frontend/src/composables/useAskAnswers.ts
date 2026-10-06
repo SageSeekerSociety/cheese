@@ -99,7 +99,7 @@ export function useAskAnswers(options: { blocks: () => Block[]; replace: (block:
   )
 
   async function fetchQuestion(block: Block): Promise<Block> {
-    const page = await listBlocks(block.topic_id, { around: block.id, limit: 3 })
+    const page = await listBlocks(block.conversation_id, { around: block.id, limit: 3 })
     const fresh = page.data.find((b) => b.id === block.id)
     if (!fresh) throw new Error(t('ask.flow.missing'))
     return fresh

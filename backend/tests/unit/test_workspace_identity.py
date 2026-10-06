@@ -288,7 +288,7 @@ async def test_a_coauthor_without_a_github_account_is_simply_not_credited(monkey
     assert who.coauthors == ()
 
 
-# --- The machines: which 分身 did which piece of work in this delivery (#189) ---
+# --- Which pieces of work went into this delivery (#189) ---
 #
 # A commit's human trailers cannot answer that, and neither can `Co-authored-by:
 # Claude Fable 5`, which every Claude Code commit anywhere carries. The answer is
@@ -296,10 +296,9 @@ async def test_a_coauthor_without_a_github_account_is_simply_not_credited(monkey
 # room is the only party that knows, and nothing here guesses when it doesn't.
 
 
-def _task(subagent_id: str | None, title: str) -> SimpleNamespace:
+def _task(title: str) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
-        subagent_id=subagent_id,
         title=title,
         owner_handle=None,
         created_by=None,
@@ -332,8 +331,8 @@ def _rows(monkeypatch, tasks):
 
 @pytest.mark.anyio
 async def test_the_delivery_names_the_work_the_card_declared(monkeypatch):
-    mine = _task("ac2c038d44616a2f2", "补 trailer")
-    theirs = _task("9f1b7c22e0d341a80", "修 flaky")
+    mine = _task("补 trailer")
+    theirs = _task("修 flaky")
     _rows(monkeypatch, [mine, theirs])
     _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
@@ -342,8 +341,8 @@ async def test_the_delivery_names_the_work_the_card_declared(monkeypatch):
         None, _topic("alice"), card=_card([str(mine.id), str(theirs.id)])
     )
     assert who.tasks == (
-        identity.WorkItem(mine.id, "ac2c038d44616a2f2", "补 trailer"),
-        identity.WorkItem(theirs.id, "9f1b7c22e0d341a80", "修 flaky"),
+        identity.WorkItem(mine.id, "补 trailer"),
+        identity.WorkItem(theirs.id, "修 flaky"),
     )
 
 
@@ -351,9 +350,9 @@ async def test_the_delivery_names_the_work_the_card_declared(monkeypatch):
 async def test_work_the_card_did_not_declare_is_not_named(monkeypatch):
     """The room has other threads — one that wrote nothing, one still running —
     and neither wrote this change. Only what was declared may be signed on."""
-    mine = _task("ac2c038d44616a2f2", "补 trailer")
-    placeholder = _task(None, "占位")
-    running = _task("9f1b7c22e0d341a80", "还在跑")
+    mine = _task("补 trailer")
+    placeholder = _task("占位")
+    running = _task("还在跑")
     _rows(monkeypatch, [mine, placeholder, running])
     _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
@@ -368,7 +367,7 @@ async def test_a_card_that_declared_nothing_names_nobody(monkeypatch):
     even be in this change — but nothing here can tell which, and a plausible
     wrong name in permanent history is worse than no name, because an audit
     believes it."""
-    _rows(monkeypatch, [_task("ac2c038d44616a2f2", "补 trailer")])
+    _rows(monkeypatch, [_task("补 trailer")])
     _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
 
@@ -378,24 +377,10 @@ async def test_a_card_that_declared_nothing_names_nobody(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_work_no_worker_started_keeps_its_place_in_the_batch(monkeypatch):
-    """`subagent_id` is NULL until a worker starts, and a room can write a
-    change itself. Dropping the row would make the batch in the commit smaller
-    than the batch the room declared."""
-    mine = _task(None, "人自己动手改的")
-    _rows(monkeypatch, [mine])
-    _roster_owner(monkeypatch, "alice")
-    _connected(monkeypatch, {"alice": ("583231", "alice")})
-
-    who = await identity.attribution(None, _topic("alice"), card=_card([str(mine.id)]))
-    assert who.tasks == (identity.WorkItem(mine.id, None, "人自己动手改的"),)
-
-
-@pytest.mark.anyio
 async def test_a_declared_id_whose_row_is_gone_costs_only_its_own_line(monkeypatch):
     """The declaration is a list of ids, not a foreign key, so it can outlive
     what it names. The rest of the batch still gets its credit."""
-    mine = _task("ac2c038d44616a2f2", "补 trailer")
+    mine = _task("补 trailer")
     _rows(monkeypatch, [mine])
     _roster_owner(monkeypatch, "alice")
     _connected(monkeypatch, {"alice": ("583231", "alice")})
@@ -435,7 +420,7 @@ async def test_declared_reporter_and_code_contributor_have_distinct_git_trailers
 
     from app.domain.review.pr_text import pr_trailers
 
-    task = _task("worker-1", "fix bug")
+    task = _task("fix bug")
     task.reporter_handle = "reporter"
     task.contributor_handles = ["coder"]
     _rows(monkeypatch, [task])

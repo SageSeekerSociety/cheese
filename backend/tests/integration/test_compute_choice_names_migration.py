@@ -96,7 +96,7 @@ def test_the_migration_drops_stored_labels_and_keeps_device_names(client, monkey
                 )
             sessions = [
                 AgentSession(
-                    topic_id=uuid.UUID(rid),
+                    conversation_id=uuid.UUID(rid),
                     agent_handle="cheese",
                     harness="claude-code",
                     execution_request={"choice": stored[key], "kept": True},

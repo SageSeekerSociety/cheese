@@ -119,11 +119,6 @@ function openTopic(topicId: string) {
 function handleMentionClick(handle: string) {
   void router.push(userRefRoute(handle, props.projectId))
 }
-
-async function handleUpgradeMessage(messageId: string) {
-  const upgraded = await store.upgradeMessage(messageId)
-  if (upgraded) openTopic(upgraded.id)
-}
 </script>
 
 <template>
@@ -137,6 +132,7 @@ async function handleUpgradeMessage(messageId: string) {
     </v-alert>
     <ChatPanel
       v-else-if="topic"
+      no-upgrade
       class="flex-grow-1"
       style="min-height: 0"
       :topic="topic"
@@ -152,7 +148,6 @@ async function handleUpgradeMessage(messageId: string) {
       @turn-done="handleTurnDone"
       @state-changed="handleStateChanged"
       @mention-click="handleMentionClick"
-      @upgrade-message="handleUpgradeMessage"
       @open-topic="openTopic"
     />
   </div>

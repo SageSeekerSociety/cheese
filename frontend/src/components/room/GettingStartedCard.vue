@@ -18,6 +18,8 @@ import { t } from '@/i18n'
 defineProps<{
   steps: GettingStartedStep[]
   projectId: string
+  /** 这个房间的 AI 队友叫什么：项目建的时候给它起了名字，清单里就说这个名字。 */
+  agentName: string
 }>()
 const emit = defineEmits<{ (e: 'dismiss'): void }>()
 
@@ -55,7 +57,7 @@ function go(key: GettingStartedStepKey, projectId: string) {
           :class="{ 'gs__mark--done': step.done }"
         />
         <span class="gs__label" :class="{ 'gs__label--done': step.done }">
-          {{ t(`work.room.gettingStarted.${step.key}`) }}
+          {{ t(`work.room.gettingStarted.${step.key}`, { agent: agentName }) }}
         </span>
         <template v-if="!step.done">
           <BaseButton v-if="DESTINATIONS[step.key]" kind="ghost" size="sm" @click="go(step.key, projectId)">

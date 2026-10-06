@@ -71,18 +71,18 @@ async def names() -> None:
         await s.commit()
 
 
-async def say(room: str, lines: list[tuple[str, str, int]]) -> None:
-    """(author, text, minutes ago) — people and 芝士 alike."""
+async def say(conversation: str, lines: list[tuple[str, str, int]]) -> None:
+    """(author, text, minutes ago) — people and 芝士 alike, in a room or a task."""
     async with async_session_factory() as s:
-        from app.domain.topic.models import Topic
+        from app.domain.conversation.models import Conversation
 
-        topic = await s.get(Topic, uuid.UUID(room))
+        place = await s.get(Conversation, uuid.UUID(conversation))
         now = datetime.now(UTC)
         for author, text, ago in lines:
             s.add(
                 Block(
-                    project_id=topic.project_id,
-                    topic_id=topic.id,
+                    project_id=place.project_id,
+                    conversation_id=place.id,
                     kind=BlockKind.message,
                     author_type=AuthorType.participant,
                     author=author,
@@ -192,17 +192,24 @@ async def main() -> None:
             "expected_version": doc.get("doc_version", 0),
         },
     )
-    tasks = [
+    def task(title: str, goal: str) -> str:
+        """A task the way a person makes one: created, its document written,
+        started."""
+        made = api("POST", f"/topics/{form}/tasks", alice, json={"title": title})
+        path = f"/topics/{made['id']}"
+        doc = api("GET", f"{path}/document", alice)["id"]
         api(
-            "POST",
-            f"/topics/{form}/split",
+            "PUT",
+            f"/documents/{doc}",
             alice,
-            json={"title": title, "brief": brief, "reviewer_handle": "alice"},
-        )["id"]
-        for title, brief in (
-            ("表单字段精简", "必填项减到 4 项，院系年级由学号带出。"),
-            ("提交校验与错误提示", "手机号、学号格式校验，错误提示写在输入框下方。"),
+            json={"content": f"## 目标\n\n{goal}\n", "expected_version": 0},
         )
+        api("POST", f"{path}/start", alice, json={"reviewer_handle": "alice"})
+        return made["id"]
+
+    tasks = [
+        task("表单字段精简", "必填项减到 4 项，院系年级由学号带出。"),
+        task("提交校验与错误提示", "手机号、学号格式校验，错误提示写在输入框下方。"),
     ]
     await (
         say(
@@ -238,6 +245,24 @@ async def main() -> None:
         )
     )
     await card(form, tasks[0], "alice")
+    await say(
+        tasks[0],
+        [
+            ("alice", f"<@{agent}> 院系和年级能从学号推出来吗？推不出的同学怎么办？", 80),
+            (
+                agent,
+                "能推出来：学号前四位是入学年份，第五、六位是院系代码，对照表在教务的公开接口里。"
+                "推不出的（交换生、研究生）保留一个选填的院系下拉，默认收起。",
+                79,
+            ),
+            ("alice", "可以，按这个做。", 75),
+            (
+                agent,
+                "改好了：必填项 4 项，手机 375 宽一屏填完。改动和截图在验收卡上，请你看一下。",
+                12,
+            ),
+        ],
+    )
     await (
         say(
             rooms["周会纪要 9/22"],

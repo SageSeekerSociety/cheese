@@ -10,10 +10,11 @@
 import type { ProjectMemberRow, Topic } from '../cx_types'
 import type { AskGroupAction } from '../lib/askGroupState'
 
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { useGettingStarted } from '../composables/useGettingStarted'
+import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import AskGroupFlow from './ask/AskGroupFlow.vue'
@@ -33,6 +34,8 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    /** 私聊里的消息不能转为任务：不给「转为任务」。 */
+    noUpgrade?: boolean
     // 这一栏里每条消息都是说给芝士听的：1:1 私聊那种只有它一个对话方的地方。
     // 别处叫它靠 @ 它（和 @ 人同一套），见 sendDraft。
     alwaysSummon?: boolean
@@ -64,6 +67,14 @@ const props = withDefaults(
     unreadOnOpen?: number
     // 打开时停在这一条（搜索结果、链接里的 `?block=`）。null = 停在平常的位置。
     focusBlock?: string | null
+    // 读的是房间里的一个任务的对话，而不是房间自己的（见 useChatPanel 的 `place`）。
+    conversationId?: string | null
+    // 这里此刻不能说话，以及为什么（任务只有负责人能说话、任务已关闭）。输入框的
+    // 位置换成这一句，`composer-closed` 插槽接在它后面。
+    composerClosed?: string | null
+    // 这一栏是一条支线：输入框写「在支线中回复」；我上一句叫过 AI 队友的话，打开时
+    // 先带上「@芝士 」。
+    inThread?: boolean
   }>(),
   {
     alwaysSummon: false,
@@ -75,6 +86,9 @@ const props = withDefaults(
     titleOverride: null,
     backLabel: null,
     unreadOnOpen: 0,
+    conversationId: null,
+    composerClosed: null,
+    inThread: false,
   }
 )
 
@@ -84,18 +98,38 @@ const props = withDefaults(
 // whoever listens to it have to agree, so there is one declaration, not two.
 const emit = defineEmits<ChatPanelEmit>()
 
+// 频道的主线：消息可以有支线。私聊、任务、支线里都没有。
+const mainLine = computed(() => !!props.topic && !props.noUpgrade && !props.conversationId)
+// 频道说它的支线变了：先把屏幕上那几行换新，再照常往上报（概览里的「支线」那一页也要读）。
+const forward = emit as unknown as (event: string, ...args: unknown[]) => void
+const panelEmit = ((event: string, ...args: unknown[]) => {
+  if (event === 'state-changed' && args[0] === 'threads') void threadLines.refresh()
+  forward(event, ...args)
+}) as ChatPanelEmit
+
 // A composable is not re-run when a prop changes: it reads the current value
 // when it needs it. That is why every prop is handed over as an accessor.
 const panel = useChatPanel({
   topic: () => props.topic,
+  conversationId: () => props.conversationId,
   alwaysSummon: () => props.alwaysSummon,
   showComposer: () => props.showComposer,
   members: () => props.members,
   topicList: () => props.topicList,
   unreadOnOpen: () => props.unreadOnOpen,
   focusBlock: () => props.focusBlock ?? null,
-  emit,
+  emit: panelEmit,
 })
+
+const threadLines = useThreadLines({
+  mainLine: () => mainLine.value,
+  roomId: () => props.topic?.id ?? null,
+  timeline: panel.timeline,
+  agentNameOf: (handle) => (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value,
+})
+function nameOf(handle: string): string {
+  return panel.refMaps.mentionNames[handle] || handle
+}
 
 const {
   // `topic` itself is NOT destructured: the prop of the same name already holds
@@ -114,6 +148,7 @@ const {
   refMaps,
   hasMore,
   hasNewer,
+  atBottom,
   loadingHistory,
   loadingOlder,
   openAt,
@@ -204,12 +239,18 @@ const {
   changeChecklist,
   onReact,
   setReply,
-  undoTitle,
   downloadAttachment,
   onAvatarError,
   isAgentBlock,
   AUTHOR,
 } = panel
+
+// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
+// 的那一刻做一次，删掉了不会再长回来。
+watch(loadingHistory, (loading, was) => {
+  if (!props.inThread || loading || !was || draft.value) return
+  draft.value = summonPrefill(panel.timeline.messages.value, isMine, agentName.value)
+})
 
 // The timeline binds these two with `:ref`, so it has to receive the Refs
 // themselves — a template binding would unwrap them into elements. Passing them
@@ -288,6 +329,10 @@ defineExpose({ send, connected, submitQuestion })
       <ErrorBoundary :reset-key="topic.id">
         <ChatTimeline
           :topic="topic"
+          :no-upgrade="noUpgrade"
+          :threadable="mainLine"
+          :replying-for="threadLines.replyingFor"
+          :name-of="nameOf"
           :rows="rows"
           :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
@@ -342,14 +387,17 @@ defineExpose({ send, connected, submitQuestion })
           @mouseleave="hideBar"
           @react="onReact"
           @reply="setReply"
+          @open-thread="emit('open-thread', $event)"
           @upgrade-message="emit('upgrade-message', $event)"
           @edit="startEdit"
           @edit-send="editSend"
           @toggle-picker="togglePicker"
-          @open-file="(path, taskId) => emit('open-file', path, taskId)"
+          @open-file="(path) => emit('open-file', path)"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
-          @open-resource="(resource, turnId, review) => emit('open-resource', resource, turnId, review)"
+          @open-resource="
+            (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
+          "
           @ask-action="askAction"
           @checklist="changeChecklist"
           @download="downloadAttachment"
@@ -359,7 +407,6 @@ defineExpose({ send, connected, submitQuestion })
           @cancel-edit="editingId = null"
           @retry="retryNow"
           @retry-send="retrySend"
-          @undo-title="undoTitle"
           @starter="startDraft"
           @settle-arrival="settleArrival"
           @settle-sent="settleSent"
@@ -374,12 +421,15 @@ defineExpose({ send, connected, submitQuestion })
         :block="sheetBlock"
         :is-agent="!!sheetBlock && isAgentBlock(sheetBlock)"
         :editable="!!sheetBlock && canEdit(sheetBlock)"
+        :no-upgrade="noUpgrade"
+        :threadable="mainLine"
         @react="onReact"
         @reply="setReply"
+        @thread="emit('open-thread', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="startEdit"
       />
-      <ChatNewMessagesPill :count="unseen.length" :has-newer="hasNewer" @jump="jumpToUnseen" />
+      <ChatNewMessagesPill :count="unseen.length" :has-newer="hasNewer" :at-bottom="atBottom" @jump="jumpToUnseen" />
 
       <ChatErrorToast :message="errorMsg" @close="errorMsg = null" />
 
@@ -389,6 +439,7 @@ defineExpose({ send, connected, submitQuestion })
         v-if="showGettingStarted && topic.project_id"
         :steps="gettingStartedSteps"
         :project-id="topic.project_id"
+        :agent-name="agentName"
         @dismiss="dismissGettingStarted"
       />
 
@@ -396,7 +447,7 @@ defineExpose({ send, connected, submitQuestion })
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
 
-      <div v-if="showComposer && draftQuote" class="composer-quote">
+      <div v-if="showComposer && !composerClosed && draftQuote" class="composer-quote">
         <MessageQuote :quote="draftQuote" />
         <button type="button" class="composer-quote__remove" @click="clearDraftQuote">
           {{ t('slides.removeQuote') }}
@@ -405,11 +456,22 @@ defineExpose({ send, connected, submitQuestion })
       <!-- 提问接管输入框：两者是同一格里的二选一，不是浮层。有题要答就把
            composer 换下来（不用点），答完或没有题时它自己回来。Esc 收起后
            「有 N 个问题待回答」那一条让人重新把它叫回来，问题不会被永久藏掉。 -->
-      <button v-if="showComposer && askReturn > 0" type="button" class="composer-ask-return" @click="restoreAsk">
+      <button
+        v-if="showComposer && !composerClosed && askReturn > 0"
+        type="button"
+        class="composer-ask-return"
+        @click="restoreAsk"
+      >
         {{ t('ask.group.returnHint', { count: askReturn }) }}
       </button>
+      <div v-if="showComposer && composerClosed" class="composer-closed">
+        <div class="composer-closed__box t-body">
+          <span class="composer-closed__text">{{ composerClosed }}</span>
+          <slot name="composer-closed" />
+        </div>
+      </div>
       <AskGroupFlow
-        v-if="showComposer && askTakeover"
+        v-else-if="showComposer && askTakeover"
         :state="askTakeover"
         :viewer="askViewer"
         :names="refMaps.mentionNames"
@@ -428,7 +490,7 @@ defineExpose({ send, connected, submitQuestion })
         :agent-seat="agentSeat"
         :agent-name="agentName"
         :always-summon="alwaysSummon"
-        :hint="composerHint"
+        :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
         :atts="pendingAtts"
         :atts-uploading="attsUploading"
         :reply-label="replyLabel"
@@ -452,6 +514,35 @@ defineExpose({ send, connected, submitQuestion })
 </template>
 
 <style scoped>
+/* 不能说话时，输入框的位置留着同样大小的一格，写着为什么：和输入框同一个圆角描边，
+   底色退一档，读得出这里平时是输入框。 */
+.composer-closed {
+  width: 100%;
+  max-width: var(--page-w-read);
+  margin-inline: auto;
+  padding: 8px 12px;
+}
+@media (max-width: 959.98px) {
+  .composer-closed {
+    max-width: var(--page-w);
+  }
+}
+.composer-closed__box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 46px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--fill);
+  color: var(--muted);
+}
+.composer-closed__text {
+  min-width: 0;
+}
 .composer-quote {
   margin: 0 16px 8px;
 }

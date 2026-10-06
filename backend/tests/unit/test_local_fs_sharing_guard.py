@@ -96,6 +96,13 @@ def test_every_directory_endpoint_checks_device_ownership():
 
 # -- (二) 授权不外泄到别的路由模块 ----------------------------------------
 
+# 设备连上来时把它自己的授权表推给它（connector.recover_business_state）。这是在授权所属
+# 的那台机器上执行授权，拿到的东西不进任何响应。只放行这一个名字，同一模块里别的引用
+# 照样算碰。
+_ENFORCEMENT_ONLY = {
+    ("connector.py", "app.domain.local_fs.enforcement"): {"push_grants_on_connect"},
+}
+
 
 def test_no_other_route_module_touches_local_fs():
     """授权只能在它自己的路由里出现。一旦任务、素材、附件的响应里能带上授权，
@@ -109,6 +116,9 @@ def test_no_other_route_module_touches_local_fs():
             if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
                 "app.domain.local_fs"
             ):
+                allowed = _ENFORCEMENT_ONLY.get((path.name, node.module or ""), set())
+                if {alias.name for alias in node.names} <= allowed:
+                    continue
                 offenders.append(f"{path.name}: {node.module}")
             if isinstance(node, ast.Import):
                 for alias in node.names:

@@ -22,6 +22,7 @@ from tests.conftest import settle_turn
 from tests.integration.conftest import (
     add_external_member,
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     room_agent_seat,
@@ -45,17 +46,19 @@ def test_new_full_service_process_reuses_original_native_executor(
     project = post_project(
         client, {"name": "Native process recovery"}, owner="alice"
     ).json()["data"]
-    project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
+    project_id, room = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
+    # 芝士 answers in a 支线 of the channel.
+    topic = uuid.UUID(in_thread(client, str(room), "alice"))
     busy = mode.endswith("busy")
     http = mode.startswith("http-")
-    default_seat = room_agent_seat(client, str(topic))
+    default_seat = room_agent_seat(client, str(room))
     recipient = default_seat
     if http:
         made = client.post(f"/projects/{project_id}/agents", json={"handle": "opus"})
         assert made.status_code == 200, made.text
         recipient = made.json()["data"]["seat_handle"]
         joined = client.post(
-            f"/topics/{topic}/members",
+            f"/topics/{room}/members",
             json={"handle": recipient, "role": "member", "actor": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -187,6 +190,7 @@ def test_new_full_service_process_reuses_original_native_executor(
                 "mode": mode,
                 "database": database,
                 "project": str(project_id),
+                "room": str(room),
                 "topic": str(topic),
                 "agent": handle.agent_handle,
                 "session_agent": handle.session.agent_handle,

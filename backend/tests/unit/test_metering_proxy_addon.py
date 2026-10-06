@@ -19,10 +19,12 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import socket
 import sys
 import threading
 import time
 import types
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -140,6 +142,7 @@ def _make_flow(*, path="/v1/messages", caller_bearer=SESSION_CREDENTIAL):
         headers={"authorization": f"Bearer {caller_bearer}"},
     )
     return SimpleNamespace(
+        id=str(uuid.uuid4()),
         request=request,
         client_conn=SimpleNamespace(
             sni="api.anthropic.com", tls_established=True, id="client-1"
@@ -1143,11 +1146,39 @@ def test_a_refused_login_is_reported_as_one_to_renew_and_not_retried(
     assert b"has to be renewed" in flow.response.content
 
 
-def test_the_credentials_requests_leave_through_its_egress(monkeypatch, tmp_path):
+@pytest.fixture
+def egress_listener():
+    """A port that accepts connections, standing in for a reachable egress."""
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(16)
+    yield server.getsockname()[1]
+    server.close()
+
+
+def _closed_port() -> int:
+    """A port nothing listens on, standing in for an egress that is offline."""
+    probe = socket.socket()
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    return port
+
+
+def _quick_egress_checks(mod, monkeypatch) -> None:
+    monkeypatch.setattr(mod, "EGRESS_CONNECT_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(mod, "EGRESS_ATTEMPT_GAP_S", 0.3)
+
+
+def test_the_credentials_requests_leave_through_its_egress(
+    monkeypatch, tmp_path, egress_listener
+):
     mod, flow = _platform_turn(
         monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
     )
-    mod.CREDENTIAL.egress_path.write_text("http://me:pw@egress.example:3128\n")
+    mod.CREDENTIAL.egress_path.write_text(f"http://me:pw@127.0.0.1:{egress_listener}\n")
 
     asyncio.run(mod.requestheaders(flow))
     connect = SimpleNamespace(
@@ -1158,24 +1189,26 @@ def test_the_credentials_requests_leave_through_its_egress(monkeypatch, tmp_path
     mod.http_connect_upstream(connect)
 
     assert flow.response is None
-    assert flow.server_conn.via == ("http", ("egress.example", 3128))
+    assert flow.server_conn.via == ("http", ("127.0.0.1", egress_listener))
     assert connect.request.headers["Proxy-Authorization"] == (
         "Basic " + base64.b64encode(b"me:pw").decode()
     )
 
 
 def test_an_egress_that_refused_the_proxy_is_reported_until_it_changes(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, egress_listener
 ):
     """A 502 would be retried silently for minutes; a wrong proxy password
     does not heal by waiting."""
     mod, first = _platform_turn(
         monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
     )
-    mod.CREDENTIAL.egress_path.write_text("http://me:wrong@egress.example:3128\n")
+    mod.CREDENTIAL.egress_path.write_text(
+        f"http://me:wrong@127.0.0.1:{egress_listener}\n"
+    )
     asyncio.run(mod.requestheaders(first))
     first.error = (
-        "Upstream proxy egress.example:3128 refused HTTP CONNECT request: "
+        f"Upstream proxy 127.0.0.1:{egress_listener} refused HTTP CONNECT request: "
         "407 Proxy Authentication Required"
     )
     mod.error(first)
@@ -1183,16 +1216,18 @@ def test_an_egress_that_refused_the_proxy_is_reported_until_it_changes(
     second = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
     asyncio.run(mod.requestheaders(second))
     assert second.response is not None and second.response.status_code == 400
-    assert b"egress.example:3128 refused" in second.response.content
+    assert f"127.0.0.1:{egress_listener} refused".encode() in second.response.content
     # A refusal that still streams the body is never delivered: mitmproxy
     # drops the connection and the client waits out its timeout.
     assert second.request.stream is False
 
-    mod.CREDENTIAL.egress_path.write_text("http://me:right@egress.example:3128\n")
+    mod.CREDENTIAL.egress_path.write_text(
+        f"http://me:right@127.0.0.1:{egress_listener}\n"
+    )
     third = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
     asyncio.run(mod.requestheaders(third))
     assert third.response is None
-    assert third.server_conn.via == ("http", ("egress.example", 3128))
+    assert third.server_conn.via == ("http", ("127.0.0.1", egress_listener))
 
 
 def test_only_the_credentials_requests_take_the_egress(monkeypatch, tmp_path):
@@ -1242,6 +1277,143 @@ def test_without_an_egress_the_credentials_requests_go_direct(monkeypatch, tmp_p
     asyncio.run(mod.requestheaders(flow))
 
     assert flow.server_conn.via is None
+
+
+def test_an_offline_egress_fails_the_turn_at_once_with_its_reason(
+    monkeypatch, tmp_path
+):
+    """Claude Code retries a 502 ten times, each one waiting out a connect
+    timeout; it gives up on a 503 that says not to retry."""
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    _quick_egress_checks(mod, monkeypatch)
+    mod.CREDENTIAL.egress_path.write_text(f"http://127.0.0.1:{_closed_port()}\n")
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is not None and flow.response.status_code == 503
+    assert flow.response.headers["x-should-retry"] == "false"
+    assert b"subscription egress is offline" in flow.response.content
+    assert flow.request.stream is False
+    assert flow.server_conn.via is None
+
+
+def test_requests_while_the_egress_is_known_offline_are_refused_without_waiting(
+    monkeypatch, tmp_path
+):
+    mod, first = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    _quick_egress_checks(mod, monkeypatch)
+    mod.CREDENTIAL.egress_path.write_text(f"http://127.0.0.1:{_closed_port()}\n")
+    asyncio.run(mod.requestheaders(first))
+
+    second = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    started = time.monotonic()
+    asyncio.run(mod.requestheaders(second))
+
+    assert second.response is not None and second.response.status_code == 503
+    assert time.monotonic() - started < 0.3
+
+
+def test_a_brief_blip_does_not_fail_the_turn(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    _quick_egress_checks(mod, monkeypatch)
+    port = _closed_port()
+    mod.CREDENTIAL.egress_path.write_text(f"http://127.0.0.1:{port}\n")
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    def come_back():
+        time.sleep(0.1)
+        server.bind(("127.0.0.1", port))
+        server.listen(16)
+
+    returning = threading.Thread(target=come_back)
+    returning.start()
+    try:
+        asyncio.run(mod.requestheaders(flow))
+    finally:
+        returning.join()
+        server.close()
+
+    assert flow.response is None
+    assert flow.server_conn.via == ("http", ("127.0.0.1", port))
+
+
+def test_the_egress_is_used_again_as_soon_as_it_is_back(monkeypatch, tmp_path):
+    mod, first = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    _quick_egress_checks(mod, monkeypatch)
+    monkeypatch.setattr(mod, "EGRESS_DOWN_FOR_S", 0.0)
+    port = _closed_port()
+    mod.CREDENTIAL.egress_path.write_text(f"http://127.0.0.1:{port}\n")
+    asyncio.run(mod.requestheaders(first))
+    assert first.response is not None and first.response.status_code == 503
+
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", port))
+    server.listen(16)
+    try:
+        second = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+        asyncio.run(mod.requestheaders(second))
+    finally:
+        server.close()
+
+    assert second.response is None
+    assert second.server_conn.via == ("http", ("127.0.0.1", port))
+
+
+def test_a_gateway_project_never_waits_on_the_subscriptions_egress(
+    monkeypatch, tmp_path
+):
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        pool="gateway",
+    )
+    _quick_egress_checks(mod, monkeypatch)
+    mod.CREDENTIAL.egress_path.write_text(f"http://127.0.0.1:{_closed_port()}\n")
+
+    started = time.monotonic()
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None
+    assert flow.request.host == "litellm.invalid"
+    assert time.monotonic() - started < 0.3
+
+
+def test_a_failed_connection_through_the_egress_has_it_checked_again(
+    monkeypatch, tmp_path
+):
+    """It answered a moment ago and stopped answering since: the next request
+    must not be sent into the same dead connection on a stale verdict."""
+    mod, first = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    _quick_egress_checks(mod, monkeypatch)
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(16)
+    port = server.getsockname()[1]
+    mod.CREDENTIAL.egress_path.write_text(f"http://127.0.0.1:{port}\n")
+    asyncio.run(mod.requestheaders(first))
+    assert first.response is None
+
+    server.close()
+    first.error = "Error connecting to '127.0.0.1': timed out"
+    mod.error(first)
+
+    second = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    asyncio.run(mod.requestheaders(second))
+    assert second.response is not None and second.response.status_code == 503
 
 
 def test_the_platforms_credential_never_reaches_the_gateway(monkeypatch, tmp_path):
@@ -1415,6 +1587,12 @@ def _gateway_answer(mod, status: int, body: dict):
     return flow.response
 
 
+def _litellm_429(message: str) -> dict:
+    """The body LiteLLM's ``/v1/messages`` gives every 429: the Anthropic
+    envelope, typed by status alone, with the cause only in ``message``."""
+    return {"type": "error", "error": {"type": "rate_limit_error", "message": message}}
+
+
 def test_the_gateways_budget_brake_reads_as_the_projects_spent_budget(
     monkeypatch, tmp_path
 ):
@@ -1427,15 +1605,10 @@ def test_the_gateways_budget_brake_reads_as_the_projects_spent_budget(
     response = _gateway_answer(
         mod,
         429,
-        {
-            "error": {
-                "message": "Budget has been exceeded! Key=0123abcd Current cost: "
-                "9.97, Max budget: 5.0108",
-                "type": "budget_exceeded",
-                "param": None,
-                "code": "429",
-            }
-        },
+        _litellm_429(
+            "Budget has been exceeded! Key=0123abcd Current cost: 9.97, "
+            "Max budget: 5.0108"
+        ),
     )
 
     _assert_read_as_a_reached_cap(response)
@@ -1444,11 +1617,57 @@ def test_the_gateways_budget_brake_reads_as_the_projects_spent_budget(
     assert "0123abcd" not in message
 
 
+# What the gateway's LiteLLM (1.103.3) sent Claude Code on 2026-10-01, when
+# the ChatGPT account behind gpt-6-astra had used its weekly plan (FB-62).
+CHATGPT_USAGE_LIMIT = (
+    "litellm.RateLimitError: RateLimitError: OpenAIException - "
+    '{"error":{"type":"usage_limit_reached","message":"The usage limit has been '
+    'reached","plan_type":"pro","resets_at":1791058083,"eligible_promo":null,'
+    '"limit_window_minutes":10080,"resets_in_seconds":164824}}. '
+    "Received Model Group=gpt-6-astra\nAvailable Model Group Fallbacks=None"
+)
+
+
+def test_a_subscription_accounts_spent_plan_stops_the_turn_and_says_when(
+    monkeypatch, tmp_path
+):
+    """No retry inside the turn can get past an account whose plan is used up,
+    so the client must stop at once instead of retrying ten times under
+    "Server is temporarily limiting requests (not your usage limit)", and
+    hear which model is out and when it comes back."""
+    mod = _load_addon(monkeypatch, tmp_path)
+
+    # 1893456000 is 2030-01-01 00:00 UTC; the recorded reset has passed.
+    said = CHATGPT_USAGE_LIMIT.replace("1791058083", "1893456000")
+
+    response = _gateway_answer(mod, 429, _litellm_429(said))
+
+    _assert_read_as_a_reached_cap(response)
+    message = json.loads(response.content)["error"]["message"]
+    assert "gpt-6-astra" in message
+    assert "用量已到上限" in message
+    assert "北京时间1月1日 08:00 恢复" in message
+    assert response.headers["anthropic-ratelimit-unified-reset"] == "1893456000"
+    expected_wait = 1893456000 - int(time.time())
+    assert abs(int(response.headers["retry-after"]) - expected_wait) <= 5
+
+
+def test_a_spent_plan_with_no_reset_still_stops_the_turn(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path)
+    said = CHATGPT_USAGE_LIMIT.replace('"resets_at":1791058083,', "")
+
+    response = _gateway_answer(mod, 429, _litellm_429(said))
+
+    _assert_read_as_a_reached_cap(response)
+    assert "retry-after" not in response.headers
+    assert "恢复" not in json.loads(response.content)["error"]["message"]
+
+
 def test_a_gateway_rate_limit_is_passed_on_as_it_came(monkeypatch, tmp_path):
     """Only the spent budget is the project's to explain; an upstream that is
     throttling really is throttling, and the client should back off."""
     mod = _load_addon(monkeypatch, tmp_path)
-    body = {"error": {"message": "upstream busy", "type": "rate_limit_error"}}
+    body = _litellm_429("litellm.RateLimitError: upstream busy")
 
     response = _gateway_answer(mod, 429, body)
 
@@ -2104,6 +2323,7 @@ def _gateway_request(
                 type_name="reverse", address=("chatgpt.com", 443)
             ),
         ),
+        id=str(uuid.uuid4()),
         server_conn=server_conn or SimpleNamespace(via=None),
         metadata={},
         response=None,

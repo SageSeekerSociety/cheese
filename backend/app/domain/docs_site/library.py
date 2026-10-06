@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.sentences import say
-from app.domain.docs_site import access, retrieval
+from app.domain.docs_site import access, retrieval, site
 from app.domain.project.models import ProjectForge, ProjectGitInstallation
 
 PAGE_CHARS = 20000
@@ -99,8 +99,9 @@ async def search(query: str, *, dev: bool, limit: int = 6) -> list[Found] | None
 
 
 def page_slug(page: str) -> str | None:
-    """``accept``, ``/docs/accept#is-merge``, ``dev/turn.md`` → the page's path
-    under /docs/; None for anything that is not one."""
+    """``accept``, ``/accept#is-merge``, ``https://docs.okcheese.com/dev/turn``,
+    ``/docs/accept`` → the page's path within the site; None for anything that
+    is not one."""
     slug = page.strip()
     slug = re.sub(r"^https?://[^/]+", "", slug)
     slug = slug.split("#", 1)[0].split("?", 1)[0]
@@ -108,9 +109,8 @@ def page_slug(page: str) -> str | None:
     return slug if _PAGE.match(slug) else None
 
 
-def _docs_base() -> str | None:
-    url = settings.docs_index_url
-    return url.rsplit("/", 1)[0] if url else None
+def _docs_base() -> str:
+    return site.index_url().rsplit("/", 1)[0]
 
 
 async def read_page(
@@ -126,10 +126,8 @@ async def read_page(
     if slug.startswith("dev/") and not dev:
         raise DevDocsForbidden(slug)
     base = _docs_base()
-    if base is None:
-        return None
     headers = (
-        {"Cookie": f"{access.COOKIE}={access.internal_pass()}"}
+        {"Cookie": f"{access.cookie_name()}={access.internal_pass()}"}
         if slug.startswith("dev/")
         else {}
     )

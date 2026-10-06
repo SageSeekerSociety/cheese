@@ -19,6 +19,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from urllib.parse import urlencode, urlsplit
 
 import bcrypt
 import jwt
@@ -34,6 +35,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 
 if TYPE_CHECKING:
+    import httpx
     from anyio.from_thread import BlockingPortal
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -360,6 +362,36 @@ def session_auth_headers(handle: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {session_token(handle)}"}
 
 
+def open_task(
+    client,
+    room_id: str,
+    title: str = "一个任务",
+    *,
+    owner: str = "alice",
+    start: bool = True,
+    reviewer: str | None = "alice",
+) -> dict:
+    """A task in ``room_id``, created by ``owner`` (who owns it) and, unless
+    ``start`` is False, started by them with ``reviewer`` reviewing its changes
+    — the way a person makes one."""
+    r = client.post(
+        f"/topics/{room_id}/tasks",
+        json={"title": title},
+        headers=session_auth_headers(owner),
+    )
+    assert r.status_code == 200, r.text
+    task = r.json()["data"]
+    if start:
+        r = client.post(
+            f"/topics/{task['id']}/start",
+            json={"reviewer_handle": reviewer},
+            headers=session_auth_headers(owner),
+        )
+        assert r.status_code == 200, r.text
+        task = r.json()["data"]
+    return task
+
+
 def chat_ws_url(topic_id: str, handle: str) -> str:
     """The topic's chat WebSocket, authenticated as ``handle``.
 
@@ -370,6 +402,18 @@ def chat_ws_url(topic_id: str, handle: str) -> str:
     connect is refused with ``code: forbidden``.
     """
     return f"/topics/{topic_id}/chat?token={session_token(handle)}"
+
+
+def in_thread(client, room_id: str, handle: str) -> str:
+    """A 支线 in the channel ``room_id``, opened by ``handle`` under a message
+    of theirs: where 芝士 answers once it is called. Its id works wherever a
+    room's did — `/messages`, `/blocks`, the chat socket."""
+    said = post_message(client, room_id, handle, {"content": "这件事在支线里说"})
+    response = client.post(
+        f"/blocks/{said['id']}/thread", headers=session_auth_headers(handle)
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["id"]
 
 
 def post_message(client, topic_id: str, handle: str, body: dict) -> dict:
@@ -768,6 +812,125 @@ async def set_free_plan_credits(session, credits: float) -> None:
         update(Plan).where(Plan.key == "free").values(credits_per_period=credits)
     )
     await session.commit()
+
+
+# ---------- the docs' own host, and signing in to it ----------
+
+PLATFORM_ORIGIN = "https://example.test"
+DOCS_ORIGIN = "https://docs.example.test"
+DOCS_HOST = "docs.example.test"
+
+
+@pytest.fixture
+def docs_host(monkeypatch) -> str:
+    """The docs on a host of their own, beside the platform at PLATFORM_ORIGIN."""
+    monkeypatch.setattr(settings, "frontend_url", PLATFORM_ORIGIN)
+    monkeypatch.setattr(settings, "docs_origin", DOCS_ORIGIN)
+    return DOCS_ORIGIN
+
+
+@dataclass
+class SignedIn:
+    """A person signed in to the platform the way the browser does it."""
+
+    handle: str
+    token: str
+    refresh: str
+
+
+def sign_in(client, handle: str) -> SignedIn:
+    """Get-or-create ``handle`` with a password and sign in through
+    ``POST /users/auth/login``: a real sign-in session, so its access token names
+    one (``sid``), and the refresh token that can end it."""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.domain.user.models import User, UserProfile
+
+    password = "correct horse battery staple"
+
+    async def ensure() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            if await session.scalar(select(User).where(User.username == handle)):
+                return
+            now = datetime.now(UTC)
+            hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4))
+            user = User(
+                username=handle,
+                email=f"{handle}@example.com",
+                hashed_password=hashed.decode(),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(user)
+            await session.flush()
+            session.add(
+                UserProfile(
+                    user_id=user.id,
+                    nickname=handle,
+                    intro="",
+                    avatar_id=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(ensure())
+    r = client.post(
+        "/users/auth/login", json={"username": handle, "password": password}
+    )
+    assert r.status_code == 200, r.text
+    return SignedIn(
+        handle, r.json()["data"]["accessToken"], set_cookie(r, "cheese_refresh")
+    )
+
+
+def docs_sign_in(client, person: SignedIn, path: str = "/") -> "httpx.Response":
+    """The round trip the browser makes: ask the platform for a grant, post it
+    to the docs host. Returns the docs host's answer (303 and a cookie)."""
+    granted = client.post(
+        "/docs/grant", headers={"Authorization": f"Bearer {person.token}"}
+    )
+    assert granted.status_code == 200, granted.text
+    data = granted.json()["data"]
+    return client.post(
+        "/docs/session",
+        content=urlencode({"grant": data["grant"], "path": path}),
+        headers={
+            "host": urlsplit(data["url"]).netloc,
+            "origin": PLATFORM_ORIGIN,
+            "content-type": "application/x-www-form-urlencoded",
+        },
+        follow_redirects=False,
+    )
+
+
+def set_cookie(response, name: str) -> str:
+    """The value a response sets ``name`` to, read off its Set-Cookie header:
+    a cookie jar would judge Secure, Path and the host first, and those are
+    what the tests check."""
+    for header in response.headers.get_list("set-cookie"):
+        key, _, rest = header.partition("=")
+        if key == name:
+            return rest.split(";", 1)[0]
+    raise AssertionError(f"no {name} cookie in {response.headers}")
+
+
+def docs_cookie(response) -> str:
+    """The docs sign-in cookie a docs host answer set, as a Cookie header."""
+    from app.domain.docs_site import access
+
+    return f"{access.cookie_name()}={set_cookie(response, access.cookie_name())}"
+
+
+def on_docs(cookie: str | None = None, *, host: str = DOCS_HOST) -> dict[str, str]:
+    """Headers for a request the docs page makes: its host, its origin, its cookie."""
+    headers = {"host": host, "origin": f"https://{host}"}
+    if cookie:
+        headers["cookie"] = cookie
+    return headers
 
 
 def free_plan_credits(client, credits: float) -> None:

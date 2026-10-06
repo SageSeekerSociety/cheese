@@ -106,6 +106,11 @@ class FakeSession:
     async def execute(self, stmt):
         uuids, strings, moments = _bound(stmt)
         key = _table_key(stmt)
+        if key == "Block" and len(stmt.column_descriptions) == 2:
+            # (block id, the room it was said in): the rooms of the blocks found.
+            return _FakeResult(
+                [(b.id, b.conversation_id) for b in self.blocks if b.id in uuids]
+            )
         if key == "Block":
             rows = [
                 b
@@ -190,7 +195,7 @@ def block(
     return SimpleNamespace(
         id=block_id or uuid.uuid4(),
         project_id=proj.id,
-        topic_id=topic_id or uuid.uuid4(),
+        conversation_id=topic_id or uuid.uuid4(),
         author=author or proj.owner_handle,
         content=content,
         created_at=created_at,

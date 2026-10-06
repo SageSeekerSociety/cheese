@@ -42,6 +42,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # The backend runs as cheese-backend-1 or cheese-backend-b-1 depending
+      # on the last release (deploy/deploy-docker.sh, "Two slots").
+      - name: Find the running backend container
+        run: echo "BACKEND=$(bash deploy/app-container.sh backend)" >> "$GITHUB_ENV"
+
       - name: Run the smoke test inside the backend container
         id: turn
         env:
@@ -52,7 +57,7 @@ jobs:
         run: |
           set -o pipefail
           docker cp backend/scripts/device_selfhost_smoke.py \
-            cheese-backend-1:/tmp/device_selfhost_smoke.py
+            "$BACKEND":/tmp/device_selfhost_smoke.py
           # -w / PYTHONPATH: the script is copied to /tmp but imports the app
           # package, which is only importable from the container's /app root.
           docker exec \
@@ -62,7 +67,7 @@ jobs:
             -e PROJECT_NAME="$PROJECT_NAME" \
             -e USER_HANDLE="$USER_HANDLE" \
             -e PROMPT="$PROMPT" \
-            cheese-backend-1 python /tmp/device_selfhost_smoke.py | tee /tmp/smoke.out
+            "$BACKEND" python /tmp/device_selfhost_smoke.py | tee /tmp/smoke.out
           grep -oE '^topic=[0-9a-f-]+' /tmp/smoke.out | cut -d= -f2 \
             > /tmp/smoke_topic || true
           echo "topic=$(cat /tmp/smoke_topic 2>/dev/null)" >> "$GITHUB_OUTPUT"
@@ -80,8 +85,8 @@ jobs:
           set -uo pipefail
           TOPIC="$(cat /tmp/smoke_topic)"
           [ -n "$TOPIC" ] || { echo "no topic recorded"; exit 1; }
-          docker cp backend/scripts/accept_topic_card.py cheese-backend-1:/tmp/ >/dev/null
-          docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+          docker cp backend/scripts/accept_topic_card.py "$BACKEND":/tmp/ >/dev/null
+          docker exec -w /app -e PYTHONPATH=/app "$BACKEND" \
             python /tmp/accept_topic_card.py "$TOPIC"
 
       - name: Device screen state (on failure — what the box's claude was doing)

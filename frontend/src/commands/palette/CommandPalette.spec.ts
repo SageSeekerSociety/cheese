@@ -2,7 +2,7 @@
 // 回车就去；# @ > 只看一类；此刻做不了的事不出现；Esc 先清字再关上；拼音还在组字
 // 的时候回车不算数；去过的下次打开排在「最近去过」里。在项目里打字还会搜内容（消息、
 // 任务……），点开落到它所在的地方；? 只看内容。
-import type { ProjectSearchHits } from '@/api'
+import type { ProjectSearchHits } from '@/api/projectSearch'
 import type { Command } from '@/commands'
 import type { Topic } from '@/cx_types'
 
@@ -20,7 +20,7 @@ import { paletteOpen } from './state'
 
 import { useCommands } from '@/commands'
 import { installShortcuts } from '@/commands/shortcuts'
-import { t } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const searchProject = vi.hoisted(() => vi.fn())
@@ -35,9 +35,9 @@ const listTopicNames = vi.hoisted(() =>
     { id: 'q1', project_id: 'p2', title: '第三周作业批改', kind: 'topic', status: 'active' },
   ])
 )
+vi.mock('@/api/projectSearch', async (original) => ({ ...(await original<object>()), searchProject }))
 vi.mock('@/api', async (original) => ({
   ...(await original<object>()),
-  searchProject,
   archiveTopic,
   setTopicTitle,
   listTopics,
@@ -54,6 +54,8 @@ const MESSAGE = {
   room_title: '合并队列偶发卡住',
   kind: 'message' as const,
   author: 'alice',
+  author_name: 'Alice',
+  author_name_source: null,
   created_at: '2026-09-01T00:00:00Z',
   task_id: null,
   snippet: '重试以后队列就不卡了',
@@ -88,6 +90,7 @@ async function mount({ withRoomCommand = ref(false) } = {}) {
         children: [
           { path: '', name: 'workspace-project', component: Blank },
           { path: 'topics/:topicId', name: 'workspace-topic', component: Blank },
+          { path: 'topics/:topicId/tasks/:taskId', name: 'workspace-task', component: Blank },
           { path: 'members/:handle', name: 'member', component: Blank },
           { path: 'dm/:peer', name: 'workspace-dm', component: Blank },
           { path: 'search', name: 'project-search', component: Blank },
@@ -302,7 +305,7 @@ describe('命令面板', () => {
     expect(router.currentRoute.value.query.block).toBe('b1')
   })
 
-  it('搜到一件任务，选中就进房间并打开那张卡', async () => {
+  it('搜到一件任务，选中就打开那个任务', async () => {
     searchProject.mockResolvedValue(
       hits({
         tasks: [
@@ -316,11 +319,10 @@ describe('命令面板', () => {
     await waitFor(() => expect(options().some((text) => text.includes('写登录接口'))).toBe(true))
     const row = screen.getAllByRole('option').find((el) => el.textContent?.includes('写登录接口'))!
     await fireEvent.click(row)
-    await waitFor(() => expect(router.currentRoute.value.fullPath).toContain('/projects/p1/topics/t2'))
-    expect(router.currentRoute.value.query.card).toBe('k9')
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t2/tasks/k9'))
   })
 
-  it('说在一件活卡片里的消息，选中就打开那张卡，停在那一条上', async () => {
+  it('说在任务里的消息，选中就打开那个任务，停在那一条上', async () => {
     searchProject.mockResolvedValue(hits({ records: [{ ...MESSAGE, snippet: '卡片里说过的缓存方案', task_id: 'k2' }] }))
     const { router } = await mount()
     await open()
@@ -328,9 +330,8 @@ describe('命令面板', () => {
     await waitFor(() => expect(options().some((text) => text.includes('卡片里说过的缓存方案'))).toBe(true))
     const row = screen.getAllByRole('option').find((el) => el.textContent?.includes('卡片里说过的缓存方案'))!
     await fireEvent.click(row)
-    await waitFor(() => expect(router.currentRoute.value.query.card).toBe('k2'))
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3/tasks/k2'))
     expect(router.currentRoute.value.query.block).toBe('b1')
-    expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3')
   })
 
   it('? 只看内容，话题名对上了也不列', async () => {
@@ -341,6 +342,65 @@ describe('命令面板', () => {
     await waitFor(() => expect(options().some((text) => text.includes('原型的配色再调一下'))).toBe(true))
     expect(options().some((text) => text.includes('搭建第一个原型'))).toBe(false)
     expect(searchProject).toHaveBeenLastCalledWith('p1', '原型')
+  })
+
+  it('内容结果下面写作者现在的名字，前面带 @；没有名字就写 handle，不带 @', async () => {
+    searchProject.mockResolvedValue(
+      hits({
+        records: [
+          { ...MESSAGE, id: 'b1', snippet: '署名一', author: 'alice', author_name: 'Alice Chen' },
+          { ...MESSAGE, id: 'b2', snippet: '署名二', author: 'bob-7', author_name: null },
+          {
+            ...MESSAGE,
+            id: 'c3',
+            kind: 'comment',
+            snippet: '署名三',
+            author: 'cheese-kimi',
+            author_name: 'Kimi',
+            author_name_source: 'human',
+          },
+        ],
+      })
+    )
+    await mount()
+    await open()
+    await type('署名')
+    const row = (snippet: string) => options().find((text) => text.includes(snippet)) ?? ''
+    await waitFor(() => expect(row('署名三')).not.toBe(''))
+    expect(row('署名一')).toContain('@Alice Chen')
+    expect(row('署名一')).not.toContain('alice')
+    expect(row('署名二')).toContain('bob-7')
+    expect(row('署名二')).not.toContain('@bob-7')
+    expect(row('署名三')).toContain('@Kimi')
+    expect(row('署名三')).not.toContain('cheese-kimi')
+  })
+
+  it('没改过名的队友按读者的语言称呼', async () => {
+    setLocale('en')
+    try {
+      searchProject.mockResolvedValue(
+        hits({
+          records: [
+            {
+              ...MESSAGE,
+              snippet: '默认署名',
+              author: 'cheese-0a1b',
+              author_name: '芝士',
+              author_name_source: 'default',
+            },
+          ],
+        })
+      )
+      await mount()
+      await open()
+      await type('默认署名')
+      await waitFor(() => expect(options().some((text) => text.includes('默认署名'))).toBe(true))
+      const row = options().find((text) => text.includes('默认署名'))!
+      expect(row).toContain('@Cheese')
+      expect(row).not.toContain('芝士')
+    } finally {
+      setLocale('zh-CN')
+    }
   })
 
   it('内容结果的最后一行进搜索结果页，带着这个词', async () => {

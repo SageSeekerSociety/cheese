@@ -3,20 +3,6 @@
 Each harness translates its structured protocol into these events. Session
 ownership travels with resumable pointers because a delayed event may arrive
 after the room has selected another teammate or harness.
-
-``thread_label`` is the contract's answer to "whose work is this" (结论 43): a
-string the agent hands its subagent when it spawns one, which the harness then
-puts on EVERY event of that sub-thread, unchanged. The platform reads it and
-nothing else — the id a harness mints for a worker is its own business, and
-carrying the label through is a hard requirement of the contract
-(``harness.SubagentRequirement``), so a harness that cannot do it is not one
-this deployment runs. Each harness binds the
-label to whichever field of its own records rides on a whole sub-thread rather
-than on one call; what that field is called there stays inside that harness's
-adapter, and the platform never learns the name.
-
-None means the session's own thread: a main thread's records carry no label at
-all, so absent IS the answer rather than a gap to reconcile.
 """
 
 import uuid
@@ -47,10 +33,6 @@ class AgentMessage:
     # conversation it belongs in the middle of. None where the persist time is
     # already the right one.
     at: datetime | None = None
-    # WHICH sub-thread said this, when it was not the session itself. See the
-    # module note: the label the agent gave the subagent it spawned, None for
-    # the main thread.
-    thread_label: str | None = None
     agent_handle: str | None = None
 
 
@@ -92,8 +74,6 @@ class AgentToolUse:
     # ``eid``: that one identifies the DELIVERY, and a call and its result are
     # two deliveries. None where the harness does not say.
     call_id: str | None = None
-    # Which sub-thread did this; None for the session's own (AgentMessage).
-    thread_label: str | None = None
     # When the call was made, as the harness recorded it — same contract as
     # AgentMessage.at. Without it a backlog read after a backend handover files
     # every call at its read time, below the words 芝士 wrote after making it.
@@ -133,7 +113,6 @@ class AgentStepFailed:
 
     call_id: str
     text: str = ""
-    thread_label: str | None = None
 
 
 @dataclass
@@ -148,7 +127,6 @@ class AgentStepOutput:
 
     call_id: str
     text: str = ""
-    thread_label: str | None = None
 
 
 @dataclass
@@ -171,10 +149,6 @@ class AgentToolResult:
     description: str = ""
     # Stable per-event id, same contract as AgentToolUse.eid.
     eid: str | None = None
-    # Which sub-thread SPAWNED this one — not the one it describes. A subagent
-    # may spawn its own, and the label on the record is always the thread the
-    # tool call was made from.
-    thread_label: str | None = None
     # Who made the spawning call; same contract as AgentToolUse.agent_handle.
     agent_handle: str | None = None
 
@@ -235,9 +209,6 @@ class AgentResult:
     # that died on its way up). 现场 shows it on the failure notice; the room's
     # line is `text`.
     log: str | None = None
-    # Which sub-thread stopped, when the Stop came from one. None for the
-    # session's own Stop — the one that ends a turn.
-    thread_label: str | None = None
     agent_handle: str | None = None
     harness: str | None = None
     # Successful native main-work completion, not cancellation or synthetic Stop.
@@ -249,56 +220,6 @@ class AgentResult:
     # Read only once it was too old to land (``STALE_S``): it still ends its
     # turn and what was read inside it, and the room hears nothing of it.
     late: bool = False
-
-
-@dataclass
-class AgentSubagentStart:
-    """A subagent the session spawned has begun work.
-
-    A subagent is a second worker inside one session: it has its own context and
-    its own tool calls, and everything it does reaches us through the SAME
-    stream as the session's own work, told apart by the ``thread_label`` riding
-    on each record (see the module note).
-
-    ``agent_id`` is the harness's own name for the worker, and the platform
-    keeps it for one job: saying on the card WHICH worker is doing it and
-    whether that worker is still alive. It answers no question about which card
-    — that is the label's, and only the label's.
-
-    Carried as its own event rather than inferred from the first tool call a
-    label makes: a subagent that starts and dies without calling anything is
-    invisible under inference, and that is exactly the case a reader needs told.
-    """
-
-    agent_id: str
-    thread_label: str = ""
-    #: The session this subagent belongs to (the spawner's, not its own).
-    session_id: str | None = None
-
-
-@dataclass
-class AgentSubagentStop:
-    """A subagent finished — but NOT necessarily its work.
-
-    One subagent can report finished more than once: putting a long command in
-    its own background and standing by counts as finishing, and resuming it
-    produces another Stop later. So this marks "handed something back", never
-    "done"; whatever reads it must stay open to a later one for the same id.
-
-    ``text`` is the subagent's closing message verbatim — the answer that
-    otherwise reaches only the thread that spawned it and dies with the
-    container's transcript.
-    """
-
-    agent_id: str
-    text: str = ""
-    thread_label: str = ""
-    #: Path to the subagent's own transcript ON THE MACHINE THAT RAN IT. Present
-    #: for a reader that can reach that filesystem; useless to one that cannot,
-    #: which is why the closing message is carried in full rather than by
-    #: reference to it.
-    transcript_path: str | None = None
-    session_id: str | None = None
 
 
 @dataclass
@@ -322,7 +243,6 @@ class AgentRetrying:
     #: How long the harness waited without any response before giving up on
     #: this attempt, when it says (Claude Code does, for a request that got none).
     no_response_ms: int | None = None
-    thread_label: str | None = None
 
 
 @dataclass
@@ -339,7 +259,6 @@ class AgentCompacting:
 
     done: bool = False
     error: str = ""
-    thread_label: str | None = None
 
 
 AgentEvent = (
@@ -350,8 +269,6 @@ AgentEvent = (
     | AgentToolResult
     | AgentSessionInfo
     | AgentResult
-    | AgentSubagentStart
-    | AgentSubagentStop
     | AgentRetrying
     | AgentCompacting
 )

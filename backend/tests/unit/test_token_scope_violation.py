@@ -51,7 +51,9 @@ def _resolver(monkeypatch, *, cheese_token: str):
         ),
     )
     return auth_mod.ActorResolver(
-        session=MagicMock(), bearer=None, cheese_token=cheese_token
+        session=MagicMock(scalar=AsyncMock(return_value=None)),
+        bearer=None,
+        cheese_token=cheese_token,
     )
 
 

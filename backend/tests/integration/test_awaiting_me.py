@@ -16,6 +16,7 @@ from app.domain.room_task.presentation import NeedsYou
 from tests.ask_fixtures import active_ask
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -39,7 +40,7 @@ def _room(client, project: str, handle: str, title: str = "预算复核") -> str
 
 def _file_card(client, room: str, reviewer: str) -> None:
     r = client.post(
-        f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
+        f"/topics/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
             "change_subject": "chore(test): file a card",
@@ -125,9 +126,11 @@ def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers)
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
         (item,) = _mine(client, "alice")
         assert item["phrase"] == NeedsYou.awaiting_answer
         assert item["reason"] == "asked"
@@ -143,8 +146,10 @@ def test_a_question_still_waits_on_its_person_after_the_turn_ends(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
 
     (item,) = _mine(client, "alice")
     assert item["reason"] == "asked"
@@ -161,14 +166,16 @@ def test_a_leftover_turn_does_not_decide_who_the_question_waits_on(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
     client.portal.call(
         lambda: open_turn(
-            client.test_factory, uuid.UUID(room), author="bob", age_s=3600
+            client.test_factory, uuid.UUID(thread), author="bob", age_s=3600
         )
     )
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers)
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
 
     (item,) = _mine(client, "alice")
     assert item["reason"] == "asked"
@@ -204,10 +211,12 @@ def test_equal_group_names_in_two_rooms_both_remain_on_my_list(
     project = _project(client, "alice")
     rooms = [_room(client, project, "alice", title) for title in ("预算", "发布")]
     for room in rooms:
+        # 芝士在支线里回答，题也在那里问。
+        thread = in_thread(client, room, "alice")
         with active_ask(
-            client, stub_hooks, monkeypatch, room, actor="alice"
+            client, stub_hooks, monkeypatch, thread, actor="alice"
         ) as headers:
-            _ask(client, room, headers, group_id="decision")
+            _ask(client, thread, headers, group_id="decision")
 
     questions = [
         item

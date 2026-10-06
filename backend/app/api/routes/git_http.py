@@ -11,28 +11,46 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import require_seated_agent
 from app.api.response import ok
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
-from app.core.sandbox_auth import token_agent_handle, verify_scoped_token
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
+from app.core.sandbox_auth import (
+    scoped_token_claims,
+    token_agent_handle,
+    verify_scoped_token,
+)
 from app.core.sentences import say
 
 router = APIRouter(prefix="/projects", tags=["git"])
 
 
-async def _task_for(db, project_id, task_id, token):
+async def _task_for(db, project_id, task_id, token, *, opening: bool = False):
+    """The task a credential reaches here, and how.
+
+    Its own session works it: a credential minted in the task's conversation.
+    A session of its room reaches it only to keep what is already on the
+    machine — the sync and backup a machine switch runs over every task
+    directory there — and never opens it: the task is worked in its own
+    conversation, by its owner and that session, and nowhere else.
+    """
     from app.domain.room_task.services import TaskService
 
     if not token or not verify_scoped_token(token, project_id=str(project_id)):
         raise AuthenticationRequiredError("Task access needs this project's token")
     task = await TaskService(db).get(task_id)
-    if (
-        task is None
-        or task.project_id != project_id
-        or not verify_scoped_token(
-            token, project_id=str(project_id), topic_id=str(task.room_id)
-        )
-    ):
+    if task is None or task.project_id != project_id:
+        raise NotFoundError(say("workTaskNotInProject"))
+    conversation = (scoped_token_claims(token) or {}).get("t")
+    if conversation == str(task.id):
+        return task
+    if conversation != str(task.room_id):
         raise NotFoundError(say("workTaskNotInRoom"))
     await require_seated_agent(db, token, project_id=project_id, topic_id=task.room_id)
+    if opening:
+        raise ForbiddenError(say("taskWorkedInItsConversation"))
     return task
 
 
@@ -122,7 +140,7 @@ async def open_task_workspace(
 ) -> dict:
     from app.domain.room_task.services import TaskService
 
-    task = await _task_for(db, project_id, task_id, x_cheese_token)
+    task = await _task_for(db, project_id, task_id, x_cheese_token, opening=True)
     acting = token_agent_handle(x_cheese_token or "")
     if not acting:
         raise AuthenticationRequiredError("Opening a task needs an agent identity")
@@ -141,23 +159,14 @@ async def task_workspace(
     db: Annotated[AsyncSession, Depends(get_db)],
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> dict:
-    if not x_cheese_token or not verify_scoped_token(
-        x_cheese_token, project_id=str(project_id)
-    ):
-        raise AuthenticationRequiredError("git access needs this project's token")
     from app.domain.project.forge import binding_for_project
-    from app.domain.room_task.services import TaskService
 
-    task = await TaskService(db).get(task_id)
-    if task is None or task.project_id != project_id or task.branch_name is None:
+    task = await _task_for(db, project_id, task_id, x_cheese_token)
+    if task.branch_name is None:
         raise NotFoundError(say("workTaskNotInProject"))
-    if not verify_scoped_token(
-        x_cheese_token or "", project_id=str(project_id), topic_id=str(task.room_id)
-    ):
-        raise NotFoundError(say("workTaskNotInRoom"))
-    await require_seated_agent(
-        db, x_cheese_token, project_id=project_id, topic_id=task.room_id
-    )
+    # The project changes only once the task's owner started it.
+    if task.started_at is None:
+        raise ValidationError(say("taskNotStarted"))
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError(say("projectHasNoRepo"))

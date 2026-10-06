@@ -27,6 +27,7 @@ from app.domain.topic.services import TopicService
 from tests.ask_fixtures import active_ask, legacy_question, wait_turn_idle
 from tests.conftest import seed_user
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_project,
     room_agent_headers,
@@ -104,7 +105,7 @@ def _agent_says(client, room: str, text: str) -> None:
             topic = await session.get(Topic, uuid.UUID(room))
             await BlockRepository(session).add(
                 project_id=topic.project_id,
-                topic_id=topic.id,
+                conversation_id=topic.id,
                 author=agent,
                 author_type=AuthorType.participant,
                 content=text,
@@ -135,9 +136,11 @@ def test_an_unanswered_question_puts_the_room_in_the_waiting_column(
 ):
     seed_user(client, "alice")
     pid, room = _room(client)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers)
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
 
     shown = _shown(client, pid, room)
     assert shown["column"] == "needs_you"
@@ -148,13 +151,15 @@ def test_answering_it_takes_the_room_back_out(client, stub_hooks, monkeypatch):
     """已回答的问题不应让房间长期停留在待回答 —— 判据是**最近一条**。"""
     seed_user(client, "alice")
     pid, room = _room(client)
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        data = _ask(client, room, headers)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        data = _ask(client, thread, headers)
     assert _shown(client, pid, room)["column"] == "needs_you"
 
     _settle(client, data)
     # 作答会把芝士叫起来；等那一轮收尾再看板，免得量到的是「正在跑」。
-    wait_turn_idle(client, room)
+    wait_turn_idle(client, thread)
 
     assert _shown(client, pid, room)["column"] != "needs_you"
 
@@ -165,13 +170,15 @@ def test_a_second_question_after_an_answered_one_still_counts(
     """一组答完不等于房间没题在等 —— 后面新问的那组还没答，仍然停在待回答。"""
     seed_user(client, "alice")
     pid, room = _room(client)
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        data = _ask(client, room, headers)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        data = _ask(client, thread, headers)
     _settle(client, data)
-    wait_turn_idle(client, room)
+    wait_turn_idle(client, thread)
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers, question="那按项目的口径要不要含外包")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers, question="那按项目的口径要不要含外包")
 
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
@@ -229,10 +236,12 @@ def test_the_person_who_started_the_turn_hears_the_question(
     alice = seed_user(client, "alice")
     bob = seed_user(client, "bob")
     pid, room = _room(client)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
     join_project_team(client, pid, "bob")
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="bob") as headers:
-        _ask(client, room, headers)
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="bob") as headers:
+        _ask(client, thread, headers)
 
     (row,) = _questions(client, bob)
     assert row["contextMetadata"]["question"] == "预算按哪个口径统计"
@@ -254,12 +263,14 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
     alice = seed_user(client, "alice")
     bob = seed_user(client, "bob")
     pid, room = _room(client)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
     join_project_team(client, pid, "bob")
 
     with active_ask(
-        client, stub_hooks, monkeypatch, room, actor="alice", platform_turn=True
+        client, stub_hooks, monkeypatch, thread, actor="alice", platform_turn=True
     ) as headers:
-        _ask(client, room, headers)
+        _ask(client, thread, headers)
 
     assert _questions(client, alice) == []
     assert _questions(client, bob) == []
@@ -302,8 +313,10 @@ def test_answering_the_question_settles_its_notification(
     """
     alice = seed_user(client, "alice")
     _pid, room = _room(client)
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        data = _ask(client, room, headers)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        data = _ask(client, thread, headers)
     (before,) = _questions(client, alice)
     assert before["read"] is False
 
@@ -344,7 +357,7 @@ def _ask_an_old_question(
             assert row is not None
             await notify_question(
                 session,
-                place=await TopicService(session).place_or_404(row.topic_id),
+                place=await TopicService(session).place_or_404(row.conversation_id),
                 block=row,
                 question=row.content,
                 asker=row.author,

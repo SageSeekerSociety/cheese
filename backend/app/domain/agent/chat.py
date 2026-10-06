@@ -29,6 +29,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence
 from app.domain.agent.announce import announce, settle_questions_answered_by
+from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.compute import ComputePool
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
@@ -115,21 +116,10 @@ from app.domain.agent.mentions import (
     person_mentions,
     project_refs_text,
 )
-from app.domain.agent.platform_failures import (
-    MODEL_LIMIT_REACHED_CODE,
-    PROVIDER_OVERLOADED_CODE,
-    PROVIDER_UNREACHABLE_CODE,
-    RESPONSE_TRUNCATED_CODE,
-    TOOL_UNAVAILABLE_CODE,
-    classify_cli_notice,
-)
 from app.domain.agent.platform_notices import (
     EVENT_MCP_NOT_CONNECTED,
-    EVENT_TURN_FAILED,
-    SEVERITY_ERROR,
     SEVERITY_WARN,
     WHO_HUMAN,
-    WHO_PLATFORM,
     delivery_fallback_notice,
     notice,
 )
@@ -143,7 +133,6 @@ from app.domain.agent.prompt import (
     _PROGRESS_MARK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _REPLAY_NOTICE_AT,  # noqa: F401
     _REPLAY_NOTICE_EVERY,  # noqa: F401
-    PLACEHOLDER_TITLE,  # noqa: F401
     _addressed_to,
     _compaction_notice,  # noqa: F401 — 测试仍从 chat.py 导它
     _is_pending_input,  # noqa: F401
@@ -181,13 +170,10 @@ from app.domain.agent.room_events import (
     _CHANGE_COMMIT_WALK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _known_commits,
     _mark_step_failed,
-    _note_worker,
     _persist_change_summary,
     _persist_room_event,
     _persist_subagent_result,
     _persist_tool_event,
-    _persist_worker_event,
-    _record_conclusion,
     _record_step_output,
     _turn_changeset,
     post_system_event,
@@ -197,8 +183,6 @@ from app.domain.agent.service import (
     AgentEvent,
     AgentResult,
     AgentRetrying,
-    AgentSubagentStart,
-    AgentSubagentStop,
     AgentToolResult,
     AgentUsage,
 )
@@ -244,8 +228,10 @@ from app.domain.membership.roster import roster_rows
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.room_task import naming
+from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.topic import doc_nudge, naming
+from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -282,70 +268,9 @@ _ACTION_LABEL = {
 # blips. Anything else (or a rejected seat rate-limit) surfaces immediately.
 _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 
-
-# CLI 自己印在对话里的那几句英文,换成平台自己的中文提示卡。
-#
-# 它们过去顶着芝士的名字发出来,读的人看到的是「芝士在说英文报错」,而实际上
-# 芝士根本没说话 —— 是它脚下的 CLI 印的。归属错了比语言错了更糟:一个平台故障
-# 被读成 AI 的回答,谁也不知道该找谁。
-#
-# 英文原话一个字都不丢,收进「服务原话」的折叠区 —— 它是唯一的一份。
-#
-# 每一条是 (那一行的键, severity, who, 说明的键)，句子在 roomNotice 词表。
-_CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
-    PROVIDER_UNREACHABLE_CODE: (
-        "cliProviderUnreachable",
-        SEVERITY_ERROR,
-        WHO_PLATFORM,
-        "cliProviderUnreachableHint",
-    ),
-    PROVIDER_OVERLOADED_CODE: (
-        "cliProviderOverloaded",
-        SEVERITY_WARN,
-        WHO_PLATFORM,
-        "cliProviderOverloadedHint",
-    ),
-    MODEL_LIMIT_REACHED_CODE: (
-        "cliModelLimitReached",
-        SEVERITY_ERROR,
-        WHO_HUMAN,
-        "cliModelLimitReachedHint",
-    ),
-    TOOL_UNAVAILABLE_CODE: (
-        "cliToolUnavailable",
-        SEVERITY_WARN,
-        WHO_PLATFORM,
-        "cliToolUnavailableHint",
-    ),
-    RESPONSE_TRUNCATED_CODE: (
-        "cliResponseTruncated",
-        SEVERITY_WARN,
-        WHO_PLATFORM,
-        "cliResponseTruncatedHint",
-    ),
-}
-
-
-#: 等一等、再来一次就可能好的那几种。额度用完、工具配置错了，重试不会有变化。
-_CLI_RETRYABLE = frozenset(
-    {PROVIDER_UNREACHABLE_CODE, PROVIDER_OVERLOADED_CODE, RESPONSE_TRUNCATED_CODE}
-)
-
-
-def _cli_notice(text: str) -> tuple[str, dict] | None:
-    """整条消息其实是 CLI 印的一句英文提示时,给出该发的中文提示卡;否则 None。"""
-    failure = classify_cli_notice(text)
-    if failure is None:
-        return None
-    line, severity, who, hint = _CLI_NOTICE_COPY[failure]
-    return say(line), notice(
-        EVENT_TURN_FAILED,
-        severity=severity,
-        who=who,
-        detail=say("hintAndServiceWords", hint=say(hint), said=text.strip()),
-        detail_label=say("labelDetails"),
-        retryable=failure in _CLI_RETRYABLE,
-    )
+#: How many conversations' rooms to remember. Well past the number of
+#: conversations one backend hears from at once; a ceiling, not a policy.
+_CONVERSATION_ROOMS_KEPT = 2048
 
 
 def _parse_uuid(raw: str | None) -> uuid.UUID | None:
@@ -446,18 +371,6 @@ class ChatService(SessionRecovery, RoomTurns):
         self._retry_notes: dict[uuid.UUID, uuid.UUID] = {}
         self._waiting_notes: dict[uuid.UUID, uuid.UUID] = {}
         self._compact_notes: dict[uuid.UUID, uuid.UUID] = {}
-        # Which child agents the running sessions say are still doing something,
-        # per room. Only the harness's own lifecycle events can answer this:
-        # they fire in the session's process and carry the child's id, while
-        # every tool call goes through the MCP transport,
-        # whose request has no caller identity on it at all — which is why a
-        # worker that only runs tools leaves no trace of its own. The board's
-        # "is that worker still alive" reads it (`worker_live`).
-        self._live_workers: dict[uuid.UUID, dict[str, bool]] = {}
-        # The session each room is currently on. A claim about a child belongs to
-        # the session that made it: a new session has never heard of the old
-        # one's children, so a claim that outlived its session is void.
-        self._room_sessions: dict[uuid.UUID, str] = {}
         # Where each live session's model traffic goes, remembered from the last
         # turn the platform assembled for it. A turn the session starts by itself
         # rides the same screen and therefore the same supply, and has no prompt
@@ -466,6 +379,9 @@ class ChatService(SessionRecovery, RoomTurns):
         # this is a dict that only ever grows in a process that runs for weeks.
         # Losing an entry costs the accuracy of one label, never a wrong charge.
         self._session_route: dict[uuid.UUID, str] = {}
+        self._conversation_rooms: dict[
+            uuid.UUID, tuple[uuid.UUID, uuid.UUID | None, bool]
+        ] = {}
         # The model each session was launched on, kept beside its route and for
         # the same reason: a self-started turn has no prompt to resolve it from.
         self._session_model: dict[uuid.UUID, str] = {}
@@ -570,10 +486,10 @@ class ChatService(SessionRecovery, RoomTurns):
                 if user_block_id is not None:
                     addressed = await blocks.get(user_block_id)
                 else:
-                    place = await PlaceResolver(session).resolve(topic_id)
+                    place = await PlaceResolver(session).conversation(topic_id)
                     if place is not None:
                         pending = _pending_input_blocks(
-                            await blocks.turn_history(place.room_id)
+                            await blocks.turn_history(place.conversation_id)
                         )
                         addressed = pending[0] if pending else None
                 recipient = (
@@ -587,10 +503,10 @@ class ChatService(SessionRecovery, RoomTurns):
                 instance = await session.get(AgentInstance, instance_id)
                 if instance is not None and instance.is_active:
                     return instance.handle
-            topic = await TopicRepository(session).get(topic_id)
-            if topic is None:
+            place = await PlaceResolver(session).conversation(topic_id)
+            if place is None:
                 raise NotFoundError("Topic not found")
-            agent = await self._resolved_agent(session, topic)
+            agent = await self._agent_at(session, place)
             return agent.handle
 
     @asynccontextmanager
@@ -917,8 +833,12 @@ class ChatService(SessionRecovery, RoomTurns):
             # 2026-09-18), and it never held archival off anyway — the archive
             # path takes the same non-conflicting KEY SHARE lock.
             async with self._sessions() as session:
-                room = await TopicRepository(session).get(topic_id)
-                archived = room is None or room.status == TopicStatus.archived
+                place = await PlaceResolver(session).conversation(topic_id)
+                archived = (
+                    place is None
+                    or place.room.status == TopicStatus.archived
+                    or (place.task is not None and place.task.status != TaskStatus.open)
+                )
             if archived:
                 delivered = False
             else:
@@ -1120,7 +1040,6 @@ class ChatService(SessionRecovery, RoomTurns):
         *,
         probe_unread: bool = False,
         fence_delivery: bool = False,
-        parent_session_id: str | None = None,
     ) -> InputRegistrar:
         from app.domain.agent.input_registration import input_registrar
 
@@ -1130,7 +1049,6 @@ class ChatService(SessionRecovery, RoomTurns):
             self._unread_inputs,
             probe_unread=probe_unread,
             fence_delivery=fence_delivery,
-            parent_session_id=parent_session_id,
         )
 
     async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None:
@@ -1209,9 +1127,7 @@ class ChatService(SessionRecovery, RoomTurns):
         看到」、点下去却什么也没有可读，白烧一轮。
         """
         async with self._sessions() as session:
-            history = await BlockRepository(session).list_for_topic(
-                topic_id, task_id=None
-            )
+            history = await conversation_inputs(session, topic_id)
             return bool(_pending_input_blocks(history))
 
     async def pending_seat(self, topic_id: uuid.UUID) -> str | None:
@@ -1230,9 +1146,7 @@ class ChatService(SessionRecovery, RoomTurns):
         理由同它：一份近似的复制品会在窗口语义改动时悄悄和它分叉。
         """
         async with self._sessions() as session:
-            history = await BlockRepository(session).list_for_topic(
-                topic_id, task_id=None
-            )
+            history = await conversation_inputs(session, topic_id)
             # 从新到旧：最近一次点名是这批消息现在要交给谁的最新说法。
             for block in reversed(_pending_input_blocks(history)):
                 recipient = (block.meta or {}).get("agent_recipient") or {}
@@ -1279,7 +1193,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 said = set(
                     await session.scalars(
                         select(Block.meta["server"].as_string()).where(
-                            Block.topic_id == topic_id,
+                            Block.conversation_id == topic_id,
                             Block.kind == BlockKind.event,
                             Block.meta["event_type"].as_string()
                             == EVENT_MCP_NOT_CONNECTED,
@@ -1323,13 +1237,16 @@ class ChatService(SessionRecovery, RoomTurns):
         *,
         meta: dict | None = None,
     ) -> dict | None:
-        """Persist a system event into the room (room_events.py)."""
+        """Persist a system event into the conversation ``topic_id`` names —
+        a room's own line, or a task's (room_events.py)."""
+        room_id, inner_id = await self._room_of_conversation(topic_id)
         return await post_system_event(
             self._sessions,
-            topic_id,
+            room_id,
             content,
             turn_id,
             meta=meta,
+            inner_id=inner_id,
         )
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
@@ -1388,34 +1305,6 @@ class ChatService(SessionRecovery, RoomTurns):
         """
         return self._compute.holds(topic_id, agent_handle)
 
-    def worker_live(self, topic_id: uuid.UUID, agent_id: str | None) -> bool | None:
-        """Is the worker bound to this task still doing it?
-
-        True when the room's session reported that agent starting and has not
-        taken it back, None when no one is claiming anything about it — never
-        mentioned, or already handed something back. The board takes this as the
-        strongest evidence it can get (`TaskFacts.worker_live`): a worker can go
-        quiet for forty minutes without being dead — that is what running a long
-        command looks like — and only the thing running it can tell the two
-        apart. The timestamps stay for the None case, where nobody has spoken.
-
-        Only the memory half — `agent.liveness` adds the task's own open turn.
-        A claim holds only while this process still holds that room's session.
-        """
-        if not agent_id:
-            return None
-        workers = self._live_workers.get(topic_id)
-        if not workers:
-            return None
-        if not self._compute.holds(topic_id):
-            # Their screen is gone, so they are gone with it — and this is the
-            # one place that notices, since nothing tells this service a screen
-            # died. Dropping the room's claims here is what keeps a claim from
-            # outliving the screen it came from and resurrecting on the next one.
-            self._live_workers.pop(topic_id, None)
-            return None
-        return workers.get(agent_id)
-
     async def turns_that_produced_something(
         self, turn_ids: list[uuid.UUID]
     ) -> set[uuid.UUID]:
@@ -1473,7 +1362,7 @@ class ChatService(SessionRecovery, RoomTurns):
         """
         try:
             async with self._sessions() as session:
-                place = await PlaceResolver(session).resolve(topic_id)
+                place = await PlaceResolver(session).conversation(topic_id)
                 if place is not None:
                     # An event names who ACTED: the seat its session authors
                     # under. The pointer is keyed by the agent that seat
@@ -1504,17 +1393,17 @@ class ChatService(SessionRecovery, RoomTurns):
                     await session.execute(
                         _select(_AS.id)
                         .where(
-                            _AS.topic_id == place.room_id,
+                            _AS.conversation_id == place.conversation_id,
                             _AS.agent_handle == agent.handle,
                             _AS.harness == harness,
                         )
                         .with_for_update()
                     )
                     self._dead_sessions.discard(
-                        (place.room_id, agent.handle, session_id)
+                        (place.conversation_id, agent.handle, session_id)
                     )
                     await AgentSessionService(session).remember(
-                        topic_id=place.room_id,
+                        conversation_id=place.conversation_id,
                         agent_handle=agent.handle,
                         resume_token=session_id,
                         harness=harness,
@@ -1550,96 +1439,57 @@ class ChatService(SessionRecovery, RoomTurns):
         await get_broker().publish(str(topic_id), frame)
         if not active:
             # The agent has said what it understood: the moment to check the
-            # name the room got from its opening line (topic/naming.py).
+            # name a task got from its opening line (room_task/naming.py).
             naming.nudge(topic_id, "turn")
-            # 同一个时刻也看一眼文档：干过活的房间文档还空着，就请这个队友补上
-            # （topic/doc_nudge.py）。
-            doc_nudge.nudge(topic_id, self)
             from app.domain.agent.pending_messages import nudge_messages
 
             nudge_messages(self, topic_id)
 
-    @staticmethod
-    def room_is_a_work_room(topic: Topic) -> bool:
-        """这间房按不按房间的规矩来 —— ``_is_dm`` 的否定，``is_private`` 在这个
-        文件里唯一的那个读点推出来的两个答案之一（名册两席 / 这一轮不租地点）。
+    async def _room_of_conversation(
+        self, conversation_id: uuid.UUID
+    ) -> tuple[uuid.UUID, uuid.UUID | None]:
+        """``(room, inner)`` for a conversation: a room is its own room with
+        nothing inside, a task or a 支线 is the room it is in and itself.
 
-        提示词给不给「本话题还没有实况文档」那一段，问的就是这个：`_assemble_turn`
-        的 `needs_place` 说的是同一句。`topic/doc_nudge.py` 按同一个答案决定要不要
-        提醒，所以那边不提 ``is_private``，问的是这里——两处必须是同一份声明，否则
-        一个模型会被提示词要求建文档、却收不到平台的提醒，或者反过来。
-
-        `doc_nudge` 经它手上的 ``chat_service`` 取这个方法（`runtime.py` 那一处收尾
-        不 import 本模块，手里只有同一个对象）。**取不到就什么都不做**：轮末那两行
-        之间没有 try，多抛一句出去，这一轮就永远是「在跑」（`_live` 摘不掉）。
+        Everything a session says arrives keyed by its conversation, while the
+        roster, the machine and the files are its room's. A task stays in the
+        room it hangs in until someone moves it, which drops the remembered
+        answer (``forget_conversation``).
         """
-        return not _is_dm(topic)
+        room, inner, _thread = await self._conversation_place(conversation_id)
+        return room, inner
 
-    def _note_room_session(self, topic_id: uuid.UUID, session_id: str) -> None:
-        """The room is on a (possibly) different session now.
-
-        Whatever the previous session said about its children died with it: the
-        children of the old session are not running in the new one, and the new
-        one will tell us about its own. Without this, a claim from a screen that
-        has since been replaced would outlive it and say "still running" about a
-        worker nobody is running.
-        """
-        previous = self._room_sessions.get(topic_id)
-        if previous is not None and previous != session_id:
-            self._live_workers.pop(topic_id, None)
-        self._room_sessions[topic_id] = session_id
-
-    def _note_worker_agent(self, topic_id: uuid.UUID, event: object) -> None:
-        """Record what this session just said about one child agent.
-
-        `SubagentStart`/`SubagentStop` are the only events that both name the
-        child they are about and arrive straight from the session's process, so
-        they are the only first-hand answer to "is that worker still doing it".
-        Nothing is inferred from silence: started means running.
-
-        A stop only takes the claim away, it does not declare the worker dead —
-        a subagent that hands something back and stands by, or that is resumed
-        later, produces a stop and then more work (see `AgentSubagentStop`). The
-        board then falls back to the timestamps, which is what it did before this
-        existed, rather than calling a worker dead that is about to speak again.
-        """
-        agent_id = getattr(event, "agent_id", None)
-        if not agent_id:
-            return
-        workers = self._live_workers.setdefault(topic_id, {})
-        if isinstance(event, AgentSubagentStart):
-            workers[agent_id] = True
-        else:
-            workers.pop(agent_id, None)
-
-    async def _work_of_worker(
-        self, topic_id: uuid.UUID, thread_label: str | None
-    ) -> uuid.UUID | None:
-        """Which piece of work this event belongs to, read off the event itself.
-
-        Several sub-threads run inside one session and everything they do
-        arrives on the same pipe as the session's own, told apart by the label
-        the agent gave each one when it spawned it (结论 43). The platform minted
-        that label when it opened the card, so this is a lookup and not a guess
-        — nobody has to have reported anything for a sub-thread's very first
-        event to reach its card.
-
-        None for three situations that want the same handling: the room itself
-        did this, a sub-thread the harness started for its own purposes did, or
-        the label names work that is not open in this room. All land on the
-        room's own line, where they landed before any of this existed —
-        swallowing them instead would make a whole run invisible, which is worse
-        than the attribution being coarse.
-        """
-        from app.domain.room_task.services import TaskService
-
-        if not thread_label:
-            return None
+    async def _conversation_place(
+        self, conversation_id: uuid.UUID
+    ) -> tuple[uuid.UUID, uuid.UUID | None, bool]:
+        """``_room_of_conversation``, and whether the conversation is a 支线."""
+        known = self._conversation_rooms.get(conversation_id)
+        if known is not None:
+            return known
         async with self._sessions() as session:
-            task = await TaskService(session).open_by_thread_label(
-                room_id=topic_id, thread_label=thread_label
-            )
-        return task.id if task is not None else None
+            place = await PlaceResolver(session).conversation(conversation_id)
+        answer = (
+            (place.room_id, place.inner_id, place.thread is not None)
+            if place is not None
+            else (conversation_id, None, False)
+        )
+        if len(self._conversation_rooms) >= _CONVERSATION_ROOMS_KEPT:
+            self._conversation_rooms.pop(next(iter(self._conversation_rooms)))
+        self._conversation_rooms[conversation_id] = answer
+        return answer
+
+    async def thread_replied(self, conversation_id: uuid.UUID) -> None:
+        """A message landed in ``conversation_id``: when that is a 支线, its
+        channel's main line shows the 支线 grown."""
+        from app.domain.agent.runtime import announce_stale
+
+        room, _inner, thread = await self._conversation_place(conversation_id)
+        if thread:
+            await announce_stale(room, "threads")
+
+    def forget_conversation(self, conversation_id: uuid.UUID) -> None:
+        """A task moved to another room: read its room again next time."""
+        self._conversation_rooms.pop(conversation_id, None)
 
     async def _begin_self_started_turn(
         self,
@@ -1691,7 +1541,7 @@ class ChatService(SessionRecovery, RoomTurns):
 
         try:
             async with self._sessions() as session:
-                place = await PlaceResolver(session).resolve(topic_id)
+                place = await PlaceResolver(session).conversation(topic_id)
                 if place is None:
                     return None
                 topic = place.room
@@ -1699,12 +1549,16 @@ class ChatService(SessionRecovery, RoomTurns):
                 if project is None:
                     return None
                 agents = AgentInstanceService(session)
-                agent = await self._session_agent(agents, topic, project, agent_handle)
+                agent = (
+                    await self._agent_at(session, place)
+                    if place.task is not None and agent_handle is None
+                    else await self._session_agent(agents, topic, project, agent_handle)
+                )
                 agent_pool = memory_pool(topic.project_id, agent)
                 # 署这个会话所属队友的名，不是房间的默认队友：一间坐着几位队友
                 # 的房间里，别人的会话自己开的一轮署成默认那位，现场和「正在处
                 # 理」就会把干活的人认错。
-                acting_agent = await self._acting_handle(session, topic_id, agent)
+                acting_agent = await self._acting_handle(session, place.room_id, agent)
                 # Read whether or not this process opened it: a session keeps
                 # working across a backend restart, and the process that fed or
                 # first saw the turn wrote what it knew on the row.
@@ -1749,7 +1603,7 @@ class ChatService(SessionRecovery, RoomTurns):
             started_at=row.started_at if row is not None else datetime.now(UTC),
             agent_instance_handle=agent.handle,
             known_commits=asyncio.ensure_future(
-                self._known_commits(project_id, topic_id)
+                self._known_commits(project_id, place.room_id)
             ),
             self_started=not opened,
         )
@@ -1787,8 +1641,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 return
             block = await blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=state.acting_agent,
                 author_type=AuthorType.platform,
                 content=say(_ACTION_LABEL[resource], actor=f"<@{state.acting_agent}>"),
@@ -1966,7 +1819,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 await complete_work_inputs(
                     session,
                     project_id=state.project_id,
-                    topic_id=state.topic_id,
+                    conversation_id=state.topic_id,
                     recipient_handle=result.agent_handle,
                     harness=result.harness,
                     native_session_id=result.session_id,
@@ -2013,10 +1866,17 @@ class ChatService(SessionRecovery, RoomTurns):
                 await blocks.mark_consumed(fed, state.work_id)
             await session.commit()
 
-        changeset = await self._turn_changeset(
-            state.project_id,
-            state.topic_id,
-            None if state.known_commits is None else await state.known_commits,
+        # A task's changes are its branch's, shown on the task; the room's
+        # change summary reads the room's checkout.
+        _room, inner_id = await self._room_of_conversation(state.topic_id)
+        changeset = (
+            await self._turn_changeset(
+                state.project_id,
+                state.topic_id,
+                None if state.known_commits is None else await state.known_commits,
+            )
+            if inner_id is None
+            else None
         )
         if changeset is not None:
             payload = await self._persist_change_summary(
@@ -2050,12 +1910,13 @@ class ChatService(SessionRecovery, RoomTurns):
         """
         async with self._sessions() as session:
             blocks = BlockRepository(session)
-            place = await PlaceResolver(session).resolve(topic_id)
+            # A room's own line, or a task's conversation in it.
+            place = await PlaceResolver(session).conversation(topic_id)
             if place is None:
                 raise NotFoundError("Topic not found")
             topic = place.room
             delivery_key = (
-                action_key(place.room_id, "chat_message", author, client_id)
+                action_key(place.conversation_id, "chat_message", author, client_id)
                 if client_id
                 else None
             )
@@ -2063,7 +1924,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 session,
                 delivery_key,
                 action="chat_message",
-                scope_id=str(place.room_id),
+                scope_id=str(place.conversation_id),
             ):
                 stored = await idem.stored_result(session, delivery_key)
                 if stored is None:
@@ -2105,7 +1966,7 @@ class ChatService(SessionRecovery, RoomTurns):
             project = await ProjectRepository(session).get(topic.project_id)
             if project is None:
                 raise NotFoundError("Project not found")
-            agent = await AgentInstanceService(session).for_topic(topic, project)
+            agent = await self._agent_at(session, place)
             mentions = await person_mentions(
                 session, topic, content, agent, dm=_is_dm(topic)
             )
@@ -2128,7 +1989,10 @@ class ChatService(SessionRecovery, RoomTurns):
             recipient = {
                 "instance_id": str(agent.instance_id),
                 "handle": agent.handle,
-                "mentioned": seats is not None and looks_like_agent_handle(seats[1]),
+                # In a task the owner talks to its agent and nobody else, so
+                # every message is addressed to it, as in a private chat with one.
+                "mentioned": place.task is not None
+                or (seats is not None and looks_like_agent_handle(seats[1])),
             }
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
@@ -2142,7 +2006,7 @@ class ChatService(SessionRecovery, RoomTurns):
             reply_uuid = _parse_uuid(reply_to)
             if reply_uuid is not None:
                 parent = await blocks.get(reply_uuid)
-                if parent is None or parent.topic_id != topic.id:
+                if parent is None or parent.conversation_id != place.conversation_id:
                     logger.warning(
                         "dropped cross-topic reply_to (topic=%s, reply_to=%s)",
                         topic_id,
@@ -2170,7 +2034,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     # so the recipient resolved above is already the right one.
                 user_block = await blocks.add(
                     project_id=topic.project_id,
-                    topic_id=place.room_id,
+                    conversation_id=place.conversation_id,
                     author=author,
                     author_type=AuthorType.participant,
                     content=content,
@@ -2201,11 +2065,13 @@ class ChatService(SessionRecovery, RoomTurns):
                     # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
                     # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
                     from app.domain.delivery.mention import record_mentions
+                    from app.domain.thread.services import answered_in
 
                     await record_mentions(
                         session,
                         project_id=topic.project_id,
                         room_id=place.room_id,
+                        conversation_id=await answered_in(session, user_block),
                         block_id=user_block.id,
                         author=author,
                         content=content,
@@ -2222,7 +2088,7 @@ class ChatService(SessionRecovery, RoomTurns):
             for index, att in enumerate(attachments or []):
                 att_block = await blocks.add(
                     project_id=topic.project_id,
-                    topic_id=place.room_id,
+                    conversation_id=place.conversation_id,
                     author=author,
                     author_type=AuthorType.participant,
                     content=str(att.get("path") or ""),
@@ -2264,9 +2130,10 @@ class ChatService(SessionRecovery, RoomTurns):
                     },
                 )
             await session.commit()
-        # A person's words are what a room gets named by (topic/naming.py).
-        if names_a_person(author):
-            naming.nudge(place.room_id, "message")
+        # A person's words are what a task gets named by (room_task/naming.py).
+        if names_a_person(author) and place.task is not None:
+            naming.nudge(place.task.id, "message")
+        await self.thread_replied(place.conversation_id)
         return payloads, anchor_id, block_ids, False
 
     async def ack_summon(
@@ -2347,7 +2214,7 @@ class ChatService(SessionRecovery, RoomTurns):
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         publish: bool = False,
         author: str | None = None,
         publication_id: str | None = None,
@@ -2380,7 +2247,7 @@ class ChatService(SessionRecovery, RoomTurns):
         # 当成助手输出印了出来。拦在这里而不是调用方:每一条写入路都经过这个方法,
         # 拦在门口才不会有一条漏网。
         as_progress = not publish
-        as_notice = None if publish else _cli_notice(text)
+        as_notice = None if publish else cli_notice(text)
         if as_notice is not None:
             line, notice_meta = as_notice
             return await self._persist_room_event(
@@ -2393,7 +2260,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 platform_unsolicited=platform_unsolicited,
                 in_room=True,
                 author_type=AuthorType.platform,
-                task_id=task_id,
+                inner_id=inner_id,
             )
         meta: dict | None = (
             {"in_room": False, "progress": True} if as_progress else None
@@ -2475,19 +2342,18 @@ class ChatService(SessionRecovery, RoomTurns):
             ):
                 return None
             author = author or await self._agent_handle(session, topic_id)
-            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
             # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
             # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
             landed = landing(
-                EventAbout.task if task_id is not None else EventAbout.room,
+                EventAbout.task if inner_id is not None else EventAbout.room,
                 project_id=project_id,
                 room_id=topic_id,
-                task_id=task_id,
+                task_id=inner_id,
             )
             block = await blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=author,
                 author_type=AuthorType.participant,
                 content=text,
@@ -2513,7 +2379,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     {"input": publication_input, "block": payload},
                 )
             await session.commit()
-        if publish and task_id is None:
+        if publish:
             # The caller attributes the publication to a turn when it can; an
             # agent running off this process (a remote executor) publishes over
             # HTTP, where the runner knows no live work and hands in None. Its
@@ -2527,9 +2393,10 @@ class ChatService(SessionRecovery, RoomTurns):
             # publisher's. Without a fallback at all, every remote publication
             # missed `last_chat_at` and the sweep kept "reminding" a turn that
             # had just spoken, counting the silence from turn start.
-            work_id = turn_id or self._attributed_work_id(topic_id, author)
+            conversation_id = inner_id or topic_id
+            work_id = turn_id or self._attributed_work_id(conversation_id, author)
             state = (
-                self._hook_work.get((topic_id, work_id))
+                self._hook_work.get((conversation_id, work_id))
                 if work_id is not None
                 else None
             )
@@ -2563,7 +2430,7 @@ class ChatService(SessionRecovery, RoomTurns):
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         platform_unsolicited: bool = False,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         author: str | None = None,
         at: datetime | None = None,
     ) -> dict | None:
@@ -2578,7 +2445,7 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id=turn_id,
             eid=eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
             author=author,
             at=at,
         )
@@ -2604,7 +2471,7 @@ class ChatService(SessionRecovery, RoomTurns):
         event: AgentRetrying,
         *,
         author: str | None,
-        task_id: uuid.UUID | None,
+        inner_id: uuid.UUID | None,
         channel: str,
     ) -> None:
         """Say the turn is retrying a failed request (hook_stream.py)."""
@@ -2615,7 +2482,7 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id,
             event,
             author=author,
-            task_id=task_id,
+            inner_id=inner_id,
             channel=channel,
         )
 
@@ -2656,7 +2523,7 @@ class ChatService(SessionRecovery, RoomTurns):
         meta: dict,
         *,
         author: str | None,
-        task_id: uuid.UUID | None,
+        inner_id: uuid.UUID | None,
         channel: str,
     ) -> None:
         """Land the turn's notice of this kind, or restate it (hook_stream.py)."""
@@ -2668,7 +2535,7 @@ class ChatService(SessionRecovery, RoomTurns):
             content,
             meta,
             author=author,
-            task_id=task_id,
+            inner_id=inner_id,
             channel=channel,
         )
 
@@ -2690,7 +2557,7 @@ class ChatService(SessionRecovery, RoomTurns):
         platform_unsolicited: bool = False,
         in_room: bool = False,
         author_type: AuthorType = AuthorType.participant,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         author: str | None = None,
         at: datetime | None = None,
     ) -> dict | None:
@@ -2706,7 +2573,7 @@ class ChatService(SessionRecovery, RoomTurns):
             platform_unsolicited=platform_unsolicited,
             in_room=in_room,
             author_type=author_type,
-            task_id=task_id,
+            inner_id=inner_id,
             author=author,
             at=at,
         )
@@ -2720,7 +2587,7 @@ class ChatService(SessionRecovery, RoomTurns):
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         platform_unsolicited: bool = False,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
     ) -> dict | None:
         return await _persist_subagent_result(
             self._sessions,
@@ -2731,58 +2598,7 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id=turn_id,
             eid=eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
-        )
-
-    async def _persist_worker_event(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        event: AgentSubagentStart | AgentSubagentStop,
-        task_id: uuid.UUID | None,
-        turn_id: uuid.UUID | None,
-        eid: str | None = None,
-        platform_unsolicited: bool = False,
-    ) -> dict | None:
-        return await _persist_worker_event(
-            self._sessions,
-            self._hook_work,
-            self._active_turn_ids,
-            project_id=project_id,
-            topic_id=topic_id,
-            event=event,
-            task_id=task_id,
-            turn_id=turn_id,
-            eid=eid,
-            platform_unsolicited=platform_unsolicited,
-        )
-
-    async def _note_worker(
-        self,
-        task_id: uuid.UUID,
-        subagent_id: str,
-        *,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None,
-        parent_session_id: str | None,
-    ) -> None:
-        return await _note_worker(
-            self._sessions,
-            self._hook_work,
-            self._active_turn_ids,
-            task_id,
-            subagent_id,
-            topic_id=topic_id,
-            turn_id=turn_id,
-            parent_session_id=parent_session_id,
-        )
-
-    async def _record_conclusion(self, task_id: uuid.UUID, text: str) -> None:
-        return await _record_conclusion(
-            self._sessions,
-            task_id,
-            text,
+            inner_id=inner_id,
         )
 
     async def _turn_changeset(
@@ -2934,7 +2750,7 @@ class ChatService(SessionRecovery, RoomTurns):
         session: AsyncSession,
         *,
         project: Project,
-        room_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         room_doc: str | None,
         overview_doc: str | None,
         all_topics: list[Topic],
@@ -2948,7 +2764,7 @@ class ChatService(SessionRecovery, RoomTurns):
         return await project_overview(
             session,
             project=project,
-            room_id=room_id,
+            conversation_id=conversation_id,
             room_doc=room_doc,
             overview_doc=overview_doc,
             all_topics=all_topics,
@@ -2990,11 +2806,12 @@ async def text_as_sent(
     publication rewrite, with the arguments a publication passes (no roster, no
     topic list). A person's goes through `person_mentions`, as
     `post_user_message` does."""
-    topic = await TopicRepository(session).get(block.topic_id)
-    if topic is None:
+    place = await PlaceResolver(session).conversation(block.conversation_id)
+    if place is None:
         raise NotFoundError("Topic not found")
+    topic = place.room
     by_agent = await TopicMemberService(session).holds_an_agent_seat(topic, author)
-    if block.task_id is not None:
+    if place.task is not None:
         text = await project_refs_text(session, topic.project_id, topic.id, content)
         return SentText(topic, text, None, by_agent)
     if by_agent:

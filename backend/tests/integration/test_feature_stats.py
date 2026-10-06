@@ -30,8 +30,13 @@ from app.core.config import settings
 from app.domain.docs_site import visits
 from app.domain.docs_site.assistant import purge_old_questions
 from app.domain.docs_site.models import DocsQuestion, DocsVisit
-from tests.conftest import seed_user
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    docs_cookie,
+    docs_sign_in,
+    on_docs,
+    session_auth_headers,
+    sign_in,
+)
 
 ADMIN = "feature-stats-admin"
 STRANGER = "feature-stats-stranger"
@@ -399,10 +404,9 @@ def test_a_visitor_is_counted_once_a_day(client):
     assert len(_visit_rows(client)) == 2
 
 
-def test_a_signed_in_visitor_is_counted_by_account_not_by_browser(client):
-    """同一个账号换一个浏览器来，还是同一个人。"""
-    token = seed_user(client, ASKER_ONE)
-    headers = {"Authorization": f"Bearer {token}"}
+def test_a_signed_in_visitor_is_counted_by_account_not_by_browser(client, docs_host):
+    """同一个账号换一个浏览器来，还是同一个人。登录看的是文档站自己的 cookie。"""
+    headers = on_docs(docs_cookie(docs_sign_in(client, sign_in(client, ASKER_ONE))))
 
     client.post("/docs/visit", json={"visitor": "aaaabbbbcccc"}, headers=headers)
     client.post("/docs/visit", json={"visitor": "zzzzyyyyxxxx"}, headers=headers)

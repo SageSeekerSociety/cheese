@@ -33,8 +33,12 @@ export const SPLIT_LIST_WIDTH = 320
  */
 export const COMPACT_DESKTOP_MAX_WIDTH = 1180
 
-/** 两栏时左边留着话题列表的那几层：列表本身，和从列表打开的房间。 */
-const SPLIT_ROUTES: ReadonlySet<RouteRecordNameGeneric> = new Set(['workspace-project', 'workspace-topic'])
+/** 两栏时左边留着话题列表的那几层：列表本身，和从列表打开的房间、任务。 */
+const SPLIT_ROUTES: ReadonlySet<RouteRecordNameGeneric> = new Set([
+  'workspace-project',
+  'workspace-topic',
+  'workspace-task',
+])
 
 export function workspaceLayout(width: number, desktop: boolean): WorkspaceLayout {
   if (desktop) return 'desktop'

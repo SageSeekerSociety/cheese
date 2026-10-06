@@ -40,11 +40,10 @@ class WaitingItem:
     project_name: str
     topic_id: uuid.UUID
     topic_title: str
-    #: `placeholder`：房间/活还没起名，读者的屏幕按语言说「新话题」「新任务」。
-    topic_title_source: str
     #: 这是房间自己的事（None），还是房间里某一条活的事。
     task_id: uuid.UUID | None
     task_title: str | None
+    #: `placeholder`：这条活还没起名，读者的屏幕按语言说「新任务」。
     task_title_source: str | None
     #: 看板算的那一格 —— 和项目看板上同一个函数、同一句话（短语的码）。
     phrase: str
@@ -53,6 +52,8 @@ class WaitingItem:
     #: 排序用：这件事最后一次动是什么时候。
     at: datetime
     block_id: uuid.UUID | None = None
+    #: The 支线 the question was asked in, when it was: the item opens there.
+    thread_id: uuid.UUID | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -60,12 +61,12 @@ class WaitingItem:
             "projectName": self.project_name,
             "topicId": str(self.topic_id),
             "topicTitle": self.topic_title,
-            "topicTitleSource": self.topic_title_source,
             "taskId": None if self.task_id is None else str(self.task_id),
             "taskTitle": self.task_title,
             "taskTitleSource": self.task_title_source,
             "phrase": self.phrase,
             "reason": self.reason,
             "blockId": str(self.block_id) if self.block_id else None,
+            "threadId": str(self.thread_id) if self.thread_id else None,
             "at": self.at.isoformat(),
         }

@@ -10,6 +10,7 @@ gets their own groups; a settled group stops being one.
 
 from tests.ask_fixtures import active_ask
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_project,
     room_agent_seat,
@@ -45,6 +46,8 @@ def test_only_the_addressees_open_groups_are_listed(client, stub_hooks, monkeypa
     )
     assert added.status_code == 200, added.text
 
+    # 芝士在支线里回答，题也在那里问。
+    room = in_thread(client, room, "alice")
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
         made = client.post(
             f"/topics/{room}/asks",

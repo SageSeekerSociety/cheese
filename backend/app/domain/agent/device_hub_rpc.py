@@ -325,6 +325,12 @@ class RemoteDeviceHub:
     def device_name(self, device_id: str) -> str:
         return self._devices.get(device_id, {}).get("name") or device_id
 
+    def target(self, device_id: str) -> str:
+        # "" also while the owner runs a release older than its snapshot
+        # carrying `target`: ordinary deploys leave the owner running, and ""
+        # is what `DeviceHub.target` answers before a machine says hello.
+        return self._devices.get(device_id, {}).get("target") or ""
+
     def last_seen_age(self, device_id: str) -> float | None:
         return self._devices.get(device_id, {}).get("last_seen_age")
 
@@ -379,6 +385,18 @@ class RemoteDeviceHub:
 
     async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
         return await self._call("list_screens", {"device_id": device_id})
+
+    async def push_local_fs_grants(
+        self,
+        device_id: str,
+        grants: list[dict[str, Any]],
+        *,
+        timeout: float = 20,
+    ) -> dict[str, Any]:
+        return await self._call(
+            "push_local_fs_grants",
+            {"device_id": device_id, "grants": grants, "timeout": timeout},
+        )
 
     async def exec(
         self,

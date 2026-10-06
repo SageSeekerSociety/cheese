@@ -22,7 +22,7 @@ from app.api.deps import get_chat_service
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.domain.agent.chat import ChatService
-from app.domain.agent.liveness import task_liveness
+from app.domain.agent.liveness import running_tasks
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.project.repositories import ProjectRepository
@@ -31,6 +31,7 @@ from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import awaiting, presentation
 from app.domain.room_task.repositories import TaskRepository
+from app.domain.thread.services import onto_rooms, threads_of_rooms
 from app.domain.topic.repositories import TopicRepository
 
 router = APIRouter(prefix="/awaiting-me", tags=["awaiting"])
@@ -103,14 +104,20 @@ async def waiting_items(
     beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
     # {地点: 这道题在等谁}。一个待确认问题只有**发起那一轮的人**能回答，提问那一刻
     # 就记在题上——不是事后去问轮次：芝士问完就收尾，那一轮早就关了。
-    room_questions, task_questions = await blocks.awaiting_answer_blocks(
-        topic_ids, task_ids
+    # A question asked in a 支线 is its channel's, and opens on that 支线.
+    thread_rooms = await threads_of_rooms(db, topic_ids)
+    in_threads = await blocks.awaiting_answer_blocks(list(thread_rooms))
+    asked_in_thread = {
+        room: thread for thread, room in thread_rooms.items() if thread in in_threads
+    }
+    questions = onto_rooms(
+        await blocks.awaiting_answer_blocks(topic_ids + task_ids) | in_threads,
+        thread_rooms,
     )
-    asked_tasks = {place: question[0] for place, question in task_questions.items()}
-    asked_rooms = {place: question[0] for place, question in room_questions.items()}
+    asked = {place: question[0] for place, question in questions.items()}
     # 「运行中」也在这一页出现（一列里的每一格都是同一个函数算的），所以这一屏每行
-    # 要的两位当下事实也一次问完 —— 这批活的屏幕和分身（`agent.liveness`）。
-    live = await task_liveness(chat, db, tasks)
+    # 要的当下事实也一次问完 —— 这批任务有没有一轮在跑（`agent.liveness`）。
+    running = await running_tasks(chat, db, tasks)
     # 一次，给整份清单用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
 
@@ -120,10 +127,8 @@ async def waiting_items(
             presentation.facts_for_task(
                 task,
                 task_cards.get(task.id),
-                beats.get(task.id),
-                room_screen_live=live[task.id].screen,
-                worker_live=live[task.id].worker,
-                awaiting_answer=task.id in asked_tasks,
+                running=task.id in running,
+                awaiting_answer=task.id in asked,
             ),
             now=now,
         )
@@ -132,7 +137,7 @@ async def waiting_items(
             Event(
                 reviewers=() if card is None else (card.reviewer_handle,),
                 reporter=task.reporter_handle,
-                asked=asked_tasks.get(task.id),
+                asked=asked.get(task.id),
             ),
             hand_of(shown.column),
         )
@@ -146,14 +151,13 @@ async def waiting_items(
                 project_name=names.get(task.project_id, ""),
                 topic_id=task.room_id,
                 topic_title=room.title if room else "",
-                topic_title_source=str(room.title_source) if room else "human",
                 task_id=task.id,
                 task_title=task.title,
                 task_title_source=str(task.title_source),
                 phrase=shown.phrase,
                 reason=reason,
                 at=beats.get(task.id) or task.updated_at,
-                block_id=task_questions[task.id][1] if reason == "asked" else None,
+                block_id=questions[task.id][1] if reason == "asked" else None,
             )
         )
 
@@ -165,7 +169,7 @@ async def waiting_items(
                 # building，所以那个答案不会进来，这里不需要问它。
                 set(),
                 room_cards.get(topic.id),
-                awaiting_answer=topic.id in asked_rooms,
+                awaiting_answer=topic.id in asked,
             ),
             now=now,
         )
@@ -174,7 +178,7 @@ async def waiting_items(
             # 房间没有「提需求的人」这一栏 —— 那是一条活上的字段。
             Event(
                 reviewers=() if card is None else (card.reviewer_handle,),
-                asked=asked_rooms.get(topic.id),
+                asked=asked.get(topic.id),
             ),
             hand_of(shown.column),
         )
@@ -187,14 +191,14 @@ async def waiting_items(
                 project_name=names.get(topic.project_id, ""),
                 topic_id=topic.id,
                 topic_title=topic.title,
-                topic_title_source=str(topic.title_source),
                 task_id=None,
                 task_title=None,
                 task_title_source=None,
                 phrase=shown.phrase,
                 reason=reason,
                 at=topic.updated_at,
-                block_id=room_questions[topic.id][1] if reason == "asked" else None,
+                block_id=questions[topic.id][1] if reason == "asked" else None,
+                thread_id=asked_in_thread.get(topic.id) if reason == "asked" else None,
             )
         )
 

@@ -104,13 +104,21 @@ def socket_path(state: Path) -> str:
 # The rule is decided here, once for every harness: which input owes an answer
 # (the platform says so when it delivers a person's message; a platform notice
 # owes nothing), from when (the moment the harness accepts it), what answers it
-# (`REPLY_TOOLS`), what the refusal says (`REPLY_OWED`), and when it lapses (the
+# (`REPLY_TOOLS`), what may still be read on the way to answering
+# (`REPLY_READS`), what the refusal says (`REPLY_OWED`), and when it lapses (the
 # turn ends with nothing unread). What differs is only where each harness lets a
 # tool call be refused, so each harness's tool path reads the file below and
 # refuses on its word: Claude Code's function hook (`remote_execution/
 # proxy.js`), Codex's dynamic-tool handler (`codex/tools.py`) and pi's extension
 # (`pi/platform.ts`). A subagent is never held to it: it reports to the agent
 # that started it, not to the room.
+#
+# Reading the room is part of answering it, so the room's own record stays
+# open. The refusal can reach the model before the person's words do, and a
+# person's message is often only a mention pointing at what they wrote above
+# it: with the room closed too, the session could only say that it had not
+# read them yet. Every other read stays refused — a file, a command, the
+# project's status: that is the work the person was waiting behind.
 #
 # Nor may the turn simply end with the person unanswered — a model that calls no
 # tool at all is refused nothing. The tool path that lets the reply through
@@ -126,11 +134,20 @@ def socket_path(state: Path) -> str:
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
 #: The platform tools that answer a person, by their name in the tool table.
 REPLY_TOOLS = ("chat_send", "cheese_ask")
+#: The platform tools that read the room's own messages: let through, and no answer.
+REPLY_READS = (
+    "cheese_chat_list",
+    "cheese_chat_get",
+    "cheese_chat_search",
+    "cheese_chat_replies",
+)
 REPLY_OWED = (
-    "A person in this room has sent a message you have not answered yet. "
-    "Reply to it in the room with chat_send first (or ask them with "
+    "A person in this conversation has sent a message you have not answered yet. "
+    "Reply to it in the conversation with chat_send first (or ask them with "
     "cheese_ask): answer it if you can; otherwise say what you understood and "
-    "what you will do next — and if they asked you to stop, stop. Every other "
+    "what you will do next — and if they asked you to stop, stop. If you have "
+    "not seen what they wrote, read the conversation with cheese_chat_list (or "
+    "cheese_chat_get / cheese_chat_search / cheese_chat_replies); every other "
     "tool is refused until you have replied."
 )
 
@@ -154,8 +171,9 @@ def reply_answered_path(state: Path) -> Path:
 def reply_owed(path: str | Path | None) -> dict | None:
     """What the file says is owed, or None when nothing is.
 
-    ``{"id": the input that owes it, "answers": REPLY_TOOLS, "reason":
-    REPLY_OWED}`` — everything a tool path needs to refuse, so none of them
+    ``{"id": the input that owes it, "answers": REPLY_TOOLS, "reads":
+    REPLY_READS, "reason": REPLY_OWED}`` — everything a tool path needs to
+    refuse, so none of them
     keeps a copy of the rule. Unreadable is nothing owed: a refusal nobody can
     explain would stop the session for good.
     """
@@ -235,6 +253,7 @@ class Runner(Generic[J]):  # noqa: UP046
                 {
                     "id": identifier,
                     "answers": list(REPLY_TOOLS),
+                    "reads": list(REPLY_READS),
                     "reason": REPLY_OWED,
                     # Where the tool path writes the id down once it lets a
                     # reply through (`insist`).

@@ -108,7 +108,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         async with factory() as session:
             turns = list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == topic_id)
+                    select(AgentTurn).where(AgentTurn.conversation_id == topic_id)
                 )
             )
         assert len(turns) == 1

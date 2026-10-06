@@ -20,6 +20,7 @@ from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -199,28 +200,6 @@ def test_an_agent_joins_a_room_through_its_roster(client):
         headers=session_auth_headers("u"),
     )
     assert r.status_code == 422, r.text
-
-
-def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
-    """This is the loop the split exists for: whatever the 分身 learns doing the
-    work lands in the SAME pool the room reads, so the room has it afterwards.
-
-    没有第二个 agent 要解析 —— 做这条活的分身跑在房间那一个会话里，它就是房间的
-    agent 在干活。所以「这条活归谁」不是一个问题，「它学到的东西进谁的池子」才是。
-    """
-    pid = _project(client)
-    reviewer = _add_agent(client, pid, handle="reviewer")
-    room = _topic(client, pid, "review room")
-    _seat(client, room, reviewer)
-
-    r = client.post(
-        f"/topics/{room}/split",
-        json=dict(reviewer_handle="alice", **{"title": "拆出来的活"}),
-    )
-    assert r.status_code == 200, r.text
-    # 一张卡不是地点：拆出来的活在房间那一个会话里做，记忆也从房间记。
-    _remember(client, pid, "分身查出来的事", agent=reviewer)
-    assert _pool(client, pid, agent=reviewer) == ["分身查出来的事"]
 
 
 def test_a_room_cannot_seat_another_projects_agent(client):
@@ -523,19 +502,21 @@ def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_hooks):
     room = _topic(client, pid, "two threads")
     reviewer = _add_agent(client, pid, handle="reviewer")
     seat = _seat(client, room, reviewer)
+    # Both answer in one 支线 of the room.
+    thread = in_thread(client, room, "u")
 
-    _turn(client, room, "你好")
+    _turn(client, thread, "你好")
     first_session = stub_hooks.last_resume_session_id
-    _turn(client, room, "再说一句")
+    _turn(client, thread, "再说一句")
     # 芝士 is resuming its own thread by now.
     assert stub_hooks.last_resume_session_id is not None
     cheese_session = stub_hooks.last_resume_session_id
     assert first_session is None
 
     # The reviewer starts a fresh conversation rather than inheriting 芝士's.
-    _turn(client, room, f"<@{seat}> 还在吗")
+    _turn(client, thread, f"<@{seat}> 还在吗")
     assert stub_hooks.last_resume_session_id is None
 
     # ...and 芝士's thread is still there when it is next up.
-    _turn(client, room, "我回来了")
+    _turn(client, thread, "我回来了")
     assert stub_hooks.last_resume_session_id == cheese_session

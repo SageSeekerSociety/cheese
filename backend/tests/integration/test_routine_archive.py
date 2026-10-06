@@ -51,7 +51,7 @@ def _stopped_lines(client, room) -> list:
     async def go(session):
         rows = await session.scalars(
             select(Block).where(
-                Block.topic_id == uuid.UUID(room), Block.kind == BlockKind.event
+                Block.conversation_id == uuid.UUID(room), Block.kind == BlockKind.event
             )
         )
         return [b for b in rows if b.meta.get("event_type") == "routine_stopped"]

@@ -244,7 +244,7 @@ def _worth_reporting(result: Any) -> bool:
 async def last_block_at(
     sessions: SessionFactory, topic_ids: set[uuid.UUID]
 ) -> dict[uuid.UUID, datetime]:
-    """Newest block timestamp per topic — the liveness probe the orphan sweep
+    """Newest block timestamp per conversation — the liveness probe the orphan sweep
     judges silence on. It is the same signal a human reads off the topic
     (「最后一块是几点」), which is what makes a sweep verdict checkable, and it is
     passed IN to `AgentWorkRunner.sweep_orphans` because the runner has no DB
@@ -258,9 +258,9 @@ async def last_block_at(
     async with sessions() as session:
         rows = (
             await session.execute(
-                select(Block.topic_id, func.max(Block.created_at))
-                .where(Block.topic_id.in_(topic_ids))
-                .group_by(Block.topic_id)
+                select(Block.conversation_id, func.max(Block.created_at))
+                .where(Block.conversation_id.in_(topic_ids))
+                .group_by(Block.conversation_id)
             )
         ).all()
     out: dict[uuid.UUID, datetime] = {}
@@ -338,6 +338,7 @@ def periodic_jobs(
     chat: "ChatService",
     machines: Sweeper,
     sandboxes: Sweeper,
+    compute: Sweeper,
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     """Every periodic job the platform runs, in one list.
@@ -426,6 +427,15 @@ def periodic_jobs(
             settings.orphan_sweep_interval_s,
             lambda: sweep_orphan_turns(chat),
         ),
+        # A message queued behind a turn starts when that turn's end nudges the
+        # scan. A nudge that finds the seat still busy is not repeated, so one
+        # missed wake-up left a message waiting until something unrelated woke
+        # the room (10.5 and 5.7 minutes on dev, 2026-10-05). This bounds that.
+        PeriodicRunner(
+            "queued message sweep",
+            settings.queued_message_sweep_interval_s,
+            lambda: get_work_runner().resume_lost_messages(chat, source="sweep"),
+        ),
         PeriodicRunner(
             "chat progress reminder",
             settings.chat_progress_check_interval_s,
@@ -453,6 +463,15 @@ def periodic_jobs(
             "cloud sandbox lifecycle",
             settings.machine_enroll_interval_seconds,
             sandboxes.sweep,
+        ),
+        # Cloud compute is charged in credits for the time each sandbox runs
+        # (usage/compute.py). Unlike the pool's plumbing it runs with or
+        # without MicroCloud configured: a run that was open when it was
+        # switched off still has to be closed and charged.
+        PeriodicRunner(
+            "cloud compute metering",
+            settings.machine_enroll_interval_seconds,
+            compute.sweep,
         ),
         PeriodicRunner(
             "cloud warm pool",

@@ -1,5 +1,5 @@
 // Preview-only sample reports. No production API or account data is used.
-import type { DocsAssistantReport, TopicNamingReport } from '@/views/admin/features/featureApi'
+import type { DocsAssistantReport, TaskNamingReport } from '@/views/admin/features/featureApi'
 
 export function featureReport(path: string, url: URL): { data: unknown } | undefined {
   const days = Number(url.searchParams.get('days') ?? 7)
@@ -7,13 +7,13 @@ export function featureReport(path: string, url: URL): { data: unknown } | undef
     new Date(Date.now() - (days - index - 1) * 86400000).toISOString().slice(0, 10)
   )
   const window = { days, start: dates[0], end: dates[dates.length - 1] }
-  if (path === '/admin/feature-stats/topic-naming') {
+  if (path === '/admin/feature-stats/task-naming') {
     const trend = dates.map((date, i) => ({ date, auto: 8 + (i % 5), person: i % 3 }))
     const auto = trend.reduce((sum, point) => sum + point.auto, 0)
     const person = trend.reduce((sum, point) => sum + point.person, 0)
-    const data: TopicNamingReport = {
+    const data: TaskNamingReport = {
       ...window,
-      id: 'topic-naming',
+      id: 'task-naming',
       title: '智能命名',
       summary: '房间自动命名的调用与标题变更',
       numbers: {
@@ -21,7 +21,7 @@ export function featureReport(path: string, url: URL): { data: unknown } | undef
         tokens: { value: 802900, prompt: 760000, completion: 42900, cache_read: 0 },
         cost: { usd: 0.2637, source: 'gateway', budget_usd: 5, budget_duration: '1d', key_spend_usd: 0.0151 },
         renames: { value: auto, name: auto - 12, calibrate: 8, follow: 4 },
-        person_edits: { value: person, rename: person - 1, undo: 1 },
+        person_edits: { value: person },
         overridden: { value: 1, named: 36, share: 1 / 36 },
       },
       trend,

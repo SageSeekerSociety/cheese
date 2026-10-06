@@ -265,6 +265,7 @@ async def retarget_completed_dependencies(
         notice,
     )
     from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
+    from app.domain.conversation.services import of_room
     from app.domain.idempotency import store as idem
     from app.domain.idempotency.keys import action_key
     from app.domain.review.models import AcceptCard, AcceptStatus
@@ -417,7 +418,7 @@ async def retarget_completed_dependencies(
                 parent_notices = await session.scalars(
                     select(Block)
                     .where(
-                        Block.topic_id == ancestor.room_id,
+                        of_room(Block.conversation_id, ancestor.room_id),
                         Block.meta["dependency_task_id"].as_string()
                         == str(ancestor.id),
                     )

@@ -183,14 +183,12 @@ class WorkIndex:
     async def _load(
         self, session: AsyncSession, topic_id: uuid.UUID
     ) -> list[tuple[datetime, uuid.UUID]]:
-        # The room's OWN line. A card's blocks sit under the same `topic_id`
-        # with a `task_id` on them, and they carry the room's turn ids — folding
-        # them in here would attribute the same turn twice.
+        # One conversation's own blocks: a task's sit under its own id, and
+        # folding them into the room's would attribute the same turn twice.
         stmt = (
             select(Block.turn_id, func.min(Block.created_at))
             .where(
-                Block.topic_id == topic_id,
-                Block.task_id.is_(None),
+                Block.conversation_id == topic_id,
                 Block.turn_id.is_not(None),
             )
             .group_by(Block.turn_id)

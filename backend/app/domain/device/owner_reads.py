@@ -33,7 +33,7 @@ used to read is dropped a release later still.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
@@ -87,6 +87,24 @@ async def project_member(
     )
 
 
+# Which room a task hangs in, read as two bare columns for the same reason as
+# everything else here.
+_tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
+_threads = table("threads", column("id", Uuid), column("room_id", Uuid))
+
+
+async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUID:
+    """The room a conversation is in: itself for a room, its room for a task
+    or a 支线."""
+    for inner in (_tasks, _threads):
+        room = await session.scalar(
+            select(inner.c.room_id).where(inner.c.id == conversation_id)
+        )
+        if room is not None:
+            return room
+    return conversation_id
+
+
 async def topic_member(session: AsyncSession, topic_id: uuid.UUID, handle: str) -> bool:
     return (
         await session.scalar(
@@ -105,7 +123,7 @@ async def project_owner(session: AsyncSession, project_id: uuid.UUID) -> str | N
     )
 
 
-async def legacy_execution(session: AsyncSession, place_id: uuid.UUID):
+async def legacy_execution(session: AsyncSession, conversation_id: uuid.UUID):
     """Only an un-upgraded lease can be addressed by a pre-session credential.
 
     A new session becoming the sole row never grants an old room token access.
@@ -116,7 +134,7 @@ async def legacy_execution(session: AsyncSession, place_id: uuid.UUID):
             select(
                 AgentSession.id, AgentSession.runtime_location, AgentSession.work_lease
             )
-            .where(AgentSession.topic_id == place_id)
+            .where(AgentSession.conversation_id == conversation_id)
             .with_for_update()
         )
     ).all()
@@ -131,14 +149,17 @@ async def legacy_execution(session: AsyncSession, place_id: uuid.UUID):
     return legacy[0] if len(legacy) == 1 else None
 
 
-async def session_execution(
-    session: AsyncSession, place_id: uuid.UUID, session_id: uuid.UUID
-):
-    """Read exactly the session named by the signed execution credential."""
+async def session_execution(session: AsyncSession, session_id: uuid.UUID):
+    """Read exactly the session named by the signed execution credential. The
+    caller checks it is the credential's conversation's."""
     return (
         await session.execute(
-            select(AgentSession.runtime_location, AgentSession.work_lease)
-            .where(AgentSession.topic_id == place_id, AgentSession.id == session_id)
+            select(
+                AgentSession.runtime_location,
+                AgentSession.work_lease,
+                AgentSession.conversation_id,
+            )
+            .where(AgentSession.id == session_id)
             .with_for_update()
         )
     ).one_or_none()

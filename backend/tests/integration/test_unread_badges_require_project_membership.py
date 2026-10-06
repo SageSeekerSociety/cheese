@@ -60,7 +60,7 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
         async with client.test_factory() as session:
             await BlockRepository(session).add(
                 project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(topic_id),
+                conversation_id=uuid.UUID(topic_id),
                 author=author,
                 author_type=AuthorType.participant,
                 content="msg",

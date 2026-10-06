@@ -17,6 +17,7 @@ import { createPinia } from 'pinia'
 
 import i18n from '@/i18n'
 import vuetify from '@/plugins/vuetify'
+import { applyResolvedTheme } from '@/theme'
 import DemoCatalog from '@/views/demo/DemoCatalog.vue'
 import { demoRouter } from '@/views/demo/demoRouter'
 import DemoView from '@/views/demo/DemoView.vue'
@@ -28,6 +29,15 @@ const catalog = /^\/demo\/catalog(\/|$)/.test(location.pathname)
 // 那时按 `/` 去选页会落到 DemoView 上、它不认识这个地址，结果一片空白——所以
 // 把 `/` 也算作预览站，并指到默认那条（提问接管输入框）。只在演示入口里有效。
 const root = location.pathname === '/' || location.pathname === '/index.html'
+
+// The docs page that embeds a demo says which theme it shows (?theme=). From the
+// docs' own host it keeps its preference in its own storage, which this origin
+// cannot read; the boot script in demo.html took it already, this tells Vuetify.
+const asked = new URLSearchParams(location.search).get('theme')
+if (asked === 'dark' || asked === 'light') {
+  applyResolvedTheme(asked)
+  vuetify.theme.global.name.value = asked
+}
 
 createApp(catalog || root ? (DemoCatalog as Component) : DemoView, {
   path: root ? '/demo/catalog/ask-takeover' : location.pathname,

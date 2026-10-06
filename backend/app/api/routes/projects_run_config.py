@@ -47,7 +47,7 @@ exactly where it was. `.importlinter` is untouched.
 Ordering. This module sorts after `projects_artifacts.py` (`projects_a` <
 `projects_r`) and before `push.py`, so its paths mount later in the route table
 than they did inside projects.py -- no longer between `/forge-attribution` and
-`/topic-naming`, but after every path that stays plus every artifact path, up to
+`/task-naming`, but after every path that stays plus every artifact path, up to
 `PUT /projects/{project_id}/upstream`. Every moved path carries a literal
 (`default-model`, `compute-configs`, `devices`/`sessions`, `tier-policy`) where
 each route that now precedes it carries a literal of its own, and no route
@@ -203,7 +203,7 @@ async def get_compute_configs(
     except ForbiddenError:
         can_manage = False
     devices = await sql_device_service(db).list_devices_for_project(project_id)
-    from app.domain.machine.session_work import project_distribution
+    from app.domain.machine.session_reports import project_distribution
 
     return ok(
         {
@@ -242,7 +242,7 @@ async def list_device_sessions(
     session in a room the caller cannot open is counted in ``hidden`` and not
     listed, so its room's title stays in that room.
     """
-    from app.domain.machine.session_work import device_sessions
+    from app.domain.machine.session_reports import device_sessions
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)

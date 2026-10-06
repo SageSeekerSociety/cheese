@@ -236,7 +236,7 @@ class RoutineService:
                 Block(
                     id=uuid.uuid4(),
                     project_id=row.project_id,
-                    topic_id=row.topic_id,
+                    conversation_id=row.topic_id,
                     author="system",
                     author_type=AuthorType.platform,
                     kind=BlockKind.event,
@@ -409,7 +409,7 @@ class RoutineService:
             already = await self._session.scalar(
                 select(Block.id)
                 .where(
-                    Block.topic_id == room.id,
+                    Block.conversation_id == room.id,
                     Block.meta["event_type"].as_string() == EVENT_ROUTINE_STOPPED,
                     Block.meta["archived_at"].as_string() == stamp,
                 )
@@ -421,7 +421,7 @@ class RoutineService:
                 Block(
                     id=uuid.uuid4(),
                     project_id=room.project_id,
-                    topic_id=room.id,
+                    conversation_id=room.id,
                     author="system",
                     author_type=AuthorType.platform,
                     kind=BlockKind.event,
@@ -585,7 +585,7 @@ async def _fire(
         Block(
             id=event_id,
             project_id=routine.project_id,
-            topic_id=routine.topic_id,
+            conversation_id=routine.topic_id,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,
@@ -624,7 +624,7 @@ async def _fire(
             },
             occurred_at=stamp,
         ),
-        topic_id=routine.topic_id,
+        conversation_id=routine.topic_id,
         instance_id=agent.id,
         content=content,
     )
@@ -674,15 +674,6 @@ async def _fire_schedules(session: AsyncSession) -> int:
     return fired
 
 
-async def _routine_turn_ids(session: AsyncSession, project_id: uuid.UUID) -> set:
-    rows = await session.scalars(
-        select(RoutineRun.turn_id)
-        .join(Routine, Routine.id == RoutineRun.routine_id)
-        .where(Routine.project_id == project_id, RoutineRun.turn_id.is_not(None))
-    )
-    return set(rows)
-
-
 async def _events_for(
     session: AsyncSession, routine: Routine, since: datetime
 ) -> list[tuple[str, str, datetime]]:
@@ -709,14 +700,9 @@ async def _events_for(
         )
         if in_room:
             query = query.where(Task.room_id == routine.topic_id)
-        own_turns = await _routine_turn_ids(session, routine.project_id)
+        # A task is created by a person (an agent only proposes one), so a
+        # routine run never opens work that would fire it again.
         for task in await session.scalars(query):
-            # Work a routine run started does not start routine work again.
-            if (
-                task.execution_turn_id is not None
-                and task.execution_turn_id in own_turns
-            ):
-                continue
             assert task.closed_at is not None
             found.append(
                 (
@@ -917,7 +903,7 @@ async def _announce_finished(session: AsyncSession) -> None:
             Block(
                 id=uuid.uuid4(),
                 project_id=routine.project_id,
-                topic_id=routine.topic_id,
+                conversation_id=routine.topic_id,
                 author="system",
                 author_type=AuthorType.platform,
                 kind=BlockKind.event,

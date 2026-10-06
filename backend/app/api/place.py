@@ -40,7 +40,9 @@ async def authorized_place(
     place = await TopicService(db).place_or_404(topic_id)
     if place.project_id != project_id:
         raise ForbiddenError(say("topicNotInUrlProject"))
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=project_id
+    )
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
     return place, actor
 
@@ -66,10 +68,28 @@ async def readable_rooms(
     """这个项目里 `actor` 读得了的房间，各自在别的清单里写成的样子（`room_ref`）。
 
     一样东西要说出它出自哪个房间时用：读不了的房间（别人的私聊）连名字也不该从
-    旁边漏出去，所以只给读得了的那些。名字连同 `title_source` 一起写出去：还没起名
-    的房间由读者的屏幕按语言叫「新话题」。"""
+    旁边漏出去，所以只给读得了的那些。"""
     rooms, _, _ = await TopicService(db).list_for_project(project_id)
     readable = await resolver.readable_topic_ids(
         actor, project_id=project_id, topics=rooms
     )
     return {room.id: room_ref(room) for room in rooms if room.id in readable}
+
+
+async def task_conversation(
+    db: AsyncSession, resolver: ActorResolver, conversation_id: uuid.UUID
+):
+    """The task this conversation id names, with who is calling — whoever may
+    see its room; 404 when the id is a room's or nobody's."""
+    from app.core.errors import NotFoundError
+
+    place = await TopicService(db).place_or_404(conversation_id)
+    if place.task is None:
+        raise NotFoundError(say("taskNotFound"))
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
+    return place, actor, place.task

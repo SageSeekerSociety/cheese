@@ -57,14 +57,15 @@ covers:
 | scoped auth 生效但调用方不能证明项目 | 401 `authentication_error` | `cheese: a valid scoped token is required` |
 | 判定 `reason_kind=BINDING` | 400 `invalid_request_error` | 判定里给的原因（模型不可用一类） |
 | 判定 `reason_kind=BUDGET` | 429 `billing_error`，带额度用完的头（见下） | `cheese project budget: …` |
-| 网关路上 LiteLLM 回 429 `budget_exceeded` | 同上，改写后再交给调用方 | `cheese project budget: 额度已用完。` |
+| 网关路上 LiteLLM 回 429，`message` 以 `Budget has been exceeded` 开头（`max_budget` 刹车） | 同上，改写后再交给调用方 | `cheese project budget: 额度已用完。` |
+| 网关路上 LiteLLM 回 429，`message` 里带上游的 `usage_limit_reached`（模型背后的订阅账号用完了套餐） | 同上，`resets_at` 写成 `retry-after` 和两个 `-reset` | `cheese: 模型 {group} 背后的订阅账号用量已到上限，北京时间…恢复。换一个模型可以继续。` |
 | 该走网关路但没路或项目没 key | 503 `api_error` | `…no model call was made` |
 | 滚动上限撞到 | 429 `rate_limit_error` | `cheese subscription cap reached: {used}/{cap} tokens in the last {n}h` |
 | 平台没有 Claude 登录 | 400 `invalid_request_error` | `cheese: the platform has no Claude login…` |
 | 登录过期、正在续 | 503 `api_error` | `…has expired and is being renewed; retry shortly` |
 | 问不到准入（fail-open）且没有凭证 | 503 `api_error` | `…could not say where this request goes…` |
 
-额度用完照 Claude Code 网关约定里「用户的额度到顶」那一种回（`_refuse_spent_budget`）：`x-should-retry: false`，`anthropic-ratelimit-unified-status: rejected`，`-overage-disabled-reason: org_spend_cap_reached`，利用率与阈值都写 1；准入给了 `reopens_at` 时再加 `retry-after` 和两个 `-reset`。带上 disabled-reason，Claude Code 把 `message` 原样打出来、不重试；只回一个 429，它会当成限流，重试十次，还打出「Server is temporarily limiting requests (not your usage limit)」，意思正好反了。`representative-claim` 和 `overage-status` 故意不带：带了它会换成自己的一句话，把我们的原因丢掉。网关那条要改写，是因为账本要等回合结束才记上花费，额度见底时拦下回合的往往是 LiteLLM 的 `max_budget`。
+额度用完照 Claude Code 网关约定里「用户的额度到顶」那一种回（`_refuse_reached_cap`）：`x-should-retry: false`，`anthropic-ratelimit-unified-status: rejected`，`-overage-disabled-reason: org_spend_cap_reached`，利用率与阈值都写 1；准入给了 `reopens_at` 时再加 `retry-after` 和两个 `-reset`。带上 disabled-reason，Claude Code 把 `message` 原样打出来、不重试；只回一个 429，它会当成限流，重试十次，还打出「Server is temporarily limiting requests (not your usage limit)」，意思正好反了。`representative-claim` 和 `overage-status` 故意不带：带了它会换成自己的一句话，把我们的原因丢掉。网关那两条要改写：LiteLLM 的 `/v1/messages` 不管什么原因，429 一律给 Anthropic 信封、`error.type` 写 `rate_limit_error`，原因只在 `message` 里（`_answer_a_reached_gateway_cap` 按 `message` 认）。`max_budget` 那条是因为账本要等回合结束才记上花费，额度见底时拦下回合的往往是它；订阅账号用完那条是因为回合内怎么重试都过不去，换模型才行。别的 429 是真限流，原样交给调用方。
 
 为什么过期给 503、没有给 400：Claude Code 对 5xx 会静默重试约三分钟，对 400 不重试。续期是等得好的，用 503；要人去登录的，用 400 立刻停下来把话说清楚。
 

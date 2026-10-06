@@ -132,7 +132,7 @@ def test_approvals_then_accept_merges(client):
     assert sorted(out["approvals"]) == ["alice", "bob"]
     assert (
         client.get(
-            f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}",
+            f"/topics/{delivery_task_id(client, tid)}/task",
             headers=delivery_headers(client, tid),
         ).json()["data"]["accepted_by"]
         == "alice"

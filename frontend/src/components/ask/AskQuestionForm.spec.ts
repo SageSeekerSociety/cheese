@@ -13,7 +13,7 @@ setLocale('zh-CN')
 afterEach(cleanup)
 const block = (): Block => ({
   id: 'q',
-  topic_id: 't',
+  conversation_id: 't',
   kind: 'message',
   content: 'Pick',
   author_type: 'participant',

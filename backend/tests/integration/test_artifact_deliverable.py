@@ -63,7 +63,7 @@ def _room(client, project_id: str, title: str = "做一个东西") -> str:
         async with client.test_factory() as session:
             room = await session.get(Topic, uuid.UUID(room_id))
             await AgentSessionService(session).remember_place(
-                topic_id=room.id,
+                conversation_id=room.id,
                 agent_handle="cheese",
                 work_lease={"kind": "device"},
                 runtime_location={
@@ -102,7 +102,7 @@ def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
         **declared,
     }
     response = client.post(
-        f"/topics/{room_id}/tasks/{task.id}/accept-card",
+        f"/topics/{task.id}/accept-card",
         headers=delivery_headers(client, room_id),
         json=body,
     )
@@ -539,7 +539,7 @@ def test_saying_a_field_is_null_hands_over_the_merge_like_leaving_it_out(client,
     task = delivery_task(client, room_id)
 
     filed = client.post(
-        f"/topics/{room_id}/tasks/{task.id}/accept-card",
+        f"/topics/{task.id}/accept-card",
         headers=delivery_headers(client, room_id),
         json={
             "change_subject": "chore(test): no artifact",
@@ -660,11 +660,7 @@ def test_each_version_names_its_room_only_to_readers_of_that_room(client):
         return r.json()["data"]["versions"][0]
 
     version = as_bob()
-    assert version["room"] == {
-        "id": room_id,
-        "title": "结题报告修订",
-        "title_source": "human",
-    }
+    assert version["room"] == {"id": room_id, "title": "结题报告修订"}
     assert version["bytes"] == len("第一版\n".encode())
 
     async def make_private():
