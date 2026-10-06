@@ -9,6 +9,7 @@ on it that it did not push.
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -482,6 +483,64 @@ def test_a_provider_that_keeps_failing_stops_the_pool_creating_hosts(pool):
     with pytest.raises(CloudKeepsFailing):
         pool.place("alice", alice)
     assert len(pool.cloud.created) == 3
+
+
+def _fail_hosts(pool, owner, session, count):
+    """``count`` hosts in a row that the provider builds into ``error``, each
+    then deleted at the provider and forgotten by it, as MicroCloud does."""
+    for _ in range(count):
+        host_id = pool.place(owner, session)
+        pool.cloud.machines[pool.host(host_id).machine_id]["status"] = "error"
+        pool.pool("refresh_due")
+        pool.pool("maintain")
+        pool.pool("refresh_due")
+
+
+def test_failures_still_count_after_the_provider_forgot_the_machines(pool, monkeypatch):
+    monkeypatch.setattr(settings, "microcloud_reconcile_interval_s", 0)
+    [alice] = pool.room("alice", 1)
+    _fail_hosts(pool, "alice", alice, 3)
+
+    with pytest.raises(CloudKeepsFailing):
+        pool.place("alice", alice)
+    assert len(pool.cloud.created) == 3
+
+
+def test_a_failing_provider_is_tried_again_after_the_probe_interval(pool, monkeypatch):
+    monkeypatch.setattr(settings, "microcloud_reconcile_interval_s", 0)
+    [alice] = pool.room("alice", 1)
+    _fail_hosts(pool, "alice", alice, 3)
+
+    async def six_minutes_ago():
+        async with pool.client.test_request_factory() as db:
+            for host in await db.scalars(
+                select(CloudHost).where(CloudHost.failed_at.is_not(None))
+            ):
+                host.failed_at -= timedelta(minutes=6)
+            await db.commit()
+
+    pool.run(six_minutes_ago)
+
+    probe = pool.place("alice", alice)
+
+    assert len(pool.cloud.created) == 4
+    assert pool.host(probe).failed_at is None
+
+
+def test_the_failure_that_stops_the_pool_is_reported_as_an_error(
+    pool, monkeypatch, caplog
+):
+    monkeypatch.setattr(settings, "microcloud_reconcile_interval_s", 0)
+    [alice] = pool.room("alice", 1)
+
+    with caplog.at_level(logging.WARNING, logger="cheese.machine"):
+        _fail_hosts(pool, "alice", alice, 2)
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        _fail_hosts(pool, "alice", alice, 1)
+
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "failed 3 hosts" in errors[0].getMessage()
 
 
 def test_the_room_hears_about_the_sandbox_not_the_host(pool):
