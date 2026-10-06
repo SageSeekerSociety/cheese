@@ -105,6 +105,29 @@ async def tell_archive_lost(session: AsyncSession, home: CloudHostHome) -> dict 
     )
 
 
+async def tell_restore_failed(
+    session: AsyncSession, home: CloudHostHome, reason: str = ""
+) -> dict | None:
+    """A restore that did not finish says so, in the machine's own words.
+
+    Without it the room keeps the ``sandboxRestoring`` line it was last given
+    and its timer goes on climbing: a restore that keeps failing looked exactly
+    like a restore that never ends, and the reason — which the tool call that
+    asked for it did get — reached nobody who was reading the room."""
+    said = reason.strip()[-1000:]
+    return await _line(
+        session,
+        home,
+        say("sandboxRestoreFailed"),
+        {
+            "event_type": "cloud_startup",
+            "severity": "warn",
+            "detail": said or None,
+            "detail_label": say("labelReason") if said else None,
+        },
+    )
+
+
 async def tell_vm_released(
     session: AsyncSession, home: CloudHostHome, minutes: int
 ) -> dict | None:
