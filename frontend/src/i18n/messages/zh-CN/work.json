@@ -302,6 +302,14 @@
       "steps": "{count} 步",
       "collapse": "收起",
       "expandAll": "展开全部（{count} 行）",
+      "phase": {
+        "queue": "排队",
+        "environment": "等环境",
+        "retry": "重试",
+        "work": "工作",
+        "span": "{phase} {span}",
+        "sep": " · "
+      },
       "record": {
         "queue": "排队",
         "delivery": "投递",

@@ -9,6 +9,8 @@
 import type { PanelSiteBundle } from '../../composables/usePanelSite'
 import type { AgentControlState, Block } from '../../cx_types'
 import type { MemberActivityLine } from '../../lib/memberActivity'
+import type { SiteTurn } from '../../lib/siteLog'
+import type { Phase, PhaseSpan } from '../../lib/sitePhases'
 
 import { computed, onUpdated, ref, useId } from 'vue'
 
@@ -27,6 +29,7 @@ import {
   isRunRecord,
   SITE_CLAMP_LINES,
 } from '../../lib/siteLog'
+import { turnPhases } from '../../lib/sitePhases'
 import { isPlatformEvent } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -218,6 +221,22 @@ function onSayClick(event: MouseEvent): void {
 }
 
 // 在跑的那一轮的起始时间由取数那一层从对话栏记下（`usePanelSite`），这里只管分组。
+// 每一轮顶上那根细条（lib/sitePhases）：分段和悬停时那一句。
+const PHASE_LABEL: Record<Phase, string> = {
+  queue: 'work.room.site.phase.queue',
+  environment: 'work.room.site.phase.environment',
+  retry: 'work.room.site.phase.retry',
+  work: 'work.room.site.phase.work',
+}
+function phasesOf(turn: SiteTurn<Block>): PhaseSpan[] {
+  return turnPhases(turn.entries, turnStarts.value[turn.key])
+}
+function phasesLabel(turn: SiteTurn<Block>): string {
+  return phasesOf(turn)
+    .map((p) => t('work.room.site.phase.span', { phase: t(PHASE_LABEL[p.phase]), span: formatSpan(p.seconds) }))
+    .join(t('work.room.site.phase.sep'))
+}
+
 const turns = computed(() => {
   const all = groupByTurn(visible.value, turnStarts.value)
   return props.onlyTurn ? all.filter((turn) => turn.key === props.onlyTurn) : all
@@ -306,6 +325,23 @@ function isLive(index: number): boolean {
               {{ t('work.room.site.steps', { count: turn.steps })
               }}<template v-if="turn.seconds > 0"> · {{ formatSpan(turn.seconds) }}</template>
             </span>
+          </div>
+          <!-- 这一轮的时间花在哪几段：排队、等环境、重试、干活。悬停看每段多久。 -->
+          <div
+            v-if="!turn.loose && phasesOf(turn).length"
+            class="turn__phases"
+            role="img"
+            :aria-label="phasesLabel(turn)"
+            :title="phasesLabel(turn)"
+            data-testid="turn-phases"
+          >
+            <span
+              v-for="p in phasesOf(turn)"
+              :key="p.phase"
+              class="turn__phase"
+              :class="`turn__phase--${p.phase}`"
+              :style="{ flexGrow: p.seconds }"
+            />
           </div>
           <template v-for="b in turn.entries" :key="b.id">
             <!-- 一步一行：动词成列，参数占满剩下的宽度，时间悬停才出现。参数太
@@ -511,6 +547,27 @@ function isLive(index: number): boolean {
   margin-bottom: 6px;
   font-size: 12px;
   color: var(--faint);
+}
+.turn__phases {
+  display: flex;
+  gap: 2px;
+  height: 4px;
+  margin: -2px 0 8px;
+}
+.turn__phase {
+  flex-basis: 0;
+  min-width: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--line-2);
+}
+.turn__phase--environment {
+  background: var(--faint);
+}
+.turn__phase--retry {
+  background: var(--warn);
+}
+.turn__phase--work {
+  background: var(--muted);
 }
 .turn__time {
   font-family: var(--font-mono);
