@@ -458,69 +458,6 @@ export async function listTopicNames(): Promise<TopicName[]> {
   return (await request<{ topics: TopicName[] }>('/topics/names')).topics
 }
 
-/** 项目里一次搜索的结果：只搜这个人能看的房间，每组最相关的在前。 */
-export interface ProjectSearchHits {
-  records: {
-    id: string
-    room_id: string
-    room_title: string
-    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'weekly'
-    author: string
-    created_at: string
-    /** 说在某件活的卡片里，而不是房间自己的对话里。 */
-    task_id: string | null
-    snippet: string
-  }[]
-  tasks: (Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'status'> & {
-    room_title: string
-    snippet: string
-  })[]
-  library: { path: string; bytes: number; modified: string }[]
-}
-
-/**
- * `only` 只搜这几类（`message`、`doc_node`…、`tasks`、`library`），并且可以用 `offset`
- * 往后翻；不给 `only` 就是每类各取前 `limit` 条。
- */
-export async function searchProject(
-  projectId: string,
-  q: string,
-  limit = 10,
-  page?: { only: string[]; offset: number }
-): Promise<ProjectSearchHits> {
-  return (await askProjectSearch(projectId, q, limit, page, false)).hits
-}
-
-/**
- * 同一次搜索，再带上每一类各能搜到多少（`message`、`doc`、`doc_node`、`comment`、
- * `weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
- */
-export async function searchProjectCounted(
-  projectId: string,
-  q: string,
-  limit: number,
-  page?: { only: string[]; offset: number }
-): Promise<{ hits: ProjectSearchHits; counts: Record<string, number> }> {
-  const body = await askProjectSearch(projectId, q, limit, page, true)
-  return { hits: body.hits, counts: body.counts ?? {} }
-}
-
-function askProjectSearch(
-  projectId: string,
-  q: string,
-  limit: number,
-  page: { only: string[]; offset: number } | undefined,
-  withCounts: boolean
-): Promise<{ hits: ProjectSearchHits; counts?: Record<string, number> }> {
-  const params = new URLSearchParams({ q, limit: String(limit) })
-  if (page) {
-    for (const kind of page.only) params.append('only', kind)
-    params.set('offset', String(page.offset))
-  }
-  if (withCounts) params.set('with_counts', 'true')
-  return request(`/projects/${encodeURIComponent(projectId)}/context/search?${params}`)
-}
-
 // 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
 // → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
 export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
