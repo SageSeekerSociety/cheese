@@ -209,6 +209,22 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
     }
 
 
+async def screen_agent_name(
+    db, project_id: uuid.UUID | None, topic_id: uuid.UUID | None, handle: str
+) -> dict:
+    """The name a screen's agent goes by, the way a room names it (see
+    ``_agent_name``). Empty when the screen names no room that still exists;
+    the page then shows the handle."""
+    from app.domain.project.models import Project
+    from app.domain.topic.models import Topic
+
+    project = await db.get(Project, project_id) if project_id else None
+    topic = await db.get(Topic, topic_id) if topic_id else None
+    if project is None or topic is None:
+        return {"agent_name": None, "agent_name_source": None}
+    return await _agent_name(db, project, topic, handle)
+
+
 async def _session_author(db, project, handle: str) -> str:
     """The seat the session keyed ``handle`` acts under: its teammate's, or the
     room-derived handle itself, which is its own seat."""

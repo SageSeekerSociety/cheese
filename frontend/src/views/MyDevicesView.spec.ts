@@ -119,3 +119,49 @@ describe('adding a device', () => {
     expect(invoke).toHaveBeenCalledWith('cancel_connect')
   })
 })
+
+describe('the screens open on a device', () => {
+  const screenOf = (sid: string, handle: string, name: string | null, source: string | null = 'human') => ({
+    sid,
+    agent_handle: handle,
+    agent_user_id: 'u-' + sid,
+    project_id: name ? 'p1' : null,
+    topic_id: name ? 't1' : null,
+    agent_name: name,
+    agent_name_source: name ? source : null,
+  })
+
+  it('names the agent on each screen, and in the session it opens', async () => {
+    listMyDevices.mockResolvedValue({
+      devices: [
+        {
+          device_id: 'd1',
+          name: 'lab-box',
+          online: true,
+          project_ids: [],
+          team_ids: [],
+          screens: [
+            screenOf('s1', 'cheese-kimi', 'Kimi'),
+            screenOf('s2', 'cheese', '芝士', 'default'),
+            screenOf('s3', 'room-agent-1', null),
+          ],
+        },
+      ],
+    })
+    render(MyDevicesView as unknown as Component, {
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        stubs: ['router-link', 'DeviceLiveViewer'],
+      },
+    })
+
+    const kimi = await screen.findByText('查看现场 · @Kimi')
+    expect(screen.getByText('查看现场 · @芝士')).toBeTruthy()
+    // A screen in no room has no name to give; its handle stands in.
+    expect(screen.getByText('查看现场 · @room-agent-1')).toBeTruthy()
+    expect(screen.queryByText(/@cheese-kimi/)).toBeNull()
+
+    await fireEvent.click(kimi)
+    expect(await screen.findByText('现场 · @Kimi')).toBeTruthy()
+  })
+})

@@ -1357,7 +1357,7 @@
     "sectionExternal": "外部成员",
     "sectionPending": "等待接受",
     "sectionAgents": "AI 队友",
-    "fromTeam": "来自团队 {'@'}{handle}",
+    "fromTeam": "来自团队 {name}",
     "manage": "管理成员",
     "remove": "移出项目",
     "dm": "私聊",

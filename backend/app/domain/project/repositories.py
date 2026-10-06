@@ -197,6 +197,7 @@ class ProjectRepository:
         ).all()
         team = await self._session.get(Team, project.team_id)
         team_handle = team.handle if team is not None else None
+        team_name = team.name if team is not None else None
         for handle, name, avatar_id, avatar_type, created_at in team_rows:
             if handle in seen:
                 continue
@@ -208,6 +209,7 @@ class ProjectRepository:
                     "source": "team",
                     "team_id": project.team_id,
                     "team_handle": team_handle,
+                    "team_name": team_name,
                     "created_at": created_at.isoformat(),
                 }
             )
