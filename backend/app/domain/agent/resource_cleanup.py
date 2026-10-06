@@ -839,19 +839,22 @@ def stop_executor(home: Path, resource: str) -> None:
         # Everything the room started is in its sandbox, the preview and
         # tunnel helpers too, and goes with it; the pid files below are the
         # room's to write and number processes in its own namespace. Where
-        # the helper gave the sandbox a cgroup, killing that is the whole
-        # stop, and the release the room started from, which may predate
-        # `end_sandbox`, is not asked. A machine a person enrolled has
-        # neither the helper nor the cgroup, and what the room left running
-        # there outlives its executor under the sandbox's first process, which
-        # the install recorded and this ends.
+        # the helper gave the sandbox a cgroup, that is killed; a machine a
+        # person enrolled has neither the helper nor the cgroup, and what the
+        # room left running there outlives its executor under the sandbox's
+        # first process, which the install recorded and this ends.
         if Path(SANDBOX_HOST).exists():
             result = run_command(["sudo", "-n", SANDBOX_HOST, "down", home.name])
             if result.returncode:
                 raise RuntimeError("sandbox has not stopped: " + result.stderr)
-            return
         runner = runpy.run_path(str(platform_program(home, "cheese-environment.py")))
-        runner["end_sandbox"](home)
+        # Not a compatibility path: rooms keep running from the release they
+        # started with. A release without `end_sandbox` predates sandboxes on
+        # enrolled machines and only ever started one on a cloud host, inside
+        # the helper's cgroup that `down` just took down.
+        end_sandbox = runner.get("end_sandbox")
+        if end_sandbox is not None:
+            end_sandbox(home)
         return
     # Both helpers can outlive the agent, including launches without an executor.
     for name in ("cheese-preview", "cheese-tunnel"):
