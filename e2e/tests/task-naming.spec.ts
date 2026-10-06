@@ -16,7 +16,7 @@ function projectIdOf(page: Page): string {
 }
 
 /** A task with no title, in a channel of its own, opened. */
-async function newTask(page: Page) {
+async function newTask(page: Page): Promise<string> {
   const projectId = projectIdOf(page);
   const room = (await api(page, 'post', '/topics', {
     project_id: projectId,
@@ -53,11 +53,15 @@ test.describe('Task naming', () => {
 
   test('a name a person typed is kept and the platform leaves it alone', async ({ page }) => {
     await openFirstProject(page);
-    const taskId = await newTask(page);
+    await newTask(page);
     await say(page, '整理这周三份会议纪要');
     await expect(activeTitle(page)).toHaveText(/^E2E /, { timeout: 20_000 });
 
-    await api(page, 'post', `/topics/${taskId}/title`, { title: '会议纪要周报' });
+    await page.getByTestId('task-more').click();
+    await page.getByTestId('task-rename').click();
+    const name = page.getByRole('textbox', { name: '任务名称' });
+    await name.fill('会议纪要周报');
+    await name.press('Enter');
     await expect(activeTitle(page)).toHaveText('会议纪要周报');
 
     // More said after the rename: what would bring a platform-named task up

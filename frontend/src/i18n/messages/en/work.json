@@ -2035,6 +2035,9 @@
     "handOver": "Hand over",
     "handOverTitle": "Hand over to whom?",
     "handOverTo": "Choose the new owner",
+    "rename": "Rename",
+    "renameTitle": "Rename task",
+    "renameLabel": "Task name",
     "actionFailed": "Couldn't do that. Try again later"
   },
   "channelTasks": {

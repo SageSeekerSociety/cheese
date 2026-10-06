@@ -555,6 +555,7 @@ void openPlace()
         :start="taskPage.start"
         :close="taskPage.close"
         :hand-over="taskPage.handOver"
+        :rename="taskPage.rename"
         :set-collaborators="taskPage.setCollaborators"
         :load-machine="taskPage.loadMachine"
         @open-room="backToRoom"

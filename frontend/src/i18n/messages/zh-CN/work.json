@@ -2035,6 +2035,9 @@
     "handOver": "转交",
     "handOverTitle": "转交给谁？",
     "handOverTo": "选择新的负责人",
+    "rename": "重命名",
+    "renameTitle": "重命名任务",
+    "renameLabel": "任务名称",
     "actionFailed": "操作失败，稍后重试"
   },
   "channelTasks": {
