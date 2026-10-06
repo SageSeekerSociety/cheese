@@ -20,10 +20,13 @@ from sqlalchemy import select, update
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.conversation.models import Conversation
 from app.domain.delivery.answer_ownership import seat_has_unfinished_input
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks, record_receipt, register_input
+from app.domain.room_task.models import Task
+from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
 from tests.turn_log import a_topic, open_turn, turn_row
 from tests.unit.test_runtime import _SweepChat
@@ -36,7 +39,9 @@ async def _inputs_into(factory, topic_id, turn_id):
     """What a session working on ``turn_id`` holds: the prompt and a message
     steered in, both read, and a second steer it never got to read."""
     async with factory() as session:
-        project_id = (await session.get(Topic, topic_id)).project_id
+        conversation = await session.get(Conversation, topic_id)
+        assert conversation is not None
+        project_id = conversation.project_id
         answer = Block(
             id=uuid.uuid4(),
             project_id=project_id,
@@ -196,3 +201,46 @@ async def test_seats_held_by_turns_that_ended_before_the_fix_are_freed(db_factor
     assert all(row.held_block_ids for row in healed if row.input_id == turns[long_ago])
     for topic in (just_now, running):
         assert all(row.terminated_at is None for row in await _rows(db_factory, topic))
+
+
+async def _task(factory, room, *, closed: bool) -> uuid.UUID:
+    async with factory() as session:
+        project_id = (await session.get(Topic, room)).project_id
+        task = Task(project_id=project_id, room_id=room, title="t")
+        session.add(task)
+        await session.flush()
+        if closed:
+            await TaskService(session).close_thread(task)
+        await session.commit()
+        return task.id
+
+
+@pytest.mark.anyio
+async def test_a_closed_tasks_turn_ends_even_while_its_session_answers(db_factory):
+    """Closing a task says nothing to its session, and the sweep keeps a
+    delivered turn open until that session is known dead. The task being
+    closed is enough: the work is over."""
+    room = await a_topic(db_factory)
+    closed = await _task(db_factory, room, closed=True)
+    still_open = await _task(db_factory, room, closed=False)
+    turns = {}
+    for task in (closed, still_open):
+        turns[task] = await open_turn(
+            db_factory, task, delivered=True, age_s=3600, session_id=SESSION
+        )
+        await _inputs_into(db_factory, task, turns[task])
+
+    chat = _SweepChat(db_factory, live_screen=True, seat_state="live")
+    resent = await AgentWorkRunner(InProcessBroker()).sweep_orphans(chat)
+
+    assert resent == 0, "a closed task's work is not offered again"
+    ended = await turn_row(db_factory, turns[closed])
+    assert ended is not None and ended.stopped_at is not None
+    running = await turn_row(db_factory, turns[still_open])
+    assert running is not None and running.stopped_at is None
+    async with db_factory() as session:
+        assert not await seat_has_unfinished_input(session, closed, SEAT)
+        assert await seat_has_unfinished_input(session, still_open, SEAT)
+    assert all(
+        row.termination == "task_closed" for row in await _rows(db_factory, closed)
+    )
