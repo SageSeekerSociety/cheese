@@ -48,9 +48,11 @@ ci_required() { # pass | fail | pending | none
 deploy_of() { # "<status> <conclusion> <run id>" of the newest dev deploy containing $1, or nothing
   local merge=$1 id st co sha
   while read -r id st co sha; do
-    if gh api "repos/$REPO/compare/$merge...$sha" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'; then
-      echo "$st ${co:-none} $id"; return
-    fi
+    gh api "repos/$REPO/compare/$merge...$sha" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$' || continue
+    # A run whose eligibility check found nothing to release concludes success
+    # with its deploy job skipped; that run shipped nothing, so it is not the deploy.
+    [ "$(gh run view "$id" -R "$REPO" --json jobs -q '.jobs[]|select(.name=="deploy")|.conclusion' 2>/dev/null)" = skipped ] && continue
+    echo "$st ${co:-none} $id"; return
   done < <(gh run list -R "$REPO" --workflow deploy-dev.yml --limit 8 \
              --json databaseId,status,conclusion,headSha -q '.[]|"\(.databaseId) \(.status) \(.conclusion) \(.headSha)"')
 }
