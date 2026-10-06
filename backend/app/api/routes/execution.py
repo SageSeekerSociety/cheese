@@ -46,11 +46,18 @@ _NOT_ACCEPTED = "Request ID already belongs to different input"
 #: checkout's history (``machine_git``, git's reading commands only), and the
 #: project's own checks around such a read, which can refuse it.
 _READ_OPERATIONS = frozenset({"open", "read", "stat", "list", "glob", "grep"})
+#: The project context a Claude Code session loads before it starts
+#: (``remote_execution/client.py`` ``prepare``): its instruction files
+#: (``context``) and the checkout's listing (``context_fs``). Refusing them left a
+#: task its owner had not started unable to start its session at all.
+_CONTEXT_READS = frozenset({"tree", "read", "statfs", "directory", "list"})
 
 
 def _reads(method: str, params: dict) -> bool:
-    if method == "ping":
+    if method in ("ping", "context"):
         return True
+    if method == "context_fs":
+        return params.get("operation", "tree") in _CONTEXT_READS
     if method != "control":
         return False
     if params.get("subtype") == "files":
