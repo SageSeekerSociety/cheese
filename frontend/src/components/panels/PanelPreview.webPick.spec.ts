@@ -21,7 +21,6 @@ import { setLocale } from '@/i18n'
 import { previewBundles } from '@/test/panelBundles'
 
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 
 type View = ComponentPublicInstance & { handlePick: (pick: unknown) => void }
 
