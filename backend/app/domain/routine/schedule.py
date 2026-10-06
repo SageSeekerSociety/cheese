@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
+from app.domain.feedback.triage import MAX_BATCH
 
 FREQS = ("hourly", "daily", "weekly", "monthly")
 WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
@@ -30,7 +31,26 @@ def _clock(spec: dict) -> time:
 
 
 def normalize(spec: dict, tz: str) -> dict:
-    """Reject a schedule that does not name one unambiguous moment."""
+    """Reject a schedule that does not name one unambiguous moment.
+
+    `feedback_batch` is the one key that is not about time: each run is also
+    handed up to that many untriaged feedback reports (`feedback/triage.py`).
+    Whether this room may take them is the service's question, not this one.
+    """
+    out = _moment(spec, tz)
+    if "feedback_batch" in spec:
+        batch = spec["feedback_batch"]
+        if (
+            not isinstance(batch, int)
+            or isinstance(batch, bool)
+            or not 1 <= batch <= MAX_BATCH
+        ):
+            raise ValidationError(say("routineFeedbackBatch", max=MAX_BATCH))
+        out["feedback_batch"] = batch
+    return out
+
+
+def _moment(spec: dict, tz: str) -> dict:
     zone(tz)
     freq = spec.get("freq")
     if freq not in FREQS:
@@ -93,6 +113,13 @@ def next_after(spec: dict, tz: str, after: datetime) -> datetime:
 
 
 def describe(spec: dict, tz: str) -> str:
+    when = _describe_moment(spec, tz)
+    if when and spec.get("feedback_batch"):
+        return f"{when}，每次附上最多 {spec['feedback_batch']} 条待分诊反馈"
+    return when
+
+
+def _describe_moment(spec: dict, tz: str) -> str:
     freq = spec.get("freq")
     if freq == "hourly":
         return f"每小时第 {spec['minute']} 分（{tz}）"

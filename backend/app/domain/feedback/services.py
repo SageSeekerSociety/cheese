@@ -47,7 +47,7 @@ from app.core.errors import (
     PreconditionFailedError,
 )
 from app.core.sentences import say
-from app.domain.feedback import claims
+from app.domain.feedback import announce, claims
 from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import (
     Feedback,
@@ -779,6 +779,7 @@ class FeedbackService:
         # a report with no `received` entry would show an empty history for the
         # one event that definitely happened.
         await self._repo.append_timeline(row.id, FeedbackStatus.received, actor_handle)
+        announce.after_commit(self._session, row)
         return row
 
     async def _create_from_proposal(
@@ -820,6 +821,7 @@ class FeedbackService:
         await self._repo.append_timeline(
             row.id, FeedbackStatus.received, submitted_by_handle
         )
+        announce.after_commit(self._session, row)
         return row
 
     async def set_status(

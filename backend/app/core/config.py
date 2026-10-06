@@ -176,6 +176,10 @@ class Settings(BaseSettings):
     # Feishu group's custom-bot webhook URL; empty disables alerting entirely,
     # which is what a developer's machine and every test wants.
     feishu_alert_webhook: str = ""
+    # Where each new feedback report is announced (`feedback/announce.py`): the
+    # team group's Feishu custom-bot webhook URL. Empty sends nothing, which is
+    # the default until a deployment names the group that works the queue.
+    feishu_feedback_webhook: str = ""
 
     # Coordinated ingress cutover is a separate release. No implicit fallback.
     preview_connection_mode: Literal["legacy", "owner"] = "legacy"
