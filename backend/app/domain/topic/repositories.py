@@ -54,11 +54,13 @@ TopicSortField = Literal["updated_at", "title", "last_activity_at"]
 
 @dataclass(frozen=True)
 class Unread:
-    """What one conversation has waiting for one person: whether anything new
-    was said (the name in bold), and the number on it."""
+    """What one conversation has waiting for one person: the number on it,
+    whether its name is bold, and how many messages came since they last read
+    it (where the 「新消息」 line goes when they open it)."""
 
     count: int
     new: bool
+    messages: int
 
 
 SortOrder = Literal["asc", "desc"]
@@ -583,15 +585,15 @@ class TopicRepository:
             if room in private and level == NotifyLevel.mentions:
                 level = NotifyLevel.all
             if level == NotifyLevel.mute:
-                unread = Unread(count=me + me_in_threads, new=False)
+                unread = Unread(count=me + me_in_threads, new=False, messages=n)
             elif level == NotifyLevel.all:
-                unread = Unread(count=n + in_threads, new=n > 0)
+                unread = Unread(count=n + in_threads, new=n > 0, messages=n)
             else:
-                unread = Unread(count=me + everyone + in_threads, new=n > 0)
-            if unread.count or unread.new:
+                unread = Unread(count=me + everyone + in_threads, new=n > 0, messages=n)
+            if unread.count or unread.messages:
                 out[room] = unread
         for task, n in (await self._session.execute(tasks)).all():
-            out[task] = Unread(count=int(n), new=True)
+            out[task] = Unread(count=int(n), new=True, messages=int(n))
         return out
 
     async def _levels(

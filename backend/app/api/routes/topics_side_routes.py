@@ -68,9 +68,9 @@ async def project_topic_unread(
     handle: str | None = None,
 ) -> dict:
     """What each channel and task has waiting for the calling user:
-    {conversation_id: {"count", "new"}} — the number on it, and whether its
-    name is bold (`TopicRepository.unread_counts`). Ones with nothing are
-    omitted.
+    {conversation_id: {"count", "new", "messages"}} — the number on it,
+    whether its name is bold, and how many messages came since the last read
+    (`TopicRepository.unread_counts`). Ones with nothing are omitted.
 
     Read-state is per-person, so the recipient comes from the verified
     credential (``handle`` is only checked against it) — a caller without one
@@ -89,7 +89,11 @@ async def project_topic_unread(
     counts = await TopicService(db).unread_counts(project_id, recipient)
     return ok(
         {
-            str(topic_id): {"count": unread.count, "new": unread.new}
+            str(topic_id): {
+                "count": unread.count,
+                "new": unread.new,
+                "messages": unread.messages,
+            }
             for topic_id, unread in counts.items()
         }
     )
