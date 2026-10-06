@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 首页那一格的目录：待办、我所在的团队、我加入的空间。
+// 首页那一格的目录，画出来的那一半：待办、我所在的团队、我加入的空间。
 //
 // 桌面上它是首页侧栏的正文（HomeSidebar），手机上是底栏「首页」那一格的整页
 // （HomeHub）——同一份目录，两端不各写一份。
@@ -7,17 +7,17 @@
 // 团队在原地展开：一个团队有五样东西（项目、成员、知识库、工作电脑、额度），点哪样
 // 右边就打开哪样，侧栏不动。个人团队只有你一个人，所以没有「成员」这一样，也没有
 // 「邀请成员」。空间不展开：空间自己有一整套目录，点进去就是那个空间。
+//
+// 名单、展开状态、四个对话框的开合都不在这里：这一只只吃 props，点了什么喊一声
+// （`toggle` / `teamAction` / 四个 `submit`），取数和成功之后的事由 `useHomeNav` 那一侧
+// 办。
 import type { MenuAction } from '@/components/common/menuAction'
-import type { Team } from '@/types'
+import type { Team, TeamMember } from '@/types'
 
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
-import { useEventListener } from '@vueuse/core'
+import { computed } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { awaitingCount } from '@/composables/useAwaitingCount'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
@@ -25,113 +25,53 @@ import JoinSpaceDialog from './JoinSpaceDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-import { SpacesApi } from '@/network/api/spaces'
-import { TeamsApi } from '@/network/api/teams'
-import { useDialog } from '@/plugins/dialog'
-import AccountService from '@/services/account'
-import errorHandler from '@/services/ErrorHandler'
-import { useWorkspaceStore } from '@/stores/workspace'
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
 import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
-defineProps<{
+const props = defineProps<{
   /** 手机上「待办」是底栏的一格，这里就不再列一次。 */
   inbox?: boolean
+  /** 等我处理的件数，画在「待办」那一行右边。 */
+  awaiting: number
+  /** 我所在的团队：自己名下那个（`personal`）排在前、不带小标题。 */
+  teams: Team[]
+  /** 我加入的空间。 */
+  spaces: { id: number; name: string }[]
+  /** 哪些团队是展开的（按 handle 记，比较时不看大小写）。 */
+  openHandles: string[]
+  /** 用邀请码加入空间。 */
+  join: { open: boolean; busy: boolean; error: string | null }
+  /** 改小队资料。 */
+  profile: { team: Team | null; busy: boolean; error: string; nameError: string }
+  /** 解散小队。 */
+  disband: { team: Team | null; busy: boolean; error: string | null }
+  /** 转让小队：`members` 是能接手的人（团队里除我以外的成员）。 */
+  transfer: { team: Team | null; members: TeamMember[]; busy: boolean; error: string | null }
 }>()
 
-const route = useRoute()
-const router = useRouter()
-const dialog = useDialog()
-const awaiting = awaitingCount()
+const emit = defineEmits<{
+  /** 展开/收起一个团队。 */
+  toggle: [handle: string]
+  /** 点了那一行 ⋯ 里的一件：「邀请」是一条链接，不走这里。 */
+  teamAction: [action: 'edit' | 'transfer' | 'disband' | 'leave', team: Team]
+  /** 某个对话框要关。 */
+  dismiss: [dialog: 'join' | 'profile' | 'disband' | 'transfer']
+  /** 点了「加入空间」。 */
+  openJoin: []
+  joinSubmit: [code: string]
+  profileSubmit: [draft: { name: string; intro: string; avatarFile?: File }]
+  disbandSubmit: []
+  transferSubmit: [userId: number]
+}>()
 
-const teams = ref<Team[]>([])
-const spaces = ref<{ id: number; name: string }[]>([])
 // 自己名下（只有自己的那个团队，以自己的昵称出现）一组，真团队一组，后一组才有「团队」小标题。
 const groups = computed(() => [
-  { key: 'own', heading: false, teams: teams.value.filter((team) => team.personal) },
-  { key: 'teams', heading: true, teams: teams.value.filter((team) => !team.personal) },
+  { key: 'own', heading: false, teams: props.teams.filter((team) => team.personal) },
+  { key: 'teams', heading: true, teams: props.teams.filter((team) => !team.personal) },
 ])
 
-// 名单会被重读很多次（见下面的换页面、拿回焦点）。只认最后发出的那一次，而这里
-// 自己改过名单（退出、解散、转让、改资料）也算一次更新：早发的读晚回来，会把刚退出
-// 的团队又画回去。
-let teamsRead = 0
-function setTeamsHere(next: Team[]) {
-  teamsRead += 1
-  teams.value = next
-}
-async function loadTeams() {
-  const read = ++teamsRead
-  try {
-    const mine = (await TeamsApi.getMyTeams()).data.teams
-    if (read === teamsRead) teams.value = mine
-  } catch {
-    // 读不到就不列：这是一份目录，不是这一页的内容。
-  }
-}
-
-async function loadSpaces() {
-  try {
-    const { data } = await SpacesApi.list({ pageSize: 50, sort_by: 'created_at', sort_order: 'desc' })
-    spaces.value = data.spaces.map((space) => ({ id: space.id, name: space.name }))
-  } catch {
-    // 同上。
-  }
-}
-
-onMounted(() => {
-  void loadTeams()
-  void loadSpaces()
-})
-
-// 侧栏跨页面一直挂着，只在挂载时读一次的话，刚建的团队、刚被批准加入的团队要整页
-// 刷新才出现。没有推送告诉它名单变了，于是在人做了点什么的时候重读：换页面（建完
-// 团队就是跳进那个团队）、窗口重新拿到焦点（批准往往是在别处等来的）。
-watch(
-  () => route.path,
-  () => void loadTeams()
-)
-useEventListener(window, 'focus', () => void loadTeams())
-
-// 哪些团队是展开的：记在这台浏览器上，下次打开还是那样。存不进去也不要紧。
-const OPEN_KEY = 'cheesex.homeNav.openTeams'
-function readOpen(): string[] {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(OPEN_KEY) || '[]')
-    return Array.isArray(saved) ? saved.filter((v): v is string => typeof v === 'string') : []
-  } catch {
-    return []
-  }
-}
-const open = ref<string[]>(readOpen())
-function persist() {
-  try {
-    localStorage.setItem(OPEN_KEY, JSON.stringify(open.value))
-  } catch {
-    // 存不进去就只在这一次有效。
-  }
-}
-function toggle(handle: string) {
-  open.value = open.value.includes(handle) ? open.value.filter((h) => h !== handle) : [...open.value, handle]
-  persist()
-}
-
-// 正在看某个团队的某一页时，那个团队一定是展开的：否则侧栏上找不到「你在这儿」。
-const currentHandle = computed(() =>
-  typeof route.params.handle === 'string' && route.path.startsWith('/teams/') ? route.params.handle : null
-)
-watch(
-  currentHandle,
-  (handle) => {
-    if (handle && !open.value.some((h) => h.toLowerCase() === handle.toLowerCase())) {
-      open.value = [...open.value, handle]
-      persist()
-    }
-  },
-  { immediate: true }
-)
-const isOpen = (team: Team) => open.value.some((h) => h.toLowerCase() === team.handle.toLowerCase())
+const isOpen = (team: Team) => props.openHandles.some((h) => h.toLowerCase() === team.handle.toLowerCase())
 
 const TEAM_PAGES = [
   { name: 'TeamsDetailDefault', label: 'home.nav.teamProjects', exact: true },
@@ -147,8 +87,6 @@ const pagesOf = (team: Team) =>
   team.personal ? TEAM_PAGES.filter((page) => !PERSONAL_HIDDEN.includes(page.name)) : TEAM_PAGES
 
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
-
-const editing = ref<Team | null>(null)
 
 /** 一个团队那一行的 ⋯（和右键）里能做的事：管理员邀请、改资料；不是所有者的能退出。 */
 function teamActions(team: Team): MenuAction[] {
@@ -166,7 +104,7 @@ function teamActions(team: Team): MenuAction[] {
         key: 'edit',
         label: t('work.teamProfile.edit'),
         icon: 'mdi-pencil-outline',
-        onSelect: () => (editing.value = team),
+        onSelect: () => emit('teamAction', 'edit', team),
       }
     )
   // 所有者退不掉（后端拒：先转让或解散），所以他看到的是那两条出路。
@@ -176,14 +114,14 @@ function teamActions(team: Team): MenuAction[] {
         key: 'transfer',
         label: t('home.nav.transferTeam'),
         icon: 'mdi-account-arrow-right-outline',
-        onSelect: () => (transferring.value = team),
+        onSelect: () => emit('teamAction', 'transfer', team),
       },
       {
         key: 'disband',
         label: t('home.nav.disbandTeam'),
         icon: 'mdi-delete-outline',
         danger: true,
-        onSelect: () => (disbanding.value = team),
+        onSelect: () => emit('teamAction', 'disband', team),
       }
     )
   else
@@ -192,80 +130,13 @@ function teamActions(team: Team): MenuAction[] {
       label: t('home.nav.leaveTeam'),
       icon: 'mdi-exit-to-app',
       danger: true,
-      onSelect: () => void leaveTeam(team),
+      onSelect: () => emit('teamAction', 'leave', team),
     })
   return actions
 }
 
 // 右键一行，弹的就是 ⋯ 那一份，弹在鼠标那一点上。
 const rowMenu = useRowMenu<number>()
-
-// 转让团队：交出去之后我是管理员，这一行的菜单跟着新角色长（这时才有「退出团队」）。
-const transferring = ref<Team | null>(null)
-const transferOpen = computed({
-  get: () => transferring.value !== null,
-  set: (value: boolean) => {
-    if (!value) transferring.value = null
-  },
-})
-function onTransferred(updated: Team) {
-  setTeamsHere(teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated, role: 'ADMIN' } : team)))
-}
-
-// 解散团队：撤不回，所以要把团队名打一遍才按得下去（DisbandTeamDialog）。后端拒绝时
-// 理由留在弹窗里；成了就和退出一样，这一行和它的项目从侧栏上下去。
-const disbanding = ref<Team | null>(null)
-const disbandOpen = computed({
-  get: () => disbanding.value !== null,
-  set: (value: boolean) => {
-    if (!value) disbanding.value = null
-  },
-})
-function onDisbanded(team: Team) {
-  toast.success(t('home.nav.disbandTeamDone', { name: team.name }))
-  forgetTeam(team)
-}
-
-// 退出团队：退掉的是整个团队，它的项目也一起看不到了，所以先确认。退出这一下成功了
-// 就算成功，后面的刷新失败不改口。
-async function leaveTeam(team: Team) {
-  const userId = AccountService.user?.id
-  if (typeof userId !== 'number') return
-  const confirmed = await dialog
-    .confirm(t('home.nav.leaveTeamBody'), {
-      title: t('home.nav.leaveTeamTitle', { name: team.name }),
-      confirmLabel: t('home.nav.leaveTeam'),
-      danger: true,
-    })
-    .wait()
-    .catch(() => false)
-  if (!confirmed) return
-  const result = await errorHandler.withErrorHandling(() => TeamsApi.removeMember(team.id, userId), {
-    defaultMessage: t('home.nav.leaveTeamFailed'),
-  })
-  if (result === undefined) return
-  toast.success(t('home.nav.leaveTeamDone', { name: team.name }))
-  forgetTeam(team)
-}
-
-// 这个团队不再是我的了：这一行消失；它的项目也不再是我的，rail 上那几格跟着项目清单走；
-// 正看着它的某一页的话回待办。
-function forgetTeam(team: Team) {
-  setTeamsHere(teams.value.filter((row) => row.id !== team.id))
-  void useWorkspaceStore().refreshProjects()
-  if (currentHandle.value?.toLowerCase() === team.handle.toLowerCase()) void router.replace({ name: 'inbox' })
-}
-const editOpen = computed({
-  get: () => editing.value !== null,
-  set: (value: boolean) => {
-    if (!value) editing.value = null
-  },
-})
-function onTeamUpdated(updated: Team) {
-  setTeamsHere(teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated } : team)))
-}
-
-const joinOpen = ref(false)
 </script>
 
 <template>
@@ -291,7 +162,7 @@ const joinOpen = ref(false)
           class="home-nav__team"
           :aria-expanded="isOpen(team)"
           :aria-label="t(isOpen(team) ? 'home.nav.collapse' : 'home.nav.expand', { name: team.name })"
-          @click="toggle(team.handle)"
+          @click="emit('toggle', team.handle)"
           @contextmenu="teamActions(team).length && rowMenu.open(team.id, $event)"
         >
           <template #prepend>
@@ -304,8 +175,9 @@ const joinOpen = ref(false)
               :class="{ 'home-nav__mark--person': team.personal }"
               data-user-content
             >
-              <!-- avatarId 为空时不发请求：getAvatarUrl(null) 回的是 /avatars/default，
-                 后端在默认头像缺文件时按设计回 404，会把控制台刷出一条错误。 -->
+              <!-- No request when avatarId is empty: getAvatarUrl(null) returns /avatars/default,
+                 which the backend answers 404 by design when the file is missing, filling the
+                 console with an error. -->
               <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)">
                 <template #error>{{ team.name.slice(0, 1) }}</template>
               </v-img>
@@ -320,10 +192,10 @@ const joinOpen = ref(false)
               :actions="teamActions(team)"
               :title="team.name"
             >
-              <template #activator="{ props }">
+              <template #activator="{ props: activator }">
                 <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
                 <v-btn
-                  v-bind="props"
+                  v-bind="activator"
                   icon="mdi-dots-horizontal"
                   size="x-small"
                   variant="text"
@@ -373,7 +245,7 @@ const joinOpen = ref(false)
       class="home-nav__action"
       prepend-icon="mdi-ticket-confirmation-outline"
       :title="t('work.joinAction')"
-      @click="joinOpen = true"
+      @click="emit('openJoin')"
     />
     <v-list-item
       rounded="lg"
@@ -385,10 +257,42 @@ const joinOpen = ref(false)
     />
   </v-list>
 
-  <JoinSpaceDialog v-model="joinOpen" @joined="loadSpaces" />
-  <TeamProfileEditDialog v-if="editing" v-model="editOpen" :team="editing" @updated="onTeamUpdated" />
-  <DisbandTeamDialog v-if="disbanding" v-model="disbandOpen" :team="disbanding" @disbanded="onDisbanded" />
-  <TransferTeamDialog v-if="transferring" v-model="transferOpen" :team="transferring" @transferred="onTransferred" />
+  <JoinSpaceDialog
+    :model-value="join.open"
+    :joining="join.busy"
+    :error="join.error ?? undefined"
+    @update:model-value="emit('dismiss', 'join')"
+    @submit="emit('joinSubmit', $event)"
+  />
+  <TeamProfileEditDialog
+    v-if="profile.team"
+    :model-value="true"
+    :team="profile.team"
+    :saving="profile.busy"
+    :error="profile.error"
+    :name-error="profile.nameError"
+    @update:model-value="emit('dismiss', 'profile')"
+    @save="emit('profileSubmit', $event)"
+  />
+  <DisbandTeamDialog
+    v-if="disband.team"
+    :model-value="true"
+    :team="disband.team"
+    :disbanding="disband.busy"
+    :error="disband.error"
+    @update:model-value="emit('dismiss', 'disband')"
+    @submit="emit('disbandSubmit')"
+  />
+  <TransferTeamDialog
+    v-if="transfer.team"
+    :model-value="true"
+    :team="transfer.team"
+    :candidates="transfer.members"
+    :transferring="transfer.busy"
+    :error="transfer.error"
+    @update:model-value="emit('dismiss', 'transfer')"
+    @submit="emit('transferSubmit', $event)"
+  />
 </template>
 
 <style scoped>

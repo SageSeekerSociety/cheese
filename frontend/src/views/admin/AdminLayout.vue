@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { useAdminSections } from '@/composables/useAdminSections'
 
-import AdminShortcutSheet from '@/components/admin/AdminShortcutSheet.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { useFeedbackStore } from '@/stores/feedback'
+import AdminLayoutView from '@/views/admin/AdminLayoutView.vue'
 
 // 管理后台的内容区（`/admin/*` 的默认视图）。分区在侧栏（`AdminSidebar`），这一层管的是
 // 门、全局那几颗键和当前那一块。
@@ -31,7 +29,6 @@ defineOptions({ name: 'AdminLayout' })
 const store = useFeedbackStore()
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
 const { canEnter } = useAdminSections()
 
 /** `?` 那一层（§8）。`Esc` 关闭由 Vuetify 的对话框自己管。 */
@@ -109,51 +106,5 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="admin-shell">
-    <div v-if="!store.metaChecked" class="admin-shell__gate">
-      <div class="admin-shell__gate-inner">
-        <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
-        <div class="t-body mb-1">{{ t('admin.layout.checking') }}</div>
-      </div>
-    </div>
-
-    <div v-else-if="!canEnter" class="admin-shell__gate">
-      <div class="admin-shell__gate-inner">
-        <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
-        <div class="t-body mb-1">{{ t('admin.layout.deniedTitle') }}</div>
-        <div class="t-body mb-3">{{ t('admin.layout.deniedBody') }}</div>
-        <!-- 这一屏只有这一个动作，所以它是 `primary`。 -->
-        <BaseButton kind="primary" size="sm" to="/feedback">{{ t('admin.layout.toFeedbackCenter') }}</BaseButton>
-      </div>
-    </div>
-
-    <RouterView v-else />
-
-    <AdminShortcutSheet v-model="shortcutOpen" />
-  </div>
+  <AdminLayoutView v-model:shortcut-open="shortcutOpen" :meta-checked="store.metaChecked" :can-enter="canEnter" />
 </template>
-
-<style scoped>
-.admin-shell {
-  height: 100%;
-  min-height: 0;
-}
-
-/* 门口那两态是居中一句话，不是一页内容。 */
-.admin-shell__gate {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  height: 100%;
-  padding: 48px 24px;
-}
-
-.admin-shell__gate-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: 420px;
-  text-align: center;
-}
-</style>

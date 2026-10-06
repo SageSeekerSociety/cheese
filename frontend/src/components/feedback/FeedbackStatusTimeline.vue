@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import type { ResolvedUserRef } from '@/composables/useUserRefResolver'
 import type { FeedbackStatus, FeedbackTimelineEntry } from '@/cx_types'
 
 import { computed } from 'vue'
 
 import { passedStatusLabel, pendingStatusLabel, statusLabel } from './feedbackLabels'
 
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
@@ -36,12 +37,24 @@ import { relTime } from '@/lib/relTime'
 // （修复 / Resolve）；正在这一步的用 `statusLabel`（已修复 / Resolved）；已经走过去
 // 的用 `passedStatusLabel`，它只在「处理中」这一档和上一副不同 —— 有人正在弄的那一
 // 档，走过去了就该是「已处理」。
+//
+// 每一步那个「是谁推的」用纯展示的 `UserRef`（只认 props）：画成什么、点了去哪由
+// 容器算好的 `resolveUser` 给全 —— 名册、当前项目、跳转都在 `useUserRefResolver` 里，
+// 这根线不该自己去读路由。没传就画 handle、不可点（单测和 /demo 里没装路由照样画）。
 const props = defineProps<{
   timeline: FeedbackTimelineEntry[]
   status: FeedbackStatus
   /** 服务端给的梯子（有序的状态列表）。 */
   ladder: FeedbackStatus[]
+  /** 这一个人叫什么、点了去哪。省略时画 handle、不可点。 */
+  resolveUser?: (handle: string | null | undefined) => ResolvedUserRef
 }>()
+
+const emit = defineEmits<{ navigate: [target: ResolvedUserRef['to']] }>()
+
+function resolve(handle: string | null | undefined): ResolvedUserRef {
+  return props.resolveUser?.(handle) ?? { name: handle ?? '', to: null }
+}
 
 interface Step {
   status: FeedbackStatus
@@ -114,7 +127,15 @@ const steps = computed<Step[]>(() => {
           {{ step.label }}
         </div>
         <div v-if="step.at" class="t-meta-read t-num">
-          {{ relTime(step.at) }}<template v-if="step.by"> · <UserRef :handle="step.by" /></template>
+          {{ relTime(step.at)
+          }}<template v-if="step.by">
+            ·
+            <UserRef
+              :handle="step.by"
+              :name="resolve(step.by).name"
+              :to="resolve(step.by).to"
+              @navigate="emit('navigate', resolve(step.by).to)"
+          /></template>
         </div>
         <div v-else class="t-meta-read t-num">
           {{ t(step.done ? 'feedback.timeline.noRecord' : 'feedback.timeline.notStarted') }}

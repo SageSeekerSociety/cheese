@@ -38,7 +38,7 @@ async function mount(value: Team) {
   })
   await router.push('/')
   return render(TeamProfile as unknown as Component, {
-    props: { team: value, join: async () => {} },
+    props: { team: value, join: async () => {}, resolveUser: () => ({ name: '', to: null }) },
     global: { plugins: [createVuetify({ components, directives }), router] },
   })
 }

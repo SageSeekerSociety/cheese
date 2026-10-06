@@ -1,3 +1,6 @@
+// 小队资料弹窗只手写一张表：填完（名字不能空是自己判的）把草稿整份报上去。传图、
+// PATCH、报错落到哪一格都在外面，所以这里断言的是「报上去的是什么」和「外面说的错话
+// 画在哪里」。真正发请求那一半见 `views/home/HomeSidebar.spec.ts`（容器那一侧）。
 import type { Component } from 'vue'
 import type { Team } from '@/types'
 
@@ -7,15 +10,15 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const update = vi.fn()
-const uploadAvatar = vi.fn()
-vi.mock('@/network/api/teams', () => ({ TeamsApi: { update: (...a: unknown[]) => update(...a) } }))
-vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { createAvatar: (...a: unknown[]) => uploadAvatar(...a) } }))
-
 import TeamProfileEditDialog from './TeamProfileEditDialog.vue'
 
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
+
+interface TeamProfileDraft {
+  name: string
+  intro: string
+  avatarFile?: File
+}
 
 function team(overrides: Partial<Team> = {}): Team {
   return {
@@ -33,11 +36,15 @@ function team(overrides: Partial<Team> = {}): Team {
   }
 }
 
-function mount(teamData: Team = team()) {
+function mount(extra: Record<string, unknown> = {}) {
   return render(TeamProfileEditDialog as unknown as Component, {
-    props: { modelValue: true, team: teamData },
+    props: { modelValue: true, team: team(), ...extra },
     global: { plugins: [createVuetify({ components, directives })] },
   })
+}
+
+function drafts(view: { emitted: () => Record<string, unknown[] | undefined> }): TeamProfileDraft[] {
+  return ((view.emitted().save ?? []) as unknown[][]).map((call) => call[0] as TeamProfileDraft)
 }
 
 beforeAll(() => {
@@ -65,8 +72,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   setLocale('zh-CN')
-  update.mockReset().mockResolvedValue({ data: { team: team({ name: '芝士社', intro: '新的介绍' }) } })
-  uploadAvatar.mockReset().mockResolvedValue({ data: { avatarId: 77 } })
   URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
 })
 afterEach(cleanup)
@@ -78,75 +83,62 @@ describe('editing what a team looks like', () => {
     expect((screen.getByLabelText('团队介绍') as HTMLTextAreaElement).value).toBe('一起把芝士做完')
   })
 
-  it('saves the new name and intro and hands the saved team back', async () => {
+  it('hands the draft over, with the name trimmed', async () => {
+    // 名字两头带空格是人打字时会留下的东西，别让它变成一个「撞名」的假警报。
     const view = mount()
-    const name = await screen.findByLabelText('团队名称')
-    await fireEvent.update(name, ' 芝士社 ')
+    await fireEvent.update(await screen.findByLabelText('团队名称'), ' 芝士社 ')
     await fireEvent.update(screen.getByLabelText('团队介绍'), '新的介绍')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    // 名字两头带空格是人打字时会留下的东西，别让它变成一个「撞名」的假警报。
-    await waitFor(() => expect(update).toHaveBeenCalledWith(7, { name: '芝士社', intro: '新的介绍' }))
-    expect(view.emitted('updated')).toEqual([[team({ name: '芝士社', intro: '新的介绍' })]])
-    await waitFor(() => expect(view.emitted('update:modelValue')).toEqual([[false]]))
+    await waitFor(() => expect(drafts(view)).toEqual([{ name: '芝士社', intro: '新的介绍' }]))
   })
 
-  it('uploads a new avatar first and sends the id it got back', async () => {
-    mount()
+  it('hands the picked picture over with the draft', async () => {
+    const view = mount()
     const file = new File(['image'], 'avatar.png', { type: 'image/png' })
     await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    await waitFor(() => expect(uploadAvatar).toHaveBeenCalledWith(file))
-    await waitFor(() =>
-      expect(update).toHaveBeenCalledWith(7, { name: 'Cheese 核心组', intro: '一起把芝士做完', avatarId: 77 })
-    )
+    // 图片本身按内容比：测试里那个 File 和控件交上来的是两个实例，同一张图。
+    await waitFor(() => expect(drafts(view)[0]?.avatarFile?.name).toBe('avatar.png'))
   })
 
-  it('keeps the current avatar when the picture was not touched', async () => {
-    mount()
-    await fireEvent.click(await screen.findByRole('button', { name: '保存' }))
-    await waitFor(() => expect(update).toHaveBeenCalledWith(7, { name: 'Cheese 核心组', intro: '一起把芝士做完' }))
-    expect(uploadAvatar).not.toHaveBeenCalled()
-  })
-
-  it('points at the name when another team already holds it', async () => {
-    // 后端对撞名给的是 409 + data.field=name。这是用户自己能修的错 —— 换一个名字
-    // 就行 —— 所以要说在名字那一格上，不能掉进「保存失败，请稍后重试」。
-    update.mockRejectedValue(
-      new BusinessError('taken', 409, { name: 'Conflict', message: 'taken', data: { field: 'name' } })
-    )
+  it('leaves the picture out when it was not touched', async () => {
     const view = mount()
     await fireEvent.click(await screen.findByRole('button', { name: '保存' }))
 
-    await screen.findByText('这个名称已被占用，换一个试试')
-    expect(screen.queryByText('保存失败，请稍后重试')).toBeNull()
-    expect(view.emitted('updated')).toBeUndefined()
+    await waitFor(() => expect(drafts(view).length).toBe(1))
+    expect('avatarFile' in drafts(view)[0]).toBe(false)
   })
 
-  it('clears the name complaint once the person edits the name', async () => {
-    update.mockRejectedValueOnce(new BusinessError('taken', 409, { name: 'Conflict', message: 'taken', data: {} }))
-    mount()
+  it('points at the name when the outside says that name is taken, and forgets it once the person renames', async () => {
+    // 后端对撞名给的是 409 + data.field=name。这是用户自己能修的错 —— 换一个名字
+    // 就行 —— 所以要说在名字那一格上，不能掉进「保存失败，请稍后重试」。
+    const view = mount({ nameError: '这个名称已被占用，换一个试试' })
     await fireEvent.click(await screen.findByRole('button', { name: '保存' }))
     await screen.findByText('这个名称已被占用，换一个试试')
 
+    // 人一动手改名字，那句话说的是上一个名字，作废。
     await fireEvent.update(screen.getByLabelText('团队名称'), '芝士社')
     await waitFor(() => expect(screen.queryByText('这个名称已被占用，换一个试试')).toBeNull())
+
+    // 再报一次同一个名字：外面那句话仍然成立，它再回来。
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await screen.findByText('这个名称已被占用，换一个试试')
+    expect(drafts(view).length).toBe(2)
   })
 
-  it('will not send a nameless team', async () => {
-    mount()
+  it('will not hand over a nameless team', async () => {
+    const view = mount()
     await fireEvent.update(await screen.findByLabelText('团队名称'), '   ')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await screen.findByText('填写团队名称')
-    expect(update).not.toHaveBeenCalled()
+    expect(view.emitted().save).toBeUndefined()
   })
 
   it('says so when the save fails for a reason the person cannot fix', async () => {
-    update.mockRejectedValue(new Error('offline'))
-    mount()
-    await fireEvent.click(await screen.findByRole('button', { name: '保存' }))
+    mount({ error: '保存失败，请稍后重试' })
     await screen.findByText('保存失败，请稍后重试')
   })
 })

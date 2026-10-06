@@ -1,5 +1,9 @@
 // 首页那一格的目录：团队在原地展开成四样东西，正在看的那个团队一定是展开的；
 // 团队行的 ⋯ 和右键：管理员邀请、改资料，不是所有者的能退出团队。
+//
+// 目录的两个落点（桌面侧栏 HomeSidebar、手机整页 HomeHub）画的是同一个 `HomeNavView`，
+// 取数和四个对话框都在 `useHomeNav` 里。这里走桌面那一条：挂上整个页面，外壳那只抽屉
+// 换成只铺默认槽的 `nav`（抽屉的布局不是这一页的事），断言打在目录上。
 import type { Component } from 'vue'
 import type { Team } from '@/types'
 
@@ -15,6 +19,7 @@ const removeMember = vi.fn()
 const del = vi.fn()
 const getMembers = vi.fn()
 const transferOwner = vi.fn()
+const update = vi.fn()
 vi.mock('@/network/api/teams', () => ({
   TeamsApi: {
     getMyTeams: () => getMyTeams(),
@@ -22,7 +27,12 @@ vi.mock('@/network/api/teams', () => ({
     del: (...args: unknown[]) => del(...args),
     getMembers: (...args: unknown[]) => getMembers(...args),
     transferOwner: (...args: unknown[]) => transferOwner(...args),
+    update: (...args: unknown[]) => update(...args),
   },
+}))
+const createAvatar = vi.fn()
+vi.mock('@/network/api/avatars', () => ({
+  AvatarsApi: { createAvatar: (...args: unknown[]) => createAvatar(...args) },
 }))
 const confirm = vi.fn()
 vi.mock('@/plugins/dialog', () => ({
@@ -39,9 +49,23 @@ vi.mock('@/network/api/spaces', () => ({
   SpacesApi: { list: async () => ({ data: { spaces: [{ id: 3, name: '数据分析课' }] } }) },
 }))
 
-import HomeNav from './HomeNav.vue'
+// 抽屉外壳（背景层、圆角、移动端 temporary）不是这一页要看的：换成只铺默认槽的 `nav`。
+vi.mock('@/components/common/Navigation/SecondaryNavigation.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    default: defineComponent({
+      setup:
+        (_, { slots }) =>
+        () =>
+          h('nav', slots.default?.()),
+    }),
+  }
+})
+
+import HomeSidebar from './HomeSidebar.vue'
 
 import { setLocale } from '@/i18n'
+import { BusinessError } from '@/network/types/error'
 
 const blank = { template: '<div />' }
 
@@ -85,11 +109,10 @@ async function mount(path: string) {
   await router.push(path)
   await router.isReady()
   mounted.router = router
-  return render(HomeNav as unknown as Component, {
-    props: { inbox: true },
+  return render(HomeSidebar as unknown as Component, {
     global: {
       plugins: [createVuetify({ components, directives }), router],
-      stubs: { TeamProfileEditDialog: true, JoinSpaceDialog: true },
+      stubs: { JoinSpaceDialog: true },
     },
   })
 }
@@ -122,8 +145,12 @@ beforeEach(() => {
   del.mockReset()
   getMembers.mockReset()
   transferOwner.mockReset()
+  update.mockReset()
+  createAvatar.mockReset()
   confirm.mockReset()
   refreshProjects.mockReset()
+  // 头像预览：jsdom 里没有 URL.createObjectURL。
+  URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
   getMyTeams
     .mockReset()
     .mockResolvedValue({ data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] } })
@@ -233,6 +260,40 @@ describe('首页目录', () => {
 
     await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
     expect(await screen.findByText('退出团队')).toBeTruthy()
+  })
+
+  // 改资料：弹窗只收草稿，传图和 PATCH 都在这一侧 —— 报上去什么、错了那句话落到哪一格，
+  // 都是这里的规矩（弹窗那一侧只管画，见 `views/teams/TeamProfileEditDialog.spec.ts`）。
+  it('改资料：撞名那句话落在名字那一格', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'ADMIN')] } })
+    update.mockRejectedValue(
+      new BusinessError('taken', 409, { name: 'Conflict', message: 'taken', data: { field: 'name' } })
+    )
+    await mount('/inbox')
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await fireEvent.click(await screen.findByText('编辑团队资料'))
+    await fireEvent.update(await screen.findByLabelText('团队名称'), '知是开发组二')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(await screen.findByText('这个名称已被占用，换一个试试')).toBeTruthy()
+    await waitFor(() => expect(update).toHaveBeenCalledWith(team('crew', '').id, { name: '知是开发组二', intro: '' }))
+  })
+
+  it('改资料：换了头像先把图传上去，再把新 id 一起报上去', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'ADMIN')] } })
+    createAvatar.mockResolvedValue({ data: { avatarId: 77 } })
+    update.mockResolvedValue({ data: { team: team('crew', '知是开发组', 'ADMIN') } })
+    await mount('/inbox')
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await fireEvent.click(await screen.findByText('编辑团队资料'))
+    const file = new File(['image'], 'avatar.png', { type: 'image/png' })
+    await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    await fireEvent.click(await screen.findByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(createAvatar).toHaveBeenCalledWith(file))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(team('crew', '').id, { name: '知是开发组', intro: '', avatarId: 77 })
+    )
   })
 
   it('取消确认就什么都不做', async () => {

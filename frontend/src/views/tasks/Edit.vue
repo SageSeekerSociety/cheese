@@ -1,6 +1,9 @@
 <script setup lang="ts">
-// 改题页：和发题页同一张表（`TaskForm`），参与方式改不了，附件直接传到这道题上、从这道
-// 题上摘，AI 指导和发题时一样单独写或沿用空间的默认。没有导入和模板。
+// 改题页的容器：读地址、取题、装空间、传附件、保存、重新提交、跳转都在这儿；画面在
+// `EditView.vue`。
+//
+// 和发题页同一张表（`TaskForm`），参与方式改不了，附件直接传到这道题上、从这道题上摘，
+// AI 指导和发题时一样单独写或沿用空间的默认。没有导入和模板。
 import type { SpaceTeaching, TaskFormSubmitData } from '@/types'
 
 import { computed, onMounted, ref } from 'vue'
@@ -14,13 +17,8 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 
 import { useTaskData } from './composables'
+import EditView from './EditView.vue'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import PageHeader from '@/components/common/PageHeader.vue'
-import TeachingFields from '@/components/common/TeachingFields.vue'
-import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
-import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { isTeachingBlank } from '@/lib/teaching'
@@ -51,6 +49,9 @@ const editCategories = computed(() =>
     .sort((a, b) => a.displayOrder - b.displayOrder)
 )
 
+/** 题所属空间的话题；空间还没取到时是空的。 */
+const classificationTopics = computed(() => taskData.value?.space?.classificationTopics ?? [])
+
 const { materials, state: materialsState } = useSpaceMaterials(spaceId)
 
 /** 附件直接传到这道题上、从这道题上摘：改题页上的增删当场生效，不等保存。 */
@@ -61,25 +62,17 @@ const uploads = useAttachmentUploads({
   },
 })
 
+/** 这道题自己的「给 AI 队友的指导」覆盖。不单独写就沿用空间（或项目集）的默认。 */
 const teaching = ref<SpaceTeaching>({})
 const teachingOwn = ref(false)
 
-const form = ref<{ submit: () => void } | null>(null)
-const formInvalid = ref(0)
-const attempted = ref(false)
 const saving = ref(false)
-const resubmit = ref(false)
 
 /** 审核没通过的题，改完可以一并重新提交审核。 */
 const rejected = computed(() => taskData.value?.approved === 'DISAPPROVED')
 
-function save(again: boolean) {
-  attempted.value = true
-  resubmit.value = again
-  form.value?.submit()
-}
-
-async function onSubmit(data: TaskFormSubmitData) {
+/** 表单发上来的那一份。`resubmit` 是视图传下来的：刚刚按的是「保存并重新提交」。 */
+async function onSubmit(data: TaskFormSubmitData, resubmit: boolean) {
   if (saving.value) return
   saving.value = true
   try {
@@ -88,7 +81,7 @@ async function onSubmit(data: TaskFormSubmitData) {
       // 整份替换：沿用默认就交一份空的，让空间（或项目集）那一层重新生效。
       teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
     })
-    if (resubmit.value) {
+    if (resubmit) {
       await TasksApi.resubmitTask(taskId)
       toast.success(t('tasks.edit.resubmitted'))
     } else {
@@ -127,150 +120,31 @@ onMounted(async () => {
 </script>
 
 <template>
-  <PageHeader show-on-mobile>
-    <nav class="te__crumb">
-      <router-link :to="listTo" class="te__crumb-link">{{ t('spaces.detail.allContests') }}</router-link>
-      <v-icon size="16" class="te__crumb-sep">mdi-chevron-right</v-icon>
-      <router-link :to="detailTo" class="te__crumb-link" data-user-content>{{ taskData?.name ?? '' }}</router-link>
-      <v-icon size="16" class="te__crumb-sep">mdi-chevron-right</v-icon>
-      <span class="te__crumb-here">{{ t('tasks.edit.crumb') }}</span>
-    </nav>
-    <template #actions>
-      <span v-if="attempted && formInvalid" class="te__blocking">{{
-        t('spaces.detail.publishTask.blocking', { n: formInvalid })
-      }}</span>
-      <BaseButton kind="ghost" :disabled="saving" @click="navigateToDetail">{{ t('global.cancel') }}</BaseButton>
-      <BaseButton
-        v-if="rejected"
-        kind="secondary"
-        :loading="saving && resubmit"
-        :disabled="saving || uploads.uploading.value"
-        @click="save(true)"
-        >{{ t('tasks.edit.saveAndResubmit') }}</BaseButton
-      >
-      <BaseButton
-        kind="primary"
-        :loading="saving && !resubmit"
-        :disabled="saving || uploads.uploading.value || !taskData"
-        @click="save(false)"
-        >{{ t('tasks.edit.saveChanges') }}</BaseButton
-      >
-    </template>
-  </PageHeader>
-
-  <div class="te">
-    <div v-if="loading" class="py-12 text-center">
-      <v-progress-circular indeterminate color="primary" />
-    </div>
-    <!-- A failed read trades the form for the error (docs/design-system.md §3.10). -->
-    <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="loadTaskData" />
-    <TaskForm
-      v-else-if="taskData"
-      ref="form"
-      :initial-data="editTaskData"
-      is-editing
-      :classification-topics="taskData.space?.classificationTopics || []"
-      :categories="editCategories"
-      :domain-groups="domainGroups"
-      :teaching-custom="teachingOwn"
-      @invalid="formInvalid = $event"
-      @submit="onSubmit"
-    >
-      <template #attachments>
-        <TaskAttachmentPicker
-          :files="uploads.files.value"
-          :uploading="uploads.uploading.value"
-          :max-file-bytes="uploads.maxFileBytes.value"
-          @add="uploads.add"
-          @remove="uploads.remove"
-        />
-      </template>
-      <template #teaching>
-        <div>
-          <p class="te__label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
-          <p class="te__hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
-          <v-radio-group v-model="teachingOwn" hide-details density="compact" class="te__choices">
-            <v-radio :value="false" :label="t('spaces.detail.publishTask.teaching.inherit')" />
-            <v-radio :value="true" :label="t('spaces.detail.publishTask.teaching.own')" />
-          </v-radio-group>
-          <TeachingFields
-            v-if="teachingOwn"
-            v-model="teaching"
-            class="te__teaching"
-            :materials="materials"
-            :materials-state="materialsState"
-            :library-to="spaceLibraryPath(spaceId)"
-          />
-        </div>
-      </template>
-    </TaskForm>
-  </div>
+  <EditView
+    v-model:teaching="teaching"
+    v-model:teaching-own="teachingOwn"
+    :loading="loading"
+    :error="error"
+    :has-task-data="taskData !== null"
+    :task-name="taskData?.name ?? ''"
+    :rejected="rejected"
+    :saving="saving"
+    :list-to="listTo"
+    :detail-to="detailTo"
+    :initial-data="editTaskData"
+    :classification-topics="classificationTopics"
+    :categories="editCategories"
+    :domain-groups="domainGroups"
+    :materials="materials"
+    :materials-state="materialsState"
+    :library-to="spaceLibraryPath(spaceId)"
+    :attachments="uploads.files.value"
+    :uploading="uploads.uploading.value"
+    :max-file-bytes="uploads.maxFileBytes.value"
+    @retry="loadTaskData"
+    @cancel="navigateToDetail"
+    @submit="onSubmit"
+    @add-attachments="uploads.add"
+    @remove-attachment="uploads.remove"
+  />
 </template>
-
-<style scoped>
-.te {
-  width: min(var(--page-w), 100%);
-  margin: 0 auto;
-  padding: 8px 16px 64px;
-}
-
-.te__crumb {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  min-width: 0;
-  font-size: 14px;
-  line-height: var(--lh-14);
-}
-
-.te__crumb-link {
-  overflow: hidden;
-  color: var(--muted);
-  text-decoration: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.te__crumb-link:hover {
-  color: var(--ink);
-}
-
-.te__crumb-sep {
-  color: var(--faint);
-}
-
-.te__crumb-here {
-  flex: none;
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.te__blocking {
-  color: var(--danger-ink);
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-
-.te__label {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: var(--lh-13);
-}
-
-.te__hint {
-  margin: 4px 0 8px;
-}
-
-.te__choices :deep(.v-label) {
-  color: var(--text);
-  font-size: 14px;
-  line-height: var(--lh-14);
-  opacity: 1;
-}
-
-.te__teaching {
-  margin-top: 12px;
-}
-</style>

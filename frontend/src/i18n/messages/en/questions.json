@@ -67,6 +67,8 @@
     }
   },
   "answer": {
-    "acceptSuccess": "Answer accepted"
+    "acceptSuccess": "Answer accepted",
+    "loadFailed": "Couldn't load this answer",
+    "listLoadFailed": "Couldn't load the answers"
   }
 }

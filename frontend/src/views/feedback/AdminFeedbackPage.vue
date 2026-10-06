@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import AdminQueuePage from '@/views/admin/AdminQueuePage.vue'
+import { ref } from 'vue'
+
+import { useAdminQueue } from '@/composables/useAdminQueue'
+
+import AdminFeedbackPageView from '@/views/feedback/AdminFeedbackPageView.vue'
 
 // `/admin/feedback` —— 上一代那一整页反馈管理，现在是**一层薄壳**（§10.2）。
 //
@@ -12,11 +16,138 @@ import AdminQueuePage from '@/views/admin/AdminQueuePage.vue'
 // 不声不响地把人换个地方（他复制回聊天里的地址和点进去的那个对不上）。留一条同名的
 // 薄壳最省事，也最不会骗人：地址不变、内容就是队列。
 //
-// 这个文件**不再有自己的状态**：搜索、筛选、分诊、键盘全在 `AdminQueuePage` 里，
-// 两边共用同一个 store，在这儿再抄一份过滤逻辑必然有第二份真相。
+// 这一件是**容器**：它自己跑一次 `useAdminQueue`（和 `/admin/queue` 那棵树各跑各的，
+// 但两边共用同一个 store，所以看到的是同一份数据），画面交给同目录的
+// `AdminFeedbackPageView.vue`，那一件把队列视图原样渲染一遍。
 defineOptions({ name: 'AdminFeedbackPage' })
+
+const view = ref<InstanceType<typeof AdminFeedbackPageView> | null>(null)
+
+const {
+  isWide,
+  detailOpen,
+  setDetailOpen,
+  closeDetail,
+  triageOpen,
+  setTriageOpen,
+  detail,
+  detailLoading,
+  detailError,
+  detailStatusItems,
+  storeError,
+  assigneeItems,
+  assigneeLoading,
+  assigneeSearch,
+  assigneeHint,
+  detailAssign,
+  detailPriority,
+  detailSecurity,
+  detailNote,
+  onDetailTriage,
+  unread,
+  markCurrentRead,
+  reload,
+  view: viewMode,
+  setView,
+  adminTab,
+  laneOptions,
+  selectLane,
+  draft,
+  setDraft,
+  windowChips,
+  clearWindow,
+  statusTab,
+  setStatusTab,
+  tabOptions,
+  visible,
+  cursorId,
+  cursorIndex,
+  showSkeleton,
+  showStatusWord,
+  onActiveIndex,
+  onTableActivate,
+  openItem,
+  advance,
+  state,
+  copy,
+  runAction,
+  scoped,
+  hasPrev,
+  hasNext,
+  prev,
+  next,
+  undo,
+  undoTriage,
+  dismissUndo,
+} = useAdminQueue({
+  focusSearch: () => view.value?.focusSearch(),
+  focusAssignee: () => view.value?.focusAssignee() ?? false,
+})
+
+/** 「指派给谁」那个下拉的输入串。它是组合式函数里的一个 ref，视图只往上报新值。 */
+function setAssigneeSearch(v: string) {
+  assigneeSearch.value = v
+}
 </script>
 
 <template>
-  <AdminQueuePage />
+  <AdminFeedbackPageView
+    ref="view"
+    :is-wide="isWide"
+    :detail-open="detailOpen"
+    :triage-open="triageOpen"
+    :detail="detail"
+    :detail-loading="detailLoading"
+    :detail-error="detailError"
+    :detail-status-items="detailStatusItems"
+    :store-error="storeError"
+    :assignee-items="assigneeItems"
+    :assignee-loading="assigneeLoading"
+    :assignee-search="assigneeSearch"
+    :assignee-hint="assigneeHint"
+    :unread="unread"
+    :view="viewMode"
+    :admin-tab="adminTab"
+    :lane-options="laneOptions"
+    :draft="draft"
+    :window-chips="windowChips"
+    :status-tab="statusTab"
+    :tab-options="tabOptions"
+    :visible="visible"
+    :cursor-index="cursorIndex"
+    :cursor-id="cursorId"
+    :show-skeleton="showSkeleton"
+    :show-status-word="showStatusWord"
+    :state="state"
+    :copy="copy"
+    :scoped="scoped"
+    :has-prev="hasPrev"
+    :has-next="hasNext"
+    :undo="undo"
+    @close="closeDetail"
+    @update:detail-open="setDetailOpen"
+    @update:triage-open="setTriageOpen"
+    @triage="onDetailTriage"
+    @assign="detailAssign"
+    @priority="detailPriority"
+    @security="detailSecurity"
+    @note="detailNote"
+    @update:assignee-search="setAssigneeSearch"
+    @mark-read="markCurrentRead"
+    @reload="reload"
+    @update:view="setView"
+    @select-lane="selectLane"
+    @update:draft="setDraft"
+    @update:status="setStatusTab"
+    @clear-window="clearWindow"
+    @update:active-index="onActiveIndex"
+    @activate="onTableActivate"
+    @open="openItem"
+    @advance="advance"
+    @action="runAction"
+    @prev="prev"
+    @next="next"
+    @undo="undoTriage"
+    @dismiss="dismissUndo"
+  />
 </template>

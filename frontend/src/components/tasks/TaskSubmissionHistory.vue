@@ -1,163 +1,39 @@
 <template>
-  <div class="d-flex flex-column ga-2 w-100 align-stretch">
-    <v-card v-if="submissions.length" flat rounded="lg" :class="{ border: outlined, 'mb-4': !isDialog }">
-      <template v-if="!hideTitle" #title> {{ title || t('tasks.submissionHistory.latest') }} </template>
-      <template #text>
-        <v-card border flat rounded="lg" class="pa-4" :class="{ 'gradient-card': highlightLatest }">
-          <div class="d-flex flex-row align-center mb-2">
-            <v-chip color="primary" variant="tonal" size="small"> #{{ latestSubmission.version }} </v-chip>
-            <span class="ml-2">
-              {{
-                t('tasks.submissionHistory.submittedAt', {
-                  time: dayjs(latestSubmission.createdAt).format('YYYY-MM-DD HH:mm'),
-                })
-              }}
-            </span>
-            <div class="flex-grow-1"></div>
-            <v-chip
-              v-if="latestSubmission.review"
-              size="small"
-              variant="tonal"
-              :color="calcSubmissionReviewColor(latestSubmission.review)"
-            >
-              {{ calcSubmissionReviewText(latestSubmission.review) }}
-            </v-chip>
-          </div>
-          <div v-for="(content, index) in latestSubmission.content" :key="index">
-            <SubmissionContentCard
-              :content="content"
-              :class="{ 'mb-2': index !== latestSubmission.content.length - 1 }"
-            />
-          </div>
-        </v-card>
-
-        <v-card v-if="reviewable" flat rounded="lg" border class="mt-4">
-          <template #title>
-            {{
-              latestSubmission.review?.reviewed
-                ? t('tasks.submissionHistory.editReview')
-                : t('tasks.submissionHistory.review')
-            }}
-          </template>
-          <template #text>
-            <v-form @submit.prevent="submitReview">
-              <v-radio-group
-                v-model="accepted"
-                inline
-                :label="t('tasks.submissionHistory.passed')"
-                v-bind="acceptedProps"
-              >
-                <v-radio :label="t('tasks.submissionHistory.accept')" :value="true"></v-radio>
-                <v-radio :label="t('tasks.submissionHistory.reject')" :value="false"></v-radio>
-              </v-radio-group>
-              <v-text-field
-                v-model.number="score"
-                :label="t('tasks.submissionHistory.score')"
-                type="number"
-                min="0"
-                max="100"
-                v-bind="scoreProps"
-              />
-              <v-textarea
-                v-model="comment"
-                autocomplete="off"
-                :label="t('tasks.submissionHistory.comment')"
-                v-bind="commentProps"
-              />
-            </v-form>
-          </template>
-          <template #actions>
-            <BaseButton v-if="latestSubmission.review?.reviewed" kind="danger" @click="cancelReview">
-              {{ t('tasks.submissionHistory.cancelReview') }}
-            </BaseButton>
-            <BaseButton kind="primary" :loading="isSubmitting" :disabled="isSubmitting" @click="submitReview">
-              {{ t('tasks.submissionHistory.submit') }}
-            </BaseButton>
-          </template>
-        </v-card>
-        <SubmissionReviewStatus v-else-if="latestSubmission.review" class="mt-4" :review="latestSubmission.review" />
-      </template>
-    </v-card>
-
-    <v-card v-if="showHistory" flat rounded="lg" :class="{ border: outlined }">
-      <template v-if="submissions.length && !hideHistoryTitle" #title>
-        {{ historyTitle || t('tasks.submissionHistory.history') }}
-      </template>
-      <infinite-scroll
-        :has-more="hasMore"
-        :loading="loadingMore"
-        :initial-loading="refreshing"
-        :is-empty="submissions.length <= 1"
-        :shown="submissions.length"
-        :total="total"
-        force-manual
-        @load-more="loadMore"
-      >
-        <template #empty>
-          <BaseEmptyState size="compact" icon="" :title="emptyText || t('tasks.submissionHistory.empty')" />
-        </template>
-        <v-expansion-panels>
-          <template v-for="submission in submissions.slice(1)" :key="submission.id">
-            <v-expansion-panel :elevation="0" ripple>
-              <template #title>
-                <div class="d-flex flex-row align-center">
-                  <v-chip color="primary" variant="tonal" size="small"> #{{ submission.version }} </v-chip>
-                  <span class="ml-2">
-                    {{
-                      t('tasks.submissionHistory.submittedBy', {
-                        name: submission.submitter.nickname,
-                        time: dayjs(submission.createdAt).format('YYYY-MM-DD HH:mm'),
-                      })
-                    }}
-                  </span>
-                  <div class="flex-grow-1"></div>
-                  <v-chip
-                    v-if="submission.review"
-                    size="small"
-                    variant="tonal"
-                    :color="calcSubmissionReviewColor(submission.review)"
-                  >
-                    {{ calcSubmissionReviewText(submission.review) }}
-                  </v-chip>
-                </div>
-              </template>
-              <template #text>
-                <div v-for="(content, index) in submission.content" :key="index">
-                  <SubmissionContentCard
-                    :content="content"
-                    :class="{ 'mb-2': index !== submission.content.length - 1 }"
-                  />
-                </div>
-                <SubmissionReviewStatus v-if="submission.review" class="mt-4" :review="submission.review" />
-              </template>
-            </v-expansion-panel>
-          </template>
-        </v-expansion-panels>
-      </infinite-scroll>
-    </v-card>
-  </div>
+  <TaskSubmissionHistoryView
+    :submissions="submissions"
+    :has-more="hasMore"
+    :loading-more="loadingMore"
+    :refreshing="refreshing"
+    :total="total"
+    :submitting="submitting"
+    :reviewable="reviewable"
+    :show-history="showHistory"
+    :hide-title="hideTitle"
+    :hide-history-title="hideHistoryTitle"
+    :title="title"
+    :history-title="historyTitle"
+    :empty-text="emptyText"
+    :outlined="outlined"
+    :highlight-latest="highlightLatest"
+    :is-dialog="isDialog"
+    @load-more="loadMore"
+    @submit-review="onReview"
+    @cancel-review="onCancelReview"
+  />
 </template>
 
 <script setup lang="ts">
-import type { TaskSubmissionReview } from '@/types'
+// 容器：翻页取提交记录、提交/改/撤回评审都在这儿；画面交给 TaskSubmissionHistoryView。
+import type { PostTaskSubmissionReviewRequestData } from '@/network/api/tasks/types'
 
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
-import { toTypedSchema } from '@vee-validate/zod'
-import dayjs from 'dayjs'
-import { useForm } from 'vee-validate'
-import { z } from 'zod'
 
-import { vuetifyConfig } from '@/utils/form'
 import { usePaging } from '@/utils/paging'
 
-import SubmissionContentCard from './SubmissionContentCard.vue'
-import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
+import TaskSubmissionHistoryView from './TaskSubmissionHistoryView.vue'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { TasksApi } from '@/network/api/tasks'
 
 const { t } = useI18n()
@@ -212,68 +88,38 @@ const {
 
 const latestSubmission = computed(() => submissions.value[0])
 
-const calcSubmissionReviewColor = (review: TaskSubmissionReview) => {
-  if (!review) {
-    return 'text'
-  }
-  if (!review.reviewed) {
-    return 'text'
-  }
-  if (review.detail.accepted) {
-    return 'success'
-  }
-  return 'error'
-}
+const submitting = ref(false)
 
-const calcSubmissionReviewText = (review: TaskSubmissionReview) => {
-  if (!review || !review.reviewed) {
-    return t('tasks.submissionHistory.notReviewed')
-  }
-  return review.detail.accepted ? t('tasks.submissionHistory.accept') : t('tasks.submissionHistory.reject')
-}
-
-const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({
-  validationSchema: toTypedSchema(
-    z.object({
-      accepted: z.boolean().optional().default(true),
-      score: z.number().min(0).max(100),
-      comment: z.string().max(255).optional().default(''),
-    })
-  ),
-})
-
-const [accepted, acceptedProps] = defineField('accepted', vuetifyConfig)
-const [score, scoreProps] = defineField('score', vuetifyConfig)
-const [comment, commentProps] = defineField('comment', vuetifyConfig)
-
-const submitReview = handleSubmit(async (values) => {
-  if (latestSubmission.value.review && latestSubmission.value.review.reviewed) {
-    try {
-      await TasksApi.patchSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
+const onReview = async (values: PostTaskSubmissionReviewRequestData) => {
+  const latest = latestSubmission.value
+  if (!latest) return
+  submitting.value = true
+  try {
+    if (latest.review && latest.review.reviewed) {
+      await TasksApi.patchSubmissionReview(props.taskId, props.participantId, latest.id, values)
       toast.success(t('tasks.submissionHistory.reviewUpdated'))
-    } catch (error) {
-      toast.error(t('tasks.submissionHistory.reviewUpdateFailed'))
-      console.error(error)
-    } finally {
-      refresh()
-    }
-  } else {
-    try {
-      await TasksApi.postSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
+    } else {
+      await TasksApi.postSubmissionReview(props.taskId, props.participantId, latest.id, values)
       toast.success(t('tasks.submissionHistory.reviewed'))
-    } catch (error) {
-      toast.error(t('tasks.submissionHistory.reviewFailed'))
-      console.error(error)
-    } finally {
-      refresh()
     }
+  } catch (error) {
+    toast.error(
+      latest.review && latest.review.reviewed
+        ? t('tasks.submissionHistory.reviewUpdateFailed')
+        : t('tasks.submissionHistory.reviewFailed')
+    )
+    console.error(error)
+  } finally {
+    submitting.value = false
+    refresh()
   }
-})
+}
 
-const cancelReview = async () => {
-  if (latestSubmission.value.review) {
+const onCancelReview = async () => {
+  const latest = latestSubmission.value
+  if (latest?.review) {
     try {
-      await TasksApi.deleteSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id)
+      await TasksApi.deleteSubmissionReview(props.taskId, props.participantId, latest.id)
       toast.success(t('tasks.submissionHistory.reviewCanceled'))
     } catch (error) {
       toast.error(t('tasks.submissionHistory.reviewCancelFailed'))
@@ -288,30 +134,7 @@ onMounted(refresh)
 
 watch(() => [props.taskId, props.participantId], refresh)
 
-watch(latestSubmission, (newVal) => {
-  if (props.reviewable && newVal.review) {
-    if (newVal.review.reviewed) {
-      accepted.value = newVal.review.detail.accepted
-      score.value = newVal.review.detail.score
-      comment.value = newVal.review.detail.comment
-    } else {
-      resetForm()
-    }
-  }
-})
-
 defineExpose({
   refresh,
 })
 </script>
-
-<style scoped>
-.gradient-card {
-  background: linear-gradient(to right bottom, rgba(var(--v-theme-primary), 0.05), rgba(var(--v-theme-primary), 0.01));
-  border: 1px solid rgba(var(--v-theme-primary), 0.1);
-}
-
-.border {
-  border: 1px solid var(--line);
-}
-</style>

@@ -1,6 +1,6 @@
-import type { Component } from 'vue'
 import type { Team } from '@/types'
 
+import { computed, defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -27,6 +27,7 @@ vi.mock('@/network/api/teams', () => ({
 }))
 
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
+import { useTeamJoinLinkCard } from './useTeamJoinLinkCard'
 
 import { setLocale } from '@/i18n'
 import { BusinessError } from '@/network/types/error'
@@ -44,6 +45,38 @@ const team = {
   visibility: 'public',
 } as unknown as Team
 
+// 卡片只剩画的那一半（只认 props/emits）；改名、重置、审批这些都在
+// useTeamJoinLinkCard 里。这里把两者接起来，跟页面（Members.vue）里接的一样。
+const Host = defineComponent({
+  props: { team: { type: Object, required: true } },
+  emits: ['updated'],
+  setup(props, { emit }) {
+    const card = useTeamJoinLinkCard(
+      computed(() => props.team as Team | undefined),
+      (updated) => emit('updated', updated),
+      () => true
+    )
+    return () =>
+      h(TeamJoinLinkCard, {
+        team: props.team as Team,
+        link: card.link.value,
+        busy: card.busy.value,
+        error: card.error.value,
+        copied: card.copied.value,
+        url: card.url.value,
+        handle: card.handle.value,
+        handleError: card.handleError.value,
+        addressPrefix: card.addressPrefix,
+        'onUpdate:handle': (value: string) => (card.handle.value = value),
+        onSave: card.saveHandle,
+        onReset: card.reset,
+        onSetApproval: card.setApproval,
+        onSetVisibility: card.setVisibility,
+        onCopy: card.copy,
+      })
+  },
+})
+
 beforeAll(() => {
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } })
 })
@@ -60,7 +93,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 function mount() {
-  return render(TeamJoinLinkCard as unknown as Component, {
+  return render(Host, {
     props: { team },
     global: { plugins: [createVuetify({ components, directives })] },
   })

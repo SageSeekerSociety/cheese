@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
 import type { Block } from '@/cx_types'
 import type { SplitMarker } from '@/lib/splitMarkers'
 
@@ -6,15 +7,21 @@ import { computed } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import DispatchedMarker from '@/components/DispatchedMarker.vue'
-import RoomMessage from '@/components/room/RoomMessage.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import { t } from '@/i18n'
 
 // The room on the public site: the room's own message rows fed a scripted
 // project, so the demo looks like the product because it is the product's rows.
 // `step` is how far the story has scrolled; each step adds what happened next.
+//
+// 只吃 props：消息行本身由外面给（`messageComponent`）。产品里那一行会自己去取
+// 图片字节，于是"用哪一行"成了一次取数——那件事留在容器里，这里只管把它们摆好。
 
-const props = defineProps<{ step: number }>()
+const props = defineProps<{
+  step: number
+  /** 一行消息用哪只组件画。不给就只画日期和任务标记。 */
+  messageComponent?: Component
+}>()
 
 const AGENT = 'cheese'
 const refs = { mentionNames: {}, topicTitles: {} }
@@ -101,8 +108,9 @@ function runStart(index: number) {
           <template v-for="(line, i) in shown" :key="line.id">
             <TimelineMark v-if="line.kind === 'day'" quiet>{{ line.label }}</TimelineMark>
             <DispatchedMarker v-else-if="line.kind === 'marker'" :marker="marker(line)" />
-            <RoomMessage
-              v-else
+            <component
+              :is="messageComponent"
+              v-else-if="messageComponent"
               :block="block(line)"
               :parent="null"
               :parent-name="null"

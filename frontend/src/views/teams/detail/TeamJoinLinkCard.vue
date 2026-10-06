@@ -1,118 +1,36 @@
 <script setup lang="ts">
 // 小队所有者 / 管理员管理「别人怎么找到、怎么进来」的地方：团队地址（handle，
 // `/teams/<handle>`）、小队链接（长期有效，可重置）、加入要不要审批、搜不搜得到。
+// 取数在 useTeamJoinLinkCard.ts 里由页面持有；这里只认 props/emits。
 import type { Team, TeamVisibility } from '@/types'
 
-import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
-import { BusinessError } from '@/network/types/error'
 
-const props = defineProps<{ team: Team }>()
-const emit = defineEmits<{ updated: [team: Team] }>()
+const props = defineProps<{
+  team: Team
+  link: { token: string; approval: boolean } | null
+  busy: boolean
+  error: string
+  copied: boolean
+  url: string
+  handle: string
+  handleError: string
+  addressPrefix: string
+}>()
 
-const link = ref<TeamsApi.TeamJoinLink | null>(null)
-const busy = ref(false)
-const error = ref('')
-const copied = ref(false)
-const url = computed(() => (link.value ? `${window.location.origin}/team-invites/${link.value.token}` : ''))
+defineEmits<{
+  'update:handle': [value: string]
+  save: []
+  reset: []
+  setApproval: [approval: boolean | null]
+  setVisibility: [visibility: TeamVisibility]
+  copy: []
+}>()
 
-const route = useRoute()
-const router = useRouter()
-const addressPrefix = `${window.location.host}/teams/`
-const handle = ref(props.team.handle)
-const handleError = ref('')
-const handleChanged = computed(() => handle.value.trim() !== props.team.handle)
-watch(
-  () => props.team.handle,
-  (current) => (handle.value = current)
-)
-
-// A new handle is a new address: the page moves to it, the old one stops working.
-async function saveHandle() {
-  handleError.value = ''
-  busy.value = true
-  try {
-    const {
-      data: { team },
-    } = await TeamsApi.update(props.team.id, { handle: handle.value.trim() })
-    emit('updated', team)
-    await router.replace({
-      name: route.name ?? 'TeamsDetailDefault',
-      params: { handle: team.handle },
-      query: route.query,
-    })
-  } catch (e) {
-    handleError.value =
-      e instanceof BusinessError && e.code === 409
-        ? t('work.teamLink.handleTaken')
-        : e instanceof BusinessError && e.code === 400
-          ? t('work.teamLink.handleInvalid')
-          : t('work.teamLink.failed')
-  } finally {
-    busy.value = false
-  }
-}
-
-async function run(action: () => Promise<void>) {
-  busy.value = true
-  error.value = ''
-  try {
-    await action()
-  } catch {
-    error.value = t('work.teamLink.failed')
-  } finally {
-    busy.value = false
-  }
-}
-
-watch(
-  () => props.team.id,
-  (teamId) => {
-    link.value = null
-    copied.value = false
-    void run(async () => {
-      const { data } = await TeamsApi.getJoinLink(teamId)
-      if (props.team.id === teamId) link.value = data
-    })
-  },
-  { immediate: true }
-)
-
-function reset() {
-  copied.value = false
-  void run(async () => {
-    link.value = (await TeamsApi.resetJoinLink(props.team.id)).data
-  })
-}
-
-function setApproval(approval: boolean | null) {
-  void run(async () => {
-    link.value = (await TeamsApi.updateJoinLink(props.team.id, { approval: !!approval })).data
-  })
-}
-
-function setVisibility(visibility: TeamVisibility) {
-  void run(async () => {
-    const {
-      data: { team },
-    } = await TeamsApi.update(props.team.id, { visibility })
-    emit('updated', team)
-  })
-}
-
-async function copy() {
-  error.value = ''
-  try {
-    await navigator.clipboard.writeText(url.value)
-    copied.value = true
-  } catch {
-    error.value = t('work.teamLink.copyFailed')
-  }
-}
+const handleChanged = computed(() => props.handle.trim() !== props.team.handle)
 </script>
 
 <template>
@@ -122,7 +40,7 @@ async function copy() {
     <p class="t-body mb-1">{{ t('work.teamLink.address') }}</p>
     <div class="d-flex flex-wrap align-center ga-2">
       <v-text-field
-        v-model="handle"
+        :model-value="handle"
         autocomplete="off"
         :prefix="addressPrefix"
         :label="t('work.teamLink.address')"
@@ -132,8 +50,9 @@ async function copy() {
         density="compact"
         variant="outlined"
         class="link-field"
+        @update:model-value="$emit('update:handle', $event)"
       />
-      <BaseButton kind="primary" :disabled="busy || !handleChanged || !handle.trim()" @click="saveHandle">
+      <BaseButton kind="primary" :disabled="busy || !handleChanged || !handle.trim()" @click="$emit('save')">
         {{ t('work.teamLink.save') }}
       </BaseButton>
     </div>
@@ -154,10 +73,10 @@ async function copy() {
           variant="outlined"
           class="link-field"
         />
-        <BaseButton kind="primary" :disabled="busy" @click="copy">
+        <BaseButton kind="primary" :disabled="busy" @click="$emit('copy')">
           {{ copied ? t('work.teamLink.copied') : t('work.teamLink.copy') }}
         </BaseButton>
-        <BaseButton :disabled="busy" @click="reset">{{ t('work.teamLink.reset') }}</BaseButton>
+        <BaseButton :disabled="busy" @click="$emit('reset')">{{ t('work.teamLink.reset') }}</BaseButton>
       </div>
       <p class="t-meta c-muted mt-2">{{ t('work.teamLink.resetHint') }}</p>
 
@@ -169,7 +88,7 @@ async function copy() {
         hide-details
         inset
         class="mt-2"
-        @update:model-value="setApproval"
+        @update:model-value="$emit('setApproval', $event)"
       />
       <p class="t-meta c-muted">{{ t('work.teamLink.approvalHint') }}</p>
     </template>
@@ -179,7 +98,7 @@ async function copy() {
       :model-value="team.visibility"
       :disabled="busy"
       hide-details
-      @update:model-value="(value) => setVisibility(value as TeamVisibility)"
+      @update:model-value="(value) => $emit('setVisibility', value as TeamVisibility)"
     >
       <v-radio value="public" :label="`${t('work.teamLink.public')} · ${t('work.teamLink.publicHint')}`" />
       <v-radio value="stealth" :label="`${t('work.teamLink.stealth')} · ${t('work.teamLink.stealthHint')}`" />

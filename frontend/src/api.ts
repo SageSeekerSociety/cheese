@@ -64,6 +64,7 @@ import type {
 } from './cx_types'
 import type { DocComment } from './lib/docThreadTypes'
 import type { AgentFieldChoice } from './lib/modelChoices'
+import type { AdminCandidate } from './types/admin'
 import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from './types/compute'
 import type { DocumentTemplate, RoomOutput } from './types/roomOutput'
 import type { SitePage } from './types/site'
@@ -2392,19 +2393,6 @@ export interface PlatformAdminsPayload {
 
 export function listPlatformAdmins(): Promise<PlatformAdminsPayload> {
   return request<PlatformAdminsPayload>('/admin/admins')
-}
-
-/** 「加一个人」那个选择器的候选：按 handle 或昵称搜账号。
- *
- *  单开一条而不是复用用户目录接口：那条只在它取回的那一页里过滤（这个部署上账号
- *  上千，搜昵称十有八九回空），而这里「搜不到」是要么换个说法要么这个人没有账号。
- *  `already_admin` 里的人照常返回 —— 选择器要把他们画成已选中，而不是「搜不到」。 */
-export interface AdminCandidate {
-  handle: string
-  nickname: string
-  /** 没挑过头像的人是 null（和反馈卡片、聊天区名册同一条判据），界面画彩色首字母。 */
-  avatar_id: number | null
-  already_admin: boolean
 }
 
 export function searchAdminCandidates(q: string, limit = 20): Promise<{ items: AdminCandidate[] }> {

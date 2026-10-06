@@ -1,96 +1,18 @@
-<template>
-  <aside class="ts">
-    <!-- 我的进度：领了（或申请了）才有。用哪个团队领的、交到第几版、剩几天、从这道题开的项目。 -->
-    <section v-if="identity" class="ts__block">
-      <h2 class="ts__h t-eyebrow-read">{{ t('tasks.side.progress') }}</h2>
-      <div class="ts__mine">
-        <div class="ts__mine-head">
-          <strong>{{
-            identity.type === 'TEAM' ? identity.teamName || t('tasks.side.unnamedTeam') : t('tasks.side.individual')
-          }}</strong>
-          <span v-if="remaining" class="t-meta-read t-num">{{ remaining }}</span>
-          <AdaptiveMenu v-if="identity.approved === 'APPROVED'" :actions="mineActions">
-            <template #activator="{ props: menu }">
-              <BaseButton v-bind="menu" icon="mdi-dots-horizontal" size="sm" :aria-label="t('tasks.side.more')" />
-            </template>
-          </AdaptiveMenu>
-        </div>
-        <p class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
-
-        <template v-if="identity.approved === 'APPROVED'">
-          <p v-if="projectsFailed" class="ts__note">
-            {{ t('tasks.side.projectsFailed') }}
-            <BaseButton kind="secondary" size="sm" @click="loadProjects">{{ t('tasks.side.retry') }}</BaseButton>
-          </p>
-          <router-link v-for="p in projects" :key="p.id" :to="`/projects/${p.id}`" class="ts__project">
-            <v-icon size="14">mdi-folder-outline</v-icon>
-            <span>{{ p.name }}</span>
-          </router-link>
-          <!-- 先列已有的项目再给「新建」：直接给一颗会默默再建一个的按钮，人会建出第二个、第三个同样的项目。 -->
-          <BaseButton
-            v-if="!projectsLoading && !projectsFailed"
-            kind="ghost"
-            size="sm"
-            prepend-icon="mdi-plus"
-            class="ts__new"
-            @click="createProject"
-          >
-            {{ t('tasks.side.newProject') }}
-          </BaseButton>
-        </template>
-      </div>
-    </section>
-
-    <section class="ts__block">
-      <h2 class="ts__h t-eyebrow-read">{{ t('tasks.side.info') }}</h2>
-      <dl class="ts__facts">
-        <div>
-          <dt>{{ t('tasks.side.form') }}</dt>
-          <dd>{{ formText }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('tasks.side.deadline') }}</dt>
-          <dd>{{ deadlineText }}</dd>
-        </div>
-        <div v-if="defaultDeadline">
-          <dt>{{ t('tasks.side.period') }}</dt>
-          <dd>{{ t('tasks.side.periodValue', { n: defaultDeadline }) }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('tasks.side.attempts') }}</dt>
-          <dd>{{ task.resubmittable ? t('tasks.side.multiple') : t('tasks.side.once') }}</dd>
-        </div>
-        <div v-if="task.rank">
-          <dt>{{ t('tasks.side.rank') }}</dt>
-          <dd><v-rating :model-value="task.rank" readonly density="compact" size="x-small" /></dd>
-        </div>
-        <div>
-          <dt>{{ t('tasks.side.claimed') }}</dt>
-          <dd class="t-num">{{ claimedText }}</dd>
-        </div>
-      </dl>
-
-      <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
-    </section>
-  </aside>
-</template>
-
 <script setup lang="ts">
+// 题目详情右栏这一块**画的那一半**：我的进度、题目信息、从这道题开出来的项目。
+//
+// 取「会继承什么」、取从这道题开出来的项目、新建项目都在容器 `views/tasks/Detail.vue`
+// 里；这里只吃 props，点「新建项目」「重试」「退出」时往上发。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
-import type { TaskParticipationIdentity } from '@/network/api/tasks/types'
+import type { TaskInheritanceData, TaskParticipationIdentity } from '@/network/api/tasks/types'
 import type { Task, TaskSubmissionReview } from '@/types'
 
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-
-import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
-
-import { useTaskInheritance } from '../composables/useTaskInheritance'
 
 import TaskInheritance from './TaskInheritance.vue'
 
-import { listProjectsForTask } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
@@ -100,19 +22,22 @@ const props = defineProps<{
   identity: TaskParticipationIdentity | null
   /** 我最新那一版提交；还没交是 null。 */
   latest: { version: number; review?: TaskSubmissionReview } | null
+  /** 从这道题开出来的项目；容器取好递下来。 */
+  projects: Project[]
+  projectsLoading: boolean
+  projectsFailed: boolean
+  /** 建这道题的项目会继承什么；容器取好递下来。 */
+  inheritance: TaskInheritanceData | null
+  inheritanceLoading: boolean
 }>()
 
-const emit = defineEmits<{ leave: [] }>()
+const emit = defineEmits<{ leave: []; 'new-project': []; 'reload-projects': [] }>()
 
-// 「会继承什么」常驻在这里 (#944)：建项目之后，同一份说明还看得到 —— 从这道题
-// 新建项目就在下面这颗按钮上，两份说明放一起，人不必回头找。
-const { inheritance, loading: inheritanceLoading } = useTaskInheritance(() => props.task.id)
+const { t } = useI18n()
 
 const mineActions = computed<MenuAction[]>(() => [
   { key: 'leave', label: t('tasks.side.leave'), icon: 'mdi-exit-to-app', onSelect: () => emit('leave') },
 ])
-
-const { t } = useI18n()
 
 const DAY_MS = 86_400_000
 
@@ -172,41 +97,86 @@ const claimedText = computed(() => {
   if (limit > 0) return t(teams ? 'tasks.side.claimedTeamsOf' : 'tasks.side.claimedPeopleOf', { n, limit })
   return t(teams ? 'tasks.side.claimedTeams' : 'tasks.side.claimedPeople', { n })
 })
-
-// ── 从这道题开出来的项目 ─────────────────────────────────────────────────────────
-
-const projects = ref<Project[]>([])
-const projectsLoading = ref(false)
-const projectsFailed = ref(false)
-const { show: showNewProjectDialog } = useNewProjectDialog()
-
-async function loadProjects() {
-  projectsLoading.value = true
-  projectsFailed.value = false
-  try {
-    projects.value = (await listProjectsForTask(props.task.id)).data
-  } catch {
-    projects.value = []
-    projectsFailed.value = true
-  } finally {
-    projectsLoading.value = false
-  }
-}
-
-/** 用团队领的，新项目就挂在那个团队下；个人领的让人在对话框里选。 */
-function createProject() {
-  const teamId = props.identity?.type === 'TEAM' ? props.identity.memberId : null
-  showNewProjectDialog(teamId, { id: props.task.id, name: props.task.name })
-}
-
-watch(
-  () => [props.task.id, props.identity?.approved] as const,
-  ([, approved]) => {
-    if (approved === 'APPROVED') loadProjects()
-  },
-  { immediate: true }
-)
 </script>
+
+<template>
+  <aside class="ts">
+    <!-- 我的进度：领了（或申请了）才有。用哪个团队领的、交到第几版、剩几天、从这道题开的项目。 -->
+    <section v-if="identity" class="ts__block">
+      <h2 class="ts__h t-eyebrow-read">{{ t('tasks.side.progress') }}</h2>
+      <div class="ts__mine">
+        <div class="ts__mine-head">
+          <strong>{{
+            identity.type === 'TEAM' ? identity.teamName || t('tasks.side.unnamedTeam') : t('tasks.side.individual')
+          }}</strong>
+          <span v-if="remaining" class="t-meta-read t-num">{{ remaining }}</span>
+          <AdaptiveMenu v-if="identity.approved === 'APPROVED'" :actions="mineActions">
+            <template #activator="{ props: menu }">
+              <BaseButton v-bind="menu" icon="mdi-dots-horizontal" size="sm" :aria-label="t('tasks.side.more')" />
+            </template>
+          </AdaptiveMenu>
+        </div>
+        <p class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
+
+        <template v-if="identity.approved === 'APPROVED'">
+          <p v-if="projectsFailed" class="ts__note">
+            {{ t('tasks.side.projectsFailed') }}
+            <BaseButton kind="secondary" size="sm" @click="emit('reload-projects')">{{
+              t('tasks.side.retry')
+            }}</BaseButton>
+          </p>
+          <router-link v-for="p in projects" :key="p.id" :to="`/projects/${p.id}`" class="ts__project">
+            <v-icon size="14">mdi-folder-outline</v-icon>
+            <span>{{ p.name }}</span>
+          </router-link>
+          <!-- 先列已有的项目再给「新建」：直接给一颗会默默再建一个的按钮，人会建出第二个、第三个同样的项目。 -->
+          <BaseButton
+            v-if="!projectsLoading && !projectsFailed"
+            kind="ghost"
+            size="sm"
+            prepend-icon="mdi-plus"
+            class="ts__new"
+            @click="emit('new-project')"
+          >
+            {{ t('tasks.side.newProject') }}
+          </BaseButton>
+        </template>
+      </div>
+    </section>
+
+    <section class="ts__block">
+      <h2 class="ts__h t-eyebrow-read">{{ t('tasks.side.info') }}</h2>
+      <dl class="ts__facts">
+        <div>
+          <dt>{{ t('tasks.side.form') }}</dt>
+          <dd>{{ formText }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('tasks.side.deadline') }}</dt>
+          <dd>{{ deadlineText }}</dd>
+        </div>
+        <div v-if="defaultDeadline">
+          <dt>{{ t('tasks.side.period') }}</dt>
+          <dd>{{ t('tasks.side.periodValue', { n: defaultDeadline }) }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('tasks.side.attempts') }}</dt>
+          <dd>{{ task.resubmittable ? t('tasks.side.multiple') : t('tasks.side.once') }}</dd>
+        </div>
+        <div v-if="task.rank">
+          <dt>{{ t('tasks.side.rank') }}</dt>
+          <dd><v-rating :model-value="task.rank" readonly density="compact" size="x-small" /></dd>
+        </div>
+        <div>
+          <dt>{{ t('tasks.side.claimed') }}</dt>
+          <dd class="t-num">{{ claimedText }}</dd>
+        </div>
+      </dl>
+
+      <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
+    </section>
+  </aside>
+</template>
 
 <style scoped>
 .ts {

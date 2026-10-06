@@ -79,10 +79,11 @@ describe('反馈页面的滚动归自己领', () => {
     //
     // **领这一条的元素换过名字，所以这个用例也换过靶子**：管理端重做之后
     // `/admin/feedback` 变成一层薄壳（`AdminFeedbackPage.vue` 现在只渲染
-    // `<AdminQueuePage />`），满高和滚动都搬到了 `views/admin/AdminQueuePage.vue`
-    // 的 `.qpage`。钉旧名字的代价是这条不变量会在没人发现的情况下失效 —— 薄壳本身
-    // 没有样式，它「有 `fbadmin` 类」这件事跟「页面能不能滚」已经没有关系了。
-    const rule = cssRule('views/admin/AdminQueuePage.vue', '.qpage')
+    // `<AdminFeedbackPageView />` → `<AdminQueuePageView />`），满高和滚动都搬到了
+    // `views/admin/AdminQueuePageView.vue` 的 `.qpage`（页面拆成容器 + 视图之后，
+    // 那一层样式跟着画面走）。钉旧名字的代价是这条不变量会在没人发现的情况下失效 ——
+    // 薄壳本身没有样式，它「有 `fbadmin` 类」这件事跟「页面能不能滚」已经没有关系了。
+    const rule = cssRule('views/admin/AdminQueuePageView.vue', '.qpage')
     expect(rule).toContain('height: 100%')
     expect(rule).toContain('min-height: 0')
     // 而且真的有一个能滚的格子在里面，不是「把滚动挪走了」就完事。
@@ -93,6 +94,9 @@ describe('反馈页面的滚动归自己领', () => {
     // 这一条钉的是**链接还活着**，不是布局：老书签、老通知、别人贴在聊天里的链接都还
     // 指着 `/admin/feedback`，它当时指的是「后台里管反馈的那一块」，今天还是那件事。
     // （薄壳的来龙去脉和它为什么不用重定向见 `AdminFeedbackPage.vue` 顶部那段。）
-    expect(rootTag('AdminFeedbackPage')).toContain('<AdminQueuePage')
+    // 页面拆成容器 + 视图之后多了一跳：薄壳渲染的是它自己的视图，视图再渲染队列视图。
+    // 这里两跳都钉住 —— 只钉第一跳的话，中间那一层换成别的东西就没人看得见了。
+    expect(rootTag('AdminFeedbackPage')).toContain('<AdminFeedbackPageView')
+    expect(rootTag('AdminFeedbackPageView')).toContain('<AdminQueuePageView')
   })
 })

@@ -2,68 +2,61 @@
 // 「转让团队」：所有者退不掉团队（后端要他先转让或解散），这里就是那条出路。从团队
 // 成员里挑一个人 → `PUT /teams/{id}/owner`：他成为所有者，我降为管理员，之后才退得掉。
 // 被拒时弹窗不关，那句理由原样留在弹窗里；重开时清掉。
+//
+// 候选人名单是 props 进来的：读成员、把我自己摘掉都是外面的事。这一只只管「挑谁」，
+// 挑好了喊一声（`submit`）。
 import type { Team, TeamMember } from '@/types'
 
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
-import AccountService from '@/services/account'
 
-const props = defineProps<{ team: Team }>()
-const open = defineModel<boolean>({ required: true })
-const emit = defineEmits<{ transferred: [team: Team] }>()
+const props = defineProps<{
+  modelValue: boolean
+  team: Team
+  /** 能接手的人：团队里除我以外的成员。外面读好再给。 */
+  candidates: TeamMember[]
+  /** 正在转让：按钮转起来，也挡住第二次提交。 */
+  transferring?: boolean
+  /** 读名单失败、或上一次转让为什么没成。 */
+  error?: string | null
+}>()
 
-const members = ref<TeamMember[]>([])
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  submit: [userId: number]
+}>()
+
 const picked = ref<number | null>(null)
-const transferring = ref(false)
-const error = ref<string | null>(null)
 
-const candidates = computed(() => members.value.filter((m) => m.user.id !== AccountService.user?.id))
-
+// 每次打开都从「还没挑」起手。
 watch(
-  open,
-  async (v) => {
-    if (!v) return
-    error.value = null
-    picked.value = null
-    try {
-      members.value = (await TeamsApi.getMembers(props.team.id)).data.members
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : t('home.nav.transferTeamLoadFailed')
-    }
+  () => props.modelValue,
+  (open) => {
+    if (open) picked.value = null
   },
   { immediate: true }
 )
 
-async function transfer() {
-  if (picked.value === null) return
-  transferring.value = true
-  error.value = null
-  try {
-    const { data } = await TeamsApi.transferOwner(props.team.id, picked.value)
-    open.value = false
-    emit('transferred', data.team)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('home.nav.transferTeamFailed')
-  } finally {
-    transferring.value = false
-  }
+function transfer() {
+  if (picked.value === null || props.transferring) return
+  emit('submit', picked.value)
 }
 </script>
 
 <template>
   <AdaptiveDialog
-    v-model="open"
+    :model-value="modelValue"
     :title="t('home.nav.transferTeamTitle', { name: team.name })"
     :primary-label="t('home.nav.transferTeam')"
     :primary-loading="transferring"
     :primary-disabled="picked === null"
     :max-width="480"
+    @update:model-value="emit('update:modelValue', $event)"
     @primary="transfer"
   >
     <div class="t-body c-muted">

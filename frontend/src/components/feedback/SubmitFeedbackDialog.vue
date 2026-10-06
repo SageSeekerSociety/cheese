@@ -56,7 +56,7 @@ function onSubmitted(id: string) {
       </div>
 
       <v-card-text class="sfd-body">
-        <SubmitFeedbackForm shell="dialog" @submitted="onSubmitted" @cancel="close" />
+        <SubmitFeedbackForm @submitted="onSubmitted" @cancel="close" />
       </v-card-text>
     </v-card>
   </v-dialog>

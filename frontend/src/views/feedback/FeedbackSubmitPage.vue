@@ -2,10 +2,9 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
-import SubmitFeedbackForm from '@/components/feedback/SubmitFeedbackForm.vue'
-import { t } from '@/i18n'
+import FeedbackSubmitPageView from './FeedbackSubmitPageView.vue'
+
+import { useSubmitFeedbackForm } from '@/components/feedback/useSubmitFeedbackForm'
 import { stepBack } from '@/lib/backOut'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -19,25 +18,44 @@ import { useFeedbackStore } from '@/stores/feedback'
 //   * 文档里的既有结论也指向它：反馈中心是一个完整页面，塞进浮层里那套（可分享的
 //     链接、Tab、详情）一件都做不了。
 //
-// 会话里那张 agent 提案卡**不走这一页**，走对话框：从对话里跳走会把那张卡留在身后，
-// 而它提交完要就地翻成一张凭证。字段是同一份（SubmitFeedbackForm），两个壳只是壳。
+// 会话里那张 agent 提案卡**不走这一页**，走对话框（`SubmitFeedbackDialog` →
+// `SubmitFeedbackForm`）：从对话里跳走会把那张卡留在身后，而它提交完要就地翻成一张凭据。
 //
-// 版面走 `FeedbackPageShell`（返回箭头在标题左边、表单在下面），**底边留白交给页内的
-// 黏底操作条**（`flushBottom`）：`sticky` 量的是滚动容器内容盒的下沿，壳再加一层 48px
-// 底内边距，操作条下面就会多出一条带子，表单从那里露出来。
+// 拆成容器 + 视图是为了场景棘轮：视图（`FeedbackSubmitPageView.vue`）要能被单独渲染，
+// 所以它不能读 store、不能读路由；这一半拿 store 和路由，把草稿和几个动作交给
+// `useSubmitFeedbackForm` —— 表单的接线和对话框那一半**是同一份**，两边不会各长一套。
+//
+// `loadMeta` 在这里调，不在表单里：只有从页面进来的人需要它把类型词表拉下来（对话框那
+// 一路是提案卡已经把草稿填好才打开的）。表单自己也调一次是以前的事，现在两边都不重复调。
 defineOptions({ name: 'FeedbackSubmitPage' })
 
 const store = useFeedbackStore()
 const router = useRouter()
 
-// 先把草稿准备好（手上这份有内容就接着写，空着才去盘上捞那一份），再谈画界面。
-// 这一步在表单组件里也做了一次（它自己挂载时调），这里不重复调：两处都调的话，
-// 第二次会把刚捞回来的那份再判成「手上这份没有内容」。
+const {
+  draft,
+  kinds,
+  restoredNotice,
+  askRepro,
+  askExpectation,
+  canSubmit,
+  tagSuggestions,
+  submitting,
+  error,
+  patch,
+  addTag,
+  removeTag,
+  discardDraft,
+  submit,
+} = useSubmitFeedbackForm()
+
 onMounted(() => {
   void store.loadMeta()
 })
 
-function onSubmitted(id: string) {
+async function onSubmit() {
+  const id = await submit()
+  if (!id) return
   // **replace 而不是 push**：提交完还按回退键，人不该回到一张已经清空的表单上 ——
   // 那份内容已经变成一条反馈了，回到空表单只会让人以为刚才那次提交没成功。
   void router.replace({ name: 'FeedbackDetail', params: { id } })
@@ -55,11 +73,21 @@ function leave() {
 </script>
 
 <template>
-  <FeedbackPageShell :title="t('feedback.submit.title')" flush-bottom>
-    <template #lead>
-      <BaseButton icon="mdi-arrow-left" size="sm" :aria-label="t('feedback.submit.back')" @click="leave" />
-    </template>
-
-    <SubmitFeedbackForm shell="page" @submitted="onSubmitted" @cancel="leave" />
-  </FeedbackPageShell>
+  <FeedbackSubmitPageView
+    :draft="draft"
+    :kinds="kinds"
+    :restored-notice="restoredNotice"
+    :ask-repro="askRepro"
+    :ask-expectation="askExpectation"
+    :tag-suggestions="tagSuggestions"
+    :submitting="submitting"
+    :error="error"
+    :can-submit="canSubmit"
+    @patch="patch"
+    @add-tag="addTag"
+    @remove-tag="removeTag"
+    @discard-draft="discardDraft"
+    @submit="onSubmit"
+    @cancel="leave"
+  />
 </template>

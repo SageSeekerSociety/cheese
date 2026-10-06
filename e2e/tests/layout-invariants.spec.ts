@@ -115,7 +115,7 @@ type Defect = { kind: string; what: string };
  *    * `VUETIFY_FIELDS` —— Vuetify 的 outlined 控件。真正画出来的 label 住在描边的
  *      缺口里（`.v-field__outline .v-field-label`），而字段是 `.v-field` 那个盒子。
  *    * `TOKEN_FIELDS` —— 平台自己用令牌画的表单（反馈提交页，见
- *      `components/feedback/SubmitFeedbackForm.vue` 的文件头：它**故意**不用 Vuetify
+ *      `components/feedback/SubmitFeedbackFormView.vue` 的文件头：它**故意**不用 Vuetify
  *      的输入框）。那里一对「标签 + 控件」是 `.sb-field`，标签在控件上方一行，是普通
  *      的 `.sb-label`，没有骑在边框上的那一半。
  *
@@ -277,7 +277,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     // 字段，喂给 `fieldDefects` 会把不相干的东西放在一起比。等的是表单真的画出来，
     // 不是地址变了 —— 地址先变、字段在后几帧里。
     //
-    // 画法是 `TOKEN_FIELDS`：这一页是平台自己用令牌画的（`SubmitFeedbackForm.vue`
+    // 画法是 `TOKEN_FIELDS`：这一页是平台自己用令牌画的（`SubmitFeedbackFormView.vue`
     // 的文件头写了为什么不用 Vuetify 的输入框），`.sb-form` 里一个 `.v-field` 都没
     // 有。量到的仍然是老一套：标签不压到别的字段上、也不被滚动容器裁掉。
     const form = page.locator('.sb-form');
