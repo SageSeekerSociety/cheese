@@ -10,6 +10,7 @@ import base64
 import errno
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -929,12 +930,15 @@ def test_only_the_builds_own_cwd_file_is_written(session, machine, target):
 
 
 def test_a_machine_out_of_reach_is_said_at_once(tmp_path, machine):
+    """And leaves nothing behind on this host: the process that would stop a
+    command started there has none to stop, and ends with the call."""
     session = Session(tmp_path / "gone", machine, kind="unavailable")
     started = time.monotonic()
     code, output = session.run(session.wrapped("echo never"))
     assert code == 1
     assert time.monotonic() - started < 20
     assert b"never" not in output
+    _wait_for(lambda: not _alive(re.escape(str(session.target))), timeout=5)
 
 
 # --- the launch -----------------------------------------------------------------
