@@ -146,8 +146,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
   // 往上报（working / site-turns）是这里的事。
-  const turns = useRoomTurns({ messages, agentName, agentNameOf })
-  const { awaitingReply, turnAgentName, turnAgentHandle } = turns
+  const turns = useRoomTurns({ messages })
+  const { awaitingReply, turnAgentHandle } = turns
   watch(awaitingReply, (v) => emit('working', v))
   watch(turns.turnStarts, (v) => emit('site-turns', v))
   // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
@@ -779,9 +779,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
     })
   )
 
-  /** 某一轮那位队友：名字和 handle。认不出是谁的轮次，就是这个房间的那位。 */
-  function turnAgent(turnId: string | null | undefined): NoticeAgent {
-    return { name: turnAgentName(turnId), handle: turnAgentHandle(turnId) ?? agentSeat.value?.handle ?? null }
+  /** 某一轮那位队友：名字和 handle。认不出是谁的轮次就不署队友：拿房间的第一位顶上，
+   *  发给 B 的那一轮出了错，提示就署成了 A。 */
+  function turnAgent(turnId: string | null | undefined): NoticeAgent | null {
+    const handle = turnAgentHandle(turnId)
+    return handle ? { name: agentDisplayName(handle), handle } : null
   }
 
   function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
