@@ -934,7 +934,7 @@ const CHAT_BASE = {
   isAgentBlock: (b: Block) => SCENE.people[b.author]?.agent === true,
   isMine: () => false,
   isExternal: () => false,
-  avatarSrc: () => null as string | null,
+  avatarOf: () => null as string | null,
   displayName: (b: Block) => NAMES[b.author] ?? b.author,
   noticeAgent: (b: Block) => (NAMES[b.author] ? { name: NAMES[b.author]!, handle: b.author } : null),
   parentOf: () => undefined,

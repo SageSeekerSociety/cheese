@@ -31,7 +31,12 @@ const replace = vi.fn(async (to: { query?: Record<string, unknown> }) => {
   for (const [k, v] of Object.entries(to.query)) if (typeof v === 'string') next[k] = v
   query.value = next
 })
-vi.mock('vue-router', () => ({
+// 只换掉这两个取用点，模块其余部分照旧：这个页面底下会摸到 api 层的
+// `network/Interceptors/hooks/refreshToken.ts`，它 `import router from '@/router'`
+// —— 整个替掉 vue-router 的话，那棵真路由树在导入时就炸了（见 proto-router-stub.ts
+// 对同一条链的说明）。
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRouter: () => ({ push: vi.fn(), replace }),
   useRoute: () => ({
     get query() {
