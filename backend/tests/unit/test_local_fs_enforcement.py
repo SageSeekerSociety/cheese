@@ -18,7 +18,6 @@ import pytest
 
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.local_fs.enforcement import (
-    PushOutcome,
     grant_wire,
     plan_local_access,
     push_grants,
@@ -124,7 +123,6 @@ async def test_an_offline_machine_does_not_fail_the_grant():
 
     assert outcome.delivered is False
     assert outcome.reason == "device_offline"
-    assert outcome.needs_retry is True
     # The detail is what the owner reads, so it has to say what happened AND what
     # will happen next, not just that something failed.
     assert "不在线" in outcome.detail
@@ -139,7 +137,6 @@ async def test_a_machine_that_answers_badly_is_reported_not_raised():
 
     assert outcome.delivered is False
     assert outcome.reason == "device_error"
-    assert outcome.needs_retry is True
 
 
 async def test_a_machine_that_does_not_answer_is_reported_not_raised():
@@ -177,14 +174,115 @@ async def test_a_fault_in_this_code_is_raised_not_blamed_on_the_machine():
         await push_grants(service, link, DEVICE)
 
 
-async def test_a_delivered_set_is_not_retried():
+async def test_a_delivered_set_carries_the_machines_fingerprint():
     repo = InMemoryLocalFsRepository()
     service = service_with(repo)
     link = FakeLink()
     outcome = await push_grants(service, link, DEVICE)
     assert outcome.delivered is True
     assert outcome.fingerprint == "fp-1"
-    assert outcome.needs_retry is False
+
+
+async def test_a_revoke_committed_while_a_push_is_in_flight_reaches_the_machine():
+    """A push that read the set just before a revoke committed is not the last
+    word on the machine.
+
+    Pushes to one machine come from any backend, and the revoke's own push can
+    land before this older one does. The set is read again once the machine
+    acknowledges, and sent again when it changed.
+    """
+    service = service_with(InMemoryLocalFsRepository())
+    paper = await service.grant_directory(
+        device_id=DEVICE,
+        owner_user_id=OWNER,
+        path="/home/alice/Paper",
+        platform=Platform.LINUX,
+        mode=GrantMode.READ,
+        scope=GrantScope.USER,
+    )
+    await service.grant_directory(
+        device_id=DEVICE,
+        owner_user_id=OWNER,
+        path="/home/alice/Notes",
+        platform=Platform.LINUX,
+        mode=GrantMode.READ,
+        scope=GrantScope.USER,
+    )
+
+    class RevokedMeanwhile(FakeLink):
+        async def push_local_fs_grants(self, device_id, grants, *, timeout=20):
+            if not self.pushed:
+                await service.revoke(paper.id, owner_user_id=OWNER)
+            return await super().push_local_fs_grants(
+                device_id, grants, timeout=timeout
+            )
+
+    link = RevokedMeanwhile()
+    outcome = await push_grants(service, link, DEVICE)
+
+    assert outcome.delivered is True
+    assert [g["path"] for g in link.pushed[-1][1]] == ["/home/alice/Notes"]
+
+
+async def test_a_revoke_committed_while_an_unanswered_push_is_out_reaches_the_machine():
+    """A push that timed out may still be applied by the machine, after the
+    revoke's own push. The set is read again, and the newer one sent after it."""
+    service = service_with(InMemoryLocalFsRepository())
+    paper = await service.grant_directory(
+        device_id=DEVICE,
+        owner_user_id=OWNER,
+        path="/home/alice/Paper",
+        platform=Platform.LINUX,
+        mode=GrantMode.READ,
+        scope=GrantScope.USER,
+    )
+
+    class SlowThenRevoked(FakeLink):
+        async def push_local_fs_grants(self, device_id, grants, *, timeout=20):
+            if not self.pushed:
+                self.pushed.append((device_id, grants))
+                await service.revoke(paper.id, owner_user_id=OWNER)
+                raise TimeoutError
+            return await super().push_local_fs_grants(
+                device_id, grants, timeout=timeout
+            )
+
+    link = SlowThenRevoked()
+    await push_grants(service, link, DEVICE)
+
+    assert link.pushed[-1][1] == []
+
+
+async def test_an_unanswered_push_of_an_unchanged_set_is_not_repeated():
+    service = service_with(InMemoryLocalFsRepository())
+    link = FakeLink(raises=TimeoutError())
+
+    outcome = await push_grants(service, link, DEVICE)
+
+    assert outcome.reason == "device_error"
+    assert len(link.pushed) == 1
+
+
+async def test_the_read_is_ended_before_the_machine_is_asked():
+    """The machine can take up to the push's timeout to answer; a database
+    connection held for that long, once per machine, empties the pool."""
+    events: list[str] = []
+
+    class Asked(FakeLink):
+        async def push_local_fs_grants(self, device_id, grants, *, timeout=20):
+            events.append("ask")
+            return await super().push_local_fs_grants(
+                device_id, grants, timeout=timeout
+            )
+
+    async def end_read() -> None:
+        events.append("end read")
+
+    await push_grants(
+        service_with(InMemoryLocalFsRepository()), Asked(), DEVICE, end_read=end_read
+    )
+
+    assert events == ["end read", "ask", "end read"]
 
 
 async def test_revoking_pushes_an_emptied_set():
@@ -323,8 +421,3 @@ def test_a_revoked_grant_is_not_a_reason_to_degrade():
     )
     plan = plan_local_access(device_online=False, grants=[revoked])
     assert plan.reason == "no_grant"
-
-
-def test_an_outcome_only_asks_for_a_retry_when_it_did_not_land():
-    assert PushOutcome(True, "delivered", "").needs_retry is False
-    assert PushOutcome(False, "device_offline", "").needs_retry is True
