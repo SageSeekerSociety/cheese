@@ -1073,6 +1073,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/join", auth: "topic.channel.self", owner: "topic.membership"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/leave", auth: "topic.channel.self", owner: "topic.membership"}
   - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/description", auth: "topic.channel.manage", owner: "topic"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/members-only", auth: "topic.channel.manage", owner: "topic"}
   # app.api.routes.topics_pins
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/pins", auth: "actor.topic", owner: "topic.pins"}
   - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/pins/{block_id}", auth: "topic.channel.self", owner: "topic.pins"}
