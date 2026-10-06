@@ -1,0 +1,282 @@
+name: Diagnose pure-layer worker crash
+
+# Temporary: runs the pure layer six times at once with every kill signal and
+# the memory traced, to find what ends an xdist worker near the end of the
+# layer ("node down: Not properly terminated"). Not to be merged.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/diag-pure-worker-crash.yml
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: pure diag ${{ matrix.copy }}
+    strategy:
+      fail-fast: false
+      matrix:
+        copy: [1, 2, 3, 4, 5, 6]
+    # Floors apply to the complete layer before sharding, not each runner.
+    env:
+      REDIS_URL: redis://localhost:6389/0
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      # LLM tests mock the completions; the client just needs to construct
+      # (the openai SDK errors without any credentials). Dummy key.
+      OPENAI_API_KEY: test-key
+      # The default AI pool is "available" only when its gateway credential is
+      # present (AgentProfile.available = bool(auth_token)); the market test
+      # asserts availability. Dummy token — no real calls are made.
+      ANTHROPIC_AUTH_TOKEN: test-token
+    services:
+      # The same images the cheese-ci pool's resident pair run
+      # (deploy/ci-runner/resident-services.sh), on the same host ports, so the
+      # test settings need no translation between the two kinds of runner.
+      postgres:
+        image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cheese_test
+        ports:
+          - 5442:5432
+        # Use tmpfs for the ephemeral integration DB to reduce observed sync I/O.
+        # Bound tmpfs to 4 GiB on 16 GiB runners; sample filesystem and RAM below.
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      valkey:
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+        ports:
+          - 6389:6379
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    # Each runner has its own services and xdist workers. This ceiling detects
+    # hangs; the artifact timings measure whether the feedback budget is met.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Hosted matrix runners have isolated service containers. Keep the slot
+      # namespace for reproductions on a machine shared by multiple test runs.
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          # Redis keys are scoped by user id and user ids restart from 1 in every
+          # database, so two runs must not share an index: each slot takes its
+          # own block of 16, and the resident Valkey has room for both.
+          echo "CHEESE_CI_REDIS_BASE_DB=$((slot * 16))" >> "$GITHUB_ENV"
+          # `-n auto` is the whole machine; two slots of it is twice the cores.
+          # A machine with one slot sets nothing and keeps `auto`.
+          echo "CHEESE_CI_TEST_WORKERS=${CHEESE_CI_TEST_WORKERS:-auto}" >> "$GITHUB_ENV"
+          # The database `alembic upgrade head` is proved against below. Its own
+          # per slot: two runs migrating one database race on its version table.
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
+
+      - name: Ensure required test tools
+        run: |
+          # bubblewrap: a Cloud session's executor runs in its sandbox, whose
+          # network the machine connects with iproute2 and iptables as root.
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
+          # The hosted runner is a throwaway VM with passwordless sudo, so the
+          # tests that start a sandbox may change its iptables rules and
+          # cgroups the way a Cloud machine's are (tests/unit/test_sandbox_network.py).
+          echo "CHEESE_TEST_SANDBOX_HOST=1" >> "$GITHUB_ENV"
+          # Tests that launch a room's session, or sandbox an executor, need
+          # its namespace.
+          "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
+
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      # The resident Postgres outlives the job, and a service container used to
+      # bring this database into being by being new. Empty every run on purpose:
+      # what the step below proves is that the migrations apply from nothing.
+      - name: Give this run an empty database
+        if: false
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh postgresql-client
+          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
+          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
+
+      # DATABASE_URL comes from the slot step above.
+      - name: Run database migrations
+        if: false
+        run: uv run alembic upgrade head
+
+      # tests/pinned_claude.py: every command an executor runs goes through the
+      # pinned build's `mcp serve`, so the remote-execution tests need the
+      # binary itself. The pool has it preinstalled; a hosted runner does not.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+      - name: Install pinned harness binaries
+        run: |
+          packages="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX
+          pins = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(f"@anthropic-ai/claude-code@{pins[CLAUDE_CODE]} @openai/codex@{pins[CODEX]}")
+          PY
+          )"
+          # Package names and versions come only from checked-in declarations.
+          read -r -a pinned_packages <<< "$packages"
+          npm install --prefix "$RUNNER_TEMP/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
+          tools="$RUNNER_TEMP/harness-tools/node_modules/.bin"
+          echo "$tools" >> "$GITHUB_PATH"
+          echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
+          "$tools/claude" --version
+          "$tools/codex" --version
+          # pi is not an npm package here: the build a room runs is the
+          # vendor's compiled release, fetched and checked by the same code the
+          # platform serves it with (`app.domain.machine.pi_dist`).
+          case "$(uname -m)" in
+            x86_64) pi_platform=linux-x64 ;;
+            aarch64 | arm64) pi_platform=linux-arm64 ;;
+          esac
+          archive="$(uv run python - "$RUNNER_TEMP/pi-dist" "$pi_platform" <<'PY'
+          import asyncio, sys
+          from pathlib import Path
+          from app.domain.agent.harness import PI
+          from app.domain.agent.capability.matrix import written
+          from app.domain.machine import pi_dist
+          version = written()[PI].pinned_version
+          print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
+          PY
+          )"
+          mkdir -p "$RUNNER_TEMP/pi"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/pi"
+          echo "CHEESE_TEST_PI=$RUNNER_TEMP/pi/pi/pi" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/pi/pi/pi" --version
+
+      - name: Verify integration PostgreSQL storage
+        if: false
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker inspect --format '{{json .HostConfig.Tmpfs}}' "$POSTGRES_CONTAINER"
+          pid=$(docker inspect --format '{{.State.Pid}}' "$POSTGRES_CONTAINER")
+          data="/proc/$pid/root/var/lib/postgresql/data"
+          test "$(sudo -n stat -f -c %T "$data")" = tmpfs
+          read -r block_size blocks < <(sudo -n stat -f -c '%S %b' "$data")
+          test "$((block_size * blocks))" = 4294967296
+          echo "CHEESE_CI_POSTGRES_PID=$pid" >> "$GITHUB_ENV"
+
+      - name: Watch signals and memory
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bpftrace
+          mkdir -p "$RUNNER_TEMP/backend-results"
+          # Every SIGKILL/SIGTERM/SIGABRT/SIGHUP/SIGINT the kernel generates: who sent it, to whom.
+          sudo nohup bpftrace -e 'tracepoint:signal:signal_generate /args->sig == 9 || args->sig == 15 || args->sig == 6 || args->sig == 1 || args->sig == 2/ { printf("%lld sig=%d from=%d(%s) to=%d(%s) res=%d\n", nsecs, args->sig, pid, comm, args->pid, args->comm, args->result); }' > "$RUNNER_TEMP/backend-results/signals.log" 2>&1 &
+          # Memory and the largest processes every two seconds; the xdist workers by pid.
+          nohup bash -c 'while true; do echo "== $(date +%s) $(grep -E "MemAvailable|SwapFree" /proc/meminfo | tr -s " " | tr "\n" " ")"; ps -eo pid,ppid,rss,etimes,args --sort=-rss | head -12 | cut -c1-200; sleep 2; done' > "$RUNNER_TEMP/backend-results/memory.log" 2>&1 &
+          sleep 5; head -3 "$RUNNER_TEMP/backend-results/signals.log"
+
+      - name: Run the selected layer partition
+        timeout-minutes: 14
+        env:
+          TEST_LAYER: pure
+          TEST_SHARD: '0/1'
+        run: |
+          mkdir -p "$RUNNER_TEMP/backend-results"
+          # The annotation step below can only name a shard's real reason if it
+          # can read the run's own output, so tee it here. pipefail keeps the
+          # step's status pytest's, not tee's — a bare pipe would report success.
+          set -o pipefail
+          if [ "$TEST_LAYER" = pure ]; then
+            export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
+            export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
+          fi
+          observe=()
+          if [ "$TEST_LAYER" = integration ]; then
+            observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" --)
+          fi
+          "${observe[@]}" uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+            --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
+            -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
+            --ci-selection-output="$RUNNER_TEMP/backend-results" \
+            --dist worksteal --tb=short --durations=30 \
+            --junitxml="$RUNNER_TEMP/backend-results/results.xml" 2>&1 \
+            | tee "$RUNNER_TEMP/backend-results/pytest.log"
+
+      # A failing shard's check run used to carry one annotation: "Process
+      # completed with exit code 1." The reason is in the JUnit report pytest
+      # wrote and the log nobody can read back (the App has no actions:read), so
+      # restate the report — or, when collection died before it existed, the
+      # captured output — as annotations that name the tests that broke.
+      # failure() keeps this off the happy path; the script always exits 0, so
+      # it can never be the reason the job is red.
+      - name: Annotate the shard's failing cases
+        if: ${{ failure() }}
+        run: >-
+          uv run python -m scripts.report_failed_cases
+          "$RUNNER_TEMP/backend-results/results.xml"
+          --log "$RUNNER_TEMP/backend-results/pytest.log"
+
+      - name: Verify the partition ran without skips
+        if: ${{ !cancelled() }}
+        env:
+          LAYER_FLOOR: 4000
+        run: >-
+          uv run python -m scripts.assert_suite_ran
+          "$RUNNER_TEMP/backend-results/results.xml"
+          --at-least "$LAYER_FLOOR"
+          --selection-dir "$RUNNER_TEMP/backend-results"
+
+      - name: Kernel log and worker deaths
+        if: ${{ always() }}
+        run: |
+          sudo dmesg -T | grep -i -E "oom|killed process|out of memory|segfault|traps:" | tail -40 || true
+          grep -E "node down|crashed while running" "$RUNNER_TEMP/backend-results/pytest.log" || echo "no worker crash this run"
+          grep -E "MemAvailable" "$RUNNER_TEMP/backend-results/memory.log" | awk '{print $4}' | sort -n | head -1 | sed 's/^/lowest MemAvailable kB: /'
+          sudo pkill bpftrace || true; sleep 1
+          wc -l "$RUNNER_TEMP/backend-results/signals.log"
+
+      - name: Preserve test results and selection
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: diag-pure-${{ matrix.copy }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-results/
+          if-no-files-found: error
+          retention-days: 14
+
