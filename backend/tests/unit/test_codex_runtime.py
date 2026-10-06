@@ -50,6 +50,7 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
                 runtime={"harness": "codex", "state": state, "agent_handle": "a"},
                 lease=None,
             ),
+            False,
         )
         for state in ("$HOME/.cheese/harness/dead", "$HOME/.cheese/harness/alive")
     ]
