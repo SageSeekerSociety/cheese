@@ -136,6 +136,9 @@ export function useRoomRoster(options: {
     const room = (rosterLoaded.value ? roomMembers.value : []).map((m) => ({
       handle: m.member_handle,
       label: memberName(m) || m.member_handle,
+      // 房间名册这一行就带着「他自己挑过的头像」；@ 菜单原来只配色块，所以同一个人
+      // 在菜单里只有首字母、在消息行里却有真图。没挑过就是 null，交给首字母。
+      avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
       agent: !!m.agent,
       external: isExternal(m.member_handle),
       role: m.role,
@@ -153,6 +156,7 @@ export function useRoomRoster(options: {
       .map((m) => ({
         handle: m.user_handle,
         label: m.name || m.user_handle,
+        avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
         agent: !!m.agent,
         external: isExternalMember(m),
         outsideTopic: rosterLoaded.value,

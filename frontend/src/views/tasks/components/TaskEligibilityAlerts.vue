@@ -47,10 +47,13 @@
             <v-expansion-panel v-for="entry in teams" :key="entry.team.id">
               <v-expansion-panel-title class="py-2">
                 <div class="d-flex align-center">
-                  <v-avatar size="24" class="mr-2">
-                    <v-img v-if="entry.team.avatarId" :src="getAvatarUrl(entry.team.avatarId)" alt="" />
-                    <v-icon v-else>mdi-account-group</v-icon>
-                  </v-avatar>
+                  <UserAvatar
+                    kind="org"
+                    :avatar="getAvatarUrl(entry.team.avatarId)"
+                    :name="entry.team.name"
+                    size="24"
+                    class="mr-2"
+                  />
                   <span>{{ entry.team.name }}</span>
                 </div>
               </v-expansion-panel-title>
@@ -120,6 +123,7 @@ import { useI18n } from 'vue-i18n'
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { eligibilityReasonKey } from '@/views/tasks/eligibilityReason'
 
 const props = defineProps<{ task: Task }>()

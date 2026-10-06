@@ -13,6 +13,7 @@ import type { Knowledge } from '@/types'
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { formatDay, resourceTypeIcon, resourceTypeName } from '@/lib/knowledgeFormat'
 
@@ -89,9 +90,7 @@ const emit = defineEmits<{
 
           <!-- 底部信息 -->
           <v-card-actions class="pa-4 pt-0">
-            <v-avatar size="24" rounded="circle" color="surface-variant">
-              <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
-            </v-avatar>
+            <UserAvatar :avatar="getAvatarUrl(resource.creator.avatarId)" :name="resource.creator.nickname" size="24" />
             <span class="text-caption ml-2">{{ resource.creator.nickname }}</span>
             <v-spacer></v-spacer>
             <!-- 删除键在网格里没有：卡上那一颗是「打开」。只有列表视图给了删除。 -->

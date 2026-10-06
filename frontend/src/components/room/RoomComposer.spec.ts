@@ -41,8 +41,8 @@ import { setLocale } from '@/i18n'
 const CHEESE_SEAT = { handle: 'cheese-topica', label: '芝士' }
 
 const POOL = [
-  { handle: 'alice', label: 'Alice', agent: false },
-  { handle: CHEESE_SEAT.handle, label: CHEESE_SEAT.label, agent: true },
+  { handle: 'alice', label: 'Alice', avatar: null, agent: false },
+  { handle: CHEESE_SEAT.handle, label: CHEESE_SEAT.label, avatar: null, agent: true },
 ]
 
 function topic(id = 't1'): Topic {
@@ -347,9 +347,9 @@ describe('@ 候选：资料库是往里走一层', () => {
 describe('@ 候选：没加入频道的人', () => {
   const MIXED: MentionPoolEntry[] = [
     // 顺序故意打乱：排在前面的是没加入的人，候选里他仍然要排到频道里的人后面。
-    { handle: 'carol', label: 'Carol', agent: false, outsideTopic: true },
-    { handle: 'alice', label: 'Alice', agent: false },
-    { handle: CHEESE_SEAT.handle, label: CHEESE_SEAT.label, agent: true },
+    { handle: 'carol', label: 'Carol', avatar: null, agent: false, outsideTopic: true },
+    { handle: 'alice', label: 'Alice', avatar: null, agent: false },
+    { handle: CHEESE_SEAT.handle, label: CHEESE_SEAT.label, avatar: null, agent: true },
   ]
 
   it('频道里的人排在前面，没加入的人跟在后面', async () => {

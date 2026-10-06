@@ -607,10 +607,25 @@ export const RAIL_ROWS = {
 /** 侧栏一行右边那几位成员（`useTopicRail.memberMarks` 在真环境里给的就是这个形状）。 */
 export const RAIL_MARKS = {
   working: [
-    { handle: 'cheese-a1', name: AGENT_NAME, agent: true, state: 'working', title: `${AGENT_NAME}正在这里工作` },
+    {
+      handle: 'cheese-a1',
+      name: AGENT_NAME,
+      avatar: null,
+      agent: true,
+      state: 'working',
+      title: `${AGENT_NAME}正在这里工作`,
+    },
+    { handle: 'louis', name: '娄宇', avatar: null, agent: false, state: 'working', title: '娄宇正在这里工作' },
   ],
   stalled: [
-    { handle: 'cheese-a1', name: AGENT_NAME, agent: true, state: 'stalled', title: `${AGENT_NAME}最近一轮报错了` },
+    {
+      handle: 'cheese-a1',
+      name: AGENT_NAME,
+      avatar: null,
+      agent: true,
+      state: 'stalled',
+      title: `${AGENT_NAME}最近一轮报错了`,
+    },
   ],
 } satisfies Record<string, RailMemberMark[]>
 

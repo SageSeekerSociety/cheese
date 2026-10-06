@@ -13,6 +13,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { canEditKnowledge, formatDay, resourceTypeIcon, resourceTypeName } from '@/lib/knowledgeFormat'
 
@@ -88,9 +89,12 @@ function resourceActions(resource: Knowledge): MenuAction[] {
         <td>{{ resourceTypeName(resource.type, resource.material?.type) }}</td>
         <td>
           <div class="d-flex align-center">
-            <v-avatar size="24" rounded="circle" color="surface-variant" class="mr-2">
-              <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
-            </v-avatar>
+            <UserAvatar
+              :avatar="getAvatarUrl(resource.creator.avatarId)"
+              :name="resource.creator.nickname"
+              size="24"
+              class="mr-2"
+            />
             <span>{{ resource.creator.nickname }}</span>
           </div>
         </td>

@@ -49,11 +49,17 @@ const {
   alt = '',
   size = 48,
   kind = 'person',
+  seed = '',
 } = defineProps<{
   /** URL of an uploaded avatar image. Empty → colored-initial fallback. */
   avatar?: string
-  /** Display name / handle used for the initial + deterministic color. */
+  /** Display name used for the initial (and for the color when no `seed` is given). */
   name?: string
+  /**
+   * 底色的种子。**有 handle 就传 handle**：颜色跟着人走，不跟昵称走 —— 改个昵称不该
+   * 换一身颜色，而且同一个人在 @ 菜单、消息行、名册里得是同一个颜色。不给就退回 `name`。
+   */
+  seed?: string
   /**
    * 头像对读屏读出来的名字。留空 = 装饰性（默认），旁边有名字可读；只有在头像
    * 自己是这一格唯一身份时才传。
@@ -70,7 +76,7 @@ const {
 // 已知取不到的 URL 直接当「没有图」，不再造 `v-img` 去问一次。
 const hasAvatar = computed(() => !!avatar && !isAvatarKnownFailed(avatar))
 const initial = computed(() => avatarInitial(name))
-const fallbackColor = computed(() => avatarColor(name))
+const fallbackColor = computed(() => avatarColor(seed || name))
 const isDecorative = computed(() => !alt)
 // 圆角方块的圆角跟着边长走（约四分之一），小头像和大头像看着是同一个形状。
 const shapeStyle = computed(() => (kind === 'person' ? {} : { borderRadius: squareRadius(size) }))

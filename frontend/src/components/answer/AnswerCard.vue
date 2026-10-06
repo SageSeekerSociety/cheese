@@ -5,7 +5,7 @@
       <v-card-title>{{ answer.author.nickname }}</v-card-title>
       <v-card-subtitle data-user-content>{{ answer.author.intro }}</v-card-subtitle>
       <template #prepend>
-        <user-avatar :avatar="getAvatarUrl(answer.author.avatarId)" />
+        <user-avatar :avatar="getAvatarUrl(answer.author.avatarId)" :name="answer.author.nickname" />
       </template>
     </v-card-item>
     <v-card-text class="text-body-1 font-weight-regular answer-body-text pb-1 px-3">

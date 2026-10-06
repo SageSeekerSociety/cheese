@@ -15,8 +15,19 @@
 // 会落到 SPA 的 index.html）。`||` 把 undefined 和空串一起兜住。
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
-export const getAvatarUrl = (avatar?: string | number) => {
-  return avatar ? `${API_BASE}/avatars/${avatar}` : `${API_BASE}/avatars/default`
+/**
+ * 头像素材的地址。素材 id 为空（null / undefined / 0 / 空串）时返回**空串**，
+ * 由调用方决定这一格画什么 —— 通常是 `components/common/UserAvatar.vue` 的彩色首字母。
+ *
+ * 这里曾经回 `${API_BASE}/avatars/default`，理由是「总得给一张图」。那张图是**所有人
+ * 共用的一张脸**：没挑过头像的人全长成同一个样子，既认不出是谁，也看不出「他还没设
+ * 头像」。素材 id 从 1 开始，所以 0 也算空值，别写成 `avatar === null`。
+ *
+ * 想画「这个人挑过的那张图」，还得先问他挑过没有：全局默认素材 id 只是一个占位，
+ * 不代表本人选过它（见 `composables/useChosenAvatar.ts`）。
+ */
+export const getAvatarUrl = (avatar?: string | number | null) => {
+  return avatar ? `${API_BASE}/avatars/${avatar}` : ''
 }
 
 export const getFullAttachmentUrl = (attachmentUrl: string) => {

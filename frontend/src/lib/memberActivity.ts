@@ -57,6 +57,11 @@ export function activityLines(
 export interface RailMemberMark {
   handle: string
   name: string
+  /**
+   * 这个人**自己挑过的**头像地址；没挑过、或名册上没他（已经退出项目）时是 null，
+   * 画彩色首字母。别在这里退回默认头像 —— 那是所有没挑过的人共用的一张脸。
+   */
+  avatar: string | null
   agent: boolean
   state: 'working' | 'stalled'
   /** 悬停时说的那一句：谁、在做什么 / 为什么在等它。 */

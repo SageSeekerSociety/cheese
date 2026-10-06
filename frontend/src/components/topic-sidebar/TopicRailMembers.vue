@@ -38,7 +38,7 @@ const moreTitle = computed(() =>
       :aria-label="mark.title"
     >
       <CheeseAvatar v-if="mark.agent" :size="16" :name="mark.name" :handle="mark.handle || null" />
-      <UserAvatar v-else :size="16" :name="mark.name" />
+      <UserAvatar v-else :size="16" :name="mark.name" :avatar="mark.avatar ?? ''" />
       <span class="rail-members__dot" aria-hidden="true" />
     </span>
     <span v-if="more > 0" class="rail-members__more" :title="moreTitle">{{

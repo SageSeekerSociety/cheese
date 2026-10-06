@@ -48,7 +48,11 @@
               </template>
             </div>
             <div class="d-flex align-center mb-2">
-              <user-avatar :avatar="getAvatarUrl(questionData.author.avatarId)" :size="24" />
+              <user-avatar
+                :avatar="getAvatarUrl(questionData.author.avatarId)"
+                :name="questionData.author.nickname"
+                :size="24"
+              />
               <span class="ms-2">{{ questionData.author.nickname }}</span>
             </div>
             <div class="d-flex align-center flex-wrap" style="gap: 8px">

@@ -42,10 +42,13 @@
           @click="$emit('select', team.id)"
         >
           <div class="d-flex pa-3">
-            <v-avatar size="52" class="mr-3 flex-shrink-0">
-              <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)" :alt="team.name"></v-img>
-              <v-icon v-else size="28" color="primary">mdi-account-group</v-icon>
-            </v-avatar>
+            <UserAvatar
+              kind="org"
+              :avatar="getAvatarUrl(team.avatarId)"
+              :name="team.name"
+              size="52"
+              class="mr-3 flex-shrink-0"
+            />
 
             <div class="flex-grow-1 min-width-0">
               <div class="d-flex align-center flex-wrap gap-2 mb-1">
@@ -77,6 +80,7 @@ import { useI18n } from 'vue-i18n'
 import { getAvatarUrl } from '@/utils/materials'
 
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const { t } = useI18n()
 

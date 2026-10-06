@@ -20,8 +20,13 @@ describe('getAvatarUrl', () => {
     expect(url).not.toContain('undefined')
   })
 
-  it('没挑过头像时取默认图，同样带上前缀', () => {
-    expect(getAvatarUrl(undefined)).toBe('/api/avatars/default')
+  it('没挑过头像时返回空串，而不是所有人共用的那张默认图', () => {
+    // 退回 `/avatars/default` 会让所有没挑过头像的人长成同一张脸：既认不出是谁，
+    // 也看不出他没设过头像。空串交给 UserAvatar 画按人派生的彩色首字母。
+    expect(getAvatarUrl(undefined)).toBe('')
+    expect(getAvatarUrl(null)).toBe('')
+    // 素材 id 从 1 开始，0 也是「没有」。
+    expect(getAvatarUrl(0)).toBe('')
   })
 })
 

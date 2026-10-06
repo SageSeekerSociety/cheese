@@ -19,6 +19,7 @@ import { isAgentHandle } from '../lib/authorship'
 import { waitStalled, waitText } from '../lib/replyWait'
 import { ancestorPathIds, inferTopicKind, loadExpandedTopics, saveExpandedTopics, visibleRows } from '../lib/topicTree'
 import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
+import { getAvatarUrl } from '../utils/materials'
 
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -56,6 +57,8 @@ export interface RailSection {
 interface RailMemberWho {
   handle: string
   name: string
+  /** 自己挑过的头像地址；没挑过、或名册上没这个人时是 null。 */
+  avatar: string | null
   agent: boolean
   identity: string
 }
@@ -186,15 +189,31 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   function memberOf(handle: string | null): RailMemberWho {
     if (!handle) {
       const fallback = store.agentHandle ?? ''
-      return { handle: fallback, name: agentName.value, agent: true, identity: fallback }
+      return { handle: fallback, name: agentName.value, avatar: null, agent: true, identity: fallback }
     }
     const agent = agentNameMap.value.get(handle)
     if (agent) {
-      return { handle, name: agent, agent: true, identity: agentIdentityMap.value.get(handle) ?? handle }
+      return {
+        handle,
+        name: agent,
+        avatar: null,
+        agent: true,
+        identity: agentIdentityMap.value.get(handle) ?? handle,
+      }
     }
-    if (isAgentHandle(handle)) return { handle, name: agentName.value, agent: true, identity: handle }
+    if (isAgentHandle(handle)) {
+      return { handle, name: agentName.value, avatar: null, agent: true, identity: handle }
+    }
     const person = store.members.find((m) => m.user_handle === handle)
-    return { handle, name: person?.name || handle, agent: false, identity: handle }
+    return {
+      handle,
+      name: person?.name || handle,
+      // 项目名册上就带着这个人挑过的头像 id，侧栏这一格原来没用它，于是真人永远只有
+      // 首字母。没挑过（avatar_id 为 null）就不取图，交给首字母。
+      avatar: person?.avatar_id != null ? getAvatarUrl(person.avatar_id) : null,
+      agent: false,
+      identity: handle,
+    }
   }
 
   /** 这一行上画的那几位成员：卡住了的在前（红），在干活的在后（绿）。同一位只画一次。 */
@@ -204,7 +223,14 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     const add = (who: RailMemberWho, state: RailMemberMark['state'], title: string) => {
       if (drawn.has(who.identity)) return
       drawn.add(who.identity)
-      marks.push({ handle: who.handle, name: who.name, agent: who.agent, state, title })
+      marks.push({
+        handle: who.handle,
+        name: who.name,
+        avatar: who.avatar,
+        agent: who.agent,
+        state,
+        title,
+      })
     }
     for (const wait of stalledWaits(topic)) {
       const who = memberOf(wait.member)

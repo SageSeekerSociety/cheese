@@ -3,7 +3,7 @@
     <!-- 侧栏头：‹ 回到首页，后面是这个空间。和右边的标题行等高，底线连成一条。 -->
     <router-link :to="{ name: 'inbox' }" class="sidebar-header space-head" :aria-label="t('spaces.sidebar.back')">
       <v-icon size="18" class="space-head__back">mdi-chevron-left</v-icon>
-      <v-avatar size="20" rounded="sm" :image="getAvatarUrl(space?.avatarId)" />
+      <UserAvatar kind="org" :avatar="getAvatarUrl(space?.avatarId)" :name="space?.name" size="20" />
       <span class="space-head__name t-title" data-user-content>{{ space?.name }}</span>
     </router-link>
 
@@ -81,6 +81,7 @@ import { storeToRefs } from 'pinia'
 import { getAvatarUrl } from '@/utils/materials'
 
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { useSpaceStore } from '@/stores/space'
 
 const { t } = useI18n()

@@ -2,7 +2,7 @@
   <v-list>
     <v-list-item v-for="(user, index) in data" :key="user.id" :title="user.nickname" :subtitle="user.intro">
       <template #prepend>
-        <user-avatar :avatar="getAvatarUrl(user.avatarId)" />
+        <user-avatar :avatar="getAvatarUrl(user.avatarId)" :name="user.nickname" />
       </template>
       <template #append>
         <BaseButton

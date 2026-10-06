@@ -35,9 +35,13 @@
       class="mb-2 application-item"
     >
       <template #prepend>
-        <v-avatar size="40" class="mr-3">
-          <v-img :src="getAvatarUrl(request.team.avatarId)"></v-img>
-        </v-avatar>
+        <UserAvatar
+          kind="org"
+          :avatar="getAvatarUrl(request.team.avatarId)"
+          :name="request.team.name"
+          size="40"
+          class="mr-3"
+        />
       </template>
       <v-list-item-title class="d-flex align-center">
         {{ request.team.name }}
@@ -98,9 +102,13 @@
       class="mb-2 application-item"
     >
       <template #prepend>
-        <v-avatar size="40" class="mr-3">
-          <v-img :src="getAvatarUrl(invitation.team.avatarId)"></v-img>
-        </v-avatar>
+        <UserAvatar
+          kind="org"
+          :avatar="getAvatarUrl(invitation.team.avatarId)"
+          :name="invitation.team.name"
+          size="40"
+          class="mr-3"
+        />
       </template>
       <v-list-item-title class="d-flex align-center">
         {{ invitation.team.name }}
@@ -220,6 +228,7 @@ import { listMyInvitations, respondToInvitation } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
