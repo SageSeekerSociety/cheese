@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import forge_quota
 from app.core.config import settings
 from app.core.forge_http import forge_client
+from app.domain.project.models import ProjectGitInstallation
 from app.domain.project.repositories import ProjectGitInstallationRepository
 
 # What PR-based accept needs (#188 §5.1): push the topic branch, open and merge
@@ -83,6 +84,7 @@ class GitHubAppTokens:
         private_key_path: str,
         installation_id: int,
         repository: str | None = None,
+        repository_id: int | None = None,
         api_base: str = "https://api.github.com",
         transport: httpx.AsyncBaseTransport | None = None,
     ):
@@ -90,6 +92,7 @@ class GitHubAppTokens:
         self._key_path = private_key_path
         self._installation_id = installation_id
         self._repository = repository
+        self._repository_id = repository_id
         self._api_base = api_base.rstrip("/")
         self._transport = transport
         self._key_text: str | None = None
@@ -104,6 +107,10 @@ class GitHubAppTokens:
     @property
     def api_base(self) -> str:
         return self._api_base
+
+    @property
+    def transport(self) -> httpx.AsyncBaseTransport | None:
+        return self._transport
 
     @property
     def installation_id(self) -> int:
@@ -255,10 +262,7 @@ class GitHubAppTokens:
                 resp = await client.post(
                     f"{self._api_base}/app/installations/"
                     f"{self._installation_id}/access_tokens",
-                    json={"permissions": permissions}
-                    | (
-                        {"repositories": [self._repository]} if self._repository else {}
-                    ),
+                    json={"permissions": permissions} | self._scope(),
                     headers={
                         "Authorization": f"Bearer {self._app_jwt()}",
                         "Accept": "application/vnd.github+json",
@@ -278,23 +282,43 @@ class GitHubAppTokens:
             forge_quota.own(token, self._installation_id, expires_epoch)
             return token, _iso(expires_epoch)
 
+    def _scope(self) -> dict:
+        """Which repository the token is limited to, by id whenever it is known.
+
+        The id, because GitHub refuses a mint naming a repository that has been
+        renamed since ("There is at least one repository that does not exist or
+        is not accessible", HTTP 422), while the id survives the rename. The
+        name only for a binding whose id has not been learned yet.
+        """
+        if self._repository_id is not None:
+            return {"repository_ids": [self._repository_id]}
+        if self._repository:
+            return {"repositories": [self._repository]}
+        return {}
+
 
 def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
 
-_instances: dict[tuple[int, str], GitHubAppTokens] = {}
+_instances: dict[tuple[int, int | None, str | None], GitHubAppTokens] = {}
 
 
 def _tokens_for_installation(
-    installation_id: int, repository: str
+    installation_id: int,
+    *,
+    repository_id: int | None = None,
+    repository: str | None = None,
 ) -> GitHubAppTokens | None:
     """The cached minter for one installation, or None when the App is not
     configured. One process serves every connected project, so instances are
-    cached per installation and repository so tokens cannot cross project bindings."""
+    cached per installation and repository so tokens cannot cross project
+    bindings. With neither a repository id nor a name the token reaches the
+    whole installation — `locate_repo` alone asks for that, and never
+    hands it on."""
     if not settings.github_app_id or not settings.github_app_private_key_path:
         return None
-    cache_key = (installation_id, repository)
+    cache_key = (installation_id, repository_id, repository)
     minter = _instances.get(cache_key)
     if minter is None:
         minter = GitHubAppTokens(
@@ -302,6 +326,7 @@ def _tokens_for_installation(
             private_key_path=settings.github_app_private_key_path,
             installation_id=installation_id,
             repository=repository,
+            repository_id=repository_id,
         )
         _instances[cache_key] = minter
     return minter
@@ -318,9 +343,75 @@ async def github_app_tokens_for_project(
     )
     if installation is None:
         return None
+    if installation.repository_id is not None:
+        return _tokens_for_installation(
+            installation.installation_id, repository_id=installation.repository_id
+        )
     return _tokens_for_installation(
-        installation.installation_id, installation.repo.split("/", 1)[1]
+        installation.installation_id, repository=installation.repo.split("/", 1)[1]
     )
+
+
+async def locate_repo(
+    installation: ProjectGitInstallation,
+) -> tuple[int, str] | None:
+    """Where GitHub says the bound repository is now: its id and `owner/name`.
+
+    None when GitHub no longer knows it (deleted, or the App lost access), or
+    when the App is not configured here.
+
+    Asked by id when the id is known, which answers the same before and after
+    a rename. A binding from before ids were kept is asked by its stored name:
+    GitHub redirects a renamed repository's old name to the repository, so
+    following the redirect finds both the id and the new name. That lookup
+    cannot use a token limited to the stored name — after a rename GitHub
+    refuses to mint one — so it uses one over the whole installation, which
+    never leaves this function.
+    """
+    if installation.repository_id is None:
+        return await repository_named(installation.installation_id, installation.repo)
+    minter = _tokens_for_installation(
+        installation.installation_id, repository_id=installation.repository_id
+    )
+    return await _describe(minter, f"/repositories/{installation.repository_id}")
+
+
+async def repository_named(installation_id: int, name: str) -> tuple[int, str] | None:
+    """The repository GitHub answers to `name` with now: its id and current
+    `owner/name`, following the redirect GitHub keeps from a former name.
+
+    With a token over the whole installation, because one limited to `name`
+    is exactly what GitHub refuses to mint once `name` is a former name. The
+    token never leaves this lookup.
+    """
+    return await _describe(_tokens_for_installation(installation_id), f"/repos/{name}")
+
+
+async def _describe(
+    minter: GitHubAppTokens | None, path: str
+) -> tuple[int, str] | None:
+    if minter is None:
+        return None
+    token, _ = await minter.installation_token()
+    async with forge_client(
+        transport=minter.transport, timeout=20.0, follow_redirects=True
+    ) as client:
+        resp = await client.get(
+            f"{minter.api_base}{path}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+    if resp.status_code == 404:
+        return None
+    if resp.status_code != 200:
+        raise GitHubAppError(
+            f"GitHub did not describe the repository (HTTP {resp.status_code}): "
+            f"{resp.text[:200]}"
+        )
+    body = resp.json()
+    return int(body["id"]), str(body["full_name"])
 
 
 async def github_app_read_token_for_project(

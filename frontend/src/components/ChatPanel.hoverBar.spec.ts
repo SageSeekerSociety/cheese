@@ -20,7 +20,7 @@ function msg(id: string, content: string): Block {
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author_type: 'participant',
     author: 'other',
@@ -74,7 +74,7 @@ async function mountRoom(blocks: Block[]) {
 }
 
 const replyButtons = (container: Element) =>
-  Array.from(container.querySelectorAll('button')).filter((b) => b.getAttribute('title') === '回复')
+  Array.from(container.querySelectorAll('button')).filter((b) => b.getAttribute('title') === '引用回复')
 
 async function pointAt(container: Element, selector: string) {
   await fireEvent.mouseOver(container.querySelector(selector)!)

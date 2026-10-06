@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.conversation.services import of_rooms, room_column
 from app.domain.machine.models import GONE, CloudHost, CloudHostHome
 from app.domain.usage.compute import SANDBOX, ComputeMeter, hourly_price
 
@@ -191,8 +192,11 @@ async def unpaid_sandboxes(session: AsyncSession) -> list:
     if rooms:
         busy = set(
             await session.scalars(
-                select(AgentTurn.topic_id)
-                .where(AgentTurn.topic_id.in_(rooms), AgentTurn.stopped_at.is_(None))
+                select(room_column(AgentTurn.conversation_id))
+                .where(
+                    of_rooms(AgentTurn.conversation_id, rooms),
+                    AgentTurn.stopped_at.is_(None),
+                )
                 .distinct()
             )
         )

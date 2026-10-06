@@ -45,7 +45,7 @@ def _seed_block(
         async with client.test_factory() as session:
             block = await BlockRepository(session).add(
                 project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(topic_id),
+                conversation_id=uuid.UUID(topic_id),
                 author="cheese",
                 author_type=author_type,
                 content=content,

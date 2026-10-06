@@ -22,10 +22,7 @@ ratchets (route module, repository module) pairs, and a direct import would add 
 line to that ratchet. topics.py still reads `BlockRepository` in a dozen
 handlers, so its own line stays matched and this move adds no exemption to any
 boundary. Everything else here keeps its home and is imported from where it is
-defined; the five names topics.py read only for these routes -- `Addressee`,
-`UpgradeBlockIn`, `EVENT_BLOCK_UPGRADED`, `SEVERITY_INFO` and `WHO_HUMAN` --
-leave its imports with them. topics.py imports nothing from this module, so
-there is no cycle.
+defined. topics.py imports nothing from this module, so there is no cycle.
 
 Ordering. This module sorts after `topics.py` and after the other three
 `topics_*` modules (`_` > `.`, and `side` > `preview`), so its three paths mount
@@ -52,18 +49,10 @@ from app.api.routes.topics import BlockRepository, DbSession
 from app.api.task_instructions import dispatch, source_text, tell_task
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
-from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt
-from app.domain.agent.platform_notices import (
-    EVENT_BLOCK_UPGRADED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
-    notice,
-)
-from app.domain.delivery.addressing import Event as Addressee
+from app.domain.conversation.services import room_of
 from app.domain.room_task.schemas import TaskOut
-from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 
 # Per-project unread map lives under /api/projects (a "/unread" path under
@@ -78,8 +67,10 @@ async def project_topic_unread(
     resolver: ActorResolverDep,
     handle: str | None = None,
 ) -> dict:
-    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for the
-    calling user, one query. Topics with zero unread are omitted.
+    """What each channel and task has waiting for the calling user:
+    {conversation_id: {"count", "new", "messages"}} — the number on it,
+    whether its name is bold, and how many messages came since the last read
+    (`TopicRepository.unread_counts`). Ones with nothing are omitted.
 
     Read-state is per-person, so the recipient comes from the verified
     credential (``handle`` is only checked against it) — a caller without one
@@ -96,22 +87,39 @@ async def project_topic_unread(
         requested=handle, project_id=project_id, allow_anonymous=False
     )
     counts = await TopicService(db).unread_counts(project_id, recipient)
-    return ok({str(topic_id): count for topic_id, count in counts.items()})
+    return ok(
+        {
+            str(topic_id): {
+                "count": unread.count,
+                "new": unread.new,
+                "messages": unread.messages,
+            }
+            for topic_id, unread in counts.items()
+        }
+    )
 
 
 @project_router.get("/{project_id}/topic-notify-levels")
 async def project_topic_notify_levels(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """我在这个项目里改过通知级别的房间：{topic_id: level}，默认（`all`）的不列。
-    侧栏拿它把静音房间的未读排除出总数。同 ``topic-unread`` 的项目门和本人规则。"""
+    """我在这个项目里不在默认档位的频道：{topic_id: {"level", "muted_until"}}，
+    过了期的静音算回默认、不列。同 ``topic-unread`` 的项目门和本人规则。"""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     recipient = await resolver.resolve_recipient(
         requested=None, project_id=project_id, allow_anonymous=False
     )
     levels = await TopicService(db).notify_levels(project_id, recipient)
-    return ok({str(topic_id): level for topic_id, level in levels.items()})
+    return ok(
+        {
+            str(topic_id): {
+                "level": level,
+                "muted_until": until.isoformat() if until else None,
+            }
+            for topic_id, (level, until) in levels.items()
+        }
+    )
 
 
 @project_router.post("/{project_id}/read-all")
@@ -161,7 +169,7 @@ async def project_private_unread(
     return ok(counts)
 
 
-# Block upgrade lives here (it produces a topic). Separate router prefix.
+# 转为任务 lives here (it starts from a block). Separate router prefix.
 block_router = APIRouter(prefix="/blocks", tags=["topics"])
 
 
@@ -172,22 +180,19 @@ async def upgrade_block(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
-    """讨论升级：a message becomes a task of its own (eval A1), owned by whoever
-    upgraded it, and its agent drafts the task's document from the message and
-    what was said around it.
+    """转为任务：a message in a channel becomes a task of its own, owned by
+    whoever turned it, and its agent drafts the task's document from the
+    message and what was said around it. A private chat's messages do not
+    leave it.
 
-    A message in a private chat becomes a room instead, because private chats
-    are not in the topic tree and a task there would be one nobody else could
-    open. The response says which by carrying either a task or a topic.
-
-    这是一条**在房间里造东西**的写：凭据由 resolve/authorize_topic 认，房间由 block
-    自己带 —— block 的 `topic_id` 就是那个房间，不是它自己去请求体里说。升级的人也
+    这是一条**在频道里造东西**的写：凭据由 resolve/authorize_topic 认，频道由 block
+    自己带 —— block 的对话所在的频道就是那个频道，不是它自己去请求体里说。转的人也
     由凭据说，而且只能是一个人：AI 队友只能提议任务。
     """
     block = await BlockRepository(db).get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
-    parent = await TopicService(db).get_or_404(block.topic_id)
+    parent = await TopicService(db).get_or_404(await room_of(db, block.conversation_id))
     actor = await resolver.resolve(topic_id=parent.id, project_id=parent.project_id)
     await resolver.authorize_topic(
         actor, project_id=parent.project_id, topic_id=parent.id
@@ -200,15 +205,11 @@ async def upgrade_block(
         block_id=block_id,
         created_by=created_by,
     )
-    out = (
-        TaskOut.model_validate(thread).model_dump(mode="json")
-        if thread is not None
-        else TopicOut.model_validate(room).model_dump(mode="json")
-    )
-    if created and thread is not None:
+    out = TaskOut.model_validate(thread).model_dump(mode="json")
+    if created:
         # The task's agent drafts its document from the message and what was
         # said around it. Recorded in this transaction, so a rolled-back upgrade
-        # leaves no instruction for a task that does not exist; **幂等**：重复升级
+        # leaves no instruction for a task that does not exist; **幂等**：重复转
         # （created=False）不再起第二次。
         await tell_task(
             db,
@@ -222,22 +223,4 @@ async def upgrade_block(
         await db.commit()
         await dispatch(chat)
         return ok(out)
-    if created:
-        # 事件和投递写在同一个事务里，和这次升级一起提交 —— 回滚了就不会留下一条
-        # 指向不存在的地方的通知。**幂等**：重复升级（created=False）不再落第二条。
-        owner = (created_by or "").strip()
-        await announce(
-            db,
-            place_id=room.id,
-            content=say("blockUpgradedToRoom"),
-            meta=notice(
-                EVENT_BLOCK_UPGRADED,
-                severity=SEVERITY_INFO,
-                who=WHO_HUMAN,
-                detail=say("blockUpgradedRoomId", id=room.id),
-                detail_label=say("labelUpgradedTo"),
-            ),
-            points_at=Addressee(reviewers=(owner,) if owner else ()),
-        )
-    await db.commit()
     return ok(out)

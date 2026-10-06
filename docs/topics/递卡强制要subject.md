@@ -1,6 +1,6 @@
 ## 目标
 
-让「递验收卡不写提交标题」在后端被挡住，而不是静默兜底成 `chore: <话题标题>`（PR #500 就是这么来的）。
+让「递验收卡不写提交标题」在后端被挡住，而不是静默兜底成话题标题（PR #500 就是这么来的）。
 
 ## 状态：做完了，已递卡给 @彭文博
 
@@ -8,13 +8,13 @@
 
 ## 做了什么
 
-**后端**（<&backend/app/domain/review/services.py>）：`AcceptService.create_card` 里，`change_subject` 缺失或全是空白直接拒绝。错误信息不是"缺参数"，而是一段能照着改的话——写法 `type(scope): description`、type 清单、英文祈使句 / ≤72 字符 / 不加句号，外加一条完整可复制的 `cheese accept-request` 命令。读这句话的是一个下一轮就要重递的 agent，只说"缺参数"等于让它再猜一轮。原有的「格式非法」校验（`commit_message.check_subject`）一行没动。
+**后端**（<&backend/app/domain/review/services.py>）：`AcceptService.create_card` 里，`change_subject` 缺失或全是空白直接拒绝。错误信息不是"缺参数"，而是告诉它格式和语言照这个仓库自己的提交惯例（最近的 `git log`、CONTRIBUTING、commitlint 配置）。读这句话的是一个下一轮就要重递的 agent，只说"缺参数"等于让它再猜一轮。平台自己只拦空标题和多行标题。
 
 **没用 Pydantic 必填**：那只会返回 pydantic 自己的 `Field required`，文案不可控。所以 <&backend/app/domain/review/schemas.py> 的类型仍是 `str | None`，只改注释说明为什么门设在服务层。
 
 **CLI**（<&backend/sandbox/cheese>）：`--subject` 改成 `required=True`，argparse 在发请求前就退出；删掉了原来那段递完卡才打的警告——那时候卡已经出去了，警告等于没有。
 
-**兜底保留**：<&backend/app/domain/review/pr_text.py> 的 `fallback_subject()` 一行没动。历史卡片的 `change_subject` 是 NULL，删掉它们的 PR 标题和合并标题会炸。docstring 补了一句说明它现在只服务历史行。
+**兜底保留**：<&backend/app/domain/review/pr_text.py> 的 `fallback_subject()` 只服务历史卡片（`change_subject` 是 NULL），用话题标题本身。
 
 **文档四处**已同步：`stage_working.md`、`stage_gate.md`、根 `CLAUDE.md`、`pr_text.py` docstring。
 
@@ -22,11 +22,10 @@
 
 | 项 | 结果 |
 |---|---|
-| 缺 subject 建卡 | 拒绝，`message` 里含 `type(scope): description` + 完整 `cheese accept-request` 例子 |
+| 缺 subject 建卡 | 拒绝，`message` 说明照仓库自己的提交惯例写 |
 | subject 是 `"   "` | 同样拒绝 |
-| 纯中文标题 | 仍旧拒绝（原行为没回归） |
 | 合法 subject | 正常建卡，原样落库 |
-| 历史 NULL 行 | 仍走兜底 `chore: <话题标题>`（新增测试守着） |
+| 历史 NULL 行 | 走兜底，用话题标题（测试守着） |
 | `cheese accept-request alice "x"` 不带 `--subject` | 非零退出，**没有**发出 POST |
 | 全量 pytest | 4899 passed, 30 skipped, **0 failed**（247s） |
 | `check.sh --no-tests`（闸门那条） | 7/7 passed，1 skipped = pytest 本身（脚本自己关的） |

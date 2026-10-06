@@ -432,7 +432,7 @@ class ArtifactVersion:
 
     number: int
     card_id: uuid.UUID
-    #: 这次交付改了什么 —— 卡上那句 Conventional Commit 标题。
+    #: 这次交付改了什么 —— 卡上那句提交标题。
     subject: str | None
     delivered_at: datetime | None
     decided_by: str | None

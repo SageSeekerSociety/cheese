@@ -5,7 +5,10 @@
 - **最后活动时间**要算上任务。一个房间的活正在做，这个房间就是活的，它该往列表
   上排——而「活都在任务里做、房间主线安静着」恰恰是这种房间的常态。
 - **未读角标**不能算任务。每条任务里说一句话就把房间标成未读，红点会立刻变成噪音，
-  而任务里的话本来只在负责人和 AI 队友之间。
+  而任务里的话本来只在负责人、协作者和 AI 队友之间。
+
+任务自己有角标，只亮给负责人和协作者，只算人说的话：AI 队友每一步都说话，算进来
+红点就没人看了；它需要人的时候，任务行上有自己的那颗点。
 
 写成一个文件是因为它们最可能的坏法是「顺手统一」：下一个人看到两处相似的查询、
 一处带 `task_id IS NULL` 一处不带，很容易以为是漏了。
@@ -44,7 +47,7 @@ def _join(client, room_id: str, handle: str) -> None:
     join_project_team(client, pid, handle)
     r = client.post(
         f"/topics/{room_id}/members",
-        json={"handle": handle, "role": "member", "actor": "alice"},
+        json={"handle": handle, "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
@@ -94,13 +97,14 @@ def _rooms(client, project_id: str, viewer: str) -> dict[str, dict]:
 
 
 def _unread(client, project_id: str, room_id: str, viewer: str) -> int:
-    """The badge map, which omits whatever is at zero — so a missing room IS
-    a zero, and the two cases have to read the same here."""
+    """How many messages came for ``viewer`` since they last read this place.
+    The map omits whatever has nothing — so a missing room IS a zero, and the
+    two cases have to read the same here."""
     r = client.get(
         f"/projects/{project_id}/topic-unread", headers=session_auth_headers(viewer)
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"].get(room_id, 0)
+    return r.json()["data"].get(room_id, {}).get("messages", 0)
 
 
 def test_work_in_a_room_keeps_the_room_alive(client):
@@ -135,3 +139,81 @@ def test_work_in_a_room_does_not_light_the_unread_badge(client):
     # 整个关掉了。
     _say(client, room_id, "bob", "房间里说一句")
     assert _unread(client, p["id"], room_id, "alice") == 1
+
+
+def _set_collaborators(client, task_id: str, owner: str, handles: list[str]) -> None:
+    r = client.patch(
+        f"/topics/{task_id}/task",
+        json={"contributor_handles": handles},
+        headers=session_auth_headers(owner),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _seed_agent_line(client, project_id: str, task_id: str) -> None:
+    """The AI teammate says something in the task."""
+    from app.domain.block.models import AuthorType, BlockKind
+    from app.domain.block.repositories import BlockRepository
+
+    async def seed() -> None:
+        async with client.test_factory() as session:
+            await BlockRepository(session).add(
+                project_id=uuid.UUID(project_id),
+                conversation_id=uuid.UUID(task_id),
+                author="cheese",
+                author_type=AuthorType.participant,
+                content="我做完了第一步",
+                kind=BlockKind.message,
+            )
+            await session.commit()
+
+    client.portal.call(seed)
+
+
+def test_a_task_lights_its_own_badge_only_for_those_taking_part(client):
+    """负责人和协作者看得到任务里别人说的话；别的人不亮。"""
+    p = _project(client)
+    room_id = _room(client, p["id"])
+    for who in ("bob", "carol", "dave"):
+        _join(client, room_id, who)
+    task_id = _task_of(client, room_id, "bob")
+    _set_collaborators(client, task_id, "bob", ["carol"])
+
+    _say_in_task(client, room_id, task_id, "carol", "我补一句")
+    assert _unread(client, p["id"], task_id, "bob") == 1
+    assert _unread(client, p["id"], task_id, "carol") == 0
+    assert _unread(client, p["id"], task_id, "dave") == 0
+    assert _unread(client, p["id"], task_id, "alice") == 0
+
+    _say_in_task(client, room_id, task_id, "bob", "收到")
+    assert _unread(client, p["id"], task_id, "carol") == 1
+
+
+def test_the_ai_teammate_talking_in_a_task_does_not_light_it(client):
+    p = _project(client)
+    room_id = _room(client, p["id"])
+    _join(client, room_id, "bob")
+    task_id = _task_of(client, room_id, "alice")
+    _set_collaborators(client, task_id, "alice", ["bob"])
+
+    _seed_agent_line(client, p["id"], task_id)
+    assert _unread(client, p["id"], task_id, "bob") == 0
+
+
+def test_opening_a_task_clears_its_badge(client):
+    p = _project(client)
+    room_id = _room(client, p["id"])
+    _join(client, room_id, "bob")
+    task_id = _task_of(client, room_id, "bob")
+    _set_collaborators(client, task_id, "bob", ["alice"])
+    _say_in_task(client, room_id, task_id, "bob", "看一下")
+    assert _unread(client, p["id"], task_id, "alice") == 1
+
+    r = client.post(
+        f"/topics/{task_id}/read", json={}, headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+    assert _unread(client, p["id"], task_id, "alice") == 0
+
+    _say_in_task(client, room_id, task_id, "bob", "又改了一处")
+    assert _unread(client, p["id"], task_id, "alice") == 1

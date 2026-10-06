@@ -28,7 +28,7 @@ def _seed(client, project, room, entries):
                 values = {
                     "id": uuid.uuid4(),
                     "project_id": uuid.UUID(project),
-                    "topic_id": uuid.UUID(room),
+                    "conversation_id": uuid.UUID(room),
                     "author": "alice",
                     "author_type": AuthorType.participant,
                     "kind": BlockKind.message,
@@ -183,10 +183,14 @@ def test_room_history_and_task_history_have_separate_scopes(client):
         room,
         [
             {"content": "Room message"},
-            {"id": parent, "task_id": uuid.UUID(task), "content": "Task question"},
+            {
+                "id": parent,
+                "conversation_id": uuid.UUID(task),
+                "content": "Task question",
+            },
             {
                 "id": child,
-                "task_id": uuid.UUID(task),
+                "conversation_id": uuid.UUID(task),
                 "content": "Task reply",
                 "reply_to": parent,
             },
@@ -197,7 +201,7 @@ def test_room_history_and_task_history_have_separate_scopes(client):
     assert ids[0] not in [b["id"] for b in _history(client, task)["data"]]
     replies = _history(client, task, reply_to=str(parent))
     assert replies["data"][0]["id"] == str(child)
-    assert replies["data"][0]["task_id"] == task
+    assert replies["data"][0]["conversation_id"] == task
     assert (
         client.get(f"/topics/{room}/history", params={"before": str(child)}).status_code
         == 404

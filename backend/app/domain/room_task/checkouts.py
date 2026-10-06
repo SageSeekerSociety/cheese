@@ -44,6 +44,7 @@ async def remove_closed_checkouts(
     from app.domain.agent import resource_cleanup
     from app.domain.agent.device_hub import device_hub
     from app.domain.agent_session.models import AgentSession
+    from app.domain.conversation.services import of_room, room_column
     from app.domain.room_task.models import Task, TaskStatus
     from app.domain.topic.models import Topic, TopicStatus
 
@@ -54,11 +55,12 @@ async def remove_closed_checkouts(
     async with sessions() as db:
         query = (
             select(AgentSession, Topic)
-            .join(Topic, Topic.id == AgentSession.topic_id)
+            .select_from(AgentSession)
+            .join(Topic, Topic.id == room_column(AgentSession.conversation_id))
             .where(Topic.status != TopicStatus.archived)
         )
         if room_id is not None:
-            query = query.where(AgentSession.topic_id == room_id)
+            query = query.where(of_room(AgentSession.conversation_id, room_id))
         for conversation, topic in (await db.execute(query)).all():
             for lease in [
                 *(conversation.execution_request or {}).get("retained_leases", []),

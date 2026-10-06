@@ -121,7 +121,7 @@
     "historyFailed": "Couldn't load the history",
     "logPlan": "Plan changed from {from} to {to}",
     "logGrant": "Granted {credits} pts, {expiry}",
-    "by": "{'@'}{handle} · {time}"
+    "by": "{'@'}{name} · {time}"
   },
   "grantDialog": {
     "title": "Grant credits to “{team}”",

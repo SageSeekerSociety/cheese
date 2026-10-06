@@ -40,21 +40,6 @@ it('tells the owner which agent works on their device, where, and what it can se
   expect(view.getByText('Orchard · Pricing · 能访问整台机器')).toBeTruthy()
 })
 
-it('in English an unnamed room is named New topic, not the stored placeholder', () => {
-  setLocale('en')
-  const unnamed = notice(false)
-  unnamed.contextMetadata = { ...unnamed.contextMetadata, topicTitle: '新话题', topicTitleSource: 'placeholder' }
-  try {
-    const view = render(RenderDeviceInUseNotification, {
-      props: { notification: unnamed },
-      global: { plugins: [i18n] },
-    })
-    expect(view.getByText('Orchard · New topic')).toBeTruthy()
-  } finally {
-    setLocale('zh-CN')
-  }
-})
-
 it('says nothing about the whole machine when the agent cannot see it', () => {
   const view = render(RenderDeviceInUseNotification, {
     props: { notification: notice(false) },

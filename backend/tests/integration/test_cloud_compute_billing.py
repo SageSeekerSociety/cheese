@@ -139,7 +139,10 @@ def room_says(case, seat) -> list[str]:
             return list(
                 await db.scalars(
                     select(Block.content)
-                    .where(Block.topic_id == seat.room, Block.kind == BlockKind.event)
+                    .where(
+                        Block.conversation_id == seat.room,
+                        Block.kind == BlockKind.event,
+                    )
                     .order_by(Block.created_at)
                 )
             )
@@ -159,7 +162,7 @@ def test_a_sandbox_is_charged_for_the_time_it_runs_and_not_while_it_sleeps(cloud
     [first] = charges(cloud)
     assert first.credits == pytest.approx(90 / 60 * PRICE)
     assert first.team_id == team_of(cloud)
-    assert first.topic_id == seat.room
+    assert first.conversation_id == seat.room
     assert (first.kind, first.total_tokens) == ("sandbox", 0)
 
     # Idle, it sleeps; its last partial minute is charged as a whole one.
@@ -234,7 +237,7 @@ def test_spent_credits_start_no_sandbox_and_stop_a_running_one_after_its_turn(cl
         async with cloud.client.test_request_factory() as db:
             turn = AgentTurn(
                 id=uuid.uuid4(),
-                topic_id=working.room,
+                conversation_id=working.room,
                 continuation_id=uuid.uuid4(),
                 author="alice",
                 started_at=datetime.now(UTC),

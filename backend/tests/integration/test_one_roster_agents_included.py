@@ -19,6 +19,7 @@
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -221,7 +222,8 @@ def test_a_retired_teammate_is_not_offered_as_someone_to_hand_work_to(
     _teammate(client, project_id, "reviewer", "评审")
     retired = _teammate(client, project_id, "old-hand", "退休")
     _retire(client, project_id, retired["id"])
-    room = _room(client, project_id)
+    # 芝士 answers in a 支线 of the channel.
+    room = in_thread(client, _room(client, project_id), OWNER)
     answering = next(row for row in _agents(client, project_id) if row["is_default"])
 
     # 这一轮得先跑起来才有提示词可看，而跑不跑只由正文里点了谁的名决定（不变量

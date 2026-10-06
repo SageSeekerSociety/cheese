@@ -15,11 +15,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.domain.repository.forge_files import ProjectFiles
-from tests.conftest import StubChannel
+from tests.conftest import StubChannel, settle_turn
 from tests.delivery import delivery_task
 from tests.integration.conftest import (
-    chat_ws_url,
-    post_message,
     post_project,
 )
 
@@ -61,10 +59,25 @@ def stub_hooks() -> SubagentScreen:
 
 
 def _chat(client, topic_id: str) -> None:
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws_conn:
-        post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
-        while ws_conn.receive_json()["type"] not in ("done", "error"):
+    """One turn in the channel's own line. Only the platform starts one there
+    (a routine's run, say): a person calling 芝士 is answered in a 支线, and a
+    支线 only reads, so it changes nothing to summarise."""
+    from app.api.deps import get_chat_service
+
+    chat = client.app.dependency_overrides[get_chat_service]()
+
+    async def run() -> None:
+        async for _frame in chat.converse(
+            topic_id=uuid.UUID(topic_id),
+            author="system",
+            content="按规则跑一下",
+            summon=True,
+            nudge_event="定时规则开始运行",
+        ):
             pass
+        await settle_turn(chat, uuid.UUID(topic_id))
+
+    client.portal.call(run)
 
 
 def _topic(client) -> str:

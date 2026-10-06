@@ -6,10 +6,10 @@
 
 import uuid
 
-from app.domain.agent.chat import PLACEHOLDER_TITLE, _expand_mention_names
+from app.domain.agent.chat import _expand_mention_names
 from app.domain.agent.harness.prompt import build_session_opening
 from app.domain.agent.prompt import _topic_ref_lists
-from app.domain.topic.models import TitleSource, Topic, TopicKind, TopicStatus
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
 
 ARCHIVED_ID = uuid.uuid4()
 CURRENT_ID = uuid.uuid4()
@@ -25,10 +25,6 @@ def _topic(
     return Topic(
         id=topic_id or uuid.uuid4(),
         title=title,
-        # 未命名认的是这一位，不是标题那几个字。
-        title_source=(
-            TitleSource.placeholder if title == PLACEHOLDER_TITLE else TitleSource.human
-        ),
         status=status,
         kind=kind,
     )
@@ -40,8 +36,6 @@ def _project_topics() -> list[Topic]:
         _topic("当前这个话题", topic_id=CURRENT_ID),
         _topic("搭建推荐算法原型"),
         _topic("分页调研"),
-        _topic(PLACEHOLDER_TITLE),
-        _topic(PLACEHOLDER_TITLE),
         _topic("设备能力检查(零消耗)"),
         _topic("设备能力检查(零消耗)"),
         _topic("两阶段采纳闭环", status=TopicStatus.archived, topic_id=ARCHIVED_ID),
@@ -53,20 +47,19 @@ def _titles(refs: list[dict]) -> list[str]:
     return [r["title"] for r in refs]
 
 
-def test_prompt_list_drops_archived_placeholder_and_duplicate_titles():
+def test_prompt_list_drops_archived_and_duplicate_titles():
     _, for_prompt = _topic_ref_lists(_project_topics(), exclude_id=CURRENT_ID)
 
     assert _titles(for_prompt) == ["搭建推荐算法原型", "分页调研"]
 
 
 def test_mention_table_stays_complete():
-    """验收标准 2：解析表必须仍是全量——归档的、未命名的、同名的都还在里面。"""
+    """验收标准 2：解析表必须仍是全量——归档的、同名的都还在里面。"""
     full, _ = _topic_ref_lists(_project_topics(), exclude_id=CURRENT_ID)
 
     titles = _titles(full)
     assert "两阶段采纳闭环" in titles  # archived
     assert "JWT 时区 bug" in titles  # archived
-    assert PLACEHOLDER_TITLE in titles
     assert titles.count("设备能力检查(零消耗)") == 2
     # 自己和 root 依然被排除（原有行为不变）
     assert "当前这个话题" not in titles
@@ -100,7 +93,7 @@ def test_prompt_section_lists_only_active_and_says_how_to_find_archived():
     assert "没列出来 ≠ 不存在" in prompt
     assert (
         'platform_request(method="GET", '
-        'path="/topics?project_id=<本项目 id>&topic=<本话题 id>")' in prompt
+        'path="/topics?project_id=<本项目 id>&topic=<CHEESE_TOPIC>")' in prompt
     )
 
 

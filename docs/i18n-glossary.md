@@ -18,8 +18,9 @@
 
 | 中文 | 英文 | 依据 / 不采用什么 |
 |---|---|---|
-| 话题 | **topic** | 后端 `/topics/{topic_id}`、`views/spaces/detail/ManageTopics.vue`、`addTopic`。**不用 thread**：界面里没有「楼」的概念，用 thread 会让人以为能把一条讨论拆成多段。**不用 subject**：那是「学科/主题」的意思，会和赛题的「选题」撞车 |
-| 空间 | **space** | `views/spaces/`、`components/spaces/SpaceSidebar.vue`、`navigation.spaces = "Spaces"`。**不用 area / zone / room**：room 在本平台另有含义（房间），会与话题混 |
+| 频道 | **channel** | 项目里人说话的地方（`work.sidebar.topics`、`navigation.term.topic`），默认那一个叫「综合 = General」。后端和路由仍叫 topic（`/topics/{topic_id}`），界面上不再出现 room 和 topic |
+| 话题 | **topic** | 只在空间里用：`views/spaces/detail/ManageTopics.vue`、`addTopic`，是给题目贴的分类标签。**不用 thread**：界面里没有「楼」的概念，用 thread 会让人以为能把一条讨论拆成多段。**不用 subject**：那是「学科/主题」的意思，会和赛题的「选题」撞车 |
+| 空间 | **space** | `views/spaces/`、`components/spaces/SpaceSidebar.vue`、`navigation.spaces = "Spaces"`。**不用 area / zone / room / channel**：channel 是项目里的频道 |
 | 项目 | **project** | `views/projects/`、后端 `/projects/{project_id}`。**不用 program**：那是「项目集」 |
 | 团队 | **team** | `views/teams/`、`navigation.teams = "Teams"`。**不用 group**：group 留给「域名组」 |
 | 赛题 | **challenge** | 注册页邮箱提示「部分题目仅对特定邮箱开放」对应的 `account.rule.emailHint` 写的是 `Some challenges are open only to…`。出现 25 次，是这套 catalog 里最大的一个术语。**不用 problem / contest**：problem 是算法题，contest 是比赛本身而非题目。见 §5 第 3 条，这里有个命名陷阱 |
@@ -145,8 +146,8 @@ Delete this question? All of its answers will be deleted too.`
    不是平台名。直接译成 `{bounty} Cheese` 会读成「获得 50 个 Cheese」，语义不通。
    英文目前不写单位，说 `the {bounty} bounty`，和旁边徽标上的 `Bounty {bounty}` 一致。
    要不要给它一个英文单位名（`credits`? `Cheese credits`?）待 owner 定。
-2. **「话题」在空间内的层级。** `spaces.detail.manageTopics` 显示空间里也有「话题」，它是给题目贴的分类标签，
-   和项目里的话题同名不同物。英文都定为 topic 没有歧义风险，但键的组织方式可能需要调整。
+2. **「话题」只剩空间里那一个。** 项目里的话题已改叫频道（channel），`spaces.detail.manageTopics` 里给题目贴的
+   分类标签仍叫话题（topic）。键的组织方式可能需要调整。
 
 3. **中文把「赛题」和「任务」当成同一个东西在叫——已经查清，按 challenge 统一。**
 

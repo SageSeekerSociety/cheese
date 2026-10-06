@@ -5,7 +5,7 @@
 - 只有空间的所有者与管理员能发公告，成员只能读；
 - 发布时，空间里除发布人以外的每个人在自己的动态里收到恰好一条，未读；
   发布人自己一条也没有；
-- 公告只进站内：不为它记下任何邮件或推送；
+- 公告默认站内 + 邮件（折进摘要）、不推送，收件人可自行关掉；
 - 改公告不再通知任何人；
 - 删公告，它发出去的通知一起消失；
 - 过了到期时间的公告不在「当前」里（题目列表顶上那一栏读的就是它），
@@ -16,7 +16,7 @@
 import time
 
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.delivery.models import ChannelDelivery
@@ -150,23 +150,23 @@ class TestPublishingNotifies:
         assert _listed(api_client, owner, space_id)["notifyCount"] == 3
         assert _listed(api_client, members[0], space_id)["notifyCount"] is None
 
-    def test_no_email_or_push_is_queued_for_it(
+    def test_it_queues_a_digest_and_no_push(
         self,
         user_client: UserCreator,
         api_client: TestClient,
         db_session: AsyncSession,
         _portal,
     ):
-        space_id, owner, _ = _space_with_members(user_client, api_client, 2)
+        space_id, owner, members = _space_with_members(user_client, api_client, 2)
 
-        async def _external() -> int:
-            return (
-                await db_session.scalar(select(func.count(ChannelDelivery.id)))
-            ) or 0
+        async def _channels() -> list[str]:
+            return list(await db_session.scalars(select(ChannelDelivery.channel)))
 
-        before = _portal.call(_external)
+        before = _portal.call(_channels)
         _publish(api_client, owner, space_id)
-        assert _portal.call(_external) == before
+        after = _portal.call(_channels)
+        # 设计稿「空间公告」默认站内 + 邮件（折进摘要）、不推送：每位成员一条摘要行。
+        assert after[len(before) :] == ["digest"] * len(members)
 
     def test_editing_notifies_nobody_again(
         self, user_client: UserCreator, api_client: TestClient

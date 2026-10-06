@@ -83,8 +83,7 @@ class AuthorizeRequest:
     owner_user_id: int
     project_id: uuid.UUID | None = None
     actor_handle: str | None = None
-    topic_id: uuid.UUID | None = None
-    task_id: uuid.UUID | None = None
+    conversation_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +285,17 @@ class LocalDirectoryService:
             fingerprint=_fingerprint(live),
         )
 
+    async def ever_granted(self, device_id: str) -> bool:
+        """Whether any directory on this machine was ever authorized, revoked
+        ones included.
+
+        A machine with only revoked grants still has to be sent its (empty) set:
+        it may be holding one of them. A machine with none has nothing to hold.
+        """
+        return bool(
+            await self._repo.list_grants_for_device(device_id, include_revoked=True)
+        )
+
     # -- the decision ------------------------------------------------------
 
     async def authorize(self, request: AuthorizeRequest) -> Verdict:
@@ -373,8 +383,7 @@ class LocalDirectoryService:
             grant_id=grant.id if grant else None,
             actor_handle=request.actor_handle,
             project_id=request.project_id,
-            topic_id=request.topic_id,
-            task_id=request.task_id,
+            conversation_id=request.conversation_id,
             detail=detail,
         )
         # Written before the verdict is returned, and without swallowing a

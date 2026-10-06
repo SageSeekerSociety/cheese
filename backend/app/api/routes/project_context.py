@@ -14,6 +14,7 @@ the search results page reads one kind at a time, a page at a time, and
 """
 
 import uuid
+from collections.abc import Iterable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -26,16 +27,19 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.living_doc import search as doc_search
 from app.domain.living_doc.schemas import document_row
+from app.domain.membership.roster import roster
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task
 from app.domain.search import bm25
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import faces_by_handle
 
 router = APIRouter(prefix="", tags=["project-context"])
 
@@ -75,14 +79,25 @@ def _snippet(body: str, terms: list[str], width: int = 160) -> str:
 
 
 def _blocks_matching(
-    terms: list[str], in_readable: list[uuid.UUID], kinds: list[str]
+    terms: list[str], conversations: Iterable[uuid.UUID], kinds: list[str]
 ) -> ColumnElement[bool]:
     return bm25.match_all_words(
         Block.id,
         terms,
         {"content": 1},
-        filters=[bm25.any_of("topic_id", in_readable), bm25.any_of("kind", kinds)],
+        filters=[
+            bm25.any_of("conversation_id", conversations),
+            bm25.any_of("kind", kinds),
+        ],
     )
+
+
+async def _conversation_rooms(
+    db: AsyncSession, rooms: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """Each conversation of these rooms — the rooms' own, their tasks' and their
+    支线' — mapped to its room."""
+    return await rooms_of_inner(db, rooms)
 
 
 def _tasks_matching(
@@ -207,19 +222,21 @@ async def _page(
     if kinds and in_readable:
         ranked: list[tuple[float, dict]] = []
         block_kinds = [k for k in kinds if k not in doc_search.KINDS]
+        by_conversation = await _conversation_rooms(db, in_readable)
         if block_kinds:
             score = func.paradedb.score(Block.id)
             rows = await db.execute(
                 select(Block, score)
                 .where(
-                    _blocks_matching(terms, in_readable, block_kinds),
+                    _blocks_matching(terms, by_conversation, block_kinds),
                     _SEARCHED_BLOCKS_SQL,
                 )
                 .order_by(score.desc(), Block.id)
                 .limit(offset + limit)
             )
             ranked += [
-                (float(value or 0), _record(b, readable, terms)) for b, value in rows
+                (float(value or 0), _record(b, by_conversation, readable, terms))
+                for b, value in rows
             ]
         docs = await doc_search.readable(db, in_readable)
         for kind in (k for k in kinds if k in doc_search.KINDS):
@@ -227,6 +244,7 @@ async def _page(
             ranked += [(h.score, _doc_record(h, readable, terms)) for h in found]
         ranked.sort(key=lambda pair: -pair[0])
         hits["records"] = [record for _, record in ranked[offset : offset + limit]]
+        await _name_authors(db, project_id, hits["records"])
     if "tasks" in groups and in_readable:
         tasks = await db.scalars(
             select(Task)
@@ -251,11 +269,12 @@ async def _counts(
     """How many of each kind the search finds, named as `only` names them."""
     counts: dict[str, int] = dict.fromkeys(ONLY_VALUES, 0)
     if in_readable:
+        by_conversation = await _conversation_rooms(db, in_readable)
         rows = await db.execute(
             select(Block.kind, func.count())
             .where(
                 _blocks_matching(
-                    terms, in_readable, [k.value for k in SEARCHED_BLOCKS]
+                    terms, by_conversation, [k.value for k in SEARCHED_BLOCKS]
                 ),
                 _SEARCHED_BLOCKS_SQL,
             )
@@ -278,17 +297,21 @@ async def _counts(
     return counts
 
 
-def _record(b: Block, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
-    room = readable[b.topic_id]
+def _record(
+    b: Block,
+    by_conversation: dict[uuid.UUID, uuid.UUID],
+    readable: dict[uuid.UUID, Topic],
+    terms: list[str],
+) -> dict:
+    room = readable[by_conversation[b.conversation_id]]
     return {
         "room_id": str(room.id),
         "room_title": room.title,
-        "room_title_source": str(room.title_source),
         "id": str(b.id),
         "kind": str(b.kind.value),
         "author": b.author,
         "created_at": b.created_at.isoformat(),
-        "task_id": str(b.task_id) if b.task_id else None,
+        "task_id": str(b.conversation_id) if b.conversation_id != room.id else None,
         "snippet": _snippet(b.content, terms),
     }
 
@@ -301,7 +324,6 @@ def _doc_record(
     return {
         "room_id": str(room.id),
         "room_title": room.title,
-        "room_title_source": str(room.title_source),
         "id": str(hit.id),
         "kind": hit.kind,
         "author": hit.author,
@@ -311,12 +333,41 @@ def _doc_record(
     }
 
 
+async def _name_authors(
+    db: AsyncSession, project_id: uuid.UUID, records: list[dict]
+) -> None:
+    """Give each record the name its author goes by now, beside the handle it
+    stores: a teammate of this project by the name the roster gives it, with
+    ``author_name_source`` (``default`` while it keeps the name it was born
+    with, which a screen shows in its reader's language), anyone else by their
+    nickname. ``author_name`` is None when there is none; the page then shows
+    the handle."""
+    authors = {r["author"] for r in records}
+    if not authors:
+        return
+    # A teammate's account keeps the nickname it was created with, so its
+    # current name comes from the roster, under either of its handles.
+    teammates: dict[str, tuple[str, str | None]] = {}
+    for member in await roster(db, project_id):
+        if member.instance_handle is not None:
+            named = (member.name, member.name_source)
+            teammates[member.handle] = named
+            teammates[member.instance_handle] = named
+    faces = await faces_by_handle(db, authors - teammates.keys())
+    for record in records:
+        name, source = teammates.get(record["author"]) or (
+            faces.get(record["author"], (None, None))[0],
+            None,
+        )
+        record["author_name"] = name
+        record["author_name_source"] = source
+
+
 def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
     room = readable[t.room_id]
     return {
         "room_id": str(room.id),
         "room_title": room.title,
-        "room_title_source": str(room.title_source),
         "id": str(t.id),
         "title": t.title,
         "title_source": str(t.title_source),
@@ -339,7 +390,6 @@ async def search_everything(
         return {
             "room_id": str(room.id),
             "room_title": room.title,
-            "room_title_source": str(room.title_source),
         }
 
     hits: dict[str, list[dict]] = {"rooms": [], "records": [], "tasks": []}
@@ -365,6 +415,7 @@ async def search_everything(
         # fill every slot, and the decision or document paragraph that also
         # matches would never be listed.
         docs = await doc_search.readable(db, in_readable)
+        by_conversation = await _conversation_rooms(db, in_readable)
         records: list[dict] = []
         for kind in RECORD_KINDS:
             if kind in doc_search.KINDS:
@@ -372,17 +423,18 @@ async def search_everything(
                 records += [_doc_record(h, readable, terms) for h in found]
                 continue
             records += [
-                _record(b, readable, terms)
+                _record(b, by_conversation, readable, terms)
                 for b in await db.scalars(
                     select(Block)
                     .where(
-                        _blocks_matching(terms, in_readable, [kind]),
+                        _blocks_matching(terms, by_conversation, [kind]),
                         _SEARCHED_BLOCKS_SQL,
                     )
                     .order_by(func.paradedb.score(Block.id).desc(), Block.id)
                     .limit(limit)
                 )
             ]
+        await _name_authors(db, project_id, records)
         hits["records"] = records
         tasks = await db.scalars(
             select(Task)
@@ -450,7 +502,6 @@ async def search_documents(
         {
             **document_row(h.document),
             "room_title": readable[h.document.room_id].title,
-            "room_title_source": str(readable[h.document.room_id].title_source),
             "snippet": _snippet(h.content, terms),
         }
         for h in found

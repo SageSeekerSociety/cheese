@@ -390,7 +390,8 @@
       "app": "Desktop app"
     },
     "closeHint": "Close settings (Esc)",
-    "usage": "Cheese credits"
+    "usage": "Cheese credits",
+    "notifications": "Notifications"
   },
   "emailCode": {
     "title": "Sign in with an email code",
@@ -448,6 +449,54 @@
     "openAtLoginHint": "Runs in the background after you log in, so it can let you know when something needs you",
     "saveFailed": "Couldn't save"
   },
+  "notifications": {
+    "title": "Notifications",
+    "lede": "Which kinds of events reach you on which channel, when to stay quiet, how often to get a summary. Each change saves on its own.",
+    "saveFailed": "Couldn't save",
+    "loading": "Loading your notification settings",
+    "loadFailed": "Couldn't load your notification settings",
+    "toggleEvent": "Toggle {channel} for “{event}”",
+    "channels": {
+      "title": "Channels",
+      "inApp": "In-app",
+      "inAppHint": "Inbox and the sidebar badge",
+      "push": "Browser push",
+      "pushHint": "Off means no system notifications",
+      "email": "Email",
+      "emailHint": "Sent to your account email",
+      "emailInstant": "Instantly",
+      "emailDigest": "Digest",
+      "emailOff": "Off"
+    },
+    "quiet": {
+      "title": "Quiet hours",
+      "window": "Quiet hours",
+      "windowHint": "In your time zone ({zone}): no push or instant email in this window; the digest still comes",
+      "windowOn": "{start} – {end}",
+      "windowOff": "None",
+      "digest": "Digest frequency",
+      "digestHint": "One email summarising what happened while you were away",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "off": "Off"
+    },
+    "matrix": {
+      "title": "By type",
+      "desc": "Each kind picks its own channels",
+      "event": "Event",
+      "inApp": "In-app",
+      "push": "Push",
+      "email": "Email",
+      "mention": "Someone {'@'}-mentions me",
+      "reply": "My message gets a reply",
+      "reaction": "Someone reacts to my message",
+      "waitsOnMe": "An accept card or decision request waits on me",
+      "deviceInUse": "Someone is using my device",
+      "invitation": "Team / project invitation",
+      "announcement": "Space announcement",
+      "billing": "Credit and billing reminders"
+    }
+  },
   "devices": {
     "lede": "Connect your own computers so AI teammates can run tasks on them",
     "signInFirst": "Sign in to manage your connected devices",
@@ -466,7 +515,7 @@
     "noTeams": "Not available to any project yet",
     "teamFallback": "Team #{id}",
     "screens": "Running sessions",
-    "watch": "Watch · {'@'}{handle}",
+    "watch": "Watch · {'@'}{name}",
     "commandsTitle": "Connect with a command",
     "commandsDesc": "On a Mac or Windows computer, download the desktop app under Add device. On other machines, run the command for the system, then run cheesehost link connect and approve when asked",
     "os": {
@@ -490,7 +539,7 @@
     "step2": "Then run cheesehost link connect and approve in the link it gives",
     "step3": "The device shows up on this page, where you can watch, rename or unlink it",
     "done": "Done",
-    "liveTitle": "Session · {'@'}{handle}",
+    "liveTitle": "Session · {'@'}{name}",
     "unbindTitle": "Unlink device \"{name}\"",
     "unbindHint": "The machine disconnects at once and has to connect again to be used"
   },

@@ -141,9 +141,10 @@ def test_a_project_without_a_team_admits_nobody_else(client):
     assert _can_enter(client, "bob", pid, root) == (403, 403)
 
 
-def test_a_teammate_on_the_roster_links_to_the_team_by_handle(client):
+def test_a_teammate_on_the_roster_names_the_team_and_links_to_it_by_handle(client):
     """Someone who joins the team after the project exists is on its roster
-    through the team, and that row names the team the way its page is addressed."""
+    through the team, and that row names the team by its name, beside the
+    handle its page is addressed by."""
     from app.domain.team.models import TeamMemberRole, TeamUserRelation
     from app.domain.user.repositories import UserRepository
 
@@ -174,3 +175,4 @@ def test_a_teammate_on_the_roster_links_to_the_team_by_handle(client):
     carol = next(r for r in rows if r["user_handle"] == "carol")
     assert carol["source"] == "team"
     assert carol["team_handle"].startswith("t-")
+    assert carol["team_name"] == "team-of-alice"

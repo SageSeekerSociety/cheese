@@ -90,11 +90,11 @@ export function useChatComposer(deps: ChatComposerDeps) {
   }
 
   // ---- 改自己发过的消息：正文原地换成输入框，保存之后房间里每个人看到新的正文。 ----
-  // 只有自己在房间里说的话：卡上的对话、别人的、芝士的都不在此列。
+  // 只有自己说的话：别人的、芝士的都不在此列。
   const editingId = ref<string | null>(null)
   const editSaving = ref(false)
   function canEdit(m: Block): boolean {
-    return isMine(m) && m.kind === 'message' && !m.task_id
+    return isMine(m) && m.kind === 'message'
   }
   function startEdit(m: Block) {
     editingId.value = m.id

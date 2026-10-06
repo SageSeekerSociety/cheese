@@ -109,10 +109,10 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
         expect: '返回名册',
       },
       {
-        name: '已采纳',
-        note: '同一件东西的另一个状态：标是「已采纳」，颜色由 `prState.cls` 决定。',
+        name: '已归档',
+        note: '同一件东西的另一个状态：标是「已归档」，颜色由 `prState.cls` 决定。',
         props: { ...HEADER_BASE, prHeader: true, prState: topicStateBadge('archived') },
-        expect: '已采纳',
+        expect: '已归档',
       },
     ],
   },

@@ -35,6 +35,7 @@ from app.domain.block.models import (
     BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import (
     CHEESE_NAME,
     agent_instance_handle,
@@ -48,12 +49,17 @@ from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
 from app.domain.review.services import AcceptService
-from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
+from app.domain.room_task.models import (
+    PLACEHOLDER_TITLE,
+    Task,
+    TaskStatus,
+    TaskTitleSource,
+)
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
-    PLACEHOLDER_TITLE,
+    NotifyLevel,
     RoomCleanup,
     Topic,
     TopicKind,
@@ -74,6 +80,7 @@ from app.domain.topic.repositories import (
     TopicProgressRepository,
     TopicRepository,
     TopicSortField,
+    Unread,
 )
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -109,23 +116,6 @@ def _require_room(parent: Topic) -> None:
 
 
 logger = logging.getLogger("cheesex.topic")
-
-
-def _brief_doc(
-    *, child_title: str, parent_title: str, created_by: str | None, source_block: str
-) -> str:
-    """A room upgraded out of a private chat starts its living doc from the
-    message it came from, copied verbatim under fixed headings. No semantics
-    are derived from prose and nothing speaks as 芝士 (CLAUDE.md red line)."""
-    by = f"由 {created_by} " if created_by else ""
-    return "\n\n".join(
-        [
-            f"# {child_title}",
-            f"> 从「{parent_title}」的一条消息{by}转来时自动预置",
-            "## 来源",
-            source_block.strip() or "（空）",
-        ]
-    )
 
 
 def _is_mid_turn_block(block: Block) -> bool:
@@ -165,15 +155,10 @@ def _stall_block_summary(block: Block | None) -> dict | None:
 
 @dataclass(frozen=True)
 class TopicRelevance:
-    """What a topic is to one particular person (与我的相关性, C2).
+    """What a channel is to one particular person. See ``TopicOut.joined`` /
+    ``awaits_me`` for the field-level contract."""
 
-    See ``TopicOut.i_participate``/``awaits_me`` for the field-level contract.
-    Two booleans instead of one enum so that "am I involved" and "is it on my
-    desk" stay separable: the sidebar folds on the first and overrides that
-    fold on the second.
-    """
-
-    i_participate: bool = False
+    joined: bool = False
     awaits_me: bool = False
 
 
@@ -240,11 +225,15 @@ class TopicService:
         self,
         *,
         project_id: uuid.UUID,
-        title: str | None,
+        title: str,
+        description: str | None = None,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
     ) -> Topic:
-        """``title=None`` opens an unnamed room (see `TopicRepository.add`)."""
+        """Open a channel, under the name whoever creates it gave it."""
+        title = title.strip()
+        if not title:
+            raise ValidationError(say("titleRequired"))
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
@@ -271,6 +260,7 @@ class TopicService:
             kind=kind,
             created_by=created_by,
         )
+        topic.description = (description or "").strip() or None
         # No branch parent: this path only ever makes ROOMS now, and a room forks
         # the base branch. Binding one to its parent would have made the project
         # root a fork point, which nothing has ever wanted.
@@ -441,54 +431,32 @@ class TopicService:
     async def relevance_for_topics(
         self, topics: list[Topic], viewer_handle: str | None
     ) -> dict[uuid.UUID, TopicRelevance]:
-        """{topic_id: 与我的相关性} for a batch of topics (C2).
-
-        FOUR queries, whatever the batch size — one per way of being involved
-        that lives in another table (roster, accept cards, @-notifications,
-        decision requests).
-        Creation is the fourth way and costs nothing: ``created_by`` is already
-        on the rows the caller handed in. The list endpoint returns a whole
-        project at once, so a per-topic probe here would be a hundred round
-        trips to render a sidebar.
+        """{topic_id: what it is to me} for a batch of channels, in a fixed
+        number of queries whatever the batch size: the list endpoint returns a
+        whole project at once, and a per-channel probe here would be a hundred
+        round trips to render a sidebar.
 
         ``viewer_handle`` is passed IN rather than read from an auth context:
-        the caller resolved the actor at the trust boundary, and a service that
-        went looking for the request's identity would be unusable from anywhere
-        that has no request (the digest builders, tests, 分身 turns).
-        Anonymous/unknown callers relate to nothing — every topic comes back
-        with both booleans false, which is also the pre-C2 behaviour.
+        the caller resolved the actor at the trust boundary. Anonymous/unknown
+        callers relate to nothing.
         """
         if viewer_handle is None or not topics:
             return {}
         topic_ids = [t.id for t in topics]
-        roster = await self._members.topic_ids_for_member(topic_ids, viewer_handle)
+        joined = await self._members.joined_topic_ids(topics, viewer_handle)
         cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
-        mentions = await self._notifications.mention_topic_ids(topic_ids, viewer_handle)
         decisions = await self._notifications.decision_topic_ids(
             topic_ids, viewer_handle
         )
-        relevance: dict[uuid.UUID, TopicRelevance] = {}
-        for topic in topics:
-            # 「在等我」只数要我**动手拍板**的：一张点名我还没结的验收卡，或一条
-            # 还没答的决策请求。未读的 @ 不算——芝士汇报、递卡都会 @人，把它算进
-            # 来侧栏几乎每一行都亮橙灯，灯就没有意义了；未读有右边的数字管。
-            awaits = cards.get(topic.id, False) or decisions.get(topic.id, False)
-            participates = (
-                topic.id in roster
-                or topic.created_by == viewer_handle
-                or topic.id in cards
-                or topic.id in mentions
-                or topic.id in decisions
+        return {
+            topic.id: TopicRelevance(
+                joined=topic.id in joined,
+                # 「在等我」只数要我**动手拍板**的：一张点名我还没结的验收卡，或一条
+                # 还没答的决策请求。
+                awaits_me=cards.get(topic.id, False) or decisions.get(topic.id, False),
             )
-            relevance[topic.id] = TopicRelevance(
-                # Being awaited is a way of being involved, so it implies
-                # participation: a card can be routed to someone who never
-                # opened the topic, and the whole point of `awaits_me` is that
-                # it must not end up folded away under 「其他话题」.
-                i_participate=participates or awaits,
-                awaits_me=awaits,
-            )
-        return relevance
+            for topic in topics
+        }
 
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
@@ -569,7 +537,7 @@ class TopicService:
 
     async def unread_counts(
         self, project_id: uuid.UUID, user_handle: str
-    ) -> dict[uuid.UUID, int]:
+    ) -> dict[uuid.UUID, Unread]:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         return await self._repo.unread_counts(project_id, user_handle)
@@ -581,9 +549,10 @@ class TopicService:
             raise NotFoundError("Project not found")
         return await self._repo.private_unread_counts(project_id, user_handle)
 
-    async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
-        await self.get_or_404(topic_id)
-        await self._repo.mark_read(topic_id, user_handle)
+    async def mark_read(self, conversation_id: uuid.UUID, user_handle: str) -> None:
+        """Bump the cursor on a room's own conversation or on one of its tasks."""
+        await self.get_or_404(await room_of(self._session, conversation_id))
+        await self._repo.mark_read(conversation_id, user_handle)
 
     async def mark_all_read(
         self, project_id: uuid.UUID, user_handle: str
@@ -595,29 +564,39 @@ class TopicService:
         await self._repo.mark_read_many(list(counts), user_handle)
         return list(counts)
 
-    NOTIFY_LEVELS = ("all", "mute")
-
     async def notify_levels(
         self, project_id: uuid.UUID, user_handle: str
-    ) -> dict[uuid.UUID, str]:
+    ) -> dict[uuid.UUID, tuple[NotifyLevel, datetime | None]]:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         return await self._repo.notify_levels(project_id, user_handle)
 
     async def set_notify_level(
-        self, topic_id: uuid.UUID, user_handle: str, level: str
+        self,
+        topic_id: uuid.UUID,
+        user_handle: str,
+        level: str,
+        muted_until: datetime | None = None,
     ) -> None:
-        if level not in self.NOTIFY_LEVELS:
+        """Set how much of a channel reaches this person. A mute may end at a
+        time, which has to be still to come."""
+        if level not in NotifyLevel.__members__:
             raise ValidationError(say("topicNotifyLevelInvalid"))
+        if muted_until is not None and muted_until <= datetime.now(UTC):
+            raise ValidationError(say("topicMuteUntilPast"))
         await self.get_or_404(topic_id)
-        await self._repo.set_notify_level(topic_id, user_handle, level)
+        await self._repo.set_notify_level(
+            topic_id, user_handle, NotifyLevel(level), muted_until
+        )
 
     # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
 
     async def archive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
-        """Manually archive a topic (idempotent) — CASCADING: a topic's active
-        subtopics go with it (归档整件事，分身是这件事的一部分；漏下的孤儿分身
-        没有父上下文，毫无意义). The root topic (项目本体) can't be archived."""
+        """A person archives a channel (idempotent): it leaves everyone's
+        sidebar and is read, not spoken in, until someone unarchives it. A
+        channel still holding open tasks is refused: archiving it would close
+        work its owners are still doing, and that is theirs to close or move.
+        综合 is never archived."""
         topic = await self._repo.lock(topic_id)
         if topic is None:
             raise NotFoundError("Topic not found")
@@ -625,6 +604,11 @@ class TopicService:
             raise ValidationError(say("projectRootCannotArchive"))
         if topic.status == TopicStatus.archived:
             return topic
+        if any(
+            task.status == TaskStatus.open
+            for task in await TaskService(self._session).list_in_room(topic.id)
+        ):
+            raise ValidationError(say("channelArchiveOpenTasks"))
         await self._archive_one(topic, by=by)
         await self._archive_children(topic, by=by)
         await self._session.flush()
@@ -640,10 +624,7 @@ class TopicService:
         and the cards they are still waiting on have to be settled with them
         (an unresolved card on a frozen place is one nobody can ever act on).
         """
-        for task in await TaskService(self._session).threads_for_room(
-            topic.id, limit=0
-        ):
-            thread = task[0]
+        for thread in await TaskService(self._session).list_in_room(topic.id):
             if thread.status == TaskStatus.closed:
                 continue
             thread.status = TaskStatus.closed
@@ -659,8 +640,7 @@ class TopicService:
             )
             await self._blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=by,
                 author_type=AuthorType.platform,
                 content=say("threadArchivedWithRoom", room=topic.title),
@@ -732,8 +712,7 @@ class TopicService:
         )
         await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=by,
             author_type=AuthorType.platform,
             content=note,
@@ -776,8 +755,7 @@ class TopicService:
         )
         await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=by,
             author_type=AuthorType.platform,
             content=say("roomUnarchived", actor=f"<@{by}>", room=topic.title),
@@ -825,24 +803,15 @@ class TopicService:
         *,
         block_id: uuid.UUID,
         created_by: str | None = None,
-    ) -> tuple[Topic, Task | None, bool]:
-        """讨论升级 (eval A1): turn a block into work of its own; the original
-        position becomes a live link.
+    ) -> tuple[Topic, Task, bool]:
+        """转为任务: a message in a channel becomes a task in that channel,
+        owned by whoever turned it; the message becomes a live link to it. Its
+        agent drafts the task's document from the message and what was said
+        around it (the caller hands it that). A private chat's messages stay
+        where they are.
 
-        WHICH place depends on where the block is, and the two answers are not
-        interchangeable:
-
-        - in a room, the message becomes a TASK in the same room, owned by
-          whoever upgraded it. Its agent drafts the task's document from the
-          message and what was said around it (the caller hands it that).
-        - in a private chat, it becomes a real room under the project root.
-          Private chats are not in the topic tree (`list_for_project` hides
-          them), so a thread there would be a thread nobody but its owner could
-          ever open.
-
-        Returns (room, task, created): `task` is None when the upgrade made a
-        room; created=False on an idempotent re-upgrade, so the caller doesn't
-        start the task's agent twice."""
+        Returns (room, task, created): created=False on an idempotent
+        re-upgrade, so the caller doesn't start the task's agent twice."""
         block = await self._blocks.get(block_id)
         if block is None:
             raise NotFoundError("Block not found")
@@ -855,65 +824,22 @@ class TopicService:
                 room = await self._repo.get(existing_task.room_id)
                 if room is not None:
                     return room, existing_task, False
-        if block.upgraded_to_topic_id is not None:
-            existing_room = await self._repo.get(block.upgraded_to_topic_id)
-            if existing_room is not None:
-                return existing_room, None, False
-        parent = await self._repo.get(block.topic_id)
+        parent = await self._repo.get(
+            await room_of(self._session, block.conversation_id)
+        )
         if parent is None:
             raise NotFoundError("Parent topic not found")
         # 归档后工作面冻结 (spec §6.3) — consistent with dispatch/edit_doc.
         if parent.status == TopicStatus.archived:
             raise ValidationError(say("topicArchivedFrozen"))
 
-        project = await self._projects.get(block.project_id)
-
-        if not parent.is_private:
-            # Opened unnamed: its agent names it (`cheese_title`).
-            task = await self.create_task(room_id=parent.id, created_by=created_by)
-            task.upgraded_from_block_id = block.id
-            await self._blocks.set_upgraded_to_place(block, task_id=task.id)
-            return parent, task, True
-
-        # 私聊不是话题树的父节点 (spec §1).
-        # A private chat's doc is never copied into a public place, so the new
-        # room's brief carries the upgraded message and nothing else.
-        brief = _brief_doc(
-            child_title=PLACEHOLDER_TITLE,
-            parent_title=parent.title,
-            created_by=created_by,
-            source_block=block.content,
-        )
-        root_id = project.root_topic_id if project else None
-        # Titles are AI-generated (the agent names a topic via `cheese_title`),
-        # never derived from text — see CLAUDE.md. An upgraded block starts
-        # unnamed and 芝士 names it on its first turn, like a + new topic.
-        new_room = await self._repo.add(
-            project_id=block.project_id,
-            title=None,
-            parent_id=root_id,
-            kind=TopicKind.topic,
-            created_by=created_by,
-            upgraded_from_block_id=block.id,
-        )
-        # Same fallback ladder as create()/dispatch_task — 升级 is usually the
-        # 分身's own suggestion, and ``created_by`` is None whenever the caller is
-        # not a verified person (the route passes only an authenticated actor's
-        # handle). Passing that straight to seed() — which drops None and every
-        # agent handle — would mint an ownerless room.
-        await self._members.seed(
-            new_room.id,
-            agent_handle=await self._starting_agent_handle(new_room),
-            owner_handle=await self._resolve_owner(
-                created_by,
-                project_id=block.project_id,
-                parent_id=root_id,
-                project_owner=project.owner_handle if project else None,
-            ),
-        )
-        await self._blocks.set_upgraded_to_place(block, topic_id=new_room.id)
-        await self.seed_brief_doc(new_room, brief)
-        return new_room, None, True
+        if parent.is_private:
+            raise ValidationError(say("privateMessageStaysPrivate"))
+        # Opened unnamed: the platform names it (`room_task/naming.py`).
+        task = await self.create_task(room_id=parent.id, created_by=created_by)
+        task.upgraded_from_block_id = block.id
+        await self._blocks.set_upgraded_to_place(block, task_id=task.id)
+        return parent, task, True
 
     async def seed_brief_doc(self, topic: Topic, content: str) -> None:
         """Preset a newborn ROOM's living doc with its task brief. Author is
@@ -939,14 +865,13 @@ class TopicService:
         landed = landing(EventAbout.room, project_id=room.project_id, room_id=room.id)
         return await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author="system",
             author_type=AuthorType.platform,
             content=say(
                 "taskCreated",
                 actor=f"<@{actor}>",
-                title=task.title,
+                title=said_title(task),
                 owner=f"<@{task.owner_handle}>" if task.owner_handle else "",
             ),
             kind=BlockKind.event,
@@ -960,9 +885,15 @@ class TopicService:
         created_by: str | None,
         title: str | None = None,
         owner_handle: str | None = None,
+        proposed_by: str | None = None,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
+
+        A title typed by a person is final. A task opened unnamed is named by
+        the platform (`room_task/naming.py`). A title the AI teammate
+        ``proposed_by`` wrote with its proposal is the platform's too: kept
+        unless the task changes direction.
 
         The owner is the person named, else the person creating it, else — when
         no person is identifiable — the room's owner, then the project's. A task
@@ -990,18 +921,26 @@ class TopicService:
             )
         )
         tasks = TaskService(self._session)
-        named = (title or "").strip()
+        named = (title or "").strip()[:300]
         task = await tasks.open_thread(
             project_id=room.project_id,
             room_id=room.id,
-            title=named[:300] or PLACEHOLDER_TITLE,
-            title_source=TaskTitleSource.human
-            if named
-            else TaskTitleSource.placeholder,
+            title=named or PLACEHOLDER_TITLE,
+            title_source=TaskTitleSource.placeholder
+            if not named
+            else TaskTitleSource.auto
+            if proposed_by
+            else TaskTitleSource.human,
             owner_handle=owner,
             created_by=created_by,
         )
+        if named and proposed_by:
+            task.title_calibrated = True
+            tasks.record_title(task, reason="proposal", by=proposed_by)
         await tasks.ensure_document(task)
+        if owner:
+            # Whoever the work is handed to is in its channel from then on.
+            await self._members.take_in(room.id, owner)
         await self._card_block(room, task, actor=created_by or "system")
         return task
 
@@ -1078,8 +1017,7 @@ class TopicService:
         """这间房自己那份实况文档；还没有人打开或写过它时没有。
 
         和 `get_doc` 读的是同一处，差别只在手上是什么：路由手上是个可能不存在的
-        place，所以先 404；轮末那种「房间行已经读出来了」的地方手上就是房间 id，
-        不必再绕一圈（`topic/doc_nudge.py`）。
+        place，所以先 404；手上已经是房间 id 的地方不必再绕一圈。
         """
         return await Documents(self._session).of_room(room_id)
 
@@ -1202,7 +1140,7 @@ class TopicService:
         }
 
     async def get_progress(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+        self, conversation_id: uuid.UUID
     ) -> tuple[list[dict], datetime | None]:
         """进度层 (#187): the checklist this topic's work left behind.
 
@@ -1210,10 +1148,7 @@ class TopicService:
         checklist and no checklist are the same thing to a reader, and making
         the caller handle a null row buys nothing.
         """
-        place = await self.place_or_404(topic_id)
-        row = await TopicProgressRepository(self._session).get(
-            place.room_id, task_id=task_id
-        )
+        row = await TopicProgressRepository(self._session).get(conversation_id)
         if row is None:
             return [], None
         return [dict(item) for item in row.items], row.updated_at

@@ -24,7 +24,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 |---|---|---|---|
 | 项目 = 本体 | 根话题 | `root` | 每个项目自动建一个根话题，芝士本体在此协调全局 |
 | 话题 | 二级话题 | `topic` | 一条工作线（≈ GitHub PR）；默认挂在本体下 |
-| 任务 | 话题旁边的一段对话 | `tasks` 一行 + `blocks.task_id` | 人创建、一个负责人，有自己的会话、实况文档、分支；不是 `topics` 表里的行，在 `conversations` 登记表里是 `kind = task` |
+| 任务 | 话题旁边的一段对话 | `tasks` 一行；它的消息、轮次、用量按 `conversation_id` = 任务 id 记 | 人创建、一个负责人，有自己的会话、实况文档、分支；不是 `topics` 表里的行，在 `conversations` 登记表里是 `kind = task` |
 
 - 模型：`backend/app/domain/topic/models.py`（`Topic`）。
 - **新建话题默认挂到项目根话题下**（`TopicService.create`，Batch A 修），树形：本体 ▸ 话题 ▸ 任务。

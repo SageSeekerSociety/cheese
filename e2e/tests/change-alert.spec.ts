@@ -71,7 +71,7 @@ test.describe('变更提醒', () => {
     await expect(asked).toContainText(title);
     await expect(asked).toContainText(body);
 
-    await asked.getByRole('button', { name: '去话题' }).click();
+    await asked.getByRole('button', { name: '去频道' }).click();
     await expect(page).toHaveURL(
       new RegExp(`/projects/${projectId}/topics/${topic.id}`),
     );
@@ -92,7 +92,7 @@ test.describe('变更提醒', () => {
     await page.goto(`/projects/${projectId}/running`);
     const asked = page.locator('.asked');
     await expect(asked).toContainText(title);
-    await expect(asked.getByRole('button', { name: '去话题' })).toHaveCount(0);
+    await expect(asked.getByRole('button', { name: '去频道' })).toHaveCount(0);
 
     await asked.getByRole('button', { name: '收起' }).click();
     // 断言「这个标题不在了」，而不是「这一叠不在了」：答掉的最后一条会让整叠退场，

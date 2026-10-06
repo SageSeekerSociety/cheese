@@ -23,6 +23,7 @@ from tests.ask_fixtures import agent_credential
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     room_agent_seat,
@@ -65,7 +66,7 @@ def _turns(client, room: str) -> list[AgentTurn]:
             return list(
                 await session.scalars(
                     select(AgentTurn)
-                    .where(AgentTurn.topic_id == uuid.UUID(room))
+                    .where(AgentTurn.conversation_id == uuid.UUID(room))
                     .order_by(AgentTurn.started_at)
                 )
             )
@@ -82,7 +83,8 @@ def _until(predicate, what: str) -> None:
 
 def test_the_turn_that_resends_an_unheard_message_can_ask(client):
     data = post_project(client, {"name": "Unheard"}, owner="alice").json()["data"]
-    room = data["root_topic_id"]
+    # 芝士 answers in a 支线 of the channel.
+    room = in_thread(client, data["root_topic_id"], "alice")
     channel = FirstSendLost()
     service = ChatService(
         session_factory=client.test_request_factory,

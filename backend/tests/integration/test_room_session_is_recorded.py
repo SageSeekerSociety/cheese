@@ -108,18 +108,15 @@ def test_a_freshly_opened_room_has_not_run(client, bearer):
     assert _has_run(client, pid, room, bearer) is False
 
 
-def test_a_task_is_not_asked_whether_it_has_run(client, bearer):
-    """任务不是地点，这个问题对它不成立 —— 问了是 404，不是 False。
-
-    False 会更糟：那读起来像「这条活闲着」，而事实是这个问题问错了对象。
-    """
+def test_a_task_is_asked_about_its_own_session(client, bearer):
+    """任务是一段自己的对话：问它跑没跑过，答的是它自己的会话，不是房间的。"""
     pid, room = _room(client)
     card = _started(client, room)
 
-    r = client.get(
-        f"/projects/{pid}/topics/{card}/work-summary", headers=bearer("alice")
-    )
-    assert r.status_code == 404
+    # Answers (200, a boolean) about the task's own session; it is no longer a
+    # question put to the wrong object.
+    assert isinstance(_has_run(client, pid, card, bearer), bool)
+    assert _has_run(client, pid, room, bearer) is False
 
 
 def test_a_room_records_its_own_turn(client, tmp_path, bearer):

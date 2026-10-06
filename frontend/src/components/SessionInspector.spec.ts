@@ -162,7 +162,7 @@ it('names the teammates when several are working, and reads the one picked', asy
     result: { response: { subtype: 'success', response: { model: 'claude-b' } } },
   })
   const view = mount()
-  await view.findByText('房间里有 2 个会话在运行，选一位队友查看')
+  await view.findByText('频道里有 2 个会话在运行，选一位队友查看')
   expect(view.queryByText('没有在运行的会话')).toBeNull()
   // Details are folded, so the teammate picker is the only choice on screen.
   await fireEvent.mouseDown(view.getByRole('combobox'))

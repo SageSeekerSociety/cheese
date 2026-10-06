@@ -49,6 +49,7 @@ def test_edits_in_a_row_are_one_line_naming_everyone_with_one_diff(client):
 def test_something_said_in_between_starts_a_new_line(client):
     room, _ = _room(client)
     _store(client, room, "第一段", "alice")
+    client.post(f"/topics/{room}/join", headers=session_auth_headers("bob"))
     _say(client, room, "bob", "我先看看")
     _store(client, room, "第一段\n\n第二段", "alice")
 
@@ -66,7 +67,7 @@ def test_a_pause_longer_than_ten_minutes_starts_a_new_line(client):
         async with client.test_factory() as session:
             await session.execute(
                 update(Block)
-                .where(Block.topic_id == uuid.UUID(room))
+                .where(Block.conversation_id == uuid.UUID(room))
                 .values(created_at=Block.created_at - timedelta(minutes=11))
             )
             await session.commit()

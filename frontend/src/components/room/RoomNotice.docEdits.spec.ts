@@ -26,7 +26,7 @@ const EDITS = [
 function notice(meta: Record<string, unknown>, content: string): Block {
   return {
     id: 'n1',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'system',

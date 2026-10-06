@@ -37,6 +37,48 @@ spec = importlib.util.spec_from_file_location("execution_runtime", RUNTIME)
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
+PREDECESSOR = RUNTIME.with_name("predecessor.py")
+predecessor_spec = importlib.util.spec_from_file_location(
+    "execution_predecessor", PREDECESSOR
+)
+predecessor = importlib.util.module_from_spec(predecessor_spec)
+predecessor_spec.loader.exec_module(predecessor)
+
+
+def _decoy(*argv):
+    """A process whose command line is `argv` and does nothing: `-c` runs the
+    program it is given and leaves the rest to `sys.argv`. Started this way
+    because the guard is about the command line's tail, not about what the
+    process really is — which is the point of asserting on it."""
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", *argv]
+    )
+
+
+def test_only_a_process_serving_this_state_may_be_ended(tmp_path):
+    """Whatever answers on a room's socket is not proof of who is behind it, so
+    the command line is what a stop signals on: this state's service, and only
+    it. A neighbouring room's executor, and a process that merely names the
+    state, are both left alone — a guard that is too wide ends the wrong thing.
+    """
+    state, other = tmp_path / "state", tmp_path / "other"
+    decoys = [
+        _decoy("serve", "--state", str(state)),
+        _decoy("serve", "--state", str(other)),
+        _decoy("--state", str(state)),
+    ]
+    try:
+        commands = [predecessor.command_line(pid=decoy.pid) for decoy in decoys]
+        assert [predecessor.serving(command, state, state) for command in commands] == [
+            True,
+            False,
+            False,
+        ]
+    finally:
+        for decoy in decoys:
+            decoy.kill()
+            decoy.wait()
+
 
 @pytest.mark.parametrize("running", [False, True])
 def test_only_a_running_command_holds_an_idle_upgrade(tmp_path, running):

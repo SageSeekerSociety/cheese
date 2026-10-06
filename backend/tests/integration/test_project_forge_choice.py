@@ -57,6 +57,7 @@ def test_github_choice_can_connect_without_cross_forge_migration(client):
                 project_id=project_id,
                 installation_id=42,
                 repo="example/existing",
+                repository_id=None,
                 account="example",
             )
             await session.commit()

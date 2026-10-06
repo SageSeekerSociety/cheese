@@ -18,10 +18,6 @@ import { isAgentHandle } from '../../../lib/authorship'
 export function useRoomTurns(options: {
   /** 时间线上此刻有的块：落下来的轮次是谁的，从块上认。 */
   messages: Ref<Block[]>
-  /** 这个房间 AI 的名字：认不出是谁的轮次时用它。 */
-  agentName: Ref<string>
-  /** 一个队友座位的显示名；不认识的座位是 null。 */
-  agentNameOf: (handle: string) => string | null
 }) {
   const awaitingReply = ref(false)
   const activeTurnIds = ref<Set<string>>(new Set())
@@ -55,9 +51,14 @@ export function useRoomTurns(options: {
   // 每一轮是哪个队友的。在跑的轮次，帧上说了（turnAgents）；落下来的轮次，块上也说：
   // 那一轮里队友自己写的块署的就是它，人发的那条记着交给了谁、开的是哪一轮
   // （`agent_recipient` 与 `consumed_turn` / `prompted_turn`）。平台替一轮写的通知
-  // （失败、重试、排队）署名是 system，靠这张表认回是哪位的那一轮。
+  // （失败、重试、排队）署名是 system，在 `meta.seat` 上记着是哪位的那一轮：一轮
+  // 还没开始就失败了，别的块都还没落，只有它说得出来。
   const turnOwners = computed(() => {
     const owners: Record<string, string> = {}
+    for (const m of options.messages.value) {
+      const seat = m.meta?.seat
+      if (m.turn_id && typeof seat === 'string') owners[m.turn_id] = seat
+    }
     for (const m of options.messages.value) {
       const recipient = (m.meta?.agent_recipient as { handle?: unknown } | undefined)?.handle
       if (typeof recipient !== 'string') continue
@@ -74,12 +75,6 @@ export function useRoomTurns(options: {
   /** 这一轮那位队友的 handle；认不出是谁的轮次就是 null。 */
   function turnAgentHandle(turnId: string | null | undefined): string | null {
     return (turnId && turnOwners.value[turnId]) || null
-  }
-
-  /** 这一轮那位队友的名字；认不出是谁的轮次，才退回这个房间 AI 的名字。 */
-  function turnAgentName(turnId: string | null | undefined): string {
-    const owner = turnId ? turnOwners.value[turnId] : undefined
-    return (owner && options.agentNameOf(owner)) || options.agentName.value
   }
 
   /** 连上时 broker 报的「此刻在跑的这几轮」。 */
@@ -169,7 +164,6 @@ export function useRoomTurns(options: {
     awaitingReply,
     turnStarts,
     faces,
-    turnAgentName,
     turnAgentHandle,
     active,
     started,

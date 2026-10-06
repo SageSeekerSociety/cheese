@@ -32,6 +32,11 @@ class TaskProposal(UuidPk, Timestamps, Base):
     room_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
+    #: Where it was proposed: a 支线, or the channel's main line. Its card is
+    #: shown there.
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
     title: Mapped[str] = mapped_column(String(300))
     #: What the task is for, in the teammate's words: what its document starts
     #: from once the task is created.
@@ -62,6 +67,7 @@ class TaskProposals:
         *,
         project_id: uuid.UUID,
         room_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         title: str,
         summary: str,
         proposed_by: str,
@@ -69,6 +75,7 @@ class TaskProposals:
         proposal = TaskProposal(
             project_id=project_id,
             room_id=room_id,
+            conversation_id=conversation_id,
             title=title,
             summary=summary,
             proposed_by=proposed_by,
@@ -78,12 +85,13 @@ class TaskProposals:
         await self._session.flush()
         return proposal
 
-    async def open_in_room(self, room_id: uuid.UUID) -> list[TaskProposal]:
-        """The proposals in a room still waiting for someone, oldest first."""
+    async def open_in(self, conversation_id: uuid.UUID) -> list[TaskProposal]:
+        """The proposals made in a conversation still waiting for someone,
+        oldest first."""
         rows = await self._session.scalars(
             select(TaskProposal)
             .where(
-                TaskProposal.room_id == room_id,
+                TaskProposal.conversation_id == conversation_id,
                 TaskProposal.state == ProposalState.open,
             )
             .order_by(TaskProposal.created_at, TaskProposal.id)

@@ -95,13 +95,12 @@ async def _answer(client, project, topic, seat, *, attach):
         "recipient_handle": seat,
         "asked_by": seat,
         "asked": "user-1",
-        "task_id": None,
     }
     group_id = str(uuid.uuid4())
     async with factory() as session:
         await AskGroups(session).create(
             project_id=project,
-            topic_id=topic,
+            conversation_id=topic,
             asked_by=seat,
             group_id=group_id,
             questions=parse_questions(
@@ -120,7 +119,7 @@ async def _answer(client, project, topic, seat, *, attach):
         await complete_work_inputs(
             session,
             project_id=project,
-            topic_id=topic,
+            conversation_id=topic,
             recipient_handle=seat,
             harness=initial.harness,
             native_session_id=initial.native_session_id,
@@ -176,7 +175,7 @@ def test_a_gone_ask_conversation_leaves_the_answer_waiting(client):
             # message in the room is not.
             ordinary = await BlockRepository(session).add(
                 project_id=project,
-                topic_id=topic,
+                conversation_id=topic,
                 author="user-1",
                 author_type=AuthorType.participant,
                 content="a person's own message",
@@ -333,6 +332,8 @@ async def _told(session, topic):
     """The room's own copy of "your answer never arrived"."""
     return [
         block
-        for block in await session.scalars(select(Block).where(Block.topic_id == topic))
+        for block in await session.scalars(
+            select(Block).where(Block.conversation_id == topic)
+        )
         if (block.meta or {}).get("event_type") == EVENT_ASK_ANSWER_UNDELIVERED
     ]

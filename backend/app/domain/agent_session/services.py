@@ -127,9 +127,10 @@ class AgentSessionService:
             uuid.UUID, uuid.UUID, uuid.UUID | None, str, str, str | None, SessionPlace
         ]
     ]:
-        """``(project_id, room_id, task_id, agent_handle, harness, resume_token,
+        """``(project_id, room_id, inner_id, agent_handle, harness, resume_token,
         place)`` for every placed session — what a channel re-adopts after a
-        restart. ``task_id`` is None for a room's own session.
+        restart. ``inner_id`` is the task's or the 支线's, None for a room's
+        own session.
 
         One per (conversation, agent, harness) seat, and each comes back on its
         own seat. Every channel reads this same list and keeps the rows whose
@@ -138,16 +139,14 @@ class AgentSessionService:
         (FB-56).
         """
         found = []
-        for row, project_id in await self._repo.placed_everywhere():
+        for row, project_id, room_id in await self._repo.placed_everywhere():
             place = row.place()
             if place is not None:
                 found.append(
                     (
                         project_id,
-                        row.topic_id,
-                        row.conversation_id
-                        if row.conversation_id != row.topic_id
-                        else None,
+                        room_id,
+                        row.conversation_id if row.conversation_id != room_id else None,
                         row.agent_handle,
                         row.harness,
                         row.resume_token,

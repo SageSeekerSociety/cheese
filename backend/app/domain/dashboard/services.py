@@ -19,6 +19,7 @@ from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
+from app.domain.conversation.services import room_column
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.notification.models import NotificationType
 from app.domain.notification.repositories import NotificationRepository
@@ -118,7 +119,7 @@ class DashboardService:
         worked_topic_ids = set(
             (
                 await self._s.execute(
-                    select(Block.topic_id)
+                    select(room_column(Block.conversation_id))
                     .where(
                         Block.project_id == project_id,
                         Block.author == user_handle,
@@ -419,17 +420,18 @@ class DashboardService:
         _, visible = await self._projects_shown(handle, viewer=viewer)
         names = {project.id: project.name for project in visible}
         last = func.max(Block.created_at)
+        room = room_column(Block.conversation_id).label("room")
         stmt = (
-            select(Block.topic_id, func.count(), last)
-            .join(Topic, Topic.id == Block.topic_id)
+            select(room, func.count(), last)
+            .join(Topic, Topic.id == room)
             .where(
                 Block.author == handle,
                 participant_blocks(),
                 Topic.project_id.in_(list(names)),
                 _listed_topic(),
             )
-            .group_by(Block.topic_id)
-            .order_by(last.desc(), Block.topic_id)
+            .group_by(room)
+            .order_by(last.desc(), room)
             .limit(limit)
         )
         if since is not None:

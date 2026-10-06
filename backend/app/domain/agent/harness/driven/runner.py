@@ -142,11 +142,11 @@ REPLY_READS = (
     "cheese_chat_replies",
 )
 REPLY_OWED = (
-    "A person in this room has sent a message you have not answered yet. "
-    "Reply to it in the room with chat_send first (or ask them with "
+    "A person in this conversation has sent a message you have not answered yet. "
+    "Reply to it in the conversation with chat_send first (or ask them with "
     "cheese_ask): answer it if you can; otherwise say what you understood and "
     "what you will do next — and if they asked you to stop, stop. If you have "
-    "not seen what they wrote, read the room with cheese_chat_list (or "
+    "not seen what they wrote, read the conversation with cheese_chat_list (or "
     "cheese_chat_get / cheese_chat_search / cheese_chat_replies); every other "
     "tool is refused until you have replied."
 )

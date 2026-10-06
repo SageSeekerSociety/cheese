@@ -19,7 +19,7 @@ const history: Block[] = [
   {
     id: 'm1',
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author_type: 'participant',
     author: 'other',
@@ -70,7 +70,7 @@ function posted(body: Record<string, unknown>): Block {
   sent.push(body)
   return {
     id: String(body.request_id),
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author: 'me',
     content: String(body.content),
@@ -92,7 +92,7 @@ async function replyThenSend(text: string, cancel: boolean) {
   await settle()
   await fireEvent.mouseOver(view.container.querySelector('[data-mid="m1"] .im-text')!)
   const bar = view.container.querySelector('.hover-bar') as HTMLElement
-  await fireEvent.click(within(bar).getByTitle('回复'))
+  await fireEvent.click(within(bar).getByTitle('引用回复'))
   if (cancel) await fireEvent.click(view.getByRole('button', { name: t('work.room.composer.cancelReply') }))
   const box = view.container.querySelector('textarea') as HTMLTextAreaElement
   box.focus()

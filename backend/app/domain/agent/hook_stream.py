@@ -43,6 +43,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_API_RETRY,
+    EVENT_CONTEXT_COMPACT,
     EVENT_DEVICE_WAITING,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
@@ -82,6 +83,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.memory.models import MemoryScope
+from app.domain.room_task.place import PlaceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +211,7 @@ class _HookStream(Protocol):
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         publish: bool = False,
         author: str | None = None,
         publication_id: str | None = None,
@@ -532,7 +534,7 @@ async def _consume_hook_event(
     # What it says lands in the room's table, beside its task, and goes out on
     # the conversation's channel — the one its view subscribes to.
     conversation_id = topic_id
-    room_id, task_id = await service._room_of_conversation(conversation_id)
+    room_id, inner_id = await service._room_of_conversation(conversation_id)
     channel = str(conversation_id)
     if not isinstance(event, AgentRetrying):
         # Anything else the turn does ends a streak of retries: the request
@@ -540,17 +542,17 @@ async def _consume_hook_event(
         retry_notes.pop(turn_id, None)
     if isinstance(event, AgentResult):
         waiting_notes.pop(turn_id, None)
-        if turn_id in compact_notes:
-            # The turn ended with the compaction still open (it was stopped,
-            # or the session died): the line must not go on saying it is
-            # compacting.
-            await _note_compaction(
-                sessions,
-                compact_notes,
-                turn_id,
-                AgentCompacting(done=True, error=say("contextCompactSessionEnded")),
-                channel=channel,
-            )
+        # The turn ended with the compaction still open (it was stopped, or
+        # the session died): the line must not go on saying it is compacting.
+        # Asked of the room, not only of this process: the line may have been
+        # landed by the backend this one replaced.
+        await _note_compaction(
+            sessions,
+            compact_notes,
+            turn_id,
+            AgentCompacting(done=True, error=say("contextCompactSessionEnded")),
+            channel=channel,
+        )
     if isinstance(event, AgentSessionInfo):
         if event.agent_handle:
             room_session_agents[topic_id] = event.agent_handle
@@ -599,7 +601,7 @@ async def _consume_hook_event(
             at=event.at,
             author=event.agent_handle
             or (state.acting_agent if state is not None else None),
-            task_id=task_id,
+            inner_id=inner_id,
         )
         if payload is not None:
             frame = {"type": "event_block", "block": payload}
@@ -617,7 +619,7 @@ async def _consume_hook_event(
             turn_id=turn_id,
             eid=eid or event.eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
             author=event.agent_handle,
             at=event.at,
         )
@@ -652,6 +654,13 @@ async def _consume_hook_event(
                 sessions, compact_notes, turn_id, event, channel=channel
             )
         else:
+            if turn_id not in compact_notes:
+                # The backend this one replaced may have landed the line while
+                # this compaction (or an earlier attempt nobody heard end) was
+                # under way. It is the same news: say it on that line.
+                running = await _running_compactions(sessions, turn_id)
+                if running:
+                    compact_notes[turn_id] = running[-1]
             content, meta = _compaction_notice(event)
             await _keep_note(
                 sessions,
@@ -661,7 +670,7 @@ async def _consume_hook_event(
                 content,
                 meta,
                 author=state.acting_agent if state is not None else None,
-                task_id=task_id,
+                inner_id=inner_id,
                 channel=channel,
             )
     elif isinstance(event, AgentRetrying):
@@ -672,7 +681,7 @@ async def _consume_hook_event(
             turn_id,
             event,
             author=state.acting_agent if state is not None else None,
-            task_id=task_id,
+            inner_id=inner_id,
             channel=channel,
         )
     elif isinstance(event, AgentToolResult):
@@ -685,7 +694,7 @@ async def _consume_hook_event(
             turn_id=turn_id,
             eid=eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
         )
         if payload is not None:
             frame = {"type": "event_block", "block": payload}
@@ -738,7 +747,7 @@ async def _consume_hook_event(
                 )
             error_line, error_code = line, meta.get("code")
             payload = await post_system_event(
-                sessions, room_id, line, turn_id, meta=meta, task_id=task_id
+                sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
             )
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
@@ -760,7 +769,7 @@ async def _consume_hook_event(
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
                 closing=result_text_seen,
-                task_id=task_id,
+                inner_id=inner_id,
             )
             if payload is not None:
                 if state is not None:
@@ -780,7 +789,7 @@ async def _consume_hook_event(
         # if nothing had happened. A turn whose coroutine is alive closes the
         # same row a moment later and finds it already closed, which is the
         # correct answer either way.
-        await service._close_open_turns(topic_id, turn_id)
+        await close_on_stop(service, topic_id, turn_id)
         if state is not None:
             if event.taken_into is not None:
                 # Its commits are the turn's that read it, which reports them.
@@ -906,6 +915,17 @@ async def _end_inputs_answered_inside(
         )
 
 
+async def close_on_stop(service, topic_id: uuid.UUID, turn_id: uuid.UUID) -> None:
+    """A Stop ends the interval it names, and with it what may hold back a
+    message queued for the same seat. The Stop can land after the turn's
+    completion and its idle frame, whose own nudges then found the interval
+    still open, so the queue is looked at once more here."""
+    from app.domain.agent.pending_messages import nudge_messages
+
+    await service._close_open_turns(topic_id, turn_id)
+    nudge_messages(service, topic_id)
+
+
 async def _note_retry(
     sessions: async_sessionmaker,
     retry_notes: dict[uuid.UUID, uuid.UUID],
@@ -914,7 +934,7 @@ async def _note_retry(
     event: AgentRetrying,
     *,
     author: str | None,
-    task_id: uuid.UUID | None,
+    inner_id: uuid.UUID | None,
     channel: str,
 ) -> None:
     """Say the turn is retrying a failed request, on one line per streak.
@@ -971,7 +991,7 @@ async def _note_retry(
         content,
         meta,
         author=author,
-        task_id=task_id,
+        inner_id=inner_id,
         channel=channel,
     )
 
@@ -984,12 +1004,32 @@ async def _note_compaction(
     *,
     channel: str,
 ) -> None:
-    """Restate the turn's compaction line as over, if it has one."""
-    block_id = compact_notes.pop(turn_id, None)
-    if block_id is None:
-        return
+    """Restate the turn's compaction line as over, if it has one.
+
+    Which line that is comes from the room, not from this process's memory:
+    dev replaces its backend on every merge, and a compaction that started
+    under one backend ends under the next, which never saw the line land."""
+    remembered = compact_notes.pop(turn_id, None)
+    lines = await _running_compactions(sessions, turn_id)
+    if remembered is not None and remembered not in lines:
+        lines.append(remembered)
     content, meta = _compaction_notice(event)
-    await _restate_note(sessions, block_id, content, meta, channel)
+    for block_id in lines:
+        await _restate_note(sessions, block_id, content, meta, channel)
+
+
+async def _running_compactions(
+    sessions: async_sessionmaker, turn_id: uuid.UUID
+) -> list[uuid.UUID]:
+    """The turn's compaction lines that still say it is compacting."""
+    try:
+        async with sessions() as session:
+            return await BlockRepository(session).running_notices(
+                turn_id, EVENT_CONTEXT_COMPACT
+            )
+    except Exception:  # noqa: BLE001 — a status line is not worth a turn
+        logger.exception("could not read compaction lines of turn %s", turn_id)
+        return []
 
 
 async def _note_reachability(
@@ -1029,15 +1069,19 @@ async def _note_reachability(
         "state": "waiting",
         "at": datetime.now(UTC).isoformat(),
     }
+    # The line lands in the conversation the turn runs in: a task's or a
+    # 支线's own, under its room.
+    async with sessions() as session:
+        place = await PlaceResolver(session).conversation(topic_id)
     await _keep_note(
         sessions,
         waiting_notes,
-        topic_id,
+        place.room_id if place is not None else topic_id,
         work_id,
         say("deviceWaiting"),
         meta,
         author=state.acting_agent if state is not None else None,
-        task_id=None,
+        inner_id=place.inner_id if place is not None else None,
         channel=str(topic_id),
     )
 
@@ -1051,7 +1095,7 @@ async def _keep_note(
     meta: dict,
     *,
     author: str | None,
-    task_id: uuid.UUID | None,
+    inner_id: uuid.UUID | None,
     channel: str,
 ) -> None:
     """Land the turn's notice of this kind, or restate the one it has."""
@@ -1072,7 +1116,7 @@ async def _keep_note(
                 # work, and 现场 files it under whoever did the work.
                 author=author or "system",
                 turn_id=turn_id,
-                task_id=task_id,
+                task_id=inner_id,
             )
             if block is None:
                 return

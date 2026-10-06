@@ -32,6 +32,7 @@ from app.domain.block.models import (
 )
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import is_task
 from app.domain.room_task.services import TaskService
 
 if TYPE_CHECKING:
@@ -80,25 +81,26 @@ async def edit_message(
         )
     # A room's agent hears of an edit to a message it read; a task's message
     # was never the room's, and its own session is told through the ledger.
-    in_room = block.task_id is None
+    in_room = not await is_task(session, block.conversation_id)
     notice = (
         await _tell_the_room(blocks, block, editor)
         if in_room and already_read
         else None
     )
     relayed = not in_room and not sent.by_agent
-    if block.task_id is not None and relayed:
-        await _tell_the_card(session, block, block.task_id, editor)
+    if relayed:
+        await _tell_the_card(session, block, block.conversation_id, editor)
     payload = BlockOut.model_validate(block).model_dump(mode="json")
     # The frame replaces the line whole, so it carries what else is on it.
     payload["reactions"] = await blocks.reactions_for_block(block.id)
     await session.commit()
     # A card's lines go out on the card's channel, where they are shown.
-    channel = block.task_id if block.task_id is not None else block.topic_id
-    await broker.publish(str(channel), {"type": "block_updated", "block": payload})
+    await broker.publish(
+        str(block.conversation_id), {"type": "block_updated", "block": payload}
+    )
     if notice is not None:
         await chat.notify_running_turn(
-            block.topic_id, _said(notice), blocks=[notice.id]
+            block.conversation_id, _said(notice), blocks=[notice.id]
         )
     if relayed:
         from app.domain.delivery.agent import dispatch_pending
@@ -128,12 +130,11 @@ async def _tell_the_room(blocks: BlockRepository, block: Block, editor: str) -> 
     it: pending until a turn stamps it. Not a line in the room — the room
     already shows the edit on the message itself."""
     landed = landing(
-        EventAbout.room, project_id=block.project_id, room_id=block.topic_id
+        EventAbout.room, project_id=block.project_id, room_id=block.conversation_id
     )
     return await blocks.add(
         project_id=landed.project_id,
-        topic_id=landed.topic_id,
-        task_id=landed.task_id,
+        conversation_id=landed.conversation_id,
         author=editor,
         author_type=AuthorType.participant,
         content=say("messageEdited", actor=f"<@{editor}>"),

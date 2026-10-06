@@ -106,7 +106,7 @@ async def _project_on_a_device(client):
         db.add(
             AgentTurn(
                 id=uuid.uuid4(),
-                topic_id=rooms["Busy"],
+                conversation_id=rooms["Busy"],
                 continuation_id=uuid.uuid4(),
                 author="alice",
                 started_at=now,

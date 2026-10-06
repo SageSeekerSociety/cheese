@@ -25,6 +25,15 @@
 
     <p v-if="loading" class="rs__note">{{ t('tasks.roster.loading') }}</p>
     <p v-else-if="denied" class="rs__note">{{ t('tasks.roster.denied') }}</p>
+    <!-- 除了「不给你看」，还有一种「这次没读到」。原来两种合成了一条 catch，500 也被
+         说成没权限 —— 出题人会去查自己的权限，而该做的是再试一次。 -->
+    <BaseLoadError
+      v-else-if="failed"
+      class="rs__note"
+      :title="t('tasks.roster.loadFailed')"
+      :error="failureReason"
+      @retry="emit('retry')"
+    />
     <BaseEmptyState
       v-else-if="!visible.length"
       size="inline"
@@ -32,7 +41,7 @@
       :title="rows.length ? t('tasks.roster.noMatch') : t('tasks.roster.empty')"
     />
 
-    <BaseTable v-else class="rs__grid" :cols="ROSTER_COLS" :label="t('tasks.roster.tableLabel')" min-width="760px">
+    <BaseTable v-else class="rs__grid" :cols="ROSTER_COLS" :label="t('tasks.roster.tableLabel')" min-width="842px">
       <template #head>
         <tr>
           <BaseTableTh>{{ t('tasks.roster.col.who') }}</BaseTableTh>
@@ -216,6 +225,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
@@ -226,7 +236,10 @@ import { vRovingTabs } from '@/lib/rovingTabs'
 type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDING' | 'PASSED' | 'FAILED'
 
 // 第一列是谁来领的（名字、团队人数），吃剩下的宽度；其余定宽。
-const ROSTER_COLS = [null, '104px', '96px', '170px', '104px', '150px']
+// 定宽按两种界面语言里最长的那一格量（格内左右各 16px）：状态是英文的
+// 「Awaiting approval」，最新提交是「Version 12 · Yesterday 16:11」。格子不换行，
+// 窄了字就压到下一列上。
+const ROSTER_COLS = [null, '104px', '140px', '208px', '104px', '150px']
 
 const STATUS: Record<Status, { label: string; tone: string }> = {
   CLAIM_PENDING: { label: 'tasks.roster.claimPending', tone: 'muted' },
@@ -258,8 +271,12 @@ const props = defineProps<{
   /** participantId → 最新那一版提交。 */
   latestByParticipant: Map<number, Latest>
   loading: boolean
-  /** 名单接口由服务端按 `may_teach_task` 把关；拿不到就说为什么，不画一张空表。 */
+  /** 名单接口由服务端按 `may_teach_task` 把关；403 是「不给你看」，说的是这一句。 */
   denied: boolean
+  /** 读失败，而且一行都没读到：画失败，不画「暂无领取者」。判断在 `Roster.vue`。 */
+  failed: boolean
+  /** 服务端给的那句原因，有就照原样显示。 */
+  failureReason: string | null
   /** 正在批准的那一行。 */
   busyId: number | null
 }>()
@@ -269,6 +286,7 @@ const emit = defineEmits<{
   reject: [id: number, reason: string]
   deadline: [id: number, at: number]
   review: [who: { id: number; name: string }]
+  retry: []
 }>()
 
 const { t } = useI18n()

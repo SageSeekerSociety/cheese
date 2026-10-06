@@ -185,8 +185,8 @@ EVENT_CONTEXT_COMPACT: Final = "context_compact"
 #: 这一轮开着，而跑它的机器够不着（离线、会话进程还没起来、连接在换）。平台在等
 #: 它回来；回来了同一行改成已恢复（`meta.state = "over"`）。
 EVENT_DEVICE_WAITING: Final = "device_waiting"
-#: 一间干过活的工作话题还没有实况文档，平台请刚才在这里干活的队友补第一版
-#: （`domain/topic/doc_nudge.py`）。每间房最多一次。
+#: 平台请房间里刚干过活的队友补第一版实况文档。频道不再有实况文档，平台也不再
+#: 这样提醒；这个值留给已经落在时间线上的那些行。
 EVENT_DOC_MISSING: Final = "doc_missing"
 #: 项目 `.mcp.json` 里的一个远程 MCP 服务器还没连接（或要重新连接、缺一个值），这
 #: 个房间的会话用不了它。每个房间每个服务器只说一次：要做的事在项目设置里，不在
@@ -355,7 +355,9 @@ def memory_changed_notice(
     **被盖回去这件事必须进 `agent_notice`**（`AGENT_NOTICE_META_KEY`）。那条灰字
     事件是给人看的，agent 一个字的 prompt 都读不到它：写记忆的 agent 在会话机上，
     它看到的世界就是那棵树，而它刚才写的那一版已经不在了。不说，它会以为写成功
-    了、下一轮再写一遍同一版，而每一轮都会被盖回去。
+    了、下一轮再写一遍同一版，而每一轮都会被盖回去。这一句落在哪间房由调用方
+    定（`queries._say_memory_change`）：写它的 agent 所在的那一间，不一定是这
+    棵树的房间。
     """
     rejected = rejected or {}
     line = (

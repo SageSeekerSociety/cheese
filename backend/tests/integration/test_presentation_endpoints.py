@@ -62,8 +62,7 @@ def _seeded(client) -> dict[str, str]:
             s.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=room.id,
-                    task_id=running.id,
+                    conversation_id=running.id,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     content="开始吧",

@@ -147,11 +147,15 @@ def test_finished_work_remains_readable_but_cannot_be_overwritten(
 ):
     project, tid = private_workspace
     task = delivery_task_id(client, tid)
-    path = f"/topics/{task}/close" if end == "close" else f"/topics/{tid}/archive"
-    result = client.post(
-        path, json={"by": "alice"}, headers=session_auth_headers("alice")
-    )
-    assert result.status_code == 200, result.text
+    # A channel is archived only once its tasks are closed.
+    paths = [f"/topics/{task}/close"]
+    if end == "archive":
+        paths.append(f"/topics/{tid}/archive")
+    for path in paths:
+        result = client.post(
+            path, json={"by": "alice"}, headers=session_auth_headers("alice")
+        )
+        assert result.status_code == 200, result.text
     denied = request_workspace(
         client, project["id"], tid, "write", session_auth_headers("alice")
     )

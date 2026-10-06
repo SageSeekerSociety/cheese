@@ -302,14 +302,14 @@ describe('hover 预取', () => {
     const { useWorkspaceStore } = await import('@/stores/workspace')
     const store = useWorkspaceStore()
     store.projectId = 'p1'
-    store.unreadMap = { t1: 3 }
+    store.unreadMap = { t1: { count: 3, new: true, messages: 3 } }
 
     prefetchOnHover({ router, to: { name: 'topic', params: { id: 't1' } }, topicId: 't1' })
     await pointerRests()
 
     expect(cachedWindow('t1')?.blocks).toHaveLength(1) // 确实取回来了
     expect(markTopicRead).not.toHaveBeenCalled() // 但没有动读游标
-    expect(store.unreadMap).toEqual({ t1: 3 }) // 红点还在
+    expect(store.unreadMap.t1?.count).toBe(3) // 红点还在
   })
 })
 

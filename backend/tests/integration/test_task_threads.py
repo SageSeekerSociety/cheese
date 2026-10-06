@@ -1,8 +1,8 @@
 """一个房间的全部支线，每条带自己的对话.
 
 一件活以前是一个房间：一整行 `topics`，连带名册、未读游标、归档决策和侧栏那一行。
-它之所以是房间只有一个原因——`blocks.topic_id` 是对话唯一的分组键。现在
-`blocks.task_id` 是那个键，一条支线便宜到不用是房间。
+它之所以是房间只有一个原因——对话要挂在房间上。现在对话自成一等，
+`blocks.conversation_id` 可以是房间也可以是活，一条支线便宜到不用是房间。
 
 这里测的是读路径：一个房间能不能一次读出「所有支线 + 每条支线的对话」，包括
 一句话都没说过的那条（存在但没人说话是个真实答案，不能被丢掉）。
@@ -83,8 +83,7 @@ def _room_with_threads(client) -> dict:
             def _block(task: Task | None, kind: BlockKind, content: str, at) -> Block:
                 b = Block(
                     project_id=project.id,
-                    topic_id=room.id,
-                    task_id=task.id if task else None,
+                    conversation_id=task.id if task else room.id,
                     kind=kind,
                     author_type=AuthorType.participant,
                     author="alice",

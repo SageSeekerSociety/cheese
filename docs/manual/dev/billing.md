@@ -56,9 +56,9 @@ covers:
 
 ## 平台自己发起的调用 {#platform}
 
-话题命名、旧记忆搬迁和记忆整理（dream）是平台自己要做的事，不扣任何团队或个人的额度。每次调用由 `Ledger.record_platform` 写一行 `resource_usage`：`team_id`、`user_id` 为空，`credits` 为 0，`kind` 写明是哪件事（`topic_naming`、`memory_migration`、`memory_dream`）。团队和个人的用量页、时间窗口和余额都按 `team_id` 读，所以这些行不会算到任何人头上，平台看板的总量里照常计入。
+任务命名、旧记忆搬迁和记忆整理（dream）是平台自己要做的事，不扣任何团队或个人的额度。每次调用由 `Ledger.record_platform` 写一行 `resource_usage`：`team_id`、`user_id` 为空，`credits` 为 0，`kind` 写明是哪件事（`topic_naming`、`memory_migration`、`memory_dream`）。团队和个人的用量页、时间窗口和余额都按 `team_id` 读，所以这些行不会算到任何人头上，平台看板的总量里照常计入。
 
-- 话题命名和旧记忆搬迁不在任何项目里，`project_id` 也为空，各走一把自带预算的网关 key，`cost_usd` 取网关在响应头里给的价格。
+- 任务命名和旧记忆搬迁不在任何项目里，`project_id` 也为空，各走一把自带预算的网关 key，`cost_usd` 取网关在响应头里给的价格。
 - 记忆整理在项目里跑，行上保留 `project_id`，整理的触发阈值靠它和 `kind` 把整理自己的花费剔掉。它不用项目付钱的那把网关 key，而是项目的第二把 key（`project.settings["llm_gateway_platform_key"]`，不设预算）；一轮结束后单独结算这把 key 的新增花费（检查点在 `llm_gateway_platform_usage_ckpt`），所以整理的花费不会混进项目的 key、被下一轮对话结算到团队头上。走订阅的整理没有这把 key，它的用量由计量代理按项目记到团队上；订阅只开给 Reserve 团队，不扣额度。
 
 ## 两处计量 {#metering}

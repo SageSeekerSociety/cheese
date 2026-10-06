@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.project_access import may_read_project
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import room_column
 from app.domain.identity.handles import agent_handle_column
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -244,7 +245,8 @@ class SpaceLearningService:
         """
         stmt = (
             select(Block)
-            .join(Topic, Topic.id == Block.topic_id)
+            .select_from(Block)
+            .join(Topic, Topic.id == room_column(Block.conversation_id))
             .where(
                 Block.project_id.in_(project_ids),
                 Block.kind == BlockKind.message,
@@ -261,6 +263,17 @@ class SpaceLearningService:
         if to_dt is not None:
             stmt = stmt.where(Block.created_at <= to_dt)
         return stmt
+
+    async def _rooms_of(self, blocks: list[Block]) -> dict[uuid.UUID, uuid.UUID]:
+        """block id → the room it was said in (a task's blocks are its room's)."""
+        if not blocks:
+            return {}
+        rows = await self._session.execute(
+            select(Block.id, room_column(Block.conversation_id)).where(
+                Block.id.in_([b.id for b in blocks])
+            )
+        )
+        return {block_id: room_id for block_id, room_id in rows}
 
     async def _display_names(self, handles: set[str]) -> dict[str, str]:
         """handle → 给人看的名字。名字在 profile 上，不在 user 上。"""
@@ -315,7 +328,8 @@ class SpaceLearningService:
         if not blocks:
             return []
 
-        topic_ids = {b.topic_id for b in blocks}
+        rooms = await self._rooms_of(blocks)
+        topic_ids = set(rooms.values())
         topic_rows = (
             await self._session.execute(
                 select(Topic.id, Topic.title).where(Topic.id.in_(topic_ids))
@@ -336,12 +350,12 @@ class SpaceLearningService:
             result.append(
                 _Question(
                     block_id=block.id,
-                    topic_id=block.topic_id,
+                    topic_id=rooms[block.id],
                     project=project,
                     student_name=names.get(
                         project.owner_handle or "", project.owner_handle or ""
                     ),
-                    topic_title=titles_by_topic.get(block.topic_id, ""),
+                    topic_title=titles_by_topic.get(rooms[block.id], ""),
                     knowledge_point=name,
                     created_at=block.created_at,
                     quote=_excerpt(block.content),
@@ -526,11 +540,10 @@ class SpaceLearningService:
         category_of_project, names_by_category = await self._knowledge_points(
             list(projects.values())
         )
+        rooms = await self._rooms_of(readable)
         topic_rows = (
             await self._session.execute(
-                select(Topic.id, Topic.title).where(
-                    Topic.id.in_({b.topic_id for b in readable})
-                )
+                select(Topic.id, Topic.title).where(Topic.id.in_(set(rooms.values())))
             )
         ).all()
         titles_by_topic = {row[0]: row[1] for row in topic_rows}
@@ -554,11 +567,11 @@ class SpaceLearningService:
                 excerpts.append(
                     {
                         "blockId": str(block.id),
-                        "topicId": str(block.topic_id),
+                        "topicId": str(rooms[block.id]),
                         "projectId": str(block.project_id),
                         "student": owner,
                         "studentName": names.get(owner, owner),
-                        "topicTitle": titles_by_topic.get(block.topic_id, ""),
+                        "topicTitle": titles_by_topic.get(rooms[block.id], ""),
                         "createdAt": int(block.created_at.timestamp() * 1000),
                         "quote": _excerpt(block.content),
                     }

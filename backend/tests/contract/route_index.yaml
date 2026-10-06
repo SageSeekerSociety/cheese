@@ -103,8 +103,10 @@ auth_entries:
   github.state: "GitHub provider callback verifies signed install/account-link state and scopes the resulting binding; no ordinary login dependency at callback. Source: app/api/routes/github_install.py; github_account_link.py."
   app.sign_in.code: "app_sign_in.finish_app_sign_in requires same origin, signed code, PKCE verifier challenge and single-use claim before issuing session. Source: app/api/routes/app_sign_in.py."
   notice.ws: "notifications_live.live verifies dedicated notice token from Authorization then _signed_in confirms active user session, periodically rechecking. Source: app/api/routes/notifications_live.py."
-  topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService decides roster/role management for actual topic. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
-  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_archive_manager; archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService.require_manager admits the channel's creator and whoever manages the project. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
+  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.channel.self: "topics_channel resolves the authenticated person in the channel and authorize_topic; joining needs the person on the project's roster, a private room or a task is not a channel. Source: app/api/routes/topics_channel.py; domain/topic_membership/services.py."
+  topic.channel.manage: "topics_channel description goes through TopicMemberService.require_manager (creator or project manager) after authorize_topic. Source: app/api/routes/topics_channel.py."
   topic.names: "topics.list_topic_names resolves/rejects failed credential and limits names to caller visible project IDs; not a raw global room directory. Source: app/api/routes/topics.py."
   cheese.room.gate: "main.cheese_token_gate matches this exact POST path in _CHEESE_WRITE_PATHS: valid scoped cheese token, explicit global sandbox override or project-agent credential with actual room authorization, followed by handler room actor check. Source: app/main.py,721."
   cheese.project.gate: "main.cheese_token_gate matches a project-scoped POST path in _CHEESE_WRITE_PATHS and checks project scope / explicit global sandbox / authorized project-agent credential. Source: app/main.py,721."
@@ -118,7 +120,7 @@ auth_entries:
   observed.debug: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /debug/turns returns agent execution lifecycle summaries. Source: app/main.py."
   observed.frontend.errors: "当前路由无认证或授权校验；公开访问意图尚未确认。仅校 project/topic 存在；frontend_log.intake 限流/去重不构成授权。Source: app/api/routes/frontend_log.py."
   observed.compute.nodes: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /market/nodes returns compute availability and deployment active-turn count. Source: app/api/routes/market.py."
-  project.can_manage.read: "ActorResolver.resolve + authorize_project gates the read; MemberService.require_manager is caught to return can_manage true/false, not to reject a nonmanager. Source: projects.get_topic_naming and projects_run_config.get_default_model/get_compute_configs."
+  project.can_manage.read: "ActorResolver.resolve + authorize_project gates the read; MemberService.require_manager is caught to return can_manage true/false, not to reject a nonmanager. Source: projects.get_task_naming and projects_run_config.get_default_model/get_compute_configs."
   project.private.chat: "projects.get_private_chat calls require_verified_caller; authenticated actors must pass authorize_project and be one of the named DM participants. Explicit global sandbox development override remains in resolver. Source: app/api/routes/projects.py."
   chat.ws: "chat.chat reads access credential from token query, constructs ActorResolver with bearer and no cheese token, applies authz.policy.refuse_unauthenticated_chat, then resolves actual task/room and authorize_topic for membership. Topic access setting applies to the membership step, not the initial login refusal. Source: app/api/routes/chat.py; domain/authz/policy.py."
   routines.list: "routines.list_routines uses _viewer(enforced room access) for topic-filtered reads or resolve/authorize_project otherwise, then _readable_rules filters each rule. Source: app/api/routes/routines.py."
@@ -266,6 +268,7 @@ owners:
   room_task.awaiting: "Cross-room work waiting for caller action; awaiting route composes room_task, review, block and delivery reads; the route is the assembly owner."
   block: "Room blocks and reactions; domain/block editing/documents. Routes own broadcasting."
   topic: "Canonical rooms and room hierarchy/read markers/title/archive; domain/topic/TopicService and related naming/retire queries."
+  thread: "支线: the replies under a channel message as a conversation of their own; domain/thread services and reads."
   topic.membership: "Room participant roster and roles; domain/topic_membership/TopicMemberService."
   topic.chat: "Room messaging/live chat relay; domain/agent/ChatService and topic/member identity, with route owning delivery/broadcast ordering."
   delivery: "Room delivery timer requests and same-handle note dispatch; domain/delivery timer/addressing, composed by room route."
@@ -727,6 +730,9 @@ routes:
   - {protocol: "http", method: "GET", path: "/memory/files", auth: "memory.files.read", owner: "memory"}
   - {protocol: "http", method: "PUT", path: "/memory/files", auth: "memory.files.write", owner: "memory"}
   - {protocol: "http", method: "POST", path: "/memory/files/delete", auth: "memory.files.write", owner: "memory"}
+  # app.api.routes.notification_preferences
+  - {protocol: "http", method: "GET", path: "/notifications/preferences", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "PUT", path: "/notifications/preferences", auth: "user.session", owner: "notification"}
   # app.api.routes.notifications_flat
   - {protocol: "http", method: "GET", path: "/notifications/unread-count", auth: "user.session", owner: "notification"}
   - {protocol: "http", method: "GET", path: "/notifications", auth: "user.session", owner: "notification"}
@@ -780,8 +786,8 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge-attribution", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/forge-attribution", auth: "project.manager", owner: "project"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/topic-naming", auth: "project.can_manage.read", owner: "project"}
-  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/topic-naming", auth: "project.manager", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/task-naming", auth: "project.can_manage.read", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/task-naming", auth: "project.manager", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/archive", auth: "project.owner", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/unarchive", auth: "project.owner", owner: "project"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/owner", auth: "project.steward", owner: "project"}
@@ -1025,7 +1031,6 @@ routes:
   # app.api.routes.topic_members
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/members", auth: "actor.topic", owner: "topic.membership"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/members", auth: "topic.members.manage", owner: "topic.membership"}
-  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
   - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
   # app.api.routes.topics
   - {protocol: "http", method: "POST", path: "/topics", auth: "actor.project", owner: "topic"}
@@ -1058,6 +1063,10 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/attachments", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/raw", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/pdf", auth: "actor.topic", owner: "room.files"}
+  # app.api.routes.topics_channel
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/join", auth: "topic.channel.self", owner: "topic.membership"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/leave", auth: "topic.channel.self", owner: "topic.membership"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/description", auth: "topic.channel.manage", owner: "topic"}
   # app.api.routes.document_comments
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/comments/threads", auth: "document.member", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/comments/{comment_id}/thread", auth: "document.member", owner: "living_doc"}
@@ -1116,9 +1125,12 @@ routes:
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/accept", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss", auth: "actor.topic", owner: "room_task"}
+  # app.api.routes.topics_threads
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/threads", auth: "actor.topic", owner: "thread"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/thread", auth: "actor.topic", owner: "thread"}
+  - {protocol: "http", method: "POST", path: "/blocks/{block_id}/thread", auth: "actor.topic", owner: "thread"}
   # app.api.routes.topics_title
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title", auth: "actor.topic", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title/undo", auth: "actor.topic.verified", owner: "topic"}
   # app.api.routes.topics_transcript
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/transcript", auth: "actor.topic", owner: "agent.execution"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/transcript/{block_id}/output", auth: "actor.topic", owner: "agent.execution"}
@@ -1134,6 +1146,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/users", auth: "legacy.users.register_user", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me", auth: "legacy.answers.list_answers", owner: "user"}
   - {protocol: "http", method: "PUT", path: "/users/me/language", auth: "user.session", owner: "user"}
+  - {protocol: "http", method: "PUT", path: "/users/me/timezone", auth: "user.session", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email/code", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me/auth-methods", auth: "legacy.answers.list_answers", owner: "user"}

@@ -16,6 +16,7 @@ const refresh = vi.fn()
 vi.mock('@/network/api/users', () => ({
   UserApi: {
     getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
+    setTimezone: () => Promise.resolve({ data: {} }),
   },
 }))
 

@@ -38,11 +38,12 @@ class SocketChannel(SeatChannel):
         self.root = Path(descriptor["root"])
         session = SessionRef(
             uuid.UUID(descriptor["project"]),
-            uuid.UUID(descriptor["topic"]),
+            uuid.UUID(descriptor["room"]),
             descriptor["session_agent"],
             harness=CLAUDE_CODE,
+            inner_id=uuid.UUID(descriptor["topic"]),
         )
-        self.seats[(session.topic_id, descriptor["agent"])] = (
+        self.seats[(session.conversation_id, descriptor["agent"])] = (
             session,
             descriptor["placed_state"],
         )
@@ -201,7 +202,7 @@ async def run(descriptor):
         async with factory() as session:
             rows = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert len(rows) == (3 if http else 2)
@@ -233,7 +234,7 @@ async def run(descriptor):
                 }
             turns = list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                    select(AgentTurn).where(AgentTurn.conversation_id == topic)
                 )
             )
             # Leave the evidence behind if anything below fails.

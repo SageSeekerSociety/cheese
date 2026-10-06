@@ -4,21 +4,27 @@ conversation of its own, beside the room it came from.
 The rules a person could state before any of this was built:
 
 - a person creates a task, and owns it; an AI teammate may only propose one;
-- only the owner talks in the task — everyone else says what they have to say
-  in the room;
+- only the people working the task talk in it — its owner and the
+  collaborators the owner brought in; everyone else says what they have to
+  say in the room;
 - nothing is changed in the project until the owner starts the task, and what
   the task's document said then is what its changes are reviewed against;
 - the task's conversation and its AI session are its own: talking in it leaves
   the room's history and the room's session alone, and the reverse;
 - a task's document is readable by whoever can see the task and written only
-  by its owner and its own session;
+  by the people working it and its own session;
 - a closed task takes no more messages.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import text
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
+from app.domain.block.models import AuthorType
+from app.domain.block.repositories import BlockRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     join_project_team,
@@ -76,6 +82,12 @@ def _task(client, room_id, task_id, handle="alice") -> dict:
     return r.json()["data"]
 
 
+def _task_contents(client, task_id) -> list[str]:
+    r = client.get(f"/topics/{task_id}/blocks", headers=session_auth_headers("alice"))
+    assert r.status_code == 200, r.text
+    return [b["content"] for b in r.json()["data"]["data"]]
+
+
 def _room_contents(client, room_id) -> list[str]:
     r = client.get(f"/topics/{room_id}/blocks", headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
@@ -93,6 +105,45 @@ def test_the_person_who_creates_a_task_owns_it_and_it_has_not_started(client):
 
     assert task["owner_handle"] == "bob"
     assert task["started_at"] is None
+
+
+def test_a_room_lists_each_task_with_its_newest_lines(client):
+    """`limit` is per task: each task brings its own newest lines, so one long
+    conversation never crowds out another's."""
+    project_id, room_id = _room(client)
+    long = open_task(client, room_id, "长的那件", start=False)
+    short = open_task(client, room_id, "短的那件", start=False)
+
+    async def say(task_id: str, lines: list[str]) -> None:
+        start = datetime.now(UTC)
+        async with client.test_factory() as db:
+            for n, line in enumerate(lines):
+                await BlockRepository(db).add(
+                    project_id=uuid.UUID(project_id),
+                    conversation_id=uuid.UUID(task_id),
+                    author="alice",
+                    author_type=AuthorType.participant,
+                    content=line,
+                    created_at=start + timedelta(seconds=n),
+                )
+            await db.commit()
+
+    client.portal.call(say, long["id"], ["一", "二", "三"])
+    client.portal.call(say, short["id"], ["就一句"])
+
+    listed = client.get(
+        f"/topics/{room_id}/tasks",
+        params={"limit": 2},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert listed.status_code == 200, listed.text
+    said = {
+        t["id"]: [b["content"] for b in t["blocks"] if b["kind"] == "message"]
+        for t in listed.json()["data"]["data"]
+    }
+    assert said[long["id"]] == ["二", "三"]
+    assert said[short["id"]] == ["就一句"]
 
 
 def test_an_ai_teammate_cannot_create_a_task(client):
@@ -137,11 +188,69 @@ def test_a_proposal_becomes_a_task_owned_by_whoever_accepts_it(client):
     assert len(client.get(f"/topics/{room_id}/tasks").json()["data"]["data"]) == 1
 
 
+def _told(client, task_id: str) -> str:
+    """Everything the platform has handed the task's own session so far."""
+
+    async def read():
+        async with client.test_factory() as db:
+            rows = await db.execute(
+                text(
+                    "SELECT payload->>'content' FROM deliveries "
+                    "WHERE conversation_id = :task ORDER BY recorded_at"
+                ),
+                {"task": task_id},
+            )
+            return "\n".join(content for (content,) in rows)
+
+    return client.portal.call(read)
+
+
+def test_a_task_made_from_a_proposal_is_handed_the_discussion_behind_it(client):
+    """The task's own session never reads the room, so what was agreed there
+    reaches the task with the proposal or not at all. On dev (2026-10-05) a
+    task proposed with no summary started knowing none of the five changes
+    agreed in its room."""
+    _project_id, room_id = _room(client)
+    post_message(
+        client, room_id, "alice", {"content": "删场次的通知选 B：发布时一起发"}
+    )
+    block_id = client.post(
+        f"/topics/{room_id}/task-proposals",
+        json={"title": "通知改到发布时", "summary": "发布时按人汇总变更"},
+        headers=room_agent_headers(client, room_id),
+    ).json()["data"]["id"]
+
+    task = client.post(
+        f"/topics/{room_id}/task-proposals/{block_id}/accept",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+
+    told = _told(client, task["id"])
+    assert "发布时按人汇总变更" in told
+    assert "删场次的通知选 B" in told
+
+
+def test_a_proposal_that_says_nothing_of_the_work_is_refused(client):
+    _project_id, room_id = _room(client)
+
+    r = client.post(
+        f"/topics/{room_id}/task-proposals",
+        json={"title": "顺手重构", "summary": ""},
+        headers=room_agent_headers(client, room_id),
+    )
+
+    assert r.status_code == 400
+    proposals = client.get(
+        f"/topics/{room_id}/task-proposals", headers=session_auth_headers("alice")
+    ).json()["data"]
+    assert proposals == []
+
+
 def test_a_dismissed_proposal_cannot_be_accepted_later(client):
     _project_id, room_id = _room(client)
     block_id = client.post(
         f"/topics/{room_id}/task-proposals",
-        json={"title": "顺手重构"},
+        json={"title": "顺手重构", "summary": "把重复的两段合成一个函数"},
         headers=room_agent_headers(client, room_id),
     ).json()["data"]["id"]
 
@@ -163,7 +272,9 @@ def test_an_ai_teammate_cannot_accept_its_own_proposal(client):
     _project_id, room_id = _room(client)
     agent = room_agent_headers(client, room_id)
     block_id = client.post(
-        f"/topics/{room_id}/task-proposals", json={"title": "自己批"}, headers=agent
+        f"/topics/{room_id}/task-proposals",
+        json={"title": "自己批", "summary": "改一处文案"},
+        headers=agent,
     ).json()["data"]["id"]
 
     r = client.post(
@@ -263,27 +374,30 @@ def test_starting_records_what_the_document_said_then(client):
 def test_a_change_answers_with_the_task_as_its_page_reads_it(client):
     """The task page replaces what it shows with what a start, a hand-over or
     a close answers; an answer without the task's board cell left the page
-    with nothing to render. Each answer says what reading the task says."""
+    with nothing to render. Each answer puts the task in the column reading
+    it does. The phrase is not compared: a started task's session may begin
+    its first turn between the answer and the read, and running is its own
+    phrase."""
     _project_id, room_id = _room(client)
     task = open_task(client, room_id, start=False)
     alice = session_auth_headers("alice")
 
-    def read() -> dict:
+    def read() -> str:
         r = client.get(f"/topics/{task['id']}/task", headers=alice)
-        return r.json()["data"]["presentation"]
+        return r.json()["data"]["presentation"]["column"]
 
     started = client.post(
         f"/topics/{task['id']}/start", json={"reviewer_handle": "alice"}, headers=alice
     ).json()["data"]
-    assert started["presentation"] == read()
+    assert started["presentation"]["column"] == read()
     handed = client.patch(
         f"/topics/{task['id']}/task", json={"agent_handle": None}, headers=alice
     ).json()["data"]
-    assert handed["presentation"] == read()
+    assert handed["presentation"]["column"] == read()
     closed = client.post(
         f"/topics/{task['id']}/close", json={"conclusion": "做完了"}, headers=alice
     ).json()["data"]
-    assert closed["presentation"] == read()
+    assert closed["presentation"]["column"] == read()
 
 
 # —— 在任务里说话 ——————————————————————————————————————————————————————————
@@ -303,6 +417,95 @@ def test_only_the_owner_talks_in_a_task(client):
     assert by_room_agent.status_code == 403
 
 
+def _seated(client, project_id: str, room_id: str, handle: str) -> None:
+    """``handle`` is on the project's team and in this room's roster."""
+    join_project_team(client, project_id, handle)
+    r = client.post(
+        f"/topics/{room_id}/members",
+        json={"handle": handle, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _set_collaborators(client, task_id, handles, by="alice"):
+    return client.patch(
+        f"/topics/{task_id}/task",
+        json={"contributor_handles": handles},
+        headers=session_auth_headers(by),
+    )
+
+
+def test_a_collaborator_talks_in_the_task_and_others_still_do_not(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    _seated(client, project_id, room_id, "carol")
+    task = open_task(client, room_id, owner="alice", start=False)
+
+    added = _set_collaborators(client, task["id"], ["bob"])
+
+    assert added.status_code == 200, added.text
+    assert added.json()["data"]["contributor_handles"] == ["bob"]
+    by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
+    assert by_bob.status_code == 200, by_bob.text
+    by_carol = _say_in_task(client, room_id, task["id"], session_auth_headers("carol"))
+    assert by_carol.status_code == 403
+
+
+def test_only_the_owner_brings_collaborators_in(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    _seated(client, project_id, room_id, "carol")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    # A collaborator cannot bring someone else in, nor start or hand it over.
+    assert (
+        _set_collaborators(client, task["id"], ["bob", "carol"], by="bob").status_code
+        == 403
+    )
+    handed = client.patch(
+        f"/topics/{task['id']}/task",
+        json={"owner_handle": "bob"},
+        headers=session_auth_headers("bob"),
+    )
+    assert handed.status_code == 403
+    # Someone outside the project cannot be made one.
+    post_project(client, owner="dave")
+    assert _set_collaborators(client, task["id"], ["dave"]).status_code == 422
+    assert _task(client, room_id, task["id"])["contributor_handles"] == ["bob"]
+
+
+def test_a_collaborator_can_leave_and_then_no_longer_talks(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    left = _set_collaborators(client, task["id"], [], by="bob")
+
+    assert left.status_code == 200, left.text
+    by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
+    assert by_bob.status_code == 403
+
+
+def test_handing_a_task_to_its_collaborator_makes_them_its_owner_only(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    handed = client.patch(
+        f"/topics/{task['id']}/task",
+        json={"owner_handle": "bob"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert handed.status_code == 200, handed.text
+    assert handed.json()["data"]["owner_handle"] == "bob"
+    assert handed.json()["data"]["contributor_handles"] == []
+
+
 def test_what_is_said_in_a_task_stays_out_of_the_room(client):
     _project_id, room_id = _room(client)
     task = open_task(client, room_id, start=False)
@@ -313,7 +516,7 @@ def test_what_is_said_in_a_task_stays_out_of_the_room(client):
     assert r.status_code == 200, r.text
 
     assert "只在任务里说" not in _room_contents(client, room_id)
-    timeline = [b["content"] for b in _task(client, room_id, task["id"])["blocks"]]
+    timeline = _task_contents(client, task["id"])
     assert "只在任务里说" in timeline
 
 
@@ -396,6 +599,25 @@ def test_others_read_a_tasks_document_and_cannot_write_it(client):
     assert write.status_code == 403
     still = client.get(f"/documents/{doc_id}", headers=session_auth_headers("alice"))
     assert "一句话" in still.json()["data"]["content"]
+
+
+def test_a_collaborator_writes_the_tasks_document(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+    doc_id = client.get(
+        f"/topics/{task['id']}/document",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+
+    write = client.put(
+        f"/documents/{doc_id}",
+        json={"content": "# 目标\n\n协作者写的。", "expected_version": 0},
+        headers=session_auth_headers("bob"),
+    )
+
+    assert write.status_code == 200, write.text
 
 
 def test_a_tasks_session_writes_its_own_document(client):
@@ -492,7 +714,7 @@ def test_a_task_turn_answers_in_the_task(client, tmp_path):
     screen.reply = "任务里的回答"
     _turn(client, _service(client, tmp_path, screen), task["id"], "做吧")
 
-    replies = [b["content"] for b in _task(client, room_id, task["id"])["blocks"]]
+    replies = _task_contents(client, task["id"])
     assert any("任务里的回答" in r for r in replies), replies
     assert "任务里的回答" not in "".join(_room_contents(client, room_id))
 
@@ -503,7 +725,7 @@ def test_talking_in_the_room_does_not_reach_the_task(client):
 
     post_message(client, room_id, "alice", {"content": "房间里的话"})
 
-    timeline = [b["content"] for b in _task(client, room_id, task["id"])["blocks"]]
+    timeline = _task_contents(client, task["id"])
     assert "房间里的话" not in timeline
 
 
@@ -521,8 +743,7 @@ def _step(client, project_id, room_id, task_id, content) -> str:
         async with client.test_request_factory() as session:
             block = await BlockRepository(session).add(
                 project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(room_id),
-                task_id=uuid.UUID(task_id) if task_id else None,
+                conversation_id=uuid.UUID(task_id or room_id),
                 author=author,
                 author_type=AuthorType.participant,
                 content=content,

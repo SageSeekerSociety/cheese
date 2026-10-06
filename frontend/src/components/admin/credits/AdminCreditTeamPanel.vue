@@ -52,7 +52,7 @@ const title = computed(() => {
 const meta = computed(() => {
   const team = props.team
   if (!team) return ''
-  if (team.personal_owner) return `${t('credits.teams.kindPersonal')} · @${team.personal_owner}`
+  if (team.personal_owner) return `${t('credits.teams.kindPersonal')} · ${team.personal_owner}`
   return team.member_count === null
     ? t('credits.teams.kindTeam')
     : `${t('credits.teams.kindTeam')} · ${t('credits.teams.members', { n: team.member_count })}`
@@ -192,9 +192,12 @@ function historyLine(entry: CreditAudit): string {
             <ul v-else-if="history && history.length" class="actp__log">
               <li v-for="(entry, i) in history" :key="`${entry.created_at}-${i}`" class="actp__logitem">
                 <span class="actp__logwhat t-body">{{ historyLine(entry) }}</span>
-                <span class="t-meta-read actp__logmeta">
+                <span class="t-meta-read actp__logmeta" :data-user-content="entry.actor_name || undefined">
                   {{
-                    t('credits.panel.by', { handle: entry.actor_handle, time: fmtDateTime(entry.created_at, locale) })
+                    t('credits.panel.by', {
+                      name: entry.actor_name || entry.actor_handle,
+                      time: fmtDateTime(entry.created_at, locale),
+                    })
                   }}
                 </span>
               </li>

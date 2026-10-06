@@ -23,8 +23,8 @@ from app.domain.user.services import user_service
 logger = logging.getLogger(__name__)
 
 
-async def _names(session: AsyncSession, payload: Any) -> dict[str, str]:
-    """`payload` 顶层那些用户、团队引用的显示名，按键索引。
+async def display_names(session: AsyncSession, payload: Any) -> dict[str, str]:
+    """`payload` 顶层那些用户、团队引用的显示名，按键索引。单封邮件和摘要都用它。
 
     和站内通知用同一套解析（`NotificationQueryService` 加两个 resolver），所以邮件
     里的「张三」和收件箱里的是同一个名字。
@@ -47,7 +47,7 @@ async def send_email(sessions, item):
         email = await session.scalar(
             select(User.email).where(User.id == item["recipientId"])
         )
-        names = await _names(session, item.get("payload"))
+        names = await display_names(session, item.get("payload"))
     if not email or is_placeholder_email(email):
         raise ValueError("Email recipient has no address")
     letter = letter_for(item, names)

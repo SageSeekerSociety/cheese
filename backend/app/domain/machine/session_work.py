@@ -33,10 +33,11 @@ from app.domain.agent.device_provider import (
 )
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
-from app.domain.agent.machine_address import device_api_base, ws_url
+from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.conversation.services import of_room, room_column, room_of
 from app.domain.device.supply import (
     Supply,
     Visibility,
@@ -140,7 +141,7 @@ async def _roommates_device(db, topic, resource: str) -> str | None:
     leases = await db.scalars(
         select(AgentSession.work_lease)
         .where(
-            AgentSession.topic_id == topic.id,
+            of_room(AgentSession.conversation_id, topic.id),
             AgentSession.work_lease.is_not(None),
         )
         .order_by(AgentSession.placed_at, AgentSession.id)
@@ -208,6 +209,22 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
     }
 
 
+async def screen_agent_name(
+    db, project_id: uuid.UUID | None, topic_id: uuid.UUID | None, handle: str
+) -> dict:
+    """The name a screen's agent goes by, the way a room names it (see
+    ``_agent_name``). Empty when the screen names no room that still exists;
+    the page then shows the handle."""
+    from app.domain.project.models import Project
+    from app.domain.topic.models import Topic
+
+    project = await db.get(Project, project_id) if project_id else None
+    topic = await db.get(Topic, topic_id) if topic_id else None
+    if project is None or topic is None:
+        return {"agent_name": None, "agent_name_source": None}
+    return await _agent_name(db, project, topic, handle)
+
+
 async def _session_author(db, project, handle: str) -> str:
     """The seat the session keyed ``handle`` acts under: its teammate's, or the
     room-derived handle itself, which is its own seat."""
@@ -232,7 +249,8 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
     on_device = AgentSession.work_lease["device_id"].as_string()
     rows = await db.execute(
         select(AgentSession, Topic, Project, on_device)
-        .join(Topic, Topic.id == AgentSession.topic_id)
+        .select_from(AgentSession)
+        .join(Topic, Topic.id == room_column(AgentSession.conversation_id))
         .join(Project, Project.id == Topic.project_id)
         .where(on_device.in_(device_ids), Topic.status != TopicStatus.archived)
         .order_by(Project.name, Topic.title, AgentSession.agent_handle)
@@ -244,7 +262,6 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
                 "project_name": project.name,
                 "topic_id": str(topic.id),
                 "topic_title": topic.title,
-                "topic_title_source": str(topic.title_source),
                 "agent_handle": session.agent_handle,
                 **await _agent_name(db, project, topic, session.agent_handle),
             }
@@ -271,7 +288,7 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
         return
-    if owner.username in await TopicMemberService(db).people_handles(topic.id):
+    if owner.username in await TopicMemberService(db).people_in(topic):
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)
@@ -295,7 +312,6 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
                 "teamHandle": team.handle if team is not None else None,
                 "topicId": str(topic.id),
                 "topicTitle": topic.title,
-                "topicTitleSource": str(topic.title_source),
                 "agentHandle": row.agent_handle,
                 "agentName": agent,
                 "agentNameSource": named["agent_name_source"],
@@ -337,7 +353,10 @@ async def _room_is_working(db, topic_id) -> bool:
 
     running = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, topic_id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     return running is not None
@@ -443,6 +462,7 @@ def _failed_tasks(printed: str) -> list[tuple[bool, str]]:
 def _executor_env(env, *, api, token, project_id, topic_id, author, work_resource):
     """What a session's executor runs with: the caller's ``CHEESE_*``/``GIT_*``
     values, then the platform's own for this session."""
+    site = site_forward(api)
     return {
         **{
             key: value
@@ -458,6 +478,7 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         "CHEESE_RESOURCE_ID": work_resource,
         "GIT_AUTHOR_NAME": author,
         "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",
+        **({"CHEESE_SITE_FORWARD": site} if site else {}),
     }
 
 
@@ -554,7 +575,7 @@ async def restart_executor(db, row, lease):
     its ``lease`` is on, as a tool call there would: with the credential a
     session launches with, minted now, since the one it last ran with may have
     expired."""
-    topic = await TopicService(db).get_or_404(row.topic_id)
+    topic = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
     project = await ProjectService(db).get_or_404(topic.project_id)
     author = await _session_author(db, project, row.agent_handle)
     resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
@@ -715,7 +736,7 @@ async def _move_session(
     # 它写，别的请求看到的是「搬之前」或者「搬之后」，没有中间态。
     await TopicService(db).lock_for_execution(topic_id)
     row = await AgentSessionService(db).by_id(session_id, lock=True)
-    if row is None or row.topic_id != topic_id:
+    if row is None or await room_of(db, row.conversation_id) != topic_id:
         raise NotFoundError("Session not found")
     request = row.execution_request or {}
     old = row.work_lease
@@ -888,7 +909,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     topic = await TopicService(db).lock_for_execution(topic_id)
     sessions = AgentSessionService(db)
     row = await sessions.by_id(session_id, lock=True)
-    if row is None or row.topic_id != topic_id:
+    if row is None or await room_of(db, row.conversation_id) != topic_id:
         raise NotFoundError("Session not found")
     resource = str(topic.resource_id or topic.id)
     if (
@@ -911,7 +932,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     # A task's session uses the task's own choice when it has one.
     task = (
         await db.get(Task, row.conversation_id)
-        if row.conversation_id != row.topic_id
+        if row.conversation_id != topic_id
         else None
     )
     choice = place_choice(topic, task, project.settings)

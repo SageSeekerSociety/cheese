@@ -100,19 +100,6 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('in English an unnamed topic in the list is called New topic', async () => {
-  setLocale('en')
-  vi.mocked(getUserProfile).mockResolvedValue(profileOf('lin'))
-  vi.mocked(getUserTopics).mockResolvedValue({
-    topics: [{ ...topic('t1', '新话题'), title_source: 'placeholder' }, topic('t2', '分页调研')],
-  })
-  const view = await renderPage('lin')
-
-  expect(await view.findByText('New topic')).toBeTruthy()
-  expect(view.getByText('分页调研')).toBeTruthy()
-  expect(view.queryByText('新话题')).toBeNull()
-})
-
 describe('choosing a week on the activity chart', () => {
   beforeEach(() => {
     vi.mocked(getUserProfile).mockResolvedValue(profileOf('lin'))

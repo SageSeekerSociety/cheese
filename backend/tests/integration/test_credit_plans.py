@@ -495,3 +495,38 @@ def test_free_leaves_out_claude_sonnet_by_its_tier_and_reserve_allows_it(client,
     assert sonnet.tier not in plans["free"]["model_tiers"]
     # Reserve allows every tier, the subscription models' included.
     assert plans["reserve"]["model_tiers"] is None
+
+
+def test_a_teams_history_names_the_administrator_as_they_are_called_now(client, admin):
+    lab = _shared_team(client, _auth(client, "cp-owner"), "cplab")
+    client.post(f"/admin/teams/{lab}/grants", json={"credits": 5}, headers=admin)
+    token = admin["Authorization"].removeprefix("Bearer ")
+    admin_id = int(jwt.decode(token, options={"verify_signature": False})["sub"])
+
+    def named() -> tuple[str, str | None]:
+        [entry] = client.get(f"/admin/teams/{lab}/history", headers=admin).json()[
+            "data"
+        ]["items"]
+        return entry["actor_handle"], entry["actor_name"]
+
+    assert named() == (ADMIN, None)
+
+    async def _nickname() -> None:
+        from app.domain.user.models import UserProfile
+
+        now = datetime.now(UTC)
+        async with client.test_factory() as session:
+            session.add(
+                UserProfile(
+                    user_id=admin_id,
+                    nickname="Grace",
+                    intro="",
+                    avatar_id=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_nickname())
+    assert named() == (ADMIN, "Grace")

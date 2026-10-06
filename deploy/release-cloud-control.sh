@@ -35,7 +35,7 @@ owner_post() {
 }
 online_managed_device_generations() {
   local managed
-  managed="$(docker exec -i cheese-backend-1 /app/.venv/bin/python - <<'PY'
+  managed="$(docker exec -i "$(bash "$HERE/app-container.sh" backend)" /app/.venv/bin/python - <<'PY'
 import asyncio
 from sqlalchemy import select
 from app.core.db import async_session_factory

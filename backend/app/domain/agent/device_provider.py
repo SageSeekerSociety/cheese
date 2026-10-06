@@ -184,52 +184,6 @@ async def resolve_pinned_device(
     return device.device_id
 
 
-# Addresses that only mean something ON the box. Routing the box's own turns
-# through the local LLM gateway / metering proxy is what makes their spend
-# visible — but the same value handed to a machine somewhere else names nothing
-# there, and the failure is a turn that dies on a connection error with no hint
-# why.
-_BOX_LOCAL_HOSTS = ("localhost", "127.0.0.1", "172.17.0.1", "172.18.0.1", "litellm")
-
-
-def uses_tunnel(*, tunnel_url: str) -> bool:
-    """Whether this screen's CONNECT traffic rides the tunnel.
-
-    Device execution never assumes access to the backend host's private network.
-    When a tunnel is configured every device uses it; otherwise the device dials
-    ``subscription_device_proxy_host`` as it does today. That is right for a flat
-    network and wrong for this one, which is exactly why it is a setting rather
-    than a guess: the deployment knows whether its machines can reach the box.
-    """
-    return bool(tunnel_url.strip())
-
-
-def connect_transport(*, session_token: str, via_tunnel: bool) -> str | None:
-    """The ``HTTPS_PROXY`` value that steers this screen to the meter, or None
-    when the backend does not know it.
-
-    Through the tunnel it does not: the address is the helper's loopback port,
-    and that port is the machine's to choose — the launcher asks the kernel for
-    a free one and exports it itself. It carries NO credential either way: the
-    helper reads the scoped token from a file the launcher writes, so a refreshed
-    token takes effect without relaunching `claude`, which reads HTTPS_PROXY
-    exactly once at startup (#385).
-
-    Direct, the scoped token rides as the proxy password, which is what stops an
-    exposed listener relaying for anyone who cannot prove which project to bill.
-    """
-    if via_tunnel:
-        return None
-    host = (
-        settings.subscription_device_proxy_host.strip()
-        or settings.subscription_proxy_host
-    )
-    return (
-        f"http://cheese:{session_token}@{host}:"
-        f"{settings.subscription_proxy_connect_port}"
-    )
-
-
 # Where the launch script writes the metering proxy's CA on the device (under the
 # screen's ISOLATED home) and exports NODE_EXTRA_CA_CERTS to point. The env value
 # built here carries the literal placeholder; only the script knows the real home.
@@ -237,23 +191,6 @@ def connect_transport(*, session_token: str, via_tunnel: bool) -> str | None:
 # `device_launch` have to agree — it is written down twice today, once on each
 # side of the seam.
 _DEVICE_PROXY_CA_PATH = "$HOME/.claude/proxy-ca.pem"
-
-
-def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) -> None:
-    # HTTPS_PROXY is the machine's CONNECT route to the metering proxy, and the
-    # only way its traffic reaches a model at all. Pointing it at a box-local
-    # address fails off-box.
-    value = env.get("HTTPS_PROXY", "")
-    if any(h in value for h in _BOX_LOCAL_HOSTS):
-        logger.error(
-            "device %s received HTTPS_PROXY=%s, which only "
-            "resolves on the backend's own host — its turns will fail to "
-            "reach a model. Give devices a reachable address "
-            "(subscription_device_proxy_host for the metering proxy) or "
-            "configure subscription_tunnel_url.",
-            device_id,
-            value,
-        )
 
 
 def _read_proxy_ca() -> str:
@@ -1012,16 +949,15 @@ class DeviceChannel(Channel):
         )
         if screen is None or screen.project_id is None:
             return False
-        # A room kept under its own id is no task; any other screen may be one.
-        task = screen.resource_id not in (None, topic_id)
-        if task:
+        # A task's or a 支线's session sits on a seat of its own in the room.
+        if inner := screen.resource_id not in (None, topic_id):
             async with self._sessions() as db:
-                task = await conversations.is_task(db, topic_id)
+                inner = await conversations.is_inner(db, topic_id)
         state = machine_launcher.state_dir(
             screen.project_id,
             screen.resource_id or topic_id,
             CLAUDE_CODE,
-            seat_key(screen.agent_handle, topic_id if task else None),
+            seat_key(screen.agent_handle, topic_id if inner else None),
         )
         try:
             status = await self._control(screen.device_id, state, "mcp_status")
@@ -1176,16 +1112,10 @@ class DeviceChannel(Channel):
             # more than one agent, so the launcher, which knows, says it.
             agent_handle=agent_handle,
         )
-        tunnel_url = machine_tunnel_url(api_base)
-        via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
-        connect_proxy_url = connect_transport(
-            session_token=session_token, via_tunnel=via_tunnel
-        )
         sub = provider_env.subscription_provider(
             ca_path=_DEVICE_PROXY_CA_PATH,
             project_id=str(project_id),
             topic_id=str(topic_id),
-            connect_proxy_url=connect_proxy_url,
             no_proxy=self._no_proxy_hosts(),
         )
         # Which model a request runs on is decided at one control point —
@@ -1209,8 +1139,8 @@ class DeviceChannel(Channel):
         ):
             model_env.pop(key, None)
         model_env.update(sub.env)
-        # The tunnel's CONNECT credential must carry the same place claims as
-        # the direct proxy URL.
+        # The tunnel's CONNECT credential: the helper reads it from a file the
+        # launch script writes, and it carries the session's place claims.
         model_env["CHEESE_CONNECT_TOKEN"] = session_token
         # Read by Claude Code only when its login comes from the environment (a
         # host with a setup-token): the scopes it then believes it holds. RC is
@@ -1221,17 +1151,15 @@ class DeviceChannel(Channel):
         )
         # The meter accepts model hosts, not package registries.
         model_env["CHEESE_MODEL_PROXY"] = "1"
-        if via_tunnel:
-            # Read by the launch script: it writes the helper and the token
-            # file, starts the helper before `claude`, and exports the port the
-            # helper bound as HTTPS_PROXY. Carried on the env rather than as
-            # arguments because a remote machine's launch is built entirely from
-            # `extra_env` — there is no other channel into that builder.
-            model_env["CHEESE_TUNNEL_URL"] = tunnel_url
+        # Read by the launch script: it writes the helper and the token file,
+        # starts the helper before `claude`, and exports the port the helper
+        # bound as HTTPS_PROXY. Carried on the env rather than as arguments
+        # because a remote machine's launch is built entirely from `extra_env` —
+        # there is no other channel into that builder.
+        model_env["CHEESE_TUNNEL_URL"] = machine_tunnel_url(api_base)
         # Preserve the birth expiry across device and backend restarts.
         credential_expires = _credential_expiry(session_token)
         model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
-        _warn_if_model_endpoint_is_box_local(model_env, device_id)
         # 运行环境预览's dial-out address. Derived from the base this machine already
         # reaches for git and the CLI rather than configured separately:
         # the preview rides the path the connector proved, so a deployment that
@@ -1605,37 +1533,33 @@ class DeviceChannel(Channel):
         stopped listening — the second half of the reuse gate, alongside
         `_credential_is_stale`.
 
-        Both answer the same question about different dependencies: `claude` reads
-        its HTTPS_PROXY exactly once at startup, and a reused screen is reasserted
-        rather than relaunched, so a dependency that dies under the running process
-        can never be repaired in place. For the credential that meant a permanent
-        407; for the tunnel helper it means a permanent ConnectionRefused, with the
-        runner reporting the process alive throughout.
+        `claude` reads HTTPS_PROXY once at startup and a reused screen is
+        reasserted rather than relaunched, so a dependency that dies under the
+        running process cannot be repaired in place: a permanent 407 for the
+        credential, a permanent ConnectionRefused for the helper, the runner
+        reporting the process alive throughout.
 
-        Skipped entirely on a deployment with no tunnel (the device dials the meter
-        directly, so there is no helper to lose) — that keeps the per-turn cost at
-        zero everywhere the failure cannot happen.
+        The port is the machine's answer: the probe reads it from the SEAT's own
+        directory, where that seat's helper recorded it — per seat, because a room
+        may seat several agents and one helper carries one credential.
 
-        Which port to ask about is the machine's answer, not ours: the helper
-        bound whatever the kernel gave it and recorded it in the room's home, so
-        the probe reads it from there.
-
-        Conservative in the same direction as the runner check: only an explicit
-        `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
-        (no /proc, no awk, no readable port file) is read as "still up", so a
-        probe hiccup never throws away a healthy screen and its in-progress
-        work."""
+        Conservative like the runner check: only an explicit `down` retires a
+        screen. A failed exec, a non-zero exit, or an `unknown` (unreadable port
+        file, no /proc) reads as "still up", so a probe hiccup never throws away
+        a healthy screen."""
         topic_id = screen.topic_id
         if topic_id is None:
-            return False
-        if not uses_tunnel(tunnel_url=settings.subscription_tunnel_url.strip()):
             return False
         started = time.monotonic()
         try:
             result = await self._hub.exec(
                 screen.device_id,
                 ["sh", "-c", DEVICE_TUNNEL_PROBE],
-                env={"CHEESE_TUNNEL_PROBE_HOME": home_dir},
+                env={
+                    "CHEESE_TUNNEL_PROBE_DIR": seat_dir(
+                        home_dir, screen.agent_handle or ""
+                    )
+                },
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death

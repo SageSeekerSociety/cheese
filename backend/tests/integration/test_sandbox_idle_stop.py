@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -46,6 +47,7 @@ from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.services import HostPool
 from app.domain.project.models import Project
+from app.domain.room_task.models import Task
 from app.domain.team.models import Team
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.user.repositories import UserRepository
@@ -390,7 +392,7 @@ def room_lines(case, seat) -> list[str]:
                 await db.scalars(
                     select(Block.content)
                     .where(
-                        Block.topic_id == seat.room,
+                        Block.conversation_id == seat.room,
                         Block.kind == BlockKind.event,
                         Block.meta["event_type"]
                         .as_string()
@@ -442,7 +444,7 @@ def test_a_sandbox_is_not_idle_while_its_room_runs_a_turn_or_it_was_just_used(cl
             db.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=seat.room,
+                    conversation_id=seat.room,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     started_at=datetime.now(UTC) - timedelta(hours=1),
@@ -659,6 +661,28 @@ def test_a_home_that_cannot_be_archived_is_not_tried_on_every_sweep(cloud):
     assert cloud.bucket.objects == {}
 
 
+def test_a_sleeping_home_no_longer_on_its_host_lets_the_host_go(cloud):
+    """Its directory was removed from the host, so there is nothing to archive
+    and nothing for the host to keep: the host is released, and the session's
+    next tool call gets a sandbox like a new one. On dev, hosts adopted from
+    before the pool were kept for days by homes like this (2026-10-06)."""
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-a")
+    asleep(cloud, seat)
+    shutil.rmtree(home)
+
+    time_passes(cloud, seat, timedelta(days=8))
+    sweep(cloud)
+    machine = host_of_machine(cloud, "host-a")
+    maintain(cloud)
+
+    assert machine in cloud.provider.deleted
+    assert cloud.bucket.objects == {}
+    assert tool_call(cloud, seat).get("preparing")
+    host_comes_up(cloud, seat, "host-b")
+    assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"
+
+
 def test_an_archive_stops_as_soon_as_it_passes_the_limit():
     scope = {"__name__": "sandbox_home"}
     exec(Path(sandbox_home.__file__).read_text(), scope)
@@ -744,7 +768,7 @@ def test_a_room_mid_turn_does_not_keep_other_sandboxes_awake(cloud, monkeypatch)
             db.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=busy.room,
+                    conversation_id=busy.room,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     started_at=datetime.now(UTC),
@@ -758,6 +782,35 @@ def test_a_room_mid_turn_does_not_keep_other_sandboxes_awake(cloud, monkeypatch)
 
     assert sweep(cloud)["asleep"] == 1
     assert home_of(cloud, quiet).stopped_at is not None
+
+
+def test_a_task_at_work_in_the_room_does_not_keep_another_sessions_sandbox_awake(
+    cloud,
+):
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+
+    async def task_turn_runs():
+        async with cloud.client.test_request_factory() as db:
+            task = Task(project_id=cloud.project_id, room_id=seat.room, title="Other")
+            db.add(task)
+            await db.flush()
+            db.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=task.id,
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    started_at=datetime.now(UTC),
+                )
+            )
+            await db.commit()
+
+    run(cloud, task_turn_runs)
+    time_passes(cloud, seat, timedelta(minutes=11))
+
+    assert sweep(cloud)["asleep"] == 1
+    assert home_of(cloud, seat).stopped_at is not None
 
 
 def test_a_home_on_an_offline_host_does_not_hold_up_other_archives(cloud, monkeypatch):

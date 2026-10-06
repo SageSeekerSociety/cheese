@@ -49,8 +49,10 @@ const props = defineProps<{
   toggleTitle: string
   /** 这一行的 ⋯ 里有哪几项（要 router 才算得出链接，所以由父级给）。 */
   actions: (topic: Topic) => MenuCommand[]
-  /** 我静音了这间房：未读不计数（父级已经去掉了），行尾留一个静音标记说明为什么。 */
+  /** 我静音了这个频道：名字变灰、只有 @我才有数字，行尾留一个静音标记说明为什么。 */
   muted?: boolean
+  /** 主线上有我没读过的新消息：名字加粗（数字按通知档位另算，可以是 0）。 */
+  fresh?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -86,7 +88,7 @@ watch(
   () => props.renaming,
   (on) => {
     // 还没名字的话题从空白开始改：占位标题不是谁起的名字。
-    if (on) draftTitle.value = props.row.topic.title_source === 'placeholder' ? '' : props.row.topic.title
+    if (on) draftTitle.value = props.row.topic.title
   },
   { immediate: true }
 )
@@ -134,9 +136,9 @@ function onMenuToggle(open: boolean) {
     @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press', row.topic.id)"
     @contextmenu="openMenuAt"
   >
-    <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），身份靠标题本身，
-         种类标签不要（缩进表达层级），操作 hover 才浮现。原先这里还有一颗每行都
-         一样的装饰图标——同一层级里人人相同的标记区分不了任何东西，删掉了。 -->
+    <!-- 左边一个 16px 槽：折叠开关或状态灯，都没有时画 #，和「# 综合」同一个记号——
+         没有它，频道名和「综合」的字就对不齐。种类标签不要（缩进表达层级），操作
+         hover 才浮现。 -->
     <template #prepend>
       <button
         v-if="row.hasChildren"
@@ -162,7 +164,14 @@ function onMenuToggle(open: boolean) {
       <span v-else-if="row.topic.awaits_me" class="row-slot">
         <span class="await-dot" :title="t('work.sidebar.awaitsTip')" />
       </span>
-      <span v-else class="row-slot" />
+      <span v-else class="row-slot">
+        <v-icon
+          size="16"
+          class="row-glyph"
+          :class="{ 'row-glyph--unread': row.unreadTotal > 0 || fresh }"
+          icon="mdi-pound"
+        />
+      </span>
     </template>
     <v-list-item-title class="d-flex align-center topic-title">
       <v-text-field
@@ -183,9 +192,12 @@ function onMenuToggle(open: boolean) {
       <template v-else>
         <span
           class="text-truncate"
-          :class="{ 'title-unread': row.unreadTotal > 0 }"
+          :class="{
+            'title-unread': row.unreadTotal > 0 || fresh,
+            'title-muted': muted && row.unreadTotal === 0,
+            'title-visiting': row.topic.joined === false,
+          }"
           :data-user-content="row.topic.title || undefined"
-          :title="row.topic.title_source === 'auto' ? t('work.sidebar.autoTitle') : undefined"
           >{{ topicTitle(row.topic) }}</span
         >
         <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
@@ -278,6 +290,15 @@ function onMenuToggle(open: boolean) {
   font-weight: 650;
   color: var(--text);
 }
+/* 正在看、还没加入的频道：斜体，说明它只是此刻摆在这里（离开就不在侧栏了）。 */
+.title-visiting {
+  font-style: italic;
+  color: var(--muted);
+}
+/* 静音：名字退到次要色，没有 @我的时候整行都安静。 */
+.title-muted {
+  color: var(--faint);
+}
 
 /* 三态：静默（透明，露出 rail 的 --canvas）/ hover --fill-2 / 选中 --line-2。
    没有琥珀左竖条——选中态靠底色和字重就够了（Slack/Discord 的行选中态也只是底色），
@@ -342,6 +363,12 @@ function onMenuToggle(open: boolean) {
 /* 行左边那一个 16px 定宽槽。所有行共用（话题行的状态/开关、置顶行的图标），
    所以图标列和文字列在整条侧栏上都成列。空槽也占满 16px：同层级的标题左缘
    必须齐，参差比多一点留白难看得多。 */
+.row-glyph {
+  color: var(--faint);
+}
+.row-glyph--unread {
+  color: var(--accent);
+}
 .row-slot {
   flex: none;
   display: inline-flex;

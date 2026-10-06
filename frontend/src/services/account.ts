@@ -131,6 +131,10 @@ export class AccountService {
   // 正在保存的那个语言：保存回来之前到达的用户记录（续签、别的标签页）还是旧
   // 的，不能拿它把刚选的语言换回去。
   private savingLanguage: Locale | null = null
+  // 时区也存在账号上：安静时段是这个人墙上的钟点（22:00–08:00），服务端按账号上那
+  // 份时区算。它跟着他正在用的浏览器走，人到了别的时区，打开页面就跟过去。
+  // 正在报的那个时区：报完之前到达的用户记录还是旧的，不能因此再报一遍。
+  private reportingTimezone: string | null = null
 
   constructor() {
     // 续签、登录、退出都可能发生在别的标签页，也可能是这个标签页里别的代码发起
@@ -177,6 +181,25 @@ export class AccountService {
     if (user.language !== current) setLocale(user.language)
   }
 
+  /** 拿到服务端给的用户记录后，账号上的时区和这个浏览器的不一样就报上去。 */
+  private followTimezone(user: User) {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (!zone || user.timezone === zone || this.reportingTimezone === zone) return
+    this.reportingTimezone = zone
+    UserApi.setTimezone(zone)
+      .then(() => {
+        if (this.user) {
+          this.user = { ...this.user, timezone: zone }
+          localStorage.setItem('user', JSON.stringify(this.user))
+        }
+      })
+      // 没报上，下次打开页面会再报一次；在那之前安静时段按账号上原来那份算。
+      .catch((error) => console.error('Failed to save the time zone:', error))
+      .finally(() => {
+        this.reportingTimezone = null
+      })
+  }
+
   /** 界面据它决定要不要画「正在恢复登录状态 / 连不上、可以重试」那一层。 */
   public get restorePhase(): RestorePhase {
     return this._restorePhase.value
@@ -220,6 +243,7 @@ export class AccountService {
         this.user = data.user
         localStorage.setItem('user', JSON.stringify(data.user))
         this.followLanguage(data.user, signingIn)
+        this.followTimezone(data.user)
       }
     } catch (error) {
       console.error('Failed to update user info:', error)
@@ -328,7 +352,10 @@ export class AccountService {
     this.loggedIn = true
     // 手里有活令牌了，恢复这件事就完成了：界面那一层可以收起来。
     this._restorePhase.value = 'idle'
-    if (user) this.followLanguage(user)
+    if (user) {
+      this.followLanguage(user)
+      this.followTimezone(user)
+    }
   }
 
   public async login(accessToken: string, user?: User) {
@@ -342,6 +369,7 @@ export class AccountService {
       this.user = user
       localStorage.setItem('user', JSON.stringify(user))
       this.followLanguage(user, true)
+      this.followTimezone(user)
     } else {
       // 如果没有提供用户信息（如 OAuth 登录），获取完整的用户信息
       await this.updateUserInfo(true)

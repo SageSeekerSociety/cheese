@@ -104,14 +104,7 @@ function topic(id: string, parentId: string | null, flags: Partial<Topic> = {}):
 
 /** 一行都不少地建 N 个我参与的话题：它们全在上组（`mine`），就是会被虚拟化的那一组。 */
 function longRail(n: number): Topic[] {
-  return [topic('root', null), ...Array.from({ length: n }, (_, i) => topic(`t${i}`, 'root', { i_participate: true }))]
-}
-
-/** 归档那一组（列表最底下）的 N 行：做完的活，只会越堆越多。 */
-function archived(n: number): Topic[] {
-  return Array.from({ length: n }, (_, i) =>
-    topic(`a${i}`, 'root', { status: 'archived', archived_at: '2026-08-01T00:00:00Z' })
-  )
+  return [topic('root', null), ...Array.from({ length: n }, (_, i) => topic(`t${i}`, 'root', { joined: true }))]
 }
 
 const router = createRouter({
@@ -208,43 +201,5 @@ describe('锚点落在行上的那几种状态', () => {
     expect(btn).not.toBeNull()
     await fireEvent.click(btn as HTMLElement)
     await waitFor(() => expect(virtua.seen[0].props.keepMounted as readonly number[]).toContain(5), WAIT)
-  })
-})
-
-describe('已归档那一组', () => {
-  it('过门槛也交给虚拟列表 —— 归档是越堆越多的，滚的还是话题列表那一层', async () => {
-    const { container } = mount({ topics: [...longRail(3), ...archived(120)] })
-    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
-    await waitFor(() => expect(virtua.seen).toHaveLength(1), WAIT)
-    expect(virtua.seen[0].props.data).toHaveLength(120)
-    // 窗口按话题列表那一层的滚动容器算，不是自己另起一个。
-    expect(virtua.seen[0].props.scrollRef).not.toBeNull()
-  })
-
-  it('选中的归档行也留在 DOM 里（光标可能正停在它上面）', async () => {
-    const { container } = mount({ topics: [...longRail(3), ...archived(120)], selectedTopicId: 'a5' })
-    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
-    await waitFor(() => expect(virtua.seen).toHaveLength(1), WAIT)
-    const rows = virtua.seen[0].props.data as Topic[]
-    const index = rows.findIndex((t) => t.id === 'a5')
-    expect(index).toBeGreaterThanOrEqual(0)
-    expect(virtua.seen[0].props.keepMounted).toEqual([index])
-  })
-
-  it('归档行也带 data-room-id —— 程序化选中时靠它把那行找出来滚进视口', async () => {
-    // 这一组不走「按序号滚」那条路（它不在 railSections 里），选中靠的是 useTopicRail
-    // 兜底那句 `querySelector('[data-room-id=...]').scrollIntoView()`。行上没这个属性
-    // 就永远够不着；选中的那一行常驻 DOM（上一条）是它能被找到的另一半。
-    const { container } = mount({ topics: [...longRail(3), ...archived(120)], selectedTopicId: 'a5' })
-    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
-    await waitFor(() => expect(virtua.seen).toHaveLength(1), WAIT)
-    expect(document.querySelector('[data-room-id="a5"]')).not.toBeNull()
-  })
-
-  it('行数不到门槛就整列画，和以前一样', async () => {
-    const { container } = mount({ topics: [...longRail(3), ...archived(3)] })
-    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
-    expect(virtua.seen).toHaveLength(0)
-    expect(container.querySelectorAll('[data-row-actions^="a"]')).toHaveLength(3)
   })
 })

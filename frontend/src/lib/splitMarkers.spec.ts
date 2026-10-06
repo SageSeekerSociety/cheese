@@ -21,7 +21,7 @@ const ROOM = 'room-1'
 function block(id: string, createdAt: string, author = '张衡'): Block {
   return {
     id,
-    topic_id: ROOM,
+    conversation_id: ROOM,
     kind: 'message',
     author_type: 'participant',
     author,

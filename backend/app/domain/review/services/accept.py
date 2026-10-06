@@ -165,13 +165,22 @@ async def _pr_repo_of(
     (pr_publish records only pr_number/pr_url at filing time)."""
     from urllib.parse import urlsplit
 
-    from app.domain.project.forge import binding_for_project
+    from app.domain.project.forge import binding_for_project, renamed_from
 
     binding = await binding_for_project(topic.project_id, self._session)
     if binding is None:
         raise ValidationError(say("reviewNoRepository"))
     if card.pr_repo and card.pr_repo != binding.repo:
-        raise ValidationError(say("reviewRepositoryChanged"))
+        # The same repository under a new name (renamed on GitHub) keeps its
+        # card; a different repository does not.
+        if binding.kind != "github_app" or not await renamed_from(
+            topic.project_id, card.pr_repo, self._session
+        ):
+            raise ValidationError(say("reviewRepositoryChanged"))
+        if card.pr_url:
+            card.pr_url = card.pr_url.replace(
+                f"/{card.pr_repo}/", f"/{binding.repo}/", 1
+            )
     if card.pr_url and urlsplit(card.pr_url).netloc != urlsplit(binding.url).netloc:
         raise ValidationError(say("reviewForgeMismatch"))
     card.pr_repo = binding.repo

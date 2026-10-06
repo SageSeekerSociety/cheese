@@ -6,6 +6,15 @@
   <v-container v-else-if="notFound" class="fill-height justify-center pa-4" fluid>
     <p class="t-body c-muted">{{ t('work.teamProfile.notFound') }}</p>
   </v-container>
+  <!-- 读失败原来直接抛出去，这一页就什么都不画 —— 整页空白，看不出是没有这个团队还是没读到。 -->
+  <v-container v-else-if="loadError" class="fill-height justify-center pa-4" fluid>
+    <BaseLoadError
+      :title="t('work.teamProfile.loadFailed')"
+      :error="loadFailureReason(loadError)"
+      :forbidden="isForbidden(loadError)"
+      @retry="retryLoad"
+    />
+  </v-container>
   <AppPage
     v-else-if="teamData"
     :title="pageTitle"
@@ -29,9 +38,11 @@ import { useRoute } from 'vue-router'
 
 import TeamProfile from './TeamProfile.vue'
 
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { TeamsApi } from '@/network/api/teams'
 import { BusinessError } from '@/network/types/error'
 import { usePageTitleStore } from '@/stores/title'
@@ -42,6 +53,8 @@ const teamData = ref<Team>()
 provide(teamDataInjectionKey, teamData)
 
 const notFound = ref(false)
+/** 这一次没读到的那个错。404 是「没有这个团队」，另走一条；其余是非空就画失败。 */
+const loadError = ref<unknown>(null)
 const isMember = computed(() => teamData.value?.joinStatus === 'member')
 
 const PAGE_TITLES: Record<string, string> = {
@@ -61,6 +74,8 @@ const teamIntro = computed(() => teamData.value?.intro ?? '')
 
 const fetchTeamData = async (handle: string) => {
   notFound.value = false
+  // 上一次的失败不许留到这一次：重新问一次，屏幕上先干净。
+  loadError.value = null
   try {
     const {
       data: { team },
@@ -71,9 +86,14 @@ const fetchTeamData = async (handle: string) => {
   } catch (error) {
     // 隐身小队对非成员就是 404：和不存在的小队说同一句话。
     if (error instanceof BusinessError && error.code === 404) notFound.value = true
-    else throw error
+    // 其余的留在这里画出来。原来这里 `throw`，抛出去就没人接 —— 页面一片空白，
+    // 而「没读到」和「没有这个团队」在屏幕上是同一幅画面。
+    else loadError.value = error
   }
 }
+
+/** 失败画面上那颗「重试」：拿地址里现在这个 handle 再问一次。 */
+const retryLoad = () => fetchTeamData(String(route.params.handle))
 
 const join = async (message: string) => {
   const {

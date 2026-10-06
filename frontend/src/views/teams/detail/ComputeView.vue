@@ -12,17 +12,24 @@ import { computed } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
-import { teammateName } from '@/lib/agentNames'
+import { screenAgentName, teammateName } from '@/lib/agentNames'
 import { topicTitle } from '@/lib/topicState'
 
 const props = defineProps<{
   devices: MyDevice[]
   myDevices: MyDevice[]
   loading: boolean
-  /** 读失败 / 注册注销失败时的那句话；非空就画告警。 */
+  /** 写操作（注册 / 注销）失败时的那句话；非空就画一条可关的告警。 */
   error: string | null
+  /** 读失败：这一块内容根本没拿到，空网格是假的。 */
+  failed: boolean
+  /** 读失败时服务端给的那句话；没有就是 `null`。 */
+  failureReason: string | null
+  /** 读失败是「不给你看」（401/403）还是「这次没读到」。 */
+  forbidden: boolean
   /** 正在注册 / 注销的那台机器 id（按钮转圈用）。 */
   busy: string | null
   teamId: number
@@ -33,6 +40,7 @@ const props = defineProps<{
 
 defineEmits<{
   clearError: []
+  retry: []
   addMachine: [device: MyDevice]
   removeMachine: [device: MyDevice]
   navigate: [target: ResolvedUserRef['to']]
@@ -55,6 +63,8 @@ const onlineCount = computed(() => props.devices.filter((device) => device.onlin
       </div>
     </div>
 
+    <!-- 写操作（添加/移除）失败是可关的一条提示，页面本身还在。读失败不是：整块内容
+         没读到，就得换成失败的样子，不能一边弹条一边画「还没有自己的机器」。 -->
     <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="$emit('clearError')">
       {{ error }}
     </v-alert>
@@ -62,6 +72,14 @@ const onlineCount = computed(() => props.devices.filter((device) => device.onlin
     <div v-if="loading" class="py-12 text-center">
       <v-progress-circular indeterminate color="primary" />
     </div>
+
+    <BaseLoadError
+      v-else-if="failed"
+      :title="t('teams.compute.loadFailed')"
+      :error="failureReason"
+      :forbidden="forbidden"
+      @retry="$emit('retry')"
+    />
 
     <template v-else>
       <section class="compute-section">
@@ -148,9 +166,10 @@ const onlineCount = computed(() => props.devices.filter((device) => device.onlin
                     size="x-small"
                     variant="tonal"
                     color="primary"
+                    :data-user-content="screen.agent_name || undefined"
                   >
                     <v-icon start size="12">mdi-monitor-eye</v-icon>
-                    {{ t('teams.compute.screenRunning', { handle: screen.agent_handle }) }}
+                    {{ t('teams.compute.screenRunning', { name: screenAgentName(screen) }) }}
                   </v-chip>
                 </div>
                 <div
@@ -164,7 +183,7 @@ const onlineCount = computed(() => props.devices.filter((device) => device.onlin
                     >
                     <template #room
                       ><span :data-user-content="use.topic_title || undefined">{{
-                        topicTitle({ title: use.topic_title, title_source: use.topic_title_source })
+                        topicTitle({ title: use.topic_title })
                       }}</span></template
                     >
                     <template #agent>

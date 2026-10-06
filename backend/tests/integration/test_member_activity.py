@@ -11,6 +11,7 @@ import uuid
 
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     new_project,
     post_message,
@@ -133,21 +134,21 @@ def test_an_agent_turn_is_that_agent_working_in_that_room_only(client, stub_hook
 
     stub_hooks.emit_turn = turn
     seat = room_agent_seat(client, room)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
+    # 芝士 is called in a 支线 of the room and works there.
+    thread = in_thread(client, room, "alice")
+    with client.websocket_connect(chat_ws_url(thread, "alice")) as ws:
+        post_message(client, thread, "alice", {"content": "@芝士 跑一下测试"})
         started = _until(ws, lambda f: _activity(f) and f["kind"] == "working")[-1]
         assert started["member"] == seat
         assert started["active"] is True
 
         working = [(seat, "working")]
-        assert _who(_snapshot(client, room, "bob")) == working
-        assert _who(_listed(client, project_id, room)) == working
-        assert _who(_header(client, room)) == working
+        assert _who(_snapshot(client, thread, "bob")) == working
         # Another room of the same project hears nothing of it.
         assert _snapshot(client, other, "bob") == []
         assert _listed(client, project_id, other) == []
 
-        stub_hooks.stops(uuid.UUID(room), "好了")
+        stub_hooks.stops(uuid.UUID(thread), "好了")
         ended = _until(ws, lambda f: _activity(f) and f["kind"] == "working")[-1]
     assert (ended["member"], ended["active"]) == (seat, False)
-    assert _header(client, room) == []
+    assert _snapshot(client, thread, "bob") == []

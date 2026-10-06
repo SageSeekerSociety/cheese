@@ -39,7 +39,9 @@ async function flush() {
 
 /** 一个刚刷新完页面、未读表还是空的项目，服务端说这些话题都有未读。 */
 function unread(map: Record<string, number>) {
-  vi.mocked(getTopicUnread).mockResolvedValue(map)
+  vi.mocked(getTopicUnread).mockResolvedValue(
+    Object.fromEntries(Object.entries(map).map(([id, n]) => [id, { count: n, new: true, messages: n }]))
+  )
 }
 
 describe('未读轮询的后台预取', () => {
@@ -60,7 +62,7 @@ describe('未读轮询的后台预取', () => {
 
     expect(vi.mocked(listBlocks)).not.toHaveBeenCalled()
     // 徽标本身照常更新——被砍掉的只有预取。
-    expect(store.unreadMap.t7).toBe(3)
+    expect(store.unreadMap.t7?.count).toBe(3)
   })
 
   it('这一趟开过的话题仍然会被后台刷新（切回去时第一帧就是新消息）', async () => {

@@ -390,19 +390,30 @@ class PlanService:
                 CreditAdminAudit.target == target,
                 CreditAdminAudit.action.like("team.%"),
             )
-        rows = await self._session.execute(
-            stmt.order_by(CreditAdminAudit.created_at.desc()).limit(limit)
+        from app.domain.user.services import faces_by_handle
+
+        rows = (
+            (
+                await self._session.execute(
+                    stmt.order_by(CreditAdminAudit.created_at.desc()).limit(limit)
+                )
+            )
+            .scalars()
+            .all()
         )
+        faces = await faces_by_handle(self._session, (r.actor_handle for r in rows))
         return [
             {
                 "created_at": row.created_at.isoformat(),
                 "actor_handle": row.actor_handle,
+                # Resolved now, not stored: a nickname changes after the fact.
+                "actor_name": faces.get(row.actor_handle, (None, None))[0],
                 "action": row.action,
                 "target": row.target,
                 "before": row.before,
                 "after": row.after,
             }
-            for row in rows.scalars()
+            for row in rows
         ]
 
     async def _audit(

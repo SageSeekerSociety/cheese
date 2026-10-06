@@ -1,5 +1,5 @@
-// 项目侧栏（`TopicSidebar`）那一半「状态」：拍平的树、两组话题、谁收着、收起来的
-// 那些行把未读和成员的动静交给谁、以及那只让红标自己亮起来的慢钟。
+// 项目侧栏（`TopicSidebar`）那一半「状态」：我加入了的频道、谁收着、收起来的那些行
+// 把未读和成员的动静交给谁、以及那只让红标自己亮起来的慢钟。
 //
 // 和画的那一半分家的理由，和 #2158 拆 PanelPreview 是同一条：这些东西原先长在
 // 那个 1887 行的组件里，于是「折叠记不记得住」「红灯会不会自己亮」只能连着整条
@@ -10,23 +10,14 @@
 import type { Topic } from '../cx_types'
 import type { RailMemberMark } from '../lib/memberActivity'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
+import type { TopicUnread } from '../types/channels'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { agentIdentities, agentNames } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { waitStalled, waitText } from '../lib/replyWait'
-import {
-  ancestorPathIds,
-  inferTopicKind,
-  isMyTopic,
-  loadExpandedTopics,
-  loadOthersGroupOpen,
-  partitionByRelevance,
-  saveExpandedTopics,
-  saveOthersGroupOpen,
-  visibleRows,
-} from '../lib/topicTree'
+import { ancestorPathIds, inferTopicKind, loadExpandedTopics, saveExpandedTopics, visibleRows } from '../lib/topicTree'
 import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 
 import { t } from '@/i18n'
@@ -37,8 +28,8 @@ export interface TopicRailSource {
   topics: Topic[]
   selectedProjectId: string | null
   selectedTopicId: string | null
-  /** 话题级未读：{topicId: count}，缺键 = 没有未读。 */
-  unreadMap?: Record<string, number>
+  /** 频道和任务在等我的东西：{id: TopicUnread}，缺键 = 没有。 */
+  unreadMap?: Record<string, TopicUnread>
   /** 私聊未读：{peerHandle: count}。侧栏只用它的总数。 */
   privateUnreadMap?: Record<string, number>
 }
@@ -55,14 +46,9 @@ export interface RailScrollTarget {
   scrollToIndex: (sectionKey: string, index: number) => void
 }
 
-/** 一组行：一组一个组头，两组的行是同一种形态。 */
+/** 一组行。侧栏现在只有一组：我加入了的频道。 */
 export interface RailSection {
   key: string
-  label: string
-  head: boolean
-  count: number
-  unread: number
-  open: boolean
   rows: VisibleRow<Topic>[]
 }
 
@@ -119,20 +105,20 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     return rows
   })
 
-  // 归档去向: archived topics leave the active tree and live in a collapsed
-  // 「已归档」 group at the bottom (newest archived first). Non-archived children
-  // of an archived parent stay in the active list (their work isn't done).
-  //
-  // 但**活跟着它的房间走**：活只有 open/closed，没有「已归档」这个状态，所以房间
-  // 子话题有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧留在活跃
-  // 列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
+  // 侧栏的那棵树：没归档、我加入了的频道。房间子话题有自己的归档状态：父话题归了、
+  // 它还活着，就照旧留着，只是父行没了，深度提到 0。
   const activeTree = computed<TreeRow[]>(() => {
     // 深度按**留下来的那个父行**重新算，不沿用原树的：拍平的树里深度就是父子关系
     // 本身，中间少一层就得少一层缩进，否则缩进指着一行不存在的父行。
     const depths = new Map<string, number>()
     const rows: TreeRow[] = []
     for (const row of tree.value) {
+      // 侧栏只列我加入了的频道，外加我此刻正看着的那一个（从「浏览频道」点进来、还没
+      // 加入的）——不然人就不知道自己在哪儿。已归档的频道不在侧栏里，在项目设置的
+      // 「频道」一栏。`joined` 缺席（没经过 list_topics 的载荷）当作加入了：宁可多列，
+      // 不把频道静默藏起来。
       if (row.topic.status === 'archived') continue
+      if (row.topic.joined === false && row.topic.id !== source.selectedTopicId) continue
       const parentId = row.topic.parent_id
       const parentDepth = parentId ? depths.get(parentId) : undefined
       const depth = parentDepth === undefined ? 0 : parentDepth + 1
@@ -142,22 +128,19 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     return rows
   })
 
-  const archivedRows = computed<Topic[]>(() =>
-    source.topics
-      .filter((t) => t.status === 'archived' && inferTopicKind(t) !== 'root')
-      .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? ''))
-  )
-
   // ---- 未读 ----
+  /** 行上的数字：频道已经按我设的通知档位算过了。 */
   function unreadOf(id: string): number {
-    return source.unreadMap?.[id] ?? 0
+    return source.unreadMap?.[id]?.count ?? 0
+  }
+  /** 有没有新消息（名字加粗）：静音的频道不加粗。 */
+  function freshOf(id: string): boolean {
+    return source.unreadMap?.[id]?.new === true
   }
   // 私聊未读的总数——侧栏只说「有几条」，不说是谁。
   const privateUnreadTotal = computed<number>(() =>
     Object.values(source.privateUnreadMap ?? {}).reduce((sum, n) => sum + n, 0)
   )
-  // Unread hiding inside the collapsed archived group still deserves a hint.
-  const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0))
 
   // ---- 状态查表 ----
   // 折叠聚合要按 id 问「这里有队友在干活吗 / 在等人吗」，而拍平树里只留了 id。走一遍
@@ -253,14 +236,10 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     return withChildren
   })
 
-  // 「其他话题」这一组展开没展开。默认折叠——这一整条改动的意义就在这里，所以它
-  // 也按项目落盘（键不在 = 折叠，见 lib/topicTree.ts）。
-  const othersOpen = ref(false)
   watch(
     () => source.selectedProjectId,
     (pid) => {
       expandedIds.value = loadExpandedTopics(pid)
-      othersOpen.value = loadOthersGroupOpen(pid)
     },
     { immediate: true }
   )
@@ -297,15 +276,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     saveExpandedTopics(source.selectedProjectId, next)
   }
 
-  // ---- 分组 (C2): 我参与的平铺，其他话题收进一个默认折叠的组 ----
-  // 判定住在 lib/topicTree.ts 里（纯函数 + 单测），这里只管接线、组的开关和落盘。
-  //
-  // 两组的**行是同一种形态**：同一段模板渲染，所以树形缩进、竖向引导线、16px 状态
-  // 槽、未读角标、hover 的 ⋯ 一个不少。折叠组只是把一批行收起来，不是换一种行。
-  const grouped = computed(() => partitionByRelevance(activeTree.value, isMyTopic))
-
-  function rowsOf(rows: readonly FlatRow<Topic>[]) {
-    return visibleRows(rows, {
+  const railRows = computed(() =>
+    visibleRows(activeTree.value, {
       collapsed: collapsedIds.value,
       reveal: selectedPath.value,
       unreadOf,
@@ -313,48 +285,9 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       awaitsOf,
       stalledOf,
     })
-  }
-
-  const mineTree = computed(() => rowsOf(grouped.value.mine))
-  const othersTree = computed(() => rowsOf(grouped.value.others))
-  const othersCount = computed(() => grouped.value.others.length)
-
-  // 组头的未读聚合成**一个点**，不是数字：别人话题里有几条新消息与我无关，但"那边
-  // 有动静"值得知道。算的是整组（含组内自己收起来的子话题），所以点在不在，不受
-  // 组内折叠状态影响。
-  const othersUnread = computed<number>(() => grouped.value.others.reduce((sum, r) => sum + unreadOf(r.topic.id), 0))
-
-  // 选中的话题落在这一组里时，通往它的那条路径照常渲染——和折叠一个父话题时的
-  // reveal 一模一样。落盘的偏好一个字都不动，离开之后这一组照旧是收着的。
-  const othersHoldsSelected = computed(() =>
-    source.selectedTopicId ? grouped.value.others.some((r) => r.topic.id === source.selectedTopicId) : false
   )
-  const othersRendered = computed(() => {
-    if (othersOpen.value) return othersTree.value
-    if (!othersHoldsSelected.value) return []
-    return othersTree.value.filter((r) => selectedPath.value.has(r.topic.id))
-  })
 
-  function toggleOthers() {
-    othersOpen.value = !othersOpen.value
-    saveOthersGroupOpen(source.selectedProjectId, othersOpen.value)
-  }
-
-  // 一次 v-for 走完两组，所以话题行的那段模板只存在一份——「形态一致」是结构保证
-  // 的，不是靠两处复制的模板保持同步。组头只有下面那一组有。
-  const railSections = computed<RailSection[]>(() => [
-    { key: 'mine', label: '', head: false, count: 0, unread: 0, open: true, rows: mineTree.value },
-    {
-      key: 'others',
-      label: t('work.sidebar.others'),
-      head: othersCount.value > 0,
-      count: othersCount.value,
-      unread: othersUnread.value,
-      // open 只管组头那个 chevron 的朝向 = 用户设的值；实际渲染哪些行看 rows。
-      open: othersOpen.value,
-      rows: othersRendered.value,
-    },
-  ])
+  const railSections = computed<RailSection[]>(() => [{ key: 'mine', rows: railRows.value }])
 
   // 选中的话题落在哪一组、那一组里排第几行。上面那条 watch 要按**序号**滚虚拟化的
   // 那一组（那种时候行不在 DOM 里，光有 id 够不着），所以除了「在不在这一组」还得知道
@@ -393,18 +326,10 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   }
 
   return {
-    // 树与分组
+    // 树
     rootTopic,
     activeTree,
-    archivedRows,
-    mineTree,
-    othersTree,
-    othersRendered,
-    othersOpen,
-    othersCount,
-    othersUnread,
-    othersHoldsSelected,
-    toggleOthers,
+    railRows,
     railSections,
     selectedLocation,
     // 折叠
@@ -412,8 +337,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     // 状态
     topicById,
     unreadOf,
+    freshOf,
     privateUnreadTotal,
-    archivedUnread,
     stalledOf,
     awaitsOf,
     workingOf,

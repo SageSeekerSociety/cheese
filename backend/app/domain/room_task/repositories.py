@@ -117,7 +117,7 @@ class TaskRepository:
         信号：在这条活自己身上实测，一轮之内 block 间隔中位数 8 秒、p90 34 秒。
 
         每条活单独取一次最大值：PostgreSQL 会把它变成在
-        `ix_blocks_task_id_created_at` 上倒着读一行，所以成本跟着活的条数走，跟
+        `ix_blocks_conversation_created_at` 上倒着读一行，所以成本跟着活的条数走，跟
         这些活说过多少话无关。写成对 block 的一个 GROUP BY 是同一个答案，但没有
         哪个计划能按组只读最新一行，它就把这些活的每一个 block 都读一遍 —— 在
         dev 上是一次读全表的并行扫描。没说过话的活直接不在结果里，由调用方决定
@@ -129,7 +129,7 @@ class TaskRepository:
             return {}
         last = (
             select(func.max(Block.created_at))
-            .where(Block.task_id == Task.id)
+            .where(Block.conversation_id == Task.id)
             .scalar_subquery()
         )
         stmt = select(Task.id, last).where(Task.id.in_(task_ids))
@@ -137,9 +137,10 @@ class TaskRepository:
         return {task_id: at for task_id, at in rows if at is not None}
 
     async def conversations_for_tasks(
-        self, task_ids: list[uuid.UUID]
+        self, task_ids: list[uuid.UUID], *, limit: int | None = None
     ) -> dict[uuid.UUID, list[Block]]:
-        """Every thread's conversation, oldest first, in ONE query.
+        """Every thread's conversation, oldest first, in ONE query; with
+        `limit`, each thread's newest `limit` blocks.
 
         Keyed by task id and batched deliberately: the caller wants a whole
         room, and a room can hold hundreds of threads — asking per thread turns
@@ -149,18 +150,35 @@ class TaskRepository:
         """
         if not task_ids:
             return {}
-        stmt = (
-            select(Block)
-            .where(
-                Block.task_id.in_(task_ids),
-                Block.kind.not_in(self._NON_TIMELINE),
-            )
-            .order_by(Block.created_at, Block.id)
+        where = (
+            Block.conversation_id.in_(task_ids),
+            Block.kind.not_in(self._NON_TIMELINE),
         )
+        if limit is None:
+            stmt = select(Block).where(*where).order_by(Block.created_at, Block.id)
+        else:
+            # Each thread's newest `limit`, cut in the database: a room's
+            # threads together can hold hundreds of thousands of blocks.
+            newest = (
+                select(
+                    Block.id,
+                    func.row_number()
+                    .over(
+                        partition_by=Block.conversation_id,
+                        order_by=(Block.created_at.desc(), Block.id.desc()),
+                    )
+                    .label("rank"),
+                )
+                .where(*where)
+                .subquery()
+            )
+            stmt = (
+                select(Block)
+                .join(newest, newest.c.id == Block.id)
+                .where(newest.c.rank <= limit)
+                .order_by(Block.created_at, Block.id)
+            )
         grouped: dict[uuid.UUID, list[Block]] = {}
         for block in (await self._session.scalars(stmt)).all():
-            # Narrowing, not a filter: `task_id` is what the query selected on,
-            # so it is never None here — this is how the type says so.
-            if (task_id := block.task_id) is not None:
-                grouped.setdefault(task_id, []).append(block)
+            grouped.setdefault(block.conversation_id, []).append(block)
         return grouped

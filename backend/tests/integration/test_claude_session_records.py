@@ -27,6 +27,7 @@ from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -35,8 +36,9 @@ from tests.support.room_reader import room_reader
 
 
 def _room(client, owner: str = "alice") -> str:
+    """A 支线 in the project's channel: where 芝士 answers when called."""
     project = post_project(client, {"name": "P"}, owner=owner).json()["data"]
-    return project["root_topic_id"]
+    return in_thread(client, project["root_topic_id"], owner)
 
 
 def _until_done(ws) -> list[dict]:
@@ -109,7 +111,7 @@ def test_a_tool_that_failed_marks_its_step_with_what_it_said(client, stub_hooks)
 
     steps = [
         block
-        for block in _blocks(client, topic_id=uuid.UUID(room))
+        for block in _blocks(client, conversation_id=uuid.UUID(room))
         if (block.meta or {}).get("tool") == "Bash"
     ]
     assert len(steps) == 1
@@ -129,7 +131,7 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     async def observe(receipt: InputReceipt):
         await original(receipt)
         if receipt.evidence == "native_echo":
-            session = stub_hooks._session_for(receipt.identity.topic_id)
+            session = stub_hooks._session_for(receipt.identity.conversation_id)
             input_id = uuid.UUID(taken[0])
             assert receipt.identity == InputIdentity(
                 session.project_id,
@@ -270,7 +272,7 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
         async with client.test_factory() as session:
             inputs = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert len(inputs) == 2
@@ -284,7 +286,8 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
             return list(
                 await session.scalars(
                     select(AgentTurn).where(
-                        AgentTurn.topic_id == topic, AgentTurn.stopped_at.is_(None)
+                        AgentTurn.conversation_id == topic,
+                        AgentTurn.stopped_at.is_(None),
                     )
                 )
             )
@@ -356,7 +359,7 @@ def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
         async with client.test_factory() as session:
             inputs = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert len(inputs) == 2
@@ -364,7 +367,7 @@ def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
             assert all(row.echoed_at and row.completed_at for row in inputs)
             turns = list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                    select(AgentTurn).where(AgentTurn.conversation_id == topic)
                 )
             )
             assert len(turns) == 2
@@ -416,6 +419,7 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
         json={"project_id": project["id"], "title": "换进程"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
+    room = in_thread(client, room, "alice")
     topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
@@ -454,9 +458,11 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
     after.stops(topic, "睡醒了")
     client.portal.call(settle_turn, replaced, topic)
 
-    said = [block.content for block in _blocks(client, topic_id=topic)]
+    said = [block.content for block in _blocks(client, conversation_id=topic)]
     assert "睡醒了" in said
-    assert _blocks(client, topic_id=topic, content="睡醒了")[0].turn_id is not None
+    assert (
+        _blocks(client, conversation_id=topic, content="睡醒了")[0].turn_id is not None
+    )
 
 
 def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
@@ -468,6 +474,7 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
         json={"project_id": project["id"], "title": "交接"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
+    room = in_thread(client, room, "alice")
     topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
@@ -502,14 +509,14 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
 
 def test_a_turn_the_next_backend_picks_up_still_answers_its_message(client):
     topic, _, after = _picked_up_by_a_new_backend(client)
-    (asked,) = _blocks(client, topic_id=topic, author="alice")
+    (asked,) = _blocks(client, conversation_id=topic, author="alice")
 
     after.returns(topic, "Bash", "done", call=after.calls["Bash"])
     after.says(topic, "睡醒了")
     after.stops(topic, "睡醒了")
     client.portal.call(settle_turn, app.dependency_overrides[get_chat_service](), topic)
 
-    (answer,) = _blocks(client, topic_id=topic, content="睡醒了")
+    (answer,) = _blocks(client, conversation_id=topic, content="睡醒了")
     assert answer.reply_to == asked.id
 
 
@@ -526,7 +533,7 @@ def test_a_message_joins_the_turn_the_next_backend_picked_up(client):
             return len(
                 list(
                     await session.scalars(
-                        select(AgentTurn.id).where(AgentTurn.topic_id == topic)
+                        select(AgentTurn.id).where(AgentTurn.conversation_id == topic)
                     )
                 )
             )
@@ -555,7 +562,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
         json={"project_id": project["id"], "title": "队友"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    topic = uuid.UUID(room)
+    channel_id = uuid.UUID(room)
 
     async def seat_teammate() -> None:
         async with client.test_factory() as session:
@@ -566,11 +573,14 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
                 display_name="Opus",
             )
             await TopicMemberService(session).ensure_agent_seat(
-                topic, agent_instance_handle(made.id)
+                channel_id, agent_instance_handle(made.id)
             )
             await session.commit()
 
     client.portal.call(seat_teammate)
+    # The teammate is seated in the channel and answers in a 支线 of it.
+    room = in_thread(client, room, "alice")
+    topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
@@ -617,7 +627,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
             return len(
                 list(
                     await session.scalars(
-                        select(AgentTurn.id).where(AgentTurn.topic_id == topic)
+                        select(AgentTurn.id).where(AgentTurn.conversation_id == topic)
                     )
                 )
             )

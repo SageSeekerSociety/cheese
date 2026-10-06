@@ -8,10 +8,14 @@
     :team-id="teamId"
     :personal="personal"
     :resolve-user="resolveUser"
+    :failed="loadFailed"
+    :failure-reason="failureReason"
+    :forbidden="forbidden"
     @clear-error="error = null"
     @add-machine="addMachine"
     @remove-machine="removeMachine"
     @navigate="navigate"
+    @retry="load"
   />
 </template>
 
@@ -32,6 +36,7 @@ import ComputeView from './ComputeView.vue'
 import { listMyDevices, listTeamDevices, registerDeviceForTeam, unregisterDeviceFromTeam } from '@/api'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { useDialog } from '@/plugins/dialog'
 
 const { confirm } = useDialog()
@@ -45,8 +50,16 @@ const scope = computed(() => (teamData.value?.personal ? 'own' : 'team'))
 const devices = ref<MyDevice[]>([])
 const myDevices = ref<MyDevice[]>([])
 const loading = ref(false)
+/** 写操作失败：一句话，可关，页面照旧（下面那块内容没受影响）。 */
 const error = ref<string | null>(null)
+/** 读失败：这一块内容根本没拿到，`devices` 空是假的。 */
+const loadError = ref<unknown>(null)
+const loadFailed = computed(() => loadError.value !== null)
 const busy = ref<string | null>(null)
+
+// 是「不给你看」还是「这次没读到」，在这里判：画面只拿布尔值、那句话说，不认状态码。
+const failureReason = computed(() => loadFailureReason(loadError.value))
+const forbidden = computed(() => isForbidden(loadError.value))
 
 function errorMessage(value: unknown, fallback: string): string {
   return value instanceof Error ? value.message : fallback
@@ -54,7 +67,7 @@ function errorMessage(value: unknown, fallback: string): string {
 
 async function load() {
   loading.value = true
-  error.value = null
+  loadError.value = null
   try {
     const [teamDevices, mine] = await Promise.all([
       listTeamDevices(teamId.value),
@@ -63,7 +76,8 @@ async function load() {
     devices.value = teamDevices.devices
     myDevices.value = mine.devices
   } catch (cause) {
-    error.value = errorMessage(cause, t('teams.compute.loadFailed'))
+    // 原来记在 `error` 里 —— 那条提示可关，关掉之后屏幕上只剩「还没有自己的机器」。
+    loadError.value = cause
   } finally {
     loading.value = false
   }

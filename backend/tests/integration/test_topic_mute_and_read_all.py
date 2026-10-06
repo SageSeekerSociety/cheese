@@ -1,7 +1,7 @@
 """话题静音和「全部标为已读」。
 
-- 静音按人记：我静音一间房，别人那边照旧；静音不等于已读，房间自己的未读数还在，
-  只是侧栏不把它算进总数（那一半在前端）。
+- 静音按人记：我静音一间房，别人那边照旧；静音不等于已读，自上次读过以后来了几条
+  消息照样记着。
 - 「全部标为已读」只动我在这个项目里有未读的房间，读完之后角标表是空的；别人的不动。
 """
 
@@ -40,12 +40,12 @@ def test_mute_is_per_person_and_is_not_reading(client):
 
     r = _set_level(client, room_id, "alice", "mute")
     assert r.status_code == 200, r.text
-    assert _levels(client, p["id"], "alice") == {room_id: "mute"}
+    assert _levels(client, p["id"], "alice")[room_id]["level"] == "mute"
     assert _levels(client, p["id"], "bob") == {}
     # 静音不是已读：那一句还在 alice 的未读里。
     assert _unread(client, p["id"], room_id, "alice") == 1
 
-    assert _set_level(client, room_id, "alice", "all").status_code == 200
+    assert _set_level(client, room_id, "alice", "mentions").status_code == 200
     assert _levels(client, p["id"], "alice") == {}
 
 

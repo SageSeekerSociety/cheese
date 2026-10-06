@@ -4,7 +4,7 @@
     "appUnavailable": "The preview connection is active, but the app is not responding. Ask Cheese to check whether the app is running.",
     "connectionUnavailable": "The preview connection has not been established or has disconnected. Cheese may still be working. Check its status in Live; this panel updates automatically when the connection returns.",
     "roomOutputs": {
-      "title": "Files in this room",
+      "title": "Files in this channel",
       "expand": "Expand",
       "collapse": "Collapse",
       "openFile": "Open {path}",
@@ -292,6 +292,7 @@
     "search": "Search by name",
     "loading": "Loading",
     "denied": "Only the challenge's publisher and space admins can see participants",
+    "loadFailed": "Couldn't load the participants",
     "noMatch": "No matching participants",
     "empty": "No participants",
     "col": {
@@ -463,6 +464,7 @@
       "inProgress": "In progress",
       "rejected": "Not passed"
     },
+    "loadFailed": "Couldn't load this challenge's data",
     "team": "Team",
     "solo": "Individual",
     "claims": "Claims",

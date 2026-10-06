@@ -103,8 +103,8 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # Why this reviewer was suggested (最懂/没参与/有空), for transparency.
     routing_reason: Mapped[str] = mapped_column(Text, default="")
     # What this topic CHANGED, in the words of whoever did the work — the one
-    # description that survives into permanent history. `change_subject` is a
-    # Conventional Commits subject (`fix(api): …`, imperative, ≤72 chars) and
+    # description that survives into permanent history. `change_subject` is the
+    # one-line commit title, in the hosted repository's own convention, and
     # `change_body` is the why. They become the PR title/body AND the squash
     # commit that lands on the default branch, so the project's git log stops
     # reading "采纳 <话题标题> (#213)" — a room name, not a change description.

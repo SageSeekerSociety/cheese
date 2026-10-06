@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -24,6 +25,12 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.living_doc.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import DocumentJournal, Documents
+
+# The task a document is the living document of. A bare table: ``room_task``
+# depends on this domain.
+_tasks = table(
+    "tasks", column("id", Uuid), column("room_id", Uuid), column("document_id", Uuid)
+)
 
 
 def _doc_edit_lines(content: str) -> list[str]:
@@ -148,6 +155,18 @@ class DocumentWriter:
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
         room_id = doc.room_id
+        task_id = None
+        if room_id is None:
+            # A task's document is told in the task, where its session reads it.
+            owner = (
+                await self._session.execute(
+                    select(_tasks.c.id, _tasks.c.room_id).where(
+                        _tasks.c.document_id == doc.id
+                    )
+                )
+            ).first()
+            if owner is not None:
+                task_id, room_id = owner
         project_id = doc.project_id
         self.notice_merged = False
         author = actors[0]
@@ -171,8 +190,8 @@ class DocumentWriter:
             raise _doc_conflict(doc.version)
         doc = updated
         # Append-only conversation event (spec H1): the doc edit is visible in
-        # the room whose document it is. A document in no room has no
-        # conversation to tell; its history is the record.
+        # the room or the task whose document it is. A document of neither has
+        # no conversation to tell; its history is the record.
         before_lines = _doc_edit_lines(previous_content)
         after_lines = _doc_edit_lines(content)
         if quiet or room_id is None or before_lines == after_lines:
@@ -187,9 +206,10 @@ class DocumentWriter:
             )
             return doc, None
         landed = landing(
-            EventAbout.room,
+            EventAbout.task if task_id is not None else EventAbout.room,
             project_id=project_id,
             room_id=room_id,
+            task_id=task_id,
         )
         # A run of edits is one line in the conversation, not one per store:
         # the last "编辑了文档" is extended while nothing else has been said
@@ -277,8 +297,7 @@ class DocumentWriter:
         else:
             notice = await self._blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=author,
                 author_type=AuthorType.platform,
                 content=line,
@@ -345,8 +364,7 @@ class DocumentWriter:
             return earlier
         return await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=actor,
             author_type=AuthorType.platform,
             content=line,
@@ -360,9 +378,7 @@ class DocumentWriter:
     ) -> Block | None:
         """The room's last line, if it is this document's notice of the same
         ``kind`` (see ``_notice_kind``), recent enough to extend."""
-        last = await self._blocks.latest_for_topic(
-            landed.topic_id, task_id=landed.task_id
-        )
+        last = await self._blocks.latest_for_topic(landed.conversation_id)
         if last is None or last.kind != BlockKind.event:
             return None
         meta = last.meta or {}
@@ -409,7 +425,7 @@ async def tell_room_of_document(
         task_id=task_id,
     )
     changed = [{"old": e["old"], "new": e["new"]} for e in edits or []]
-    last = await blocks.latest_for_topic(landed.topic_id, task_id=landed.task_id)
+    last = await blocks.latest_for_topic(landed.conversation_id)
     meta_of_last = (last.meta or {}) if last is not None else {}
     if (
         last is not None
@@ -443,8 +459,7 @@ async def tell_room_of_document(
         line = say("docEditedInLibrary", actor=who, title=title)
     block = await blocks.add(
         project_id=landed.project_id,
-        topic_id=landed.topic_id,
-        task_id=landed.task_id,
+        conversation_id=landed.conversation_id,
         author=actor,
         author_type=AuthorType.platform,
         content=line,

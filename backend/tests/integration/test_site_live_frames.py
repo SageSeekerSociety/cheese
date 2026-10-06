@@ -18,6 +18,7 @@ from app.domain.block.models import Block
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -29,8 +30,9 @@ def _alice() -> dict:
 
 
 def _room(client) -> str:
+    """A 支线 of the project's 综合: where 芝士 answers when called."""
     project = post_project(client, {"name": "P"}, owner="alice").json()
-    return project["data"]["root_topic_id"]
+    return in_thread(client, project["data"]["root_topic_id"], "alice")
 
 
 def _until(ws, predicate) -> list[dict]:
@@ -50,7 +52,7 @@ def _blocks(client, room: str) -> list[Block]:
         async with client.test_factory() as session:
             query = (
                 select(Block)
-                .where(Block.topic_id == uuid.UUID(room))
+                .where(Block.conversation_id == uuid.UUID(room))
                 .order_by(Block.created_at)
             )
             return list(await session.scalars(query))

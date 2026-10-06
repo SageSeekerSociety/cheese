@@ -81,6 +81,10 @@ class NotificationType(str, Enum):
     TEAM_INVITATION_CANCELED = "TEAM_INVITATION_CANCELED"
     TEAM_REQUEST_CANCELED = "TEAM_REQUEST_CANCELED"
 
+    #: 我参与过的支线里有人回复了（`agent.mentions._tell_thread`）。`payload`
+    #: 带 ``thread_id``；`topic_id` 是支线所在的频道。
+    THREAD_REPLY = "THREAD_REPLY"
+
     #: 平台在房间里说的、要人动手的那一句（`app.domain.agent.announce`）。所有
     #: 平台提示共用这一个码：要显示的文字是后端给的 `payload.content`，前端不按
     #: 类别拼模板，具体是哪件事看 `payload.eventType`。
@@ -97,8 +101,9 @@ class NotificationType(str, Enum):
     DEVICE_IN_USE = "DEVICE_IN_USE"
 
     #: 空间里发了一条公告，告诉这个空间里除发布人以外的每个人
-    #: （`space.announcement_service`）。只进站内：不发邮件、不推送
-    #: （`outbox.MAILBOX_ONLY`）。改公告不再发；删公告连它发出去的这些一起撤回。
+    #: （`space.announcement_service`）。走哪个渠道由收件人的偏好矩阵决定
+    #: （`preferences` 的「空间公告」一行：默认站内 + 邮件，不推送）。改公告不再发；
+    #: 删公告连它发出去的这些一起撤回。
     SPACE_ANNOUNCEMENT = "SPACE_ANNOUNCEMENT"
 
     #: 平台报告自己的那三种（原 `AlertKind`）。值保持小写原样：`cheese_notify

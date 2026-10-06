@@ -15,6 +15,7 @@ vi.mock('@/api', async () => ({
   getPrivateUnread: vi.fn().mockResolvedValue({}),
 }))
 
+import type { TopicUnread } from '@/api'
 import type { Topic } from '@/cx_types'
 
 import { archiveTopic, createTopic, getTopic, getTopicUnread, listTopics } from '@/api'
@@ -59,13 +60,12 @@ it('creating a room during navigation leaves the destination project intact', as
   expect(store.topics).toEqual([])
 })
 
-// 没打字就是没名字：不替它写一个标题，由后端记成「未命名」，每块屏幕按读者的语言叫它。
-it('a room created without a title is sent without one', async () => {
+// 频道要先起名：没打字就不建，也不替它写一个标题。
+it('a channel without a name is not created', async () => {
   const store = useWorkspaceStore()
   await store.openProject('a')
-  vi.mocked(createTopic).mockResolvedValueOnce(room('new', 'a'))
-  await store.create('   ')
-  expect(createTopic).toHaveBeenCalledWith('a', undefined)
+  expect(await store.create('   ')).toBeNull()
+  expect(createTopic).not.toHaveBeenCalled()
 })
 
 it('overlapping topic refreshes share one pending request', async () => {
@@ -107,7 +107,7 @@ it('a refresh asked for while an older read is in flight reads the list again', 
 it('overlapping unread refreshes share one pending request', async () => {
   const store = useWorkspaceStore()
   store.projectId = 'a'
-  const response = deferred<Record<string, number>>()
+  const response = deferred<Record<string, TopicUnread>>()
   vi.mocked(getTopicUnread).mockReturnValueOnce(response.promise)
   const requests = Array.from({ length: 8 }, () => store.refreshUnread())
   expect(getTopicUnread).toHaveBeenCalledTimes(1)

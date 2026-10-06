@@ -481,7 +481,7 @@ class Consumptions:
             status = await self._host.attach(
                 consumption.ref, Access("", host=consumption.host)
             )
-            if status is None:
+            if status is None or status.runner_gone:
                 # Its runner could not be asked: not gone, only not reached
                 # from here. Another pass, here or elsewhere, tries again.
                 await self._valkey().eval(  # type: ignore[misc]

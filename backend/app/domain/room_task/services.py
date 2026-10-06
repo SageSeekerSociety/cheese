@@ -16,6 +16,7 @@ from app.domain.room_task.models import (
     RoomLock,
     Task,
     TaskStatus,
+    TaskTitle,
     TaskTitleSource,
 )
 from app.domain.room_task.repositories import TaskRepository
@@ -27,10 +28,36 @@ class TaskService:
         self._session = session
         self._repo = TaskRepository(session)
 
-    @staticmethod
-    def rename(task: Task, title: str) -> None:
-        """Give ``task`` a title; from then on it is named, whatever the words."""
-        task.title, task.title_source = title, TaskTitleSource.human
+    def rename(
+        self,
+        task: Task,
+        title: str,
+        *,
+        by: str | None,
+        by_person: bool = True,
+    ) -> None:
+        """Give ``task`` a title. A person's is final; one its AI teammate gave
+        it the platform may still change when the task changes direction.
+        Either way the version moves, so a platform rename computed against the
+        old title is not written over this one."""
+        task.title = title
+        task.title_source = TaskTitleSource.human if by_person else TaskTitleSource.auto
+        task.title_version = task.title_version + 1
+        if not by_person:
+            task.title_calibrated = True
+        self.record_title(task, reason="rename", by=by)
+
+    def record_title(self, task: Task, *, reason: str, by: str | None) -> None:
+        """Keep ``task``'s current title in its history."""
+        self._session.add(
+            TaskTitle(
+                task_id=task.id,
+                title=task.title,
+                source=task.title_source,
+                reason=reason,
+                by=by,
+            )
+        )
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
@@ -267,9 +294,30 @@ class TaskService:
 
     async def hand_over(self, task: Task, *, owner_handle: str) -> Task:
         """Another member owns the task from now. Moving it off its former
-        owner's own computer first is the caller's (``topics_tasks``)."""
+        owner's own computer first is the caller's (``topics_tasks``). A
+        collaborator who becomes the owner is no longer listed as one."""
         task.owner_handle = owner_handle
+        task.contributor_handles = [
+            h for h in task.contributor_handles or [] if h != owner_handle
+        ]
         await self._session.flush()
+        return task
+
+    @staticmethod
+    def takes_part(task: Task, handle: str | None) -> bool:
+        """Whether this person works the task: its owner, or a collaborator
+        the owner brought in. Both talk to its AI teammate and write its
+        document; only the owner starts, closes or hands it over."""
+        return handle is not None and (
+            handle == task.owner_handle or handle in (task.contributor_handles or [])
+        )
+
+    async def set_contributors(self, task: Task, handles: list[str]) -> Task:
+        """Who works the task beside its owner. They are credited on its
+        commits too (``repository.identity``)."""
+        await self.set_credits(
+            task, reporter_handle=task.reporter_handle, contributor_handles=handles
+        )
         return task
 
     async def give_agent(self, task: Task, *, agent_handle: str | None) -> Task:
@@ -347,44 +395,10 @@ class TaskService:
         whether anyone had spoken yet.
         """
         tasks = await self._repo.list_for_room(room_id)
-        conversations = await self._repo.conversations_for_tasks([t.id for t in tasks])
-        out: list[tuple[Task, list[Block]]] = []
-        for task in tasks:
-            blocks = conversations.get(task.id, [])
-            out.append((task, blocks[-limit:] if limit is not None else blocks))
-        return out
-
-    async def blocks_for_thread(
-        self,
-        task_id: uuid.UUID,
-        *,
-        limit: int | None = None,
-        through: uuid.UUID | None = None,
-    ) -> list[Block] | None:
-        """One card's conversation, oldest first, newest *limit* blocks.
-
-        The single-card counterpart of `threads_for_room`: opening one card
-        must not fan out over every other card's history to reach it, and a
-        long-lived room holds close to two hundred of them.
-
-        `through` names a block the window must reach back to, with a few
-        blocks of context above it: a card opened at one of its messages.
-        None when that block is not in this card's conversation.
-        """
-        conversations = await self._repo.conversations_for_tasks([task_id])
-        blocks = conversations.get(task_id, [])
-        start = max(len(blocks) - limit, 0) if limit is not None else 0
-        if through is not None:
-            at = next((i for i, b in enumerate(blocks) if b.id == through), None)
-            if at is None:
-                return None
-            if at < start:
-                start = max(at - _CONTEXT_ABOVE, 0)
-        return blocks[start:]
-
-
-#: Blocks kept above a card's `through` block, so it opens mid-conversation.
-_CONTEXT_ABOVE = 10
+        conversations = await self._repo.conversations_for_tasks(
+            [t.id for t in tasks], limit=limit
+        )
+        return [(task, conversations.get(task.id, [])) for task in tasks]
 
 
 class RoomLockService:
@@ -496,3 +510,14 @@ class RoomLockService:
             return "这个房间自己正在改它"
         task = await TaskRepository(self._session).get(lock.holder_task_id)
         return f"「{task.title}」正在改它" if task else "另一条活正在改它"
+
+
+def said_title(task: Task) -> str:
+    """``task``'s title as a parameter of a room line about it.
+
+    An unnamed task's stored title is the Chinese placeholder, so it goes in as
+    its own sentence and each reader sees their own word for it. A title
+    someone gave is passed as it is, even one that reads like the placeholder."""
+    if task.title_source == TaskTitleSource.placeholder:
+        return say("taskUntitled")
+    return task.title

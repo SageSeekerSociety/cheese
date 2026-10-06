@@ -28,7 +28,7 @@ covers:
 | 实例 | `agent_instances` | 它在这个项目里是谁、在这里学到了什么 |
 | 会话 | `agent_sessions` | 一段对话（话题或任务）里的会话，可以随时丢掉 |
 
-`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room` 或 `task`，id 就是话题或任务自己的 id，由数据库触发器在话题、任务插入和删除时维护，应用不写它。`topic_id` 是这条会话所在的房间：话题自己的会话就是它本身，任务的会话是任务所在的那个房间——房间范围的问题（房间的机器、换机、清理）只读这一列。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<话题十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把话题交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
+`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room` 或 `task`，id 就是话题或任务自己的 id，由数据库触发器在话题、任务插入和删除时维护，应用不写它。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<话题十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把话题交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
 
 任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions.py`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；任务还没「开始」时凭证对工作机器只读（文档照样能写），启动环境里是 `CHEESE_TASK` 和 `CHEESE_TASK_READS_ONLY`，开始之后空闲的会话带着可写的凭证重开。broker 上任务的频道就是任务 id。
 
@@ -62,7 +62,7 @@ covers:
 - `sweep_orphans` 收拾还开着的区间。`SWEEP_MIN_AGE_S`（60 秒）挡掉刚出现、可能正被别的路径处理的那些；启动时用 `resume_orphans` 跑同一个函数，把这道门关掉（`min_age_s=0.0`）——那一刻开着的区间全属于上一任，没有东西在跟它赛跑。
 - `_wedged_turns` 找**两个**信号都安静了的轮：话题里最新块的时间，以及这个进程为它发过的最后一帧；阈值 `SILENT_TURN_S`（1800 秒）。启动时不传 `last_activity`，这个探针整个跳过。
 - 一轮算不算被接着做（`_adopted`）问的是**这一轮自己那个席位**的会话还在不在，不是房间里有没有哪个会话还在：同房间另一个队友还在干活，不能让一个会话已经没了的队友那一轮一直开着。
-- `resume_lost_messages` 补上重启丢掉的排队：项目级并发闸是纯 asyncio 的，进程一换就没了。它按席位判：点名的那个队友没有轮次在跑就起一轮，每个队友最多一轮；别的队友在跑不挡它，因为那一轮不会读一条不是点给它的消息。还没组装、说不出是谁的一轮，按整间房在忙算。
+- `resume_lost_messages` 补上重启丢掉的排队：项目级并发闸是纯 asyncio 的，进程一换就没了。它按席位判：点名的那个队友没有轮次在跑就起一轮，每个队友最多一轮；别的队友在跑不挡它，因为那一轮不会读一条不是点给它的消息。还没组装、说不出是谁的一轮，按整间房在忙算。它不只在接手时跑：一轮结束时它的完成、空闲和 Stop 各唤醒一次（Stop 是关掉这一轮区间的那一下，排在它后面的消息要等它），另有每 10 秒一次的兜底扫描（`queued_message_sweep_interval_s`），读的是部分索引 `ix_blocks_queued_messages`，所以一次唤醒漏了，消息最多再等一个间隔。
 
 ## 派出去过什么 {#dispatch}
 

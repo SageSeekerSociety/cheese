@@ -115,13 +115,28 @@
 
 /* ---- Hero ---- */
 
+/* The copy sits in the middle of the first screen, not at its foot, so the
+   bottom of the screen is left to the fade below. */
 .hero {
   display: flex;
   position: relative;
   min-height: calc(100dvh - var(--bar-h));
   padding: 0 var(--gutter) 64px;
   overflow: hidden;
-  align-items: flex-end;
+  align-items: center;
+}
+
+/* The foot of the first screen blurs and fades into the page, so it reads as
+   the top of something longer rather than a finished poster. */
+.hero::after {
+  position: absolute;
+  inset: auto 0 0;
+  height: 120px;
+  background: linear-gradient(to bottom, transparent, var(--canvas));
+  backdrop-filter: blur(6px);
+  mask-image: linear-gradient(to bottom, transparent, var(--ink) 70%);
+  pointer-events: none;
+  content: '';
 }
 
 /* The scene fills the right of the hero and fades into the page on its left,
@@ -152,6 +167,7 @@
 .hero-copy {
   display: flex;
   position: relative;
+  z-index: 1;
   flex-direction: column;
   gap: 32px;
 }
@@ -926,6 +942,11 @@
 
   .site-menu-toggle {
     display: inline-flex;
+  }
+
+  /* The scene takes the top of a narrow screen, so the copy stays at its foot. */
+  .hero {
+    align-items: flex-end;
   }
 
   .hero-scene {

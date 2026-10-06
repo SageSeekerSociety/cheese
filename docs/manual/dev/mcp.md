@@ -42,7 +42,7 @@ covers:
 
 常用的动作各有一样专门的工具，其余的只有 `platform_request` 一样，原因和用法见下面[其余的平台接口](#rest)。
 
-只有两样还要机器上的一份东西：`cheese_doc_set` 要读机器上那个文件，`cheese_accept_request` 先让机器把任务的提交推上去。要作为进程在机器上跑的（任务目录、同步与恢复、预览、文件转换、git 凭据）不在表里，是这个文件的 CLI 子命令。
+只有 `cheese_accept_request` 还要机器：它先让机器把任务的提交推上去。文档类工具直接收正文，不碰机器，所以任务开始前、机器只读时也能写实况文档。要作为进程在机器上跑的（任务目录、同步与恢复、预览、文件转换、git 凭据）不在表里，是这个文件的 CLI 子命令。
 
 ## 其余的平台接口：platform_request {#rest}
 
@@ -91,7 +91,7 @@ Codex 那条路走 `RemoteTools.discover`：先向执行器问 `native` 和各�
 - `MACHINE_OUT_OF_REACH` 是这句话；`MachineOutOfReach` 是它的类型。以前调用方只能比字符串，于是只认得「执行器答了 502/503/504」这一档；机器真的没了时执行器什么也不答——读超时 660 秒到点抛 `TimeoutError`，连接被拒是重试窗口耗尽后抛 `ConnectionRefusedError`，两者的文字都不是那句话。`MachineOutOfReach` 让最该被认出来的那一档认得出来。
 - 判「够不着」不能只看非 200：`OUT_OF_REACH_STATUSES` 只有 `{502, 503, 504}`（中间那一跳转不过去，或者执行器没在听），还有一个得连响应头一起看的 409（`_device_is_offline`：`X-Device-Id` 在就是链路断了，不在就是代际冲突，机器好好的）。其余的（500 是机器上某个工具抛了异常、401 是令牌过期、别的 4xx 是执行器比后端旧）手好好的，说成够不着是假话，agent 会照着它放弃整轮的文件与命令操作。
 - **答案当场给，不等超时**：接不通只重试到 `CONNECT_RETRY_WINDOW_S = 180` 秒为止；机器上那个 MCP 进程撞上第一次之后，余下的调用在 `RECHECK_AFTER_S = 30` 秒内直接答同一句话，不再一个个去撞 660 秒。
-- 平台工具里只有那两样要机器（`cheese_doc_set`、`cheese_accept_request`）吃这个闸；机器答了错但手还在的调用拿到的是 `EXECUTOR_CALL_FAILED`（「机器还在，这一个可以重试」）。
+- 平台工具里只有 `cheese_accept_request` 要机器，吃这个闸；机器答了错但手还在的调用拿到的是 `EXECUTOR_CALL_FAILED`（「机器还在，这一个可以重试」）。
 
 ## 时间线上的工具名 {#timeline}
 

@@ -65,7 +65,6 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'retry'): void
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
-  (e: 'undo-title', blockId: string): void
 }>()
 
 /** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
@@ -161,8 +160,6 @@ const ACTION_META: Record<string, { btn: string }> = {
   topics: { btn: '' },
   split: { btn: 'work.room.notice.action.split' },
   task_created: { btn: 'work.room.notice.action.split' },
-  // 平台自动改了标题：行尾是撤销，不是「去看看」，见下面的模板分支。
-  title: { btn: 'work.room.notice.action.undo' },
   accept: { btn: 'work.room.notice.action.accept' },
   notify: { btn: '' },
 }
@@ -302,11 +299,9 @@ const ACTION_META: Record<string, { btn: string }> = {
             type="button"
             class="sys-btn sys-btn--inline"
             @click="
-              notice.resource === 'title'
-                ? emit('undo-title', block.id)
-                : splitTask
-                  ? emit('open-card', splitTask)
-                  : emit('open-resource', notice.resource, block.turn_id ?? undefined)
+              splitTask
+                ? emit('open-card', splitTask)
+                : emit('open-resource', notice.resource, block.turn_id ?? undefined)
             "
           >
             {{ t(ACTION_META[notice.resource].btn) }}

@@ -16,10 +16,10 @@ vi.mock('../api', async () => {
     getTopicComputeProfile: (...args: unknown[]) => machines.get(...args),
     listTopicMembers: vi.fn(async () => ({
       data: [
-        { id: '1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false, avatar_id: null },
-        { id: '3', member_handle: 'bob', name: 'Bob', role: 'member', agent: false, avatar_id: null },
-        { id: '4', member_handle: 'carol', name: 'Carol', role: 'member', agent: false, avatar_id: 77 },
-        { id: '2', member_handle: 'cheese-t1', name: '芝士', role: 'member', agent: true, avatar_id: null },
+        { member_handle: 'alice', name: 'Alice', role: 'owner', agent: false, avatar_id: null },
+        { member_handle: 'bob', name: 'Bob', role: 'member', agent: false, avatar_id: null },
+        { member_handle: 'carol', name: 'Carol', role: 'member', agent: false, avatar_id: 77 },
+        { member_handle: 'cheese-t1', name: '芝士', role: 'member', agent: true, avatar_id: null },
       ],
       total: 4,
     })),
@@ -85,9 +85,9 @@ const settle = async () => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-async function openRoster() {
+async function openRoster(extra: Record<string, unknown> = {}) {
   const utils = render(Roster, {
-    props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
+    props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice', canManage: true, ...extra },
     global: { plugins: [createVuetify({ components, directives })] },
   })
   await settle()
@@ -125,15 +125,35 @@ beforeEach(() => {
 })
 
 describe('成员名册', () => {
-  it('右键一位成员：改角色和移出，弹在鼠标那一点上', async () => {
+  it('右键一位成员：移出，弹在鼠标那一点上', async () => {
     await openRoster()
     const bob = Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('Bob'))!
     await fireEvent.contextMenu(bob, { clientX: 20, clientY: 40 })
     await waitFor(() =>
       expect(
         Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim())
-      ).toEqual(['设为拥有者', '设为管理员', '移出话题'])
+      ).toEqual(['移出频道'])
     )
+  })
+
+  it('不管这个频道的人只能看，不能加人也不能移人', async () => {
+    await openRoster({ canManage: false })
+    expect(document.querySelector('.roster__remove')).toBeNull()
+    expect(document.querySelector('.roster__select')).toBeNull()
+  })
+
+  it('「综合」里的人移不出去，只有 AI 队友能请进请出', async () => {
+    await openRoster({ general: true })
+    const rows = Array.from(document.querySelectorAll('.roster__item'))
+    const bobRow = rows.find((r) => r.textContent?.includes('Bob'))!
+    const agent = rows.find((r) => r.textContent?.includes('cheese-t1'))!
+    expect(bobRow.querySelector('.roster__remove')).toBeNull()
+    expect(agent.querySelector('.roster__remove')).not.toBeNull()
+    await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
+    await settle()
+    const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).map((n) => n.textContent ?? '')
+    expect(items.length).toBeGreaterThan(0)
+    expect(items.every((t) => t.includes('AI 队友'))).toBe(true)
   })
 
   it('队友和人一样能被移出，但房间没有「换队友」这种开关', async () => {
@@ -144,8 +164,7 @@ describe('成员名册', () => {
     const agentRow = rows.find((r) => r.textContent?.includes('cheese-t1'))!
     const humanRow = rows.find((r) => r.textContent?.includes('alice'))!
     expect(agentRow.querySelector('.roster__remove')).not.toBeNull()
-    expect(agentRow.querySelector('.roster__role--btn')).toBeNull()
-    expect(humanRow.querySelector('.roster__role')).not.toBeNull()
+    expect(humanRow.querySelector('.roster__remove')).not.toBeNull()
     expect(document.body.textContent).not.toMatch(/换队友|更换 AI 队友/)
   })
 
@@ -169,13 +188,12 @@ describe('成员名册', () => {
     expect(agentRow.querySelector('.roster__role')).toBeNull()
   })
 
-  it('每个人名旁的角色都带着一句这个角色能做什么', async () => {
+  it('建这个频道的人标着「创建者」', async () => {
     await openRoster()
     const rowOf = (handle: string) =>
       Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
-    // 名单只两行高，说明落在角色的 title 上，悬停可读。
-    expect(rowOf('alice').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('管理房间与成员')
-    expect(rowOf('bob').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('参与房间讨论')
+    expect(rowOf('alice').textContent).toContain('创建者')
+    expect(rowOf('bob').textContent).not.toContain('创建者')
   })
 })
 
@@ -264,14 +282,14 @@ describe('名册上这个话题的工作电脑', () => {
     expect(agentRow().textContent).not.toContain('工作电脑')
     const rooms = document.querySelectorAll('[data-testid="future-machine"]')
     expect(rooms).toHaveLength(1)
-    expect(rooms[0].textContent).toContain('本话题运行在：实验室工作站')
+    expect(rooms[0].textContent).toContain('本频道运行在：实验室工作站')
     expect(rooms[0].textContent).toContain('改')
   })
 
   it('房间那一行跟着项目默认时标出来', async () => {
     await openRoster()
     const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('本话题运行在：云端沙箱')
+    expect(room.textContent).toContain('本频道运行在：云端沙箱')
     expect(room.textContent).toContain('项目默认')
   })
 
@@ -308,6 +326,6 @@ describe('名册上这个话题的工作电脑', () => {
     })
     await settle()
     const notices = emitted()['machine-access'] as [string | null][]
-    expect(notices.at(-1)).toEqual(['让它看到整台机器（能操作这台机器上的服务和其他房间）'])
+    expect(notices.at(-1)).toEqual(['让它看到整台机器（能操作这台机器上的服务和其他频道）'])
   })
 })

@@ -17,6 +17,7 @@ from app.api.deps import get_broker
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     open_task,
     post_message,
@@ -33,15 +34,17 @@ PLAN = [
 
 
 def _room(client) -> tuple[str, dict]:
-    """A room, and the credentials its agent's session writes with."""
+    """A 支线 in a channel — where 芝士 answers — and the credentials its
+    session writes with."""
     p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题"},
         headers=session_auth_headers("user-1"),
     ).json()["data"]
-    token = mint_scoped_token(project_id=p["id"], topic_id=t["id"])
-    return t["id"], {"X-Cheese-Token": token}
+    thread = in_thread(client, t["id"], "user-1")
+    token = mint_scoped_token(project_id=p["id"], topic_id=thread)
+    return thread, {"X-Cheese-Token": token}
 
 
 def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):

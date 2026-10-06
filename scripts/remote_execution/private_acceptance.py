@@ -194,56 +194,6 @@ def main():
 
         record("reuse", shell_and_reuse)
 
-        def document():
-            # A living doc's text is a file on the machine, and the session reads
-            # it through the executor, the way `cheese_doc_set` does (结论 63).
-            # The backend half is recorded here rather than served: what this
-            # acceptance owns is the executor.
-            from importlib.machinery import SourceFileLoader
-
-            from executor_transport import read_file_on_the_machine
-
-            cheese = SourceFileLoader(
-                "cheese_platform_tools", str(ROOT / "backend/sandbox/cheese")
-            ).load_module()
-            sent = []
-
-            def through_the_executor(payload, arguments):
-                return client.call(
-                    "invoke",
-                    {"id": payload["id"], "tool": payload["tool"], "args": arguments},
-                )
-
-            class Host:
-                environ = {
-                    "CHEESE_TOPIC": config["topic"],
-                    "CHEESE_DOCUMENT": "acceptance-document",
-                    "CHEESE_AUTHOR": "cheese",
-                }
-                doc_versions = {"acceptance-document": 1}
-
-                def request(self, plan):
-                    sent.append(plan)
-                    return {"data": {"doc_version": 2}}
-
-                def read_file(self, path):
-                    return read_file_on_the_machine(
-                        through_the_executor, path, uuid.uuid4().hex
-                    )
-
-                def sync_task(self, task_id):
-                    raise AssertionError("a living doc pushes no task")
-
-            said = cheese.run_platform_tool(
-                "cheese_doc_set", {"path": "/work/draft.md"}, Host()
-            )
-            assert "已更新" in said, said
-            assert sent[0]["body"]["content"] == "Second draft\n", sent
-            assert sent[0]["body"]["expected_version"] == 1, sent
-            return sent[0]["body"]
-
-        record("document-publication", document)
-
         def controls():
             # Outside the workspace, so the diff below still reads clean.
             home = shell('printf %s "$HOME"')["stdout"].strip()

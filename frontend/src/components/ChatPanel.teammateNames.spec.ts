@@ -1,8 +1,8 @@
 // 一间房里坐着几个 AI 队友时，每一句话、每一条通知署的是那一轮的那位队友。
 //
 // 平台替一轮写的通知（失败、兜底投递）署名是 system，轮次帧和收件人写的是队友自己
-// 的 handle（`cheese-kimi`），都不是名册上的座位。认不出时退回房间的默认 AI，读起来
-// 就是另一个队友失败了、另一个队友在干活。
+// 的 handle（`cheese-kimi`），都不是名册上的座位。认不出是谁的那一轮就不署队友：退回
+// 房间的默认 AI，读起来就是另一个队友失败了、另一个队友在干活。
 import type { Block, ProjectMemberRow, Topic, TopicMemberRow, WsServerFrame } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -51,15 +51,13 @@ const TEAM = [
 const [, KIMI, OPUS] = TEAM
 
 const roster: TopicMemberRow[] = [
-  { id: '0', topic_id: 'room', member_handle: 'me', name: '我', role: 'owner', agent: false, created_at: '' },
-  ...TEAM.map((a, i) => ({
-    id: String(i + 1),
+  { topic_id: 'room', member_handle: 'me', name: '我', role: 'owner', agent: false },
+  ...TEAM.map((a) => ({
     topic_id: 'room',
     member_handle: a.seat,
     name: a.name,
     role: 'member' as const,
     agent: true,
-    created_at: '',
   })),
 ]
 const members: ProjectMemberRow[] = [
@@ -80,7 +78,7 @@ function block(fields: Partial<Block>): Block {
   return {
     id: `b${at}`,
     project_id: 'p1',
-    topic_id: 'room',
+    conversation_id: 'room',
     kind: 'message',
     author_type: 'participant',
     content: '',
@@ -94,15 +92,15 @@ function block(fields: Partial<Block>): Block {
 const ask = (to: string, turn: string) =>
   block({ author: 'me', content: '请看一下', meta: { agent_recipient: { handle: to }, consumed_turn: turn } })
 const reply = (seat: string, turn: string, content: string) => block({ author: seat, turn_id: turn, content })
-// 平台替这一轮写的通知。
-const notice = (turn: string, eventType: string, who: string, content: string) =>
+// 平台替这一轮写的通知。`seat` 是后端记下的那一轮是谁的。
+const notice = (turn: string, eventType: string, who: string, content: string, seat?: string) =>
   block({
     kind: 'event',
     author_type: 'platform',
     author: 'system',
     turn_id: turn,
     content,
-    meta: { event_type: eventType, severity: 'error', who, detail: '服务原话：No response' },
+    meta: { event_type: eventType, severity: 'error', who, detail: '服务原话：No response', ...(seat ? { seat } : {}) },
   })
 
 class FakeWebSocket {
@@ -196,6 +194,28 @@ describe('一间房里几位队友，各署各的名', () => {
     expect(find('Opus 的兜底投递')).toEqual(as('芝士Opus'))
     expect(rows.find((r) => r.text.includes('Opus 的兜底投递'))?.text).toContain('芝士Opus正在处理')
     expect(find('编辑了文档')).toEqual({ avatar: null, name: null })
+  })
+
+  it('一轮还没开始就失败了，通知署它记下的那位队友；说不出是谁的就不署队友', async () => {
+    listBlocks.mockResolvedValue({
+      data: [
+        // 交给 Kimi 的那一轮没起来：时间线上只有平台替它写的这一条。
+        notice('kimi-turn', 'turn_failed', 'human', 'Kimi 这一轮没起来', KIMI.own),
+        notice('nobody-turn', 'turn_failed', 'human', '说不出是谁的那一轮'),
+      ],
+      has_more: false,
+    })
+
+    const { container } = mount()
+    await flush()
+
+    const rows = notices(container)
+    const find = (text: string) => {
+      const row = rows.find((r) => r.text.includes(text))
+      return row && { avatar: row.avatar, name: row.name }
+    }
+    expect(find('Kimi 这一轮没起来')).toEqual(as('芝士K'))
+    expect(find('说不出是谁的那一轮')).toEqual({ avatar: null, name: null })
   })
 
   it('成员动态写的是队友自己的 handle，「谁在干活」报它的名字', async () => {

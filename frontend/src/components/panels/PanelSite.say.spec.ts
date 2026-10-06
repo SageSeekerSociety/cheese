@@ -42,11 +42,11 @@ const topic = {
 } as Topic
 
 // 没有显式发布的输出就是这么落库的（meta.progress），不是一步操作。
-function say(id: string, content: string, taskId: string | null = null): Block {
+function say(id: string, content: string): Block {
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-t1',
@@ -54,7 +54,6 @@ function say(id: string, content: string, taskId: string | null = null): Block {
     reply_to: null,
     refs: [],
     turn_id: 'turn-a',
-    task_id: taskId,
     meta: { progress: true },
     created_at: '2026-09-16T10:00:00Z',
   } as unknown as Block
@@ -109,14 +108,14 @@ describe('现场里芝士说的话', () => {
     expect(emitted()['mention-click']).toEqual([['caisongyang']])
   })
 
-  it('文件 token 变 chip，点击带这条消息自己的任务 id', async () => {
-    const { container, emitted } = await openSite([say('1', '见 <&frontend/src/main.ts>', 'task-9')])
+  it('文件 token 变 chip，点击打开那个文件', async () => {
+    const { container, emitted } = await openSite([say('1', '见 <&frontend/src/main.ts>')])
 
     const chip = container.querySelector<HTMLElement>('.mention[data-file="frontend/src/main.ts"]')!
     expect(chip.textContent).toContain('main.ts')
 
     await fireEvent.click(chip)
-    expect(emitted()['open-file']).toEqual([['frontend/src/main.ts', 'task-9']])
+    expect(emitted()['open-file']).toEqual([['frontend/src/main.ts']])
   })
 
   it('话题 token 点了开那个话题', async () => {

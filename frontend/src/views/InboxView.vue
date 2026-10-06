@@ -67,10 +67,18 @@ const REASON: Record<WaitingItem['reason'], string> = {
 /** 活的事写活的名字，房间自己的事写房间的；还没起名的按读者的语言说。 */
 function itemTitle(item: WaitingItem): string {
   if (item.taskTitle) return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
-  return topicTitle({ title: item.topicTitle, title_source: item.topicTitleSource })
+  return topicTitle({ title: item.topicTitle })
 }
 
 function linkTo(item: WaitingItem) {
+  // 芝士在支线里问的，打开那条支线。
+  if (item.threadId) {
+    return {
+      name: 'workspace-thread',
+      params: { projectId: item.projectId, topicId: item.topicId, threadId: item.threadId },
+      query: item.blockId ? { block: item.blockId } : undefined,
+    }
+  }
   return {
     name: 'workspace-topic',
     params: { projectId: item.projectId, topicId: item.topicId },

@@ -92,15 +92,6 @@ def _roster(client, tid) -> dict[str, str]:
     return {row["member_handle"]: row["role"] for row in rows}
 
 
-def _set_role(client, tid, handle, role):
-    r = client.put(
-        f"/topics/{tid}/members/{handle}",
-        json={"role": role},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-
-
 def test_an_operation_is_found_with_what_it_takes(room):
     *_, agent = room
 
@@ -183,30 +174,25 @@ def test_a_plain_member_agent_is_refused_the_roster(client, room):
     assert _roster(client, tid)[seat] == "member"
 
     assert agent.refused("POST", f"/topics/{tid}/members", {"handle": "bob"}) == 403
-    assert (
-        agent.refused("PUT", f"/topics/{tid}/members/alice", {"role": "member"}) == 403
-    )
     assert agent.refused("DELETE", f"/topics/{tid}/members/alice") == 403
     assert "bob" not in _roster(client, tid)
     assert _roster(client, tid)["alice"] == "owner"
 
 
-def test_an_admin_agent_manages_the_roster_as_an_admin_would(client, room):
-    _, tid, seat, agent = room
-    _set_role(client, tid, seat, "admin")
+def test_a_managing_agent_manages_the_channel_as_a_person_would(client, room):
+    """An agent that manages the project — an admin of its team, as a person
+    would be — manages its channels too, under the same rules."""
+    pid, tid, seat, agent = room
+    join_project_team(client, pid, seat, admin=True)
 
     agent.call("POST", f"/topics/{tid}/members", {"handle": "bob"})
     assert _roster(client, tid)["bob"] == "member"
-    agent.call("PUT", f"/topics/{tid}/members/bob", {"role": "admin"})
-    assert _roster(client, tid)["bob"] == "admin"
     agent.call("DELETE", f"/topics/{tid}/members/bob")
     assert "bob" not in _roster(client, tid)
 
-    # What no admin may do, it may not either: leave the room without an owner,
-    # or seat someone the project does not have.
-    assert agent.refused("DELETE", f"/topics/{tid}/members/alice") == 422
+    # What no manager may do, it may not either: seat someone the project
+    # does not have.
     assert agent.refused("POST", f"/topics/{tid}/members", {"handle": "eve"}) == 422
-    assert _roster(client, tid)["alice"] == "owner"
 
 
 def test_the_agent_reads_its_own_inbox_and_nobody_elses(client, room):

@@ -1781,7 +1781,7 @@ def _card_events(client, card_id):
             card = await session.get(AcceptCard, uuid.UUID(card_id))
             blocks = list(
                 await session.scalars(
-                    select(Block).where(Block.task_id == card.task_id)
+                    select(Block).where(Block.conversation_id == card.task_id)
                 )
             )
             return "\n".join(
@@ -1838,7 +1838,7 @@ def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub
         async with client.test_factory() as session:
             card = await session.get(AcceptCard, uuid.UUID(cid))
             row = await session.scalar(
-                select(Delivery).where(Delivery.task_id == card.task_id)
+                select(Delivery).where(Delivery.conversation_id == card.task_id)
             )
             assert row.state == "pending"
             return row.payload["content"]
@@ -3028,11 +3028,11 @@ def test_a_correction_is_refused_once_the_card_has_been_accepted(client, sweepin
 
 
 def test_a_correction_is_validated_like_the_original_subject(client, sweeping):
-    """标题走的是同一道 Conventional Commits 校验：更正入口不能成为绕过它的路。"""
+    """标题走的是递卡时的同一道校验：更正入口不能成为绕过它的路。"""
     pid, tid = _room_with_work(client)
     _make_card(client, tid)
 
-    r = _describe(client, tid, change_subject="随便写点什么。")
+    r = _describe(client, tid, change_subject="第一行\n第二行")
 
     assert r.status_code == 422, r.text
     assert sweeping["patched"] == []

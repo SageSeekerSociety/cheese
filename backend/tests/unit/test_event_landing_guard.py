@@ -1,20 +1,17 @@
-"""守卫：产生事件的调用点必须从 `landing()` 取落点，不许就地挑一个 `topic_id`。
+"""守卫：产生事件的调用点必须从 `landing()` 取落点，不许就地挑一个 `conversation_id`。
 
 和 ``test_author_type_two_values.py`` / ``test_no_adhoc_auth_helpers.py`` 一样，
 这是一条**静态**测试 —— 被测的东西本身就是源码树的一个性质，属于 CLAUDE.md 那条
 「测行为、不读源码」的例外。
 
 它守的是这次改动唯一守不住自己的一半。封闭表（``block/about.py``）只在被调用时才
-起作用：下一个人写事件时照旧写 ``topic_id=topic.id``，代码跑得好好的，事件也确实
+起作用：下一个人写事件时照旧写 ``conversation_id=topic.id``，代码跑得好好的，事件也确实
 写进了某个房间 —— 只是落错地方的事件从来不报错，只是在该读到它的那张卡上再也读不
 到。一次都不会响，而这正是这张表本来要消灭的那种自由。
 
 判据：任何一处 ``…add(kind=BlockKind.event, …)``，它的 ``project_id`` /
-``topic_id`` / ``task_id`` 三个实参都必须是同一个 ``landing()`` 返回值上的三个字段
+``conversation_id`` 两个实参都必须是同一个 ``landing()`` 返回值上的字段
 （``landed.project_id`` 这样的形状），一个都不能少。
-
-``task_id`` 少不得：默认值是 ``None``，省掉它就等于悄悄把一条卡的事件说成房间的
-事件 —— 正是这张表要回答的那个问题，被一个默认值替调用点答了。
 
 **扫的不止 ``backend/app``。** 写进同一张 ``blocks`` 表的还有种子脚本、一次性回填
 脚本、evals 和 probe；它们今天一条事件也不写，而这条守卫存在的意义就是它们明天开始
@@ -30,7 +27,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 # 连着同一张 blocks 表的、活的代码。
 SCANNED = ("backend/app", "backend/scripts", "scripts", "evals")
 
-LANDING_FIELDS = ("project_id", "topic_id", "task_id")
+LANDING_FIELDS = ("project_id", "conversation_id")
 
 
 def _sources() -> list[tuple[pathlib.Path, str]]:
@@ -149,7 +146,7 @@ def test_the_guard_reads_an_annotated_landing_binding():
 def test_the_guard_can_see_a_call_site_picking_its_own_landing():
     """守卫自己得能抓到东西 —— 一条恒真的断言守不住任何东西。"""
     tree = ast.parse(
-        "blocks.add(project_id=p, topic_id=t, task_id=None, kind=BlockKind.event)"
+        "blocks.add(project_id=p, conversation_id=t, kind=BlockKind.event)"
     )
     call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call))
     assert _writes_an_event(call)

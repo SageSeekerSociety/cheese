@@ -24,8 +24,8 @@ async def running_tasks(chat, db: AsyncSession, tasks: list[Task]) -> set[uuid.U
         return set()
     here = {task_id for task_id in ids if chat.has_running_turn(task_id)}
     open_turns = await db.scalars(
-        select(AgentTurn.task_id).where(
-            AgentTurn.task_id.in_(ids),
+        select(AgentTurn.conversation_id).where(
+            AgentTurn.conversation_id.in_(ids),
             AgentTurn.stopped_at.is_(None),
             AgentTurn.delivered_at.is_not(None),
         )

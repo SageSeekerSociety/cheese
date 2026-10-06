@@ -17,7 +17,7 @@ def _told(doc: str | None) -> str:
 def test_an_empty_room_doc_asks_for_the_first_version():
     told = _told("")
 
-    assert "本话题还没有实况文档" in told
+    assert "这里还没有实况文档" in told
     assert "`cheese_doc_set` 建第一版" in told
     assert "不论你是哪个队友" in told
     # 五块模板和有文档时是同一份。
@@ -29,7 +29,7 @@ def test_an_existing_doc_keeps_the_maintain_section_and_the_same_form():
 
     # 改已有文档用 doc_edit：doc_set 整份覆盖，会盖掉别人的段落和正在打的字。
     assert "`cheese_doc_edit`" in told
-    assert "本话题还没有实况文档" not in told
+    assert "这里还没有实况文档" not in told
     assert "- **现状**" in told
     assert "做一件事。" in told
 
@@ -37,5 +37,5 @@ def test_an_existing_doc_keeps_the_maintain_section_and_the_same_form():
 def test_no_doc_at_all_says_nothing_about_the_room_doc():
     told = _told(None)
 
-    assert "当前话题的实况文档" not in told
+    assert "## 实况文档" not in told
     assert "建第一版" not in told

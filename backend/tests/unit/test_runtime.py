@@ -944,7 +944,7 @@ async def test_a_finished_turn_leaves_a_closed_interval(db_factory):
     async with db_factory() as session:
         rows = list((await session.execute(select(AgentTurn))).scalars())
     assert len(rows) == 1
-    assert rows[0].topic_id == topic
+    assert rows[0].conversation_id == topic
     assert rows[0].stopped_at is not None
 
 

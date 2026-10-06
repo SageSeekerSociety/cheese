@@ -13,6 +13,7 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from tests.conftest import settle_turn, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     room_agent_seat,
@@ -21,13 +22,14 @@ from tests.integration.conftest import (
 
 
 def _project_and_topic(client, owner: str = "user-1") -> str:
+    """A 支线 in a channel: the conversation 芝士 answers in."""
     p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "T"},
         headers=session_auth_headers(owner),
     ).json()["data"]
-    return t["id"]
+    return in_thread(client, t["id"], owner)
 
 
 def _say_without_summoning(client, topic_id: str, text: str) -> None:
@@ -136,7 +138,7 @@ def test_summon_after_someone_else_already_asked_starts_nothing(client, stub_hoo
 def _a_room_with_two_teammates(client) -> tuple[str, str]:
     """A room with the project's default 芝士 and one more AI teammate in it.
 
-    Returns the room and the second teammate's seat. The default seat is read
+    Returns a 支线 of the room and the second teammate's seat. The default seat is read
     BEFORE the second one joins: `room_agent_seat` answers only for a room that
     hosts exactly one agent, which is the point of asking it here.
     """
@@ -157,7 +159,7 @@ def _a_room_with_two_teammates(client) -> tuple[str, str]:
     )
     assert joined.status_code == 200, joined.text
     assert teammate != default
-    return topic_id, teammate
+    return in_thread(client, topic_id, "alice"), teammate
 
 
 def _say(client, topic_id: str, text: str, author: str = "alice") -> None:

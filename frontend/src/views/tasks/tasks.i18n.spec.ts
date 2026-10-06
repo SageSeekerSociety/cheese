@@ -146,6 +146,9 @@ describe('task pages in English', () => {
         reviewByParticipant: new Map(),
         canManage: false,
         loading: false,
+        failed: false,
+        failureReason: null,
+        forbidden: false,
       },
       global: { plugins: plugins() },
     })

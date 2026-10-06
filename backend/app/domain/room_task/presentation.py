@@ -234,7 +234,7 @@ class TaskFacts:
     running: bool = False
     #: 关闭时留下过结论（`Task.conclusion`）。
     has_conclusion: bool = False
-    #: 最近一条提问消息还没有回答（`BlockRepository.tasks_awaiting_an_answer`）。
+    #: 最近一条提问消息还没有回答（`BlockRepository.awaiting_an_answer`）。
     #: 回答记在提问那一块上，所以这一位不需要新增存储；但它要查一次库，所以和别的
     #: 事实一样从外面喂进来。
     awaiting_answer: bool = False

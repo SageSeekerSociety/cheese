@@ -78,5 +78,5 @@ async def test_a_dm_is_told_the_living_doc_a_room_is_told(client, tmp_path):
     assert room_seats == 2
 
     for prompt in (private_prompt, room_prompt):
-        assert "## 当前话题的实况文档" in prompt
+        assert "## 实况文档" in prompt
         assert DOC in prompt

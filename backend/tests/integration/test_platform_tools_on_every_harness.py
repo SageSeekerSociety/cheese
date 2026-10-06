@@ -42,6 +42,7 @@ from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
 )
@@ -132,7 +133,8 @@ def room(client):
         "/topics",
         json={"project_id": project["id"], "title": "Work"},
     ).json()["data"]
-    return project["id"], topic["id"]
+    # 芝士 answers in a 支线 of the channel: its tools act there.
+    return project["id"], in_thread(client, topic["id"], "alice")
 
 
 @pytest.fixture(params=HARNESSES)

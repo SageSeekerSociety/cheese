@@ -33,6 +33,7 @@ import {
   ACCEPT_NOTE_ERROR,
   ACCEPT_NOTE_INFO,
   ACCEPT_ONE,
+  ACCEPT_REVIEWERS,
   acceptChecks,
   acceptPendingProps,
   AGENT_NAME,
@@ -62,7 +63,7 @@ const BAR_PENDING = {
   // 名字》第 N 版」一行里说不出这次改了什么。
   title: ACCEPT_ONE.change_subject ?? '',
   // 等谁审阅。卡上写的就是这个人（`work.room.accept.waitingOn` 那句话的口径）。
-  sub: `待 @${ACCEPT_ONE.reviewer_handle} 审阅`,
+  sub: `待 @${ACCEPT_REVIEWERS.find((r) => r.user_handle === ACCEPT_ONE.reviewer_handle)?.name ?? ACCEPT_ONE.reviewer_handle} 审阅`,
 }
 
 const BAR_DELIVERING = { icon: 'mdi-history', color: 'warning', title: '已采纳，合并未完成', sub: '' }

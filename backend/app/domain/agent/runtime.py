@@ -68,7 +68,7 @@ from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import names_a_person, recipient_seat
-from app.domain.topic import doc_nudge
+from app.domain.thread.services import answer_place
 from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.runtime")
@@ -106,18 +106,6 @@ def _fire_on_done(callback: Callable[[], None]) -> None:
         callback()
     except Exception:  # noqa: BLE001 — a hook must never break the runner
         logger.exception("submit on_done hook failed")
-
-
-async def _open_turns(session_factory) -> dict[uuid.UUID, TurnRecord]:
-    """Every turn interval still open, keyed by turn id.
-
-    Whether reading this can fail is the sweep's business, not this function's:
-    it raises, and the callers that must survive a database blip say so where
-    they say what else they do on failure.
-    """
-    async with session_factory() as session:
-        rows = await AgentTurnRepository(session).open_turns()
-    return {record.turn_id: record for record in rows}
 
 
 async def _instance_of(
@@ -294,10 +282,16 @@ class InProcessBroker:
         )
         if duplicate:
             return turn_id
+        # A message to 芝士 in a channel's main line is answered in its 支线.
+        answer_in = await answer_place(
+            chat_service.session_factory, user_block_id if mentioned else None, topic_id
+        )
+        if answer_in != topic_id:
+            live_delivery_expected = chat_service.has_running_turn(answer_in)
         if self._message_subscriber is not None:
             self._message_subscriber(
                 chat_service,
-                topic_id,
+                answer_in,
                 turn_id,
                 addressed=addressed,
                 continuation_id=turn_id,
@@ -1066,7 +1060,7 @@ class AgentWorkRunner:
         await _open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             continuation_id=turn_id,
             author=author,
             content="",
@@ -1238,7 +1232,7 @@ class AgentWorkRunner:
         `sweep_orphans` with the young-entry guard switched off."""
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
 
-    async def resume_lost_messages(self, chat_service, *, topic_id=None) -> int:
+    async def resume_lost_messages(self, chat_service, **scope) -> int:
         """Start the turns a previous owner accepted a message for and never
         began. Returns how many turns it started.
 
@@ -1258,7 +1252,7 @@ class AgentWorkRunner:
         """
         from app.domain.agent.pending_messages import resume_messages
 
-        return await resume_messages(self, chat_service, topic_id=topic_id)
+        return await resume_messages(self, chat_service, **scope)
 
     async def sweep_orphans(
         self,
@@ -1334,7 +1328,7 @@ class AgentWorkRunner:
         A turn the platform does not re-run is a turn someone has to pick up by
         hand, and they can only do that if the topic says so — silence is the
         failure mode, not the loud recovery."""
-        open_turns = await _open_turns(chat_service.session_factory)
+        open_turns = await turn_inputs.open_turns(chat_service.session_factory)
         if not open_turns:
             return 0
         if min_age_s is None:
@@ -1365,7 +1359,7 @@ class AgentWorkRunner:
         # — a turn that opened while the activity probe awaited is still open,
         # and a running turn no sweep can see is how the next death goes silent
         # again, which is the whole bug.
-        await _close_turns(chat_service.session_factory, orphans)
+        await turn_inputs.close_dead_turns(chat_service.session_factory, orphans)
         for turn_id in orphans:
             # A turn with a coroutine gets its marks dropped by that coroutine's
             # own `finally`; one without (a self-started turn, or anything left
@@ -1523,11 +1517,6 @@ class AgentWorkRunner:
                     )
                 )
             )
-        # Delivery owns retries and receipt uncertainty. A generic resend would
-        # lose its recipient and attempt identity, and could duplicate a send.
-        entries = [
-            record for record in entries if record.turn_id not in delivery_attempts
-        ]
         delivered = {record.turn_id for record in entries if record.delivered}
         probe_ok = False
         try:
@@ -1537,9 +1526,13 @@ class AgentWorkRunner:
             probe_ok = True
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
             logger.exception("orphan block probe failed for %s", topic_id)
-        attach = bool(delivered) or not probe_ok
-        if probe_ok:  # what reached nobody leaves no live turn behind
+        if probe_ok:  # what reached nobody, a delivery too, leaves no live turn
             chat_service.retire_unheard({r.turn_id for r in entries} - delivered)
+        # Delivery owns retries and receipt uncertainty. A generic resend would
+        # lose its recipient and attempt identity, and could duplicate a send.
+        entries = [r for r in entries if r.turn_id not in delivery_attempts]
+        delivered -= delivery_attempts
+        attach = bool(delivered) or not probe_ok
 
         # Each re-send and the agent it goes back to (None: the room decides).
         resends: dict[str | None, TurnRecord] = {}
@@ -2175,12 +2168,6 @@ class AgentWorkRunner:
                 await self._broker.publish(
                     channel, {"type": "turn_finished", "turn_id": str(turn_id)}
                 )
-                # 会话没接手收尾的那种轮次，结束就在这里：和会话自报结束那一处
-                # （`ChatService._set_hook_activity`）一样看一眼文档。「是不是工作
-                # 房间」问的是同一个答案，那边由 `chat_service` 上带（`doc_nudge`
-                # 经它取，不 import `chat.py`）。这里一句都不能多：下一行就是把这
-                # 一轮的存活标记摘掉，中间抛出去，这轮就永远是「在跑」。
-                doc_nudge.nudge(topic_id, chat_service)
             # Drop the liveness mark here, not in `_execute`: a turn killed by
             # task cancellation (CancelledError is a BaseException — it misses
             # every `except` inside `_execute`, including the registry cleanup)
@@ -2290,7 +2277,7 @@ class AgentWorkRunner:
         await _open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             continuation_id=continuation_id,
             author=author,
             content=content,

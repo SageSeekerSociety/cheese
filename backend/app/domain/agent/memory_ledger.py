@@ -52,6 +52,7 @@ from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import of_room, room_column
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
 from app.domain.living_doc.services import Documents
 from app.domain.memory import dream
@@ -221,7 +222,9 @@ class MemoryLedger:
                 # 一次对账大部分时候答的是这个。什么都没变就什么都不说：这条事
                 # 件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
                 return
-            await _say_memory_change(session, project_id, change, scopes)
+            await _say_memory_change(
+                session, project_id, change, scopes, writer_room=topic_id
+            )
             await session.commit()
 
     # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
@@ -558,11 +561,12 @@ async def _dream_rooms(
     整理要的是「这段时间发生了什么」，不是「这个项目有哪些房间」。
     """
     newest = func.max(Block.created_at).label("newest")
+    room = room_column(Block.conversation_id).label("room")
     rows = (
         await session.execute(
-            select(Block.topic_id, newest)
+            select(room, newest)
             .where(Block.project_id == project_id, Block.created_at > since)
-            .group_by(Block.topic_id)
+            .group_by(room)
             .order_by(newest.desc())
             .limit(dream.ROOMS_LIMIT)
         )
@@ -580,7 +584,7 @@ async def _dream_rooms(
             await session.scalars(
                 select(Block)
                 .where(
-                    Block.topic_id == topic_id,
+                    of_room(Block.conversation_id, topic_id),
                     Block.kind == BlockKind.message,
                     Block.created_at > since,
                 )

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: Full main commit with a successful image build
+        description: Full merged main SHA with successful Build and Required CI
         required: true
       interrupt:
         description: Acknowledge that replacing the gateway interrupts active model streams
@@ -38,7 +38,7 @@ jobs:
         run: |
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-          test "$(gh run list --workflow build.yml --commit "$RELEASE_SHA" --status success --json conclusion --jq 'length')" -gt 0
+          python3 deploy/check-auto-deploy.py --require-ci "$RELEASE_SHA"
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io

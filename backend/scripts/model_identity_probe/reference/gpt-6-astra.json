@@ -1,0 +1,118 @@
+{
+  "format_version": 1,
+  "protocol": "one-token/v1",
+  "model": "gpt-6-astra",
+  "source": "gateway:gpt-6-astra",
+  "collected_at": "2026-10-05T10:07:53Z",
+  "samples_per_cell": 25,
+  "cells": {
+    "coin-flip:en": {
+      "counts": {
+        "heads": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-animal:en": {
+      "counts": {
+        "otter": 22,
+        "pangolin": 3
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-color:en": {
+      "counts": {
+        "teal": 15,
+        "turquoise": 4,
+        "cerulean": 6
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-color:zh": {
+      "counts": {
+        "蓝": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-letter:en": {
+      "counts": {
+        "q": 18,
+        "r": 2,
+        "k": 5
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-100:en": {
+      "counts": {
+        "47": 15,
+        "17": 6,
+        "42": 1,
+        "40": 2,
+        "73": 1
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-100:zh": {
+      "counts": {
+        "47": 17,
+        "37": 6,
+        "42": 2
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-10:en": {
+      "counts": {
+        "7": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    }
+  },
+  "tokenizer": {
+    "base_input_tokens": 18,
+    "deltas": {
+      "latin": 9,
+      "chinese": 13,
+      "japanese": 15,
+      "korean": 14,
+      "russian": 10,
+      "emoji": 17,
+      "code": 18,
+      "unicode-mix": 15,
+      "digits": 14,
+      "whitespace": 6,
+      "long-latin": 37
+    }
+  },
+  "notes": "protocol=one-token/v1 preset=standard temperature=omitted max_tokens=16 reasoning=anthropic-thinking"
+}

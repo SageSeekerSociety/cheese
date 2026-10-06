@@ -69,7 +69,7 @@ def test_a_task_override_replaces_the_whole_shell_key() -> None:
     assert got.name == "workbench"
     # And it is the WHOLE declaration that came across, not a merge of the two.
     assert got.terms == CATALOG["workbench"].terms
-    assert got.hidden == CATALOG["workbench"].hidden
+    assert got.nav == CATALOG["workbench"].nav
 
 
 def test_a_projects_own_setting_outranks_the_protocol() -> None:
@@ -140,17 +140,13 @@ def test_default_is_todays_interface_verbatim() -> None:
     """
     default = CATALOG[DEFAULT_SHELL_NAME]
     assert default.home == "workspace-running"
-    # 侧栏那一面：资料库和名册是常驻那两格，例行和技能默认收进项目名旁边那个 ⋯ 菜单。
-    # 看板不在里面 —— 它就是 home，项目名那一行点下去就到。名册回到侧栏是
-    # 「退出项目」的可发现性：那颗按钮长在名册页上，名册收进 ⋯ 之后没人找得到
-    # 怎么退出。un-hiding 就是壳的「开」，仍在四条拨盘之内。
+    # 资料库摆在项目名下那一行（和 home 看板一起），其余按这个顺序进项目名菜单。
     assert default.nav.project == (
         "project-library",
-        "project-routines",
         "project-members",
+        "project-routines",
         "project-skills",
     )
-    assert default.hidden == ("project-routines", "project-skills")
     assert default.terms == {}
     assert default.nav.rail == ("home", "projects", "add")
     assert default.nav.tabs == ("home", "workspace", "inbox")
@@ -172,7 +168,6 @@ def test_every_shell_names_only_known_keys() -> None:
         assert set(shell.nav.rail) <= known_rail, name
         assert set(shell.nav.tabs) <= known_tabs, name
         assert set(shell.nav.project) <= known_project, name
-        assert set(shell.hidden) <= known_project, name
         # A 壳 that renamed a noun to nothing would render an empty label.
         assert all(shell.terms.values()), name
 
@@ -223,7 +218,7 @@ def test_the_frontends_fallback_is_the_backend_default() -> None:
     )
     default = CATALOG[DEFAULT_SHELL_NAME]
     # 形状先对齐：多一个键少一个键都是分叉，哪怕值是对的。
-    assert set(raw) == {"name", "home", "nav", "hidden", "terms"}
+    assert set(raw) == {"name", "home", "nav", "terms"}
     assert set(raw["nav"]) == {"rail", "tabs", "project"}
     assert raw == {
         "name": default.name,
@@ -233,7 +228,6 @@ def test_the_frontends_fallback_is_the_backend_default() -> None:
             "tabs": list(default.nav.tabs),
             "project": list(default.nav.project),
         },
-        "hidden": list(default.hidden),
         "terms": dict(default.terms),
     }
     # default 不换任何词。

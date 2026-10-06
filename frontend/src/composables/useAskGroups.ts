@@ -215,7 +215,7 @@ export function useAskGroups(options: {
       known.reduce(
         (latest, candidate) =>
           candidate.id === block.id &&
-          candidate.topic_id === block.topic_id &&
+          candidate.conversation_id === block.conversation_id &&
           (answerVersion(candidate) > answerVersion(latest) ||
             (answerVersion(candidate) === answerVersion(latest) &&
               revisions &&

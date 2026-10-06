@@ -11,17 +11,17 @@
     "online": "Online",
     "offline": "Offline",
     "listSeparator": ", ",
-    "screenRunning": "Running · {'@'}{handle}",
+    "screenRunning": "Running · {'@'}{name}",
     "team": {
       "removeDeviceConfirm": "Remove \"{name}\" from this team?",
-      "subtitle": "The team's self-hosted devices. A project sets the default work computer for new AI teammates; each AI teammate's can be changed in the room.",
+      "subtitle": "The team's self-hosted devices. A project sets the default work computer for new AI teammates; each AI teammate's can be changed in the channel.",
       "selfHostedSubtitle": "Register machines your members have connected. Working trees and data stay on the machine.",
       "allDevicesAdded": "All your devices are already in this team",
       "selfHostedEmptyHint": "Once connected, every project in the team can use it.",
       "remove": "Remove from team"
     },
     "own": {
-      "subtitle": "Self-hosted devices for the projects under your name. A project sets the default work computer for new AI teammates; each AI teammate's can be changed in the room.",
+      "subtitle": "Self-hosted devices for the projects under your name. A project sets the default work computer for new AI teammates; each AI teammate's can be changed in the channel.",
       "selfHostedSubtitle": "Machines added here can be used by every project under your name. Working trees and data stay on the machine.",
       "allDevicesAdded": "All your devices are already added",
       "selfHostedEmptyHint": "Once connected, every project under your name can use it.",
@@ -108,7 +108,7 @@
     "noProjectInvitations": "No project invitations",
     "noProjectInvitationsHint": "You have no project invitations",
     "unnamedProject": "A project",
-    "projectInvitedBy": "Invited by {inviter} · Accept to see every topic in this project",
+    "projectInvitedBy": "Invited by {inviter} · Accept to see every channel in this project",
     "joinedProject": "Joined the project",
     "answerFailed": "Couldn't send your answer. Try again later.",
     "loadRequestsFailed": "Couldn't load your requests",
@@ -162,12 +162,12 @@
   },
   "projects": {
     "loadFailed": "Couldn't load projects",
-    "subtitle": "This team's AI workspace. Open topics with Cheese in each project; results and work computers belong to the team.",
+    "subtitle": "This team's AI workspace. Open channels with Cheese in each project; results and work computers belong to the team.",
     "newProject": "New project",
     "emptyTitle": "No projects yet",
     "emptyHint": "Use New project to start one and get working with Cheese.",
     "createdAt": "Created {date}",
-    "ownSubtitle": "Projects under your name. Work with Cheese in each project's topics, and invite people to a project when you need to."
+    "ownSubtitle": "Projects under your name. Work with Cheese in each project's channels, and invite people to a project when you need to."
   },
   "knowledge": {
     "searchLabel": "Search the knowledge base",

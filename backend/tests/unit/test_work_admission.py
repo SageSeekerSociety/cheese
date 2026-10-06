@@ -22,6 +22,20 @@ from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic
 
 
+class _NothingStored:
+    """A database that holds none of the stand-in's messages: they were never
+    written, so asking where one is answered finds nothing."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, *args, **kwargs):
+        return None
+
+
 class FakeChat(WorkChat):
     """Controllable stand-in for ChatService: converse turns block until
     released, so tests can observe concurrency and queue order."""
@@ -30,7 +44,7 @@ class FakeChat(WorkChat):
         self.policy = policy
         # Where the runner opens each turn's interval — a real ChatService
         # carries the database, so a stand-in that runs turns carries it too.
-        self.session_factory = session_factory
+        self.session_factory = session_factory or _NothingStored
         self.system_events: list[str] = []
         self.system_event_meta: list[dict | None] = []
         self.running = 0

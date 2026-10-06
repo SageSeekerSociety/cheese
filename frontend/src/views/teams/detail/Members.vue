@@ -41,7 +41,7 @@
                   />
                   <div class="min-w-0">
                     <div class="t-body">{{ found.name || found.handle }}</div>
-                    <div class="t-meta c-muted">@{{ found.handle }}</div>
+                    <div class="t-meta c-muted">{{ found.handle }}</div>
                   </div>
                 </div>
                 <v-select

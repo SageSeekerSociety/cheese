@@ -64,7 +64,7 @@ async def finish_deferred_message(
     async with client.test_request_factory() as session:
         waiting = await session.scalar(
             select(NativeInput).where(
-                NativeInput.topic_id == topic,
+                NativeInput.conversation_id == topic,
                 NativeInput.execution_work_id == held_work,
             )
         )
@@ -147,11 +147,15 @@ async def finish_deferred_message(
             while not queued.is_set():
                 await asyncio.sleep(0.01)
         try:
+            from app.domain.conversation.services import room_of
             from tests.integration.conftest import session_auth_headers
 
+            # The roster is the channel's: a 支线's session runs in its room.
+            async with client.test_request_factory() as session:
+                room = await room_of(session, topic)
             removed = await asyncio.to_thread(
                 client.delete,
-                f"/topics/{topic}/members/{recipient_handle}?actor=alice",
+                f"/topics/{room}/members/{recipient_handle}?actor=alice",
                 headers=session_auth_headers("alice"),
             )
             assert removed.status_code == 200, removed.text
@@ -164,7 +168,7 @@ async def finish_deferred_message(
         async with client.test_request_factory() as session:
             rows = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert len(rows) == 2 and all(row.completed_at for row in rows)
@@ -198,7 +202,7 @@ async def finish_deferred_message(
             async with client.test_request_factory() as session:
                 row = await session.scalar(
                     select(NativeInput).where(
-                        NativeInput.topic_id == topic,
+                        NativeInput.conversation_id == topic,
                         NativeInput.work_id == ordinary_id,
                     )
                 )
@@ -210,7 +214,7 @@ async def finish_deferred_message(
         rows = list(
             await session.scalars(
                 select(NativeInput).where(
-                    NativeInput.topic_id == topic,
+                    NativeInput.conversation_id == topic,
                 )
             )
         )
@@ -231,7 +235,7 @@ async def finish_deferred_message(
         turns = list(
             await session.scalars(
                 select(AgentTurn).where(
-                    AgentTurn.topic_id == topic,
+                    AgentTurn.conversation_id == topic,
                 )
             )
         )

@@ -26,7 +26,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Protocol
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.announce import announce
 from app.domain.agent.event_lines import (
@@ -39,6 +40,7 @@ from app.domain.agent.event_lines import (
     _subagent_result_meta,
     _tool_event_meta,
 )
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.queries import _agent_handle, _block_payload
 from app.domain.agent.service import (
     AgentToolResult,
@@ -49,6 +51,8 @@ from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.delivery.models import Delivery
+from app.domain.identity.handles import recipient_seat
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,23 @@ class _TurnActor(Protocol):
     acting_agent: str
 
 
+async def _turn_seat(session: AsyncSession, turn_id: uuid.UUID) -> str | None:
+    """Whose turn ``turn_id`` is: the seat the turn recorded, or, for a turn
+    that has no row yet (still queued), the seat its delivery addresses — the
+    delivery's attempt is that turn."""
+    turn = await session.get(AgentTurn, turn_id)
+    if turn is not None and turn.agent_handle:
+        return turn.agent_handle
+    delivery = await session.scalar(
+        select(Delivery).where(Delivery.attempt_id == turn_id)
+    )
+    if delivery is None:
+        return None
+    return recipient_seat(
+        {"instance_id": delivery.agent_instance_id, "handle": delivery.recipient_handle}
+    )
+
+
 async def post_system_event(
     sessions: async_sessionmaker,
     topic_id: uuid.UUID,
@@ -78,7 +99,7 @@ async def post_system_event(
     turn_id: uuid.UUID | None = None,
     *,
     meta: dict | None = None,
-    task_id: uuid.UUID | None = None,
+    inner_id: uuid.UUID | None = None,
 ) -> dict | None:
     """Persist a system event into the room (e.g. a turn failure): visible in
     the conversation, scrolls with it, and survives a reload — unlike a
@@ -89,15 +110,21 @@ async def post_system_event(
     Room-only: every caller here reports something about the room itself
     (a turn that failed, an environment that was rebuilt), which nobody was
     named for. A notice that knows whom it points at passes `points_at`
-    to `announce` directly (`points_at=Event(...)`)."""
+    to `announce` directly (`points_at=Event(...)`).
+
+    The line stays the platform's: a machine's error under a teammate's name
+    reads as that teammate's judgement. It records in ``meta.seat`` whose turn
+    it is about (`_turn_seat`), and the room shows it beside that teammate. A
+    room may seat several, so nothing else can say which one it was."""
     async with sessions() as session:
+        seat = await _turn_seat(session, turn_id) if turn_id is not None else None
         block = await announce(
             session,
             place_id=topic_id,
             content=content,
-            meta=meta,
+            meta={**(meta or {}), "seat": seat} if seat else meta,
             turn_id=turn_id,
-            task_id=task_id,
+            task_id=inner_id,
         )
         if block is None:
             return None
@@ -119,7 +146,7 @@ async def _persist_room_event(
     platform_unsolicited: bool = False,
     in_room: bool = False,
     author_type: AuthorType = AuthorType.participant,
-    task_id: uuid.UUID | None = None,
+    inner_id: uuid.UUID | None = None,
     author: str | None = None,
     at: datetime | None = None,
 ) -> dict | None:
@@ -150,25 +177,24 @@ async def _persist_room_event(
     # 时的回落：几位队友同坐一间房时，拿默认那位署名会把现场整轮记到别人头上。
     # A turn is kept under its conversation: the task's when there is one.
     state = (
-        hook_work.get((task_id or topic_id, turn_id)) if turn_id is not None else None
+        hook_work.get((inner_id or topic_id, turn_id)) if turn_id is not None else None
     )
     async with sessions() as session:
         blocks = BlockRepository(session)
-        if eid and await blocks.has_eid(topic_id, eid):
+        if eid and await blocks.has_eid(inner_id or topic_id, eid):
             return None
-        # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+        # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
         # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
         # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
         landed = landing(
-            EventAbout.task if task_id is not None else EventAbout.room,
+            EventAbout.task if inner_id is not None else EventAbout.room,
             project_id=project_id,
             room_id=topic_id,
-            task_id=task_id,
+            task_id=inner_id,
         )
         block = await blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=(
                 author
                 or (state.acting_agent if state is not None else None)
@@ -198,7 +224,7 @@ async def _persist_tool_event(
     turn_id: uuid.UUID | None,
     eid: str | None = None,
     platform_unsolicited: bool = False,
-    task_id: uuid.UUID | None = None,
+    inner_id: uuid.UUID | None = None,
     author: str | None = None,
     at: datetime | None = None,
 ) -> dict | None:
@@ -226,7 +252,7 @@ async def _persist_tool_event(
         turn_id=turn_id,
         eid=eid,
         platform_unsolicited=platform_unsolicited,
-        task_id=task_id,
+        inner_id=inner_id,
         author=author,
         at=at,
     )
@@ -242,7 +268,7 @@ async def _persist_subagent_result(
     turn_id: uuid.UUID | None,
     eid: str | None = None,
     platform_unsolicited: bool = False,
-    task_id: uuid.UUID | None = None,
+    inner_id: uuid.UUID | None = None,
 ) -> dict | None:
     """Land a returning subagent's conclusion in the room timeline."""
     return await _persist_room_event(
@@ -255,7 +281,7 @@ async def _persist_subagent_result(
         turn_id=turn_id,
         eid=eid or event.eid,
         platform_unsolicited=platform_unsolicited,
-        task_id=task_id,
+        inner_id=inner_id,
         author=event.agent_handle,
     )
 

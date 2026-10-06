@@ -1,0 +1,1429 @@
+"""The model-identity probe's pure halves: normalisation, distance, verdict.
+
+No network, no database: everything here is the arithmetic and the folding
+rules that a live comparison depends on. The parts that talk to a model are
+exercised by running the CLI, not by a unit test.
+"""
+
+from __future__ import annotations
+
+import json
+import random
+
+import pytest
+
+from scripts.model_identity_probe import battery
+from scripts.model_identity_probe import reference as reference_mod
+from scripts.model_identity_probe.binding import (
+    SeatCheck,
+    check_seat,
+    credential_claims,
+    credential_seat,
+    declared_from_card,
+    declared_from_operator,
+    declared_from_seat_config,
+    session_seat,
+)
+from scripts.model_identity_probe.normalize import (
+    normalize_answer,
+    parse_any_number,
+    parse_chinese_numeral,
+    parse_english_number_word,
+)
+from scripts.model_identity_probe.report import build_provenance
+from scripts.model_identity_probe.stats import (
+    JSD_MATCH_THRESHOLD,
+    JSD_MISMATCH_THRESHOLD,
+    CellSamples,
+    compare_cells,
+    jensen_shannon_divergence,
+    mean_jsd,
+    shannon_entropy_bits,
+    split_half_jsd,
+    split_half_mean,
+)
+from scripts.model_identity_probe.tokenizer_fp import (
+    BASE as TOKENIZER_BASE,
+)
+from scripts.model_identity_probe.tokenizer_fp import (
+    PROBES as TOKENIZER_PROBES,
+)
+from scripts.model_identity_probe.tokenizer_fp import TokenizerSample
+from scripts.model_identity_probe.tokenizer_fp import compare as compare_tokens
+from scripts.model_identity_probe.tokenizer_fp import (
+    measure as measure_tokens,
+)
+from scripts.model_identity_probe.transport import (
+    REASONING_DISABLE_BODIES,
+    Completion,
+    Endpoint,
+    _absorb_openai,
+    detect_adapter,
+    evidence_headers,
+    pool_from_headers,
+)
+from scripts.model_identity_probe.verdict import (
+    INSUFFICIENT,
+    MATCH,
+    MISMATCH,
+    UNCERTAIN,
+    AdmissionReading,
+    BehaviourEvidence,
+    ProvenanceEvidence,
+    TokenizerEvidence,
+    combine,
+    decide_jsd_verdict,
+)
+
+INT_1_100 = battery.PROBE_TASKS["random-number-1-100"].domain
+COIN = battery.PROBE_TASKS["coin-flip"].domain
+COLOR = battery.PROBE_TASKS["random-color"].domain
+
+
+# --- normalisation -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("7", 7),
+        ("47", 47),
+        ("seventy", 70),
+        ("fortyseven", 47),
+        ("onehundred", 100),
+        ("四十二", 42),
+        ("十五", 15),
+        ("十", 10),
+        ("两", 2),
+    ],
+)
+def test_numbers_parse_through_every_spelling(raw: str, expected: int) -> None:
+    assert parse_any_number(raw) == expected
+
+
+def test_non_numerals_do_not_parse() -> None:
+    assert parse_any_number("blue") is None
+    assert parse_chinese_numeral("蓝") is None
+    assert parse_english_number_word("blue") is None
+
+
+def test_a_hyphenated_number_word_folds_once_punctuation_is_stripped() -> None:
+    # The normaliser strips the hyphen; parse_* alone sees only the joined word.
+    assert normalize_answer("forty-seven", INT_1_100).normalized == "47"
+
+
+@pytest.mark.parametrize("raw", ["４２", "٤٢", "۴۲"])
+def test_fullwidth_and_indic_digits_fold_to_latin(raw: str) -> None:
+    assert normalize_answer(raw, INT_1_100).normalized == "42"
+
+
+def test_punctuation_quotes_and_case_are_stripped() -> None:
+    assert normalize_answer('"Seventy."', INT_1_100).normalized == "70"
+    assert normalize_answer("BLUE!", COLOR).normalized == "blue"
+
+
+def test_out_of_domain_number_is_invalid_not_silently_clamped() -> None:
+    answer = normalize_answer("500", INT_1_100)
+    assert answer.category == "invalid"
+    assert answer.normalized == "500"
+
+
+def test_refusals_are_recognised_in_both_languages() -> None:
+    assert normalize_answer("I cannot help with that.", INT_1_100).category == "refusal"
+    assert normalize_answer("我不能回答这个问题", INT_1_100).category == "refusal"
+
+
+def test_empty_and_emoji_only_answers_are_empty() -> None:
+    assert normalize_answer("", INT_1_100).category == "empty"
+    assert normalize_answer("   ", INT_1_100).category == "empty"
+    assert normalize_answer("🎈", INT_1_100).category == "empty"
+
+
+def test_colour_and_coin_aliases_fold() -> None:
+    assert normalize_answer("grey", COLOR).normalized == "gray"
+    assert normalize_answer("蓝色", COLOR).normalized == "蓝"
+    assert normalize_answer("正", COIN).normalized == "heads"
+    assert normalize_answer("heads", COIN).normalized == "heads"
+    assert normalize_answer("tails", COIN).normalized == "tails"
+
+
+def test_letter_names_fold_and_letter_domain_validates() -> None:
+    letter = battery.PROBE_TASKS["random-letter"].domain
+    assert normalize_answer("queue", letter).normalized == "q"
+    assert normalize_answer("k", letter).category == "valid"
+    assert normalize_answer("xyz", letter).category == "invalid"
+
+
+# --- distance ----------------------------------------------------------------
+
+
+def test_jsd_of_a_distribution_with_itself_is_zero() -> None:
+    counts = {"47": 5, "42": 3, "seven": 2}
+    assert jensen_shannon_divergence(counts, counts) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_jsd_of_disjoint_supports_is_one_bit() -> None:
+    assert jensen_shannon_divergence({"a": 4}, {"b": 4}) == pytest.approx(1.0)
+
+
+def test_jsd_is_symmetric_and_bounded() -> None:
+    left = {"a": 7, "b": 1}
+    right = {"a": 2, "c": 5}
+    forward = jensen_shannon_divergence(left, right)
+    assert forward == pytest.approx(jensen_shannon_divergence(right, left))
+    assert 0.0 <= forward <= 1.0
+
+
+def test_jsd_ignores_an_empty_side() -> None:
+    assert jensen_shannon_divergence({}, {"a": 3}) == 0.0
+
+
+def test_entropy_of_a_single_outcome_is_zero() -> None:
+    assert shannon_entropy_bits({"x": 9}) == 0.0
+    assert shannon_entropy_bits({"x": 4, "y": 4}) == pytest.approx(1.0)
+
+
+def test_compare_cells_skips_cells_either_side_lacks_samples_for() -> None:
+    reference = {"c1": _cell({"a": 12}), "c2": _cell({"b": 3})}
+    target = {"c1": _cell({"a": 12}), "c2": _cell({"b": 12})}
+    entries = compare_cells(reference, target)
+    assert [entry.cell_id for entry in entries] == ["c1"]
+    assert entries[0].valid_a == 12
+    assert entries[0].valid_b == 12
+    assert mean_jsd(entries) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_compare_cells_only_sees_cells_the_reference_covers() -> None:
+    entries = compare_cells({"c1": _cell({"a": 12})}, {"c9": _cell({"a": 12})})
+    assert entries == []
+
+
+def test_compare_cells_sorts_by_descending_jsd() -> None:
+    # Upstream compareCellSets sorts; the worst cell must come first so the
+    # report leads with the evidence that moved the verdict.
+    reference = {"c1": _cell({"a": 12}), "c2": _cell({"a": 6, "b": 6})}
+    target = {"c1": _cell({"a": 12}), "c2": _cell({"b": 12})}
+    entries = compare_cells(reference, target)
+    assert [entry.cell_id for entry in entries] == ["c2", "c1"]
+    assert entries[0].jsd >= entries[1].jsd
+
+
+def test_split_half_catches_an_alternating_endpoint() -> None:
+    # Two backends behind one name answer a, b, a, b, ...; splitting by arrival
+    # parity puts every ``a`` in one half and every ``b`` in the other, so JSD
+    # is 1.0. The old port shuffled the bag of counts before halving, which
+    # reported ~0.03 for exactly this endpoint where the upstream reports 1.0.
+    assert split_half_jsd(["a", "b"] * 10) == pytest.approx(1.0)
+    # An endpoint that is genuinely one distribution answers the same mixture in
+    # a randomised order -- the two halves agree up to sampling noise and JSD
+    # stays well inside the match band, unlike the alternating case's 1.0.
+    stable = ["a", "b"] * 10
+    random.Random(3).shuffle(stable)
+    assert split_half_jsd(stable) < JSD_MATCH_THRESHOLD
+
+
+def test_split_half_needs_samples_in_both_halves() -> None:
+    assert split_half_jsd(["a", "b", "a"]) is None
+    assert split_half_jsd([]) is None
+
+
+def test_split_half_mean_averages_over_cells_not_the_max() -> None:
+    cells = {
+        "c1": _ordered(["a", "b"] * 6),  # alternating: JSD 1.0
+        "c2": _ordered(["a"] * 12),  # stable: JSD 0.0
+    }
+    assert split_half_mean(cells) == pytest.approx(0.5)
+
+
+# --- verdict -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("mean", "cells", "expected"),
+    [
+        (0.10, 8, MATCH),
+        (JSD_MATCH_THRESHOLD, 8, MATCH),
+        (0.30, 8, UNCERTAIN),
+        (JSD_MISMATCH_THRESHOLD, 8, UNCERTAIN),
+        (0.44, 8, MISMATCH),
+        (0.05, 2, INSUFFICIENT),  # too few comparable cells
+        (None, 8, INSUFFICIENT),
+    ],
+)
+def test_decide_jsd_verdict_bands(mean, cells, expected) -> None:
+    assert decide_jsd_verdict(mean, cells) == expected
+
+
+def test_a_wire_name_that_is_not_the_claim_is_a_mismatch_on_its_own() -> None:
+    provenance = _provenance(MISMATCH)
+    behaviour = _behaviour(MATCH, 8)
+    verdict, reason = combine(provenance, behaviour, None)
+    assert verdict == MISMATCH
+    assert "different model than the one claimed" in reason
+
+
+def test_behaviour_disagreeing_with_the_reference_is_a_mismatch() -> None:
+    verdict, _ = combine(_provenance(MATCH), _behaviour(MISMATCH, 8), None)
+    assert verdict == MISMATCH
+
+
+def test_matching_behaviour_with_a_foreign_tokenizer_is_only_uncertain() -> None:
+    verdict, reason = combine(
+        _provenance(MATCH), _behaviour(MATCH, 8), TokenizerEvidence(MISMATCH)
+    )
+    assert verdict == UNCERTAIN
+    assert "tokenizer" in reason
+
+
+def test_matching_behaviour_and_tokenizer_is_a_match() -> None:
+    verdict, _ = combine(
+        _provenance(MATCH), _behaviour(MATCH, 8), TokenizerEvidence(MATCH)
+    )
+    assert verdict == MATCH
+
+
+def test_no_reference_but_a_clean_wire_is_a_match() -> None:
+    # A subscription seat has no behavioural reference, but the deterministic
+    # wire facts (upstream model echo, pool) still decide: agreement is a match.
+    verdict, reason = combine(_provenance(MATCH), None, None)
+    assert verdict == MATCH
+    assert "no behavioural reference" in reason
+
+
+def test_no_signal_at_all_is_insufficient() -> None:
+    verdict, _ = combine(None, None, None)
+    assert verdict == INSUFFICIENT
+
+
+def test_no_reference_and_a_wrong_pool_is_a_mismatch() -> None:
+    verdict, reason = combine(
+        _provenance(MATCH), None, None, expected_pool="subscription"
+    )
+    assert verdict == MISMATCH
+    assert "pool" in reason
+
+
+def test_a_wrong_pool_outweighs_matching_behaviour() -> None:
+    verdict, _ = combine(
+        _provenance(MATCH),
+        _behaviour(MATCH, 8),
+        TokenizerEvidence(MATCH),
+        expected_pool="subscription",
+    )
+    assert verdict == MISMATCH
+
+
+def test_unstable_routing_downgrades_a_behavioural_match() -> None:
+    behaviour = _behaviour(MATCH, 8)
+    behaviour.unstable_routing = True
+    behaviour.split_half_mean = 0.9
+    verdict, reason = combine(_provenance(MATCH), behaviour, TokenizerEvidence(MATCH))
+    assert verdict == UNCERTAIN
+    assert "split-half" in reason
+
+
+def test_unstable_routing_without_a_statistic_does_not_raise() -> None:
+    # R3-5: an evidence built by hand can set the flag without the statistic.
+    # The threshold is on the statistic, so a missing one must not format into a
+    # TypeError -- remove the guard and this raises.
+    behaviour = _behaviour(MATCH, 8)
+    behaviour.unstable_routing = True
+    behaviour.split_half_mean = None
+    verdict, reason = combine(_provenance(MATCH), behaviour, TokenizerEvidence(MATCH))
+    assert verdict == UNCERTAIN
+    assert "split-half" in reason
+
+
+def test_a_credential_signed_for_another_seat_is_a_mismatch() -> None:
+    # Fix #1: the credential's own seat claim vs the session's own seat. The
+    # wire and pool here agree completely; only the seat disagreement decides.
+    seat = SeatCheck(False, "default-seat", "cheese-opus", "signed for another seat")
+    verdict, reason = combine(_provenance(MATCH), None, None, seat=seat)
+    assert verdict == MISMATCH
+    assert "seat" in reason
+
+
+def test_an_admission_that_resolves_another_model_is_a_mismatch() -> None:
+    # Fix #2 / R3-4: admission is the call the metering proxy rewrites the body
+    # from, so its answer disagreeing with the independent declaration is the
+    # FB-73 disease -- a mismatch, not the expectation.
+    admission = AdmissionReading(model="deepseek-flash", pool="gateway")
+    verdict, reason = combine(
+        _provenance(MATCH, pool="subscription"),
+        None,
+        None,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=admission,
+    )
+    assert verdict == MISMATCH
+    assert "admission" in reason
+
+
+def test_an_admission_that_resolves_another_pool_is_a_mismatch() -> None:
+    admission = AdmissionReading(model="claude-opus-5-5", pool="gateway")
+    verdict, reason = combine(
+        _provenance(MATCH, pool="subscription", claimed_model="claude-opus-5-5"),
+        None,
+        None,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=admission,
+    )
+    assert verdict == MISMATCH
+    assert "pool" in reason
+
+
+def test_an_admission_alias_of_the_expected_model_is_not_a_mismatch() -> None:
+    # A dated snapshot of the expected model is the same model, not a conflict.
+    admission = AdmissionReading(model="claude-opus-5-5-20250915")
+    verdict, _ = combine(
+        _provenance(MATCH),
+        None,
+        None,
+        expected_model="claude-opus-5-5",
+        admission=admission,
+    )
+    assert verdict == MATCH
+
+
+def test_expected_model_equal_to_admission_does_not_fire() -> None:
+    admission = AdmissionReading(model="claude-opus-5-5", pool="subscription")
+    verdict, _ = combine(
+        _provenance(MATCH, pool="subscription", claimed_model="claude-opus-5-5"),
+        None,
+        None,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=admission,
+    )
+    assert verdict == MATCH
+
+
+def test_uncertainty_band_is_reported_as_uncertain() -> None:
+    verdict, _ = combine(
+        _provenance(MATCH), _behaviour(UNCERTAIN, 8), TokenizerEvidence(MATCH)
+    )
+    assert verdict == UNCERTAIN
+
+
+# --- provenance --------------------------------------------------------------
+
+
+def test_the_gateway_and_anthropic_shells_are_told_apart() -> None:
+    assert pool_from_headers({"x-litellm-call-id": "abc"}) == "gateway"
+    assert (
+        pool_from_headers({"anthropic-ratelimit-requests-limit": "50"})
+        == "subscription"
+    )
+    assert pool_from_headers({"request-id": "req_1"}) == "subscription"
+    assert pool_from_headers({"content-type": "application/json"}) is None
+
+
+def test_only_evidence_headers_survive_the_filter() -> None:
+    kept = evidence_headers(
+        {
+            "x-litellm-model-name": "openai/gpt-6-astra",
+            "anthropic-ratelimit-tokens-remaining": "9",
+            "cf-ray": "abc123",
+            "content-type": "application/json",
+            "set-cookie": "secret",
+        }
+    )
+    assert set(kept) == {
+        "x-litellm-model-name",
+        "anthropic-ratelimit-tokens-remaining",
+        "cf-ray",
+    }
+
+
+# --- tokenizer ---------------------------------------------------------------
+
+
+def test_tokenizer_deltas_that_disagree_are_a_mismatch() -> None:
+    reference = reference_mod.TokenizerReference(
+        base_input_tokens=10, deltas={"latin": 9}
+    )
+    agreed = compare_tokens(TokenizerSample(base=10, deltas={"latin": 9}), reference)
+    differed = compare_tokens(TokenizerSample(base=10, deltas={"latin": 11}), reference)
+    assert agreed.verdict == MATCH
+    assert differed.verdict == MISMATCH
+
+
+def test_a_probe_measured_below_base_is_dropped_not_recorded() -> None:
+    # BASE is a prefix of BASE+probe, so input_tokens can only grow. A server
+    # that reports a smaller count for the longer prompt (a stream that dropped
+    # its usage block) must not be written into the fingerprint as a negative.
+    def usage_for(prompt: str) -> int:
+        if prompt == TOKENIZER_BASE:
+            return 18
+        if prompt == TOKENIZER_BASE + TOKENIZER_PROBES["latin"]:
+            return 27
+        if prompt == TOKENIZER_BASE + TOKENIZER_PROBES["digits"]:
+            return 0
+        return 18
+
+    class _Stub:
+        def complete(self, system: str, prompt: str, **kwargs: object) -> Completion:
+            return Completion(
+                "ok", "stub", {"input_tokens": usage_for(prompt)}, {}, 0.0
+            )
+
+    sample = measure_tokens(_Stub())  # type: ignore[arg-type]
+    assert sample.deltas["latin"] == 9
+    assert "digits" not in sample.deltas
+    assert "digits" in sample.errors
+
+
+def test_tokenizer_without_a_reference_is_insufficient() -> None:
+    assert (
+        compare_tokens(TokenizerSample(base=10, deltas={"latin": 9}), None).verdict
+        == INSUFFICIENT
+    )
+
+
+# --- protocol constants ------------------------------------------------------
+
+
+def test_protocol_constants_match_the_reference_implementation() -> None:
+    from scripts.model_identity_probe.stats import (
+        DEFAULT_MAX_RETRIES,
+        DEFAULT_SAMPLES_PER_CELL,
+        DEFAULT_TIMEOUT_S,
+        PROBE_MAX_TOKENS,
+        PROBE_TEMPERATURE,
+    )
+
+    assert PROBE_TEMPERATURE == 1.0
+    assert PROBE_MAX_TOKENS == 16
+    assert DEFAULT_SAMPLES_PER_CELL == 25
+    assert DEFAULT_MAX_RETRIES == 2
+    assert DEFAULT_TIMEOUT_S == 30.0
+
+
+def test_every_preset_samples_25_per_cell() -> None:
+    assert all(spc == 25 for _, spc in battery.PROBE_PRESETS.values())
+
+
+def test_the_probe_sends_temperature_and_a_16_token_budget(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_stream(self, client, body):  # noqa: ANN001
+        seen.update(body)
+        return Completion("42", "m", {}, {}, 0.0)
+
+    monkeypatch.setattr(Endpoint, "_stream", fake_stream)
+    Endpoint.gateway("m").complete("sys", "hi")
+    assert seen["temperature"] == 1.0
+    assert seen["max_tokens"] == 16
+    assert seen["stream"] is True
+    assert seen["model"] == "m"
+
+
+def test_the_reasoning_disable_field_reaches_the_body(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_stream(self, client, body):  # noqa: ANN001
+        seen.update(body)
+        return Completion("1", "m", {}, {}, 0.0)
+
+    monkeypatch.setattr(Endpoint, "_stream", fake_stream)
+    Endpoint.gateway("m").complete(
+        "sys", "hi", extra_body={"thinking": {"type": "disabled"}}
+    )
+    assert seen["thinking"] == {"type": "disabled"}
+
+
+def test_the_openai_reasoning_field_is_offered_first() -> None:
+    assert REASONING_DISABLE_BODIES["openai-chat"][0] == (
+        "openai-effort",
+        {"reasoning_effort": "none"},
+    )
+    assert REASONING_DISABLE_BODIES["anthropic-messages"][0] == (
+        "anthropic-thinking",
+        {"thinking": {"type": "disabled"}},
+    )
+
+
+def test_complete_omits_temperature_when_asked(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_stream(self, client, body):  # noqa: ANN001
+        seen.update(body)
+        return Completion("1", "m", {}, {}, 0.0)
+
+    monkeypatch.setattr(Endpoint, "_stream", fake_stream)
+    Endpoint.gateway("m").complete("sys", "hi", temperature=None)
+    assert "temperature" not in seen
+
+
+def test_detect_adapter_drops_temperature_when_the_upstream_rejects_it(
+    monkeypatch,
+) -> None:
+    calls: list[dict] = []
+
+    def fake_complete(self, system, prompt, **kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        if kwargs.get("temperature") == 1.0:
+            return Completion(
+                "", "m", {}, {}, 0.0, "HTTP 400: Unsupported parameter: temperature"
+            )
+        return Completion("7", "m", {}, {}, 0.0)
+
+    monkeypatch.setattr(Endpoint, "complete", fake_complete)
+    adapter = detect_adapter(Endpoint(mode="gateway", model="m"))
+    assert adapter.omit_temperature is True
+    assert adapter.temperature is None
+    assert calls[0]["temperature"] == 1.0  # the paper temperature was tried first
+    assert calls[1]["temperature"] is None  # and dropped only after the rejection
+
+
+def test_detect_adapter_picks_the_first_field_that_works(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_complete(self, system, prompt, **kwargs):  # noqa: ANN001
+        body = kwargs.get("extra_body") or {}
+        calls.append(body)
+        if body.get("reasoning_effort") == "none":
+            return Completion("7", "m", {}, {}, 0.0)
+        return Completion("", "m", {}, {}, 0.0, "HTTP 400")
+
+    monkeypatch.setattr(Endpoint, "complete", fake_complete)
+    endpoint = Endpoint(mode="gateway", model="m", protocol="openai-chat")
+    adapter = detect_adapter(endpoint)
+    assert adapter.strategy == "openai-effort"
+    assert adapter.extra_body == {"reasoning_effort": "none"}
+    assert {"reasoning_effort": "none"} in calls
+
+
+# --- transport shell ---------------------------------------------------------
+
+
+def test_openai_stream_chunks_are_parsed() -> None:
+    text, model, usage = _absorb_openai(
+        {"model": "gpt-6-astra", "choices": [{"delta": {"content": "4"}}]},
+        [],
+        None,
+        {},
+    )
+    text, model, usage = _absorb_openai(
+        {"choices": [{"delta": {"content": "2"}}], "usage": {"prompt_tokens": 5}},
+        text,
+        model,
+        usage,
+    )
+    assert "".join(text) == "42"
+    assert model == "gpt-6-astra"
+    assert usage["prompt_tokens"] == 5
+
+
+def test_seat_mode_reads_the_connect_token_from_the_environment(monkeypatch) -> None:
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.setenv("CHEESE_CONNECT_TOKEN", "tok-not-printed")
+    endpoint = Endpoint.seat("m", connect_host="host:8444")
+    assert "cheese:tok-not-printed@host:8444" in endpoint.proxy_url
+    assert endpoint.credential_source == "CHEESE_CONNECT_TOKEN"
+    assert endpoint.connect_host == "host:8444"
+
+
+def test_seat_mode_without_a_credential_names_the_missing_piece(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("CHEESE_CONNECT_TOKEN", raising=False)
+    monkeypatch.setenv("CHEESE_CONNECT_TOKEN_FILE", str(tmp_path / "absent.token"))
+    endpoint = Endpoint.seat("m", connect_host="host:8444")
+    assert endpoint.credential_source == "none"
+    assert endpoint.proxy_url == "http://host:8444"
+
+
+# --- provenance (wire facts, not self-report) --------------------------------
+
+
+def _completion(echo: str | None = None, headers: dict | None = None) -> Completion:
+    return Completion("", echo, {}, headers or {}, 0.0)
+
+
+def test_a_dated_snapshot_of_the_claim_is_a_match() -> None:
+    provenance = build_provenance(
+        "claude-opus-5-5",
+        _completion(
+            "claude-opus-5-5-20250915",
+            {"x-litellm-model-name": "anthropic/claude-opus-5-5-20250915"},
+        ),
+    )
+    assert provenance.verdict == MATCH
+
+
+def test_a_provider_prefix_is_folded() -> None:
+    provenance = build_provenance(
+        "gpt-6-astra",
+        _completion(
+            "openai/gpt-6-astra",
+            {"x-litellm-model-name": "openai/gpt-6-astra"},
+        ),
+    )
+    assert provenance.verdict == MATCH
+
+
+def test_an_alias_a_human_must_settle_is_uncertain() -> None:
+    provenance = build_provenance(
+        "claude-opus-5-5",
+        _completion(
+            "claude-opus-5-5-preview",
+            {"x-litellm-model-name": "anthropic/claude-opus-5-5-preview"},
+        ),
+    )
+    assert provenance.verdict == UNCERTAIN
+
+
+def test_a_genuinely_different_model_on_the_wire_is_a_mismatch() -> None:
+    provenance = build_provenance(
+        "claude-opus-5-5",
+        _completion(
+            "deepseek-flash", {"x-litellm-model-name": "deepseek/deepseek-flash"}
+        ),
+    )
+    assert provenance.verdict == MISMATCH
+
+
+def test_a_body_echo_that_disagrees_is_a_mismatch_not_a_hedge() -> None:
+    provenance = build_provenance("claude-opus-5-5", _completion("deepseek-flash"))
+    assert provenance.verdict == MISMATCH
+
+
+def test_a_matching_header_cannot_paper_over_a_disagreeing_body() -> None:
+    # R3-3: the header named the claim, the body echoed another model. Before
+    # the fix the header branch short-circuited to MATCH and the contradiction
+    # was never looked at -- remove the fix and this goes red.
+    provenance = build_provenance(
+        "claude-opus-5-5",
+        _completion(
+            "deepseek-flash",
+            {"x-litellm-model-name": "anthropic/claude-opus-5-5"},
+        ),
+    )
+    assert provenance.verdict == MISMATCH
+    assert provenance.echo_matches_claim is False
+
+
+def test_the_header_and_echo_branches_fold_names_the_same_way() -> None:
+    # R3-3: an echo carrying the provider prefix and a dated snapshot folds onto
+    # the claim, and echo_matches_claim must say so -- the header branch used to
+    # compare strictly while the echo branch normalised, so the two disagreed.
+    provenance = build_provenance(
+        "claude-opus-5-5", _completion("anthropic/claude-opus-5-5-20250915")
+    )
+    assert provenance.echo_matches_claim is True
+    assert provenance.verdict == MATCH
+
+
+# --- seat mode: the no-reference verdict -------------------------------------
+
+
+def test_verify_without_a_reference_still_reports_a_verdict(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+    from scripts.model_identity_probe import transport as transport_mod
+
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "42",
+            "claude-opus-5-5",
+            {"input_tokens": 5},
+            {"anthropic-ratelimit-requests-limit": "50"},
+            0.0,
+        ),
+    )
+    endpoint = transport_mod.Endpoint(mode="seat", model="claude-opus-5-5")
+    verification = report_mod.verify(
+        endpoint,
+        "claude-opus-5-5",
+        None,
+        sample_tokenizer=False,
+        expected_pool="subscription",
+    )
+    assert verification.provenance is not None
+    assert verification.provenance.pool == "subscription"
+    assert verification.behaviour is None
+    assert verification.verdict == MATCH
+
+
+def test_verify_without_a_reference_flags_a_pool_mismatch(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+    from scripts.model_identity_probe import transport as transport_mod
+
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "42",
+            "claude-opus-5-5",
+            {"input_tokens": 5},
+            {
+                "x-litellm-call-id": "abc",
+                "x-litellm-model-name": "anthropic/claude-opus-5-5",
+            },
+            0.0,
+        ),
+    )
+    endpoint = transport_mod.Endpoint(mode="seat", model="claude-opus-5-5")
+    verification = report_mod.verify(
+        endpoint,
+        "claude-opus-5-5",
+        None,
+        sample_tokenizer=False,
+        expected_pool="subscription",
+    )
+    assert verification.verdict == MISMATCH
+    assert "pool" in verification.reason
+
+
+# --- FB-73, end to end -------------------------------------------------------
+#
+# The whole failure in one fake response: the session is the Opus seat, but its
+# credential was signed for the project-default seat, so admission resolves the
+# request to deepseek-flash/gateway and the metering proxy writes that into the
+# body; the wire echoes deepseek-flash. The card (the seat's own config) still
+# says claude-opus-5-5/subscription. Each of the two independent fixes -- the
+# seat check and the independent expected binding -- catches it alone, which is
+# what keeps the probe honest when the other source is unavailable.
+
+
+def _fb73_endpoint(monkeypatch):
+    from scripts.model_identity_probe import transport as transport_mod
+
+    # The wire: both the body echo and the upstream header name deepseek-flash.
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "42",
+            "deepseek-flash",
+            {"input_tokens": 5},
+            {
+                "x-litellm-call-id": "abc",
+                "x-litellm-model-name": "deepseek/deepseek-flash",
+            },
+            0.0,
+        ),
+    )
+    return transport_mod.Endpoint(mode="seat", model="claude-opus-5-5")
+
+
+FB73_ADMISSION = AdmissionReading(model="deepseek-flash", pool="gateway")
+FB73_SEAT = SeatCheck(
+    False,
+    "default-seat",
+    "cheese-eeb5ebc073fc",
+    "the credential was signed for another seat ('default-seat'); this "
+    "session is 'cheese-eeb5ebc073fc'",
+)
+
+
+def test_fb73_end_to_end_is_a_mismatch(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "claude-opus-5-5",
+        None,
+        sample_tokenizer=False,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=FB73_ADMISSION,
+        seat=FB73_SEAT,
+    )
+    assert verification.verdict == MISMATCH
+    assert verification.seat is FB73_SEAT
+
+
+def test_fb73_is_still_caught_with_the_seat_check_removed(monkeypatch) -> None:
+    # Remove fix #1 (the credential-seat check): the independent expected binding
+    # alone still catches it, because admission resolved another model/pool.
+    from scripts.model_identity_probe import report as report_mod
+
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "claude-opus-5-5",
+        None,
+        sample_tokenizer=False,
+        expected_model="claude-opus-5-5",
+        expected_pool="subscription",
+        admission=FB73_ADMISSION,
+        seat=None,
+    )
+    assert verification.verdict == MISMATCH
+
+
+def test_fb73_is_still_caught_with_the_independent_binding_removed(
+    monkeypatch,
+) -> None:
+    # Remove fix #2 (the independent expected binding): the expectation collapses
+    # back onto admission (the circular old behaviour -- wire and admission both
+    # say deepseek-flash), and the seat check alone still catches it.
+    from scripts.model_identity_probe import report as report_mod
+
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "deepseek-flash",
+        None,
+        sample_tokenizer=False,
+        expected_model=None,
+        expected_pool=None,
+        admission=FB73_ADMISSION,
+        seat=FB73_SEAT,
+    )
+    assert verification.verdict == MISMATCH
+
+
+# --- tokenizer: cached input tokens ------------------------------------------
+
+
+def test_tokenizer_counts_cached_input_tokens_not_just_input_tokens() -> None:
+    class _Stub:
+        def complete(self, system: str, prompt: str, **kwargs: object) -> Completion:
+            usage = (
+                {"input_tokens": 5, "cache_read_input_tokens": 10}
+                if prompt == TOKENIZER_BASE
+                else {"input_tokens": 5, "cache_read_input_tokens": 12}
+            )
+            return Completion("ok", "stub", usage, {}, 0.0)
+
+    sample = measure_tokens(_Stub(), probes={"latin": "x"})  # type: ignore[arg-type]
+    assert sample.base == 15
+    assert sample.deltas["latin"] == 2
+
+
+def test_tokenizer_reports_a_base_count_that_disagrees() -> None:
+    reference = reference_mod.TokenizerReference(base_input_tokens=10, deltas={})
+    evidence = compare_tokens(TokenizerSample(base=12, deltas={}), reference)
+    assert evidence.verdict == MISMATCH
+
+
+# --- battery and reference store --------------------------------------------
+
+
+def test_preset_cells_are_a_prefix_of_the_priority_order() -> None:
+    assert battery.cells_for_preset("quick") == battery.CELL_PRIORITY_ORDER[:4]
+    assert len(battery.cells_for_preset("strict")) == 16
+
+
+def test_every_cell_id_in_the_order_is_real() -> None:
+    assert all(battery.is_cell_id(cell) for cell in battery.CELL_PRIORITY_ORDER)
+    assert not battery.is_cell_id("random-number-1-100:fr")
+    assert not battery.is_cell_id("nonsense:en")
+
+
+def test_paraphrases_come_from_that_cell_only() -> None:
+    rng = random.Random(7)
+    task, lang = battery.parse_cell_id("random-color:zh")
+    pool = set(battery.PROBE_TASKS[task].paraphrases[lang])
+    assert {battery.pick_paraphrase("random-color:zh", rng) for _ in range(50)} <= pool
+
+
+def test_a_reference_survives_a_round_trip(tmp_path) -> None:
+    reference = reference_mod.new_reference(
+        "demo-model", "gateway:demo", samples_per_cell=4
+    )
+    reference.cells = {"random-color:en": _cell({"blue": 4, "red": 1})}
+    reference.tokenizer = reference_mod.TokenizerReference(
+        base_input_tokens=8, deltas={"latin": 7}
+    )
+    path = reference_mod.save(reference, tmp_path)
+    loaded = reference_mod.load("demo-model", tmp_path)
+    assert loaded is not None
+    assert loaded.cells["random-color:en"].counts["blue"] == 4
+    assert loaded.tokenizer is not None and loaded.tokenizer.deltas == {"latin": 7}
+    assert path.name == "demo-model.json"
+
+
+def test_an_absent_reference_loads_as_none(tmp_path) -> None:
+    assert reference_mod.load("nobody", tmp_path) is None
+
+
+def test_model_ids_that_are_not_filenames_are_slugged(tmp_path) -> None:
+    assert (
+        reference_mod.path_for("gpt-6.1-sol/x", tmp_path).name == "gpt-6.1-sol_x.json"
+    )
+
+
+# --- credential seat / declared binding --------------------------------------
+
+
+def _scoped(payload: dict, sig: str = "sig", prefix: str = "") -> str:
+    import base64
+    import json
+
+    body = (
+        base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode())
+        .decode()
+        .rstrip("=")
+    )
+    return f"{prefix}{body}.{sig}"
+
+
+def test_credential_seat_reads_the_claim_and_never_the_signature() -> None:
+    import json
+
+    token = _scoped(
+        {"p": "proj", "t": "topic", "a": "cheese-opus"},
+        sig="secret-signature",
+        prefix="cxss_",
+    )
+    assert credential_seat(token) == "cheese-opus"
+    claims = credential_claims(token)
+    assert claims is not None and claims["a"] == "cheese-opus"
+    # The signature segment is never decoded into the claims.
+    assert "secret-signature" not in json.dumps(claims)
+
+
+def test_a_credential_that_names_no_seat_is_not_a_mismatch() -> None:
+    check = check_seat(_scoped({"p": "proj"}), seat="cheese-opus", env={})
+    assert check.ok is True
+
+
+def test_a_credential_signed_for_another_seat_is_flagged() -> None:
+    check = check_seat(_scoped({"a": "default-seat"}), seat="cheese-opus", env={})
+    assert check.ok is False
+    assert check.credential_seat == "default-seat"
+    assert "another seat" in check.reason
+
+
+def test_the_session_seat_comes_from_cheese_author() -> None:
+    token = _scoped({"a": "cheese-opus"})
+    assert session_seat({"CHEESE_AUTHOR": "cheese-opus"}) == "cheese-opus"
+    assert session_seat({}) is None
+    check = check_seat(token, env={"CHEESE_AUTHOR": "cheese-opus"})
+    assert check.ok is True
+
+
+def test_a_launch_seat_that_disagrees_with_the_addressed_seat_is_a_mismatch() -> None:
+    # --seat does not paper over the environment: the launch naming another
+    # seat than the one the turn was addressed to is the FB-73 relaunch itself.
+    check = check_seat(
+        _scoped({"a": "cheese-opus"}),
+        seat="cheese-opus",
+        env={"CHEESE_AUTHOR": "someone-else"},
+    )
+    assert check.ok is False
+    assert check.independent is True
+
+
+# --- FB-73 as it really happened ---------------------------------------------
+#
+# The relaunch picked the seat from the roster, so EVERYTHING the session can
+# read on its own names the default seat: CHEESE_AUTHOR, CHEESE_TOKEN's claim
+# and the CONNECT credential's claim. Admission then answers deepseek-flash and
+# the wire faithfully serves it. Every launch-side signal agrees with itself.
+
+FB73_LAUNCH_ENV = {"CHEESE_AUTHOR": "default-seat"}
+
+
+def test_fb73_launch_side_agreement_is_never_a_match(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+
+    seat = check_seat(
+        _scoped({"a": "default-seat"}),
+        env=FB73_LAUNCH_ENV,
+        connect_token=_scoped({"a": "default-seat"}),
+    )
+    assert seat.ok is True and seat.independent is False
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "deepseek-flash",
+        None,
+        sample_tokenizer=False,
+        admission=FB73_ADMISSION,
+        seat=seat,
+    )
+    assert verification.verdict == UNCERTAIN
+    assert "--seat" in verification.reason
+
+
+def test_fb73_with_the_addressed_seat_is_a_mismatch(monkeypatch) -> None:
+    from scripts.model_identity_probe import report as report_mod
+
+    seat = check_seat(
+        _scoped({"a": "default-seat"}),
+        seat="cheese-eeb5ebc073fc",
+        env=FB73_LAUNCH_ENV,
+        connect_token=_scoped({"a": "default-seat"}),
+    )
+    assert seat.ok is False
+    verification = report_mod.verify(
+        _fb73_endpoint(monkeypatch),
+        "deepseek-flash",
+        None,
+        sample_tokenizer=False,
+        admission=FB73_ADMISSION,
+        seat=seat,
+    )
+    assert verification.verdict == MISMATCH
+
+
+def test_the_connect_credential_disagreeing_with_cheese_token_is_a_mismatch() -> None:
+    # The API credential is right, the model traffic's credential is not: the
+    # seat check must read the one admission resolves the model from.
+    check = check_seat(
+        _scoped({"a": "cheese-opus"}),
+        seat="cheese-opus",
+        env={"CHEESE_AUTHOR": "cheese-opus"},
+        connect_token=_scoped({"a": "default-seat"}),
+    )
+    assert check.ok is False
+    assert check.connect_seat == "default-seat"
+
+
+def test_the_connect_credential_is_found_where_a_real_turn_keeps_it(tmp_path) -> None:
+    from scripts.model_identity_probe.binding import connect_credential
+
+    assert connect_credential({"HTTPS_PROXY": "http://cheese:tok-1@10.0.0.1:8444"}) == (
+        "tok-1"
+    )
+    assert connect_credential({"CHEESE_CONNECT_TOKEN": "tok-2"}) == "tok-2"
+    token_file = tmp_path / "cheese-tunnel.token"
+    token_file.write_text("tok-3\n", encoding="utf-8")
+    assert connect_credential({"CHEESE_CONNECT_TOKEN_FILE": str(token_file)}) == "tok-3"
+    assert (
+        connect_credential({"CHEESE_CONNECT_TOKEN_FILE": str(tmp_path / "none")})
+        is None
+    )
+
+
+def test_a_match_without_an_independent_seat_is_capped_at_uncertain() -> None:
+    seat = SeatCheck(True, "s", "s", "launch only")
+    verdict, _ = combine(_provenance(MATCH), None, None, seat=seat)
+    assert verdict == UNCERTAIN
+    independent = SeatCheck(True, "s", "s", "addressed", independent=True)
+    verdict, _ = combine(_provenance(MATCH), None, None, seat=independent)
+    assert verdict == MATCH
+
+
+def test_a_no_reference_match_does_not_claim_the_pool_was_compared() -> None:
+    _, reason = combine(_provenance(MATCH), None, None)
+    assert "pool was not compared" in reason
+    _, reason = combine(_provenance(MATCH), None, None, expected_pool="gateway")
+    assert "pool matches" in reason
+
+
+def test_an_unreadable_admission_is_not_fatal(monkeypatch) -> None:
+    import argparse
+
+    import httpx
+
+    from scripts import probe_model_identity as cli
+
+    class _Refusing:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> None:
+            return None
+
+        def post(self, *args, **kwargs):
+            return httpx.Response(403, text="nope")
+
+    monkeypatch.setenv("CHEESE_TOKEN", _scoped({"a": "s"}))
+    monkeypatch.setenv("CHEESE_API", "http://backend.invalid")
+    monkeypatch.setattr(cli.httpx, "Client", _Refusing)
+    reading = cli.read_binding(argparse.Namespace(child_model=""))
+    assert reading == {"error": "admission refused: HTTP 403"}
+
+
+def test_a_malformed_proxy_url_does_not_leak_the_credential() -> None:
+    endpoint = Endpoint(mode="proxy", model="m", proxy_url="cheese:S3CRET@127.0.0.1:1")
+    result = endpoint.complete("s", "p")
+    assert result.error is not None
+    assert "S3CRET" not in result.error
+
+
+def test_the_operator_declaration_is_the_highest_trust_source() -> None:
+    declared = declared_from_operator("claude-opus-5-5", "subscription")
+    assert declared.model == "claude-opus-5-5"
+    assert declared.pool == "subscription"
+    assert declared.source == "operator"
+    assert declared_from_operator("", "").source == "none"
+
+
+def test_seat_config_reads_the_model_the_session_launched_with() -> None:
+    declared = declared_from_seat_config(
+        {"state": {"init": {"model": "claude-opus-5-5"}}}
+    )
+    assert declared.model == "claude-opus-5-5"
+    assert declared.source == "seat-config"
+    assert declared_from_seat_config({"state": {}}).source == "none"
+    assert declared_from_seat_config({}).source == "none"
+
+
+def test_a_merged_declaration_fills_gaps_without_overwriting() -> None:
+    seat = declared_from_seat_config({"state": {"init": {"model": "claude-opus-5-5"}}})
+    # A pool-only operator declaration keeps the seat's model and adds the pool.
+    merged = declared_from_operator("", "subscription").merged(seat)
+    assert merged.model == "claude-opus-5-5"
+    assert merged.pool == "subscription"
+    # A model from the operator is not overwritten by the seat's.
+    merged2 = declared_from_operator("m1", "").merged(seat)
+    assert merged2.model == "m1"
+
+
+def test_a_card_with_a_model_and_route_declares_the_binding() -> None:
+    declared = declared_from_card(
+        [{"meta": {"model": "claude-opus-5-5", "route": "subscription"}}]
+    )
+    assert declared.model == "claude-opus-5-5"
+    assert declared.pool == "subscription"
+    assert declared.source == "card"
+
+
+def test_a_card_without_a_model_declares_nothing() -> None:
+    assert declared_from_card([{"meta": {"tool": "Bash"}}]).source == "none"
+    assert declared_from_card([]).source == "none"
+
+
+# --- CLI plumbing ------------------------------------------------------------
+
+
+def test_the_backend_reads_cheese_api_and_ignores_cheese_backend(monkeypatch) -> None:
+    from scripts import probe_model_identity as cli
+
+    monkeypatch.setenv("CHEESE_BACKEND", "http://box-local:8081")
+    monkeypatch.setenv("CHEESE_API", "https://okcheese.com/api")
+    assert cli._backend() == "https://okcheese.com/api"
+    monkeypatch.delenv("CHEESE_API", raising=False)
+    # Without CHEESE_API the default is the platform's own address, never the
+    # local CHEESE_BACKEND the platform does not set.
+    assert cli._backend() == "http://172.17.0.1:8081"
+
+
+def test_verify_takes_the_model_from_the_operator_declaration(
+    monkeypatch, capsys
+) -> None:
+    from scripts import probe_model_identity as cli
+    from scripts.model_identity_probe import transport as transport_mod
+
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "42",
+            "claude-opus-5-5",
+            {"input_tokens": 5},
+            {"anthropic-ratelimit-requests-limit": "50"},
+            0.0,
+        ),
+    )
+    monkeypatch.delenv("CHEESE_TOKEN", raising=False)
+    monkeypatch.setenv(
+        "CHEESE_TOKEN", "cxss_" + _scoped({"a": "seat-1"}).split(".")[0] + ".sig"
+    )
+    monkeypatch.setenv("CHEESE_AUTHOR", "seat-1")
+    # No topic: the seat-config/card lookups return empty without any request.
+    monkeypatch.delenv("CHEESE_TOPIC", raising=False)
+    args = cli.build_parser().parse_args(
+        ["verify", "--mode", "gateway", "--expected-model", "claude-opus-5-5"]
+    )
+    args.models = ["claude-opus-5-5"]
+    # gateway mode does not read admission; the declaration drives the run.
+    # Uncertain (no --seat, no wire) exits 3, not 0.
+    assert cli.cmd_verify(args) == 3
+    out = capsys.readouterr().out
+    assert '"source": "operator"' in out
+
+
+def test_a_probe_that_could_not_be_made_surfaces_the_transport_error(
+    monkeypatch, capsys
+) -> None:
+    # Without HTTPS_PROXY/token a seat's CONNECT is refused, so no wire evidence
+    # exists. That must read as "the probe failed", not as a bare inconclusive
+    # sample a reader could mistake for a real uncertain result.
+    from scripts import probe_model_identity as cli
+    from scripts.model_identity_probe import transport as transport_mod
+
+    monkeypatch.setattr(
+        transport_mod.Endpoint,
+        "complete",
+        lambda self, system, prompt, **kwargs: Completion(
+            "",
+            None,
+            {},
+            {},
+            0.0,
+            error="ProxyError: 407 ",
+        ),
+    )
+    monkeypatch.setenv(
+        "CHEESE_TOKEN", "cxss_" + _scoped({"a": "seat-1"}).split(".")[0] + ".sig"
+    )
+    monkeypatch.setenv("CHEESE_AUTHOR", "seat-1")
+    monkeypatch.delenv("CHEESE_TOPIC", raising=False)
+    args = cli.build_parser().parse_args(
+        ["verify", "--mode", "gateway", "--expected-model", "claude-opus-5-5"]
+    )
+    args.models = ["claude-opus-5-5"]
+    cli.cmd_verify(args)
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["verdict"] == "uncertain"
+    assert result["wire_error"] == "ProxyError: 407 "
+
+
+# --- transport: the openai-chat stream dispatch ------------------------------
+
+
+class _FakeStreamCtx:
+    def __init__(self, response: object) -> None:
+        self._response = response
+
+    def __enter__(self) -> object:
+        return self._response
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class _FakeClient:
+    def __init__(self, response: object) -> None:
+        self._response = response
+
+    def stream(self, method: str, url: str, **kwargs: object) -> _FakeStreamCtx:
+        return _FakeStreamCtx(self._response)
+
+
+class _FakeResponse:
+    def __init__(self, headers: dict, lines: list[str]) -> None:
+        self.status_code = 200
+        self.headers = headers
+        self._lines = lines
+
+    def read(self) -> bytes:
+        return b""
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+
+def test_the_openai_chat_stream_dispatch_parses_chunks() -> None:
+    # R3-5/S8: the openai-chat arm of `_stream` had a test for its parser but
+    # not for the dispatch that reaches it; this drives `_stream` itself.
+    endpoint = Endpoint(mode="gateway", model="m", protocol="openai-chat")
+    response = _FakeResponse(
+        {"x-litellm-model-name": "openai/gpt-6-astra"},
+        [
+            'data: {"model":"gpt-6-astra","choices":[{"delta":{"content":"4"}}]}',
+            'data: {"choices":[{"delta":{"content":"2"}}]}',
+            'data: {"usage":{"prompt_tokens":5}}',
+            "data: [DONE]",
+        ],
+    )
+    completion = endpoint._stream(_FakeClient(response), {"model": "m"})
+    assert completion.text == "42"
+    assert completion.model_echo == "gpt-6-astra"
+    assert completion.usage["prompt_tokens"] == 5
+
+
+# --- helpers -----------------------------------------------------------------
+
+
+def _cell(counts: dict[str, int]) -> CellSamples:
+    samples = CellSamples()
+    for value, count in counts.items():
+        for _ in range(count):
+            samples.add("valid", value)
+    return samples
+
+
+def _ordered(answers: list[str]) -> CellSamples:
+    """A cell that keeps the arrival order, which split-half depends on."""
+    samples = CellSamples()
+    for answer in answers:
+        samples.add("valid", answer)
+    return samples
+
+
+def _behaviour(verdict: str, cells: int) -> BehaviourEvidence:
+    return BehaviourEvidence(mean_jsd=0.2, comparable_cells=cells, verdict=verdict)
+
+
+def _provenance(
+    verdict: str, *, pool: str = "gateway", claimed_model: str = "m"
+) -> ProvenanceEvidence:
+    return ProvenanceEvidence(
+        claimed_model=claimed_model,
+        wire_model="m",
+        upstream_model_name=None,
+        pool=pool,
+        echo_matches_claim=verdict == MATCH,
+        verdict=verdict,
+    )
+
+
+def test_the_cli_seat_check_reads_the_connect_credential(monkeypatch) -> None:
+    import argparse
+
+    from scripts import probe_model_identity as cli
+
+    monkeypatch.setenv("CHEESE_TOKEN", _scoped({"a": "cheese-opus"}))
+    monkeypatch.setenv("CHEESE_AUTHOR", "cheese-opus")
+    monkeypatch.setenv("CHEESE_CONNECT_TOKEN", _scoped({"a": "default-seat"}))
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    check = cli.read_seat_check(argparse.Namespace(seat="cheese-opus"))
+    assert check.ok is False
+    assert check.connect_seat == "default-seat"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "<html>oops</html>",
+        "",
+        "[1, 2, 3]",
+        '{"data": null}',
+    ],
+)
+def test_an_admission_200_without_a_readable_body_is_not_fatal(
+    monkeypatch, response: str
+) -> None:
+    import argparse
+
+    import httpx
+
+    from scripts import probe_model_identity as cli
+
+    class _Odd:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> None:
+            return None
+
+        def post(self, *args, **kwargs):
+            return httpx.Response(200, text=response)
+
+    monkeypatch.setenv("CHEESE_TOKEN", _scoped({"a": "s"}))
+    monkeypatch.setenv("CHEESE_API", "http://backend.invalid")
+    monkeypatch.setattr(cli.httpx, "Client", _Odd)
+    reading = cli.read_binding(argparse.Namespace(child_model=""))
+    assert "error" in reading
+
+
+def test_an_uncertain_run_does_not_exit_zero() -> None:
+    from scripts.probe_model_identity import exit_code
+
+    assert exit_code(["match"]) == 0
+    assert exit_code(["uncertain"]) == 3
+    assert exit_code(["insufficient"]) == 4
+    assert exit_code(["match", "uncertain", "mismatch"]) == 2
+    assert exit_code(["match", "insufficient", "uncertain"]) == 3
+
+
+def test_a_launch_disagreement_is_not_called_a_credential_problem() -> None:
+    check = check_seat("", seat="cheese-opus", env={"CHEESE_AUTHOR": "default-seat"})
+    assert check.ok is False
+    assert "launched for another seat" in check.reason

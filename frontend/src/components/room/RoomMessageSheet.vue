@@ -22,8 +22,10 @@ import { t } from '@/i18n'
 const open = defineModel<boolean>({ default: false })
 
 const props = defineProps<{
-  /** 私聊里转出去的是一个新话题，别处是任务。 */
-  upgradeToTopic?: boolean
+  /** 私聊里的消息不能转为任务：不给「转为任务」。 */
+  noUpgrade?: boolean
+  /** 频道主线上的消息才有支线：别处不给「在支线中回复」。 */
+  threadable?: boolean
   /** 长按的那一条。面板收起时还留着，收起的那一下里内容不会先没了。 */
   block: Block | null
   isAgent: boolean
@@ -34,6 +36,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'react', block: Block, emoji: string): void
   (e: 'reply', block: Block): void
+  (e: 'thread', block: Block): void
   (e: 'upgrade', blockId: string): void
   (e: 'edit', block: Block): void
 }>()
@@ -72,6 +75,16 @@ const actions = computed<MenuAction[]>(() => {
       icon: 'mdi-reply-outline',
       onSelect: () => emit('reply', block),
     },
+    ...(props.threadable
+      ? [
+          {
+            key: 'thread',
+            label: t('work.room.message.replyInThread'),
+            icon: 'mdi-forum-outline',
+            onSelect: () => emit('thread', block),
+          },
+        ]
+      : []),
     { key: 'copy', label: t('work.room.message.copy'), icon: 'mdi-content-copy', onSelect: () => void copy(block) },
   ]
   if (hrefOf(block) !== null)
@@ -95,12 +108,13 @@ const actions = computed<MenuAction[]>(() => {
       onSelect: () => emit('edit', block),
     })
   }
-  list.push({
-    key: 'upgrade',
-    label: props.upgradeToTopic ? t('work.room.message.upgradeToTopic') : t('work.room.message.upgrade'),
-    icon: 'mdi-comment-arrow-right-outline',
-    onSelect: () => emit('upgrade', block.id),
-  })
+  if (!props.noUpgrade)
+    list.push({
+      key: 'upgrade',
+      label: t('work.room.message.upgrade'),
+      icon: 'mdi-comment-arrow-right-outline',
+      onSelect: () => emit('upgrade', block.id),
+    })
   return list
 })
 

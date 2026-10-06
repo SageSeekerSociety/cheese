@@ -78,7 +78,7 @@ URL_TTL_S = 3600
 #: A sandbox whose background command keeps it up is asked again this often.
 RECHECK = timedelta(minutes=1)
 #: An archive that failed — a file the host cannot read, a home over the
-#: archive limit, a home not on its host — is tried again after this long, not
+#: archive limit — is tried again after this long, not
 #: on every sweep; the home stays where it is meanwhile.
 ARCHIVE_RETRY = timedelta(hours=6)
 #: Stops and archives made per sweep: stopping is quick, archiving is not.
@@ -179,14 +179,21 @@ class SandboxLifecycle:
         idle_for = timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
         from app.domain.agent.models import AgentTurn
 
-        # A turn running in the room, or one that ended within the idle time,
-        # keeps every sandbox of the room awake; a home its session left is
-        # measured by its own activity alone. Decided here, not after a limit:
-        # a busy room's homes would otherwise take every place in the batch.
-        room_active = (
+        # A turn running in the conversation the home's session works in, or
+        # one that ended within the idle time, keeps that sandbox awake; a
+        # home its session left is measured by its own activity alone. Not the
+        # room's turns: every task of a channel hangs under it, and one task at
+        # work kept the sandboxes of all the others up for days. Decided here,
+        # not after a limit: busy homes would otherwise take every place in the
+        # batch.
+        session_active = (
             select(AgentTurn.id)
             .where(
-                AgentTurn.topic_id == CloudHostHome.topic_id,
+                AgentTurn.conversation_id
+                == select(AgentSession.conversation_id)
+                .where(AgentSession.id == CloudHostHome.session_id)
+                .correlate(CloudHostHome)
+                .scalar_subquery(),
                 or_(
                     AgentTurn.stopped_at.is_(None),
                     AgentTurn.stopped_at > now - idle_for,
@@ -219,7 +226,7 @@ class SandboxLifecycle:
                 or_(
                     CloudHostHome.left_at.is_not(None),
                     CloudHostHome.session_id.is_(None),
-                    ~room_active,
+                    ~session_active,
                 ),
             )
             .order_by(CloudHostHome.active_at)
@@ -260,7 +267,12 @@ class SandboxLifecycle:
                 select(
                     func.count().filter(AgentTurn.stopped_at.is_(None)),
                     func.max(AgentTurn.stopped_at),
-                ).where(AgentTurn.topic_id == home.topic_id)
+                ).where(
+                    AgentTurn.conversation_id
+                    == select(AgentSession.conversation_id)
+                    .where(AgentSession.id == home.session_id)
+                    .scalar_subquery()
+                )
             )
         ).one()
         await self._session.commit()
@@ -473,18 +485,29 @@ class SandboxLifecycle:
                 resource=resource,
                 url=url,
             )
-            stored = await bucket.stat(key)
-            if stored != (int(written["size"]), str(written["md5"])):
-                raise SandboxHomeError(
-                    f"the bucket holds {stored}, the host wrote "
-                    f"{(written['size'], written['md5'])}"
-                )
+            if not written.get("absent"):
+                stored = await bucket.stat(key)
+                if stored != (int(written["size"]), str(written["md5"])):
+                    raise SandboxHomeError(
+                        f"the bucket holds {stored}, the host wrote "
+                        f"{(written['size'], written['md5'])}"
+                    )
         except BaseException as exc:
             await self._release(home_id, failed=str(exc) or type(exc).__name__)
             await delete_archive(key)
             raise
 
         home = await self._repo.lock_home(home_id)
+        if written.get("absent"):
+            # Its directory is gone from the host, so nothing of it is kept
+            # anywhere: the home goes, as when the room's cleanup removes one,
+            # and no longer holds its host. Its session, if it comes back,
+            # is placed like a new one.
+            if home is not None and home.host_id is not None:
+                await self._repo.delete_home(home)
+            await self._session.commit()
+            logger.warning("sandbox home %s was not on its host; let go", home_id)
+            return False
         if home is None or home.host_id is None:
             # The room's cleanup took the home meanwhile.
             await self._session.commit()

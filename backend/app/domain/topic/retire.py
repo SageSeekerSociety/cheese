@@ -17,6 +17,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import list_device_storage
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import UNPUSHED_ARCHIVE, HostPool
 from app.domain.repository import service as ws
@@ -102,19 +103,20 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
     resource_ids = {str(operation.resource_id)}
     resource_ids.update(
         str(task.id)
-        for task, *_ in await TaskService(session).threads_for_room(
-            operation.topic_id, limit=0
-        )
+        for task in await TaskService(session).list_in_room(operation.topic_id)
     )
     entries = {}
     sessions = list(
         await session.scalars(
-            select(AgentSession).where(AgentSession.topic_id == operation.topic_id)
+            select(AgentSession).where(
+                of_room(AgentSession.conversation_id, operation.topic_id)
+            )
         )
     )
     # A cloud session's home in the bucket is on no machine; the archive goes
     # when the room's homes are forgotten, at the end.
     archived = await HostPool(session).archived_resources(operation.topic_id)
+    devices = sql_device_service(session)
     for conversation in sessions:
         leases = [
             *(conversation.execution_request or {}).get("retained_leases", []),
@@ -123,15 +125,28 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
         for lease in leases:
             resource_id = lease.get("resource_id")
             device_id = lease.get("device_id")
-            if not resource_id or not device_id:
-                raise RuntimeError("session work lease has incomplete ownership")
-            resource_ids.add(resource_id)
-            if resource_id in archived:
+            if resource_id:
+                resource_ids.add(resource_id)
+            # A machine whose record is gone was removed: nothing can connect
+            # as it again, so nothing of the room is left on it to stop or
+            # remove, and waiting for it to come online failed the cleanup on
+            # every sweep, forever. An offline machine that still has its
+            # record may come back, and is waited for.
+            if (
+                not device_id
+                or resource_id in archived
+                or await devices.get_device(device_id) is None
+            ):
                 continue
             if not device_hub.is_online(device_id) or device_id not in inventory:
                 raise RuntimeError(
                     "session work device is offline or its inventory failed"
                 )
+            if not resource_id:
+                # A lease written before leases named their home. The room's
+                # homes on this machine are still found below, by the room's
+                # resource ids in its inventory.
+                continue
             entries[(device_id, resource_id)] = {
                 "kind": "device",
                 "device_id": device_id,
@@ -462,7 +477,7 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             active = await session.scalar(
                 select(AgentTurn.id)
                 .where(
-                    AgentTurn.topic_id == operation.topic_id,
+                    of_room(AgentTurn.conversation_id, operation.topic_id),
                     AgentTurn.stopped_at.is_(None),
                 )
                 .limit(1)

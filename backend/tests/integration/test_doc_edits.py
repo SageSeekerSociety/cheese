@@ -53,7 +53,7 @@ def _turn_started_by(client, room: str, seat: str, author: str) -> None:
         async with client.test_factory() as session:
             await AgentTurnRepository(session).open(
                 turn_id=uuid.uuid4(),
-                topic_id=uuid.UUID(room),
+                conversation_id=uuid.UUID(room),
                 continuation_id=uuid.uuid4(),
                 author=author,
                 content="work",

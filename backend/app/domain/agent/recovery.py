@@ -81,9 +81,11 @@ class SessionRecovery:
                 )
         # One per seat, not per room: teammates in one room run side by side,
         # and a seat left out here is re-attached but never read again until
-        # somebody next addresses it.
+        # somebody next addresses it. A seat is a conversation's — the room's
+        # own line, a task's or a 支线's — and so is the work it runs.
         unique = {
-            (session.topic_id, session.agent_handle): session for session in sessions
+            (session.conversation_id, session.agent_handle): session
+            for session in sessions
         }
         rooms: dict[uuid.UUID, list[SessionRef]] = {}
         for session in unique.values():
@@ -92,16 +94,19 @@ class SessionRecovery:
             # closes nothing: the batch it answered is never stamped
             # consumed, and the next turn sends it again.
             work = self._compute.work_in_flight(
-                session.topic_id, session.agent_handle or None
+                session.conversation_id, session.agent_handle or None
             )
-            if work is not None and (session.topic_id, work) not in self._hook_work:
+            if (
+                work is not None
+                and (session.conversation_id, work) not in self._hook_work
+            ):
                 try:
                     found = self._compute.found_conversations(
-                        session.topic_id, session.agent_handle
+                        session.conversation_id, session.agent_handle
                     )
                     await self._begin_self_started_turn(
                         session.project_id,
-                        session.topic_id,
+                        session.conversation_id,
                         work,
                         opened=True,
                         agent_handle=session.agent_handle or None,
@@ -109,10 +114,10 @@ class SessionRecovery:
                     )
                 except Exception:  # noqa: BLE001 — one topic cannot block startup
                     logger.exception(
-                        "session recovery failed for topic %s", session.topic_id
+                        "session recovery failed for topic %s", session.conversation_id
                     )
                     continue
-            rooms.setdefault(session.topic_id, []).append(session)
+            rooms.setdefault(session.conversation_id, []).append(session)
         for topic_id, seats in rooms.items():
             # A device reconnecting while its room still replays: the new
             # replay starts where that one stops, not beside it.
@@ -138,7 +143,7 @@ class SessionRecovery:
                     # recover and nothing to fix; its next connection runs this.
                     logger.warning(
                         "session not recovered for topic %s: device offline",
-                        session.topic_id,
+                        session.conversation_id,
                     )
                 except DeviceCallError as exc:
                     # The machine is there and said no — its runner's socket is
@@ -148,17 +153,17 @@ class SessionRecovery:
                     # own words are what somebody reading this would act on.
                     logger.warning(
                         "session not recovered for topic %s: %s",
-                        session.topic_id,
+                        session.conversation_id,
                         exc,
                     )
                 except Exception:  # noqa: BLE001 — one topic cannot block startup
                     logger.exception(
-                        "session recovery failed for topic %s", session.topic_id
+                        "session recovery failed for topic %s", session.conversation_id
                     )
                 else:
                     from app.domain.agent.pending_messages import nudge_messages
 
-                    nudge_messages(self, session.topic_id)
+                    nudge_messages(self, session.conversation_id)
                     # Taken over, read up: now compare it with what this
                     # release would start, while nobody is waiting on it.
                     self.prewarm.nudge(session)

@@ -421,12 +421,9 @@ def http_connect(flow: http.HTTPFlow) -> None:
     caller that can prove "bill this project" gets a tunnel at all. Reverse-mode
     connections never CONNECT, so the container path is untouched.
 
-    Fails CLOSED when no secret is configured, rather than falling back to the
-    old bridge-only trust model. The listener's bind address is now a per-box
-    setting (CONNECT_BIND_HOST, so MicroCloud machines can reach it), and a
-    deployment that widens the bind without setting CHEESE_SCOPED_SECRET would
-    otherwise turn the meter into an open relay — silently, since nothing about
-    a missing env var looks like a failure. The one documented exception stays
+    Fails CLOSED when no secret is configured, rather than trusting whoever can
+    reach the bridge: a missing env var looks like nothing, and the listener
+    would relay for anything on the box. The one documented exception stays
     explicit: CHEESE_ALLOW_HEADER_ATTR=1, which already means "this box trusts
     whoever can reach it"."""
     if ALLOW_HEADER_ATTR:
@@ -474,6 +471,15 @@ def _leave_through_egress(flow: http.HTTPFlow, credential=None) -> bool:
             "`claude-login.sh egress set`",
         )
         return False
+    if EGRESS_HEALTH.unreachable(egress):
+        _refuse(
+            flow,
+            503,
+            "api_error",
+            EGRESS_OFFLINE_MESSAGE,
+            {"x-should-retry": "false"},
+        )
+        return False
     flow.server_conn.via = ("http", (egress.host, egress.port))
     flow.metadata["cheese_egress"] = egress
     # The upstream CONNECT is a flow of its own, raised when the lazy server
@@ -488,6 +494,109 @@ _REFUSED_EGRESS: dict[str, Egress] = {}
 # The Proxy-Authorization each client connection's egress wants, set when a
 # request is sent through it and read when the connection to it is opened.
 _EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
+
+# What a turn is told when the machine its credential must leave through does
+# not answer. 503 with x-should-retry: false is the one answer Claude Code
+# gives up on at once; a 502 from a connection that never opened was retried
+# ten times, each attempt waiting out a TCP connect timeout, and the room sat
+# silent for minutes. The backend recognises the phrase "subscription egress
+# is offline" and shows its own notice for it (`platform_failures`), which
+# takes only short lines: Claude Code prints this inside the JSON error body.
+EGRESS_OFFLINE_MESSAGE = (
+    "cheese: the subscription egress is offline, so no model call was made. "
+    "It works again once that machine is back online."
+)
+#: One attempt to open a connection to an egress may take this long. Over the
+#: tailnet a healthy one answers in well under a second.
+EGRESS_CONNECT_TIMEOUT_S = 4.0
+#: Attempts before an egress is called offline, and the pause between them: a
+#: blip of a few seconds must not fail a turn.
+EGRESS_ATTEMPTS = 3
+EGRESS_ATTEMPT_GAP_S = 1.0
+#: How long a verdict stands before a request asks again. An offline verdict
+#: is short so that a machine coming back is used within seconds.
+EGRESS_UP_FOR_S = 15.0
+EGRESS_DOWN_FOR_S = 5.0
+
+
+class EgressHealth:
+    """Whether each egress answers, asked before a request is sent through it.
+
+    One probe per egress at a time: the requests that arrive while it runs wait
+    for its answer instead of opening probes of their own."""
+
+    def __init__(self, *, clock=time.monotonic):
+        self._clock = clock
+        self._verdicts: dict[tuple[str, int], tuple[bool, float]] = {}
+        self._probes: dict[tuple[str, int], asyncio.Task] = {}
+
+    async def check(self, egress: Egress) -> None:
+        address = (egress.host, egress.port)
+        verdict = self._verdicts.get(address)
+        if verdict is not None and self._clock() < verdict[1]:
+            return
+        probe = self._probes.get(address)
+        if probe is None:
+            probe = asyncio.ensure_future(self._probe(address))
+            self._probes[address] = probe
+        try:
+            await asyncio.shield(probe)
+        finally:
+            if probe.done() and self._probes.get(address) is probe:
+                del self._probes[address]
+
+    async def _probe(self, address: tuple[str, int]) -> None:
+        for attempt in range(EGRESS_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(EGRESS_ATTEMPT_GAP_S)
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(*address), EGRESS_CONNECT_TIMEOUT_S
+                )
+            except (OSError, TimeoutError):
+                continue
+            writer.close()
+            self._verdicts[address] = (True, self._clock() + EGRESS_UP_FOR_S)
+            return
+        logger.warning(
+            "the Claude credential's egress %s:%s did not answer %d attempts",
+            *address,
+            EGRESS_ATTEMPTS,
+        )
+        self._verdicts[address] = (False, self._clock() + EGRESS_DOWN_FOR_S)
+
+    def unreachable(self, egress: Egress) -> bool:
+        """The last answer for this egress was that it is offline."""
+        verdict = self._verdicts.get((egress.host, egress.port))
+        return verdict is not None and not verdict[0]
+
+    def forget(self, egress: Egress) -> None:
+        """A connection through it failed: ask again before the next request."""
+        self._verdicts.pop((egress.host, egress.port), None)
+
+
+EGRESS_HEALTH = EgressHealth()
+
+
+async def _check_egresses(flow: http.HTTPFlow, verdict, is_messages: bool) -> None:
+    """Ask, before routing, whether the egresses of the platform's Claude
+    credentials answer — only for a request that will be sent on one of them.
+    A project the gateway serves never waits on an egress it does not use."""
+    if _caller_bearer(flow) != NO_LOGIN_PLACEHOLDER:
+        return
+    if (
+        is_messages
+        and verdict is not None
+        and verdict.allow
+        and verdict.pool == GATEWAY
+    ):
+        return
+    egresses = {
+        (egress.host, egress.port): egress
+        for credential in CLAUDE_ACCOUNTS.accounts().values()
+        if (egress := credential.egress()) is not None
+    }
+    await asyncio.gather(*(EGRESS_HEALTH.check(e) for e in egresses.values()))
 
 
 def http_connect_upstream(flow: http.HTTPFlow) -> None:
@@ -871,6 +980,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         )
 
     await _refresh_credential()
+    await _check_egresses(flow, verdict, is_messages)
     _route(
         flow,
         verdict,
@@ -952,6 +1062,7 @@ async def request(flow: http.HTTPFlow) -> None:
             requested_model=requested,
         )
     await _refresh_credential()
+    await _check_egresses(flow, verdict, True)
     _route(
         flow,
         verdict,
@@ -1507,6 +1618,8 @@ def error(flow: http.HTTPFlow) -> None:
     if egress is not None:
         if "407" in str(flow.error):
             _REFUSED_EGRESS["egress"] = egress
+        else:
+            EGRESS_HEALTH.forget(egress)
         logger.warning(
             "request through the Claude credential's egress %s:%s failed: %s",
             egress.host,
