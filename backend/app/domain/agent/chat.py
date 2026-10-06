@@ -29,6 +29,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence
 from app.domain.agent.announce import announce, settle_questions_answered_by
+from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.compute import ComputePool
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
@@ -115,21 +116,10 @@ from app.domain.agent.mentions import (
     person_mentions,
     project_refs_text,
 )
-from app.domain.agent.platform_failures import (
-    MODEL_LIMIT_REACHED_CODE,
-    PROVIDER_OVERLOADED_CODE,
-    PROVIDER_UNREACHABLE_CODE,
-    RESPONSE_TRUNCATED_CODE,
-    TOOL_UNAVAILABLE_CODE,
-    classify_cli_notice,
-)
 from app.domain.agent.platform_notices import (
     EVENT_MCP_NOT_CONNECTED,
-    EVENT_TURN_FAILED,
-    SEVERITY_ERROR,
     SEVERITY_WARN,
     WHO_HUMAN,
-    WHO_PLATFORM,
     delivery_fallback_notice,
     notice,
 )
@@ -281,71 +271,6 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 #: How many conversations' rooms to remember. Well past the number of
 #: conversations one backend hears from at once; a ceiling, not a policy.
 _CONVERSATION_ROOMS_KEPT = 2048
-
-
-# CLI 自己印在对话里的那几句英文,换成平台自己的中文提示卡。
-#
-# 它们过去顶着芝士的名字发出来,读的人看到的是「芝士在说英文报错」,而实际上
-# 芝士根本没说话 —— 是它脚下的 CLI 印的。归属错了比语言错了更糟:一个平台故障
-# 被读成 AI 的回答,谁也不知道该找谁。
-#
-# 英文原话一个字都不丢,收进「服务原话」的折叠区 —— 它是唯一的一份。
-#
-# 每一条是 (那一行的键, severity, who, 说明的键)，句子在 roomNotice 词表。
-_CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
-    PROVIDER_UNREACHABLE_CODE: (
-        "cliProviderUnreachable",
-        SEVERITY_ERROR,
-        WHO_PLATFORM,
-        "cliProviderUnreachableHint",
-    ),
-    PROVIDER_OVERLOADED_CODE: (
-        "cliProviderOverloaded",
-        SEVERITY_WARN,
-        WHO_PLATFORM,
-        "cliProviderOverloadedHint",
-    ),
-    MODEL_LIMIT_REACHED_CODE: (
-        "cliModelLimitReached",
-        SEVERITY_ERROR,
-        WHO_HUMAN,
-        "cliModelLimitReachedHint",
-    ),
-    TOOL_UNAVAILABLE_CODE: (
-        "cliToolUnavailable",
-        SEVERITY_WARN,
-        WHO_PLATFORM,
-        "cliToolUnavailableHint",
-    ),
-    RESPONSE_TRUNCATED_CODE: (
-        "cliResponseTruncated",
-        SEVERITY_WARN,
-        WHO_PLATFORM,
-        "cliResponseTruncatedHint",
-    ),
-}
-
-
-#: 等一等、再来一次就可能好的那几种。额度用完、工具配置错了，重试不会有变化。
-_CLI_RETRYABLE = frozenset(
-    {PROVIDER_UNREACHABLE_CODE, PROVIDER_OVERLOADED_CODE, RESPONSE_TRUNCATED_CODE}
-)
-
-
-def _cli_notice(text: str) -> tuple[str, dict] | None:
-    """整条消息其实是 CLI 印的一句英文提示时,给出该发的中文提示卡;否则 None。"""
-    failure = classify_cli_notice(text)
-    if failure is None:
-        return None
-    line, severity, who, hint = _CLI_NOTICE_COPY[failure]
-    return say(line), notice(
-        EVENT_TURN_FAILED,
-        severity=severity,
-        who=who,
-        detail=say("hintAndServiceWords", hint=say(hint), said=text.strip()),
-        detail_label=say("labelDetails"),
-        retryable=failure in _CLI_RETRYABLE,
-    )
 
 
 def _parse_uuid(raw: str | None) -> uuid.UUID | None:
@@ -2322,7 +2247,7 @@ class ChatService(SessionRecovery, RoomTurns):
         # 当成助手输出印了出来。拦在这里而不是调用方:每一条写入路都经过这个方法,
         # 拦在门口才不会有一条漏网。
         as_progress = not publish
-        as_notice = None if publish else _cli_notice(text)
+        as_notice = None if publish else cli_notice(text)
         if as_notice is not None:
             line, notice_meta = as_notice
             return await self._persist_room_event(

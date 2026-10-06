@@ -192,7 +192,12 @@ The credential can have an egress: an HTTP proxy that every request carrying
 it, token refreshes included, leaves through. Nothing else changes route — the
 gateway, the answers given here and everything tunnelled raw keep their own.
 An egress that is down or refuses the proxy fails the request; it is never sent
-direct instead.
+direct instead. Before a request goes out through it, the proxy checks that the
+egress accepts a connection, with three short attempts so that a blip of a few
+seconds does not fail the turn. An egress that does not answer gets a 503 with
+`x-should-retry: false`, which Claude Code does not retry, and the room shows a
+notice that the subscription's egress machine is offline. That verdict lasts
+five seconds, so the machine is used again as soon as it is back.
 
 - `claude-login.sh egress set http://[user:pass@]host:port` sets it, from the
   next request.
