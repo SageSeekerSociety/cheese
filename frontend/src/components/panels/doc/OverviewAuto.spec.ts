@@ -3,37 +3,24 @@
  * 它在这之前只进 AI 队友的提示词，人翻开总览文档只看得到正文那一块。这一份钉的是
  * 界面这一头：两块都画出来、每块标着「平台自动生成」，而且每一条都点得动——去哪
  * 看是它自己的那一头，不是一段死文字。
+ *
+ * 内容从哪来不在这儿：只有根话题去取、跟着每一轮动静重读，是 `composables/usePanelDoc.ts`
+ * 的事，接线在 `components/work/PanelDocHost.overviewAuto.spec.ts` 里钉。
  */
 import type { Component } from 'vue'
-import type { OverviewAutoBlock, Topic } from '../../../cx_types'
+import type { OverviewAutoBlock } from '../../../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-const getOverviewAuto = vi.fn()
-
-vi.mock('../../../api', async () => {
-  const actual = await vi.importActual<typeof import('../../../api')>('../../../api')
-  return { ...actual, getOverviewAuto: (...a: unknown[]) => getOverviewAuto(...a) }
-})
 
 import OverviewAuto from './OverviewAuto.vue'
 
 import { setLocale } from '@/i18n'
 
 const Auto = OverviewAuto as unknown as Component
-
-const ROOT = {
-  id: 'root-1',
-  project_id: 'p1',
-  parent_id: null,
-  title: '项目总览',
-  kind: 'root',
-  status: 'active',
-} as Topic
 
 const BLOCKS: OverviewAutoBlock[] = [
   {
@@ -50,18 +37,14 @@ const BLOCKS: OverviewAutoBlock[] = [
   },
 ]
 
-function mount() {
+function mount(props: Record<string, unknown> = {}) {
   return render(Auto, {
-    props: { topic: ROOT, activityTick: 0 },
+    props: { blocks: BLOCKS, ...props },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
 
-beforeEach(() => {
-  setLocale('zh-CN')
-  getOverviewAuto.mockReset()
-  getOverviewAuto.mockResolvedValue({ root_topic_id: 'root-1', blocks: BLOCKS })
-})
+beforeEach(() => setLocale('zh-CN'))
 
 describe('总览的自动区', () => {
   it('两块都画出来，每块都标着它不由人维护', async () => {
@@ -95,22 +78,19 @@ describe('总览的自动区', () => {
     expect(emitted()['open-topic']).toEqual([['t-1']])
   })
 
-  it('两块都没有就整段不画 —— 不补一排「暂无」', async () => {
-    getOverviewAuto.mockResolvedValue({ root_topic_id: 'root-1', blocks: [] })
-    const { container } = mount()
+  it('两块都没有就整段不画 —— 不补一排「暂无」', () => {
+    const { container } = mount({ blocks: [] })
 
-    await waitFor(() => expect(getOverviewAuto).toHaveBeenCalled())
     expect(container.querySelector('.overview-auto')).toBeNull()
   })
 
-  it('拿不到就照实说，重试能把它再要一遍', async () => {
-    getOverviewAuto.mockRejectedValueOnce(new Error('boom'))
-    const { container, findByText } = mount()
+  it('拿不到就照实说，重试把重读要回来', async () => {
+    const reload = vi.fn()
+    const { container, findByText } = mount({ blocks: [], failed: true, reload })
 
     await findByText('无法加载这部分内容')
-    getOverviewAuto.mockResolvedValue({ root_topic_id: 'root-1', blocks: BLOCKS })
     await fireEvent.click(container.querySelector('.overview-auto__retry') as HTMLElement)
 
-    await findByText('现在在做什么')
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 })

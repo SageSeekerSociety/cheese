@@ -1,5 +1,9 @@
 // 现场 only watches its session: a person can look at the session's state and
 // ask it read-only questions, and there is nothing here that changes anything.
+import type { Component, PropType } from 'vue'
+import type { AgentControlState } from '../cx_types'
+
+import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -7,6 +11,7 @@ import { cleanup, fireEvent, render, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 
 import { getAgentControl, getRoomMcpServers, sendAgentControl } from '../api'
+import { useSessionInspector } from '../composables/useSessionInspector'
 
 import SessionInspector from './SessionInspector.vue'
 
@@ -35,8 +40,26 @@ afterEach(() => {
 // jsdom does not submit a form from its submit button's click; a browser does.
 const ask = (view: ReturnType<typeof render>) =>
   fireEvent.submit(view.getByRole('button', { name: '查看' }).closest('form')!)
+// 这一只只吃 props：轮询、上一帧会话状态、把那一句问出去都在
+// `useSessionInspector` 里，由渲染它的那一层调一次、整包递下来。测试站在那一层的位置上。
+const Host = defineComponent({
+  props: {
+    topicId: { type: String, required: true },
+    active: { type: Boolean, default: false },
+    // 不传 = 没有推的那条路（快的那档轮询）；传 null = 有那条路但还没有帧。
+    pushed: { type: Object as PropType<AgentControlState | null>, default: undefined },
+  },
+  setup(props) {
+    const session = useSessionInspector({
+      topicId: () => props.topicId,
+      active: () => props.active,
+      pushed: () => props.pushed,
+    })
+    return () => h(SessionInspector as unknown as Component, { session })
+  },
+})
 const mount = () =>
-  render(SessionInspector, {
+  render(Host, {
     props: { topicId: 'topic1', active: true },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
@@ -127,13 +150,13 @@ it('takes the room session state off the socket instead of asking again', async 
   // What this pins is the half that saves the requests: having been given one,
   // the panel does not go back to asking every two seconds.
   vi.useFakeTimers({ shouldAdvanceTime: true })
-  const props = { topicId: 'topic1', active: true }
-  const view = render(SessionInspector, {
-    props: { ...props, pushed: null },
+  const view = render(Host, {
+    props: { topicId: 'topic1', active: true, pushed: null },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   await view.rerender({
-    ...props,
+    topicId: 'topic1',
+    active: true,
     pushed: {
       id: 's2',
       connected: true,

@@ -29,8 +29,7 @@ vi.mock('../../api', async () => {
 })
 
 import { SITE_PAGE_SIZE } from '../../api'
-
-import PanelSite from './PanelSite.vue'
+import PanelSite from '../work/PanelSiteHost.vue'
 
 import { setLocale } from '@/i18n'
 

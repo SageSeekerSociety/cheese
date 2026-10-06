@@ -4,7 +4,11 @@
 // 图片）直接读原始字节。两个面板都要做这件事——预览看的是芝士交付的那一份，改动看
 // 的是某个任务分支上的那一份——所以取字节这件事在这里一次写完，而不是各写一遍：
 // 各写一遍的表现是同一份文档在两处显示得不一样。
+//
+// 「还是不是同一份文档」那个判断不住在这里，在 lib/documentIdentity.ts：它一次接口都
+// 不调，而几个只做这个判断的钩子不该因为要它而够得着接口层。
 import type { FileSource } from '../cx_types'
+import type { DocumentIdentity, DocumentSnapshot } from './documentIdentity'
 
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
@@ -28,30 +32,6 @@ export interface DocumentSource {
   /** 这个文件要不要取字节。Markdown 不要：它的正文已经在文件内容里了，取一份
    *  PDF 只会把一篇好端端的 .md 变成「转换失败」。 */
   enabled?: () => boolean
-}
-
-export interface DocumentIdentity {
-  topicId: string
-  path: string
-  taskId: string | null
-  source: FileSource
-  version: string | null
-}
-
-export interface DocumentSnapshot {
-  bytes: ArrayBuffer
-  identity: Readonly<DocumentIdentity>
-  sourceVersion: string | null
-}
-
-export function sameDocumentIdentity(left: DocumentIdentity, right: DocumentIdentity): boolean {
-  return (
-    left.topicId === right.topicId &&
-    left.path === right.path &&
-    left.taskId === right.taskId &&
-    left.source === right.source &&
-    left.version === right.version
-  )
 }
 
 export function useDocumentBytes(source: DocumentSource) {

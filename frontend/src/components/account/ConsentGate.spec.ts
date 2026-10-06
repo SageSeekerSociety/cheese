@@ -7,12 +7,11 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getPendingConsents, acceptDocuments, apiLogout, accountLogout, push } = vi.hoisted(() => ({
+const { getPendingConsents, acceptDocuments, apiLogout, accountLogout } = vi.hoisted(() => ({
   getPendingConsents: vi.fn(),
   acceptDocuments: vi.fn(),
   apiLogout: vi.fn(),
   accountLogout: vi.fn(),
-  push: vi.fn(),
 }))
 
 vi.mock('@/services/account', async () => {
@@ -22,10 +21,6 @@ vi.mock('@/services/account', async () => {
 })
 vi.mock('@/network/api/legal', () => ({ LegalApi: { getPendingConsents, acceptDocuments } }))
 vi.mock('@/network/api/users', () => ({ UserApi: { logout: apiLogout } }))
-vi.mock('vue-router', async () => ({
-  ...(await vi.importActual<object>('vue-router')),
-  useRouter: () => ({ push }),
-}))
 
 import ConsentGate from './ConsentGate.vue'
 
@@ -36,19 +31,25 @@ const TERMS = { document: 'terms', title: '用户协议', version: '2.0', effect
 
 const blank = defineComponent({ setup: () => () => h('div') })
 
-/** 协议那两条公开页（`router/legal.ts`）：弹窗里点协议名要真的去得了那一页。 */
+/** 协议那两条公开页（`router/legal.ts`）：弹窗里点协议名要真的去得了那一页。
+ *  登录页是不同意那条路的去处 —— 组件跳转走 `composables/useNavigation`，路由从
+ *  应用上拿，所以装的必须是真路由（它读的就是这一个）。 */
 function mount() {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/legal/terms', name: 'LegalTerms', component: blank },
       { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
+      { path: '/account/signin', name: 'SignIn', component: blank },
       { path: '/:any(.*)*', component: blank },
     ],
   })
-  return render(ConsentGate, {
-    global: { plugins: [createVuetify({ components, directives }), router] },
-  })
+  return {
+    router,
+    ...render(ConsentGate, {
+      global: { plugins: [createVuetify({ components, directives }), router] },
+    }),
+  }
 }
 
 beforeEach(() => {
@@ -120,11 +121,11 @@ describe('ConsentGate', () => {
   })
 
   it('disagreeing signs out on the server and locally, and goes to sign-in', async () => {
-    mount()
+    const { router } = mount()
     await signIn(7)
     await fireEvent.click(await screen.findByRole('button', { name: '不同意并退出登录' }))
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith({ name: 'SignIn' }))
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('SignIn'))
     expect(apiLogout).toHaveBeenCalled()
     expect(accountLogout).toHaveBeenCalled()
     expect(acceptDocuments).not.toHaveBeenCalled()

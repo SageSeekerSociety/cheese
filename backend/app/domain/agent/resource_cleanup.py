@@ -834,8 +834,14 @@ def stop_executor(home: Path, resource: str) -> None:
             raise RuntimeError("execution marker names another resource generation")
         runtime = platform_program(home, "remote-execution/runtime.py")
         state = installed / "executor"
-        helper = runpy.run_path(str(runtime))
-        if Path(helper["socket_path"](state)).exists():
+        # A home restored from its archive onto a fresh host keeps its links
+        # into the release it last ran from, which this host never staged:
+        # until the room is prepared here again, no executor of it can be
+        # running here, and there is nothing to stop.
+        if (
+            runtime.exists()
+            and Path(runpy.run_path(str(runtime))["socket_path"](state)).exists()
+        ):
             result = run_command(
                 [sys.executable, str(runtime), "stop", "--state", str(state)]
             )

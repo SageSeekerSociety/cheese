@@ -65,4 +65,36 @@ describe('DemoRoom', () => {
     // 现场还挂着（切走的那几格不卸），只是藏着。
     expect(view.container.querySelector<HTMLElement>('.panel-site')?.style.display).toBe('none')
   })
+
+  // 总览那一格从「面板自己去取数」改成「接线外壳去取数」之后，演示页有一阵子是空的：
+  // 外壳是产品里的新一层，剧本喂的还是老地方的 props。这一份钉着它真的接上了。
+  it('总览那一格也是产品自己的，剧本里的活经演示后端喂到它手上', async () => {
+    const scene: Scene = {
+      ...SCENE,
+      steps: [
+        {
+          label: '摆出总览',
+          panel: 'overview',
+          overview: { tasks: [{ id: 't1', title: '分页接口', who: 'cheese', column: 'building' }] },
+          events: [],
+        },
+      ],
+    }
+    const view = render(Room, {
+      props: { scene, frame: frameAt(scene, 0, 0) },
+      global: { plugins: [createVuetify({ components, directives }), createPinia(), demoRouter(), i18n] },
+    })
+
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-region="tabs"] [role="tab"][aria-selected="true"]')?.textContent
+      ).toContain('总览')
+    )
+    await waitFor(() => expect(view.container.querySelector('.panel-overview')).toBeTruthy())
+    // 看板默认折着，先看那一行摘要：它上面的「1 件」只可能来自演示后端答回来的那条活。
+    const head = () => view.container.querySelector<HTMLElement>('.task-progress__head')
+    await waitFor(() => expect(head()?.textContent).toContain('1 件'))
+    head()!.click()
+    await waitFor(() => expect(view.container.textContent).toContain('分页接口'))
+  })
 })

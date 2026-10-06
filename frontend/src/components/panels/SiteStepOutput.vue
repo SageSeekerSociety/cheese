@@ -2,17 +2,20 @@
 // 摊开的那一步下面：它打印了什么。默认收着——参数是这一行的主体，输出是想追问
 // 的人才看的；而且几 KB 的输出一摊开，前后的步骤就都被挤出屏幕了。第一次点开
 // 才去取，后端只留了末尾一截（见 backend/app/domain/agent/step_output.py）。
+//
+// 去取的那一下从 `load` 递进来（`usePanelSite` 那一包里的 `loadStepOutput`）：
+// 这一只也是场景（`components/panels/**` 下每个 SFC 都是），自己引接口函数就会把
+// 「现场」那一格一起拖下去。
 import { computed, ref } from 'vue'
-
-import { getStepOutput } from '../../api'
 
 import { t } from '@/i18n'
 
 const props = defineProps<{
-  topicId: string
   blockId: string
   /** 整段输出有多长（字节）；后端留下的至多是末尾 8 KiB。 */
   bytes: number
+  /** 取这一步的输出（取数那一层知道在哪间房里找）。 */
+  load: (blockId: string) => Promise<string>
 }>()
 
 const open = ref(false)
@@ -32,7 +35,7 @@ async function toggle() {
   if (!open.value || text.value !== null) return
   failed.value = false
   try {
-    text.value = (await getStepOutput(props.topicId, props.blockId)).output
+    text.value = await props.load(props.blockId)
   } catch {
     failed.value = true
   }

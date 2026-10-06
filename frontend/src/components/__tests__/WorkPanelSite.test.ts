@@ -12,7 +12,7 @@ import type { Block, Topic } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import i18n, { setLocale } from '@/i18n'
@@ -164,7 +164,9 @@ describe('现场面板', () => {
     await flush()
     await openTab(container, '现场')
 
-    expect(container.textContent).toContain('最新的一条')
+    // 正文是懒加载的阅读器画的（common/MarkdownView），首帧那一块是空的：等它真的
+    // 画出来再断言，不然读的是还没画的那一帧。
+    await waitFor(() => expect(container.textContent).toContain('最新的一条'))
     expect(scrollBox(container, '.panel-site').scrollTop).toBe(SCROLL_HEIGHT)
   })
 

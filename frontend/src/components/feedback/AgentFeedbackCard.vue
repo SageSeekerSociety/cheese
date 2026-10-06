@@ -2,7 +2,8 @@
 import type { FeedbackProposal } from '@/cx_types'
 
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
 import { kindLabel } from './feedbackLabels'
@@ -53,7 +54,7 @@ const workspace = useWorkspaceStore()
 function nameOf(handle: string): string {
   return workspace.members.find((m) => m.user_handle === handle)?.name || handle
 }
-const router = useRouter()
+const navigation = useNavigation()
 
 /** 这个话题里还活着的提案。拉不到就是空数组（提案是顺路问一句，不该让对话栏报错）。 */
 const proposals = ref<FeedbackProposal[]>([])
@@ -128,6 +129,11 @@ function dismiss(proposal: FeedbackProposal) {
   void store.dismissProposal(props.topicId, proposal.block_id)
 }
 
+/** 去看刚发出去的那条反馈。没有路由（这个组件也能在没装路由的宿主里渲染）就不动。 */
+function openSubmitted(id: string) {
+  navigation?.navigate(`/feedback/${id}`)
+}
+
 /** 提交完成 —— 表单是全局共享的那一份，所以只由**开着它的那张卡**记下来。 */
 function onSubmitted(id: string) {
   const blockId = pending.value
@@ -146,7 +152,7 @@ function onSubmitted(id: string) {
           <span class="t-title">{{ t('feedback.proposal.submitted') }}</span>
         </div>
         <div class="t-body mb-3">{{ t('feedback.proposal.progress') }}</div>
-        <BaseButton kind="secondary" size="sm" @click="router.push(`/feedback/${submitted[proposal.block_id]}`)">
+        <BaseButton kind="secondary" size="sm" @click="openSubmitted(submitted[proposal.block_id])">
           {{ t('feedback.proposal.view') }}
         </BaseButton>
       </div>

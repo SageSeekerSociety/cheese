@@ -481,9 +481,11 @@ class Consumptions:
             status = await self._host.attach(
                 consumption.ref, Access("", host=consumption.host)
             )
-            if status is None or status.runner_gone:
+            if status is None:
                 # Its runner could not be asked: not gone, only not reached
-                # from here. Another pass, here or elsewhere, tries again.
+                # from here. Another pass, here or elsewhere, tries again. A
+                # runner the machine says is gone is an answer, not this: the
+                # question ends below instead of being taken up every sweep.
                 await self._valkey().eval(  # type: ignore[misc]
                     _DROP, 1, _lease(consumption.work_id), self._me
                 )
