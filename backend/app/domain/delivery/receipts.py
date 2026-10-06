@@ -9,7 +9,7 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from sqlalchemy import or_, select, true, update
+from sqlalchemy import delete, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -542,6 +542,38 @@ async def complete_work_inputs(
             )
             row.released_block_ids = sorted(released)
     return consumed
+
+
+async def withdraw_input(session, identity: InputIdentity, effects: InputEffects):
+    """Undo a registration whose send stopped before anything left.
+
+    The input never reached the session, so it is not a terminal outcome to
+    record but a registration that should not exist: the row goes, which frees
+    the seat and the blocks it would have held, and a fenced delivery attempt
+    goes back to ``claimed`` so its attempt ends as an ordinary retry instead
+    of an outcome nobody may repeat. A row the session has already answered
+    for (accepted, echoed or settled) is evidence and stays."""
+    await session.execute(
+        delete(NativeInput).where(
+            NativeInput.harness == identity.harness,
+            NativeInput.native_session_id == identity.native_session_id,
+            NativeInput.input_id == identity.input_id,
+            NativeInput.accepted_at.is_(None),
+            NativeInput.echoed_at.is_(None),
+            NativeInput.completed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+        )
+    )
+    if effects.delivery_id is not None:
+        await session.execute(
+            update(Delivery)
+            .where(
+                Delivery.id == effects.delivery_id,
+                Delivery.attempt_id == effects.attempt_id,
+                Delivery.state == "sending",
+            )
+            .values(state="claimed")
+        )
 
 
 async def terminate_work_inputs(
