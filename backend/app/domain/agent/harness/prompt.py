@@ -268,7 +268,7 @@ DOC_FORM = load_skills(["doc-form"])
 #: 显示在那里，所以每个 agent 都要读到它，读到的是同一段：主会话在
 #: `PLATFORM_RULES` 里读到；Claude Code 不把系统提示词带给它起的 agent，由
 #: SubagentStart hook 补在每个 agent 开头（`claude_code.session_launch`）；Codex 的
-#: 子线程继承主线程的 developer instructions。pi 的分身没有带说明字段的工具。
+#: 子线程继承主线程的 developer instructions；pi 的分身由 `SUBAGENT_RULES` 补上。
 STEP_TITLES = (
     "每调一次工具，界面上的「施工现场」就多一行，显示你填的说明字段（Bash 和 "
     "Agent 的 description）。这些字段用和你说话的人用的语言写这一步在做什么，不复述"
@@ -279,7 +279,8 @@ STEP_TITLES = (
 #: 改仓库、跑检查的每个 agent 动手前都要知道的几条：同一个仓库、同一台机器上同时
 #: 有别的任务在干活。主会话在 `PLATFORM_RULES` 里读到；Claude Code 起的 agent 由
 #: SubagentStart hook 补在开头（大活是分身在做，提交、拉取、起服务的多半是它们）；
-#: Codex 的子线程继承主线程的 developer instructions。pi 的分身没有核实过。
+#: Codex 的子线程继承主线程的 developer instructions；pi 的分身追加在系统提示词末尾
+#: （`pi/subagents.py`）。
 SHARED_CHECKOUT = (
     "- 同一台机器上可能有这个仓库的别的任务在干活，stash 栈是整个仓库共用的：不用 "
     "`git stash`，要把改动放一边就提交；发起 `git pull`、`git merge`、`git rebase` "
@@ -292,7 +293,8 @@ SHARED_CHECKOUT = (
     "库不用。"
 )
 
-#: Claude Code 起的每个 agent 开头补的那一段（SubagentStart hook）。
+#: 读不到主会话系统提示词的每个分身都补这一段，同一份：Claude Code 起的 agent 由
+#: SubagentStart hook 补在开头，pi 的分身追加在系统提示词末尾。
 SUBAGENT_RULES = f"- {STEP_TITLES}\n{SHARED_CHECKOUT}\n{SUBAGENT_TODO_WRITE}"
 
 #: 每个托管仓库、每一轮都成立的平台规矩。按需的流程（交付、产物、邮件、定时）在
