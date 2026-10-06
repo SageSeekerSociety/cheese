@@ -15,9 +15,12 @@
 ├── 开始使用
 │   ├── 快速开始 quickstart.md
 │   └── 与芝士协作 working-with-cheese.md
-├── 教程（按任务分组，一篇教一件事）
-│   ├── 组队协作：和同学一起做一个项目 team-project.md
-│   └── 题目：完成一道题目 solve-a-challenge.md
+├── 教程（按任务分组，一篇教一件事；分组和顺序以 docs/site/src/structure.mjs 为准）
+│   ├── 组队协作：team-project / invite-to-project / join-a-team / split-work
+│   ├── 做题目：solve-a-challenge / ask-about-a-challenge / team-challenge / resubmit
+│   ├── 出题目：publish-a-challenge / guide-the-teammate
+│   ├── 成果：review-changes / publish-a-site
+│   └── 工作电脑：use-your-computer
 ├── 使用 Cheese
 │   ├── 赛题 challenges.md
 │   ├── 团队 teams.md
@@ -70,8 +73,19 @@
 
 | 页面 | 负责什么 | 边界与相关页面 |
 |---|---|---|
-| `team-project.md` | 建团队 → 邀请同学 → 同学接受 → 在团队下建项目 → 在频道里交给芝士 → 验收 → 拿到成果 | 团队、项目、验收的完整规则链接对应功能页；提交到题目见 `solve-a-challenge.md` |
-| `solve-a-challenge.md` | 加入空间 → 找到并查看题目 → 领取 → 从题目建项目 → 和芝士协作 → 提交 → 查看提交记录 | 详细规则链接空间与题目、项目、AI 队友、文件与成果、提交 |
+| `team-project.md` | 建团队、拉同学进来 → 在「综合」里转为任务 → 和芝士写任务文档 → 开始 → 中途改要求 → 验收 → 交出去 | 团队、项目、任务、验收的完整规则链接功能页 |
+| `invite-to-project.md` | 不建团队，按用户名或邮箱把一个人邀请进项目 | 项目成员规则见 `projects.md` |
+| `join-a-team.md` | 用链接申请、搜索申请或在「待办」接受邀请加入团队 | 团队规则见 `teams.md` |
+| `split-work.md` | 同一频道里每人负责一个任务，用协作者、转交、「全部任务」和看板推进 | 任务规则见 `tasks.md` |
+| `solve-a-challenge.md` | 加入空间 → 看题 → 领取 → 在题目建的项目里和芝士做 → 提交 | 详细规则链接空间与题目、提交 |
+| `ask-about-a-challenge.md` | 在题目页用「问芝士」弄懂题目、要提示不要答案 | 额度见 `quota.md` |
+| `team-challenge.md` | 以团队身份领取团队题目，一起做、一起交 | 详细规则链接空间与题目、团队、提交 |
+| `resubmit.md` | 看评审结果，和芝士改完，提交新版本 | 提交规则见 `submissions.md` |
+| `publish-a-challenge.md` | 建空间、发邀请码、发布题目、批准领取、评审提交 | 详细规则链接空间与题目、提交 |
+| `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `challenges.md` |
+| `review-changes.md` | 找到待审阅的改动，审阅、追问、采纳或退回 | 按钮的完整说明见 `accept.md` |
+| `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
+| `use-your-computer.md` | 可选：接入自己的电脑或服务器，给频道或任务换工作电脑 | 接入与隔离的完整说明见 `devices.md` |
 
 ### 使用 Cheese {#feature-pages}
 

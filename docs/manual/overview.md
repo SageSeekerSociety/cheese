@@ -69,8 +69,9 @@ summary: 知是是什么、给谁用，空间、团队、项目、频道、芝�
 |---|---|
 | 和同学一起做一个项目 | [和同学一起做一个项目](/team-project#team-project) |
 | 在空间里领一道题目，做完后提交 | [完成一道题目](/solve-a-challenge#solve-a-challenge) |
-| 在空间里发布题目、审核报名、看提交 | [空间与题目 · 发布题目](/challenges#publish)、[提交 · 发布者查看提交](/submissions#review) |
-| 让芝士在你自己的电脑或服务器上干活 | [设备与工作电脑](/devices#devices) |
-| 把芝士做的网页发布出去 | [发布网站](/sites#sites) |
+| 发布题目、批准领取、评审提交 | [发布一道题目并收作业](/publish-a-challenge#publish-a-challenge) |
+| 检查并采纳芝士做的改动 | [验收芝士交回来的改动](/review-changes#review-changes) |
+| 把芝士做的网页发布出去 | [把网页发布成网站](/publish-a-site#publish-a-site) |
+| 让芝士用你自己的电脑或服务器干活（可选） | [让芝士用你自己的电脑干活](/use-your-computer#use-your-computer) |
 
 遇到问题，按提示原文在[常见问题与排障](/troubleshooting#troubleshooting)里找对应的一节。发现哪里写错或不好用，去[反馈中心](/feedback#feedback)提。
