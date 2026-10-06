@@ -1,8 +1,9 @@
 """智能命名的数据页: what the automatic titles cost, and how well they land.
 
 Naming is a platform job that runs off the agent's turn
-(``domain/topic/naming.py``): a small model gives a room its first title, then
-may calibrate it once, then follows the room only when its direction changes.
+(``domain/room_task/naming.py``): a small model gives a task opened without a
+title its first one, then may calibrate it once, then follows the task only
+when its direction changes.
 The question this page answers is 「这件事值不值得继续开着」 — what it spends,
 whether the calls work, and whether the names survive.
 
@@ -13,7 +14,7 @@ Two sources, and **no new tracking** for either:
   requests, failures, tokens and spend per key per day. The model ledger reads
   the same two endpoints, so this page adds no call the deployment does not
   already make elsewhere.
-* ``topic_titles``, for what naming does. Every title a room has had is a row
+* ``task_titles``, for what naming does. Every title a task has had is a row
   with its source and its reason, which is enough for 「改了多少次」「哪个阶段
   动的」「人后来改掉多少」 — the last one being the only quality signal the
   tables keep, and the reason that table exists at all.
@@ -39,7 +40,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 from sqlalchemy import select
@@ -48,27 +49,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.agent.gateway_admin import AdminKey, GatewayAdmin, ModelUsage
 from app.domain.platform_stats.windows import dense_series, utc_day_window
-from app.domain.topic.models import TitleSource, TopicTitle
+from app.domain.room_task.models import TaskTitle, TaskTitleSource
 
 logger = logging.getLogger(__name__)
 
-FEATURE_ID = "topic-naming"
+FEATURE_ID = "task-naming"
 TITLE = "智能命名"
-SUMMARY = "话题标题的自动命名：花了多少、几个阶段在动、人后来改掉了多少"
+SUMMARY = "任务标题的自动命名：花了多少、几个阶段在动、人后来改掉了多少"
 
-# The key naming mints for itself (``domain/topic/naming.py``, ``KeySpec.alias``).
+# The key naming mints for itself (``domain/room_task/naming.py``, ``KeySpec.alias``).
 # Only traffic on this key is this feature's — every other key on the gateway
 # belongs to someone else.
 KEY_ALIAS = "topic-naming"
 
 # The three stages a title can be written at (``naming.Stage``), in the order a
-# room meets them. The reason column of an automatic row holds one of these.
+# task meets them. The reason column of an automatic row holds one of these, or
+# ``proposal`` for the title an AI teammate proposed the task under.
 STAGES = ("name", "calibrate", "follow")
-# A person's two reasons (``topics_title.set_title``, ``naming.undo``) — the two
-# cells of 「人动了什么」. 「退回」换过一次写法，见 ``_person_bucket``：
-RENAME_REASONS = ("rename",)
-UNDO_REASONS = ("undo", "restore")
-PERSON_REASONS = ("rename", "undo")
 
 # The naming key never changes, and the window only moves at midnight, so a
 # minute of staleness costs nothing and keeps someone flipping between 7 and 90
@@ -182,90 +179,60 @@ async def _gateway_usage(
     return read
 
 
-def _person_bucket(reason: str | None) -> Literal["rename", "undo"] | None:
-    """Which of the two cells a person's row goes in, or None when it is neither.
-
-    人的改动只有这两件事，写入路径也只有两条（``topics_title.set_title`` 写
-    `rename`，``naming.undo`` 写 `undo`）。「退回」换过一次写法：`restore`
-    （3ce29a4d，2026-09-27）后来改成 `undo`（ce08b7ca，09-28），库里两种行都在，
-    所以这一格按名字列表认这两种。
-
-    认不出来的写法返回 ``None``：一个我们不认识的原因不能被说成「人撤销了 N 次」，
-    也不能为了凑齐总数塞进某一格。``_titles`` 让它既不进两格、也不进总数。
-    """
-    if reason in RENAME_REASONS:
-        return "rename"
-    if reason in UNDO_REASONS:
-        return "undo"
-    return None
-
-
 async def _titles(session: AsyncSession, since: datetime, until: datetime) -> dict:
     """Every title written in the window, read as the things the page counts.
 
-    One query, computed in the process: renaming a room is rare, so a window
+    One query, computed in the process: renaming a task is rare, so a window
     holds a handful of rows even on a busy deployment, and the 「人后来改掉了」
-    count needs the rows in order per room — which is what a window function
+    count needs the rows in order per task — which is what a window function
     would say and six lines of Python say without one.
-
-    「人动了什么」只数这一页认得的两种原因（改名，和撤销——含它的旧写法）。总数
-    就是这两格的和：明细列不出来的行也不进总数，这样「共 N 次」下面永远列得出 N。
     """
     rows = (
         await session.execute(
             select(
-                TopicTitle.topic_id,
-                TopicTitle.source,
-                TopicTitle.reason,
-                TopicTitle.created_at,
+                TaskTitle.task_id,
+                TaskTitle.source,
+                TaskTitle.reason,
+                TaskTitle.created_at,
             )
-            .where(TopicTitle.created_at >= since, TopicTitle.created_at < until)
-            .order_by(TopicTitle.topic_id, TopicTitle.created_at)
+            .where(TaskTitle.created_at >= since, TaskTitle.created_at < until)
+            .order_by(TaskTitle.task_id, TaskTitle.created_at)
         )
     ).all()
 
     by_stage = dict.fromkeys(STAGES, 0)
-    by_reason = dict.fromkeys(PERSON_REASONS, 0)
     auto_by_day: dict[date, int] = {}
     person_by_day: dict[date, int] = {}
-    # Room -> the position of its first automatic (and first person's) title in
+    # Task -> the position of its first automatic (and first person's) title in
     # this window. Ordered by ``created_at``, so 「first」 is 「earliest」.
     first_auto: dict[uuid.UUID, int] = {}
     first_person: dict[uuid.UUID, int] = {}
     auto_total = 0
     person_total = 0
-    for position, (room, source, reason, created) in enumerate(rows):
+    for position, (task, source, reason, created) in enumerate(rows):
         day = created.astimezone(UTC).date()
-        if source == TitleSource.auto:
+        if source == TaskTitleSource.auto:
             auto_total += 1
             if reason in by_stage:
                 by_stage[reason] += 1
             auto_by_day[day] = auto_by_day.get(day, 0) + 1
-            first_auto.setdefault(room, position)
-        elif source == TitleSource.human:
-            bucket = _person_bucket(reason)
-            if bucket is None:
-                # 认不出来的写法：不进两格，也不进总数。总数说的是「这两格加起来」
-                # ——页面上「共 N 次人的改动」下面永远列得出 N，塞进某一格的代价是
-                # 把一个我们不理解的数字说成「人撤销了 N 次」。
-                continue
+            first_auto.setdefault(task, position)
+        elif source == TaskTitleSource.human:
             person_total += 1
-            by_reason[bucket] += 1
             person_by_day[day] = person_by_day.get(day, 0) + 1
-            first_person.setdefault(room, position)
+            first_person.setdefault(task, position)
         # Any other source is neither: 「人改掉」和「平台命名」是这一页仅有的两件事，
         # 一个不认识的来源必须是不可见的，而不是被算进「人」那一栏。
-    # A room counts as 「改掉了」 when a person wrote a title after the automatic
+    # A task counts as 「改掉了」 when a person wrote a title after the automatic
     # one, both inside the window. A person's title that came *first* is someone
-    # naming the room themselves, which is not this feature's loss.
+    # naming the task themselves, which is not this feature's loss.
     overridden = sum(
         1
-        for room, position in first_auto.items()
-        if first_person.get(room, -1) > position
+        for task, position in first_auto.items()
+        if first_person.get(task, -1) > position
     )
     return {
         "by_stage": by_stage,
-        "by_reason": by_reason,
         "auto_by_day": auto_by_day,
         "person_by_day": person_by_day,
         "auto_total": auto_total,
@@ -348,11 +315,7 @@ async def load(
                 "calibrate": titles["by_stage"]["calibrate"],
                 "follow": titles["by_stage"]["follow"],
             },
-            "person_edits": {
-                "value": titles["person_total"],
-                "rename": titles["by_reason"]["rename"],
-                "undo": titles["by_reason"]["undo"],
-            },
+            "person_edits": {"value": titles["person_total"]},
             "overridden": {
                 "value": titles["overridden"],
                 "named": titles["named"],

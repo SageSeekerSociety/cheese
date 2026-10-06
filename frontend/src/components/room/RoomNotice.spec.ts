@@ -99,7 +99,7 @@ describe('平台自动改了标题', () => {
     meta: { action: 'title', who: 'platform', from: 'dev 外网访问慢', to: 'Valkey 连接池耗尽' },
   } as unknown as Block
 
-  it('行尾是撤销，按下去带着这一行自己的 id', async () => {
+  it('旧的改名记录照常显示，不再带撤销', () => {
     const [row] = collapseNotices([renamed])
     const view = render(RoomNotice as Component, {
       props: {
@@ -114,9 +114,7 @@ describe('平台自动改了标题', () => {
       global: { plugins: [vuetify] },
     })
     expect(view.container.textContent).toContain('标题自动更新为「Valkey 连接池耗尽」')
-    await fireEvent.click(view.getByRole('button', { name: '撤销' }))
-    expect(view.emitted('undo-title')).toEqual([['rename-1']])
-    expect(view.emitted('open-resource')).toBeUndefined()
+    expect(view.queryByRole('button', { name: '撤销' })).toBeNull()
   })
 })
 

@@ -6,7 +6,7 @@ import type { TopicComputeProfile } from '@/types/compute'
 import { computed, ref } from 'vue'
 
 import { ApiError, getTopicComputeProfile } from '@/api'
-import { closeTask, compareDocumentVersions, getTask, startTask, updateTask } from '@/api/tasks'
+import { closeTask, compareDocumentVersions, getTask, renameTask, startTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 
@@ -98,6 +98,20 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
     }
   }
 
+  // ---- 改名：负责人和协作者都能改 ----
+  async function rename(title: string): Promise<boolean> {
+    const name = title.trim()
+    if (!task.value || !name) return false
+    actionError.value = null
+    try {
+      task.value = { ...task.value, ...(await renameTask(task.value.id, name)) }
+      return true
+    } catch (e) {
+      actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
+      return false
+    }
+  }
+
   // ---- 协作者：负责人增减；协作者只能把自己去掉 ----
   async function setCollaborators(handles: string[]): Promise<boolean> {
     if (!task.value) return false
@@ -163,6 +177,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
     actionError,
     close,
     handOver,
+    rename,
     machine,
     machineError,
     loadMachine,

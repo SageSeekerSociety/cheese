@@ -46,7 +46,6 @@ from app.domain.room_task import binding, presentation
 from app.domain.room_task.proposals import ProposalState, TaskProposals
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
-from app.domain.topic import naming
 from app.domain.topic.schemas import ConclusionIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -312,8 +311,6 @@ async def create_task(
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
     await announce_stale(place.room_id, "topics")
-    # A task opened in a room is a sign of where the room is going.
-    naming.nudge(place.room_id, "signal")
     return ok(out)
 
 
@@ -519,7 +516,10 @@ async def accept_task_proposal(
         raise ForbiddenError(say("taskCreatedByPerson"))
     proposal = await _open_proposal(db, place.room_id, proposal_id)
     task = await TopicService(db).create_task(
-        room_id=place.room_id, created_by=actor.handle, title=proposal.title
+        room_id=place.room_id,
+        created_by=actor.handle,
+        title=proposal.title,
+        proposed_by=proposal.proposed_by,
     )
     TaskProposals.decide(
         proposal, ProposalState.accepted, by=actor.handle, task_id=task.id
@@ -537,7 +537,6 @@ async def accept_task_proposal(
     await db.commit()
     await announce_stale(place.room_id, "task-proposals")
     await announce_stale(place.room_id, "topics")
-    naming.nudge(place.room_id, "signal")
     await dispatch(chat)
     return ok(out)
 

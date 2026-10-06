@@ -108,6 +108,32 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("127.0.0.1:18080:127.0.0.1:8081", forwards)
         self.assertIn("127.0.0.1:18083:127.0.0.1:18083", forwards)
 
+    async def test_the_site_is_forwarded_to_the_front_doors_tls_listener(self):
+        """A session's browser on the machine reaches the site over this
+        forward rather than through the public relay."""
+        seen = []
+
+        async def capture(*args, **kwargs):
+            seen.append(args)
+            return await asyncio.create_subprocess_exec(
+                sys.executable, "-c", "import time; time.sleep(60)", **kwargs
+            )
+
+        with TemporaryDirectory() as directory:
+            with patch.object(control.asyncio, "create_subprocess_exec", capture):
+                task = asyncio.create_task(control.forward(
+                    (1, "device1", "192.0.2.1", "cheese"), Path(directory), 8081,
+                    18083
+                ))
+                await asyncio.sleep(0.2)
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+        argv = seen[0]
+        forwards = [argv[i + 1] for i, value in enumerate(argv) if value == "-R"]
+        self.assertIn("127.0.0.1:18445:127.0.0.1:18445", forwards)
+        self.assertEqual(argv[-1], "cheese@192.0.2.1")
+
 
 
 class BackendLookupTests(unittest.IsolatedAsyncioTestCase):

@@ -71,7 +71,7 @@ class FakeHub:
         self.asked: list[tuple[str, dict]] = []  # (method, params) to the runner
         self.ping: dict | BaseException = {"alive": True, "working": False}
         self.tunnel = ("up", 0)
-        self.probed_homes: list[str] = []
+        self.probed_dirs: list[str] = []
         self.release = {"stage": {"changed": True}, "acknowledge": {}}
         # The release the machine's helpers are on, as its marker names it.
         self.marker = ""
@@ -138,8 +138,8 @@ class FakeHub:
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:
         self.execs.append((argv, stdin))
-        if env and "CHEESE_TUNNEL_PROBE_HOME" in env:
-            self.probed_homes.append(env["CHEESE_TUNNEL_PROBE_HOME"])
+        if env and "CHEESE_TUNNEL_PROBE_DIR" in env:
+            self.probed_dirs.append(env["CHEESE_TUNNEL_PROBE_DIR"])
             verdict, code = self.tunnel
             return {"stdout": verdict, "stderr": "", "exit": code}
         if argv[:2] == ["sh", "-c"] and "release-ready" in argv[2]:
@@ -191,7 +191,7 @@ class ShellHub(FakeHub):
         self.home = home
 
     async def exec(self, device_id, argv, *, env=None, stdin=None, **kwargs):
-        if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_HOME"):
+        if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_DIR"):
             return await super().exec(device_id, argv, env=env, stdin=stdin, **kwargs)
         self.execs.append((argv, stdin))
         result = subprocess.run(
@@ -646,10 +646,14 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(
     assert [s.sid for s in hub.opened] == [second.sid]  # … and relaunched fresh
     (line,) = _retired(caplog)
     assert "reason=tunnel_helper_down" in line
-    # The probe reads the port from the room's own home, so concurrent rooms on
-    # one machine are judged independently rather than sharing one verdict.
-    assert hub.probed_homes == [
-        device_home_dir(room.arguments["project_id"], room.arguments["topic_id"])
+    # The probe reads the port from THIS SEAT's own directory, so concurrent
+    # seats (and rooms) on one machine are judged independently rather than
+    # sharing one verdict.
+    assert hub.probed_dirs == [
+        seat_dir(
+            device_home_dir(room.arguments["project_id"], room.arguments["topic_id"]),
+            room.arguments["agent_handle"],
+        )
     ]
 
 
@@ -686,7 +690,7 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
     await room.ensure()
     await room.ensure()
 
-    assert hub.probed_homes == []  # never asked
+    assert hub.probed_dirs == []  # never asked
     assert hub.closed == []  # and nothing retired on a verdict it never got
 
 
@@ -694,10 +698,10 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
 def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     """The probe is a shell script parsing /proc/net/tcp, which is exactly the kind
     of thing that passes review and is wrong on the box. Run it for real: against
-    the port a room's port file records, it must say `up` while the recorded
+    the port a seat's port file records, it must say `up` while the recorded
     helper pid (this test) is listening there, `down` once nothing holds it, and
     `down` when the port is held by a process other than the recorded helper —
-    the listener another room's helper becomes once the kernel hands it a dead
+    the listener another seat's helper becomes once the kernel hands it a dead
     helper's port."""
     import socket
 
@@ -706,7 +710,7 @@ def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     if host == "::1" and not socket.has_ipv6:
         pytest.skip("IPv6 is unavailable on this platform")
     family = socket.AF_INET6 if host == "::1" else socket.AF_INET
-    port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
     pid_file = port_file.with_name("cheese-tunnel.pid")
     port_file.parent.mkdir(parents=True)
 
@@ -733,9 +737,21 @@ def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     assert verdict(free, os.getpid()) == "down"
 
 
-def _tunnel_probe(machine_home: Path) -> str:
-    """The probe as the backend runs it: the room's home named with the literal
-    `$HOME` placeholder, resolved against the machine's own HOME."""
+# The seat name the launcher derives from the handle under test — the sha256
+# prefix `place.seat_name` gives a `cheese-…` handle, spelled opaquely here.
+_TUNNEL_PROBE_SEAT = "46dd0e26bf01"
+
+
+def _seat_dir(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> Path:
+    """Where a launch leaves one seat's helper files."""
+    return machine_home / "room" / ".cheese" / "seats" / seat
+
+
+def _tunnel_probe(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> str:
+    """The probe as the backend runs it: the seat's directory named with the
+    literal `$HOME` placeholder the backend leaves in it, resolved against the
+    machine's own HOME. Per seat, because a room may seat several agents and
+    each has a helper of its own."""
     return subprocess.run(
         ["sh", "-c", DEVICE_TUNNEL_PROBE],
         capture_output=True,
@@ -743,7 +759,7 @@ def _tunnel_probe(machine_home: Path) -> str:
         env={
             **os.environ,
             "HOME": str(machine_home),
-            "CHEESE_TUNNEL_PROBE_HOME": "$HOME/room",
+            "CHEESE_TUNNEL_PROBE_DIR": f"$HOME/room/.cheese/seats/{seat}",
         },
         timeout=30,
     ).stdout.strip()
@@ -756,7 +772,7 @@ def test_a_room_without_a_readable_port_file_is_unknown_not_down(tmp_path, conte
     file that is not a number is no evidence the helper died — `down` here would
     throw away a working screen on a probe that never looked at a port."""
     if content is not None:
-        port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+        port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
         port_file.parent.mkdir(parents=True)
         port_file.write_text(content)
 
@@ -766,7 +782,7 @@ def test_a_room_without_a_readable_port_file_is_unknown_not_down(tmp_path, conte
 def test_a_room_without_a_recorded_helper_pid_is_unknown_not_down(tmp_path):
     """Whose socket the port is can only be told from the pid the helper was
     started as. Without that record the probe has no evidence either way."""
-    port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
     port_file.parent.mkdir(parents=True)
     port_file.write_text("40000\n")
 

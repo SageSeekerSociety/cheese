@@ -451,7 +451,7 @@ export function listTopics(
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
-export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'title_source' | 'kind' | 'status'>
+export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'kind' | 'status'>
 
 /** 我能看到的所有项目里的话题名，最近有动静的在前。私聊不在里面。 */
 export async function listTopicNames(): Promise<TopicName[]> {
@@ -464,7 +464,6 @@ export interface ProjectSearchHits {
     id: string
     room_id: string
     room_title: string
-    room_title_source?: string
     kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'weekly'
     author: string
     created_at: string
@@ -474,7 +473,6 @@ export interface ProjectSearchHits {
   }[]
   tasks: (Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'status'> & {
     room_title: string
-    room_title_source?: string
     snippet: string
   })[]
   library: { path: string; bytes: number; modified: string }[]
@@ -542,8 +540,8 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title?: string, parentId?: string): Promise<Topic> {
-  const body: Record<string, string> = { project_id: projectId, ...(title ? { title } : {}) }
+export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
+  const body: Record<string, string> = { project_id: projectId, title }
   if (parentId) body.parent_id = parentId
   return request<Topic>('/topics', {
     method: 'POST',
@@ -562,28 +560,20 @@ export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
   })
 }
 
-/** Undo the automatic rename announced by `eventId`; the old title comes back and stays. */
-export function undoTopicTitle(topicId: string, eventId: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title/undo`, {
-    method: 'POST',
-    body: JSON.stringify({ event_id: eventId }),
-  })
-}
-
-export type TopicNamingMode = 'auto' | 'manual'
-export interface TopicNaming {
-  mode: TopicNamingMode
-  /** Whether the deployment can name rooms at all (a model gateway is configured). */
+export type TaskNamingMode = 'auto' | 'manual'
+export interface TaskNaming {
+  mode: TaskNamingMode
+  /** Whether the deployment can name tasks at all (a model gateway is configured). */
   available: boolean
   can_manage: boolean
 }
 
-export function getTopicNaming(projectId: string): Promise<TopicNaming> {
-  return request<TopicNaming>(`/projects/${encodeURIComponent(projectId)}/topic-naming`)
+export function getTaskNaming(projectId: string): Promise<TaskNaming> {
+  return request<TaskNaming>(`/projects/${encodeURIComponent(projectId)}/task-naming`)
 }
 
-export function setTopicNaming(projectId: string, mode: TopicNamingMode): Promise<TopicNaming> {
-  return request<TopicNaming>(`/projects/${encodeURIComponent(projectId)}/topic-naming`, {
+export function setTaskNaming(projectId: string, mode: TaskNamingMode): Promise<TaskNaming> {
+  return request<TaskNaming>(`/projects/${encodeURIComponent(projectId)}/task-naming`, {
     method: 'PUT',
     body: JSON.stringify({ mode }),
   })
@@ -1099,7 +1089,7 @@ export interface ArtifactVersion {
   filename: string | null
   url: string | null
   bytes: number | null
-  room: { id: string; title: string; title_source?: string } | null
+  room: { id: string; title: string } | null
 }
 
 export interface ProjectArtifactDetail extends ProjectArtifact {

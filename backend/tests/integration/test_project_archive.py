@@ -135,7 +135,7 @@ def test_an_archived_project_is_hidden_frozen_and_comes_back_whole(client):
     )
     _refused_as_archived(
         client.put(
-            f"/projects/{pid}/topic-naming", json={"mode": "auto"}, headers=AS_OWNER
+            f"/projects/{pid}/task-naming", json={"mode": "auto"}, headers=AS_OWNER
         )
     )
     _refused_as_archived(

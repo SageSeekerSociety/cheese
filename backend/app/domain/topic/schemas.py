@@ -12,10 +12,8 @@ from app.domain.topic.models import TopicKind, TopicStatus
 
 class TopicCreate(BaseModel):
     project_id: uuid.UUID
-    # Left out (or blank) for a room nobody has named yet: the backend stores it
-    # as a placeholder, flagged by `title_source`, and each screen renders its
-    # own word for "untitled".
-    title: str | None = Field(default=None, max_length=300)
+    # A channel is named by whoever creates it.
+    title: str = Field(min_length=1, max_length=300)
     parent_id: uuid.UUID | None = None
 
 
@@ -43,9 +41,6 @@ class TopicOut(BaseModel):
     project_id: uuid.UUID
     parent_id: uuid.UUID | None
     title: str
-    # Who chose the title: "placeholder" (unnamed), "auto" (the platform, which
-    # may rename it) or "human" (kept as is). See topic/naming.py.
-    title_source: str = "human"
     kind: TopicKind
     status: TopicStatus
     created_at: datetime

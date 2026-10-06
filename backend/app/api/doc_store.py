@@ -30,7 +30,7 @@ from app.domain.living_doc import collab
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.schemas import document_snapshot
 from app.domain.living_doc.services import DocumentJournal
-from app.domain.topic import naming
+from app.domain.room_task import naming
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.doc_checks import living_doc_warnings
 
@@ -143,6 +143,9 @@ async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
         # everything derived from the stored version: comment anchors, the
         # last edit, the history.
         await collab.tell(doc.id, {"type": "state", "resource": "doc"})
+    if stored.changed:
+        # A task's document rewritten: a moment its direction may show.
+        naming.nudge_document(doc.id)
     room_id = doc.room_id
     if room_id is None:
         return
@@ -161,7 +164,6 @@ async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
     if stored.changed:
         # The room's overview shows what the document says.
         await broker.publish(str(room_id), {"type": "state", "resource": "doc"})
-        naming.nudge(room_id, "signal")
 
 
 async def tell_origin_room(

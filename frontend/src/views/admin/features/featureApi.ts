@@ -90,15 +90,15 @@ export interface DocsAssistantReport {
   unanswered: UnansweredQuestion[]
 }
 
-/** 智能命名那一页的形状（`/admin/feature-stats/topic-naming`）。
+/** 智能命名那一页的形状（`/admin/feature-stats/task-naming`）。
  *
  *  两个来源，都不新增埋点：钱来自网关那把**命名专用密钥**（命名跑在后台，不在谁的
- *  回合里），动作来自 `topic_titles` —— 标题每次真的被改都会在那里留一行。
+ *  回合里），动作来自 `task_titles` —— 标题每次真的被改都会在那里留一行。
  *
  *  **网关那几个数可以是 `null`**：读不到网关时它们是「没读到」，页面画长破折号，不画
  *  0（0 读作「这个窗口没花钱」，是另一个意思）。`cost.source` 就是这一格读到了没有。
  *  库里那几个数永远是真的。 */
-export interface TopicNamingNumbers {
+export interface TaskNamingNumbers {
   /** `success_rate` 是网关的口径（请求打到模型并回来了），不是「命名成功率」——模型
    *  回了个不能用的答案在网关眼里也是成功。一个请求都没有时它是 `null`。 */
   calls: { value: number | null; failed: number | null; success_rate: number | null }
@@ -123,14 +123,13 @@ export interface TopicNamingNumbers {
   }
   /** 平台自动写的标题，按阶段分（首次 / 校准 / 跟随）。 */
   renames: { value: number; name: number; calibrate: number; follow: number }
-  /** 人写的标题，按原因分（改标题 / 撤销自动改名）。`value` 就是这两个格子的和：
-   *  认不出的原因不进任何一格，也不进总数。 */
-  person_edits: { value: number; rename: number; undo: number }
-  /** `named` = 窗口里被自动命名过的房间数（比例的分母）；没有分母时 `share` 是 null。 */
+  /** 人给任务改的名字。 */
+  person_edits: { value: number }
+  /** `named` = 窗口里被自动命名过的任务数（比例的分母）；没有分母时 `share` 是 null。 */
   overridden: { value: number; named: number; share: number | null }
 }
 
-export interface TopicNamingTrendPoint {
+export interface TaskNamingTrendPoint {
   date: string
   /** 那天平台自动写了几个标题。 */
   auto: number
@@ -138,15 +137,15 @@ export interface TopicNamingTrendPoint {
   person: number
 }
 
-export interface TopicNamingReport {
+export interface TaskNamingReport {
   id: string
   title: string
   summary: string
   days: number
   start: string
   end: string
-  numbers: TopicNamingNumbers
-  trend: TopicNamingTrendPoint[]
+  numbers: TaskNamingNumbers
+  trend: TaskNamingTrendPoint[]
 }
 
 export type FeatureDays = 7 | 30 | 90
@@ -165,6 +164,6 @@ export function getDocsAssistantReport(days: FeatureDays): Promise<DocsAssistant
   return getFeatureReport<DocsAssistantReport>('docs-assistant', days)
 }
 
-export function getTopicNamingReport(days: FeatureDays): Promise<TopicNamingReport> {
-  return getFeatureReport<TopicNamingReport>('topic-naming', days)
+export function getTaskNamingReport(days: FeatureDays): Promise<TaskNamingReport> {
+  return getFeatureReport<TaskNamingReport>('task-naming', days)
 }

@@ -21,7 +21,7 @@ from app.core.sentences import exception_text, say
 from app.domain.agent import turn_inputs
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
-    UNTITLED_FIRST,
+    UNTITLED_TASK,
     build_session_opening,
     build_system_prompt,
     opening_changes,
@@ -77,12 +77,12 @@ from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task.models import TaskStatus
+from app.domain.room_task import naming
+from app.domain.room_task.models import TaskStatus, TaskTitleSource
 from app.domain.room_task.place import Place, PlaceResolver, doc_text_of
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
-from app.domain.topic import naming
-from app.domain.topic.models import TitleSource, Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.usage.ledger import team_terms
 
@@ -736,12 +736,12 @@ class RoomTurns:
                 session_agent.handle,
                 harness=wanted_harness,
             )
-            # The platform names rooms itself (topic/naming.py). Only where it
-            # cannot — no gateway to call — is the agent still asked to, and
-            # never in a project that chose to name its rooms by hand.
+            # The platform names tasks itself (room_task/naming.py). Only where
+            # it cannot — no gateway to call — is the task's own session asked
+            # to, and never in a project that chose to name its tasks by hand.
             untitled = (
-                task is None
-                and topic.title_source == TitleSource.placeholder
+                task is not None
+                and task.title_source == TaskTitleSource.placeholder
                 and not naming.available()
                 and naming.naming_mode(project.settings if project else None) == "auto"
             )
@@ -1121,8 +1121,8 @@ class RoomTurns:
                 topic_id, prepared.agent.handle, harness=prepared.harness
             )
         if untitled:
-            # 起名是这一轮的第一件事，所以排在最前；起完名下一轮就不再说。
-            prompt_text = f"{platform_prompt(UNTITLED_FIRST)}\n\n{prompt_text}"
+            # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
+            prompt_text = f"{platform_prompt(UNTITLED_TASK)}\n\n{prompt_text}"
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
         prompt_text = publication_prompt(prompt_text)

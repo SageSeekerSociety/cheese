@@ -86,7 +86,7 @@ watch(
   () => props.renaming,
   (on) => {
     // 还没名字的话题从空白开始改：占位标题不是谁起的名字。
-    if (on) draftTitle.value = props.row.topic.title_source === 'placeholder' ? '' : props.row.topic.title
+    if (on) draftTitle.value = props.row.topic.title
   },
   { immediate: true }
 )
@@ -187,7 +187,6 @@ function onMenuToggle(open: boolean) {
           class="text-truncate"
           :class="{ 'title-unread': row.unreadTotal > 0 }"
           :data-user-content="row.topic.title || undefined"
-          :title="row.topic.title_source === 'auto' ? t('work.sidebar.autoTitle') : undefined"
           >{{ topicTitle(row.topic) }}</span
         >
         <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->

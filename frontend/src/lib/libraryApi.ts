@@ -23,7 +23,7 @@ export interface LibraryFile {
   added_by: string | null
   added_at: string | null
   /** 在哪个房间给的；从资料库页直接上传的、或读不了那个房间时为 null。 */
-  room: { id: string; title: string; title_source?: string } | null
+  room: { id: string; title: string } | null
   /** 被替换过几次。 */
   replaced: number
   /** 你读得到的房间里有几条消息带着它。 */

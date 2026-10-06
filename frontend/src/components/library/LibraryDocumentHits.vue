@@ -21,7 +21,7 @@ const emit = defineEmits<{
 }>()
 
 function roomName(hit: DocumentHit): string {
-  return topicTitle({ title: hit.room_title ?? '', title_source: hit.room_title_source })
+  return topicTitle({ title: hit.room_title ?? '' })
 }
 </script>
 

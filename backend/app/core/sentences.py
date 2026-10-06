@@ -131,6 +131,8 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: old rooms). A comment naming the agent is answered in its thread, not by a
 #: turn of the room (「在文档评论里提到了」 stays on old rooms). A private chat's
 #: message no longer becomes a channel (「一条消息已转为频道」 stays on old ones).
+#: The platform renames tasks quietly, without a line (「标题自动更新为」 stays on
+#: old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
         "docCommented",
@@ -146,6 +148,7 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "labelUpgradedTo",
         "subagentStart",
         "subagentStopEmpty",
+        "titleAutoRenamed",
     }
 )
 
