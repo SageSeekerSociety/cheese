@@ -28,12 +28,14 @@ user-facing route lists hosts. The admin dashboard counts them.
 | `CLOUD_SANDBOX_ARCHIVE_AFTER_S` | 604800 | A home asleep this long is archived to the private bucket and deleted from its host. |
 | `CLOUD_POOL_MIN_FREE_SLOTS` | 2 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. An idle host is not let go if that would take the free slots below it. |
 | `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that runs no sandbox is kept. Then its sleeping homes are archived and it is released. |
-| `CLOUD_POOL_MAX_HOSTS` | 20 | The platform's cap on hosts, protecting the cluster. Draining hosts do not count. A session that finds the pool full and every host full is told capacity is tight and to try later. |
+| `CLOUD_POOL_MAX_HOSTS` | 10 | The platform's cap on hosts, protecting the cluster: ten hosts' disks written full fit in the cluster's shared thin pool. Draining hosts do not count. A session that finds the pool full and every host full is told capacity is tight and to try later. |
 | `CLOUD_SANDBOX_CREDITS_PER_HOUR` | none | Credits a running sandbox costs per hour. Unset, no cloud sandbox starts. |
 | `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a whole cloud VM, from creation to release, by its size as `<cores>c<GiB>g` (`4c8g`). A size not listed cannot be created. |
 
-Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (clamped into the
-offering), so a host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at once. A host has a
+Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (4 cores, 16 GiB,
+40 GB; clamped into the offering). A host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at
+once, but no more than fit, each at its full `CLOUD_SANDBOX_MEMORY_MB`, in the memory it gives
+its sandboxes (its memory less a quarter, at least 1 GiB): four on the default host. A host has a
 free slot for a new session when it has both a slot to run in and room on its disk for the
 home. There is no team or project quota on cloud. A running sandbox is charged in credits by
 the hour, from the same packs as model calls (`docs/manual/dev/billing.md`, 云端算力).

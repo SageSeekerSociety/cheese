@@ -680,9 +680,12 @@ class Settings(BaseSettings):
     microcloud_offering_id: int = 0
     # The size every cloud host is created with. Every value is clamped into the
     # chosen offering's own range, so these are preferences, not guarantees.
-    microcloud_default_cores: int = 2
-    microcloud_default_memory_mb: int = 4096
-    microcloud_default_disk_gb: int = 20
+    # Four sandboxes at their full 3 GiB limit fit in 16 GiB less the host's own
+    # quarter (`models.capacity`); a 4 GiB host held one. Disk keeps eight homes
+    # at `cloud_sandbox_disk_gb`, running or asleep.
+    microcloud_default_cores: int = 4
+    microcloud_default_memory_mb: int = 16384
+    microcloud_default_disk_gb: int = 40
     # Prepare the default CPU offering; zero disables replenishment.
     microcloud_warm_pool_size: int = Field(default=0, ge=0, le=5)
     # Requires deploy/cloud-control.py on the backend host before enrollment.
@@ -691,13 +694,14 @@ class Settings(BaseSettings):
     microcloud_login_user: str = "cheese"
     # What one session's sandbox on a Cloud machine may use
     # (`remote_execution/sandbox_host.py`), whatever else shares the machine.
-    # Memory: 3 GiB of the default 4 GiB machine. Sessions in this repository's
+    # Memory: 3 GiB, a quarter of what the default 16 GiB host gives its
+    # sandboxes. Sessions in this repository's
     # own earlier sandboxes had `pnpm run build` and `vue-tsc` OOM-killed at
     # 2 GiB (docs/topics), and the limit is there so that a session over it is
     # killed alone, not to share the machine out evenly. No swap, so a session
     # at its limit is killed instead of pushing the machine into swap. CPU:
-    # the default machine's two cores, a ceiling that only binds on larger
-    # machines; below it sessions share by equal weight. Processes: stops a
+    # two cores each, so a session alone on a host gets half of it; when they
+    # all run, sessions share by equal weight. Processes: stops a
     # fork bomb, well above the threads a Node or JVM build starts.
     cloud_sandbox_memory_mb: int = Field(default=3072, ge=64)
     cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
@@ -744,8 +748,10 @@ class Settings(BaseSettings):
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
     # The most hosts the pool holds at once, legacy hosts draining excluded. It
     # protects the MicroCloud cluster; a session that finds the pool full is told
-    # capacity is tight and to try later.
-    cloud_pool_max_hosts: int = Field(default=20, ge=1, le=500)
+    # capacity is tight and to try later. Ten hosts' disks written full are
+    # 400 GB, within what 119pve's shared thin pool had free (464 GB, 2026-10-06);
+    # twenty would not be.
+    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
