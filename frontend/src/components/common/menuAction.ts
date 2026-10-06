@@ -1,4 +1,4 @@
-import type { RouteLocationRaw } from 'vue-router'
+import type { NavTarget } from '@/lib/navTarget'
 
 /**
  * 一项操作：菜单里的一行、底部动作面板里的一行、手机顶栏右边的一颗按钮，都是它。
@@ -20,6 +20,6 @@ export interface MenuAction {
   /** 行尾的未读数（「成员」上挂着的私聊未读）。琥珀色：它是未读标记。 */
   badge?: string
   /** 选中后去哪儿。和 onSelect 可以同时给，先跑 onSelect。 */
-  to?: RouteLocationRaw
+  to?: NavTarget
   onSelect?: () => void
 }

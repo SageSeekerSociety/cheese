@@ -40,7 +40,8 @@
 import type { LegalDocumentSummary } from '@/network/api/legal/types'
 
 import { ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import NavLink from '@/components/common/NavLink.vue'
@@ -50,7 +51,7 @@ import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService, { currentUserId } from '@/services/account'
 
-const router = useRouter()
+const navigation = useNavigation()
 const pending = ref<LegalDocumentSummary[]>([])
 const accepting = ref(false)
 const error = ref('')
@@ -95,7 +96,7 @@ async function decline() {
     console.warn('Logout request failed; clearing local session anyway:', e)
   } finally {
     await AccountService.logout()
-    router.push({ name: 'SignIn' })
+    navigation?.navigate({ name: 'SignIn' })
   }
 }
 </script>
