@@ -1,8 +1,11 @@
 // 同一个人连着做的几件事（归档了一串频道、又改了几次文档）在时间线上合成一行：
 // 收起时一句概括，按种类各说一句；点开在原处列出每一条，每一条的按钮都还在。
 //
-// 只合淡行和动作行：事故卡、失败折叠行、草稿卡、本轮摘要各自有要单独看的东西。中间
-// 隔了一条别的行（消息、别人的操作、上面那几种行），合并就断。
+// 只合淡行和动作行：事故卡、失败折叠行、草稿卡、本轮摘要各自有要单独看的东西。动作行
+// 里带着交出来的东西的也不合：新建或改了资料库里的文档、改了别人让改的文档、提了修改
+// 建议、建了任务，那张卡和那颗按钮就是这一行的用处。平台替一轮写的行（署名 system）
+// 只在同一轮里合：分不出轮次就分不出是哪位队友做的。中间隔了一条别的行（消息、别人的
+// 操作、上面那几种行），合并就断。
 import type { NoticeRow } from './platformNotice'
 
 import { noticeText } from './noticeText'
@@ -34,12 +37,24 @@ function meta(row: NoticeRow): Record<string, unknown> {
   return (row.block.meta ?? {}) as Record<string, unknown>
 }
 
-/** 谁做的。平台替一轮写的行署名都是 system，是哪位队友那一轮在 seat 上。 */
+/** 资源码是这几种的动作行带着一件任务。 */
+const TASK_RESOURCES = new Set(['split', 'task_created'])
+
+/** 这一行有自己要交给人的东西（文档卡、查看改动、查看建议、任务卡）。 */
+function delivers(row: NoticeRow): boolean {
+  const n = row.notice
+  if (n?.mode !== 'action') return false
+  return !!(n.docRequest || n.docSuggestions || n.libraryDoc || TASK_RESOURCES.has(n.resource))
+}
+
+/** 谁做的；不参与合并的行是 null。 */
 function actorKey(row: NoticeRow): string | null {
   const mode = row.notice?.mode
-  if (mode !== 'plain' && mode !== 'action') return null
+  if ((mode !== 'plain' && mode !== 'action') || delivers(row)) return null
   const m = meta(row)
-  return [row.block.author, str(m.agent_id), str(m.seat)].join('\u0000')
+  const system = row.block.author === 'system'
+  if (system && !row.block.turn_id) return null
+  return [row.block.author, str(m.agent_id), str(m.seat), system ? row.block.turn_id : ''].join('\u0000')
 }
 
 function knownOf(row: NoticeRow): Known | null {
