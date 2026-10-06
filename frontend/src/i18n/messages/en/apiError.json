@@ -84,7 +84,7 @@
   "routineResumePausedOnly": "Only a paused routine can be resumed",
   "routineRunUnconfirmed": "A routine that hasn't been confirmed can't run",
   "routineFeedbackBatch": "feedback_batch is how many reports each run is handed: a whole number from 1 to {max}",
-  "routineFeedbackBatchPlatformOnly": "Only a room in a project that works on the platform itself can take feedback triage: teammates elsewhere cannot claim reports",
+  "routineFeedbackBatchPlatformOnly": "Only a channel in a project that works on the platform itself can take feedback triage: teammates elsewhere cannot claim reports",
   "timezoneUnknown": "Unknown time zone: {name}",
   "scheduleTimeFormat": "Write the time as HH:MM, e.g. 09:00",
   "scheduleHourlyMinute": "An hourly routine needs the minute to run at (0–59)",
