@@ -562,10 +562,12 @@ class RoomTurns:
                 session, topic.id, agent
             )
             pending = [block for block in pending if _addressed_to(block, agent.handle)]
+            # Holds and waiting answers are kept per conversation, as inputs
+            # are registered: a task's own, not its room's.
             held = await held_blocks(
                 session,
                 project_id=topic.project_id,
-                topic_id=place.room_id,
+                topic_id=place.conversation_id,
                 recipient_handle=acting_agent,
             )
             # An answer whose Ask conversation is gone belongs to no prompt:
@@ -573,7 +575,7 @@ class RoomTurns:
             # (`ask_session_wait`).
             held |= await waiting_ask_blocks(
                 session,
-                topic_id=place.room_id,
+                topic_id=place.conversation_id,
                 recipient_handle=acting_agent,
             )
             pending = [block for block in pending if block.id not in held]
