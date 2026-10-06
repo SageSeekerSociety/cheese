@@ -347,7 +347,7 @@ def test_a_session_whose_hosts_keep_failing_is_told_retries_were_made(
     data = _lease(case, case.new).json()["data"]
     assert time.monotonic() - started < 5, "A failure is not waited out"
     assert "preparing" not in data
-    assert data["unavailable"].startswith("沙箱准备失败")
+    assert data["unavailable"].startswith("环境准备失败")
     assert f"连续 {MAX_PROVIDER_ERRORS} 次" in data["unavailable"]
     assert "每 5 分钟再试一次" in data["unavailable"]
     assert len(case.cloud.created) == MAX_PROVIDER_ERRORS

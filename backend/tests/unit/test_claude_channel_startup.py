@@ -220,7 +220,7 @@ async def test_a_session_that_dies_on_its_way_up_is_reported_at_once(tmp_path):
     assert waited < 30, f"the room waited {waited:.0f}s for a runner already gone"
     # The room gets one sentence; what the bootstrap printed goes with it for
     # 现场, and none of it is in the sentence.
-    assert host.refusal == "Claude Code 启动失败：这个频道的工作电脑还在准备"
+    assert host.refusal == "Claude Code 启动失败：这个频道的环境还在准备"
     assert host.refused is not None and host.refused.log
     assert "Platform HTTP 504" in host.refused.log
     assert "status 1" in host.refused.log
@@ -235,7 +235,7 @@ async def test_a_missing_program_is_named_and_its_error_kept_for_the_site(
 
     await _start(host)
 
-    assert host.refusal == "Claude Code 启动失败：机器上缺少 Claude Code"
+    assert host.refusal == "Claude Code 启动失败：环境里缺少 Claude Code"
     assert host.refused is not None and "/nonexistent/bin/claude" in host.refused.log
     assert "/nonexistent" not in host.refusal
 

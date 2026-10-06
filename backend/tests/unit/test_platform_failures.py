@@ -231,23 +231,23 @@ _START_LOGS = {
     "lease answered 504": (
         _LEASE + "executor_transport.PlatformHTTPError: Platform HTTP 504: "
         '{"code":504,"message":"GatewayTimeoutError"}',
-        "Claude Code 启动失败：这个频道的工作电脑还在准备",
+        "Claude Code 启动失败：这个频道的环境还在准备",
     ),
     "lease found no machine": (
         _LEASE + 'raise RuntimeError(result["unavailable"])\n'
         "RuntimeError: 工作电脑未连接；对话和平台工具仍可用。",
-        "Claude Code 启动失败：这个频道的工作电脑没有连接",
+        "Claude Code 启动失败：这个频道的环境没有连接",
     ),
     "lease found the room's machine unbound": (
         _LEASE + 'raise RuntimeError(result["unavailable"])\n'
-        "RuntimeError: 这个频道选的工作电脑已经解绑，需要重新选择工作电脑；"
+        "RuntimeError: 这个频道选的电脑已经解绑，需要重新选择环境工作电脑；"
         "对话和平台工具仍可用。",
-        "Claude Code 启动失败：这个频道选的工作电脑已经解绑，需要重新选择",
+        "Claude Code 启动失败：这个频道选的电脑已经解绑，需要重新选择环境",
     ),
     "lease refused otherwise": (
         _LEASE + "executor_transport.PlatformHTTPError: Platform HTTP 403: "
         '{"message":"Device is not hosted"}',
-        "Claude Code 启动失败：没能取得这个频道的工作电脑",
+        "Claude Code 启动失败：没能取得这个频道的环境",
     ),
     "docker run exit 125": (
         _RECORD + "subprocess.CalledProcessError: Command '['docker', 'run', "
@@ -259,7 +259,7 @@ _START_LOGS = {
         _RECORD + "Unable to find image 'cheese-private-executor:2.1.282' locally\n"
         "docker: Error response from daemon: pull access denied for "
         "cheese-private-executor",
-        "Claude Code 启动失败：机器上缺少执行容器的镜像",
+        "Claude Code 启动失败：环境里缺少执行容器的镜像",
     ),
     "another runner holds the lock": (
         "cheese-runner 0f0f ended: the runner failed\n"
@@ -272,26 +272,26 @@ _START_LOGS = {
     ),
     "binary missing (dash)": (
         _RECORD + "sh: 1: exec: /opt/cheese/claude/versions/2.1.282: not found",
-        "Claude Code 启动失败：机器上缺少 Claude Code",
+        "Claude Code 启动失败：环境里缺少 Claude Code",
     ),
     "binary missing (bash)": (
         _RECORD + "sh: line 1: /usr/local/bin/node: No such file or directory",
-        "Claude Code 启动失败：机器上缺少 node",
+        "Claude Code 启动失败：环境里缺少 node",
     ),
     "a wrapper's program missing": (
         _RECORD + "/h/.local/bin/claude: line 6: exec: /h/.local/bin/claude-switchboard"
         ": cannot execute: No such file or directory",
-        "Claude Code 启动失败：机器上缺少 claude-switchboard",
+        "Claude Code 启动失败：环境里缺少 claude-switchboard",
     ),
     "a spawned program missing": (
         _RECORD + '  File "/usr/lib/python3.12/subprocess.py", line 1955, in '
         "_execute_child\n"
         "FileNotFoundError: [Errno 2] No such file or directory: 'docker'",
-        "Claude Code 启动失败：机器上缺少 docker",
+        "Claude Code 启动失败：环境里缺少 docker",
     ),
     "binary for another platform": (
         _RECORD + "OSError: [Errno 8] Exec format error: '/h/.cheese/bin/claude'",
-        "Claude Code 启动失败：机器上的 Claude Code 无法运行，可能已损坏或平台不符",
+        "Claude Code 启动失败：环境里的 Claude Code 无法运行，可能已损坏或平台不符",
     ),
     "model login gone": (
         _RECORD + "Please run /login · API Error: 401 OAuth access token has been "
@@ -339,7 +339,7 @@ def test_the_sentence_names_the_harness_that_was_starting():
 
     assert (
         classify_session_start(log, harness="Codex").content
-        == "Codex 启动失败：这个频道的工作电脑还在准备"
+        == "Codex 启动失败：这个频道的环境还在准备"
     )
 
 

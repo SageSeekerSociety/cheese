@@ -129,7 +129,7 @@ def test_nobody_but_the_machines_owner_gives_a_room_the_whole_machine(client):
     refused = _choose(client, tid, machine, session_auth_headers(MEMBER), "host")
 
     assert refused.status_code == 403
-    owner_only = "只有机器的主人本人登录后，才能让频道访问整台机器"
+    owner_only = "只有电脑的主人本人登录后，才能让频道访问整台电脑"
     assert owner_only in refused.json()["message"]
     assert _binding(client, tid) is None
 

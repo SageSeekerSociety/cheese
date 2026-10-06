@@ -110,9 +110,15 @@ async def _run_refused_turn(
 
 
 async def _system_event_lines(factory, topic_id: uuid.UUID) -> list[str]:
+    """What the room can read of each platform line: the line, and the original
+    words folded under it."""
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
-    return [b.content for b in blocks if b.author_type == AuthorType.platform]
+    return [
+        "\n".join(filter(None, [b.content, (b.meta or {}).get("detail")]))
+        for b in blocks
+        if b.author_type == AuthorType.platform
+    ]
 
 
 @pytest.mark.anyio
@@ -148,7 +154,7 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
     await _run_refused_turn(chat, topic_id, turn_id)
 
     lines = await _system_event_lines(db_factory, topic_id)
-    assert CREDITS_EXHAUSTED_EVENT in lines
+    assert any(line.startswith(CREDITS_EXHAUSTED_EVENT) for line in lines)
     assert not any("Invalid API key" in line for line in lines)
 
 
@@ -172,7 +178,7 @@ async def test_an_unstamped_stop_failure_keeps_todays_notice(db_factory, tmp_pat
 
     lines = await _system_event_lines(db_factory, topic_id)
     assert any("Invalid API key" in line for line in lines)
-    assert CREDITS_EXHAUSTED_EVENT not in lines
+    assert not any(line.startswith(CREDITS_EXHAUSTED_EVENT) for line in lines)
 
 
 @pytest.mark.anyio

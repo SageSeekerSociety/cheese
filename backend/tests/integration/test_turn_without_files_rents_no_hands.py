@@ -333,9 +333,8 @@ async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_pa
     assert channel.asked == [True]
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
-    assert any("没有在线的绑定设备" in (b.content or "") for b in blocks), [
-        b.content for b in blocks
-    ]
+    said = [f"{b.content}\n{(b.meta or {}).get('detail') or ''}" for b in blocks]
+    assert any("没有在线的绑定设备" in text for text in said), said
 
 
 async def test_the_platform_still_works_with_no_machines_at_all(client, room):

@@ -332,5 +332,5 @@ async def test_a_codex_that_did_not_start_says_one_sentence_and_keeps_its_stderr
             system_prompt="",
         )
 
-    assert str(refused.value) == "Codex 启动失败：机器上缺少 codex"
+    assert str(refused.value) == "Codex 启动失败：环境里缺少 codex"
     assert refused.value.log == stderr

@@ -305,7 +305,7 @@ def test_a_room_nobody_configured_still_passes_the_gate(client, stub_hooks):
 
     proposals = _proposals(client, tid)
     assert len(proposals) == 1
-    assert "工作电脑" in proposals[0].content
+    assert "环境" in proposals[0].content
     # 产物是一条提议，不是一次报错：这一轮以房间里那条提议加一个 done 收场，发消
     # 息的人在流里读到的就是它。
     assert _errors(frames) == []
@@ -313,7 +313,7 @@ def test_a_room_nobody_configured_still_passes_the_gate(client, stub_hooks):
     assert [
         f
         for f in frames
-        if f["type"] == "event_block" and "工作电脑" in f["block"]["content"]
+        if f["type"] == "event_block" and "环境" in f["block"]["content"]
     ]
     # 这一轮没有发生：没有请求发出去，机器也没有被绑走。
     assert stub_hooks.last_prompt is None
