@@ -245,6 +245,27 @@ function cellLabel(category: NotificationEventCategory, channel: NotificationEve
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 20px;
+  /* 这一段是下面那条容器查询的容器。宽度自己撑满——行内尺寸一被包含，宽度就再也
+     推不出来（`components/base/SettingsRow` 的同一件事）。 */
+  container-type: inline-size;
+  width: 100%;
+}
+
+/* 卡片并排时每张只有 ~326px，行里那套 180px 的标签列放不下中间那格说明：它被压到
+   12px，中文一个字一行，八到十三行。所以并排时的行改用设置行的窄容器排法
+   （`components/base/SettingsRow`，判据同为 672）：标签和控件一行，说明另起一行占满。
+   660 是上面那条 auto-fit 开始并排的宽度（320×2 + 20），判据是这一栏有多宽——并排与
+   否由它决定，窗口宽度答不对。 */
+@container (min-width: 660px) {
+  .notif__cols .srow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 16px;
+  }
+
+  .notif__cols .srow__v {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
 }
 
 .notif-matrix {
