@@ -125,6 +125,31 @@ export const boundaryRule = {
     const options = { ...boundaryOptions, ...(context.options[0] ?? {}) }
     const filename = String(context.filename ?? context.getFilename())
 
+    /**
+     * A declaration that crosses the API-layer line in name only: `import type
+     * { X } from '@/network/api/x/types'`, `export type { X } from …`, or one
+     * whose every specifier is marked `type`.
+     *
+     * A type binding is erased before anything runs, so it cannot fetch — the
+     * thing this half of the rule is about. And counting it makes the shape the
+     * rule asks for unrepresentable: a component that draws from props alone
+     * names its props' types, and the type of a server record lives in the API
+     * layer, with no house re-export to reach it through (`.claude/rules/
+     * architecture.md`: "Data in by prop … **the shape of the props is on
+     * you**"). 21 of the 95 frozen violations were this and nothing else.
+     *
+     * The vue-router half keeps counting type-only imports on purpose
+     * (`frontend/AGENTS.md`): there *is* a house alternative — `NavTarget` from
+     * `lib/navTarget.ts` — and naming it is what lets the same component render
+     * with no router at all. A rule only pays for itself where the fix it asks
+     * for exists.
+     */
+    function isTypeOnly(node) {
+      if (node.importKind === 'type' || node.exportKind === 'type') return true
+      const specifiers = node.specifiers ?? []
+      return specifiers.length > 0 && specifiers.every((s) => s.importKind === 'type')
+    }
+
     /** A static import, a re-export, or a dynamic `import()` — same dependency. */
     function check(node) {
       const source = node.source
@@ -155,6 +180,7 @@ export const boundaryRule = {
       const modulePath = srcModulePath(resolved)
       if (modulePath === null) return
       if (options.apiLayer.includes(modulePath.split('/')[0])) {
+        if (isTypeOnly(node)) return
         context.report({ node, message: options.messages.api })
       }
     }
