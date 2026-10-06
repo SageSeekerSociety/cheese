@@ -33,7 +33,6 @@ def subscription_provider(
     ca_path: str,
     project_id: str | None = None,
     topic_id: str | None = None,
-    connect_proxy_url: str | None = None,
     no_proxy: str | None = None,
 ) -> ProviderChoice:
     """The environment that steers a session through the metering proxy.
@@ -45,10 +44,6 @@ def subscription_provider(
       - trust the proxy's CA (it terminates TLS for the Anthropic names);
       - NOT carry a stale gateway key — blank, not absent, or the CLI inherits
         the backend's key and silently drops to API-key mode;
-      - route through the proxy: ``connect_proxy_url`` → ``HTTPS_PROXY``,
-        pointing at the proxy's CONNECT listener with the session's scoped
-        cheese token as the proxy password — which is how the proxy knows the
-        project to bill and keeps an exposed listener from being an open relay;
       - announce which project/topic to bill.
 
     Crucially it sets NO ``ANTHROPIC_BASE_URL``. Setting one puts Claude Code
@@ -68,8 +63,6 @@ def subscription_provider(
         "ANTHROPIC_AUTH_TOKEN": "",
         "NODE_EXTRA_CA_CERTS": ca_path,
     }
-    if connect_proxy_url:
-        env["HTTPS_PROXY"] = connect_proxy_url
     if no_proxy:
         env["NO_PROXY"] = no_proxy
         env["no_proxy"] = no_proxy

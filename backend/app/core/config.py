@@ -600,23 +600,10 @@ class Settings(BaseSettings):
     subscription_proxy_port: int = 8443
     # The metering proxy's CONNECT (regular-mode) listener. Containers are steered
     # by --add-host on 443; a DEVICE screen is a bare process with no root and no
-    # docker, so its `claude` reaches the proxy via HTTPS_PROXY instead — that env
-    # needs a listener that speaks CONNECT, which reverse mode does not.
+    # docker, so its `claude` goes through HTTPS_PROXY to the machine's tunnel
+    # helper, and the tunnel (`/llm/tunnel`) delivers that CONNECT traffic here —
+    # a listener that speaks CONNECT, which reverse mode does not.
     subscription_proxy_connect_port: int = 8444
-    # Host a DEVICE reaches the CONNECT listener at. Empty = subscription_proxy_host,
-    # which must resolve from every enrolled device's network. Otherwise configure
-    # a tunnel; an unreachable direct address fails on connect (loud, not silent).
-    subscription_device_proxy_host: str = ""
-    # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
-    # cannot reach the CONNECT listener directly. On the ghg network it cannot:
-    # measured 2026-08-14, packets to the box's listener port never reach its NIC,
-    # dropped at a hypervisor bridge the box can neither see nor change. Set, every
-    # device's subscription turns ride the tunnel: a private-control cloud machine
-    # dials it through its loopback forward to the backend
-    # (`machine_address.tunnel_url`), every other device dials this URL. Empty =
-    # no tunnel, and a device dials `subscription_device_proxy_host` directly
-    # (right for a flat network).
-    subscription_tunnel_url: str = ""
     # Where the proxy's own CA is mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
     # an opaque TLS error far from its cause.

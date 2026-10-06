@@ -54,18 +54,11 @@ def ws_url(base: str, route: str) -> str:
 
 
 def tunnel_url(api_base: str) -> str:
-    """Where the model tunnel helper on a machine dials; empty when the
-    deployment has no tunnel.
-
-    A cloud machine whose backend is the loopback forward dials the tunnel
-    through that forward, so it needs no address on the backend's private
-    network, which a MicroCloud guest is not given. Every other machine dials
-    the configured URL.
-    """
-    configured = settings.subscription_tunnel_url.strip()
-    if configured and api_base == CLOUD_LOOPBACK_BASE:
-        return ws_url(api_base, "/llm/tunnel")
-    return configured
+    """Where the model tunnel helper on a machine dials: the tunnel route on the
+    base that machine already dials, so the session host, a private-control
+    cloud machine and every other machine each reach the tunnel the way they
+    reach the backend, with no second address to keep true."""
+    return ws_url(api_base, "/llm/tunnel")
 
 
 def site_forward(api_base: str) -> str:

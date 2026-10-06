@@ -421,12 +421,9 @@ def http_connect(flow: http.HTTPFlow) -> None:
     caller that can prove "bill this project" gets a tunnel at all. Reverse-mode
     connections never CONNECT, so the container path is untouched.
 
-    Fails CLOSED when no secret is configured, rather than falling back to the
-    old bridge-only trust model. The listener's bind address is now a per-box
-    setting (CONNECT_BIND_HOST, so MicroCloud machines can reach it), and a
-    deployment that widens the bind without setting CHEESE_SCOPED_SECRET would
-    otherwise turn the meter into an open relay — silently, since nothing about
-    a missing env var looks like a failure. The one documented exception stays
+    Fails CLOSED when no secret is configured, rather than trusting whoever can
+    reach the bridge: a missing env var looks like nothing, and the listener
+    would relay for anything on the box. The one documented exception stays
     explicit: CHEESE_ALLOW_HEADER_ATTR=1, which already means "this box trusts
     whoever can reach it"."""
     if ALLOW_HEADER_ATTR:

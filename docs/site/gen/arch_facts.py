@@ -120,10 +120,10 @@ def main() -> None:
     inside, inside_src = grab(COMPOSE, r'--mode reverse:https://api\.anthropic\.com@(\d+)')
     reverse, reverse_src = grab(COMPOSE, r'"172\.17\.0\.1:(\d+):' + inside)
     fact("ports.reverse", reverse, COMPOSE, [inside_src, reverse_src])
-    # The regular listener is published on a variable host, but the same number
-    # inside and out.
+    # The regular listener is published on the bridge, the same number inside
+    # and out.
     connect, connect_src = grab(COMPOSE, r'--mode regular@(\d+)')
-    connect_port, connect_port_src = grab(COMPOSE, r'\{CONNECT_BIND_HOST:-172\.17\.0\.1\}:(\d+):')
+    connect_port, connect_port_src = grab(COMPOSE, r'"172\.17\.0\.1:(\d+):' + connect + '"')
     if connect != connect_port:
         raise Missing(f"{COMPOSE}: the regular mode says {connect}, its published port says {connect_port}")
     fact("ports.connect", connect, COMPOSE, [connect_src, connect_port_src])

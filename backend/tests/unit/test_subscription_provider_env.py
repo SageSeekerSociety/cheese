@@ -4,8 +4,7 @@ These lock in facts that were MEASURED, each of which silently produces "works
 but bills nothing" if it regresses:
 
   - BASE_URL stays unset (api.anthropic.com): sessions reach the meter by
-    HTTPS_PROXY at its CONNECT listener (the native CLI honors it — measured
-    2026-08-13 on 2.1.229);
+    HTTPS_PROXY (the native CLI honors it — measured 2026-08-13 on 2.1.229);
   - a turn with no attribution header is tokens nobody can be charged for;
   - an inherited ANTHROPIC_AUTH_TOKEN switches the CLI out of subscription mode.
 """
@@ -38,7 +37,6 @@ def test_the_environment_carries_no_claude_login_of_its_own():
         ca_path="/ca.pem",
         project_id="proj-1",
         topic_id="topic-2",
-        connect_proxy_url="http://cheese:scoped.tok@172.17.0.1:8444",
     ).env
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
 
@@ -65,22 +63,15 @@ def test_no_base_url_is_ever_set():
     CLI out of subscription mode."""
     env = provider_env.subscription_provider(ca_path="/ca.pem").env
     assert "ANTHROPIC_BASE_URL" not in env
-    env = provider_env.subscription_provider(
-        ca_path="/ca.pem", connect_proxy_url="http://cheese:t@172.17.0.1:8444"
-    ).env
-    assert "ANTHROPIC_BASE_URL" not in env
 
 
-def test_connect_transport_rides_https_proxy_with_its_exclusions():
-    """A bare device process is steered by HTTPS_PROXY (no root, no --add-host),
-    and NO_PROXY must keep the backend + loopback out of the detour — the CLI
+def test_the_proxy_exclusions_keep_the_backend_out_of_the_detour():
+    """NO_PROXY must keep the backend + loopback out of the detour — the CLI
     routes even plain-http requests through HTTPS_PROXY (measured)."""
     env = provider_env.subscription_provider(
         ca_path="/ca.pem",
-        connect_proxy_url="http://cheese:tok@172.17.0.1:8444",
         no_proxy="cheese.test,localhost,127.0.0.1,::1",
     ).env
-    assert env["HTTPS_PROXY"] == "http://cheese:tok@172.17.0.1:8444"
     assert env["NO_PROXY"] == "cheese.test,localhost,127.0.0.1,::1"
     assert env["no_proxy"] == env["NO_PROXY"]
 

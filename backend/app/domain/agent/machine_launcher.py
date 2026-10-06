@@ -717,8 +717,8 @@ cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
 export PATH="$HOME/.cheese:$PATH"
 {toolchain}cheese_launch_phase files_written
 {credentials}\
-# The tunnel helper, for a machine that cannot reach the meter's listener
-# directly. Written on EVERY launch, token included: the helper re-reads the
+# The tunnel helper, the one way a launch that rides the meter reaches it.
+# Written on EVERY launch, token included: the helper re-reads the
 # token per connection, so replacing this file is how a refreshed credential
 # reaches a still-running helper (#385's shape, one layer down).
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
