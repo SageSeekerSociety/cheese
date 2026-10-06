@@ -63,12 +63,20 @@ import TaskForm from '@/components/tasks/TaskForm.vue'
 
 const { t } = useI18n()
 
+/** 表单的初始值就是容器里那一份 `editTaskData`。它比提交体多两栏 —— 正文原本的格式
+ *  （`markdown` 还是 `tiptap`）和原文；`TaskForm` 把这两栏当自己的 props 收，值就在这
+ *  一份里，所以这里照读，不再让容器多传一遍。 */
+type EditInitialData = Partial<TaskFormSubmitData> & {
+  descriptionFormat?: 'markdown' | 'tiptap'
+  originalDescription?: string
+}
+
 defineProps<{
   loading: boolean
   error: string | null
   /** 题目数据到位了才画表单；没有就什么都不画（加载中和读失败已经各自占了一格）。 */
   hasTaskData: boolean
-  initialData: Partial<TaskFormSubmitData> | null
+  initialData: EditInitialData | null
   classificationTopics: Topic[]
   domainGroups: DomainGroup[]
   isResubmitting: boolean

@@ -48,7 +48,7 @@ const FeedbackStub = defineComponent({
   template: `<button class="stub-feedback" @click="$emit('selectDay', '2026-01-02')">feedback</button>`,
 })
 
-const BASE = {
+const BASE: ViewProps = {
   kinds: ['pipeline', 'usage'],
   tabs: {},
   titles: {},
@@ -71,7 +71,10 @@ const BASE = {
   integrations: null,
 }
 
-function mount(props: Record<string, unknown> = {}) {
+/** 挂这一页要的那一串 props。类型从组件本身取，不在这里抄一遍 —— 抄的那份会和页面漂开。 */
+type ViewProps = InstanceType<typeof AdminDashboardPageView>['$props']
+
+function mount(props: Partial<ViewProps> = {}) {
   return render(AdminDashboardPageView, {
     props: { ...BASE, ...props },
     global: {

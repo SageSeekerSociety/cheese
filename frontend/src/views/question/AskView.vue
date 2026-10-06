@@ -16,7 +16,7 @@
             ></v-text-field>
             <rich-editor holder="editor" :config="editorConfig" @create="onCreate" />
             <topic-selector-view
-              :model-value="topics"
+              :model-value="selectedTopics"
               :items="topicItems"
               :loading="topicLoading"
               class="mt-4"
@@ -85,7 +85,7 @@ import type EditorJS from '@editorjs/editorjs'
 import type { TopicOption } from '@/composables/useTopicSelector'
 import type { Topic } from '@/types'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
@@ -161,6 +161,11 @@ const removeBounty = () => {
   hasBounty.value = false
   bounty.value = 0
 }
+
+// 一个话题都没选之前，表单这一栏是 `undefined`（zod 里没给初值），而选择器要的是一份
+// 列表。「没选」在它那里的样子就是空列表，所以在这里收成 `[]`；用具名的一份而不是写在
+// 模板里的 `?? []`，是为了让列表的引用在重画之间不变。
+const selectedTopics = computed(() => topics.value ?? [])
 
 async function onTopicsUpdate(newTopics: Topic[]) {
   // 先乐观写回，再拿容器补建之后的最终列表覆盖一次。

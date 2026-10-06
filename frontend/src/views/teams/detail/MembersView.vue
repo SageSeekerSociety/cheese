@@ -84,11 +84,14 @@
     <slot name="joinLink" />
 
     <!-- 标签页 -->
+    <!-- `v-tabs` hands back `unknown` (Vuetify types the tab value that way), while the page
+         above keeps the tab name as a string. The tabs here only ever carry the three names
+         written below, so the assertion is the value itself, not a guess. -->
     <v-tabs
       :model-value="activeTab"
       color="primary"
       class="mb-4"
-      @update:model-value="$emit('update:activeTab', $event)"
+      @update:model-value="$emit('update:activeTab', $event as string)"
     >
       <v-tab value="members">{{ t('teams.members.tabMembers') }}</v-tab>
       <v-tab v-if="canBringPeopleIn" value="requests">

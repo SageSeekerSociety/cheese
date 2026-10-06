@@ -35,6 +35,26 @@
   </v-sheet>
 </template>
 
+<script lang="ts">
+// 这一件的 props 单独立个名字并导出：`views/question/DetailAnswerListView.vue` 把它整
+// 个转发一遍（那边没有自己的画面），两边共用这一份类型，就不用抄第二遍。类型导出不构成
+// 依赖，那一件仍然是 A 级。
+//
+// 用到的 `Answer` / `Question` 从下面那个块的 import 来 —— 两个块编译后是同一个模块。
+export interface AnswerListViewProps {
+  answers: Answer[]
+  question?: Question | null
+  refreshing: boolean
+  /** 当前登录者是不是题主：决定每张卡上画不画采纳按钮。判断在容器里。 */
+  canAccept?: boolean
+  /** 这次没读到：`answers` 空是假的。 */
+  failed: boolean
+  failureReason: string | null
+  /** 401/403：不是「没读到」，是「不给你看」，不给重试。 */
+  forbidden: boolean
+}
+</script>
+
 <script setup lang="ts">
 // 一道题下面那串回答**画的那一半**：只认 props、只往上发事件（每一颗的赞 / 踩 /
 // 收藏 / 采纳都带着是哪一条回答）。
@@ -51,24 +71,10 @@ import BlankPage from '@/components/common/BlankPage.vue'
 
 const { t } = useI18n()
 
-withDefaults(
-  defineProps<{
-    answers: Answer[]
-    question?: Question | null
-    refreshing: boolean
-    /** 当前登录者是不是题主：决定每张卡上画不画采纳按钮。判断在容器里。 */
-    canAccept?: boolean
-    /** 这次没读到：`answers` 空是假的。 */
-    failed: boolean
-    failureReason: string | null
-    /** 401/403：不是「没读到」，是「不给你看」，不给重试。 */
-    forbidden: boolean
-  }>(),
-  {
-    question: null,
-    canAccept: false,
-  }
-)
+withDefaults(defineProps<AnswerListViewProps>(), {
+  question: null,
+  canAccept: false,
+})
 
 defineEmits<{
   retry: []

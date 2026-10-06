@@ -24,6 +24,8 @@
 
 <script setup lang="ts">
 // 容器：翻页取提交记录、提交/改/撤回评审都在这儿；画面交给 TaskSubmissionHistoryView。
+import type { PostTaskSubmissionReviewRequestData } from '@/network/api/tasks/types'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
@@ -88,7 +90,7 @@ const latestSubmission = computed(() => submissions.value[0])
 
 const submitting = ref(false)
 
-const onReview = async (values: { accepted?: boolean; score?: number; comment?: string }) => {
+const onReview = async (values: PostTaskSubmissionReviewRequestData) => {
   const latest = latestSubmission.value
   if (!latest) return
   submitting.value = true

@@ -1,3 +1,33 @@
+<script lang="ts">
+// 这一件的 props 单独立个名字并导出：`views/feedback/FeedbackSubmitPageView.vue` 把它
+// 整个转发一遍（那边没有自己的画面），两边共用这一份类型，就不用抄第二遍。类型导出不
+// 构成依赖，那一件仍然是 A 级。
+//
+// 用到的 `FeedbackDraft` / `FeedbackKind` 从下面那个块的 import 来 —— 两个块编译后是
+// 同一个模块。
+export interface SubmitFeedbackFormViewProps {
+  /** 壳：页面还是对话框。只影响操作条黏不黏底。 */
+  shell: 'page' | 'dialog'
+  /** 正在填的这一份内容。**只读**：视图改任何一栏都发 `patch`。 */
+  draft: FeedbackDraft
+  /** 类型候选。词表来自服务端，容器兜了默认值。 */
+  kinds: FeedbackKind[]
+  /** 手上这份是刚从盘上捞回来的。 */
+  restoredNotice: boolean
+  /** 按类型出现的那两栏：口径在容器里（和请求体用的是同一份常量）。 */
+  askRepro: boolean
+  askExpectation: boolean
+  /** 标签候选：容器从已经加载到的那两份列表里汇总来的。 */
+  tagSuggestions: string[]
+  /** 提交请求在飞。 */
+  submitting: boolean
+  /** 服务端的原话（412 的「已经办完了」之类也走这里）。 */
+  error: string | null
+  /** 提交按钮能不能按。门槛在 store 里，容器算好了传下来。 */
+  canSubmit: boolean
+}
+</script>
+
 <script setup lang="ts">
 import type { FeedbackKind } from '@/cx_types'
 import type { FeedbackDraft } from '@/stores/feedback'
@@ -55,27 +85,7 @@ type FormField = 'kind' | 'title' | 'body' | 'repro' | 'expectation' | 'visibili
 
 defineOptions({ name: 'SubmitFeedbackFormView' })
 
-const props = defineProps<{
-  /** 壳：页面还是对话框。只影响操作条黏不黏底。 */
-  shell: 'page' | 'dialog'
-  /** 正在填的这一份内容。**只读**：视图改任何一栏都发 `patch`。 */
-  draft: FeedbackDraft
-  /** 类型候选。词表来自服务端，容器兜了默认值。 */
-  kinds: FeedbackKind[]
-  /** 手上这份是刚从盘上捞回来的。 */
-  restoredNotice: boolean
-  /** 按类型出现的那两栏：口径在容器里（和请求体用的是同一份常量）。 */
-  askRepro: boolean
-  askExpectation: boolean
-  /** 标签候选：容器从已经加载到的那两份列表里汇总来的。 */
-  tagSuggestions: string[]
-  /** 提交请求在飞。 */
-  submitting: boolean
-  /** 服务端的原话（412 的「已经办完了」之类也走这里）。 */
-  error: string | null
-  /** 提交按钮能不能按。门槛在 store 里，容器算好了传下来。 */
-  canSubmit: boolean
-}>()
+const props = defineProps<SubmitFeedbackFormViewProps>()
 
 const emit = defineEmits<{
   /** 草稿的某几栏改了。写回 store、落盘都在外面那一半。 */

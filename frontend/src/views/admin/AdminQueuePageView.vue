@@ -1,5 +1,48 @@
+<script lang="ts">
+// 这一页的 props 单独立个名字并导出，好让 `/admin/feedback` 那层壳（它把这件原样渲染
+// 一遍）声明同一份类型，而不是把三十条抄一遍 —— 抄的那份迟早和这里漂开。类型导出不
+// 构成依赖：`import type` 在编译后就没了（所以壳那一件仍然是 A 级）。
+//
+// 这几行用到的类型，import 写在下面 `<script setup>` 那一个块里 —— 两个块在编译后是
+// 同一个模块，作用域是共用的，各写一份反而会「重复标识符」。
+export interface AdminQueuePageViewProps {
+  isWide: boolean
+  detailOpen: boolean
+  triageOpen: boolean
+  detail: FeedbackDetail | null
+  detailLoading: boolean
+  detailError: string | null
+  detailStatusItems: { title: string; value: FeedbackStatus }[]
+  storeError: string | null
+  assigneeItems: AdminCandidate[]
+  assigneeLoading: boolean
+  assigneeSearch: string
+  assigneeHint: string
+  unread: number
+  view: QueueView
+  adminTab: AdminTab
+  laneOptions: { value: AdminTab; label: string }[]
+  draft: string
+  /** 三个日期窗口的「已生效」小条，键就是清窗口时回传的那个键。 */
+  windowChips: { key: QueueWindowKey; text: string; clearAria: string }[]
+  statusTab: FeedbackStatus | 'all'
+  tabOptions: { value: FeedbackStatus | 'all'; label: string }[]
+  visible: FeedbackCard[]
+  cursorIndex: number
+  cursorId: string | null
+  showSkeleton: boolean
+  showStatusWord: boolean
+  state: 'error' | 'filtered' | 'empty' | null
+  copy: { title: string; desc?: string; action: string }
+  scoped: boolean
+  hasPrev: boolean
+  hasNext: boolean
+  undo: { id: string; from: FeedbackStatus; message: string } | null
+}
+</script>
+
 <script setup lang="ts">
-import type { QueueView } from '@/composables/useAdminQueue'
+import type { QueueView, QueueWindowKey } from '@/composables/useAdminQueue'
 import type { FeedbackCard, FeedbackDetail, FeedbackPriority, FeedbackStatus } from '@/cx_types'
 import type { AdminTab } from '@/stores/feedback'
 import type { AdminCandidate } from '@/types/admin'
@@ -41,39 +84,7 @@ import AdminFeedbackDetailDrawerView from '@/components/feedback/AdminFeedbackDe
 // `/admin/feedback` 请求。
 defineOptions({ name: 'AdminQueuePageView' })
 
-defineProps<{
-  isWide: boolean
-  detailOpen: boolean
-  triageOpen: boolean
-  detail: FeedbackDetail | null
-  detailLoading: boolean
-  detailError: string | null
-  detailStatusItems: { title: string; value: FeedbackStatus }[]
-  storeError: string | null
-  assigneeItems: AdminCandidate[]
-  assigneeLoading: boolean
-  assigneeSearch: string
-  assigneeHint: string
-  unread: number
-  view: QueueView
-  adminTab: AdminTab
-  laneOptions: { value: AdminTab; label: string }[]
-  draft: string
-  windowChips: { key: string; text: string; clearAria: string }[]
-  statusTab: FeedbackStatus | 'all'
-  tabOptions: { value: FeedbackStatus | 'all'; label: string }[]
-  visible: FeedbackCard[]
-  cursorIndex: number
-  cursorId: string | null
-  showSkeleton: boolean
-  showStatusWord: boolean
-  state: 'error' | 'filtered' | 'empty' | null
-  copy: { title: string; desc?: string; action: string }
-  scoped: boolean
-  hasPrev: boolean
-  hasNext: boolean
-  undo: { id: string; from: FeedbackStatus; message: string } | null
-}>()
+defineProps<AdminQueuePageViewProps>()
 
 const emit = defineEmits<{
   (e: 'close'): void

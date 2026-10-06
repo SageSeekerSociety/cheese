@@ -72,9 +72,10 @@ const identityOptions = computed(() => {
   })
 })
 
-// 是否显示身份选择器
+// 是否显示身份选择器。`Boolean(...)` 是把「没有参与信息」那个 `undefined` 收成 `false`：
+// 画面那半收到的是一栏 `boolean`，判真假的地方（`v-if`）要的也是真假，不是三态。
 const showIdentitySelect = computed(() => {
-  return props.participationInfo?.hasParticipation && props.participationInfo.identities.length > 0
+  return Boolean(props.participationInfo?.hasParticipation && props.participationInfo.identities.length > 0)
 })
 
 // 计算当前查看的参与者ID

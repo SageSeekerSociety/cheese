@@ -32,7 +32,8 @@ defineProps<{
   forbidden: boolean
   hasFilters: boolean
   availableTags: string[]
-  ownerId: string | null
+  /** 当前登录者的用户 id，用来判断一条知识能不能改：和 `KnowledgeTable`、明细对话框收的是同一栏。 */
+  ownerId?: number
   detailDialog: boolean
   selectedResource: Knowledge | null
   selectedResourceContent: KnowledgeContentData

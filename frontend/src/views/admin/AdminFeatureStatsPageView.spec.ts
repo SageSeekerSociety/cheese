@@ -29,7 +29,10 @@ const ROWS = [
   { id: 'docs-assistant', to: null, title: '文档助手', summary: '还没做' },
 ]
 
-function mount(props: Record<string, unknown>) {
+/** 挂这一页要的那三栏。类型从组件本身取，不在这里抄一遍 —— 抄的那份会和页面漂开。 */
+type ViewProps = InstanceType<typeof AdminFeatureStatsPageView>['$props']
+
+function mount(props: ViewProps) {
   return render(AdminFeatureStatsPageView, {
     props,
     global: { plugins: [createVuetify({ components, directives })] },

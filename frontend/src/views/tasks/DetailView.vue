@@ -31,8 +31,9 @@ const { t } = useI18n()
 const { mdAndUp } = useDisplay()
 const routeNames = TASK_ROUTE_NAMES
 
-/** 审阅提交时带上去的那几个值：`defineEmits` 和模板里的处理函数共用一份。 */
-type SubmitReviewValues = { accepted?: boolean; score?: number; comment?: string }
+/** 审阅提交时带上去的那几个值：`defineEmits` 和模板里的处理函数共用一份。三栏都到齐才
+ *  往上发（评分必填，另两栏由表单 schema 的默认值补齐），接口要的也是完整的一份。 */
+type SubmitReviewValues = { accepted: boolean; score: number; comment: string }
 
 const props = defineProps<{
   loading: boolean

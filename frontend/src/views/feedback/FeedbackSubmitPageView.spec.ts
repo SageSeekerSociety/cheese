@@ -82,8 +82,10 @@ function mount(extra: Partial<ViewProps> = {}) {
   return { ...utils, ...handlers }
 }
 
-/** 提交按钮：`type="submit"` 那一颗。按名字找不行 —— 页面标题和按钮上是同一句话。 */
-function submitButton(container: HTMLElement): HTMLButtonElement {
+/** 提交按钮：`type="submit"` 那一颗。按名字找不行 —— 页面标题和按钮上是同一句话。
+ *  收 `Element`（而不是 `HTMLElement`）：挂载出来的 `container` 就是 `Element`，这里
+ *  也只用到 `querySelector`，两样都在 `Element` 上。 */
+function submitButton(container: Element): HTMLButtonElement {
   const button = container.querySelector<HTMLButtonElement>('button[type="submit"]')
   if (!button) throw new Error('这一页上没有提交按钮')
   return button

@@ -162,11 +162,13 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 
 const { t } = useI18n()
 
-/** 评审表单收好的值，交给容器去打接口。 */
+/** 评审表单收好的值，交给容器去打接口。三栏都到齐了才发：`score` 在表单里是必填，
+ *  `accepted` / `comment` 由 schema 的默认值补齐（`true` / 空串），所以发出去的一定是
+ *  完整的一份，而不是「可能少一栏」—— 接口那边要的也是完整的一份。 */
 interface ReviewValues {
-  accepted?: boolean
-  score?: number
-  comment?: string
+  accepted: boolean
+  score: number
+  comment: string
 }
 
 const props = withDefaults(

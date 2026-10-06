@@ -70,7 +70,7 @@
 // 领取这条路（实名确认、团队选择、退出）走的是 `useTaskParticipation` 与 `TaskDialogs`：
 // 这一页的「领取」按钮只往 `useEvents()` 总线上发 `join-clicked`，不自己发请求。
 import type { Project } from '@/cx_types'
-import type { TaskParticipationIdentity } from '@/network/api/tasks/types'
+import type { PostTaskSubmissionReviewRequestData, TaskParticipationIdentity } from '@/network/api/tasks/types'
 import type { TaskSubmission, TaskSubmissionReview } from '@/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -234,7 +234,7 @@ const {
 
 const reviewSubmitting = ref(false)
 
-async function onReview(values: { accepted?: boolean; score?: number; comment?: string }) {
+async function onReview(values: PostTaskSubmissionReviewRequestData) {
   const latest = reviewSubmissions.value[0]
   const task = taskData.value
   const who = reviewing.value

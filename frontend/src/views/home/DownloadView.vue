@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { ChangelogDay, Download } from '@/lib/desktop'
+import type { Download } from '@/lib/desktop'
+import type { ChangelogDay } from '@/lib/desktopChangelog'
 
 import { computed, ref } from 'vue'
 import { renderSVG } from 'uqr'
@@ -19,7 +20,8 @@ import { canPromptInstall, detectIos, isInstalled, promptInstall } from '@/lib/p
 
 const props = defineProps<{
   loggedIn: boolean
-  downloads: Download[]
+  /** 只读：这份清单是 `lib/desktop` 里的常量，这一层只照着画。 */
+  downloads: readonly Download[]
   primary: Download
   version: string | null
   days: ChangelogDay[]

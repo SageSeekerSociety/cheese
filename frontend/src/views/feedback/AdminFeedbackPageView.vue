@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { AdminQueuePageViewProps } from '@/views/admin/AdminQueuePageView.vue'
+
 import { ref } from 'vue'
 
 import AdminQueuePageView from '@/views/admin/AdminQueuePageView.vue'
@@ -10,10 +12,18 @@ import AdminQueuePageView from '@/views/admin/AdminQueuePageView.vue'
 // 共用同一个 store，于是照旧是同一份数据（§13 C-10 的理由写在 `AdminQueuePage.vue` 里）。
 // 这一件只吃 props、只发事件，老地址这层壳也因此能单独挂起来看。
 //
-// 透传用 `v-bind="$attrs"`：它没有自己的 props 要声明，而 props 与事件一共五六十条，
-// 抄一遍只会多一处会漂开的地方。搜索框与详情的落点在最里面那层视图里，容器要能请它们
-// 聚焦，所以照原样再往外暴露一层。
+// props 的类型是队列视图自己导出的那一份（`import type` 不算依赖，这一件仍然是 A 级），
+// 所以不用把三十条抄一遍 —— 抄的那份迟早和那一件漂开。声明出来有两个好处：容器那几十条
+// 绑定重新被类型检查，这一件单独挂起来时 props 也是有名字的。
+//
+// 模板里的 `{ ...$props, ...$attrs }`：props 走前者，事件（`defineEmits` 没在这儿声明，
+// 所以它们都留在 `$attrs` 里）走后者。两边的键不会撞：声明过的 props 不会再出现在
+// `$attrs` 里。
+//
+// 搜索框与详情的落点在最里面那层视图里，容器要能请它们聚焦，所以照原样再往外暴露一层。
 defineOptions({ name: 'AdminFeedbackPageView', inheritAttrs: false })
+
+defineProps<AdminQueuePageViewProps>()
 
 const inner = ref<InstanceType<typeof AdminQueuePageView> | null>(null)
 
@@ -29,5 +39,5 @@ defineExpose({ focusSearch, focusAssignee })
 </script>
 
 <template>
-  <AdminQueuePageView ref="inner" v-bind="$attrs" />
+  <AdminQueuePageView ref="inner" v-bind="{ ...$props, ...$attrs }" />
 </template>

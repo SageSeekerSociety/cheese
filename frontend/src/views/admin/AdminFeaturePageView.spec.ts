@@ -27,7 +27,10 @@ import AdminFeaturePageView from './AdminFeaturePageView.vue'
 /** 一个认得出的功能页：只画一句能认出来的话。 */
 const FeatureStub = defineComponent({ template: `<div>功能页本体</div>` })
 
-function mount(props: Record<string, unknown>) {
+/** 挂这一页要的那两栏。类型从组件本身取，不在这里抄一遍 —— 抄的那份会和页面漂开。 */
+type ViewProps = InstanceType<typeof AdminFeaturePageView>['$props']
+
+function mount(props: ViewProps) {
   return render(AdminFeaturePageView, {
     props,
     global: { plugins: [createVuetify({ components, directives })] },
