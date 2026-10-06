@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import type { ResolvedUserRef } from '@/composables/useUserRefResolver'
 import type { FeedbackComment } from '@/cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -43,6 +44,9 @@ const props = defineProps<{
   isReply?: boolean
   /** 删掉这一条会连带删掉几条回复。顶层的用，回复恒为 0。 */
   replyCount: number
+  /** 「回复 X」那颗人名画成什么、点了去哪，由容器算好的 `resolveUser` 给全。省略就画
+   *  handle、不可点 —— 没装路由的树里（单测、/demo）照样画得出这一行。 */
+  resolveUser?: (handle: string | null | undefined) => ResolvedUserRef
 }>()
 
 const emit = defineEmits<{
@@ -54,7 +58,13 @@ const emit = defineEmits<{
   reply: [commentId: string, body: string, done: (ok: boolean) => void]
   like: [commentId: string]
   remove: [commentId: string]
+  /** 点了人名：请容器带着算好的去处跳一次。 */
+  navigate: [target: ResolvedUserRef['to']]
 }>()
+
+function resolve(handle: string | null | undefined): ResolvedUserRef {
+  return props.resolveUser?.(handle) ?? { name: handle ?? '', to: null }
+}
 
 /** 正在确认删除。就地换成「确认 / 取消」两个按钮，不开弹窗：一次误触的代价是
  *  一条评论，而弹窗会把这一页的注意力整块拿走。 */
@@ -143,7 +153,13 @@ function confirmRemove() {
          把「回复 X」拼进去会让第一段被挤变形，也让人分不清这句是谁写的。 -->
     <div v-if="comment.reply_to_handle" class="fb-ci__re">
       <i18n-t keypath="feedback.comment.replyTo" tag="span">
-        <template #handle><UserRef :handle="comment.reply_to_handle" /></template>
+        <template #handle
+          ><UserRef
+            :handle="comment.reply_to_handle"
+            :name="resolve(comment.reply_to_handle).name"
+            :to="resolve(comment.reply_to_handle).to"
+            @navigate="emit('navigate', resolve(comment.reply_to_handle).to)"
+        /></template>
       </i18n-t>
     </div>
 

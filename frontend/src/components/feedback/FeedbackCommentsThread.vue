@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ResolvedUserRef } from '@/composables/useUserRefResolver'
 import type { FeedbackComment } from '@/cx_types'
 
 import { computed, ref } from 'vue'
@@ -43,6 +44,9 @@ const props = defineProps<{
   /** 哪几栋楼正在取楼内的下一页回复，按顶层评论 id。同一栋楼两次点击只会发一次
    *  请求 —— 两次会把同一段回复追加两遍，屏幕上是两条一模一样的回复。 */
   loadingReplies: Record<string, boolean>
+  /** 评论上的人名画成什么、点了去哪，往下递给评论条。省略时评论条自己画 handle、
+   *  不可点（没装路由的树里照样挂得起来）。 */
+  resolveUser?: (handle: string | null | undefined) => ResolvedUserRef
 }>()
 
 const emit = defineEmits<{
@@ -51,6 +55,8 @@ const emit = defineEmits<{
   remove: [commentId: string]
   'load-more': []
   'load-replies': [parentId: string]
+  /** 某条评论里的人名被点了，原样往上传。 */
+  navigate: [target: ResolvedUserRef['to']]
 }>()
 
 /** 一栋楼默认露出几条回复。 */
@@ -179,10 +185,12 @@ function onRemove(commentId: string) {
         :comment="top"
         :replying="replyTo === top.id"
         :reply-count="totalRepliesOf(top)"
+        :resolve-user="resolveUser"
         @toggle-reply="toggleReply"
         @reply="send"
         @like="onLike"
         @remove="onRemove"
+        @navigate="emit('navigate', $event)"
       />
 
       <!-- 回复区。左边那根竖线是**缩进的说明**，不是装饰：没有它，24px 的缩进在
@@ -194,10 +202,12 @@ function onRemove(commentId: string) {
             is-reply
             :replying="replyTo === reply.id"
             :reply-count="0"
+            :resolve-user="resolveUser"
             @toggle-reply="toggleReply"
             @reply="send"
             @like="onLike"
             @remove="onRemove"
+            @navigate="emit('navigate', $event)"
           />
         </li>
       </ul>
