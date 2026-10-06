@@ -1,55 +1,25 @@
 <template>
-  <v-container>
-    <v-card outlined class="pa-4">
-      <v-card-title class="text-h5 mb-4">
-        <v-icon left class="mr-2">mdi-pencil</v-icon>
-        {{ t('tasks.detail.editTask') }}
-      </v-card-title>
-      <v-divider class="mb-4"></v-divider>
-      <div v-if="loading" class="py-12 text-center">
-        <v-progress-circular indeterminate color="primary" />
-      </div>
-      <!-- A failed read trades the form for the error (docs/design-system.md §3.10). -->
-      <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="loadTaskData" />
-      <TaskForm
-        v-else-if="taskData"
-        ref="taskFormRef"
-        :initial-data="editTaskData"
-        :submit-button-text="t('tasks.edit.saveChanges')"
-        is-editing
-        :classification-topics="taskData.space?.classificationTopics || []"
-        :domain-groups="domainGroups"
-        :description-format="editTaskData.descriptionFormat"
-        :original-description="editTaskData.originalDescription"
-        @submit="handleSubmitEdit"
-        @cancel="navigateToDetail"
-      >
-        <template #buttons="{ isSubmitting }">
-          <div class="d-flex gap-4">
-            <BaseButton kind="ghost" :disabled="isSubmitting || isResubmitting" @click="navigateToDetail">{{
-              t('global.cancel')
-            }}</BaseButton>
-            <BaseButton kind="primary" :loading="isSubmitting" type="submit">{{
-              t('tasks.edit.saveChanges')
-            }}</BaseButton>
-            <BaseButton
-              v-if="showResubmitButton"
-              kind="secondary"
-              :loading="isResubmitting"
-              :disabled="isSubmitting"
-              type="button"
-              @click="submitWithReapproval"
-            >
-              {{ t('tasks.edit.saveAndResubmit') }}
-            </BaseButton>
-          </div>
-        </template>
-      </TaskForm>
-    </v-card>
-  </v-container>
+  <EditView
+    ref="viewRef"
+    :loading="loading"
+    :error="error"
+    :has-task-data="hasTaskData"
+    :initial-data="editTaskData"
+    :classification-topics="classificationTopics"
+    :domain-groups="domainGroups"
+    :is-resubmitting="isResubmitting"
+    :show-resubmit-button="showResubmitButton"
+    @retry="loadTaskData"
+    @submit="handleSubmitEdit"
+    @cancel="navigateToDetail"
+    @resubmit="requestResubmit"
+  />
 </template>
 
 <script setup lang="ts">
+// 改题页的容器：读路由、取题、存题、跳转都在这儿；画面交给 EditView。
+import type { TaskFormSubmitData } from '@/types'
+
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -59,10 +29,8 @@ import { storeToRefs } from 'pinia'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import { useTaskData, useTaskManagement } from './composables'
+import EditView from './EditView.vue'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
@@ -86,8 +54,11 @@ const spaceData = useSpaceData()
 const { domainGroups } = storeToRefs(spaceStore)
 
 // 状态
+const viewRef = ref<InstanceType<typeof EditView> | null>(null)
 const isResubmitting = ref(false)
-const taskFormRef = ref<InstanceType<typeof TaskForm> | null>(null)
+
+const hasTaskData = computed(() => taskData.value !== null)
+const classificationTopics = computed(() => taskData.value?.space?.classificationTopics ?? [])
 
 // 显示重新提交审核按钮的条件
 const showResubmitButton = computed(() => {
@@ -95,7 +66,7 @@ const showResubmitButton = computed(() => {
 })
 
 // Methods
-const handleSubmitEdit = async (updatedTaskData: any) => {
+const handleSubmitEdit = async (updatedTaskData: TaskFormSubmitData) => {
   if (isResubmitting.value) {
     await handleSubmitWithReapproval(updatedTaskData)
     return
@@ -105,14 +76,15 @@ const handleSubmitEdit = async (updatedTaskData: any) => {
   navigateToDetail()
 }
 
-const submitWithReapproval = async () => {
-  if (!taskFormRef.value) return
+/** 「保存并重新提交」：先把重新提交这一趟立起来，再让表单自己按原生 submit 走一遍，
+ *  提交那条路（`handleSubmitEdit`）才知道该落到重新审核那一支上。 */
+const requestResubmit = () => {
+  if (!viewRef.value) return
   isResubmitting.value = true
-  const form = taskFormRef.value.$el as HTMLFormElement
-  form.requestSubmit()
+  viewRef.value.requestSubmit()
 }
 
-const handleSubmitWithReapproval = async (formData: any) => {
+const handleSubmitWithReapproval = async (formData: TaskFormSubmitData) => {
   try {
     await submitEditTask(formData)
     await TasksApi.resubmitTask(taskId)
