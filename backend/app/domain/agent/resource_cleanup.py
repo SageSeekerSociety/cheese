@@ -872,7 +872,7 @@ def stop_executor(home: Path, resource: str) -> None:
     # directories of their own, and a machine that still has one is worth
     # stopping too.
     markers = [home / ".cheese" / "cheese-preview.pid"]
-    markers += sorted((home / ".cheese" / SEATS_DIR).glob("cheese-tunnel.pid"))
+    markers += sorted((home / ".cheese" / SEATS_DIR).glob("*/cheese-tunnel.pid"))
     markers.append(home / ".cheese" / "cheese-tunnel.pid")
     for marker in markers:
         name = marker.name[: -len(".pid")]
