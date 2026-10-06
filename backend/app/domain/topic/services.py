@@ -56,7 +56,7 @@ from app.domain.room_task.models import (
     TaskTitleSource,
 )
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
     RoomCleanup,
@@ -879,11 +879,7 @@ class TopicService:
             content=say(
                 "taskCreated",
                 actor=f"<@{actor}>",
-                # An unnamed task's stored title is the Chinese placeholder;
-                # the word each reader sees is their own language's.
-                title=say("taskUntitled")
-                if task.title_source == TaskTitleSource.placeholder
-                else task.title,
+                title=said_title(task),
                 owner=f"<@{task.owner_handle}>" if task.owner_handle else "",
             ),
             kind=BlockKind.event,

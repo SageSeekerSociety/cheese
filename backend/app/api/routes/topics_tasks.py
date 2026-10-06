@@ -45,7 +45,7 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.proposals import ProposalState, TaskProposals
 from app.domain.room_task.schemas import TaskOut
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.schemas import ConclusionIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -249,9 +249,9 @@ async def conclude_task(
         db,
         place_id=place.room_id,
         content=(
-            say("taskCompleted", title=task.title, conclusion=task.conclusion)
+            say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
             if task.conclusion
-            else say("taskClosed", title=task.title)
+            else say("taskClosed", title=said_title(task))
         ),
         meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
     )
@@ -335,7 +335,7 @@ async def start_task(
     await announce(
         db,
         place_id=place.room_id,
-        content=say("taskStarted", actor=f"<@{actor.handle}>", title=task.title),
+        content=say("taskStarted", actor=f"<@{actor.handle}>", title=said_title(task)),
         meta={"platform": True, "action": "task_started", "task_id": str(task.id)},
     )
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
