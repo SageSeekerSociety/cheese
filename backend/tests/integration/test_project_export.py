@@ -18,6 +18,7 @@ from app.domain.library.service import artifact_snapshot_path, write_library_fil
 from app.domain.living_doc.models import Document
 from app.domain.project.models import ProjectArtifact, ProjectForge
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
+from app.domain.room_task.models import Task
 from app.domain.topic.repositories import TopicRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project
@@ -68,22 +69,34 @@ def exported_project(client, monkeypatch, tmp_path):
             binding.api_url = "https://forge.invalid"
             binding.repo = "fixture/project"
             binding.default_branch = "main"
+            # Each a task's living document: one in the public room, one in
+            # the private room.
             doc = Document(
                 project_id=pid,
-                room_id=room.id,
                 author="export-owner",
                 content="# Offline document\n",
                 version=1,
             )
-            db.add(doc)
-            db.add(
-                Document(
-                    project_id=pid,
-                    room_id=private.id,
-                    author="other",
-                    content="PRIVATE-SECRET",
-                    version=1,
-                )
+            secret = Document(
+                project_id=pid, author="other", content="PRIVATE-SECRET", version=1
+            )
+            db.add_all([doc, secret])
+            await db.flush()
+            db.add_all(
+                [
+                    Task(
+                        project_id=pid,
+                        room_id=room.id,
+                        title="Public task",
+                        document_id=doc.id,
+                    ),
+                    Task(
+                        project_id=pid,
+                        room_id=private.id,
+                        title="Private task",
+                        document_id=secret.id,
+                    ),
+                ]
             )
             artifact = ProjectArtifact(
                 project_id=pid, name="Report", about="Report fixture"

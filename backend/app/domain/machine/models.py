@@ -279,8 +279,11 @@ class CloudHostHome(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE")
     )
+    # The room the home was made for. A room that has since become a task keeps
+    # its id as that task's conversation, and its cleanup still finds the home
+    # here, so this names a conversation rather than a channel.
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
     # The room generation the home belongs to (``topic.resource_id``): a room's
     # cleanup removes the homes of the generation it was opened for.

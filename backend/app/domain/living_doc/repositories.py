@@ -15,11 +15,10 @@ _projects = table("projects", column("overview_document_id", Uuid))
 
 
 def project_own(project_id: uuid.UUID) -> ColumnElement[bool]:
-    """The project's own documents: in no room, no task's living document and
-    not the project's overview. The library lists and searches these."""
+    """The project's own documents: not a task's living document and not the
+    project's overview. The library lists and searches these."""
     return and_(
         Document.project_id == project_id,
-        Document.room_id.is_(None),
         Document.id.not_in(
             select(_tasks.c.document_id).where(_tasks.c.document_id.is_not(None))
         ),
@@ -38,19 +37,8 @@ class DocumentRepository:
     async def get(self, document_id: uuid.UUID) -> Document | None:
         return await self._session.get(Document, document_id)
 
-    async def of_rooms(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, Document]:
-        """The documents still kept by old rooms, keyed by room id: an archived
-        room waiting to become a task keeps the one it had."""
-        if not room_ids:
-            return {}
-        rows = await self._session.scalars(
-            select(Document).where(Document.room_id.in_(room_ids))
-        )
-        return {row.room_id: row for row in rows if row.room_id is not None}
-
     async def of_project(self, project_id: uuid.UUID) -> list[Document]:
-        """The project's own documents, in no room and no task's, the latest
-        changed first."""
+        """The project's own documents, no task's, the latest changed first."""
         rows = await self._session.scalars(
             select(Document)
             .where(project_own(project_id))

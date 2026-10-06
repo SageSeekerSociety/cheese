@@ -339,7 +339,7 @@ async def publish_site(
     directory = _directory(directory)
     # Serialize even a project's first publication; no Site row exists to lock yet.
     await session.scalar(
-        select(Project).where(Project.id == project_id).with_for_update()
+        select(Project).where(Project.id == project_id).with_for_update(key_share=True)
     )
     revision = await ProjectFiles(session, project_id, None).revision()
     if revision != expected_source_revision:

@@ -48,12 +48,12 @@ async def reach(
     enforce: bool = False,
 ) -> Reached:
     """The document and the caller, once the caller may reach it. ``enforce``
-    holds a room's document to its roster even where room access is not
-    otherwise enforced (a write, or anything that acts as the caller)."""
+    holds a task's document to its channel's roster even where channel access
+    is not otherwise enforced (a write, or anything that acts as the caller)."""
     doc = await Documents(db).get(document_id)
     if doc is None:
         raise NotFoundError(say("docNotFound"))
-    task = await TaskService(db).of_document(doc.id) if doc.room_id is None else None
+    task = await TaskService(db).of_document(doc.id)
     if task is not None:
         place = await TopicService(db).place_or_404(task.id)
         actor = await resolver.resolve(
@@ -63,18 +63,9 @@ async def reach(
             actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
         )
         return Reached(doc, actor, place, task, resolver.credential_conversation())
-    if doc.room_id is None:
-        actor = await resolver.resolve(project_id=doc.project_id)
-        await authorize_in_project(resolver, actor, doc.project_id)
-        return Reached(doc, actor, None)
-    place = await TopicService(db).place_or_404(doc.room_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
-    )
-    return Reached(doc, actor, place)
+    actor = await resolver.resolve(project_id=doc.project_id)
+    await authorize_in_project(resolver, actor, doc.project_id)
+    return Reached(doc, actor, None)
 
 
 async def authorize_in_project(
