@@ -89,13 +89,16 @@ const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(nu
 const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
 const router = useRouter()
-// 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换房间就重读。
+// 卡片属于提出它的那段对话：在任务里就是这个任务，否则是房间本身。三种卡都按它
+// 取、按它决定 —— 任务里提的卡落在任务里，按房间去取就一张也看不到。
+const conversationId = computed(() => props.taskId ?? props.topic.id)
+// 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换对话就重读。
 const skills = useSkillProposals(
   toRef(() => props.topic.project_id),
-  toRef(() => props.topic.id)
+  conversationId
 )
 onMounted(skills.load)
-watch(() => props.topic.id, skills.load)
+watch(conversationId, skills.load)
 function openSkill(skill: { id: string }) {
   void router.push({
     name: 'project-skills',
@@ -104,7 +107,7 @@ function openSkill(skill: { id: string }) {
   })
 }
 
-// AI 队友提议的任务：列的是这个房间里还在等人决定的那些，接在对话后面。点「创建
+// AI 队友提议的任务：列的是这段对话里还在等人决定的那些，接在对话后面。点「创建
 // 任务」的人就是负责人，创建好就去任务页。
 const store = useWorkspaceStore()
 
@@ -121,16 +124,16 @@ async function join() {
 const proposals = ref<TaskProposal[]>([])
 const deciding = ref<string | null>(null)
 async function loadProposals() {
-  const room = props.topic.id
+  const conversation = conversationId.value
   try {
-    const rows = await listTaskProposals(room)
-    if (props.topic.id === room) proposals.value = Array.isArray(rows) ? rows : []
+    const rows = await listTaskProposals(conversation)
+    if (conversationId.value === conversation) proposals.value = Array.isArray(rows) ? rows : []
   } catch {
     // 拉不到就先不画，下一次房间有动静时再读。
   }
 }
 onMounted(loadProposals)
-watch(() => props.topic.id, loadProposals)
+watch(conversationId, loadProposals)
 function proposerName(handle: string): string {
   return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
 }
@@ -139,10 +142,10 @@ async function decideProposal(proposal: TaskProposal, decision: 'accept' | 'dism
   deciding.value = proposal.id
   try {
     if (decision === 'accept') {
-      const task = await acceptTaskProposal(props.topic.id, proposal.id)
+      const task = await acceptTaskProposal(conversationId.value, proposal.id)
       emit('open-card', task.id)
     } else {
-      await dismissTaskProposal(props.topic.id, proposal.id)
+      await dismissTaskProposal(conversationId.value, proposal.id)
     }
     proposals.value = proposals.value.filter((p) => p.id !== proposal.id)
   } catch (e) {
@@ -216,14 +219,14 @@ defineExpose({
           @review="emit('review')"
         />
       </template>
-      <template v-if="!taskId" #timeline-end>
+      <template #timeline-end>
         <!-- Agent 反馈卡：「这一轮结束时，平台要人做的一个决定」，接在这一轮的
              对话后面。
              什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
              （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
              换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
-        <AgentFeedbackCard ref="feedbackRef" :topic-id="topic.id" />
+        <AgentFeedbackCard ref="feedbackRef" :topic-id="conversationId" />
         <!-- 技能提议卡：芝士把一套做法整理好了，请人就地决定存不存。同样由服务端
              说了算：列的是这个房间里还在等人的提议，没有就什么都不画。 -->
         <SkillProposalCard
