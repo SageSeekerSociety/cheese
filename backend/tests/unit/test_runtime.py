@@ -611,6 +611,69 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
     # A named platform incident waits for recovery; it never re-runs the turn.
     await asyncio.sleep(0.05)
     assert svc.converse_calls == 1
+    await runner.drain()
+
+
+@pytest.mark.anyio
+async def test_a_turns_closing_scan_ends_with_the_runner_that_ran_the_turn(db_factory):
+    """When a turn ends, it looks for messages left waiting in its room. That
+    scan belongs to the runner that ran the turn: draining that runner waits for
+    it, whichever runner the process bound for incoming messages."""
+    from app.domain.agent import pending_messages
+
+    previous = pending_messages.current_runner()
+    elsewhere = AgentWorkRunner(InProcessBroker())
+    pending_messages.bind_runner(elsewhere)
+    release = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def sessions():
+        task = asyncio.current_task()
+        if task is not None and task.get_name().startswith("pending-messages:"):
+            await release.wait()
+        async with db_factory() as session:
+            yield session
+
+    class _Full(WorkChat):
+        session_factory = staticmethod(sessions)
+
+        def replaying(self, topic_id):
+            return None
+
+        async def converse(self, **_):
+            raise OSError(errno.ENOSPC, "No space left on device")
+            yield  # pragma: no cover
+
+        async def post_system_event(
+            self, topic_id, content, turn_id=None, *, meta=None
+        ):
+            return {"id": "storage-1", "kind": "event", "content": content}
+
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    topic = await a_topic(db_factory)
+    try:
+        async with broker.subscribe(str(topic)) as q:
+            runner.submit(
+                _Full(),
+                topic,
+                author="u",
+                content="hi",
+                addressed=addressed_to_agent("cheese-seat"),
+            )
+            await _next_frame(q, "error")
+        asyncio.get_running_loop().call_later(0.2, release.set)
+        await runner.drain()
+        waiting = [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == f"pending-messages:{topic}" and not task.done()
+        ]
+        assert waiting == []
+    finally:
+        release.set()
+        await elsewhere.drain()
+        pending_messages.bind_runner(previous)
 
 
 @pytest.mark.anyio

@@ -70,8 +70,14 @@ async def defer_message(session, block_id):
         block.meta = {**(block.meta or {}), DEFERRED_INPUT: True}
 
 
-def nudge_messages(chat, topic_id):
-    runner = _runner
+def nudge_messages(chat, topic_id, runner=None):
+    """Look for messages left waiting in ``topic_id``, in the background.
+
+    ``runner`` is the runner the scan belongs to: it is tracked in that runner's
+    tasks, so draining or handing over that runner waits for it. A runner ending
+    one of its own turns passes itself; everything else uses the runner bound
+    for incoming messages."""
+    runner = runner or _runner
     caller = asyncio.current_task()
     if (
         runner is None
