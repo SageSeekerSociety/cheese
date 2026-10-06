@@ -1,7 +1,7 @@
 // 搜索结果页：词在地址上，打开就搜；「全部」每类列前几条，某一类比列出来的多时可以
 // 点进那一栏看全；某一栏滚到底接着加载下一页，拿到的是后面的，不重复；改了词地址
 // 跟着变，重新搜。
-import type { ProjectSearchHits } from '@/api'
+import type { ProjectSearchHits } from '@/api/projectSearch'
 
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
@@ -14,7 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const searchProject = vi.hoisted(() => vi.fn())
 const searchProjectCounted = vi.hoisted(() => vi.fn())
-vi.mock('@/api', async (original) => ({ ...(await original<object>()), searchProject, searchProjectCounted }))
+vi.mock('@/api/projectSearch', async (original) => ({
+  ...(await original<object>()),
+  searchProject,
+  searchProjectCounted,
+}))
 
 import ProjectSearchView from './ProjectSearchView.vue'
 
@@ -29,6 +33,8 @@ function message(n: number) {
     room_title: '登录页改成深色',
     kind: 'message' as const,
     author: 'alice',
+    author_name: 'Alice',
+    author_name_source: null,
     created_at: '2026-09-01T00:00:00Z',
     task_id: null,
     snippet: `深色第 ${n} 条`,
