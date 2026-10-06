@@ -128,9 +128,6 @@ def _channels(client, pid, room, token) -> dict[str, int]:
         "project files": client.get(
             f"/projects/{pid}/files", headers=headers
         ).status_code,
-        "environment overview": client.get(
-            f"/projects/{pid}/environment/recovery/rooms/{room}", headers=headers
-        ).status_code,
         "project inbox": client.post(
             f"/projects/{pid}/alerts",
             json={"level": "silent", "kind": "change_alert", "title": "t"},

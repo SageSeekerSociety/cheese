@@ -111,7 +111,6 @@ ignore_imports =
     app.core.errors -> app.domain.agent.device_hub
     app.domain.agent.chat -> app.api.deps
     app.domain.platform_stats.services -> app.api.routes.health
-    app.domain.project.environment_recovery -> app.api.deps
     app.domain.project.export -> app.api.auth
     app.domain.review.pr_poll -> app.api.deps
 
@@ -331,10 +330,6 @@ ignore_imports =
     app.domain.policy.proposals -> app.domain.room_task.place
     app.domain.project.artifacts -> app.domain.review.models
     app.domain.project.environment -> app.domain.topic.models
-    app.domain.project.environment_recovery -> app.domain.agent.models
-    app.domain.project.environment_recovery -> app.domain.agent.platform_notices
-    app.domain.project.environment_recovery -> app.domain.agent.runtime
-    app.domain.project.environment_recovery -> app.domain.topic.models
     app.domain.project.export -> app.domain.review.models
     app.domain.project.export -> app.domain.topic.models
     app.domain.project.forge -> app.domain.agent.forgejo_tokens

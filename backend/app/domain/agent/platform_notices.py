@@ -85,8 +85,8 @@ EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 
 #: 一条消息被升级成了一条活（或一个房间），下一步在它的负责人手上。
 EVENT_BLOCK_UPGRADED: Final = "block_upgraded"
-#: 一个房间的环境倒了，这件事交到总览芝士手上了。
-EVENT_ENVIRONMENT_RECOVERY_REQUEST: Final = "environment_recovery_request"
+#: 频道的工作环境没准备好：在等的人去项目设置的「环境」里看、改、重试。
+EVENT_ENVIRONMENT_FAILED: Final = "environment_failed"
 #: 房间的环境修好了，此前没送达的消息接着处理。
 EVENT_ENVIRONMENT_REPAIRED: Final = "environment_repaired"
 #: 这个房间的记忆在整理 —— 芝士自己的事，没有人在等它。
@@ -216,7 +216,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_CARD_REDESCRIBED,
         EVENT_UPSTREAM_CONFLICT,
         EVENT_BLOCK_UPGRADED,
-        EVENT_ENVIRONMENT_RECOVERY_REQUEST,
+        EVENT_ENVIRONMENT_FAILED,
         EVENT_ENVIRONMENT_REPAIRED,
         EVENT_MEMORY_ORGANIZING,
         EVENT_MEMORY_CHANGED,

@@ -1397,6 +1397,7 @@ async def _install(
                 for key, value in (row.execution_request or {}).items()
                 if key != LOST_KEY
             }
+        conversation_id = row.conversation_id
         device = (
             await sql_device_service(db).get_device(device_id) if owner_device else None
         )
@@ -1412,7 +1413,22 @@ async def _install(
         if target["status"] != "ready":
             message = "项目环境尚未就绪；对话和平台工具仍可用。"
             detail = {"environment_status": target.get("environment_status")}
-            if (detail["environment_status"] or {}).get("state") in ENVIRONMENT_SETTLED:
+            settled = detail["environment_status"] or {}
+            if settled.get("state") in ENVIRONMENT_SETTLED:
+                if settled.get("state") == "failed":
+                    # The people waiting are told where they wait, with the
+                    # way to the settings; the teammate is told here.
+                    from app.domain.agent.environment_failures import tell_failed
+
+                    line = await tell_failed(
+                        db,
+                        room_id=topic_id,
+                        conversation_id=conversation_id,
+                        status=settled,
+                    )
+                    await db.commit()
+                    if line is not None:
+                        await publish_line(conversation_id, line)
                 return {"unavailable": message, **detail}
             return _Preparing(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail

@@ -72,7 +72,6 @@ auth_entries:
   skill.project: "project_skills._in_project / _load bind skill actual project, use enforced room access when topic is supplied, otherwise authorize_project. Source: app/api/routes/project_skills.py,127."
   skill.bundle: "skill_bundles.download_skill_bundle reads scoped_token_claims from X-Cheese-Token (the session's project token) and derives the project from claim p; the URL carries no project id, so the credential itself is the only scope. A global sandbox token is not a project claim and is refused. Source: app/api/routes/skill_bundles.py and app/core/sandbox_auth.py."
   environment.user: "project_environment.User -> require_auth_user; access resolves user handle and checks roster for reads / MemberService.manages for writes, plus archive-write guard. room/apply operations bind the room and idle requirement. Source: app/api/routes/project_environment.py,54,79."
-  environment.overview: "project_environment.overview_access requires scoped claims p=URL project and t=project.root_topic_id; recovery repair additionally requires idle and matching incident. Source: app/api/routes/project_environment.py."
   export.human: "domain/project/export.create_archive requires token user_id, rejects IdentityService agent binding, checks may_read_project and filters readable_topic_ids. This is the route delegated authorization seam. Source: app/domain/project/export.py."
   context.rooms: "project_context._readable_rooms uses enforced supplied-room access or authorize_project, then readable_topic_ids filters every search group. Source: app/api/routes/project_context.py."
   site.access: "ActorResolver resolves verified actor then site.services.require_site_access, for publication/read or minting a short-lived site grant. Source: app/api/routes/project_sites.py and site_sessions.py; app/domain/site/services.py."
@@ -278,7 +277,7 @@ owners:
   project: "Project lifecycle, association, ownership and repository settings; domain/project/ProjectService and project forge/protection. Route retains request assembly."
   project.rail: "Project rail assembly in projects.list_project_tasks: project_reader -> TaskService -> latest_cards_by_task -> beats -> asked -> one now -> presentation. Domain owners of facts remain room_task/review/block; v6 says assembly owner is the route."
   project.artifacts: "Published project artifact catalogue/version comparisons; domain/project/artifacts.py, composed with library/preview/repository bytes by the route."
-  project.environment: "Project/room execution environment and recovery; domain/project/environment.py and environment_recovery.py, composed with machine/device state."
+  project.environment: "Project/channel execution environment, its failures and their diagnosis; domain/project/environment.py and environment_diagnosis.py, domain/agent/environment_failures.py, composed with machine/device state."
   project.export: "Caller-visible offline project export; domain/project/export.create_archive owns archive construction and delegated auth."
   project.skills: "Project-owned reusable skills/revisions; domain/project_skill/ProjectSkillService."
   skill.bundle: "Content-addressed delivery of a session's shipped platform skills plus this project's own skills to the launching machine; domain/project_skill/service.session_skill_bundle and the device launcher cache. Derived content, not new business state."
@@ -759,8 +758,7 @@ routes:
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/environment", auth: "environment.user", owner: "project.environment"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/environment/rooms/{topic_id}", auth: "environment.user", owner: "project.environment"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/environment/rooms/{topic_id}/apply", auth: "environment.user", owner: "project.environment"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/environment/recovery/rooms/{topic_id}", auth: "environment.overview", owner: "project.environment"}
-  - {protocol: "http", method: "POST", path: "/projects/{project_id}/environment/recovery/rooms/{topic_id}", auth: "environment.overview", owner: "project.environment"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/environment/rooms/{topic_id}/diagnose", auth: "environment.user", owner: "project.environment"}
   # app.api.routes.project_export
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/export", auth: "export.human", owner: "project.export"}
   # app.api.routes.project_sites

@@ -1403,11 +1403,6 @@ class RoomTurns:
                 False,
                 False,
             )
-            status = getattr(exc, "environment_status", None)
-            if status is not None:
-                from app.domain.project.environment_recovery import report_failure
-
-                await report_failure(self, project_id, prepared.room_id, status)
             # The write never reached the transport, so the Stop consumer's
             # close_one rightly refuses this interval (undelivered). Its own
             # coroutine retires it HERE, by exact id — the same end the
@@ -1428,8 +1423,6 @@ class RoomTurns:
         # and so calls a prompt that landed two seconds earlier undelivered
         # and re-sends it. Nothing but the runtime acts on this, so it never
         # reaches the broker.
-        from app.domain.project.environment_recovery import close_recovery
-
         # Delivery is recorded AT the source (FB-56): the transport accepted
         # the write, so the interval and its input are stamped delivered in
         # the same commit — a converse driven without the work runner leaves
@@ -1439,7 +1432,6 @@ class RoomTurns:
             await turn_inputs.stamp_delivered(
                 session, turn_id=turn_id, at=datetime.now(UTC)
             )
-            await close_recovery(session, prepared.room_id)
             await session.commit()
         _delivery_step("stamp_delivered")
         logger.info(

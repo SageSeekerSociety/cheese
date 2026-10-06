@@ -33,7 +33,6 @@ BASELINE = {
     "app/domain/agent/room/turn.py": 1,
     "app/domain/agent_instance/services.py": 1,
     "app/domain/dashboard/services.py": 1,
-    "app/domain/project/environment_recovery.py": 1,
     # 管理员看板「学习」那一格：私聊不进这张列表，`WHERE is_private IS FALSE` 一类
     # 的过滤，和轮次组装不是一回事（见上面「登记，不是认可」）。
     "app/domain/space/learning_service.py": 1,
