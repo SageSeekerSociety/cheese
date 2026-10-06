@@ -108,18 +108,6 @@ def _fire_on_done(callback: Callable[[], None]) -> None:
         logger.exception("submit on_done hook failed")
 
 
-async def _open_turns(session_factory) -> dict[uuid.UUID, TurnRecord]:
-    """Every turn interval still open, keyed by turn id.
-
-    Whether reading this can fail is the sweep's business, not this function's:
-    it raises, and the callers that must survive a database blip say so where
-    they say what else they do on failure.
-    """
-    async with session_factory() as session:
-        rows = await AgentTurnRepository(session).open_turns()
-    return {record.turn_id: record for record in rows}
-
-
 async def _instance_of(
     session_factory, place_id: uuid.UUID, agent_handle: str
 ) -> uuid.UUID | None:
@@ -1334,7 +1322,7 @@ class AgentWorkRunner:
         A turn the platform does not re-run is a turn someone has to pick up by
         hand, and they can only do that if the topic says so — silence is the
         failure mode, not the loud recovery."""
-        open_turns = await _open_turns(chat_service.session_factory)
+        open_turns = await turn_inputs.open_turns(chat_service.session_factory)
         if not open_turns:
             return 0
         if min_age_s is None:
