@@ -139,9 +139,13 @@ describe('卡上的「谁在做」是一个人', () => {
     const { container } = mount()
     await waitFor(() => expect(owner(container).querySelector('img')).not.toBeNull())
 
+    // 图现在由 UserAvatar 画：收到 error 后当帧把彩色首字母盖到原位（v-img 的 error
+    // 插槽），`<img>` 留着但读到的已经是首字母；这个 URL 也由它记进 utils/avatarFailures，
+    // 本次会话不再为它发第二次注定 404 的请求。
     await fireEvent.error(owner(container).querySelector('img') as HTMLElement)
-    await waitFor(() => expect(owner(container).querySelector('img')).toBeNull())
-    expect((owner(container).querySelector('.board-card__avatar') as HTMLElement).textContent?.trim()).toBe('奶')
+    await waitFor(() =>
+      expect((owner(container).querySelector('.user-avatar-char') as HTMLElement)?.textContent?.trim()).toBe('奶')
+    )
   })
 
   it('名册里查不到这个 handle 时，把 handle 原样显示出来，不留空白', async () => {

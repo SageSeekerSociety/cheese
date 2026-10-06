@@ -89,9 +89,11 @@ function resourceActions(resource: Knowledge): MenuAction[] {
         <td>{{ resourceTypeName(resource.type, resource.material?.type) }}</td>
         <td>
           <div class="d-flex align-center">
+            <!-- 种子用 handle(username)：颜色跟着人走，不跟昵称走，改昵称不换色（契约 §3.14）。 -->
             <UserAvatar
               :avatar="getAvatarUrl(resource.creator.avatarId)"
               :name="resource.creator.nickname"
+              :seed="resource.creator.username"
               size="24"
               class="mr-2"
             />

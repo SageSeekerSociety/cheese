@@ -49,8 +49,9 @@
             </div>
             <div class="d-flex align-center mb-2">
               <user-avatar
-                :avatar="getAvatarUrl(questionData.author.avatarId)"
+                :avatar="isChosenAvatar(questionData.author.avatarId) ? getAvatarUrl(questionData.author.avatarId) : ''"
                 :name="questionData.author.nickname"
+                :seed="questionData.author.username"
                 :size="24"
               />
               <span class="ms-2">{{ questionData.author.nickname }}</span>
@@ -269,6 +270,7 @@ import { defaultEditorConfig } from '@/utils/editor'
 import { getAvatarUrl } from '@/utils/materials'
 import { parse } from '@/utils/parser'
 
+import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -306,6 +308,12 @@ const loadFailed = ref(false)
 const loadError = ref<string | null>(null)
 
 provide(questionDataInjectionKey, questionData)
+
+// 提问者的头像：注册时 profile 一律被填上默认头像 id，不能直接 getAvatarUrl——那样
+// 没挑过头像的人会长着和所有人同一张脸。先问一次全局默认头像 id（幂等，全进程共用一
+// 份），再据此判断这条 id 是不是本人真挑的；不是就把空串交给 UserAvatar，由它按 handle
+// 画彩色首字母。默认 id 到货时这个 ref 一变，模板跟着重算。
+ensureDefaultAvatarId()
 
 const createdAt = computed(() => {
   if (questionData.value) {

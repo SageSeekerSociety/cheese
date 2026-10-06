@@ -5,7 +5,11 @@
       <v-card-title>{{ answer.author.nickname }}</v-card-title>
       <v-card-subtitle data-user-content>{{ answer.author.intro }}</v-card-subtitle>
       <template #prepend>
-        <user-avatar :avatar="getAvatarUrl(answer.author.avatarId)" :name="answer.author.nickname" />
+        <user-avatar
+          :avatar="isChosenAvatar(answer.author.avatarId) ? getAvatarUrl(answer.author.avatarId) : ''"
+          :name="answer.author.nickname"
+          :seed="answer.author.username"
+        />
       </template>
     </v-card-item>
     <v-card-text class="text-body-1 font-weight-regular answer-body-text pb-1 px-3">
@@ -49,6 +53,8 @@ import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 import { parse } from '@/utils/parser'
+
+import { isChosenAvatar } from '@/composables/useChosenAvatar'
 
 import CollapsibleContent from '../common/CollapsibleContent.vue'
 import ContentVoter from '../common/ContentVoter.vue'

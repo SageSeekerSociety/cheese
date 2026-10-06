@@ -5,20 +5,15 @@
        住在「帮助与反馈」菜单里。 -->
   <v-card class="pa-0" width="280">
     <div class="user-menu-head">
-      <v-avatar
-        size="40"
-        rounded="circle"
-        :style="menu.avatar.value ? undefined : { backgroundColor: menu.avatarColor.value }"
-      >
-        <v-img v-if="menu.avatar.value" :src="menu.avatar.value">
-          <template #error>
-            <span class="user-menu-avatar-char" :style="{ backgroundColor: menu.avatarColor.value }">{{
-              menu.avatarInitial.value
-            }}</span>
-          </template>
-        </v-img>
-        <span v-else class="user-menu-avatar-char">{{ menu.avatarInitial.value }}</span>
-      </v-avatar>
+      <!-- 头像走 UserAvatar：挑过就画那张，没挑过/取不到就画按 handle 派生的彩色首字母，
+           失败记忆也归它一处管。以前这里自画一份，和 nav 左栏、顶栏各画一份，同一个
+           人的头像会三处三种样子。 -->
+      <UserAvatar
+        :avatar="menu.avatar.value ?? ''"
+        :name="menu.nickname.value"
+        :seed="menu.currentUser.value?.username"
+        :size="40"
+      />
       <div class="user-menu-head__text">
         <div class="t-title text-truncate">{{ menu.nickname.value }}</div>
         <div class="user-menu-head__intro text-truncate">
@@ -73,6 +68,7 @@ import { useDesktopApp } from '@/composables/useDesktopApp'
 
 import LanguagePreference from '@/components/common/LanguagePreference.vue'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { inDesktopApp } from '@/lib/desktopApp'
 
@@ -98,22 +94,6 @@ const { phoneOpen } = useDesktopApp()
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
-}
-
-/* 没挑过头像时的彩色首字母，同 LeftAppRail 的 .rail-avatar-char。 */
-.user-menu-avatar-char {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  /* stylelint-disable-next-line color-no-hex -- 压在 avatarColor() 算出来的底色
-     上的墨色。那个底色按固定感知亮度取（OKLCH L = 0.54），深浅两套主题下是同一个
-     值，所以字也必须是同一个值；改成 token 反而会在两套主题里各错一次。 */
-  color: #fff;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
 }
 
 /* 退出不是破坏性操作，不用红；它只是这张菜单里最不常用的一项，用次要文字色。 */

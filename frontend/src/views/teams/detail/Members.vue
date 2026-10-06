@@ -36,6 +36,7 @@
                   <UserAvatar
                     :name="found.name || found.handle"
                     :avatar="getAvatarUrl(found.avatar_id)"
+                    :seed="found.handle"
                     :size="32"
                     class="mr-3"
                   />
@@ -129,6 +130,7 @@
                 <UserAvatar
                   :avatar="getAvatarUrl(member.user.avatarId)"
                   :name="member.user.nickname"
+                  :seed="member.user.username"
                   size="40"
                   class="mr-3"
                 />
@@ -235,6 +237,7 @@
                 <UserAvatar
                   :avatar="getAvatarUrl(request.user.avatarId)"
                   :name="request.user.nickname"
+                  :seed="request.user.username"
                   size="40"
                   class="mr-3"
                 />
@@ -333,6 +336,7 @@
                 <UserAvatar
                   :avatar="getAvatarUrl(invitation.user.avatarId)"
                   :name="invitation.user.nickname"
+                  :seed="invitation.user.username"
                   size="40"
                   class="mr-3"
                 />

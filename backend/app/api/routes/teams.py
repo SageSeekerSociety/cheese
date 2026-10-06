@@ -42,7 +42,10 @@ class CreateTeamRequest(BaseModel):
     handle: str | None = None
     intro: str = ""
     description: str = ""
-    avatar_id: int = Field(default=1, alias="avatarId", gt=0)
+    # 建队时没挑头像就是 ``0``（契约 §3.14：``0`` 是「没有头像」的哨兵值，
+    # 前端 ``getAvatarUrl(0)`` 渲染成空串）。以前的默认 ``1`` 会被当成
+    # 「挑过第 1 张」而画出一张谁都没选过的脸，契约不允许。
+    avatar_id: int = Field(default=0, alias="avatarId", ge=0)
 
 
 class PatchTeamRequest(BaseModel):
@@ -112,8 +115,16 @@ async def get_team_membership_service(
     )
 
 
-def _user_payload(user, profile, *, fallback_id: int) -> dict:
-    """Build a User-shaped dict matching frontend `User` type expectations."""
+def _user_payload(
+    user, profile, *, fallback_id: int, avatar_id: int | None = None
+) -> dict:
+    """Build a User-shaped dict matching frontend `User` type expectations.
+
+    ``avatar_id`` 传的是**这个人自己挑过**的那张（``chosen_avatar_ids`` 的答案，没
+    挑过是 None），不从 ``profile.avatar_id`` 取：那一列每个注册路径都写死了全局
+    默认头像，照原样回会让所有没挑过头像的人共用同一张脸 —— 而区分人正是头像的活。
+    调用方从 ``profiles_map`` 旁边那份 ``avatars_map`` 里拿。
+    """
     if user is None:
         return {
             "id": fallback_id,
@@ -133,7 +144,7 @@ def _user_payload(user, profile, *, fallback_id: int) -> dict:
         "id": user.id,
         "username": user.username,
         "nickname": nickname,
-        "avatarId": profile.avatar_id if profile else None,
+        "avatarId": avatar_id,
         "intro": profile.intro if profile else "",
         "question_count": 0,
         "answer_count": 0,
@@ -155,6 +166,7 @@ def _team_to_api_model(
     current_user_id: int | None = None,
     users_map: dict | None = None,
     profiles_map: dict | None = None,
+    avatars_map: dict | None = None,
 ) -> dict:
     created_at_ms = (
         int(team.created_at.timestamp() * 1000) if team.created_at is not None else 0
@@ -171,6 +183,8 @@ def _team_to_api_model(
 
     users_map = users_map or {}
     profiles_map = profiles_map or {}
+    # user_id -> 这个人挑过的头像 id；没挑过的不在这份映射里（`_load_team_user_maps`）。
+    avatars_map = avatars_map or {}
 
     if members is not None:
         for rel in members:
@@ -179,6 +193,7 @@ def _team_to_api_model(
                     users_map.get(rel.user_id),
                     profiles_map.get(rel.user_id),
                     fallback_id=rel.user_id,
+                    avatar_id=avatars_map.get(rel.user_id),
                 )
             elif rel.role == TeamMemberRole.ADMIN:
                 admin_relations.append(rel)
@@ -203,6 +218,7 @@ def _team_to_api_model(
                 users_map.get(rel.user_id),
                 profiles_map.get(rel.user_id),
                 fallback_id=rel.user_id,
+                avatar_id=avatars_map.get(rel.user_id),
             )
             for rel in ordered
         ]
@@ -254,6 +270,7 @@ def _member_to_api_model(
     *,
     users_map: dict | None = None,
     profiles_map: dict | None = None,
+    avatars_map: dict | None = None,
 ) -> dict:
     """TeamMember representation with the full User shape the frontend expects."""
     created_at_ms = (
@@ -271,10 +288,12 @@ def _member_to_api_model(
     role_name = role_map.get(rel.role, "MEMBER")
     users_map = users_map or {}
     profiles_map = profiles_map or {}
+    avatars_map = avatars_map or {}
     user_payload = _user_payload(
         users_map.get(rel.user_id),
         profiles_map.get(rel.user_id),
         fallback_id=rel.user_id,
+        avatar_id=avatars_map.get(rel.user_id),
     )
     return {
         "role": role_name,
@@ -287,16 +306,23 @@ def _member_to_api_model(
 
 async def _load_team_user_maps(
     db, members: list[TeamUserRelation]
-) -> tuple[dict, dict]:
-    """Bulk-load User + UserProfile records for all member relations."""
+) -> tuple[dict, dict, dict]:
+    """Bulk-load User + UserProfile records, and the avatars they picked.
+
+    ``avatars_map`` 是 ``user_id -> 挑过的头像 id``（``chosen_avatar_ids`` 的答案，
+    没挑过的不在里面）。和 ``profiles_map`` 一起给是为了让 dto 装配处不必再去碰
+    ``profile.avatar_id``：那一列每个注册路径都写死了全局默认，直接回会给没挑过的
+    人一张共同的脸。
+    """
     user_ids = list({rel.user_id for rel in members})
     if not user_ids:
-        return {}, {}
+        return {}, {}, {}
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
     users_map = await user_repo.get_by_ids(user_ids)
     profiles_map = await profile_repo.get_profiles_by_user_ids(user_ids)
-    return users_map, profiles_map
+    avatars_map = await profile_repo.chosen_avatar_ids(user_ids)
+    return users_map, profiles_map, avatars_map
 
 
 def application_to_api_model(
@@ -304,6 +330,7 @@ def application_to_api_model(
     *,
     users_map: dict | None = None,
     profiles_map: dict | None = None,
+    avatars_map: dict | None = None,
     teams_map: dict | None = None,
 ) -> dict:
     """TeamMembershipApplication payload aligned with the frontend type.
@@ -314,11 +341,12 @@ def application_to_api_model(
     The frontend ``TeamMembershipApplication`` (cheese-frontend types/teams.ts)
     embeds full ``user``, ``team``, ``initiator`` and optional ``processedBy``
     objects. Bare-id responses caused Members.vue's "已发送邀请" tab to render
-    blank rows. Pass bulk-loaded users/profiles/teams maps to keep this O(1)
-    per row in list endpoints.
+    blank rows. Pass bulk-loaded users/profiles/avatars/teams maps to keep this
+    O(1) per row in list endpoints.
     """
     users_map = users_map or {}
     profiles_map = profiles_map or {}
+    avatars_map = avatars_map or {}
     teams_map = teams_map or {}
 
     payload: dict = {
@@ -329,12 +357,14 @@ def application_to_api_model(
             users_map.get(app.user_id),
             profiles_map.get(app.user_id),
             fallback_id=app.user_id,
+            avatar_id=avatars_map.get(app.user_id),
         ),
         "team": team_summary(teams_map.get(app.team_id), fallback_id=app.team_id),
         "initiator": _user_payload(
             users_map.get(app.initiator_id),
             profiles_map.get(app.initiator_id),
             fallback_id=app.initiator_id,
+            avatar_id=avatars_map.get(app.initiator_id),
         ),
         "type": app.type,
         "status": app.status,
@@ -351,19 +381,20 @@ def application_to_api_model(
             users_map.get(app.processed_by_id),
             profiles_map.get(app.processed_by_id),
             fallback_id=app.processed_by_id,
+            avatar_id=avatars_map.get(app.processed_by_id),
         )
     else:
         payload["processedBy"] = None
     return payload
 
 
-async def load_application_maps(db, apps) -> tuple[dict, dict, dict]:
-    """Bulk-fetch User+UserProfile+Team for a batch of applications.
+async def load_application_maps(db, apps) -> tuple[dict, dict, dict, dict]:
+    """Bulk-fetch User+UserProfile+chosen-avatar+Team for a batch of applications.
 
     Public for the same reason as `application_to_api_model` above.
     """
     if not apps:
-        return {}, {}, {}
+        return {}, {}, {}, {}
     user_ids = set()
     team_ids = set()
     for app in apps:
@@ -377,8 +408,9 @@ async def load_application_maps(db, apps) -> tuple[dict, dict, dict]:
     team_repo = TeamRepository(session=db)
     users_map = await user_repo.get_by_ids(list(user_ids))
     profiles_map = await profile_repo.get_profiles_by_user_ids(list(user_ids))
+    avatars_map = await profile_repo.chosen_avatar_ids(list(user_ids))
     teams_map = await team_repo.get_by_ids(list(team_ids))
-    return users_map, profiles_map, teams_map
+    return users_map, profiles_map, avatars_map, teams_map
 
 
 _ROLE_NAME_TO_VALUE = {
@@ -423,13 +455,14 @@ async def get_teams(
     items: list[dict] = []
     for team in teams_to_emit:
         members = list(await service.get_team_members(team_id=team.id))
-        users_map, profiles_map = await _load_team_user_maps(db, members)
+        users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
         items.append(
             _team_to_api_model(
                 team,
                 members=members,
                 users_map=users_map,
                 profiles_map=profiles_map,
+                avatars_map=avatars_map,
             )
         )
     next_start = str(offset + page_size) if has_more else None
@@ -466,7 +499,7 @@ async def get_my_teams(
     items = []
     for team in teams:
         members = list(await service.get_team_members(team_id=team.id))
-        users_map, profiles_map = await _load_team_user_maps(db, members)
+        users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
         items.append(
             _team_to_api_model(
                 team,
@@ -474,6 +507,7 @@ async def get_my_teams(
                 current_user_id=auth_user.user_id,
                 users_map=users_map,
                 profiles_map=profiles_map,
+                avatars_map=avatars_map,
             )
         )
     return {
@@ -492,13 +526,14 @@ async def _team_profile(
 ) -> dict:
     """One team shape, whether it was reached by id or by its join link."""
     members = list(await service.get_team_members(team_id=team.id))
-    users_map, profiles_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
     data = _team_to_api_model(
         team,
         members=members,
         current_user_id=user_id,
         users_map=users_map,
         profiles_map=profiles_map,
+        avatars_map=avatars_map,
     )
     data["joinStatus"] = await membership_service.join_status(team.id, user_id)
     return {"code": 200, "message": "OK", "data": {"team": data}}
@@ -641,9 +676,14 @@ async def get_team_members(
     """Return team members for a given team."""
     _ = auth_user
     relations = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map = await _load_team_user_maps(db, relations)
+    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, relations)
     members = [
-        _member_to_api_model(rel, users_map=users_map, profiles_map=profiles_map)
+        _member_to_api_model(
+            rel,
+            users_map=users_map,
+            profiles_map=profiles_map,
+            avatars_map=avatars_map,
+        )
         for rel in relations
     ]
     # Compute allMembersVerified: check real-name status for each member
@@ -688,7 +728,7 @@ async def create_team(
         handle=payload.handle,
     )
     members = list(await service.get_team_members(team_id=team.id))
-    users_map, profiles_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
     return {
         "code": 201,
         "message": "Team created",
@@ -699,6 +739,7 @@ async def create_team(
                 current_user_id=auth_user.user_id,
                 users_map=users_map,
                 profiles_map=profiles_map,
+                avatars_map=avatars_map,
             )
         },
     }
@@ -728,7 +769,7 @@ async def patch_team(
         handle=payload.handle,
     )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
     return {
         "code": 200,
         "message": "OK",
@@ -739,6 +780,7 @@ async def patch_team(
                 current_user_id=auth_user.user_id,
                 users_map=users_map,
                 profiles_map=profiles_map,
+                avatars_map=avatars_map,
             )
         },
     }
@@ -817,7 +859,7 @@ async def patch_team_member_role(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
     return {
         "code": 200,
         "message": "OK",
@@ -828,6 +870,7 @@ async def patch_team_member_role(
                 current_user_id=auth_user.user_id,
                 users_map=users_map,
                 profiles_map=profiles_map,
+                avatars_map=avatars_map,
             )
         },
     }
@@ -856,7 +899,7 @@ async def put_team_owner(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
     return {
         "code": 200,
         "message": "OK",
@@ -867,6 +910,7 @@ async def put_team_owner(
                 current_user_id=auth_user.user_id,
                 users_map=users_map,
                 profiles_map=profiles_map,
+                avatars_map=avatars_map,
             )
         },
     }
@@ -954,10 +998,16 @@ async def list_team_join_requests(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, teams_map = await load_application_maps(db, apps)
+    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
+        db, apps
+    )
     items = [
         application_to_api_model(
-            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+            app,
+            users_map=users_map,
+            profiles_map=profiles_map,
+            avatars_map=avatars_map,
+            teams_map=teams_map,
         )
         for app in apps
     ]
@@ -1033,10 +1083,16 @@ async def list_team_invitations(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, teams_map = await load_application_maps(db, apps)
+    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
+        db, apps
+    )
     items = [
         application_to_api_model(
-            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+            app,
+            users_map=users_map,
+            profiles_map=profiles_map,
+            avatars_map=avatars_map,
+            teams_map=teams_map,
         )
         for app in apps
     ]
@@ -1072,13 +1128,19 @@ async def create_team_invitation(
         role=role,
         message=payload.message,
     )
-    users_map, profiles_map, teams_map = await load_application_maps(db, [app])
+    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
+        db, [app]
+    )
     return {
         "code": 201,
         "message": "Invitation created",
         "data": {
             "invitation": application_to_api_model(
-                app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+                app,
+                users_map=users_map,
+                profiles_map=profiles_map,
+                avatars_map=avatars_map,
+                teams_map=teams_map,
             )
         },
     }

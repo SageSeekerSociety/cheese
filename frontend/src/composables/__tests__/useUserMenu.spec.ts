@@ -71,23 +71,15 @@ describe('我的头像', () => {
   it('从来没挑过头像 → 不给图，让界面画彩色首字母', async () => {
     user.value = { id: 7, nickname: '爱丽丝', avatarId: DEFAULT_AVATAR_ID }
     const menu = await freshUserMenu()
+    // 彩色首字母本身（取字、取色）已搬进 UserAvatar 一处画（契约 §3.14），这里的职责
+    // 收窄成「没挑过就不给图」——把图交给 UserAvatar，它自己走彩色首字母兜底。
     expect(menu.avatar.value).toBeNull()
-    expect(menu.avatarInitial.value).toBe('爱')
-    expect(menu.avatarColor.value).toMatch(/^#[0-9a-f]{6}$/)
   })
 
   it('自己挑过头像 → 就画那张', async () => {
     user.value = { id: 7, nickname: '爱丽丝', avatarId: 4242 }
     const menu = await freshUserMenu()
     expect(menu.avatar.value).toContain('/avatars/4242')
-  })
-
-  it('两个人的兜底颜色不一样 —— 认人正是头像的全部职责', async () => {
-    user.value = { id: 7, nickname: '爱丽丝', avatarId: DEFAULT_AVATAR_ID }
-    const alice = (await freshUserMenu()).avatarColor.value
-    user.value = { id: 8, nickname: '鲍勃', avatarId: DEFAULT_AVATAR_ID }
-    const bob = (await freshUserMenu()).avatarColor.value
-    expect(alice).not.toBe(bob)
   })
 
   it('问不到哪一行是默认头像时，照旧取图 —— 宁可多显示一张，也不能把真头像藏了', async () => {

@@ -88,7 +88,11 @@ const props = defineProps<{
   isAgentBlock: (b: Block) => boolean
   isMine: (m: Block) => boolean
   isExternal: (handle: string) => boolean
-  avatarSrc: (handle: string) => string | null
+  /** handle → 头像 URL（没挑过、名册里没这个人就是 null）。这一层不画头像，只把
+      它转发给下面的 RoomMessage / ThreadLine，由它们的 UserAvatar 决定画脸还是画
+      彩色首字母。原名叫 `avatarSrc`，改成 `avatarOf`：和这批修复里其它地方（ThreadLine、
+      文档链）已经统一的名字一致，一个概念只有一个叫法。 */
+  avatarOf: (handle: string) => string | null
   displayName: (m: Block) => string
   noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
   parentOf: (m: Block) => Block | undefined
@@ -125,7 +129,6 @@ const emit = defineEmits<{
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
-  (e: 'avatar-error', handle: string): void
   (e: 'save-edit', block: Block, text: string): void
   (e: 'cancel-edit'): void
   (e: 'retry'): void
@@ -414,7 +417,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :topic-id="topic?.id ?? null"
             :author-name="displayName(m)"
             :external="isExternal(m.author)"
-            :avatar="avatarSrc(m.author)"
+            :avatar="avatarOf(m.author)"
             :is-agent="isAgentBlock(m)"
             :time="fmtTime(m.created_at)"
             :refs="refs"
@@ -439,7 +442,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             @checklist="emitChecklist"
             @download="emit('download', $event)"
             @jump="emit('jump', $event)"
-            @avatar-error="emit('avatar-error', $event)"
             @save-edit="emitSaveEdit"
             @cancel-edit="emit('cancel-edit')"
             @keep="emit('keep', $event)"
@@ -455,7 +457,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :replying="replyingFor?.(m) ?? null"
             :refs="refs"
             :name-of="nameOf ?? String"
-            :avatar-of="avatarSrc"
+            :avatar-of="avatarOf"
             :task-level="taskLevel"
             :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
             @open="emit('open-thread', m)"
@@ -490,7 +492,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :topic-id="topic?.id ?? null"
           :author-name="myName"
           :external="isExternal(viewer)"
-          :avatar="avatarSrc(viewer)"
+          :avatar="avatarOf(viewer)"
           :is-agent="false"
           :time="outgoingState(item)"
           :refs="refs"
@@ -500,7 +502,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @animationend="emit('settle-sent', $event, item.clientId)"
           @retry="emit('retry-send', item.clientId)"
           @edit="emit('edit-send', item)"
-          @avatar-error="emit('avatar-error', $event)"
         />
       </TransitionGroup>
 
@@ -518,14 +519,13 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :topic-id="topic?.id ?? null"
         :author-name="displayName(m)"
         :external="isExternal(m.author)"
-        :avatar="avatarSrc(m.author)"
+        :avatar="avatarOf(m.author)"
         :is-agent="isAgentBlock(m)"
         :time="t('work.room.chat.typing')"
         :refs="refs"
         :viewer="viewer"
         :ask-busy="false"
         :outgoing="{ failed: false }"
-        @avatar-error="emit('avatar-error', $event)"
       />
 
       <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->

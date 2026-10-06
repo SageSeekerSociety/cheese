@@ -102,7 +102,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     displayName,
     isExternal,
     avatarSrc,
-    onAvatarError,
     myName,
   } = useRoomRoster({
     topic: () => topic(),
@@ -975,7 +974,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     changeChecklist,
     onReact,
     downloadAttachment,
-    onAvatarError,
     roomTasks,
     isAgentBlock,
     AUTHOR,

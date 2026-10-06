@@ -93,12 +93,15 @@ async function hoverAvatar() {
   const view = render(Rail, {
     global: { plugins: [createVuetify({ components, directives }), router] },
   })
-  const avatar = view.container.querySelector('.v-avatar') as HTMLElement
+  // 头像是 UserAvatar（它的根是 `.v-avatar`），但菜单和 tooltip 的锚点是包着它的
+  // 那层 `.rail-avatar`（UserAvatar 没开插槽，tooltip 塞不进它的根）。事件要打在锚点
+  // 那层上——pointerenter / mouseenter 都不冒泡，打在内层 `.v-avatar` 上收不到。
+  const avatar = view.container.querySelector('.rail-avatar') as HTMLElement
   // Vuetify binds the hover listeners to the activator a tick after mount.
   await nextTick()
   // A real pointer entering fires pointerenter first, then mouseenter. The component
-  // remembers the avatar from the former (a template ref would be overwritten by the
-  // menu's own ref), and the tooltip opens on the latter.
+  // remembers the activator from the former (a template ref would be overwritten by
+  // the menu's own ref), and the tooltip opens on the latter.
   avatar.dispatchEvent(new Event('pointerenter'))
   // A real `mouseenter`: testing-library's fireEvent.mouseEnter dispatches mouseover.
   avatar.dispatchEvent(new MouseEvent('mouseenter'))
@@ -120,7 +123,7 @@ describe('account avatar tooltip', () => {
   it('stays while the pointer is still moving over the avatar', async () => {
     const { view, avatar } = await hoverAvatar()
 
-    pointerMoveOn(avatar.querySelector('.rail-avatar-char') ?? avatar)
+    pointerMoveOn(avatar)
     await new Promise((r) => setTimeout(r, 50))
 
     expect(tooltipShowing()).toBe(true)

@@ -217,6 +217,17 @@ class DashboardService:
             if user
             else None
         )
+        # 头像只回这个人**自己挑过**的那张：``profile.avatar_id`` 是原始 profile 值，
+        # 注册时人人被写上全局默认那一行，直接回它会让没挑过的人显示一张共用的默认脸。
+        # 前端的 ProfileView 靠 isChosenAvatar 兜住了这一层，后端不能只靠它。
+        # 判据只有一处（``UserProfileRepository.chosen_avatar_ids``）；没挑过回 null。
+        chosen_avatar_id = (
+            (await UserProfileRepository(self._s).chosen_avatar_ids([user.id])).get(
+                user.id
+            )
+            if user is not None
+            else None
+        )
         is_self = viewer == handle
         ids = [project.id for project in visible]
 
@@ -315,7 +326,7 @@ class DashboardService:
             # UserProfile.intro.
             "name": profile.nickname if profile else handle,
             "bio": profile.intro if profile else "",
-            "avatar_id": profile.avatar_id if profile else None,
+            "avatar_id": chosen_avatar_id,
             "joined_at": user.created_at.isoformat() if user else None,
             "teams": [team_summary(team, fallback_id=team.id) for team in teams],
             "activity": {

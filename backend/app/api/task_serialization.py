@@ -172,6 +172,10 @@ async def _enrich_task_models(
 
     users = await user_repo.get_by_ids(all_user_ids)
     profiles = await profile_repo.get_profiles_by_user_ids(all_user_ids)
+    # 头像走「挑过的」判据，别回档案上的 avatar_id：每个注册路径都往那一列写死了全局
+    # 默认（见 UserProfileRepository.chosen_avatar_ids），直接回它会让所有没挑过头像
+    # 的人共用同一张脸。没挑过的人不在映射里，下面回 None，前端画彩色首字母。
+    chosen_avatars = await profile_repo.chosen_avatar_ids(all_user_ids)
     memberships = await membership_repo.list_memberships_for_space(space_id)
     categories = await category_repo.list_categories_for_space(
         space_id, include_archived=True
@@ -188,7 +192,7 @@ async def _enrich_task_models(
             nickname = (
                 profile.nickname if profile and profile.nickname else user.username
             )
-            avatar_id = profile.avatar_id if profile else None
+            avatar_id = chosen_avatars.get(rel.user_id)
             intro = profile.intro if profile else ""
             user_payload = {
                 "id": user.id,
@@ -240,7 +244,7 @@ async def _enrich_task_models(
             nickname = (
                 profile.nickname if profile and profile.nickname else user.username
             )
-            avatar_id = profile.avatar_id if profile else None
+            avatar_id = chosen_avatars.get(creator_id)
             intro = profile.intro if profile else ""
             task_model["creator"] = {
                 "id": user.id,
@@ -502,11 +506,20 @@ def _build_participant_user_info(
     user_map: dict | None = None,
     profile_map: dict | None = None,
     team_map: dict | None = None,
+    avatar_map: dict | None = None,
 ) -> dict:
-    """Build the user or team identity displayed on a registration."""
+    """Build the user or team identity displayed on a registration.
+
+    ``avatar_map`` 是 user_id → 这个人**自己挑过**的头像 id，由调用方经
+    ``UserProfileRepository.chosen_avatar_ids`` 批量取得。不能拿 ``profile_map`` 里的
+    ``profile.avatar_id``：每个注册路径都往那一列写死了全局默认（默认头像是哪一行因
+    环境而异），直接回它等于给所有没挑过头像的人同一张脸。没挑过的人不在映射里，这里
+    回 None，前端 ``RosterView`` 据此画彩色首字母。
+    """
     user_map = user_map or {}
     profile_map = profile_map or {}
     team_map = team_map or {}
+    avatar_map = avatar_map or {}
     if membership.is_team and membership.member_id in team_map:
         return team_summary(
             team_map[membership.member_id], fallback_id=membership.member_id
@@ -524,7 +537,7 @@ def _build_participant_user_info(
             "username": user.username,
             "nickname": nickname,
             "name": nickname,
-            "avatarId": profile.avatar_id if profile else None,
+            "avatarId": avatar_map.get(membership.member_id),
             "intro": profile.intro if profile else "",
         }
     return {"id": membership.member_id}

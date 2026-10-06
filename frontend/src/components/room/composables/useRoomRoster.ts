@@ -20,6 +20,7 @@ import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
 import { cachedTopicPanel, fetchTopicMembers } from '../../../lib/topicPanelCache'
 import { onTopicRosterChange } from '../../../lib/topicRosterChanges'
+import { isAvatarKnownFailed, rememberAvatarFailure } from '../../../utils/avatarFailures'
 import { getAvatarUrl } from '../../../utils/materials'
 
 export function useRoomRoster(options: {
@@ -206,18 +207,30 @@ export function useRoomRoster(options: {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
     return memberByHandle.value.get(m.author)?.name || m.author
   }
-  // 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
-  const avatarBroken = ref<Set<string>>(new Set())
-  function avatarSrc(handle: string): string | null {
-    if (avatarBroken.value.has(handle)) return null
+  // 真头像加载失败过的 URL —— 退回彩色首字母，不留破图。
+  //
+  // 失败记录**只留一份**，在 `utils/avatarFailures` 里（UserAvatar 也读同一份）。
+  // 这里原来自己拿一个 `Set<handle>` 记，和那边记的是同一个事实却分成两份：同一个人
+  // 在消息行（这里）失败过，在名册（UserAvatar）里还会再发一次注定 404 的请求，反过
+  // 来也一样。改成读写共享那份之后，两处对同一个 URL 的失败只记一次。
+  //
+  // 入参仍是 handle（调用方 useChatPanel / ChatTimeline 传的是 handle），在这里折算
+  // 成 URL 再进出共享表：名册上没这个人、或这行没头像时没有 URL，也就无所谓失败。
+  function avatarUrlOf(handle: string): string | null {
     const id = memberByHandle.value.get(handle)?.avatar_id
+    // getAvatarUrl 对 null/undefined/0/'' 回空串，空串当「没有图」——
     // 名册上没这个人、或这行没有头像时返回 null：宁可留一个按 handle 哈希、认得出
     // 是谁的色块，也不要给陌生人随便配一张脸。
-    return id == null ? null : getAvatarUrl(id)
+    const url = id == null ? '' : getAvatarUrl(id)
+    return url || null
+  }
+  function avatarSrc(handle: string): string | null {
+    const url = avatarUrlOf(handle)
+    return url && !isAvatarKnownFailed(url) ? url : null
   }
   function onAvatarError(handle: string): void {
-    if (avatarBroken.value.has(handle)) return
-    avatarBroken.value = new Set(avatarBroken.value).add(handle)
+    const url = avatarUrlOf(handle)
+    if (url) rememberAvatarFailure(url)
   }
   // 自己在名册上的名字（发件箱那几行用它，因为它们还没有作者字段）。
   const myName = computed(() => memberByHandle.value.get(options.author)?.name || options.author)

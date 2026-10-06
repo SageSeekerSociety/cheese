@@ -218,10 +218,14 @@ async def get_user_answers(
     profile = await profile_repo.get_profile_by_user_id(user_id)
     sender = None
     if profile:
+        # 只有真挑过头像才带 avatarId，判据在 ``chosen_avatar_ids`` 一处（挂到非
+        # ``default`` 那张脸才算数）。直接抛 ``profile.avatar_id`` 会把「没挑过 =
+        # 存了默认脸」当成挑过，前端就退回全站默认头像了。
+        chosen = await profile_repo.chosen_avatar_ids([user_id])
         sender = {
             "id": profile.user_id,
             "nickname": profile.nickname,
-            "avatarId": profile.avatar_id,
+            "avatarId": chosen.get(user_id),
             "intro": profile.intro,
         }
 

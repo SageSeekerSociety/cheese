@@ -384,7 +384,17 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                 class="profile__row profile__row--project"
                 :to="{ name: 'workspace-project', params: { projectId: p.project_id } }"
               >
-                <span class="profile__tile" aria-hidden="true" data-user-content>{{ p.name.slice(0, 1) }}</span>
+                <!-- 项目格子走 UserAvatar（kind="org" 出方角）：没挑过头像就退成项目名
+                     首字母的底色方块。和左侧人像同一个组件、同一套退化，不再这里自己
+                     截首字、自己上色。种子用 project_id —— 颜色跟着项目走，改名不换色。 -->
+                <UserAvatar
+                  :avatar="''"
+                  :name="p.name"
+                  :seed="p.project_id"
+                  kind="org"
+                  :size="32"
+                  class="profile__tile"
+                />
                 <span class="profile__row-text">
                   <span class="profile__row-title">
                     <span class="profile__project-name" data-user-content>{{ p.name }}</span>
@@ -735,19 +745,10 @@ a.profile__row:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 项目格子自己就是 UserAvatar（见模板）：尺寸、方角、底色都由它画，这里只留
+   「在行里不参与伸缩」这一条布局。 */
 .profile__tile {
-  display: inline-flex;
   flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-md);
-  background: var(--fill-2);
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
 }
 .profile__spark {
   display: flex;
