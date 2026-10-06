@@ -118,6 +118,7 @@ def test_the_run_keeps_its_results_and_a_question_after_it_reads_only(client, tm
 
     client.portal.call(ask)
     assert screen.reading[-1] is True, "追问的那一轮不是只读"
+    assert "卡住的那个写上预计时间" in screen.told, "换成只读之后，追问那一轮没有跑起来"
 
 
 def test_the_rules_owner_takes_part_in_the_runs_thread(client):
@@ -129,8 +130,21 @@ def test_the_rules_owner_takes_part_in_the_runs_thread(client):
     assert routine["owner_handle"] in _db(client, people)
 
 
-def test_a_settled_run_says_how_it_went_at_the_bottom_of_the_main_line(client):
+def test_a_settled_run_says_how_it_went_at_the_bottom_of_the_main_line(
+    client, monkeypatch
+):
     room, _routine, run, _conversation, _submitted = _fired(client)
+    from app.domain.agent.runtime import get_broker
+
+    broker = get_broker()
+    original = broker.publish
+    frames: list[tuple[str, dict]] = []
+
+    async def publish(channel, frame, *args, **kwargs):
+        frames.append((channel, frame))
+        return await original(channel, frame, *args, **kwargs)
+
+    monkeypatch.setattr(broker, "publish", publish)
     post_message(client, room, OWNER, {"content": "顺便说一句别的"})
 
     done = client.post(
@@ -145,6 +159,18 @@ def test_a_settled_run_says_how_it_went_at_the_bottom_of_the_main_line(client):
     assert message["content"] == "本周三个任务完成"
     assert message["routine_run"]["status"] == "succeeded"
     assert main[-1]["id"] == message["id"], "跑完的结果没有落到主线最下面"
+    # Whoever has the channel open sees it change, whole, without reloading.
+    told = [
+        f["block"]
+        for channel, f in frames
+        if channel == room
+        and f.get("type") == "block_updated"
+        and f["block"]["id"] == message["id"]
+    ]
+    assert told, "开着频道的人没收到这条消息变了"
+    assert told[-1]["content"] == "本周三个任务完成"
+    assert told[-1]["routine_run"]["status"] == "succeeded"
+    assert told[-1]["created_at"] == message["created_at"]
 
 
 def test_a_run_that_failed_says_nothing_in_the_teammates_name(client):

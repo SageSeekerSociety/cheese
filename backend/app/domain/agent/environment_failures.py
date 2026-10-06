@@ -25,6 +25,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import of_room, of_rooms
 
 #: How much of the end of the log the line keeps: what failed is at the end.
 LOG_TAIL = 8000
@@ -102,6 +103,9 @@ async def open_failures(
     rows = await session.scalars(
         _failures()
         .where(
+            # The channels' own conversations first: a failure is said in one
+            # of them, and the blocks table is every conversation's.
+            of_rooms(Block.conversation_id, room_ids),
             Block.meta["room_id"].as_string().in_([str(r) for r in room_ids]),
             Block.meta["retried_at"].as_string().is_(None),
         )
@@ -137,6 +141,7 @@ async def waiting_on(
         await session.scalars(
             _failures()
             .where(
+                of_room(Block.conversation_id, room_id),
                 Block.meta["room_id"].as_string() == str(room_id),
                 Block.meta["attempt"].as_string() == attempt,
                 Block.meta["retried_at"].as_string().is_(None),

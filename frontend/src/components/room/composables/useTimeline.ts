@@ -24,6 +24,9 @@ import { capWindow, joinNewest, placeBlock, prependOlder } from '../../../lib/bl
  * 新来的一块落在哪：显示出来了、收在背后的最新一段里、本来就有，还是比这一段更早、
  * 留给往上翻的那一页带回来（见 placeBlock）。
  */
+/** 频道翻页时另外挂在一块上的东西，更新那一块时没带就照旧留着。 */
+const ATTACHED = ['thread', 'routine_run'] as const
+
 export type Landing = 'shown' | 'held' | 'known' | 'above'
 
 /**
@@ -107,10 +110,15 @@ export function useTimeline(options: TimelineOptions = {}) {
   /** 一块变了：两段里有它的地方都原地换掉。只有它的时间也变了（例行任务跑完，
    *  那条消息挪到跑完的那一刻）才按新时间重新落位，落法和新来的一块一样；
    *  不在窗口里、又比窗口里最新的还新的，就当新来的一块接上。 */
-  function replace(block: Block): Landing | null {
-    const shown = messages.value.find((m) => m.id === block.id)
-    const heldBlock = newestHeld?.blocks.find((m) => m.id === block.id)
+  function replace(changed: Block): Landing | null {
+    const shown = messages.value.find((m) => m.id === changed.id)
+    const heldBlock = newestHeld?.blocks.find((m) => m.id === changed.id)
     const before = shown ?? heldBlock
+    // 一行下面挂着的两样（支线那一行、例行任务那一行）是频道翻页时另外挂上的，
+    // 改字、加表情推来的那一块不带它们：没带的照旧留着，不让那一行消失。
+    const block = { ...changed }
+    for (const key of ATTACHED)
+      if (!(key in changed) && before && key in before) Object.assign(block, { [key]: before[key] })
     if (before && before.created_at !== block.created_at) {
       remove(block.id)
       return append(block)

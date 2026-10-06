@@ -236,6 +236,17 @@ describe('一块变了', () => {
     expect(ids(timeline.messages.value)).toEqual(['m0', 'm1', 'm2', 'old'])
   })
 
+  it('改了字推来的一块不带挂在下面的那几行：它们照旧留着', () => {
+    const timeline = useTimeline()
+    const withLines = { ...timed('m0', 0), thread: { id: 't1' }, routine_run: { run_id: 'r1' } } as unknown as Block
+    timeline.show({ blocks: [withLines, timed('m1', 1000)], hasMore: false })
+    timeline.replace({ ...timed('m0', 0), content: 'edited' } as Block)
+    const row = timeline.messages.value[0]
+    expect(row.content).toBe('edited')
+    expect(row.thread?.id).toBe('t1')
+    expect(row.routine_run?.run_id).toBe('r1')
+  })
+
   it('不在这一段里、时间也更早的，不凭空冒出来', () => {
     const timeline = useTimeline()
     timeline.show({ blocks: timedRun(3, 'n').map((x, i) => timed(x.id, 10_000 + i)), hasMore: true })
