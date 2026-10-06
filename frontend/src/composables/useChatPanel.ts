@@ -779,11 +779,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
     })
   )
 
-  /** 某一轮那位队友：名字和 handle。认不出是谁的轮次就不署队友：拿房间的第一位顶上，
-   *  发给 B 的那一轮出了错，提示就署成了 A。 */
+  // 某一轮那位队友。认不出是谁的轮次，房间里只坐着一位时只能是它；坐着几位时不猜：
+  // 拿排在最前的那位顶上，发给 B 的那一轮出了错，提示就署成了 A。
+  const severalAgents = computed(() => [...seatByHandle.value.values()].filter((row) => row.agent).length > 1)
   function turnAgent(turnId: string | null | undefined): NoticeAgent | null {
     const handle = turnAgentHandle(turnId)
-    return handle ? { name: agentDisplayName(handle), handle } : null
+    if (handle) return { name: agentDisplayName(handle), handle }
+    return severalAgents.value ? null : { name: agentName.value, handle: agentSeat.value?.handle ?? null }
   }
 
   function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
