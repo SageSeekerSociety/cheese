@@ -86,32 +86,37 @@ defineOptions({ name: 'AdminQueuePageView' })
 
 defineProps<AdminQueuePageViewProps>()
 
+// 事件用「名字 → 参数表」这一种写法，不用重载那一种：重载一多（这件有二十多条），
+// Volar 就解不出事件名，组件对外的 props 会退成一条 `on*` 的索引签名 —— 而这件正被
+// `/admin/feedback` 那层壳摊开传递（`{ ...$props, ...$attrs }`），VNode 自带的
+// `onVnodeBeforeMount` 不是函数，撞上那条索引签名就报类型错。同一批的
+// `AnswerListView` / `SubmitFeedbackFormView` 也是这个写法。
 const emit = defineEmits<{
-  (e: 'close'): void
-  (e: 'update:detailOpen', v: boolean): void
-  (e: 'update:triageOpen', v: boolean): void
-  (e: 'triage', to: FeedbackStatus): void
-  (e: 'assign', id: string, handle: string | null): void
-  (e: 'priority', id: string, value: FeedbackPriority): void
-  (e: 'security', id: string, value: boolean): void
-  (e: 'note', id: string, body: string): void
-  (e: 'update:assigneeSearch', v: string): void
-  (e: 'mark-read'): void
-  (e: 'reload'): void
-  (e: 'update:view', v: QueueView): void
-  (e: 'select-lane', lane: AdminTab): void
-  (e: 'update:draft', v: string): void
-  (e: 'update:status', v: FeedbackStatus | 'all'): void
-  (e: 'clear-window', key: string): void
-  (e: 'update:activeIndex', index: number): void
-  (e: 'activate', id: string): void
-  (e: 'open', id: string): void
-  (e: 'advance', id: string): void
-  (e: 'action'): void
-  (e: 'prev'): void
-  (e: 'next'): void
-  (e: 'undo'): void
-  (e: 'dismiss'): void
+  close: []
+  'update:detailOpen': [v: boolean]
+  'update:triageOpen': [v: boolean]
+  triage: [to: FeedbackStatus]
+  assign: [id: string, handle: string | null]
+  priority: [id: string, value: FeedbackPriority]
+  security: [id: string, value: boolean]
+  note: [id: string, body: string]
+  'update:assigneeSearch': [v: string]
+  'mark-read': []
+  reload: []
+  'update:view': [v: QueueView]
+  'select-lane': [lane: AdminTab]
+  'update:draft': [v: string]
+  'update:status': [v: FeedbackStatus | 'all']
+  'clear-window': [key: string]
+  'update:activeIndex': [index: number]
+  activate: [id: string]
+  open: [id: string]
+  advance: [id: string]
+  action: []
+  prev: []
+  next: []
+  undo: []
+  dismiss: []
 }>()
 
 const { t } = useI18n()
