@@ -95,7 +95,10 @@ class DigestCadence(str, Enum):
 #: 让人调。
 CATEGORY_TYPES: Final[dict[PreferenceCategory, frozenset[NotificationType]]] = {
     PreferenceCategory.MENTION: frozenset({NotificationType.MENTION}),
-    PreferenceCategory.REPLY: frozenset({NotificationType.REPLY}),
+    # 我参与的支线有人回复，和我的消息被回复是同一件事。
+    PreferenceCategory.REPLY: frozenset(
+        {NotificationType.REPLY, NotificationType.THREAD_REPLY}
+    ),
     PreferenceCategory.REACTION: frozenset({NotificationType.REACTION}),
     PreferenceCategory.WAITS_ON_ME: frozenset(
         {NotificationType.ACCEPT_REQUEST, NotificationType.DECISION_REQUEST}
