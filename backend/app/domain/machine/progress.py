@@ -76,6 +76,17 @@ async def tell_replaced(
     )
 
 
+async def tell_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
+    """The sandbox's host stopped answering and the pool gave up on it: the
+    session works in a new sandbox from what was pushed."""
+    return await _line(
+        session,
+        home,
+        say("sandboxLost"),
+        {"event_type": "cloud_startup", "severity": "warn"},
+    )
+
+
 async def tell_asleep(
     session: AsyncSession, home: CloudHostHome, minutes: int
 ) -> dict | None:

@@ -1526,6 +1526,86 @@ def test_a_lease_request_that_times_out_is_still_a_machine_being_prepared(
         thread.join()
 
 
+def test_a_notice_from_the_platform_reaches_the_agent_once_with_its_hands(
+    executor, tmp_path, monkeypatch
+):
+    """The platform tells a session whose sandbox was replaced with the hands
+    it hands out next. Only a call that shows the agent what it is told asks
+    for that: a call nobody reads leaves it for the next one."""
+    import io
+
+    _, work, state = executor
+    generation = str(uuid.uuid4())
+    replaced = "原来的沙箱所在机器失联，已换成一个新沙箱。"
+    pending = [replaced]
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/lease":
+                notice = pending.pop() if body.get("tells_agent") and pending else None
+                result = {
+                    "data": {
+                        "target": {
+                            "kind": "device",
+                            "workspace": str(work),
+                            "url": base + "/execute",
+                            "generation": generation,
+                        },
+                        "token": "execution-only",
+                        **({"notice": notice} if notice else {}),
+                    }
+                }
+            else:
+                result = runtime.request(state, body["method"], body["params"])
+            encoded = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    base = f"http://127.0.0.1:{server.server_port}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv("CHEESE_API", base)
+    monkeypatch.setenv("CHEESE_TOKEN", "session-token")
+    client = executor_transport.RemoteClient(
+        {
+            "kind": "deferred",
+            "workspace": "/unavailable-project",
+            "lease_path": "/lease",
+        }
+    )
+
+    def write(name, told=None):
+        return client.call(
+            "invoke",
+            {
+                "id": name,
+                "tool": "Bash",
+                "args": {"command": f"printf remote > /unavailable-project/{name}"},
+            },
+            preparing=told,
+        )
+
+    try:
+        assert "error" not in write("unread")
+        first, second = io.StringIO(), io.StringIO()
+        assert "error" not in write("first", first)
+        assert "error" not in write("second", second)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    assert first.getvalue().strip() == replaced
+    assert second.getvalue() == ""
+    assert (work / "second").read_text() == "remote"
+
+
 PREPARING = "云端工作电脑正在准备；对话和平台工具仍可用。"
 
 

@@ -16,10 +16,17 @@ from app.domain.machine.models import (
 # What a tool waiting on its cloud sandbox is told.
 SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
 SANDBOX_WAKING = "沙箱正在唤醒；对话和平台工具仍可用。"
-SANDBOX_ERROR = "云端沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 SANDBOX_RESTORE_FAILED = "沙箱没能从归档恢复，稍后会再试；对话和平台工具仍可用。"
 VM_PREPARING = "云虚拟机正在准备；对话和平台工具仍可用。"
 VM_ERROR = "云虚拟机出错：供应方报告错误。对话和平台工具仍可用。"
+# What a session whose sandbox's host the pool gave up on is told, once, with
+# the first tool call that succeeds in its new sandbox (``HostPool._fail``
+# records it under ``LOST_KEY`` in the session's ``execution_request``).
+SANDBOX_LOST = (
+    "原来的沙箱所在机器失联，已换成一个新沙箱：工作区从 git 重新取出，"
+    "上次推送之后没推送的改动不在了。"
+)
+LOST_KEY = "sandbox_lost"
 
 
 async def _home_settled(db, session_id) -> bool:
@@ -70,8 +77,11 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
             return True
         return False
     if host.status == MachineStatus.error:
-        # Enrolled, so the session's work may be on it: it is not replaced.
-        return VM_ERROR if host.whole_machine else SANDBOX_ERROR
+        if host.whole_machine:
+            return VM_ERROR
+        # The pool sweep gives it up and the next attempt places the session
+        # in a new sandbox (``HostPool._lost``).
+        return False
     if host.status in GONE:
         # Gone upstream: the next attempt forgets it and places the session.
         return True

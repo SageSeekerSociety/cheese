@@ -349,6 +349,7 @@
   "sandboxPreparing": "正在准备沙箱",
   "sandboxReady": "沙箱已就绪",
   "sandboxReplaced": "沙箱准备失败，正在重新准备",
+  "sandboxLost": "沙箱所在的机器不再响应，沙箱已换成新的：新沙箱从仓库里已推送的内容开始，没推送的改动不在了",
   "sandboxWaking": "正在唤醒沙箱",
   "sandboxRestoring": "正在从归档恢复沙箱",
   "sandboxAsleep": "沙箱 {minutes} 分钟没有活动，已休眠。文件都留着，下一条消息会唤醒它。",

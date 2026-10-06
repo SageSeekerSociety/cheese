@@ -349,6 +349,7 @@
   "sandboxPreparing": "Preparing the sandbox",
   "sandboxReady": "The sandbox is ready",
   "sandboxReplaced": "Preparing the sandbox failed; preparing it again",
+  "sandboxLost": "The machine the sandbox was on stopped answering, so the sandbox was replaced: the new one starts from what is pushed to the repository, and changes that were not pushed are gone",
   "sandboxWaking": "Waking the sandbox",
   "sandboxRestoring": "Restoring the sandbox from its archive",
   "sandboxAsleep": "The sandbox went to sleep after {minutes} minutes without activity. Its files are kept, and the next message wakes it.",

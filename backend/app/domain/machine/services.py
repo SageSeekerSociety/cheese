@@ -65,8 +65,9 @@ from app.domain.machine.models import (
     capacity,
     disk_capacity,
 )
-from app.domain.machine.progress import publish_line, tell_replaced
+from app.domain.machine.progress import publish_line, tell_lost, tell_replaced
 from app.domain.machine.repositories import CloudHostRepository, Load
+from app.domain.machine.sandbox_wait import LOST_KEY
 from app.domain.machine.supply import pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicStatus
@@ -80,6 +81,13 @@ CUSTOMER_REF = "cheese-platform-host-pool"
 #: How long an enrolled host's connector has to reach the platform before the
 #: pool gives up on it, when no session has started working there yet.
 CONNECT_GRACE = timedelta(minutes=5)
+#: How long an enrolled pool host's connector may stay away before the pool
+#: gives up on it and its sessions get new sandboxes. A dropped link is back
+#: within seconds (``device_hub.RECONNECT_GRACE_S``) and a rebooted host dials
+#: in within ``CONNECT_GRACE``; twice that is past any host that is coming
+#: back, and still minutes, where a hung host kept its sessions waiting for
+#: hours (dev, 2026-10-05: four to five).
+LOST_AFTER = timedelta(minutes=10)
 
 # One provider create per host per process: a session placed on a host that is
 # being created waits here, holding no database lock, until the create returned.
@@ -230,7 +238,8 @@ class HostPool:
 
         ``resource_id`` names the directory the session will work in there. A
         host the provider failed before it was enrolled holds nothing of the
-        session's, so the session is placed again; any other host keeps it.
+        session's, so the session is placed again; any other host keeps it
+        until the pool sweep gives up on it (``maintain``).
 
         A sandbox asleep wakes where its home is when that host has a slot
         (``SandboxMustMove`` when it has none); an archived home is placed like
@@ -723,9 +732,10 @@ class HostPool:
         ``cloud_pool_min_free_slots``. One with no home on it is released; one
         whose sleeping homes are still on its disk is set draining, and the
         sandbox sweep archives them (``lifecycle``), after which it is
-        released here. Also gives up on hosts the provider failed, closes the
-        preparing line of every room whose sandbox's host is up, and adds a
-        host when the free slots fall below that floor.
+        released here. Also gives up on hosts the provider failed and on
+        enrolled ones that stopped answering (``_lost``), closes the preparing
+        line of every room whose sandbox's host is up, and adds a host when the
+        free slots fall below that floor.
         """
         from app.domain.machine.lifecycle import archives_configured
 
@@ -733,12 +743,18 @@ class HostPool:
         await self._repo.lock_pool()
         hosts = await self._repo.live()
         load = await self._repo.occupancy()
+        for host in hosts:
+            if host.device_id is None or self._hub.is_online(host.device_id):
+                host.offline_since = None
+            else:
+                host.offline_since = host.offline_since or now
         failed = [
             host
             for host in hosts
             if _failed_unenrolled(host) or await self._silent(host, now)
         ]
-        live = [host for host in hosts if host not in failed]
+        lost = self._lost([host for host in hosts if host not in failed], now)
+        live = [host for host in hosts if host not in failed and host not in lost]
         free = sum(free_slots(host, load) for host in live if accepting(host))
         hold = timedelta(seconds=settings.cloud_host_idle_hold_s)
         idle: list[CloudHost] = []
@@ -783,6 +799,8 @@ class HostPool:
             await self._repo.lock_pool()
             await self._session.refresh(host)
             await self._fail(host)
+        for host in lost:
+            await self._lose(host)
         for host in idle:
             logger.info("cloud pool releasing idle host %s", host.hostname)
             await self._delete_at_provider(host)
@@ -830,24 +848,109 @@ class HostPool:
         )
         return working is None
 
-    async def _fail(self, host: CloudHost) -> None:
-        """Give up on a host the provider failed before anyone worked on it.
+    def _lost(self, hosts: list[CloudHost], now: datetime) -> list[CloudHost]:
+        """Enrolled pool hosts whose sandboxes will not run again: one the
+        provider reports in error, and one whose connector has been away for
+        ``LOST_AFTER``. A sandbox is disposable — what counts is what was pushed
+        — so its session is not left waiting on such a host.
 
-        Called holding the pool. Its homes hold nothing — no session worked
-        there — so their sessions are placed again on their next tool call, and
-        each room that was told its sandbox is being prepared hears why it
-        takes longer. The provider delete follows with no transaction open.
+        A connector away is only believed while another host of the pool is
+        online right now. When none is, what is down is more likely the
+        platform's side — this backend just restarted, the link to the hosts is
+        cut — and giving up on every host would throw away every sandbox that
+        is about to come back. The provider's own error report needs no such
+        check. Whole cloud VMs are left as they are."""
+        pool = [
+            host
+            for host in hosts
+            if host.device_id is not None and not host.whole_machine
+        ]
+        answering = any(
+            host.device_id is not None and self._hub.is_online(host.device_id)
+            for host in pool
+        )
+        return [
+            host
+            for host in pool
+            if host.status == MachineStatus.error
+            or (
+                answering
+                and host.offline_since is not None
+                and now - host.offline_since >= LOST_AFTER
+            )
+        ]
+
+    async def _lose(self, host: CloudHost) -> None:
+        """Give up on an enrolled host found lost (``_lost``), unless its
+        connector came back meanwhile.
+
+        Each session whose sandbox was there (its lease is on the host's
+        device) is told so on its next tool call, which places it in a new
+        sandbox. Their rows are locked before the pool, the order a tool call
+        takes them in (``session_work._attempt``)."""
+        from app.domain.agent_session.models import AgentSession
+
+        device_id = host.device_id
+        assert device_id is not None  # an enrolled host (``_lost``)
+        worked = {
+            row.id: row
+            for row in await self._session.scalars(
+                select(AgentSession)
+                .where(AgentSession.work_lease["device_id"].as_string() == device_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        }
+        await self._repo.lock_pool()
+        await self._session.refresh(host)
+        error = host.status == MachineStatus.error
+        if host.released_at is not None or (
+            not error and self._hub.is_online(device_id)
+        ):
+            await self._session.commit()
+            return
+        # Only the provider's own error counts against it (``CloudKeepsFailing``).
+        # A connector that went away may be the platform's network as much as
+        # the provider's, and counting it would let a partial outage stop the
+        # pool adding the very hosts the sessions are moved to.
+        await self._fail(host, worked=worked, provider_failed=error)
+
+    async def _fail(
+        self,
+        host: CloudHost,
+        *,
+        worked: dict | None = None,
+        provider_failed: bool = True,
+    ) -> None:
+        """Give up on a host: release it, take its homes off it, and delete it
+        at the provider.
+
+        Called holding the pool. Each session is placed again on its next tool
+        call. One whose sandbox was there (``worked``, its locked session rows
+        by id) is told on that call that it is in a new sandbox (``LOST_KEY``),
+        and its room hears that the sandbox was replaced and what was not
+        pushed is gone. A room that was told a sandbox no session used yet is
+        being prepared hears why it takes longer. The provider delete follows
+        with no transaction open. ``provider_failed`` counts the host against
+        the provider's record.
         """
         now = datetime.now(UTC)
         host.released_at = host.released_at or now
-        if not host.draining:
+        if provider_failed and not host.draining:
             # A pool host counts against the provider's record. One adopted from
             # before the pool says nothing about how the provider does now.
             host.failed_at = host.failed_at or now
         lines = []
         await self._repo.unplace_archived(host.id)
         for home in await self._repo.homes_on(host.id):
-            if home.waiting_since is not None:
+            row = (worked or {}).get(home.session_id) if home.left_at is None else None
+            if row is not None:
+                row.execution_request = {
+                    **(row.execution_request or {}),
+                    LOST_KEY: True,
+                }
+                lines.append((home.topic_id, await tell_lost(self._session, home)))
+            elif home.waiting_since is not None:
                 lines.append(
                     (
                         home.topic_id,
@@ -859,10 +962,12 @@ class HostPool:
         for topic_id, line in lines:
             await publish_line(topic_id, line)
         logger.warning(
-            "cloud pool gave up on host %s (status=%s, enroll_attempts=%s)",
+            "cloud pool gave up on host %s "
+            "(status=%s, enroll_attempts=%s, offline_since=%s)",
             host.hostname,
             host.status,
             host.enroll_attempts,
+            host.offline_since,
         )
         await self._delete_at_provider(host)
 
