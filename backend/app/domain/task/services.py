@@ -824,11 +824,6 @@ class TaskSubmissionService:
         attachments = {
             a.id: a for a in await self._attachments.get_many(attachment_ids)
         }
-        # An entry is titled by the task's form, the item at the same index.
-        names = {
-            item.index: item.description
-            for item in await self._schema_repo.list_by_task_id(membership.task_id)
-        }
 
         def _entry_to_dto(idx: int, entry: TaskSubmissionEntry) -> dict:
             if entry.content_attachment_id is not None:
@@ -840,10 +835,10 @@ class TaskSubmissionService:
             if attachment is not None:
                 content_attachment = _submitted_file_to_api(attachment)
             return {
-                # The form can be replaced after this was handed in, and lose
-                # the item, and an item's name may be blank; the entry is then
-                # numbered instead.
-                "title": names.get(entry.index) or f"Entry {idx + 1}",
+                # Titled by the name the entry was answered under, not by the
+                # form as it reads now. An entry answered under a blank name,
+                # or past the end of the form, is numbered instead.
+                "title": entry.prompt or f"Entry {idx + 1}",
                 "type": entry_type,
                 "contentText": entry.content_text,
                 "contentAttachment": content_attachment,
@@ -871,16 +866,23 @@ class TaskSubmissionService:
         }
 
     async def _entries_from(
-        self, contents: list[dict], *, submitter_id: int
-    ) -> list[tuple[int, str | None, int | None]]:
-        """Turn the request's entries into ``(index, text, attachment_id)`` rows.
+        self, contents: list[dict], *, task_id: int, submitter_id: int
+    ) -> list[tuple[int, str | None, int | None, str | None]]:
+        """Turn the request's entries into ``(index, text, attachment_id, prompt)``.
+
+        ``prompt`` is the name of the form item at the entry's position, read
+        now, so the entry keeps it however the form changes afterwards.
 
         A file entry may only name a file the submitter uploaded. The submission
         view hands out the file's storage link and name, so accepting any id here
         would let a participant read someone else's upload by guessing its id.
         Checked before anything is written, so a refused request changes nothing.
         """
-        rows: list[tuple[int, str | None, int | None]] = []
+        prompts = {
+            item.index: item.description
+            for item in await self._schema_repo.list_by_task_id(task_id)
+        }
+        rows: list[tuple[int, str | None, int | None, str | None]] = []
         for idx, item in enumerate(contents):
             attachment_id_raw = item.get("attachmentId")
             attachment_id: int | None = None
@@ -889,9 +891,11 @@ class TaskSubmissionService:
                     attachment_id = int(attachment_id_raw)
                 except (TypeError, ValueError):
                     attachment_id = None
-            rows.append((idx, item.get("text"), attachment_id))
+            rows.append(
+                (idx, item.get("text"), attachment_id, prompts.get(idx) or None)
+            )
 
-        wanted = {a for _, _, a in rows if a is not None}
+        wanted = {a for _, _, a, _ in rows if a is not None}
         found = {a.id: a for a in await self._attachments.get_many(list(wanted))}
         for attachment_id in sorted(wanted):
             attachment = found.get(attachment_id)
@@ -926,7 +930,9 @@ class TaskSubmissionService:
         )
         new_version = latest_version + 1
 
-        entry_tuples = await self._entries_from(contents, submitter_id=submitter_id)
+        entry_tuples = await self._entries_from(
+            contents, task_id=participant.task_id, submitter_id=submitter_id
+        )
 
         submission = await self._submission_repo.create_submission(
             membership_id=participant_id,
@@ -983,7 +989,9 @@ class TaskSubmissionService:
         if submission is None:
             raise NotFoundError.for_resource("submission", version)
 
-        entry_tuples = await self._entries_from(contents, submitter_id=submitter_id)
+        entry_tuples = await self._entries_from(
+            contents, task_id=participant.task_id, submitter_id=submitter_id
+        )
 
         # Soft-delete existing entries for this submission.
         await self._entry_repo.soft_delete_by_membership_and_version(

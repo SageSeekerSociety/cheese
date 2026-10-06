@@ -261,6 +261,11 @@ class TaskSubmissionEntry(Base):
         nullable=True,
         comment="References attachment.id; kept nullable for pure-text entries.",
     )
+    # The name of the form item this entry answered, as the form read when the
+    # entry was written. The form can be reordered, renamed or cut down later;
+    # the entry keeps the name it was answered under. NULL when that item had
+    # no name, or the form had no item at this position.
+    prompt: Mapped[str | None] = mapped_column("prompt", Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
