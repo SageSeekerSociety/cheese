@@ -9,6 +9,8 @@ import type { TopicComputeProfile } from '@/types/compute'
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import { getAvatarUrl } from '@/utils/materials'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -64,6 +66,13 @@ const taskAgentName = computed(() => {
 const otherPeople = computed(() => props.people.filter((m) => m.member_handle !== ME))
 const collaborators = computed(() => props.task?.contributor_handles ?? [])
 const nameOf = (handle: string) => props.memberNames[handle] || handle
+// 这个人自己挑过的头像。没挑过（`avatar_id` 是 null）给空串，交给 `UserAvatar` 画按
+// handle 派生的彩色首字母：`getAvatarUrl(undefined)` 回的是全站默认那张脸，所有没挑过
+// 头像的人共用同一张，认不出是谁（同一个判据在 `useBoardMembers.avatarSrc`）。
+function avatarOf(handle: string | null | undefined): string {
+  const chosen = props.people.find((m) => m.member_handle === handle)?.avatar_id
+  return chosen ? getAvatarUrl(chosen) : ''
+}
 // 还能拉进来的人：名册上的人，除了负责人和已经在协作的。
 const addable = computed(() =>
   props.people.filter(
@@ -154,7 +163,7 @@ async function confirmHandOver() {
             :title="t('work.task.details')"
             data-testid="task-details"
           >
-            <UserAvatar :size="20" :name="ownerName" />
+            <UserAvatar :size="20" :name="ownerName" :avatar="avatarOf(task?.owner_handle)" />
             <span class="task-header__owner-name">{{ t('work.task.ownerChip', { name: ownerName }) }}</span>
             <span v-if="collaborators.length" class="task-header__helpers" aria-hidden="true">
               <UserAvatar
@@ -162,6 +171,7 @@ async function confirmHandOver() {
                 :key="handle"
                 :size="18"
                 :name="nameOf(handle)"
+                :avatar="avatarOf(handle)"
                 class="task-header__helper"
               />
             </span>
