@@ -60,7 +60,7 @@ configure_logging()
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(application: FastAPI):
     # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process left behind (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
@@ -376,6 +376,13 @@ async def lifespan(_: FastAPI):
             "asked to hand the running work over; still serving requests"
         )
         hand_over_once()
+
+    # FastAPI builds the OpenAPI document on the first request for it and keeps
+    # it. Building it is ~1.3 s of pure Python on the event loop (the document is
+    # 800 kB), and every new process met that on whichever request came first:
+    # each blue-green switch on dev logged an `event loop stalled` there.
+    # Built here, in a worker thread, before the first request arrives.
+    await asyncio.to_thread(application.openapi)
 
     loop = asyncio.get_running_loop()
     try:
