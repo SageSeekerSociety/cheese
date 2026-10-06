@@ -1226,7 +1226,7 @@ class AgentWorkRunner:
         `sweep_orphans` with the young-entry guard switched off."""
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
 
-    async def resume_lost_messages(self, chat_service, *, topic_id=None) -> int:
+    async def resume_lost_messages(self, chat_service, **scope) -> int:
         """Start the turns a previous owner accepted a message for and never
         began. Returns how many turns it started.
 
@@ -1246,7 +1246,7 @@ class AgentWorkRunner:
         """
         from app.domain.agent.pending_messages import resume_messages
 
-        return await resume_messages(self, chat_service, topic_id=topic_id)
+        return await resume_messages(self, chat_service, **scope)
 
     async def sweep_orphans(
         self,

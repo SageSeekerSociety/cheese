@@ -875,6 +875,10 @@ class Settings(BaseSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # How long a message can wait for its turn past a missed wake-up
+    # (`background.periodic_jobs`). One indexed read of the few waiting
+    # messages per run (`ix_blocks_queued_messages`), owner process only.
+    queued_message_sweep_interval_s: int = 10
     # How long a backend on its way out waits for the prompts it is still
     # sending, and the receipts it is still expecting, before it hands its
     # sessions to the next backend anyway (`app.core.ownership`). It has to fit

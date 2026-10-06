@@ -780,7 +780,7 @@ async def _consume_hook_event(
         # if nothing had happened. A turn whose coroutine is alive closes the
         # same row a moment later and finds it already closed, which is the
         # correct answer either way.
-        await service._close_open_turns(topic_id, turn_id)
+        await close_on_stop(service, topic_id, turn_id)
         if state is not None:
             if event.taken_into is not None:
                 # Its commits are the turn's that read it, which reports them.
@@ -904,6 +904,17 @@ async def _end_inputs_answered_inside(
         await service._set_hook_activity(
             project_id, topic_id, input_turn, False, agent_handle=result.agent_handle
         )
+
+
+async def close_on_stop(service, topic_id: uuid.UUID, turn_id: uuid.UUID) -> None:
+    """A Stop ends the interval it names, and with it what may hold back a
+    message queued for the same seat. The Stop can land after the turn's
+    completion and its idle frame, whose own nudges then found the interval
+    still open, so the queue is looked at once more here."""
+    from app.domain.agent.pending_messages import nudge_messages
+
+    await service._close_open_turns(topic_id, turn_id)
+    nudge_messages(service, topic_id)
 
 
 async def _note_retry(

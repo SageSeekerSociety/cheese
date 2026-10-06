@@ -41,6 +41,7 @@ INDEXES = {
     "ix_blocks_questions",
     "ix_blocks_machine_events",
     "ix_blocks_failed_turns",
+    "ix_blocks_queued_messages",
 }
 
 
@@ -278,4 +279,52 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
         [(sql, params)] = seen
         plan = await _generic_plan(conn, "probe_beats", sql, params)
         assert "Backward using ix_blocks_conversation_created_at" in plan, plan
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_the_waiting_messages_come_back_and_are_read_by_their_index(db_factory):
+    """The pending-message scan runs on a clock, so it must read its few rows
+    from `ix_blocks_queued_messages`, not the table of everything ever said."""
+    from app.domain.agent.pending_messages import queued_messages
+
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        now, room = seeded["now"], seeded["rooms"]["quiet"]
+        waiting = {"agent_recipient": {"mentioned": True}, "consumed_turn": None}
+        rows = {
+            "waiting": waiting,
+            "taken": {**waiting, "consumed_turn": "t1"},
+            "tried": {**waiting, "prompt_attempts": 1},
+            "answered": {**waiting, "answer_to": "q1"},
+            "unnamed": {"agent_recipient": {"mentioned": False}, "consumed_turn": None},
+        }
+        blocks = {
+            name: Block(
+                project_id=room.project_id,
+                conversation_id=room.id,
+                kind=BlockKind.message,
+                author_type=AuthorType.participant,
+                author="u1",
+                content=name,
+                meta=meta,
+                created_at=now - timedelta(minutes=1),
+            )
+            for name, meta in rows.items()
+        }
+        session.add_all(blocks.values())
+        await session.flush()
+        await session.execute(text("ANALYZE blocks"))
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+
+        with statements(session) as seen:
+            found = list(
+                await session.scalars(queued_messages(now - timedelta(hours=2)))
+            )
+        assert [block.content for block in found] == ["waiting"]
+
+        [(sql, params)] = seen
+        conn = await session.connection()
+        plan = await _generic_plan(conn, "probe_queued", sql, params)
+        assert "ix_blocks_queued_messages" in plan, f"{sql}\n{plan}"
         await session.rollback()

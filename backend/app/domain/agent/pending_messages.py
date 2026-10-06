@@ -9,19 +9,15 @@ from sqlalchemy import or_, select
 
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
-from app.domain.block.models import (
-    CONSUMED_TURN_META_KEY,
-    Block,
-    BlockKind,
-    consumed_turn,
-    prompt_attempts,
-)
+from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS
+from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.answer_ownership import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
 
 DEFERRED_INPUT = "deferred_native_input"
 _runner = None
+logger = logging.getLogger(__name__)
 
 
 def bind_runner(runner):
@@ -83,6 +79,20 @@ def nudge_messages(chat, topic_id):
         or not runner.accepting_turns
         or (caller is not None and caller.cancelling())
     ):
+        # A nudge that goes nowhere leaves a waiting message to the sweep; this
+        # line is what tells which of these it was when one waited too long.
+        reason = (
+            "no_runner"
+            if runner is None
+            else "not_owner"
+            if not runner.owns_sessions
+            else "not_accepting"
+            if not runner.accepting_turns
+            else "caller_cancelling"
+        )
+        logger.info(
+            "pending_messages nudge_dropped topic=%s reason=%s", topic_id, reason
+        )
         return
 
     # Handover waits/cancels these scans with the runner's other work.
@@ -90,45 +100,47 @@ def nudge_messages(chat, topic_id):
         try:
             await runner.resume_lost_messages(chat, topic_id=topic_id)
         except Exception:
-            logging.getLogger(__name__).exception(
-                "pending message recovery failed topic=%s", topic_id
-            )
+            logger.exception("pending message recovery failed topic=%s", topic_id)
 
     task = asyncio.create_task(scan(), name=f"pending-messages:{topic_id}")
     runner._tasks.add(task)
     task.add_done_callback(runner._tasks.discard)
 
 
-async def resume_messages(runner, chat, *, topic_id=None):
+def queued_messages(since, topic_id=None):
+    """Messages that named an agent and have not had their turn: recent, or
+    held back on purpose (`defer_message`). Filtered by the literal predicate of
+    `ix_blocks_queued_messages`, so a scan on a clock reads that index and not
+    the whole table (`indexed_rows`)."""
+    query = select(Block).where(
+        QUEUED_MESSAGE_ROWS,
+        or_(
+            Block.created_at >= since,
+            Block.meta[DEFERRED_INPUT].as_boolean().is_(True),
+        ),
+    )
+    if topic_id is not None:
+        query = query.where(Block.conversation_id == topic_id)
+    return query.order_by(Block.created_at, Block.id)
+
+
+async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
     """``topic_id`` is a conversation: a room, or a task, whose messages are
-    the blocks carrying its id."""
+    the blocks carrying its id.
+
+    ``source`` says who asked: a ``nudge`` after something in the room changed,
+    the periodic ``sweep``, or ``startup``. A nudge logs every waiting message it
+    passes over and why; the sweep logs every message it starts, since one it
+    finds is one the nudges missed."""
     from app.domain.agent.queries import conversation_seat
 
     if not runner.owns_sessions or not runner.accepting_turns:
         return 0
-    since = datetime.now(UTC) - timedelta(seconds=runner.ORPHAN_STALE_S)
+    now = datetime.now(UTC)
+    since = now - timedelta(seconds=runner.ORPHAN_STALE_S)
+    skipped: list[tuple[Block, str]] = []
     async with chat.session_factory() as session:
-        query = select(Block).where(
-            or_(
-                Block.created_at >= since,
-                Block.meta[DEFERRED_INPUT].as_boolean().is_(True),
-            ),
-            Block.kind == BlockKind.message,
-            Block.meta["agent_recipient"]["mentioned"].as_boolean(),
-        )
-        if topic_id is not None:
-            query = query.where(Block.conversation_id == topic_id)
-        mentioned = [
-            block
-            for block in await session.scalars(
-                query.order_by(Block.created_at, Block.id)
-            )
-            if CONSUMED_TURN_META_KEY in (block.meta or {})
-            and consumed_turn(block) is None
-            and prompt_attempts(block) == 0
-            and "delivery_event_id" not in (block.meta or {})
-            and "answer_to" not in (block.meta or {})
-        ]
+        mentioned = list(await session.scalars(queued_messages(since, topic_id)))
         if not mentioned:
             return 0
         ids = [block.id for block in mentioned]
@@ -165,21 +177,41 @@ async def resume_messages(runner, chat, *, topic_id=None):
             if key in seats:
                 continue
             running = busy.get(conversation, set())
-            if None in running or handle in running or chat.has_running_turn(*key):
+            if None in running or handle in running:
+                skipped.append((block, "turn_open_in_db"))
+                continue
+            if chat.has_running_turn(*key):
+                skipped.append((block, "turn_running_in_process"))
                 continue
             seated = await conversation_seat(session, conversation, handle)
             if seated is None:
+                skipped.append((block, "no_seat"))
                 continue
             agent, acting = seated
             if agent.handle != handle:
+                skipped.append((block, "seat_has_other_agent"))
                 continue
             if recipient.get("instance_id") not in (None, str(agent.instance_id)):
+                skipped.append((block, "other_instance"))
                 continue
             if acting != recipient_seat(recipient):
+                skipped.append((block, "other_acting_seat"))
                 continue
             if await seat_has_unfinished_input(session, conversation, acting):
+                skipped.append((block, "unfinished_input"))
                 continue
             seats[key] = block
+    if source != "sweep":
+        for block, reason in skipped:
+            logger.info(
+                "pending_messages skipped source=%s topic=%s block=%s reason=%s"
+                " waited_s=%.0f",
+                source,
+                block.conversation_id,
+                block.id,
+                reason,
+                (now - block.created_at).total_seconds(),
+            )
     started = 0
     for (room, handle), block in seats.items():
         # No await between this final reservation check and scheduling. Other
@@ -211,4 +243,11 @@ async def resume_messages(runner, chat, *, topic_id=None):
             ),
         )
         started += 1
+        logger.info(
+            "pending_messages started source=%s topic=%s block=%s waited_s=%.0f",
+            source,
+            room,
+            block.id,
+            (now - block.created_at).total_seconds(),
+        )
     return started
