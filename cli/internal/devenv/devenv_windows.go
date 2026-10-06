@@ -64,6 +64,7 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 		os.Setenv("PATH", strings.Join(append(path, current), ";"))
 	}
 	os.Setenv("CLAUDE_CODE_GIT_BASH_PATH", filepath.Join(git, "bin", "bash.exe"))
+	isolatePython()
 	return nil
 }
 
@@ -139,8 +140,9 @@ func suffix(name string) string {
 
 // extractPython unpacks the embeddable distribution with Windows' own tar,
 // names it the way the server's commands call it, and drops its ._pth: that
-// file pins sys.path and silently ignores PYTHONPATH and site-packages, which
-// would make it behave unlike the python3 every other device has.
+// file pins sys.path and silently ignores site-packages, which would make it
+// behave unlike the python3 every other device has. The owner's PYTHONPATH is
+// kept away from it by isolatePython, not by the ._pth.
 func extractPython(archive, dir string) error {
 	if out, err := hidden("tar.exe", "-xf", archive, "-C", dir).CombinedOutput(); err != nil {
 		return fmt.Errorf("unpack: %v: %s", err, out)
