@@ -277,12 +277,13 @@ class RawTranscript(UuidPk, Timestamps, Base):
 
 
 class TopicReadState(UuidPk, Timestamps, Base):
-    """Per-user read cursor on a topic (话题级未读, Feishu-style).
+    """Per-user read cursor on a conversation: a room's or a task's.
 
-    One row per (topic, user); last_read_at is bumped whenever the user opens
-    the topic. Unread = message blocks by OTHERS created after this cursor
+    One row per (conversation, user); last_read_at is bumped whenever the user
+    opens it. Unread = message blocks by OTHERS created after this cursor
     (no row = everything by others is unread). Deliberately a cursor, not a
-    per-message read table — cheap to bump, cheap to count against.
+    per-message read table — cheap to bump, cheap to count against. Which
+    conversations count for whom is `TopicRepository.unread_counts`.
     """
 
     __tablename__ = "topic_read_states"
@@ -290,8 +291,9 @@ class TopicReadState(UuidPk, Timestamps, Base):
         UniqueConstraint("topic_id", "user_handle", name="uq_topic_read_user"),
     )
 
+    # A conversation id (`conversations`): the room's own, or a task's.
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

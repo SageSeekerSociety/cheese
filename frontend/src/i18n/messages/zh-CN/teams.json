@@ -14,14 +14,14 @@
     "screenRunning": "运行中 · {'@'}{handle}",
     "team": {
       "removeDeviceConfirm": "确定把「{name}」移出这个团队吗？",
-      "subtitle": "团队的自有设备。项目给新 AI 队友设默认工作电脑，房间里可以给每个 AI 队友更换。",
+      "subtitle": "团队的自有设备。项目给新 AI 队友设默认工作电脑，频道里可以给每个 AI 队友更换。",
       "selfHostedSubtitle": "把成员已接入的机器注册给团队，工作树与数据留在机器上。",
       "allDevicesAdded": "你的设备都已在这个团队中",
       "selfHostedEmptyHint": "接入后，团队内所有项目都可以使用。",
       "remove": "移出团队"
     },
     "own": {
-      "subtitle": "你名下项目的自有设备。项目给新 AI 队友设默认工作电脑，房间里可以给每个 AI 队友更换。",
+      "subtitle": "你名下项目的自有设备。项目给新 AI 队友设默认工作电脑，频道里可以给每个 AI 队友更换。",
       "selfHostedSubtitle": "加到这里的机器，你名下的项目都能用，工作树与数据留在机器上。",
       "allDevicesAdded": "你的设备都已加到这里",
       "selfHostedEmptyHint": "接入后，你名下的所有项目都可以使用。",
@@ -108,7 +108,7 @@
     "noProjectInvitations": "暂无项目邀请",
     "noProjectInvitationsHint": "你暂时没有收到项目邀请",
     "unnamedProject": "一个项目",
-    "projectInvitedBy": "{inviter} 邀请 · 接受之后你能看到这个项目的全部话题",
+    "projectInvitedBy": "{inviter} 邀请 · 接受之后你能看到这个项目的全部频道",
     "joinedProject": "已加入项目",
     "answerFailed": "答复失败，请稍后再试",
     "loadRequestsFailed": "获取申请列表失败",
@@ -162,12 +162,12 @@
   },
   "projects": {
     "loadFailed": "加载项目失败",
-    "subtitle": "这个团队的 AI 工作台。每个项目里和芝士开话题协作，产出与工作电脑都归团队。",
+    "subtitle": "这个团队的 AI 工作台。每个项目里和芝士一起完成任务，产出与工作电脑都归团队。",
     "newProject": "新建项目",
     "emptyTitle": "还没有项目",
     "emptyHint": "点「新建项目」直接开一个，进去就能和芝士开工。",
     "createdAt": "创建于 {date}",
-    "ownSubtitle": "你名下的项目。每个项目里和芝士开话题协作，可以在项目里另外邀请人。"
+    "ownSubtitle": "你名下的项目。每个项目里和芝士一起完成任务，可以在项目里另外邀请人。"
   },
   "knowledge": {
     "searchLabel": "搜索知识库",

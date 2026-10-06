@@ -132,7 +132,7 @@ describe('成员名册', () => {
     await waitFor(() =>
       expect(
         Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim())
-      ).toEqual(['设为拥有者', '设为管理员', '移出话题'])
+      ).toEqual(['设为拥有者', '设为管理员', '移出频道'])
     )
   })
 
@@ -174,8 +174,8 @@ describe('成员名册', () => {
     const rowOf = (handle: string) =>
       Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
     // 名单只两行高，说明落在角色的 title 上，悬停可读。
-    expect(rowOf('alice').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('管理房间与成员')
-    expect(rowOf('bob').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('参与房间讨论')
+    expect(rowOf('alice').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('管理频道与成员')
+    expect(rowOf('bob').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('参与频道讨论')
   })
 })
 
@@ -264,14 +264,14 @@ describe('名册上这个话题的工作电脑', () => {
     expect(agentRow().textContent).not.toContain('工作电脑')
     const rooms = document.querySelectorAll('[data-testid="future-machine"]')
     expect(rooms).toHaveLength(1)
-    expect(rooms[0].textContent).toContain('本话题运行在：实验室工作站')
+    expect(rooms[0].textContent).toContain('本频道运行在：实验室工作站')
     expect(rooms[0].textContent).toContain('改')
   })
 
   it('房间那一行跟着项目默认时标出来', async () => {
     await openRoster()
     const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('本话题运行在：云端沙箱')
+    expect(room.textContent).toContain('本频道运行在：云端沙箱')
     expect(room.textContent).toContain('项目默认')
   })
 
@@ -308,6 +308,6 @@ describe('名册上这个话题的工作电脑', () => {
     })
     await settle()
     const notices = emitted()['machine-access'] as [string | null][]
-    expect(notices.at(-1)).toEqual(['让它看到整台机器（能操作这台机器上的服务和其他房间）'])
+    expect(notices.at(-1)).toEqual(['让它看到整台机器（能操作这台机器上的服务和其他频道）'])
   })
 })

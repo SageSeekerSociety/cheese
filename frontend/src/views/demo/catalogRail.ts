@@ -19,6 +19,7 @@ import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailGroupToggle from '@/components/topic-sidebar/TopicRailGroupToggle.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
+import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
@@ -128,102 +129,81 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-pinned',
     title: 'TopicRailPinnedRows',
-    about: '话题列表顶上那几行置顶入口：全局房间、这个项目露出来的几页、项目文档。',
+    about: '项目名下面那两行：看板和资料库，和频道行同一种行。别的页进项目名菜单，这里不再加。',
     file: 'src/components/topic-sidebar/TopicRailPinnedRows.vue',
     component: TopicRailPinnedRows,
     // 只读词表和 props：哪几页露出来了、当前在哪一页，都是父级算好递进来的。
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '置顶上那组入口',
-        note: '和话题行同一种语法（同图标槽、同缩进、同选中态）：点它会发生什么，不用另学一遍。',
+        name: '站在资料库上',
+        note: '选中态和频道行同一套。',
         props: {
-          rootTopic: RAIL_ROOT_TOPIC,
-          selectedTopicId: null,
           pages: RAIL_PAGES,
           routeName: 'project-library',
           terms: RAIL_TERMS,
-          docsActive: false,
-          privateUnreadTotal: 3,
           page: false,
-          unreadOf: (id: string) => (id === 't-root' ? 3 : 0),
         },
         expect: '资料库',
       },
       {
-        name: '站在全局房间里',
-        note: '选中态落在「全局」那一行上，它的未读角标也亮着——置顶行和话题行是同一套。',
+        name: '手机上：这一行收进项目菜单',
+        note: '整页形态里这两页在点项目名弹出的面板里，这里不画。',
+        props: {
+          pages: RAIL_PAGES,
+          routeName: 'workspace-running',
+          terms: RAIL_TERMS,
+          page: true,
+        },
+      },
+    ],
+  },
+  {
+    id: 'topic-rail-root',
+    title: 'TopicRailRootRow',
+    about: '频道分组的第一行：项目自带的频道「综合」，固定在最上面。',
+    file: 'src/components/topic-sidebar/TopicRailRootRow.vue',
+    component: TopicRailRootRow,
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '站在综合里',
+        note: '选中态和未读角标都和频道行同一套。',
         props: {
           rootTopic: RAIL_ROOT_TOPIC,
           selectedTopicId: 't-root',
-          pages: RAIL_PAGES,
-          routeName: 'workspace-running',
-          terms: RAIL_TERMS,
-          docsActive: false,
-          privateUnreadTotal: 0,
           page: false,
-          unreadOf: () => 0,
+          unreadOf: (id: string) => (id === 't-root' ? 3 : 0),
         },
-        expect: '全局',
-      },
-      {
-        name: '打开的是项目文档',
-        note: '四种文档（章程/决策/周报/记忆）在侧栏只占这一行，任何一种开着它都是选中态。',
-        props: {
-          rootTopic: RAIL_ROOT_TOPIC,
-          selectedTopicId: null,
-          pages: RAIL_PAGES,
-          routeName: 'project-docs',
-          terms: RAIL_TERMS,
-          docsActive: true,
-          privateUnreadTotal: 0,
-          page: false,
-          unreadOf: () => 0,
-        },
-        expect: '项目文档',
-      },
-      {
-        name: '手机上：列表只留话题',
-        note: '那几页收进了项目名旁边那颗 ⌄（整页形态的列表只留话题），所以这里只剩「全局」一行。',
-        props: {
-          rootTopic: RAIL_ROOT_TOPIC,
-          selectedTopicId: null,
-          pages: RAIL_PAGES,
-          routeName: 'workspace-running',
-          terms: RAIL_TERMS,
-          docsActive: false,
-          privateUnreadTotal: 0,
-          page: true,
-          unreadOf: () => 0,
-        },
-        expect: '全局',
+        expect: '综合',
       },
     ],
   },
   {
     id: 'topic-rail-header',
     title: 'TopicRailHeader',
-    about: '项目名那一行：标识 + 搜索 + 项目菜单（那些一年点几次的页面）。',
+    about: '项目名那一行：点名字弹出项目菜单（看板、资料库之外的几页、项目文档、设置），右边是搜索。',
     file: 'src/components/topic-sidebar/TopicRailHeader.vue',
     component: TopicRailHeader,
-    // 名字和 chevron 是两个按钮：名字回项目首页，chevron 展开收起的那几页。
+    // 名字连着 ⌄ 是一个按钮，点下去是菜单。
     // 整页形态下这一行填进顶栏（Teleport），另外两个形态里它就在原地。
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '站在看板上',
-        note: '首页是登录进项目看到的第一屏，所以它自己占着项目名那一行——菜单里不再列一遍。',
+        name: '所有者',
+        note: '菜单里是项目文档、看板和资料库之外的几页、项目设置和「转让项目」；成员上挂着私聊未读。',
         props: {
           page: false,
           column: false,
-          homeActive: true,
-          homeKey: 'workspace-running',
-          homeIcon: 'mdi-view-column-outline',
           projectName: '课程项目',
           privateUnreadTotal: 3,
           searchTitle: '搜索（⌘K）',
           menuOpen: false,
-          menuPages: [{ key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' }],
+          docsActive: false,
+          menuPages: [
+            { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+            { key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
+          ],
           routeName: 'workspace-running',
           terms: RAIL_TERMS,
           projectSelected: true,
@@ -238,13 +218,11 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         props: {
           page: false,
           column: false,
-          homeActive: false,
-          homeKey: 'workspace-running',
-          homeIcon: 'mdi-view-column-outline',
           projectName: '别人的项目',
           privateUnreadTotal: 0,
           searchTitle: '搜索（⌘K）',
           menuOpen: false,
+          docsActive: false,
           menuPages: [],
           routeName: 'project-members',
           terms: RAIL_TERMS,
@@ -260,13 +238,11 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         props: {
           page: false,
           column: false,
-          homeActive: false,
-          homeKey: 'workspace-running',
-          homeIcon: 'mdi-view-column-outline',
           projectName: '选择项目',
           privateUnreadTotal: 0,
           searchTitle: '搜索（⌘K）',
           menuOpen: false,
+          docsActive: false,
           menuPages: [],
           routeName: null,
           terms: RAIL_TERMS,
@@ -282,13 +258,11 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         props: {
           page: true,
           column: true,
-          homeActive: false,
-          homeKey: 'workspace-running',
-          homeIcon: 'mdi-view-column-outline',
           projectName: '课程项目',
           privateUnreadTotal: 0,
           searchTitle: '搜索',
           menuOpen: false,
+          docsActive: false,
           menuPages: [],
           routeName: 'project-routines',
           terms: RAIL_TERMS,
@@ -313,13 +287,13 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       {
         name: '收着，里面还有新消息',
         note: '收起来时未读聚成一个点（不是数字）：别人话题里有几条与我无关，但那边有动静值得知道。',
-        props: { label: '其他话题', count: 12, open: false, unread: true, unreadTitle: '其他话题里有新消息' },
-        expect: '其他话题',
+        props: { label: '其他频道', count: 12, open: false, unread: true, unreadTitle: '其他话题里有新消息' },
+        expect: '其他频道',
       },
       {
         name: '展开着',
         note: '展开着就没有那颗点：里面的事本来就在眼前。',
-        props: { label: '其他话题', count: 12, open: true, unread: false, unreadTitle: '其他话题里有新消息' },
+        props: { label: '其他频道', count: 12, open: true, unread: false, unreadTitle: '其他话题里有新消息' },
         expect: '12',
       },
       {

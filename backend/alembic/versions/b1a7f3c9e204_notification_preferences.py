@@ -1,7 +1,7 @@
 """per-user notification preferences (设计稿 通知设置页)
 
 Revision ID: b1a7f3c9e204
-Revises: b6fcc6362b79
+Revises: fc3eab9b8847
 Create Date: 2026-10-04 09:30:00.000000
 
 一张表，一人一行：三个渠道的总开关、免打扰时段、摘要频率，加上矩阵那八行的渠道
@@ -18,7 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b1a7f3c9e204"
-down_revision: str | Sequence[str] | None = "b6fcc6362b79"
+down_revision: str | Sequence[str] | None = "fc3eab9b8847"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

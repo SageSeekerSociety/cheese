@@ -81,7 +81,7 @@
       "memory": "Memory"
     },
     "loadFailed": "Couldn't load",
-    "askInRoom": "Ask for one in the project room",
+    "askInRoom": "Ask it in General",
     "charterHint": "Editing this is giving Cheese instructions",
     "memoryEmpty": "No memories",
     "memoryHint": "Say “remember…” in a conversation, or it writes here when it judges something important",
@@ -91,10 +91,10 @@
     "memoryDeleteTitle": "Delete this memory?",
     "memoryDeleteBody": "It can't be recovered, and Cheese will no longer remember it.",
     "noCharter": "This project has no editable charter yet",
-    "fromTopic": "From topic",
+    "fromTopic": "From channel",
     "weekliesEmpty": "No weekly reports",
-    "weekliesHint": "Mention {'@'}Cheese in the project room and ask for “this week's project report”. It is recorded here once written",
-    "goToRoom": "Go to project room",
+    "weekliesHint": "Mention {'@'}Cheese in the project channel and ask for “this week's project report”. It is recorded here once written",
+    "goToRoom": "Go to General",
     "recordedOn": "Recorded {date}"
   }
 }

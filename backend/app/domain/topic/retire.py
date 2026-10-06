@@ -103,9 +103,7 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
     resource_ids = {str(operation.resource_id)}
     resource_ids.update(
         str(task.id)
-        for task, *_ in await TaskService(session).threads_for_room(
-            operation.topic_id, limit=0
-        )
+        for task in await TaskService(session).list_in_room(operation.topic_id)
     )
     entries = {}
     sessions = list(

@@ -82,7 +82,8 @@
     "src/views/user/settings/ProfileView.vue",
     "src/views/user/settings/RealNameView.vue",
     "src/views/user/settings/SecurityView.vue",
-    "src/views/user/settings/UsageView.vue"
+    "src/views/user/settings/UsageView.vue",
+    "src/views/workspace/ChannelTasksView.vue"
   ],
   "debt": [
     "src/components/panels/PanelChanges.vue",

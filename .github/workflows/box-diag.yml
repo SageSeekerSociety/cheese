@@ -29,9 +29,17 @@ jobs:
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: deploy/app-container.sh
+          sparse-checkout-cone-mode: false
+      # The backend runs as cheese-backend-1 or cheese-backend-b-1 depending
+      # on the last release (deploy/deploy-docker.sh, "Two slots").
+      - name: Find the running backend container
+        run: echo "BACKEND=$(bash deploy/app-container.sh backend)" >> "$GITHUB_ENV"
       - name: Read session host readiness and recent startup failures
         run: |
-          docker exec -i cheese-backend-1 python - <<'PY'
+          docker exec -i "$BACKEND" python - <<'PY'
           import asyncio
           import json
           import asyncpg
@@ -82,7 +90,7 @@ jobs:
           PY
       - name: Database encoding
         run: |
-          docker exec cheese-backend-1 python -c '
+          docker exec "$BACKEND" python -c '
           import os
 
           Q = (
@@ -152,7 +160,7 @@ jobs:
         # the same failure the line budget had, arriving through a different
         # door. Calls that raised still show up; it is the 200s that are noise.
         run: |
-          docker logs --since 2h --timestamps cheese-backend-1 2>&1 \
+          docker logs --since 2h --timestamps "$BACKEND" 2>&1 \
             | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
             | grep -v 'device-connection:8082.*"HTTP/1.1 200 OK"' \
             | tail -600 || true

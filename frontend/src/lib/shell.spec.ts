@@ -2,7 +2,7 @@ import type { Project } from '@/cx_types'
 
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_SHELL, orderedNav, projectPagePlan, shellFor, shellOf, termParams } from './shell'
+import { DEFAULT_SHELL, orderedNav, projectPageLayout, shellFor, shellOf, termParams } from './shell'
 
 import { t } from '@/i18n'
 
@@ -70,12 +70,11 @@ describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
   it('default 壳下三个面逐格就是今天的样子', () => {
     expect(orderedNav(DEFAULT_SHELL, 'rail', ['home', 'projects', 'add'])).toEqual(['home', 'projects', 'add'])
     expect(orderedNav(DEFAULT_SHELL, 'tabs', ['home', 'workspace', 'inbox'])).toEqual(['home', 'workspace', 'inbox'])
-    // 侧栏那一面：资料库和名册是常驻那两格，定时与触发默认收进项目名旁边那个 ⋯ 菜单。
-    // 看板不在里面——它就是首页，项目名那一行点下去就到。
+    // 项目页的顺序：资料库摆在项目名下，成员排在菜单第一个（「退出项目」在那一页）。
     expect(orderedNav(DEFAULT_SHELL, 'project', KNOWN)).toEqual([
       'project-library',
-      'project-routines',
       'project-members',
+      'project-routines',
     ])
   })
 })
@@ -104,57 +103,43 @@ describe('termParams: 词表切文案，壳没说就回落 catalog', () => {
   })
 })
 
-describe('projectPagePlan: 收起是「收起」，永远不是「禁止」', () => {
-  it('default 壳下侧栏摆资料库和名册，其余全在「更多」里', () => {
-    // 「更多」就是项目名旁边那个 ⋯ 菜单（`TopicSidebar.vue` 的 menuPages）。
-    // default 下它是 看板 / 定时与触发 —— 一格都没丢，只是不占那条竖线。名册不在里头：
-    // 「退出项目」长在名册页上，收进 ⋯ 就是把「怎么退出」也一起藏了。
-    const plan = projectPagePlan(DEFAULT_SHELL, KNOWN, new Set())
-    expect(plan.visible).toEqual(['project-library', 'project-members'])
-    expect(plan.more).toEqual(['workspace-running', 'project-routines'])
+describe('projectPageLayout: 项目名下那一行只有看板和资料库，其余都在项目名菜单里', () => {
+  it('项目名下那一行只有看板和资料库', () => {
+    // 这一行加一格，频道就往下挪一行；用户整理过不止一次，几个版本后又是一摞入口。
+    // 新页面进项目名菜单。改这一条之前先读 .claude/rules/project-sidebar.md。
+    const everything = shellLike({ nav: { ...DEFAULT_SHELL.nav, project: [...KNOWN, 'project-skills'] } })
+    const { bar } = projectPageLayout(everything, [...KNOWN, 'project-skills'])
+    expect(bar).toEqual(['workspace-running', 'project-library'])
   })
 
-  it('hidden 里的页落进「更多」', () => {
-    const shell = shellLike({
-      nav: { ...DEFAULT_SHELL.nav, project: KNOWN },
-      hidden: ['project-routines', 'project-members'],
-    })
-    const plan = projectPagePlan(shell, KNOWN, new Set())
-    expect(plan.visible).toEqual(['workspace-running', 'project-library'])
-    expect(plan.more).toEqual(['project-routines', 'project-members'])
+  it('default 壳：那一行是看板和资料库，菜单里是其余几页', () => {
+    const { bar, menu } = projectPageLayout(DEFAULT_SHELL, KNOWN)
+    expect(bar).toEqual(['workspace-running', 'project-library'])
+    expect(menu).toEqual(['project-members', 'project-routines'])
   })
 
-  it('他手动打开过一次，这一页就回到外面（个人级压过壳）', () => {
-    const shell = shellLike({ hidden: ['project-routines'] })
-    expect(projectPagePlan(shell, KNOWN, new Set(['project-routines'])).visible).toContain('project-routines')
-    expect(projectPagePlan(shell, KNOWN, new Set(['project-routines'])).more).not.toContain('project-routines')
+  it('壳不摆资料库，资料库就在菜单里', () => {
+    const shell = shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['project-members', 'project-routines'] } })
+    const { bar, menu } = projectPageLayout(shell, KNOWN)
+    expect(bar).toEqual(['workspace-running'])
+    expect(menu).toContain('project-library')
   })
 
-  it('壳写错了 key、或者前端多出一页 —— 那一页在「更多」里，不是凭空消失', () => {
-    // 壳只认得两格，剩下两格（包括壳压根没听说过的那个新页）全都收着，但都在。
-    const shell = shellLike({
-      nav: { ...DEFAULT_SHELL.nav, project: ['workspace-running', 'project-routines'] },
-      hidden: [],
-    })
-    const plan = projectPagePlan(shell, KNOWN, new Set())
-    expect(plan.visible).toEqual(['workspace-running', 'project-routines'])
-    expect(plan.more).toEqual(['project-library', 'project-members'])
-  })
-
-  it('露出 + 收起 = 认得的全部，一格不多一格不少', () => {
+  it('壳写错了 key、或者前端多出一页 —— 那一页在菜单里，不是凭空消失', () => {
     const shells = [
       DEFAULT_SHELL,
-      shellLike({ hidden: ['workspace-running', 'project-members'] }),
-      shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['project-routines', 'project-members'] } }),
-      shellLike({ hidden: ['project-routines'], nav: { ...DEFAULT_SHELL.nav, project: ['project-routines'] } }),
+      shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['project-routines', 'no-such-page'] } }),
+      shellLike({ nav: { ...DEFAULT_SHELL.nav, project: [] } }),
     ]
     for (const shell of shells) {
-      const revealed = new Set(['project-routines'])
-      const { visible, more } = projectPagePlan(shell, KNOWN, revealed)
-      expect([...visible, ...more].sort()).toEqual([...KNOWN].sort())
-      expect(new Set([...visible, ...more]).size).toBe(KNOWN.length)
-      // 顺序也还认得出：visible 内部照壳的顺序，more 内部照前端认得的顺序。
-      expect(visible).toEqual(orderedNav(shell, 'project', KNOWN).filter((k) => visible.includes(k)))
+      const { bar, menu } = projectPageLayout(shell, KNOWN)
+      expect([...bar, ...menu].sort()).toEqual([...KNOWN].sort())
+      expect(new Set([...bar, ...menu]).size).toBe(KNOWN.length)
     }
+  })
+
+  it('菜单里先按壳的顺序', () => {
+    const shell = shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['project-routines', 'project-members'] } })
+    expect(projectPageLayout(shell, KNOWN).menu.slice(0, 2)).toEqual(['project-routines', 'project-members'])
   })
 })

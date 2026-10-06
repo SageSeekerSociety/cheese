@@ -77,7 +77,7 @@ RELEASE_FILES = {
         f"remote-execution/{name}.py": (
             f"app/domain/agent/harness/claude_code/remote_execution/{name}.py"
         )
-        for name in _OWN
+        for name in (*_OWN, "predecessor")
     },
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
@@ -749,18 +749,18 @@ class Executor:
 
     def _wait_command(self, command_id, process):
         code = process.wait()
-        record = self._record(command_id)
         # Negative for a POSIX child killed by signal n, kept so its reader can
-        # end the same way.
-        temporary = record / ("exit." + uuid.uuid4().hex)
-        temporary.write_text(str(code))
-        # Renamed in and taken off `running` as one step: a reader answers
-        # `exit` once the file is there, and `forget` refuses a command still
-        # in `running`, so apart they would call one command both.
-        with self.command_lock:
-            temporary.replace(record / "exit")
-            self.running.pop(command_id, None)
-            self.collected[command_id] = time.time()
+        # end the same way. Renamed in and off `running` as one step, and that
+        # step is a `finally`: a full disk (2026-10-03) must not strand a reader.
+        temporary = self._record(command_id) / ("exit." + uuid.uuid4().hex)
+        try:
+            temporary.write_text(str(code))
+        finally:
+            with self.command_lock:
+                with contextlib.suppress(OSError):
+                    temporary.replace(temporary.with_name("exit"))
+                self.running.pop(command_id, None)
+                self.collected[command_id] = time.time()
         self.log(command_id, "exited", exit_code=code)
 
     def _tree(self, pid):
@@ -2031,26 +2031,6 @@ def bridge(state, server, *, call=None):
         thread.join()
 
 
-def terminate_unrequested(state, named):
-    """Stop an executor that refused `shutdown`: one started before stopping was
-    a request. Signal the pid it reports once it is seen running this state's
-    service: whatever answers on a room's socket is not proof of who is behind
-    it, and a sandboxed room names the state `/proc/self/fd/N`, resolved here."""
-    try:
-        pid = request(state, "ping")["pid"]
-    except (OSError, RuntimeError):
-        return
-    running = subprocess.run(
-        ["ps", "-ww", "-p", str(pid), "-o", "args="],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.rstrip()
-    spellings = {str(named), str(state), str(Path(state).resolve())}
-    if any(running.endswith(f"serve --state {path}") for path in spellings):
-        os.kill(pid, signal.SIGTERM)
-
-
 def main():
     import argparse
 
@@ -2074,7 +2054,8 @@ def main():
             if not state.exists():
                 return
         except RuntimeError:
-            terminate_unrequested(state, args.state)
+            # Answered, then refused: old enough that stopping was not a request.
+            beside("predecessor")["end_unrequested"](state, args.state)
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
         with os.fdopen(os.open(state / "service.lock", flags, 0o600), "a") as lock_file:
             for _ in range(100):

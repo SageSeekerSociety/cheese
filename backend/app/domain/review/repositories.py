@@ -100,12 +100,8 @@ class AcceptCardRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
-        """The cards this room filed.
-
-        `task_id IS NULL` is not redundant: cards filed back when a piece of
-        work was a place of its own sit under the same room, and a room asking
-        "do I have a card" must not be answered with one of those.
-        """
+        """Every card filed under this room: its tasks' cards, each carrying
+        its `task_id`. A caller asking about one task filters on that."""
         stmt = (
             select(AcceptCard)
             .where(

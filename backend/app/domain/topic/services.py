@@ -112,23 +112,6 @@ def _require_room(parent: Topic) -> None:
 logger = logging.getLogger("cheesex.topic")
 
 
-def _brief_doc(
-    *, child_title: str, parent_title: str, created_by: str | None, source_block: str
-) -> str:
-    """A room upgraded out of a private chat starts its living doc from the
-    message it came from, copied verbatim under fixed headings. No semantics
-    are derived from prose and nothing speaks as 芝士 (CLAUDE.md red line)."""
-    by = f"由 {created_by} " if created_by else ""
-    return "\n\n".join(
-        [
-            f"# {child_title}",
-            f"> 从「{parent_title}」的一条消息{by}转来时自动预置",
-            "## 来源",
-            source_block.strip() or "（空）",
-        ]
-    )
-
-
 def _is_mid_turn_block(block: Block) -> bool:
     """Is this block the middle of a turn rather than the end of one?
 
@@ -582,9 +565,10 @@ class TopicService:
             raise NotFoundError("Project not found")
         return await self._repo.private_unread_counts(project_id, user_handle)
 
-    async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
-        await self.get_or_404(topic_id)
-        await self._repo.mark_read(topic_id, user_handle)
+    async def mark_read(self, conversation_id: uuid.UUID, user_handle: str) -> None:
+        """Bump the cursor on a room's own conversation or on one of its tasks."""
+        await self.get_or_404(await room_of(self._session, conversation_id))
+        await self._repo.mark_read(conversation_id, user_handle)
 
     async def mark_all_read(
         self, project_id: uuid.UUID, user_handle: str
@@ -641,10 +625,7 @@ class TopicService:
         and the cards they are still waiting on have to be settled with them
         (an unresolved card on a frozen place is one nobody can ever act on).
         """
-        for task in await TaskService(self._session).threads_for_room(
-            topic.id, limit=0
-        ):
-            thread = task[0]
+        for thread in await TaskService(self._session).list_in_room(topic.id):
             if thread.status == TaskStatus.closed:
                 continue
             thread.status = TaskStatus.closed
@@ -823,24 +804,15 @@ class TopicService:
         *,
         block_id: uuid.UUID,
         created_by: str | None = None,
-    ) -> tuple[Topic, Task | None, bool]:
-        """讨论升级 (eval A1): turn a block into work of its own; the original
-        position becomes a live link.
+    ) -> tuple[Topic, Task, bool]:
+        """转为任务: a message in a channel becomes a task in that channel,
+        owned by whoever turned it; the message becomes a live link to it. Its
+        agent drafts the task's document from the message and what was said
+        around it (the caller hands it that). A private chat's messages stay
+        where they are.
 
-        WHICH place depends on where the block is, and the two answers are not
-        interchangeable:
-
-        - in a room, the message becomes a TASK in the same room, owned by
-          whoever upgraded it. Its agent drafts the task's document from the
-          message and what was said around it (the caller hands it that).
-        - in a private chat, it becomes a real room under the project root.
-          Private chats are not in the topic tree (`list_for_project` hides
-          them), so a thread there would be a thread nobody but its owner could
-          ever open.
-
-        Returns (room, task, created): `task` is None when the upgrade made a
-        room; created=False on an idempotent re-upgrade, so the caller doesn't
-        start the task's agent twice."""
+        Returns (room, task, created): created=False on an idempotent
+        re-upgrade, so the caller doesn't start the task's agent twice."""
         block = await self._blocks.get(block_id)
         if block is None:
             raise NotFoundError("Block not found")
@@ -853,10 +825,6 @@ class TopicService:
                 room = await self._repo.get(existing_task.room_id)
                 if room is not None:
                     return room, existing_task, False
-        if block.upgraded_to_topic_id is not None:
-            existing_room = await self._repo.get(block.upgraded_to_topic_id)
-            if existing_room is not None:
-                return existing_room, None, False
         parent = await self._repo.get(
             await room_of(self._session, block.conversation_id)
         )
@@ -866,54 +834,13 @@ class TopicService:
         if parent.status == TopicStatus.archived:
             raise ValidationError(say("topicArchivedFrozen"))
 
-        project = await self._projects.get(block.project_id)
-
-        if not parent.is_private:
-            # Opened unnamed: its agent names it (`cheese_title`).
-            task = await self.create_task(room_id=parent.id, created_by=created_by)
-            task.upgraded_from_block_id = block.id
-            await self._blocks.set_upgraded_to_place(block, task_id=task.id)
-            return parent, task, True
-
-        # 私聊不是话题树的父节点 (spec §1).
-        # A private chat's doc is never copied into a public place, so the new
-        # room's brief carries the upgraded message and nothing else.
-        brief = _brief_doc(
-            child_title=PLACEHOLDER_TITLE,
-            parent_title=parent.title,
-            created_by=created_by,
-            source_block=block.content,
-        )
-        root_id = project.root_topic_id if project else None
-        # Titles are AI-generated (the agent names a topic via `cheese_title`),
-        # never derived from text — see CLAUDE.md. An upgraded block starts
-        # unnamed and 芝士 names it on its first turn, like a + new topic.
-        new_room = await self._repo.add(
-            project_id=block.project_id,
-            title=None,
-            parent_id=root_id,
-            kind=TopicKind.topic,
-            created_by=created_by,
-            upgraded_from_block_id=block.id,
-        )
-        # Same fallback ladder as create()/dispatch_task — 升级 is usually the
-        # 分身's own suggestion, and ``created_by`` is None whenever the caller is
-        # not a verified person (the route passes only an authenticated actor's
-        # handle). Passing that straight to seed() — which drops None and every
-        # agent handle — would mint an ownerless room.
-        await self._members.seed(
-            new_room.id,
-            agent_handle=await self._starting_agent_handle(new_room),
-            owner_handle=await self._resolve_owner(
-                created_by,
-                project_id=block.project_id,
-                parent_id=root_id,
-                project_owner=project.owner_handle if project else None,
-            ),
-        )
-        await self._blocks.set_upgraded_to_place(block, topic_id=new_room.id)
-        await self.seed_brief_doc(new_room, brief)
-        return new_room, None, True
+        if parent.is_private:
+            raise ValidationError(say("privateMessageStaysPrivate"))
+        # Opened unnamed: its agent names it (`cheese_title`).
+        task = await self.create_task(room_id=parent.id, created_by=created_by)
+        task.upgraded_from_block_id = block.id
+        await self._blocks.set_upgraded_to_place(block, task_id=task.id)
+        return parent, task, True
 
     async def seed_brief_doc(self, topic: Topic, content: str) -> None:
         """Preset a newborn ROOM's living doc with its task brief. Author is

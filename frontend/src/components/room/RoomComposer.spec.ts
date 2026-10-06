@@ -28,7 +28,7 @@ vi.mock('../../api', async () => {
     // 待发条上的图片先取字节再画：这个地址在测试里给不出东西，返回空串就够了，
     // 这一份问的不是它画成什么样。
     attachmentImageUrl: vi.fn().mockResolvedValue(''),
-    // 「拉进话题」走的是名册抽屉那一条加人的接口。
+    // 「拉进频道」走的是名册抽屉那一条加人的接口。
     addTopicMember: vi.fn().mockResolvedValue({}),
   }
 })
@@ -52,7 +52,7 @@ function topic(id = 't1'): Topic {
     project_id: 'p1',
     parent_id: null,
     title: '做一件事',
-    kind: 'topic',
+    kind: 'channel',
     status: 'active',
     created_at: '2026-08-10T00:00:00Z',
   } as Topic
@@ -353,7 +353,7 @@ describe('@ 候选：不在话题里的人', () => {
     { handle: CHEESE_SEAT.handle, label: CHEESE_SEAT.label, agent: true },
   ]
 
-  it('话题里的人排在前面，不在话题里的人跟在后面，右边挂「不在话题中」', async () => {
+  it('话题里的人排在前面，不在话题里的人跟在后面，右边挂「不在频道中」', async () => {
     const { container, box } = mount({ pool: MIXED })
 
     await fireEvent.update(box(), '@')
@@ -361,9 +361,9 @@ describe('@ 候选：不在话题里的人', () => {
 
     expect(labels(container)).toEqual(['芝士', '所有人', '在线成员', 'Alice', 'Carol'])
     const row = (name: string) => menuItems(container).find((el) => el.textContent?.includes(name))!
-    expect(row('Carol').textContent).toContain('不在话题中')
-    expect(row('Alice').textContent).not.toContain('不在话题中')
-    expect(row('芝士').textContent).not.toContain('不在话题中')
+    expect(row('Carol').textContent).toContain('不在频道中')
+    expect(row('Alice').textContent).not.toContain('不在频道中')
+    expect(row('芝士').textContent).not.toContain('不在频道中')
   })
 
   it('不在话题里的人照样挑得中，@ 写进正文', async () => {
@@ -493,28 +493,28 @@ describe('发出去的消息 @ 了不在话题里的人', () => {
 
     await send(utils, '@Carol @Dave 看一下')
 
-    expect(notice(utils.container)?.textContent).toContain('Carol 不在话题中，他们不会收到通知')
+    expect(notice(utils.container)?.textContent).toContain('Carol 不在频道中，他们不会收到通知')
     expect(notice(utils.container)?.textContent).not.toContain('Dave')
   })
 
-  it('能管名册的人点「拉进话题」把他加进来，提示随之消失', async () => {
+  it('能管名册的人点「拉进频道」把他加进来，提示随之消失', async () => {
     const utils = mount({ pool: pool('admin') })
     await send(utils, '@Carol 看一下')
 
-    await fireEvent.click(utils.getByRole('button', { name: '拉进话题' }))
+    await fireEvent.click(utils.getByRole('button', { name: '拉进频道' }))
     await flush()
 
     expect(addTopicMember).toHaveBeenCalledWith('t1', 'carol', 'member')
     expect(notice(utils.container)).toBeNull()
   })
 
-  it('不能管名册的人只看到那句话，没有「拉进话题」', async () => {
+  it('不能管名册的人只看到那句话，没有「拉进频道」', async () => {
     const utils = mount({ pool: pool('member') })
 
     await send(utils, '@Carol 看一下')
 
-    expect(notice(utils.container)?.textContent).toContain('不在话题中')
-    expect(utils.queryByRole('button', { name: '拉进话题' })).toBeNull()
+    expect(notice(utils.container)?.textContent).toContain('不在频道中')
+    expect(utils.queryByRole('button', { name: '拉进频道' })).toBeNull()
   })
 
   it('加人失败时提示留着，并说出为什么', async () => {
@@ -522,7 +522,7 @@ describe('发出去的消息 @ 了不在话题里的人', () => {
     const utils = mount({ pool: pool('owner') })
     await send(utils, '@Carol 看一下')
 
-    await fireEvent.click(utils.getByRole('button', { name: '拉进话题' }))
+    await fireEvent.click(utils.getByRole('button', { name: '拉进频道' }))
     await flush()
 
     expect(notice(utils.container)?.textContent).toContain('只能添加项目成员')

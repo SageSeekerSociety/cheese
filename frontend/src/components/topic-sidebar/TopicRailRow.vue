@@ -134,9 +134,9 @@ function onMenuToggle(open: boolean) {
     @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press', row.topic.id)"
     @contextmenu="openMenuAt"
   >
-    <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），身份靠标题本身，
-         种类标签不要（缩进表达层级），操作 hover 才浮现。原先这里还有一颗每行都
-         一样的装饰图标——同一层级里人人相同的标记区分不了任何东西，删掉了。 -->
+    <!-- 左边一个 16px 槽：折叠开关或状态灯，都没有时画 #，和「# 综合」同一个记号——
+         没有它，频道名和「综合」的字就对不齐。种类标签不要（缩进表达层级），操作
+         hover 才浮现。 -->
     <template #prepend>
       <button
         v-if="row.hasChildren"
@@ -162,7 +162,9 @@ function onMenuToggle(open: boolean) {
       <span v-else-if="row.topic.awaits_me" class="row-slot">
         <span class="await-dot" :title="t('work.sidebar.awaitsTip')" />
       </span>
-      <span v-else class="row-slot" />
+      <span v-else class="row-slot">
+        <v-icon size="16" class="row-glyph" :class="{ 'row-glyph--unread': row.unreadTotal > 0 }" icon="mdi-pound" />
+      </span>
     </template>
     <v-list-item-title class="d-flex align-center topic-title">
       <v-text-field
@@ -342,6 +344,12 @@ function onMenuToggle(open: boolean) {
 /* 行左边那一个 16px 定宽槽。所有行共用（话题行的状态/开关、置顶行的图标），
    所以图标列和文字列在整条侧栏上都成列。空槽也占满 16px：同层级的标题左缘
    必须齐，参差比多一点留白难看得多。 */
+.row-glyph {
+  color: var(--faint);
+}
+.row-glyph--unread {
+  color: var(--accent);
+}
 .row-slot {
   flex: none;
   display: inline-flex;

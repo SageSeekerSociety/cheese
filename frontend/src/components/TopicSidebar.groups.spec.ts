@@ -30,7 +30,7 @@ function topic(id: string, parentId: string | null, flags: Partial<Topic> = {}):
     project_id: 'p1',
     parent_id: parentId,
     title: id,
-    kind: parentId === null ? 'root' : 'topic',
+    kind: parentId === null ? 'root' : 'channel',
     status: 'active',
     created_by: 'u',
     created_at: '2026-08-10T00:00:00Z',
@@ -98,7 +98,7 @@ function rowFor(container: Element, title: string): HTMLElement {
 // 「其他话题」的组头。底部的「已归档」组头共用 .group-toggle，用文字区分。
 function othersHead(container: Element): HTMLElement {
   const head = Array.from(container.querySelectorAll('.group-toggle')).find((el) =>
-    el.textContent?.includes('其他话题')
+    el.textContent?.includes('其他频道')
   ) as HTMLElement | undefined
   if (!head) throw new Error('没有找到「其他话题」组头')
   return head
@@ -111,7 +111,7 @@ async function expand(container: Element, title: string): Promise<void> {
 }
 
 function hasOthersHead(container: Element): boolean {
-  return Array.from(container.querySelectorAll('.group-toggle')).some((el) => el.textContent?.includes('其他话题'))
+  return Array.from(container.querySelectorAll('.group-toggle')).some((el) => el.textContent?.includes('其他频道'))
 }
 
 beforeAll(() => {
@@ -220,7 +220,7 @@ describe('左侧话题列表：按相关性分两组', () => {
     expect(visibleTitles(container)).toEqual(['mine', 'theirs', 'theirs1', 'theirs1x'])
     expect(rowFor(container, 'theirs1x').classList.contains('is-active')).toBe(true)
     // 组头仍然显示"收起来了"，开关不是一颗按了没反应的按钮。
-    expect(othersHead(container).textContent).toContain('其他话题')
+    expect(othersHead(container).textContent).toContain('其他频道')
     expect(othersHead(container).querySelector('.mdi-chevron-right')).not.toBeNull()
     // 而且不写回偏好：离开之后这一组照旧是收起来的。
     expect(localStorage.getItem('cheesex.railOthersOpen.v1:p1')).toBeNull()
@@ -257,12 +257,14 @@ describe('左侧话题列表：按相关性分两组', () => {
     expect(visibleTitles(container)).toEqual(['mine'])
   })
 
-  it('一个都不相关时，上组说清楚空的是这一组、不是这个项目', () => {
+  it('一个都不相关时，综合仍在最上面，其余收在「其他频道」里', () => {
     const patched = topics.map((t) => (t.id.startsWith('mine') ? ({ ...t, i_participate: false } as Topic) : t))
     const { container } = mount({ topics: patched })
     expect(visibleTitles(container)).toEqual([])
-    expect(container.textContent).toContain('暂无与你相关的话题')
-    expect(container.textContent).not.toContain('暂无话题')
+    // 综合永远是频道分组的第一行，所以上组从来不是空的，不用再解释。
+    expect(container.querySelector('[data-row-actions="root"]')?.textContent).toContain('综合')
+    expect(container.textContent).not.toContain('暂无与你相关的频道')
+    expect(container.textContent).not.toContain('暂无频道')
     expect(othersHead(container).querySelector('.group-count')?.textContent?.trim()).toBe('5')
   })
 

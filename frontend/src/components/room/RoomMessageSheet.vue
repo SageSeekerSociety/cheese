@@ -22,8 +22,8 @@ import { t } from '@/i18n'
 const open = defineModel<boolean>({ default: false })
 
 const props = defineProps<{
-  /** 私聊里转出去的是一个新话题，别处是任务。 */
-  upgradeToTopic?: boolean
+  /** 私聊里的消息不能转为任务：不给「转为任务」。 */
+  noUpgrade?: boolean
   /** 长按的那一条。面板收起时还留着，收起的那一下里内容不会先没了。 */
   block: Block | null
   isAgent: boolean
@@ -95,12 +95,13 @@ const actions = computed<MenuAction[]>(() => {
       onSelect: () => emit('edit', block),
     })
   }
-  list.push({
-    key: 'upgrade',
-    label: props.upgradeToTopic ? t('work.room.message.upgradeToTopic') : t('work.room.message.upgrade'),
-    icon: 'mdi-comment-arrow-right-outline',
-    onSelect: () => emit('upgrade', block.id),
-  })
+  if (!props.noUpgrade)
+    list.push({
+      key: 'upgrade',
+      label: t('work.room.message.upgrade'),
+      icon: 'mdi-comment-arrow-right-outline',
+      onSelect: () => emit('upgrade', block.id),
+    })
   return list
 })
 

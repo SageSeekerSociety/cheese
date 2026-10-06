@@ -392,3 +392,46 @@ def test_an_unmirrored_pending_card_really_is_waiting_for_review(client):
         "pr_number": None,
         "pr_url": None,
     }
+
+
+def test_a_thread_says_when_it_last_moved(client):
+    """The rail lists the most recently active work first: a thread someone
+    spoke in says when, and one nobody spoke in says when it was made."""
+    project = _project(client)
+    room = _room(client, project)
+    ids: dict[str, str] = {}
+    spoken = datetime(2026, 9, 3, 10, 0, tzinfo=UTC)
+
+    async def _seed_them(s):
+        quiet = Task(
+            project_id=uuid.UUID(project),
+            room_id=uuid.UUID(room),
+            title="没人说话",
+            created_at=OLDER,
+        )
+        talked = Task(
+            project_id=uuid.UUID(project),
+            room_id=uuid.UUID(room),
+            title="有人说话",
+            created_at=OLDER,
+        )
+        s.add_all([quiet, talked])
+        await s.flush()
+        s.add(
+            Block(
+                project_id=uuid.UUID(project),
+                conversation_id=talked.id,
+                kind=BlockKind.message,
+                author_type=AuthorType.participant,
+                author="alice",
+                content="进展如何",
+                created_at=spoken,
+            )
+        )
+        ids["quiet"], ids["talked"] = str(quiet.id), str(talked.id)
+
+    _seed(client, _seed_them)
+
+    rows = {row["id"]: row for row in _list(client, project, "tasks")["data"]}
+    assert datetime.fromisoformat(rows[ids["talked"]]["last_activity_at"]) == spoken
+    assert datetime.fromisoformat(rows[ids["quiet"]]["last_activity_at"]) == OLDER

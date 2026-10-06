@@ -242,6 +242,7 @@ export interface RoomTask {
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
+  contributor_handles?: string[] // 协作者：负责人拉进来的人，也能在任务里和 AI 队友对话
   reviewer_handle?: string | null // 谁审阅它的改动，开始时定下
   created_by?: string | null
   branch_name?: string | null
@@ -264,9 +265,8 @@ export interface RoomTask {
   upgraded_from_block_id?: string | null
   created_at: string
   updated_at: string
-  // 项目级那条列表（`GET /projects/{id}/tasks`）和房间级那条（`GET
-  // /topics/{id}/tasks`）都带它——「等人验收」也是安静的，没有它就和「闲着」
-  // 在屏幕上长得一模一样。
+  last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
+  // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
   // 这条活在看板上落哪一列、卡上写哪句话。**必有字段，不是可选的**：状态从今往后
   // 只在后端算一次，前端没有一条退回本地推导的路——留一条兜底路，两个算法就会同时
