@@ -30,13 +30,14 @@
 // 三个日期窗口各有可见的一颗 chip（`windowChips`）：看板 KPI 深链带着 `?since=7d`
 // 进来时它是唯一的筛选指示；值在 store 里存原文、发请求时才折成日期
 // （`lib/feedbackWindows.ts` —— 后端的参数是 datetime，'7d' 原样发出去是 422）。
-import type AdminQueueDetail from '@/components/admin/AdminQueueDetail.vue'
-import type { FeedbackCard, FeedbackStatus } from '@/cx_types'
+import type { FeedbackCard, FeedbackPriority, FeedbackStatus } from '@/cx_types'
 import type { AdminTab } from '@/stores/feedback'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+
+import { useAdminAssigneeSearch } from '@/composables/useAdminAssigneeSearch'
 
 import { allStatuses, statusMeta } from '@/lib/feedbackMeta'
 import { relativeDays } from '@/lib/feedbackWindows'
@@ -88,9 +89,14 @@ const ADMIN_TABS: AdminTab[] = ['public', 'private', 'agent', 'security']
 export type QueueWindowKey = 'since' | 'resolved_since' | 'deployed_since'
 
 /** 搜索框住在 `AdminQueueToolbar` 里，而 `/` 键和 chip 清空都把焦点送进去。搜索框的
- *  位置是**页面**的事（那一件只吃 props），所以页面把那件事包成一个回调交给这一层。 */
+ *  位置是**页面**的事（那一件只吃 props），所以页面把那件事包成一个回调交给这一层。
+ *
+ *  `focusAssignee` 同理：落点（宽屏那一栏里的 combobox）在视图里，视图把它暴露出来，
+ *  页面转一手；返回 `true` 表示「视图里那个实例接住了」，这一层就不必再退到 DOM 上找
+ *  （窄屏抽屉里那一个没有转发它，所以那一路仍然靠 DOM 兜底）。 */
 export interface AdminQueueDeps {
   focusSearch: () => void
+  focusAssignee: () => boolean
 }
 
 export function useAdminQueue(deps: AdminQueueDeps) {
@@ -120,7 +126,9 @@ export function useAdminQueue(deps: AdminQueueDeps) {
    *  的那一个词，前者是手上正在打的。分开的理由见 `QUERY_MIN_CHARS` 和 `clearFilters`。 */
   const draft = ref(store.adminQuery)
 
-  const detailRef = ref<InstanceType<typeof AdminQueueDetail> | null>(null)
+  /** 「指派给谁」那个下拉的搜索。它跟详情一起出现，所以和详情同住这一层：详情那半
+   *  （`AdminQueueDetailView`）只吃 props，候选与状态都得由这里搜好递下去。 */
+  const assignee = useAdminAssigneeSearch()
 
   const media =
     typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(WIDE_QUERY) : null
@@ -369,6 +377,36 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     triageOpen.value = open
   }
 
+  /* ---- 详情那半要的取数与写入口 ---- */
+
+  /** 状态梯子的选项：梯子四级 + 梯子之外的「不修复」。用**服务端**那份（meta 里的
+   *  `statuses`），服务端没到之前是本地兜底（`allStatuses`）。详情那半只吃 props，所以
+   *  由这里算好递下去。 */
+  const detailStatusItems = computed(() =>
+    allStatuses(store.meta?.statuses).map((s) => ({ title: statusMeta(s).label, value: s }))
+  )
+
+  /** 写操作失败时的原话。详情那半只吃 props，`store.error` 由这里转一手。 */
+  const storeError = computed(() => store.error)
+
+  /** 指派 / 优先级 / 安全问题 / 内部备注：四路都直接落 store（没有撤销条，见
+   *  `AdminQueueDetail` 的分工说明）。状态那一路不走这里 —— 它要经过撤销条的栈。 */
+  function assignDetail(id: string, handle: string | null) {
+    void store.assign(id, handle)
+  }
+
+  function setDetailPriority(id: string, value: FeedbackPriority) {
+    void store.setPriority(id, value)
+  }
+
+  function setDetailSecurity(id: string, value: boolean) {
+    void store.setSecurity(id, value)
+  }
+
+  function addDetailNote(id: string, body: string) {
+    void store.addNote(id, body)
+  }
+
   /** 无效按键的闪底。**先摘再挂**：同一个类名连着加两次，第二次不会重启动效，而人看到
    *  的是「第一次按没反应」。 */
   let flashTimer: ReturnType<typeof setTimeout> | undefined
@@ -443,19 +481,16 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     void store.markRead()
   }
 
-  /** `A`：把焦点送进「指派」那个 combobox（§8）。宽屏那一档那个实例上有 `focusAssignee`；
-   *  抽屉里的那个没有转发它（`AdminFeedbackDetailDrawer` 的 emits 里没有这一条），所以
-   *  退一步在 DOM 上找 —— 详情里只有这一颗 combobox。 */
+  /** `A`：把焦点送进「指派」那个 combobox（§8）。宽屏那一档那个实例上有 `focusAssignee`，
+   *  视图把它暴露出来、页面转一手（`deps.focusAssignee`）；抽屉里的那个没有转发它，
+   *  所以退一步在 DOM 上找 —— 详情里只有这一颗 combobox。 */
   async function focusAssignee() {
     if (!detailOpen.value) {
       if (!current.value) return
       detailOpen.value = true
       await nextTick()
     }
-    if (detailRef.value?.focusAssignee) {
-      detailRef.value.focusAssignee()
-      return
-    }
+    if (deps.focusAssignee()) return
     document.querySelector<HTMLInputElement>('.v-navigation-drawer .v-field input')?.focus()
   }
 
@@ -800,7 +835,6 @@ export function useAdminQueue(deps: AdminQueueDeps) {
 
   return {
     // 详情
-    detailRef,
     isWide,
     detailOpen,
     setDetailOpen,
@@ -811,6 +845,17 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     detailLoading: computed(() => store.detailLoading),
     detailError,
     onDetailTriage,
+    // 详情那半（只吃 props 的视图）要的取数与写入口
+    detailStatusItems,
+    storeError,
+    detailAssign: assignDetail,
+    detailPriority: setDetailPriority,
+    detailSecurity: setDetailSecurity,
+    detailNote: addDetailNote,
+    assigneeSearch: assignee.search,
+    assigneeItems: assignee.candidates,
+    assigneeLoading: assignee.searching,
+    assigneeHint: assignee.hint,
     // 页头
     unread,
     markCurrentRead,

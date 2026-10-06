@@ -20,6 +20,8 @@ import type { AuditItem, ModelRow, ModelsListing, ModelUsage, ProjectRow, Projec
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { useAdminModelDetail } from '@/composables/useAdminModelDetail'
+
 import {
   createGatewayModel,
   deleteGatewayModel,
@@ -74,6 +76,27 @@ export function useAdminModels() {
 
   const drawerOpen = ref(false)
   const drawerName = ref<string | null>(null)
+
+  // 详情抽屉那一半的数据。抽屉的画面在页面的视图里（只吃 props），取数留在这里 —— 它跟着
+  // 页面的窗口走（窗口变了重拉），而抽屉自己单独用时走的是同一份
+  // `useAdminModelDetail`，两处不会分家。
+  const {
+    detail: drawerDetail,
+    loading: drawerDetailLoading,
+    error: drawerDetailError,
+    load: loadDetail,
+  } = useAdminModelDetail({
+    open: () => drawerOpen.value,
+    name: () => drawerName.value,
+    days: () => days.value,
+  })
+
+  // 详情抽屉自己关上（右上的叉 / Esc / 点外面）。原来这一段由抽屉组件内部管，页面拆开之后
+  // 开合是页面的事：关掉只是把 `drawerOpen` 落回 false，`drawerName` 留着（下次打开的是
+  // 同一个模型时不用重设）。
+  function closeDetail() {
+    drawerOpen.value = false
+  }
 
   /** 审计区展开「查看改动」的行（按下标记）。diff 在子组件 `AdminAuditDiff` 里画。 */
   const auditExpanded = ref<Set<number>>(new Set())
@@ -444,6 +467,11 @@ export function useAdminModels() {
     // 详情抽屉
     drawerOpen,
     drawerName,
+    drawerDetail,
+    drawerDetailLoading,
+    drawerDetailError,
+    loadDetail,
+    closeDetail,
     openDetail,
     // 额度段
     budgetOpen,
