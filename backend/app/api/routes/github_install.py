@@ -42,6 +42,7 @@ from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
+from app.domain.project.forge import follow_github_rename
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
@@ -143,6 +144,7 @@ async def _connect(
             project_id=project_id,
             installation_id=installation_id,
             repo=repo["full_name"],
+            repository_id=repo.get("id"),
             account=repo["owner"]["login"],
         )
     except RepositoryTakenError as taken:
@@ -170,6 +172,7 @@ async def get_github_connection(
         raise AuthenticationRequiredError(say("githubConnectionSignIn"))
     await ProjectService(db).get_or_404(project_id)
     await resolver.authorize_project(actor, project_id=project_id)
+    await follow_github_rename(project_id, db)
     installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
     if installation is None:
         return ok({"connected": False})
@@ -188,6 +191,10 @@ async def connect_github_repo(
     actor = await _manager(project_id, resolver, db)
     existing = await ProjectGitInstallationRepository(db).get_by_project(project_id)
     if existing:
+        # Connecting again is how someone says the binding looks wrong; the one
+        # thing that can go wrong with it unseen is a rename on GitHub.
+        if await follow_github_rename(project_id, db, now=True):
+            await db.refresh(existing)
         return ok(
             {"connected": True, "repo": existing.repo, "account": existing.account}
         )
@@ -297,6 +304,7 @@ async def _install(
             project_id=project_id,
             installation_id=installation_id,
             repo=repo["full_name"],
+            repository_id=repo.get("id"),
             account=repo["owner"]["login"],
         )
     except ForbiddenError:

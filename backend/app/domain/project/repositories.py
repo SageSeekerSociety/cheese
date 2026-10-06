@@ -393,6 +393,7 @@ class ProjectGitInstallationRepository:
         project_id: uuid.UUID,
         installation_id: int,
         repo: str,
+        repository_id: int | None,
         account: str,
     ) -> ProjectGitInstallation:
         """Bind `repo` (through `installation_id`) to `project_id`, replacing
@@ -424,6 +425,7 @@ class ProjectGitInstallationRepository:
         if existing is not None:
             existing.installation_id = installation_id
             existing.repo = repo
+            existing.repository_id = repository_id
             existing.account = account
             await self._session.flush()
             return existing
@@ -432,6 +434,7 @@ class ProjectGitInstallationRepository:
             project_id=project_id,
             installation_id=installation_id,
             repo=repo,
+            repository_id=repository_id,
             account=account,
         )
         self._session.add(row)
