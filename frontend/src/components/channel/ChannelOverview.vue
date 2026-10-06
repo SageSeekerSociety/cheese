@@ -3,14 +3,14 @@
 // 进行中的任务（各带最后说的一句）、最近完成。频道没有自己的实况文档：要一起看的
 // 东西钉在置顶里，要做成的事是任务。
 import type { PanelDocument } from '@/composables/usePanelDoc'
-import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { RoomTask, Topic } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
-import PanelDocHost from '@/components/work/PanelDocHost.vue'
+import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
 import { replySnippet } from '@/lib/blockDisplay'
 import { columnDotStyle, phraseLabel } from '@/lib/board'
@@ -23,16 +23,14 @@ const props = defineProps<{
   general: boolean
   /** 项目总览是哪一份文档；只有综合有。 */
   overview: PanelDocument | null
+  /** 项目总览现在写着什么。这里只读地显示开头，改它是整份打开（`edit-overview`）。 */
+  overviewText: string
   pins: ChannelPin[]
   tasks: RoomTask[]
   /** 能不能取消置顶：在主线说得上话的人。 */
   canPin: boolean
   memberNames: Record<string, string>
   agentName: string
-  agentHandle: string | null
-  members: ProjectMemberRow[]
-  topicList: Topic[]
-  activityTick: number
   saveDescription: (text: string) => Promise<boolean>
 }>()
 
@@ -41,12 +39,16 @@ const emit = defineEmits<{
   (e: 'jump', blockId: string): void
   (e: 'open-task', taskId: string): void
   (e: 'open-all'): void
-  (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
+  (e: 'edit-overview', documentId: string): void
 }>()
 
 /** 最近完成列几件：其余在看板里。 */
 const RECENT_DONE = 3
+/** 进行中只列最近这么多天里有动静的，最多这么多件：其余在「全部任务」里。概览答的是
+ *  「这个频道现在在忙什么」，一长串很久没人碰的任务会把真在动的淹掉。 */
+const LIVELY_DAYS = 7
+const LIVELY_MAX = 6
 
 const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 const nameOf = (handle: string) => props.memberNames[handle] || handle
@@ -54,6 +56,14 @@ const nameOf = (handle: string) => props.memberNames[handle] || handle
 const running = computed(() =>
   props.tasks.filter((task) => task.status === 'open' && task.presentation.column !== 'done')
 )
+const movedAt = (task: RoomTask) => task.last_message?.created_at ?? task.created_at
+const lively = computed(() => {
+  const since = new Date(Date.now() - LIVELY_DAYS * 86_400_000).toISOString()
+  return running.value
+    .filter((task) => movedAt(task) >= since)
+    .sort((a, b) => movedAt(b).localeCompare(movedAt(a)))
+    .slice(0, LIVELY_MAX)
+})
 const recentDone = computed(() =>
   props.tasks
     .filter((task) => task.status !== 'open' || task.presentation.column === 'done')
@@ -65,6 +75,28 @@ function latest(task: RoomTask): string | null {
   const block = task.last_message
   if (!block) return null
   return t('work.channel.overview.latest', { name: nameOf(block.author), text: replySnippet(block, refs.value, 80) })
+}
+
+// ---- 项目总览：只读的开头，放不下才给「展开全文」 ----
+const overviewBody = ref<HTMLElement | null>(null)
+const overviewOpen = ref(false)
+const overviewClipped = ref(false)
+watch(
+  () => [props.overviewText, overviewBody.value] as const,
+  async () => {
+    await nextTick()
+    const el = overviewBody.value
+    overviewClipped.value = !!el && el.scrollHeight > el.clientHeight + 1
+  },
+  { immediate: true }
+)
+watch(
+  () => props.topic.id,
+  () => (overviewOpen.value = false)
+)
+function onOverviewClick(event: MouseEvent) {
+  const chip = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-handle]')
+  if (chip?.dataset.handle) emit('mention-click', chip.dataset.handle)
 }
 
 // ---- 频道说明：管理者就地改 ----
@@ -91,26 +123,45 @@ async function save() {
 
 <template>
   <div class="channel-overview" data-testid="channel-overview">
-    <section v-if="general" class="co-section co-section--overview">
+    <section v-if="general" class="co-section co-section--overview" data-testid="project-overview">
       <div class="co-head">
         <h3 class="co-title">{{ t('work.channel.overview.project') }}</h3>
+        <button
+          v-if="overview && overviewText.trim()"
+          type="button"
+          class="co-link t-meta"
+          data-testid="project-overview-edit"
+          @click="emit('edit-overview', overview.id)"
+        >
+          {{ t('work.channel.overview.edit') }}
+        </button>
       </div>
       <p class="t-meta c-faint co-note">{{ t('work.channel.overview.projectNote', { name: agentName }) }}</p>
-      <PanelDocHost
-        v-if="overview"
-        bare
-        flow
-        class="co-doc"
-        :topic="topic"
-        :document="overview"
-        :activity-tick="activityTick"
-        :topic-list="topicList"
-        :agent-name="agentName"
-        :agent-handle="agentHandle"
-        :members="members"
-        @open-topic="emit('open-topic', $event)"
-        @mention-click="emit('mention-click', $event)"
-      />
+      <template v-if="overview && overviewText.trim()">
+        <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- delegates clicks on mention chips -->
+        <div
+          ref="overviewBody"
+          class="co-overview"
+          :class="{ 'co-overview--clipped': !overviewOpen }"
+          @click="onOverviewClick"
+        >
+          <MarkdownView class="md-content" :source="overviewText" :names="refs" />
+        </div>
+        <button
+          v-if="overviewClipped || overviewOpen"
+          type="button"
+          class="co-link co-more t-meta"
+          @click="overviewOpen = !overviewOpen"
+        >
+          {{ overviewOpen ? t('work.channel.overview.collapse') : t('work.channel.overview.expand') }}
+        </button>
+      </template>
+      <div v-else-if="overview" class="co-empty">
+        <span class="t-meta c-faint">{{ t('work.channel.overview.noProject') }}</span>
+        <button type="button" class="co-link t-meta" @click="emit('edit-overview', overview.id)">
+          {{ t('work.channel.overview.writeProject') }}
+        </button>
+      </div>
     </section>
     <section v-else class="co-section">
       <div class="co-head">
@@ -156,7 +207,7 @@ async function save() {
       <h3 class="co-title">{{ t('work.channel.overview.running', { count: running.length }) }}</h3>
       <p v-if="!running.length" class="t-meta c-faint">{{ t('work.channel.overview.noRunning') }}</p>
       <button
-        v-for="task in running"
+        v-for="task in lively"
         :key="task.id"
         type="button"
         class="co-task"
@@ -174,9 +225,22 @@ async function save() {
         <span class="co-task__meta t-meta c-faint">{{
           t('work.channel.overview.owner', {
             name: nameOf(task.owner_handle ?? ''),
-            when: relTime(task.last_message?.created_at ?? task.created_at),
+            when: relTime(movedAt(task)),
           })
         }}</span>
+      </button>
+      <button
+        v-if="running.length > lively.length"
+        type="button"
+        class="co-link co-more t-meta"
+        data-testid="channel-running-more"
+        @click="emit('open-all')"
+      >
+        {{
+          lively.length
+            ? t('work.channel.overview.moreRunning', { count: running.length - lively.length })
+            : t('work.channel.overview.quietRunning', { count: running.length })
+        }}
       </button>
     </section>
 
@@ -235,8 +299,21 @@ async function save() {
 .co-note {
   margin: 0;
 }
-.co-doc {
-  margin: 0 -16px;
+.co-overview {
+  min-width: 0;
+  color: var(--text);
+}
+/* 只给开头：大约十行，放不下的由「展开全文」接着。 */
+.co-overview--clipped {
+  max-height: 240px;
+  overflow: hidden;
+  /* A mask reads only alpha: any opaque token will do. */
+  mask-image: linear-gradient(to bottom, var(--ink) 75%, transparent);
+}
+.co-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .co-link {
   padding: 0;
@@ -250,6 +327,10 @@ async function save() {
 }
 .co-link:hover {
   color: var(--ink);
+}
+.co-more {
+  align-self: flex-start;
+  margin-top: 2px;
 }
 .co-description {
   margin: 0;

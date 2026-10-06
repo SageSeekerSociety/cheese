@@ -763,7 +763,6 @@
     "panel": {
       "tabDetail": "{label} ({detail})",
       "detailPair": "{first}, {second}",
-      "taskCount": "no tasks | 1 task | {count} tasks",
       "inProgress": "none in progress | 1 in progress | {count} in progress",
       "newContent": "new content",
       "fileCount": "no files | 1 file | {count} files",
@@ -2103,6 +2102,10 @@
     "overview": {
       "project": "Project overview",
       "projectNote": "{name} reads this in every conversation",
+      "expand": "Show all",
+      "collapse": "Show less",
+      "noProject": "No project overview yet",
+      "writeProject": "Write one",
       "description": "About this channel",
       "edit": "Edit",
       "save": "Save",
@@ -2110,6 +2113,8 @@
       "noDescription": "No description",
       "running": "In progress · {count}",
       "noRunning": "No tasks in progress",
+      "moreRunning": "{count} more in all tasks",
+      "quietRunning": "Nothing moved in the last 7 days; {count} in all tasks",
       "latest": "{name}: {text}",
       "owner": "{name} owns it · {when}",
       "recentDone": "Recently done",
