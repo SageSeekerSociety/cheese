@@ -3,7 +3,7 @@ line that stands for one run (`service._fire`)."""
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import ARRAY, Uuid, any_, bindparam, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.routine.models import Routine, RoutineRun
@@ -23,7 +23,12 @@ async def runs_under(
         select(RoutineRun, Routine.title, Thread.id)
         .join(Routine, Routine.id == RoutineRun.routine_id)
         .outerjoin(Thread, Thread.root_block_id == RoutineRun.message_id)
-        .where(RoutineRun.message_id.in_(block_ids))
+        # One array parameter, not an IN list: the whole timeline of a busy
+        # room is more ids than asyncpg binds in one statement.
+        .where(
+            RoutineRun.message_id
+            == any_(bindparam(None, list(block_ids), type_=ARRAY(Uuid)))
+        )
     )
     out: dict[uuid.UUID, dict] = {}
     for run, title, thread_id in rows:

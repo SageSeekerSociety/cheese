@@ -135,6 +135,8 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: old rooms).
 #: An answer to an agent's question is an ordinary message now and has no
 #: conversation of its own to miss (「一条答案没能送达」 stays on old rooms).
+#: A routine's run is its own message in the main line, its result written
+#: into it (「「…」完成了」 with its 「结果」 stays on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
         "askAnswerUndelivered",
@@ -150,6 +152,8 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "blockUpgradedToRoom",
         "blockUpgradedRoomId",
         "labelUpgradedTo",
+        "labelResult",
+        "routineResult",
         "subagentStart",
         "subagentStopEmpty",
         "titleAutoRenamed",
