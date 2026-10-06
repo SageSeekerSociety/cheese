@@ -43,6 +43,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_API_RETRY,
+    EVENT_CONTEXT_COMPACT,
     EVENT_DEVICE_WAITING,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
@@ -541,17 +542,17 @@ async def _consume_hook_event(
         retry_notes.pop(turn_id, None)
     if isinstance(event, AgentResult):
         waiting_notes.pop(turn_id, None)
-        if turn_id in compact_notes:
-            # The turn ended with the compaction still open (it was stopped,
-            # or the session died): the line must not go on saying it is
-            # compacting.
-            await _note_compaction(
-                sessions,
-                compact_notes,
-                turn_id,
-                AgentCompacting(done=True, error=say("contextCompactSessionEnded")),
-                channel=channel,
-            )
+        # The turn ended with the compaction still open (it was stopped, or
+        # the session died): the line must not go on saying it is compacting.
+        # Asked of the room, not only of this process: the line may have been
+        # landed by the backend this one replaced.
+        await _note_compaction(
+            sessions,
+            compact_notes,
+            turn_id,
+            AgentCompacting(done=True, error=say("contextCompactSessionEnded")),
+            channel=channel,
+        )
     if isinstance(event, AgentSessionInfo):
         if event.agent_handle:
             room_session_agents[topic_id] = event.agent_handle
@@ -653,6 +654,13 @@ async def _consume_hook_event(
                 sessions, compact_notes, turn_id, event, channel=channel
             )
         else:
+            if turn_id not in compact_notes:
+                # The backend this one replaced may have landed the line while
+                # this compaction (or an earlier attempt nobody heard end) was
+                # under way. It is the same news: say it on that line.
+                running = await _running_compactions(sessions, turn_id)
+                if running:
+                    compact_notes[turn_id] = running[-1]
             content, meta = _compaction_notice(event)
             await _keep_note(
                 sessions,
@@ -996,12 +1004,32 @@ async def _note_compaction(
     *,
     channel: str,
 ) -> None:
-    """Restate the turn's compaction line as over, if it has one."""
-    block_id = compact_notes.pop(turn_id, None)
-    if block_id is None:
-        return
+    """Restate the turn's compaction line as over, if it has one.
+
+    Which line that is comes from the room, not from this process's memory:
+    dev replaces its backend on every merge, and a compaction that started
+    under one backend ends under the next, which never saw the line land."""
+    remembered = compact_notes.pop(turn_id, None)
+    lines = await _running_compactions(sessions, turn_id)
+    if remembered is not None and remembered not in lines:
+        lines.append(remembered)
     content, meta = _compaction_notice(event)
-    await _restate_note(sessions, block_id, content, meta, channel)
+    for block_id in lines:
+        await _restate_note(sessions, block_id, content, meta, channel)
+
+
+async def _running_compactions(
+    sessions: async_sessionmaker, turn_id: uuid.UUID
+) -> list[uuid.UUID]:
+    """The turn's compaction lines that still say it is compacting."""
+    try:
+        async with sessions() as session:
+            return await BlockRepository(session).running_notices(
+                turn_id, EVENT_CONTEXT_COMPACT
+            )
+    except Exception:  # noqa: BLE001 — a status line is not worth a turn
+        logger.exception("could not read compaction lines of turn %s", turn_id)
+        return []
 
 
 async def _note_reachability(
