@@ -2,6 +2,7 @@
 import type { WaitingItem } from '@/cx_types'
 
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
@@ -12,7 +13,9 @@ import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { phraseLabel } from '@/lib/board'
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
+import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { taskTitle, topicTitle } from '@/lib/topicState'
+import { SpacesApi } from '@/network/api/spaces'
 import { useWorkspaceStore } from '@/stores/workspace'
 import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
 import NotificationFeed from '@/views/home/NotificationFeed.vue'
@@ -56,7 +59,31 @@ onMounted(() => {
 const noProjects = computed(() => store.projectsSettled && store.projects.length === 0)
 const projectTerm = termParams(DEFAULT_SHELL)
 const { show: showNewProjectDialog } = useNewProjectDialog()
+
+// 用邀请码加入空间：`JoinSpaceDialog` 只负责收那只码，加入之后往哪走在这一页。
+const router = useRouter()
 const joinOpen = ref(false)
+const joining = ref(false)
+const joinError = ref('')
+
+function openJoin() {
+  joinError.value = ''
+  joinOpen.value = true
+}
+
+async function submitJoin(code: string) {
+  joining.value = true
+  joinError.value = ''
+  try {
+    const { data } = await SpacesApi.join({ code })
+    joinOpen.value = false
+    await router.push(spaceEntryRoute(data.space))
+  } catch {
+    joinError.value = t('work.joinFailed')
+  } finally {
+    joining.value = false
+  }
+}
 
 const REASON: Record<WaitingItem['reason'], string> = {
   reviewer: 'home.inbox.reason.reviewer',
@@ -115,7 +142,7 @@ function linkTo(item: WaitingItem) {
             <span class="inbox__path-title">{{ t('work.startPaths.invite.title') }}</span>
             <span class="inbox__path-body">{{ t('work.startPaths.invite.body') }}</span>
           </div>
-          <BaseButton kind="secondary" size="sm" @click="joinOpen = true">
+          <BaseButton kind="secondary" size="sm" @click="openJoin">
             {{ t('work.startPaths.invite.action') }}
           </BaseButton>
         </li>
@@ -170,7 +197,7 @@ function linkTo(item: WaitingItem) {
     </v-list>
 
     <NotificationFeed />
-    <JoinSpaceDialog v-model="joinOpen" />
+    <JoinSpaceDialog v-model="joinOpen" :joining="joining" :error="joinError" @submit="submitJoin" />
   </AppPage>
 </template>
 
