@@ -262,6 +262,25 @@ STEP_TITLES = (
     "里写明用哪种语言。"
 )
 
+#: 改仓库、跑检查的每个 agent 动手前都要知道的几条：同一个仓库、同一台机器上同时
+#: 有别的任务在干活。主会话在 `PLATFORM_RULES` 里读到；Claude Code 起的 agent 由
+#: SubagentStart hook 补在开头（大活是分身在做，提交、拉取、起服务的多半是它们）；
+#: Codex 的子线程继承主线程的 developer instructions。pi 的分身没有核实过。
+SHARED_CHECKOUT = (
+    "- 同一台机器上可能有这个仓库的别的任务在干活，stash 栈是整个仓库共用的：不用 "
+    "`git stash`，要把改动放一边就提交；发起 `git pull`、`git merge`、`git rebase` "
+    "时加 `--no-autostash`，git 配置可能让它们自动 stash。hook 和 git 配置也是所有工作"
+    "目录共用的：不装 hook、不改配置，仓库要求装 hook 的，提交前自己跑它要的检查。\n"
+    "- `git add` 只点名该进仓库的文件，不用 `-A`、`.` 或整个目录：工作目录里还有中间"
+    "文件、比对用的旧版本、交付用的成品和 core dump。\n"
+    "- 测试库名能用环境变量或参数换的，换成带你工作目录路径特征的名字，端口挑一个空着"
+    "的；换不了就用默认值，不为这个改仓库配置。别人起的服务不停、不重启，别人建的测试"
+    "库不用。"
+)
+
+#: Claude Code 起的每个 agent 开头补的那一段（SubagentStart hook）。
+SUBAGENT_RULES = f"- {STEP_TITLES}\n{SHARED_CHECKOUT}"
+
 #: 每个托管仓库、每一轮都成立的平台规矩。按需的流程（交付、产物、邮件、定时）在
 #: cheese 技能里；这里只放芝士在任何一轮都可能撞上、撞上之前就得知道的几条。
 #: 三种骨架加载技能的办法不同：Claude Code 有 Skill 工具，Codex 和 pi 只在技能
@@ -279,8 +298,7 @@ PLATFORM_RULES = (
     "- 平台数据用平台工具、`cheese` 命令行或 `platform_request` 取，不确定接口时先"
     "只传 `find`。不要自己提取凭据拼 curl 或裸 HTTP 请求，不翻 home、会话文件、"
     "`.git` 内部和系统目录。参数拿不准就看工具的定义或 `--help`，不要瞎试。\n"
-    "- 不用 `git stash`：整个仓库共用一个 stash 栈，你 pop 出来的可能是别的任务的"
-    "改动。要把改动放一边就提交。也不写 `.git/hooks`、不改共享的 git 配置。\n"
+    f"{SHARED_CHECKOUT}\n"
     "- 改项目仓库里的文件、交出东西，在任务里做。任务由人创建：你在房间里时，"
     "用 `cheese_task` 提议一个，等人创建。怎么提议、怎么交，在 `cheese` 技能里，"
     "先加载它。\n"

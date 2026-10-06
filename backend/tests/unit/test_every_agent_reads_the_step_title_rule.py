@@ -1,4 +1,5 @@
-"""Every agent a room's Claude Code session starts is told how to write its step titles.
+"""Every agent a room's Claude Code session starts is told how to write its step
+titles, and how to share the repository and the machine with other tasks.
 
 Each step of an agent the session starts — one from the Agent tool, one from a
 workflow — is a line on the room's 施工现场, titled with the description that
@@ -18,7 +19,7 @@ import pytest
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
 from app.domain.agent.harness.claude_code.session_launch import session_settings
-from app.domain.agent.harness.prompt import STEP_TITLES
+from app.domain.agent.harness.prompt import SHARED_CHECKOUT, STEP_TITLES
 from tests.pinned_claude import claude_binary
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
@@ -89,3 +90,7 @@ def test_agents_and_workflow_agents_are_given_the_rule(tmp_path, contract):
         own = [r for r in requests if child in _opening(r) and "DO:" not in _opening(r)]
         assert own, f"no model request was made for {child}"
         assert STEP_TITLES in _opening(own[0]), _opening(own[0])[:2000]
+        # The rules about sharing the repository and the machine with other
+        # tasks reach it the same way (escaped as the request carries them).
+        shared = json.dumps(SHARED_CHECKOUT, ensure_ascii=False)[1:-1]
+        assert shared in _opening(own[0]), _opening(own[0])[:2000]

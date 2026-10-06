@@ -4,23 +4,27 @@ conversation of its own, beside the room it came from.
 The rules a person could state before any of this was built:
 
 - a person creates a task, and owns it; an AI teammate may only propose one;
-- only the owner talks in the task — everyone else says what they have to say
-  in the room;
+- only the people working the task talk in it — its owner and the
+  collaborators the owner brought in; everyone else says what they have to
+  say in the room;
 - nothing is changed in the project until the owner starts the task, and what
   the task's document said then is what its changes are reviewed against;
 - the task's conversation and its AI session are its own: talking in it leaves
   the room's history and the room's session alone, and the reverse;
 - a task's document is readable by whoever can see the task and written only
-  by its owner and its own session;
+  by the people working it and its own session;
 - a closed task takes no more messages.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
+from app.domain.block.models import AuthorType
+from app.domain.block.repositories import BlockRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     join_project_team,
@@ -101,6 +105,45 @@ def test_the_person_who_creates_a_task_owns_it_and_it_has_not_started(client):
 
     assert task["owner_handle"] == "bob"
     assert task["started_at"] is None
+
+
+def test_a_room_lists_each_task_with_its_newest_lines(client):
+    """`limit` is per task: each task brings its own newest lines, so one long
+    conversation never crowds out another's."""
+    project_id, room_id = _room(client)
+    long = open_task(client, room_id, "长的那件", start=False)
+    short = open_task(client, room_id, "短的那件", start=False)
+
+    async def say(task_id: str, lines: list[str]) -> None:
+        start = datetime.now(UTC)
+        async with client.test_factory() as db:
+            for n, line in enumerate(lines):
+                await BlockRepository(db).add(
+                    project_id=uuid.UUID(project_id),
+                    conversation_id=uuid.UUID(task_id),
+                    author="alice",
+                    author_type=AuthorType.participant,
+                    content=line,
+                    created_at=start + timedelta(seconds=n),
+                )
+            await db.commit()
+
+    client.portal.call(say, long["id"], ["一", "二", "三"])
+    client.portal.call(say, short["id"], ["就一句"])
+
+    listed = client.get(
+        f"/topics/{room_id}/tasks",
+        params={"limit": 2},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert listed.status_code == 200, listed.text
+    said = {
+        t["id"]: [b["content"] for b in t["blocks"] if b["kind"] == "message"]
+        for t in listed.json()["data"]["data"]
+    }
+    assert said[long["id"]] == ["二", "三"]
+    assert said[short["id"]] == ["就一句"]
 
 
 def test_an_ai_teammate_cannot_create_a_task(client):
@@ -374,6 +417,95 @@ def test_only_the_owner_talks_in_a_task(client):
     assert by_room_agent.status_code == 403
 
 
+def _seated(client, project_id: str, room_id: str, handle: str) -> None:
+    """``handle`` is on the project's team and in this room's roster."""
+    join_project_team(client, project_id, handle)
+    r = client.post(
+        f"/topics/{room_id}/members",
+        json={"handle": handle, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _set_collaborators(client, task_id, handles, by="alice"):
+    return client.patch(
+        f"/topics/{task_id}/task",
+        json={"contributor_handles": handles},
+        headers=session_auth_headers(by),
+    )
+
+
+def test_a_collaborator_talks_in_the_task_and_others_still_do_not(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    _seated(client, project_id, room_id, "carol")
+    task = open_task(client, room_id, owner="alice", start=False)
+
+    added = _set_collaborators(client, task["id"], ["bob"])
+
+    assert added.status_code == 200, added.text
+    assert added.json()["data"]["contributor_handles"] == ["bob"]
+    by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
+    assert by_bob.status_code == 200, by_bob.text
+    by_carol = _say_in_task(client, room_id, task["id"], session_auth_headers("carol"))
+    assert by_carol.status_code == 403
+
+
+def test_only_the_owner_brings_collaborators_in(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    _seated(client, project_id, room_id, "carol")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    # A collaborator cannot bring someone else in, nor start or hand it over.
+    assert (
+        _set_collaborators(client, task["id"], ["bob", "carol"], by="bob").status_code
+        == 403
+    )
+    handed = client.patch(
+        f"/topics/{task['id']}/task",
+        json={"owner_handle": "bob"},
+        headers=session_auth_headers("bob"),
+    )
+    assert handed.status_code == 403
+    # Someone outside the room cannot be made one.
+    join_project_team(client, project_id, "dave")
+    assert _set_collaborators(client, task["id"], ["dave"]).status_code == 422
+    assert _task(client, room_id, task["id"])["contributor_handles"] == ["bob"]
+
+
+def test_a_collaborator_can_leave_and_then_no_longer_talks(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    left = _set_collaborators(client, task["id"], [], by="bob")
+
+    assert left.status_code == 200, left.text
+    by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
+    assert by_bob.status_code == 403
+
+
+def test_handing_a_task_to_its_collaborator_makes_them_its_owner_only(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+
+    handed = client.patch(
+        f"/topics/{task['id']}/task",
+        json={"owner_handle": "bob"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert handed.status_code == 200, handed.text
+    assert handed.json()["data"]["owner_handle"] == "bob"
+    assert handed.json()["data"]["contributor_handles"] == []
+
+
 def test_what_is_said_in_a_task_stays_out_of_the_room(client):
     _project_id, room_id = _room(client)
     task = open_task(client, room_id, start=False)
@@ -467,6 +599,25 @@ def test_others_read_a_tasks_document_and_cannot_write_it(client):
     assert write.status_code == 403
     still = client.get(f"/documents/{doc_id}", headers=session_auth_headers("alice"))
     assert "一句话" in still.json()["data"]["content"]
+
+
+def test_a_collaborator_writes_the_tasks_document(client):
+    project_id, room_id = _room(client)
+    _seated(client, project_id, room_id, "bob")
+    task = open_task(client, room_id, owner="alice", start=False)
+    assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
+    doc_id = client.get(
+        f"/topics/{task['id']}/document",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+
+    write = client.put(
+        f"/documents/{doc_id}",
+        json={"content": "# 目标\n\n协作者写的。", "expected_version": 0},
+        headers=session_auth_headers("bob"),
+    )
+
+    assert write.status_code == 200, write.text
 
 
 def test_a_tasks_session_writes_its_own_document(client):

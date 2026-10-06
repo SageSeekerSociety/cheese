@@ -35,15 +35,11 @@ from app.domain.agent.personal import session as personal
 from app.domain.agent.session_host.answer import Answer, Tool, Words, ask
 from app.domain.agent.session_host.contract import Prompt
 from app.domain.agent.session_host.host import SessionHost
+from tests.support.hang import HANG_S
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
 TOOLS = ("cheese_my_tasks", "cheese_docs_search")
-
-
-#: The longest the fake holds the rest of an answer back for a reader that
-#: never sees its first words; past it the answer goes on, and arrives whole.
-HELD_S = 10.0
 
 
 #: What the platform's routes answer a tool's request with, by path prefix.
@@ -119,7 +115,11 @@ class Platform:
                         # The rest of the answer waits for the reader to see
                         # its first words: a whole answer written faster than
                         # one read is handed on in one piece, rightly.
-                        held.wait(HELD_S)
+                        # Bounded only so a reader that never sees them
+                        # fails the test instead of hanging it: how long a
+                        # reader takes is the runner's load, and an answer
+                        # let go early ends before the test can act on it.
+                        held.wait(HANG_S)
                         held = None
                     time.sleep(0.02)
                 self.wfile.write(b"data: [DONE]\n\n")

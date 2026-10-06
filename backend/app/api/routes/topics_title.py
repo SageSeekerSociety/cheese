@@ -84,8 +84,8 @@ async def set_title(
     task = place.task
     if task is not None:
         own_session = resolver.credential_conversation() == task.id
-        if not own_session and actor.handle != task.owner_handle:
-            raise ForbiddenError(say("taskOwnerOnly"))
+        if not own_session and not TaskService.takes_part(task, actor.handle):
+            raise ForbiddenError(say("taskParticipantsOnly"))
         TaskService.rename(task, title[:80])
         out = TaskOut.model_validate(task).model_dump(mode="json")
         await db.commit()

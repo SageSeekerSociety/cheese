@@ -126,9 +126,9 @@ async def send_chat_message(
     `request_id` makes a retry safe: the same id returns the message already
     stored instead of posting it twice.
 
-    In a task only two speak: its owner, whose message the task's session
-    answers, and that session itself, publishing in its turn. What anyone else
-    has to say about a task they say in the room.
+    In a task only the people working it speak — its owner and the
+    collaborators the owner brought in — and its own session, publishing in
+    its turn. What anyone else has to say about a task they say in the room.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -140,8 +140,8 @@ async def send_chat_message(
             if resolver.credential_conversation() != task.id:
                 raise ForbiddenError(say("taskOwnerOnly"))
             return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
-        if actor.handle != task.owner_handle:
-            raise ForbiddenError(say("taskOwnerOnly"))
+        if not TaskService.takes_part(task, actor.handle):
+            raise ForbiddenError(say("taskParticipantsOnly"))
         TaskService.require_open(task)
     elif await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         return ok(await _publish_as_agent(chat, place, body, actor.handle, db))

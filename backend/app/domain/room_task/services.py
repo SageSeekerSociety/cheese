@@ -267,9 +267,30 @@ class TaskService:
 
     async def hand_over(self, task: Task, *, owner_handle: str) -> Task:
         """Another member owns the task from now. Moving it off its former
-        owner's own computer first is the caller's (``topics_tasks``)."""
+        owner's own computer first is the caller's (``topics_tasks``). A
+        collaborator who becomes the owner is no longer listed as one."""
         task.owner_handle = owner_handle
+        task.contributor_handles = [
+            h for h in task.contributor_handles or [] if h != owner_handle
+        ]
         await self._session.flush()
+        return task
+
+    @staticmethod
+    def takes_part(task: Task, handle: str | None) -> bool:
+        """Whether this person works the task: its owner, or a collaborator
+        the owner brought in. Both talk to its AI teammate and write its
+        document; only the owner starts, closes or hands it over."""
+        return handle is not None and (
+            handle == task.owner_handle or handle in (task.contributor_handles or [])
+        )
+
+    async def set_contributors(self, task: Task, handles: list[str]) -> Task:
+        """Who works the task beside its owner. They are credited on its
+        commits too (``repository.identity``)."""
+        await self.set_credits(
+            task, reporter_handle=task.reporter_handle, contributor_handles=handles
+        )
         return task
 
     async def give_agent(self, task: Task, *, agent_handle: str | None) -> Task:
@@ -347,12 +368,10 @@ class TaskService:
         whether anyone had spoken yet.
         """
         tasks = await self._repo.list_for_room(room_id)
-        conversations = await self._repo.conversations_for_tasks([t.id for t in tasks])
-        out: list[tuple[Task, list[Block]]] = []
-        for task in tasks:
-            blocks = conversations.get(task.id, [])
-            out.append((task, blocks[-limit:] if limit is not None else blocks))
-        return out
+        conversations = await self._repo.conversations_for_tasks(
+            [t.id for t in tasks], limit=limit
+        )
+        return [(task, conversations.get(task.id, [])) for task in tasks]
 
 
 class RoomLockService:

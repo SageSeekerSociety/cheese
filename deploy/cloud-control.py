@@ -48,6 +48,25 @@ def identity(row):
     return int(row["machine_id"]), row["device_id"], row["ip"], row["login_user"]
 
 
+async def running_backend(project="cheese"):
+    """The running backend container. On a box that releases without downtime it
+    is cheese-backend-1 or cheese-backend-b-1, whichever slot the last release
+    moved it to (deploy/app-container.sh), so it is looked up every cycle. This
+    file is installed on its own, so it cannot call that script."""
+    process = await asyncio.create_subprocess_exec(
+        "docker", "ps", "--filter", f"label=com.docker.compose.project={project}",
+        "--filter", "label=com.docker.compose.oneoff=False",
+        "--format", '{{.Label "com.docker.compose.service"}} {{.Names}}',
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    output, _ = await asyncio.wait_for(process.communicate(), 20)
+    for line in output.decode().splitlines():
+        service, _, name = line.partition(" ")
+        if service in ("backend", "backend-b"):
+            return name
+    raise RuntimeError("no running backend container")
+
+
 async def inventory(container):
     process = await asyncio.create_subprocess_exec(
         "docker", "exec", "-i", "-w", "/app", container, "python", "-",
@@ -97,7 +116,13 @@ async def forward(key, state_dir, backend_port, owner_port):
                 # the owner's log in one second, and `connection open` again at
                 # :38, inside a deploy window. Ten-odd deploys a day, ten-odd
                 # rounds of that.
-                "-R", f"127.0.0.1:18083:127.0.0.1:{owner_port}", f"{user}@{ip}",
+                "-R", f"127.0.0.1:18083:127.0.0.1:{owner_port}",
+                # The site itself, over TLS, for the browsers and clients a
+                # session runs on the machine: api-front's listener for it
+                # (deploy/llm-tunnel/configure-frontend.sh). The machine's
+                # default route reaches the public name only through the Hong
+                # Kong relay, which sends it straight back here through a tunnel.
+                "-R", "127.0.0.1:18445:127.0.0.1:18445", f"{user}@{ip}",
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
@@ -142,7 +167,7 @@ async def run(args):
     try:
         while not stop.is_set():
             try:
-                desired = await inventory(args.backend_container)
+                desired = await inventory(args.backend_container or await running_backend())
                 await reconcile(tasks, desired,
                                 lambda key: forward(key, args.state_dir, args.backend_port,
                                                     args.owner_port))
@@ -160,7 +185,8 @@ async def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend-container", default="cheese-backend-1")
+    # Unset, the running backend is looked up every cycle.
+    parser.add_argument("--backend-container")
     parser.add_argument("--backend-port", type=int, default=8081)
     # The connection owner, published loopback-only by the standing
     # compose stack. Deploys never recreate it, which is the point of

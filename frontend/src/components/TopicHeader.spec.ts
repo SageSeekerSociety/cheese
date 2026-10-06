@@ -39,7 +39,7 @@ const topic = {
   project_id: 'p1',
   parent_id: null,
   title: '登录页改成深色',
-  kind: 'topic',
+  kind: 'channel',
   status: 'active',
   created_by: 'u',
   created_at: '2026-09-01T00:00:00Z',
@@ -119,7 +119,7 @@ describe('话题头', () => {
     mountHeader()
 
     await waitFor(() => expect(bar().textContent).toContain('能访问整台机器'))
-    expect(bar().querySelector('[title="让它看到整台机器（能操作这台机器上的服务和其他房间）"]')).toBeTruthy()
+    expect(bar().querySelector('[title="让它看到整台机器（能操作这台机器上的服务和其他频道）"]')).toBeTruthy()
   })
 
   it('看不到能访问整台机器时这一行不提它', async () => {
@@ -189,7 +189,7 @@ describe('手机上话题头的 ⋯', () => {
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
-    const field = await screen.findByLabelText('话题名称')
+    const field = await screen.findByLabelText('频道名称')
     await fireEvent.update(field, '登录页改成浅色')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -201,7 +201,7 @@ describe('手机上话题头的 ⋯', () => {
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
-    await screen.findByLabelText('话题名称')
+    await screen.findByLabelText('频道名称')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     expect(emitted().rename).toBeUndefined()

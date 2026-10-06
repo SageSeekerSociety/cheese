@@ -62,16 +62,15 @@ covers:
 | 准备常驻件 | `ensure_forgejo`、`ensure_forge_events`、`ensure_application_router`（`:124-209`） | Forgejo、事件中继、app-router 不在就先起 |
 | 迁移 | `:649-651` | `dc run --rm backend sh -c "alembic upgrade head"`，失败直接停 |
 | 归属 | `OWNERSHIP_MIGRATED`（`:685`） | 跑 `fix-workspace-ownership.sh`，报告留给回滚用 |
-| 起新后端 | `rollout_backend`（`:784`） | 用 `dc run -d --no-deps --name <next> -p 127.0.0.1:18082:8081 backend` 起一个一次性后端；新后端没在超时内应答 `/healthz` 就删掉它，**正在跑的那个一直没被动过** |
-| 切流量 | `switch_active_backend`（`:754`） | 把 app-router 的 `backend_active` 上游写进 `backend.conf`：先写临时文件再 `mv`（半写的文件会带塌整个 nginx 配置），然后 `nginx -s reload` |
-| 排空 | `DRAIN_SECONDS=${DEPLOY_DRAIN_SECONDS:-31}`（`:711`） | 旧后端继续服务已建立的连接，等 31 秒（31 ≥ 前端 30 秒读超时） |
-| 收尾 | | 用正式 service 定义在 `:8081` 重建后端，再 `docker stop --time 60` 掉旧的那个 |
-| 前端 | `rollout_frontend`/`wait_for_frontend`（`:822-851`） | 前端镜像自带 nginx，同样由 `switch_active_frontend` 切上游 |
+| 起新槽位 | `rollout_app`、`read_slots` | 主 API 和前端各有两个槽位（`backend`/`backend-b`、`frontend`/`frontend-b`，前端在回环端口 18088/18084 上）。按 app-router 的 `backend.conf`/`frontend.conf` 认出正在服务的那个，把另一个用新镜像 `up -d --no-deps --force-recreate` 起来，等它应答健康检查；起不来就删掉新起的，**正在跑的那个一直没被动过** |
+| 切流量 | `switch_app_router` | 两个上游文件一起写（先写临时文件再 `mv`，半写的文件会带塌整个 nginx 配置），**只 reload 一次**；`nginx -t` 或 reload 失败就把两个文件改回去 |
+| 交接、排空 | `hand_over_running_work`、`DRAIN_SECONDS=${DEPLOY_DRAIN_SECONDS:-31}` | 切完马上换 collab；5 秒后给旧主 API 发 SIGUSR1 交出正在跑的工作；旧槽位继续答完手上的请求 31 秒 |
+| 收尾 | `take_frontend_ports` | 旧前端（最多 120 秒）和旧主 API（`docker stop --time 60`）同时优雅停下再删掉；盒子的 :8080、:80 写在 app-router 的 `frontend.conf` 里，转给正在服务的前端（每个版本的 `app-router.conf` 都 include 这个文件，旧提交的发版也留得住）。最后一个自己占着这两个端口的 compose 前端只给 5 秒停下，之后才把端口加进去，那一次发版多 reload 一次；加不进去就把那个前端重新拉起来服务端口，下一次发版在切流量时接过去；下次发版回到这次空出来的槽位 |
 | 判定 | `check-app-tier.sh`（`:955`） | 把 `docker ps` 的输出喂给它，断言 app 层的镜像 tag 就是本次 sha |
 | 回收 | `reclaim_docker_disk`（`:434`）、`retain_ci_service_images`（`:409`）、`promote_image_retainer`（`:1016`） | 每次发版拉 6-7GB 新镜像，成功后立刻回收被顶掉的；`on_exit`（`:460`）保证失败、`set -e` 中止、runner 取消也回收 |
 | 定时器 | `:1009-1013` | 装 `cheese-room-cleanup.timer`；主机没有 systemd 时只在日志里提示安排外部触发 |
 
-**回滚**（`:968-996`）：健康检查失败、`PREV_SHA` 非空且与本次不同，就用记下的两个镜像引用重新 `up -d backend frontend`。如果这次发版做过归属迁移（`OWNERSHIP_MIGRATED=yes`），先把绑定挂载交还给 `PREVIOUS_AGENT_UID`（默认 1001）——否则旧镜像会起在一棵它读不了的树上。没有可回的目标时只报错退出。
+**回滚**（`:968-996`）：健康检查失败、`PREV_SHA` 非空且与本次不同，就用记下的两个镜像引用重新 `up -d backend frontend`；有 app-router 的盒子则把旧镜像按同样的方式放回空出来的槽位，再切一次。如果这次发版做过归属迁移（`OWNERSHIP_MIGRATED=yes`），先把绑定挂载交还给 `PREVIOUS_AGENT_UID`（默认 1001）——否则旧镜像会起在一棵它读不了的树上。没有可回的目标时只报错退出。
 
 镜像有两种来源：`DEPLOY_APP_IMAGE_SOURCE=registry`（默认）和 `local`；`local` 模式下 `BACKEND_IMAGE`/`FRONTEND_IMAGE` 必填，且失败路径不会回收本地构建的镜像（:609-619）。
 
@@ -202,7 +201,7 @@ covers:
 - **迁移没有反向**。`alembic upgrade head` 排在换流量之前，失败就停在旧版本，这很好；但它一旦跑过，回滚镜像不会把 schema 降回去。回滚恢复的是镜像，不是数据形状。
 - **`cheese-db-backup.timer` 的描述与它实际频率不符**：`Description` 写 "every 6 hours"，`OnCalendar=*-*-* *:00:00` 是每小时；`db-backup.sh` 的注释又写 "every few hours"。实际频率以 `OnCalendar` 为准（每小时），[数据存在哪](/dev/data#backup)写的也是每小时。改的时候要同时改这三处。
 - **仓库里的 `cheesex-*.sh` 改了不代表盒子上会变**。两个 unit 的 `ExecStart` 是 `/usr/local/sbin/cheesex-healthcheck` 与 `/usr/local/sbin/cheesex-disk-pressure-guard`，仓库里没有任何脚本把它们装到那里。
-- **发版脚本会主动拒绝而不是自动纠正**：`rollout_backend` 一上来就检查 app-router 是否还指着 `:18082`，是就直接失败（上一次发版的残留），要人工恢复。同理 `switch_active_backend` 的 `nginx -s reload` 失败会失败整个发版，而不是让配置生效一半。
+- **发版脚本会主动拒绝而不是自动纠正**：`read_slots` 发现 app-router 指着的端口不是两个槽位之一，就直接失败，要人工恢复。槽位之前的版本中断后留下的 `cheese-backend-next`/`cheese-frontend-next`，app-router 没指着它就由 `clear_interrupted_release` 在拉镜像、迁移之前删掉，指着它就在那里失败。手动发布两个槽位之前的旧提交时，旧脚本会先装上自己的 `app-router.conf` 并 reload（30 秒后断开 app-router 上的连接），拉镜像、跑迁移，然后在 `-b` 槽位服务期间拒绝切流量。如果回滚是在 `-b` 槽位服务期间合进 main 的，main 上已经没有带槽位的提交，此后每次自动发版都会这样走一遍再拒绝，直到有人对最后一个包含 #2770 的 SHA 手动触发发版，把服务换回第一组槽位，main 的下一次发版才能过。`deploy/tests/test-pre-slot-release.sh` 用最后一个这样的提交的脚本验证两种状态。同理 `switch_app_router` 的 `nginx -s reload` 失败会把上游文件改回去、失败整个发版，而不是让配置生效一半。
 - **`check-app-tier.sh` 证明的是"跑着的镜像对不对"，不是"服务活不活"**。它读的是 `docker ps` 输出的 tag。健康探针是另一个东西：`/healthz` 是进程级探针，带依赖检查的是 `/readyz`（`backend/app/api/routes/health.py`）。
 - **没有 systemd 的主机上，归档清理不会发生**：`deploy-docker.sh:1009-1013` 检测不到 `/run/systemd/system` 时只在日志里说一句"自己安排每分钟触发"，不会失败也不会兜底。
 - **`deploy.sh` 与 `deploy-docker.sh` 是两条不同的路**：前者是 etrip 盒子的发版入口，只做拉镜像、迁移、重启、健康检查，没有滚动、没有排空、没有回滚；dev 和 prod 走的是后者。

@@ -44,7 +44,7 @@ def test_a_project_reports_the_shell_its_category_declared(client):
     # that exists, so it points at the board until that page lands.
     assert shell["home"] == "workspace-running"
     assert shell["terms"] == {"project": "课程", "topic": "提问"}
-    assert "project-members" in shell["hidden"]
+    assert "project-library" in shell["nav"]["project"]
     assert shell["nav"]["tabs"][0] == "workspace"
 
 
@@ -58,16 +58,14 @@ def test_a_project_with_no_shell_anywhere_gets_the_default(client):
 
     assert shell["name"] == "default"
     assert shell["home"] == "workspace-running"
-    # 「零感知」 means the default declares what the product ALREADY does — not
-    # what it did before #1330. That change moved 日历 and 成员 next to the
-    # project name and left 资料库 on the rail; 成员 has since come back out
-    # (退出项目 lives on the 名册 page and was unreachable behind the ⋯). A 壳
-    # that still listed all seven would put them back.
-    assert shell["hidden"] == ["project-routines", "project-skills"]
+    # 「零感知」 means the default declares what the product ALREADY does: 资料库
+    # under the project name, then the menu in this order, 成员 first because
+    # 「退出项目」 lives on that page.
+    assert "hidden" not in shell
     assert shell["nav"]["project"] == [
         "project-library",
-        "project-routines",
         "project-members",
+        "project-routines",
         "project-skills",
     ]
     assert shell["terms"] == {}

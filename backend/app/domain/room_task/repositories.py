@@ -137,9 +137,10 @@ class TaskRepository:
         return {task_id: at for task_id, at in rows if at is not None}
 
     async def conversations_for_tasks(
-        self, task_ids: list[uuid.UUID]
+        self, task_ids: list[uuid.UUID], *, limit: int | None = None
     ) -> dict[uuid.UUID, list[Block]]:
-        """Every thread's conversation, oldest first, in ONE query.
+        """Every thread's conversation, oldest first, in ONE query; with
+        `limit`, each thread's newest `limit` blocks.
 
         Keyed by task id and batched deliberately: the caller wants a whole
         room, and a room can hold hundreds of threads — asking per thread turns
@@ -149,14 +150,34 @@ class TaskRepository:
         """
         if not task_ids:
             return {}
-        stmt = (
-            select(Block)
-            .where(
-                Block.conversation_id.in_(task_ids),
-                Block.kind.not_in(self._NON_TIMELINE),
-            )
-            .order_by(Block.created_at, Block.id)
+        where = (
+            Block.conversation_id.in_(task_ids),
+            Block.kind.not_in(self._NON_TIMELINE),
         )
+        if limit is None:
+            stmt = select(Block).where(*where).order_by(Block.created_at, Block.id)
+        else:
+            # Each thread's newest `limit`, cut in the database: a room's
+            # threads together can hold hundreds of thousands of blocks.
+            newest = (
+                select(
+                    Block.id,
+                    func.row_number()
+                    .over(
+                        partition_by=Block.conversation_id,
+                        order_by=(Block.created_at.desc(), Block.id.desc()),
+                    )
+                    .label("rank"),
+                )
+                .where(*where)
+                .subquery()
+            )
+            stmt = (
+                select(Block)
+                .join(newest, newest.c.id == Block.id)
+                .where(newest.c.rank <= limit)
+                .order_by(Block.created_at, Block.id)
+            )
         grouped: dict[uuid.UUID, list[Block]] = {}
         for block in (await self._session.scalars(stmt)).all():
             grouped.setdefault(block.conversation_id, []).append(block)

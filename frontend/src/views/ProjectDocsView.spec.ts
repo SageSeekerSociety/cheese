@@ -92,7 +92,7 @@ describe('周报集', () => {
     // 窗口是这一行的身份：并排摆着的几份周报，是它把它们分开的。
     expect(view.getByText('8月31日 – 9月6日')).toBeTruthy()
     expect(await view.findByText('本周交付了产物页预览。')).toBeTruthy()
-    expect(view.getByText('来自话题')).toBeTruthy()
+    expect(view.getByText('来自频道')).toBeTruthy()
     view.unmount()
   })
 
@@ -103,7 +103,7 @@ describe('周报集', () => {
       global: { plugins: [createVuetify()] },
     })
     expect(view.queryByText('周报由芝士定期产出')).toBeNull()
-    expect(view.getByText(/在项目房间里 @ 芝士/)).toBeTruthy()
+    expect(view.getByText(/在「综合」里 @ 芝士/)).toBeTruthy()
     expect(view.getByText('暂无周报')).toBeTruthy()
     view.unmount()
   })
@@ -129,7 +129,7 @@ describe('in English', () => {
       global: { plugins: [createVuetify()] },
     })
     expect(view.getByText('Aug 31 – Sep 6')).toBeTruthy()
-    expect(view.getByText('From topic')).toBeTruthy()
+    expect(view.getByText('From channel')).toBeTruthy()
     expect(view.getByText('Weekly reports')).toBeTruthy()
     view.unmount()
   })
