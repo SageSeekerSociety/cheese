@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""The front door's TLS listener for the public names, behind PROXY protocol.
+"""The front door's TLS listeners for the public names.
 
 A request that arrives as an SNI passthrough relay forwards it — a PROXY
 protocol header, then TLS — reaches the application with the client address
-from that header, a request for an alias name is sent to the canonical one,
-and a box without a certificate gets no TLS listener at all.
+from that header. A request that arrives as plain TLS on the Cloud machines'
+listener, as cloud-control's loopback forward delivers it, reaches the same
+application. On both, a request for an alias name is sent to the canonical
+one, and a box without a certificate gets no TLS listener at all.
 """
 
 import json
@@ -49,12 +51,14 @@ def configure(active: Path, plain_port: int) -> str:
     return (active / "sites-frontend.conf").read_text()
 
 
-def request_through_relay(port: int, host: str = "okcheese.com", path: str = "/") -> tuple[bytes, bytes]:
+def request_through_relay(port: int, host: str = "okcheese.com", path: str = "/",
+                          proxy_header: bool = True) -> tuple[bytes, bytes]:
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
-        raw.sendall(f"PROXY TCP4 {CLIENT} 127.0.0.1 40000 443\r\n".encode())
+        if proxy_header:
+            raw.sendall(f"PROXY TCP4 {CLIENT} 127.0.0.1 40000 443\r\n".encode())
         with context.wrap_socket(raw, server_hostname=host) as tls:
             tls.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
             response = b""
@@ -81,10 +85,11 @@ def main() -> None:
         )
         app = ThreadingHTTPServer(("127.0.0.1", 0), Echo)
         threading.Thread(target=app.serve_forever, daemon=True).start()
-        plain, tls = free_port(), free_port()
+        plain, tls, machines = free_port(), free_port(), free_port()
         site = configure(active, plain)
         site = (site.replace("127.0.0.1:18086", f"127.0.0.1:{app.server_port}")
                     .replace("127.0.0.1:18443", f"127.0.0.1:{tls}")
+                    .replace("127.0.0.1:18445", f"127.0.0.1:{machines}")
                     .replace("/etc/nginx/active", str(active)))
         (active / "sites-frontend.conf").write_text(site)
         temp_paths = "".join(
@@ -110,10 +115,18 @@ def main() -> None:
             assert forwarded[0] == CLIENT, headers
             assert headers["host"] == "okcheese.com", headers
 
-            for alias in ("www.okcheese.com", "hk.okcheese.com", "WWW.okcheese.com"):
-                head, _ = request_through_relay(tls, alias, "/projects/1?tab=site")
-                assert head.startswith(b"HTTP/1.1 301"), head
-                assert b"\r\nlocation: https://okcheese.com/projects/1?tab=site" in head.lower(), head
+            head, body = request_through_relay(machines, proxy_header=False)
+            assert head.startswith(b"HTTP/1.1 200"), head
+            headers = {k.lower(): v for k, v in json.loads(body).items()}
+            assert headers["host"] == "okcheese.com", headers
+            assert headers["x-forwarded-proto"] == "https", headers
+
+            for port, relayed in ((tls, True), (machines, False)):
+                for alias in ("www.okcheese.com", "hk.okcheese.com", "WWW.okcheese.com"):
+                    head, _ = request_through_relay(port, alias, "/projects/1?tab=site",
+                                                    proxy_header=relayed)
+                    assert head.startswith(b"HTTP/1.1 301"), head
+                    assert b"\r\nlocation: https://okcheese.com/projects/1?tab=site" in head.lower(), head
         finally:
             subprocess.run([*command, "-s", "stop"], check=False)
             app.shutdown()

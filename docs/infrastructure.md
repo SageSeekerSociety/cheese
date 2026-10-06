@@ -773,6 +773,16 @@ api-front's TLS listener `127.0.0.1:18443`, which terminates TLS on the dev
 box. No public traffic uses it. The watchdog below probes through it, and
 the rollback at the end of this section sends the public names back to it.
 
+The platform's own Cloud machines are on the dev box's private network, but
+their default route reaches the public name the way any visitor's does: out
+through router-2 to Hong Kong, then back here through a tunnel. So api-front
+serves the same names over TLS on a third listener, `127.0.0.1:18445`, with
+the same certificate and no PROXY protocol, and `deploy/cloud-control.py`
+forwards each machine's `127.0.0.1:18445` to it on the SSH session that
+already carries the machine's backend forward. Measured from a Cloud machine
+on 2026-10-05, a new connection plus `/api/healthz` took 25-40 ms this way
+against 1.4-3.9 s through Hong Kong.
+
 None of it is deployed by CI. The units below were installed by hand; change
 them by hand, keep a timestamped copy of every file you edit next to it, and
 note the rollback command before you start.

@@ -116,7 +116,13 @@ async def forward(key, state_dir, backend_port, owner_port):
                 # the owner's log in one second, and `connection open` again at
                 # :38, inside a deploy window. Ten-odd deploys a day, ten-odd
                 # rounds of that.
-                "-R", f"127.0.0.1:18083:127.0.0.1:{owner_port}", f"{user}@{ip}",
+                "-R", f"127.0.0.1:18083:127.0.0.1:{owner_port}",
+                # The site itself, over TLS, for the browsers and clients a
+                # session runs on the machine: api-front's listener for it
+                # (deploy/llm-tunnel/configure-frontend.sh). The machine's
+                # default route reaches the public name only through the Hong
+                # Kong relay, which sends it straight back here through a tunnel.
+                "-R", "127.0.0.1:18445:127.0.0.1:18445", f"{user}@{ip}",
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
