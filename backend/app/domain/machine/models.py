@@ -215,8 +215,15 @@ class CloudHost(UuidPk, Timestamps, Base):
     idle_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # The provider failed it before it was enrolled. Counted against
-    # ``MAX_PROVIDER_ERRORS``; such a host is released at once.
+    # Since when the pool sweep has found the enrolled host's connector away;
+    # NULL while it is linked. Kept on the row, not in the hub's memory, so a
+    # backend restart does not start the count again (``services.LOST_AFTER``).
+    offline_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The provider failed it — before it was enrolled, or by reporting an
+    # enrolled one in error. Counted against ``MAX_PROVIDER_ERRORS``; such a
+    # host is released at once.
     failed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
