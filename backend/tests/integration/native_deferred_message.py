@@ -147,11 +147,15 @@ async def finish_deferred_message(
             while not queued.is_set():
                 await asyncio.sleep(0.01)
         try:
+            from app.domain.conversation.services import room_of
             from tests.integration.conftest import session_auth_headers
 
+            # The roster is the channel's: a 支线's session runs in its room.
+            async with client.test_request_factory() as session:
+                room = await room_of(session, topic)
             removed = await asyncio.to_thread(
                 client.delete,
-                f"/topics/{topic}/members/{recipient_handle}?actor=alice",
+                f"/topics/{room}/members/{recipient_handle}?actor=alice",
                 headers=session_auth_headers("alice"),
             )
             assert removed.status_code == 200, removed.text

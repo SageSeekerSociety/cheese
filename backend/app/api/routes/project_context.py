@@ -27,6 +27,7 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.living_doc import search as doc_search
@@ -94,14 +95,9 @@ def _blocks_matching(
 async def _conversation_rooms(
     db: AsyncSession, rooms: list[uuid.UUID]
 ) -> dict[uuid.UUID, uuid.UUID]:
-    """Each conversation of these rooms, the rooms' own and their tasks', mapped
-    to its room."""
-    found = {room: room for room in rooms}
-    for task_id, room_id in await db.execute(
-        select(Task.id, Task.room_id).where(Task.room_id.in_(rooms))
-    ):
-        found[task_id] = room_id
-    return found
+    """Each conversation of these rooms — the rooms' own, their tasks' and their
+    支线' — mapped to its room."""
+    return await rooms_of_inner(db, rooms)
 
 
 def _tasks_matching(

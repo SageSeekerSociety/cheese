@@ -113,7 +113,6 @@
   "docEditedInLibrary": "{actor} edited the doc \"{title}\"",
   "docSuggestedInLibrary": "{actor} suggested changes to the doc \"{title}\"",
   "docUntitled": "Untitled doc",
-  "docMissing": "This channel has progress but no living doc yet; an AI teammate has been asked to write one",
   "docSuggested": "{agent} suggested {n} changes to the doc",
   "emptyValue": "(empty)",
   "environmentFailedHandedOver": "Environment setup failed and was handed to General.",

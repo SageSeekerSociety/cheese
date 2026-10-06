@@ -105,6 +105,8 @@ const props = withDefaults(
     members?: ProjectMemberRow[]
     // 此刻谁在这个房间里忙（对话栏从 socket 上学来）。现场那一格画其中在干活的队友。
     activity?: MemberActivityLine[]
+    // 「支线」那一格里有我没读过的回复：页签上挂一个点。
+    threadsNew?: boolean
   }>(),
   {
     taskId: null,
@@ -487,7 +489,7 @@ async function pollThreads(opts: { fresh?: boolean } = {}) {
 }
 
 function hasContent(key: TabKey): boolean {
-  if (key === 'chat' || key === 'overview') return true
+  if (key === 'chat' || key === 'overview' || key === 'threads') return true
   // 「定时与触发」也是永远有得看的一格：没有规则时它写的是「还没有规则，点新建」——
   // 那一格自己是让人动手建一条的地方，不是一个「暂无」。数有几条要现问后端，而这一格
   // 关着的时候不该为此多打一个请求。
@@ -501,7 +503,9 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-const tabs = computed(() => workPanelTabs(props.withChat).filter((tab) => !(props.taskId && tab.key === 'routines')))
+const tabs = computed(() =>
+  workPanelTabs(props.withChat).filter((tab) => !(props.taskId && (tab.key === 'routines' || tab.key === 'threads')))
+)
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
 useCommands(() =>
   tabs.value.map((tab) => ({
@@ -533,6 +537,7 @@ function tabTitle(tab: TabDef): string {
 function signalFor(key: TabKey): PanelTab['signal'] {
   if (key === 'site' && props.working) return { kind: 'pulse' }
   if (key === 'preview' && previewHasNew.value) return { kind: 'dot' }
+  if (key === 'threads' && props.threadsNew) return { kind: 'dot' }
   if (key === 'overview' && threads.value.total) return { kind: 'count', count: threads.value.total }
   if (key === 'changes' && summary.value.changedFiles.length) {
     return { kind: 'count', count: summary.value.changedFiles.length, fresh: changesHasNew.value }
@@ -818,8 +823,11 @@ defineExpose({
           <div v-if="taskId" v-show="active === 'overview'" class="tabpane-slot" :class="enterClass('overview')">
             <slot name="overview" />
           </div>
+          <div v-if="!taskId" v-show="active === 'threads'" class="tabpane-slot" :class="enterClass('threads')">
+            <slot name="threads" />
+          </div>
           <PanelOverview
-            v-else
+            v-if="!taskId"
             v-show="active === 'overview'"
             ref="overviewRef"
             :class="enterClass('overview')"

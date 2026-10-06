@@ -8,6 +8,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from tests.ask_fixtures import active_ask
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -117,8 +118,12 @@ def test_cross_room_access_requires_membership_and_preserves_identity(
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["author"] == handle
-    with active_ask(client, stub_hooks, monkeypatch, other, actor="alice", seat=handle):
-        response = client.post(f"/topics/{other}/asks", json=question, headers=auth)
+    # 芝士 answers — and asks — in a 支线 of the room.
+    thread = in_thread(client, other, "alice")
+    with active_ask(
+        client, stub_hooks, monkeypatch, thread, actor="alice", seat=handle
+    ):
+        response = client.post(f"/topics/{thread}/asks", json=question, headers=auth)
         assert response.status_code == 200, response.text
         assert response.json()["data"]["group"]["asked_by"] == handle
         assert [row["author"] for row in response.json()["data"]["blocks"]] == [handle]
@@ -430,9 +435,10 @@ def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions
     seat = _seated_agent(client, origin)
     if setup_token is not None:
         client.headers["X-Cheese-Token"] = setup_token
-    with active_ask(client, stub_hooks, monkeypatch, origin, actor="alice", seat=seat):
+    thread = in_thread(client, origin, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice", seat=seat):
         response = client.post(
-            f"/topics/{origin}/asks",
+            f"/topics/{thread}/asks",
             json={
                 "questions": [
                     {"question": "Which?", "options": [{"text": "A"}, {"text": "B"}]}

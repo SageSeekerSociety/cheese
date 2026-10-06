@@ -24,6 +24,7 @@ from app.main import app
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     room_agent_seat,
@@ -98,13 +99,15 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
             client, {"name": "Native Ask competing sessions"}, owner="alice"
         ).json()["data"]
         project_id = uuid.UUID(project["id"])
-        topic = uuid.UUID(project["root_topic_id"])
-        seat_b = room_agent_seat(client, str(topic))
+        room = project["root_topic_id"]
+        # 芝士 answers in a 支线 of the channel.
+        topic = uuid.UUID(in_thread(client, room, "alice"))
+        seat_b = room_agent_seat(client, room)
         made = client.post(f"/projects/{project_id}/agents", json={"handle": "opus"})
         assert made.status_code == 200, made.text
         seat_a = made.json()["data"]["seat_handle"]
         joined = client.post(
-            f"/topics/{topic}/members",
+            f"/topics/{room}/members",
             json={"handle": seat_a, "role": "member", "actor": "alice"},
             headers=session_auth_headers("alice"),
         )

@@ -78,9 +78,9 @@ async def test_the_system_prompt_stays_and_a_change_is_told_once(client, tmp_pat
     assert first_system == second_system == third_system
     assert "新开的话题" not in second_system
     # 新会话的第一条消息带着整份现状。
-    assert "本话题现在的情况" in first
+    assert "## 现在的情况" in first
     # 下一轮只补变了的那一段，不再把整份说一遍。
     assert "新开的话题" in second
-    assert "本话题现在的情况" not in second
+    assert "## 现在的情况" not in second
     # 已经说过了，第三轮不再说。
     assert "新开的话题" not in third

@@ -17,5 +17,7 @@ export interface WaitingItem {
   phrase: BoardPhrase
   reason: 'reviewer' | 'reporter' | 'asked'
   blockId?: string | null
+  /** 问题是芝士在哪条支线里问的；不在支线里时没有。 */
+  threadId?: string | null
   at: string
 }

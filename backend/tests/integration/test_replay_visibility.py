@@ -20,11 +20,13 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.main import app
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
+    session_auth_headers,
 )
 
 
@@ -87,7 +89,8 @@ def _project_and_topic(client) -> str:
             "title": "重放",
         },
     )
-    return tr.json()["data"]["id"]
+    # 芝士 answers in a 支线 of the channel: that is where its turns run.
+    return in_thread(client, tr.json()["data"]["id"], "user-1")
 
 
 def _say(client, topic_id: str, text: str) -> None:
@@ -134,13 +137,28 @@ def _replay_notices(client, topic_id: str) -> list[str]:
     ]
 
 
+def _opened_by(client, text: str) -> str:
+    """A channel where ``text`` calls 芝士 in the main line; returns the 支线
+    it is answered in, once that first turn has finished."""
+    pr = post_project(client, json={"name": "Replay"}, owner="user-1")
+    room = client.post(
+        "/topics",
+        json={"project_id": pr.json()["data"]["id"], "title": "重放"},
+    ).json()["data"]["id"]
+    asked = post_message(client, room, "user-1", {"content": f"{text} @芝士"})
+    thread = client.post(
+        f"/blocks/{asked['id']}/thread", headers=session_auth_headers("user-1")
+    ).json()["data"]["id"]
+    wait_work_idle()
+    return thread
+
+
 def test_a_repeatedly_replayed_batch_is_announced_in_the_room(client, monkeypatch):
     _use_failing_agent(client, monkeypatch)
-    topic_id = _project_and_topic(client)
 
     # Three failing turns. The first message rides all three prompts, so by the
     # third one the batch is on its third attempt.
-    _say(client, topic_id, "第一句")
+    topic_id = _opened_by(client, "第一句")
     assert not _replay_notices(client, topic_id)
     _say(client, topic_id, "第二句")
     assert not _replay_notices(client, topic_id), "两次还不算模式，不该已经喊出来"
@@ -217,6 +235,7 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         "/topics",
         json={"project_id": project_id, "title": "换进程"},
     ).json()["data"]["id"]
+    topic_id = in_thread(client, topic_id, "user-1")
 
     before = WorkingScreen()
     app.dependency_overrides[get_chat_service] = lambda: ChatService(
@@ -356,6 +375,7 @@ def test_a_failed_batch_is_not_swallowed_by_a_later_clean_stop(client):
         "/topics",
         json={"project_id": project_id, "title": "死过一次"},
     ).json()["data"]["id"]
+    topic_id = in_thread(client, topic_id, "user-1")
     room = uuid.UUID(topic_id)
     screen = DiesOnceScreen()
     service = ChatService(

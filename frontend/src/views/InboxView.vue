@@ -71,6 +71,14 @@ function itemTitle(item: WaitingItem): string {
 }
 
 function linkTo(item: WaitingItem) {
+  // 芝士在支线里问的，打开那条支线。
+  if (item.threadId) {
+    return {
+      name: 'workspace-thread',
+      params: { projectId: item.projectId, topicId: item.topicId, threadId: item.threadId },
+      query: item.blockId ? { block: item.blockId } : undefined,
+    }
+  }
   return {
     name: 'workspace-topic',
     params: { projectId: item.projectId, topicId: item.topicId },

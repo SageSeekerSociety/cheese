@@ -127,9 +127,10 @@ class AgentSessionService:
             uuid.UUID, uuid.UUID, uuid.UUID | None, str, str, str | None, SessionPlace
         ]
     ]:
-        """``(project_id, room_id, task_id, agent_handle, harness, resume_token,
+        """``(project_id, room_id, inner_id, agent_handle, harness, resume_token,
         place)`` for every placed session — what a channel re-adopts after a
-        restart. ``task_id`` is None for a room's own session.
+        restart. ``inner_id`` is the task's or the 支线's, None for a room's
+        own session.
 
         One per (conversation, agent, harness) seat, and each comes back on its
         own seat. Every channel reads this same list and keeps the rows whose

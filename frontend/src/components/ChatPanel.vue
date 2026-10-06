@@ -10,10 +10,11 @@
 import type { ProjectMemberRow, Topic } from '../cx_types'
 import type { AskGroupAction } from '../lib/askGroupState'
 
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { useGettingStarted } from '../composables/useGettingStarted'
+import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import AskGroupFlow from './ask/AskGroupFlow.vue'
@@ -71,6 +72,9 @@ const props = withDefaults(
     // 这里此刻不能说话，以及为什么（任务只有负责人能说话、任务已关闭）。输入框的
     // 位置换成这一句，`composer-closed` 插槽接在它后面。
     composerClosed?: string | null
+    // 这一栏是一条支线：输入框写「在支线中回复」；我上一句叫过 AI 队友的话，打开时
+    // 先带上「@芝士 」。
+    inThread?: boolean
   }>(),
   {
     alwaysSummon: false,
@@ -84,6 +88,7 @@ const props = withDefaults(
     unreadOnOpen: 0,
     conversationId: null,
     composerClosed: null,
+    inThread: false,
   }
 )
 
@@ -92,6 +97,15 @@ const props = withDefaults(
 // event means — is ChatPanelEmit in ../composables/useChatPanel: the panel and
 // whoever listens to it have to agree, so there is one declaration, not two.
 const emit = defineEmits<ChatPanelEmit>()
+
+// 频道的主线：消息可以有支线。私聊、任务、支线里都没有。
+const mainLine = computed(() => !!props.topic && !props.noUpgrade && !props.conversationId)
+// 频道说它的支线变了：先把屏幕上那几行换新，再照常往上报（概览里的「支线」那一页也要读）。
+const forward = emit as unknown as (event: string, ...args: unknown[]) => void
+const panelEmit = ((event: string, ...args: unknown[]) => {
+  if (event === 'state-changed' && args[0] === 'threads') void threadLines.refresh()
+  forward(event, ...args)
+}) as ChatPanelEmit
 
 // A composable is not re-run when a prop changes: it reads the current value
 // when it needs it. That is why every prop is handed over as an accessor.
@@ -104,8 +118,18 @@ const panel = useChatPanel({
   topicList: () => props.topicList,
   unreadOnOpen: () => props.unreadOnOpen,
   focusBlock: () => props.focusBlock ?? null,
-  emit,
+  emit: panelEmit,
 })
+
+const threadLines = useThreadLines({
+  mainLine: () => mainLine.value,
+  roomId: () => props.topic?.id ?? null,
+  timeline: panel.timeline,
+  agentNameOf: (handle) => (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value,
+})
+function nameOf(handle: string): string {
+  return panel.refMaps.mentionNames[handle] || handle
+}
 
 const {
   // `topic` itself is NOT destructured: the prop of the same name already holds
@@ -221,6 +245,13 @@ const {
   AUTHOR,
 } = panel
 
+// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
+// 的那一刻做一次，删掉了不会再长回来。
+watch(loadingHistory, (loading, was) => {
+  if (!props.inThread || loading || !was || draft.value) return
+  draft.value = summonPrefill(panel.timeline.messages.value, isMine, agentName.value)
+})
+
 // The timeline binds these two with `:ref`, so it has to receive the Refs
 // themselves — a template binding would unwrap them into elements. Passing them
 // inside a plain object keeps them intact: props are shallow, not deep.
@@ -299,6 +330,9 @@ defineExpose({ send, connected, submitQuestion })
         <ChatTimeline
           :topic="topic"
           :no-upgrade="noUpgrade"
+          :threadable="mainLine"
+          :replying-for="threadLines.replyingFor"
+          :name-of="nameOf"
           :rows="rows"
           :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
@@ -353,6 +387,7 @@ defineExpose({ send, connected, submitQuestion })
           @mouseleave="hideBar"
           @react="onReact"
           @reply="setReply"
+          @open-thread="emit('open-thread', $event)"
           @upgrade-message="emit('upgrade-message', $event)"
           @edit="startEdit"
           @edit-send="editSend"
@@ -387,8 +422,10 @@ defineExpose({ send, connected, submitQuestion })
         :is-agent="!!sheetBlock && isAgentBlock(sheetBlock)"
         :editable="!!sheetBlock && canEdit(sheetBlock)"
         :no-upgrade="noUpgrade"
+        :threadable="mainLine"
         @react="onReact"
         @reply="setReply"
+        @thread="emit('open-thread', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="startEdit"
       />
@@ -453,7 +490,7 @@ defineExpose({ send, connected, submitQuestion })
         :agent-seat="agentSeat"
         :agent-name="agentName"
         :always-summon="alwaysSummon"
-        :hint="composerHint"
+        :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
         :atts="pendingAtts"
         :atts-uploading="attsUploading"
         :reply-label="replyLabel"

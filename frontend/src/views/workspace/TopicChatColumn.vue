@@ -69,6 +69,8 @@ const emit = defineEmits<{
   // 的那几处；只转第一个的话这两样都会静默降级成「整篇闪一下」。
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'upgrade-message', payload: unknown): void
+  // 「在支线中回复」、点开消息下面那一行：页面换到那条支线。
+  (e: 'open-thread', block: Block): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
@@ -184,6 +186,7 @@ defineExpose({
           emit('open-resource', resource, turnId, review, document)
       "
       @upgrade-message="emit('upgrade-message', $event)"
+      @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"
     >
