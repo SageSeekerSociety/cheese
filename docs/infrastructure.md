@@ -563,7 +563,10 @@ which reads exactly like "there are no logs".
 
 Retention is set by `deploy/journald-cheese.conf`, which every deploy installs
 as `/etc/systemd/journald.conf.d/cheese.conf`: up to 40 GB and a month, and
-never below 40 GB free on the disk, whichever is tighter. At journald's own
+never below 40 GB free on the disk, whichever is tighter. It also raises
+journald's limit on the number of journal files, which by default stops at
+100 whatever their size: at about 50 MB a file that cap, not the 40 GB, set
+dev's reach at about eight hours (2026-10-05). At journald's own
 default (a tenth of the filesystem, at most 4 GB) dev kept about thirteen hours
 on 2026-09-29, and the evidence for a failure was gone before anyone looked.
 `sudo journalctl --disk-usage` and
