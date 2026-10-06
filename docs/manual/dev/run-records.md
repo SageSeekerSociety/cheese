@@ -40,8 +40,12 @@ covers:
 
 `run_record.service.record` 在调用方的事务里写一行；`agent.run_records.record_now` 自己开事务、提交后推一帧 `run_record` 到对话的通道上。帧里那一份长得和一条事件块一样（`as_payload`，带 `run_record: true`），现场按块的样子排它，聊天区不收。重试到第几次、整理完没有、机器连上没有这几种会原地改写同一条（`restate_now`），前端按 id 换掉旧的那一份。
 
+支线里的记录同时推一份 `thread_status` 帧到频道主线（`agent.run_records.publish`）：主线那条消息下面那一行据此写芝士在排队、重试、整理上下文还是等环境。这一帧只实时推，不进断线重放的缓冲。
+
 `GET /topics/{id}/transcript` 把这一页时间范围里的运行记录和事件块合在一起按时间排好返回。侧栏的「在等机器」、消息有没有开始处理、孤儿轮次判断，都同时读块和运行记录。
 
 ## 留多久、谁能看 {#retention}
 
-运行记录留 30 天（`run_record.models.RETENTION`），巡检 `run record expiry` 每小时删一次过期的。管理后台「运行记录」（`/admin/run-records`，只给平台管理员）按种类合并：报错按指纹，别的按把数字抹掉的那句话，给出次数、涉及几个项目、首次和最近时间、24 段分布，点开看最近一次的全文和出现在哪些项目、对话里。
+运行记录留 30 天（`run_record.models.RETENTION`），巡检 `run record expiry` 每小时删一次过期的。管理后台「运行记录」（`/admin/run-records`，只给平台管理员）按种类合并：报错按指纹，别的按把数字抹掉的那句话，给出次数、涉及几个项目、首次和最近时间、24 段分布，点开看最近一次的全文和出现在哪些项目、对话里。平台自己项目里的 AI 队友用 `cheese_run_records` 读同一份（`GET /run-records`、`GET /run-records/detail`，带上它所在的频道）；别的项目的频道调它会被拒，因为报错里有其他项目的名字和对话。
+
+现场每一轮顶上那根细条（`lib/sitePhases.ts`）也读运行记录：排队从排队那条记录到这一轮开始，等环境从等机器那条到它说连上了，重试从重试那条到下一步出现，剩下的算工作。
