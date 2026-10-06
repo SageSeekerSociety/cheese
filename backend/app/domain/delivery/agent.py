@@ -35,7 +35,18 @@ from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
 LEASE_SECONDS = 120
+# An attempt that was not admitted waits before the next one, twice as long each
+# time, up to the cap. A fixed short wait turned every permanent refusal into a
+# loop: each retry is a whole turn that takes the seat and starts the session,
+# so a room with a dozen refused deliveries ran a turn every two seconds and
+# the people in it queued behind those (2026-10-06, 1278 in an hour).
 RETRY_SECONDS = 30
+RETRY_CAP_SECONDS = 300
+
+
+def retry_after(attempts: int) -> float:
+    """How long a delivery waits after its ``attempts``-th unadmitted attempt."""
+    return min(RETRY_SECONDS * 2 ** max(0, attempts - 1), RETRY_CAP_SECONDS)
 
 
 class DeliveryTargetChanged(ValidationError):
@@ -287,7 +298,7 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
                         seconds=(
                             ASK_SESSION_RETRY_SECONDS
                             if waiting_for_session
-                            else RETRY_SECONDS
+                            else retry_after(row.attempts)
                         )
                     )
                     row.last_error = (
