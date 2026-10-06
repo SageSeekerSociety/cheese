@@ -163,25 +163,26 @@
  * Confirms who is at the keyboard before a sensitive change, in place, over
  * whatever the person was doing. Mounted once at the app root; `withSudo`
  * opens it and waits for the ticket it gets from the server.
+ *
+ * 和后端怎么谈在 `useSudoChallenge` 里（方式清单、验证码、换票），这里只管画、
+ * 管焦点、管挑哪一路——组件因此不吃 API 层（.claude/rules/architecture.md）。
  */
-import type { MyAuthMethods } from '@/network/api/users/types'
+import type { SudoMethod } from '@/composables/useSudoChallenge'
+import type { SudoRequest } from '@/utils/sudo'
 
-import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser'
 
 import { pendingSudo } from '@/utils/sudo'
+
+import { useSudoChallenge } from '@/composables/useSudoChallenge'
 
 import AccountField from '@/components/account/AccountField.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
-import { currentUserId, currentUserName } from '@/services/account'
-import { attemptMessage } from '@/views/account/attemptWait'
-import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
-type Method = 'passkey' | 'password' | 'totp' | 'email_code'
+type Method = SudoMethod
 
 const METHODS: Record<Method, { icon: string; label: string }> = {
   passkey: { icon: 'mdi-key-chain', label: 'account.sudo.passkey' },
@@ -190,11 +191,8 @@ const METHODS: Record<Method, { icon: string; label: string }> = {
   email_code: { icon: 'mdi-email-outline', label: 'account.sudo.method.emailCode' },
 }
 
-// The server refuses a new code within a minute of the last one.
-const RESEND_COOLDOWN_SECONDS = 60
-
 // Say what is being confirmed, so the interruption explains itself.
-const ACTIONS: Record<UserApi.SudoPurpose, string> = {
+const ACTIONS: Record<SudoRequest['purpose'], string> = {
   '2fa:enable': 'account.sudo.action.initTOTP',
   '2fa:disable': 'account.sudo.action.disableTOTP',
   '2fa:backup-codes': 'account.sudo.action.generateBackupCodes',
@@ -212,22 +210,27 @@ const codeLabelId = useId()
 const webAuthnSupported = browserSupportsWebAuthn()
 
 const request = pendingSudo
-const methods = ref<MyAuthMethods | null>(null)
+const {
+  methods,
+  loading,
+  errorMessage,
+  password,
+  code,
+  codeSentTo,
+  sending,
+  resendWait,
+  currentUserName,
+  loadMethods,
+  sendEmailCode,
+  verifyPassword,
+  verifyTotp,
+  verifyEmailCode,
+  verifyPasskey: confirmWithPasskey,
+} = useSudoChallenge(request)
+
+/** 哪一路在台面上；挑它是界面的事，用什么换票是 composable 的事。 */
 const method = ref<Method>('password')
-const loading = ref(false)
-const password = ref('')
-const code = ref('')
-const errorMessage = ref('')
 const panel = ref<HTMLElement | null>(null)
-/** Where the last email code went, once one has been sent for this request. */
-const codeSentTo = ref('')
-const codeSentAt = ref(0)
-const sending = ref(false)
-const now = ref(Date.now())
-let ticker: ReturnType<typeof setInterval> | undefined
-const resendWait = computed(() =>
-  Math.max(0, RESEND_COOLDOWN_SECONDS - Math.floor((now.value - codeSentAt.value) / 1000))
-)
 
 const lede = computed(() =>
   request.value ? t('account.sudo.ledeFor', { action: t(ACTIONS[request.value.purpose]) }) : ''
@@ -256,21 +259,8 @@ watch(
   async (current) => {
     if (!current) return
     if (!returnFocusTo && document.activeElement instanceof HTMLElement) returnFocusTo = document.activeElement
-    methods.value = null
-    loading.value = false
-    errorMessage.value = ''
-    password.value = ''
-    code.value = ''
-    codeSentTo.value = ''
-    codeSentAt.value = 0
-    let found: MyAuthMethods = { password: true, passkey: false, twoFactor: false, emailCode: false }
-    try {
-      found = (await UserApi.getMyAuthMethods()).data
-    } catch {
-      // Without the list, offer the password, the way most accounts have.
-    }
+    await loadMethods()
     if (request.value !== current) return
-    methods.value = found
     method.value = primary.value
     await nextTick()
     focusFirst()
@@ -306,93 +296,9 @@ function cancel() {
   request.value?.settle(null)
 }
 
-// An email code stops being accepted once two-step verification is on, which
-// can happen in another tab while this dialog is open.
-function emailCodeMessage(error: unknown): string | null {
-  const reason = (error as { error?: { data?: { reason?: unknown } } } | null)?.error?.data?.reason
-  if (reason === 'email_code_unavailable') return t('account.sudo.emailCodeUnavailable')
-  return attemptMessage(error)
-}
-
-async function sendEmailCode() {
-  const current = request.value
-  if (!current || sending.value) return
-  sending.value = true
-  errorMessage.value = ''
-  try {
-    const { data } = await UserApi.requestSudoEmailCode()
-    if (request.value !== current) return
-    codeSentTo.value = data.email
-    codeSentAt.value = now.value = Date.now()
-    clearInterval(ticker)
-    ticker = setInterval(() => (now.value = Date.now()), 1000)
-  } catch (error: unknown) {
-    if (request.value !== current) return
-    errorMessage.value = emailCodeMessage(error) ?? t('account.sudo.sendFailed')
-  } finally {
-    sending.value = false
-  }
-}
-
-watch(request, (current) => {
-  if (!current) clearInterval(ticker)
-})
-onBeforeUnmount(() => clearInterval(ticker))
-
-async function verify(run: () => Promise<{ data: { sudoTicket?: string } }>) {
-  const current = request.value
-  if (!current || loading.value) return
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const { data } = await run()
-    if (!data.sudoTicket) throw new Error('No ticket in the confirmation')
-    current.settle(data.sudoTicket)
-  } catch (error: unknown) {
-    if (request.value !== current) return
-    // The browser's own WebAuthn error text is English and names internals.
-    errorMessage.value =
-      (method.value === 'email_code' ? emailCodeMessage(error) : null) ??
-      passkeyWrongHostMessage(error, passkeyRpId) ??
-      ((error as { name?: string } | null)?.name === 'NotAllowedError'
-        ? t('account.sudo.passkeyCanceled')
-        : requestErrorMessage(error, t('account.sudo.failed')))
-    code.value = ''
-  } finally {
-    loading.value = false
-  }
-}
-
-// The site the server asked the passkey for, to say where it works if this
-// address is not covered by it.
-let passkeyRpId: string | undefined
-
+/** 通行密钥：设备那一步用浏览器的 WebAuthn，换票交给 composable。 */
 function verifyPasskey() {
-  const purpose = request.value?.purpose
-  return verify(async () => {
-    const { data } = await UserApi.getPasskeyAuthenticationOptions(currentUserId.value)
-    passkeyRpId = data.options.rpId
-    const assertion = await startAuthentication({ optionsJSON: data.options })
-    return UserApi.verifySudoPasskey(assertion, purpose)
-  })
-}
-
-function verifyPassword() {
-  if (!password.value) {
-    errorMessage.value = t('account.sudo.passwordRequired')
-    return
-  }
-  return verify(() => UserApi.verifySudoPassword(password.value, request.value?.purpose))
-}
-
-function verifyTotp() {
-  if (code.value.length !== 6) return
-  return verify(() => UserApi.verifySudoTOTP(code.value, request.value?.purpose))
-}
-
-function verifyEmailCode() {
-  if (code.value.length !== 6) return
-  return verify(() => UserApi.verifySudoEmailCode(code.value, request.value?.purpose))
+  return confirmWithPasskey((options) => startAuthentication({ optionsJSON: options }))
 }
 </script>
 

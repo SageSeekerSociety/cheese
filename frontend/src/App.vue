@@ -89,8 +89,15 @@
       </div>
     </v-main>
 
-    <!-- 协议实质变更后的重新同意（#1486）；只在应用外壳里，协议页不在外壳里 -->
-    <ConsentGate />
+    <!-- 协议实质变更后的重新同意（#1486）；只在应用外壳里，协议页不在外壳里。
+         取数和两个去处见 usePendingConsent，这里只接线。 -->
+    <ConsentGate
+      :pending="pendingConsents"
+      :accepting="acceptingConsents"
+      :error="consentError"
+      @accept="acceptConsents"
+      @decline="declineConsents"
+    />
 
     <!-- 敏感操作前确认身份；withSudo 打开它 -->
     <SudoDialog v-if="sudoWanted" />
@@ -273,6 +280,7 @@ import { pendingSudo } from '@/utils/sudo'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
 import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
@@ -589,6 +597,15 @@ const awaitingByProject = awaitingCountByProject()
 const { count: unreadActivity } = useUnreadNotifications()
 // The same number on the desktop app's icon, whenever this page has read it.
 watch(awaitingCount, desktopBadge)
+
+// 协议实质变更后的重新同意（#1486）：取数在 composable 里，这里只把它接到弹窗上。
+const {
+  pending: pendingConsents,
+  accepting: acceptingConsents,
+  error: consentError,
+  accept: acceptConsents,
+  decline: declineConsents,
+} = usePendingConsent()
 
 // 右键 rail 上一个项目：那一份菜单和退出确认框的状态见 useProjectMenu。
 const { projectMenu, leaveOpen, leavingProjectId } = useProjectMenu(router)
