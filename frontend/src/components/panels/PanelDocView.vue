@@ -668,8 +668,10 @@ defineExpose({
 }
 /* Stage holds the editor and, when pinned, the docked tool panel beside it. */
 /* 跟着外面那一列一起滚：没有自己的高度和滚动条，顶栏吸在这一篇的顶上，滚过这一篇
-   就跟着走。 */
+   就跟着走。按内容排高、不让外面那一列压扁：压扁后正文被评论栏外框剪掉，整列也就
+   没东西可滚了。 */
 .doc--flow {
+  flex: 0 0 auto;
   height: auto;
 }
 .doc--flow .doc-stage {
