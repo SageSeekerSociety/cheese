@@ -9,6 +9,7 @@ import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
 import { getProject } from '@/api'
+import { diagnoseRoomEnvironment } from '@/api/environment'
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -280,7 +281,16 @@ function close() {
               <ProjectComputeSettings :project-id="projectId" />
             </div>
           </section>
-          <ProjectEnvironmentSettings :project-id="projectId" />
+          <ProjectEnvironmentSettings
+            :project-id="projectId"
+            :room="
+              typeof router.currentRoute.value.query.room === 'string'
+                ? router.currentRoute.value.query.room
+                : undefined
+            "
+            :agent-name="workspace.agentName"
+            :diagnose-room="(roomId: string) => diagnoseRoomEnvironment(projectId, roomId)"
+          />
           <CreditsPanel :project-id="projectId" />
         </template>
 

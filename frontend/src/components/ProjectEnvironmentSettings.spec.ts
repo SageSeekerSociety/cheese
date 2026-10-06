@@ -44,7 +44,13 @@ afterEach(cleanup)
 
 function mount() {
   return render(ProjectEnvironmentSettings, {
-    props: { projectId: 'p' },
+    props: {
+      projectId: 'p',
+      agentName: '芝士',
+      diagnoseRoom: async () => {
+        throw new Error('unused')
+      },
+    },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }

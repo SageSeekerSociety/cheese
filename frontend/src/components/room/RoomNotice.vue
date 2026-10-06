@@ -20,7 +20,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { parseDiffLines } from '../../lib/diff'
 import { repeatsLine } from '../../lib/noticeRepeats'
 import { noticeText } from '../../lib/noticeText'
-import { confirmTarget } from '../../lib/platformNotice'
+import { confirmTarget, environmentTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { progressLabel, type ProgressLevel } from '../../lib/taskProgress'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
@@ -134,6 +134,7 @@ const showRetry = computed(
 
 // 芝士起草的规则 / 技能：这一行直接通到要确认的那一条。
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
+const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
 
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
@@ -431,6 +432,9 @@ const ACTION_META: Record<string, { btn: string }> = {
         <!-- 在 summary 里点它不能顺带展开这一行。 -->
         <NavLink v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
           {{ t('work.room.notice.goConfirm') }}
+        </NavLink>
+        <NavLink v-if="environmentAt" :to="environmentAt" class="sys-btn" data-testid="notice-environment" @click.stop>
+          {{ t('work.room.notice.goEnvironment') }}
         </NavLink>
         <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click.prevent.stop="emit('retry')">
           {{ t('work.room.retry.action') }}
