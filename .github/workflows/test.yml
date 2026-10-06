@@ -208,7 +208,7 @@ jobs:
           --health-timeout 5s --health-retries 5
     # Each runner has its own services and xdist workers. This ceiling detects
     # hangs; the artifact timings measure whether the feedback budget is met.
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
