@@ -2,6 +2,7 @@
 import type { FeedbackProposal } from '@/cx_types'
 
 import { onMounted, ref } from 'vue'
+import { toast } from 'vuetify-sonner'
 
 import { useNavigation } from '@/composables/useNavigation'
 
@@ -123,10 +124,17 @@ function openForm(proposal: FeedbackProposal) {
 }
 
 /** 「不用」。服务端按**指纹**记，所以同一个问题的另一种说法回来时是另一条，会被再问一次
- *  —— 那是刻意的：换过说法的那条，值得再问一遍。 */
-function dismiss(proposal: FeedbackProposal) {
+ *  —— 那是刻意的：换过说法的那条，值得再问一遍。
+ *
+ *  先本地收起：点下去要立刻有反应。服务端没记下就把它放回来 —— 这里以前装着成功，
+ *  人下次进来又看到同一张卡，还不知道自己上次那一下没算数。 */
+async function dismiss(proposal: FeedbackProposal) {
   dismissed.value = new Set([...dismissed.value, proposal.block_id])
-  void store.dismissProposal(props.topicId, proposal.block_id)
+  if (await store.dismissProposal(props.topicId, proposal.block_id)) return
+  const back = new Set(dismissed.value)
+  back.delete(proposal.block_id)
+  dismissed.value = back
+  toast.error(store.error ?? t('feedback.errors.actionFailed'))
 }
 
 /** 去看刚发出去的那条反馈。没有路由（这个组件也能在没装路由的宿主里渲染）就不动。 */
