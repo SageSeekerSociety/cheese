@@ -1265,6 +1265,17 @@ class RoomTurns:
             nonce=nonce,
             at=datetime.now(UTC),
         )
+        # From the interval opening (``started_at``) to the input stamped
+        # delivered: where the platform's own time goes on every turn.
+        delivery_ms: dict[str, float] = {}
+        delivery_mark = time.monotonic()
+
+        def _delivery_step(name: str) -> None:
+            nonlocal delivery_mark
+            now = time.monotonic()
+            delivery_ms[name] = round((now - delivery_mark) * 1000, 1)
+            delivery_mark = now
+
         # And on the turn itself: the backend that ends this turn may not be
         # this one (`_begin_self_started_turn`), and it remembers neither.
         await self._note_turn_context(
@@ -1273,6 +1284,7 @@ class RoomTurns:
             reply_to=user_block_id,
             agent_handle=prepared.agent.handle,
         )
+        _delivery_step("note_context")
         summoned = user_block_id is not None and not is_resume and not platform_turn
         effects = InputEffects(
             held_block_ids=tuple(consumed_ids),
@@ -1297,6 +1309,7 @@ class RoomTurns:
                 task_id=prepared.task_id,
             )
             await self._compute.activate(session_ref, runtime)
+            _delivery_step("activate")
             ready = await runtime.send(
                 session_ref,
                 prompt_text,
@@ -1319,6 +1332,7 @@ class RoomTurns:
                 ),
                 owes_reply=summoned,
             )
+            _delivery_step("send")
             # 这一轮把现状说到了：下一轮只补在这之后变了的。回答一道 Ask 的那一轮
             # 接着原来的对话，runtime 不往里放现状（`RoomSessions.send`），所以不算。
             if expected_session is None:
@@ -1330,6 +1344,7 @@ class RoomTurns:
                         told=opening.digests(),
                     )
                     await session.commit()
+            _delivery_step("remember_told")
         except InputOutcomeUnconfirmed as exc:
             # The session still owns this work. Its structured echo can settle
             # the committed identity even after this ChatService is replaced.
@@ -1414,6 +1429,14 @@ class RoomTurns:
             )
             await close_recovery(session, prepared.room_id)
             await session.commit()
+        _delivery_step("stamp_delivered")
+        logger.info(
+            "chat_delivery_timing topic=%s turn=%s elapsed_ms=%.1f phases_ms=%s",
+            topic_id,
+            turn_id,
+            sum(delivery_ms.values()),
+            delivery_ms,
+        )
         yield {"type": "prompt_delivered"}
         if ready is False:
             marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id

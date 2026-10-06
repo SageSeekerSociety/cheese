@@ -63,6 +63,7 @@ from app.domain.agent.reads import (
     Working,
     Writing,
 )
+from app.domain.agent.room.stopwatch import Stopwatch, timed
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.agent.session_host.contract import (
     Access,
@@ -764,10 +765,13 @@ class RoomSessions:
         acting: str | None = None,
         needs_place: bool = True,
         reads_only: bool = False,
+        phases: dict[str, float] | None = None,
     ) -> Live:
         """The seat's session, started where the room's placement puts it if it
         has to be. ``reads_only``: a task's session before its owner starts it,
-        which may read the machine and change nothing on it."""
+        which may read the machine and change nothing on it. ``phases``, when
+        given, receives how long each step took (`send` logs it)."""
+        mark = Stopwatch(phases)
         seat = self._seat_of(session)
         previous = self.live.get(seat)
         if previous is not None and not previous.takes_inputs:
@@ -781,8 +785,10 @@ class RoomSessions:
             # seats in the same room are not this call's business.
             await self.interrupt(session)
             await self.close(session)
+        mark("ensure_close")
         precheck = await self.channel.precheck(session, needs_place=needs_place)
         assert isinstance(precheck, Placement)
+        mark("ensure_precheck")
         # WHO acts with it. The caller pins a teammate when a message named one;
         # unnamed, it is the agent the machine resolver resolved for this room.
         # The room itself never answers: it may seat several agents, and a name
@@ -855,7 +861,9 @@ class RoomSessions:
                     seat=state_key,
                 ),
             )
+            mark("ensure_prepare")
             status = await self.host.start(ref, spec, access)
+            mark("ensure_start")
         attached = await self._attach(
             Live(
                 session,
@@ -865,6 +873,7 @@ class RoomSessions:
                 status.takes_inputs,
             )
         )
+        mark("ensure_attach")
         # Compared with what it would be started with now: up to date, or a
         # relaunch the channel owes (``prewarm_due``).
         self.unchecked.discard(seat)
@@ -904,83 +913,98 @@ class RoomSessions:
         answer: it may go only into that live conversation, never a cold one.
         ``owes_reply``: a person wrote this, and the session answers them in the
         room before it does anything else (`driven/runner.py`)."""
-        seat = self._seat_of(session)
-        if expected_native_session is not None:
-            live = self.live.get(seat)
-            if (
-                live is None
-                or live.conversation != expected_native_session
-                or live.session.project_id != session.project_id
-            ):
-                raise ValidationError(
-                    "The original Ask session is not live; no replacement started"
+        # One line per message put to a session: where the platform spent the
+        # time between the turn opening and the runner holding the input.
+        with timed(
+            logger,
+            "room_send_timing",
+            topic=session.conversation_id,
+            seat=session.agent_handle,
+            work=work_id,
+        ) as mark:
+            seat = self._seat_of(session)
+            if expected_native_session is not None:
+                live = self.live.get(seat)
+                if (
+                    live is None
+                    or live.conversation != expected_native_session
+                    or live.session.project_id != session.project_id
+                ):
+                    raise ValidationError(
+                        "The original Ask session is not live; no replacement started"
+                    )
+            else:
+                live = await self.ensure(
+                    session,
+                    system_prompt=system_prompt,
+                    resume_token=resume_token,
+                    model=model,
+                    env=env,
+                    acting=acting,
+                    needs_place=needs_place,
+                    reads_only=reads_only,
+                    phases=mark.phases,
                 )
-        else:
-            live = await self.ensure(
-                session,
-                system_prompt=system_prompt,
-                resume_token=resume_token,
-                model=model,
-                env=env,
-                acting=acting,
-                needs_place=needs_place,
-                reads_only=reads_only,
+                mark.lap()
+                message = self._with_project_state(
+                    seat, live, resume_token, session_opening, opening_changes, message
+                )
+            if not live.takes_inputs:
+                raise InputProtocolUnavailable()
+            pictures = self._images(session, images)
+            on_mark(work_id)
+            await self._consume(
+                session.project_id,
+                session.conversation_id,
+                work_id,
+                AgentSessionInfo(
+                    session_id=live.conversation,
+                    agent_handle=live.acting,
+                    harness=self.harness,
+                ),
+                f"{self.harness}:{live.conversation}:opening:{work_id}",
+                False,
+                False,
             )
-            message = self._with_project_state(
-                seat, live, resume_token, session_opening, opening_changes, message
+            mark("consume")
+            # A message sent while the session is in the middle of a turn is read at
+            # that turn's next tool boundary and answered inside it: its records,
+            # its result and its end all carry the running turn's work, and none
+            # ever names this one. Taking the seat over would leave it holding a
+            # turn that never ends, and the next time the session goes away (the
+            # runner lets an idle one go) that turn would be failed as a crash. The
+            # platform's own work (``reading``) takes the seat all the same: its
+            # caller waits on its own queue for an ending, and the session going
+            # away is the only one it can get.
+            if seat not in self.clocks or work_id in self.queues:
+                self.work[seat] = work_id
+            # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
+            # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
+            await self.reconcile_memory(session.topic_id)
+            mark("memory")
+            identity = InputIdentity(
+                session.project_id,
+                session.conversation_id,
+                live.acting,
+                self.harness,
+                live.conversation,
+                work_id,
+                work_id,
             )
-        if not live.takes_inputs:
-            raise InputProtocolUnavailable()
-        pictures = self._images(session, images)
-        on_mark(work_id)
-        await self._consume(
-            session.project_id,
-            session.conversation_id,
-            work_id,
-            AgentSessionInfo(
-                session_id=live.conversation,
-                agent_handle=live.acting,
-                harness=self.harness,
-            ),
-            f"{self.harness}:{live.conversation}:opening:{work_id}",
-            False,
-            False,
-        )
-        # A message sent while the session is in the middle of a turn is read at
-        # that turn's next tool boundary and answered inside it: its records,
-        # its result and its end all carry the running turn's work, and none
-        # ever names this one. Taking the seat over would leave it holding a
-        # turn that never ends, and the next time the session goes away (the
-        # runner lets an idle one go) that turn would be failed as a crash. The
-        # platform's own work (``reading``) takes the seat all the same: its
-        # caller waits on its own queue for an ending, and the session going
-        # away is the only one it can get.
-        if seat not in self.clocks or work_id in self.queues:
-            self.work[seat] = work_id
-        # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
-        # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
-        await self.reconcile_memory(session.topic_id)
-        identity = InputIdentity(
-            session.project_id,
-            session.conversation_id,
-            live.acting,
-            self.harness,
-            live.conversation,
-            work_id,
-            work_id,
-        )
-        await register_input(identity)
-        try:
-            await self._submit(
-                live,
-                identity,
-                Prompt(work_id, message, images=pictures, owes_reply=owes_reply),
-                steer=False,
-            )
-        finally:
-            # A lost acknowledgement does not mean the session stopped working.
-            self._listen(seat)
-        return True
+            await register_input(identity)
+            mark("register")
+            try:
+                await self._submit(
+                    live,
+                    identity,
+                    Prompt(work_id, message, images=pictures, owes_reply=owes_reply),
+                    steer=False,
+                )
+                mark("submit")
+            finally:
+                # A lost acknowledgement does not mean the session stopped working.
+                self._listen(seat)
+            return True
 
     def _with_project_state(
         self,
