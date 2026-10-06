@@ -8,8 +8,8 @@ import { setLocale } from '@/i18n'
 beforeEach(() => setLocale('zh-CN'))
 
 describe('话题状态标', () => {
-  it('归档的话题读作「已采纳」，不是 git 的 merged', () => {
-    expect(topicStateBadge('archived')).toEqual({ label: '已采纳', cls: 'pr-state--merged' })
+  it('归档的频道读作「已归档」：归档是人把它收起来，不是它的改动被采纳', () => {
+    expect(topicStateBadge('archived')).toEqual({ label: '已归档', cls: 'pr-state--merged' })
   })
 
   it('草稿单独一档', () => {

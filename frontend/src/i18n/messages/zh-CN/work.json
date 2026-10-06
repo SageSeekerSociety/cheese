@@ -1300,10 +1300,10 @@
     "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单"
   },
   "topicState": {
-    "accepted": "已采纳",
     "draft": "草稿",
     "done": "已完成",
-    "open": "进行中"
+    "open": "进行中",
+    "archived": "已归档"
   },
   "sidebar": {
     "wait": {
@@ -1828,8 +1828,7 @@
       "archive": "归档",
       "unarchive": "取消归档",
       "descriptionLabel": "频道说明（选填）",
-      "describe": "编辑说明",
-      "joined": "已加入"
+      "describe": "编辑说明"
     }
   },
   "computeChoice": {

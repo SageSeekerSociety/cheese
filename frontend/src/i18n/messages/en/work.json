@@ -1300,10 +1300,10 @@
     "forbiddenBody": "Only project members can see what is here. If you need access, ask someone on the project to add you"
   },
   "topicState": {
-    "accepted": "Accepted",
     "draft": "Draft",
     "done": "Done",
-    "open": "In progress"
+    "open": "In progress",
+    "archived": "Archived"
   },
   "sidebar": {
     "wait": {
@@ -1828,8 +1828,7 @@
       "archive": "Archive",
       "unarchive": "Unarchive",
       "descriptionLabel": "Description (optional)",
-      "describe": "Edit description",
-      "joined": "Joined"
+      "describe": "Edit description"
     }
   },
   "computeChoice": {

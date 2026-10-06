@@ -192,7 +192,11 @@ function onMenuToggle(open: boolean) {
       <template v-else>
         <span
           class="text-truncate"
-          :class="{ 'title-unread': row.unreadTotal > 0 || fresh, 'title-muted': muted && row.unreadTotal === 0 }"
+          :class="{
+            'title-unread': row.unreadTotal > 0 || fresh,
+            'title-muted': muted && row.unreadTotal === 0,
+            'title-visiting': row.topic.joined === false,
+          }"
           :data-user-content="row.topic.title || undefined"
           >{{ topicTitle(row.topic) }}</span
         >
@@ -285,6 +289,11 @@ function onMenuToggle(open: boolean) {
 .title-unread {
   font-weight: 650;
   color: var(--text);
+}
+/* 正在看、还没加入的频道：斜体，说明它只是此刻摆在这里（离开就不在侧栏了）。 */
+.title-visiting {
+  font-style: italic;
+  color: var(--muted);
 }
 /* 静音：名字退到次要色，没有 @我的时候整行都安静。 */
 .title-muted {

@@ -193,7 +193,7 @@ useCommands(roomCommands)
       />
 
       <ChannelNotifyMenu
-        v-if="topic.joined"
+        v-if="topic.joined && topic.status !== 'archived'"
         :level="store.levelOf(topic.id)"
         :muted-until="store.mutedUntil(topic.id)"
         @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"

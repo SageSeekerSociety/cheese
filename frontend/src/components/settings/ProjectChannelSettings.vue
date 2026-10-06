@@ -166,9 +166,6 @@ async function setJoined(topic: Topic, joined: boolean) {
             topic.description
           }}</span>
         </span>
-        <span v-if="topic.joined" class="channel-row__joined t-meta">{{
-          t('work.projectSettings.channels.joined')
-        }}</span>
         <BaseButton
           v-if="topic.joined"
           kind="ghost"
@@ -282,10 +279,6 @@ async function setJoined(topic: Topic, joined: boolean) {
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.channel-row__joined {
-  flex: none;
-  color: var(--faint);
 }
 .channel-row__field {
   flex: 1 1 auto;
