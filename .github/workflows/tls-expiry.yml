@@ -1,0 +1,66 @@
+name: Intranet certificate expiry
+
+# Certificates that only machines inside the dev network can reach, so no
+# outside uptime check sees them expire. On 2026-10-06 the Proxmox API's
+# certificate expired and every cloud sandbox create failed for 7.4 hours
+# before anyone noticed. Each name below renews itself; this is what says so
+# when a renewal stops working, two weeks before it matters.
+
+on:
+  schedule:
+    - cron: '17 9 * * *' # 09:17 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 5
+    env:
+      WEBHOOK: ${{ secrets.FEISHU_ALERT_WEBHOOK }}
+      # host:port, space-separated. pve119 is the Proxmox API MicroCloud
+      # creates every cloud host through (renewed by PVE's own ACME).
+      ENDPOINTS: pve119.okcheese.com:8006
+      MIN_DAYS: '14'
+    steps:
+      - name: Fail if a certificate expires within MIN_DAYS
+        id: check
+        run: |
+          set -uo pipefail
+          problems=""
+          now="$(date +%s)"
+          for endpoint in $ENDPOINTS; do
+            host="${endpoint%:*}"
+            end="$(echo | timeout 15 openssl s_client -connect "$endpoint" \
+              -servername "$host" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null)"
+            if [ -z "$end" ]; then
+              echo "::error::$endpoint: no certificate read"
+              problems="$problems $endpoint（读不到证书）"
+              continue
+            fi
+            days=$(( ($(date -d "${end#notAfter=}" +%s) - now) / 86400 ))
+            echo "$endpoint: ${end#notAfter=} (${days} days left)"
+            if [ "$days" -le "$MIN_DAYS" ]; then
+              echo "::error::$endpoint: certificate expires in ${days} days"
+              problems="$problems $endpoint（剩 ${days} 天）"
+            fi
+          done
+          if [ -n "$problems" ]; then
+            echo "problems=$problems" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Tell the team a certificate is about to expire
+        if: ${{ failure() && env.WEBHOOK != '' }}
+        env:
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          text="$(printf '内网证书快过期了：%s\n自动续期可能停了。这一轮：%s' \
+            "${PROBLEMS:-见运行日志}" "$RUN_URL")"
+          body="$(TEXT="$text" python3 -c 'import json, os; print(json.dumps({"msg_type": "text", "content": {"text": os.environ["TEXT"]}}))')"
+          curl -sS -m 15 -X POST "$WEBHOOK" -H 'Content-Type: application/json' \
+            --data "$body" || echo "::warning::could not reach the alert webhook"
