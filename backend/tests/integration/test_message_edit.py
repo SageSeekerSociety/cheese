@@ -19,6 +19,7 @@ from app.main import app
 from tests.conftest import stub_compute, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     open_task,
     post_message,
@@ -187,8 +188,9 @@ def _private_room(client) -> tuple[str, str, str]:
 
 
 def _shared_room(client) -> tuple[str, str, str]:
+    """A 支线 of a shared channel: where a message calling 芝士 is answered."""
     room, project = _room(client)
-    return room, project, "alice"
+    return in_thread(client, room, "alice"), project, "alice"
 
 
 ROOMS = pytest.mark.parametrize(

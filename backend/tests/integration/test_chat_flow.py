@@ -7,7 +7,9 @@ from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
+    open_task,
     post_message,
     post_project,
     room_agent_seat,
@@ -34,6 +36,12 @@ def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
     assert tr.status_code == 200
     topic_id = tr.json()["data"]["id"]
     return project_id, topic_id
+
+
+def _create_project_and_thread(client, owner: str = "user-1") -> tuple[str, str]:
+    """A project and a 支线 in its channel: where 芝士 answers when called."""
+    project_id, topic_id = _create_project_and_topic(client, owner)
+    return project_id, in_thread(client, topic_id, owner)
 
 
 def test_health(client):
@@ -71,7 +79,7 @@ def test_create_topic_requires_existing_project(client):
 
 
 def test_blocks_empty_then_populated_after_chat(client):
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
 
     r = client.get(f"/topics/{topic_id}/blocks")
     assert r.json()["data"]["total"] == 0
@@ -128,7 +136,7 @@ def test_blocks_empty_then_populated_after_chat(client):
 
 
 def test_session_id_persisted_for_resume(client):
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
         _drain_until_done(ws)
@@ -139,24 +147,21 @@ def test_session_id_persisted_for_resume(client):
         _drain_until_done(ws)
 
 
-def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hooks):
-    """The whole point of writing the notice down, end to end.
-
-    A session keeps the system prompt it was started with, so the document the
-    agent is holding is the one from turn one. An edit that lands between turns
-    has no running session to be pushed at — it waits on the event, and the next
-    turn is handed it the way it is handed a message somebody typed.
-    """
-    _, topic_id = _create_project_and_topic(client)
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        post_message(client, topic_id, "user-1", {"content": "@芝士 开工"})
-        _drain_until_done(ws)
+def test_a_persons_doc_edit_is_told_to_the_tasks_agent(client):
+    """A session keeps the system prompt it was started with, so the document
+    the agent is holding is the one from its start. An edit a person makes
+    lands in the task as a line, and that line carries what 芝士 is told: where
+    the document changed and to read it again — not the new text itself, which
+    would displace the work instead of informing it."""
+    # A task's document: channels and 支线 have none.
+    _, room_id = _create_project_and_topic(client)
+    task_id = open_task(client, room_id, owner="user-1", reviewer="user-1")["id"]
 
     doc = "# 目标\n\n做推荐\n\n## 验收标准\n\nRecall@10 > 0.15\n"
     for version, content in ((0, doc), (1, doc.replace("0.15", "0.25"))):
         assert (
             client.put(
-                _doc(client, topic_id),
+                _doc(client, task_id),
                 json={
                     "content": content,
                     "expected_version": version,
@@ -166,22 +171,18 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
             == 200
         )
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        post_message(client, topic_id, "user-1", {"content": "@芝士 接着做"})
-        _drain_until_done(ws)
-
-    said = stub_hooks.last_prompt
-    assert said is not None
+    blocks = client.get(
+        f"/topics/{task_id}/blocks", headers=session_auth_headers("user-1")
+    ).json()["data"]["data"]
+    told = [
+        (b.get("meta") or {}).get("agent_notice") or ""
+        for b in blocks
+        if (b.get("meta") or {}).get("action") == "doc"
+    ]
+    said = told[-1]
     assert "实况文档已被" in said and "第 2 版" in said
     assert "「验收标准」" in said
-    # It locates the change without carrying it: a document pushed at a turn
-    # displaces the work instead of informing it.
     assert "Recall@10 > 0.25" not in said
-    # And having been read, it is not said again.
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        post_message(client, topic_id, "user-1", {"content": "@芝士 继续"})
-        _drain_until_done(ws)
-    assert "实况文档已被" not in (stub_hooks.last_prompt or "")
 
 
 def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
@@ -192,7 +193,7 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
 
     The private index is the speaker's only: an index is paid for every turn,
     and a project is wider than the people in this room."""
-    project_id, topic_id = _create_project_and_topic(client)
+    project_id, topic_id = _create_project_and_thread(client)
 
     async def _seed() -> None:
         async with client.test_factory() as session:
@@ -280,13 +281,14 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     # each tagged with who said it (§8.4 multi-person disambiguation).
     # Two speakers means two sockets: authorship is pinned to the connection's
     # token, so one socket can only ever speak as one person.
-    project_id, topic_id = _create_project_and_topic(client, owner="alice")
+    project_id, room_id = _create_project_and_topic(client, owner="alice")
     join_project_team(client, project_id, "bob")
     client.post(
-        f"/topics/{topic_id}/members",
+        f"/topics/{room_id}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
+    topic_id = in_thread(client, room_id, "alice")
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         post_message(client, topic_id, "alice", {"content": "先随便说一句"})
         quiet = _drain_until_done(ws)
@@ -303,13 +305,13 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     prompt = stub_hooks.last_prompt or ""
     assert "[alice]: 先随便说一句" in prompt
     assert "[bob]: 再补一句" in prompt
-    assert f"[alice]: <@{room_agent_seat(client, topic_id)}> 芝士看看" in prompt
+    assert f"[alice]: <@{room_agent_seat(client, room_id)}> 芝士看看" in prompt
 
 
 def test_a_reply_brings_the_message_it_answers(stub_hooks, client):
     # 回复一条前一轮已经读过的消息并 @ 芝士：那条不在待读里了，原文得跟着这次回复
     # 进 prompt，否则「按这条改」到了芝士那里没有「这条」。
-    _, topic_id = _create_project_and_topic(client, owner="alice")
+    _, topic_id = _create_project_and_thread(client, owner="alice")
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         post_message(
             client, topic_id, "alice", {"content": "B 组第 7 行录错了，应该是 0.42"}
@@ -343,7 +345,7 @@ def _drain_until_done(ws) -> list[dict]:
 def test_debug_turns_records_lifecycle(client):
     """可 debug: /debug/turns exposes each turn's lifecycle summary (status,
     timings, tool counts) without grepping logs."""
-    _, topic_id = _create_project_and_topic(client)
+    _, topic_id = _create_project_and_thread(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):

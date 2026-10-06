@@ -27,6 +27,7 @@ from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -35,8 +36,9 @@ from tests.support.room_reader import room_reader
 
 
 def _room(client, owner: str = "alice") -> str:
+    """A 支线 in the project's channel: where 芝士 answers when called."""
     project = post_project(client, {"name": "P"}, owner=owner).json()["data"]
-    return project["root_topic_id"]
+    return in_thread(client, project["root_topic_id"], owner)
 
 
 def _until_done(ws) -> list[dict]:
@@ -417,6 +419,7 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
         json={"project_id": project["id"], "title": "换进程"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
+    room = in_thread(client, room, "alice")
     topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
@@ -471,6 +474,7 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
         json={"project_id": project["id"], "title": "交接"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
+    room = in_thread(client, room, "alice")
     topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
@@ -558,7 +562,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
         json={"project_id": project["id"], "title": "队友"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    topic = uuid.UUID(room)
+    channel_id = uuid.UUID(room)
 
     async def seat_teammate() -> None:
         async with client.test_factory() as session:
@@ -569,11 +573,14 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
                 display_name="Opus",
             )
             await TopicMemberService(session).ensure_agent_seat(
-                topic, agent_instance_handle(made.id)
+                channel_id, agent_instance_handle(made.id)
             )
             await session.commit()
 
     client.portal.call(seat_teammate)
+    # The teammate is seated in the channel and answers in a 支线 of it.
+    room = in_thread(client, room, "alice")
+    topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(

@@ -11,6 +11,7 @@ admin may manage the roster, plain members may not.
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -24,6 +25,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -460,6 +462,11 @@ class TopicMemberService:
         着有一个收件人，落到正文里的 @ 却谁也对不上，于是事件送出去了、却什么也不会
         发生。没人可点就是没人可点，如实答 None。
         """
+        if room_id is None:
+            # A 支线 seats nobody of its own: its channel's roster answers.
+            room_id = await self._session.scalar(
+                select(Thread.room_id).where(Thread.id == topic_id)
+            )
         if not await self.agent_handles(room_id or topic_id):
             return None
         return await self.resolve_agent_handle(topic_id, room_id=room_id)

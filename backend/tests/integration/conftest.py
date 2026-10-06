@@ -404,6 +404,18 @@ def chat_ws_url(topic_id: str, handle: str) -> str:
     return f"/topics/{topic_id}/chat?token={session_token(handle)}"
 
 
+def in_thread(client, room_id: str, handle: str) -> str:
+    """A 支线 in the channel ``room_id``, opened by ``handle`` under a message
+    of theirs: where 芝士 answers once it is called. Its id works wherever a
+    room's did — `/messages`, `/blocks`, the chat socket."""
+    said = post_message(client, room_id, handle, {"content": "这件事在支线里说"})
+    response = client.post(
+        f"/blocks/{said['id']}/thread", headers=session_auth_headers(handle)
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["id"]
+
+
 def post_message(client, topic_id: str, handle: str, body: dict) -> dict:
     """``handle`` says something in the room the way the browser does: a POST
     with a fresh ``request_id``, authenticated as ``handle``. Returns the stored

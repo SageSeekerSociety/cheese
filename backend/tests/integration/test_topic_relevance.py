@@ -27,6 +27,7 @@ from tests.ask_fixtures import active_ask, legacy_question
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     post_message,
     post_project,
@@ -285,9 +286,11 @@ def test_a_question_waits_on_whoever_summoned_the_agent(
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    with active_ask(client, stub_hooks, monkeypatch, tid, actor="bob") as headers:
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, tid, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="bob") as headers:
         r = client.post(
-            f"/topics/{tid}/asks",
+            f"/topics/{thread}/asks",
             json={
                 "questions": [
                     {
@@ -331,9 +334,11 @@ def test_a_question_awaits_only_whoever_started_the_turn(
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    with active_ask(client, stub_hooks, monkeypatch, tid, actor="bob") as headers:
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, tid, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="bob") as headers:
         r = client.post(
-            f"/topics/{tid}/asks",
+            f"/topics/{thread}/asks",
             json={
                 "questions": [
                     {

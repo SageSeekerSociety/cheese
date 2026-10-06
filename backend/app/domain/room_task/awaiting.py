@@ -52,6 +52,8 @@ class WaitingItem:
     #: 排序用：这件事最后一次动是什么时候。
     at: datetime
     block_id: uuid.UUID | None = None
+    #: The 支线 the question was asked in, when it was: the item opens there.
+    thread_id: uuid.UUID | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -65,5 +67,6 @@ class WaitingItem:
             "phrase": self.phrase,
             "reason": self.reason,
             "blockId": str(self.block_id) if self.block_id else None,
+            "threadId": str(self.thread_id) if self.thread_id else None,
             "at": self.at.isoformat(),
         }

@@ -1013,8 +1013,9 @@ class DeviceChannel(Channel):
         if screen is None or screen.project_id is None:
             return False
         # A task's or a 支线's session sits on a seat of its own in the room.
-        async with self._sessions() as db:
-            inner = await conversations.is_inner(db, topic_id)
+        if inner := screen.resource_id not in (None, topic_id):
+            async with self._sessions() as db:
+                inner = await conversations.is_inner(db, topic_id)
         state = machine_launcher.state_dir(
             screen.project_id,
             screen.resource_id or topic_id,

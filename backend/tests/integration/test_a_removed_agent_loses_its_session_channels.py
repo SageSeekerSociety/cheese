@@ -17,6 +17,7 @@ import pytest
 from app.api.routes import llm_proxy
 from app.domain.agent.harness.channel import mint_session_token
 from tests.integration.conftest import (
+    chat_ws_url,
     new_project,
     post_message,
     room_agent_seat,
@@ -192,17 +193,20 @@ def test_a_turn_running_when_its_agent_is_taken_off_is_stopped_and_its_calls_ref
 
     stub_hooks.emit_turn = turn
     seat = room_agent_seat(client, room)
-    token = mint_session_token(pid, room, seat)
-    post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-    assert _until(lambda: _working(client, room) == [seat])
+    asked = post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
+    # It works in the message's 支线, with that 支线's credential.
+    thread = _thread_of(client, asked["id"])
+    token = mint_session_token(pid, uuid.UUID(thread), seat)
+    assert _until(lambda: _working_in(client, thread) == [seat])
     assert _admission(client, token)["allow"] is True
 
     _take_off(client, room, seat)
 
-    assert _until(lambda: _working(client, room) == [])
+    assert _until(lambda: _working_in(client, thread) == [])
     assert _admission(client, token)["allow"] is False
     assert _model_call(client, token) == 403
-    assert _channels(client, pid, room, token)["executor"] == 403
+    # Its executor is addressed by its own conversation, the 支线.
+    assert _channels(client, pid, thread, token)["executor"] == 403
 
 
 def _working(client, room: str) -> list[str]:
@@ -212,6 +216,30 @@ def _working(client, room: str) -> list[str]:
         for entry in got.json()["data"]["activity"]
         if entry["kind"] == "working"
     ]
+
+
+def _working_in(client, conversation: str) -> list[str]:
+    """Who a socket opened on ``conversation`` now is told is working."""
+    with client.websocket_connect(chat_ws_url(conversation, "alice")) as ws:
+        ws.send_json({"type": "ping"})
+        snapshots = []
+        while True:
+            frame = ws.receive_json()
+            if frame["type"] == "activity_snapshot":
+                snapshots.append(frame)
+            if frame["type"] == "pong":
+                break
+    members = snapshots[-1]["members"] if snapshots else []
+    return [entry["member"] for entry in members if entry["kind"] == "working"]
+
+
+def _thread_of(client, block_id: str) -> str:
+    """The 支线 a call to 芝士 in the main line is answered in."""
+    opened = client.post(
+        f"/blocks/{block_id}/thread", headers=session_auth_headers("alice")
+    )
+    assert opened.status_code == 200, opened.text
+    return opened.json()["data"]["id"]
 
 
 def _until(check, timeout: float = 10.0) -> bool:

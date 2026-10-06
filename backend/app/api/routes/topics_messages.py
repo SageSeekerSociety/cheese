@@ -101,6 +101,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.room_task.services import TaskService
+from app.domain.thread.services import answered_in
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -236,10 +237,14 @@ async def _summon_the_named(
     from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 
     async with chat.session_factory() as session:
+        block = await BlockRepository(session).get(uuid.UUID(payload["id"]))
         summoned = await record_mentions(
             session,
             project_id=place.project_id,
             room_id=place.room_id,
+            conversation_id=await answered_in(session, block)
+            if block is not None
+            else place.conversation_id,
             block_id=uuid.UUID(payload["id"]),
             author=author,
             content=payload["content"],
@@ -252,6 +257,7 @@ async def _summon_the_named(
             fused = await announce(
                 session,
                 place_id=place.room_id,
+                task_id=place.inner_id,
                 content=say("mentionFused"),
                 meta=notice(
                     EVENT_MENTION_FUSED,
@@ -267,7 +273,7 @@ async def _summon_the_named(
         await session.commit()
     if fused is not None:
         await get_broker().publish(
-            str(place.room_id),
+            str(place.conversation_id),
             {
                 "type": "event_block",
                 "block": BlockOut.model_validate(fused).model_dump(mode="json"),

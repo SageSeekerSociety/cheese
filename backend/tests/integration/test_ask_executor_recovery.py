@@ -16,7 +16,12 @@ from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    in_thread,
+    post_message,
+    post_project,
+)
 from tests.integration.test_claude_session_records import StillWorking, _until
 from tests.integration.test_native_batch_ownership import _blocks
 
@@ -26,7 +31,8 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
         client, {"name": "Ask executor recovery"}, owner="alice"
     ).json()["data"]
     project_id = uuid.UUID(project["id"])
-    topic = uuid.UUID(project["root_topic_id"])
+    # 芝士 answers in a 支线 of the channel.
+    topic = uuid.UUID(in_thread(client, project["root_topic_id"], "alice"))
 
     def service(channel):
         return ChatService(

@@ -231,6 +231,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -1126,7 +1127,7 @@ class ChatService(SessionRecovery, RoomTurns):
         看到」、点下去却什么也没有可读，白烧一轮。
         """
         async with self._sessions() as session:
-            history = await BlockRepository(session).list_for_topic(topic_id)
+            history = await conversation_inputs(session, topic_id)
             return bool(_pending_input_blocks(history))
 
     async def pending_seat(self, topic_id: uuid.UUID) -> str | None:
@@ -1145,7 +1146,7 @@ class ChatService(SessionRecovery, RoomTurns):
         理由同它：一份近似的复制品会在窗口语义改动时悄悄和它分叉。
         """
         async with self._sessions() as session:
-            history = await BlockRepository(session).list_for_topic(topic_id)
+            history = await conversation_inputs(session, topic_id)
             # 从新到旧：最近一次点名是这批消息现在要交给谁的最新说法。
             for block in reversed(_pending_input_blocks(history)):
                 recipient = (block.meta or {}).get("agent_recipient") or {}
@@ -2064,11 +2065,13 @@ class ChatService(SessionRecovery, RoomTurns):
                     # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
                     # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
                     from app.domain.delivery.mention import record_mentions
+                    from app.domain.thread.services import answered_in
 
                     await record_mentions(
                         session,
                         project_id=topic.project_id,
                         room_id=place.room_id,
+                        conversation_id=await answered_in(session, user_block),
                         block_id=user_block.id,
                         author=author,
                         content=content,

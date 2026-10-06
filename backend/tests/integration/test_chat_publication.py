@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -28,8 +29,10 @@ def room(client):
         json={"project_id": project["id"], "title": "Work"},
         headers=session_auth_headers("alice"),
     ).json()["data"]
-    token = mint_scoped_token(project_id=project["id"], topic_id=topic["id"])
-    return topic["id"], {"X-Cheese-Token": token}
+    # 芝士 answers in a 支线 of the channel: that is where it publishes.
+    thread = in_thread(client, topic["id"], "alice")
+    token = mint_scoped_token(project_id=project["id"], topic_id=thread)
+    return thread, {"X-Cheese-Token": token}
 
 
 def private_room(client):

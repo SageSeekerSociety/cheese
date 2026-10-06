@@ -32,6 +32,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
+from app.domain.thread.models import Thread
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -40,6 +41,7 @@ from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import registered
 from tests.support.hang import HANG_S
 from tests.support.quoted_context import prompt_quote, slide_quote
+from tests.support.threads import thread_in
 
 
 @pytest.mark.anyio
@@ -75,7 +77,8 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
         current = (await members.agent_handles(topic.id))[0]
         other = agent_instance_handle(second.id)
         await members.ensure_agent_seat(topic.id, other)
-        topic_id = topic.id
+        # 芝士 answers in a 支线: that is the conversation the turn runs in.
+        topic_id = await thread_in(session, topic)
         await session.commit()
 
     async def first_turn():
@@ -576,11 +579,17 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
-    await broker.receive_message(svc, topic_id, author="u", content="@芝士 check this")
+    landed = await broker.receive_message(
+        svc, topic_id, author="u", content="@芝士 check this"
+    )
     # The turn ends when it ends. A deadline here raced it and cancelled it
     # mid-turn when a loaded runner was slower than the deadline.
     await runner.drain(timeout_s=60)
-    await finish_turn(svc, topic_id)
+    # Said in the main line, it is answered in the message's 支线.
+    async with factory() as session:
+        thread = await Thread.of_root(session, landed)
+    assert thread is not None
+    await finish_turn(svc, thread.id)
     assert "check this" in screen.last_prompt
 
 
@@ -618,7 +627,8 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
         )
         second_seat = agent_instance_handle(second.id)
         await TopicMemberService(session).ensure_agent_seat(topic.id, second_seat)
-        topic_id = topic.id
+        # Both teammates answer in a 支线 of the channel they sit in.
+        topic_id = await thread_in(session, topic, "u")
         await session.commit()
     async for _ in svc.converse(
         topic_id=topic_id, author="u", content="First task", summon=True
@@ -876,7 +886,7 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
         await TopicMemberService(session).ensure_agent_seat(
             topic.id, agent_instance_handle(second.id)
         )
-        topic_id = topic.id
+        topic_id = await thread_in(session, topic, "u")
         await session.commit()
     async for _ in svc.converse(
         topic_id=topic_id, author="u", content="First task", summon=True
@@ -1734,14 +1744,15 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
     async with factory() as session:
         await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
-        rooms = [
-            (
-                await TopicService(session).create(
-                    project_id=project.id, title=title, created_by="u"
-                )
-            ).id
+        channels = [
+            await TopicService(session).create(
+                project_id=project.id, title=title, created_by="u"
+            )
             for title in ("Slow", "Quick")
         ]
+        # 芝士 answers in a 支线 of each channel.
+        rooms = [await thread_in(session, channel, "u") for channel in channels]
+        slow_channel = channels[0].id
         await session.commit()
     slow, quick = rooms
     for room in rooms:
@@ -1752,7 +1763,7 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
         await finish_turn(svc, room)
 
     await before.runtime.stop_listening()
-    after = SlowToReplay(slow)
+    after = SlowToReplay(slow_channel)
     after.root = before.root
     after.sessions = before.sessions
     for session_runner in after.sessions.values():

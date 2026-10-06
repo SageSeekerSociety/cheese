@@ -75,12 +75,18 @@ async def open_thread(session: AsyncSession, block_id: uuid.UUID, *, by: str) ->
     return thread
 
 
-async def answer_place(sessions, block_id: uuid.UUID) -> uuid.UUID:
-    """``answered_in`` for a message just posted, in a transaction of its own."""
+async def answer_place(
+    sessions, block_id: uuid.UUID | None, posted_in: uuid.UUID
+) -> uuid.UUID:
+    """Where a message just posted in ``posted_in`` is answered
+    (``answered_in``), in a transaction of its own: there, when it calls no
+    one (``block_id`` None) or was not stored."""
+    if block_id is None:
+        return posted_in
     async with sessions() as session:
         block = await session.get(Block, block_id)
         if block is None:
-            raise NotFoundError("Block not found")
+            return posted_in
         conversation = await answered_in(session, block)
         await session.commit()
     return conversation
@@ -123,3 +129,63 @@ async def waiting_in_room(session: AsyncSession, room_id: uuid.UUID) -> list[uui
         if conversation not in waiting:
             waiting.append(conversation)
     return waiting
+
+
+async def thread_opening(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> list[Block]:
+    """The message a 支线 hangs under and the files sent with it, when
+    ``conversation_id`` is a 支线's; empty otherwise. They stay in the main
+    line, and they are the 支线's first input all the same."""
+    root_id = await session.scalar(
+        select(Thread.root_block_id).where(Thread.id == conversation_id)
+    )
+    if root_id is None:
+        return []
+    root = await session.get(Block, root_id)
+    if root is None:
+        return []
+    files = await session.scalars(
+        select(Block)
+        .where(
+            Block.conversation_id == root.conversation_id,
+            Block.turn_id == root.id,
+            Block.kind == BlockKind.attachment,
+        )
+        .order_by(Block.created_at, Block.id)
+    )
+    return [root, *files]
+
+
+async def conversation_inputs(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> list[Block]:
+    """Everything said in a conversation, oldest first, with a 支线's message
+    and its files in front: what its unread inputs are read from."""
+    from app.domain.block.repositories import BlockRepository
+
+    blocks = await BlockRepository(session).list_for_topic(conversation_id)
+    return [*await thread_opening(session, conversation_id), *blocks]
+
+
+async def threads_of_rooms(
+    session: AsyncSession, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """Every 支线 of these channels, mapped to its channel."""
+    if not room_ids:
+        return {}
+    rows = await session.execute(
+        select(Thread.id, Thread.room_id).where(Thread.room_id.in_(room_ids))
+    )
+    return {thread_id: room_id for thread_id, room_id in rows}
+
+
+def onto_rooms(found: dict, rooms_of: dict[uuid.UUID, uuid.UUID]) -> dict:
+    """What was found per 支线 (``found``, keyed by conversation) said of its
+    channel too, where the channel has nothing of its own: a question 芝士 asks
+    in a 支线 is the channel waiting on that person."""
+    out = dict(found)
+    for thread_id, room_id in rooms_of.items():
+        if thread_id in found and room_id not in out:
+            out[room_id] = found[thread_id]
+    return out

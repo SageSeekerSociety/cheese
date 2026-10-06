@@ -545,7 +545,9 @@ class StubChannel(SeatChannel):
                     session,
                     self.device,
                     state,
-                    str(topic_id),
+                    # Where it was placed: its room's machine, which a 支线's
+                    # session shares (`SeatChannel.prepare_session`).
+                    str(session.topic_id),
                     runner.actor,
                     runner.session_id if key in self.gone else None,
                 )

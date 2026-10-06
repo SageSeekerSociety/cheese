@@ -1396,6 +1396,8 @@ class RoomSessions:
                         placed.resource_id,
                         placed.session.agent_handle,
                         placed.agent_handle,
+                        # The seat it was started on: a task's or a 支线's own.
+                        seat=seat_key(placed.agent_handle, placed.session.inner_id),
                     ),
                 ),
                 placed.resume_token,

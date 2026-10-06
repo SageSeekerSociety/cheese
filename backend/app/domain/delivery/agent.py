@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.conversation.services import project_of
+from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ask_receipt_wait import (
     ASK_RECEIPT_WAIT,
     AskReceiptPending,
@@ -183,7 +183,10 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                     row.last_error = "The task is no longer open"
                     continue
             else:
-                topic = await session.get(Topic, row.conversation_id)
+                # A room's own line, or one of its 支线: the roster is the room's.
+                topic = await session.get(
+                    Topic, await room_of(session, row.conversation_id)
+                )
                 if (
                     topic is None
                     or topic.status == TopicStatus.archived

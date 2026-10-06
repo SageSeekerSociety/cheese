@@ -20,6 +20,7 @@ from app.domain.block.repositories import BlockRepository
 from tests.ask_fixtures import active_ask, legacy_question
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     post_project,
     room_agent_seat,
@@ -28,6 +29,7 @@ from tests.integration.conftest import (
 
 
 def _topic(client) -> str:
+    """A 支线 in a channel: where 芝士 answers, and so where it asks."""
     auth = session_auth_headers("user-1")
     p = post_project(client, json={"name": "P"}, headers=auth).json()["data"]
     t = client.post(
@@ -35,7 +37,7 @@ def _topic(client) -> str:
         json={"project_id": p["id"], "title": "T"},
         headers=auth,
     ).json()["data"]
-    return t["id"]
+    return in_thread(client, t["id"], "user-1")
 
 
 @pytest.fixture
@@ -467,6 +469,8 @@ def test_an_unfinished_group_is_not_shadowed_by_a_later_one(
         json={"project_id": project["id"], "title": "周会"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
+    # 芝士在支线里回答，题也在那里问。
+    room = in_thread(client, room, "alice")
 
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
         made = client.post(

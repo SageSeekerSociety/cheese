@@ -22,6 +22,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -35,15 +36,17 @@ PNG_1PX = bytes.fromhex(
 
 
 def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
-    """一个房间，外加这个房间里芝士的凭据。"""
+    """一条支线，外加芝士在这条支线里的凭据。"""
     project = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     topic = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "T"},
         headers=session_auth_headers(owner),
     ).json()["data"]
-    token = mint_scoped_token(project_id=project["id"], topic_id=topic["id"])
-    return project["id"], topic["id"], {"X-Cheese-Token": token}
+    # 芝士 answers in a 支线, so that is where this file's conversation is.
+    thread = in_thread(client, topic["id"], owner)
+    token = mint_scoped_token(project_id=project["id"], topic_id=thread)
+    return project["id"], thread, {"X-Cheese-Token": token}
 
 
 def _say(client, topic_id: str, text: str, *, summon: bool) -> None:

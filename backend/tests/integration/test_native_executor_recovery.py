@@ -21,7 +21,12 @@ from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
 from app.main import app
 from tests.conftest import settle_turn
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    in_thread,
+    post_message,
+    post_project,
+)
 from tests.integration.test_claude_session_records import _until
 from tests.integration.test_native_batch_ownership import _blocks
 from tests.support.seat_channel import SeatChannel
@@ -39,7 +44,9 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
     project = post_project(
         client, {"name": "Native executor recovery"}, owner="alice"
     ).json()["data"]
-    project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
+    project_id = uuid.UUID(project["id"])
+    # 芝士 answers in a 支线 of the channel.
+    topic = uuid.UUID(in_thread(client, project["root_topic_id"], "alice"))
     runner = None
     operations = []
 

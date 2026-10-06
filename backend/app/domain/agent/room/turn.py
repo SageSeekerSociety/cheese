@@ -53,6 +53,7 @@ from app.domain.agent.queries import (
     require_pinned_seat,
 )
 from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.room.thread_context import thread_context as _thread_context
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skills
@@ -82,6 +83,7 @@ from app.domain.room_task.models import TaskStatus, TaskTitleSource
 from app.domain.room_task.place import Place, PlaceResolver, doc_text_of
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
+from app.domain.thread.services import thread_opening, threads_of_rooms
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.usage.ledger import team_terms
@@ -139,54 +141,6 @@ def _is_dm(topic: Topic) -> bool:
     谁」，退路是项目默认的芝士；答错「这间房有没有名册」，正文就出了房间。
     """
     return topic.is_private
-
-
-#: How many of the main line's messages before a 支线's message its session
-#: opens with: what was being talked about when it was said.
-THREAD_CONTEXT_MESSAGES = 10
-
-
-async def _thread_context(session: "AsyncSession", room: Topic, root) -> str:
-    """What a 支线's session is told about where it is: the channel, the
-    message the 支线 hangs under and what the main line said just before it,
-    and the channel's tasks still open — so a piece of work that already has a
-    task is pointed to rather than proposed again."""
-    from app.domain.room_task.services import TaskService
-
-    def line(block) -> str:
-        return f"[{block.author}] {block.content}"
-
-    earlier = await BlockRepository(session).messages_before(
-        room.id, root.created_at, limit=THREAD_CONTEXT_MESSAGES
-    )
-    parts = [
-        f"你在频道「#{room.title}」的一条支线里。这里的人 @ 你，你才回答。"
-        "你只读：可以看代码、跑只读的命令、查资料，不改项目，不交付，不摆预览；"
-        "要改的事用 `cheese_task` 提议成任务。别处定过的事不记得时，用 "
-        "`cheese_chat_search` 加 `channel` 搜整个频道。",
-        "",
-        "支线挂在主线的这条消息下面：",
-        line(root),
-    ]
-    if earlier:
-        parts += ["", "这条消息之前，主线上说的是：", *map(line, earlier)]
-    open_tasks = [
-        task
-        for task in await TaskService(session).list_in_room(room.id)
-        if task.status == TaskStatus.open
-    ]
-    if open_tasks:
-        parts += [
-            "",
-            "这个频道里还在进行的任务（要做的事已经有任务了，就告诉人去那个任务，"
-            "不再提议）：",
-            *(
-                f"- {task.title}"
-                + (f"（负责人 @{task.owner_handle}）" if task.owner_handle else "")
-                for task in open_tasks
-            ),
-        ]
-    return "\n".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,8 +403,11 @@ class RoomTurns:
             agent = project and await AgentInstanceService(session).for_seat_handle(
                 project, seat
             )
+            # It sat in the room for the room's 支线 too: their work stops as well.
+            threads = list(await threads_of_rooms(session, [topic_id]))
         if agent is not None:
-            await self._compute.dismiss(topic_id, agent.handle)
+            for conversation in (topic_id, *threads):
+                await self._compute.dismiss(conversation, agent.handle)
 
     def _session_system_prompt(
         self, *, needs_place: bool, has_doc: bool, role: str | None, harness: str
@@ -576,15 +533,12 @@ class RoomTurns:
             # This conversation's OWN line: a room's history leaves out its
             # tasks' conversations, and a task's is only its own.
             history = await blocks.turn_history(place.conversation_id)
-            # A 支线's first input is the message it hangs under, which stays in
-            # the channel's main line: read it in while no turn has read it.
-            thread_root = (
-                await blocks.get(place.thread.root_block_id)
-                if place.thread is not None
-                else None
-            )
-            if thread_root is not None:
-                history = [thread_root, *history]
+            # A 支线's first input is the message it hangs under and its files,
+            # which stay in the channel's main line: read them in while no turn
+            # has read them.
+            opening = await thread_opening(session, place.conversation_id)
+            root = opening[0] if opening else None
+            history = [*opening, *history]
             phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_input_blocks(history)
             # Kept apart from `pending` on purpose: that list answers
@@ -625,7 +579,7 @@ class RoomTurns:
             )
             pending = [block for block in pending if _addressed_to(block, agent.handle)]
             # Holds and waiting answers are kept per conversation, as inputs
-            # are registered: a task's own, not its room's.
+            # are registered: a task's or a 支线's own, not its room's.
             held = await held_blocks(
                 session,
                 project_id=topic.project_id,
@@ -824,8 +778,8 @@ class RoomTurns:
                 place.conversation_id, excluding=prompt_pending_ids
             )
             thread_context = (
-                await _thread_context(session, topic, thread_root)
-                if thread_root is not None
+                await _thread_context(session, topic, root)
+                if root is not None
                 else None
             )
             # Resolve the room choice, then the explicit project default.

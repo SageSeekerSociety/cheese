@@ -22,6 +22,7 @@ from app.domain.usage.models import ResourceUsage
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     room_agent_seat,
@@ -36,7 +37,8 @@ def _room(client) -> tuple[str, str]:
         json={"project_id": project["id"], "title": "房间"},
         headers=session_auth_headers("u"),
     ).json()["data"]
-    return project["id"], topic["id"]
+    # 芝士 answers in a 支线 of the channel: that is where its session works.
+    return project["id"], in_thread(client, topic["id"], "u")
 
 
 def _one_ordinary_turn(client, topic_id: str) -> None:
@@ -194,6 +196,8 @@ def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
         headers=session_auth_headers("alice"),
     )
     assert seated.status_code == 200, seated.text
+    # Seated in the channel, the teammate answers in a 支线 of it.
+    room_id = in_thread(client, room_id, "alice")
 
     def say(content: str) -> None:
         with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:

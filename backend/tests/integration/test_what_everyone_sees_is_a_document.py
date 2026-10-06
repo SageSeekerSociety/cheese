@@ -14,8 +14,11 @@ everyone` 往这份文档里追加的那一路——它把总览写成了只增�
 读不到——写在别块的字一个字都不该进提示词。
 """
 
+import uuid
+
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -47,12 +50,35 @@ def _overview_room(client, project_id: str) -> str:
 
 
 def _say(client, topic_id: str, text: str = "@芝士 现在什么状态") -> None:
-    """在这一轮里说一句话，等它跑完。提示词落在 `stub_hooks` 上。"""
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        post_message(client, topic_id, "user-1", {"content": text})
+    """在这个房间的一条支线里叫芝士说一句，等它跑完——人叫芝士，芝士在支线里
+    答。提示词落在 `stub_hooks` 上。"""
+    thread = in_thread(client, topic_id, "user-1")
+    with client.websocket_connect(chat_ws_url(thread, "user-1")) as ws:
+        post_message(client, thread, "user-1", {"content": text})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break
+
+
+def _overview_turn(client, overview: str) -> None:
+    """总览房间自己那一轮：主线上只剩平台起的轮次（比如环境修复请求）。"""
+    from app.api.deps import get_chat_service
+    from tests.conftest import settle_turn
+
+    chat = client.app.dependency_overrides[get_chat_service]()
+
+    async def run() -> None:
+        async for _frame in chat.converse(
+            topic_id=uuid.UUID(overview),
+            author="system",
+            content="看一下项目现在的状态",
+            summon=True,
+            nudge_event="平台请芝士看一下项目",
+        ):
+            pass
+        await settle_turn(chat, uuid.UUID(overview))
+
+    client.portal.call(run)
 
 
 def _doc_text(client, topic_id: str) -> str:
@@ -115,7 +141,7 @@ def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hoo
         headers=session_auth_headers("user-1"),
     )
 
-    _say(client, overview)
+    _overview_turn(client, overview)
 
     assert stub_hooks.last_system_prompt is not None
     prompt = stub_hooks.told
@@ -140,7 +166,7 @@ def test_the_overview_room_reads_the_other_blocks_from_the_data(client, stub_hoo
         headers=session_auth_headers("user-1"),
     )
 
-    _say(client, overview)
+    _overview_turn(client, overview)
 
     assert stub_hooks.last_system_prompt is not None
     prompt = stub_hooks.told

@@ -283,11 +283,11 @@ class InProcessBroker:
         if duplicate:
             return turn_id
         # A message to 芝士 in a channel's main line is answered in its 支线.
-        answer_in = topic_id
-        if mentioned:
-            answer_in = await answer_place(chat_service.session_factory, user_block_id)
-            if answer_in != topic_id:
-                live_delivery_expected = chat_service.has_running_turn(answer_in)
+        answer_in = await answer_place(
+            chat_service.session_factory, user_block_id if mentioned else None, topic_id
+        )
+        if answer_in != topic_id:
+            live_delivery_expected = chat_service.has_running_turn(answer_in)
         if self._message_subscriber is not None:
             self._message_subscriber(
                 chat_service,

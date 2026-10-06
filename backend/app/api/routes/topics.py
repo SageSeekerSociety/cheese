@@ -58,6 +58,7 @@ from app.domain.room_task.services import (
     TaskService,
 )
 from app.domain.thread import reads as thread_reads
+from app.domain.thread.services import onto_rooms, threads_of_rooms
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.repositories import (
     SortOrder,
@@ -130,6 +131,20 @@ def _viewer(actor: Actor) -> str | None:
     the default already says — so it is filtered out here instead.
     """
     return actor.handle if actor.handle != "anonymous" else None
+
+
+async def _awaiting_an_answer(
+    db: AsyncSession, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str | None]:
+    """Which channels wait on an answer, and from whom: their own line's
+    question, or one 芝士 asked in one of their 支线."""
+    thread_rooms = await threads_of_rooms(db, room_ids)
+    found = await BlockRepository(db).awaiting_an_answer([*room_ids, *thread_rooms])
+    return {
+        place: who
+        for place, who in onto_rooms(found, thread_rooms).items()
+        if place in room_ids
+    }
 
 
 def _asks_me(
@@ -311,7 +326,7 @@ async def list_topics(
         else set()
     )
     # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
-    asked = await BlockRepository(db).awaiting_an_answer([t.id for t in topics])
+    asked = await _awaiting_an_answer(db, [t.id for t in topics])
     asks_me = _asks_me(asked, _viewer(actor))
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
@@ -427,7 +442,7 @@ async def get_topic(
         if actor.authenticated
         else set()
     )
-    asked = await BlockRepository(db).awaiting_an_answer([topic.id])
+    asked = await _awaiting_an_answer(db, [topic.id])
     waits = await MemberWaits(db).for_rooms(
         [topic.id], now=datetime.now(UTC), stuck_rooms=_stuck_on_checks(live)
     )
@@ -663,7 +678,7 @@ async def read_chat_message(
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
-    block = await _history_block(repo, place.room_id, block_id)
+    block = await _history_block(repo, place.conversation_id, block_id)
     item = BlockOut.model_validate(block).model_dump(mode="json")
     item["reactions"] = await repo.reactions_for_block(block_id)
     return ok(item)
@@ -876,9 +891,10 @@ async def write_topic_progress(
         # The global development token opens the room but is nobody, and a
         # message needs an author.
         raise ForbiddenError("Sign in to write a checklist")
-    # A task's or a 支线's checklist is written by its own session, and shown
-    # as its progress; a room's by an agent seated in it, as a message.
-    inner_id = place.inner_id
+    # A task's checklist is written by the task's own session, and shown as its
+    # progress; a room's or a 支线's by an agent seated in the room, as a
+    # message in that conversation.
+    inner_id = place.task_id
     plans_the_turn = (
         resolver.credential_conversation() == inner_id
         if inner_id is not None
@@ -891,7 +907,7 @@ async def write_topic_progress(
     current = None
     if inner_id is None and not body.new:
         current = await BlockRepository(db).current_checklist(
-            place.room_id, actor.handle, message=body.message
+            place.conversation_id, actor.handle, message=body.message
         )
         if current is None and body.message is not None:
             raise NotFoundError("Checklist not found in this room")
@@ -930,6 +946,7 @@ async def write_topic_progress(
     message = await chat._persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
+        inner_id=place.thread_id,
         text=await project_refs_text(db, place.project_id, place.room_id, text),
         turn_id=turn_id,
         reply_to=None,
@@ -944,7 +961,7 @@ async def write_topic_progress(
     )
     assert message is not None  # a publication with no eid never deduplicates
     await get_broker().publish(
-        str(place.room_id), {"type": "assistant_block", "block": message}
+        str(place.conversation_id), {"type": "assistant_block", "block": message}
     )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
@@ -1000,9 +1017,10 @@ async def summon_agent(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    if chat.has_running_turn(place.room_id):
+    # The conversation the button is in: a 支线's or a task's retry runs there.
+    if chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
-    if not await chat.has_unread_input(place.room_id):
+    if not await chat.has_unread_input(place.conversation_id):
         return ok({"started": False, "reason": "nothing_pending"})
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
@@ -1015,14 +1033,14 @@ async def summon_agent(
     # 句话。没人被点名（没 @ 不等于没说），或者被点名的那位已经不在名册上（被请出
     # 房间），才回落到默认席位。
     members = TopicMemberService(db)
-    seat = await chat.pending_seat(place.room_id)
+    seat = await chat.pending_seat(place.conversation_id)
     if seat is None or seat not in await members.agent_handles(place.room_id):
         seat = await members.addressable_agent_handle(place.room_id)
     runner.submit(
         chat,
-        place.room_id,
+        place.conversation_id,
         author="system",
-        content="有人请你看一下房间里还没读到的消息，照常处理。",
+        content="有人请你看一下这里还没读到的消息，照常处理。",
         # 点名的是按下这个按钮的人，不是平台：他指名这个房间的芝士，寻址结果里
         # 因此恰好有它一个，这一轮才跑得起来。
         addressed=addressed_to_agent(seat),

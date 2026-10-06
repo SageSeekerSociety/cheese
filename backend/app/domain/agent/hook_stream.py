@@ -82,6 +82,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.memory.models import MemoryScope
+from app.domain.room_task.place import PlaceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -1040,15 +1041,19 @@ async def _note_reachability(
         "state": "waiting",
         "at": datetime.now(UTC).isoformat(),
     }
+    # The line lands in the conversation the turn runs in: a task's or a
+    # 支线's own, under its room.
+    async with sessions() as session:
+        place = await PlaceResolver(session).conversation(topic_id)
     await _keep_note(
         sessions,
         waiting_notes,
-        topic_id,
+        place.room_id if place is not None else topic_id,
         work_id,
         say("deviceWaiting"),
         meta,
         author=state.acting_agent if state is not None else None,
-        inner_id=None,
+        inner_id=place.inner_id if place is not None else None,
         channel=str(topic_id),
     )
 
