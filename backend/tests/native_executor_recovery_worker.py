@@ -140,17 +140,8 @@ async def run(descriptor):
         status = await channel.call(channel.handle, "ping", {})
         assert status["pid"] == descriptor["native_pid"]
         assert not any(method in ("send", "steer") for method in channel.calls)
-        http = descriptor["mode"].startswith("http-")
         busy = descriptor["mode"].endswith("busy")
-        http_result = None
-        if http:
-            from tests.native_http_recovery import answer_after_recovery
-
-            assert status["working"] == busy
-            http_result = await answer_after_recovery(
-                descriptor, chat, channel, factory
-            )
-        elif busy:
+        if busy:
             assert status["working"] and status["work_id"] == str(work)
             assert (topic, work) in chat._hook_work
             assert await chat.notify_running_turn(
@@ -205,9 +196,7 @@ async def run(descriptor):
                     select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
-            assert len(rows) == (3 if http else 2)
-            if http:
-                assert all(row.completed_at for row in rows)
+            assert len(rows) == 2
             assert {row.native_session_id for row in rows} == {descriptor["native"]}
             assert all(row.echoed_at and row.settled_at for row in rows)
             assert all(
@@ -259,22 +248,13 @@ async def run(descriptor):
             assert all(t.stopped_at for t in turns), "a turn was left running"
             if busy:
                 assert {row.execution_work_id for row in rows} == {work}
-                # Both HTTP answers are steered into the running work (two
-                # steers, no sends). They owe a reply, so the runner moves the
-                # gate-waiting Bash to the background; when that task's
-                # notification lands after the work's result, the session runs
-                # one more turn of its own, recorded as a second row. That turn
-                # is real model work, so only the socket path, which never
-                # backgrounds, can promise one row.
-                if not http:
-                    assert len(turns) == 1
-                assert channel.calls.count("steer") == (2 if http else 1)
+                assert len(turns) == 1
+                assert channel.calls.count("steer") == 1
                 assert channel.calls.count("send") == 0
             else:
-                count = 3 if http else 2
-                assert len({row.execution_work_id for row in rows}) == count
-                assert len(turns) == count
-                assert channel.calls.count("send") == (2 if http else 1)
+                assert len({row.execution_work_id for row in rows}) == 2
+                assert len(turns) == 2
+                assert channel.calls.count("send") == 1
                 assert channel.calls.count("steer") == 0
         print(
             json.dumps(
@@ -285,7 +265,6 @@ async def run(descriptor):
                     "send": channel.calls.count("send"),
                     "steer": channel.calls.count("steer"),
                     "turns": len(turns),
-                    "http": http_result,
                     "input_states": channel.input_states,
                 }
             ),

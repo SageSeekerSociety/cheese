@@ -871,19 +871,9 @@ class AgentWorkRunner:
             recipient_instance_id=recipient_instance_id,
         )
         if delivery_id is not None:
-            from app.domain.agent.answer_delivery import run_with_answer_offer
             from app.domain.delivery.agent import run_attempt
 
-            work = run_with_answer_offer(
-                self, chat_service, topic_id, delivery_id, turn_id, content, work
-            )
-            work = run_attempt(
-                chat_service.session_factory,
-                delivery_id,
-                turn_id,
-                work,
-                chat=chat_service,
-            )
+            work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
         task = asyncio.create_task(
             work,
             name=f"turn:{turn_id}",
@@ -2090,14 +2080,12 @@ class AgentWorkRunner:
             return
         lifecycle = {"started": False, "session_owned": False}
         try:
-            from app.domain.agent.answer_delivery import admitted_initial
+            from app.domain.agent.initial_admission import admitted_initial
 
             async with admitted_initial(
                 chat_service,
                 topic_id,
                 delivery_id,
-                turn_id,
-                content,
                 user_block_id=landed_user_block_id,
                 recipient_instance_id=recipient_instance_id,
                 recipient_handle=recipient_handle,

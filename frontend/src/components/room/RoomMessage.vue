@@ -9,7 +9,6 @@
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block, TodoItem } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
-import type { AskAction, AskFormState } from '../../lib/askPresentation'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -19,7 +18,7 @@ import { fileIcon } from '../../lib/fileKind'
 import { cancelMeasure, observeSize, queueMeasure } from '../../lib/foldMeasure'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
-import AskQuestionForm from '../ask/AskQuestionForm.vue'
+import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
@@ -58,7 +57,6 @@ const props = defineProps<{
   viewer: string
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
   active?: boolean
-  askState?: AskFormState
   /** 这条是队友此刻正在推进的清单（房间在跑，且是它最新的一条）。 */
   live?: boolean
   /** 这一条的头像是这位队友最近出现的那个，它正在干活（或刚干完）：头像的表情。 */
@@ -95,7 +93,7 @@ const emit = defineEmits<{
   (e: 'open-topic', id: string): void
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
-  (e: 'ask-action', block: Block, action: AskAction): void
+  (e: 'ask-reply', block: Block, text: string): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -383,13 +381,11 @@ function renderPlain(text: string): string {
           {{ t('work.room.outbox.edit') }}
         </button>
       </div>
-      <AskQuestionForm
-        v-if="askOptions(block) && !block.meta?.ask_group"
+      <AskQuickReplies
+        v-if="askOptions(block)"
         :block="block"
-        :viewer="viewer"
         :names="refs.mentionNames"
-        :state="askState"
-        @action="emit('ask-action', block, $event)"
+        @reply="emit('ask-reply', block, $event)"
       />
       <!-- 转出去的块指向它变成的东西。房间里转出来的是一个任务，私聊里转出来的
          才是房间——两个字段各指一张表，同时只会有一个非空。 -->

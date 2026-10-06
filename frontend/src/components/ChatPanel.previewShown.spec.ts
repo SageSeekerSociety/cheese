@@ -20,11 +20,6 @@ vi.mock('../api', async () => ({
   chatWsUrl: () => 'ws://test/chat',
 }))
 
-vi.mock('../services/askGroups', async () => ({
-  ...(await vi.importActual<typeof import('../services/askGroups')>('../services/askGroups')),
-  listAwaitingAskGroups: vi.fn().mockResolvedValue([]),
-}))
-
 import ChatPanel from './ChatPanel.vue'
 
 import i18n from '@/i18n'

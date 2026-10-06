@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
-from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent import attachments, machine_launcher
 from app.domain.agent.device_hub import DeviceOffline
@@ -892,7 +891,6 @@ class RoomSessions:
         on_mark: Callable[[uuid.UUID], None],
         register_input: InputRegistrar,
         resume_token: str | None = None,
-        expected_native_session: str | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
         acting: str | None = None,
@@ -912,10 +910,9 @@ class RoomSessions:
 
         An ack, not an answer: what the agent does about it arrives through the
         seat's reading — possibly minutes later, possibly to a different process
-        than the one that sent this. ``expected_native_session`` is an Ask's
-        answer: it may go only into that live conversation, never a cold one.
-        ``owes_reply``: a person wrote this, and the session answers them in the
-        room before it does anything else (`driven/runner.py`)."""
+        than the one that sent this. ``owes_reply``: a person wrote this, and
+        the session answers them in the room before it does anything else
+        (`driven/runner.py`)."""
         # One line per message put to a session: where the platform spent the
         # time between the turn opening and the runner holding the input.
         with timed(
@@ -926,32 +923,21 @@ class RoomSessions:
             work=work_id,
         ) as mark:
             seat = self._seat_of(session)
-            if expected_native_session is not None:
-                live = self.live.get(seat)
-                if (
-                    live is None
-                    or live.conversation != expected_native_session
-                    or live.session.project_id != session.project_id
-                ):
-                    raise ValidationError(
-                        "The original Ask session is not live; no replacement started"
-                    )
-            else:
-                live = await self.ensure(
-                    session,
-                    system_prompt=system_prompt,
-                    resume_token=resume_token,
-                    model=model,
-                    env=env,
-                    acting=acting,
-                    needs_place=needs_place,
-                    reads_only=reads_only,
-                    phases=mark.phases,
-                )
-                mark.lap()
-                message = self._with_project_state(
-                    seat, live, resume_token, session_opening, opening_changes, message
-                )
+            live = await self.ensure(
+                session,
+                system_prompt=system_prompt,
+                resume_token=resume_token,
+                model=model,
+                env=env,
+                acting=acting,
+                needs_place=needs_place,
+                reads_only=reads_only,
+                phases=mark.phases,
+            )
+            mark.lap()
+            message = self._with_project_state(
+                seat, live, resume_token, session_opening, opening_changes, message
+            )
             if not live.takes_inputs:
                 raise InputProtocolUnavailable()
             pictures = self._images(session, images)
@@ -1169,45 +1155,6 @@ class RoomSessions:
         finally:
             self.queues.pop(work_id, None)
 
-    async def ask_origin(self, project_id, topic_id, agent_handle) -> dict | None:
-        """The seat's exact live native identity, starting and sending nothing:
-        the work its session is doing is the work this process has open."""
-        from app.domain.agent.ask_origin import refused
-
-        seat = (topic_id, agent_handle)
-        live = self.live.get(seat)
-        work = self.work.get(seat)
-        if live is None or work is None or live.session.project_id != project_id:
-            refused(
-                "no live session work",
-                topic_id,
-                agent_handle,
-                live=live is not None,
-                work=work,
-            )
-            return None
-        status = await self.host.status(live.ref)
-        if status is None or not status.working or status.work_id != str(work):
-            refused(
-                "session not working on it",
-                topic_id,
-                agent_handle,
-                work=work,
-                reachable=status is not None,
-                working=status.working if status is not None else None,
-                session_work=status.work_id if status is not None else None,
-            )
-            return None
-        if self.live.get(seat) is not live or self.work.get(seat) != work:
-            refused("session changed while reading", topic_id, agent_handle, work=work)
-            return None
-        return {
-            "harness": self.harness,
-            "native_session_id": live.conversation,
-            "work_id": str(work),
-            "recipient_handle": agent_handle,
-        }
-
     async def interrupt(self, session: SessionRef) -> bool:
         """Take the seat's work away; the session and its conversation stay.
         True = the stop reached the session."""
@@ -1278,19 +1225,6 @@ class RoomSessions:
         return {
             conversation for pair_seat, conversation in self.dead if pair_seat == seat
         }
-
-    def holds_conversation(self, topic_id, harness, conversation) -> bool:
-        """Is that exact conversation still attached somewhere in this room?
-
-        A seat outlives its conversations, and an Ask answer may enter only the
-        one that asked it: ``send`` refuses to start another for it. The
-        conversation id is the harness's own, and a room holds it at most once,
-        so the room is enough to identify it."""
-        return self.harness == harness and any(
-            live.conversation == conversation
-            for seat, live in self.live.items()
-            if seat[0] == topic_id
-        )
 
     def holds(self, topic_id, agent_handle=None) -> bool:
         """Is there a session here this process can still reach — for this
