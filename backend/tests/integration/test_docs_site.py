@@ -356,7 +356,7 @@ def test_an_expired_grant_is_refused(client, docs_host, monkeypatch):
     # Handed out longer ago than a grant lasts, as if the browser sat on it.
     earlier = time.time() - access.GRANT_TTL - 5
     with monkeypatch.context() as m:
-        m.setattr(access.time, "time", lambda: earlier)
+        m.setattr(access, "_clock", lambda: earlier)
         grant = _grant(client, person)
     assert _post_grant(client, grant).status_code == 401
 
@@ -412,15 +412,18 @@ def test_signing_out_of_the_platform_signs_out_of_the_docs(client, docs_host, as
 
 
 def test_the_docs_sign_in_ends_when_its_time_is_up(client, docs_host, monkeypatch):
-    monkeypatch.setattr(settings, "docs_session_seconds", 1)
+    monkeypatch.setattr(settings, "docs_session_seconds", 60)
     cookie = docs_cookie(docs_sign_in(client, sign_in(client, "docs-timed")))
-    assert (
-        client.get("/docs/dev-access/check", headers=on_docs(cookie)).status_code == 403
-    )
-    time.sleep(2.1)
-    assert (
-        client.get("/docs/dev-access/check", headers=on_docs(cookie)).status_code == 401
-    )
+    signed_in_at = time.time()
+
+    def check_at(seconds_later: float) -> int:
+        monkeypatch.setattr(access, "_clock", lambda: signed_in_at + seconds_later)
+        return client.get("/docs/dev-access/check", headers=on_docs(cookie)).status_code
+
+    # Still signed in (a reader who is not an admin) just before the minute is
+    # up, and signed out once it is.
+    assert check_at(58) == 403
+    assert check_at(61) == 401
 
 
 # ---------- dev/: platform admins ----------

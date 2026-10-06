@@ -324,7 +324,12 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
 
     main = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["kind"] for b in main] == ["message", "attachment"]
-    answer = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+    # The turn's record reaches the 支线 by its own path: the session's records
+    # are read back and written after the prompt was handed over, so seeing the
+    # prompt does not mean the record is there yet. Wait for it.
+    while not (answer := client.get(f"/topics/{thread}/blocks").json()["data"]["data"]):
+        assert time.monotonic() < deadline, "the 支线's turn left no record"
+        time.sleep(0.2)
     assert [b["kind"] for b in answer] == ["event"]
     assert answer[0]["meta"]["in_room"] is False
 
