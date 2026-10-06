@@ -412,6 +412,10 @@ describe('发题页：从文件导入', () => {
     await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
     const sent = createTask.mock.calls[0][0] as Record<string, unknown>
     expect(sent.name).toBe('用 gdb 定位一次段错误')
+    // 描述带着从 PDF 里抽出的那张插图。
+    const description = JSON.parse(sent.description as string)
+    expect(JSON.stringify(description)).toContain('"type":"image"')
+    expect(JSON.stringify(description)).toContain('https://storage.test/task-images/a.png')
     // 原 PDF 与插图放进了附件。
     expect(sent.attachmentIds).toEqual([911, 912])
   })
