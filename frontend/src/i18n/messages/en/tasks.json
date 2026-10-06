@@ -120,7 +120,7 @@
     "minTeamSize": "Minimum",
     "maxTeamSize": "Maximum",
     "team": "Team",
-    "teamLockingPolicyLockOnApproval": "Lock on approval",
+    "teamLockingPolicyLockOnApproval": "Locked on approval",
     "validation": {
       "categoryRequired": "Choose a category",
       "teamSizeOrder": "The maximum cannot be below the minimum",

@@ -93,7 +93,7 @@
     "advanced": "高级",
     "defaultDeadline": "默认完成期限",
     "taskDescription": "题目描述",
-    "teamLockingPolicyLockOnApproval": "审核通过后锁定",
+    "teamLockingPolicyLockOnApproval": "报名通过后锁定",
     "privacy": {
       "title": "实名信息隐私保护",
       "intro": "为保护参与者隐私，我们对需要实名信息的题目采取了多重保护措施：",
