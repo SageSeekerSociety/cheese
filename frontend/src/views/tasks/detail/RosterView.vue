@@ -32,7 +32,7 @@
       :title="rows.length ? t('tasks.roster.noMatch') : t('tasks.roster.empty')"
     />
 
-    <BaseTable v-else class="rs__grid" :cols="ROSTER_COLS" :label="t('tasks.roster.tableLabel')" min-width="760px">
+    <BaseTable v-else class="rs__grid" :cols="ROSTER_COLS" :label="t('tasks.roster.tableLabel')" min-width="842px">
       <template #head>
         <tr>
           <BaseTableTh>{{ t('tasks.roster.col.who') }}</BaseTableTh>
@@ -226,7 +226,10 @@ import { vRovingTabs } from '@/lib/rovingTabs'
 type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDING' | 'PASSED' | 'FAILED'
 
 // 第一列是谁来领的（名字、团队人数），吃剩下的宽度；其余定宽。
-const ROSTER_COLS = [null, '104px', '96px', '170px', '104px', '150px']
+// 定宽按两种界面语言里最长的那一格量（格内左右各 16px）：状态是英文的
+// 「Awaiting approval」，最新提交是「Version 12 · Yesterday 16:11」。格子不换行，
+// 窄了字就压到下一列上。
+const ROSTER_COLS = [null, '104px', '140px', '208px', '104px', '150px']
 
 const STATUS: Record<Status, { label: string; tone: string }> = {
   CLAIM_PENDING: { label: 'tasks.roster.claimPending', tone: 'muted' },
