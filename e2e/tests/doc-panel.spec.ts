@@ -119,3 +119,41 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
   await expect(prose).toBeFocused();
   expect(await outline()).toBe('none');
 });
+
+// 任务概览是一整列自然滚动：文档、产出、相关排成一列，手指或滚轮在哪儿都能把它滚到底。
+// 文档比屏幕长时，最后一段要能滚进视野；只滚得动一屏、剩下被剪掉，就等于读不到。手机上
+// 留给文档的高度最少，这一条在那里最先坏，所以按手机的尺寸量。
+test('手机上任务概览里的长文档能一路滚到最后一段', async ({ page }) => {
+  await apiLogin(page);
+  await openFirstProject(page);
+  const projectId = projectIdOf(page);
+
+  const room = (await api(page, 'post', '/topics', {
+    project_id: projectId,
+    title: `长文档 ${Date.now()}`,
+  })) as { id: string };
+  const task = (await api(page, 'post', `/topics/${room.id}/tasks`, { title: '长文档' })) as { id: string };
+  const doc = (await api(page, 'get', `/topics/${task.id}/document`)) as { id: string };
+  const paragraphs = Array.from({ length: 80 }, (_, i) => `第 ${i + 1} 段正文。`);
+  await api(page, 'put', `/documents/${doc.id}`, {
+    content: ['# 一份很长的任务文档', '', ...paragraphs, '', '这是最后一段。'].join('\n\n'),
+    expected_version: 0,
+  });
+
+  // 登录走桌面尺寸（等的是左侧栏），进任务页之前再换成手机。
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/projects/${projectId}/topics/${room.id}/tasks/${task.id}?tab=overview`);
+  const prose = page.locator('.doc-prose');
+  const first = prose.getByText('第 1 段正文。');
+  await expect(first).toBeVisible({ timeout: 30_000 });
+  const last = prose.getByText('这是最后一段。');
+  await expect(last).not.toBeInViewport();
+
+  // 人怎么滚就怎么滚：指针放在正文上滚滚轮，不替页面调 scrollIntoView。
+  const box = (await first.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(async () => {
+    await page.mouse.wheel(0, 1500);
+    await expect(last).toBeInViewport({ timeout: 500 });
+  }).toPass({ timeout: 15_000 });
+});
