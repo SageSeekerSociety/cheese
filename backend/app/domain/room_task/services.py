@@ -510,3 +510,14 @@ class RoomLockService:
             return "这个房间自己正在改它"
         task = await TaskRepository(self._session).get(lock.holder_task_id)
         return f"「{task.title}」正在改它" if task else "另一条活正在改它"
+
+
+def said_title(task: Task) -> str:
+    """``task``'s title as a parameter of a room line about it.
+
+    An unnamed task's stored title is the Chinese placeholder, so it goes in as
+    its own sentence and each reader sees their own word for it. A title
+    someone gave is passed as it is, even one that reads like the placeholder."""
+    if task.title_source == TaskTitleSource.placeholder:
+        return say("taskUntitled")
+    return task.title
