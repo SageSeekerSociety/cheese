@@ -384,6 +384,10 @@ async def _may_view_screen(
     """Only a logged-in human who shares the screen's project (a project member/owner)
     or its topic (a topic-roster member) may watch its 现场 (P1 authz shape). Browsers
     can't set an Authorization header on a WS, so the token rides as ``?token=``.
+
+    A screen working in a private channel, or in one of its tasks, is that
+    channel's: only someone seated in it watches, project managers included —
+    the same door as the channel's own routes (``authorize_topic``).
     """
     if not token:
         return False
@@ -392,6 +396,10 @@ async def _may_view_screen(
         return False
     # Membership is keyed by handle.
     handle = claims.handle
+    if screen.topic_id is not None:
+        room = await owner_reads.room_of(session, screen.topic_id)
+        if await owner_reads.members_only(session, room):
+            return await owner_reads.topic_member(session, room, handle)
     if screen.project_id is not None:
         if await owner_reads.project_member(session, screen.project_id, handle):
             return True

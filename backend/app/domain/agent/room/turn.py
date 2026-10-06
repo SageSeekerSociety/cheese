@@ -693,17 +693,16 @@ class RoomTurns:
             # ——用户自己打 @某个归档话题也必须还能变成链接）；
             # `topic_refs_for_prompt` 只是**渲染**进 system prompt 的子集。
             # 私密频道不进别的房间的提示词：它的名字只给在里面的人看。
-            all_topics = [
-                t
-                for t in await topics.list_for_project(topic.project_id)
-                if not t.members_only
-            ]
+            project_topics = await topics.list_for_project(topic.project_id)
+            all_topics = [t for t in project_topics if not t.members_only]
             topic_refs, topic_refs_for_prompt = _topic_ref_lists(
                 all_topics, exclude_id=topic.id
             )
             # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。不租地点的一轮里
             # 没有交付，那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，
             # 前者要说话（第一次交付只能新建），后者一个字都不说，所以给的是 None。
+            # 别的私密频道里交付的不进这份清单，理由同上面的话题列表
+            # （`artifacts.hidden_from_room`）。
             artifact_refs = (
                 [
                     {
@@ -713,7 +712,13 @@ class RoomTurns:
                         "about": a.about,
                     }
                     for a in await project_artifacts.list_for_project(
-                        session, topic.project_id
+                        session,
+                        topic.project_id,
+                        hidden={
+                            t.id
+                            for t in project_topics
+                            if t.members_only and t.id != topic.id
+                        },
                     )
                 ]
                 if needs_place

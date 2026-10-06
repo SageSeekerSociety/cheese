@@ -185,7 +185,11 @@ async def _announce_new_artifact(
     展开区里摆的是清单现在的全部内容 —— 判断「这是不是刚才那一项换了个说法」
     要的正是把两个名字放在一起看，而这一行本身只说得出新的那一个。
     """
-    listed = await artifacts.list_for_project(session, topic.project_id)
+    listed = await artifacts.list_for_project(
+        session,
+        topic.project_id,
+        hidden=await artifacts.hidden_from_room(session, topic.id),
+    )
     await announce(
         session,
         place_id=topic.id,

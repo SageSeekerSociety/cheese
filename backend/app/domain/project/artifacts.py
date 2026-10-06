@@ -60,10 +60,11 @@ id（`reuse`），新建才写名字（`claim`）。名字是给人读的，写�
 """
 
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Boolean, Uuid, column, func, select, table, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,6 +73,15 @@ from app.core.sentences import say
 from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
 from app.domain.review.models import AcceptCard, AcceptStatus
+
+#: 频道表里这里要的三列，按列名读：清单只问一个房间是不是私密频道，为这一句去依
+#: 赖 topic 这个领域会让 project 和 topic 互相依赖（`.importlinter` C3）。
+_rooms = table(
+    "topics",
+    column("id", Uuid),
+    column("project_id", Uuid),
+    column("members_only", Boolean),
+)
 
 #: 名字的长度上限，与 `ProjectArtifact.name` 这一列一致。
 NAME_MAX = 200
@@ -216,7 +226,11 @@ async def for_repository(
 
 
 async def reuse(
-    session: AsyncSession, *, project_id: uuid.UUID, artifact_id: str
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    artifact_id: str,
+    hidden: Collection[uuid.UUID] = (),
 ) -> ProjectArtifact:
     """沿用清单上已经有的那一项 —— 这次交付是它的新一版。
 
@@ -224,8 +238,11 @@ async def reuse(
     `报告` 和 `结题报告` 都是合法名字，按名字认的话一次手滑就是清单上多一项。id
     错了要么解析不出来、要么不在这个项目的清单上，两种都是当场的报错。清单每一轮
     都在系统提示里，id 连着名字一起给，照抄即可；新建的那一次会把新的 id 返回来。
+
+    `hidden` 是递卡这个房间看不见的私密频道（见 `list_for_project`）：清单在这里
+    是那个房间里的人读得到的那一份，报错里列出来的也是。
     """
-    listed = await list_for_project(session, project_id)
+    listed = await list_for_project(session, project_id, hidden=hidden)
     wanted = (artifact_id or "").strip()
     asked = _as_uuid(wanted)
     for row in listed:
@@ -244,7 +261,12 @@ async def reuse(
 
 
 async def claim(
-    session: AsyncSession, *, project_id: uuid.UUID, name: str, about: str
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    name: str,
+    about: str,
+    hidden: Collection[uuid.UUID] = (),
 ) -> ProjectArtifact:
     """声明这次交付做出了一样清单上还没有的东西。
 
@@ -261,7 +283,7 @@ async def claim(
     if not about:
         raise ValidationError(say("artifactNeedsAbout"))
     clean = clean_name(name)
-    listed = await list_for_project(session, project_id)
+    listed = await list_for_project(session, project_id, hidden=hidden)
     if any(row.name == clean for row in listed):
         raise ValidationError(say("artifactNameAlreadyListed", name=clean))
     found = await _by_name(session, project_id=project_id, name=clean)
@@ -366,13 +388,19 @@ async def delete(session: AsyncSession, artifact: ProjectArtifact) -> None:
 
 
 async def list_for_project(
-    session: AsyncSession, project_id: uuid.UUID
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    hidden: Collection[uuid.UUID] = (),
 ) -> list[ArtifactSummary]:
     """这个项目的清单，最近交付的在前，还没落地的排在后面。
 
     在不在清单上由卡决定（见模块开头）：交付落地过，或者有一张在飞的卡正在交付它。
+
+    `hidden` 是读这份清单的人看不见的私密频道。那里递的卡对他不存在：只在那里交付
+    过的一项不在他的清单上，几处都交付过的一项只数他看得见的那几版。
     """
-    claims = _claims()
+    claims = _claims(hidden)
     rows = await session.execute(
         select(
             ProjectArtifact,
@@ -399,10 +427,13 @@ async def list_for_project(
 
 
 async def summary(
-    session: AsyncSession, artifact_id: uuid.UUID
+    session: AsyncSession,
+    artifact_id: uuid.UUID,
+    *,
+    hidden: Collection[uuid.UUID] = (),
 ) -> ArtifactSummary | None:
     """清单上那一行，单独取一项。"""
-    claims = _claims()
+    claims = _claims(hidden)
     found = await session.execute(
         select(ProjectArtifact, claims.c.landed, claims.c.delivered_at)
         .join(claims, claims.c.artifact_id == ProjectArtifact.id)
@@ -470,14 +501,18 @@ def version_payload(
 
 
 async def versions(
-    session: AsyncSession, artifact_id: uuid.UUID
+    session: AsyncSession,
+    artifact_id: uuid.UUID,
+    *,
+    hidden: Collection[uuid.UUID] = (),
 ) -> list[ArtifactVersion]:
-    """这一项交付过的每一版，第一版在前。"""
+    """这一项交付过的每一版，第一版在前 —— 读的人看得见的那几版，按他看得见的数。"""
     found = await session.execute(
         select(AcceptCard)
         .where(
             AcceptCard.artifact_id == artifact_id,
             AcceptCard.status == AcceptStatus.accepted,
+            _outside(hidden),
         )
         .order_by(AcceptCard.decided_at, AcceptCard.created_at)
     )
@@ -498,7 +533,50 @@ async def versions(
     ]
 
 
-def _claims():
+async def hidden_from_room(session: AsyncSession, room_id: uuid.UUID) -> set[uuid.UUID]:
+    """一个房间里说出来的清单不该带上的那些房间：这个项目别的私密频道。
+
+    房间里的话、房间里那一轮的系统提示，房间里的每个人都读得到，所以清单在那里是
+    这个房间看得见的那一份 —— 别处私密频道里交付的东西，在这里说出来就是把它带给
+    了不在那个频道里的人。"""
+    return set(
+        await session.scalars(
+            select(_rooms.c.id).where(
+                _rooms.c.project_id
+                == select(_rooms.c.project_id)
+                .where(_rooms.c.id == room_id)
+                .scalar_subquery(),
+                _rooms.c.members_only.is_(True),
+                _rooms.c.id != room_id,
+            )
+        )
+    )
+
+
+async def kept_from(
+    session: AsyncSession, artifact_id: uuid.UUID, hidden: Collection[uuid.UUID]
+) -> bool:
+    """这一项只在 `hidden` 里那些私密频道交付过：对看不见它们的人，它不存在。
+
+    一张卡都没有的一项（声明它的卡全撤了、或者删过）不算：那里没有可藏的东西。"""
+    if not hidden:
+        return False
+    rooms = set(
+        await session.scalars(
+            select(AcceptCard.topic_id)
+            .where(AcceptCard.artifact_id == artifact_id)
+            .distinct()
+        )
+    )
+    return bool(rooms) and rooms <= set(hidden)
+
+
+def _outside(hidden: Collection[uuid.UUID]):
+    """一张卡不在 `hidden` 那几个房间里递。"""
+    return AcceptCard.topic_id.not_in(list(hidden)) if hidden else true()
+
+
+def _claims(hidden: Collection[uuid.UUID] = ()):
     """每一项产物被声明的情况：落地了几次、有没有人正在交付、最近一次是什么时候。
 
     落地的那个数就是版本 —— 一版是一次交付。存一个计数器要在每条合并成功的路上都
@@ -516,7 +594,7 @@ def _claims():
             .filter(AcceptCard.status == AcceptStatus.accepted)
             .label("delivered_at"),
         )
-        .where(AcceptCard.artifact_id.is_not(None))
+        .where(AcceptCard.artifact_id.is_not(None), _outside(hidden))
         .group_by(AcceptCard.artifact_id)
         .subquery()
     )

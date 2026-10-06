@@ -33,7 +33,7 @@ used to read is dropped a release later still.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import Boolean, Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
@@ -103,6 +103,18 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
         if room is not None:
             return room
     return conversation_id
+
+
+_rooms = table("topics", column("id", Uuid), column("members_only", Boolean))
+
+
+async def members_only(session: AsyncSession, room_id: uuid.UUID) -> bool:
+    """Whether a room is a private channel, seen only by the people in it."""
+    return bool(
+        await session.scalar(
+            select(_rooms.c.members_only).where(_rooms.c.id == room_id)
+        )
+    )
 
 
 async def topic_member(session: AsyncSession, topic_id: uuid.UUID, handle: str) -> bool:

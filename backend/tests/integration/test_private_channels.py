@@ -8,14 +8,27 @@ managers make a public channel private; only someone who manages the project
 makes a private one public again. 综合 is never private.
 """
 
+import time
 import uuid
 
+import pytest
+from starlette.websockets import WebSocketDisconnect
+
 from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import seed_claim, seed_space, seed_task_with_protocol
 from tests.integration.conftest import (
     join_project_team,
     post_message,
     post_project,
     session_auth_headers,
+    session_token,
+)
+from tests.integration.test_accept_pr import app_world  # noqa: F401
+from tests.integration.test_connector_viewer import _register_screen, _unregister
+from tests.integration.test_project_artifacts import (
+    _decide,
+    _file_card,
+    _notice_detail,
 )
 
 
@@ -346,3 +359,203 @@ def test_general_is_never_private(client):
     r = _make(client, p["root_topic_id"], True, by="dave")
     assert r.status_code == 422, r.text
     assert p["root_topic_id"] in _listed(client, p["id"], "bob")
+
+
+# ---- what was made in it -------------------------------------------------------
+
+
+@pytest.fixture
+def delivering(client, request):
+    """Cards that hand over an address, filed through the fake forge."""
+    client.artifact_forge = request.getfixturevalue("app_world")
+
+
+def _deliver(client, room: str, name: str) -> dict:
+    """A card in ``room`` declaring a new artifact ``name``, accepted by alice."""
+    filed = _file_card(client, room, new_artifact=name)
+    assert filed.status_code == 200, filed.text
+    card = filed.json()["data"]
+    decided = _decide(client, card["id"], "accept")
+    assert decided.status_code == 200, decided.text
+    return {"card": card["id"], "artifact": card["artifact"]["id"]}
+
+
+def _catalog(client, pid: str, who: str) -> dict[str, int]:
+    r = client.get(f"/projects/{pid}/artifacts", headers=session_auth_headers(who))
+    assert r.status_code == 200, r.text
+    return {a["name"]: a["version"] for a in r.json()["data"]["data"]}
+
+
+def test_what_was_delivered_in_it_is_not_in_the_project_catalog(client, delivering):
+    p = _project(client)
+    tid = _channel(client, p["id"])
+    secret = _deliver(client, tid, "机密报告")
+    _deliver(client, p["root_topic_id"], "公开报告")
+
+    assert _catalog(client, p["id"], "alice") == {"机密报告": 1, "公开报告": 1}
+    assert _catalog(client, p["id"], "bob") == {"公开报告": 1}
+    assert _catalog(client, p["id"], "dave") == {"公开报告": 1}
+
+    base = f"/projects/{p['id']}/artifacts"
+    nowhere = f"{base}/{uuid.uuid4()}"
+    item = f"{base}/{secret['artifact']}"
+    compare = {"before": secret["card"], "after": secret["card"]}
+    for method, path, kw in (
+        ("get", "", {}),
+        ("get", "/compare", {"params": compare}),
+        ("get", f"/versions/{secret['card']}/file", {}),
+        ("patch", "", {"json": {"name": "改个名"}}),
+        ("delete", "", {}),
+    ):
+        seen = client.request(
+            method, item + path, headers=session_auth_headers("bob"), **kw
+        )
+        missing = client.request(
+            method, nowhere + path, headers=session_auth_headers("bob"), **kw
+        )
+        assert seen.status_code == 404, (method, path, seen.text)
+        assert seen.json()["message"] == missing.json()["message"], (method, path)
+
+    mine = client.get(item, headers=session_auth_headers("alice"))
+    assert mine.status_code == 200, mine.text
+    assert [v["card_id"] for v in mine.json()["data"]["versions"]] == [secret["card"]]
+    compared = client.get(
+        f"{item}/compare", params=compare, headers=session_auth_headers("alice")
+    )
+    assert compared.status_code == 200, compared.text
+
+
+def test_its_deliveries_are_not_counted_in_a_version_seen_from_outside(
+    client, delivering
+):
+    p = _project(client)
+    tid = _channel(client, p["id"])
+    first = _deliver(client, p["root_topic_id"], "结题报告")
+    again = _file_card(client, tid, artifact=first["artifact"])
+    assert again.status_code == 200, again.text
+    assert _decide(client, again.json()["data"]["id"], "accept").status_code == 200
+
+    assert _catalog(client, p["id"], "alice") == {"结题报告": 2}
+    assert _catalog(client, p["id"], "bob") == {"结题报告": 1}
+    page = client.get(
+        f"/projects/{p['id']}/artifacts/{first['artifact']}",
+        headers=session_auth_headers("bob"),
+    )
+    assert page.status_code == 200, page.text
+    assert [v["card_id"] for v in page.json()["data"]["versions"]] == [first["card"]]
+
+
+def test_a_new_artifact_said_in_another_channel_does_not_list_its_items(
+    client, delivering
+):
+    p = _project(client)
+    tid = _channel(client, p["id"])
+    _deliver(client, tid, "机密报告")
+    root = p["root_topic_id"]
+    _file_card(client, root, new_artifact="公开报告")
+
+    listed = _notice_detail(client, root, "公开报告")
+    assert "公开报告" in listed
+    assert "机密报告" not in listed
+
+
+# ---- the screen of an agent working in it -------------------------------------
+
+
+def _watches(client, screen, who: str) -> bool:
+    url = f"/connector/session/{screen.sid}/screen?token={session_token(who)}"
+    try:
+        with client.websocket_connect(url) as ws:
+            ws.send_json({"type": "resize", "cols": 80, "rows": 24})
+            for _ in range(100):
+                if screen.viewers:
+                    return True
+                time.sleep(0.02)
+            return False
+    except WebSocketDisconnect:
+        return False
+
+
+def test_only_its_people_watch_a_screen_working_in_it(client):
+    p = _project(client)
+    tid = _channel(client, p["id"])
+    task = _task(client, tid)
+    pid = uuid.UUID(p["id"])
+
+    for where in (tid, task):
+        screen = _register_screen(
+            project_id=pid, topic_id=uuid.UUID(where), handle="agent-x"
+        )
+        try:
+            # Not whoever manages the project, from outside the channel.
+            assert not _watches(client, screen, "dave"), where
+            assert _watches(client, screen, "alice"), where
+        finally:
+            _unregister(screen)
+
+    public = _register_screen(
+        project_id=pid, topic_id=uuid.UUID(p["root_topic_id"]), handle="agent-x"
+    )
+    try:
+        assert _watches(client, public, "dave")
+    finally:
+        _unregister(public)
+
+
+# ---- counts -----------------------------------------------------------------
+
+
+def test_counts_leave_out_what_is_written_in_it_for_those_outside(client):
+    space_id = seed_space(client, "书院")
+    external = seed_task_with_protocol(client, space_id=space_id)
+    seed_claim(client, external, handle="dave")
+    p = post_project(
+        client, json={"name": "队伍", "external_task_id": external}, owner="dave"
+    ).json()["data"]
+    for handle in ("alice", "bob"):
+        join_project_team(client, p["id"], handle)
+    post_message(client, p["root_topic_id"], "bob", {"content": "大家好"})
+    tid = _channel(client, p["id"])
+    post_message(client, tid, "alice", {"content": "只给在场的人看"})
+    post_message(client, tid, "alice", {"content": "还是只给在场的人看"})
+
+    def board(who):
+        r = client.get(
+            f"/spaces/{space_id}/dashboard", headers=session_auth_headers(who)
+        )
+        assert r.status_code == 200, r.text
+        (card,) = r.json()["data"]["teams"]
+        return card["topic_count"], card["contributions"]["human"]
+
+    def written(who):
+        r = client.get(
+            f"/projects/{p['id']}/contributions", headers=session_auth_headers(who)
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["by_author"]
+
+    def weekly(who):
+        r = client.get(
+            f"/projects/{p['id']}/members/alice/summary",
+            headers=session_auth_headers(who),
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["weekly_contributions"]
+
+    def profile(who):
+        r = client.get("/users/alice/profile", headers=session_auth_headers(who))
+        assert r.status_code == 200, r.text
+        data = r.json()["data"]
+        (row,) = [x for x in data["projects"] if x["project_id"] == p["id"]]
+        return row["contributions"], data["activity"]["total"]
+
+    inside, outside = board("alice"), board("bob")
+    assert inside[0] == outside[0] + 1
+    assert inside[1] == outside[1] + 2
+    assert written("alice").get("alice") == 2
+    assert written("bob").get("alice") is None
+    assert written("bob").get("bob") == 1
+    assert weekly("alice") == 2
+    assert weekly("bob") == 0
+    assert profile("alice") == (2, 2)
+    assert profile("bob") == (0, 0)
