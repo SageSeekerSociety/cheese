@@ -5,6 +5,7 @@ import binascii
 import hashlib
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,6 +18,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # the API layer because the device launcher needs the same string to tell an
 # agent where its app will be mounted, and the domain cannot import the API.
 GATEWAY_MOUNT = "/api"
+
+
+def browser_origin(url: str) -> str:
+    """``scheme://host[:port]`` of ``url`` as a browser writes it in Origin:
+    lower case, and no port when it is the scheme's default."""
+    parts = urlsplit(url.strip().lower())
+    default = {"https": 443, "http": 80}.get(parts.scheme)
+    port = f":{parts.port}" if parts.port and parts.port != default else ""
+    return f"{parts.scheme}://{parts.hostname or ''}{port}"
+
 
 # What an unconfigured development machine or test run encrypts with. Public
 # by construction, so a deployment may never use it; see
@@ -340,22 +351,30 @@ class Settings(BaseSettings):
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
     # into the sandbox instead of the master key, so a sandbox never holds admin
     # credentials and spend is attributable per project — and read back REAL token
-    # usage from /spend/logs (fixes a provider-reported usage=0), and (L2) set a
-    # per-key max_budget from the project's compute grants so the gateway refuses
-    # further calls when the budget is exhausted (the mid-turn brake).
+    # usage from its daily totals per key (fixes a provider-reported usage=0), and
+    # (L2) set a per-key max_budget from the project's compute grants so the
+    # gateway refuses further calls when the budget is exhausted (the mid-turn
+    # brake).
     # Unset (default) =整层关闭: env injection, usage, credits all behave as before.
     llm_gateway_admin_base: str | None = None  # e.g. http://127.0.0.1:4000
     llm_gateway_admin_key: str | None = None  # the LiteLLM master key
 
     # --- Docs site (app/domain/docs_site) ---
-    # Where 问芝士 reads the docs from: the frontend image serves the built
-    # site, so the backend asks its own deployment for the same version readers
-    # see. Unset, 问芝士 answers that it is unavailable.
-    docs_index_url: str | None = "http://frontend/docs/ask-index.json"
-    # The developer pages' index, behind the /docs/dev/ gate; the backend passes
-    # it with an internal pass (docs_site/access.py). Agents read it only in
+    # The docs' own host, as a browser origin: "https://docs.okcheese.com". Empty,
+    # the platform serves them under /docs/ on `frontend_url`. Set, the
+    # platform's /docs/ redirects there and readers sign in to it through the
+    # platform (docs_site/access.py). The frontend reads the same value
+    # (frontend/nginx/), so a compose deployment sets it once, in the deploy
+    # environment the compose file passes to both.
+    docs_origin: str = ""
+    # Where 问芝士 reads the docs from. Unset, the frontend container this
+    # deployment runs, so the backend reads the version readers see
+    # (docs_site/site.py works out the address).
+    docs_index_url: str | None = None
+    # The developer pages' index, behind the dev/ gate; the backend passes it
+    # with an internal pass (docs_site/access.py). Agents read it only in
     # projects whose repository is one of `docs_dev_repositories`.
-    docs_dev_index_url: str | None = "http://frontend/docs/dev/ask-index.json"
+    docs_dev_index_url: str | None = None
     # Projects working on this platform's own code ("owner/repo",
     # case-insensitive): their agents may read the developer docs, and their
     # members and agents may claim feedback (`FeedbackService.may_claim`).
@@ -376,8 +395,9 @@ class Settings(BaseSettings):
     # credits at what the gateway spent, so the model must be priced there.
     assistant_model: str = "deepseek-flash"
     docs_question_retention_days: int = 90
-    # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
-    docs_dev_session_seconds: int = 3600
+    # How long a docs sign-in lasts before the reader goes through the
+    # platform again. It also ends with the platform sign-in it came from.
+    docs_session_seconds: int = 8 * 3600
 
     # --- Topic naming (app/domain/topic/naming.py) ---
     # The platform names rooms itself, off the main agent's turn: a small model
@@ -586,12 +606,12 @@ class Settings(BaseSettings):
     # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
     # cannot reach the CONNECT listener directly. On the ghg network it cannot:
     # measured 2026-08-14, packets to the box's listener port never reach its NIC,
-    # dropped at a hypervisor bridge the box can neither see nor change — while
-    # the gateway path those machines already use for the connector works and
-    # carries websockets. Set this to that path and device subscription turns ride
-    # it instead. Empty = no tunnel, and a device falls back to dialling
-    # `subscription_device_proxy_host` directly (right for a flat network, and the
-    # behaviour every deployment has today).
+    # dropped at a hypervisor bridge the box can neither see nor change. Set, every
+    # device's subscription turns ride the tunnel: a private-control cloud machine
+    # dials it through its loopback forward to the backend
+    # (`machine_address.tunnel_url`), every other device dials this URL. Empty =
+    # no tunnel, and a device dials `subscription_device_proxy_host` directly
+    # (right for a flat network).
     subscription_tunnel_url: str = ""
     # Where the proxy's own CA is mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
@@ -642,19 +662,20 @@ class Settings(BaseSettings):
     # (CONNECTOR_WS_OVERRIDES, commits ce30e62 + 6327c7e).
     connector_ws_overrides: dict[str, str] = {}
 
-    # --- MicroCloud: cloud nodes for the team's compute pool ---
-    # A project remains the billing/audit unit for each machine, but enrollment
-    # binds the resulting device to that project's team. Cheese is one MicroCloud
-    # tenant and keeps the opaque provider secret server-side. Empty secret = the
-    # feature reports itself unavailable without breaking self-hosted compute.
+    # --- MicroCloud: the platform's pool of cloud hosts ---
+    # Every cloud host belongs to the platform, under one MicroCloud customer and
+    # account of its own, and carries the sandboxes of sessions from any project.
+    # Cheese is one MicroCloud tenant and keeps the opaque provider secret
+    # server-side. Empty secret = the feature reports itself unavailable without
+    # breaking self-hosted compute.
     microcloud_base_url: str = ""
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
     microcloud_offering_id: int = 0
-    # Requested spec. Every value is clamped into the chosen offering's own
-    # range, so these are preferences, not guarantees.
+    # The size every cloud host is created with. Every value is clamped into the
+    # chosen offering's own range, so these are preferences, not guarantees.
     microcloud_default_cores: int = 2
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
@@ -685,10 +706,65 @@ class Settings(BaseSettings):
     # machine 477 was never diagnosed. Platform-provisioned machines only: a
     # self-hosted box is someone else's and never gets a key of ours.
     microcloud_operator_ssh_pubkey: str = ""
-    # The billing project's fund account, and the balance kept in it. MicroCloud
-    # bills compute against this; 0 disables top-ups (an operator funds it by hand).
+    # The platform's fund account for its hosts, and the balance kept in it.
+    # MicroCloud bills compute against this; 0 disables top-ups (an operator funds
+    # it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
+    # Sandbox slots per host core: how many sessions' sandboxes one host runs at
+    # once. A sandbox holds its slot while it runs; one asleep holds only disk.
+    cloud_host_slots_per_core: int = Field(default=2, ge=1, le=16)
+    # The disk a session's home is budgeted on its host. A host keeps at most
+    # `disk_gb // this` homes, running or asleep (never fewer than its slots).
+    cloud_sandbox_disk_gb: int = Field(default=5, ge=1, le=1024)
+    # A cloud sandbox is stopped once its room has run no turn and the session
+    # has asked for no tool for this long; its home stays on the host's disk and
+    # the next tool call starts it again.
+    cloud_sandbox_idle_stop_s: int = Field(default=600, ge=60, le=86400)
+    # A command the executor still runs for the session (a Bash call sent to the
+    # background) keeps an otherwise idle sandbox up, but no longer than this
+    # after the session's last activity.
+    cloud_sandbox_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
+    # A home asleep this long is archived to the private bucket and deleted
+    # from its host; the session's next tool call restores it on any host.
+    cloud_sandbox_archive_after_s: int = Field(
+        default=7 * 86400, ge=3600, le=365 * 86400
+    )
+    # Pre-scale: when the free slots of the pool's live hosts fall below this,
+    # the pool sweep claims (or creates) the next host before anyone waits on it.
+    cloud_pool_min_free_slots: int = Field(default=2, ge=0, le=64)
+    # How long a host that runs no sandbox is kept. Then its sleeping homes are
+    # archived and it is released.
+    cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
+    # The most hosts the pool holds at once, legacy hosts draining excluded. It
+    # protects the MicroCloud cluster; a session that finds the pool full is told
+    # capacity is tight and to try later.
+    cloud_pool_max_hosts: int = Field(default=20, ge=1, le=500)
+    # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
+    # The offering a session that asks for a whole machine gets its VM from
+    # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
+    # the choice. Each VM counts against `cloud_pool_max_hosts` like a host.
+    microcloud_vm_offering_id: int = 0
+    # The size every whole cloud VM is created with, clamped into the offering's
+    # own range. One size: what a session is charged is spec × time, and the
+    # spec is recorded on the VM's row.
+    cloud_vm_cores: int = Field(default=4, ge=1)
+    cloud_vm_memory_mb: int = Field(default=8192, ge=1024)
+    cloud_vm_disk_gb: int = Field(default=40, ge=10)
+    # A session's VM is released once its room has run no turn and the session
+    # has asked for no tool for this long, after its work is pushed. The next
+    # tool call prepares a new one, which takes minutes, so this is longer
+    # than a sandbox's idle stop.
+    cloud_vm_idle_release_s: int = Field(default=1800, ge=60, le=7 * 86400)
+    # Credits one cloud sandbox costs per hour it runs, from start to idle stop
+    # (usage/compute.py). Unset on purpose: the price is the product owner's to
+    # set, and with none set no cloud sandbox starts, so cloud compute never
+    # runs free by accident. 0 is an explicit "free".
+    cloud_sandbox_credits_per_hour: float | None = Field(default=None, ge=0)
+    # Credits per hour of a whole cloud VM, by its size as cores and GiB of
+    # memory, e.g. `{"4c8g": 30}` (usage.compute.vm_spec). A size not named
+    # here cannot be started.
+    cloud_vm_credits_per_hour: dict[str, float] = Field(default_factory=dict)
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud by the sweep. Never would let a machine destroyed upstream sit
     # here as `running` forever (which happened, and also consumed the
@@ -963,9 +1039,10 @@ class Settings(BaseSettings):
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
-    # The private bucket, for task snapshot bundles (room_task/snapshots.py);
-    # the public upload bucket is never used for them. The name is the bucket's
-    # first use: it also holds the transcript objects `raw_transcripts` indexes.
+    # The private bucket, for task snapshot bundles (room_task/snapshots.py)
+    # and archived cloud sandbox homes (machine/lifecycle.py); the public upload
+    # bucket is never used for them. The name is the bucket's first use: it also
+    # holds the transcript objects `raw_transcripts` indexes.
     transcript_s3_bucket: str = ""
     s3_endpoint_url: str | None = None
     s3_access_key: str | None = None
@@ -1250,6 +1327,49 @@ class Settings(BaseSettings):
             "deploy/.env.prod.example). If you are sure nobody should, set it "
             "to a handle you control rather than leaving it empty."
         )
+
+    @model_validator(mode="after")
+    def _docs_origin_is_an_origin(self) -> "Settings":
+        """``docs_origin`` is a browser origin of its own, written as browsers do.
+
+        The docs sign-in cookie is minted for exactly this origin and the Origin
+        header of every docs request is compared with it, so it is normalised
+        the way browsers write one (lower case, no default port, no trailing
+        slash) and blank means unset, as the frontend container reads it too.
+        Plain http only on a loopback name, where browsers keep Secure cookies
+        off. And it must not be the platform's own host: the frontend's docs
+        server would then answer every platform request in the platform's place.
+        """
+        value = self.docs_origin.strip()
+        if not value:
+            self.docs_origin = ""
+            return self
+        parts = urlsplit(value.lower())
+        host = parts.hostname or ""
+        local = host == "localhost" or host.endswith(".localhost")
+        if (
+            parts.scheme not in ("https", "http")
+            or (parts.scheme == "http" and not local)
+            or not host
+            or parts.path not in ("", "/")
+            or parts.query
+            or parts.fragment
+            or parts.username
+        ):
+            raise RuntimeError(
+                f"DOCS_ORIGIN={self.docs_origin!r} is not an https origin. "
+                "Write the scheme and host only, e.g. https://docs.okcheese.com "
+                "(http is accepted for *.localhost)."
+            )
+        if host == (urlsplit(self.frontend_url.strip().lower()).hostname or ""):
+            raise RuntimeError(
+                f"DOCS_ORIGIN={self.docs_origin!r} is the platform's own host "
+                f"(FRONTEND_URL={self.frontend_url!r}). The docs need a host of "
+                "their own, such as docs.<platform domain>; leave DOCS_ORIGIN empty "
+                "to serve them under /docs/ on the platform."
+            )
+        self.docs_origin = browser_origin(value)
+        return self
 
     @model_validator(mode="after")
     def _require_data_encryption_key(self) -> "Settings":

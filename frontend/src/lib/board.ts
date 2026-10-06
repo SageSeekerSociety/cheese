@@ -48,6 +48,7 @@ export function columnDotClass(column: BoardColumn): string {
  *  只有 `needs_you` 是暖色且实心：整块板上唯一需要人动手的那一列，应该是唯一抓眼
  *  睛的。其余靠形状分（空心 / 虚线 / 实心），所以把颜色关掉也还读得出来。 */
 export function columnDotStyle(column: BoardColumn): Record<string, string> {
+  if (column === 'not_started') return { borderColor: 'var(--faint)', borderStyle: 'dashed' }
   if (column === 'building') return { borderColor: 'var(--ok)' }
   if (column === 'delivering') return { borderColor: 'var(--ok)', borderStyle: 'dashed' }
   if (column === 'needs_you') return { borderColor: 'var(--warn)', background: 'var(--warn)' }
@@ -58,14 +59,16 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
 /** 板上并排的那几列。
  *
  *  `done` 不在里面：它收进页面底部那条折叠行，板面留给还需要人看的东西。`archived`
- *  也不在：活不归档（只有房间会），一条活永远落不到那一列。 */
-export const BOARD_COLUMNS: BoardColumnSpec[] = (['building', 'delivering', 'needs_you'] as const).map((key) => ({
-  key,
-  get label() {
-    return columnLabel(key)
-  },
-  cls: columnDotClass(key),
-}))
+ *  也不在：任务不归档（只有房间会），一个任务永远落不到那一列。 */
+export const BOARD_COLUMNS: BoardColumnSpec[] = (['not_started', 'building', 'delivering', 'needs_you'] as const).map(
+  (key) => ({
+    key,
+    get label() {
+      return columnLabel(key)
+    },
+    cls: columnDotClass(key),
+  })
+)
 
 /** 同一列里的先后。
  *
@@ -89,8 +92,8 @@ export function compareTasks(a: SortableTask, b: SortableTask): number {
 /** 板上真正要看的那些活：去掉已归档房间里没走完的活。
  *
  *  活不归档，房间归档：一个房间收了尾，里面没走完的活（已退回、待回答）后端照样
- *  按它自己的状态落在施工中 / 交付中 / 待处理里，一挂就是几周。可房间归档了，就
- *  没人会再去动它们——三列答的是「接下来谁要动什么」，它们不该在上面。已完成不筛：
+ *  按它自己的状态落在未开始 / 进行中 / 检查中 / 待处理里，一挂就是几周。可房间归档
+ *  了，就没人会再去动它们——四列答的是「接下来谁要动什么」，它们不该在上面。已完成不筛：
  *  那是交付过的东西，房间归档了也还是交付过。
  *
  *  看板和话题列表顶上那一行摘要都从这一份出发：两处数字对不上，看的人就不知道信
@@ -112,7 +115,7 @@ export function boardColumnCounts(
   for (const task of liveBoardTasks(tasks, archivedRoomIds)) {
     counts.set(task.presentation.column, (counts.get(task.presentation.column) ?? 0) + 1)
   }
-  return (['needs_you', 'building', 'delivering'] as const)
+  return (['needs_you', 'not_started', 'building', 'delivering'] as const)
     .map((key) => ({ key, label: columnLabel(key), count: counts.get(key) ?? 0 }))
     .filter((column) => column.count > 0)
 }

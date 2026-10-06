@@ -106,7 +106,7 @@ async def _project_on_a_device(client):
         db.add(
             AgentTurn(
                 id=uuid.uuid4(),
-                topic_id=rooms["Busy"],
+                conversation_id=rooms["Busy"],
                 continuation_id=uuid.uuid4(),
                 author="alice",
                 started_at=now,
@@ -126,7 +126,11 @@ async def _project_on_a_device(client):
 
 def _pushes(monkeypatch):
     monkeypatch.setattr(
-        work_lease, "device_hub", SimpleNamespace(is_online=lambda device: True)
+        work_lease,
+        "device_hub",
+        SimpleNamespace(
+            target=lambda _device: "linux-amd64", is_online=lambda device: True
+        ),
     )
     remote = AsyncMock(
         side_effect=lambda lease, method, *a, **k: (

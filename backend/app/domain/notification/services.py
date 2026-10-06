@@ -408,7 +408,7 @@ class ProjectNotificationService:
         if row.topic_id is not None and row.project_id is not None:
             block = await BlockRepository(self._session).add(
                 project_id=row.project_id,
-                topic_id=row.topic_id,
+                conversation_id=row.topic_id,
                 author=decided_by,
                 author_type=AuthorType.participant,
                 content=f"【决策】关于「{row.title}」：选择「{chosen}」。",
@@ -419,7 +419,8 @@ class ProjectNotificationService:
             block_payload = BlockOut.model_validate(block).model_dump(mode="json")
             await self._session.commit()
             await get_broker().publish(
-                str(block.topic_id), {"type": "event_block", "block": block_payload}
+                str(block.conversation_id),
+                {"type": "event_block", "block": block_payload},
             )
         return saved
 

@@ -215,6 +215,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   const error = ref<string | null>(null)
+  /**
+   * 话题清单这一块没读到时服务端给的原因，交给侧栏**就地**显示 + 重试
+   * （docs/design-system.md §3.10）。和上面那条 `error`（弹一条就走的全局 toast）
+   * 分开：读不到话题清单要留在它读的那块地方——那条红条几秒就没，之后和「暂无
+   * 话题」长得一模一样，人再也分不出是「坏了」还是「本来就没有」。
+   */
+  const topicsError = ref<string | null>(null)
   function reportError(e: unknown, fallback: string) {
     // 项目在这期间被所有者归档了：那不是一次失败，是这个项目换了状态，整块换成说明。
     if (isProjectArchivedError(e)) {
@@ -350,6 +357,31 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
+  /**
+   * 读一个项目的话题清单，读到了就落进 `topics`，读不到就把服务端那句原因写进
+   * `topicsError`（侧栏就地显示 + 重试）。
+   *
+   * 返回 false 表示这一趟已经作废（项目已经换了）或者「进不来」（401/403 交给
+   * `accessDenied` 那一屏）——两种都不该再往下走。返回 true 表示这一趟算数，调用
+   * 方可以接着刷未读这些跟项目的动作。
+   */
+  async function loadTopicsInto(id: string, revision: number, epoch: number): Promise<boolean> {
+    try {
+      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
+      if (epoch !== projectEpoch || projectId.value !== id) return false
+      if (revision === topicRevision) topics.value = payload.data
+      forgetMissingTopic(id, payload.data)
+      noteArchived(payload.data)
+      return true
+    } catch (e) {
+      // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是侧栏
+      // 里那块就地报错。分不开的话，一次网络抖动会被写成「你没有权限」。
+      if (epoch !== projectEpoch || projectId.value !== id || noteAccess(e)) return false
+      topicsError.value = e instanceof Error ? e.message : t('shell.workspaceErrors.loadTopics')
+      return true
+    }
+  }
+
   // Enter a project: everything project-scoped is reloaded, and anything left
   // over from the previous project is dropped rather than shown as this one's.
   async function openProject(id: string) {
@@ -379,23 +411,24 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     loadingTopics.value = true
     accessDenied.value = null
     openedProject.value = null
+    topicsError.value = null
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
-    try {
-      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
-      if (epoch !== projectEpoch || projectId.value !== id) return
-      if (revision === topicRevision) topics.value = payload.data
-      forgetMissingTopic(id, payload.data)
-      noteArchived(payload.data)
-    } catch (e) {
-      // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是那条
-      // 红条。分不开的话，一次网络抖动会被写成「你没有权限」。
-      if (epoch !== projectEpoch || projectId.value !== id || noteAccess(e)) return
-      reportError(e, t('shell.workspaceErrors.loadTopics'))
-    } finally {
-      if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
-    }
-    void refreshUnread()
+    const proceed = await loadTopicsInto(id, revision, epoch)
+    if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
+    if (proceed) void refreshUnread()
+  }
+
+  /** 侧栏那块「加载话题失败」的「重试」：再读一次当前项目的话题清单。 */
+  async function reloadTopics() {
+    const id = projectId.value
+    if (!id) return
+    const revision = topicRevision
+    const epoch = projectEpoch
+    topicsError.value = null
+    loadingTopics.value = true
+    await loadTopicsInto(id, revision, epoch)
+    if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
   }
 
   /** 已归档的项目本身（名字、所有者）。「项目已归档」那一屏打开时来取。 */
@@ -657,17 +690,17 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  /** 升级出来的东西：房间里的消息变成这个房间的一张**卡**，私聊里的变成一个新
-   *  房间。调用方要据此决定去哪儿——钻进那张卡，还是跳进那个房间。 */
+  /** 转出来的东西：房间里的消息变成这个房间的一个任务，私聊里的变成一个新房间。
+   *  调用方要据此决定去哪儿——打开那个任务，还是跳进那个房间。 */
   async function upgradeMessage(messageId: string): Promise<{ kind: 'card' | 'room'; id: string } | null> {
     try {
       const made = await upgradeBlock(messageId)
       await refreshTopics()
-      // 卡带着「我挂在哪个房间」，房间没有这个问题——这就是分辨它们的那一位。
+      // 任务带着「我挂在哪个房间」，房间没有这个问题——这就是分辨它们的那一位。
       const kind = 'room_id' in made ? 'card' : 'room'
       return { kind, id: made.id }
     } catch (e) {
-      reportError(e, t('shell.workspaceErrors.convertToTopic'))
+      reportError(e, t('shell.workspaceErrors.convertMessage'))
       return null
     }
   }
@@ -695,6 +728,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     activeDmPeer,
     chatPct,
     error,
+    topicsError,
     rootTopic,
     projectName,
     setChatPct,
@@ -702,6 +736,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     refreshProjects,
     refreshMembers,
     refreshTopics,
+    reloadTopics,
     refreshUnread,
     refreshTopicRow,
     loadPlace,

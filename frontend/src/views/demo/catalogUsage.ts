@@ -16,7 +16,12 @@ function days(spent: number[]): CreditUsage['days'] {
     return {
       date: `2026-10-${String(i + 1).padStart(2, '0')}`,
       credits,
-      lines: { collab: (credits ?? 0) * 0.6, ask: (credits ?? 0) * 0.3, write: (credits ?? 0) * 0.1 },
+      lines: {
+        collab: (credits ?? 0) * 0.5,
+        ask: (credits ?? 0) * 0.2,
+        write: (credits ?? 0) * 0.1,
+        compute: (credits ?? 0) * 0.2,
+      },
     }
   })
 }
@@ -76,7 +81,7 @@ const PERSON: CreditUsage = {
     { id: 'p1', name: '空气质量看板', credits: 162 },
     { id: 'p2', name: '课程笔记整理', credits: 40 },
   ],
-  lines: { collab: 202, ask: 52, write: 16 },
+  lines: { collab: 150, ask: 52, write: 16, compute: 52 },
   teams: [
     {
       id: 3,
@@ -118,7 +123,18 @@ const WINDOWED: CreditUsage = {
     { hours: null, calendar: 'week', used_ratio: 0.12, resets_at: '2026-10-18T16:00:00+00:00' },
   ],
   packs: [],
-  lines: undefined,
+  lines: { collab: 150, compute: 52 },
+  teams: undefined,
+}
+
+const TEAM: CreditUsage = {
+  ...PERSON,
+  packs: [],
+  days: days(SPENT).map((d) => ({
+    ...d,
+    lines: { collab: (d.credits ?? 0) * 0.7, compute: (d.credits ?? 0) * 0.3 },
+  })),
+  lines: { collab: 189, compute: 81 },
   teams: undefined,
 }
 
@@ -152,11 +168,17 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
   {
     id: 'team-credits-view',
     title: 'TeamCreditsView',
-    about: '团队的「额度」：方案、本月或各个使用上限、其他额度、每天用量、按项目。',
+    about: '团队的「额度」：方案、本月（按协作、算力分）或各个使用上限、其他额度、每天用量、按项目。',
     file: 'src/views/teams/detail/CreditsView.vue',
     component: TeamCreditsView,
     needs: UI,
     states: [
+      {
+        name: '按月发放的方案',
+        note: '本月的条和每天的柱子按协作和算力分两色；团队没有问答和写作。',
+        props: { usage: TEAM, loading: false, error: null },
+        expect: '算力',
+      },
       {
         name: '按时间窗口限额的方案',
         note: '没有月额度，每个窗口一行，写用了多少和什么时候清零。',

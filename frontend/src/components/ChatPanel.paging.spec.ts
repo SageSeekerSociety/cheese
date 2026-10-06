@@ -59,7 +59,7 @@ const TOPIC = {
 function said(id: string): Block {
   return {
     id,
-    topic_id: TOPIC.id,
+    conversation_id: TOPIC.id,
     kind: 'message',
     author_type: 'participant',
     author: 'someone-else',
@@ -87,7 +87,7 @@ const OLDER = (ids: string[], more = false) => page(ids, more)
 function hiddenEvent(id: string): Block {
   return {
     id,
-    topic_id: TOPIC.id,
+    conversation_id: TOPIC.id,
     kind: 'event',
     author_type: 'system',
     author: 'platform',

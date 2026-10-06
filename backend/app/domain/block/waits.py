@@ -19,7 +19,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import String, Uuid, any_, bindparam, or_, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.authorship import participant_blocks
@@ -30,6 +31,7 @@ from app.domain.block.models import (
     Block,
     BlockKind,
 )
+from app.domain.conversation.services import of_rooms, room_column
 from app.domain.identity.handles import agent_handle_column, recipient_seat
 
 #: Only this far back. A wait is about someone waiting now; a message nobody
@@ -56,6 +58,19 @@ CHECKS_FOR_THE_AGENT = (
 
 #: The reason a failed turn is reported under.
 FAILED = "failed"
+
+
+def _among(column, values, item_type):
+    """`column = ANY(:values)`, one array parameter however many values there are.
+
+    An `IN` list binds each value on its own, so the SQL grows with the list
+    and is compiled on the event loop at every call, then prepared afresh by
+    asyncpg because its text changed. Rooms are counted in hundreds and a
+    week's failed turns in thousands: about 100 ms of loop time per
+    `GET /topics` on dev (2026-10-04), with every other request held behind it.
+    Past 32767 values asyncpg refuses the query, and the page with it.
+    """
+    return column == any_(bindparam(None, list(values), type_=ARRAY(item_type)))
 
 
 @dataclass(frozen=True)
@@ -140,17 +155,16 @@ class MemberWaits:
     ) -> dict[tuple[uuid.UUID, str], datetime]:
         """{(room, agent): when it last said something on the room's own line}."""
         stmt = (
-            select(Block.topic_id, Block.author, Block.created_at)
+            select(Block.conversation_id, Block.author, Block.created_at)
             .where(
-                Block.topic_id.in_(topic_ids),
-                Block.task_id.is_(None),
+                _among(Block.conversation_id, topic_ids, Uuid),
                 Block.kind == BlockKind.message,
                 Block.created_at >= since,
                 participant_blocks(),
                 agent_handle_column(Block.author),
             )
-            .order_by(Block.topic_id, Block.author, Block.created_at.desc())
-            .distinct(Block.topic_id, Block.author)
+            .order_by(Block.conversation_id, Block.author, Block.created_at.desc())
+            .distinct(Block.conversation_id, Block.author)
         )
         return {
             (room, author): at
@@ -179,9 +193,8 @@ class MemberWaits:
         a stuck one is not swallowed. A platform notice is not the agent
         answering, and people talking to each other wake nobody.
         """
-        stmt = select(Block.topic_id, Block.created_at, Block.meta).where(
-            Block.topic_id.in_(topic_ids),
-            Block.task_id.is_(None),
+        stmt = select(Block.conversation_id, Block.created_at, Block.meta).where(
+            _among(Block.conversation_id, topic_ids, Uuid),
             Block.kind == BlockKind.message,
             Block.created_at >= since,
             participant_blocks(),
@@ -211,22 +224,26 @@ class MemberWaits:
         """
         if not topic_ids:
             return []
-        under_room = (Block.topic_id.in_(topic_ids), Block.created_at >= since)
+        under_room = (
+            of_rooms(Block.conversation_id, topic_ids),
+            Block.created_at >= since,
+        )
+        room = room_column(Block.conversation_id).label("room")
         events = (
-            select(Block.topic_id, Block.created_at)
+            select(room, Block.created_at)
             .where(
                 *under_room,
                 ~participant_blocks(),
                 Block.meta["event_type"].as_string().in_(CHECKS_FOR_THE_AGENT),
             )
-            .order_by(Block.topic_id, Block.created_at.desc())
-            .distinct(Block.topic_id)
+            .order_by(room, Block.created_at.desc())
+            .distinct(room)
         )
         touched = (
-            select(Block.topic_id, Block.author, Block.created_at)
+            select(room, Block.author, Block.created_at)
             .where(*under_room, participant_blocks(), agent_handle_column(Block.author))
-            .order_by(Block.topic_id, Block.created_at.desc())
-            .distinct(Block.topic_id)
+            .order_by(room, Block.created_at.desc())
+            .distinct(room)
         )
         last_touch = {
             room: (author, at)
@@ -252,16 +269,17 @@ class MemberWaits:
     async def _machine_events(self, topic_ids, since, spoke):
         """{room: (newest machine event, when)} since an agent last spoke there."""
         event = Block.meta["event_type"].as_string()
+        room = room_column(Block.conversation_id).label("room")
         stmt = (
-            select(Block.topic_id, event, Block.created_at)
+            select(room, event, Block.created_at)
             .where(
-                Block.topic_id.in_(topic_ids),
+                of_rooms(Block.conversation_id, topic_ids),
                 Block.created_at >= since,
                 ~participant_blocks(),
                 MACHINE_EVENT_ROWS,
             )
-            .order_by(Block.topic_id, Block.created_at.desc())
-            .distinct(Block.topic_id)
+            .order_by(room, Block.created_at.desc())
+            .distinct(room)
         )
         return {
             room: (kind, at)
@@ -277,10 +295,9 @@ class MemberWaits:
         agent that wrote in it, or the one the message that started it was
         handed to."""
         stmt = (
-            select(Block.topic_id, Block.turn_id, Block.created_at)
+            select(Block.conversation_id, Block.turn_id, Block.created_at)
             .where(
-                Block.topic_id.in_(topic_ids),
-                Block.task_id.is_(None),
+                _among(Block.conversation_id, topic_ids, Uuid),
                 Block.created_at >= since,
                 ~participant_blocks(),
                 FAILED_TURN_ROWS,
@@ -308,12 +325,20 @@ class MemberWaits:
             return {}
         owners: dict[uuid.UUID, str] = {}
         prompts = select(Block.meta).where(
-            Block.topic_id.in_(topic_ids),
+            of_rooms(Block.conversation_id, topic_ids),
             Block.created_at >= since,
             Block.kind == BlockKind.message,
             or_(
-                Block.meta[PROMPTED_TURN_META_KEY].as_string().in_(map(str, turns)),
-                Block.meta[CONSUMED_TURN_META_KEY].as_string().in_(map(str, turns)),
+                _among(
+                    Block.meta[PROMPTED_TURN_META_KEY].as_string(),
+                    map(str, turns),
+                    String,
+                ),
+                _among(
+                    Block.meta[CONSUMED_TURN_META_KEY].as_string(),
+                    map(str, turns),
+                    String,
+                ),
             ),
         )
         for (meta,) in (await self._session.execute(prompts)).all():
@@ -324,7 +349,7 @@ class MemberWaits:
         wrote = (
             select(Block.turn_id, Block.author)
             .where(
-                Block.turn_id.in_(turns),
+                _among(Block.turn_id, turns, Uuid),
                 participant_blocks(),
                 agent_handle_column(Block.author),
             )

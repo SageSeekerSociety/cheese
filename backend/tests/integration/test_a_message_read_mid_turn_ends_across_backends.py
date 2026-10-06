@@ -72,7 +72,7 @@ def _rows(client, model, topic: uuid.UUID, *where) -> list:
         async with client.test_factory() as session:
             return list(
                 await session.scalars(
-                    select(model).where(model.topic_id == topic, *where)
+                    select(model).where(model.conversation_id == topic, *where)
                 )
             )
 

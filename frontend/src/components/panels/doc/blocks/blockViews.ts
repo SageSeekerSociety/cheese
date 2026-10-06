@@ -15,6 +15,7 @@
 //     in ignoreMutation; otherwise ProseMirror reads the change as an edit and
 //     rebuilds the block.
 import type { AnyExtension, Editor, NodeViewRendererProps } from '@tiptap/core'
+import type { Transaction } from '@tiptap/pm/state'
 import type { NodeView } from '@tiptap/pm/view'
 import type { CalloutKind } from '../../../../lib/docSchema/blocks'
 import type { AgentHook } from './mermaidView'
@@ -41,7 +42,7 @@ import {
   timelineItemShape,
   timelineShape,
 } from './shapes'
-import { posOf } from './viewKit'
+import { arrive, depart, posOf, slideFrom } from './viewKit'
 
 import { t } from '@/i18n'
 
@@ -52,8 +53,30 @@ const own =
   (m: { type: string; target: Node }) =>
     (m.type === 'attributes' && m.target === dom) || controls.some((c) => c.contains(m.target))
 
+/** Run `act` on the node at `pos` once it has played its way out; edits made
+ *  meanwhile (by anyone) move `pos` along, and a node they delete is left alone. */
+function afterLeaving(editor: Editor, pos: number, act: (pos: number) => void): void {
+  let at: number | null = pos
+  const follow = ({ transaction }: { transaction: Transaction }) => {
+    if (at === null) return
+    const mapped = transaction.mapping.mapResult(at)
+    at = mapped.deleted ? null : mapped.pos
+  }
+  editor.on('transaction', follow)
+  void depart(editor.view.nodeDOM(pos) as Element | null).then(() => {
+    editor.off('transaction', follow)
+    if (at !== null) act(at)
+  })
+}
+
 /** Remove the item at `pos`; the last item of a block takes the block with it. */
 function removeItem(editor: Editor, pos: number): void {
+  const $pos = editor.state.doc.resolve(pos)
+  if ($pos.parent.childCount === 1) dropItem(editor, pos)
+  else afterLeaving(editor, pos, (at) => dropItem(editor, at))
+}
+
+function dropItem(editor: Editor, pos: number): void {
   const { state } = editor
   const $pos = state.doc.resolve(pos)
   const node = state.doc.nodeAt(pos)
@@ -77,6 +100,7 @@ function addItemAfter(editor: Editor, pos: number): void {
   tr.setSelection(TextSelection.create(tr.doc, at + 2))
   editor.view.dispatch(tr.scrollIntoView())
   editor.view.focus()
+  arrive(editor.view.nodeDOM(at) as Element | null)
 }
 
 function moveItem(editor: Editor, pos: number, step: -1 | 1): void {
@@ -86,12 +110,19 @@ function moveItem(editor: Editor, pos: number, step: -1 | 1): void {
   const index = $pos.index()
   const other = $pos.parent.maybeChild(index + step)
   if (!node || !other) return
+  // Where the two were, to slide each from there to its new place.
+  const otherPos = step < 0 ? pos - other.nodeSize : pos + node.nodeSize
+  const was = (at: number) => (editor.view.nodeDOM(at) as Element | null)?.getBoundingClientRect()
+  const movedFrom = was(pos)
+  const otherFrom = was(otherPos)
   const tr = state.tr.delete(pos, pos + node.nodeSize)
   const at = step < 0 ? pos - other.nodeSize : pos + other.nodeSize
   tr.insert(at, node)
   tr.setSelection(TextSelection.create(tr.doc, at + 2))
   editor.view.dispatch(tr.scrollIntoView())
   editor.view.focus()
+  slideFrom(editor.view.nodeDOM(at) as Element | null, movedFrom)
+  slideFrom(editor.view.nodeDOM(step < 0 ? at + node.nodeSize : pos) as Element | null, otherFrom)
 }
 
 // ---- Callout: the kind is a label at the top; picking it opens the five kinds.
@@ -233,25 +264,26 @@ const columnView: ViewFactory = ({ editor, getPos }) => {
           tr.setSelection(TextSelection.create(tr.doc, at + 2))
           editor.view.dispatch(tr)
           editor.view.focus()
+          arrive(editor.view.nodeDOM(at) as Element | null)
         },
       })
     }
     items.push({
       label: t('work.room.doc.blocks.removeColumn'),
       run: () => {
-        const { state } = editor
-        const node = state.doc.nodeAt(pos)
-        if (!node) return
-        const tr = state.tr
         // Two columns are the fewest: removing one leaves the other's content in place.
         if (count <= 2) {
           const other = $pos.parent.child($pos.index() === 0 ? 1 : 0)
-          tr.replaceWith($pos.before(), $pos.after(), other.content)
-        } else {
-          tr.delete(pos, pos + node.nodeSize)
+          editor.view.dispatch(editor.state.tr.replaceWith($pos.before(), $pos.after(), other.content))
+          editor.view.focus()
+          return
         }
-        editor.view.dispatch(tr)
-        editor.view.focus()
+        afterLeaving(editor, pos, (at) => {
+          const node = editor.state.doc.nodeAt(at)
+          if (!node) return
+          editor.view.dispatch(editor.state.tr.delete(at, at + node.nodeSize))
+          editor.view.focus()
+        })
       },
     })
     menuAt(handle, items)
@@ -342,6 +374,7 @@ const footnoteRefView: ViewFactory = ({ node, editor }) => {
     if (note && editor.isEditable) {
       const go = document.createElement('button')
       go.type = 'button'
+      go.className = 'doc-menu__item'
       go.textContent = t('work.room.doc.blocks.editFootnote')
       go.addEventListener('click', () => {
         closePopover()

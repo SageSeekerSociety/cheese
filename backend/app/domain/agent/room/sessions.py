@@ -43,6 +43,7 @@ from app.domain.agent.harness.driven.subscription import (
     Seat,
 )
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.agent.place import seat_key
 from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_CODE,
     PROMPT_UNDELIVERED_MESSAGE,
@@ -109,6 +110,11 @@ MemoryConsumer = Callable[[uuid.UUID], Awaitable[None]]
 # do is take the next thing somebody typed, and that is a failure with a person
 # on the other end of it.
 UnreadProbe = Callable[[uuid.UUID], float | None]
+
+# A seat whose session went quiet while it may not be what the backend would
+# start today (``prewarm_due``): the room brings it up to date then, so the
+# restart is not paid by the next person's message.
+QuietListener = Callable[[SessionRef], None]
 
 # How long a session's runner may go unanswered while work is owed before the
 # work is called dead. Longer than the connection owner takes to come back after
@@ -236,16 +242,17 @@ class RoomSessions:
         self.reader: RoomReader | None = None
         self.unread: UnreadProbe | None = None
         self._memory: MemoryConsumer | None = None
+        self._quiet: QuietListener | None = None
+        # Seats this process took over and has not yet brought up to date with
+        # what it would start today: a release changes what a session is
+        # launched with, and no turn here has compared it yet.
+        self.unchecked: set[Seat] = set()
 
     # --- the machine pool ----------------------------------------------------
 
     @property
     def name(self) -> str:
         return self.channel.name
-
-    @property
-    def provisions_machine(self) -> bool:
-        return self.channel.provisions_machine
 
     @property
     def deferred_work(self) -> bool:
@@ -258,19 +265,49 @@ class RoomSessions:
     def available(self) -> bool:
         return self.channel.available()
 
-    async def prepare_topic(self, **kwargs) -> tuple[bool, str]:
-        return await self.channel.prepare_topic(**kwargs)
-
     def report_to(
         self,
         reader: "RoomReader",
         *,
         unread: "UnreadProbe",
         memory: "MemoryConsumer",
+        quiet: "QuietListener | None" = None,
     ) -> None:
         """The room's books: where it hears its sessions, where it says what
-        it sent that is still unread, and where its memory is reconciled."""
+        it sent that is still unread, where its memory is reconciled, and who
+        brings a seat that went quiet up to date (``prewarm_due``)."""
         self.reader, self.unread, self._memory = reader, unread, memory
+        self._quiet = quiet
+
+    def prewarm_due(self, session: SessionRef) -> "Live | None":
+        """The seat's live session, when the next message would have to start
+        it again and nothing is running on it; else None.
+
+        Owed after this process took the seat over, until a start compares it
+        (``unchecked``); whenever the channel put a relaunch off because the
+        session was working (``owes``); and once its runner stopped answering,
+        which is what letting an idle session go looks like from here. Only the
+        process that owns the running work answers yes: the one handing it over
+        must not start what the next one is about to read."""
+        seat = self._seat_of(session)
+        live = self.live.get(seat)
+        if live is None or not live.takes_inputs or seat in self.work:
+            return None
+        provider = self._owns_sessions_provider
+        if provider is not None and not provider().owns_sessions:
+            return None
+        ledger = getattr(self.channel, "screen_ledger", None)
+        if (
+            seat in self.unchecked
+            or (ledger is not None and ledger.owes((seat[0], live.acting)))
+            or self.host.answers(live.ref) is False
+        ):
+            return live
+        return None
+
+    def _went_quiet(self, session: SessionRef) -> None:
+        if self._quiet is not None and self.prewarm_due(session) is not None:
+            self._quiet(session)
 
     def bind_owns_sessions(self, provider) -> None:
         """Who answers ``owns_sessions`` at attach time (FB-56)."""
@@ -297,21 +334,21 @@ class RoomSessions:
     async def _hear_receipt(self, receipt: InputReceipt) -> None:
         identity = receipt.identity
         await self._hear(
-            self._room(identity.project_id, identity.topic_id),
+            self._room(identity.project_id, identity.conversation_id),
             Read(str(identity.work_id), Received(receipt)),
             required=True,
         )
 
     async def _hear_completion(self, completion: WorkCompletion) -> None:
         await self._hear(
-            self._room(completion.project_id, completion.topic_id),
+            self._room(completion.project_id, completion.conversation_id),
             Read(str(completion.work_id), Completed(completion)),
             required=True,
         )
 
     async def _hear_termination(self, termination: WorkTermination) -> None:
         await self._hear(
-            self._room(termination.project_id, termination.topic_id),
+            self._room(termination.project_id, termination.conversation_id),
             Read(str(termination.work_id), Terminated(termination)),
             required=True,
         )
@@ -474,8 +511,8 @@ class RoomSessions:
 
     @staticmethod
     def _seat_of(session: SessionRef) -> Seat:
-        """The seat a session ref names: (topic, agent)."""
-        return (session.topic_id, session.agent_handle)
+        """The seat a session ref names: (conversation, agent)."""
+        return (session.conversation_id, session.agent_handle)
 
     async def _attach(self, live: Live) -> Live:
         """Make ``live`` the seat's session, read from now on by one reading
@@ -596,6 +633,7 @@ class RoomSessions:
                 # 一轮结束时问一次记忆：agent 该写的记忆按规矩写在回复之前，所
                 # 以一轮读完就是它写完的时刻。
                 await self.reconcile_memory(topic)
+                self._went_quiet(live.session)
         elif isinstance(event, Moved):
             self.pulse(seat, event.marks)
         elif isinstance(event, Received):
@@ -627,6 +665,9 @@ class RoomSessions:
             caught.set()
         elif isinstance(event, ControlsMoved):
             await self.announce(topic)
+            # A background task finishing is what lets a relaunch put off for
+            # it happen; the controls moving is how that is heard.
+            self._went_quiet(live.session)
         else:
             assert work is not None, "a session's events belong to work"
             if hasattr(event, "attachment"):
@@ -722,9 +763,11 @@ class RoomSessions:
         env: dict[str, str] | None = None,
         acting: str | None = None,
         needs_place: bool = True,
+        reads_only: bool = False,
     ) -> Live:
         """The seat's session, started where the room's placement puts it if it
-        has to be."""
+        has to be. ``reads_only``: a task's session before its owner starts it,
+        which may read the machine and change nothing on it."""
         seat = self._seat_of(session)
         previous = self.live.get(seat)
         if previous is not None and not previous.takes_inputs:
@@ -747,22 +790,30 @@ class RoomSessions:
         agent = acting or precheck.agent_handle
         placed: dict = {}
 
+        # A task's session is a conversation of its own beside the room's, for
+        # the same agent: its state and every file it starts from live apart
+        # from the room seat's.
+        state_key = seat_key(agent, session.task_id)
+
         def place(resource) -> dict:
             placed.update(
                 harness=self.harness,
                 agent_handle=agent,
                 state=machine_launcher.state_dir(
-                    session.project_id, resource, self.harness, agent
+                    session.project_id, resource, self.harness, state_key
                 ),
             )
             return placed
 
         async with self.channel.prepare_session(
             session=session,
-            token=mint_session_token(session.project_id, session.topic_id, agent),
+            token=mint_session_token(
+                session.project_id, session.conversation_id, agent
+            ),
             env=env,
             precheck=precheck,
             runtime_factory=place,
+            reading=reads_only,
         ) as prepared:
             ref = CoreRef(self.harness, _home(placed["state"]))
             spec = SessionSpec(
@@ -773,8 +824,16 @@ class RoomSessions:
                 env={
                     **prepared.env,
                     "CHEESE_PROJECT": str(session.project_id),
-                    "CHEESE_TOPIC": str(session.topic_id),
+                    # The conversation: a room, or the task this session works.
+                    "CHEESE_TOPIC": str(session.conversation_id),
                     "CHEESE_AUTHOR": prepared.agent_handle,
+                    # Part of the launch, so starting the task relaunches
+                    # an idle session with a credential that may write.
+                    **(
+                        {"CHEESE_TASK_READS_ONLY": "1" if reads_only else "0"}
+                        if session.task_id is not None
+                        else {}
+                    ),
                 },
                 acting=prepared.agent_handle,
                 skills=session_skill_files(session.project_id),
@@ -788,15 +847,16 @@ class RoomSessions:
                 host=prepared.device_id,
                 owner=Owner(
                     session.project_id,
-                    session.topic_id,
+                    session.conversation_id,
                     prepared.env["CHEESE_RESOURCE_ID"],
                     session.agent_handle,
                     prepared.agent_handle,
                     prepared.agent_user_id,
+                    seat=state_key,
                 ),
             )
             status = await self.host.start(ref, spec, access)
-        return await self._attach(
+        attached = await self._attach(
             Live(
                 session,
                 ref,
@@ -805,6 +865,10 @@ class RoomSessions:
                 status.takes_inputs,
             )
         )
+        # Compared with what it would be started with now: up to date, or a
+        # relaunch the channel owes (``prewarm_due``).
+        self.unchecked.discard(seat)
+        return attached
 
     async def send(
         self,
@@ -821,6 +885,7 @@ class RoomSessions:
         env: dict[str, str] | None = None,
         acting: str | None = None,
         needs_place: bool = True,
+        reads_only: bool = False,
         images: list[dict] | None = None,
         owes_reply: bool = False,
         session_opening: str = "",
@@ -859,6 +924,7 @@ class RoomSessions:
                 env=env,
                 acting=acting,
                 needs_place=needs_place,
+                reads_only=reads_only,
             )
             message = self._with_project_state(
                 seat, live, resume_token, session_opening, opening_changes, message
@@ -869,7 +935,7 @@ class RoomSessions:
         on_mark(work_id)
         await self._consume(
             session.project_id,
-            session.topic_id,
+            session.conversation_id,
             work_id,
             AgentSessionInfo(
                 session_id=live.conversation,
@@ -896,7 +962,7 @@ class RoomSessions:
         await self.reconcile_memory(session.topic_id)
         identity = InputIdentity(
             session.project_id,
-            session.topic_id,
+            session.conversation_id,
             live.acting,
             self.harness,
             live.conversation,
@@ -1062,19 +1128,34 @@ class RoomSessions:
     async def ask_origin(self, project_id, topic_id, agent_handle) -> dict | None:
         """The seat's exact live native identity, starting and sending nothing:
         the work its session is doing is the work this process has open."""
+        from app.domain.agent.ask_origin import refused
+
         seat = (topic_id, agent_handle)
         live = self.live.get(seat)
         work = self.work.get(seat)
         if live is None or work is None or live.session.project_id != project_id:
+            refused(
+                "no live session work",
+                topic_id,
+                agent_handle,
+                live=live is not None,
+                work=work,
+            )
             return None
         status = await self.host.status(live.ref)
-        if (
-            status is None
-            or not status.working
-            or status.work_id != str(work)
-            or self.live.get(seat) is not live
-            or self.work.get(seat) != work
-        ):
+        if status is None or not status.working or status.work_id != str(work):
+            refused(
+                "session not working on it",
+                topic_id,
+                agent_handle,
+                work=work,
+                reachable=status is not None,
+                working=status.working if status is not None else None,
+                session_work=status.work_id if status is not None else None,
+            )
+            return None
+        if self.live.get(seat) is not live or self.work.get(seat) != work:
+            refused("session changed while reading", topic_id, agent_handle, work=work)
             return None
         return {
             "harness": self.harness,
@@ -1100,21 +1181,38 @@ class RoomSessions:
             {"type": "agent_control", "state": await self.control_state(topic)},
         )
 
-    async def control_state(self, topic: uuid.UUID) -> dict:
-        """What the room's controls show, from the session's mirror alone."""
-        seat = self._room_seat(topic)
+    def _control_seat(self, topic: uuid.UUID, agent: str | None) -> Seat | None:
+        """The seat a control names, or the room's only live one when it names
+        none. Several live and none named is no seat: the caller picks from
+        ``seats`` rather than this picking a teammate at random."""
+        return (topic, agent) if agent else self._room_seat(topic)
+
+    async def control_state(self, topic: uuid.UUID, agent: str | None = None) -> dict:
+        """What the room's controls show, from the session's mirror alone.
+
+        ``seats`` lists every live seat in the room with its session, so a room
+        with two teammates working says so instead of showing no session."""
+        seat = self._control_seat(topic, agent)
         live = self.live.get(seat) if seat is not None else None
         shown = await self.host.control_state(live.ref) if live is not None else {}
         return {
             "id": live.conversation if live else None,
             "connected": live is not None,
+            "agent": seat[1] if live is not None and seat is not None else None,
+            "seats": [
+                {"agent": handle, "id": held.conversation}
+                for (room, handle), held in sorted(self.live.items())
+                if room == topic
+            ],
             "controls": list(self.controls),
             **shown,
         }
 
-    async def control(self, topic: uuid.UUID, request: dict) -> dict:
+    async def control(
+        self, topic: uuid.UUID, request: dict, agent: str | None = None
+    ) -> dict:
         """One control request to the room's session, to its response."""
-        seat = self._room_seat(topic)
+        seat = self._control_seat(topic, agent)
         live = self.live.get(seat) if seat is not None else None
         if live is None:
             raise LookupError("No session is running in this room")
@@ -1270,7 +1368,7 @@ class RoomSessions:
                     host=placed.machine,
                     owner=Owner(
                         placed.session.project_id,
-                        placed.session.topic_id,
+                        placed.session.conversation_id,
                         placed.resource_id,
                         placed.session.agent_handle,
                         placed.agent_handle,
@@ -1316,6 +1414,7 @@ class RoomSessions:
                 self.work[seat] = uuid.UUID(status.work_id)
                 now = time.monotonic()
                 self.clocks[seat] = Clock(opened=now, progressed=now)
+            self.unchecked.add(seat)
             recovered.append(session)
         # Chat restores room bookkeeping before replay starts reading.
         return recovered

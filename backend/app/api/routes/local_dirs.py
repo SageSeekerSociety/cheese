@@ -134,8 +134,9 @@ def _access_view(record: AccessRecord) -> dict[str, Any]:
         "detail": record.detail,
         "actor_handle": record.actor_handle,
         "project_id": str(record.project_id) if record.project_id else None,
-        "topic_id": str(record.topic_id) if record.topic_id else None,
-        "task_id": str(record.task_id) if record.task_id else None,
+        "conversation_id": str(record.conversation_id)
+        if record.conversation_id
+        else None,
         "created_at": record.created_at.isoformat(),
     }
 

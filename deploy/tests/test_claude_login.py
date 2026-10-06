@@ -59,6 +59,33 @@ class ClaudeLoginTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.credential.exists())
 
+    def test_second_account_does_not_replace_primary(self):
+        self.run_script("setup-token", stdin="sk-ant-oat01-FIRST\n")
+        result = self.run_script(
+            "--account", "second", "setup-token", stdin="sk-ant-oat01-SECOND\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.credential.read_text().strip(), "sk-ant-oat01-FIRST")
+        second = self.credential.parent / "accounts/second/credential"
+        self.assertEqual(second.read_text().strip(), "sk-ant-oat01-SECOND")
+        self.assertEqual(second.stat().st_mode & 0o777, 0o600)
+
+    def test_account_name_cannot_escape_credential_directory(self):
+        result = self.run_script(
+            "--account", "../../outside", "setup-token", stdin="sk-ant-oat01-SECOND\n"
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_operator_can_release_only_the_named_cooldown(self):
+        self.credential.parent.mkdir()
+        state = self.credential.parent / "cooldowns.json"
+        state.write_text(
+            json.dumps({"primary": {"until": None}, "second": {"until": 123}})
+        )
+        result = self.run_script("--account", "second", "cooldown-reset")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(state.read_text()), {"primary": {"until": None}})
+
     def test_a_browser_login_leaves_its_pair_with_the_proxy_alone(self):
         result = self.run_script("login")
 

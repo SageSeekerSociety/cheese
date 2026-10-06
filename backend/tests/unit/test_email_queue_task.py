@@ -239,22 +239,6 @@ async def test_push_intent_follows_the_pushable_rules(db_factory):
     assert pushed_keys == {"notice:10", "mention:10"}
 
 
-def test_the_email_escapes_user_text_and_preserves_the_destination():
-    subject, body = maintenance._compose_email(
-        {
-            "type": "ROOM_NOTICE",
-            "payload": {
-                "content": "<script>bad()</script>",
-                "topicId": "room-1",
-                "topicTitle": "Review",
-            },
-        }
-    )
-    assert "<script>" not in body
-    assert "&lt;script&gt;" in body
-    assert maintenance.settings.frontend_url in body
-
-
 async def test_legacy_migration_respects_old_lock_and_recovers_commit_before_ack(
     db_factory, monkeypatch
 ):

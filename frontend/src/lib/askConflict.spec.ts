@@ -8,7 +8,7 @@ describe('unknown operation after question edits', () => {
   it('offers revision only after answer-version advance, never a same-version text edit', () => {
     const block: Block = {
       id: 'q',
-      topic_id: 'room',
+      conversation_id: 'room',
       kind: 'message',
       author_type: 'participant',
       author: 'agent',

@@ -15,8 +15,8 @@
   CHEESE_API     平台 API 基址；直连后端用 http://host.docker.internal:8099，
                  经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
-  CHEESE_TOPIC   当前话题 id
-  CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用话题的实况文档）
+  CHEESE_TOPIC   当前对话 id：话题的，或者任务自己的会话里是任务的
+  CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用任务或话题的实况文档）
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
   CHEESE_TOKEN   房间凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
   CHEESE_TURN    当前这一轮的 id，带回去让这一轮写出的块归在一起
@@ -51,13 +51,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import UTC, datetime, time
+from datetime import datetime, time, timezone
 from pathlib import Path
 from time import monotonic, sleep
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if sys.platform != "win32":
     import fcntl
+
+# Not `datetime.UTC`: that name is 3.11+, and this script also runs on a Mac
+# whose only python3 is the command line tools' 3.9.
+UTC = timezone.utc  # noqa: UP017
 
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
@@ -113,9 +117,9 @@ class ToolTable:
     了」。这件事付过三轮（2026-09-13、-14、-15）。
 
     表在这里，它就不再问任何人。表上是**纯平台动作**：它们要的是平台，不是那台机器，
-    所以从会话直接打后端，机器离线时一样不少——对话、文档、任务卡、验收都在。有两样
-    还要机器上的一份东西：`cheese_doc_set` 读机器上那个文件，`cheese_accept_request`
-    先让机器把任务的提交推上去；机器够不着时它们当场说够不着，不等超时。
+    所以从会话直接打后端，机器离线时一样不少——对话、文档、任务卡、验收都在。只有
+    `cheese_accept_request` 还要机器：它先让机器把任务的提交推上去；机器够不着时当场
+    说够不着，不等超时。
 
     必须在机器上作为进程跑的（任务目录、同步与恢复、预览、读写工作区文件的转换、git
     凭据）才是这个文件的 CLI 子命令，跟文件、命令、项目 `.mcp.json` 一样随机器在、随
@@ -134,6 +138,14 @@ class ToolTable:
 
     def __contains__(self, name: object) -> bool:
         return name in self.names()
+
+
+#: Which document: one of the project's own, by id (`cheese_doc_list`). Left
+#: out, the session's own document, or its room's living document.
+_DOCUMENT_ARG = {
+    "type": "string",
+    "description": "项目资料库里那份文档的编号；省略就是本话题的实况文档",
+}
 
 
 def _tool(name: str, description: str, properties=None, required=()) -> dict:
@@ -217,20 +229,18 @@ _FEEDBACK_STATUS = {
 # compute catalog differ.
 MACHINE_PROFILES = ("cloud", "device")
 MACHINE_PROFILE_DESCRIPTION = (
-    "只有两个值：cloud 是为这个会话开一台平台的云端机器；"
-    "device 是项目已授权的自有设备，配合 device_id 指定哪一台，"
-    "不填 device_id 就自动选一台在线的。"
+    "只有两个值：cloud 是平台的云端，每个会话一个沙箱，配合 whole_machine "
+    "换成每个会话一整台云虚拟机；device 是项目已授权的自有设备，配合 device_id "
+    "指定哪一台，不填 device_id 就自动选一台在线的。"
 )
 
-_TASK = _text("任务 id")
 _CONTRIBUTOR = {
     "type": "array",
     "items": {"type": "string"},
     "description": "实际贡献者的 handle",
 }
 _CHAT_SCOPE = {
-    "topic": _text("房间 id，默认当前房间"),
-    "task": _text("任务 id：读或校验这条任务卡的记录"),
+    "topic": _text("话题或任务 id，默认当前对话"),
 }
 _CHAT_PAGE = {
     "limit": {"type": "integer", "description": "每页条数 1..500，默认 50"},
@@ -301,8 +311,8 @@ PLATFORM_TOOLS = ToolTable(
             "new=true 另发一条。做完时再调用一次，所有项标 completed，并用 result "
             "写一句落下了什么，它接在清单下面。每次传完整的清单，不是增量；"
             f"最多 {TODO_MAX_ITEMS} 项，每项 ≤{TODO_MAX_CHARS} 字；"
-            "同一时刻只让一项 in_progress。你是替一条活干活的分身时带上那条活的 id，"
-            "清单记在那张卡上，不发到房间里。",
+            "同一时刻只让一项 in_progress。在任务里时，清单记在这个任务上，"
+            "不发到房间里。",
             {
                 "todos": {
                     "type": "array",
@@ -328,7 +338,6 @@ PLATFORM_TOOLS = ToolTable(
                 "result": _text(
                     f"做完时写一句结果（≤{TODO_MAX_CHARS} 字），显示在清单下面"
                 ),
-                "task": _text("你是分身时，你做的那条活的 id"),
             },
             ["todos"],
         ),
@@ -366,21 +375,27 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_get",
-            "读本话题实况文档，末尾列出还没人处理的修改建议。读到的这一版就是接下来 "
-            "cheese_doc_set 写回所依据的那一版；没读过就写，只有本话题还没有文档时"
-            "才让你建。",
+            "读一份文档，末尾列出还没人处理的修改建议。不给 document 读本话题的实况"
+            "文档；给了读项目资料库里的那一份（编号见 cheese_doc_list）。读到的这一版"
+            "就是接下来 cheese_doc_set 写回所依据的那一版；没读过就写，只有文档还是"
+            "空的时才让你写。",
+            {"document": _DOCUMENT_ARG},
         ),
         _tool(
             "cheese_doc_set",
-            "把机器上一个文件的全文设为本话题实况文档：整块覆盖，不是补丁。"
-            "先 cheese_doc_get；期间别人改过会被拒，拒了就重读、把改动合进文件再写，"
-            "别原样重试。话题标题会渲染成大标题，正文别再用一级标题重复。",
-            {"path": _text("机器上 markdown 文件的绝对路径；草稿别放在任务工作目录里")},
-            ["path"],
+            "把一份文档的全文设为 content：整块覆盖，不是补丁。不用机器，"
+            "任务开始前也能写。先 cheese_doc_get；期间别人改过会被拒，拒了就重读、"
+            "把别人的改动合进你的正文再写，别原样重试。文档标题会渲染成大标题，"
+            "正文别再用一级标题重复。",
+            {
+                "content": _text("文档的全文，Markdown"),
+                "document": _DOCUMENT_ARG,
+            },
+            ["content"],
         ),
         _tool(
             "cheese_doc_edit",
-            "改本话题实况文档里的几处文字，其余部分和别人正在打的字都不动。每处给"
+            "改一份文档里的几处文字，其余部分和别人正在打的字都不动。每处给"
             "原文 old（照 cheese_doc_get 读到的 Markdown 原样抄，要在文档里只出现"
             "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
             "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
@@ -404,39 +419,53 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "只提建议，不直接改",
                 },
                 "reason": _text("为什么改，一句话；作为建议时显示在建议旁边"),
+                "document": _DOCUMENT_ARG,
             },
             ["edits"],
         ),
         _tool(
-            "cheese_task",
-            "开一条活：任务卡、独立分支和负责人；不启动任何执行者，也不碰机器。"
-            "返回任务 id、线程标识和验收人。动手前用 Bash 跑 `cheese worktree <id>` "
-            "准备工作目录。交给原生后台分身时把线程标识原样写进它的 prompt，"
-            "分身干的事才记在这张卡上。",
+            "cheese_doc_new",
+            "在项目资料库里新建一份文档，项目成员都能看、能改，本话题里会出现这份"
+            "文档，点开就在对话旁边。有人要一份独立的文档（调研、方案、清单）时用它；"
+            "本话题的实况文档用 cheese_doc_set。给 content 就把它写成第一版。"
+            "返回文档编号，之后读写都带上 document。",
             {
-                "title": _text("任务标题"),
-                "brief": _text("目标、约束和验收标准"),
-                "reviewer": _text("验收人 handle；省略取项目默认"),
-                "base_task": _text("依赖的任务 id；PR 以它的分支为目标"),
-                "reported_by": _text("需求提出者的 handle"),
-                "contributor": _CONTRIBUTOR,
+                "title": _text("文档标题，正文里别再用一级标题重复"),
+                "content": _text("第一版的全文，Markdown；省略就建一份空文档"),
             },
             ["title"],
         ),
         _tool(
-            "cheese_close_task",
-            "放弃或撤销一条任务时显式关闭；正常交付在采纳后自动关闭。",
+            "cheese_doc_list",
+            "列出项目资料库里的文档（编号、标题、最近谁改的），最近改过的在前。"
+            "不含各话题的实况文档。",
+        ),
+        _tool(
+            "cheese_task",
+            "提议一个任务：在房间里放一张提议卡，由人决定是否创建。创建的人就是负责人，"
+            "任务有自己的对话和工作目录，由那里的 AI 队友去做。你不能自己创建任务。",
             {
-                "task": _TASK,
+                "title": _text("任务标题"),
+                "summary": _text(
+                    "要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
+                    "任务那边的 AI 队友只能从这里和提议前的几条消息知道讨论"
+                ),
+            },
+            ["title", "summary"],
+        ),
+        _tool(
+            "cheese_close_task",
+            "放弃或撤销当前任务时显式关闭；正常交付在采纳后自动关闭。",
+            {
                 "conclusion": _text("关闭原因或最终说明"),
                 "reported_by": _text("需求提出者的 handle"),
                 "contributor": _CONTRIBUTOR,
             },
-            ["task"],
+            [],
         ),
         _tool(
             "cheese_accept_request",
-            "为一条任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
+            "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
@@ -446,49 +475,41 @@ PLATFORM_TOOLS = ToolTable(
             "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
             "不抄 subject，抄了会被打回。",
             {
-                "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
                 "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
                 "reason": _text("验收证据和要对方检查的内容"),
-                "body": _text("改动原因和验证说明，用中文"),
+                "body": _text("改动原因和验证说明，语言按这个仓库自己 PR 的惯例，还没有惯例就用英文"),
                 "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
                 "new_artifact": _text("清单上还没有的东西的真名"),
                 "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
                 "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
                 "deliver_url": _text("交出去的地址"),
             },
-            ["task", "subject"],
+            ["subject"],
         ),
         _tool(
             "cheese_describe",
-            "修改任务尚未采纳的验收卡及 PR 的标题或正文；采纳以卡为准。",
+            "修改当前任务尚未采纳的验收卡及 PR 的标题或正文；采纳以卡为准。",
             {
-                "task": _TASK,
                 "subject": _text("英文 Conventional Commits 标题，≤72 字符"),
-                "body": _text("改动原因和验证说明，用中文"),
+                "body": _text("改动原因和验证说明，语言按这个仓库自己 PR 的惯例，还没有惯例就用英文"),
             },
-            ["task"],
+            [],
         ),
         _tool(
             "cheese_ready",
-            "把任务已有的 draft PR 标记为可评审；请人验收用 cheese_accept_request。",
-            {"task": _TASK},
-            ["task"],
-        ),
-        _tool(
-            "cheese_tell",
-            "在你派出的一条活的时间线上留一句追加要求；只记录，不唤醒执行者。"
-            "长的写进实况文档。",
-            {"target": _text("活的 id、<#id> 或标题"), "message": _text("要说的话")},
-            ["target", "message"],
+            "把当前任务已有的 draft PR 标记为可评审；"
+            "请人验收用 cheese_accept_request。",
+            {},
+            [],
         ),
         _tool(
             "cheese_title",
             "有人明确要你给本话题改名时才用，≤12 字；平台会自己给话题起名、"
             "方向变了再改，这样改出的名字按人定的处理，之后不再自动改。"
             "话题的提示里要你先起名时（平台暂时不能起名）也用它。"
-            "带 task 给房间里的一条活起名。",
-            {"text": _text("标题"), "task": _text("给这条活而不是本话题起名")},
+            "在任务的对话里，它给这个任务起名。",
+            {"text": _text("标题")},
             ["text"],
         ),
         _tool(
@@ -540,16 +561,16 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_lock",
-            "为一条任务占用房间的重资源锁，装依赖、跑大型测试或起服务前用；"
+            "为当前任务占用房间的重资源锁，装依赖、跑大型测试或起服务前用；"
             "占不到时说谁占着，不等待。",
-            {"task": _TASK, "kind": {"type": "string", "enum": ["heavy"]}},
-            ["task"],
+            {"kind": {"type": "string", "enum": ["heavy"]}},
+            [],
         ),
         _tool(
             "cheese_unlock",
-            "释放任务持有的重资源锁；锁 30 分钟后自动到期。",
-            {"task": _TASK, "kind": {"type": "string", "enum": ["heavy"]}},
-            ["task"],
+            "释放当前任务持有的重资源锁；锁 30 分钟后自动到期。",
+            {"kind": {"type": "string", "enum": ["heavy"]}},
+            [],
         ),
         _tool(
             "cheese_members",
@@ -693,6 +714,12 @@ PLATFORM_TOOLS = ToolTable(
                     "description": MACHINE_PROFILE_DESCRIPTION,
                 },
                 "device_id": _text("自有设备的 id，只有 device 能指定"),
+                "whole_machine": {
+                    "type": "boolean",
+                    "description": "只配 cloud：每个会话一整台云虚拟机，有 sudo，"
+                    "能跑 Docker、要 KVM 的任务和内核模块，沙箱里做不了的活用它；"
+                    "准备要几分钟",
+                },
             },
             ["profile"],
         ),
@@ -926,10 +953,14 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     "cheese_doc_get",
     "cheese_doc_set",
     "cheese_doc_edit",
+    # 资料库是项目的，不是话题的。
+    "cheese_doc_new",
+    "cheese_doc_list",
 } | {"cheese_attachment_read"}
 _NEEDS_DOCUMENT = frozenset({"cheese_doc_get", "cheese_doc_edit"})
 _NEEDS_PROJECT = frozenset(
     {
+        "cheese_doc_list",
         "cheese_project_search",
         "cheese_memory_read",
         "cheese_notify",
@@ -1093,7 +1124,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         raise ValueError("Missing CHEESE_TOPIC")
     if tool in _NEEDS_PROJECT and not project:
         raise ValueError("Missing CHEESE_PROJECT")
-    task = f"/topics/{topic}/tasks/{args.get('task')}"
+    here = f"/topics/{topic}"
     if tool == "platform_request":
         method = (args.get("method") or "GET").upper()
         path = args.get("path") or ""
@@ -1123,7 +1154,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             else str(uuid.uuid4()),
             **_given(args, "reply_to"),
         }
-        return {"method": "POST", "path": f"/topics/{topic}/messages", "body": body}
+        return {"method": "POST", "path": here + "/messages", "body": body}
     if tool == "chat_edit":
         return {
             "method": "PATCH",
@@ -1137,7 +1168,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "body": {
                 "todos": args["todos"],
                 **({"new": True} if args.get("new") is True else {}),
-                **_given(args, "task", "result"),
+                **_given(args, "result"),
             },
         }
     if tool == "cheese_doc_get":
@@ -1158,23 +1189,13 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_task":
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/split",
-            "body": {
-                "title": args["title"],
-                **_given(
-                    args,
-                    "brief",
-                    "reviewer:reviewer_handle",
-                    "base_task:base_task_id",
-                    "reported_by:reporter_handle",
-                    "contributor:contributor_handles",
-                ),
-            },
+            "path": f"/topics/{topic}/task-proposals",
+            "body": {"title": args["title"], "summary": args.get("summary") or ""},
         }
     if tool == "cheese_close_task":
         return {
             "method": "POST",
-            "path": task + "/close",
+            "path": here + "/close",
             "body": {
                 "conclusion": args.get("conclusion") or "",
                 **_given(
@@ -1187,7 +1208,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_accept_request":
         return {
             "method": "POST",
-            "path": task + "/accept-card",
+            "path": here + "/accept-card",
             "body": {
                 "routing_reason": args.get("reason") or "",
                 "change_subject": args["subject"],
@@ -1207,27 +1228,25 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         body = _given(args, "subject:change_subject", "body:change_body")
         if not body:
             raise ValueError("describe 至少要给 subject 或 body")
-        return {"method": "POST", "path": task + "/accept-card/describe", "body": body}
+        return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
     if tool == "cheese_ready":
-        return {"method": "POST", "path": task + "/ready"}
+        return {"method": "POST", "path": here + "/ready"}
     if tool in {"cheese_lock", "cheese_unlock"}:
         verb = tool.removeprefix("cheese_")
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/{verb}",
-            "body": {"kind": args.get("kind") or "heavy", "task_id": args["task"]},
+            "path": f"{here}/{verb}",
+            "body": {"kind": args.get("kind") or "heavy"},
         }
+    if tool == "cheese_doc_list":
+        return {"method": "GET", "path": f"/projects/{project}/documents"}
     if tool == "cheese_library_ls":
         # 带上话题：沙箱 token 是为一轮、一个地方铸的，后端要凭它确认这个凭据属于谁。
         where = urllib.parse.quote(topic)
         return {"method": "GET", "path": f"/projects/{project}/library?topic={where}"}
     if tool == "cheese_title":
-        path = (
-            f"/topics/{topic}/tasks/{args['task']}/title"
-            if args.get("task")
-            else f"/topics/{topic}/title"
-        )
-        return {"method": "POST", "path": path, "body": {"title": args["text"]}}
+        body = {"title": args["text"]}
+        return {"method": "POST", "path": here + "/title", "body": body}
     if tool == "cheese_docs_search":
         return {
             "method": "POST",
@@ -1339,7 +1358,10 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": f"/feedback/{ref}/claim?topic={topic}",
         }
     if tool == "cheese_machine":
-        body = {"profile": args["profile"], **_given(args, "device_id")}
+        body = {
+            "profile": args["profile"],
+            **_given(args, "device_id", "whole_machine"),
+        }
         return {
             "method": "PUT",
             "path": f"/topics/{topic}/compute-profile",
@@ -1472,10 +1494,10 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     """Run one tool from `PLATFORM_TOOLS` or `DELEGATED_TOOLS` and say, in
     text, what came of it.
 
-    `host` is where the session runs, and supplies the four things a tool can
+    `host` is where the session runs, and supplies the three things a tool can
     need: `environ` (the room's CHEESE_* values), `request(plan)` (one backend
     request, the parsed JSON back, `PlatformHTTPError` otherwise),
-    `read_file(path)` and `sync_task(task_id)` (the two that need the machine),
+    `sync_task(task_id)` (the one that needs the machine),
     plus a `doc_versions` dict that outlives a single call. The text is what the
     agent acts on — ids, the next call to make — so it is written for that
     reader, not dumped JSON."""
@@ -1533,7 +1555,7 @@ def _chat_call(name: str, **kwargs) -> str:
 
 
 def _chat_scope(args: dict) -> dict:
-    return {key: args[key] for key in ("topic", "task") if args.get(key)}
+    return {key: args[key] for key in ("topic",) if args.get(key)}
 
 
 def _chat_get(args: dict, host) -> str:
@@ -1547,8 +1569,6 @@ def _chat_get(args: dict, host) -> str:
         + urllib.parse.quote(args["message_id"], safe="")
     )
     block = host.request({"method": "GET", "path": path})["data"]
-    if args.get("task") and block.get("task_id") != args["task"]:
-        raise PlatformToolError("这条消息不属于那条任务卡")
     text = _chat_message_text(block)
     end = offset + length
     shown = text[offset:end]
@@ -1575,7 +1595,6 @@ def _chat_page(tool: str):
         for key, name in (
             ("before", "before"),
             ("after", "after"),
-            ("task", "task_id"),
             ("kind", "kind"),
             ("author", "author"),
         ):
@@ -1652,7 +1671,7 @@ def _doc_get(args: dict, host) -> str:
     content over it claiming to be based on it, which is the exact overwrite the
     version exists to stop. So the version this read returned is kept by the
     host, and the write reads it back from there."""
-    document = _document(host)
+    document = _document(host, args)
     plan = request_plan("cheese_doc_get", args, {**host.environ, **document})
     doc = host.request(plan).get("data") or {}
     version = doc.get("doc_version", 0)
@@ -1674,21 +1693,27 @@ def _doc_get(args: dict, host) -> str:
     return "\n".join(lines)
 
 
-def _document(host) -> dict:
-    """本次要读写的文档：会话本来就是对着某份文档开的（CHEESE_DOCUMENT），
-    或者是话题里的会话，用话题的实况文档。"""
+def _document(host, args: dict | None = None) -> dict:
+    """本次要读写的文档：点了名的那一份（项目资料库里的），会话本来就是对着
+    某份文档开的（CHEESE_DOCUMENT），或者是话题里的会话，用话题的实况文档。"""
+    named = str((args or {}).get("document") or "").strip()
+    if named:
+        return {"CHEESE_DOCUMENT": named}
     document = host.environ.get("CHEESE_DOCUMENT", "")
     if document:
         return {"CHEESE_DOCUMENT": document}
     topic = host.environ.get("CHEESE_TOPIC", "")
     if not topic:
         raise PlatformToolError("Missing CHEESE_DOCUMENT or CHEESE_TOPIC")
-    found = host.request({"method": "GET", "path": f"/topics/{topic}/document"})
+    path = f"/topics/{topic}/document"
+    found = host.request({"method": "GET", "path": path})
     return {"CHEESE_DOCUMENT": (found.get("data") or {})["id"]}
 
 
 def _doc_edit(args: dict, host) -> str:
-    plan = request_plan("cheese_doc_edit", args, {**host.environ, **_document(host)})
+    plan = request_plan(
+        "cheese_doc_edit", args, {**host.environ, **_document(host, args)}
+    )
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -1718,13 +1743,39 @@ def _doc_edit(args: dict, host) -> str:
     return "\n".join(lines)
 
 
-def _doc_set(args: dict, host) -> str:
-    document = _document(host)["CHEESE_DOCUMENT"]
-    raw = host.read_file(args["path"])
+def _doc_new(args: dict, host) -> str:
+    project = host.environ.get("CHEESE_PROJECT", "")
+    if not project:
+        raise PlatformToolError("Missing CHEESE_PROJECT")
+    body: dict = {"title": str(args["title"])}
+    if args.get("content"):
+        body["content"] = str(args["content"])
     try:
-        content = raw.decode("utf-8")
-    except UnicodeError as exc:
-        raise PlatformToolError(f"{args['path']} 不是 UTF-8 文本: {exc}") from exc
+        answer = host.request(
+            {"method": "POST", "path": f"/projects/{project}/documents", "body": body}
+        )
+    except Exception as exc:
+        if getattr(exc, "status", None) != 422:
+            raise
+        try:
+            why = json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+        except (ValueError, KeyError, TypeError):
+            raise exc from None
+        raise PlatformToolError(
+            f"没建成，资料库里没有多出文档：{why} 改好正文再 cheese_doc_new。"
+        ) from exc
+    doc = answer.get("data") or {}
+    host.doc_versions[doc["id"]] = doc.get("doc_version", 0)
+    shown = "本话题里已经出现这份文档。" if host.environ.get("CHEESE_TOPIC") else ""
+    return (
+        f"已在资料库新建《{doc.get('title') or args['title']}》，编号 {doc['id']}"
+        f"（第 {doc.get('doc_version', 0)} 版）。{shown}之后读写它都带上 document。"
+    )
+
+
+def _doc_set(args: dict, host) -> str:
+    document = _document(host, args)["CHEESE_DOCUMENT"]
+    content = str(args["content"])
     # 0 —— 「我没读过」—— 是没有读过时的值，也是唯一允许**新建**文档的版本：
     # 没读过一份已经存在的文档，正是写入必须被拒的时候。
     based_on = host.doc_versions.get(document, 0)
@@ -1744,7 +1795,7 @@ def _doc_set(args: dict, host) -> str:
         # `PlatformHTTPError`, or the transport's, which this file cannot import).
         status = getattr(exc, "status", None)
         if status == 422:
-            # The document is blocks and this file is Markdown: a write that
+            # The document is blocks and this text is Markdown: a write that
             # would lose text on the way in is refused, and the platform says
             # which line and what to write instead. Nothing was changed.
             try:
@@ -1752,7 +1803,7 @@ def _doc_set(args: dict, host) -> str:
             except (ValueError, KeyError, TypeError):
                 raise exc from None
             raise PlatformToolError(
-                f"没写进去，文档没有变：{why} 改好 {args['path']} 再 cheese_doc_set。"
+                f"没写进去，文档没有变：{why} 改好正文再 cheese_doc_set。"
             ) from exc
         if status != 409:
             raise
@@ -1762,7 +1813,7 @@ def _doc_set(args: dict, host) -> str:
             current = "?"
         raise PlatformToolError(
             f"没写进去：文档现在是第 {current} 版，你这份是照第 {based_on} 版改的。"
-            "先 cheese_doc_get 重新读一遍，把别人的改动合进你的文件，再 "
+            "先 cheese_doc_get 重新读一遍，把别人的改动合进你的正文，再 "
             "cheese_doc_set。直接重试会原样被拒。"
         ) from exc
     version = (result.get("data") or {}).get("doc_version", 0)
@@ -1788,11 +1839,12 @@ def _task_relative(path: str, task: str) -> str:
 
 def _accept_request(args: dict, host) -> str:
     if args.get("deliver"):
-        args = {**args, "deliver": _task_relative(args["deliver"], args["task"])}
+        task = host.environ.get("CHEESE_TOPIC", "")
+        args = {**args, "deliver": _task_relative(args["deliver"], task)}
     plan = request_plan("cheese_accept_request", args, host.environ)
     # 卡读的是 forge 上那条分支：先让机器把这条任务的提交推上去，推不上去就不递
     # ——递一张照着旧提交的卡，比一次「机器够不着」更糟，因为没人会发现。
-    host.sync_task(args["task"])
+    host.sync_task(host.environ.get("CHEESE_TOPIC", ""))
     data = host.request(plan).get("data") or {}
     art = data.get("artifact") or {}
     named = art.get("name") or args.get("new_artifact") or args.get("artifact")
@@ -1814,49 +1866,6 @@ def _accept_request(args: dict, host) -> str:
         "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，不要为这条任务再递一张卡。"
     )
     return "\n".join(lines)
-
-
-def _tell(args: dict, host) -> str:
-    """在一条活的时间线上说一句：和人在卡下面说话走同一条路由。
-
-    说话的是房间的 AI 队友，所以后端只把这句落在那条活上，不叫醒谁。`target` 是
-    id、`<#id>` 或标题；标题只在这个房间的活里找。"""
-    topic = host.environ.get("CHEESE_TOPIC", "")
-    if not topic:
-        raise PlatformToolError("Missing CHEESE_TOPIC")
-    room = urllib.parse.quote(topic, safe="")
-    wanted = args["target"].strip()
-    if wanted.startswith("<#") and wanted.endswith(">"):
-        wanted = wanted[2:-1].strip()
-    try:
-        task_id, title = str(uuid.UUID(wanted)), None
-    except ValueError:
-        listing = host.request(
-            {"method": "GET", "path": f"/topics/{room}/tasks?limit=1"}
-        )
-        tasks = ((listing.get("data") or {}).get("data")) or []
-        exact = [t for t in tasks if (t.get("title") or "").strip() == wanted]
-        loose = exact or [t for t in tasks if wanted in (t.get("title") or "")]
-        if not loose:
-            names = "、".join(t.get("title") or "" for t in tasks) or "（没有）"
-            raise PlatformToolError(
-                f"这个房间的活里没有叫「{wanted}」的。可选的是：{names}"
-            )
-        if len(loose) > 1:
-            names = "、".join(t.get("title") or "" for t in loose)
-            raise PlatformToolError(f"「{wanted}」对上了多条活（{names}），用 id 指明")
-        task_id, title = loose[0]["id"], loose[0].get("title")
-    host.request(
-        {
-            "method": "POST",
-            "path": f"/topics/{room}/tasks/{urllib.parse.quote(task_id)}/messages",
-            "body": {"content": args["message"]},
-        }
-    )
-    return (
-        f"已写在「{title or args['target']}」上。"
-        "没有人被叫醒——做这条活的分身在你自己的会话里，要它动就直接给它发消息。"
-    )
 
 
 #: How many matches `platform_request(find=…)` spells out in full, and how many
@@ -2213,8 +2222,8 @@ _STEPS = {
     "cheese_doc_get": _doc_get,
     "cheese_doc_set": _doc_set,
     "cheese_doc_edit": _doc_edit,
+    "cheese_doc_new": _doc_new,
     "cheese_accept_request": _accept_request,
-    "cheese_tell": _tell,
     "platform_request": _platform_request,
     "cheese_feedback_list": _feedback_list,
     "cheese_feedback_get": _feedback_get,
@@ -2226,14 +2235,8 @@ _STEPS = {
 
 def _say_task(args, data, env) -> str:
     return (
-        f"任务：{data.get('title')}\nid={data.get('id')}\n"
-        f"线程标识：{data.get('thread_label')}\n"
-        f"验收人：{data.get('reviewer_handle') or '待指定'}\n"
-        f"动手前用 Bash 跑 `cheese worktree {data.get('id')}` 准备工作目录，"
-        "进入它返回的目录再改文件。交给原生分身时，把任务简报、那个目录和上面的"
-        "线程标识一起放进它的 prompt：平台从 prompt 上读出标识，分身干的每件事才"
-        "落在这张卡上；不写，这条活看着就是没人做。也告诉它：用 `todo_write` 写清单时"
-        f"带 task={data.get('id')}，清单才记在这张卡上，不盖掉房间的。"
+        f"已在房间里提议任务「{args['title']}」，等人决定是否创建。"
+        "创建后它在自己的对话里由那里的 AI 队友去做。"
     )
 
 
@@ -2362,6 +2365,17 @@ def _say_library(args, data, env) -> str:
     return "\n".join(lines)
 
 
+def _say_documents(args, data, env) -> str:
+    rows = (data or {}).get("data") or []
+    if not rows:
+        return "资料库里还没有文档。"
+    return "\n".join(
+        f"{row['id']}\t{row.get('title') or '未命名文档'}\t{row.get('author') or ''}"
+        f" {str(row.get('updated_at') or '')[:16]}"
+        for row in rows
+    )
+
+
 def _say_chat_send(args, data, env) -> str:
     return json.dumps(data, ensure_ascii=False)
 
@@ -2472,9 +2486,7 @@ _SAY = {
         "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
     ),
     "cheese_title": lambda a, d, e: (
-        f"这条活现在叫「{(d or {}).get('title') or a['text']}」。"
-        if a.get("task")
-        else f"话题标题已设为：{a['text']}"
+        f"标题已设为：{(d or {}).get('title') or a['text']}"
     ),
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
@@ -2487,6 +2499,7 @@ _SAY = {
     "cheese_members": _say_members,
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,
+    "cheese_doc_list": _say_documents,
     "cheese_ask": _say_ask,
     # 卡片由平台渲染，所以这里只说结果。
     "cheese_feedback_propose": lambda a, d, e: (
@@ -2520,13 +2533,11 @@ _SAY = {
 
 class LocalHost:
     """A host for a session that runs ON the machine (the pi harness): the backend
-    over plain HTTP, the file from this disk, the sync as this CLI's own
-    subcommand."""
+    over plain HTTP, the sync as this CLI's own subcommand."""
 
-    def __init__(self, environ=None, doc_versions=None, cwd=None):
+    def __init__(self, environ=None, doc_versions=None):
         self.environ = dict(os.environ if environ is None else environ)
         self.doc_versions = {} if doc_versions is None else doc_versions
-        self.cwd = cwd or os.getcwd()
 
     def request(self, plan: dict) -> dict:
         api = self.environ.get("CHEESE_API", "").rstrip("/")
@@ -2553,10 +2564,6 @@ class LocalHost:
             raise PlatformHTTPError(
                 exc.code, exc.read().decode(errors="replace")
             ) from None
-
-    def read_file(self, path: str) -> bytes:
-        with open(os.path.join(self.cwd, path), "rb") as stream:
-            return stream.read()
 
     def wait_machine(self) -> None:
         """This session runs on its machine: it is there."""
@@ -2649,9 +2656,8 @@ def _environment_runner() -> Path | None:
     return None
 
 
-def _task_id(explicit: str | None = None) -> str:
-    if explicit:
-        return str(uuid.UUID(explicit))
+def _marked_task() -> str | None:
+    """The task whose worktree this is, or None in any other checkout."""
     result = subprocess.run(
         ["git", "rev-parse", "--git-path", "cheese-task.json"],
         capture_output=True,
@@ -2661,11 +2667,24 @@ def _task_id(explicit: str | None = None) -> str:
         marker = Path(result.stdout.strip())
         if marker.is_file():
             return str(uuid.UUID(json.loads(marker.read_text())["task_id"]))
-    raise SystemExit("[cheese] 请在任务工作目录内执行，或指定 --task <id>")
+    return None
+
+
+def _task_id(explicit: str | None = None) -> str:
+    if explicit:
+        return str(uuid.UUID(explicit))
+    task_id = _marked_task()
+    if task_id is None:
+        raise SystemExit("[cheese] 请在任务工作目录内执行，或指定 --task <id>")
+    return task_id
 
 
 def _git_task(
-    cwd: Path, *args: str, extra_env: dict | None = None, input_text: str | None = None
+    cwd: Path,
+    *args: str,
+    extra_env: dict | None = None,
+    input_text: str | None = None,
+    raw: bool = False,
 ) -> str:
     env = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
@@ -2683,7 +2702,8 @@ def _git_task(
     )
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
-    return result.stdout.strip()
+    # Raw for NUL-separated paths: a file name may begin with a space.
+    return result.stdout if raw else result.stdout.strip()
 
 
 def _git_credential(operation: str) -> None:
@@ -2743,7 +2763,12 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
 
 
 def _git_attribution(message_file: str) -> None:
-    task_id = _task_id()
+    # The hook belongs to the shared repository, so every worktree of it runs
+    # it, including one made with `git worktree add` beside a task's. Only a
+    # task's own worktree has someone to credit; any other commits as itself.
+    task_id = _marked_task()
+    if task_id is None:
+        return
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
     if data["room_id"] != TOPIC:
@@ -2885,7 +2910,13 @@ def _task_worktree(task_id: str) -> Path:
         prepare.write_text('#!/bin/sh\nexec cheese git-attribution "$1"\n')
         prepare.chmod(0o755)
         hook = hooks / "post-commit"
-        hook.write_text("#!/bin/sh\nexec cheese sync\n")
+        # Delivers the task whose worktree committed; another worktree of this
+        # repository has no task to deliver, and `cheese sync` there would fail.
+        hook.write_text(
+            "#!/bin/sh\n"
+            '[ -f "$(git rev-parse --git-path cheese-task.json)" ] || exit 0\n'
+            "exec cheese sync\n"
+        )
         hook.chmod(0o755)
     # The room has no checkout. Branch dependencies belong to this task and
     # must be prepared on every open, including after local branch changes.
@@ -2939,6 +2970,16 @@ def _report_sync_failure(
             "队列里，排队的分支不能再改。提交留在那台机器上并已备份；PR 合并后"
             "在新任务里交付它们，或由验收人退回这张卡、PR 撤出队列后再推。"
         )
+    if not _tell_room(content):
+        print(
+            f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
+            "cheese-sync.log 保留了结果",
+            file=sys.stderr,
+        )
+
+
+def _tell_room(content: str) -> bool:
+    """Post `content` to the room this machine works for; whether it arrived."""
     body = {
         "content": content,
         "request_id": str(uuid.uuid4()),
@@ -2953,15 +2994,149 @@ def _report_sync_failure(
     try:
         with urllib.request.urlopen(req, timeout=30):
             pass
-    except Exception:  # noqa: BLE001 — the sync's own failure is what matters
+    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+        return False
+    return True
+
+
+# Directories only a tool writes, from something else the repository holds
+# (dependency installs, interpreter and tool caches). Untracked, they are never
+# work: a fresh install regenerates them, and one node_modules is more files
+# than everything else a task backs up.
+_GENERATED_DIRS = frozenset(
+    {
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        ".nox",
+        ".gradle",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".turbo",
+        ".parcel-cache",
+    }
+)
+# How much of a task's untracked files one backup carries. Build output that
+# the repository does not ignore (dist/, build/, target/, an exported model)
+# lands here: those names are also used for hand-written files, so they are
+# not dropped by name, only by size, largest first. Tracked files are never
+# counted or dropped — an edit to one is always work.
+_UNTRACKED_BACKUP_BUDGET = 64 * 1024 * 1024
+
+
+def _snapshot_index(
+    worktree: Path, env: dict
+) -> tuple[list[str], list[tuple[str, int]]]:
+    """Stage into `env`'s index what a backup of `worktree` carries.
+
+    Every tracked file as it is now — committed or only staged, an edit to one
+    is always work — and the untracked files git does not ignore, except those
+    in a generated directory and the largest ones until the rest fit
+    `_UNTRACKED_BACKUP_BUDGET`. Returns what is left out: the generated
+    directories, and each dropped file with its size.
+    """
+
+    def paths(*args: str) -> set[str]:
+        return set(filter(None, _git_task(worktree, *args, raw=True).split("\0")))
+
+    # Both read from the checkout's own index: a file the agent staged is
+    # tracked, even though the commit it would be in does not exist yet.
+    untracked = paths("ls-files", "-z", "--others", "--exclude-standard")
+    staged = paths(
+        "diff-index", "--cached", "--name-only", "--diff-filter=A", "-z", "HEAD"
+    )
+    _git_task(worktree, "read-tree", "HEAD", extra_env=env)
+    _git_task(worktree, "add", "-u", extra_env=env)
+    keep = {path for path in staged if os.path.lexists(worktree / path)}
+    generated, sized = set(), []
+    for path in untracked:
+        parts = path.rstrip("/").split("/")
+        hit = next((i for i, part in enumerate(parts) if part in _GENERATED_DIRS), None)
+        if hit is not None:
+            generated.add("/".join(parts[: hit + 1]) + "/")
+            continue
+        try:
+            sized.append((os.lstat(worktree / path).st_size, path))
+        except FileNotFoundError:
+            continue  # Gone since it was listed; there is nothing to keep.
+    sized.sort(key=lambda item: (-item[0], item[1]))
+    total = sum(size for size, _ in sized)
+    dropped = []
+    while sized and total > _UNTRACKED_BACKUP_BUDGET:
+        size, path = sized.pop(0)
+        total -= size
+        dropped.append((path, size))
+    keep |= {path for _, path in sized}
+    if keep:
+        _git_task(
+            worktree,
+            "add",
+            # Forced for a file staged past .gitignore; the others are not ignored.
+            "--force",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+            extra_env={**env, "GIT_LITERAL_PATHSPECS": "1"},
+            input_text="\0".join(sorted(keep)),
+        )
+    return sorted(generated), dropped
+
+
+_LEFT_OUT_HEADER = "Left out of this backup (untracked, still only on that machine):"
+
+
+def _left_out_lines(generated: list[str], dropped: list[tuple[str, int]]) -> list[str]:
+    return [f"{path}  (generated)" for path in generated] + [
+        f"{path}  ({size / 1024 / 1024:.1f} MiB, over the backup budget)"
+        for path, size in dropped
+    ]
+
+
+def _print_left_out(task_id: str, left_out: list[str]) -> None:
+    """For the agent that synced one task, often through the post-commit hook.
+
+    Never from `sync --all`: the platform reads that one's output as nothing
+    but failures, each reason starting at the first line after the last.
+    """
+    if left_out:
         print(
-            f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
-            "cheese-sync.log 保留了结果",
+            f"[cheese] 任务 {task_id} 的备份没有带上这些未跟踪的文件：\n  "
+            + "\n  ".join(left_out),
             file=sys.stderr,
         )
 
 
-def _sync_task(task_id: str) -> None:
+def _tell_room_left_out(
+    admin: Path, data: dict, dropped: list[tuple[str, int]]
+) -> None:
+    """Tell the room of untracked files the backup left behind for their size.
+
+    Each file once, and never a generated directory: that comes back with an
+    install, while a large file nobody committed may be hours of work, and it
+    goes with the machine.
+    """
+    told_file = admin / "cheese-backup-left-out"
+    told = set(told_file.read_text().splitlines()) if told_file.exists() else set()
+    new = [path for path, _ in dropped if path not in told]
+    if not (new and API and TOPIC and TOKEN):
+        return
+    budget = _UNTRACKED_BACKUP_BUDGET // 1024 // 1024
+    if _tell_room(
+        f"⚠️ {data['branch']} 的备份没有带上这些没提交的大文件（每次备份里未跟踪"
+        f"的文件合计最多 {budget} MiB，超出时从最大的开始略过）：\n- "
+        + "\n- ".join(new)
+        + "\n它们只在这台机器上，机器回收后就没有了。要留下的请提交，或移进附件存储。"
+    ):
+        told_file.write_text("".join(f"{path}\n" for path in sorted(told | set(new))))
+
+
+def _sync_task(task_id: str) -> list[str]:
+    """Back up and deliver one task; return what its backup left out."""
     task_id = str(uuid.UUID(task_id))
     worktree = _task_root() / task_id
     if not (worktree / ".git").exists():
@@ -3001,9 +3176,14 @@ def _sync_task(task_id: str) -> None:
             # Keep unfinished work off the PR. An alternate index preserves the
             # worker's staging choices while backing up its files at turn end.
             snapshot_env = {"GIT_INDEX_FILE": str(admin / "cheese-snapshot-index")}
-            _git_task(worktree, "read-tree", "HEAD", extra_env=snapshot_env)
-            _git_task(worktree, "add", "-A", extra_env=snapshot_env)
+            generated, dropped = _snapshot_index(worktree, snapshot_env)
             tree = _git_task(worktree, "write-tree", extra_env=snapshot_env)
+            message = f"Work in progress for task {task_id}\n"
+            if left_out := _left_out_lines(generated, dropped):
+                # The list travels with the backup, for `cheese recover`.
+                message += f"\n{_LEFT_OUT_HEADER}\n" + "".join(
+                    f"{line}\n" for line in left_out
+                )
             snapshot = (
                 head
                 if tree == _git_task(worktree, "rev-parse", "HEAD^{tree}")
@@ -3013,9 +3193,10 @@ def _sync_task(task_id: str) -> None:
                     tree,
                     "-p",
                     head,
-                    input_text=f"Work in progress for task {task_id}\n",
+                    input_text=message,
                 )
             )
+            _tell_room_left_out(admin, data, dropped)
             _once_more_if_transient(
                 lambda: _backup_task_snapshot(worktree, admin, data, head, snapshot)
             )
@@ -3026,7 +3207,7 @@ def _sync_task(task_id: str) -> None:
                     f"{datetime.now(UTC).isoformat()} archived snapshot={snapshot}; "
                     "delivery is closed\n"
                 )
-                return
+                return left_out
             branch = data["branch"]
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
@@ -3040,6 +3221,7 @@ def _sync_task(task_id: str) -> None:
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
             )
+            return left_out
         except BaseException as exc:
             record.write(
                 f"{datetime.now(UTC).isoformat()} failed {type(exc).__name__}: {exc}\n"
@@ -3314,6 +3496,10 @@ def _recover_task(task_id):
             staging.rename(recovered)
     bundle.unlink()
     print(f"已恢复到独立目录：{recovered}\n原工作目录和评审分支均未覆盖。")
+    message = _git_task(recovered, "log", "-1", "--format=%B", data["snapshot_sha"])
+    if _LEFT_OUT_HEADER in message:
+        left_out = message.split(_LEFT_OUT_HEADER, 1)[1].strip()
+        print(f"备份时没有带上这些未跟踪的文件，恢复出来的目录里没有它们：\n{left_out}")
 
 
 def _has_work_to_sync(worktree: Path) -> bool:
@@ -3361,6 +3547,93 @@ def _sync_all_tasks() -> None:
             print(f"[cheese] {which} {worktree.name} 同步失败：{exc}", file=sys.stderr)
     if failed:
         raise SystemExit(1)
+
+
+CHECK_DIR = os.path.expanduser("~/.cache/cheese-check")
+
+
+def _check_page(a: argparse.Namespace) -> None:
+    """`cheese check`: the platform's browser renders the page, this prints
+    what it saw and leaves the screenshots where the agent can open them."""
+    try:
+        html = open(a.path, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+    widths = (a.widths or [400, 1280])[:3]
+    if any(not 200 <= w <= 2000 for w in widths):
+        print("[cheese] --width 要在 200 到 2000 之间", file=sys.stderr)
+        sys.exit(2)
+    if a.pdf and not re.fullmatch(
+        r"[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?", a.margin
+    ):
+        print('[cheese] --margin 写一个或两个长度,如 "0" 或 "16mm 18mm"', file=sys.stderr)
+        sys.exit(2)
+    body = {
+        "html": html,
+        "widths": widths,
+        "color_scheme": "dark" if a.dark else "light",
+        "pdf_margin": a.margin if a.pdf else None,
+        "topic": TOPIC or None,
+        "project": PROJECT or None,
+    }
+    started = monotonic()
+    resp = _call("POST", "/page-check", body, tolerate=(503,), timeout=120)
+    if resp.get("ok") is False and resp.get("status"):
+        reason = (resp.get("error") or {}).get("message") or "渲染服务不可用"
+        print(f"[cheese] 平台现在渲染不了:{reason}", file=sys.stderr)
+        sys.exit(1)
+    data = resp.get("data") or {}
+    if not data.get("ok"):
+        print(f"[cheese] 渲染失败:{data.get('error') or '未知原因'}", file=sys.stderr)
+        sys.exit(1)
+    os.makedirs(CHECK_DIR, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(a.path))[0] or "page"
+    print(f"已渲染 {a.path}(用时 {monotonic() - started:.1f} 秒)")
+    problems = 0
+    errors: list[str] = []
+    for view in data.get("views") or []:
+        width = view["width"]
+        shot = os.path.join(CHECK_DIR, f"{stem}-{width}.png")
+        with open(shot, "wb") as out:
+            out.write(base64.b64decode(view["png_b64"]))
+        cut = f",只截了前 {view['cut_at']}px" if view.get("cut_at") else ""
+        print(f"\n{width}px:截图 {shot}(整页高 {view['page_height']}px{cut})")
+        if view["page_width"] > view["viewport_width"] + 1:
+            problems += 1
+            print(
+                f"  页面被撑宽到 {view['page_width']}px,读者要横向滚动整页。"
+                "撑宽它的元素:"
+            )
+            for item in view.get("overflowing") or []:
+                print(f"  - {item['element']}:右边缘在 {item['right']}px")
+        else:
+            print("  宽度正常,没有横向撑破。")
+        for item in view.get("clipped") or []:
+            problems += 1
+            print(f"  内容被裁掉 {item['hidden_px']}px:{item['element']}")
+        for src in view.get("broken_images") or []:
+            errors.append(f"图片没加载出来:{src}(页面只能用内联图片)")
+        for text in view.get("console_errors") or []:
+            errors.append(f"脚本报错:{text}")
+        for url in view.get("failed_requests") or []:
+            errors.append(f"请求失败:{url}")
+    if a.pdf and data.get("pdf_b64"):
+        pdf = base64.b64decode(data["pdf_b64"])
+        with open(a.pdf, "wb") as out:
+            out.write(pdf)
+        pages = len(re.findall(rb"/Type\s*/Page(?!s)", pdf))
+        print(f"\nPDF:{a.pdf}(A4,{pages} 页)")
+    if errors:
+        print()
+        for line in dict.fromkeys(errors):
+            problems += 1
+            print(f"- {line}")
+    print(
+        "\n没有发现问题。看一眼截图就可以摆出来。"
+        if not problems
+        else "\n按上面的问题改一轮,再看一眼截图;不需要反复跑。"
+    )
 
 
 def _need(name: str, value: str) -> str:
@@ -3619,7 +3892,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="准备任务工作目录并输出路径",
         description=(
             "准备已有任务的工作目录，输出路径；不会改变当前 shell 的目录。"
-            "任务用 cheese_task 创建。"
+            "任务由人创建，cheese_task 只能提议。"
         ),
     )
     pwork.add_argument("task_id", help="任务 UUID")
@@ -3671,17 +3944,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="把这台机器上跑起来的应用设为当前预览(先起服务,报端口前先探通)",
         description=(
             "把**已经跑起来的**应用设为当前预览。跑之前:\n"
-            "  1. 把应用起在 127.0.0.1 上,后台跑(nohup ... &)。前端项目优先\n"
+            "  1. 把应用起在 127.0.0.1 上,后台跑(nohup ... &)。前端项目能构建就\n"
             "     「先 build、再按静态文件起服务」,别报 dev server——几百个模块\n"
-            "     请求会挤过预览隧道,首屏能拖到几十秒\n"
-            "  2. 端口你自己挑,固定住(vite 要 --strictPort,否则端口被占时它会\n"
-            "     静默跳到下一个,你以为起好了,报上来的那个却没人应答)\n"
+            "     请求会挤过预览隧道,首屏能拖到几十秒;构建被系统杀掉(内存不够)\n"
+            "     才报 dev server,并跟用户说首屏会慢\n"
+            "  2. 端口你自己挑,先确认没人在用:别的任务的服务占着它时,这条命令和\n"
+            "     平台探到的都是那个服务,报上去的就是别人的预览。vite 还要\n"
+            "     --strictPort,否则端口被占时它会静默跳到下一个\n"
             "  3. 把那个端口报给这条命令\n"
             "\n"
             "每个话题使用独立的预览地址，应用可直接从根路径运行，\n"
             "无需为了预览修改资源路径。例如:\n"
-            "  vite build --outDir dist\n"
-            "  BACKEND_URL=<后端地址> vite preview --strictPort --port <端口>\n"
+            "  PIDFILE=\"/tmp/preview-$(pwd | cksum | cut -d' ' -f1).pid\"\n"
+            "  [ -s \"$PIDFILE\" ] && { kill \"$(cat \"$PIDFILE\")\" 2>/dev/null; rm -f \"$PIDFILE\"; sleep 1; }\n"
+            "  ./node_modules/.bin/vite build --outDir dist || exit\n"
+            "  curl -s --max-time 2 --noproxy '*' -o /dev/null 127.0.0.1:<端口> \\\n"
+            "      && { echo '端口已经有人在用'; exit 1; }\n"
+            "  nohup ./node_modules/.bin/vite preview --outDir dist --host 127.0.0.1 \\\n"
+            "      --strictPort --port <端口> >/tmp/preview-<端口>.log 2>&1 &\\\n"
+            "  echo $! >\"$PIDFILE\"   # 收工只停这个进程,不按名字杀\n"
             "\n"
             "报之前,这条命令自己先敲一次 127.0.0.1:<端口>(浏览器式的 GET):应用已经\n"
             "在听就立刻过;还在起的等它应答,最多 --wait 秒(默认 30,--no-wait 跳过)。\n"
@@ -3793,6 +4074,38 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=sorted(ARTIFACT_KINDS),
         help="渲染类型(默认按扩展名判断)",
+    )
+
+    pcheck = sub.add_parser(
+        "check",
+        help="让平台的浏览器看一眼一份 HTML:手机宽和桌面宽各截一张整页,报出撑破页面的元素和报错",
+        description=(
+            "摆出来之前(或改完之后)跑一次,不用自己装浏览器。默认按手机宽 400px 和"
+            "桌面宽 1280px 各渲染一次,截图存到本地,打印页面实际宽度、把页面撑宽的"
+            "元素、控制台报错和没加载出来的图。看截图、按报告改一轮就够了,不要反复跑。"
+        ),
+    )
+    pcheck.add_argument("path", help="工作区里的 HTML 文件")
+    pcheck.add_argument(
+        "--width",
+        dest="widths",
+        type=int,
+        action="append",
+        default=None,
+        help="改用这些宽度(可重复,最多 3 个;默认 400 和 1280)",
+    )
+    pcheck.add_argument(
+        "--dark", action="store_true", help="按深色模式渲染(默认浅色)"
+    )
+    pcheck.add_argument(
+        "--pdf",
+        default=None,
+        help="顺便按打印样式导出 A4 PDF 到这个路径(背景色保留)",
+    )
+    pcheck.add_argument(
+        "--margin",
+        default="0",
+        help="PDF 页边距,一个值四边相同,两个值是「上下 左右」,如 \"16mm 18mm\"(默认 0)",
     )
 
     ppull = sub.add_parser(
@@ -3980,12 +4293,13 @@ def main() -> None:
         if a.all:
             _sync_all_tasks()
         else:
-            _sync_task(_task_id(a.task))
+            task = _task_id(a.task)
+            _print_left_out(task, _sync_task(task))
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)
-        _sync_task(task)
-        path = f"/topics/{topic}/tasks/{task}/push-fix"
+        _print_left_out(task, _sync_task(task))
+        path = f"/topics/{task}/push-fix"
         if a.drop_dependency:
             path += "?drop_dependency=true"
         r = _call("POST", path)["data"]
@@ -4165,6 +4479,8 @@ def main() -> None:
             f"已从模板 {a.template} 在房间里新建 {rel}，并取到本地 {a.path}。"
             "填好占位后 cheese show 它。"
         )
+    elif a.cmd == "check":
+        _check_page(a)
     elif a.cmd == "pull":
         topic = _need("CHEESE_TOPIC", TOPIC)
         rel = _worktree_relative(a.path)

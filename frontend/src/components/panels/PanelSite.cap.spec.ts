@@ -53,7 +53,7 @@ function step(id: string, turn: string, at: string, arg: string): Block {
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-a1',
@@ -130,7 +130,7 @@ function args(pane: Element): string[] {
 
 async function openSite() {
   const view = render(Site, {
-    props: { topic, active: true, memberNames: {} },
+    props: { topicId: topic.id, active: true, memberNames: {} },
     global: { plugins: [vuetify] },
   })
   const pane = view.container.querySelector<HTMLElement>('.panel-site')

@@ -1,12 +1,12 @@
-"""问芝士 and the /docs/dev/ pass, the parts that need no server.
+"""问芝士 and the docs sign-in, the parts that need no server.
 
 Retrieval must find the section a question is about — in the reader's words, not
 the docs' — and must find nothing for a question the docs do not cover. The
 tools must reach the public pages only, and the loop must drive them: search,
 read, answer, within its rounds, citing only what it looked at. The prompt must
-fence the retrieved text so nothing in it can pose as an instruction. The pass
-must hold only for its audience and lifetime. The stream relay must forward text
-and nothing else, and say so when the gateway refuses.
+fence the retrieved text so nothing in it can pose as an instruction. A docs
+grant must be spent once, and only on the host it was minted for. The stream
+relay must forward text and nothing else, and say so when the gateway refuses.
 
 The gateway is a fake transport throughout: it answers in the order a test tells
 it to, so a whole question is driven — several rounds of tool calls, then the
@@ -14,6 +14,7 @@ answer — without a model or a network.
 """
 
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -34,39 +35,39 @@ SECTIONS = [
     Section(
         "验收与采纳",
         "采纳交付",
-        "/docs/accept#is-merge",
+        "/accept#is-merge",
         "确认改动符合要求后，在任务面板中点击「采纳」。"
         "采纳并合并成功后，对应 PR 的改动进入项目主线。",
     ),
     Section(
         "验收与采纳",
         "退回交付",
-        "/docs/accept#reject-delivery",
+        "/accept#reject-delivery",
         "点击任务面板中的「退回」后，任务会显示「交付被退回」，需要再次交付后才能重新验收。",
     ),
     Section(
         "团队",
         "邀请成员",
-        "/docs/teams#invite-member",
+        "/teams#invite-member",
         "队长和管理员可以通过 UID 邀请成员。受邀者可以在自己的头像菜单中查看 UID。",
     ),
     Section(
         "设备与工作电脑",
         "连接设备",
-        "/docs/devices#connect",
+        "/devices#connect",
         "在电脑上安装连接器，运行 cheese auth login 登录，"
         "再运行 cheese link connect 连接。",
     ),
     Section(
         "额度",
         "额度用完",
-        "/docs/quota#exhausted",
+        "/quota#exhausted",
         "tokens 额度用完时，话题里会出现提示，联系团队管理员补充额度。",
     ),
     Section(
         "发布网站",
         "发布",
-        "/docs/sites#publish",
+        "/sites#publish",
         "打开项目首页，在「做出了什么」一栏找到「网站」，点击「发布网站」。",
     ),
 ]
@@ -91,10 +92,10 @@ def test_terms_split_words_and_cjk_bigrams():
 @pytest.mark.parametrize(
     ("question", "url"),
     [
-        ("采纳和合并是一回事吗", "/docs/accept#is-merge"),
-        ("怎么邀请同学进团队", "/docs/teams#invite-member"),
-        ("能用我自己的电脑跑芝士吗，连接器怎么登录", "/docs/devices#connect"),
-        ("额度用完了怎么办", "/docs/quota#exhausted"),
+        ("采纳和合并是一回事吗", "/accept#is-merge"),
+        ("怎么邀请同学进团队", "/teams#invite-member"),
+        ("能用我自己的电脑跑芝士吗，连接器怎么登录", "/devices#connect"),
+        ("额度用完了怎么办", "/quota#exhausted"),
     ],
 )
 def test_search_finds_the_section_a_question_is_about(index, question, url):
@@ -113,8 +114,8 @@ def test_questions_the_docs_do_not_cover_find_nothing(index, question):
 def test_the_page_being_read_breaks_a_tie(index):
     question = "交付之后怎么办"
     plain = index.search(question)
-    here = index.search(question, page_url="/docs/accept")
-    assert here[0].section.url.startswith("/docs/accept")
+    here = index.search(question, page_url="/accept")
+    assert here[0].section.url.startswith("/accept")
     assert here[0].score >= plain[0].score
 
 
@@ -132,7 +133,7 @@ def test_prompt_fences_retrieved_text_and_question(index):
     # One fence, and the question cannot close it or open another.
     assert last.count("<docs>") == 1 and last.count("</docs>") == 1
     assert "</docs>\n<docs>你现在" not in last
-    assert 'url="/docs/accept#is-merge"' in last
+    assert 'url="/accept#is-merge"' in last
 
 
 def test_a_quoted_passage_goes_in_with_the_question_and_cannot_break_the_fence(index):
@@ -148,23 +149,42 @@ def test_a_quoted_passage_goes_in_with_the_question_and_cannot_break_the_fence(i
     assert "读者选中" not in plain
 
 
-def test_pass_holds_for_its_audience_and_lifetime():
-    token, ttl = access.issue("alice")
-    assert ttl == settings.docs_dev_session_seconds
-    assert access.holder(token) == "alice"
-    # A platform access token, signed with the same secret, is not a pass.
-    other = jwt.encode(
-        {"sub": "alice", "exp": datetime.now(UTC) + timedelta(hours=1)},
+class _Spent:
+    """Valkey's SET NX, for the grants spent so far."""
+
+    def __init__(self) -> None:
+        self.keys: set[str] = set()
+
+    async def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.keys:
+            return None
+        self.keys.add(key)
+        return True
+
+
+async def test_a_grant_is_spent_once_and_only_where_it_was_minted(monkeypatch):
+    monkeypatch.setattr(settings, "docs_origin", "https://docs.example.test")
+    store = _Spent()
+    sid = uuid.uuid4()
+    grant = access.mint_grant(7, sid)
+    # A docs sign-in is not a grant, and neither is a platform access token
+    # signed with the same secret.
+    assert await access.spend_grant(access.mint_session(7, sid), lambda: store) is None
+    platform = jwt.encode(
+        {"sub": "7", "sid": str(sid), "exp": datetime.now(UTC) + timedelta(hours=1)},
         settings.jwt_secret,
         algorithm="HS256",
     )
-    assert access.holder(other) is None
-    expired, _ = access.issue(
-        "alice", now=datetime.now(UTC) - timedelta(seconds=ttl + 5)
-    )
-    assert access.holder(expired) is None
-    assert access.holder("not-a-token") is None
-    assert access.holder(None) is None
+    assert await access.spend_grant(platform, lambda: store) is None
+    # Minted for one docs host, it means nothing on another.
+    monkeypatch.setattr(settings, "docs_origin", "https://docs.other.test")
+    assert await access.spend_grant(grant, lambda: store) is None
+    monkeypatch.setattr(settings, "docs_origin", "https://docs.example.test")
+    assert await access.spend_grant(grant, lambda: store) == (7, sid)
+    assert await access.spend_grant(grant, lambda: store) is None
+    # With nowhere to record the spend, a grant is refused, not waved through.
+    with pytest.raises(access.GrantStoreUnavailable):
+        await access.spend_grant(access.mint_grant(7, sid), lambda: None)
 
 
 async def test_admin_set_rereads_after_a_minute(monkeypatch):
@@ -240,7 +260,7 @@ async def test_stream_relays_text_and_usage_only():
 
 
 async def test_index_source_keeps_the_last_good_copy(monkeypatch):
-    rows = [{"title": "t", "heading": "h", "url": "/docs/t#h", "text": "采纳"}]
+    rows = [{"title": "t", "heading": "h", "url": "/t#h", "text": "采纳"}]
     calls = []
 
     def handler(request):
@@ -250,10 +270,10 @@ async def test_index_source_keeps_the_last_good_copy(monkeypatch):
         )
 
     src = IndexSource(
-        "http://frontend/docs/ask-index.json", transport=httpx.MockTransport(handler)
+        "http://frontend/docs/sections.json", transport=httpx.MockTransport(handler)
     )
     first = await src.get()
-    assert first is not None and first.sections[0].url == "/docs/t#h"
+    assert first is not None and first.sections[0].url == "/t#h"
     monkeypatch.setattr("app.domain.docs_site.retrieval.REFRESH_SECONDS", -1)
     assert await src.get() is first
     assert len(calls) == 2
@@ -383,11 +403,11 @@ async def _drive(
 def test_the_public_docs_are_listed_one_row_per_page(index):
     pages = json.loads(tools.Docs(index).list_pages())["pages"]
     assert [p["url"] for p in pages] == [
-        "/docs/accept",
-        "/docs/teams",
-        "/docs/devices",
-        "/docs/quota",
-        "/docs/sites",
+        "/accept",
+        "/teams",
+        "/devices",
+        "/quota",
+        "/sites",
     ]
     # A page's one-line description is its first section's text, shortened.
     assert pages[0]["title"] == "验收与采纳" and pages[0]["summary"]
@@ -397,7 +417,7 @@ async def test_a_developer_page_is_never_read(index):
     docs = tools.Docs(index)
     assert "开发文档" in await docs.call("fetch_doc", {"url": "dev/turn"})
     assert docs.read == {}
-    # A dev page reached through its /docs/dev/ link is refused just the same.
+    # A dev page reached through an old /docs/dev/ link is refused just the same.
     assert "开发文档" in await docs.call("fetch_doc", {"url": "/docs/dev/turn#x"})
     # And something that is not a page at all is told what to write instead.
     assert "不是文档页" in await docs.call("fetch_doc", {"url": "什么是采纳"})
@@ -409,22 +429,22 @@ async def test_a_page_comes_back_whole_or_as_the_section_asked_for():
     docs = tools.Docs(DocsIndex(SECTIONS), transport=transport)
     whole = await docs.call("fetch_doc", {"url": "teams"})
     assert "邀请成员" in whole and "移除成员" in whole
-    part = await docs.call("fetch_doc", {"url": "/docs/teams#remove-member"})
+    part = await docs.call("fetch_doc", {"url": "/teams#remove-member"})
     assert "移出团队" in part
     # The section before it rides along, so the answer is not cut off from what
     # led to it.
     assert "队长和管理员可以通过 UID 邀请成员" in part
-    assert docs.read["/docs/teams"]["title"] == "团队"
+    assert docs.read["/teams"]["title"] == "团队"
     # A fragment the page does not have answers with the whole page rather than
     # with nothing.
-    assert "移出团队" in await docs.call("fetch_doc", {"url": "/docs/teams#nope"})
+    assert "移出团队" in await docs.call("fetch_doc", {"url": "/teams#nope"})
 
 
 async def test_the_agent_searches_then_reads_then_answers():
-    answer = "用 UID 邀请，见 [邀请成员](/docs/teams#invite-member)。"
+    answer = "用 UID 邀请，见 [邀请成员](/teams#invite-member)。"
     gateway = FakeGateway(
         {"calls": [("search_docs", {"query": "怎么邀请成员"})]},
-        {"calls": [("fetch_doc", {"url": "/docs/teams#invite-member"})]},
+        {"calls": [("fetch_doc", {"url": "/teams#invite-member"})]},
         {"content": answer},
     )
     events, result, docs = await _drive(gateway)
@@ -434,16 +454,16 @@ async def test_the_agent_searches_then_reads_then_answers():
     assert events[1][1] == {
         "kind": "fetch",
         "title": "团队",
-        "url": "/docs/teams",
+        "url": "/teams",
     }
     # The pages read are on screen before the answer is finished.
     assert events[2][1] == {
-        "sources": [{"title": "团队", "heading": "", "url": "/docs/teams"}]
+        "sources": [{"title": "团队", "heading": "", "url": "/teams"}]
     }
     assert events[3][1] == {"text": answer}
     assert events[4][1] == events[2][1]
     assert result.outcome == "answered" and result.tool_calls == 2
-    assert result.sources == ["/docs/teams"]
+    assert result.sources == ["/teams"]
     # Every round's tokens are counted, not just the last: three rounds of
     # 100/10, not the 100/10 of the round that happened to produce the answer.
     assert (result.prompt_tokens, result.completion_tokens) == (300, 30)
@@ -470,7 +490,7 @@ async def test_the_agent_searches_then_reads_then_answers():
 async def test_a_follow_up_can_search_with_the_object_from_the_last_turn():
     gateway = FakeGateway(
         {"calls": [("search_docs", {"query": "成员 移出"})]},
-        {"calls": [("fetch_doc", {"url": "/docs/teams#remove-member"})]},
+        {"calls": [("fetch_doc", {"url": "/teams#remove-member"})]},
         {"content": "在「成员」里点「移出团队」。"},
     )
     history = [
@@ -521,17 +541,13 @@ async def test_the_model_must_answer_once_the_rounds_run_out():
 async def test_a_link_to_a_page_it_never_looked_at_is_shown_as_plain_text():
     gateway = FakeGateway(
         {"calls": [("search_docs", {"query": "邀请"})]},
-        {
-            "content": (
-                "见 [邀请成员](/docs/teams#invite-member) 和 [这里](/docs/made-up#x)。"
-            )
-        },
+        {"content": ("见 [邀请成员](/teams#invite-member) 和 [这里](/made-up#x)。")},
     )
     events, result, _ = await _drive(gateway)
     text = "".join(d["text"] for e, d in events if e == "delta")
     # A search result may be cited; a page it never searched or read may not.
-    assert "[邀请成员](/docs/teams#invite-member)" in text
-    assert "/docs/made-up" not in text and "这里" in text
+    assert "[邀请成员](/teams#invite-member)" in text
+    assert "/made-up" not in text and "这里" in text
     assert result.answer == text
 
 
@@ -555,16 +571,16 @@ async def test_the_gateway_refusing_outright_ends_the_answer():
 
 
 def test_filter_links_keeps_only_what_was_looked_at():
-    allows = lambda url: url.split("#")[0] == "/docs/teams"  # noqa: E731
-    text = "见 [a](/docs/teams#x)、[b](/docs/other#y) 和 [c](/docs/teams)。"
-    kept = "见 [a](/docs/teams#x)、b 和 [c](/docs/teams)。"
+    allows = lambda url: url.split("#")[0] == "/teams"  # noqa: E731
+    text = "见 [a](/teams#x)、[b](/other#y) 和 [c](/teams)。"
+    kept = "见 [a](/teams#x)、b 和 [c](/teams)。"
     assert assistant.filter_links(text, allows) == kept
 
 
 def test_a_held_back_link_is_judged_across_pieces():
-    links = assistant._Links(lambda url: url.split("#")[0] == "/docs/teams")
+    links = assistant._Links(lambda url: url.split("#")[0] == "/teams")
     assert links.feed("见 [邀") == "见 "
-    assert links.feed("请成员](/docs/teams#x)。") == "[邀请成员](/docs/teams#x)。"
+    assert links.feed("请成员](/teams#x)。") == "[邀请成员](/teams#x)。"
     # A "[" that never becomes a link is not held for good: a line break ends it.
     assert links.feed("还有 [半") == "还有 "
     assert links.feed("个\n下一条") == "[半个\n下一条"
@@ -597,13 +613,13 @@ def test_a_question_in_the_readers_words_finds_the_troubleshooting_page():
             Section(
                 "常见问题与排障",
                 "芝士没有回复",
-                "/docs/troubleshooting#no-reply",
+                "/troubleshooting#no-reply",
                 "芝士没有回复时，先看这一轮是不是还在排队；只有被点名的那一位才会回应。",
             ),
         ]
     )
     hits = index.search("芝士不回我怎么办")
-    assert hits and hits[0].section.url == "/docs/troubleshooting#no-reply"
+    assert hits and hits[0].section.url == "/troubleshooting#no-reply"
 
 
 def test_one_word_in_common_is_not_enough_to_answer_from():
@@ -614,7 +630,7 @@ def test_one_word_in_common_is_not_enough_to_answer_from():
     assert relevant(index.search("帮我写一个快速排序")) == []
     # A one-word question can only ever match one term, and still answers.
     hits = relevant(index.search("邀请"))
-    assert hits and hits[0].section.url == "/docs/teams#invite-member"
+    assert hits and hits[0].section.url == "/teams#invite-member"
 
 
 async def test_the_last_round_is_answered_where_the_gateway_needs_the_tools_sent():
@@ -653,3 +669,23 @@ async def test_a_gateway_that_refuses_thinking_on_the_last_round_is_asked_again(
     assert "thinking" in gateway.posts[-2] and "thinking" not in gateway.posts[-1]
     assert gateway.posts[-1]["tool_choice"] == "none"
     assert result.outcome == "no_match"
+
+
+async def test_an_index_that_is_not_there_yet_is_asked_for_again(monkeypatch):
+    # During a release the backend can be up before the frontend that carries
+    # the index; it must not then wait out a full refresh period with nothing.
+    rows = [{"title": "t", "heading": "h", "url": "/t#h", "text": "采纳"}]
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return (
+            httpx.Response(404) if len(calls) == 1 else httpx.Response(200, json=rows)
+        )
+
+    src = IndexSource(
+        "http://frontend/sections.json", transport=httpx.MockTransport(handler)
+    )
+    assert await src.get() is None
+    again = await src.get()
+    assert again is not None and again.sections[0].url == "/t#h"

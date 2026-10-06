@@ -171,7 +171,7 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
         label: m.label,
         kind: 'member' as const,
         insert: m.label,
-        sub: `@${m.handle}`,
+        sub: m.handle,
         agent: m.agent,
         external: !!m.external,
         outsideTopic: !!m.outsideTopic,

@@ -70,7 +70,7 @@ def _seen_by(client, pid: str, handle: str) -> dict[str, dict]:
 
 def _card(client, tid: str, reviewer: str) -> str:
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",

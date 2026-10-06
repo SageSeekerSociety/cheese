@@ -46,7 +46,7 @@ const flush = () => vi.advanceTimersByTimeAsync(0)
 function said(id: string, author = 'someone-else'): Block {
   return {
     id,
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'message',
     author_type: 'participant',
     author,
@@ -59,12 +59,14 @@ function arrive(block: Block) {
   sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
 }
 
-// happy-dom 不排版：给滚动容器一个高度，并把它停在离底部很远的地方。
+// happy-dom 不排版：给滚动容器一个高度，并让人从底部往上翻到离底部很远的地方。
 function scrollAway(pane: HTMLElement) {
   Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 4000 })
   Object.defineProperty(pane, 'clientHeight', { configurable: true, value: 600 })
-  pane.scrollTop = 0
   pane.scrollTo = vi.fn()
+  pane.scrollTop = 3400
+  pane.dispatchEvent(new Event('scroll'))
+  pane.scrollTop = 0
   pane.dispatchEvent(new Event('scroll'))
 }
 
@@ -118,8 +120,17 @@ describe('往上翻着时来了新消息', () => {
     scrollAway(getByTestId('chat-scroll'))
     arrive(said('mine', 'me'))
     await flush()
-    expect(pill(container)).toBeNull()
+    // 翻上去了，入口还在（写「回到最新」）；但自己说的那条没有变成「新消息」去计数。
+    expect(pill(container)?.textContent).toContain(t('work.room.backToLatest'))
+    expect(pill(container)?.textContent).not.toContain(t('work.room.newMessages'))
     localStorage.removeItem('user')
+  })
+
+  it('只是往上翻了翻、没有新消息，也有回到最新的入口', async () => {
+    const { container, getByTestId } = await mountRoom()
+    scrollAway(getByTestId('chat-scroll'))
+    await flush()
+    expect(pill(container)?.textContent).toContain(t('work.room.backToLatest'))
   })
 
   it('点一下回到最新，提示收起', async () => {
@@ -131,6 +142,10 @@ describe('往上翻着时来了新消息', () => {
     await fireEvent.click(pill(container)!)
     await vi.advanceTimersByTimeAsync(400)
     expect(pane.scrollTo).toHaveBeenCalled()
+    // 平滑滚动落了地：滚动事件到，位置回到最底下，提示才收起。
+    Object.defineProperty(pane, 'scrollTop', { configurable: true, value: 4000 - 600, writable: true })
+    pane.dispatchEvent(new Event('scroll'))
+    await flush()
     expect(pill(container)).toBeNull()
   })
 })

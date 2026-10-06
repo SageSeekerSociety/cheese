@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 import { useTeamKnowledge } from '@/composables/useTeamKnowledge'
 
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import KnowledgeDetailDialog from '@/components/teams/knowledge/KnowledgeDetailDialog.vue'
 import KnowledgeEmpty from '@/components/teams/knowledge/KnowledgeEmpty.vue'
 import KnowledgeGrid from '@/components/teams/knowledge/KnowledgeGrid.vue'
 import KnowledgeTable from '@/components/teams/knowledge/KnowledgeTable.vue'
 import KnowledgeToolbar from '@/components/teams/knowledge/KnowledgeToolbar.vue'
 import KnowledgeUploadDialog from '@/components/teams/knowledge/KnowledgeUploadDialog.vue'
+import { t } from '@/i18n'
 import { RESOURCE_TYPE_OPTIONS } from '@/lib/knowledgeFormat'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 
 // 小队知识库（`/teams/:handle/knowledge`）。这一页原来 1508 行，装了三件事：
 // 取数与写入、四种视图的模板、以及和它们搅在一起的一堆判断。现在它只剩**接线**
@@ -27,6 +32,7 @@ const {
   searchQuery,
   filter,
   knowledges,
+  loadError,
   hasFilters,
   availableTags,
   ownerId,
@@ -42,6 +48,12 @@ const {
   openUploadDialog,
   createKnowledge,
 } = useTeamKnowledge()
+
+/**
+ * 这一页没读出来。空列表只在「真的读到了、里面是空的」时才算数 ——
+ * 读失败也留一个空列表，两种长得一模一样，所以要看 `loadError`。
+ */
+const failed = computed(() => loadError.value !== null && knowledges.value.length === 0)
 
 /** 上传对话框递上来的那份草稿：成功才关门。 */
 async function onSubmitUpload(draft: Parameters<typeof createKnowledge>[0]) {
@@ -73,7 +85,16 @@ async function onSubmitUpload(draft: Parameters<typeof createKnowledge>[0]) {
         @upload="openUploadDialog"
       />
 
-      <KnowledgeEmpty v-if="knowledges.length === 0" :has-filters="hasFilters" />
+      <!-- 没读出来就说没读出来，「这个团队还没有资料」是另一回事，由下面的空态说。 -->
+      <BaseLoadError
+        v-if="failed"
+        :title="t('teams.knowledge.loadFailed')"
+        :error="loadFailureReason(loadError)"
+        :forbidden="isForbidden(loadError)"
+        @retry="loadKnowledges"
+      />
+
+      <KnowledgeEmpty v-else-if="knowledges.length === 0" :has-filters="hasFilters" />
 
       <KnowledgeGrid
         v-else-if="viewMode === 'grid'"

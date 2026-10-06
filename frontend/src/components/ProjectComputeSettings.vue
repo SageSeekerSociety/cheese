@@ -1,14 +1,13 @@
 <script setup lang="ts">
 // 项目只给默认：新 agent 开工时用哪台工作电脑。已经在干活的 agent 各有各的机器，
 // 改默认不搬它们；它们现在在哪，写在「现在的分布」里。
-import type { ComputeChoice, ProjectComputeConfigs } from '../cx_types'
+import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
 
 import { onMounted, ref, watch } from 'vue'
 
 import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
-import { useCloudSupply } from '../composables/useCloudSupply'
 import { t } from '../i18n'
 import { choiceDetail, choiceName, deviceName } from '../lib/computeConfig'
 
@@ -19,7 +18,6 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
 
 const props = defineProps<{ projectId: string }>()
-const { supply: cloudSupply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
 const state = ref<ProjectComputeConfigs | null>(null)
 const error = ref('')
 const busy = ref(false)
@@ -53,11 +51,6 @@ async function save(choice: ComputeChoice) {
 const releaseGate = holdRevealGate()
 onMounted(() => load().finally(releaseGate))
 watch(() => props.projectId, load)
-// 再进编辑就再问一次范围：表单收起时答案留在这里，留着的那份会旧。还没问过就不问，
-// 等表单自己要；这样一次编辑最多问一次。
-watch(editing, (open) => {
-  if (open && cloudSupply.value) void loadSupply()
-})
 </script>
 
 <template>
@@ -86,22 +79,28 @@ watch(editing, (open) => {
         v-if="editing && state.can_manage"
         :devices="state.devices"
         :cloud-available="state.cloud_available"
-        :supply="cloudSupply"
-        :supply-loading="supplyLoading"
+        :cloud-vm-available="state.cloud_vm_available"
         :busy="busy"
         @select="save"
-        @need-supply="loadSupply"
       />
 
       <div class="distribution" data-testid="project-distribution">
         <div class="distribution-title">{{ t('work.projectMachine.distribution') }}</div>
-        <p v-if="!state.distribution.cloud && !state.distribution.devices.length" class="c-muted mb-0">
+        <p
+          v-if="!state.distribution.cloud && !state.distribution.cloud_vm && !state.distribution.devices.length"
+          class="c-muted mb-0"
+        >
           {{ t('work.projectMachine.noneStarted') }}
         </p>
         <ul v-else class="distribution-list">
           <li v-if="state.distribution.cloud">
             <span class="status-dot" />{{
               t('work.projectMachine.onCloud', { agents: agents(state.distribution.cloud) })
+            }}
+          </li>
+          <li v-if="state.distribution.cloud_vm">
+            <span class="status-dot" />{{
+              t('work.projectMachine.onCloudVm', { agents: agents(state.distribution.cloud_vm) })
             }}
           </li>
           <li v-for="device in state.distribution.devices" :key="device.device_id ?? ''">

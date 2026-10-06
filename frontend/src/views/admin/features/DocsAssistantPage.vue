@@ -5,7 +5,6 @@ import type { DocsAssistantReport, FeatureDays } from '@/views/admin/features/fe
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminHistogram from '@/components/admin/AdminHistogram.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
@@ -14,6 +13,7 @@ import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminQuestionTable from '@/components/admin/AdminQuestionTable.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { fmtCost, fmtMs, fmtNum, fmtPercent } from '@/lib/usageFormat'
 import { getDocsAssistantReport } from '@/views/admin/features/featureApi'
 
@@ -212,12 +212,11 @@ const outcomeSegments = computed(() => {
     <div class="adoc__body admin-page__body">
       <p v-if="window" class="adoc__stamp t-meta-read">{{ window }}</p>
 
-      <AdminEmptyState
+      <BaseLoadError
         v-if="failed"
         :title="t('featureStats.page.loadFailed')"
-        :action="t('featureStats.page.retry')"
-        tone="error"
-        @action="load"
+        :retry-label="t('featureStats.page.retry')"
+        @retry="load"
       />
 
       <template v-else>

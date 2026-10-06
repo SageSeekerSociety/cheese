@@ -264,7 +264,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
             <UserAvatar :avatar="avatarUrl" :name="displayName" :size="compact ? 64 : 96" class="profile__avatar" />
             <div class="profile__names">
               <h1 class="t-page-title profile__name">{{ displayName }}</h1>
-              <div class="t-meta-read profile__handle">@{{ handle }}</div>
+              <div class="t-meta-read profile__handle">{{ handle }}</div>
               <div v-if="roleInProject" class="profile__role">
                 <ExternalTag v-if="roleInProject === 'external'" />
                 <span v-else class="chip-neutral">{{ roleLabel(roleInProject) }}</span>

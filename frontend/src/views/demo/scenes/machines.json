@@ -10,13 +10,13 @@
   "backstage": "devices",
   "devices": [
     { "id": "mbp", "name": "王长鑫的 MacBook", "kind": "自托管设备" },
-    { "id": "cloud", "name": "cm-7f3a", "kind": "云机器" }
+    { "id": "cloud", "name": "cm-7f3a", "kind": "云端沙箱" }
   ],
   "steps": [
     {
       "label": "几种机器",
       "focus": "backstage",
-      "tag": "本机沙盒、自托管设备、云机器、中心会话加执行机",
+      "tag": "本机沙盒、自托管设备、云端沙箱、中心会话加执行机",
       "events": [
         { "at": 200, "do": "device", "id": "cloud", "status": "online", "text": "每个话题一台 MicroCloud 机器" },
         { "at": 700, "do": "device", "id": "mbp", "status": "offline", "text": "还没接入" }

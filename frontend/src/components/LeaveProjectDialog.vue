@@ -4,7 +4,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { leaveProject } from '@/api'
+import { leaveProject, listProjectMembers } from '@/api'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
@@ -18,7 +18,26 @@ const store = useWorkspaceStore()
 
 // 「退出的是项目不是团队」只对随团队进来的人成立：被邀请进来的外部成员、自己名下
 // 项目里的人，本来就不在什么团队里。
-const viaTeam = computed(() => store.members.find((member) => member.user_handle === myHandle())?.source === 'team')
+//
+// 读的是**要退的那个项目**的名册：从 rail 右键退的可能不是正开着的这个，store 里那份
+// 名册是正开着那个的。不是同一个就打开时读一次；读到之前、读不到，都按不提团队说。
+const otherRoster = ref<{ user_handle: string; source?: string }[] | null>(null)
+const roster = computed(() => (props.projectId === store.projectId ? store.members : otherRoster.value ?? []))
+const viaTeam = computed(() => roster.value.find((member) => member.user_handle === myHandle())?.source === 'team')
+watch(
+  [open, () => props.projectId],
+  async ([isOpen, projectId]) => {
+    if (!isOpen || projectId === store.projectId) return
+    otherRoster.value = null
+    try {
+      const rows = (await listProjectMembers(projectId)).data
+      if (props.projectId === projectId) otherRoster.value = rows
+    } catch {
+      // 只是确认框里的一句措辞，读不到就用不提团队的那一句。
+    }
+  },
+  { immediate: true }
+)
 
 const leaving = ref(false)
 const error = ref<string | null>(null)

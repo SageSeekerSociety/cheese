@@ -7,11 +7,14 @@
 //
 // 名册底下一行写这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻
 // 结论 60）：房间里的 AI 队友都在这一台上，所以不再每个队友各写一行。
-import type { ProjectMemberRow, TopicComputeProfile, TopicMemberRow } from '../cx_types'
+import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+import type { TopicComputeProfile } from '../types/compute'
+import type { MenuAction } from './common/menuAction'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { addTopicMember, getTopicComputeProfile, removeTopicMember, updateTopicMemberRole } from '../api'
+import { useRowMenu } from '../composables/useRowMenu'
 import { t } from '../i18n'
 import { memberName } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
@@ -21,6 +24,7 @@ import { cachedTopicPanel, fetchTopicMembers } from '../lib/topicPanelCache'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
+import AdaptiveMenu from './common/AdaptiveMenu.vue'
 import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
@@ -124,6 +128,33 @@ const myRole = computed(() => members.value.find((m) => m.member_handle === prop
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'admin')
 const ownerCount = computed(() => members.value.filter((m) => m.role === 'owner').length)
 
+// 右键一位成员：行里那个角色菜单和移出按钮，收成一份弹在鼠标那一点上。最后一个拥有者
+// 不能被降级或移出，那几项和行里一样点不动。
+const rowMenu = useRowMenu<string>()
+function memberActions(m: TopicMemberRow): MenuAction[] {
+  const lastOwner = m.role === 'owner' && ownerCount.value <= 1
+  const roles: MenuAction[] = m.agent
+    ? []
+    : ROLES.filter((r) => r !== m.role).map((r) => ({
+        key: `role.${r}`,
+        label: t('work.room.roster.setRole', { role: roleLabel(r) }),
+        icon: 'mdi-account-key-outline',
+        disabled: busy.value || lastOwner,
+        onSelect: () => void onSetRole(m.member_handle, r),
+      }))
+  return [
+    ...roles,
+    {
+      key: 'remove',
+      label: t('work.room.roster.remove'),
+      icon: 'mdi-account-remove-outline',
+      danger: true,
+      disabled: busy.value || lastOwner,
+      onSelect: () => void onRemove(m.member_handle),
+    },
+  ]
+}
+
 // 项目里的外部成员（团队以外、被邀请进来的人）。房间名册上的人都来自项目名册，所以
 // 谁是外部成员问项目名册就够了，列表和「添加」下拉都挂「外部」。
 const externals = computed(() => externalHandles(props.projectMembers))
@@ -165,6 +196,13 @@ function initial(name: string): string {
 
 function roleLabel(role: string): string {
   return ROLES.includes(role as (typeof ROLES)[number]) ? t(`work.room.roster.role.${role}`) : role
+}
+
+/** What the role can do, shown beside each option in the role menu and as the tooltip on
+ *  the resting label. The roster row is only two lines tall, so the list keeps the label
+ *  and the explanation lives one hover away. */
+function roleHint(role: string): string {
+  return ROLES.includes(role as (typeof ROLES)[number]) ? t(`work.room.roster.roleHint.${role}`) : ''
 }
 
 async function guard<T>(fn: () => Promise<T>): Promise<void> {
@@ -217,8 +255,8 @@ async function onSetRole(handle: string, role: string) {
               :style="{ zIndex: MAX_FACES - i }"
             />
             <img
-              decoding="async"
               v-else-if="faceSrc(m)"
+              decoding="async"
               class="members-mini__face members-mini__face--photo"
               :src="faceSrc(m)!"
               :alt="memberName(m) || m.member_handle"
@@ -246,11 +284,24 @@ async function onSetRole(handle: string, role: string) {
 
       <LoadingSkeleton v-if="loading" variant="roster" />
       <ul v-else class="roster__list">
-        <li v-for="m in members" :key="m.id" class="roster__item">
+        <li
+          v-for="m in members"
+          :key="m.id"
+          class="roster__item"
+          @contextmenu="canManage && rowMenu.open(m.member_handle, $event)"
+        >
+          <AdaptiveMenu
+            v-if="canManage"
+            v-bind="rowMenu.bind(m.member_handle)"
+            :actions="memberActions(m)"
+            :title="memberName(m) || m.member_handle"
+          >
+            <template #activator />
+          </AdaptiveMenu>
           <CheeseAvatar v-if="m.agent" :size="26" :name="memberName(m) || m.member_handle" :handle="m.member_handle" />
           <img
-            decoding="async"
             v-else-if="faceSrc(m)"
+            decoding="async"
             class="roster__avatar roster__avatar--photo"
             :src="faceSrc(m)!"
             :alt="memberName(m) || m.member_handle"
@@ -261,7 +312,7 @@ async function onSetRole(handle: string, role: string) {
           }}</span>
           <span class="roster__who">
             <span class="roster__name">{{ memberName(m) || m.member_handle }}</span>
-            <span class="roster__handle">@{{ m.member_handle }}</span>
+            <span class="roster__handle">{{ m.member_handle }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />
@@ -272,7 +323,13 @@ async function onSetRole(handle: string, role: string) {
           <template v-if="canManage">
             <v-menu v-if="!m.agent" location="bottom end">
               <template #activator="{ props: rp }">
-                <button v-bind="rp" type="button" class="roster__role roster__role--btn" :disabled="busy">
+                <button
+                  v-bind="rp"
+                  type="button"
+                  class="roster__role roster__role--btn"
+                  :disabled="busy"
+                  :title="roleHint(m.role)"
+                >
                   {{ roleLabel(m.role) }}
                   <v-icon size="12">mdi-chevron-down</v-icon>
                 </button>
@@ -288,6 +345,7 @@ async function onSetRole(handle: string, role: string) {
                   <v-list-item-title class="text-body-2">
                     {{ roleLabel(r) }}
                   </v-list-item-title>
+                  <v-list-item-subtitle class="text-caption">{{ roleHint(r) }}</v-list-item-subtitle>
                 </v-list-item>
               </v-list>
             </v-menu>
@@ -302,7 +360,7 @@ async function onSetRole(handle: string, role: string) {
             </button>
           </template>
           <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义。 -->
-          <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
+          <span v-else-if="!m.agent" class="roster__role" :title="roleHint(m.role)">{{ roleLabel(m.role) }}</span>
         </li>
       </ul>
 
@@ -318,7 +376,7 @@ async function onSetRole(handle: string, role: string) {
         >
           <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
         </span>
-        <TopicComputePicker :topic-id="topicId" :project-id="projectId" :profile="machines" @changed="loadMachines" />
+        <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
       </div>
       <div v-else-if="machinesError" class="roster__hint">
         {{ t('work.roomMachine.loadFailed') }}
@@ -345,8 +403,8 @@ async function onSetRole(handle: string, role: string) {
               <template #prepend>
                 <CheeseAvatar v-if="item.raw.agent" :size="26" :name="item.raw.title" :handle="item.raw.value" />
                 <img
-                  decoding="async"
                   v-else-if="item.raw.face"
+                  decoding="async"
                   class="roster__avatar roster__avatar--photo"
                   :src="item.raw.face"
                   :alt="item.raw.title"

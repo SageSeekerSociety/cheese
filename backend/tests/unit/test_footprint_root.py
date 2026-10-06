@@ -36,6 +36,7 @@ from app.domain.agent.place import (
     SANDBOXES_DIR,
     STAGED_DIR,
     footprint_root,
+    launcher_path,
     session_platform_dirs,
 )
 
@@ -66,6 +67,7 @@ def test_the_teardown_reads_the_sandboxes_the_bootstrap_records():
     room wrote into its own home outside the sandbox."""
     assert bootstrap.SANDBOXES == SANDBOXES_DIR
     assert resource_cleanup.SANDBOXES == SANDBOXES_DIR
+    assert environment_runner.SANDBOXES == SANDBOXES_DIR
 
 
 def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
@@ -203,7 +205,7 @@ def test_the_directories_a_room_is_given_are_inside_the_footprint():
         device_provider.device_home_dir(project, room),
         device_provider.device_work_dir(project, room),
         device_provider.device_store_dir(project),
-        device_provider.launcher_path(room),
+        launcher_path(room),
     ):
         inside_the_footprint(path)
 

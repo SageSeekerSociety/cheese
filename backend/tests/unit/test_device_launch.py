@@ -1161,13 +1161,16 @@ def _kill_helper(home) -> None:
     _await(lambda: not _pid_alive(pid), timeout=5)
 
 
-def _run_tunnel_up(home):
+_HELPER_URL = "ws://127.0.0.1:9/llm/tunnel"
+
+
+def _run_tunnel_up(home, url: str = _HELPER_URL):
     return subprocess.run(
         ["sh", str(home / ".cheese" / "cheese-tunnel-up")],
         env={
             **os.environ,
             "HOME": str(home),
-            "CHEESE_TUNNEL_URL": "ws://127.0.0.1:9/llm/tunnel",
+            "CHEESE_TUNNEL_URL": url,
         },
         capture_output=True,
         text=True,
@@ -1175,10 +1178,10 @@ def _run_tunnel_up(home):
     )
 
 
-def _up(home) -> int:
+def _up(home, url: str = _HELPER_URL) -> int:
     """Run the up-script, and return the port it printed — which must be all it
     printed, since the launcher exports stdout verbatim as the proxy's port."""
-    result = _run_tunnel_up(home)
+    result = _run_tunnel_up(home, url)
     assert result.returncode == 0, result.stderr
     assert re.fullmatch(r"[0-9]+\n", result.stdout), result.stdout
     port = int(result.stdout)
@@ -1187,12 +1190,14 @@ def _up(home) -> int:
 
 
 def _stamp_of(home) -> str:
-    return subprocess.run(
+    """The stamp a helper started by `_up` leaves: its code and its URL."""
+    code = subprocess.run(
         ["cksum", str(home / ".cheese" / "cheese-tunnel.py")],
         capture_output=True,
         text=True,
         check=True,
     ).stdout.split()[0]
+    return f"{code} {_HELPER_URL}"
 
 
 @pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
@@ -1352,6 +1357,36 @@ def test_a_helper_it_already_started_is_adopted_on_its_port(tmp_path):
         assert _up(home) == port
         assert _helper_pid(home) == first, "a healthy helper was restarted"
         assert _listening(port)
+    finally:
+        _kill_helper(home)
+
+
+def test_a_helper_dialling_another_url_is_retired_not_adopted(tmp_path):
+    """A machine's tunnel address can move — a cloud machine's onto its
+    loopback forward — while its helper is still alive. Adopting that helper
+    would keep the room on the old address, which may no longer answer."""
+    home, _up_script = _tunnel_up_home(tmp_path)
+    moved = "ws://127.0.0.1:10/llm/tunnel"
+    try:
+        _up(home)
+        first = _helper_pid(home)
+
+        port = _up(home, moved)
+        second = _helper_pid(home)
+
+        assert second != first, "a helper dialling the old URL was adopted"
+        assert _await(lambda: not _pid_alive(first))
+        assert _listening(port)
+        args = subprocess.run(
+            ["ps", "-o", "args=", "-p", str(second)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert moved in args
+        # Asked again with the same URL, the new helper is the one kept.
+        assert _up(home, moved) == port
+        assert _helper_pid(home) == second
     finally:
         _kill_helper(home)
 
@@ -1587,9 +1622,11 @@ def test_nothing_in_the_settings_observes_the_session():
     """The runner reads what the session does from its stdout. A hook left here
     to report it would be a second, racing account of the same turn."""
     hooks = session_settings()["hooks"]
-    assert set(hooks) == {"SessionStart", "UserPromptSubmit"}
-    for entries in hooks.values():
-        (entry,) = entries
+    # SubagentStart's hook hands each new agent the step-title rule
+    # (test_every_agent_reads_the_step_title_rule); it reports nothing.
+    assert set(hooks) == {"SessionStart", "UserPromptSubmit", "SubagentStart"}
+    for event in ("SessionStart", "UserPromptSubmit"):
+        (entry,) = hooks[event]
         assert [hook["command"] for hook in entry["hooks"]] == [
             "cheese sync-agents || true"
         ]

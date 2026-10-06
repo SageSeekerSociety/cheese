@@ -95,7 +95,9 @@ def _hub(monkeypatch, machines: dict[str, Machine], online: set[str]):
             "stderr": result.stderr,
         }
 
-    fake = SimpleNamespace(is_online=is_online, exec=exec_)
+    fake = SimpleNamespace(
+        target=lambda _device: "linux-amd64", is_online=is_online, exec=exec_
+    )
     monkeypatch.setattr(hub_module, "device_hub", fake)
     return SimpleNamespace(asked=asked, ran=ran)
 

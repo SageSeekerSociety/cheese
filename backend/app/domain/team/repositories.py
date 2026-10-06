@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ConflictError
+from app.core.sentences import say
 from app.domain.team.models import (
     PERSONAL_TEAM_ROW,
     ApplicationStatus,
@@ -193,6 +194,18 @@ class TeamRepository:
         teams = list(result.scalars().all())
         return {t.id: t for t in teams}
 
+    async def application_statuses(self, ids: Sequence[int]) -> dict[int, str]:
+        """Where each team invitation or join request stands now, by id."""
+        if not ids:
+            return {}
+        stmt = select(
+            TeamMembershipApplication.id, TeamMembershipApplication.status
+        ).where(
+            TeamMembershipApplication.id.in_(list(ids)),
+            TeamMembershipApplication.deleted_at.is_(None),
+        )
+        return {app_id: status for app_id, status in await self._session.execute(stmt)}
+
     async def list_teams_of_user(self, user_id: int) -> Sequence[Team]:
         """Return teams joined by the given user using team_user_relation."""
         rel_stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
@@ -354,7 +367,7 @@ class TeamRepository:
         existing = await self.get_member_relation(team_id, user_id)
         if existing is not None:
             raise ConflictError(
-                "User is already a member of this team",
+                say("teamAlreadyMember"),
                 data={"teamId": team_id, "userId": user_id},
             )
         now = datetime.now(UTC)

@@ -244,7 +244,9 @@ def test_every_launcher_writes_the_runner_where_the_probe_looks():
     )
     assert written, "the machine launcher stopped writing the runner"
     # The executor's payload names the file; its bootstrap picks the directory.
-    payload = payload_for(uuid.uuid4(), uuid.uuid4(), {}, sandbox=False)
+    payload = payload_for(
+        uuid.uuid4(), uuid.uuid4(), {}, sandbox=False, platform_machine=False
+    )
     assert "cheese-environment.py" in payload["file_names"]
     written.add(bootstrap.PLATFORM_DIR)
 

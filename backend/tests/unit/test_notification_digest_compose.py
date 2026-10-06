@@ -4,14 +4,14 @@ from app.domain.notification.digest import compose_digest
 
 
 def test_the_subject_counts_the_items():
-    subject, _body = compose_digest(
+    subject, _body, _text = compose_digest(
         [{"type": "MENTION", "payload": {}}, {"type": "REPLY", "payload": {}}]
     )
     assert "2" in subject
 
 
 def test_each_line_links_to_its_own_subject():
-    _subject, body = compose_digest(
+    _subject, body, _text = compose_digest(
         [
             {
                 "type": "MENTION",
@@ -27,5 +27,5 @@ def test_each_line_links_to_its_own_subject():
 
 
 def test_each_line_says_what_happened_in_words():
-    _subject, body = compose_digest([{"type": "MENTION", "payload": {}}])
+    _subject, body, _text = compose_digest([{"type": "MENTION", "payload": {}}])
     assert "提到了你" in body

@@ -78,7 +78,7 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
         async with factory() as session:
             rows = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert len(rows) == 2
@@ -101,7 +101,7 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
             assert {consumed_turn(block) for block in blocks} == {str(work)}
             turns = list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                    select(AgentTurn).where(AgentTurn.conversation_id == topic)
                 )
             )
             assert len(turns) == 1

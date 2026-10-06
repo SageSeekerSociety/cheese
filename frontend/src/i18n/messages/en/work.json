@@ -4,7 +4,7 @@
     "description": "AI teammates use the project main model unless you assign one to them",
     "main": "Project main model",
     "subagent": "Default subagent model",
-    "subagentHint": "Used by temporary subagents spawned by Claude Code during a task",
+    "subagentHint": "Used by temporary subagents Claude Code spawns within a turn",
     "inheritMain": "Use project main model",
     "chooseAvailable": "Choose a model available to this project",
     "loadError": "Could not load models",
@@ -66,6 +66,8 @@
     "abandonTitle": "Change without pushing?"
   },
   "roomMachine": {
+    "taskHeading": "This task's work computer",
+    "taskHint": "Changing it first pushes this task's changes to its branch and switches only once they are pushed; if they cannot be, nothing changes and the reason is shown.",
     "edit": "Edit",
     "heading": "This topic's work computer",
     "hint": "Every AI teammate in the room shares this one. Changing it pushes each teammate’s work to its branch first and switches only when all of them are pushed; otherwise nothing moves and you are told why.",
@@ -80,7 +82,12 @@
     "saveFailed": "Could not choose the work computer",
     "retry": "Retry",
     "here": "This topic runs on: {name}",
-    "abandon": "The old computer is unreachable: switch without pushing"
+    "abandon": "The old computer is unreachable: switch without pushing",
+    "accessHeading": "What this room sees of {name}",
+    "isolated": "Isolated environment",
+    "isolatedHint": "Its own work directory and the project's package cache. Not the owner's files, the tools installed in their home folder, or other rooms.",
+    "host": "Full machine access",
+    "hostOwnerOnly": "Only the machine's owner can turn this on"
   },
   "deviceInUse": {
     "line": "In use: {project} · {room} · {agent}",
@@ -104,7 +111,8 @@
     "collapse": "Collapse",
     "hint": "Only affects agents that have not started; agents already working keep their own computer",
     "distribution": "Where agents are now",
-    "onCloud": "Cloud · {agents}",
+    "onCloud": "Cloud sandbox · {agents}",
+    "onCloudVm": "Whole cloud VM · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "1 agent | {count} agents",
     "noneStarted": "No agents have started",
@@ -199,8 +207,6 @@
     "projects": "Projects: no limit is set",
     "concurrent": "A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue",
     "detail": "Resource limits",
-    "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
-    "machinesOwn": "Cloud machines: projects under your name share {count} by default; see Work computers under your name for credits and usage",
     "failed": "Could not load resource limits",
     "retry": "Retry",
     "loading": "Loading resource limits…"
@@ -255,6 +261,8 @@
         "label": "Session details",
         "connected": "Session connected",
         "none": "No session running",
+        "several": "{count} sessions are running in this room; pick a teammate to view one",
+        "teammate": "Teammate",
         "expand": "Show details",
         "collapse": "Hide details",
         "view": "View",
@@ -297,6 +305,8 @@
       "more": "More",
       "focus": "Focus mode",
       "exitFocus": "Exit focus mode",
+      "newTask": "New task",
+      "newTaskFailed": "Couldn’t create the task. Try again later",
       "rename": "Rename",
       "copyLink": "Copy link",
       "markRead": "Mark as read",
@@ -337,9 +347,9 @@
       "gateBlocked": "Platform check could not run",
       "delivering": "Accepted, merge not finished",
       "accepted": "Accepted",
-      "waitingOn": "Waiting for {'@'}{handle} to review",
+      "waitingOn": "Waiting for {'@'}{name} to review",
       "waitingOnYou": "Waiting for your review",
-      "decidedBy": "Accepted by {'@'}{handle}",
+      "decidedBy": "Accepted by {'@'}{name}",
       "review": "Review",
       "expand": "Show details",
       "collapse": "Hide details",
@@ -401,8 +411,10 @@
         "human": "Needs a person"
       },
       "working": "{name} is on it",
-      "machineReady": "Work computer ready",
-      "machinePreparing": "Preparing the work computer",
+      "sandboxReady": "Sandbox ready",
+      "sandboxPreparing": "Preparing the sandbox",
+      "cloudVmReady": "Cloud VM ready",
+      "cloudVmPreparing": "Preparing the cloud VM",
       "incident": {
         "title": "Work computer temporarily unavailable",
         "cleaning": "Cleaning up automatically",
@@ -424,7 +436,13 @@
       "added": "Added",
       "removed": "Removed",
       "docEditCount": "Changes: {n}",
-      "viewSuggestions": "View"
+      "viewSuggestions": "View",
+      "docCard": {
+        "created": "New doc · Library",
+        "open": "Open",
+        "suggested": "{n} suggestions",
+        "updated": "Updated"
+      }
     },
     "message": {
       "copy": "Copy",
@@ -439,7 +457,8 @@
       "saveFailed": "Could not save the edit",
       "reply": "Reply",
       "react": "Add reaction",
-      "upgrade": "Move to a new topic",
+      "upgrade": "Turn into a task",
+      "upgradeToTopic": "Move to a new topic",
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
       "upgradedToTask": "Moved to a task",
@@ -761,21 +780,13 @@
       "needsYou": "1 needs you | {count} need you",
       "row": "#{n}: {title}"
     },
-    "card": {
-      "loadFailed": "Couldn't load this task",
-      "sendFailed": "Message not sent. Try again later",
-      "notFound": "This task isn't in this room",
-      "retry": "Retry",
-      "brief": "Brief",
-      "conclusion": "Conclusion",
-      "noMessages": "No messages",
-      "subagent": "Subagent",
-      "steps": "No steps | 1 step | {count} steps",
-      "stepFailed": "A step failed",
-      "sayPlaceholder": "Message the subagent",
-      "send": "Send"
-    },
+    "card": {},
     "doc": {
+      "delete": "Delete doc",
+      "deleted": "This doc has been deleted",
+      "untitled": "Untitled doc",
+      "titlePlaceholder": "Title",
+      "titleLabel": "Doc title",
       "pickTopic": "Select a topic to see its document",
       "outdated": "This page has been updated. Refresh to keep editing",
       "reload": "Refresh",
@@ -787,13 +798,15 @@
       "options": "Document options",
       "setReadOnly": "Make read-only",
       "insertBelow": "Insert a block below",
-      "blockHandle": "Drag to move, click to change the style",
+      "blockHandle": "Drag to move, click to change the style or delete",
       "language": "Language",
       "copyFailed": "Couldn't copy",
       "commentOnSelection": "Comment on the selection",
       "copied": "Copied",
       "copyCode": "Copy code",
       "emptyPlaceholder": "The AI teammate keeps this document up to date. You can edit it too",
+      "emptyPlaceholderLibrary": "Start writing, or type / to insert a heading, table or chart",
+      "deleteBlock": "Delete",
       "format": {
         "bold": "Bold",
         "italic": "Italic",
@@ -922,6 +935,7 @@
         "chartCategory": "Category",
         "chartValue": "Value",
         "chartSlice": "{name}: {value} ({percent}%)",
+        "chartOther": "Other",
         "diagramSource": "Source",
         "askAgent": "Ask {name} to change it",
         "emptyDiagram": "No content",
@@ -989,7 +1003,7 @@
     "gettingStarted": {
       "title": "Getting started",
       "dismiss": "Don't show again",
-      "talk": "Say the first word to your teammate",
+      "talk": "Say the first word to {agent}",
       "talkHint": "In the box below",
       "materials": "Bring your material in",
       "materialsAction": "Open library",
@@ -1040,6 +1054,11 @@
         "admin": "Admin",
         "member": "Member"
       },
+      "roleHint": {
+        "owner": "Manage the room and its members",
+        "admin": "Manage members and their roles",
+        "member": "Take part in the room"
+      },
       "failed": "Something went wrong",
       "title": "Topic members",
       "remove": "Remove from topic",
@@ -1048,7 +1067,8 @@
       "add": "Add",
       "readOnly": "Only owners and admins can change members",
       "listSeparator": ", ",
-      "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete"
+      "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
+      "setRole": "Make {role}"
     },
     "mail": {
       "noSubject": "(No subject)",
@@ -1191,25 +1211,26 @@
       "allRestored": "All changes {requester} asked {agent} to make are restored",
       "close": "Hide changes",
       "position": "Change {i} of {n}",
-      "restore": "Restore this"
+      "restore": "Restore this",
+      "titleOwn": "{n} changes by {agent}",
+      "allRestoredOwn": "All changes by {agent} are restored"
     }
   },
   "board": {
     "column": {
-      "building": "Building",
-      "delivering": "Delivering",
+      "not_started": "Not started",
+      "building": "In progress",
+      "delivering": "Checking",
       "needs_you": "Needs you",
       "done": "Done",
       "archived": "Archived"
     },
     "phrase": {
+      "discussing": "Discussing",
       "running": "Running",
       "started": "Started",
-      "not_started": "Not started",
-      "returned": "Handed back",
       "idle": "Idle",
       "draft": "Draft",
-      "lost": "Lost contact",
       "gate_running": "Checks running",
       "awaiting_checks": "Waiting for checks",
       "fixing_checks": "Fixing checks",
@@ -1221,14 +1242,14 @@
       "awaiting_answer": "Awaiting answer",
       "accepted": "Accepted",
       "closed": "Closed",
-      "archived": "Archived"
+      "archived": "Archived",
+      "completed": "Completed"
     },
     "loadFailed": "Couldn't load",
     "unknownRoom": "Unknown room",
     "noneMine": "No tasks assigned to you",
     "emptyColumn": "No tasks in {column}",
     "mineOnly": "Only mine",
-    "retry": "Retry",
     "openChat": "Open the chat",
     "noAssignee": "No assignee",
     "queued": "Queued",
@@ -1236,7 +1257,8 @@
     "made": "What was made",
     "findPlaceholder": "Find by title (/)",
     "findLabel": "Find tasks on the board by title",
-    "findNone": "No task titles in this column contain “{text}”"
+    "findNone": "No task titles in this column contain “{text}”",
+    "clearFilter": "Clear filter"
   },
   "publishedSite": {
     "revisionChanged": "The project's accepted version changed. Check it, then publish",
@@ -1325,7 +1347,9 @@
     "empty": "No topics yet",
     "workingTip": "{name} is working here",
     "expandWorking": "Expand: a teammate is working in here",
-    "moreMembers": "+{count}"
+    "moreMembers": "+{count}",
+    "taskNeedsYou": "Needs you",
+    "taskRunning": "Running"
   },
   "members": {
     "leave": "Leave project",
@@ -1410,12 +1434,12 @@
     }
   },
   "library": {
-    "intro": "Files you gave this project. Every conversation can reference them; the AI teammate reads them but never changes them",
+    "intro": "Docs and files for this project, citable from any conversation. Anyone can edit a doc; uploaded files are read-only",
     "dropHint": "Drop files here to upload",
     "upload": "Upload files",
     "uploaded": "Uploaded {n} files",
     "uploadFailed": "Upload failed",
-    "search": "Search by file name",
+    "search": "Search titles and contents",
     "kindsLabel": "Filter by type",
     "kinds": {
       "all": "All",
@@ -1427,6 +1451,7 @@
     },
     "empty": "No files yet",
     "noMatch": "No matching files",
+    "clearFilters": "Clear filters",
     "loading": "Loading the library",
     "loadError": "Could not load the library",
     "unknownSource": "Unknown source",
@@ -1444,11 +1469,11 @@
     "delete": "Delete",
     "deleteTitle": "Delete “{name}”",
     "deleteBody": "This cannot be undone, and messages that referenced it will no longer open this file",
+    "deleteDocBody": "This can't be undone. The doc's history and comments are deleted with it",
     "deleteFailed": "Delete failed",
     "close": "Close",
     "actionsOf": "Actions for {name}",
     "backToList": "Back to library",
-    "previewLoading": "Loading the file",
     "previewError": "Could not preview this file",
     "downloadOnly": "This format cannot be previewed yet; download it to view",
     "versions": "Versions…",
@@ -1463,7 +1488,18 @@
     "restoreTitle": "Restore version {n} as current?",
     "restoreBody": "This copies it as a new version; every earlier version stays. Messages that reference this file will read it from then on.",
     "restoreFailed": "Couldn't restore this version",
-    "restoredDone": "Version {n} is current again"
+    "restoredDone": "Version {n} is current again",
+    "newDoc": "New doc",
+    "docMeta": "Doc · edited by {who} {when}",
+    "hits": {
+      "library": "Docs in the library",
+      "libraryCount": "Library · {n}",
+      "rooms": "Docs in conversations",
+      "roomsCount": "Docs in conversations · {n}",
+      "roomDoc": "Doc of “{room}”",
+      "keep": "Save as a doc"
+    },
+    "newDocFailed": "Couldn't create the doc"
   },
   "projectSettings": {
     "title": "Project settings",
@@ -1783,30 +1819,16 @@
     }
   },
   "computeChoice": {
-    "cloud": "Cloud",
+    "cloud": "Cloud sandbox",
+    "cloudVm": "Whole cloud VM",
     "deviceOnline": "{name} · Online",
     "deviceOffline": "{name} · Offline",
     "computer": "Work computer",
     "none": "No work computers available",
-    "custom": "Custom CPU, memory and disk",
-    "cores": "CPU cores",
-    "memory": "Memory (GB)",
-    "disk": "Disk (GB)",
-    "coresUnit": "cores",
-    "memoryLabel": "Memory",
-    "diskLabel": "Disk",
-    "noValue": "No selectable values right now",
-    "outOfRange": "Outside the available range",
-    "noRangeFor": "{label}: no selectable values",
-    "supplyLoading": "Checking what the cloud can offer right now…",
-    "supplyRange": "Available range: {range}",
-    "supplyUnknown": "The cloud's available range can't be read right now ({reason}). You can save anyway and it is checked again when the machine starts",
-    "cloudHint": "Allocated on the first run and counted against the cloud quota. The cloud does not report remaining capacity, so a configuration inside the range can still fail to start",
+    "cloudHint": "Each session works in a cloud sandbox of its own, prepared on the first run",
+    "cloudVmHint": "Each session gets a virtual machine of its own, with sudo, Docker, KVM and kernel modules. Preparing one takes a few minutes; once the session is idle, its changes are pushed to their branches and the VM is released",
     "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
     "submit": "Use this configuration"
-  },
-  "cloudSupply": {
-    "requestFailed": "Request failed"
   },
   "projectTransfer": {
     "lookupFailed": "No account found",
@@ -1822,7 +1844,7 @@
     "lookupTeam": "No one on the team to hand it to? Find a person directly:",
     "lookupOwn": "Enter the new owner's username or email:",
     "lookupLabel": "Full username or email",
-    "movingOut": "The whole project moves to {'@'}{handle}. Afterwards you are no longer a member and can't see any of its topics."
+    "movingOut": "The whole project moves to {who}. Afterwards you are no longer a member and can't see any of its topics."
   },
   "skills": {
     "awaiting": "Waiting for you",
@@ -1922,7 +1944,7 @@
     "online": "Online",
     "offline": "Offline",
     "device": "Own device",
-    "cloud": "Cloud",
+    "cloud": "Cloud sandbox",
     "current": "Used when nothing is chosen"
   },
   "needsYou": {
@@ -1965,5 +1987,42 @@
       "archived": "Archived",
       "draft": "Draft"
     }
+  },
+  "task": {
+    "agent": "AI teammate",
+    "machine": "Work computer",
+    "followsRoom": "Follows the topic",
+    "details": "Task details",
+    "ownerOnlyNotice": "Only the owner can talk to {name} here",
+    "closedNotice": "This task is closed",
+    "backToRoom": "Back to # {room}",
+    "notFound": "This room has no such task",
+    "loadFailed": "Couldn't load this task",
+    "owner": "Owner",
+    "ownerChip": "Owned by {name}",
+    "start": "Start",
+    "startFailed": "Couldn't start. Try again later",
+    "reviewer": "Reviewer",
+    "reviewerNone": "Choose a reviewer",
+    "startedLine": "{who} started {when}",
+    "compare": "Compare with the start",
+    "compareBack": "Back to the document",
+    "compareFailed": "Couldn't read the document as it was at the start",
+    "compareSame": "The document hasn't changed since the start",
+    "conclusion": "Conclusion",
+    "proposal": {
+      "byline": "{name} proposed a task",
+      "accept": "Create task",
+      "dismiss": "Not now",
+      "failed": "Couldn't do that. Try again later"
+    },
+    "more": "More actions",
+    "close": "Close task",
+    "closeTitle": "Close this task?",
+    "closeBody": "Write a conclusion if it is done; leave it empty if it is no longer needed.",
+    "handOver": "Hand over",
+    "handOverTitle": "Hand over to whom?",
+    "handOverTo": "Choose the new owner",
+    "actionFailed": "Couldn't do that. Try again later"
   }
 }

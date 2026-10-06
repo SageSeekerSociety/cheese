@@ -244,7 +244,7 @@
       "devices": "设备",
       "hosted": "托管设备",
       "warm": "常驻机器",
-      "project": "项目机器",
+      "hosts": "云端宿主机",
       "note": "这四行是四张台账的存量，不是在线数 —— 在线状态住在进程内存里，库里没有可以查的那一列。"
     },
     "column": {
@@ -421,17 +421,21 @@
     "extras": {
       "title": "配额与缺口",
       "warmStates": "常驻机器按状态",
-      "projectStates": "项目机器按状态",
+      "hostStates": "云端宿主机按状态",
       "machineState": {
         "preparing": "准备中",
         "ready": "就绪",
         "claimed": "已认领",
         "error": "出错"
       },
-      "projectStatus": {
-        "leased": "租出中",
-        "released": "已释放",
-        "error": "出错"
+      "hostStatus": {
+        "provisioning": "创建中",
+        "starting": "启动中",
+        "running": "运行中",
+        "deleting": "释放中",
+        "deleted": "已释放",
+        "error": "出错",
+        "unknown": "未知"
       },
       "disk": {
         "title": "磁盘（这台后端）",
@@ -443,6 +447,10 @@
       },
       "machines": {
         "note": "数的是四张台账里的行与状态分布，**不是容器数** —— 一房一容器还没有 transport，今天不存在一份可以数的容器清单。"
+      },
+      "hostSlots": {
+        "title": "沙箱槽位",
+        "note": "已被会话占用的沙箱槽位 / 宿主机池里的全部槽位。"
       }
     },
     "reliability": {

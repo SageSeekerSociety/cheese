@@ -15,16 +15,31 @@ class LegacyEvidenceIncomplete(RuntimeError):
     pass
 
 
+#: A work's records in the mirror, found by the work stamp on each one.
+WORK_RECORDS = (
+    "SELECT sequence, record FROM records WHERE "
+    "json_extract(record, '$.cheese.work_id') = ? ORDER BY sequence"
+)
+#: The index ``WORK_RECORDS`` is answered from. Without it every lookup parsed
+#: every record the mirror holds: 0.7 s on a busy room's 125k-record mirror,
+#: once per retained result, and a recovery looks up every one of them
+#: (`Subscription.reconcile_history`): 179 of them kept a busy room
+#: recovering for three minutes after each deploy. Built on the mirror only,
+#: where the lookups are; the runner's journal is never asked this.
+WORK_INDEX = (
+    "CREATE INDEX IF NOT EXISTS records_work_id "
+    "ON records(json_extract(record, '$.cheese.work_id'))"
+)
+
+
 def completion_inputs(
     path, *, work_id: str, session_id: str, recipient_handle: str, result: dict
 ) -> tuple[dict, ...]:
     journal = Journal(path)
     try:
-        rows = journal.connection.execute(
-            "SELECT sequence, record FROM records WHERE "
-            "json_extract(record, '$.cheese.work_id') = ? ORDER BY sequence",
-            (work_id,),
-        ).fetchall()
+        with journal.connection:
+            journal.connection.execute(WORK_INDEX)
+        rows = journal.connection.execute(WORK_RECORDS, (work_id,)).fetchall()
     finally:
         journal.close()
     interval: list[tuple[int, dict]] = []

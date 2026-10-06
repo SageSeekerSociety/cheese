@@ -70,6 +70,7 @@
     "all": "全部",
     "viewAll": "查看全部 {n} 条",
     "failed": "搜索失败，稍后重试",
+    "clear": "清空",
     "loading": "正在搜索"
   },
   "palette": {
@@ -147,6 +148,7 @@
     "feedbackDetail": "反馈详情",
     "openPreview": "打开预览",
     "openSite": "打开网站",
+    "openDocs": "打开文档",
     "connect": "连接设备",
     "market": "市场",
     "notFound": "页面未找到",

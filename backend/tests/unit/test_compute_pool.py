@@ -111,7 +111,6 @@ class _FakeBackend:
     pool asks of a room's sessions on one machine pool."""
 
     embeds_images = True
-    provisions_machine = False
     controls: tuple[str, ...] = ()
 
     def __init__(self, name: str, harness: str = "claude-code"):
@@ -236,7 +235,6 @@ def test_an_unconfigured_turn_lands_on_the_pool_the_catalogue_marks_default(
 
     Checked in BOTH deployment shapes, because the answer moves between them and
     only one of the two could be got right by accident."""
-    from unittest.mock import AsyncMock
 
     from app.core.config import settings
     from app.domain.agent.cloud_provider import CloudChannel
@@ -246,8 +244,6 @@ def test_an_unconfigured_turn_lands_on_the_pool_the_catalogue_marks_default(
     def _cloud() -> CloudChannel:
         return CloudChannel(
             configured=True,
-            ensure_topic_cloud=AsyncMock(),
-            read_topic_cloud=AsyncMock(),
         )
 
     monkeypatch.setattr(settings, "microcloud_base_url", "")
@@ -277,15 +273,12 @@ def test_the_default_never_names_a_machine_the_pool_does_not_hold(monkeypatch):
 
 
 def test_build_pool_registers_the_concrete_cloud_channel():
-    from unittest.mock import AsyncMock
 
     from app.domain.agent.cloud_provider import CloudChannel
     from app.domain.agent.compute import build_compute_pool
 
     cloud = CloudChannel(
         configured=False,
-        ensure_topic_cloud=AsyncMock(),
-        read_topic_cloud=AsyncMock(),
     )
     pool = build_compute_pool(cloud_channel=cloud)
 
@@ -295,7 +288,6 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     # Registration is independent of readiness. Chat needs its session host;
     # Cloud hands are acquired by a tool, never by turn admission.
     assert backend.available() is False
-    assert backend.provisions_machine is False
     assert backend.deferred_work is True
 
 
@@ -322,7 +314,6 @@ def test_pi_runs_on_every_machine_and_takes_it_only_for_work():
     """pi's session runs on the session host and reaches the room's machine
     for its work (#1106), as the other harnesses' do: it is on every machine
     in the pool, and a turn on it does not wait for a machine to start."""
-    from unittest.mock import AsyncMock
 
     from app.domain.agent.cloud_provider import CloudChannel
     from app.domain.agent.compute import build_compute_pool
@@ -330,15 +321,12 @@ def test_pi_runs_on_every_machine_and_takes_it_only_for_work():
 
     cloud = CloudChannel(
         configured=True,
-        ensure_topic_cloud=AsyncMock(),
-        read_topic_cloud=AsyncMock(),
     )
     pool = build_compute_pool(cloud_channel=cloud)
 
     for provider in ("device", "cloud"):
         backend = pool.select(provider_id=provider, harness=PI)
         assert backend is not None
-        assert backend.provisions_machine is False
         assert backend.deferred_work is True
 
 
@@ -372,9 +360,7 @@ def test_a_room_runs_a_harness_that_hands_tools_over(monkeypatch):
 
     assert chosen() == PI
     pi = HARNESSES[PI]
-    monkeypatch.setitem(
-        harness_module.HARNESSES, PI, Harness(pi.name, pi.label, subagents=pi.subagents)
-    )
+    monkeypatch.setitem(harness_module.HARNESSES, PI, Harness(pi.name, pi.label))
     assert chosen() == CLAUDE_CODE
 
 
@@ -395,7 +381,7 @@ def test_a_harness_that_cannot_hand_tools_over_is_not_put_behind_the_central_hos
     monkeypatch.setitem(
         harness_module.HARNESSES,
         CLAUDE_CODE,
-        Harness(claude.name, claude.label, subagents=claude.subagents),
+        Harness(claude.name, claude.label),
     )
     monkeypatch.setattr(settings, "agent_harnesses", [PI])
     pool = build_compute_pool()

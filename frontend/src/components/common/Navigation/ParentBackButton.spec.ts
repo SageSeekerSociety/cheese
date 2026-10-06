@@ -25,6 +25,11 @@ function withoutViews(record: RouteRecordRaw): RouteRecordRaw {
   return {
     ...record,
     components: { default: { template: '<div />' } },
+    // 管理那一段的 `beforeEnter`（`router/spaces.ts` 的 `spaceManageGuard`）也是
+    // 一个数据加载器：它先去取这个空间的管理员名单。这一份里没有真接口，取不到
+    // 就等于「不是管理员」，人会被领到 `SpaceManageDenied`，父级自然也不是这一条
+    // 声明的那个了。这一份钉的是「← 去哪儿」，取数留给钉守卫的那一份。
+    beforeEnter: undefined,
     children: record.children?.map(withoutViews),
   } as RouteRecordRaw
 }

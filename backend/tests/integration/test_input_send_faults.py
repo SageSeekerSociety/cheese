@@ -31,6 +31,9 @@ from app.main import app
 from tests.support.room_reader import room_reader
 
 _COMMIT_PHASE = ContextVar("input_send_fault_phase", default=None)
+# The commit listener is process-wide, and the app's periodic jobs commit too.
+# A fault is injected only into commits made inside the call under test.
+_UNDER_TEST = ContextVar("input_send_fault_scope", default=False)
 
 
 class Host:
@@ -90,7 +93,7 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
                     id=delivery_id,
                     event_id=uuid.uuid4(),
                     recipient_handle=ref.agent_handle,
-                    topic_id=ref.topic_id,
+                    conversation_id=ref.topic_id,
                     dedup_key=str(uuid.uuid4()),
                     type="mention",
                     payload={},
@@ -231,6 +234,8 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
         injected = []
 
         def fail_commit(session):
+            if not _UNDER_TEST.get():
+                return
             phase = (
                 "accepted"
                 if any(
@@ -248,9 +253,13 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
         try:
             # The real ChatService -> ComputePool -> runtime -> channel ->
             # ChatService commit path is retained, not a fake exception result.
-            delivered = await chat.merge_into_running_turn(
-                ref.topic_id, [], "new answer", "user-1"
-            )
+            scope = _UNDER_TEST.set(True)
+            try:
+                delivered = await chat.merge_into_running_turn(
+                    ref.topic_id, [], "new answer", "user-1"
+                )
+            finally:
+                _UNDER_TEST.reset(scope)
         finally:
             event.remove(Session, "before_commit", fail_commit)
         assert injected == [fault]

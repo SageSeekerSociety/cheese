@@ -157,14 +157,14 @@ async def _input_holding(
     async with factory() as session:
         rows = list(
             await session.scalars(
-                select(NativeInput).where(NativeInput.topic_id == topic_id)
+                select(NativeInput).where(NativeInput.conversation_id == topic_id)
             )
         )
     for row in rows:
         if str(block_id) in {str(value) for value in row.held_block_ids}:
             return InputIdentity(
                 row.project_id,
-                row.topic_id,
+                row.conversation_id,
                 row.recipient_handle,
                 row.harness,
                 row.native_session_id,
@@ -976,7 +976,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         workspace_root=str(tmp_path / "ws"),
     )
 
-    started_on = ComputeChoice(name="Eight cores", profile="cloud", cores=8)
+    started_on = ComputeChoice(profile="device")
     async with factory() as session:
         await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
@@ -1021,10 +1021,10 @@ class DeferredScreen(InstantScreen):
 @pytest.mark.parametrize(
     "default",
     [
-        ComputeChoice(name="Eight cores", profile="cloud", cores=8, memory_mb=16384),
+        ComputeChoice(profile="cloud"),
         ComputeChoice(name="Lab workstation", profile="device", device_id="lab-box"),
     ],
-    ids=["cloud-spec", "named-device"],
+    ids=["cloud", "named-device"],
 )
 async def test_a_teammate_joining_later_starts_on_the_rooms_choice(
     business_db_factory, tmp_path, default
@@ -1073,7 +1073,7 @@ async def test_a_teammate_joining_later_starts_on_the_rooms_choice(
     async with factory() as session:
         rows = list(
             await session.scalars(
-                select(AgentSession).where(AgentSession.topic_id == topic_id)
+                select(AgentSession).where(AgentSession.conversation_id == topic_id)
             )
         )
     choices = {row.agent_handle: row.execution_request["choice"] for row in rows}
@@ -1444,7 +1444,7 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
             assert consumed_turn(message) is None
             rows = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic_id)
+                    select(NativeInput).where(NativeInput.conversation_id == topic_id)
                 )
             )
             assert len(rows) == 2  # original prompt and the one attempted steer
@@ -1678,7 +1678,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
     first = minted[0]
     other = InputIdentity(
         first.project_id,
-        first.topic_id,
+        first.conversation_id,
         first.recipient_handle,
         first.harness,
         first.native_session_id,

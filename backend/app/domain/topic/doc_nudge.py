@@ -47,6 +47,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import of_room
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -86,7 +87,7 @@ async def _reminded(session: AsyncSession, room_id: uuid.UUID) -> bool:
     stmt = (
         select(Block.id)
         .where(
-            Block.topic_id == room_id,
+            of_room(Block.conversation_id, room_id),
             Block.kind == BlockKind.event,
             Block.meta["event_type"].as_string() == EVENT_DOC_MISSING,
         )
@@ -114,7 +115,7 @@ async def _worked(session: AsyncSession, room_id: uuid.UUID, agents: list[str]) 
     stmt = select(
         func.count().filter(tool.is_not(None)),
         func.count().filter(Block.kind == BlockKind.message),
-    ).where(Block.topic_id == room_id, Block.author.in_(agents))
+    ).where(of_room(Block.conversation_id, room_id), Block.author.in_(agents))
     tools, messages = (await session.execute(stmt)).one()
     return int(tools or 0) >= MIN_TOOL_EVENTS and int(messages or 0) >= 1
 
@@ -125,7 +126,7 @@ async def _acting_agent(
     """名册上最近一个在这间房里动过手的 agent 席位。"""
     stmt = (
         select(Block.author)
-        .where(Block.topic_id == room_id, Block.author.in_(agents))
+        .where(of_room(Block.conversation_id, room_id), Block.author.in_(agents))
         .order_by(Block.created_at.desc())
         .limit(1)
     )

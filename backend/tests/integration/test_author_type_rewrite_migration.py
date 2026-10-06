@@ -91,7 +91,7 @@ def _seed(client) -> dict[str, uuid.UUID]:
                 # 其余两个值照样从这里铺，同一条路，少一处差别。
                 await s.execute(
                     text(
-                        "INSERT INTO blocks (id, project_id, topic_id, kind, "
+                        "INSERT INTO blocks (id, project_id, conversation_id, kind, "
                         "author_type, author, content, refs, created_at, "
                         "updated_at) VALUES (:id, :pid, :tid, 'message', :at, "
                         ":author, :content, '[]', :now, :now)"

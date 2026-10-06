@@ -56,7 +56,7 @@ const topic: Topic = {
 
 const block: Block = {
   id: 'm1',
-  topic_id: topic.id,
+  conversation_id: topic.id,
   kind: 'message',
   author_type: 'participant',
   author: 'cheese-keyboard',
@@ -165,9 +165,11 @@ describe('键盘挤矮聊天容器', () => {
 
   it('用户自己上滚看历史时，容器变矮不把他拽回底部', async () => {
     const { pane } = await mount()
-    const m = fakeMetrics(pane, { scrollHeight: 1000, clientHeight: 500, scrollTop: 100 })
+    const m = fakeMetrics(pane, { scrollHeight: 1000, clientHeight: 500, scrollTop: 500 })
 
-    // 上滚过，`atBottom` 因此是假的。
+    // 从底部上滚过，`atBottom` 因此是假的。
+    pane.dispatchEvent(new Event('scroll'))
+    m.scrollTop = 100
     pane.dispatchEvent(new Event('scroll'))
     await flush()
 

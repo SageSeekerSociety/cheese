@@ -312,7 +312,7 @@ eq(mcFigs.length, 1, 'machines.md renders one architecture figure')
   has(llmMd, cfg.walks['sandbox/budget'].stops[3].head, 'the refused walk is in the prose too')
   // The indexes agents search are built from that same prose, so a figure whose
   // text version never reached them is a figure nobody can find.
-  for (const [file, name] of [['dev/search.json', 'the search index'], ['dev/ask-index.json', 'the 问芝士 index']]) {
+  for (const [file, name] of [['dev/search.json', 'the search index'], ['dev/sections.json', 'the 问芝士 index']]) {
     has(fs.readFileSync(path.join(out, file), 'utf8'), '换入口：包从哪进、在哪拦', `${name} gets the text version as well`)
   }
 }
@@ -326,7 +326,8 @@ eq(mcFigs.length, 1, 'machines.md renders one architecture figure')
   has(css, '.demo-arch.ar-live .ar-fallback{display:none}', 'the readable list is hidden only once the script is up')
   ok(!/\.demo-arch \.ar-fallback\{display:none/.test(css), 'and it is never hidden before that')
   has(css, '.demo-arch.ar-live .ar-ctl-wrap{display:block}', 'the controls are reserved for the live version')
-  const narrow = css.slice(css.lastIndexOf('@media (max-width:760px)'))
+  // The minifier may or may not keep the space after the colon.
+  const narrow = css.slice(Math.max(css.lastIndexOf('@media (max-width:760px)'), css.lastIndexOf('@media (max-width: 760px)')))
   has(narrow, '.demo-arch .ar-fallback', 'a narrow screen gets the list back')
   has(narrow, '.demo-arch .ar-board', 'and drops the map it cannot draw')
 }

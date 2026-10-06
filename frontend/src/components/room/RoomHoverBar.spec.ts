@@ -22,16 +22,15 @@ import { setLocale } from '@/i18n'
 
 const writeText = vi.fn().mockResolvedValue(undefined)
 
-function block(id: string, taskId: string | null = null): Block {
+function block(id: string): Block {
   return {
     id,
-    topic_id: 'tp1',
+    conversation_id: 'tp1',
     kind: 'message',
     author_type: 'participant',
     author: '张衡',
     content: '这一条',
     created_at: '2026-09-20T00:00:00Z',
-    task_id: taskId,
   }
 }
 
@@ -45,7 +44,7 @@ async function routerStoppedOnTopic() {
   return router
 }
 
-function renderBar(b: Block, router?: ReturnType<typeof createRouter>) {
+function renderBar(b: Block, router?: ReturnType<typeof createRouter>, extra: Record<string, unknown> = {}) {
   const vuetify = createVuetify({ components, directives })
   const plugins = router ? [vuetify, router] : [vuetify]
   return render(RoomHoverBar, {
@@ -57,6 +56,7 @@ function renderBar(b: Block, router?: ReturnType<typeof createRouter>) {
       isAgent: false,
       pickerOpen: false,
       editable: false,
+      ...extra,
     },
     global: { plugins },
   })
@@ -96,19 +96,6 @@ describe('消息的悬停条：复制链接', () => {
     expect(url.searchParams.get('block')).toBe('b1')
   })
 
-  it('活卡里的对话多带 tab 和 card', async () => {
-    const router = await routerStoppedOnTopic()
-    const { container } = renderBar(block('b2', 'task9'), router)
-
-    await fireEvent.click(linkButton(container)!)
-    await flush()
-
-    const url = new URL(writeText.mock.calls[0][0] as string)
-    expect(url.searchParams.get('block')).toBe('b2')
-    expect(url.searchParams.get('tab')).toBe('overview')
-    expect(url.searchParams.get('card')).toBe('task9')
-  })
-
   it('复制完原地说一声「已复制链接」', async () => {
     const router = await routerStoppedOnTopic()
     const { container } = renderBar(block('b1'), router)
@@ -124,5 +111,37 @@ describe('消息的悬停条：复制链接', () => {
     expect(linkButton(container)).toBeNull()
     // 其余的按钮照旧在（复制的正文那颗还在）。
     expect(container.querySelector('button[title="复制"]')).toBeTruthy()
+  })
+})
+
+// 右键一条消息：时间线把鼠标位置交给悬停条，悬停条在那一点打开这一条的 ⋯。
+describe('右键一条消息', () => {
+  it('在鼠标那一点打开这一条的操作', async () => {
+    vi.stubGlobal('visualViewport', {
+      width: 1280,
+      height: 800,
+      offsetLeft: 0,
+      offsetTop: 0,
+      scale: 1,
+      addEventListener() {},
+      removeEventListener() {},
+    })
+    vi.stubGlobal('devicePixelRatio', 1)
+    // 菜单定位时 Vuetify 要问指针下是谁，happy-dom 没有这个 API。
+    const elementFromPoint = document.elementFromPoint
+    document.elementFromPoint = () => null
+    ;(window as unknown as { innerWidth: number }).innerWidth = 1280
+    const { rerender, unmount } = renderBar(block('m1'))
+    await rerender({ menuAt: { x: 30, y: 60 } })
+    await flush()
+    const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) =>
+      el.textContent?.trim()
+    )
+    expect(items).toContain('回复')
+    expect(items).toContain('复制')
+    unmount()
+    await flush()
+    document.elementFromPoint = elementFromPoint
+    vi.unstubAllGlobals()
   })
 })

@@ -1,9 +1,9 @@
-import type { ComputeChoice } from '../cx_types'
+import type { ComputeChoice } from '../types/compute'
 
 import { t } from '@/i18n'
 
 export function choiceKey(c: ComputeChoice): string {
-  return JSON.stringify([c.profile, c.device_id ?? null, c.cores ?? null, c.memory_mb ?? null, c.disk_gb ?? null])
+  return JSON.stringify([c.profile, c.device_id ?? null, c.whole_machine === true])
 }
 
 // The choices in order, each configuration once.
@@ -23,8 +23,7 @@ export function compactChoices(...choices: (ComputeChoice | null | undefined)[])
 // one of those is another reader's label and is not shown.
 export function choiceName(c: ComputeChoice): string {
   if (c.profile === 'device') return deviceName(c.name, c.device_id)
-  if (c.cores || c.memory_mb || c.disk_gb) return t('compute.choice.cloudCustom')
-  return t('compute.choice.cloudStandard')
+  return t(c.whole_machine ? 'compute.choice.cloudVm' : 'compute.choice.cloud')
 }
 
 // A self-hosted device by its own name, or — with none known — as the platform's
@@ -37,12 +36,5 @@ export function deviceName(name: string | null, deviceId: string | null): string
 
 export function choiceDetail(c: ComputeChoice): string {
   if (c.profile === 'device') return c.device_id ? t('compute.choice.device') : t('compute.choice.deviceOnFirstRun')
-  if (!c.cores && !c.memory_mb && !c.disk_gb) return t('compute.choice.standard')
-  return [
-    c.cores && t('compute.choice.cores', { n: c.cores }),
-    c.memory_mb && t('compute.choice.memory', { n: c.memory_mb / 1024 }),
-    c.disk_gb && t('compute.choice.disk', { n: c.disk_gb }),
-  ]
-    .filter(Boolean)
-    .join(' · ')
+  return t(c.whole_machine ? 'compute.choice.vm' : 'compute.choice.sandbox')
 }

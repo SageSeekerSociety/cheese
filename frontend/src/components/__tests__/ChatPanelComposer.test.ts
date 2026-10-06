@@ -66,7 +66,7 @@ vi.mock('../../api/messages', () => ({
     sent.push({ payload: JSON.stringify(body) })
     return {
       id: body.request_id,
-      topic_id: topicId,
+      conversation_id: topicId,
       kind: 'message',
       author_type: 'participant',
       author: 'alice',
@@ -203,7 +203,7 @@ describe('对话栏自己的输入栏', () => {
       data: [
         {
           id: 'm1',
-          topic_id: 'starter-talked',
+          conversation_id: 'starter-talked',
           kind: 'message',
           content: '我打算把这学期的课程材料整理成一份大纲',
           author: 'alice',
@@ -229,7 +229,7 @@ describe('对话栏自己的输入栏', () => {
       data: [
         {
           id: 'm2',
-          topic_id: 'starter-answered',
+          conversation_id: 'starter-answered',
           kind: 'message',
           content: '好，我先把材料归拢一下，再跟你确认大纲的结构。',
           author: 'cheese-topica',
@@ -247,6 +247,23 @@ describe('对话栏自己的输入栏', () => {
     await rerender({ topic: { ...topic('starter-answered'), kind: 'root' } })
     await flush()
     expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+  })
+
+  // 项目建的时候给 AI 队友起了名字，清单第一步说的是这个名字，不是平台的「芝士」。
+  it('names the room’s own teammate in the start checklist', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listTopicMembers).mockResolvedValueOnce({
+      data: [
+        { id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
+        { id: 'm2', member_handle: 'cheese-spark', name: '火花', role: 'member', agent: true },
+      ],
+      total: 2,
+    } as never)
+    const { rerender, findByText, queryByText } = mountPanel({}, 'checklist-named')
+    await rerender({ topic: { ...topic('checklist-named'), kind: 'root' } })
+    await flush()
+    expect(await findByText('跟火花说第一句话')).toBeTruthy()
+    expect(queryByText('跟芝士说第一句话')).toBeNull()
   })
 
   it('previews a document and sends its uploaded path', async () => {
@@ -400,7 +417,7 @@ describe('对话栏自己的输入栏', () => {
       data: [
         {
           id: 'doc-1',
-          topic_id: 'topic-download',
+          conversation_id: 'topic-download',
           kind: 'attachment',
           content: 'uploads/id/report.docx',
           mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

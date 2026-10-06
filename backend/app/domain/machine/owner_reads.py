@@ -1,27 +1,27 @@
-"""Column-limited Cloud ownership reads for the long-lived device owner."""
+"""Column-limited cloud host reads for the long-lived device owner.
 
-import uuid
+Why the owner names its columns: ``app/domain/device/owner_reads.py``.
+"""
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
-from app.domain.machine.models import ProjectMachine
+from app.domain.machine.models import CloudHost
 
 
-async def active_cloud_device_for_project(
-    session: AsyncSession, device_id: str, project_id: uuid.UUID
-) -> bool:
+async def active_cloud_host(session: AsyncSession, device_id: str) -> bool:
+    """Whether this device is a host of the pool. A host carries the sandboxes
+    of sessions from any project, so the session's own lease on it — checked
+    by the caller — is what ties a call to the project."""
     return (
         await session.scalar(
-            select(ProjectMachine.device_id)
-            .join(DeviceRow, DeviceRow.device_id == ProjectMachine.device_id)
+            select(CloudHost.device_id)
+            .join(DeviceRow, DeviceRow.device_id == CloudHost.device_id)
             .where(
-                ProjectMachine.device_id == device_id,
-                ProjectMachine.project_id == project_id,
-                ProjectMachine.released_at.is_(None),
-                ProjectMachine.superseded_at.is_(None),
+                CloudHost.device_id == device_id,
+                CloudHost.released_at.is_(None),
                 DeviceRow.supply == Supply.cloud,
             )
         )

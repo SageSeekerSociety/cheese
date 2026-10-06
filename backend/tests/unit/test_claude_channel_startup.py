@@ -42,7 +42,6 @@ class Host:
     """The room's placement and the session host's screens, on this disk."""
 
     name = "central"
-    provisions_machine = False
     deferred_work = False
     _session_factory = None
     # What the room was told when the session did not come up, and the
@@ -86,7 +85,9 @@ class Host:
         return Placement(DEVICE, 1, AGENT, rented=False)
 
     @asynccontextmanager
-    async def prepare_session(self, *, session, token, env, precheck, runtime_factory):
+    async def prepare_session(
+        self, *, session, token, env, precheck, runtime_factory, reading=False
+    ):
         self.placed = runtime_factory(TOPIC)["state"]
         yield SimpleNamespace(
             device_id=DEVICE,

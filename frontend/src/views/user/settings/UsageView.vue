@@ -12,7 +12,7 @@ import UsageShareList from '@/components/usage/UsageShareList.vue'
 import UsageTeamList from '@/components/usage/UsageTeamList.vue'
 import { fmtMonth } from '@/lib/creditUsage'
 
-// 个人设置里的「芝士额度」：本月用了多少（按协作、问答、写作分）、其他额度、每天用量、
+// 个人设置里的「芝士额度」：本月用了多少（按协作、问答、写作、算力分）、其他额度、每天用量、
 // 我名下的项目各占多少、我所在的团队还剩多少。
 defineOptions({ name: 'UsageSettingsView' })
 
@@ -66,7 +66,7 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
           :plan="usage.plan"
           :other-credits="otherCredits"
           :month="month"
-          :lines="usage.lines ?? null"
+          :lines="usage.lines"
           :windows="usage.windows"
         />
       </section>

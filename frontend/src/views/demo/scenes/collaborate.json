@@ -2,7 +2,7 @@
   "title": "中途补一句，芝士问你一句",
   "project": "知是",
   "topic": "报名说明",
-  "machine": "本话题运行在：云机器 cm-2b81",
+  "machine": "本话题运行在：云端沙箱",
   "people": {
     "wang": { "name": "王长鑫" },
     "cheese": { "name": "芝士", "agent": true }

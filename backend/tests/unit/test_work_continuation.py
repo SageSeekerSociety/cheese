@@ -40,6 +40,9 @@ class _Quiet(WorkChat):
     def has_live_screen(self, topic_id, agent_handle=None):
         return False
 
+    def retire_unheard(self, turn_ids):
+        pass
+
     async def turns_that_produced_something(self, turn_ids):
         # No trace anywhere → the sweep may re-send (the path under test).
         return set()

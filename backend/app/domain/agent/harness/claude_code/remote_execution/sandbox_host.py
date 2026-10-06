@@ -18,7 +18,7 @@ cgroup with the given limits. The sandbox may reach the machine's DNS
 resolvers on port 53 and the public internet; nothing in a private range, not
 the machine itself, and not another sandbox. `--forward` lets it reach one TCP
 port of the machine's own loopback as the same port on its own: a machine
-whose backend is a loopback forward (`device_provider.device_api_base`) is
+whose backend is a loopback forward (`machine_address.device_api_base`) is
 reached that way.
 
 The caller is trusted with nothing but its own processes. Arguments are

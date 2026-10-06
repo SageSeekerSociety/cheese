@@ -67,6 +67,9 @@ class _Chat(WorkChat):
     def has_live_screen(self, topic_id, agent_handle=None):
         return self._live_screen
 
+    def retire_unheard(self, turn_ids):
+        pass
+
     async def turns_that_produced_something(self, turn_ids):
         if self._probe_error:
             raise RuntimeError("probe blew up")
@@ -339,7 +342,7 @@ async def test_delivery_attempt_is_never_replayed_by_generic_orphan_recovery(
                 event_id=uuid.uuid4(),
                 recipient_handle="agent-recipient",
                 receiver_id=None,
-                topic_id=topic_id,
+                conversation_id=topic_id,
                 attempt_id=turn_id,
                 state=state,
                 dedup_key=str(uuid.uuid4()),

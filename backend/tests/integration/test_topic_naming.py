@@ -30,7 +30,7 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.topic import naming
 from app.domain.topic.models import TitleSource, Topic, TopicTitle
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project
+from tests.integration.conftest import open_task, post_project
 from tests.support.living_doc import document_of
 
 
@@ -116,7 +116,7 @@ def _say(client, room_id: str, text: str, *, author: str = "alice") -> None:
             s.add(
                 Block(
                     project_id=room.project_id,
-                    topic_id=room.id,
+                    conversation_id=room.id,
                     kind=BlockKind.message,
                     author_type=AuthorType.participant,
                     author=author,
@@ -165,7 +165,7 @@ def _events(client, room_id: str) -> list[Block]:
         async with client.test_factory() as s:
             rows = await s.scalars(
                 select(Block).where(
-                    Block.topic_id == uuid.UUID(room_id),
+                    Block.conversation_id == uuid.UUID(room_id),
                     Block.kind == BlockKind.event,
                 )
             )
@@ -542,7 +542,9 @@ def test_without_a_gateway_nothing_is_asked(client, alice, gateway, monkeypatch)
     assert gateway["asked"] == []
 
 
-def test_a_rewritten_goal_and_a_split_are_signals(client, alice, gateway, monkeypatch):
+def test_a_rewritten_goal_and_a_new_task_are_signals(
+    client, alice, gateway, monkeypatch
+):
     seen: list[tuple[str, str]] = []
     monkeypatch.setattr(
         naming, "nudge", lambda room_id, reason: seen.append((str(room_id), reason))
@@ -558,10 +560,5 @@ def test_a_rewritten_goal_and_a_split_are_signals(client, alice, gateway, monkey
         headers=alice,
     )
     assert r.status_code == 200, r.text
-    r = client.post(
-        f"/topics/{rid}/split",
-        json={"title": "限流开关", "reviewer_handle": "alice"},
-        headers=alice,
-    )
-    assert r.status_code == 200, r.text
+    open_task(client, rid, "限流开关", start=False)
     assert seen == [(rid, "signal"), (rid, "signal")]

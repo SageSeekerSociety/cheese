@@ -117,3 +117,42 @@ export function inlineDiff(before: string, after: string): Segment[] {
   while (j < b.length) push(b[j++], 'add')
   return out
 }
+
+// 两份正文直接比。行数太多就不逐段配对，整篇算删了又加了，理由同 MAX_CELLS。
+const MAX_LINE_CELLS = 4_000_000
+
+/** 两版正文（一段一行）之间改了的每一段：先按行求最长公共子序列，拼成一份统一格式
+ *  的 diff，再交给 `paragraphDiff` 配对、细分。 */
+export function compareTexts(before: string, after: string): ParagraphDiff {
+  const a = before ? before.split('\n') : []
+  const b = after ? after.split('\n') : []
+  const lines: string[] = ['@@ -1 +1 @@']
+  if (a.length * b.length > MAX_LINE_CELLS) {
+    lines.push(...a.map((line) => `-${line}`), ...b.map((line) => `+${line}`))
+    return paragraphDiff(lines.join('\n'))
+  }
+  const width = b.length + 1
+  const lcs = new Uint32Array((a.length + 1) * width)
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      lcs[i * width + j] =
+        a[i] === b[j] ? lcs[(i + 1) * width + j + 1] + 1 : Math.max(lcs[(i + 1) * width + j], lcs[i * width + j + 1])
+    }
+  }
+  let i = 0
+  let j = 0
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      lines.push(` ${a[i]}`)
+      i++
+      j++
+    } else if (j < b.length && (i >= a.length || lcs[i * width + j + 1] >= lcs[(i + 1) * width + j])) {
+      lines.push(`+${b[j]}`)
+      j++
+    } else {
+      lines.push(`-${a[i]}`)
+      i++
+    }
+  }
+  return paragraphDiff(lines.join('\n'))
+}

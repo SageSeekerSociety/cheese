@@ -59,7 +59,7 @@ describe('handing a browser sign-in to the app', () => {
     keepAppChallenge(CHALLENGE)
     const { view } = await arrive()
 
-    await waitFor(() => expect(view.getByText(/as Andy \(@andylizf\)/)).toBeTruthy())
+    await waitFor(() => expect(view.getByText(/as Andy \(andylizf\)/)).toBeTruthy())
     expect(UserApi.startAppSignIn).not.toHaveBeenCalled()
 
     await fireEvent.click(view.getByRole('button', { name: 'Continue' }))

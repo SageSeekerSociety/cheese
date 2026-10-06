@@ -13,6 +13,7 @@ import type { Team } from '@/types'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
+import { useEventListener } from '@vueuse/core'
 
 import { getAvatarUrl } from '@/utils/materials'
 
@@ -30,7 +31,9 @@ import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 import { useWorkspaceStore } from '@/stores/workspace'
+import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
 import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
+import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 defineProps<{
   /** 手机上「待办」是底栏的一格，这里就不再列一次。 */
@@ -50,9 +53,19 @@ const groups = computed(() => [
   { key: 'teams', heading: true, teams: teams.value.filter((team) => !team.personal) },
 ])
 
+// 名单会被重读很多次（见下面的换页面、拿回焦点）。只认最后发出的那一次，而这里
+// 自己改过名单（退出、解散、转让、改资料）也算一次更新：早发的读晚回来，会把刚退出
+// 的团队又画回去。
+let teamsRead = 0
+function setTeamsHere(next: Team[]) {
+  teamsRead += 1
+  teams.value = next
+}
 async function loadTeams() {
+  const read = ++teamsRead
   try {
-    teams.value = (await TeamsApi.getMyTeams()).data.teams
+    const mine = (await TeamsApi.getMyTeams()).data.teams
+    if (read === teamsRead) teams.value = mine
   } catch {
     // 读不到就不列：这是一份目录，不是这一页的内容。
   }
@@ -71,6 +84,15 @@ onMounted(() => {
   void loadTeams()
   void loadSpaces()
 })
+
+// 侧栏跨页面一直挂着，只在挂载时读一次的话，刚建的团队、刚被批准加入的团队要整页
+// 刷新才出现。没有推送告诉它名单变了，于是在人做了点什么的时候重读：换页面（建完
+// 团队就是跳进那个团队）、窗口重新拿到焦点（批准往往是在别处等来的）。
+watch(
+  () => route.path,
+  () => void loadTeams()
+)
+useEventListener(window, 'focus', () => void loadTeams())
 
 // 哪些团队是展开的：记在这台浏览器上，下次打开还是那样。存不进去也不要紧。
 const OPEN_KEY = 'cheesex.homeNav.openTeams'
@@ -147,8 +169,24 @@ function teamActions(team: Team): MenuAction[] {
         onSelect: () => (editing.value = team),
       }
     )
-  // 所有者退不掉（后端拒：先转让或解散），不给他一个必然被拒的按钮。
-  if (team.role !== 'OWNER')
+  // 所有者退不掉（后端拒：先转让或解散），所以他看到的是那两条出路。
+  if (team.role === 'OWNER')
+    actions.push(
+      {
+        key: 'transfer',
+        label: t('home.nav.transferTeam'),
+        icon: 'mdi-account-arrow-right-outline',
+        onSelect: () => (transferring.value = team),
+      },
+      {
+        key: 'disband',
+        label: t('home.nav.disbandTeam'),
+        icon: 'mdi-delete-outline',
+        danger: true,
+        onSelect: () => (disbanding.value = team),
+      }
+    )
+  else
     actions.push({
       key: 'leave',
       label: t('home.nav.leaveTeam'),
@@ -161,6 +199,32 @@ function teamActions(team: Team): MenuAction[] {
 
 // 右键一行，弹的就是 ⋯ 那一份，弹在鼠标那一点上。
 const rowMenu = useRowMenu<number>()
+
+// 转让团队：交出去之后我是管理员，这一行的菜单跟着新角色长（这时才有「退出团队」）。
+const transferring = ref<Team | null>(null)
+const transferOpen = computed({
+  get: () => transferring.value !== null,
+  set: (value: boolean) => {
+    if (!value) transferring.value = null
+  },
+})
+function onTransferred(updated: Team) {
+  setTeamsHere(teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated, role: 'ADMIN' } : team)))
+}
+
+// 解散团队：撤不回，所以要把团队名打一遍才按得下去（DisbandTeamDialog）。后端拒绝时
+// 理由留在弹窗里；成了就和退出一样，这一行和它的项目从侧栏上下去。
+const disbanding = ref<Team | null>(null)
+const disbandOpen = computed({
+  get: () => disbanding.value !== null,
+  set: (value: boolean) => {
+    if (!value) disbanding.value = null
+  },
+})
+function onDisbanded(team: Team) {
+  toast.success(t('home.nav.disbandTeamDone', { name: team.name }))
+  forgetTeam(team)
+}
 
 // 退出团队：退掉的是整个团队，它的项目也一起看不到了，所以先确认。退出这一下成功了
 // 就算成功，后面的刷新失败不改口。
@@ -181,8 +245,13 @@ async function leaveTeam(team: Team) {
   })
   if (result === undefined) return
   toast.success(t('home.nav.leaveTeamDone', { name: team.name }))
-  teams.value = teams.value.filter((row) => row.id !== team.id)
-  // 这个团队的项目也不再是我的：rail 上那几格跟着这份清单走。
+  forgetTeam(team)
+}
+
+// 这个团队不再是我的了：这一行消失；它的项目也不再是我的，rail 上那几格跟着项目清单走；
+// 正看着它的某一页的话回待办。
+function forgetTeam(team: Team) {
+  setTeamsHere(teams.value.filter((row) => row.id !== team.id))
   void useWorkspaceStore().refreshProjects()
   if (currentHandle.value?.toLowerCase() === team.handle.toLowerCase()) void router.replace({ name: 'inbox' })
 }
@@ -193,7 +262,7 @@ const editOpen = computed({
   },
 })
 function onTeamUpdated(updated: Team) {
-  teams.value = teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated } : team))
+  setTeamsHere(teams.value.map((team) => (team.id === updated.id ? { ...team, ...updated } : team)))
 }
 
 const joinOpen = ref(false)
@@ -318,6 +387,8 @@ const joinOpen = ref(false)
 
   <JoinSpaceDialog v-model="joinOpen" @joined="loadSpaces" />
   <TeamProfileEditDialog v-if="editing" v-model="editOpen" :team="editing" @updated="onTeamUpdated" />
+  <DisbandTeamDialog v-if="disbanding" v-model="disbandOpen" :team="disbanding" @disbanded="onDisbanded" />
+  <TransferTeamDialog v-if="transferring" v-model="transferOpen" :team="transferring" @transferred="onTransferred" />
 </template>
 
 <style scoped>

@@ -82,9 +82,7 @@ API 那条路的前提是应用拿到了文档权限（管理员在飞书后台�
 
 凭据是 HMAC 令牌，**一个字都不存**（`backend/app/core/webhook_auth.py`）：`WebhookToken` 只存一个 `version` 计数器，令牌里嵌着它。`mint` 把版本 +1 并签发一个含新版本的令牌（这就是轮换：此前发出的全部立刻失效），`revoke` 只 +1 而不发新令牌（这就是撤销）。`verify` 重新验签、并把令牌里的 `v` 和行上的当前值比对。
 
-行的身份是「**哪里**」：一个房间的主线，或者一条线程。`topic_id` 曾经就是主键，改成两个**部分唯一索引**（`uq_webhook_tokens_room` 条件 `task_id IS NULL`，`uq_webhook_tokens_thread` 条件 `task_id IS NOT NULL`），因为主键装不下「NULL = 房间自己的主线」，而 NULL 在唯一索引里不等于 NULL。`bump_version` 的冲突目标正是这两个索引之一，谓词写错时 Postgres 会直接报错而不是悄悄插第二行 —— 这是故意的。
-
-今天**只有房间那一档在走**：`webhook_service.mint/verify` 不带 `task_id`，`POST /topics/{topic_id}/webhook-token` 的注释说明线程级凭据不这么做（「webhook 唤醒的是那个 place」）。
+行的身份是「**哪段对话**」：一行一个 `conversation_id`（房间或任务的 id，唯一），`bump_version` 按它冲突更新。
 
 | 门 | 谁 | 说明 |
 | --- | --- | --- |

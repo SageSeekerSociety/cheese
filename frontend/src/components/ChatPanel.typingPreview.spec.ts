@@ -7,7 +7,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -85,7 +85,7 @@ function live(blocks: LiveBlock[], agent = 'cheese', turn = 'turn-a'): WsServerF
 function message(content: string, author = 'cheese'): Block {
   return {
     id: `msg-${author}`,
-    topic_id: topic.id,
+    conversation_id: topic.id,
     kind: 'message',
     author_type: 'participant',
     author,
@@ -102,6 +102,13 @@ function text(view: ReturnType<typeof render>): string {
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1
 }
+
+// A message body is drawn by the Markdown reader, which MarkdownView imports the
+// first time it draws. Loaded here, that import resolves at once; left to the
+// first test, it can outlast `flush()` on a busy machine and the body is blank.
+beforeAll(async () => {
+  await import('@/components/panels/doc/blocks/reader')
+})
 
 beforeEach(() => {
   // These assertions read the Chinese copy.

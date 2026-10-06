@@ -2,7 +2,7 @@
   "title": "学生做完一道作业",
   "project": "知是",
   "topic": "销售分析报告",
-  "machine": "本话题运行在：云机器 cm-7f3a",
+  "machine": "本话题运行在：云端沙箱",
   "people": {
     "wang": { "name": "王长鑫" },
     "cheese": { "name": "芝士", "agent": true }

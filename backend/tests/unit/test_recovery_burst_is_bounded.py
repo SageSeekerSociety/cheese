@@ -17,15 +17,9 @@ import pytest
 from app.api.routes import connector
 
 
-class _Wakeup:
-    async def wake_device(self, device_id: str) -> None:
-        return None
-
-
 @pytest.fixture
 def quiet_reconnect(monkeypatch):
     monkeypatch.setattr("app.core.background.spawn", lambda coro, *, name: coro.close())
-    monkeypatch.setattr("app.api.deps.get_cloud_wakeup", lambda: _Wakeup())
 
 
 @pytest.mark.anyio

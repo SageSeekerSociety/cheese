@@ -29,6 +29,16 @@ from tests.integration.conftest import (
     unique_int,
 )
 
+#: A 项目集 that says nothing, as the API reports it.
+EMPTY_TEACHING = {
+    "systemPrompt": None,
+    "currentWeek": None,
+    "allowedTopics": [],
+    "avoidInCode": [],
+    "materialIds": [],
+    "knowledgeIds": [],
+}
+
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
@@ -267,7 +277,7 @@ def test_referencing_another_teams_knowledge_is_refused(
     )
     assert 400 <= denied.status_code < 500, denied.text
     # 被拒之后，存着的配置一个字都没动。
-    assert _teaching_of(api_client, board, board["token"]) == {}
+    assert _teaching_of(api_client, board, board["token"]) == EMPTY_TEACHING
 
 
 def test_referencing_my_own_knowledge_sticks_and_reaches_the_course(
@@ -288,7 +298,7 @@ def test_referencing_my_own_knowledge_sticks_and_reaches_the_course(
         api_client, board, board["token"], knowledge_ids=[mine["knowledge_id"]]
     )
     assert ok.status_code == 200, ok.text
-    assert _teaching_of(api_client, board, board["token"])["knowledge_ids"] == [
+    assert _teaching_of(api_client, board, board["token"])["knowledgeIds"] == [
         mine["knowledge_id"]
     ]
 
@@ -317,7 +327,7 @@ def test_a_missing_knowledge_id_is_named_not_dropped(
     )
     assert denied.status_code == 400, denied.text
     assert denied.json()["error"]["data"]["field"] == "knowledgeIds"
-    assert _teaching_of(api_client, board, board["token"]) == {}
+    assert _teaching_of(api_client, board, board["token"]) == EMPTY_TEACHING
 
 
 def test_a_missing_material_id_is_named_not_dropped(
@@ -331,7 +341,7 @@ def test_a_missing_material_id_is_named_not_dropped(
     )
     assert denied.status_code == 400, denied.text
     assert denied.json()["error"]["data"]["field"] == "materialIds"
-    assert _teaching_of(api_client, board, board["token"]) == {}
+    assert _teaching_of(api_client, board, board["token"]) == EMPTY_TEACHING
 
 
 def test_someone_elses_material_is_allowed_because_material_has_no_owner(
@@ -350,7 +360,7 @@ def test_someone_elses_material_is_allowed_because_material_has_no_owner(
 
     ok = _patch_teaching(api_client, board, board["token"], material_ids=[material_id])
     assert ok.status_code == 200, ok.text
-    assert _teaching_of(api_client, board, board["token"])["material_ids"] == [
+    assert _teaching_of(api_client, board, board["token"])["materialIds"] == [
         material_id
     ]
 
@@ -377,11 +387,7 @@ def test_the_other_teaching_fields_are_untouched(
     )
     assert resp.status_code == 200, resp.text
 
-    stored = _teaching_of(api_client, board, board["token"])
-    assert stored["system_prompt"] == teaching["systemPrompt"]
-    assert stored["current_week"] == 3
-    assert stored["allowed_topics"] == ["循环"]
-    assert stored["avoid_in_code"] == ["递归"]
+    assert _teaching_of(api_client, board, board["token"]) == teaching
 
     task_id = _publish_task(api_client, board, name="这门课的题（其它字段）")
     project_id = _project_under(api_client, user_client, board, task_id=task_id)

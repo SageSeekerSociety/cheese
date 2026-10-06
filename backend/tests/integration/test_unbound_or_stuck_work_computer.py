@@ -158,7 +158,9 @@ def _installing_hub(monkeypatch):
         }
 
     hub = SimpleNamespace(
-        is_online=lambda device: True, exec=AsyncMock(side_effect=install)
+        target=lambda _device: "linux-amd64",
+        is_online=lambda device: True,
+        exec=AsyncMock(side_effect=install),
     )
     from app.domain.machine import session_work as work_lease
 

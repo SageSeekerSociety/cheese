@@ -34,7 +34,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
-from app.domain.agent.place import seat_dir
+from app.domain.agent.place import seat_dir, seat_key
 
 
 @pytest.fixture(autouse=True)
@@ -477,7 +477,7 @@ def test_release_marker_is_read_from_the_requested_seat(tmp_path):
 
     for name in ("first", "second"):
         command, env = DeviceChannel._screen_file_refresh(
-            str(home), release_state={}, execution_token=None, agent_handle=name
+            str(home), release_state={}, execution_token=None, seat=name
         )
         result = subprocess.run(
             ["sh", "-c", command], capture_output=True, text=True, env=env
@@ -520,6 +520,46 @@ async def test_a_turn_rewrites_only_its_own_seat_s_execution_token(tmp_path):
     await room.ensure(agent_handle="cheese-a", token="a2")
     assert mine.read_text() == "a2"
     assert theirs.read_text() == "b1"
+
+
+async def test_a_task_s_session_leaves_its_room_s_session_its_own_files(tmp_path):
+    """One teammate in a room and in a task of that room: two conversations on
+    one machine, under the room's home. Opening the task's must not change the
+    credential or the launcher the room's session runs on.
+
+    On dev (2026-10-05) the task's start rewrote both: from then on every call
+    the room's agent made was refused as working another conversation, and the
+    task's launcher came up on the room's state and never answered.
+    """
+    hub = ShellHub(tmp_path)
+    hub.release["stage"] = {"changed": False}
+    project, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    room = _room(
+        hub,
+        project_id=project,
+        env={
+            "CHEESE_EXECUTION_TARGET": json.dumps({"device_id": "executor"}),
+            "CHEESE_RESOURCE_ID": str(room_id),
+        },
+    )
+    home = Path(device_home_dir(project, room_id).replace("$HOME", str(tmp_path)))
+
+    def launcher(screen: HubScreen) -> Path:
+        written = re.search(r'exec bash "([^"]+)"', screen.command[-1]).group(1)
+        return Path(written.replace("$HOME", str(tmp_path)))
+
+    room_screen = await room.ensure(topic_id=room_id, token="room")
+    room_token = Path(seat_dir(str(home), "cheese")) / "remote-session/execution.token"
+    room_launcher = launcher(room_screen).read_text()
+
+    task_screen = await room.ensure(
+        topic_id=task_id, seat=seat_key("cheese", task_id), token="task"
+    )
+
+    assert task_screen.sid != room_screen.sid
+    assert room_token.read_text() == "room", "开任务的会话换掉了房间会话的凭据"
+    assert launcher(room_screen).read_text() == room_launcher
+    assert launcher(task_screen) != launcher(room_screen)
 
 
 @pytest.mark.parametrize(
@@ -999,7 +1039,7 @@ async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
             ["bash", "-lc", "printf launcher"],
             str(home),
             execution_token=value,
-            agent_handle="cheese",
+            seat="cheese",
         )
         token = seat / "remote-session/execution.token"
         assert token.read_text() == value
@@ -1408,6 +1448,52 @@ async def test_a_tunnel_screen_is_handed_no_loopback_port(monkeypatch, tmp_path)
     assert not any("//127.0.0.1:" in value for value in env.values())
     # The meter's allowlist still applies to the tunnelled route.
     assert env["CHEESE_MODEL_PROXY"] == "1"
+
+
+@pytest.mark.parametrize("cloud", [True, False])
+async def test_a_cloud_machine_tunnels_through_its_loopback_forward(
+    monkeypatch, tmp_path, cloud
+):
+    """A MicroCloud guest is isolated from private networks, so a cloud machine
+    whose backend is the loopback forward must find the model tunnel there too,
+    not at the deployment's private gateway. A device someone enrolled keeps
+    the configured URL."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    from app.domain.agent import machine_address
+    from app.domain.device.supply import Supply
+
+    _subscription_settings(monkeypatch, tmp_path)
+    configured = "wss://gateway.internal.example/api/llm/tunnel"
+    monkeypatch.setattr(settings, "subscription_tunnel_url", configured)
+    monkeypatch.setattr(settings, "agent_session_device_id", None)
+    machine = SimpleNamespace(
+        supply=Supply.cloud if cloud else Supply.self_hosted,
+        cloud_control_private=cloud,
+    )
+
+    class Session:
+        async def get(self, _row, _device_id):
+            return machine
+
+    async def api_base(self, device_id):
+        return await machine_address.device_api_base(
+            Session(), device_id, self._public_base
+        )
+
+    monkeypatch.setattr(DeviceChannel, "_device_api_base", api_base)
+    _hub, env, _project, _topic = await _subscription_screen()
+
+    tunnel = urlsplit(env["CHEESE_TUNNEL_URL"])
+    if cloud:
+        api = urlsplit(env["CHEESE_API"])
+        assert ipaddress.ip_address(tunnel.hostname).is_loopback
+        assert (tunnel.hostname, tunnel.port) == (api.hostname, api.port)
+        assert (tunnel.scheme, tunnel.path) == ("ws", "/llm/tunnel")
+    else:
+        assert env["CHEESE_TUNNEL_URL"] == configured
+    assert "HTTPS_PROXY" not in env
 
 
 def test_every_backend_in_the_deployed_pool_gets_the_same_liveness_policy():

@@ -1019,6 +1019,52 @@ wait_for_healthz() {
   return 1
 }
 
+# The running work — sessions, turns, sweeps — belongs to one backend at a time
+# (backend/app/core/ownership.py), and used to move only when the old backend
+# stopped, after the drain below. Every new turn on the backend traffic had just
+# moved to waited for it: on dev on 2026-10-04 a message sent in that window
+# waited 40 s (median) for its turn to start, against 0.2 s outside it. So the
+# backend traffic has left is told to hand the work over now, with SIGUSR1, and
+# goes on answering what it still has through the drain. The pause first lets a
+# request already on its way there land before the work moves; on dev nearly
+# all of them completed within 5 s of a switch.
+HANDOVER_AFTER_SECONDS="${DEPLOY_HANDOVER_AFTER_SECONDS:-5}"
+
+# Does the backend in container $1 catch SIGUSR1? One built before the handler
+# existed would be killed by it outright — that is the signal's default action —
+# so the first release carrying the handler moves the work the old way, at stop.
+catches_handover_signal() {
+  docker exec "$1" python -c '
+import os, pathlib, sys
+for status in pathlib.Path("/proc").glob("[0-9]*/status"):
+    if status.parent.name == str(os.getpid()):
+        continue
+    try:
+        command = (status.parent / "cmdline").read_bytes()
+        fields = dict(line.split(":", 1) for line in status.read_text().splitlines() if ":" in line)
+    except OSError:
+        continue
+    if b"bin/uvicorn" in command and int(fields["SigCgt"], 16) & (1 << 9):
+        sys.exit(0)
+sys.exit(1)
+' >/dev/null 2>&1
+}
+
+hand_over_running_work() {
+  local container="$1"
+  [ -n "$container" ] || return 0
+  if ! catches_handover_signal "$container"; then
+    log "$container does not take the handover signal; its running work moves when it stops"
+    return 0
+  fi
+  sleep "$HANDOVER_AFTER_SECONDS"
+  if docker kill --signal USR1 "$container" >/dev/null; then
+    log "told $container to hand its running work over; it keeps serving through the drain"
+  else
+    log "could not signal $container; its running work moves when it stops"
+  fi
+}
+
 rollout_backend() {
   if grep -Fq "server 127.0.0.1:$BACKEND_PORT_NEXT;" "$ACTIVE_BACKEND_DIR/backend.conf"; then
     fail "backend router is still on :$BACKEND_PORT_NEXT from a previous rollout; recover it before redeploying"
@@ -1037,6 +1083,7 @@ rollout_backend() {
     fail "$NEXT_BACKEND never answered /healthz within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
   fi
   switch_active_backend "127.0.0.1:${BACKEND_PORT_NEXT}"
+  hand_over_running_work "$(service_container backend)"
   sleep "$DRAIN_SECONDS"
   log "recreating backend on the new image behind ${NEXT_BACKEND}…"
   dc up -d --no-deps backend \
@@ -1045,13 +1092,15 @@ rollout_backend() {
     fail "the recreated backend never answered /healthz on :$BACKEND_PORT; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it — repair the backend, then point api-front back by hand"
   fi
   switch_active_backend "127.0.0.1:${BACKEND_PORT}"
+  hand_over_running_work "$NEXT_BACKEND"
   # Requests the old nginx workers were still answering go to the container
   # that is about to disappear; give them a moment to finish.
   sleep "$DRAIN_SECONDS"
-  # Stopped before it is removed: on SIGTERM it hands its running turns to the
-  # backend just switched to (backend/app/core/ownership.py), and `rm -f` alone
-  # is a SIGKILL that cuts that handover off. The compose backend gets the same
-  # grace from its stop_grace_period when `up` recreates it above.
+  # Stopped before it is removed: on SIGTERM it hands whatever running work it
+  # still holds to the backend just switched to (backend/app/core/ownership.py),
+  # and `rm -f` alone is a SIGKILL that cuts that handover off. The compose
+  # backend gets the same grace from its stop_grace_period when `up` recreates
+  # it above.
   docker stop --time "$BACKEND_STOP_GRACE_SECONDS" "$NEXT_BACKEND" >/dev/null 2>&1 || true
   docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
   log "$NEXT_BACKEND removed; backend rollout complete"

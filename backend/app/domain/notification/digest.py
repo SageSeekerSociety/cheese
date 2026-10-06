@@ -32,7 +32,6 @@ anyio.run(run_notification_digests, SessionFactory)"
 
 from __future__ import annotations
 
-import html
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -43,7 +42,12 @@ from sqlalchemy import or_, select
 from app.core.db import SessionFactory
 from app.core.email import get_email_sender, is_placeholder_email
 from app.domain.delivery.models import ChannelDelivery
-from app.domain.notification.maintenance import email_link, headline_for
+from app.domain.notification.letter import (
+    letter_for,
+    render_digest_html,
+    render_digest_text,
+)
+from app.domain.notification.maintenance import display_names
 from app.domain.notification.outbox import LEASE_SECONDS
 from app.domain.notification.preferences import DigestCadence, EmailMode
 from app.domain.notification.preferences_models import PreferencesRepository
@@ -58,16 +62,21 @@ _PERIOD: dict[DigestCadence, timedelta] = {
 }
 
 
-def compose_digest(items: list[dict[str, Any]]) -> tuple[str, str]:
-    """(标题, HTML 正文)。一条一行，每行都指向它说的那件事。"""
-    subject = f"[芝士] 你不在时的 {len(items)} 条通知"
-    body = ["<p>你不在的时候，芝士上有这些事：</p><ul>"]
-    for item in items:
-        headline = html.escape(headline_for(str(item.get("type") or "")))
-        link = html.escape(email_link(item.get("payload")), quote=True)
-        body.append(f'<li><a href="{link}">{headline}</a></li>')
-    body.append("</ul>")
-    return subject, "".join(body)
+def compose_digest(
+    items: list[dict[str, Any]], names: list[dict[str, str]] | None = None
+) -> tuple[str, str, str]:
+    """(标题, HTML 正文, 纯文本)。一条一行，每行用单封邮件的那句话、指向它说的那件事。
+
+    `names` 和 `items` 一一对应，是每一条 `payload` 里用户、团队引用查出来的名字。
+    """
+    names = names or [{} for _ in items]
+    letters = [letter_for(item, n) for item, n in zip(items, names, strict=True)]
+    subject = f"你不在时的 {len(items)} 条通知"
+    return (
+        subject,
+        render_digest_html(subject, letters),
+        render_digest_text(subject, letters),
+    )
 
 
 async def send_digest_email(
@@ -75,14 +84,15 @@ async def send_digest_email(
 ) -> bool:
     async with sessions() as session:
         email = await session.scalar(select(User.email).where(User.id == receiver_id))
+        names = [await display_names(session, item.get("payload")) for item in items]
     if not email or is_placeholder_email(email):
         logger.warning("摘要收件人 %s 没有可用邮箱", receiver_id)
         return False
-    subject, body_html = compose_digest(items)
+    subject, body_html, body_text = compose_digest(items, names)
     try:
         return bool(
             await get_email_sender().send(
-                to=email, subject=subject, body_html=body_html
+                to=email, subject=subject, body_html=body_html, body_text=body_text
             )
         )
     except Exception:

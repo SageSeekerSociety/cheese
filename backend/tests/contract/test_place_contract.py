@@ -7,8 +7,6 @@ for itself — one of those rules was once written inside out.
 结论 24（地点是一个可以问「你给得出什么」的东西）。
 """
 
-from unittest.mock import AsyncMock
-
 from app.domain.device.supply import Supply
 
 
@@ -19,8 +17,6 @@ def channels():
     enrolled = DeviceChannel()
     opened = CloudChannel(
         configured=True,
-        ensure_topic_cloud=AsyncMock(),
-        read_topic_cloud=AsyncMock(),
     )
     return enrolled, opened
 

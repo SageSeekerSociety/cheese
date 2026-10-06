@@ -48,17 +48,17 @@ async def refresh(session, compute, dead_sessions: set) -> None:
     )
     for pointer in pointers:
         key: tuple[uuid.UUID, str, str] = (
-            pointer.topic_id,
+            pointer.conversation_id,
             pointer.agent_handle,
             pointer.resume_token,
         )
         if pointer.resume_token in compute.found_conversations(
-            pointer.topic_id, pointer.agent_handle
+            pointer.conversation_id, pointer.agent_handle
         ):
             dead_sessions.discard(key)
             continue
         if pointer.resume_token in compute.terminal_conversations(
-            pointer.topic_id, pointer.agent_handle
+            pointer.conversation_id, pointer.agent_handle
         ):
             dead_sessions.add(key)
 

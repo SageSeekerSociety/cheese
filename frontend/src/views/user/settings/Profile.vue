@@ -1,113 +1,32 @@
+<!--
+  账号设置里的「个人资料」一页：这个人的记录、头像上传和保存请求都在这里，
+  画面全在同目录的 ProfileView.vue（只吃 props 和事件）。改这里的是「从哪来、
+  交给谁」，改样子去改视图。
+-->
 <template>
-  <div class="settings-page">
-    <header class="profile__head">
-      <div>
-        <h1 class="t-page-title">{{ t('account.profile.title') }}</h1>
-        <p class="settings-page__lede">{{ t('account.profile.lede') }}</p>
-      </div>
-      <router-link v-if="user" class="profile__home" :to="{ name: 'UserPage', params: { handle: user.username } }">
-        {{ t('account.profile.viewPage') }}
-        <v-icon icon="mdi-chevron-right" size="16" />
-      </router-link>
-    </header>
-
-    <!-- Save is the page's one main action, so it is the only amber on it
-         (design-system §1.6); it exists only while there is something to save. -->
-    <form v-if="user" class="settings-card" novalidate @submit.prevent="save">
-      <div class="srow srow--field">
-        <span class="srow__k">{{ t('account.profile.avatar') }}</span>
-        <div class="avatar-field">
-          <UserAvatar class="avatar-field__img" :avatar="shownAvatar" :name="avatarSeed" size="64" />
-          <div class="avatar-field__side">
-            <div class="avatar-field__actions">
-              <BaseButton
-                kind="secondary"
-                :loading="changingAvatar"
-                :disabled="removingAvatar"
-                @click="avatarInput?.click()"
-              >
-                {{ t('account.profile.changeAvatar') }}
-              </BaseButton>
-              <BaseButton
-                v-if="canRemoveAvatar"
-                :loading="removingAvatar"
-                :disabled="changingAvatar"
-                @click="removeAvatar"
-              >
-                {{ t('account.profile.removeAvatar') }}
-              </BaseButton>
-            </div>
-            <span class="field-note">{{ t('account.profile.avatarHint') }}</span>
-          </div>
-          <input
-            ref="avatarInput"
-            class="avatar-field__input"
-            type="file"
-            :accept="AVATAR_TYPES.join(',')"
-            @change="onAvatarPicked"
-          />
-        </div>
-      </div>
-
-      <div class="srow srow--field">
-        <label class="srow__k" for="profile-nickname">{{ t('account.profile.nickname') }}</label>
-        <v-text-field
-          id="profile-nickname"
-          v-model="nickname"
-          autocomplete="nickname"
-          variant="outlined"
-          density="compact"
-          :error-messages="nicknameError"
-          hide-details="auto"
-        />
-      </div>
-
-      <div class="srow srow--field">
-        <span class="srow__k">{{ t('account.profile.username') }}</span>
-        <div class="srow__stack">
-          <span class="handle">@{{ user.username }}</span>
-          <span class="field-note">{{ t('account.profile.usernameNote') }}</span>
-        </div>
-      </div>
-
-      <div class="srow srow--field">
-        <label class="srow__k" for="profile-intro">{{ t('account.profile.intro') }}</label>
-        <v-textarea
-          id="profile-intro"
-          v-model="intro"
-          autocomplete="off"
-          variant="outlined"
-          density="compact"
-          rows="2"
-          auto-grow
-          no-resize
-          :counter="INTRO_MAX"
-          :counter-value="length"
-          persistent-counter
-          :error-messages="introError"
-        />
-      </div>
-
-      <SaveBar
-        :dirty="dirty"
-        :saving="saving"
-        :saved="saved"
-        :error="error"
-        :disabled="!valid"
-        :note="t('account.profile.unsaved')"
-        :revert-label="t('account.profile.revert')"
-        :save-label="t('account.profile.save')"
-        @revert="revert"
-        @save="save"
-      />
-    </form>
-  </div>
+  <ProfileView
+    :user="user"
+    :shown-avatar="shownAvatar"
+    :avatar-seed="avatarSeed"
+    :can-remove-avatar="canRemoveAvatar"
+    :changing-avatar="changingAvatar"
+    :removing-avatar="removingAvatar"
+    :saved-nickname="savedNickname"
+    :saved-intro="savedIntro"
+    :saving="saving"
+    :saved="saved"
+    :error="error"
+    :avatar-accept="AVATAR_TYPES.join(',')"
+    @save="save"
+    @avatar-picked="onAvatarPicked"
+    @remove-avatar="removeAvatar"
+  />
 </template>
 
 <script setup lang="ts">
 import type { User } from '@/types/users'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -115,9 +34,8 @@ import { getAvatarUrl } from '@/utils/materials'
 import { ensureDefaultAvatarId, globalDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 import { useSaveState } from '@/composables/useSaveState'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import SaveBar from '@/components/base/SaveBar.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
+import ProfileView from './ProfileView.vue'
+
 import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
 import { UserApi } from '@/network/api/users'
@@ -128,11 +46,6 @@ import AccountService from '@/services/account'
 // which would show as a broken avatar. It sets no size limit of its own.
 const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024
-const NICKNAME_MAX = 50
-const INTRO_MAX = 60
-// A nickname needs at least one CJK character, letter or digit, so it cannot be
-// only symbols or spaces.
-const READABLE = /[0-9A-Za-z㐀-䶿一-鿿]/
 
 const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessage(error, fallback))
 
@@ -147,66 +60,30 @@ function remember(change: Partial<User>) {
   void AccountService.updateUserInfo()
 }
 
-// ---- Nickname and intro: edited here, saved together ----
+// ---- Nickname and intro: edited in the view, saved together here ----
 
 const savedNickname = computed(() => user.value?.nickname ?? '')
 const savedIntro = computed(() => user.value?.intro ?? '')
-const nickname = ref(savedNickname.value)
-const intro = ref(savedIntro.value)
-
-// The record can arrive or change after the page opens. A field follows it
-// only while nobody has edited that field.
-watch(savedNickname, (next, prev) => {
-  if (nickname.value === prev) nickname.value = next
-})
-watch(savedIntro, (next, prev) => {
-  if (intro.value === prev) intro.value = next
-})
-
-// Counted in characters, as the server counts them.
-const length = (value: string) => [...value].length
-
-const nicknameError = computed(() => {
-  const value = nickname.value.trim()
-  if (!value) return t('account.profile.nicknameRequired')
-  if (length(value) > NICKNAME_MAX) return t('account.profile.nicknameTooLong', { max: NICKNAME_MAX })
-  if (!READABLE.test(value)) return t('account.profile.nicknameUnreadable')
-  return ''
-})
-const introError = computed(() =>
-  length(intro.value) > INTRO_MAX ? t('account.profile.introTooLong', { max: INTRO_MAX }) : ''
-)
-
-const dirty = computed(() => nickname.value !== savedNickname.value || intro.value !== savedIntro.value)
-const valid = computed(() => !nicknameError.value && !introError.value)
 
 // 保存结果就地回执（§3.11）：这一块一直在屏幕上，一条几秒就走掉的 toast
-// 不够用。成功写进旁边那行 SaveStatus，失败同样是。
+// 不够用。成功写进旁边那行 SaveStatus，失败同样是。脏没脏由视图自己比
+// （草稿和它手里的已存值），这里只管保存这一件事。
 const { saving, saved, error, run } = useSaveState({
   feedback: 'inline',
-  dirty: () => dirty.value,
   messages: { saved: t('account.profile.saved'), failed: t('account.profile.saveFailed') },
 })
 
-function revert() {
-  nickname.value = savedNickname.value
-  intro.value = savedIntro.value
-}
-
-async function save() {
+async function save(change: { nickname: string; intro: string }) {
   const current = user.value
-  if (!current || !dirty.value || !valid.value) return
+  if (!current) return
   await run(async () => {
-    const change = { nickname: nickname.value.trim(), intro: intro.value }
     await UserApi.updateUserInfo(current.id, change)
     remember(change)
-    nickname.value = change.nickname
   })
 }
 
 // ---- Avatar: takes effect as soon as it is chosen ----
 
-const avatarInput = ref<HTMLInputElement | null>(null)
 const changingAvatar = ref(false)
 const removingAvatar = ref(false)
 
@@ -217,11 +94,8 @@ const shownAvatar = computed(() => (isChosenAvatar(user.value?.avatarId) ? getAv
 // initial; until that default is known there is nothing to put back.
 const canRemoveAvatar = computed(() => globalDefaultAvatarId.value !== null && isChosenAvatar(user.value?.avatarId))
 
-async function onAvatarPicked(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file || !user.value) return
+async function onAvatarPicked(file: File) {
+  if (!user.value) return
   if (!AVATAR_TYPES.includes(file.type)) {
     toast.error(t('account.profile.avatarWrongType'))
     return
@@ -258,118 +132,3 @@ async function removeAvatar() {
 
 onMounted(ensureDefaultAvatarId)
 </script>
-
-<style scoped src="@/styles/settings-card.css"></style>
-
-<style scoped>
-/* 这一页不再自己设宽度：宽度和水平内距由浮层的内容列给（SettingsOverlay 的
-   `.so__content`，720 居中）。以前这里写死 `--page-w-read`（660），比别的设置页窄
-   一截，同一条内容列里只有它不一样。 */
-
-.profile__head {
-  display: flex;
-  gap: 16px;
-  align-items: flex-end;
-  justify-content: space-between;
-}
-
-.profile__home {
-  display: inline-flex;
-  flex-shrink: 0;
-  gap: 4px;
-  align-items: center;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--muted);
-  text-decoration: none;
-  transition: color var(--dur-quick) var(--ease-standard);
-}
-
-.profile__home:hover {
-  color: var(--ink);
-}
-
-/* A row that holds a field: the label sits on the field's first line. */
-.srow--field {
-  grid-template-columns: 120px minmax(0, 1fr);
-  gap: 24px;
-  align-items: start;
-  padding: 20px 24px;
-}
-
-.srow--field > .srow__k {
-  padding-top: 10px;
-}
-
-.srow__stack {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding-top: 10px;
-}
-
-.handle {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-
-.field-note {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-.avatar-field {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-
-.avatar-field__img {
-  flex-shrink: 0;
-  font-size: 23px;
-  font-weight: 600;
-}
-
-.avatar-field__side {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-.avatar-field__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.avatar-field__input {
-  display: none;
-}
-
-/* 断点对齐共享 token（`styles/breakpoints.scss`）：599.98 → 767.98，和这一页
-   一起加载的 `settings-card.css` 同一条线。 */
-@media (max-width: 767.98px) {
-  .profile__head {
-    flex-direction: column;
-    gap: 8px;
-    align-items: flex-start;
-  }
-
-  .srow--field {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-    padding: 16px;
-  }
-
-  .srow--field > .srow__k,
-  .srow__stack {
-    padding-top: 0;
-  }
-}
-</style>

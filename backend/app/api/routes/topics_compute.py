@@ -11,9 +11,9 @@ and may this session use it" -- `GET /topics/{topic_id}/compute-profile`,
 `POST /topics/{topic_id}/sessions/{session_id}/work-lease` on the machine it
 names -- together with the `WorkLeaseRequest` body the lease route takes.
 
-一个话题一个容器（2026-09-28 决定，推翻结论 60）：这一项是整间房的选择，这三条路
-由就是它的读、写和「让这一代会话开工」；topics.py 里没有别处碰它，所以这个组是自
-己一个整体，搬走不欠任何边界。
+一个话题一个容器（2026-09-28 决定，推翻结论 60）：这一项是整间房的选择（带
+`task` 时是那个任务自己的），这三条路由就是它的读、写和「让这一代会话开工」；
+topics.py 里没有别处碰它，所以这个组是自己一个整体，搬走不欠任何边界。
 
 What stays behind, and why. `ProjectRepository` is the one name read here that
 topics.py merely imports, and it is imported from topics.py rather than from
@@ -29,7 +29,7 @@ either.
 Everything else here keeps its home and is imported from where it is defined;
 the names topics.py read only for these routes -- `asyncio`, `asdict`,
 `Request`, `project_device_online`, `device_hub`, the eight `market` names,
-`sql_device_service`, `MachineService`, `gate` and `propose` -- leave its
+`sql_device_service`, `HostPool`, `gate` and `propose` -- leave its
 imports with them. topics.py imports nothing from this module, so there is no
 cycle.
 
@@ -54,7 +54,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolverDep, require_seated_agent
 from app.api.deps import project_device_online
 from app.api.response import ok
 from app.api.routes.topics import DbSession, ProjectRepository
@@ -65,18 +65,49 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_DEVICE,
     VISIBILITY_HOST,
+    cloud_vm_provisionable,
     compute_default_name,
     compute_listings,
     compute_selectable,
     visibility_listings,
 )
+from app.domain.device.supply import (
+    Supply,
+    Visibility,
+    default_visibility,
+    sandbox_unavailable,
+)
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import HostPool
+from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
+
+
+async def _may_move_task(db, resolver, actor, topic, task) -> bool:
+    """Who changes a task's work computer: its owner, a manager of the project,
+    or the owner of a device the task holds now (taking a task off one's own
+    machine); a session only its own task's."""
+    if actor.via != "token":
+        return resolver.credential_conversation() == task.id
+    if actor.handle == task.owner_handle:
+        return True
+    try:
+        await MemberService(db).require_manager(topic.project_id, actor)
+        return True
+    except ForbiddenError:
+        pass
+    from app.domain.machine.session_reports import devices_held_by
+
+    devices = sql_device_service(db)
+    for device_id in await devices_held_by(db, task.id):
+        device = await devices.get_device(device_id)
+        if device is not None and device.owner_user_id == actor.user_id:
+            return True
+    return False
 
 
 @router.get("/{topic_id}/compute-profile")
@@ -85,26 +116,39 @@ async def get_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The room's work computer: the one choice every session in it works on.
-
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：`sessions` 报的每一行都是那
-    一台——一个房间里的会话不再各有各的机器。没开工的会话也答那一项，它开工时拿的
-    就是那一台。"""
-    topic = await TopicService(db).get_or_404(topic_id)
+    """A conversation's work computer — a room's, or a task's: the one choice
+    every session of that conversation works on. A session that has not
+    started answers the same choice, the machine it will get."""
+    place = await TopicService(db).place_or_404(topic_id)
+    topic, the_task = place.room, place.task
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic.id
     )
+    topic_id = topic.id
     project = await ProjectRepository(db).get(topic.project_id)
-    from app.domain.agent.compute_configs import project_configs, room_choice
+    from app.domain.agent.compute_configs import (
+        place_choice,
+        project_configs,
+        works_tasks_of,
+    )
 
     configs = project_configs(project.settings if project else None)
-    choice = room_choice(topic, project.settings if project else None)
+    choice = place_choice(topic, the_task, project.settings if project else None)
     current = choice.profile
     device_online = await project_device_online(db, topic.project_id)
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
-    binding = await device_service.topic_binding(topic_id)
+    if the_task is not None:
+        # Someone else's own computer is not offered for this task.
+        devices = [
+            device
+            for device in devices
+            if await works_tasks_of(
+                db, device.device_id, project, the_task.owner_handle
+            )
+        ]
+    binding = await device_service.topic_binding(topic_id) if the_task is None else None
     if current == COMPUTE_DEVICE and binding is not None and choice.device_id is None:
         # 「自动选一台」的房间，第一轮钉下的是哪一台。
         choice.device_id = binding.device_id
@@ -116,25 +160,33 @@ async def get_topic_compute_profile(
     # 都是同一台机器，而它就是房间那一项算出来的那台，所以读那一项就够了。Surfaced
     # so the room shows a visible safety badge instead of the platform granting
     # whole-machine access silently (原则八).
-    from app.domain.machine.session_work import (
-        room_machine_visibility,
-        session_machines,
-    )
+    from app.domain.machine.session_reports import session_machines
+    from app.domain.machine.session_work import room_machine_visibility
 
-    visibility = await room_machine_visibility(
-        db, topic, project.settings if project else None
+    if the_task is None:
+        visibility = await room_machine_visibility(
+            db, topic, project.settings if project else None
+        )
+    elif current == COMPUTE_DEVICE and choice.device_id:
+        visibility = await device_service.room_visibility(topic_id, choice.device_id)
+    else:
+        visibility = None
+    sessions = await session_machines(
+        db, topic, the_task.id if the_task is not None else None
     )
-    sessions = await session_machines(db, topic)
     effective_visibility = visibility.value if visibility is not None else None
     return ok(
         {
             "current": current,
             "choice": choice.model_dump(),
             "project_default": configs.default.model_dump(),
+            # A task's: whether it has no choice of its own yet and works on
+            # its room's. None for a room.
+            "follows_room": (
+                not the_task.compute_config if the_task is not None else None
+            ),
             # A machine id only has selection meaning under the self-hosted pool.
-            # Cloud also records its connector in device_topic, but that endpoint is
-            # an implementation detail of the freshly provisioned topic machine, not
-            # a machine the person chose from a list.
+            # A cloud session's sandbox sits on a platform host nobody chooses.
             "device_id": (
                 binding.device_id
                 if current == COMPUTE_DEVICE and binding is not None
@@ -145,6 +197,21 @@ async def get_topic_compute_profile(
                     "device_id": device.device_id,
                     "name": device.name,
                     "online": device_hub.is_online(device.device_id),
+                    # Whether the reader may give a room this whole machine.
+                    "owned": actor.via == "token"
+                    and actor.user_id == device.owner_user_id,
+                    # Why a session here cannot have a sandbox, in the reader's
+                    # language, or None (also before the machine said hello).
+                    "sandbox_unavailable": (
+                        reason.descriptor()
+                        if (
+                            reason := sandbox_unavailable(
+                                device_hub.target(device.device_id)
+                            )
+                        )
+                        is not None
+                        else None
+                    ),
                 }
                 for device in devices
             ],
@@ -158,6 +225,8 @@ async def get_topic_compute_profile(
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
             ],
+            # Whether cloud also offers a whole VM per session (`whole_machine`).
+            "cloud_vm_available": cloud_vm_provisionable(settings),
             "visibility": {
                 "options": [asdict(v) for v in visibility_listings()],
                 # "host" | "isolated" | null (no agent here on an enrolled machine).
@@ -192,6 +261,10 @@ async def acquire_session_work_lease(
     claims = scoped_token_claims(token)
     if claims is None:
         raise AuthenticationRequiredError("A session execution credential is required")
+    place = await TopicService(db).place_or_404(topic_id)
+    await require_seated_agent(
+        db, token, project_id=place.project_id, topic_id=topic_id
+    )
     try:
         # body.timeout caps how long the caller waits for a machine being
         # prepared (wait_s). It is not the time to answer: a session that will
@@ -201,7 +274,7 @@ async def acquire_session_work_lease(
             return ok(
                 await work_lease.ensure(
                     db,
-                    topic_id=topic_id,
+                    topic_id=place.room_id,
                     session_id=session_id,
                     claims=claims,
                     token=token,
@@ -216,6 +289,11 @@ async def acquire_session_work_lease(
         # client asks again until its own deadline (`executor_transport.acquire`).
         # A 504 here reached the agent as a failed tool call it read as final,
         # and it slept instead of letting the next call wait.
+        # The step it outlasted may have been a query — waiting on the room's
+        # lock while a switch pushes, say — and a query cancelled mid-flight
+        # leaves the session unusable: the commit after this answer would
+        # raise and turn it into a 500. Nothing of this attempt is kept.
+        await db.rollback()
         return ok({"unavailable": str(say("workComputerPreparing")), "preparing": True})
 
 
@@ -227,31 +305,34 @@ async def set_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The room's work computer — the choice for the whole room.
+    """A conversation's work computer: a room's, or a task's.
 
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：改这一项就是改整个房间——房间
-    里坐着的每一条会话都跟着搬到那台机器上（各自先把改动推上去，见
-    ``machine/session_work.request_choice``），不再有「只在以后来的队友身上生效」这
-    一说。一条会话拿着自己的凭据来改，改的也是这一间房：凭据能证明它属于这个房间
-    的这一代，而房间只有一条选择。
+    Every session working on the choice moves with it, each pushing its work
+    first (``machine/session_work.request_choice``): for the room, its own
+    sessions and those of tasks that follow it; for a task, the task's. Only
+    the task's owner, a project manager or the owner of a device the task
+    holds changes a task's, or the task's own session. A person's own computer
+    works only that person's tasks.
     """
     from pydantic import ValidationError as SchemaError
 
     from app.domain.agent.compute_configs import (
         ComputeChoice,
         machine_policy_call,
-        room_choice,
+        place_choice,
         standard_choice,
         validate_choice,
+        works_tasks_of,
     )
     from app.domain.machine import session_work as work_lease
 
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
+    topic, the_task = place.room, place.task
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic.id
     )
-    await work_lease.lock_room(db, topic_id)
+    await TopicService(db).lock_for_execution(topic.id)
     # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
     # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
     from app.core.sandbox_auth import scoped_token_claims
@@ -263,6 +344,12 @@ async def set_topic_compute_profile(
         or claims.get("r") != str(topic.resource_id or topic.id)
     ):
         raise ForbiddenError("Execution credential does not own this room generation")
+    topic_id = topic.id
+    if the_task is not None:
+        if not await _may_move_task(db, resolver, actor, topic, the_task):
+            raise ForbiddenError(say("taskComputeOwnerOnly"))
+        if body.get("visibility") is not None:
+            raise ValidationError(say("visibilityRoomOnly"))
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:
         choice = ComputeChoice.model_validate(
@@ -271,6 +358,7 @@ async def set_topic_compute_profile(
                 **standard_choice(name).model_dump(),
                 "profile": name,
                 "device_id": body.get("device_id"),
+                "whole_machine": body.get("whole_machine") is True,
             }
         )
     except SchemaError as exc:
@@ -291,14 +379,46 @@ async def set_topic_compute_profile(
     # is selectable only when at least one project-scoped device is online.
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
         raise ValidationError(say("computeKindUnavailable", name=repr(name)))
-    if body.get("choice"):
+    if body.get("choice") or choice.whole_machine:
         await validate_choice(db, topic.project_id, choice)
 
     device_service = sql_device_service(db)
+    named_device = None
     if device_id is not None:
         scoped_devices = await device_service.list_devices_for_project(topic.project_id)
-        if device_id not in {device.device_id for device in scoped_devices}:
+        named_device = next(
+            (device for device in scoped_devices if device.device_id == device_id),
+            None,
+        )
+        if named_device is None:
             raise ValidationError(say("deviceNotInProject"))
+    project = await ProjectRepository(db).get(topic.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if (
+        the_task is not None
+        and device_id is not None
+        and not await works_tasks_of(db, device_id, project, the_task.owner_handle)
+    ):
+        raise ValidationError(say("deviceOthersOwn"))
+
+    # What the room sees of that machine: its own sandbox, or the whole machine.
+    # Left out, a room keeps what it has there and a new binding gets the
+    # default. The whole machine is the owner's to give, and only as a person:
+    # an agent asking with its session credential would be a sandboxed room
+    # letting itself out.
+    visibility = None
+    if body.get("visibility") is not None:
+        try:
+            visibility = Visibility(body["visibility"])
+        except ValueError as exc:
+            raise ValidationError(say("visibilityInvalid")) from exc
+        if named_device is None or named_device.supply is not Supply.self_hosted:
+            raise ValidationError(say("visibilityNeedsDevice"))
+        if visibility is Visibility.host and (
+            actor.via != "token" or actor.user_id != named_device.owner_user_id
+        ):
+            raise ForbiddenError(say("visibilityHostOwnerOnly"))
 
     # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
     # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
@@ -307,9 +427,6 @@ async def set_topic_compute_profile(
     #
     # 放在这里而不是更早：前面几步在答「这个选择本身成不成立」（池接没接入、设备
     # 属不属于这个项目），闸门答的是「这个成立的选择可不可以自己发生」。
-    project = await ProjectRepository(db).get(topic.project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
     policy = gate.policy_of(project.settings)
     # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
     # 备、再取一次机主，而不限档时判决与那几条查询无关。
@@ -333,7 +450,7 @@ async def set_topic_compute_profile(
         # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
         # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
         # 法，先信谁？
-        current = room_choice(topic, project.settings)
+        current = place_choice(topic, the_task, project.settings)
         return ok(
             {
                 "current": current.profile,
@@ -354,7 +471,7 @@ async def set_topic_compute_profile(
     # "cloud")` 一句 401 撞死在这里，连那条「等项目主人点头」的提议都长不出来——
     # 而那条提议正是 Cloud 这一档该有的产物（结论 23）。变成提议的那一次没有花任
     # 何人的钱，该点头的人就是项目主人本人。
-    await MachineService(db).admit_choice(topic.project_id, actor, choice)
+    await HostPool(db).admit_choice(topic.project_id, actor, choice)
 
     # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
     # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——
@@ -364,6 +481,7 @@ async def set_topic_compute_profile(
         topic_id=topic_id,
         actor=actor,
         choice=choice,
+        task=the_task,
         # 人的那一次可以在原来那台够不着时决定不推送——成员名册和设备页的批量切换
         # 用的就是这个开关。会话凭据自己来改时它不成立（`_move_session`）。
         abandon_unpushed=body.get("abandon_unpushed") is True,
@@ -376,6 +494,17 @@ async def set_topic_compute_profile(
     # Release then bind keeps bind_topic_device write-once: the bind never
     # overwrites, an explicit change removes the old pin first. Cloud or
     # 「系统挑一台」 leaves no pin; resolve_pinned_device freezes it next turn.
+    if the_task is not None:
+        # A task's choice pins nothing: the room's pin is the room's machine.
+        return ok(
+            {
+                "current": name,
+                "choice": choice.model_dump(),
+                "device_id": device_id if name == COMPUTE_DEVICE else None,
+                "proposal": None,
+                "warnings": moved["warnings"],
+            }
+        )
     binding = await device_service.topic_binding(topic_id)
     if binding is not None and (
         name != COMPUTE_DEVICE or binding.device_id != device_id
@@ -384,11 +513,20 @@ async def set_topic_compute_profile(
             topic_id, reason="the room moved to another work computer"
         )
         binding = None
+    if (
+        binding is not None
+        and visibility is not None
+        and binding.visibility is not visibility
+    ):
+        # The session's executor follows at its next start: the install sees
+        # the sandbox it is asked for differ from the one running.
+        await device_service.release_topic_device(
+            topic_id, reason=f"the room's machine access became {visibility}"
+        )
+        binding = None
     if name == COMPUTE_DEVICE and device_id is not None and binding is None:
         await device_service.bind_topic_device(
-            topic_id,
-            device_id,
-            visibility=await device_service.binding_visibility(device_id),
+            topic_id, device_id, visibility=visibility or default_visibility()
         )
     await db.flush()
     return ok(

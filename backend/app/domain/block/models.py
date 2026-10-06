@@ -32,6 +32,10 @@ from app.domain.block.indexed_rows import (
 )
 from app.domain.common import Timestamps, UuidPk
 
+# The registry `conversation_id` points at: mapped wherever a block is, so the
+# foreign key resolves in a process that never imports `app.models`.
+from app.domain.conversation.models import Conversation  # noqa: F401
+
 
 class BlockKind(enum.StrEnum):
     message = "message"
@@ -163,82 +167,59 @@ def prompted_turn(block: "Block") -> uuid.UUID | None:
 
 class Block(UuidPk, Timestamps, Base):
     __tablename__ = "blocks"
-    # (topic_id, created_at) serves every "this topic's blocks, newest first"
-    # question: the timeline pages, and the MAX(created_at) behind a topic's
-    # 最后活动时间 — which the sidebar sorts on, so it runs once per listed topic
-    # and must not degrade into reading the whole topic's history.
+    # (conversation_id, created_at) serves every "this conversation's blocks,
+    # newest first" question: the timeline pages, and the MAX(created_at)
+    # behind a conversation's 最后活动时间 — which the sidebar sorts on, so it
+    # runs once per listed conversation and must not degrade into reading its
+    # whole history.
     __table_args__ = (
-        Index("ix_blocks_topic_id_created_at", "topic_id", "created_at"),
-        # The same shape one level down: a thread's conversation, oldest-first.
-        # Partial, because most blocks are the room's own line and carry no
-        # task — indexing those NULLs would double the index for no reader.
+        Index("ix_blocks_conversation_created_at", "conversation_id", "created_at"),
+        # 未读: count, per conversation, the messages someone else wrote after
+        # the reader's cursor. Its only selective predicate lives elsewhere, so
+        # without this the planner read the whole table — every 30 seconds, for
+        # every open tab. INCLUDE(author) rather than a key column because
+        # `author <> me` is only ever tested for inequality; carrying it in the
+        # leaf is what makes the scan index-ONLY. `created_at` IS a key column:
+        # the cursor comparison ranges on it.
         Index(
-            "ix_blocks_task_id_created_at",
-            "task_id",
-            "created_at",
-            postgresql_where=text("task_id IS NOT NULL"),
-        ),
-        # 话题级未读: count, per topic, the messages on a room's own line that
-        # someone else wrote after the reader's cursor. Its only selective
-        # predicate lives on `topics`, so without this the planner read the
-        # whole table — every 30 seconds, for every open tab, at a cost that
-        # grew with the size of the entire platform rather than the project
-        # being looked at. INCLUDE(author) rather than a fifth key column
-        # because `author <> me` is only ever tested for inequality; carrying
-        # it in the leaf is what makes the scan index-ONLY (Heap Fetches: 0),
-        # and the heap reads are where the buffer-pool churn came from.
-        # `created_at` IS a key column: the cursor comparison ranges on it.
-        Index(
-            "ix_blocks_topic_kind_task_created",
-            "topic_id",
+            "ix_blocks_conversation_kind_created",
+            "conversation_id",
             "kind",
-            "task_id",
             "created_at",
             postgresql_include=["author"],
         ),
         # 「这个房间最近一次开机事件是哪条」—— asked once at the top of every
         # turn (`turn_history`), and answerable only by a predicate no other
-        # index leads with, so the planner read every block the room has ever
-        # had to find the newest of a handful. A room accumulates blocks
-        # forever, so that scan got slower every day the room was used.
-        # Partial on the predicate itself: these events are a handful per room
-        # against a table of every message and every line of agent output, so
-        # the index stays tiny and the write path barely notices it.
+        # index leads with. Partial on the predicate itself: these events are a
+        # handful per room against a table of every message, so the index stays
+        # tiny and the write path barely notices it.
         Index(
             "ix_blocks_cloud_provisioning",
-            "topic_id",
+            "conversation_id",
             "created_at",
             "id",
             postgresql_where=CLOUD_PROVISIONING_ROWS,
         ),
-        # The four below serve reads the sidebar and the board poll for every
-        # room or every task of a project at once — which questions are still
-        # open, which rooms wait on a broken turn or a machine. Each looks for
-        # a few hundred rows in the whole table, and without an index of its
-        # own each read the whole table to find them. Partial on exactly the
-        # predicate the query filters by (`indexed_rows`), which is also why
-        # they stay tiny.
+        # The three below serve reads the sidebar and the board poll for every
+        # conversation of a project at once — which questions are still open,
+        # which rooms wait on a broken turn or a machine. Each looks for a few
+        # hundred rows in the whole table. Partial on exactly the predicate the
+        # query filters by (`indexed_rows`), which is also why they stay tiny.
         Index(
-            "ix_blocks_task_questions",
-            "task_id",
+            "ix_blocks_questions",
+            "conversation_id",
             text("created_at DESC"),
-            postgresql_where=text(f"task_id IS NOT NULL AND {QUESTION_ROWS.text}"),
-        ),
-        Index(
-            "ix_blocks_room_questions",
-            "topic_id",
-            text("created_at DESC"),
-            postgresql_where=text(f"task_id IS NULL AND {QUESTION_ROWS.text}"),
+            postgresql_where=QUESTION_ROWS,
         ),
         Index(
             "ix_blocks_machine_events",
-            "topic_id",
+            "conversation_id",
             "created_at",
             postgresql_where=MACHINE_EVENT_ROWS,
         ),
         Index(
             "ix_blocks_failed_turns",
-            "topic_id",
+            "conversation_id",
             "created_at",
             postgresql_where=FAILED_TURN_ROWS,
         ),
@@ -247,21 +228,11 @@ class Block(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    # No single-column index of its own: `ix_blocks_topic_kind_task_created`
-    # and `ix_blocks_topic_id_created_at` both lead with topic_id, so either
-    # serves a topic_id-only lookup (including the ON DELETE CASCADE sweep when
-    # a topic or project goes away). A third copy would only be one more index
-    # for every insert to maintain.
-    topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE")
-    )
-    # WHICH thread this block is in. NULL = the room's own line; set = the
-    # conversation of that one piece of work. This is the key that makes a task
-    # a thread instead of a room: before it, the only way to give work its own
-    # conversation was to give it its own row in `topics`, because `topic_id`
-    # was the sole grouping key.
-    task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
+    # The conversation this block is in: a room or a task. No single-column
+    # index of its own: the two indexes above lead with it, and serve a lookup
+    # by it alone (including the ON DELETE CASCADE sweep).
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE")
     )
 
     kind: Mapped[BlockKind] = mapped_column(

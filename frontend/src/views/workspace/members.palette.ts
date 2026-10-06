@@ -19,7 +19,7 @@ const source: PaletteSource = {
     return store.members.map((member) => ({
       id: `member:${member.user_handle}`,
       title: memberName(member) || member.user_handle,
-      subtitle: `@${member.user_handle}`,
+      subtitle: member.user_handle,
       icon: member.agent ? 'mdi-robot-outline' : 'mdi-account-outline',
       keywords: [member.user_handle],
       to: { name: 'member', params: { projectId: ctx.projectId!, handle: member.user_handle } },

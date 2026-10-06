@@ -67,7 +67,6 @@ class CentralChannel(DeviceChannel):
         super().__init__(hub=executor._hub, session_factory=executor._session_factory)
         self.executor = executor
         self.name = executor.name
-        self.provisions_machine = False
         self.deferred_work = True
         # 手是执行机的，所以这条通道的供给就是被它包住的那条通道的供给：一台机器
         # 归哪条通道认领，说的是那台机器，不是中心会话机。
@@ -78,9 +77,6 @@ class CentralChannel(DeviceChannel):
             settings.agent_session_device_id
             and self._hub.is_online(settings.agent_session_device_id)
         )
-
-    async def prepare_topic(self, **kwargs):
-        return True, ""
 
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         own = await self._session_host_agent(session)
@@ -128,7 +124,9 @@ class CentralChannel(DeviceChannel):
             sessions = await AgentSessionService(db).placed_sessions()
         return [
             Placed(
-                SessionRef(project_id, room_id, handle, harness=row_harness),
+                SessionRef(
+                    project_id, room_id, handle, harness=row_harness, task_id=task_id
+                ),
                 place.machine,
                 place.runtime["state"],
                 place.resource_id,
@@ -137,9 +135,15 @@ class CentralChannel(DeviceChannel):
                 place.runtime.get("agent_handle") or handle,
                 resume_token,
             )
-            for project_id, room_id, handle, row_harness, resume_token, place in (
-                sessions
-            )
+            for (
+                project_id,
+                room_id,
+                task_id,
+                handle,
+                row_harness,
+                resume_token,
+                place,
+            ) in sessions
             if row_harness == harness
             and place.channel == self.name
             and "state" in (place.runtime or {})
@@ -155,6 +159,7 @@ class CentralChannel(DeviceChannel):
         env,
         precheck=None,
         runtime_factory=None,
+        reading: bool = False,
     ) -> AsyncIterator[PreparedSession]:
         assert isinstance(precheck, Placement)
         project_id, topic_id = session.project_id, session.topic_id
@@ -193,7 +198,7 @@ class CentralChannel(DeviceChannel):
             # rents again rather than being refused for not matching what some
             # other session in the same room happens to be holding.
             session_row = await AgentSessionService(db).ensure(
-                topic_id, session.agent_handle, harness=session.harness
+                session.conversation_id, session.agent_handle, harness=session.harness
             )
             session_id = session_row.id
             place = session_row.place()
@@ -229,11 +234,14 @@ class CentralChannel(DeviceChannel):
         # Its credential names that lease, as the one the lease hands out does:
         # the executor route admits nothing else, and this is the one the
         # session's calls carry again after each turn rewrites it.
+        # ``reading``: a task its owner has not started yet reads the
+        # machine and changes nothing on it (`routes/execution.py`).
         token = bind_resource_token(
             token,
             str(resource),
             session_id=str(session_id),
             lease_generation=(leased or {}).get("generation"),
+            reading=reading,
         )
         # 这一轮没有租手 (``precheck`` 说的)，所以它跑在这条会话自己的草稿区里：
         # 一个有界的一次性容器，开在会话机上，不是一个地点 (结论 19)。
@@ -242,7 +250,12 @@ class CentralChannel(DeviceChannel):
                 "kind": "deferred",
                 "resource_id": str(resource),
                 "session_id": str(session_id),
-                "lease_path": f"/topics/{topic_id}/sessions/{session_id}/work-lease",
+                # Named by the conversation, as the credential is: a task's
+                # credential is refused on its room's path.
+                "lease_path": (
+                    f"/topics/{session.conversation_id}/sessions/{session_id}"
+                    "/work-lease"
+                ),
                 "setup_env": {
                     key: value
                     for key, value in values.items()
@@ -256,7 +269,9 @@ class CentralChannel(DeviceChannel):
                 # machine there, relaunches it onto the machine.
                 "workspace": leased["workspace"]
                 if leased
-                and await self._starts_on_machine(leased, center, topic_id, resource)
+                and await self._starts_on_machine(
+                    leased, center, session.conversation_id, resource
+                )
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
@@ -306,7 +321,7 @@ class CentralChannel(DeviceChannel):
             if (room.resource_id or room.id) != resource:
                 raise ScreenSetupError(say("screenRoomReopenedOldEnvSkipped"))
             await AgentSessionService(db).remember_place(
-                topic_id=topic_id,
+                conversation_id=session.conversation_id,
                 agent_handle=session.agent_handle,
                 harness=session.harness,
                 work_lease=(place.lease if place else None)

@@ -212,6 +212,15 @@ function openActions(row: ResultRow | undefined) {
   actSelected.value = 0
 }
 
+// 右键一行：打开的就是 Tab 那一栏「还能做什么」，对的是右键的那一行。
+function onRowContextMenu(event: MouseEvent, index: number) {
+  const row = rows.value[index]
+  if (!hasMore(row)) return
+  event.preventDefault()
+  selected.value = index
+  openActions(row)
+}
+
 async function runAction(action: MenuCommand) {
   const row = acting.value?.row
   acting.value = null
@@ -453,6 +462,7 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
                 :title="shortcutLabel(row.shortcut)"
                 @mousemove="selected = offsets[g] + i"
                 @click="choose(row, $event.metaKey || $event.ctrlKey)"
+                @contextmenu="onRowContextMenu($event, offsets[g] + i)"
               >
                 <v-icon :icon="row.icon" size="18" class="palette__icon" />
                 <span class="palette__text">

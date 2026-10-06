@@ -95,7 +95,7 @@ def reader(chat: RoomBooks) -> RoomReader:
             await chat.confirm_work_termination(event.termination)
         elif isinstance(event, Writing):
             await publish_live(
-                session.topic_id,
+                session.conversation_id,
                 work,
                 event.author or session.agent_handle,
                 list(event.blocks),
@@ -105,19 +105,23 @@ def reader(chat: RoomBooks) -> RoomReader:
             if isinstance(event, Working):
                 await chat._set_hook_activity(
                     session.project_id,
-                    session.topic_id,
+                    session.conversation_id,
                     work,
                     event.active,
                     agent_handle=session.agent_handle,
                 )
             elif isinstance(event, Reachable):
                 await chat._note_reachability(
-                    session.project_id, session.topic_id, work, event.yes, event.reason
+                    session.project_id,
+                    session.conversation_id,
+                    work,
+                    event.yes,
+                    event.reason,
                 )
             elif isinstance(event, AgentEvent):
                 await chat._consume_hook_event(
                     session.project_id,
-                    session.topic_id,
+                    session.conversation_id,
                     work,
                     event,
                     read.eid,

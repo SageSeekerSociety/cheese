@@ -545,10 +545,9 @@ def test_an_unfinished_group_is_not_shadowed_by_a_later_one(
 
     async def read_rooms():
         async with client.test_request_factory() as session:
-            rooms, tasks = await BlockRepository(session).awaiting_answer_blocks(
-                [uuid.UUID(room)], []
+            return await BlockRepository(session).awaiting_answer_blocks(
+                [uuid.UUID(room)]
             )
-            return rooms
 
     rooms = client.portal.call(read_rooms)
     asked, pending_id = rooms[uuid.UUID(room)]

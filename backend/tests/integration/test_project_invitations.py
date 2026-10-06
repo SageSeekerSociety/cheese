@@ -3,8 +3,8 @@
 邀请是团队以外的人进项目的唯一一条路（团队成员本来就在团队的每个项目里）。为什么不
 是一步到位——进了项目就看得见这个项目的公开话题，那是别人的工作内容，不该由邀请方单
 方面决定谁能看。所以这一份钉的全是「谁做的决定」：没答复之前不算成
-员、只有本人能答复、答复过的邀请不能再答一次，以及那条待办不会在答复之后还挂在别
-人的收件箱里等一个已经没有答案的问题。
+员、只有本人能答复、答复过的邀请不能再答一次。被邀请的人在哪里收到这条邀请、答复
+之后它不再等回答，见 ``test_a_project_invitation_reaches_the_invitee.py``。
 
 另外两条钉的是**谁可以被邀请**：执行身份（带 agent_bindings 的 user）不能被**当人**
 请进来（直加名册那条路照旧，队友就是这么上名册的），以及「已经在项目里」要按完整名册
@@ -202,33 +202,6 @@ def test_my_invitations_are_addressed_to_me_only(client, bearer):
         client.get("/me/invitations", headers=bearer("carol")).json()["data"]["data"]
         == []
     )
-
-
-def test_an_answered_invitation_stops_waiting_in_the_inbox(client, bearer):
-    """邀请是一条**待办**：答复之前不消失，答复之后必须消失。
-
-    不结掉的话，一张已经答复的邀请会永远挂在收件箱里等他回答一个已经没有答案的
-    问题。
-    """
-    project_id = _project(client)
-    invitation = _invite(client, bearer, project_id, "alice").json()["data"]
-
-    inbox = client.get(
-        f"/projects/{project_id}/inbox?target_handle=alice", headers=bearer("alice")
-    ).json()["data"]["data"]
-    waiting = [a for a in inbox if a["resolved_at"] is None]
-    assert waiting, "收到邀请应该在收件箱里留一条待办"
-    assert any("邀请你加入项目" in a["title"] for a in waiting)
-
-    client.post(
-        f"/invitations/{invitation['id']}/respond",
-        json={"accept": True},
-        headers=bearer("alice"),
-    )
-    inbox = client.get(
-        f"/projects/{project_id}/inbox?target_handle=alice", headers=bearer("alice")
-    ).json()["data"]["data"]
-    assert [a for a in inbox if a["resolved_at"] is None] == []
 
 
 def test_revoking_takes_the_invitation_back(client, bearer):

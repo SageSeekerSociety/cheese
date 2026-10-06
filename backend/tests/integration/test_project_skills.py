@@ -56,6 +56,7 @@ def _shipped(project_id: str) -> dict[str, str]:
         uuid.uuid4(),
         {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
         sandbox=False,
+        platform_machine=False,
     )["skills"]
 
 
@@ -138,6 +139,7 @@ def test_a_deleted_skill_leaves_a_machine_that_had_it(client, tmp_path, monkeypa
             uuid.uuid4(),
             {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
             sandbox=False,
+            platform_machine=False,
         )
         with bootstrap.prepared(payload, machine) as (home, _c, _s, _e):
             return home / ".claude" / "skills"

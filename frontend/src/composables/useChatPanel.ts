@@ -24,15 +24,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
-import {
-  ApiError,
-  attachmentRawUrl,
-  downloadFile,
-  ensureFreshToken,
-  isRetryableGetFailure,
-  listBlocks,
-  undoTopicTitle,
-} from '../api'
+import { ApiError, attachmentRawUrl, downloadFile, ensureFreshToken, isRetryableGetFailure, listBlocks } from '../api'
 import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
@@ -64,9 +56,11 @@ import { useAskAnswers } from './useAskAnswers'
 import { useAskGroups } from './useAskGroups'
 import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
+import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
+import { useTopicTitleUndo } from './useTopicTitleUndo'
 
 import { t } from '@/i18n'
 
@@ -77,6 +71,13 @@ export type { ChatPanelEmit, ChatPanelOptions } from './chatPanelContract'
 
 export function useChatPanel(opts: ChatPanelOptions) {
   const { topic, alwaysSummon, showComposer, members, topicList, unreadOnOpen, focusBlock, emit } = opts
+  // 这一栏读的那段对话：房间自己，或房间里的一个任务（`conversationId`）。消息、连接、
+  // 发送、草稿走它；名册、附件、标题还是房间的（`topic()`）。
+  function place(): Topic | null {
+    const room = topic()
+    const id = opts.conversationId?.()
+    return room && id && id !== room.id ? { ...room, id } : room
+  }
 
   // Message rendering (markdown / plain / reference chips) lives in
   // ../lib/renderMessage and happens in the row components; here we only fill the
@@ -151,7 +152,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   watch(turns.turnStarts, (v) => emit('site-turns', v))
   // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
   function toSite(b: Block) {
-    if (b.kind === 'event' && !b.task_id) emit('site-block', b)
+    if (b.kind === 'event') emit('site-block', b)
   }
 
   const { askStates, askAction, askViewer, askAccount } = useAskAnswers({
@@ -181,7 +182,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
   const { postChecklist, changeChecklist } = useOwnChecklist({
-    topicId: () => topic()?.id,
+    topicId: () => place()?.id,
     show: replaceShown,
     fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.checklist.saveFailed')),
   })
@@ -193,35 +194,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pendingHistory: () => historyReactions,
     me: AUTHOR,
   })
-
-  // 「这条事件长什么样」的判断全在 lib/platformNotice.ts —— 包括动作卡认哪些块
-  // (refs=["action:<resource>"] / meta.action)。这里只剩按钮文案和 emit 接线。
-
-  // @mention chips are rendered via v-html; delegate clicks so the parent can
-  // resolve the name (person → member page, topic/doc → open it). A message's
-  // avatar and name (.im-person) go the same way as a chip for its author.
-  function onMessagesClick(e: MouseEvent) {
-    const target = e.target as HTMLElement | null
-    // Click-away closes the emoji picker (clicks inside it are handled there).
-    if (reactionPickerFor.value && !target?.closest('.rx-picker, .rx-toggle')) {
-      reactionPickerFor.value = null
-    }
-    if (touchOnly.value && target) rowActions.toggleTime(target)
-    const el = target?.closest('.mention, .im-person') as HTMLElement | null
-    if (!el) return
-    // 在动的那个头像：它此刻在干的事在「现场」，点它就去那里。
-    if (el.dataset.site !== undefined) emit('open-resource', 'site')
-    else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
-    else if (el.dataset.topic) {
-      const id = el.dataset.topic
-      if (roomTasks.value.some((task) => task.id === id)) emit('open-card', id)
-      else emit('open-topic', id)
-    } else if (el.dataset.file) {
-      const row = el.closest('[data-mid]') as HTMLElement | null
-      const task = rows.value.find(({ block }) => block.id === row?.dataset.mid)?.block.task_id
-      emit('open-file', el.dataset.file, task ?? null)
-    }
-  }
 
   // 滚动位置、跟不跟新消息、重放期间不抖 —— 见 room/composables/useChatScroll。
   // 往回翻历史留在这里：它碰 messages / 缓存 / 错误横幅，不是滚动的事。
@@ -258,7 +230,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     isConnectRefusal,
     retryLater,
   } = useRoomSocket({
-    topicId: () => topic()?.id,
+    topicId: () => place()?.id,
     onFrame: (frame) => {
       handleFrame(frame)
       noteFrame()
@@ -270,7 +242,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
-      const current = topic()
+      const current = place()
       if (current?.id === topicId) void loadTopic(current)
     },
     errorMsg,
@@ -425,18 +397,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
   let disposed = false
 
-  // 撤销一次自动改名（RoomNotice 那一行的按钮）。后端改完会发 `state: topics`，
-  // 侧栏据此重读；这里再主动报一次，按下去就能看到名字回来。
-  async function undoTitle(blockId: string) {
-    const room = topic()
-    if (!room) return
-    try {
-      await undoTopicTitle(room.id, blockId)
-      emit('state-changed', 'topics')
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.undoFailed')
-    }
-  }
+  // 撤销一次自动改名（RoomNotice 那一行的按钮）—— 见 composables/useTopicTitleUndo。
+  const { undoTitle } = useTopicTitleUndo({ topic, emit, errorMsg })
 
   async function loadTopic(room: Topic, entering = false) {
     const generation = ++historyGeneration
@@ -444,7 +406,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     historyChanges = changes
     const reactions = new Map<string, ReactionAgg[]>()
     historyReactions = reactions
-    const stillHere = () => !disposed && generation === historyGeneration && topic()?.id === room.id
+    const stillHere = () => !disposed && generation === historyGeneration && place()?.id === room.id
     // 地址点名了一条消息：落到它上面，而不是上次停的地方。
     const focus = focusBlock() ?? null
     errorMsg.value = null
@@ -471,6 +433,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
       timeline.show(cached)
       rowBatch.startFor(room.id, focus)
       if (!focus) restoreScroll(room.id)
+      // 缓存里只有一页，而最新那一段几乎全是 `in_room:false` 的回合事件——一页常常画
+      // 不满一屏（一条消息飘在半空、下面空一片）。不等上面那条请求回来，现在就按真实
+      // 行往回补：补的时候滚动补偿把最新那条钉在底部，历史往上长。见 useChatPaging。
+      void paging.fillViewportIfNeeded()
     } else {
       timeline.show({ blocks: [], hasMore: false })
       loadingHistory.value = true
@@ -492,15 +458,20 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // 都和一开始就有缓存时一样。
       let shownEarly: typeof cached = null
       const warming = cached ? undefined : pendingBlockRefresh(room.id)
-      void warming?.then(() => {
+      void warming?.then(async () => {
         if (!stillHere() || !loadingHistory.value) return
         const warmed = cachedWindow(room.id)
         if (!warmed) return
         shownEarly = warmed
         timeline.show(warmed)
         rowBatch.startFor(room.id, focus)
-        loadingHistory.value = false
         if (!focus) restoreScroll(room.id)
+        // 预热回来的是同样的一页，而最新那一段几乎全是 `in_room:false` 的回合事件，
+        // 一页只画得出一两行——这时候撤骨架露出来还是「一条消息飘在半空」。先按真实行
+        // 补满一屏再撤，和下面正式那一页补法一致。见 useChatPaging.fillViewportIfNeeded。
+        await paging.fillViewportIfNeeded()
+        if (!stillHere()) return
+        loadingHistory.value = false
       })
       // One screenful, not the whole timeline — older blocks arrive when the
       // user scrolls up to them (loadOlder).
@@ -513,6 +484,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // cached window and this page can be different sizes (the user may have
       // paged back), so a length comparison says nothing about the tail.
       const shown = cached ?? shownEarly
+      // 开场补窗（上面那次 fillViewportIfNeeded）可能已经把更早的几页读进来了。游标是
+      // 「窗口读到哪了」，比缓存窗口的更老就说明窗口被往上撑开过——这时候下面这一份
+      // 「最新一页」只是它的尾巴，`timeline.show` 整段换会把刚读回来的历史丢掉、屏幕跳
+      // 回最新那条。改成把它当缓存窗口，按它去合并。
+      const extended = shown !== null && timeline.oldestLoaded() !== (shown.blocks[0]?.id ?? null)
       const grew = shown !== null && shown.blocks.at(-1)?.id !== payload.data.at(-1)?.id
       // Merge rather than replace, so scrollback the user already loaded (and
       // that restoreScroll's saved offset refers to) does not vanish under them.
@@ -525,19 +501,32 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // Live frames can arrive while the HTTP snapshot is pending. Apply them
       // last, including retractions, so that snapshot cannot erase newer events.
       merged.blocks = applyLiveChanges(merged, changes, reactions)
-      timeline.show(merged)
+      if (extended) {
+        // 窗口已经被补开了：不整段换，逐条接——变了的原地替换，新来的接到末尾。更早
+        // 那段历史原样留着，滚动位置也就不动。
+        for (const block of merged.blocks) {
+          if (timeline.find(block.id)) timeline.replace(block)
+          else timeline.append(block)
+        }
+      } else {
+        timeline.show(merged)
+      }
       // A reconnect starts with durable history. Settle sends that landed while
       // their echo was lost before opening the new socket; only absent client ids
       // remain queued for an idempotent resend.
       for (const block of merged.blocks) settleOutbox(block)
-      setCachedWindow(room.id, merged)
+      // 补过窗的话缓存那一页由翻页自己维护（pullOlderPage 会写），这里别用这一页盖回去。
+      if (!extended) setCachedWindow(room.id, merged)
       placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
       if (!shown) rowBatch.startFor(room.id, focus)
       if (focus) void paging.openAt(focus)
       else if (!shown) restoreScroll(room.id)
       else if (grew && atBottom.value) autoScroll()
       if (!parallelSocket && !connectRefused.value) connectSocket(room.id)
-      void paging.fillViewportIfNeeded()
+      // 开场这一窗先按真实行补满一屏，再让骨架撤（下面 finally 才把 loadingHistory 落下）：
+      // 最新那一段几乎全是 `in_room:false` 的回合事件，一页 50 块常常只画得出一两行，补完
+      // 之前露出来就是「一条消息飘在半空」，补完再露才是首屏一屏历史。见 useChatPaging。
+      await paging.fillViewportIfNeeded()
     } catch (e) {
       if (!stillHere()) return
       if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
@@ -603,7 +592,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pause: pauseOutbox,
   } = useOutbox({
     send: (item, signal) => {
-      const room = topic()
+      const room = place()
       if (!room) return Promise.reject(new DOMException('no room', 'AbortError'))
       const body = outgoingMessageBody(item)
       return postChatMessage(room.id, body, signal).catch((error: unknown) => {
@@ -622,7 +611,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     },
     onDelivered: (block) => {
       // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
-      if (block.topic_id !== topic()?.id) return
+      if (block.conversation_id !== place()?.id) return
       delivered.add(block.id)
       pushBlock(block)
       autoScroll()
@@ -665,7 +654,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // Each block below owns one job, so no single file has to hold the whole
   // room; the panel keeps the wiring and what is shared between them.
   const paging = useChatPaging({
-    topic,
+    topic: place,
     focusBlock,
     timeline,
     scrollRef,
@@ -691,7 +680,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const { arrived, sentNow, delivered, flashId, flash, settleArrival, settleSent, outboxLeave, jumpToUnseen } = motion
 
   const composer = useChatComposer({
-    topic,
+    topic: place,
     alwaysSummon,
     showComposer,
     rows,
@@ -724,6 +713,16 @@ export function useChatPanel(opts: ChatPanelOptions) {
     editingId: composer.editingId,
   })
   const { sheet, sheetBlock, touchOnly, timeShownId, bar, barBlock, onTimelinePointer, hideBar } = rowActions
+
+  // 消息区里点到的 chip / 头像落到哪个事件 —— 见 composables/useChatMessageClicks。
+  const onMessagesClick = useChatMessageClicks({
+    reactionPickerFor,
+    touchOnly,
+    toggleTime: rowActions.toggleTime,
+    rows: () => rows.value,
+    roomTasks: () => roomTasks.value,
+    emit,
+  })
 
   // ---- 时间刻度 ----
   // 哪一条属于哪一天、日期线画在它上面：规则和判据在 lib/chatGrouping.ts（纯函数，
@@ -771,8 +770,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
     { immediate: true, deep: true }
   )
 
+  // 「从这里拆出了一个任务」只画在房间的对话里：任务自己的对话里没有拆出去这回事。
   const splitMarkers = computed(() =>
-    placeSplitMarkers(roomTasks.value, {
+    placeSplitMarkers(place()?.id === topic()?.id ? roomTasks.value : [], {
       blocks: visible.value,
       hasMore: hasMore.value,
       hasNewer: hasNewer.value,
@@ -863,7 +863,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // plain Enter. Track composition ourselves and swallow the trailing Enter.
 
   watch(
-    () => topic()?.id,
+    () => place()?.id,
     (id, oldId) => {
       // Save where we were in the topic we're leaving, so coming back restores it.
       if (oldId) rememberScroll(oldId)
@@ -871,7 +871,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         composer.rememberComposer(oldId)
         pauseOutbox()
       }
-      const room = topic()
+      const room = place()
       if (room) {
         // loadTopic clears the pending attachments synchronously before its first
         // await, so this topic's own draft has to be restored AFTER the call.
@@ -889,8 +889,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   onBeforeUnmount(() => {
     disposed = true
     // persist position across an unmount (e.g. leaving the view)
-    rememberScroll(topic()?.id)
-    const room = topic()
+    rememberScroll(place()?.id)
+    const room = place()
     if (room) composer.rememberComposer(room.id)
     // 链路和回声计时器由各自的 composable 在 scope 停掉时收，这里不重复一遍。
   })

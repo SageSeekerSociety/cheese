@@ -140,19 +140,22 @@ class TopicMembershipRepository:
             owners.setdefault(topic_id, []).append(member_handle)
         return owners
 
-    async def handles_by_topic(
+    async def seats_by_topic(
         self, topic_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, list[str]]:
-        """Everyone seated in each of these topics, in ONE query — same reason as
-        ``owners_by_topic``: the project-level exit asks it about a set of rooms."""
+    ) -> dict[uuid.UUID, dict[str, TopicRole]]:
+        """Everyone seated in each of these topics and the chair they hold, in ONE
+        query — same reason as ``owners_by_topic``: the project-level exit asks it
+        about a set of rooms."""
         if not topic_ids:
             return {}
-        stmt = select(TopicMembership.topic_id, TopicMembership.member_handle).where(
-            TopicMembership.topic_id.in_(topic_ids)
-        )
-        seated: dict[uuid.UUID, list[str]] = {}
-        for topic_id, member_handle in (await self._session.execute(stmt)).all():
-            seated.setdefault(topic_id, []).append(member_handle)
+        stmt = select(
+            TopicMembership.topic_id,
+            TopicMembership.member_handle,
+            TopicMembership.role,
+        ).where(TopicMembership.topic_id.in_(topic_ids))
+        seated: dict[uuid.UUID, dict[str, TopicRole]] = {}
+        for topic_id, handle, role in (await self._session.execute(stmt)).all():
+            seated.setdefault(topic_id, {})[handle] = role
         return seated
 
     async def update_role(

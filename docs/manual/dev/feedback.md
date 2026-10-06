@@ -143,6 +143,19 @@ Fixes-feedback: FB-12, FB-15
 - 这一步没有新增端点，也没有新增凭据：部署本来就在那台机器上用 `docker exec` / `docker compose run` 跑后端脚本，这里是同一种做法。
 - 只有测试环境（`okcheese.com`）这样做。生产环境是另一份数据库，同一个编号在那里指的是另一条反馈。
 
+## 从服务器上改状态：用命令，不用别人的令牌 {#ops-status}
+
+在服务器上替反馈管理员改状态的人（运维，或者替管理员干活的 agent），用后端镜像里的命令，不给管理员的账号签令牌再去调 `POST /admin/feedback/{id}/status`：
+
+```bash
+docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
+  --note "设计如此：……" --by "andy 的运维 agent"
+```
+
+签出来的令牌是一张持有者凭证：在它有效期内、不管被贴到哪里，它都带着那个账号的全部权限（私密反馈、管理台的其他页面）；它写下的时间线还会说是管理员本人按的按钮。这条命令只能改一条反馈的状态，时间线上也记的是它自己。
+
+`scripts/feedback_status.py` 走的是 `FeedbackService.set_status`，和管理员按钮是同一条路，所以时间线照写、提交者的未读数照涨。和部署那一步一样，没有人按按钮：`by_handle` 为 NULL。`--note` 和 `--by` 都必填，合成一句写进 `note`（「原因（谁 用运维命令设置）」），提交者在时间线上看得到。状态没变就不写第二条；编号不存在时退出码为 1。
+
 ## 栏位是过滤器，不是分区 {#tabs}
 
 公开侧四个栏位 `all` / `hot` / `active` / `resolved`，定义只写在 `_tab_where` 一处，列表和计数共用：

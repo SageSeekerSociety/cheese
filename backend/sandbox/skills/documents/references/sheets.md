@@ -66,8 +66,7 @@ cheese recalc 预算表.xlsx
 的格」。抓出它靠的是另外两件事：
 
 ```bash
-SKILL=skills/documents
-[ -d "$SKILL" ] || SKILL="$CLAUDE_CONFIG_DIR/skills/documents"
+SKILL="<这个技能的目录>"   # 加载 documents 技能时给出的那个目录
 python3 "$SKILL/scripts/sheets.py" refs 汇总.xlsx
 ```
 

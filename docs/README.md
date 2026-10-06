@@ -24,7 +24,7 @@
 | [`infrastructure.md`](infrastructure.md) | 这个应用跑在哪、怎么发布、数据在哪 |
 | [`agent-liveness.md`](agent-liveness.md) | 一轮什么时候算卡住、什么会结束它、结束后房间看到什么；时限只记不闸，失败不自动重跑 |
 | [`where-a-turn-runs.md`](where-a-turn-runs.md) | 一轮活落在哪台机器上：两条执行路，一台机器都没有时会怎样，以及归档后机器上的东西什么时候退、怎么退 |
-| [`microcloud.md`](microcloud.md) | Cloud 机器从哪来、芝士向 MicroCloud 要什么、两个机器状态各自意味着什么，以及改 MicroCloud 的代码怎么合并、交给运维 agent 部署、发版 |
+| [`microcloud.md`](microcloud.md) | 云主机池：会话的沙箱放在哪台宿主机上、池子何时扩容和释放；芝士向 MicroCloud 要什么、两个机器状态各自意味着什么，以及改 MicroCloud 的代码怎么合并、交给运维 agent 部署、发版 |
 | [`what-the-agent-perceives.md`](what-the-agent-perceives.md) | 芝士收得到什么、收不到什么：平台的三十种事件里有多少回流给它（答案是零） |
 | [`accept-is-merge.md`](accept-is-merge.md) | 采纳=当场合并那个 PR；「只在绿的时候合」靠项目配置的分支保护规则 |
 | [`spec.md`](spec.md) | Cheese 2.0 产品与实现 Spec |
@@ -44,7 +44,7 @@
 
 | | |
 |---|---|
-| `manual/` | **用户说明书**——唯一写给平台使用者而不是写给改代码的人的目录；站点在 `okcheese.com/docs`，芝士答流程问题时引用它的锚点 |
+| `manual/` | **用户说明书**——唯一写给平台使用者而不是写给改代码的人的目录；站点在 `docs.okcheese.com`，芝士答流程问题时引用它的锚点 |
 | `plans/` | 演进计划（带日期，文件头标注实施状态） |
 | `topics/` | 话题实况文档（芝士在话题里维护的状态摘要，采纳后随之进 main） |
 
@@ -53,7 +53,7 @@
 | 知是愿景 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Xr8rwqIrKiqQaVkGFnScJxYCnkb) — 产品方向，去那评论 |
 | 产品定位（对谁、给什么） | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Xfm5wBpIwieCtjkM11SchWELnXg) — 现阶段为谁服务，以及一件事该不该做 |
 | 产品方向反馈 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/PtVAwDevmiKFnbkQiVAcuqNvnZf) |
-| 机器形态（Cloud / Hosted Sandbox / Hosted Machine） | **#358**——三类里两类还没传输，是演进中的设计 |
+| 执行环境（沙箱 / 整台机器，云机或用户电脑） | **#2320**——设计与实施步骤；现状见 `where-a-turn-runs.md` §四 |
 | 算力模型为何是这个样子 | **#282**（一个字段挤着四件事）、**#442**（两种机器被建模成一种加两个开关） |
 
 约定：产品/方向类文档住飞书（多人评论）；改代码时需要同步改的文档住 repo。

@@ -8,7 +8,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -52,6 +52,7 @@ vi.mock('vue-i18n', async () => {
 
 import SpacesIndex from './Index.vue'
 
+import { setLocale } from '@/i18n'
 import AccountService from '@/services/account'
 
 const START_HERE = 'spaces.index.firstRun.title'
@@ -283,6 +284,44 @@ describe('题目板名录页的第一次落点', () => {
     await flush()
 
     expect(queryByText(START_HERE)).toBeNull()
+  })
+})
+
+// 名录读不到和名录真的是空的，在屏幕上曾经是同一句话（「暂无空间」）：失败留下的
+// 也是空数组，`is-empty` 分不出来。这一格钉的是失败留在原地，并且**不**替服务端
+// 说「一个空间都没有」。
+describe('空间名录没读出来', () => {
+  async function failedPage(error: unknown) {
+    listProjects.mockResolvedValue({ data: [], total: 0 })
+    spacesList.mockRejectedValue(error)
+    const page = mountPage()
+    await flush()
+    await waitFor(() => expect(page.container.querySelector('.base-load-error')).toBeTruthy())
+    return page
+  }
+
+  it('失败时原地说明并给重试，不说成「暂无空间」', async () => {
+    const page = await failedPage(new Error('boom'))
+    const block = page.container.querySelector('.base-load-error') as HTMLElement
+
+    expect(block.textContent).toContain('spaces.index.loadFailed')
+    expect(page.queryByText('spaces.index.noSpaces')).toBeNull()
+
+    spacesList.mockResolvedValue({ data: { spaces: [], page: { pageSize: 12, hasMore: false } } })
+    await fireEvent.click(within(block).getByRole('button'))
+    await waitFor(() => expect(spacesList).toHaveBeenCalledTimes(2))
+  })
+
+  it('403 说的是「没权限」，并且不给一颗按不动的重试', async () => {
+    // 「没权限」那句来自 `@/i18n`（BaseLoadError 自己取词），不是这一页那句被
+    // mock 成 key 的 `t`，所以要真的把语言定下来才看得到中文。
+    setLocale('zh-CN')
+    const page = await failedPage(Object.assign(new Error('nope'), { status: 403 }))
+    const block = page.container.querySelector('.base-load-error') as HTMLElement
+
+    expect(block.textContent).toContain('你没有权限查看')
+    expect(within(block).queryByRole('button')).toBeNull()
+    expect(page.queryByText('spaces.index.noSpaces')).toBeNull()
   })
 })
 

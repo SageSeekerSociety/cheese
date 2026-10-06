@@ -90,7 +90,7 @@ def test_original_ordinary_prompt_projects_echo_and_completed_receipts(client, g
             await complete_work_inputs(
                 session,
                 project_id=identity.project_id,
-                topic_id=identity.topic_id,
+                conversation_id=identity.conversation_id,
                 recipient_handle=identity.recipient_handle,
                 harness=identity.harness,
                 native_session_id=identity.native_session_id,
@@ -128,7 +128,7 @@ async def ordinary(session, result):
     origin = delivery.payload["ask_origin"]
     identity = InputIdentity(
         project_id=wake.project_id,
-        topic_id=wake.topic_id,
+        conversation_id=wake.conversation_id,
         recipient_handle=origin["recipient_handle"],
         harness=origin["harness"],
         native_session_id=origin["native_session_id"],
@@ -143,6 +143,6 @@ async def receipt(session, identity, event_id):
         session,
         event_id=event_id,
         project_id=identity.project_id,
-        topic_id=identity.topic_id,
+        topic_id=identity.conversation_id,
         recipient=identity.recipient_handle,
     )

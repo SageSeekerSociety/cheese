@@ -35,6 +35,7 @@ class TestSocket {
   readyState = 1
   onopen: (() => void) | null = null
   onclose: (() => void) | null = null
+  onerror: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
   send = vi.fn()
   close = vi.fn()
@@ -80,7 +81,7 @@ function stored(body: ChatMessageBody, topicId = vi.mocked(postChatMessage).mock
   return {
     id: crypto.randomUUID(),
     project_id: 'p',
-    topic_id: topicId,
+    conversation_id: topicId,
     kind: 'message',
     author_type: 'participant',
     author: 'u',
@@ -249,6 +250,58 @@ describe('chat recovery after history errors', () => {
     expect(sends().map((b) => b.content)).toEqual(['first', 'second'])
   })
 
+  it('a drop the first reconnect heals never puts up the reconnecting banner', async () => {
+    // What a release does to every open room: the socket is cut, and the retry a
+    // second later gets straight through. Nothing was lost; nothing to tell.
+    const view = mountPanel()
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    sockets[0].onerror?.()
+    sockets[0].onclose?.()
+    await flushPromises()
+    expect(view.queryByText(t('work.room.socket.reconnecting'))).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(sockets).toHaveLength(2)
+    sockets[1].onopen?.()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(view.queryByText(t('work.room.socket.reconnecting'))).toBeNull()
+  })
+
+  it('a link that stays down is announced, and stays announced until it is back', async () => {
+    const view = mountPanel()
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    sockets[0].onerror?.()
+    sockets[0].onclose?.()
+    // The retry's handshake goes nowhere.
+    await vi.advanceTimersByTimeAsync(7_000)
+    expect(sockets).toHaveLength(2)
+    expect(view.queryByText(t('work.room.socket.reconnecting'))).toBeNull()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(view.getByText(t('work.room.socket.reconnecting'))).toBeTruthy()
+
+    // Still down on the next try: the refetch before it clears the line, the
+    // failed handshake puts it straight back rather than waiting all over again.
+    sockets[1].onerror?.()
+    sockets[1].onclose?.()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(sockets).toHaveLength(3)
+    sockets[2].onerror?.()
+    await flushPromises()
+    expect(view.getByText(t('work.room.socket.reconnecting'))).toBeTruthy()
+
+    sockets[2].onclose?.()
+    await vi.advanceTimersByTimeAsync(4_000)
+    sockets[3].onopen?.()
+    await flushPromises()
+    expect(view.queryByText(t('work.room.socket.reconnecting'))).toBeNull()
+  })
+
   it('pings an idle socket and replaces it when nothing answers', async () => {
     mountPanel()
     await flushPromises()
@@ -363,7 +416,7 @@ it('keeps a reaction received before its message arrives in history', async () =
     data: [
       {
         id: 'old',
-        topic_id: 'room',
+        conversation_id: 'room',
         kind: 'message',
         author: 'alice',
         author_type: 'participant',

@@ -104,7 +104,7 @@ describe('对话栏的接线', () => {
       {
         id: 'm1',
         project_id: 'p1',
-        topic_id: topic.id,
+        conversation_id: topic.id,
         kind: 'message',
         author_type: 'participant',
         author: 'other',

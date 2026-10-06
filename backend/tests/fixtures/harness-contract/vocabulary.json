@@ -1,51 +1,65 @@
 {
   "why": "The closed vocabulary every scenario in this directory is written in: the six verbs of the harness contract, the events a harness may produce, and the codes a harness may answer with when it cannot produce one. Both readers load this file first and refuse a scenario that steps outside it — which is what stops the set growing a word only one language understands.",
-  "verbs": ["ensure", "send", "backlog", "steer", "interrupt", "close"],
+  "verbs": [
+    "ensure",
+    "send",
+    "backlog",
+    "steer",
+    "interrupt",
+    "close"
+  ],
   "events": {
     "message": {
       "class": "AgentMessage",
-      "required": ["text"],
+      "required": [
+        "text"
+      ],
       "why": "One whole thing the agent said, at a protocol boundary."
     },
     "tool_use": {
       "class": "AgentToolUse",
-      "required": ["name", "input"],
+      "required": [
+        "name",
+        "input"
+      ],
       "why": "A step the room shows while it is happening."
     },
     "step_failed": {
       "class": "AgentStepFailed",
-      "required": ["call_id"],
+      "required": [
+        "call_id"
+      ],
       "why": "That step came back an error. It marks the step already on the timeline rather than adding one — and it is NOT the event a tool that returned produces, which is the whole of #1096."
     },
     "step_output": {
       "class": "AgentStepOutput",
-      "required": ["call_id"],
+      "required": [
+        "call_id"
+      ],
       "why": "What that step handed back, for whoever opens its line. Written onto the step already on the timeline, never a line of its own; the room keeps only a capped tail."
     },
     "tool_result": {
       "class": "AgentToolResult",
-      "required": ["name", "text"],
+      "required": [
+        "name",
+        "text"
+      ],
       "why": "A subagent's conclusion, as its own event: it otherwise reaches only the thread that spawned it. Every other return is written onto its step (step_output)."
     },
     "session_info": {
       "class": "AgentSessionInfo",
-      "required": ["session_id"],
+      "required": [
+        "session_id"
+      ],
       "why": "The harness's own name for this conversation, announced before the turn ends so a turn that dies mid-stream still leaves something to resume."
     },
     "result": {
       "class": "AgentResult",
-      "required": ["text", "session_id"],
+      "required": [
+        "text",
+        "session_id"
+      ],
       "why": "This turn is over. The platform's transcript pass is keyed off it, which is what makes 「每轮结束前增量上交」 a property of the turn rather than of a timer."
-    },
-    "subagent_start": {
-      "class": "AgentSubagentStart",
-      "required": ["agent_id"],
-      "why": "A second worker inside one session began."
-    },
-    "subagent_stop": {
-      "class": "AgentSubagentStop",
-      "required": ["agent_id"],
-      "why": "A second worker handed something back. Not 「done」."
     },
     "retrying": {
       "class": "AgentRetrying",
@@ -59,7 +73,7 @@
     }
   },
   "differences": {
-    "no-subagent-tool-return": "This harness reports that a subagent stopped, but never what it handed back as a tool return.",
+    "no-subagent-tool-return": "This harness never reports what a subagent handed back as a tool return.",
     "refusal-in-provider-words": "This harness words a refused model request as the provider answered it (`401: {...}`), not in Claude Code's own line; the turn still ends once, in failure, with the HTTP status on the result.",
     "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result."
   }

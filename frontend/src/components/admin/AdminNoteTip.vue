@@ -20,7 +20,7 @@ defineProps<{
 <template>
   <v-tooltip :text="text" location="top" open-on-click :open-delay="0">
     <template #activator="{ props: tip }">
-      <button type="button" class="ant" v-bind="tip" :aria-label="t('feedback.dashboard.noteTip.aria')">
+      <button type="button" class="ant tap-target" v-bind="tip" :aria-label="t('feedback.dashboard.noteTip.aria')">
         <span class="ant__icon mdi mdi-information-outline" aria-hidden="true" />
       </button>
     </template>
@@ -29,6 +29,8 @@ defineProps<{
 
 <style scoped>
 .ant {
+  /* 相对定位给 .tap-target：20px 的说明图标，手指要点得中（§3.6）。 */
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;

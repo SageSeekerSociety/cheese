@@ -7,6 +7,7 @@
     "deleteHint": "删掉之后它不再出现在这里，也没法恢复。",
     "noNotifications": "暂无通知",
     "noUnread": "暂无未读通知",
+    "loadFailed": "无法读取动态",
     "markAllAsRead": "标记全部已读",
     "loadMore": "加载更多",
     "filterAll": "全部",
@@ -47,6 +48,17 @@
     "action": {
       "accept": "接受",
       "decline": "拒绝"
+    },
+    "ended": {
+      "accepted": "你已加入项目 \"{projectName}\"",
+      "declined": "你已拒绝加入项目 \"{projectName}\"",
+      "revoked": "项目 \"{projectName}\" 的邀请已撤回"
+    },
+    "toast": {
+      "accepted": "已接受邀请",
+      "acceptFailed": "接受邀请失败，请稍后再试",
+      "declined": "已拒绝邀请",
+      "declineFailed": "拒绝邀请失败，请稍后再试"
     }
   },
   "DEADLINE_REMIND": {

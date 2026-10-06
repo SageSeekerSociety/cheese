@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import require_seated_agent
 from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.auth.checker import require_auth_user
@@ -28,9 +29,10 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import addressed_to_agent
+from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
-from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.machine.repositories import CloudHostRepository
 from app.domain.membership.roster import roster
 from app.domain.membership.services import MemberService
 from app.domain.project.environment import EnvironmentConfig, project_environment
@@ -101,7 +103,10 @@ async def require_idle(db: AsyncSession, topic: Topic) -> None:
         raise ValidationError(say("unarchiveBeforeEnvironmentChange"))
     active = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic.id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, topic.id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     if active is not None:
@@ -163,22 +168,21 @@ async def get_room_environment(
     topic = await room(db, project_id, topic_id)
     binding = await sql_device_service(db).topic_binding(topic_id)
     if binding is None:
-        machines = [
-            machine
-            for machine in await ProjectMachineRepository(db).list_active_for_topic(
-                topic_id
+        hosts = [
+            host
+            for _home, host in await CloudHostRepository(db).room_homes(
+                topic_id, str(topic.resource_id or topic.id)
             )
-            if machine.superseded_at is None
         ]
-        if not machines:
-            # No allocation exists until a session requests execution. A chat
-            # message alone is not a pending machine reservation.
+        if not hosts:
+            # No sandbox is placed until a session requests execution. A chat
+            # message alone is not a pending placement.
             state = {"state": "unbound"}
-        elif any(machine.status == MachineStatus.error for machine in machines):
-            log = say("envCloudMachineFailed")
+        elif any(host.status == MachineStatus.error for host in hosts):
+            log = say("envSandboxFailed")
             state = {"state": "failed", "log": log, **notice_keys(log=log)}
         else:
-            # A cloud machine on its way IS preparation, whatever stage it's at.
+            # A sandbox on its way IS preparation, whatever stage it's at.
             state = {"state": "pending"}
     elif not device_hub.is_online(binding.device_id):
         state = {"state": "offline"}
@@ -189,7 +193,10 @@ async def get_room_environment(
     recovery = await reconcile_recovery(db, topic_id)
     busy = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, topic_id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     return ok(
@@ -263,7 +270,8 @@ async def apply_environment(
 
 
 async def overview_access(request: Request, db: Db, project_id: uuid.UUID):
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
+    token = request.headers.get("x-cheese-token", "")
+    claims = scoped_token_claims(token)
     project = await db.get(Project, project_id)
     if (
         not claims
@@ -273,6 +281,9 @@ async def overview_access(request: Request, db: Db, project_id: uuid.UUID):
         or claims.get("t") != str(project.root_topic_id)
     ):
         raise ForbiddenError(say("envRepairOverviewOnly"))
+    await require_seated_agent(
+        db, token, project_id=project_id, topic_id=project.root_topic_id
+    )
     return project
 
 

@@ -68,7 +68,7 @@ def _set_reporter(client, room: str, handle: str) -> None:
 
 def _file_card(client, room: str, reviewer: str = "alice"):
     return client.post(
-        f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
+        f"/topics/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
             "change_subject": _SUBJECT,
@@ -79,9 +79,9 @@ def _file_card(client, room: str, reviewer: str = "alice"):
 
 
 def _filed_events(client, room: str) -> list[dict]:
-    blocks = client.get(
-        f"/topics/{room}/tasks/{delivery_task_id(client, room)}"
-    ).json()["data"]["blocks"]
+    blocks = client.get(f"/topics/{delivery_task_id(client, room)}/blocks").json()[
+        "data"
+    ]["data"]
     return [
         b
         for b in blocks
@@ -187,9 +187,9 @@ def test_a_notice_that_names_nobody_reaches_nobody(client):
     assert r.status_code == 200, r.text
     wait_work_idle()
 
-    blocks = client.get(
-        f"/topics/{room}/tasks/{delivery_task_id(client, room)}"
-    ).json()["data"]["blocks"]
+    blocks = client.get(f"/topics/{delivery_task_id(client, room)}/blocks").json()[
+        "data"
+    ]["data"]
     assert any(
         (b.get("meta") or {}).get("event_type") == "card_rejected" for b in blocks
     )

@@ -116,11 +116,11 @@ async def chat(
                 conn_actor, token_presented=bool(token)
             )
             if refusal is None:
-                # A card is not a room, but it has a channel of its own: its
-                # 分身's events and checklist go out on the card id (chat.py,
-                # `todo_write`). Whoever may watch it is whoever may enter its
-                # room, found through the card; otherwise an outsider holding
-                # the id from a `?card=` link finds no room and is let in.
+                # A task is a conversation of its own, on a channel of its own:
+                # everything its turns publish goes out on the task id. Whoever
+                # may watch it is whoever may enter its room, found through the
+                # task; otherwise an outsider holding a task id finds no room
+                # and is let in.
                 card = await TaskService(auth_session).get(topic_id)
                 room_id = card.room_id if card is not None else topic_id
                 project_id = await resolver.project_of_topic(room_id)
@@ -138,11 +138,7 @@ async def chat(
                     # then the recreated one), so a turn started before it, or
                     # on the other container while both ran, is missing from it
                     # though its agent is still at work.
-                    open_turns = await open_turns_on(
-                        auth_session,
-                        room_id,
-                        task_id=card.id if card is not None else None,
-                    )
+                    open_turns = await open_turns_on(auth_session, topic_id)
         if refusal is not None:
             code, message = refusal
             _log.info("chat_ws_refused", code=code, topic=str(topic_id))
@@ -173,6 +169,10 @@ async def chat(
         # ends on the current state whichever side of the snapshot a change fell.
         if busy := broker.activity.snapshot(channel):
             await send({"type": "activity_snapshot", "members": busy})
+        # Somebody is here, and a message may follow: a session its runner let
+        # go while the room sat idle starts now rather than when it arrives.
+        if card is None:
+            chat_service.prewarm.room_active(room_id)
 
         relay_task = asyncio.create_task(relay(queue))
         try:
@@ -189,11 +189,10 @@ async def chat(
                     await send({"type": "pong"})
                     continue
                 if payload.get("type") == "typing":
-                    await broker.typing(
-                        channel,
-                        conn_actor.handle,
-                        active=payload.get("active") is not False,
-                    )
+                    typing = payload.get("active") is not False
+                    await broker.typing(channel, conn_actor.handle, active=typing)
+                    if typing and card is None:
+                        chat_service.prewarm.room_active(room_id)
                     continue
                 # A message is POSTed to /topics/{id}/messages; this socket
                 # writes nothing, so it says so rather than dropping the frame.

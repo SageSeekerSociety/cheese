@@ -9,7 +9,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolverDep, require_seated_in_its_room
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
 from app.core.db import get_db
@@ -61,6 +61,14 @@ async def require_project_access(
     # Files and Git diffs contain the private room's source, not just its title.
     # The path-bound room wins over a query parameter on work-summary requests.
     room_id = request.path_params.get("topic_id") or topic
+    # A task's conversation in the path is that task, in its room.
+    if task is None and room_id is not None:
+        try:
+            named = await TaskService(db).get(uuid.UUID(str(room_id)))
+        except ValueError:
+            named = None
+        if named is not None:
+            task, room_id = named.id, None
     work = await TaskService(db).get(task) if task is not None else None
     if task is not None:
         if work is None or work.project_id != project_id:
@@ -68,6 +76,12 @@ async def require_project_access(
         if room_id is not None and str(work.room_id) != str(room_id):
             raise NotFoundError("Task not found")
         room_id = work.room_id
+    if scoped and room_id is None:
+        # The whole project's source, to an agent that still sits in the room
+        # its credential was minted in.
+        await require_seated_in_its_room(
+            db, x_cheese_token or "", project_id=project_id
+        )
     if room_id is not None:
         try:
             room_uuid = uuid.UUID(str(room_id))
@@ -248,8 +262,13 @@ async def topic_work_summary(
     """
     await ProjectService(db).get_or_404(project_id)
     place = await TopicService(db).place_or_404(topic_id)
-    tasks = await TaskService(db).list_in_room(place.room_id)
-    has_run = await AgentSessionService(db).has_run(place.room_id)
+    # A task's page asks about that task alone; a room's about its open tasks.
+    if place.task_id is not None:
+        one = await TaskService(db).get(place.task_id)
+        tasks = [one] if one is not None else []
+    else:
+        tasks = await TaskService(db).list_in_room(place.room_id)
+    has_run = await AgentSessionService(db).has_run(place.conversation_id)
     paths = set()
     try:
         # Bound the whole summary, including all task comparisons.

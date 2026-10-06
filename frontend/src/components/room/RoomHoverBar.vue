@@ -23,6 +23,8 @@ import { copyMessage, QUICK_EMOJIS } from './messageActions'
 import { t } from '@/i18n'
 
 const props = defineProps<{
+  /** 私聊里转出去的是一个新话题，别处是任务。 */
+  upgradeToTopic?: boolean
   /** 停在哪条消息上。收起时还留着上一条，淡出的那一下里按钮不会先没了。 */
   block: Block | null
   shown: boolean
@@ -34,6 +36,8 @@ const props = defineProps<{
   pickerOpen: boolean
   /** 这条是我自己发的消息：多一颗「编辑」。 */
   editable: boolean
+  /** 右键这一条时鼠标的位置：每次右键一个新对象，认到就在那一点打开 ⋯。 */
+  menuAt?: { x: number; y: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +56,19 @@ const copied = ref(false)
 const linkCopied = ref(false)
 const menuOpen = ref(false)
 const focusWithin = ref(false)
+// 右键打开时菜单弹在鼠标那一点；点 ⋯ 打开时挂在 ⋯ 下面。
+const menuPoint = ref<[number, number] | null>(null)
+watch(
+  () => props.menuAt,
+  (at) => {
+    if (!at) return
+    menuPoint.value = [at.x, at.y]
+    menuOpen.value = true
+  }
+)
+watch(menuOpen, (open) => {
+  if (!open) menuPoint.value = null
+})
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
 let linkCopiedTimer: ReturnType<typeof setTimeout> | undefined
 let focusRecoveryFrame: number | undefined
@@ -143,7 +160,7 @@ const menuActions = computed<MenuAction[]>(() => {
     })
   actions.push({
     key: 'upgrade',
-    label: t('work.room.message.upgrade'),
+    label: props.upgradeToTopic ? t('work.room.message.upgradeToTopic') : t('work.room.message.upgrade'),
     icon: 'mdi-comment-arrow-right-outline',
     onSelect: () => emit('upgrade', block.id),
   })
@@ -247,13 +264,13 @@ function onFocusOut(event: FocusEvent) {
         <button
           type="button"
           class="hover-bar__act"
-          :title="t('work.room.message.upgrade')"
+          :title="upgradeToTopic ? t('work.room.message.upgradeToTopic') : t('work.room.message.upgrade')"
           @click="emit('upgrade', block.id)"
         >
           <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
         </button>
       </div>
-      <AdaptiveMenu v-model="menuOpen" :actions="menuActions">
+      <AdaptiveMenu v-model="menuOpen" :actions="menuActions" :point="menuPoint">
         <template #activator="{ props: menu }">
           <button
             v-bind="menu"

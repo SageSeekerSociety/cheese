@@ -771,7 +771,7 @@ class Ledger:
         credits deducted."""
         await UsageRepository(self._session).add(
             project_id=payer.project_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             model=model,
             input_tokens=input_tokens,
             cache_read_tokens=cache_read_tokens,
@@ -811,7 +811,7 @@ class Ledger:
         it."""
         await UsageRepository(self._session).add(
             project_id=project_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,

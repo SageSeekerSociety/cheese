@@ -11,11 +11,13 @@ repository 模块，且那道守卫是对的：值类型不该住在数据访问
 
 import enum
 
+from app.core.sentences import NoticeText, say
+
 __all__ = [
     "Supply",
     "Visibility",
-    "binding_visibility",
-    "has_runnable_transport",
+    "default_visibility",
+    "sandbox_unavailable",
 ]
 
 
@@ -26,7 +28,7 @@ class Supply(enum.StrEnum):
     is a container or a VM. The platform opened it on demand → it may destroy it;
     a human enrolled a machine they already had → it may not. Every disposal rule
     is a consequence of this one field, which is why it is stored rather than
-    inferred: `ProjectMachine.device_id` can reverse-look-up the same fact today,
+    inferred: `CloudHost.device_id` can reverse-look-up the same fact today,
     and a semantics that exists only by reverse lookup is the bug #282 is about.
 
     Consequence: the SAME physical VM is `cloud` when the platform provisions it
@@ -48,63 +50,51 @@ class Visibility(enum.StrEnum):
     room's worktree on that machine and exec into their containers.
 
     `isolated` runs each session's executor in a sandbox of its own
-    (`remote_execution/bootstrap.sandbox_argv`). Only Cloud machines have that
-    transport today; on a self-hosted one it has none, and nothing may hand it
-    out there until #2320 step 2 lands (`has_runnable_transport`).
+    (`remote_execution/bootstrap.sandbox_argv`), on Cloud machines and enrolled
+    ones alike. It is the default everywhere (#2320); `host` is the 档 a
+    machine's owner picks for a room on purpose. Whether a given enrolled
+    machine can give a session a sandbox depends on what it runs
+    (`sandbox_unavailable`), and one that cannot refuses an `isolated` room
+    rather than running it over the whole machine.
     """
 
     isolated = "isolated"  # one sandbox per session — blast radius is the session
-    # The whole machine, as its owner. 申请制 by intent — but it IS the default
-    # on self-hosted machines today, because `isolated` has no transport there
-    # and there is nothing else to default to. `default_visibility()` says so
-    # out loud rather than leaving the comment and the code disagreeing; it
-    # stops being the default the moment #2320 step 2 lands.
+    # The whole machine, as its owner: chosen by that owner for a room, never a
+    # default (`topics_compute.set_topic_compute_profile`).
     host = "host"
 
 
-def has_runnable_transport(visibility: Visibility, supply: Supply) -> bool:
-    """Whether the device backend can run a turn at this visibility on a
-    machine of this supply today: `host` anywhere, `isolated` only on Cloud
-    machines, the ones that sandbox each session."""
-    return visibility is Visibility.host or supply is Supply.cloud
-
-
-# Most conservative first: the default is the first entry that can actually run.
-_VISIBILITY_PREFERENCE = (Visibility.isolated, Visibility.host)
-
-
 def default_visibility() -> Visibility:
-    """The 档 a topic on a self-hosted machine gets when nobody picked one.
+    """The 档 a new binding gets when nobody picked one — every binding point
+    asks this, so the picker, the room badge and the session's sandbox cannot
+    disagree about it.
 
-    DERIVED from what has a transport, never declared, because the two used to be
-    declared separately and disagreed: the market catalogue advertised `isolated`
-    as the default while `resolve_pinned_device` bound `host` unconditionally. A
-    person opening the picker was told their topic was boxed; every topic in fact
-    had whole-machine access. Both surfaces now read this, so when step 2 (#2320)
-    gives `isolated` a transport on self-hosted machines, the default moves in
-    both places at once and nobody has to remember the second one.
-    """
-    for visibility in _VISIBILITY_PREFERENCE:
-        if has_runnable_transport(visibility, Supply.self_hosted):
-            return visibility
-    raise RuntimeError("no visibility has a runnable transport")
+    `isolated` on every machine (#2320): a Cloud machine and an enrolled one
+    both give each session a sandbox of its own, so the session sees its own
+    directory and its project's package store, and neither the machine owner's
+    files (the connector's credential is among them) nor other sessions'."""
+    return Visibility.isolated
 
 
-def binding_visibility(supply: Supply) -> Visibility:
-    """一条新绑定拿到的可见性档——**四个绑定点共用的那一个答案**。
+# The connector systems with no isolated environment, and the sentence a room
+# there is refused with. Which environment a system gets is the bootstrap's to
+# build (`bootstrap.sandbox_tools`): bubblewrap on Linux, `sandbox-exec` on
+# macOS. A system gains one by leaving this table in the same change that
+# teaches the bootstrap to build it. Windows gets it through WSL, whose
+# connector is a Linux one.
+_NO_SANDBOX = {
+    "windows": "sandboxUnavailableWindows",
+}
 
-    以前四个绑定点各写一个字面量 `host`，于是「这个档默认是什么」在代码里有四份声
-    明，而 `default_visibility()` 只被市场目录和自动挑机那两处读到。人在选择器上看
-    到的和绑定时写下的因此可以不一样，而且没有任何东西会说出来。
 
-    档由供给决定，不由调用点决定：
+def sandbox_unavailable(target: str) -> NoticeText | None:
+    """Why an enrolled machine whose connector build is ``target``
+    (``<os>-<arch>``, as its `hello` names it) cannot give a session an
+    isolated environment, or None when it can or the build is not known yet.
 
-    * 平台开的机器上，每条会话的执行器跑在自己的沙箱里（#2320），所以是
-      `isolated`：会话只看得见自己的目录和本项目的包缓存，看不见机器的主人目录
-      （连接器的凭据在那里）和别的会话。
-    * 人接入的机器上，答案是 `default_visibility()`：从「哪个档今天真有传输层」推
-      出来。#2320 第二步给那里的 `isolated` 接上传输层的那天，它和市场目录一起移动。
-    """
-    if supply is Supply.cloud:
-        return Visibility.isolated
-    return default_visibility()
+    An `isolated` room there is refused with this sentence rather than run
+    over the whole machine; the machine's owner can give the room full machine
+    access instead. The install on the machine refuses the same way for a
+    machine this side has not heard from (`bootstrap.sandbox_argv`)."""
+    key = _NO_SANDBOX.get(target.split("-", 1)[0])
+    return say(key) if key is not None else None

@@ -6,7 +6,8 @@
   "line": {
     "collab": "协作",
     "ask": "问答",
-    "write": "写作"
+    "write": "写作",
+    "compute": "算力"
   },
   "period": {
     "label": "本月",

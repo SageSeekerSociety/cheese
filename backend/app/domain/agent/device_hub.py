@@ -408,6 +408,12 @@ class DeviceHub:
         device = self._devices.get(device_id)
         return device.name if device is not None and device.name else device_id
 
+    def target(self, device_id: str) -> str:
+        """The `<os>-<arch>` the machine's connector said it was built for, or
+        "" before this process has heard its `hello`."""
+        device = self._devices.get(device_id)
+        return device.target if device is not None else ""
+
     def last_seen_age(self, device_id: str) -> float | None:
         """Seconds since the device last sent any frame; None when it never has."""
         device = self._devices.get(device_id)

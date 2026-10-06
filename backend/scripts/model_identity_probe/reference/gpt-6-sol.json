@@ -1,0 +1,124 @@
+{
+  "format_version": 1,
+  "protocol": "one-token/v1",
+  "model": "gpt-6-sol",
+  "source": "gateway:gpt-6-sol",
+  "collected_at": "2026-10-05T10:13:55Z",
+  "samples_per_cell": 25,
+  "cells": {
+    "coin-flip:en": {
+      "counts": {
+        "heads": 23,
+        "tails": 2
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-animal:en": {
+      "counts": {
+        "otter": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-color:en": {
+      "counts": {
+        "turquoise": 14,
+        "teal": 6,
+        "indigo": 1,
+        "blue": 1,
+        "cerulean": 2,
+        "violet": 1
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-color:zh": {
+      "counts": {
+        "蓝": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-letter:en": {
+      "counts": {
+        "k": 5,
+        "q": 18,
+        "m": 2
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-100:en": {
+      "counts": {
+        "17": 8,
+        "30": 2,
+        "70": 4,
+        "40": 6,
+        "47": 3,
+        "7": 2
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-100:zh": {
+      "counts": {
+        "37": 7,
+        "47": 10,
+        "7": 3,
+        "73": 3,
+        "42": 2
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-10:en": {
+      "counts": {
+        "7": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    }
+  },
+  "tokenizer": {
+    "base_input_tokens": 18,
+    "deltas": {
+      "latin": 9,
+      "chinese": 13,
+      "japanese": 15,
+      "korean": 14,
+      "russian": 10,
+      "emoji": 17,
+      "code": 18,
+      "unicode-mix": 15,
+      "digits": 14,
+      "whitespace": 6,
+      "long-latin": 37
+    }
+  },
+  "notes": "protocol=one-token/v1 preset=standard temperature=omitted max_tokens=16 reasoning=anthropic-thinking"
+}

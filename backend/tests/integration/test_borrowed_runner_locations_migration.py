@@ -2,107 +2,82 @@
 
 Such rows were recorded by turns that ran as the project's default agent under
 another teammate's seat. Recovery attached a reader for each row, so two
-readers wrote one runner's mirror. The migration clears the borrowed row's
-location, keeps its work lease, and leaves the runner's own row alone.
+readers wrote one runner's mirror file. The migration (7e4b9d2c1a60) clears the
+borrowed row's location, keeps its work lease, and leaves the runner's own row
+alone.
+
+The rows are seeded on the database of the revision before the migration, and
+read back from it afterwards.
 """
 
-import asyncio
-import importlib.util
+import json
 import uuid
-from pathlib import Path
 
-from sqlalchemy import select, text
-
-from app.domain.agent_session.models import AgentSession
-from app.domain.identity.handles import agent_instance_handle
-from tests.integration.conftest import post_project
-
-_MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "alembic/versions/7e4b9d2c1a60_drop_borrowed_runner_locations.py"
+from tests.integration.migration_replay import (
+    database_at,
+    seat_handle,
+    seed_agent,
+    seed_extra_room,
+    seed_room,
 )
 
-
-def _drop_borrowed_locations() -> str:
-    spec = importlib.util.spec_from_file_location("borrowed", _MIGRATION)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.DROP_BORROWED_LOCATIONS
+BEFORE = "c4f1d8a2e9b7"
+AFTER = "7e4b9d2c1a60"
 
 
-def _location(room: str, seat: str, state: str) -> dict:
+def _location(room: uuid.UUID, seat: str, state: str) -> dict:
     return {
         "device_id": "device",
-        "resource_id": room,
+        "resource_id": str(room),
         "channel": "device",
         "runtime": {"harness": "claude-code", "agent_handle": seat, "state": state},
     }
 
 
-def test_a_row_on_another_teammates_runner_is_no_longer_found(client):
-    project = post_project(client, json={"name": "P"}).json()["data"]["id"]
-    reviewer = client.post(
-        f"/projects/{project}/agents",
-        json={"handle": "reviewer", "display_name": "审稿人"},
-    ).json()["data"]
-    rooms = [
-        client.post(
-            "/topics",
-            json={"project_id": project, "title": title},
-        ).json()["data"]["id"]
-        for title in ("Shared", "Alone")
-    ]
-    shared, alone = rooms
-    seat = agent_instance_handle(reviewer["id"])
-    lease = {"kind": "device", "device_id": "machine", "status": "ready"}
+def _session(db, room, handle, location, lease=None) -> uuid.UUID:
+    row = uuid.uuid4()
+    db.execute(
+        "INSERT INTO agent_sessions (id, topic_id, agent_handle, harness,"
+        " runtime_location, work_lease, created_at, updated_at)"
+        " VALUES ($1, $2, $3, 'claude-code', $4::json, $5::json, now(), now())",
+        row,
+        room,
+        handle,
+        json.dumps(location),
+        None if lease is None else json.dumps(lease),
+    )
+    return row
 
-    async def seed() -> dict[str, uuid.UUID]:
-        async with client.test_factory() as session:
-            rows = {
-                # The runner's owner: the teammate's own session on its seat.
-                "owner": AgentSession(
-                    topic_id=uuid.UUID(shared),
-                    agent_handle=reviewer["handle"],
-                    harness="claude-code",
-                    runtime_location=_location(shared, seat, "/state/shared"),
-                    work_lease=lease,
-                ),
-                # The default agent's row, recorded on the teammate's runner.
-                "borrowed": AgentSession(
-                    topic_id=uuid.UUID(shared),
-                    agent_handle="cheese",
-                    harness="claude-code",
-                    runtime_location=_location(shared, seat, "/state/shared"),
-                    work_lease=lease,
-                ),
-                # A mismatch with nobody else on its runner is not this case.
-                "alone": AgentSession(
-                    topic_id=uuid.UUID(alone),
-                    agent_handle="cheese",
-                    harness="claude-code",
-                    runtime_location=_location(alone, seat, "/state/alone"),
-                ),
-            }
-            session.add_all(rows.values())
-            await session.commit()
-            return {name: row.id for name, row in rows.items()}
 
-    ids = asyncio.run(seed())
+def _read(db, row: uuid.UUID) -> tuple[dict | None, dict | None]:
+    found = db.fetchrow(
+        "SELECT runtime_location, work_lease FROM agent_sessions WHERE id = $1", row
+    )
+    return tuple(None if v is None else json.loads(v) for v in found)
 
-    async def migrate_and_read() -> dict[str, AgentSession]:
-        async with client.test_factory() as session:
-            await session.execute(text(_drop_borrowed_locations()))
-            await session.commit()
-            found = await session.scalars(
-                select(AgentSession).where(AgentSession.id.in_(ids.values()))
-            )
-            by_id = {row.id: row for row in found}
-            return {name: by_id[row_id] for name, row_id in ids.items()}
 
-    after = asyncio.run(migrate_and_read())
+def test_a_row_on_another_teammates_runner_is_no_longer_found():
+    with database_at(BEFORE) as db:
+        project, shared = seed_room(db)
+        alone = seed_extra_room(db, project)
+        seed_agent(db, project, "cheese")
+        reviewer = seed_agent(db, project, "reviewer")
+        seat = seat_handle(reviewer)
+        lease = {"kind": "device", "device_id": "machine", "status": "ready"}
 
-    assert after["borrowed"].runtime_location is None
-    assert after["borrowed"].work_lease == lease
-    assert after["owner"].runtime_location == _location(shared, seat, "/state/shared")
-    assert after["alone"].runtime_location == _location(alone, seat, "/state/alone")
+        # The runner's owner: the teammate's own session on its seat.
+        owner = _session(
+            db, shared, "reviewer", _location(shared, seat, "/state/shared"), lease
+        )
+        # The default agent's row, recorded on the teammate's runner.
+        borrowed = _session(
+            db, shared, "cheese", _location(shared, seat, "/state/shared"), lease
+        )
+        # A mismatch with nobody else on its runner is not this case.
+        lonely = _session(db, alone, "cheese", _location(alone, seat, "/state/alone"))
+
+        db.upgrade(AFTER)
+
+        assert _read(db, borrowed) == (None, lease)
+        assert _read(db, owner) == (_location(shared, seat, "/state/shared"), lease)
+        assert _read(db, lonely) == (_location(alone, seat, "/state/alone"), None)

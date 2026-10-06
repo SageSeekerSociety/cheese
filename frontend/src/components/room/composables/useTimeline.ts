@@ -117,14 +117,21 @@ export function useTimeline(options: TimelineOptions = {}) {
     if (newestHeld) newestHeld = { ...newestHeld, blocks: newestHeld.blocks.filter((m) => m.id !== id) }
   }
 
-  /** 往上翻到的那一页拼到显示的这一段顶上。 */
-  function prepend(older: Block[], more: boolean) {
+  /**
+   * 往上翻到的那一页拼到显示的这一段顶上。回这一页**多画出来**了几行（`renders` 过掉、
+   * 又不在窗口里的那些）：最新那一带几乎全是 `in_room:false` 的回合事件时，整页可能一行
+   * 都画不出来（回 0），调用方据此知道该接着往回读——不然这一页没让任何东西长高，就没有
+   * 下一次滚动事件，翻页停在那儿。见 composables/useChatPaging 的补窗。
+   */
+  function prepend(older: Block[], more: boolean): number {
+    const before = messages.value.length
     const next = prependOlder(current(), older.filter(renders), more)
     messages.value = next.blocks
     hasMore.value = next.hasMore
     // 游标记这一页（原始的）最老那条：不露面的块进了窗口的只有前面那几个，但更早
     // 的块是在它们上面。拿窗口里最老的那条当游标会把不露面那一段反复问一遍。
     if (older.length) oldestId = older[0].id
+    return next.blocks.length - before
   }
 
   /**

@@ -88,15 +88,18 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
     writer, reviewer = agents
     route = f"/projects/{pid}/git/tasks/{task.id}"
 
-    def headers(agent):
+    def headers(agent, conversation=room):
         return {
             "X-Cheese-Token": mint_scoped_token(
-                project_id=pid, topic_id=room, agent_handle=agent["seat_handle"]
+                project_id=pid,
+                topic_id=str(conversation),
+                agent_handle=agent["seat_handle"],
             )
         }
 
     assert client.get(route, headers=headers(reviewer)).json()["data"]["author"] is None
-    opened = client.post(route, headers=headers(writer))
+    # The task's own session opens it, with the credential of its conversation.
+    opened = client.post(route, headers=headers(writer, task.id))
     assert opened.status_code == 200, opened.text
     expected = str(identity.agent_identity(writer["seat_handle"]))
     assert opened.json()["data"]["author"] == expected
@@ -108,7 +111,7 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
             await session.commit()
 
     client.portal.call(change_default)
-    reopened = client.post(route, headers=headers(reviewer))
+    reopened = client.post(route, headers=headers(reviewer, task.id))
     assert reopened.status_code == 200, reopened.text
     assert reopened.json()["data"]["author"] == expected
 
@@ -137,3 +140,52 @@ def test_historical_task_does_not_invent_an_agent_author(client):
             return pr_trailers(room, "alice", who)
 
     assert "Cheese-Agent:" not in client.portal.call(read)
+
+
+def _credential(project_id, conversation, agent):
+    return {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project_id, topic_id=str(conversation), agent_handle=agent
+        )
+    }
+
+
+def test_a_task_is_opened_by_its_own_session_and_kept_by_its_room(client):
+    """A task is worked in its own conversation: its session opens its
+    workspace. A session of its room never opens it — on dev (2026-10-05) the
+    room's agent worked a task from the room while the task's own session
+    could not — yet still reaches it to keep what a machine switch syncs."""
+    from tests.integration.conftest import room_agent_seat
+
+    project = post_project(client, json={"name": "Whose task"}, owner="alice").json()[
+        "data"
+    ]
+    pid, room = project["id"], project["root_topic_id"]
+    task = delivery_task(client, room, commit=False)
+    agent = room_agent_seat(client, room)
+    route = f"/projects/{pid}/git/tasks/{task.id}"
+
+    from_the_room = client.post(route, headers=_credential(pid, room, agent))
+    assert from_the_room.status_code == 403, from_the_room.text
+    kept = client.get(route, headers=_credential(pid, room, agent))
+    assert kept.status_code == 200, kept.text
+
+    opened = client.post(route, headers=_credential(pid, task.id, agent))
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["data"]["branch"] == task.branch_name
+
+
+def test_a_task_s_session_reaches_no_other_task(client):
+    project = post_project(client, json={"name": "Two tasks"}, owner="alice").json()[
+        "data"
+    ]
+    pid, room = project["id"], project["root_topic_id"]
+    mine = delivery_task(client, room, commit=False)
+    other = delivery_task(client, room, new=True, commit=False)
+
+    response = client.post(
+        f"/projects/{pid}/git/tasks/{other.id}",
+        headers=_credential(pid, mine.id, "cheese"),
+    )
+
+    assert response.status_code == 404

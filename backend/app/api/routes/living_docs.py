@@ -15,12 +15,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, Field
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_chat_service
-from app.api.doc_access import frozen, reach, require_writable
+from app.api.doc_access import authorize_in_project, frozen, reach, require_writable
 from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
-from app.api.doc_store import announce, store
+from app.api.doc_store import announce, store, tell_origin_room
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.errors import (
@@ -34,28 +34,164 @@ from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab, work_edits
-from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn, document_snapshot
-from app.domain.living_doc.services import DocumentJournal
+from app.domain.living_doc.schemas import (
+    DocumentIn,
+    DocumentRenameIn,
+    PassageEditsIn,
+    RestoreIn,
+    document_row,
+    document_snapshot,
+)
+from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.mentions import canonicalize_refs
+from app.domain.project.services import refuse_writes_if_archived
+from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 rooms = APIRouter(prefix="/topics", tags=["topics"])
+projects = APIRouter(prefix="/projects", tags=["documents"])
 
 
 @rooms.get("/{topic_id}/document")
-async def room_document(
+async def conversation_document(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Which document is this room's living document. It is made, empty, the
-    first time anyone asks."""
+    """Which document is this conversation's living document — a room's, or a
+    task's. It is made, empty, the first time anyone asks."""
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    doc = await topics.room_doc(place.room_id, place.project_id)
+    if place.task is not None:
+        document_id = await TaskService(db).ensure_document(place.task)
+    else:
+        document_id = (await topics.room_doc(place.room_id, place.project_id)).id
     await db.commit()
-    return ok({"id": str(doc.id)})
+    return ok({"id": str(document_id)})
+
+
+def _origin(resolver: ActorResolver, reached_actor) -> uuid.UUID | None:
+    """The conversation an agent writing a document of the project's own works
+    in: a room, or one of its tasks."""
+    return resolver.credential_conversation() if reached_actor.via == "cheese" else None
+
+
+@projects.get("/{project_id}/documents")
+async def project_documents(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The project's own documents, the latest changed first. A room's living
+    document is the room's and is not listed."""
+    actor = await resolver.resolve(project_id=project_id, read_only=True)
+    await authorize_in_project(resolver, actor, project_id)
+    docs = await Documents(db).of_project(project_id)
+    return ok({"data": [document_row(doc) for doc in docs]})
+
+
+@projects.post("/{project_id}/documents")
+async def create_document(
+    project_id: uuid.UUID,
+    body: DocumentIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """A new document of the project's own: empty, with ``content``, or a copy
+    of what another document says now (``copy_of``). 芝士 making one from a
+    room puts it in that room as a line to open."""
+    actor = await resolver.resolve(project_id=project_id)
+    await authorize_in_project(resolver, actor, project_id)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError(say("docEditNeedsWriter"))
+    await refuse_writes_if_archived(db, project_id)
+    title = body.title.strip()
+    content = body.content
+    if body.copy_of is not None:
+        source = (await reach(db, resolver, body.copy_of)).doc
+        if source.project_id != project_id:
+            raise NotFoundError(say("docNotFound"))
+        content = source.content
+        if not title:
+            title = source.title or ""
+            if source.room_id is not None:
+                place = await TopicService(db).place_or_404(source.room_id)
+                title = place.title or ""
+    doc = await Documents(db).create(
+        project_id=project_id, title=title, author=actor.handle
+    )
+    await db.commit()
+    if content and content.strip():
+        try:
+            await collab.replace(
+                doc.id,
+                content=await canonicalize_refs(db, project_id, content)
+                if body.copy_of is None
+                else content,
+                base=None,
+                actor=actor.handle,
+                # Stored text needs no check; Markdown from outside an editor does.
+                check=body.copy_of is None,
+            )
+        except Exception:
+            # Nothing made it in: the document goes, rather than stay empty
+            # under a name its maker will not look for.
+            await db.delete(doc)
+            await db.commit()
+            raise
+        await db.refresh(doc)
+    await tell_origin_room(
+        db, _origin(resolver, actor), doc, actor.handle, created=True
+    )
+    return ok(document_row(doc))
+
+
+@router.get("/{document_id}/about")
+async def document_about(
+    document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """What the document is called and whose it is, even before anything is
+    written in it."""
+    return ok(document_row((await reach(db, resolver, document_id)).doc))
+
+
+async def _own(db, resolver, document_id: uuid.UUID):
+    """A document of the project's own that the caller may change. A room's
+    document is the room's: it is named after the room and goes with it."""
+    reached = await reach(db, resolver, document_id, enforce=True)
+    if not reached.actor.authenticated:
+        raise AuthenticationRequiredError(say("docEditNeedsWriter"))
+    if reached.doc.room_id is not None:
+        raise ForbiddenError(say("docBelongsToRoom"))
+    await require_writable(db, reached)
+    return reached
+
+
+@router.patch("/{document_id}")
+async def rename_document(
+    document_id: uuid.UUID,
+    body: DocumentRenameIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    doc = (await _own(db, resolver, document_id)).doc
+    doc.title = body.title.strip()
+    await db.commit()
+    await db.refresh(doc)
+    await collab.tell(doc.id, {"type": "state", "resource": "title"})
+    return ok(document_row(doc))
+
+
+@router.delete("/{document_id}")
+async def delete_document(
+    document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Delete a document of the project's own, its history and its comments.
+    Whoever has it open is told; what they type after that is not kept."""
+    doc = (await _own(db, resolver, document_id)).doc
+    await db.delete(doc)
+    await db.commit()
+    await collab.tell(document_id, {"type": "state", "resource": "deleted"})
+    return ok({})
 
 
 @router.get("/{document_id}")
@@ -161,7 +297,7 @@ async def replace_document(
     await db.commit()
     # Markdown is how this caller speaks; the document is blocks. A write that
     # would lose visible text on the way in is refused with what to change.
-    return await collab.replace(
+    stored = await collab.replace(
         doc.id,
         content=content,
         base=base,
@@ -169,6 +305,9 @@ async def replace_document(
         operation=operation,
         check=True,
     )
+    await db.refresh(doc)
+    await tell_origin_room(db, _origin(resolver, actor), doc, actor.handle)
+    return stored
 
 
 @router.post("/{document_id}/edits")
@@ -222,6 +361,19 @@ async def edit_doc_passages(
     )
     if delegation is not None:
         await work_edits.record(get_redis_client(), delegation.work, edits)
+    else:
+        changed = result.get("edits") or edits
+        await db.refresh(doc)
+        await tell_origin_room(
+            db,
+            _origin(resolver, actor),
+            doc,
+            author,
+            edits=changed,
+            suggested=[e["suggestion_id"] for e in changed if e.get("suggestion_id")]
+            if decision.mode == "suggest"
+            else None,
+        )
     stored = result.get("stored") or {}
     return ok(
         {
@@ -264,6 +416,38 @@ async def document_history(
         return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else None})
     rows = await journal.history(doc.id, after=after)
     return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else after})
+
+
+@router.get("/{document_id}/compare")
+async def compare_document_versions(
+    document_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    before: int = Query(ge=0),
+    after: int | None = Query(default=None, ge=1),
+) -> dict:
+    """Two versions of the document, for reading side by side: ``before``, and
+    ``after`` (the current one when omitted). Version 0 is the empty document
+    before anything was written — what a task started on an empty document
+    is compared against."""
+    doc = (await reach(db, resolver, document_id, enforce=True)).doc
+    journal = DocumentJournal(db)
+    newest = after or doc.version
+
+    async def text_of(version: int) -> str:
+        if version == 0:
+            return ""
+        content = await journal.version_content(doc.id, version)
+        if content is None:
+            raise NotFoundError(say("docVersionNotFound"))
+        return content
+
+    return ok(
+        {
+            "before": {"version": before, "content": await text_of(before)},
+            "after": {"version": newest, "content": await text_of(newest)},
+        }
+    )
 
 
 @router.get("/{document_id}/operations/{operation_id}")

@@ -46,7 +46,7 @@ const flush = () => vi.advanceTimersByTimeAsync(0)
 function said(id: string, author = 'someone-else'): Block {
   return {
     id,
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'message',
     author_type: 'participant',
     author,
@@ -78,6 +78,16 @@ function arrive(block: Block) {
 const shown = (container: Element) =>
   Array.from(container.querySelectorAll('[data-mid]')).map((el) => el.getAttribute('data-mid'))
 const pill = (container: Element) => container.querySelector('.new-pill')
+
+// happy-dom 不排版：给滚动容器一个高度，再把它停在最底下，然后把那条滚动事件补上。
+// 「在不在底部」（药丸露不露面读的就是它）是在这条事件里重新量出来的
+// （useChatScroll.rememberScroll），真浏览器里落点之后一定会到。
+function settleAtBottom(pane: HTMLElement) {
+  Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 1000 })
+  Object.defineProperty(pane, 'clientHeight', { configurable: true, value: 600 })
+  pane.scrollTop = 400
+  pane.dispatchEvent(new Event('scroll'))
+}
 
 let rooms = 0
 async function mountRoom(focusBlock: string | null) {
@@ -165,9 +175,12 @@ describe('从一条旧消息打开对话', () => {
   })
 
   it('点名的消息就在最新一页里：原地停过去，不另取一段', async () => {
-    const { container } = await mountRoom('n2')
+    const { container, getByTestId } = await mountRoom('n2')
     expect(shown(container)).toEqual(['n1', 'n2', 'n3'])
     expect(vi.mocked(listBlocks).mock.calls.some(([, opts]) => opts?.around)).toBe(false)
+    // n2 就是最底下那一条：落过去之后人还在底部，入口收起来。
+    settleAtBottom(getByTestId('chat-scroll'))
+    await flush()
     expect(pill(container)).toBeNull()
   })
 })

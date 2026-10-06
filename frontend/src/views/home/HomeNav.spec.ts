@@ -12,8 +12,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const getMyTeams = vi.fn()
 const removeMember = vi.fn()
+const del = vi.fn()
+const getMembers = vi.fn()
+const transferOwner = vi.fn()
 vi.mock('@/network/api/teams', () => ({
-  TeamsApi: { getMyTeams: () => getMyTeams(), removeMember: (...args: unknown[]) => removeMember(...args) },
+  TeamsApi: {
+    getMyTeams: () => getMyTeams(),
+    removeMember: (...args: unknown[]) => removeMember(...args),
+    del: (...args: unknown[]) => del(...args),
+    getMembers: (...args: unknown[]) => getMembers(...args),
+    transferOwner: (...args: unknown[]) => transferOwner(...args),
+  },
 }))
 const confirm = vi.fn()
 vi.mock('@/plugins/dialog', () => ({
@@ -50,6 +59,8 @@ function team(handle: string, name: string, role: Team['role'] = 'MEMBER'): Team
   }
 }
 
+const mounted: { router?: ReturnType<typeof createRouter> } = {}
+
 async function mount(path: string) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -73,6 +84,7 @@ async function mount(path: string) {
   })
   await router.push(path)
   await router.isReady()
+  mounted.router = router
   return render(HomeNav as unknown as Component, {
     props: { inbox: true },
     global: {
@@ -107,6 +119,9 @@ beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
   removeMember.mockReset()
+  del.mockReset()
+  getMembers.mockReset()
+  transferOwner.mockReset()
   confirm.mockReset()
   refreshProjects.mockReset()
   getMyTeams
@@ -140,7 +155,7 @@ describe('首页目录', () => {
   it.each([
     ['ADMIN', ['邀请成员', '编辑团队资料', '退出团队']],
     ['MEMBER', ['退出团队']],
-    ['OWNER', ['邀请成员', '编辑团队资料']],
+    ['OWNER', ['邀请成员', '编辑团队资料', '转让团队', '解散团队']],
   ] as const)('%s 在团队那一行的 ⋯ 里看到的操作', async (role, labels) => {
     getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', role)] } })
     await mount('/inbox')
@@ -162,6 +177,62 @@ describe('首页目录', () => {
     await waitFor(() => expect(removeMember).toHaveBeenCalledWith(team('lab', '').id, 42))
     await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
     expect(refreshProjects).toHaveBeenCalled()
+  })
+
+  it('所有者解散团队：要把团队名打一遍才按得下去，解散后这一行消失', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    del.mockResolvedValue({})
+    await mount('/inbox')
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
+    await fireEvent.click(await screen.findByText('解散团队'))
+    const confirmButton = await screen.findByRole('button', { name: '解散团队' })
+    const input = screen.getByLabelText('输入团队名「知是开发组」确认')
+
+    await fireEvent.update(input, '知是')
+    expect(confirmButton.hasAttribute('disabled')).toBe(true)
+    await fireEvent.click(confirmButton)
+    expect(del).not.toHaveBeenCalled()
+
+    await fireEvent.update(input, '知是开发组')
+    await waitFor(() => expect(confirmButton.hasAttribute('disabled')).toBe(false))
+    await fireEvent.click(confirmButton)
+    await waitFor(() => expect(del).toHaveBeenCalledWith(team('crew', '').id))
+    await waitFor(() => expect(screen.queryByText('知是开发组')).toBeNull())
+  })
+
+  it('解散被拒（还有没归档的项目）：理由留在弹窗里，团队还在', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    del.mockRejectedValue(new Error('团队里还有没归档的项目，把它们都归档后才能解散'))
+    await mount('/inbox')
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
+    await fireEvent.click(await screen.findByText('解散团队'))
+    await fireEvent.update(await screen.findByLabelText('输入团队名「知是开发组」确认'), '知是开发组')
+    await fireEvent.click(await screen.findByRole('button', { name: '解散团队' }))
+    expect(await screen.findByText('团队里还有没归档的项目，把它们都归档后才能解散')).toBeTruthy()
+    expect(screen.getAllByText('知是开发组').length).toBeGreaterThan(0)
+  })
+
+  it('所有者把团队交给一位成员，之后自己就能退出了', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    getMembers.mockResolvedValue({
+      data: {
+        members: [
+          { role: 'OWNER', user: { id: 42, username: 'me', nickname: '我', avatarId: 0 } },
+          { role: 'MEMBER', user: { id: 7, username: 'mate', nickname: '小王', avatarId: 0 } },
+        ],
+      },
+    })
+    transferOwner.mockResolvedValue({ data: { team: team('crew', '知是开发组', 'OWNER') } })
+    await mount('/inbox')
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await fireEvent.click(await screen.findByText('转让团队'))
+    await fireEvent.click(await screen.findByText('小王'))
+    expect(screen.queryByText('我')).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: '转让团队' }))
+    await waitFor(() => expect(transferOwner).toHaveBeenCalledWith(team('crew', '').id, 7))
+
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
+    expect(await screen.findByText('退出团队')).toBeTruthy()
   })
 
   it('取消确认就什么都不做', async () => {
@@ -197,6 +268,46 @@ describe('首页目录', () => {
     getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'MEMBER')] } })
     await mount('/teams/crew')
     await waitFor(() => expect(hrefs()).toContain('/teams/crew/credits'))
+  })
+
+  // 侧栏跨页面一直挂着：名单要是只在挂载时读一次，刚建的、刚被批准加入的团队
+  // 都得整页刷新才出现。
+  it('刚建好的团队，跳过去的那一下就出现在侧栏里', async () => {
+    await mount('/teams/explore')
+    await screen.findByText('知是开发组')
+    getMyTeams.mockResolvedValue({
+      data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('fresh', '刚建的团队', 'OWNER')] },
+    })
+    await mounted.router!.push('/teams/fresh')
+    expect(await screen.findByText('刚建的团队')).toBeTruthy()
+  })
+
+  it('在别处被批准加入的团队，回到这个窗口就出现在侧栏里', async () => {
+    await mount('/inbox')
+    await screen.findByText('知是开发组')
+    getMyTeams.mockResolvedValue({
+      data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('joined', '刚加入的团队')] },
+    })
+    window.dispatchEvent(new Event('focus'))
+    expect(await screen.findByText('刚加入的团队')).toBeTruthy()
+  })
+
+  it('退出团队时还在路上的那次重读，回来后不会把这个团队又画回去', async () => {
+    confirm.mockResolvedValue(true)
+    removeMember.mockResolvedValue({})
+    await mount('/inbox')
+    await screen.findByText('数据课第三组')
+    let answerOldRead: (value: unknown) => void = () => {}
+    getMyTeams.mockImplementationOnce(() => new Promise((resolve) => (answerOldRead = resolve)))
+    await mounted.router!.push('/teams/crew')
+
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 数据课第三组'), { clientX: 40, clientY: 80 })
+    await fireEvent.click(await screen.findByText('退出团队'))
+    await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
+
+    answerOldRead({ data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] } })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.queryByText('数据课第三组')).toBeNull()
   })
 
   it('空间点了就进那个空间', async () => {

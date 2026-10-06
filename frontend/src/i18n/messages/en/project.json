@@ -67,6 +67,11 @@
       "title": "Open site",
       "membersOnly": "Only project members can open this site. Sign in first",
       "opening": "Opening the site"
+    },
+    "docs": {
+      "failed": "Couldn't open the docs",
+      "title": "Open the docs",
+      "opening": "Opening the docs"
     }
   },
   "docs": {

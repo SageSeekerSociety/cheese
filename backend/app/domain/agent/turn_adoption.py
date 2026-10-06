@@ -20,10 +20,10 @@ from app.domain.agent.runtime import InProcessBroker
 
 
 async def open_turns_on(
-    session: AsyncSession, room_id: uuid.UUID, *, task_id: uuid.UUID | None
+    session: AsyncSession, conversation_id: uuid.UUID
 ) -> list[tuple[str, float, str | None]]:
-    """The delivered turns still open on the room's line, or the card's."""
-    return await AgentTurnRepository(session).open_on(room_id, task_id=task_id)
+    """The delivered turns still open in the conversation."""
+    return await AgentTurnRepository(session).open_on(conversation_id)
 
 
 def adopt(

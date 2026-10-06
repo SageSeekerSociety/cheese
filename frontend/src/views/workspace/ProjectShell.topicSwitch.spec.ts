@@ -51,6 +51,10 @@ const pendingB = vi.hoisted(() => ({
 }))
 
 // 聊天栏底部的技能提议卡也会读一次；这里没有提议。
+vi.mock('@/api/tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/tasks')>()),
+  listTaskProposals: vi.fn(async () => []),
+}))
 vi.mock('@/api/projectSkills', () => ({
   listProjectSkills: vi.fn(() => Promise.resolve({ data: [], total: 0 })),
   confirmProjectSkill: vi.fn(),

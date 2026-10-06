@@ -34,7 +34,7 @@ vi.mock('@/api', async (original) => ({
   // 所以这些跟「你要做什么」无关的请求也得在这里给出答案。
   getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })),
   getFeedbackMeta: vi.fn(async () => ({ is_admin: false, hot_min_items: 5 })),
-  getResourceLimits: vi.fn(async () => ({ max_machines_per_team: 0, max_concurrent_turns: 0 })),
+  getResourceLimits: vi.fn(async () => ({ max_concurrent_turns: 0 })),
 }))
 // 版本徽章自己会打 `/api/version`，而这里没有要证的东西在它身上；和
 // `App.navigation.spec.ts` / `App.keepAlive.spec.ts` 同一处理。

@@ -52,8 +52,9 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.main import app as fastapi_app
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.integration.test_archive_retires_storage import _seed_device
 from tests.pinned_claude import claude_binary
 from tests.support import wire
@@ -71,7 +72,7 @@ def ref(project, topic, agent=AGENT):
 async def place_session(db, topic, resource, target, *, agent=AGENT, machine="center"):
     """Put one session of this room on a machine, hands and process both."""
     await AgentSessionService(db).remember_place(
-        topic_id=topic,
+        conversation_id=topic,
         agent_handle=agent,
         work_lease=target,
         runtime_location={
@@ -153,6 +154,7 @@ def channel(client, monkeypatch):
         return {"generation": "fixture", "entries": {}}
 
     hub: Any = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
         is_online=lambda device: device in {"center", "executor"},
         call_executor=AsyncMock(side_effect=runner),
         exec=AsyncMock(
@@ -435,6 +437,40 @@ async def test_a_room_stays_writable_while_its_agent_is_starting(
 
 
 @pytest.mark.anyio
+async def test_a_task_s_session_is_handed_a_machine_path_its_credential_opens(
+    client, room, monkeypatch
+):
+    """A task's session takes its machine through the path its target names,
+    with the credential it was started with. That credential works the task's
+    conversation and no other, so a path naming the room was refused and the
+    task's session never reached a machine (dev, 2026-10-05)."""
+    project, topic = room
+    task = uuid.UUID(open_task(client, str(topic))["id"])
+    central = channel(client, monkeypatch)
+    session = SessionRef(project, topic, AGENT, harness="claude-code", task_id=task)
+
+    async def opened():
+        await sessions(central).ensure(session, system_prompt="System")
+        opening = central._ensure_screen.await_args.kwargs
+        async with client.test_factory() as db:
+            await TopicMemberService(db).ensure_agent_seat(
+                topic, opening["agent_handle"]
+            )
+            await db.commit()
+        return opening
+
+    opening = client.portal.call(opened)
+    target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
+    answer = client.post(
+        target["lease_path"],
+        headers={"X-Cheese-Token": opening["token"]},
+        json={"env": {}, "timeout": 1},
+    )
+
+    assert answer.status_code == 200, answer.text
+
+
+@pytest.mark.anyio
 async def test_room_starts_centrally_and_keeps_recorded_placement(
     client, room, monkeypatch
 ):
@@ -668,7 +704,7 @@ async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
         stored = await db.get(Topic, topic)
         resource = stored.resource_id or topic
         await AgentSessionService(db).remember_place(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle="pi-teammate",
             harness="pi",
             work_lease=None,
@@ -762,7 +798,7 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
 
     # A room's live session, as the controls see it: reading a file is the
     # executor's to answer, so it goes to the lease the platform recorded.
-    async def control_state(_topic):
+    async def control_state(_topic, agent=None):
         return {"id": "session-1", "tasks": {}}
 
     session = SimpleNamespace(
@@ -820,10 +856,10 @@ async def test_the_room_looks_at_its_session_and_never_steers_it(client, room):
     _, topic = room
     sent: list[dict] = []
 
-    async def control_state(_topic):
+    async def control_state(_topic, agent=None):
         return {"id": "session-1", "connected": True, "tasks": {}}
 
-    async def control(_topic, request):
+    async def control(_topic, request, agent=None):
         sent.append(request)
         return {"subtype": "success", "response": {"totalTokens": 1}}
 
@@ -868,6 +904,85 @@ async def test_the_room_looks_at_its_session_and_never_steers_it(client, room):
         )
         assert looked.status_code == 200, looked.text
         assert sent == [{"subtype": "get_context_usage"}]
+    finally:
+        fastapi_app.dependency_overrides.pop(get_chat_service, None)
+
+
+@pytest.mark.anyio
+async def test_a_room_with_two_live_teammates_lists_them_and_reads_the_one_named(
+    client, room
+):
+    """Two teammates working in one room are two sessions, not none. The room
+    is told both, and looks at the one it names; naming none picks nobody."""
+    from app.domain.agent.harness import SessionRef as RoomRef
+    from app.domain.agent.room.sessions import Live
+    from app.domain.agent.session_host.contract import SessionRef as HostRef
+
+    _, topic = room
+    topic = uuid.UUID(str(topic))
+    asked: list[tuple[str, dict]] = []
+
+    class Host:
+        async def control_state(self, ref):
+            return {"tasks": {f"{ref.home}-task": {"task_id": f"{ref.home}-task"}}}
+
+        async def control(self, ref, request):
+            asked.append((ref.home, request))
+            return {"subtype": "success", "response": {"from": ref.home}}
+
+    sessions = RoomSessions(SimpleNamespace(name="device"), CLAUDE_CODE, Host())
+    for handle, conversation in (("cheese-a", "conv-a"), ("cheese-b", "conv-b")):
+        ref = RoomRef(uuid.uuid4(), topic, handle, harness=CLAUDE_CODE)
+        sessions.live[(topic, handle)] = Live(
+            ref, HostRef(CLAUDE_CODE, f"host-{handle}"), handle, conversation
+        )
+    fastapi_app.dependency_overrides[get_chat_service] = lambda: SimpleNamespace(
+        session_controls=lambda _topic: sessions
+    )
+    path = f"/topics/{topic}/agent/control"
+    headers = session_auth_headers("alice")
+    try:
+        unnamed = client.get(path, headers=headers)
+        assert unnamed.status_code == 200, unnamed.text
+        state = unnamed.json()["data"]
+        assert state["id"] is None and state["connected"] is False
+        assert state["seats"] == [
+            {"agent": "cheese-a", "id": "conv-a"},
+            {"agent": "cheese-b", "id": "conv-b"},
+        ]
+
+        named = client.get(path, params={"agent": "cheese-b"}, headers=headers)
+        state = named.json()["data"]
+        assert (state["id"], state["connected"], state["agent"]) == (
+            "conv-b",
+            True,
+            "cheese-b",
+        )
+        assert list(state["tasks"]) == ["host-cheese-b-task"]
+
+        looked = client.post(
+            path,
+            headers=headers,
+            json={
+                "session_id": "conv-b",
+                "agent": "cheese-b",
+                "request": {"subtype": "get_context_usage"},
+            },
+        )
+        assert looked.status_code == 200, looked.text
+        assert asked == [("host-cheese-b", {"subtype": "get_context_usage"})]
+        # The other teammate's session is not the one named: refused, unasked.
+        crossed = client.post(
+            path,
+            headers=headers,
+            json={
+                "session_id": "conv-a",
+                "agent": "cheese-b",
+                "request": {"subtype": "get_context_usage"},
+            },
+        )
+        assert crossed.status_code == 409, crossed.text
+        assert len(asked) == 1
     finally:
         fastapi_app.dependency_overrides.pop(get_chat_service, None)
 

@@ -2,12 +2,10 @@
   "choice": {
     "device": "自有设备",
     "deviceOnFirstRun": "首次运行时选择在线设备",
-    "standard": "平台标准配置 · 首次运行时自动准备",
-    "cores": "{n} 核 CPU",
-    "memory": "{n} GB 内存",
-    "disk": "{n} GB 磁盘",
-    "cloudStandard": "云端 · 标准配置",
-    "cloudCustom": "云端 · 自定义配置",
+    "sandbox": "每个会话一个独立沙箱 · 首次运行时自动准备",
+    "vm": "每个会话一台独立的云虚拟机，可用 Docker 和 sudo · 首次运行时自动准备",
+    "cloud": "云端沙箱",
+    "cloudVm": "整台云虚拟机",
     "anyDevice": "自有设备 · 自动选择"
   },
   "startup": {

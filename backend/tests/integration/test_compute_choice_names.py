@@ -1,6 +1,6 @@
 """A compute choice names only a device; the platform's choices carry no name.
 
-The cloud (standard or with its own specs) and 「any online device」 used to be
+The cloud and 「any online device」 used to be
 stored with a Chinese label as their name, and every member of a project saw it
 whatever language their screen was in. They are identified by their fields now
 and each screen renders the label, so the API hands out no name for them — not
@@ -18,7 +18,7 @@ from app.domain.agent.compute_configs import ComputeChoice
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, session_auth_headers
 
-SPECS = {"device_id": None, "cores": None, "memory_mb": None, "disk_gb": None}
+SPECS = {"device_id": None}
 
 
 def _project(client, monkeypatch) -> str:
@@ -48,12 +48,11 @@ def test_the_cloud_is_handed_out_without_a_name(client, monkeypatch):
 
     # A client that still sends a label for the cloud does not get it stored.
     rid = _room(client, pid)
-    sent = {"name": "云端 · 自定义配置", "profile": "cloud", **SPECS, "cores": 8}
+    sent = {"name": "云端 · 标准配置", "profile": "cloud", **SPECS}
     response = client.put(f"/topics/{rid}/compute-profile", json={"choice": sent})
     assert response.status_code == 200, response.text
     choice = client.get(f"/topics/{rid}/compute-profile").json()["data"]["choice"]
-    assert choice["name"] is None
-    assert (choice["profile"], choice["cores"]) == ("cloud", 8)
+    assert (choice["profile"], choice["name"]) == ("cloud", None)
 
 
 def test_a_named_device_keeps_its_name_and_any_device_has_none():
@@ -69,11 +68,10 @@ def _choice(name: str | None, profile: str, device_id: str | None = None) -> dic
 
 def test_a_stored_label_on_a_platform_choice_is_not_handed_out(client, monkeypatch):
     pid = _project(client, monkeypatch)
-    cloud_room, custom_room = _room(client, pid), _room(client, pid)
+    cloud_room = _room(client, pid)
     legacy = {
         "project": _choice("自有设备 · 自动选择", "device"),
         cloud_room: _choice("云端 · 标准配置", "cloud"),
-        custom_room: {**_choice("云端 · 自定义配置", "cloud"), "cores": 8},
     }
 
     async def seed() -> None:
@@ -88,7 +86,7 @@ def test_a_stored_label_on_a_platform_choice_is_not_handed_out(client, monkeypat
                     "id": uuid.UUID(pid),
                 },
             )
-            for rid in (cloud_room, custom_room):
+            for rid in (cloud_room,):
                 await s.execute(
                     text(
                         "UPDATE topics SET compute_config = CAST(:v AS json) "
@@ -102,6 +100,6 @@ def test_a_stored_label_on_a_platform_choice_is_not_handed_out(client, monkeypat
 
     default = client.get(f"/projects/{pid}/compute-configs").json()["data"]["default"]
     assert (default["profile"], default["name"]) == ("device", None)
-    for rid in (cloud_room, custom_room):
+    for rid in (cloud_room,):
         choice = client.get(f"/topics/{rid}/compute-profile").json()["data"]["choice"]
         assert (choice["profile"], choice["name"]) == ("cloud", None)

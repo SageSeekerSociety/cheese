@@ -7,9 +7,16 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.conversation.services import of_room
 from app.domain.platform_stats.windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.models import ResourceUsage
+from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage
+
+#: Rows of model calls. A compute charge (``usage.compute``) is a usage row
+#: too, for its credits, but it has no tokens and is no call: every count of
+#: tokens, cost and calls below leaves it out, and only the credit reads of a
+#: team's spend take it in.
+MODEL_CALLS = ResourceUsage.route != COMPUTE_ROUTE
 
 
 def unpriced_tokens() -> Any:
@@ -43,7 +50,7 @@ class UsageRepository:
         self,
         *,
         project_id: uuid.UUID | None,
-        topic_id: uuid.UUID | None,
+        conversation_id: uuid.UUID | None,
         model: str,
         input_tokens: int,
         output_tokens: int,
@@ -74,13 +81,10 @@ class UsageRepository:
         Spend outside any project has no ``project_id`` and names, in
         ``user_id``, the person whose credits paid for it.
         """
-        # The ROOM's books. Every 分身 in a room spends through that room's one
-        # session, so there is no second meter to read: a per-card figure would
-        # be an invented split of one bill.
         row = ResourceUsage(
             project_id=project_id,
             user_id=user_id,
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             turn_id=turn_id,
             model=model,
             input_tokens=input_tokens,
@@ -135,7 +139,7 @@ class UsageRepository:
         )
         return {pid: float(spent or 0.0) for pid, spent in rows}
 
-    async def _agg(self, column, value) -> dict:
+    async def _agg(self, where) -> dict:
         # The public `turns` key is retained for wire compatibility, but its
         # number now means distinct originating human messages or platform work
         # ids, not intervals. One attributed unit can write several rows: the
@@ -153,7 +157,7 @@ class UsageRepository:
             attributed_work,
             func.coalesce(unattributed, 0),
             func.coalesce(unpriced, 0),
-        ).where(column == value)
+        ).where(where, MODEL_CALLS)
         row = (await self._session.execute(stmt)).one()
         return {
             "input_tokens": int(row[0]),
@@ -165,17 +169,12 @@ class UsageRepository:
         }
 
     async def for_topic(self, topic_id: uuid.UUID) -> dict:
-        """A room's TOTAL — its own main line and every thread dispatched in it.
-
-        Threads are included by construction rather than by a union: `add`
-        stores the room in `topic_id` whichever half of the place the spend
-        happened in, so this one predicate already reaches all of it.
-        """
-        return await self._agg(ResourceUsage.topic_id, topic_id)
+        """A room's TOTAL — its own conversation and every task dispatched in it."""
+        return await self._agg(of_room(ResourceUsage.conversation_id, topic_id))
 
     async def for_task(self, task_id: uuid.UUID) -> dict:
-        """One thread's own spend, and nothing of the room around it."""
-        return await self._agg(ResourceUsage.task_id, task_id)
+        """One task's own spend, and nothing of the room around it."""
+        return await self._agg(ResourceUsage.conversation_id == task_id)
 
     async def last_model_by_task(
         self, task_ids: list[uuid.UUID]
@@ -197,19 +196,21 @@ class UsageRepository:
             return {}
         rows = (
             await self._session.execute(
-                select(ResourceUsage.task_id, ResourceUsage.model)
+                select(ResourceUsage.conversation_id, ResourceUsage.model)
                 .where(
-                    ResourceUsage.task_id.in_(task_ids),
+                    ResourceUsage.conversation_id.in_(task_ids),
                     ResourceUsage.model != "",
                 )
-                .distinct(ResourceUsage.task_id)
-                .order_by(ResourceUsage.task_id, ResourceUsage.created_at.desc())
+                .distinct(ResourceUsage.conversation_id)
+                .order_by(
+                    ResourceUsage.conversation_id, ResourceUsage.created_at.desc()
+                )
             )
         ).all()
         return {task_id: model for task_id, model in rows if task_id is not None}
 
     async def for_project(self, project_id: uuid.UUID) -> dict:
-        return await self._agg(ResourceUsage.project_id, project_id)
+        return await self._agg(ResourceUsage.project_id == project_id)
 
     async def platform_totals(self, *, since: datetime, until: datetime) -> dict:
         """全平台在窗口内的用量总量 —— 看板「用量」那一块的头三个数。
@@ -233,6 +234,7 @@ class UsageRepository:
         ).where(
             ResourceUsage.created_at >= since,
             ResourceUsage.created_at < until,
+            MODEL_CALLS,
         )
         row = (await self._session.execute(stmt)).one()
         return {
@@ -262,6 +264,7 @@ class UsageRepository:
             .where(
                 ResourceUsage.created_at >= since,
                 ResourceUsage.created_at < until,
+                MODEL_CALLS,
             )
             .group_by(day)
             .order_by(day)
@@ -302,6 +305,7 @@ class UsageRepository:
             .where(
                 ResourceUsage.created_at >= since,
                 ResourceUsage.created_at < until,
+                MODEL_CALLS,
             )
             .group_by(ResourceUsage.model)
             .order_by(func.sum(ResourceUsage.total_tokens).desc())
@@ -337,6 +341,7 @@ class UsageRepository:
             .where(
                 ResourceUsage.created_at >= since,
                 ResourceUsage.created_at < until,
+                MODEL_CALLS,
             )
             .group_by(ResourceUsage.route)
             .order_by(func.sum(ResourceUsage.total_tokens).desc())
@@ -376,6 +381,7 @@ class UsageRepository:
             .where(
                 ResourceUsage.created_at >= since,
                 ResourceUsage.created_at < until,
+                MODEL_CALLS,
             )
             .group_by(ResourceUsage.project_id, Project.name)
             .order_by(func.sum(ResourceUsage.total_tokens).desc())

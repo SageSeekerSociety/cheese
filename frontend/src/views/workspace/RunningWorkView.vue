@@ -4,7 +4,7 @@
 // 它以前是一张表，答的是「有哪些活、它们各是什么状态」。板答的是另一个问题：现在
 // 轮到谁。一个人早上打开界面真正想知道的是后者——哪几件在等我、哪几件平台自己在
 // 推、哪几件还在干。所以列不是状态的分组，是「下一步在谁手上」的分组：同一个客观
-// 事实（快检红了）在平台自己修的时候落「交付中」，在等人拍板的时候落「等你」。
+// 事实（快检红了）在平台自己修的时候落「检查中」，在等人拍板的时候落「等你」。
 //
 // 房间总览那一段答的是「这个房间在干什么」，而一个项目有上百个房间：不打开每个房
 // 间就不知道现在什么在跑。四个槽位一个房间的额度也只有在这里才看得出来撞没撞上
@@ -12,24 +12,23 @@
 // 到别处去了」。这两条理由是这一页存在的全部原因，改成板不能把它们弄丢。
 //
 // 屏幕上每一个状态词都是后端算好的 `presentation.phrase`，这里一个都不推。
-import type { BoardColumn, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { BoardColumn, RoomTask, Topic } from '@/cx_types'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { avatarColor, avatarInitial } from '@/utils/avatar'
-import { getAvatarUrl } from '@/utils/materials'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import VirtualList from '@/components/common/VirtualList.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
-import { memberName } from '@/lib/agentNames'
 import { isAgentHandle } from '@/lib/authorship'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
 import { readProjectTasks } from '@/lib/projectTasks'
@@ -38,6 +37,7 @@ import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import BoardFind from '@/views/workspace/BoardFind.vue'
+import { useBoardMembers } from '@/views/workspace/useBoardMembers'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -53,7 +53,10 @@ const rows = ref<RoomTask[]>([])
  *  项目什么都没交出去」。和 `countsPending` 是同一条规矩。 */
 const madeCount = ref<number | null>(null)
 const loading = ref(false)
-const errorMsg = ref<string | null>(null)
+// 整块板没读出来时：一句「加载失败」（标题）＋服务端那句原因，就地替换板体，
+// 带一条重试的路（docs/design-system.md §3.10）。不再是裸灰字 + 自制按钮。
+const failed = ref(false)
+const errorReason = ref('')
 // 已完成折起来。板面留给还需要人看的东西，但要说得出有多少件——悄悄不显示会让人
 // 以为这个项目从来没交付过什么。
 const showDone = ref(false)
@@ -71,7 +74,7 @@ const REFRESH_MS = 15_000
 
 /** 重拉。
  *
- *  `silent` 的一次不碰 `loading`、不清 `rows`、失败也不写 `errorMsg` —— 正在看的
+ *  `silent` 的一次不碰 `loading`、不清 `rows`、失败也不写 `failed` —— 正在看的
  *  那几列因此不会闪回骨架，也不会因为一次网络抖动整块变成「加载失败」。同
  *  `TopicAcceptCard.vue` 的 `loadAcceptCard(silent)`，那里的注释解释了为什么这两
  *  种加载必须分开。 */
@@ -83,7 +86,8 @@ async function load(silent = false) {
   inFlight = true
   if (!silent) {
     loading.value = true
-    errorMsg.value = null
+    failed.value = false
+    errorReason.value = ''
   }
   try {
     // 每次都真读（板是进项目的第一屏），只是和同一刻别处发出的那一次合并。
@@ -91,10 +95,14 @@ async function load(silent = false) {
     if (props.projectId === pid) {
       rows.value = payload.data
       // 上一次前台加载失败过、这一次悄悄成功了：把错误收掉，人不用自己点重试。
-      errorMsg.value = null
+      failed.value = false
+      errorReason.value = ''
     }
-  } catch {
-    if (!silent && props.projectId === pid) errorMsg.value = t('work.board.loadFailed')
+  } catch (e) {
+    if (!silent && props.projectId === pid) {
+      failed.value = true
+      errorReason.value = e instanceof Error ? e.message : ''
+    }
   } finally {
     inFlight = false
     if (!silent && props.projectId === pid) loading.value = false
@@ -135,35 +143,13 @@ const roomTitle = computed(() => {
   return (roomId: string) => byId.get(roomId) ?? t('work.board.unknownRoom')
 })
 
-// 「谁在做」是一个人，不是一个 handle。名册里有昵称和他自己挑的头像，卡上就该是
-// 那两样——`n1ctheboy` 这种串认得出来的只有他本人。
-const memberByHandle = computed(() => new Map((store.members as ProjectMemberRow[]).map((m) => [m.user_handle, m])))
-
-/** 名册上的昵称；名册里没有这个 handle 就把 handle 原样显示出来（同
- *  `ChatPanel.vue` 的 `displayName`）—— 退回空白等于把「这条活有主」也一起抹掉。 */
-function ownerName(handle?: string | null): string {
-  if (!handle) return ''
-  return memberName(memberByHandle.value.get(handle)) || handle
-}
-
-// 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
-const avatarBroken = ref<Set<string>>(new Set())
-function avatarSrc(handle?: string | null): string | null {
-  if (!handle || avatarBroken.value.has(handle)) return null
-  const id = memberByHandle.value.get(handle)?.avatar_id
-  // 名册上没这个人、或这行没有头像时返回 null：宁可留一个按 handle 哈希、认得出
-  // 是谁的色块，也不要 getAvatarUrl(undefined) 给所有没挑过头像的人配同一张脸。
-  return id == null ? null : getAvatarUrl(id)
-}
-function onAvatarError(handle?: string | null): void {
-  if (!handle || avatarBroken.value.has(handle)) return
-  avatarBroken.value = new Set(avatarBroken.value).add(handle)
-}
+// 卡上「谁在做」那一小块的名册信息（昵称、头像、破图退回）分在 useBoardMembers 里。
+const { ownerName, avatarSrc, onAvatarError } = useBoardMembers()
 
 /** 这会儿真的在跑的那些。
  *
  *  `running` 是后端 `presentation.phrase` 的码，这里只是认它，没有在前端另推一次状
- *  态：色点是**列级**的，所以「施工中」那一列里在跑的和排队的原来长得一模一样，
+ *  态：色点是**列级**的，所以「进行中」那一列里在跑的和排队的原来长得一模一样，
  *  而这两件事对看的人不是一回事。 */
 function isRunning(row: RoomTask): boolean {
   return row.presentation.phrase === 'running'
@@ -201,6 +187,10 @@ watch(
 )
 const findNeedle = computed(() => find.value.trim().toLocaleLowerCase())
 const filtered = computed(() => mine.value || !!findNeedle.value)
+// 「筛选空」那句下面的一键清除：清掉搜索框里的词，内容自己回来（docs/design-system.md §8.1）。
+function clearFind() {
+  find.value = ''
+}
 
 const visibleRows = computed(() => {
   let list = boardRows.value
@@ -249,8 +239,7 @@ function countLabel(column: BoardColumn): string {
 /** 一列空着的时候，那一列自己说它空。
  *
  *  这句话是第一屏的主要内容而不是收尾：一个项目几百条活里同时活着的往往只有几
- *  条，三列全空、底下一条「已完成 292」才是常态。所以「施工中」那一列还要多说一
- *  句下一步——一块空板本身说不出该做什么。 */
+ *  条，四列全空、底下一条「已完成 292」才是常态。 */
 function emptyLine(column: BoardColumn): string {
   if (findNeedle.value) return t('work.board.findNone', { text: find.value.trim() })
   if (mine.value) return t('work.board.noneMine')
@@ -259,7 +248,7 @@ function emptyLine(column: BoardColumn): string {
 
 /** 这个项目还什么都没有：没有活，也没有一个话题。
  *
- *  和「三列都空」不是一回事。三列空是常态——活干完了、都归到已完成里去了，板还是
+ *  和「四列都空」不是一回事。四列空是常态——活干完了、都归到已完成里去了，板还是
  *  在答「什么在跑」这个问题，答案是「没有」。而一个刚建出来的项目连这个问题都还
  *  不成立：它需要的是一个能说话的地方，不是一张说「暂无」的板。
  *
@@ -299,7 +288,7 @@ const doneRows = computed(() => inColumn('done'))
 const doneTotal = computed(() => totalByColumn.value.get('done')?.length ?? 0)
 
 /** 顶上那行统计。以前是「N 件在跑 · N 件排队 · N 件等验收」，现在用板自己的词——
- *  三列的计数各自也在列头上，这一行是把它们和折起来的「已完成」并成一句。
+ *  四列的计数各自也在列头上，这一行是把它们和折起来的「已完成」并成一句。
  *
  *  数的是整块板，不是筛过的那一份：这一行说的是「这个项目有多少活」，筛不筛是看
  *  的人此刻的取景，两件事。列头上那个「3 / 12」才是取景的结果。 */
@@ -311,13 +300,11 @@ const tally = computed(() => {
   ].filter((item) => item.n > 0)
 })
 
-// 打开一张卡 = 打开**它所在的房间**，然后在总览那一格钻进这张卡。一件活不是
-// 地点：做它的分身住在房间的会话里，没有自己的地址。
+// 打开一个任务 = 去那个任务自己的页面。
 function openTask(task: RoomTask) {
   void router.push({
-    name: 'workspace-topic',
-    params: { projectId: props.projectId, topicId: task.room_id },
-    query: { tab: 'overview', card: task.id },
+    name: 'workspace-task',
+    params: { projectId: props.projectId, topicId: task.room_id, taskId: task.id },
   })
 }
 
@@ -340,14 +327,16 @@ function taskRowKey(row: unknown): string {
             <span>{{ item.label }} {{ item.n }}</span>
           </template>
         </template>
-        <!-- 正文已经整屏说了「暂无任务」时，这里不再说第二遍。 -->
-        <template v-else-if="!loading && !nothingYet">{{ t('work.room.noTasks') }}</template>
+        <!-- When the body already says "no tasks" full-screen, do not repeat it
+             here; and when loading failed, never print "no tasks" in this summary
+             either — that is exactly failure degrading into an empty state. -->
+        <template v-else-if="!loading && !nothingYet && !failed">{{ t('work.room.noTasks') }}</template>
       </span>
     </template>
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
     <template #controls>
-      <BoardFind v-if="!nothingYet && !errorMsg" v-model="find" />
+      <BoardFind v-if="!nothingYet && !failed" v-model="find" />
       <button
         v-if="mineHandle"
         type="button"
@@ -369,10 +358,13 @@ function taskRowKey(row: unknown): string {
       <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
       <NeedsYou :project-id="projectId" />
 
-      <div v-if="errorMsg" class="pa-6 t-body c-muted">
-        {{ errorMsg }}
-        <BaseButton kind="secondary" class="ms-2" size="sm" @click="load()">{{ t('work.board.retry') }}</BaseButton>
-      </div>
+      <BaseLoadError
+        v-if="failed"
+        class="pa-6"
+        :title="t('work.board.loadFailed')"
+        :error="errorReason || null"
+        @retry="load()"
+      />
 
       <template v-else-if="nothingYet">
         <!-- 刚建出来的项目落在这儿时，几列空格子是它的整个第一屏。把那一屏换成
@@ -403,13 +395,13 @@ function taskRowKey(row: unknown): string {
                 <template v-else>{{ countLabel(col.key) }}</template>
               </span>
             </header>
-            <!-- 活还在路上时，列已经在这儿了：列本身是固定的（三列 + 列头），会变的
+            <!-- 活还在路上时，列已经在这儿了：列本身是固定的（四列 + 列头），会变的
                只有里面装什么。所以加载态画在列**里面**，板的框架一开始就是最终的
                样子，卡到齐的那一刻没有任何东西挪位置。定时重拉走的是静默那一路，
                它不碰 loading，所以骨架不会在人看着的时候再回来一次。 -->
             <LoadingSkeleton v-if="loading && !rows.length" variant="card" :rows="2" class="board-col__skel" />
             <!-- 这块板每 15 秒自己重拉一次，所以卡是会在没人碰它的时候变的：一条活
-               从「施工中」挪进「待处理」，那一刻的画面是这一页唯一一处不由点击引
+               从「进行中」挪进「待处理」，那一刻的画面是这一页唯一一处不由点击引
                起的变化，而它恰好是最要紧的那一种——轮到你了。所以卡的进出走过渡，
                而不是原地换一批。同一列里剩下的那几张跟着 FLIP 补位。
                跨列不连着动：两列各是一个能独立滚动的容器，一张卡跨过去在前一列是
@@ -417,7 +409,12 @@ function taskRowKey(row: unknown): string {
             <TransitionGroup v-else tag="ul" name="board-card" class="board-col__list">
               <!-- 空列自己说它空，到此为止（设计规范 §8.1）。 -->
               <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
-                {{ emptyLine(col.key) }}
+                <span>{{ emptyLine(col.key) }}</span>
+                <!-- Empty because of the filter: say the search box filtered it
+                     out, then offer a one-click clear -->
+                <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
+                  {{ t('work.board.clearFilter') }}
+                </BaseButton>
               </li>
               <li v-for="row in inColumn(col.key)" :key="row.id">
                 <button type="button" class="board-card" @click="openTask(row)">
@@ -489,8 +486,8 @@ function taskRowKey(row: unknown): string {
             </TransitionGroup>
           </section>
 
-          <!-- 做出了什么：板上最右边那一列。三列从左到右是一条流水线（施工中 → 交付
-             中 → 待处理），产物是这条流水线吐出来的东西，接在后面。它不摞在板上面
+          <!-- 做出了什么：板上最右边那一列。四列从左到右是一条流水线（未开始 → 进行
+             中 → 检查中 → 待处理），产物是这条流水线吐出来的东西，接在后面。它不摞在板上面
              是因为那要占竖直高度，有几项就占多高，而这一页不滚——板会被挤没。空的
              时候这一列留着：一列凭空消失会让整个网格错位。 -->
           <section class="board-col board-col--made">
@@ -521,7 +518,10 @@ function taskRowKey(row: unknown): string {
                semantics in both paths. -->
           <ul v-if="showDone" ref="doneScroll" class="board__done-list" role="list">
             <li v-if="!doneRows.length" class="board-col__empty t-body">
-              {{ findNeedle ? t('work.board.findNone', { text: find.trim() }) : t('work.board.noneMine') }}
+              <span>{{ findNeedle ? t('work.board.findNone', { text: find.trim() }) : t('work.board.noneMine') }}</span>
+              <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
+                {{ t('work.board.clearFilter') }}
+              </BaseButton>
             </li>
             <VirtualList
               :items="doneRows"
@@ -631,7 +631,7 @@ function taskRowKey(row: unknown): string {
 /* 并排的纵向卡片流。min() 是让轨道不比容纳它的那一列更宽的那一半：光写
    minmax(260px, …) 的话 260px 是个下限，网格在一个更窄的容器里也照守，于是板横着
    溢出而不是重排 —— main 上 #658 就是修的这个。
-   窄的时候（这一格 < 1000px）：三列任务照旧自动换行，而「做出了什么」跨满整行、
+   窄的时候（这一格 < 1040px）：四列任务照旧自动换行，而「做出了什么」跨满整行、
    排到最上面，只列前三项，其余的收着（ArtifactManifest 里的「展开其余 N 项」）。
    它在窄屏上只能摞在上面，但摞的是一个**有上限**的高度，不是「有几项就多高」；
    里面不再套一层滚动，三项都完整露出来。 */
@@ -650,17 +650,10 @@ function taskRowKey(row: unknown): string {
   order: -1;
   grid-column: 1 / -1;
 }
-/* 800–1000 这一档板仍然钉在这一格的高度里：人把产物全展开时，这一块封在半屏以内
-   自己滚，板不至于被挤没。更窄时整页一起滚，不用封。 */
-@container (800px <= width < 1000px) {
-  .board__cols > .board-col--made {
-    max-height: 50vh;
-  }
-}
-/* 三列任务排不下一行（< 800 = 3×260 + 2×10）时，列会折成两行、三行。上面那两条
-   行轨只管得了前两行：第二行吃掉剩下的全部高度，下一列被推到一屏空白之后。这时
-   不再把板钉在这一格的高度里各列自己滚，而是每列有多高画多高，整页一起滚。 */
-@container (width < 800px) {
+/* 四列任务和产物排不下一行（< 1040，见下）时，列会折成两行、三行。上面那两条行
+   轨只管得了前两行：第二行吃掉剩下的全部高度，下一列被推到一屏空白之后。这时不
+   再把板钉在这一格的高度里各列自己滚，而是每列有多高画多高，整页一起滚。 */
+@container (width < 1040px) {
   .board__cols {
     flex: none;
     grid-template-rows: none;
@@ -670,11 +663,11 @@ function taskRowKey(row: unknown): string {
     max-height: none;
   }
 }
-/* 够宽就并排成四列。三列任务各 240 起，产物那一列只放名字和第几版，220 够用：
-   240×3 + 220 + 10×3 = 970，所以 1000 是这条线该划的地方。 */
-@container (min-width: 1000px) {
+/* 够宽就并排成五列。四列任务各 200 起，产物那一列只放名字和第几版，200 够用：
+   200×4 + 200 + 10×4 = 1040，所以 1040 是这条线该划的地方。 */
+@container (min-width: 1040px) {
   .board__cols {
-    grid-template-columns: repeat(3, minmax(240px, 1fr)) minmax(220px, 0.8fr);
+    grid-template-columns: repeat(4, minmax(200px, 1fr)) minmax(200px, 0.8fr);
     grid-template-rows: minmax(0, 1fr);
   }
   .board__cols > .board-col--made {
@@ -683,21 +676,21 @@ function taskRowKey(row: unknown): string {
     max-height: none;
   }
 }
-/* 再宽一档，四列本身封顶居中：列再多就没有了（「该谁动」只有那三档，产物只有
-   一栏），而 1920/2560 上四列各拉到 500+ 只是把卡片摊薄、把一行文字拉长。
-   1360 = 三条 350 的任务列 + 一条 280 的产物列 + 3×10 的列间距，和 1000 那一档
+/* 再宽一档，五列本身封顶居中：列再多就没有了（「该谁动」只有那四档，产物只有
+   一栏），而 1920/2560 上各列拉到 400+ 只是把卡片摊薄、把一行文字拉长。
+   1440 = 四条 300 的任务列 + 一条 200 的产物列 + 4×10 的列间距，和 1040 那一档
    同一种算法，到这儿列宽就停在读得动的尺寸上，两侧留白。 */
-@container (min-width: 1360px) {
+@container (min-width: 1440px) {
   .board__cols {
     width: 100%;
-    max-width: 1360px;
+    max-width: 1440px;
     margin-inline: auto;
   }
 }
-/* 三列「该谁动」是 --fill 的泳道，卡片白底描边：卡比泳道亮，列和卡一眼分得开。
+/* 四列「该谁动」是 --fill 的泳道，卡片白底描边：卡比泳道亮，列和卡一眼分得开。
    内容区本身是 surface，所以列不能再是白框。
-   「做出了什么」也是同一种泳道（它原来只有一条分隔线、没有底色，四列并排时最右边
-   那列看着像没画完）；它装的不是卡片而是名字 + 版本，列头那一行的语法仍和三列共用。 */
+   「做出了什么」也是同一种泳道（它原来只有一条分隔线、没有底色，并排时最右边
+   那列看着像没画完）；它装的不是卡片而是名字 + 版本，列头那一行的语法仍和四列共用。 */
 .board-col {
   display: flex;
   flex-direction: column;

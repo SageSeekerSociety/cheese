@@ -60,8 +60,14 @@ def mint_scoped_token(
     agent_handle: str | None = None,
     access_scope: Literal["topic", "project"] = "topic",
     resource_id: str | None = None,
+    document_id: str | None = None,
 ) -> str:
-    """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
+    """Mint an HMAC token scoped to a project (+ optional conversation), expiring
+    in ttl_s.
+
+    ``topic_id`` (claim ``t``) names the conversation: a room, or one of its
+    tasks. A task's session holds its task's id there, and so acts in that task
+    and in no other conversation.
 
     The token also names WHO acts with it (claim ``a``): ``agent_handle``, the
     handle of the agent this turn runs as. Without it a token said only "which
@@ -104,6 +110,10 @@ def mint_scoped_token(
         payload["a"] = actor
     if resource_id is not None:
         payload["r"] = resource_id
+    # A document question's session: the project's own agent may answer it in a
+    # room it does not sit in (`llm_proxy`).
+    if document_id is not None:
+        payload["d"] = document_id
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{body}.{_sign(body)}"

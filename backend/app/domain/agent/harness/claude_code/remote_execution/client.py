@@ -1063,9 +1063,9 @@ def _deliver_stop(target, command_id, pipe):
     client = RemoteClient(_current_target(target))
 
     def send(signalled):
-        deadline = time.monotonic() + 600
+        started = time.monotonic()
         nonlocal client
-        while time.monotonic() < deadline:
+        while time.monotonic() < started + 600:
             try:
                 return client.call(
                     "control",
@@ -1076,9 +1076,9 @@ def _deliver_stop(target, command_id, pipe):
                         "signal": int(signalled),
                     },
                 )
-            except Exception:  # noqa: BLE001 — the link may be down; retry
+            except Exception:  # noqa: BLE001 — link down or refused: retry, backing off
                 client = RemoteClient(_current_target(target))
-                time.sleep(1)
+                time.sleep(min(30.0, max(1.0, time.monotonic() - started)))
         return {}
 
     send(number)
@@ -1541,9 +1541,9 @@ def transport(config, target_path):
     # 命令调用会一个接一个各撞一次。第一次撞上之后，余下的当场答同一句话：机器够不
     # 着这件事第一次就问清楚了，后面每一次都是在重问。
     #
-    # 平台工具从会话直接打后端，不经过这台机器；只有要机器上一份东西的那两样
-    # （`cheese_doc_set` 读文件、`cheese_accept_request` 推提交）走这个出口，于是
-    # 也吃这个闸：当场说够不着，而不是等超时。
+    # 平台工具从会话直接打后端，不经过这台机器；只有要机器的那一样
+    # （`cheese_accept_request` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
+    # 而不是等超时。
     #
     # 再试一次的那个口子留着，因为「够不着」是这一刻的事实，不是这一场会话的判决：
     # 一次 502 之后机器回来了，而闸没有第二个开关。

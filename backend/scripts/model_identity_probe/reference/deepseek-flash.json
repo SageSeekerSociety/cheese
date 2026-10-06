@@ -1,0 +1,121 @@
+{
+  "format_version": 1,
+  "protocol": "one-token/v1",
+  "model": "deepseek-flash",
+  "source": "gateway:deepseek-flash",
+  "collected_at": "2026-10-05T10:06:26Z",
+  "samples_per_cell": 25,
+  "cells": {
+    "coin-flip:en": {
+      "counts": {
+        "heads": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-animal:en": {
+      "counts": {
+        "cat": 6,
+        "elephant": 14,
+        "dog": 2,
+        "owl": 3
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-color:en": {
+      "counts": {
+        "blue": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-color:zh": {
+      "counts": {
+        "紫": 3,
+        "蓝": 20,
+        "青": 1,
+        "绿": 1
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-letter:en": {
+      "counts": {
+        "q": 15,
+        "k": 8,
+        "j": 1,
+        "g": 1
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-100:en": {
+      "counts": {
+        "42": 20,
+        "72": 2,
+        "47": 2,
+        "23": 1
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-100:zh": {
+      "counts": {
+        "37": 5,
+        "42": 11,
+        "73": 9
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    },
+    "random-number-1-10:en": {
+      "counts": {
+        "7": 25
+      },
+      "valid": 25,
+      "invalid": 0,
+      "refusal": 0,
+      "empty": 0,
+      "error": 0
+    }
+  },
+  "tokenizer": {
+    "base_input_tokens": 13,
+    "deltas": {
+      "latin": 9,
+      "chinese": 11,
+      "japanese": 13,
+      "korean": 16,
+      "russian": 12,
+      "emoji": 16,
+      "code": 18,
+      "unicode-mix": 14,
+      "digits": 14,
+      "whitespace": 6,
+      "long-latin": 40
+    }
+  },
+  "notes": "protocol=one-token/v1 preset=standard temperature=1.0 max_tokens=16 reasoning=anthropic-thinking"
+}

@@ -3,7 +3,6 @@
 import type {
   AcceptCard,
   AgentConfiguration,
-  AgentControlState,
   AgentType,
   ApiEnvelope,
   Block,
@@ -55,7 +54,6 @@ import type {
   ReactionAgg,
   RoomTask,
   Topic,
-  TopicComputeProfile,
   TopicMemberRow,
   TopicProgress,
   TopicWorkSummary,
@@ -67,6 +65,7 @@ import type {
 } from './cx_types'
 import type { DocComment } from './lib/docThreadTypes'
 import type { AgentFieldChoice } from './lib/modelChoices'
+import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from './types/compute'
 import type { SitePage } from './types/site'
 
 import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
@@ -604,11 +603,9 @@ export function unarchiveTopic(topicId: string): Promise<Topic> {
   })
 }
 
-// 把一条消息升级成它自己的地点 (eval A1)。`blockId` 是那条消息的 block id。
-// 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
-// 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
-/** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
- *  私聊里的变成一个新房间（回来的是 Topic）。升级的人由会话认，不由请求体说。 */
+/** 把一条消息转为任务。房间里的消息变成这个房间的一个任务（回来的是 RoomTask，
+ *  点的人是负责人）；私聊里的变成一个新房间（回来的是 Topic）——私聊不在话题树
+ *  里，任务挂在那儿没人打得开。升级的人由会话认，不由请求体说。 */
 export function upgradeBlock(blockId: string): Promise<Topic | RoomTask> {
   return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
@@ -635,10 +632,8 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
 
-// MicroCloud machines are billed/audited through one project but enroll into that
-// project's team compute pool. The browser never receives provider credentials.
+// Creation defaults, available before a project exists.
 export interface ResourceLimits {
-  max_machines_per_team: number
   max_concurrent_turns: number
 }
 
@@ -646,53 +641,8 @@ export function getResourceLimits(): Promise<ResourceLimits> {
   return request('/projects/resource-limits')
 }
 
-export interface MachineQuota {
-  team_id: number
-  used: number
-  limit: number
-  project_used: number
-}
-
-export interface TeamResourceQuotas {
-  team_id: number
-  machines: { used: number; limit: number }
-  projects: {
-    id: string
-    name: string
-    machines_used: number
-  }[]
-}
-
-export function getTeamResourceQuotas(teamId: number): Promise<TeamResourceQuotas> {
-  return request(`/teams/${teamId}/resource-quotas`)
-}
-
-export function listProjectMachines(
-  projectId: string
-): Promise<ListPayload<import('./cx_types').ProjectMachine> & { quota: MachineQuota }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines`)
-}
-
-export function deleteProjectMachine(
-  projectId: string,
-  machineId: string
-): Promise<import('./cx_types').ProjectMachine | null> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines/${encodeURIComponent(machineId)}`, {
-    method: 'DELETE',
-  })
-}
-
-export function changeProjectMachinePower(
-  projectId: string,
-  machineId: string,
-  operation: 'suspend' | 'resume'
-): Promise<import('./cx_types').ProjectMachine> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines/${encodeURIComponent(machineId)}/${operation}`, {
-    method: 'POST',
-  })
-}
-
 // 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
+// A task's id: that task's own work computer.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
@@ -706,14 +656,14 @@ export function listDeviceSessions(
   return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 
-export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
+export function getProjectComputeConfigs(projectId: string): Promise<ProjectComputeConfigs> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`)
 }
 
 export function saveProjectComputeConfigs(
   projectId: string,
-  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default'>
-): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default'>> {
+  configs: Pick<ProjectComputeConfigs, 'default'>
+): Promise<Pick<ProjectComputeConfigs, 'default'>> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`, {
     method: 'PUT',
     body: JSON.stringify(configs),
@@ -729,21 +679,25 @@ export interface ComputeProposal {
   content: string
 }
 
-// 一个话题一个容器：改的是整个房间，房间里每一条会话都跟着搬。平台先在各自离开
-// 的那台上把改动推上去，推不上去就整个不换。`abandonUnpushed` 只在原来那台够不着
-// 时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409
-// SessionWorking）。
+// 一个话题一个容器：改的是整个房间，每条会话都跟着搬，先推送，推不上去就整个不换。`abandonUnpushed` 只在原来那台
+// 够不着时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409 SessionWorking）；`visibility` 是房间在
+// 点名那台上能看到什么，不给就保持原样，新绑上的是隔离环境。
 export function setTopicComputeChoice(
   topicId: string,
-  choice: import('./cx_types').ComputeChoice,
-  options: { abandonUnpushed?: boolean; ifIdle?: boolean } = {}
-): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
+  choice: ComputeChoice,
+  options: {
+    abandonUnpushed?: boolean
+    ifIdle?: boolean
+    visibility?: 'host' | 'isolated'
+  } = {}
+): Promise<{ choice: ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({
       choice,
       ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
       ...(options.ifIdle ? { if_idle: true } : {}),
+      ...(options.visibility ? { visibility: options.visibility } : {}),
     }),
   })
 }
@@ -1430,11 +1384,10 @@ export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
 // Read on topic open — between turns there is no WS stream to carry it, and
 // "做到哪了" has to be visible without summoning anyone. `items` is [] for a
-// topic that never had a checklist. With `taskId`, that card's list — the one
-// its 分身 wrote — instead of the room's.
-export function getProgress(topicId: string, taskId?: string): Promise<TopicProgress> {
-  const q = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
-  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
+// topic that never had a checklist. A task's id reads the list its own session
+// wrote.
+export function getProgress(topicId: string): Promise<TopicProgress> {
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
 }
 
 // A document's top-level blocks (heading/paragraph/list/…), in order: which
@@ -1517,32 +1470,10 @@ export function getStepOutput(topicId: string, blockId: string): Promise<{ outpu
   )
 }
 
+export type { AgentControlResult, AgentControlState } from './api/agentControl'
+export { getAgentControl, sendAgentControl } from './api/agentControl'
 export { requestPreviewSession } from './api/preview'
 export type { PreviewSelection, PreviewSession } from './types/preview'
-
-export interface AgentControlResult {
-  request_id: string
-  status: string
-  result: { response: { subtype: string; error?: string; response?: Record<string, unknown> } } | null
-}
-
-export type { AgentControlState }
-
-export function getAgentControl(topicId: string) {
-  return request<AgentControlState>(`/topics/${encodeURIComponent(topicId)}/agent/control`)
-}
-
-export function sendAgentControl(
-  topicId: string,
-  sessionId: string,
-  control: Record<string, unknown>,
-  requestId = crypto.randomUUID()
-) {
-  return request<AgentControlResult>(`/topics/${encodeURIComponent(topicId)}/agent/control`, {
-    method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, request_id: requestId, request: control }),
-  })
-}
 
 export function getGitLog(
   projectId: string,
@@ -1668,18 +1599,15 @@ export function getAppVersion(): Promise<AppVersion> {
 // ---- 采纳卡 / 验收 (eval C5/A3) ----
 
 // Accept cards for a topic, newest first.
-export function getAcceptCards(topicId: string, taskId?: string | null): Promise<ListPayload<AcceptCard>> {
-  return request<ListPayload<AcceptCard>>(
-    `/topics/${encodeURIComponent(topicId)}/accept-card${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
-  )
+// A task's id lists that task's cards; a room's, every card of its tasks.
+export function getAcceptCards(topicId: string): Promise<ListPayload<AcceptCard>> {
+  return request<ListPayload<AcceptCard>>(`/topics/${encodeURIComponent(topicId)}/accept-card`)
 }
 
 // 采纳 PR 化 (#188 §5.1): live CI state of the newest card's PR. Safe to poll —
 // answers {available:false} when the topic has no PR-riding card.
-export function getPrChecks(topicId: string, taskId?: string | null): Promise<PrChecks> {
-  return request<PrChecks>(
-    `/topics/${encodeURIComponent(topicId)}/pr-checks${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
-  )
+export function getPrChecks(topicId: string): Promise<PrChecks> {
+  return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
 }
 
 /** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
@@ -1816,14 +1744,13 @@ export function inviteExternalMember(projectId: string, handle: string): Promise
 }
 
 export interface LookedUpUser {
+  id: number // what a team invitation names the person by
   handle: string
   name: string
   avatar_id: number | null
 }
 
-// 按用户名或邮箱**精确**找一个人（像飞书加外部联系人那样）：只认完整的用户名或邮箱，
-// 不做模糊搜索——邀请是把人放进项目的动作，「搜出来一串相似的名字再挑」正是加错人
-// 的来路。找不到是 404。
+// 按完整的用户名或邮箱**精确**找一个人，不做模糊搜索（为什么见 useAccountLookup）。找不到是 404。
 export function lookupUser(q: string): Promise<LookedUpUser> {
   return request<LookedUpUser>(`/users/lookup?q=${encodeURIComponent(q)}`)
 }
@@ -1863,34 +1790,10 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
 // 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
 export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
 
-// 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
-// `getRoomTask`（房间的地址 + 卡的 id）。
+// 一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`
+// 的 `getTask`（`/topics/{task}/task`）。
 export function getTopic(topicId: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}`)
-}
-
-/** 一张卡，连着它自己的对话。`limit` 只截对话，卡本身照常整份回来。 */
-export function getRoomTask(
-  roomId: string,
-  taskId: string,
-  opts?: { limit?: number; through?: string }
-): Promise<RoomTask & { blocks: Block[] }> {
-  const q = new URLSearchParams()
-  if (opts?.limit != null) q.set('limit', String(opts.limit))
-  if (opts?.through) q.set('through', opts.through)
-  const query = q.toString() ? `?${q.toString()}` : ''
-  return request<RoomTask & { blocks: Block[] }>(
-    `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}${query}`
-  )
-}
-
-/** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
- *  房间的会话里，只有房间的芝士递得到话。 */
-export function sayOnRoomTask(roomId: string, taskId: string, content: string): Promise<Block> {
-  return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ content }),
-  })
 }
 
 // ---- 反馈 (feedback) ----
@@ -2218,7 +2121,7 @@ export interface StatsPlatform {
     new_agents: number
     series: { date: string; created: number; human_created: number; agent_created: number }[]
   }
-  machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
+  machines: { devices: number; hosted_devices: number; warm_machines: number; cloud_hosts: number }
   /** **这一刻**的健康度（和上面两组的「存量 / 窗口」不是一回事）。判据与 `/health/detailed` 同源。 */
   health: {
     overall: 'healthy' | 'degraded' | 'unknown'
@@ -2244,10 +2147,12 @@ export interface StatsPlatform {
       warm_total: number
       warm_by_state: Record<string, number>
       warm_error: number
-      project_total: number
-      project_by_status: Record<string, number>
-      project_leased: number
-      project_enroll_error: number
+      host_total: number
+      host_by_status: Record<string, number>
+      host_active: number
+      host_enroll_error: number
+      host_slots_used: number
+      host_slots_total: number
       note_key: string
     }
   }

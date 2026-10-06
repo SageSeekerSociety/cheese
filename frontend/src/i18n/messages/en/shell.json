@@ -69,6 +69,6 @@
     "archive": "Couldn’t archive",
     "unarchive": "Couldn’t unarchive",
     "createTopic": "Couldn’t create the topic",
-    "convertToTopic": "Couldn’t turn it into a topic"
+    "convertMessage": "Couldn’t convert this message"
   }
 }

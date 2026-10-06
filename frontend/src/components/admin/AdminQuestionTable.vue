@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import { fmtNum } from '@/lib/usageFormat'
@@ -50,7 +50,7 @@ const shown = (page: string | null) => page || '—'
       <span v-for="n in 4" :key="n" class="aqt__bone" />
     </div>
 
-    <AdminEmptyState v-else-if="rows.length === 0" :title="empty" compact />
+    <BaseEmptyState v-else-if="rows.length === 0" :title="empty" size="compact" />
 
     <!-- Loading and empty keep their own shapes above; only real rows go into the shared table. -->
     <BaseTable v-else class="aqt__grid" :cols="[null, '140px', '64px']" :label="title" min-width="0">

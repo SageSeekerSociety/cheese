@@ -440,9 +440,10 @@ class FeedbackTimeline(UuidPk, Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     by_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    #: 这一步为什么发生，给提交者看的一句话。目前只有部署管线写它（「由 PR #N 修复并
-    #: 上线」加 PR 链接，见 `shipping.py`）：那一步没有推它的人（`by_handle` 为
-    #: NULL），不写这一句，提交者只看得到状态变了，看不到是哪次改动让它变的。
+    #: 这一步为什么发生，给提交者看的一句话。`by_handle` 为 NULL 的那几步非写不可
+    #: ——部署管线（「由 PR #N 修复并上线」加 PR 链接，见 `shipping.py`）和运维命令
+    #: （原因加上是谁跑的，见 `scripts/feedback_status.py`）：那几步没有推它的人，
+    #: 不写这一句，提交者只看得到状态变了，看不到为什么变、是谁让它变的。
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

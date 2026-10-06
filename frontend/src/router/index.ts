@@ -21,7 +21,7 @@ import { refreshPreviewPointer } from '@/lib/previewPointer'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { installTopicTransitions } from '@/lib/viewTransition'
 import { myId } from '@/me'
-import { reloadForNewBuild } from '@/services/staleBuild'
+import { recoverNavigations } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
 import { handSignInToApp } from '@/views/account/appSignIn'
 
@@ -76,6 +76,13 @@ const routes: RouteRecordRaw[] = [
     path: '/sites/:projectId',
     component: () => import('@/views/SiteOpenView.vue'),
     meta: { titleKey: 'navigation.pages.openSite', isFullPage: true, ...PERSONAL_PAGE },
+  },
+  {
+    // The docs site signs its readers in through here (views/DocsSignIn.vue).
+    name: 'docs-signin',
+    path: '/docs-signin',
+    component: () => import('@/views/DocsSignIn.vue'),
+    meta: { titleKey: 'navigation.pages.openDocs', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     name: 'my-archived-projects',
@@ -173,10 +180,8 @@ router.beforeEach((to) => {
 
 // A lazily imported view is fetched at navigation time, so a release that
 // lands while this tab is open turns the next click into a rejected import
-// rather than a page the user can see.
-router.onError((error) => {
-  reloadForNewBuild(error)
-})
+// rather than a page the user can see. Load the page the click was going to.
+recoverNavigations(router)
 
 // 宽屏上话题之间切换的淡入淡出（lib/viewTransition.ts）。
 installTopicTransitions(router)

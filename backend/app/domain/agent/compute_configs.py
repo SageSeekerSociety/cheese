@@ -3,6 +3,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import String, cast, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -12,30 +13,29 @@ from app.domain.agent.market import (
     COMPUTE_DEVICE,
     COMPUTE_TIERS,
     cloud_provisionable,
+    cloud_vm_provisionable,
     compute_default_name,
 )
+from app.domain.device.supply import default_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
 
-# What a platform choice may hold at all, provider aside. The cloud supply
-# range a form offers is the provider's offering met with these
-# (`domain/machine/supply.py`), so both read the same numbers.
-PLATFORM_BOUNDS: dict[str, tuple[int, int]] = {
-    "cores": (1, 256),
-    "memory_mb": (512, 1048576),
-    "disk_gb": (1, 16384),
-}
-
 
 class ComputeChoice(BaseModel):
-    """Which machine a room works on: the profile, the device, the specs.
+    """Which machine a room works on: a cloud sandbox, a whole cloud VM, or a
+    self-hosted device.
 
-    ``name`` is only ever a device's own name, a proper noun that reads the same
-    in every language. A choice the platform describes — the cloud, standard or
-    with specs, and 「any online device」 — carries no name: it is identified by
-    its fields, and each reader's screen renders its own label for it. A stored
-    name would be one language's words shown to every member of the project.
+    Cloud is either a sandbox on a platform host, or with ``whole_machine`` a
+    whole virtual machine for each session, for work a sandbox cannot do
+    (Docker, KVM, kernel modules, root). Neither has a spec to choose: every
+    sandbox gets the same fixed share of a host, and every VM the deployment's
+    one VM size. ``name`` is only ever a device's own name, a proper
+    noun that reads the same in every language. A choice the platform describes
+    — the cloud, and 「any online device」 — carries no name: it is identified
+    by its fields, and each reader's screen renders its own label for it. A
+    stored name would be one language's words shown to every member of the
+    project.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -43,19 +43,7 @@ class ComputeChoice(BaseModel):
     name: str | None = Field(default=None, max_length=60)
     profile: Literal["cloud", "device"]
     device_id: str | None = None
-    cores: int | None = Field(
-        default=None, ge=PLATFORM_BOUNDS["cores"][0], le=PLATFORM_BOUNDS["cores"][1]
-    )
-    memory_mb: int | None = Field(
-        default=None,
-        ge=PLATFORM_BOUNDS["memory_mb"][0],
-        le=PLATFORM_BOUNDS["memory_mb"][1],
-    )
-    disk_gb: int | None = Field(
-        default=None,
-        ge=PLATFORM_BOUNDS["disk_gb"][0],
-        le=PLATFORM_BOUNDS["disk_gb"][1],
-    )
+    whole_machine: bool = False
 
     @model_validator(mode="after")
     def resource_kind(self):
@@ -64,10 +52,8 @@ class ComputeChoice(BaseModel):
         self.name = ((self.name or "").strip() or None) if named_device else None
         if self.profile == "cloud" and self.device_id:
             raise ValueError(say("computeCloudCannotNameDevice"))
-        if self.profile == "device" and any(
-            v is not None for v in (self.cores, self.memory_mb, self.disk_gb)
-        ):
-            raise ValueError(say("computeDeviceUsesOwnSpec"))
+        if self.profile == "device" and self.whole_machine:
+            raise ValueError(say("computeWholeMachineIsCloud"))
         return self
 
 
@@ -90,9 +76,7 @@ def choice_label(choice: ComputeChoice) -> str:
         return choice.name
     if choice.profile == "device":
         return say("computeAnyDevice" if choice.device_id is None else "computeDevice")
-    if choice.cores or choice.memory_mb or choice.disk_gb:
-        return say("computeCloudCustom")
-    return say("computeCloudStandard")
+    return say("computeCloudVm" if choice.whole_machine else "computeCloud")
 
 
 def project_configs(project_settings: dict | None) -> ProjectComputeConfigs:
@@ -103,7 +87,8 @@ def project_configs(project_settings: dict | None) -> ProjectComputeConfigs:
 
 
 def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
-    """The work computer THIS ROOM works on — every session in it (2026-09-28).
+    """The work computer THIS ROOM works on — the room's own sessions and its
+    tasks' until they fix their own (2026-09-28).
 
     一个话题一个容器（2026-09-28 的决定，推翻结论 60）：一间房只有一条算力选择，
     房间里坐着的每一条会话都工作在它算出来的那台机器上，所以会话要手的时候
@@ -121,10 +106,85 @@ def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
     return project_configs(project_settings).default
 
 
+async def works_tasks_of(
+    session: AsyncSession, device_id: str, project, owner_handle: str | None
+) -> bool:
+    """Whether a device may work a task owned by ``owner_handle``.
+
+    A device shared with the project's team is the team's, and works anyone's
+    tasks. Any other device in the project is a person's own computer, and
+    works only its owner's tasks."""
+    devices = sql_device_service(session)
+    device = await devices.get_device(device_id)
+    if device is None:
+        return False
+    if project.team_id in await devices.list_teams(device_id):
+        return True
+    owner = (
+        await session.scalar(select(UserRow).where(UserRow.username == owner_handle))
+        if owner_handle
+        else None
+    )
+    return owner is not None and owner.id == device.owner_user_id
+
+
+async def choice_for_owner(
+    session: AsyncSession, topic, task, project, owner_handle: str | None
+) -> ComputeChoice:
+    """The work computer a task works on under ``owner_handle``: its own choice,
+    else its room's — skipping either when it names someone else's own
+    computer — else the project default."""
+    settings_ = project.settings if project else None
+    default = project_configs(settings_).default
+    for choice in (place_choice(topic, task, settings_), room_choice(topic, settings_)):
+        if not choice.device_id or await works_tasks_of(
+            session, choice.device_id, project, owner_handle
+        ):
+            return choice
+    return default
+
+
+async def fix_task_choice(session: AsyncSession, topic, task, project) -> bool:
+    """Fix a task's work computer on its first turn that needs one, so a later
+    change to the room's does not move it. The room's choice is copied, unless
+    it names someone else's own computer: then the project default. False when
+    there is nothing to fix: a room's own turn, or a task that already has its
+    choice."""
+    if task is None or task.compute_config:
+        return False
+    choice = await choice_for_owner(session, topic, task, project, task.owner_handle)
+    # Written only if still unset: the owner may have picked one since this
+    # turn read the task, and that pick stands.
+    model = type(task)
+    unset = or_(
+        model.compute_config.is_(None),
+        cast(model.compute_config, String) == "null",
+    )
+    written = await session.scalar(
+        update(model)
+        .where(model.id == task.id, unset)
+        .values(compute_config=choice.model_dump())
+        .returning(model.id)
+        .execution_options(synchronize_session=False)
+    )
+    await session.refresh(task, ["compute_config"])
+    return written is not None
+
+
+def place_choice(topic, task, project_settings: dict | None) -> ComputeChoice:
+    """The work computer a conversation works on: a task's own choice when its
+    owner made one, else the room's (``room_choice``)."""
+    if task is not None and task.compute_config:
+        return ComputeChoice.model_validate(task.compute_config)
+    return room_choice(topic, project_settings)
+
+
 async def validate_choice(session: AsyncSession, project_id, choice: ComputeChoice):
     if choice.profile == "cloud":
         if not cloud_provisionable(settings):
             raise ValidationError(say("cloudNotAvailable"))
+        if choice.whole_machine and not cloud_vm_provisionable(settings):
+            raise ValidationError(say("cloudVmNotAvailable"))
         return
     devices = await sql_device_service(session).list_devices_for_project(project_id)
     if choice.device_id:
@@ -146,7 +206,7 @@ async def bind_room_device_choice(
             await devices.bind_topic_device(
                 topic.id,
                 choice.device_id,
-                await devices.binding_visibility(choice.device_id),
+                default_visibility(),
             )
     topic.compute_config = choice.model_dump()
 

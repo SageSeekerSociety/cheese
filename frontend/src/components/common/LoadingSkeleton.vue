@@ -30,13 +30,12 @@ withDefaults(
      * - `entry`  支线进度（`TaskProgress`：一条分组小标 + 若干 55px 的 `.task-row`）
      * - `card`   看板的卡（`RunningWorkView` 的 `.board-card`，101px 的带框块）
      * - `site`   现场的一条动作（`PanelSite` 的 `.site-act`，8px 圆点 + 动作 + 参数）
-     * - `brief`  一条活打开后的头（`PanelCard`：标题 + 一行元信息 + 简报那一段）
      * - `doc`    实况文档的正文（`DocEditor` 的 `.doc-prose`：小标题 + 几段 28.8px 的行）
      * - `feedback` 反馈中心的一条（`FeedbackCard` 的 `.fb-card`：左边支持按钮 + 标题 + 两行摘要 + 元信息一行）
      * - `detail` 反馈详情页整页（`FeedbackDetailPage` 的 `.fb-layout`：标题 + 芯片 + 正文几段 + 右边一栏两格）
      * - `text`   一段正文
      */
-    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'card' | 'site' | 'brief' | 'doc' | 'feedback' | 'detail' | 'text'
+    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'card' | 'site' | 'doc' | 'feedback' | 'detail' | 'text'
     /** 画几行。默认值按各自最常见的一屏给，调用点通常不用传。 */
     rows?: number
   }>(),
@@ -51,7 +50,6 @@ const DEFAULT_ROWS: Record<string, number> = {
   entry: 3,
   card: 2,
   site: 5,
-  brief: 1,
   doc: 3,
   feedback: 6,
   detail: 3,
@@ -141,25 +139,9 @@ function width(i: number): string {
       </div>
     </template>
 
-    <!-- 一条活打开后的头：标题、一行元信息、简报那一段。结论不画——只有交完活的
-         卡才有结论，画上等于对每一张卡都许诺一段它多半没有的东西。 -->
-    <template v-else-if="variant === 'brief'">
-      <div class="skel__btitle">
-        <div class="skel__bone skel__bone--dot" />
-        <div class="skel__bone skel__bone--line" style="width: 62%" />
-      </div>
-      <div class="skel__bmeta">
-        <div class="skel__bone skel__bone--meta" style="width: 46%" />
-      </div>
-      <div v-for="i in rows || DEFAULT_ROWS.brief" :key="i" class="skel__bblock" :style="{ '--skel-i': i }">
-        <div class="skel__bone skel__bone--meta skel__bone--blockhead" />
-        <div v-for="j in 3" :key="j" class="skel__bone skel__bone--body" :style="{ width: width(i + j) }" />
-      </div>
-    </template>
-
     <!-- 实况文档的正文。文档没有固定的形状，但它有固定的**节奏**：一条小标题带
          着几段字。画这个节奏，胜过画一片等长的灰条——更胜过现在这样，正文还在路
-         上就先摆出一句「AI 队友会在这里维护文档」，那句话是说给空文档的。 -->
+         上就先摆出空文档的那句占位灰字，那句话是说给空文档的。 -->
     <template v-else-if="variant === 'doc'">
       <div v-for="i in rows || DEFAULT_ROWS.doc" :key="i" class="skel__dsec" :style="{ '--skel-i': i }">
         <div class="skel__bone skel__bone--h2" :style="{ width: i % 2 ? '38%' : '30%' }" />
@@ -514,39 +496,6 @@ function width(i: number): string {
 }
 .skel__bone--arg {
   margin: 0;
-}
-
-/* PanelCard 的头三段，尺寸逐条照抄：
-   .panel-card__title  padding 6px 0 0、gap 8px、一行 .t-body     → 28.7px
-   .panel-card__meta   padding 2px 0 8px 18px、一行 .t-meta       → 28.8px
-   .panel-card__block  padding 8px 0，小标 20.8px + 若干行 22.7px */
-.skel__btitle {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding-top: 6px;
-}
-.skel__btitle .skel__bone--dot {
-  margin-top: 11px; /* .t-body 行盒的中线，同 PanelCard 里那颗 .board-dot */
-}
-.skel__bmeta {
-  padding: 2px 0 8px 18px;
-}
-.skel__bmeta .skel__bone--meta {
-  margin: 0;
-  height: 10px;
-  margin-block: 4px 5px;
-}
-.skel__bblock {
-  padding: 8px 0;
-}
-.skel__bone--blockhead {
-  width: 32px;
-  margin-bottom: 7px; /* .panel-card__block-head 的 padding-bottom 2px + 行盒 */
-}
-.skel__bone--body {
-  height: 12px;
-  margin: 5px 0 6px; /* .card-markdown 的一行：14px × 1.62 ≈ 22.7px */
 }
 
 /* DocEditor 的 .doc-prose：16px / 1.8（行盒 28.8px），段落 margin-bottom 12px；

@@ -10,15 +10,21 @@ import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
+import { useProjectMenu } from '@/composables/useProjectMenu'
+import { useRowMenu } from '@/composables/useRowMenu'
 
 import { listProjects } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
 const { locale } = i18n.global
 const router = useRouter()
+// 右键一张项目卡片，弹的是 rail 上右键那一格的同一份菜单。
+const { projectMenu } = useProjectMenu(router)
+const rowMenu = useRowMenu<string>()
 // The URL names the team by handle; its id comes from the team the page loaded.
 const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
@@ -91,7 +97,16 @@ watch(teamId, load)
 
     <v-row v-else>
       <v-col v-for="p in projects" :key="p.id" cols="12" sm="6" lg="4">
-        <v-card variant="outlined" rounded="lg" class="pa-4 fill-height project-card" @click="open(p)">
+        <v-card
+          variant="outlined"
+          rounded="lg"
+          class="pa-4 fill-height project-card"
+          @click="open(p)"
+          @contextmenu="rowMenu.open(p.id, $event)"
+        >
+          <AdaptiveMenu v-bind="rowMenu.bind(p.id)" :actions="projectMenu(p)" :title="p.name">
+            <template #activator />
+          </AdaptiveMenu>
           <div class="d-flex align-center mb-1">
             <v-icon size="20" color="primary" class="mr-2">mdi-robot-happy-outline</v-icon>
             <span class="text-subtitle-2 font-weight-medium text-truncate">{{ p.name }}</span>

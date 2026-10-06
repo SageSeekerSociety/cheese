@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { Component } from 'vue'
-import type { RoomTask } from '@/cx_types'
+import type { BoardPhrase, RoomTask } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -83,7 +83,7 @@ function mount() {
   return render(Board, { props: { projectId: 'p1' }, global: { plugins: [vuetify] } })
 }
 
-/** 一列的列头，形如「施工中 2」。空白由模板编译决定，不是这份用例要钉的东西。 */
+/** 一列的列头，形如「进行中 2」。空白由模板编译决定，不是这份用例要钉的东西。 */
 function columnHead(container: Element, column: string): string {
   const head = container.querySelector(`[data-column="${column}"] .board-col__head`)
   const name = head?.querySelector('.board-col__name')?.textContent?.trim() ?? ''
@@ -129,13 +129,13 @@ describe('列按「该谁动」分', () => {
   })
 
   it('后端造出一个前端没见过的短语，照样原样显示', async () => {
-    // 「失联」这类词是后端加的。前端有一张自己的表的话，新词只会变成一个空白。
+    // 短语由后端加。前端有一张自己的表的话，新词只会变成一个空白。
     listProjectTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'building', phrase: 'lost' } })],
+      data: [task({ presentation: { column: 'building', phrase: 'brand_new' as BoardPhrase } })],
       total: 1,
     })
     const { findByText } = mount()
-    await findByText('失联')
+    await findByText('brand_new')
   })
 })
 
@@ -148,8 +148,8 @@ describe('空列不消失', () => {
     const { container } = mount()
     await waitFor(() => expect(columnHead(container, 'needs_you')).toBe('待处理 1'))
     // 整列消失会让板在两次刷新之间跳，而「待处理」在哪个位置本身就是信息。
-    expect(columnHead(container, 'building')).toBe('施工中 0')
-    expect(columnHead(container, 'delivering')).toBe('交付中 0')
+    expect(columnHead(container, 'building')).toBe('进行中 0')
+    expect(columnHead(container, 'delivering')).toBe('检查中 0')
   })
 })
 
@@ -182,7 +182,7 @@ describe('这一页原来的两个用处都还在', () => {
     listProjectTasks.mockResolvedValue({
       data: [
         ...['a', 'b', 'c', 'd'].map((id) => task({ id, title: `跑-${id}`, presentation: { ...running } })),
-        task({ id: 'e', title: '排队的', presentation: { column: 'building', phrase: 'not_started' } }),
+        task({ id: 'e', title: '排队的', presentation: { column: 'building', phrase: 'started' } }),
       ],
       total: 5,
     })
@@ -218,7 +218,7 @@ describe('这一页原来的两个用处都还在', () => {
     const { container } = mount()
     await waitFor(() => {
       const head = container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')
-      expect(head).toBe('施工中1·待处理1·已完成1')
+      expect(head).toBe('进行中1·待处理1·已完成1')
     })
   })
 
@@ -277,16 +277,13 @@ describe('卡片上的其余几行', () => {
     await findByText('暂无负责人')
   })
 
-  it('点一张卡就打开它所在的房间，并钻进这张卡', async () => {
-    // 一件活不是地点：做它的分身住在房间的会话里。所以地址是房间的，卡在 query
-    // 上——「你看一下这条活」因此还是一条能发出去的链接。
+  it('点一张卡就打开那个任务的页面', async () => {
     const { container } = mount()
     await waitFor(() => expect(container.querySelector('.board-card')).not.toBeNull())
     await fireEvent.click(container.querySelector('.board-card') as HTMLElement)
     expect(push).toHaveBeenCalledWith({
-      name: 'workspace-topic',
-      params: { projectId: 'p1', topicId: 'room-1' },
-      query: { tab: 'overview', card: 'task-1' },
+      name: 'workspace-task',
+      params: { projectId: 'p1', topicId: 'room-1', taskId: 'task-1' },
     })
   })
 })
@@ -304,8 +301,8 @@ describe('一件活都没有', () => {
       total: 1,
     })
     const { findByText } = mount()
-    await findByText('暂无施工中的任务')
-    await findByText('暂无交付中的任务')
+    await findByText('暂无进行中的任务')
+    await findByText('暂无检查中的任务')
     await findByText('暂无待处理的任务')
   })
 
@@ -363,5 +360,33 @@ describe('板自己钉在视口高度上', () => {
     const list = src.indexOf('\n.board-col__list {')
     const listRule = src.slice(src.indexOf('{', list) + 1, src.indexOf('}', list)).replace(/\/\*[\s\S]*?\*\//g, '')
     expect(listRule).toContain('position: relative')
+  })
+})
+
+describe('读不到板的时候', () => {
+  it('就地换成 BaseLoadError：一句「加载失败」＋服务端原因＋重试，而不是一条裸灰字', async () => {
+    listProjectTasks.mockRejectedValue(new Error('服务器错误'))
+    const { container } = mount()
+    const alert = await waitFor(() => {
+      const el = container.querySelector('.base-load-error[role="alert"]')
+      expect(el, '读失败时应当就地画出错误块').not.toBeNull()
+      return el as HTMLElement
+    })
+    expect(alert.textContent).toContain('加载失败')
+    expect(alert.textContent).toContain('服务器错误')
+    expect(alert.querySelector('button')?.textContent?.trim()).toBe('重试')
+    // 失败不许退化成「暂无」：这一段摘要一个字都不该写。
+    expect(container.textContent).not.toContain('暂无任务')
+  })
+
+  it('重试再读一次；读到了就把错误收掉、板回来了', async () => {
+    listProjectTasks.mockRejectedValueOnce(new Error('服务器错误'))
+    const { container } = mount()
+    await waitFor(() => expect(container.querySelector('.base-load-error')).not.toBeNull())
+
+    listProjectTasks.mockResolvedValue({ data: [task()], total: 1 })
+    await fireEvent.click(container.querySelector('.base-load-error button')!)
+    await waitFor(() => expect(container.querySelector('.base-load-error')).toBeNull())
+    expect(titlesInColumn(container, 'building')).toEqual(['查一下分页接口'])
   })
 })

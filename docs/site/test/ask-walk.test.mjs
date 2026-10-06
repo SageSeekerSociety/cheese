@@ -43,7 +43,7 @@ try {
 const out = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'docs-walk-'))
 if (!process.env.OUT) {
   execFileSync(process.execPath, ['build.mjs'], { cwd: SITE, env: { ...process.env, OUT: out }, stdio: ['ignore', 'ignore', 'inherit'] })
-} else if (!fs.existsSync(path.join(out, 'ask-index.json'))) {
+} else if (!fs.existsSync(path.join(out, 'sections.json'))) {
   console.error(`ask-walk: no build in ${out} — run the build first or leave OUT unset`)
   process.exit(2)
 }

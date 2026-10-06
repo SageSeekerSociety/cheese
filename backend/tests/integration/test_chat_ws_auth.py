@@ -26,6 +26,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    open_task,
     post_project,
     session_auth_headers,
     session_token,
@@ -200,23 +201,21 @@ def test_a_refused_message_says_why(client, monkeypatch):
     assert sent.json()["error"]["message"] == "房间已关闭"
 
 
-def _card(client, room_id: str) -> str:
-    """One of the room's cards. A 分身 works it inside the room's session, and
-    what it does goes out on the card's own channel — the card id."""
-    task = client.post(
-        f"/topics/{room_id}/split", json={"title": "子活", "reviewer_handle": "alice"}
-    ).json()["data"]
+def _task(client, room_id: str) -> str:
+    """One of the room's tasks. Its session's turns go out on the task's own
+    channel — the task id."""
+    task = open_task(client, room_id, "子活")
     wait_work_idle()
     return task["id"]
 
 
-def test_a_cards_channel_refuses_someone_outside_its_room(client):
-    """A card's channel carries its 分身's events and checklist — the room's
-    work. It is not a room, so the room check has to be the card's room's:
-    an outsider holding the card id (it sits in every `?card=` link) is refused
+def test_a_tasks_channel_refuses_someone_outside_its_room(client):
+    """A task's channel carries its session's events and checklist — the room's
+    work. It is not a room, so the room check has to be the task's room's:
+    an outsider holding the task id (it sits in every `?card=` link) is refused
     exactly as on the room's own channel."""
     _, room = _project_topic(client, owner="alice")
-    card = _card(client, room)
+    card = _task(client, room)
 
     with client.websocket_connect(chat_ws_url(card, "mallory")) as ws:
         frame = ws.receive_json()
@@ -224,22 +223,22 @@ def test_a_cards_channel_refuses_someone_outside_its_room(client):
     assert frame["code"] == "forbidden"
 
 
-def test_a_member_watching_a_card_sees_its_workers_checklist(client):
-    """The card view's live checklist: the room's member subscribes to the card's
-    channel and the 分身's `todo_write` arrives there."""
+def test_a_member_watching_a_task_sees_its_workers_checklist(client):
+    """The task view's live checklist: the room's member subscribes to the
+    task's channel and its own session's `todo_write` arrives there."""
     project, room = _project_topic(client, owner="alice")
-    card = _card(client, room)
-    agent = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
+    card = _task(client, room)
+    agent = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=card)}
 
     with client.websocket_connect(chat_ws_url(card, "alice")) as ws:
+        # The pong says the subscription is live; the task's own session may
+        # already be talking on the channel ahead of it.
         ws.send_json({"type": "ping"})
-        assert ws.receive_json() == {"type": "pong"}
+        while ws.receive_json()["type"] != "pong":
+            pass
         response = client.put(
-            f"/topics/{room}/progress",
-            json={
-                "todos": [{"content": "改接口", "status": "in_progress"}],
-                "task": card,
-            },
+            f"/topics/{card}/progress",
+            json={"todos": [{"content": "改接口", "status": "in_progress"}]},
             headers=agent,
         )
         assert response.status_code == 200, response.text

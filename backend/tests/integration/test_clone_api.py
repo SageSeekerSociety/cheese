@@ -30,7 +30,7 @@ def _seed_session(client, topic_id: str, session_id: str) -> None:
     async def _run() -> None:
         async with client.test_factory() as s:
             await AgentSessionRepository(s).save(
-                topic_id=uuid.UUID(topic_id),
+                conversation_id=uuid.UUID(topic_id),
                 agent_handle=CHEESE_HANDLE,
                 resume_token=session_id,
                 harness="claude-code",
