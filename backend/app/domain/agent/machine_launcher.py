@@ -57,7 +57,7 @@ from app.domain.agent.resource_cleanup import SESSION_TMP
 # it as HTTPS_PROXY for the agent it is about to start.
 #
 # The port belongs to the machine. Only its kernel knows which ports are free,
-# so a helper with no port recorded binds port 0 and reports what it got. The
+# so the helper binds port 0 and reports what it got. The
 # backend used to derive one by hashing the room into a 2000-port window, and
 # with ~50 rooms on one host two of them landed on the same number: the second
 # helper died on EADDRINUSE, the first one answered the readiness check in its
@@ -73,27 +73,21 @@ from app.domain.agent.resource_cleanup import SESSION_TMP
 # rather than unbounded: if it cannot bind in five seconds it is not going to, and
 # hanging the launch would be a worse failure than a loud one.
 #
-# The recorded port is tried first when a helper has to be started again, and a
-# fresh one only when that bind fails. The launcher hands whichever port was
-# printed to the agent it starts next, so either one is safe.
+# Every launch starts a helper of its own, and the launch that started it stops
+# it when it ends (the launcher's `cleanup`): a helper lives exactly as long as
+# the `claude` that dials it. A helper left to outlive its launch for a later
+# one to take over was never stopped when no later launch came, and a session
+# host collected them by the dozen — 67 on dev on 2026-10-06, 59 of them
+# dialling an address that had stopped answering a day before. A start costs
+# about 70 ms, measured on that host, once per launch rather than per turn.
 #
-# Adopt-if-alive, because a screen is reused across
-# turns, and restarting a working helper each time would reset every in-flight
-# connection. Adoption needs all four: the recorded pid alive, the stamp
-# matching the helper on disk, the port file present, and that pid holding the
-# LISTEN socket on that port.
-# A pid that resolves proves only that SOME process holds that number — after a
-# reboot, or on a box that has burnt through the pid space, that is a
-# coincidence, and adopting on it leaves the port dead for the life of the
-# screen with nothing anywhere reporting a fault.
-#
-# `nohup` is what makes the helper outlive a caller that returns. Measured
-# 2026-08-30 on the dev box: fifteen topics whose helper was gone and whose
-# `claude` had been dialling a dead port for days. Their `cheese-tunnel.log` said
-# `tunnel listening` at the timestamp of the last launch, so this script HAD
-# started a helper; it simply did not outlive the tmux window that ran the
-# script, whose process group is torn down — SIGHUP — the moment the script
-# returns.
+# `nohup` is what makes the helper outlive this script, which returns as soon
+# as the helper is up. Measured 2026-08-30 on the dev box: fifteen topics whose
+# helper was gone and whose `claude` had been dialling a dead port for days.
+# Their `cheese-tunnel.log` said `tunnel listening` at the timestamp of the
+# last launch, so this script HAD started a helper; it simply did not outlive
+# the tmux window that ran the script, whose process group is torn down —
+# SIGHUP — the moment the script returns.
 CHEESE_TUNNEL_UP = """#!/bin/sh
 # $1: this seat's directory, as the launcher builds it. Everything that says
 # WHICH teammate the traffic is (--token-file below) or which process is this
@@ -104,67 +98,8 @@ CHEESE_TUNNEL_UP = """#!/bin/sh
 # The helper's CODE stays one file in the room's `.cheese`: it holds nothing.
 SEATD="${1:-$HOME/.cheese}"
 PIDF="$SEATD/cheese-tunnel.pid"
-STAMPF="$SEATD/cheese-tunnel.stamp"
 PORTF="$SEATD/cheese-tunnel.port"
 LOG="$SEATD/cheese-tunnel.log"
-# Does pid $1 itself hold the LISTEN socket on port $2? Something answering there
-# is not enough: after this room's helper died, the kernel may have handed its
-# port to another room's helper. Linux answers from /proc; elsewhere lsof does.
-# With neither, nothing is adopted and a helper of our own is started.
-tunnel_owned() {
-  python3 - "$1" "$2" <<'PROBEPY'
-import os, subprocess, sys
-
-pid, port = sys.argv[1], int(sys.argv[2])
-if os.path.isdir("/proc/%s" % pid) and os.path.exists("/proc/net/tcp"):
-    inodes = set()
-    for fd in os.listdir("/proc/%s/fd" % pid):
-        target = os.readlink("/proc/%s/fd/%s" % (pid, fd))
-        if target.startswith("socket:["):
-            inodes.add(target[len("socket:["):-1])
-    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
-        if not os.path.exists(table):
-            continue
-        with open(table) as handle:
-            for line in handle.readlines()[1:]:
-                cols = line.split()
-                local_port = int(cols[1].rsplit(":", 1)[1], 16)
-                if cols[3] == "0A" and local_port == port and cols[9] in inodes:
-                    raise SystemExit(0)
-    raise SystemExit(1)
-try:
-    held = subprocess.run(
-        ["lsof", "-nP", "-a", "-p", pid, "-iTCP:%d" % port, "-sTCP:LISTEN", "-t"],
-        capture_output=True, text=True, timeout=5,
-    ).stdout.split()
-except (OSError, subprocess.TimeoutExpired):
-    held = []
-raise SystemExit(0 if pid in held else 1)
-PROBEPY
-}
-# Adopt a live helper ONLY if it is running the helper we just wrote, dialling
-# the URL this launch was given. The launcher rewrites cheese-tunnel.py on every
-# launch, so a shipped fix would otherwise never reach a machine whose helper is
-# still alive — it would keep serving the old code indefinitely, and nothing
-# would look wrong. The same holds for a machine whose tunnel moved (a cloud
-# machine onto its loopback forward): the old address may no longer answer.
-WANT="$(cksum "$HOME/.cheese/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
-[ -z "$WANT" ] || WANT="$WANT $CHEESE_TUNNEL_URL"
-HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
-PID="$(cat "$PIDF" 2>/dev/null || true)"
-PORT="$(cat "$PORTF" 2>/dev/null || true)"
-case "$PORT" in ''|*[!0-9]*) PORT="" ;; esac
-if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ] && [ -n "$PORT" ] \\
-    && tunnel_owned "$PID" "$PORT" 2>/dev/null; then
-    printf '%s\\n' "$PORT"
-    exit 0
-  fi
-  # Different code, or a pid that is alive without holding its port:
-  # retire it. In-flight turns see one connection reset, which claude retries;
-  # a permanently stale helper does not heal at all.
-  kill "$PID" 2>/dev/null || true
-fi
 NEWF="$PORTF.new.$$"
 # Start a helper on port $1 and wait for it. Exit 0: it is alive and wrote its
 # port file. 3: it exited, which is how a failed bind looks. 1: timed out.
@@ -208,13 +143,8 @@ raise SystemExit(1)
 WAITPY
 }
 : >"$LOG"
-start_helper "${PORT:-0}"
+start_helper 0
 RC=$?
-if [ "$RC" = 3 ] && [ -n "$PORT" ]; then
-  # Something else holds the recorded port now. Let the kernel choose.
-  start_helper 0
-  RC=$?
-fi
 if [ "$RC" != 0 ]; then
   kill "$NEWPID" 2>/dev/null || true
   rm -f "$NEWF" "$PIDF"
@@ -224,7 +154,6 @@ if [ "$RC" != 0 ]; then
 fi
 mv "$NEWF" "$PORTF"
 echo "$NEWPID" > "$PIDF"
-printf '%s\\n' "$WANT" > "$STAMPF"
 cat "$PORTF"
 """
 
@@ -235,10 +164,10 @@ cat "$PORTF"
 # once survives a helper's death (a machine reboot, a killed process) without the
 # agent having to declare it again.
 #
-# Adopt-if-alive on the same cksum, for the same reason the tunnel helper does:
-# the launcher rewrites cheese-preview.py on every launch, so a shipped fix would
-# otherwise never reach a machine whose helper is still running — it would keep
-# serving the old code indefinitely with nothing looking wrong.
+# Adopt-if-alive only on the same cksum: the launcher rewrites cheese-preview.py
+# on every launch, so a shipped fix would otherwise never reach a machine whose
+# helper is still running — it would keep serving the old code indefinitely
+# with nothing looking wrong.
 #
 # No readiness wait here (unlike the tunnel's): nothing on this machine is
 # blocked on the tunnel being up. The one caller that needs it up — `cheese serve`
@@ -771,10 +700,13 @@ if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
   ENVIRONMENT_CMD="python3 \\"$HOME/.cheese/cheese-environment.py\\" "
 fi
 AGENT_PID=""
+TUNNEL_PID=""
 cleanup() {{
   trap '' HUP INT TERM
   [ -z "$AGENT_PID" ] || kill "$AGENT_PID" 2>/dev/null || true
   [ -z "$AGENT_PID" ] || wait "$AGENT_PID" 2>/dev/null || true
+  # The helper this launch started goes with it (see CHEESE_TUNNEL_UP).
+  [ -z "$TUNNEL_PID" ] || kill "$TUNNEL_PID" 2>/dev/null || true
 }}
 trap 'exit 129' HUP
 trap 'exit 130' INT
@@ -785,6 +717,7 @@ if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   # The seat's directory goes in: this seat gets its own helper, on its own
   # port, holding its own token — the whole point of $SEATD above.
   TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up" "$SEATD")" || exit 1
+  TUNNEL_PID="$(cat "$SEATD/cheese-tunnel.pid")"
   export HTTPS_PROXY="http://127.0.0.1:$TUNNEL_PORT"
 fi
 if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
