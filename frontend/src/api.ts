@@ -2363,8 +2363,7 @@ export type { FeedbackNote }
  *  这个人没有 profile 行（或平台上根本没有这个账号），回退成 handle 之后界面就分不清
  *  「没设昵称」和「他叫这个 handle」；`avatar_id` 为 null = 他从没自己挑过头像
  *  （判据在服务端 `UserProfileRepository.chosen_avatar_ids`，不是硬比 id），界面这时
- *  把空串交给 `UserAvatar` 画彩色首字母 —— `getAvatarUrl` 对空值现在回的空串，不再是
- *  那张所有人共用的默认脸。 */
+ *  交给 `UserAvatar` 画彩色首字母 —— `getAvatarUrl` 对空值回的空串，不是共用的默认脸。 */
 export interface PlatformAdminRow {
   handle: string
   nickname: string | null
