@@ -415,11 +415,9 @@ async def test_a_question_whose_runner_is_gone_ends_instead_of_being_taken_up_ag
     )
     after = Recorder()
     gone.serve(kind, after)
-
-    async def started() -> bool:
-        return _words(before) > 0
-
-    await _until(started)
+    # Let go at once rather than after the first words: what the session does
+    # next is the runner's load, and an answer that finishes on its own would
+    # leave no question for the sweep to take up.
     await old.let_go()
 
     assert await gone.sweep() == 1
