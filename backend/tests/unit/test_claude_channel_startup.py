@@ -241,6 +241,24 @@ async def test_a_missing_program_is_named_and_its_error_kept_for_the_site(
 
 
 @pytest.mark.anyio
+async def test_a_launch_that_fails_moments_after_it_starts_is_refused(tmp_path):
+    # The runner answers its socket as soon as the launch command is running.
+    # A bootstrap that fails a moment later must still be reported as a start
+    # that failed, not taken for a session that came up.
+    reason = "bootstrap: the work lease was refused"
+    host = Host(
+        tmp_path,
+        shlex.join(
+            ["sh", "-c", f"sleep 0.3; printf '%s\\n' {shlex.quote(reason)} >&2; exit 1"]
+        ),
+    )
+
+    await _start(host)
+
+    assert host.refused is not None and reason in host.refused.log
+
+
+@pytest.mark.anyio
 async def test_a_cause_nobody_recognises_is_not_read_out_in_the_room(tmp_path):
     reason = "ValueError: the flux capacitor is out of alignment"
     host = Host(tmp_path, _dies(reason))
