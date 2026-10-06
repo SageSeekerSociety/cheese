@@ -189,3 +189,35 @@ def test_a_task_s_session_reaches_no_other_task(client):
     )
 
     assert response.status_code == 404
+
+
+def test_a_task_that_arrived_without_a_branch_opens_on_one(client):
+    """A room turned into a task has no branch. Its session opening it gets a
+    workspace on a branch of its own, the same one every time it opens it."""
+    from app.domain.room_task.models import Task
+    from tests.integration.conftest import room_agent_seat
+
+    project = post_project(client, json={"name": "Old room"}, owner="alice").json()[
+        "data"
+    ]
+    pid, room = project["id"], project["root_topic_id"]
+    task = delivery_task(client, room, commit=False)
+    agent = room_agent_seat(client, room)
+
+    async def without_a_branch():
+        async with client.test_factory() as session:
+            row = await session.get(Task, task.id)
+            row.branch_name = row.workspace_name = row.base_branch = None
+            await session.commit()
+
+    client.portal.call(without_a_branch)
+    route = f"/projects/{pid}/git/tasks/{task.id}"
+
+    opened = client.post(route, headers=_credential(pid, task.id, agent))
+    assert opened.status_code == 200, opened.text
+    branch = opened.json()["data"]["branch"]
+    assert branch
+
+    again = client.post(route, headers=_credential(pid, task.id, agent))
+    assert again.status_code == 200, again.text
+    assert again.json()["data"]["branch"] == branch
