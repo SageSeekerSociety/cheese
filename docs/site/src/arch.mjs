@@ -18,8 +18,8 @@
 
 // ---------- llm: one model request, session process to vendor ----------
 const LLM_STATIONS = [
-  { key: 'session', label: '会话进程', sub: '沙盒容器 / 裸进程 / 云机器 / Codex·Pi', col: 0, row: 2, tone: '--chart-1' },
-  { key: 'helper', label: '隧道助手', sub: '云机器上的回环口', col: 1, row: 4, tone: '--chart-4' },
+  { key: 'session', label: '会话进程', sub: '沙盒容器 / 裸进程 / 会话主机 / Codex·Pi', col: 0, row: 2, tone: '--chart-1' },
+  { key: 'helper', label: '隧道助手', sub: '会话主机上的回环口', col: 1, row: 4, tone: '--chart-4' },
   { key: 'llmv1', label: '/llm/v1', sub: '主 API 的另一条入口', col: 2, row: 0, tone: '--chart-5' },
   { key: 'proxy443', label: ':443 反向代理', sub: '容器路径', col: 2, row: 1, tone: '--chart-4' },
   { key: 'proxy8444', label: ':8444 CONNECT', sub: '裸进程路径', col: 2, row: 3, tone: '--chart-4' },
@@ -47,7 +47,7 @@ const LLM_WIRES = [
 const LLM_ENTRIES = [
   { key: 'sandbox', label: '沙盒容器', sub: '本机容器，:443 反向代理' },
   { key: 'bare', label: '裸进程', sub: '设备屏幕 / 云机器，:8444 CONNECT' },
-  { key: 'cloud', label: '云机器', sub: '经模型隧道回到主机的计量代理' },
+  { key: 'cloud', label: '会话主机', sub: '经模型隧道到计量代理' },
   { key: 'codex', label: 'Codex、Pi', sub: '{平台地址}/llm/v1' },
 ]
 
@@ -103,7 +103,7 @@ const cloudHelperStop = (f) => ({
   head: '机器上的隧道助手：HTTPS_PROXY 指向回环口',
   see: [['HTTPS_PROXY', 'http://127.0.0.1:<隧道端口>'], ['机器上有什么', '只有自己的短期芝士令牌']],
   say: [['它做的事', `把这次 CONNECT 装进一条 WebSocket，发到平台的 ${f.paths.tunnel}`]],
-  note: '云机器没有 root、没有 docker、没有可以改的域名解析，但它能开一条出去的连接。助手就装在机器上，替它说 CONNECT。',
+  note: '会话主机上的 claude 只认 HTTPS_PROXY。隧道助手装在会话主机上，替它说 CONNECT：把请求装进一条出去的 WebSocket。',
 })
 
 const cloudArriveStop = (f) => ({
@@ -275,7 +275,7 @@ const llmWalks = {
   },
   cloud: {
     ok: (f) => [
-      { ...sessionStop(f, 'cloud'), head: '云机器上的会话进程：调模型', act: '发起请求' },
+      { ...sessionStop(f, 'cloud'), head: '会话主机上的会话进程：调模型', act: '发起请求' },
       cloudHelperStop(f),
       cloudArriveStop(f),
       meterStop(f, { say: [['先做的事', `POST ${f.paths.admission}`], ['准入回答', 'allow: true，pool: gateway']], quota: Q('62%', '62%'), note: '改写和记账只有一份：隧道只是把包送进来。' }),
@@ -284,21 +284,21 @@ const llmWalks = {
       vendorStop(f),
     ],
     budget: (f) => [
-      { ...sessionStop(f, 'cloud'), head: '云机器上的会话进程：调模型', act: '发起请求' },
+      { ...sessionStop(f, 'cloud'), head: '会话主机上的会话进程：调模型', act: '发起请求' },
       cloudHelperStop(f),
       cloudArriveStop(f),
       meterStop(f, { say: [['准入回答', 'allow: false，reason_kind: budget']], out: [['status', String(f.budget.status)], ['body', `{"type":"${f.budget.type}","message":"${f.budget.prefix}${f.budget.refusal_reason}"}`]], note: '拒绝沿隧道回到机器上，会话读到的是同一种错误。' }),
       admissionStop(f, { allow: false, reason: f.budget.refusal_reason, reason_kind: 'budget', pool: 'gateway（没给 key）', model: ASK.model, block: true, quota: Q('0%', '0%'), note: '额度用完：这一轮不执行，厂商那边一个请求都没到。' }),
     ],
     binding: (f) => [
-      { ...sessionStop(f, 'cloud'), head: '云机器上的会话进程：调模型', act: '发起请求' },
+      { ...sessionStop(f, 'cloud'), head: '会话主机上的会话进程：调模型', act: '发起请求' },
       cloudHelperStop(f),
       cloudArriveStop(f),
       meterStop(f, { say: [['准入回答', 'allow: false，reason_kind: binding']], out: [['status', String(f.binding.status)], ['body', `{"type":"${f.binding.type}","message":"…能指定的模型：…"}`]], note: '绑定解析不出和额度无关，回的是「重试没用」那个形状。' }),
       admissionStop(f, { allow: false, reason: '这个项目不能跑 <模型名>；能指定的有：…', reason_kind: 'binding', pool: '（空）', model: '（没有）', block: true, note: '不会悄悄换到另一条路，厂商那边一个请求都没到。' }),
     ],
     failopen: (f) => [
-      { ...sessionStop(f, 'cloud'), head: '云机器上的会话进程：调模型', act: '发起请求' },
+      { ...sessionStop(f, 'cloud'), head: '会话主机上的会话进程：调模型', act: '发起请求' },
       cloudHelperStop(f),
       cloudArriveStop(f),
       meterStop(f, { say: [['准入', '连不上主 API'], ['它自己的决定', '放行（fail-open）']], note: '隧道是常驻进程，但准入在主 API 上：主 API 重启的这几秒，模型流量不跟着断。' }),
