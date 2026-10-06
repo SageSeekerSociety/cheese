@@ -138,6 +138,37 @@ class AgentSessionRepository:
             },
         )
 
+    async def let_go(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        placed_before: datetime,
+    ) -> None:
+        """Mark this placement's runner as gone (``RoomSessions.recover``).
+
+        The place itself stays: the next message starts the session again on
+        it, and that start writes a fresh ``runtime_location`` without the
+        mark. Only a placement made before ``placed_before`` is marked, so a
+        session started while recovery was asking keeps its new place.
+        """
+        row = await self._session.scalar(
+            select(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .with_for_update()
+        )
+        if row is None or not row.runtime_location:
+            return
+        if row.placed_at is not None and row.placed_at > placed_before:
+            return
+        row.runtime_location = {**row.runtime_location, "let_go": True}
+        await self._session.flush()
+
     async def _upsert(
         self,
         *,

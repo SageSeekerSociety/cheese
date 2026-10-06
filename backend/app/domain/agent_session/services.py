@@ -9,6 +9,7 @@ the import guard forbids.
 """
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -124,11 +125,18 @@ class AgentSessionService:
         self,
     ) -> list[
         tuple[
-            uuid.UUID, uuid.UUID, uuid.UUID | None, str, str, str | None, SessionPlace
+            uuid.UUID,
+            uuid.UUID,
+            uuid.UUID | None,
+            str,
+            str,
+            str | None,
+            SessionPlace,
+            bool,
         ]
     ]:
         """``(project_id, room_id, inner_id, agent_handle, harness, resume_token,
-        place)`` for every placed session — what a channel re-adopts after a
+        place, let_go)`` for every placed session — what a channel re-adopts after a
         restart. ``inner_id`` is the task's or the 支线's, None for a room's
         own session.
 
@@ -151,9 +159,26 @@ class AgentSessionService:
                         row.harness,
                         row.resume_token,
                         place,
+                        bool((row.runtime_location or {}).get("let_go")),
                     )
                 )
         return found
+
+    async def let_go(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        placed_before: datetime,
+    ) -> None:
+        """Record that this session's runner is gone; see the repository."""
+        await self._repo.let_go(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            placed_before=placed_before,
+        )
 
     async def has_run(self, room_id: uuid.UUID) -> bool:
         """Whether ANY agent has ever run here — what the compute pin freezes on."""
