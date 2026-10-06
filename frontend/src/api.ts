@@ -1330,13 +1330,13 @@ export function summonAgent(topicId: string): Promise<{ started: boolean; reason
   })
 }
 
-// ---- 记忆 (spec §8.4: 记忆可见) ----
+// ---- 记忆 (spec §8.4: 记忆可见): 一条记忆一个 markdown 文件 ----
 export interface MemoryEntryOut {
   id: string
   scope: string
-  scope_id: string
   content: string
   created_at: string
+  updated_at: string
 }
 export function listMemory(projectId: string, userHandle?: string): Promise<ListPayload<MemoryEntryOut>> {
   const u = userHandle ? `&user_handle=${encodeURIComponent(userHandle)}` : ''

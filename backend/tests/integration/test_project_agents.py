@@ -6,16 +6,24 @@ keeps one pool. A room does not point at an agent: it seats any number of them
 on its roster, the way it seats people.
 
 写入那一侧（`cheese_remember`）已经整个撤掉——记忆改成直接写会话目录下的文件
-（见系统提示的「记忆」一节），条目池只剩读侧（界面上的记忆面板）。所以这几条用
-例自己按键写库，守的是读侧按 agent 分池这件事。
+（见系统提示的「记忆」一节），条目池既没有写入方、也没有读点了（界面上的记忆面板
+改读那棵树，见 `docs/manual/dev/memory.md`）。所以这几条用例自己按键写库、直接读
+表，守的是池按 agent 分这件事。
 """
 
 import asyncio
 import uuid
 
+from sqlalchemy import select
+
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
+from app.domain.memory.models import (
+    MemoryEntry,
+    MemoryScope,
+    agent_project_scope_id,
+)
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
@@ -72,16 +80,31 @@ def _remember(
 
 
 def _pool(client, project_id: str, *, agent: dict | None = None) -> list[str]:
-    """这个池里存着的事实，读记忆列表本身。
+    """这个池里存着的事实，直接读那张表。
 
-    按关键词检索的那条读路径（`/projects/{id}/memory/search`）连同条目池的读
-    侧一起撤了。归属这件事列表答得一样清楚，而这几条用例守的正是归属：池是按
-    AGENT 分的，写入分给谁，就是谁的池里有它。没有点名就是项目默认那位。
+    条目池既没有写入方、也没有读点了：按关键词检索的那条读路径
+    （`/projects/{id}/memory/search`）和 `GET /memory` 都撤了读侧（后者改读那棵
+    记忆树），所以「这条事实落在谁的池子里」只能问表本身。这几条用例守的正是归
+    属：池是按 AGENT 分的，写入分给谁，就是谁的池里有它。没有点名就是项目默认
+    那位。
     """
     handle = agent["handle"] if agent is not None else CHEESE_HANDLE
-    r = client.get(f"/memory?project_id={project_id}&agent_handle={handle}")
-    assert r.status_code == 200, r.text
-    return [e["content"] for e in r.json()["data"]["data"]]
+
+    async def _read() -> list[str]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(MemoryEntry.content)
+                .where(
+                    MemoryEntry.scope == MemoryScope.agent_project,
+                    MemoryEntry.scope_id
+                    == agent_project_scope_id(uuid.UUID(project_id), handle),
+                    MemoryEntry.retired_at.is_(None),
+                )
+                .order_by(MemoryEntry.created_at.desc())
+            )
+            return list(rows.all())
+
+    return asyncio.run(_read())
 
 
 def _seat(client, topic_id: str, agent: dict, by: str = "u") -> str:

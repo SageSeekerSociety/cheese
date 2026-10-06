@@ -161,15 +161,39 @@ describe('章程', () => {
 })
 
 describe('记忆', () => {
-  const one = { id: 'm1', scope: 'user', content: '喜欢用 pnpm', created_at: '2026-09-25T00:00:00Z' }
+  // 树怎么分作用域见 `docs/manual/dev/memory.md`：`private` 是这个人自己的那一份，
+  // 其余是项目共享的。这一页按它贴标签，所以两者的名字要对得上。
+  const one = {
+    id: 'm1',
+    scope: 'private',
+    content: '喜欢用 pnpm',
+    created_at: '2026-09-25T00:00:00Z',
+    updated_at: '2026-09-25T00:00:00Z',
+  }
+  const shared = {
+    id: 'm2',
+    scope: 'team',
+    content: '部署脚本在 deploy/deploy.sh',
+    created_at: '2026-09-24T00:00:00Z',
+    updated_at: '2026-09-24T00:00:00Z',
+  }
 
   function mountMemory() {
-    state.payload = { memoryEntries: [one] }
+    state.payload = { memoryEntries: [one, shared] }
     return render(ProjectDocsView, {
       props: { projectId: 'p', kind: 'memory' },
       global: { plugins: [createVuetify()] },
     })
   }
+
+  it('一条记忆一份作用域的名字：自己的那份叫个人记忆，其余叫项目记忆', async () => {
+    const view = mountMemory()
+    await waitFor(() => expect(view.getByText('喜欢用 pnpm')).toBeTruthy())
+
+    expect(view.getByText(/个人记忆/)).toBeTruthy()
+    expect(view.getByText(/项目记忆/)).toBeTruthy()
+    view.unmount()
+  })
 
   it('删一条记忆要先确认，点了确定才删', async () => {
     const view = mountMemory()
