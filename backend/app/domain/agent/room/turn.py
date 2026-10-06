@@ -62,7 +62,7 @@ from app.domain.agent.room.thread_context import thread_context as _thread_conte
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skills
-from app.domain.agent.turn_speakers import turn_speakers
+from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.agent_instance.services import (
     AgentInstanceService,
@@ -758,8 +758,9 @@ class RoomTurns:
             earlier_messages = await blocks.count_messages(
                 place.conversation_id, excluding=prompt_pending_ids
             )
+            routine_run = await is_routine_run(session, delivery_id)
             thread_context = (
-                await _thread_context(session, topic, root)
+                await _thread_context(session, topic, root, routine_run=routine_run)
                 if root is not None
                 else None
             )
@@ -987,7 +988,9 @@ class RoomTurns:
         return _TurnContext(
             room_id=place.room_id,
             inner_id=place.inner_id,
-            reads_only=place.thread is not None
+            # A 支线 reads only, except the turn that is a routine's run: a rule
+            # its owner confirmed, which keeps what it produces.
+            reads_only=(place.thread is not None and not routine_run)
             or (task is not None and task.started_at is None),
             task_machine=None
             if task is None or place.thread is not None

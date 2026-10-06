@@ -110,6 +110,7 @@ class RoutineRun(UuidPk, Base):
     __tablename__ = "routine_runs"
     __table_args__ = (
         UniqueConstraint("routine_id", "occurrence_key", name="uq_routine_occurrence"),
+        UniqueConstraint("message_id", name="uq_routine_runs_message_id"),
         Index(
             "ix_routine_runs_open",
             "created_at",
@@ -128,6 +129,13 @@ class RoutineRun(UuidPk, Base):
         DateTime(timezone=True), nullable=True
     )
     status: Mapped[str] = mapped_column(String(16), default=RunStatus.queued.value)
+    #: The run's message in the channel's main line: the teammate's line that
+    #: says how the run went, and whose 支线 the run happened in. None for a
+    #: run that never got as far as a message (skipped).
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("blocks.id", ondelete="SET NULL", name="fk_routine_runs_message_id"),
+        nullable=True,
+    )
     #: The delivery ledger event that carries the prompt; its attempt id is the turn.
     delivery_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     turn_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)

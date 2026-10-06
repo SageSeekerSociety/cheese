@@ -50,6 +50,32 @@ _tasks = table(
 )
 
 
+# A routine's run is a message in the main line. Bare tables: ``routine``
+# depends on this domain.
+_runs = table("routine_runs", column("message_id", Uuid), column("routine_id", Uuid))
+_routines = table(
+    "routines",
+    column("id", Uuid),
+    column("title", String),
+    column("owner_handle", String),
+)
+
+
+async def routine_runs_of(
+    session: AsyncSession, block_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict]:
+    """Which of these messages stand for a run of a routine: the rule's
+    title and its owner, keyed by the message."""
+    if not block_ids:
+        return {}
+    rows = await session.execute(
+        select(_runs.c.message_id, _routines.c.title, _routines.c.owner_handle)
+        .join(_routines, _routines.c.id == _runs.c.routine_id)
+        .where(_runs.c.message_id == _among(block_ids))
+    )
+    return {message: {"title": title, "owner": owner} for message, title, owner in rows}
+
+
 def _among(ids):
     """One array parameter, not an IN list: a busy channel's whole timeline is
     tens of thousands of ids, and asyncpg refuses more than 32767 bound values
@@ -170,18 +196,21 @@ async def under_messages(
 async def _participants(
     session: AsyncSession, threads: list[Thread]
 ) -> dict[uuid.UUID, list[str]]:
-    """Who said something in each 支线, the message it hangs under first."""
+    """Who said something in each 支线, the message it hangs under first. A
+    routine's run is a message of its teammate's, said on its owner's behalf:
+    the owner takes part in that 支线 from the start."""
     if not threads:
         return {}
-    roots = {
-        block.id: block.author
-        for block in await session.scalars(
-            select(Block).where(Block.id == _among([t.root_block_id for t in threads]))
-        )
-    }
+    root_ids = [t.root_block_id for t in threads]
+    runs = await routine_runs_of(session, root_ids)
+    roots: dict[uuid.UUID, list[str]] = {}
+    for block in await session.scalars(
+        select(Block).where(Block.id == _among(root_ids))
+    ):
+        owner = runs.get(block.id, {}).get("owner")
+        roots[block.id] = [block.author, *([owner] if owner else [])]
     said: dict[uuid.UUID, list[str]] = {
-        t.id: [roots[t.root_block_id]] if t.root_block_id in roots else []
-        for t in threads
+        t.id: list(roots.get(t.root_block_id, [])) for t in threads
     }
     rows = await session.execute(
         select(Block.conversation_id, Block.author, func.min(Block.created_at))

@@ -70,3 +70,15 @@ async def routine_owner(
         return None
     owner = payload.get("routineOwner")
     return owner if isinstance(owner, str) and owner else None
+
+
+async def is_routine_run(session: AsyncSession, delivery_id: uuid.UUID | None) -> bool:
+    """这一轮是不是周期任务的一次执行：同样从那一笔投递上认。那一轮在支线里
+    也可以写（存它的结果），之后有人追问的那几轮照支线的规矩只读。"""
+    if delivery_id is None:
+        return False
+    from app.domain.delivery.models import Delivery
+
+    row = await session.get(Delivery, delivery_id)
+    payload = (row.payload if row is not None else None) or {}
+    return payload.get("eventType") == EVENT_ROUTINE_RUN
