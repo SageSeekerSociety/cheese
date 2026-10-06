@@ -262,7 +262,12 @@ class _MemoryBooks(Protocol):
     """What a turn tells the service's memory ledger (``agent.memory_ledger``)."""
 
     def remember_turn(
-        self, topic_id: uuid.UUID, *, acting: str, speakers: tuple[str, ...]
+        self,
+        room_id: uuid.UUID,
+        seat: tuple[uuid.UUID, str],
+        *,
+        acting: str,
+        speakers: tuple[str, ...],
     ) -> None: ...
 
 
@@ -624,7 +629,12 @@ class RoomTurns:
             memory = await memory_index(
                 session, topic.project_id, speaker_handles=list(speakers)
             )
-            self._memory.remember_turn(topic.id, acting=acting_agent, speakers=speakers)
+            self._memory.remember_turn(
+                topic.id,
+                (place.conversation_id, agent.handle),
+                acting=acting_agent,
+                speakers=speakers,
+            )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
