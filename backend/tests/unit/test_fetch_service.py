@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from app.domain.fetch import layers, service
+from app.domain.fetch import guard, layers, service
 from app.domain.fetch.extract import substantive_length, to_markdown
 
 # A directory page: many short entries, mostly links, very little prose per
@@ -70,6 +70,14 @@ async def test_a_distillation_that_never_answers_does_not_hang_the_fetch(monkeyp
         await asyncio.Event().wait()
 
     monkeypatch.setattr(service, "_distill", never_returns)
+
+    # The guard still checks the address; only the lookup is answered here.
+    # A real one is as slow as the runner's network, and this test's budget is
+    # for the service's own deadline.
+    async def resolve(host, port):
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr(guard, "_resolve", resolve)
     # Shorten the service's OWN deadline so this asserts that the service gives
     # up, not that the test's patience ran out first.
     monkeypatch.setattr(service, "DISTILL_TIMEOUT_SECONDS", 0.5)
