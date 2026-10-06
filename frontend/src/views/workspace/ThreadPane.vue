@@ -7,7 +7,7 @@
 import type { Block, ProjectMemberRow, Topic } from '@/cx_types'
 import type { Thread } from '@/types/threads'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 
 import { avatarColor, avatarInitial } from '@/utils/avatar'
 
@@ -16,12 +16,15 @@ import { getThread } from '@/api/threads'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
+import TaskProposalCard from '@/components/room/TaskProposalCard.vue'
 import { t } from '@/i18n'
 import { isAgentBlock } from '@/lib/authorship'
 import { replySnippet } from '@/lib/blockDisplay'
 import { renderPlain } from '@/lib/renderMessage'
 import { topicTitle } from '@/lib/topicState'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useTaskProposals } from '@/views/workspace/useTaskProposals'
 
 defineOptions({ name: 'ThreadPane' })
 
@@ -45,6 +48,14 @@ const emit = defineEmits<{
 }>()
 
 const store = useWorkspaceStore()
+// 芝士在支线里提的卡落在这条支线上：反馈卡和任务卡都接在支线的对话后面。
+const proposals = useTaskProposals(
+  toRef(() => props.threadId),
+  (id) => emit('open-task', id)
+)
+function proposerName(handle: string): string {
+  return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
+}
 const thread = ref<Thread | null>(null)
 const error = ref<string | null>(null)
 const busy = ref(false)
@@ -101,6 +112,7 @@ function toTask() {
 // 这里只需要在「转为任务」之后重读一次挂着的那条消息。
 function onState(resource: string) {
   if (resource === 'topics') void load()
+  if (resource === 'tasks') void proposals.load()
 }
 </script>
 
@@ -179,7 +191,19 @@ function onState(resource: string) {
         @open-card="emit('open-task', $event)"
         @mention-click="emit('mention-click', $event)"
         @upgrade-message="emit('to-task', $event)"
-      />
+      >
+        <template #timeline-end>
+          <AgentFeedbackCard :topic-id="threadId" />
+          <TaskProposalCard
+            v-for="proposal in proposals.proposals.value"
+            :key="proposal.id"
+            :proposal="proposal"
+            :proposer="proposerName(proposal.proposed_by)"
+            :busy="proposals.deciding.value === proposal.id"
+            @decide="proposals.decide(proposal, $event)"
+          />
+        </template>
+      </ChatPanel>
     </template>
   </section>
 </template>

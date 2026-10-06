@@ -12,6 +12,12 @@ const markRead = vi.fn()
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ markRead }) }))
 const getThread = vi.fn()
 vi.mock('@/api/threads', () => ({ getThread: (id: string) => getThread(id) }))
+const listTaskProposals = vi.fn()
+vi.mock('@/api/tasks', () => ({
+  listTaskProposals: (id: string) => listTaskProposals(id),
+  acceptTaskProposal: vi.fn(),
+  dismissTaskProposal: vi.fn(),
+}))
 
 import ThreadPane from './ThreadPane.vue'
 
@@ -44,6 +50,8 @@ function mount() {
 beforeEach(() => {
   markRead.mockClear()
   getThread.mockReset()
+  listTaskProposals.mockReset()
+  listTaskProposals.mockResolvedValue([])
 })
 
 describe('支线', () => {
@@ -72,5 +80,27 @@ describe('支线', () => {
     await fireEvent.click(await findByTestId('thread-open-task'))
     expect(queryByTestId('thread-to-task')).toBeNull()
     expect(emitted()['open-task']).toEqual([['task9']])
+  })
+
+  it('芝士在支线里提的卡，接在支线的对话后面', async () => {
+    // 卡落在提出它的那段对话上：支线里提的就在支线里，按房间去取就一张也看不到。
+    getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
+    listTaskProposals.mockResolvedValue([
+      { id: 'tp1', title: '把首页的标语往上挪', summary: '', proposed_by: 'cheese', state: 'open' },
+    ])
+    const { findByText, container } = render(ThreadPane as Component, {
+      props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
+      global: {
+        plugins: [vuetify],
+        stubs: {
+          MarkdownView: true,
+          ChatPanel: { template: '<div><slot name="timeline-end" /></div>' },
+          AgentFeedbackCard: { props: ['topicId'], template: '<i class="feedback-probe">{{ topicId }}</i>' },
+        },
+      },
+    })
+    expect(await findByText('把首页的标语往上挪')).toBeTruthy()
+    expect(listTaskProposals).toHaveBeenCalledWith('th1')
+    expect(container.querySelector('.feedback-probe')?.textContent).toBe('th1')
   })
 })
