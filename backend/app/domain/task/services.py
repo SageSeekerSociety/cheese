@@ -841,8 +841,9 @@ class TaskSubmissionService:
                 content_attachment = _submitted_file_to_api(attachment)
             return {
                 # The form can be replaced after this was handed in, and lose
-                # the item; the entry is then numbered instead.
-                "title": names.get(entry.index, f"Entry {idx + 1}"),
+                # the item, and an item's name may be blank; the entry is then
+                # numbered instead.
+                "title": names.get(entry.index) or f"Entry {idx + 1}",
                 "type": entry_type,
                 "contentText": entry.content_text,
                 "contentAttachment": content_attachment,

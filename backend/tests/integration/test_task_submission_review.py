@@ -775,3 +775,24 @@ class TestTaskSubmissionReviewIntegration:
         assert [c["contentText"] for c in submission["content"]] == [
             "This is a test submission."
         ]
+
+    def test_an_entry_whose_form_item_has_no_name_still_has_a_title(
+        self, setup_submission: dict, api_client: TestClient
+    ):
+        creator = setup_submission["creator"]
+        task_id = setup_submission["task_id"]
+        membership_id = setup_submission["membership_id"]
+        replaced = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"submissionSchema": [{"prompt": "", "type": "TEXT"}]},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert replaced.status_code == 200, replaced.text
+
+        resp = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+
+        [submission] = resp.json()["data"]["submissions"]
+        assert all(c["title"] for c in submission["content"])
