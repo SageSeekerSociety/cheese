@@ -18,6 +18,10 @@ from app.domain.topic.models import Topic
 #: what identifies the work, the title is there to be recognised.
 MAX_TASK_TITLE = 120
 
+#: The width of `AcceptCard.change_subject`, the bound every filed subject
+#: already meets at the API.
+MAX_FALLBACK = 255
+
 
 def task_trailer(topic: Topic, item: identity.WorkItem) -> str:
     """One `Cheese-Task:` line — a URL that opens the task, and its title.
@@ -54,13 +58,12 @@ def fallback_subject(topic: Topic) -> str:
     table, which is also why it must not be "cleaned up" — deleting it breaks
     the PR title and merge subject of every pre-existing card.
 
-    It is deliberately ugly. `chore: <话题标题>` is a truthful admission that
-    nobody wrote a commit subject for this change, and it reads as clearly
-    wrong in `git log`, which is the point."""
-    room = commit_message.MAX_SUBJECT - len("chore: ") - len(" (#0000)")
-    title = topic.title or "untitled topic"
-    trimmed = title if len(title) <= room else f"{title[: room - 1]}…"
-    return f"chore: {trimmed}"
+    The topic title, untouched in format: the platform does not know the
+    repository's commit convention, so it does not dress the line up in one.
+    Trimmed to the card column's width, which also keeps it under GitHub's
+    256-character limit on a PR title — a topic title can run to 300."""
+    title = " ".join((topic.title or "").split()) or "untitled topic"
+    return title if len(title) <= MAX_FALLBACK else f"{title[: MAX_FALLBACK - 1]}…"
 
 
 def change_subject(card: AcceptCard | None, topic: Topic) -> str:
@@ -158,8 +161,11 @@ def pr_body(
 
 def merge_commit_title(card: AcceptCard | None, topic: Topic, number: int) -> str:
     """The squash commit's title line — the subject of the ONE commit this
-    topic leaves in the project's history."""
-    return commit_message.merge_subject(change_subject(card, topic), number)
+    topic leaves in the project's history. GitHub only auto-appends `(#N)` to
+    the DEFAULT title it derives from the repo's `squash_merge_commit_title`
+    setting; an explicit `commit_title` replaces that wholesale, so the number
+    is appended here or the `… (#213)` history style breaks."""
+    return f"{change_subject(card, topic)} (#{number})"
 
 
 def merge_commit_message(
