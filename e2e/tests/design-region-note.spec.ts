@@ -5,6 +5,10 @@ import { expect, test, type Page } from '@playwright/test'
 
 // Real PNG decoding + PanelPreview's original-byte identity owner. Only the API
 // is substituted; pointer selection, layout, observers, focus and send are real.
+//
+// 下面第一屏挂的是「预览」那一格的外壳（`components/work/PanelPreviewHost.vue`），
+// 不是面板本身：面板现在只吃 props，取数在 `composables/usePanelPreview.ts` 里做一次
+// 再整包递下去，这里按住的假接口喂的正是那一层。只挂面板的话它拿不到那一包，什么都画不出来。
 function png() {
   const crc = (bytes: Buffer) => {
     let value = 0xffffffff
@@ -44,7 +48,7 @@ const fixture = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body>
 <div id="fixture"></div><script type="module">
 import {createApp,h,ref} from '/node_modules/.vite/deps/vue.js';
 import {VApp} from '/node_modules/.vite/deps/vuetify_components.js';
-import PanelPreview from '/src/components/panels/PanelPreview.vue';
+import PanelPreviewHost from '/src/components/work/PanelPreviewHost.vue';
 import vuetify from '/src/plugins/vuetify.ts';
 import i18n,{setLocale} from '/src/i18n/index.ts';
 import '/src/style.css';
@@ -61,7 +65,7 @@ window.fetch=async url=>{
 };
 createApp({setup(){return()=>h(VApp,{}, {default:()=>h('main',{style:'padding:24px;display:flex;gap:24px'},[
  h('aside',{id:'stage',style:{width:width.value+'px',height:height.value+'px',display:'flex',flexShrink:0}},[
- mounted.value?h(PanelPreview,{topicId:'fixture-room',projectId:'fixture-project',active:true,path:'design.png',refreshTick:refreshTick.value,onLocate:note=>window.notes.push(note)}):null]),
+ mounted.value?h(PanelPreviewHost,{topicId:'fixture-room',projectId:'fixture-project',active:true,path:'design.png',refreshTick:refreshTick.value,onLocate:note=>window.notes.push(note)}):null]),
  h('input',{id:'outside', 'aria-label':'聊天输入'})])})}}).use(vuetify).use(i18n).mount('#fixture');
 </script></body></html>`
 
