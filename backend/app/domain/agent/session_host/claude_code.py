@@ -52,7 +52,14 @@ if TYPE_CHECKING:
 # so a cold session's first question often arrives before there is anything to
 # answer it. A runner that has already ended says so in its log, and the wait
 # stops there.
+#
+# The first questions come quickly and then less often: a runner is usually up
+# within a few hundred milliseconds, and a fixed one-second wait made every cold
+# start cost at least a second (on dev, 1.05 s of the 1.25 s each person's first
+# message spent starting the session). Reading the log for an ending is a
+# program run on the host, so that still happens once a second, not per ping.
 STARTUP_WAIT_S = 120.0
+STARTUP_FIRST_POLL_S = 0.05
 STARTUP_POLL_S = 1.0
 
 
@@ -137,6 +144,8 @@ class ClaudeCodeDriver:
         whatever the log last said travels back with the refusal.
         """
         deadline = time.monotonic() + STARTUP_WAIT_S
+        interval = STARTUP_FIRST_POLL_S
+        log_read_at = time.monotonic() + STARTUP_POLL_S
         while True:
             try:
                 status = await wire.call(host, ref, "ping", {})
@@ -150,15 +159,18 @@ class ClaudeCodeDriver:
                 # arrive as HTTP errors; whatever shape it takes, a ping that
                 # does not come back means the session cannot be reached yet.
                 failure = exc
-            if record := await self._ended(wire, host, ref.state, name):
-                raise startup_refused(record, harness=self.label)
+            if time.monotonic() >= log_read_at:
+                if record := await self._ended(wire, host, ref.state, name):
+                    raise startup_refused(record, harness=self.label)
+                log_read_at = time.monotonic() + STARTUP_POLL_S
             if time.monotonic() >= deadline:
                 raise startup_refused(
                     await self._why(wire, host, ref.state, failure),
                     harness=self.label,
                     timed_out=True,
                 )
-            await asyncio.sleep(STARTUP_POLL_S)
+            await asyncio.sleep(interval)
+            interval = min(interval * 2, STARTUP_POLL_S)
 
     async def _ended(self, wire: Wire, host: str, state: str, name: str) -> str:
         """What this launch's runner wrote on ending, or nothing yet.
