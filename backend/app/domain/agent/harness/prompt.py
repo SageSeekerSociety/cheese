@@ -417,7 +417,19 @@ def build_system_prompt(
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
 #: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
-TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory")
+TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory", "machine")
+
+#: 任务会话对工作机器能做什么。它随任务开始而变（开始后会话带着能写的凭证重开，但接着
+#: 的是同一条对话，开场不会再发），所以是一段会再告诉一次的现状，而不是写死在开场里。
+#: 只读时说清楚，否则 agent 照常跑命令，被拒以后才知道。
+TASK_MACHINE_READS_ONLY = (
+    "## 工作机器\n"
+    "这条任务还没开始，你对工作机器只读：能看代码和提交记录，不能执行命令、不能改"
+    "文件，任务文档照常能写。负责人开始任务以后平台会告诉你，那之后再动手。"
+)
+TASK_MACHINE_STARTED = (
+    "## 工作机器\n这条任务已经开始，你可以在工作机器上执行命令、改文件。"
+)
 
 
 @dataclass(frozen=True)
@@ -480,11 +492,16 @@ def build_session_opening(
     environment: list[str] | None = None,
     teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
+    machine: str | None = None,
 ) -> SessionOpening:
-    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。"""
+    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。
+
+    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。"""
     sections: dict[str, str] = {}
     if thread:
         sections["thread"] = "## 这条支线\n" + thread
+    if machine:
+        sections["machine"] = machine
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
     if topics:
