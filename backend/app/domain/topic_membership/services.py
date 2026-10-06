@@ -244,6 +244,13 @@ class TopicMemberService:
             joined |= {t.id for t in roots}
         return joined
 
+    async def seen(self, topics: list[Topic], handle: str) -> list[Topic]:
+        """The ones of these channels ``handle`` sees: the public ones, and the
+        private channels they sit in."""
+        private = [t for t in topics if t.members_only]
+        seated = await self.joined_topic_ids(private, handle) if private else set()
+        return [t for t in topics if not t.members_only or t.id in seated]
+
     async def joined_ids(
         self, topic_ids: list[uuid.UUID], handle: str
     ) -> set[uuid.UUID]:

@@ -45,7 +45,6 @@ from app.domain.project.models import Project
 from app.domain.project.services import refuse_writes_if_archived
 from app.domain.thread.services import waiting_in_room
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
-from app.domain.topic.repositories import seen_by
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
@@ -95,8 +94,6 @@ async def room(
         Topic.project_id == project_id,
         Topic.is_private.is_(False),
     )
-    if viewer is not None:
-        statement = statement.where(seen_by(await _handle(db, viewer)))
     if lock:
         # The session keeps objects across commit, so a locked re-read must
         # load the row again rather than hand back the unlocked read's copy.
@@ -104,7 +101,10 @@ async def room(
             populate_existing=True
         )
     topic = await db.scalar(statement)
-    if topic is None:
+    if topic is None or (
+        viewer is not None
+        and not await TopicMemberService(db).seen([topic], await _handle(db, viewer))
+    ):
         raise NotFoundError("Room not found")
     return topic
 
@@ -140,11 +140,12 @@ async def get_environment(project_id: uuid.UUID, db: Db, user: User) -> dict:
                 Topic.is_private.is_(False),
                 Topic.kind != TopicKind.root,
                 Topic.status != TopicStatus.archived,
-                seen_by(await _handle(db, user)),
             )
             .order_by(Topic.created_at)
         )
     ).all()
+    # A private channel is listed to its people only.
+    topics = await TopicMemberService(db).seen(list(topics), await _handle(db, user))
     return ok(
         {
             "config": project_environment(project.settings),

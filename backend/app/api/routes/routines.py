@@ -32,7 +32,6 @@ from app.domain.membership.services import MemberService
 from app.domain.routine import service as routines
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import RoutineService, describe_trigger
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -277,7 +276,7 @@ async def _readable_rules(
         rooms = [
             room
             for room in [
-                await TopicRepository(db).get(i) for i in {r.topic_id for r in rows}
+                await TopicService(db).get(i) for i in {r.topic_id for r in rows}
             ]
             if room is not None
         ]
