@@ -24,6 +24,7 @@ from app.core.sandbox_auth import (
     project_agent_claims,
 )
 from app.core.sentences import say
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -163,7 +164,9 @@ class ProjectAgentCredentialService:
         parsed = _as_uuid(topic_id)
         if parsed is None:
             return None
-        topic = await self._topics.get(parsed)
+        # A task or a 支线 is a conversation inside a room: its project is
+        # its room's.
+        topic = await self._topics.get(await room_of(self._session, parsed))
         return topic.project_id if topic is not None else None
 
 
