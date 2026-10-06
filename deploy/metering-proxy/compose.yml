@@ -78,6 +78,13 @@ services:
     # container (a restart) instead of taking down every other service on the
     # box. Raise it on hosts that run many concurrent subscription turns.
     mem_limit: 2g
+    # journald, for the reason the app containers use it
+    # (docs/infrastructure.md, "Logs"): every release recreates this
+    # container, and a json-file log goes with the container it belonged to.
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
     # mitmproxy puts no timeout on opening an upstream connection, so an
     # unreachable one (a credential egress across a flaky tailnet relay) waited
     # out the kernel's 6 SYN retries, ~135 s, per request. At 3 it fails in

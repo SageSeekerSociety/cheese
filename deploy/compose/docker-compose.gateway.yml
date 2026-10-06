@@ -18,11 +18,13 @@ services:
     # The Dockerfile pins the upstream digest and verifies the patched file hash.
     image: ${GATEWAY_IMAGE:?set the CI-built gateway image}
     restart: unless-stopped
+    # journald, for the reason the app containers use it
+    # (docs/infrastructure.md, "Logs"): every release recreates this
+    # container, and a json-file log goes with the container it belonged to.
     logging:
-      driver: json-file
+      driver: journald
       options:
-        max-size: "20m"
-        max-file: "5"
+        tag: "{{.Name}}"
     depends_on:
       litellm-db:
         condition: service_healthy
