@@ -1006,28 +1006,40 @@ def _executors_under(directory: Path) -> dict[int, str]:
     return found
 
 
+#: The base temp of the worker that ran a test, kept for the check after its
+#: teardown (`_end_leftover_executors`).
+_EXECUTOR_BASETEMP = pytest.StashKey[Path]()
+
+
 @pytest.fixture(autouse=True)
-def _no_executor_outlives_its_test(
+def _executor_basetemp(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
-) -> Iterator[None]:
+) -> None:
+    """Where to look for the executors a test may leave: only tests with a
+    `tmp_path`, which is where every fixture that starts an executor puts
+    it; a process listing per test is not free."""
+    if sys.platform != "win32" and "tmp_path" in request.fixturenames:
+        request.node.stash[_EXECUTOR_BASETEMP] = tmp_path_factory.getbasetemp()
+
+
+def _end_leftover_executors(item: pytest.Item) -> None:
     """No executor a test started is still running once the test is over.
 
     An executor runs in a session of its own (`runtime.py start`), so nothing
     ends it with the test or with the xdist worker: one a teardown missed
     stays up, reparented to init, holding memory after the run has exited.
-    Checked after the test's own fixtures have torn down — this one is set up
-    before them — under this worker's base temp, which holds every test's
+    Looked for under this worker's base temp, which holds every test's
     `tmp_path` and nothing of another worker or another run. Whatever is found
     is killed, so the rest of the run is not left with it, and the test that
     left it fails by name.
 
-    Only for tests that have a `tmp_path`, which is where every fixture that
-    starts an executor puts it; a process listing per test is not free.
+    Run from `pytest_runtest_teardown` once every fixture has torn down, not
+    from a fixture: tests patch `subprocess`, `PATH` and `sys.platform`, and
+    only after `monkeypatch` has undone that does `ps` mean `ps`.
     """
-    yield
-    if sys.platform == "win32" or "tmp_path" not in request.fixturenames:
+    basetemp = item.stash.get(_EXECUTOR_BASETEMP, None)
+    if basetemp is None:
         return
-    basetemp = tmp_path_factory.getbasetemp()
     # A stop returns once the executor has let go of its lock; its exit can
     # trail that by a moment.
     deadline = time.monotonic() + 5
@@ -1041,7 +1053,7 @@ def _no_executor_outlives_its_test(
         except ProcessLookupError:
             pass
     pytest.fail(
-        f"{request.node.nodeid} left {len(left)} executor process(es) running"
+        f"{item.nodeid} left {len(left)} executor process(es) running"
         " after its fixtures tore down (killed now):\n"
         + "\n".join(f"  pid={pid} {args}" for pid, args in left.items()),
         pytrace=False,
@@ -1905,8 +1917,18 @@ def pytest_runtest_teardown(item: pytest.Item):
     backstop for whatever gets past that.
 
     Cost: one connection to the maintenance DB per client-DB test, a few ms.
+
+    Executors a test left running are looked for here too
+    (`_end_leftover_executors`).
     """
     yield
+    try:
+        _fail_on_open_transactions(item)
+    finally:
+        _end_leftover_executors(item)
+
+
+def _fail_on_open_transactions(item: pytest.Item) -> None:
     names = getattr(item, "fixturenames", ())
     # A pure test has no database behind it, so it cannot have leaked a
     # transaction on one — and the name check below cannot tell that on its own:
