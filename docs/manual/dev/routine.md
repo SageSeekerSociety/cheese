@@ -1,7 +1,7 @@
 ---
 title: 例行与巡检
 kind: 参考
-summary: 房间里的常驻工作：规则与执行两张表、钟点与事件两种触发、一次执行的一生，以及平台自己的巡检钟。
+summary: 频道里的常驻工作：规则与执行两张表、钟点与事件两种触发、一次执行的一生（主线上的一条消息和它的支线），以及平台自己的巡检钟。
 covers:
   - backend/app/domain/routine/
   - backend/app/api/routes/routines.py
@@ -10,7 +10,7 @@ covers:
 
 # 例行与巡检 {#routine}
 
-房间里的 AI 队友可以被安排一件**常驻**的活：到点就跑，或者项目里发生了某件事就跑，跑完把结果交回房间、再通知安排它的人。
+频道里的 AI 队友可以被安排一件**常驻**的活：到点就跑，或者项目里发生了某件事就跑。每一次执行是 AI 队友在频道主线上的一条消息，执行本身在这条消息的支线里；跑完结果写进这条消息，再通知安排它的人。
 
 > 讲：一条周期任务从起草到执行到结账的全过程，以及平台自己的那几口钟。不讲：通知怎么发出去（见[通知](/dev/notifications#ledger)），一次执行在房间里怎么变成芝士的一轮（见[一条消息怎么变成芝士的一轮](/dev/turn)），任务与交付本身（见[任务与工作目录](/dev/tasks)、[任务 → 分支 → PR → 验收合并](/dev/delivery)）。
 
@@ -21,7 +21,7 @@ covers:
 | 表 | 是什么 | 关键列 |
 | --- | --- | --- |
 | `Routine` | 一条**规则** | `title`、`instructions`、`context_scope`、`output_dir`、`trigger`、`spec`、`timezone`、`state`、`agent_handle`、`owner_handle`、`next_run_at`、`event_cursor`、`revision` |
-| `RoutineRun` | 规则**响了一次** | `occurrence_key`、`routine_revision`、`status`、`delivery_event_id`、`turn_id`、`summary`、`outputs`、`error`、`notified` |
+| `RoutineRun` | 规则**响了一次** | `occurrence_key`、`routine_revision`、`status`、`message_id`、`delivery_event_id`、`turn_id`、`summary`、`outputs`、`error`、`notified` |
 
 规则三态：`draft`（芝士起草，人没确认之前什么都不跑）、`active`、`paused`。执行五态：`queued` / `running` / `succeeded` / `failed` / `skipped`，末三者是终结态（`TERMINAL_RUN_STATUSES`）。
 
@@ -57,14 +57,22 @@ covers:
 
 ## 一次执行的一生 {#run-life}
 
+这一节讲一次执行从响起到结账，在频道里各留下什么。
+
 ```
-到点/事件 → _fire：写 RoutineRun（queued）→ 派一个投递事件（ROOM_NOTICE）
-        → 芝士的一轮跑起来 → run.turn_id → 交回结果 → report → _announce_finished
+到点/事件 → _fire：写 RoutineRun（queued）→ 主线上落 AI 队友的一条消息（message_id）
+        → answered_in 给它开支线 → 支线里落「开始执行」→ 往支线派一个投递事件（ROOM_NOTICE）
+        → 芝士的一轮在支线里跑起来 → run.turn_id → 交回结果 → report
+        → _announce_finished：结果写进那条消息、消息挪到结账的时刻 → 通知规则的主人
 ```
 
-`_fire` 拿的是投递账本那一条（`route/notification` 侧的 `DeliveryEvent`，类型 `ROOM_NOTICE`），它的 payload 里是这段工作本身：`run_prompt` 把工作内容、资料范围、结果目录、以及**怎么交回**（`POST /routine-runs/{id}/report`）都写给芝士看。执行的 `turn_id` 就是那一轮。
+**一次执行是主线上的一条消息。** `_fire` 先在规则所在频道的主线落一条 AI 队友署名、正文为空的消息，`RoutineRun.message_id` 记下它；再用 `thread.services.answered_in` 决定在哪里答：频道主线上的消息在它的支线里，私聊没有支线，就在私聊里。「开始执行」那一行和投递都落在那里。消息下面那一行（规则名、运行中 / 未能执行、查看这次运行）由 `routine/reads.runs_under` 在频道翻页时挂上，前端是 `RoutineRunLine`。规则的主人算这条支线的参与者（`thread/reads._participants`），所以支线里有人追问，回复会通知到他。
 
-**交回是必须的**：`report` 只认这条规则的 `agent_handle` 交，成功失败都要交，失败还必须写明原因，`outputs` 最多 50 条。没交回的那一次会被记成失败。
+**这一轮可以写，追问只读。** 支线里的芝士本来只读；执行的那一轮从投递上认出来（`turn_speakers.is_routine_run`，`eventType == routine_run`），不按只读启动，开场提示也换成「这一轮就是这次执行，可以保存结果」。之后有人在这条支线里追问，那几轮照支线的规矩只读，会话按新参数重启一次，接着同一段对话。
+
+**投递和交回。** 投递事件的 payload 里是这段工作本身：`run_prompt` 把工作内容、资料范围、结果目录、上一次成功执行交回的结果，以及**怎么交回**（`POST /routine-runs/{id}/report`）都写给芝士看。执行的 `turn_id` 就是那一轮。
+
+**交回是必须的**：`report` 只认这条规则的 `agent_handle` 交，成功失败都要交，失败还必须写明原因，`outputs` 最多 50 条。成功时交回的 `summary` 就是那条消息的正文，频道里的人直接读它。没交回的那一次会被记成失败。
 
 结账在 `_settle_open_runs` 里，按几口不同的钟判：
 
@@ -79,11 +87,11 @@ covers:
 
 为什么这不看「这一轮什么时候结束」：活会话里每条输入的 turn 行都是毫秒级交付又停止的，后端看不见设备那边这一轮到底还忙不忙。所以唯一的钟是「一轮最长能跑多久」再加一点交回的余量，而真正的失败更早会被房间里那条 turn-failed 通知抓到。迟到的失败如果后来交回了成功，`report` 会把 `notified` 复位、把错误清掉，**重新通知一次** —— 那次通知说的是它实际怎么样了。
 
-`_announce_finished` 只扫 `notified = false` 且已经终结的执行：房间事件块 + 给 `owner_handle` 的 `CHANGE_ALERT` 通知，一次都不重复。
+`_announce_finished` 只扫 `notified = false` 且已经终结的执行：成功的把交回的结果写进那条消息，没成功的消息正文留空（不以 AI 队友的名义替平台说话，原因由 `runs_under` 带出、画在消息下面那一行）；两种都把消息的时间改成结账的这一刻，挪到主线最下面，再给 `owner_handle` 发 `CHANGE_ALERT` 通知，一次都不重复。改过的消息在提交后整行推给开着频道的人（`publish_run_messages`，前端只有时间变了的那一行才重新落位）。`skipped` 的执行没有消息，只通知主人。
 
 ## 抢跑、补跑与熔断 {#once}
 
-- **错过了就不补**：计划时刻晚于现在超过 `MISSED_GRACE`（15 分钟）的，落一行 `skipped`，理由写「平台当时没有运行，这一次不补跑」。补跑一条几小时前的定时任务，通常比不跑更糟。
+- **错过了就不补**：计划时刻晚于现在超过 `MISSED_GRACE`（15 分钟）的，执行记成 `skipped`，理由写「平台当时没有运行，这一次不补跑」，频道里不落消息。补跑一条几小时前的定时任务，通常比不跑更糟。
 - **不重复**：唯一约束那一步返回空就说明这个时刻已经响过了，`_fire` 直接返回。
 - **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；「任务完成触发工作、工作又开任务」也绕不起来：任务只能由人创建，周期任务跑出来的一轮最多提议任务。
 - **扫描是并发的**：`_fire_schedules` / `_fire_events` / `announce_archived_rooms` / `_settle_open_runs` / `_announce_finished` 都 `with_for_update(skip_locked=True)`，多个后端进程同时在跑也不会互相排队或重复处理。
