@@ -154,6 +154,13 @@ const liveChecklists = computed(() => {
   return ids
 })
 
+// 合成一行的那一串署谁的名，看它最后那一条。
+function agentOf(block: Block, notice: PlatformNotice): NoticeAgent | null {
+  if (notice.mode !== 'repeats') return props.noticeAgent(block, notice)
+  const last = notice.rows[notice.rows.length - 1]
+  return last.notice ? props.noticeAgent(last.block, last.notice) : null
+}
+
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
 // 名字和时间。断开的条件和消息一样（chatGrouping.ts）：中间插了别的行、换了一天、
 // 隔了一小时以上。和消息之间照旧断开。
@@ -161,8 +168,8 @@ const noticeCont = computed(() =>
   props.rows.map((row, i) => {
     const prev = props.rows[i - 1]
     if (!row.notice || !prev?.notice) return false
-    const agent = props.noticeAgent(row.block, row.notice)
-    const before = props.noticeAgent(prev.block, prev.notice)
+    const agent = agentOf(row.block, row.notice)
+    const before = agentOf(prev.block, prev.notice)
     if (!agent || !before || agent.name !== before.name || agent.handle !== before.handle) return false
     if (props.splitMarkers.before.has(row.block.id) || row.block.id === props.unreadAnchorId) return false
     if (dayKey(prev.block.created_at) !== dayKey(row.block.created_at)) return false
@@ -182,7 +189,7 @@ const faceRows = computed(() => {
     const handle = notice
       ? noticeCont.value[i]
         ? null
-        : props.noticeAgent(block, notice)?.handle ?? null
+        : agentOf(block, notice)?.handle ?? null
       : props.runEdges[i] !== 'cont' && props.isAgentBlock(block)
         ? block.author
         : null
@@ -377,7 +384,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :block="m"
             :notice="notice"
             :run="run"
-            :agent="noticeAgent(m, notice)"
+            :agent="agentOf(m, notice)"
+            :time-of="fmtTime"
             :cont="noticeCont[i]"
             :face="faceRows.get(m.id)?.state ?? null"
             :face-label="faceLabel(faceRows.get(m.id))"

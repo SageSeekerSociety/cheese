@@ -403,6 +403,15 @@
       "failed": "Retry failed"
     },
     "notice": {
+      "repeats": {
+        "line": "{actor} {parts}",
+        "sep": ", ",
+        "archived": "archived {n} channels",
+        "unarchived": "unarchived {n} channels",
+        "docEdited": "edited documents {n} times",
+        "others": "and {n} other actions",
+        "only": "{line} and {n} actions in all"
+      },
       "platform": "Platform",
       "changedFiles": "Changed files",
       "moreFiles": "{n} more files",

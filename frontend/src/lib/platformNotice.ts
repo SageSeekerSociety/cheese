@@ -33,6 +33,7 @@ import type { Block } from '../cx_types'
 import type { DocEdit } from './docEdits'
 import type { PlatformErrorPresentation } from './platformEvents'
 
+import { foldRepeats } from './noticeRepeats'
 import { noticeText } from './noticeText'
 import { platformErrorPresentation } from './platformEvents'
 
@@ -277,6 +278,8 @@ export type PlatformNotice =
       /** 后端说现在点一下重试有用（`meta.retryable`）。 */
       retryable: boolean
     }
+  /** 同一个人连着做的同一种操作，合成一行；点开列出每一条（lib/noticeRepeats）。 */
+  | { mode: 'repeats'; actor: string; rows: NoticeRow[] }
   /** 老样子：居中、灰、12px、一行。 */
   | { mode: 'plain' }
 
@@ -557,7 +560,7 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
     row.notice = platformNotice(row.block, row.run)
     if (row.notice?.mode === 'mail-draft') row.notice.outcome = mailEnds.get(row.notice.mail.draftId) ?? null
   }
-  return foldTurnSummary(rows)
+  return foldRepeats(foldTurnSummary(rows))
 }
 
 /**
