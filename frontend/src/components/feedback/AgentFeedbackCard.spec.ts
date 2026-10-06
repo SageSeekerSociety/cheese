@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AgentFeedbackCard from './AgentFeedbackCard.vue'
 
+import { dismissFeedbackProposal } from '@/api'
 import i18n, { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -39,6 +40,7 @@ const proposal = {
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   listFeedbackProposals: vi.fn(async () => [proposal]),
+  dismissFeedbackProposal: vi.fn(async () => ({ dismissed: true })),
 }))
 
 beforeEach(() => {
@@ -84,5 +86,18 @@ describe('房间里的反馈卡', () => {
     expect(detail.closest('[inert]')).toBeNull()
     await fireEvent.click(view.getByRole('button', { name: /收起详情/ }))
     expect(detail.closest('[inert]')).not.toBeNull()
+  })
+
+  it('服务端记下了这一下「不用」，卡当场收起', async () => {
+    const view = await mount()
+    await fireEvent.click(view.getByRole('button', { name: /不用/ }))
+    await vi.waitFor(() => expect(view.queryByText('云端工作电脑反复创建失败')).toBeNull())
+  })
+
+  it('服务端没记下，卡就回到屏幕上 —— 人不会以为这一下算数了', async () => {
+    vi.mocked(dismissFeedbackProposal).mockRejectedValueOnce(new Error('500'))
+    const view = await mount()
+    await fireEvent.click(view.getByRole('button', { name: /不用/ }))
+    await vi.waitFor(() => expect(view.getAllByText('云端工作电脑反复创建失败')).toHaveLength(1))
   })
 })

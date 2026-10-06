@@ -38,6 +38,7 @@ from app.domain.identity.handles import agent_instance_handle, looks_like_agent_
 from app.main import app
 from tests.integration.conftest import (
     add_external_member,
+    open_task,
     post_project,
     registered,
     room_agent_seat,
@@ -1693,6 +1694,32 @@ def test_dismissing_a_proposal_is_remembered(client):
     # …and it stays out: the refusal is on the server, so a reload does not bring
     # the card back and a re-proposal is refused rather than re-asked.
     assert _propose(client, topic, token).status_code == 412
+
+
+def test_a_dismissal_in_a_task_is_remembered_too(client):
+    """任务和房间一样是对话：卡开在任务里时，「不用」同样要记得住。
+
+    这里钉的是一次真的漏网：这张表的外键曾经指向 `topics`，而任务只有
+    `conversations` 行 —— 任务里点「不用」，这行 INSERT 被外键拒绝、路由回 500，
+    人看到的却是卡收起来又回来（前端把那个错吞了）。房间没事，所以它一直看着是好的，
+    直到 fc3eab9b8847 把这类房间变成了任务。
+    """
+    project = _project(client, REPORTER)
+    room = _topic(client, project, REPORTER)
+    task = open_task(client, room, owner=REPORTER, start=False)["id"]
+    token = mint_scoped_token(project_id=project, topic_id=task)
+
+    block_id = _propose(client, task, token).json()["data"]["block_id"]
+    r = client.post(
+        f"/topics/{task}/feedback-proposals/{block_id}/dismiss",
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 200, r.text
+
+    live = client.get(
+        f"/topics/{task}/feedback-proposals", headers=session_auth_headers(REPORTER)
+    ).json()["data"]
+    assert live == []
 
 
 def test_the_topic_runs_out_of_proposals_for_the_day(client):
