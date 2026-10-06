@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 
@@ -81,10 +81,15 @@ async def rung_markdown_native(url: str, timeout: float = 12.0) -> Attempt:
     loop = asyncio.get_running_loop()
     start = loop.time()
     parsed = urlparse(url)
-    candidates: list[tuple[str, dict[str, str]]] = [
-        (url, {"Accept": _MARKDOWN_ACCEPT}),
-        (url.rstrip("/") + ".md", {"Accept": _MARKDOWN_ACCEPT}),
-    ]
+    candidates: list[tuple[str, dict[str, str]]] = [(url, {"Accept": _MARKDOWN_ACCEPT})]
+    # The twin is the page's PATH plus `.md`, on the same host. Appended to the
+    # whole URL instead, a site root became `https://example.com.md` — another
+    # host, which the guard refuses as unresolvable, and a refusal there ends
+    # the whole fetch. A root has no page name to append to, so it has no twin.
+    page = parsed.path.rstrip("/")
+    if parsed.scheme and parsed.netloc and page:
+        twin = urlunparse((parsed.scheme, parsed.netloc, page + ".md", "", "", ""))
+        candidates.append((twin, {"Accept": _MARKDOWN_ACCEPT}))
     if parsed.scheme and parsed.netloc:
         candidates.append(
             (urljoin(f"{parsed.scheme}://{parsed.netloc}", "/llms.txt"), {})

@@ -332,3 +332,41 @@ async def test_a_short_published_markdown_twin_wins_the_first_rung(monkeypatch):
     assert got.ok, f"a published markdown twin must win here, however short: {got.note}"
     assert "A team is a group" in got.text
     assert got.note.endswith(".md"), "and it must say which URL answered"
+
+
+async def test_a_site_root_is_read_without_asking_another_host(monkeypatch):
+    """The markdown twin goes on the page's path, never on the host name.
+
+    Appended to the whole URL, `https://okcheese.com` became
+    `https://okcheese.com.md`; the guard refused that host as unresolvable and
+    the refusal ended the fetch (feedback card #80). A query string is no part
+    of a file name either.
+    """
+    import httpx
+
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        if request.url.path == "/docs/teams.md":
+            return httpx.Response(
+                200, text="# Teams\n", headers={"content-type": "text/markdown"}
+            )
+        return httpx.Response(
+            200, text="<html></html>", headers={"content-type": "text/html"}
+        )
+
+    original = httpx.AsyncClient
+
+    def with_mock(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(layers.httpx, "AsyncClient", with_mock)
+
+    await layers.rung_markdown_native("https://example.com")
+    await layers.rung_markdown_native("https://example.com/")
+    got = await layers.rung_markdown_native("https://example.com/docs/teams/?tab=2")
+
+    assert {httpx.URL(u).host for u in asked} == {"example.com"}, asked
+    assert got.ok and got.note == "https://example.com/docs/teams.md"
