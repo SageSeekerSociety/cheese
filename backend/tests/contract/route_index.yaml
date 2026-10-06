@@ -103,8 +103,10 @@ auth_entries:
   github.state: "GitHub provider callback verifies signed install/account-link state and scopes the resulting binding; no ordinary login dependency at callback. Source: app/api/routes/github_install.py; github_account_link.py."
   app.sign_in.code: "app_sign_in.finish_app_sign_in requires same origin, signed code, PKCE verifier challenge and single-use claim before issuing session. Source: app/api/routes/app_sign_in.py."
   notice.ws: "notifications_live.live verifies dedicated notice token from Authorization then _signed_in confirms active user session, periodically rechecking. Source: app/api/routes/notifications_live.py."
-  topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService decides roster/role management for actual topic. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
-  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_archive_manager; archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService.require_manager admits the channel's creator and whoever manages the project. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
+  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.channel.self: "topics_channel resolves the authenticated person in the channel and authorize_topic; joining needs the person on the project's roster, a private room or a task is not a channel. Source: app/api/routes/topics_channel.py; domain/topic_membership/services.py."
+  topic.channel.manage: "topics_channel description goes through TopicMemberService.require_manager (creator or project manager) after authorize_topic. Source: app/api/routes/topics_channel.py."
   topic.names: "topics.list_topic_names resolves/rejects failed credential and limits names to caller visible project IDs; not a raw global room directory. Source: app/api/routes/topics.py."
   cheese.room.gate: "main.cheese_token_gate matches this exact POST path in _CHEESE_WRITE_PATHS: valid scoped cheese token, explicit global sandbox override or project-agent credential with actual room authorization, followed by handler room actor check. Source: app/main.py,721."
   cheese.project.gate: "main.cheese_token_gate matches a project-scoped POST path in _CHEESE_WRITE_PATHS and checks project scope / explicit global sandbox / authorized project-agent credential. Source: app/main.py,721."
@@ -1029,7 +1031,6 @@ routes:
   # app.api.routes.topic_members
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/members", auth: "actor.topic", owner: "topic.membership"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/members", auth: "topic.members.manage", owner: "topic.membership"}
-  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
   - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
   # app.api.routes.topics
   - {protocol: "http", method: "POST", path: "/topics", auth: "actor.project", owner: "topic"}
@@ -1062,6 +1063,10 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/attachments", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/raw", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/pdf", auth: "actor.topic", owner: "room.files"}
+  # app.api.routes.topics_channel
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/join", auth: "topic.channel.self", owner: "topic.membership"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/leave", auth: "topic.channel.self", owner: "topic.membership"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/description", auth: "topic.channel.manage", owner: "topic"}
   # app.api.routes.document_comments
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/comments/threads", auth: "document.member", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/comments/{comment_id}/thread", auth: "document.member", owner: "living_doc"}
