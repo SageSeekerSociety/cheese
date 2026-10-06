@@ -8,6 +8,7 @@
 import type { Component } from 'vue'
 
 import { ref } from 'vue'
+import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -27,9 +28,21 @@ vi.mock('@/api', async () => {
   }
 })
 
-// replace 而不是 push：退出成功后再按回退键不该落回这个项目（见组件里那句注释）。
-const replace = vi.fn()
-vi.mock('vue-router', () => ({ useRouter: () => ({ replace }), useRoute: () => ({ query: {} }) }))
+const Blank = { render: () => null }
+
+/** 退出成功之后回空间目录，而且是 replace 而不是 push：再按回退键不该落回一个名册里
+ *  已经没有他的项目（见组件里那句注释）。组件跳转走 `composables/useNavigation`，路由
+ *  从应用上拿，所以这里装的必须是真路由 —— 它读的就是这一个。 */
+function makeRouter(): Router {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/spaces', name: 'HomeSpaces', component: Blank },
+      { path: '/projects/:projectId', name: 'project', component: Blank },
+      { path: '/:any(.*)*', component: Blank },
+    ],
+  })
+}
 
 const refreshMembers = vi.fn()
 const refreshProjects = vi.fn()
@@ -79,11 +92,11 @@ beforeEach(() => {
   listProjectMembers.mockReset().mockResolvedValue({ data: [], total: 0 })
   refreshMembers.mockReset().mockResolvedValue(undefined)
   refreshProjects.mockReset().mockResolvedValue(undefined)
-  replace.mockReset()
 })
 
 /** 挂一个外置开关：弹窗的 open 由它供着，测试能真的关了再开。 */
 function mount(projectId = 'p1') {
+  const router = makeRouter()
   const Host = {
     setup() {
       const open = ref(true)
@@ -92,7 +105,11 @@ function mount(projectId = 'p1') {
     components: { Dialog },
     template: `<div><button type="button" data-testid="reopen" @click="open = true">打开</button><Dialog v-model="open" project-id="${projectId}" /></div>`,
   }
-  return render(Host as unknown as Component, { global: { plugins: [vuetify] } })
+  const utils = render(Host as unknown as Component, { global: { plugins: [vuetify, router] } })
+  // 挂上之后才钉：装路由时 vue-router 自己会往初始位置走一步，那一步不是组件跳的。
+  const push = vi.spyOn(router, 'push')
+  const replace = vi.spyOn(router, 'replace')
+  return { ...utils, router, push, replace }
 }
 
 // These assertions read the Chinese copy; the English rendering is checked in its own case.
@@ -101,7 +118,7 @@ beforeEach(() => setLocale('zh-CN'))
 describe('LeaveProjectDialog 的被拒语义', () => {
   it('被拒时弹窗不关，理由说在弹窗里——人还没退成', async () => {
     leaveProject.mockRejectedValue(new Error('项目所有者不能退出项目，需要先把项目转让给别人'))
-    mount()
+    const { replace } = mount()
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     expect(await screen.findByText(/需要先把项目转让给别人/)).toBeTruthy()
     // 弹窗还开着：确认那一排按钮都还在，人还点得动「取消」。
@@ -159,10 +176,13 @@ describe('LeaveProjectDialog 的被拒语义', () => {
   it('确认之后退出、刷新、回首页；刷新失败也照样走', async () => {
     refreshMembers.mockRejectedValue(new Error('boom'))
     refreshProjects.mockRejectedValue(new Error('boom'))
-    mount()
+    const { router, push, replace } = mount()
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p1'))
-    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: 'HomeSpaces' }))
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaces'))
+    // 换掉这一格，不在身后压回一条刚才那个项目。
+    expect(replace).toHaveBeenCalledWith({ name: 'HomeSpaces' })
+    expect(push).not.toHaveBeenCalled()
     expect(screen.queryByText(/退出失败/)).toBeNull()
     expect(refreshMembers).toHaveBeenCalled()
     expect(refreshProjects).toHaveBeenCalled()

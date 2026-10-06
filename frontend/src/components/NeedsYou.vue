@@ -23,7 +23,8 @@
 import type { InboxItem } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import { getInbox, markRead, resolveAlert, sendFeedback } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -34,7 +35,7 @@ import { myHandle } from '@/me'
 
 const props = defineProps<{ projectId: string }>()
 
-const router = useRouter()
+const navigation = useNavigation()
 
 const rows = ref<InboxItem[]>([])
 const actionError = ref('')
@@ -98,7 +99,7 @@ function canOpen(row: InboxItem): boolean {
 
 function open(row: InboxItem) {
   const target = topicTarget(row)
-  if (target) void router.push(target)
+  if (target) navigation?.navigate(target)
 }
 
 /** 这一条给的选项。带选项的才答得了，其余只能读完收起来。 */
