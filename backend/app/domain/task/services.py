@@ -859,6 +859,39 @@ class TaskSubmissionService:
             "review": review_dto if review_dto is not None else None,
         }
 
+    async def _entries_from(
+        self, contents: list[dict], *, submitter_id: int
+    ) -> list[tuple[int, str | None, int | None]]:
+        """Turn the request's entries into ``(index, text, attachment_id)`` rows.
+
+        A file entry may only name a file the submitter uploaded. The submission
+        view hands out the file's storage link and name, so accepting any id here
+        would let a participant read someone else's upload by guessing its id.
+        Checked before anything is written, so a refused request changes nothing.
+        """
+        rows: list[tuple[int, str | None, int | None]] = []
+        for idx, item in enumerate(contents):
+            attachment_id_raw = item.get("attachmentId")
+            attachment_id: int | None = None
+            if attachment_id_raw is not None:
+                try:
+                    attachment_id = int(attachment_id_raw)
+                except (TypeError, ValueError):
+                    attachment_id = None
+            rows.append((idx, item.get("text"), attachment_id))
+
+        wanted = {a for _, _, a in rows if a is not None}
+        found = {a.id: a for a in await self._attachments.get_many(list(wanted))}
+        for attachment_id in sorted(wanted):
+            attachment = found.get(attachment_id)
+            if attachment is None:
+                raise NotFoundError.for_resource("attachment", attachment_id)
+            if not self._attachments.is_uploader(attachment, submitter_id):
+                raise ForbiddenError(
+                    "A submission can only include files its submitter uploaded"
+                )
+        return rows
+
     async def submit_task(
         self,
         *,
@@ -882,24 +915,13 @@ class TaskSubmissionService:
         )
         new_version = latest_version + 1
 
+        entry_tuples = await self._entries_from(contents, submitter_id=submitter_id)
+
         submission = await self._submission_repo.create_submission(
             membership_id=participant_id,
             submitter_id=submitter_id,
             version=new_version,
         )
-
-        # Convert incoming DTOs into internal entries.
-        entry_tuples: list[tuple[int, str | None, int | None]] = []
-        for idx, item in enumerate(contents):
-            text = item.get("text")
-            attachment_id_raw = item.get("attachmentId")
-            attachment_id: int | None = None
-            if attachment_id_raw is not None:
-                try:
-                    attachment_id = int(attachment_id_raw)
-                except (TypeError, ValueError):
-                    attachment_id = None
-            entry_tuples.append((idx, text, attachment_id))
 
         await self._entry_repo.create_entries(
             submission_id=submission.id,
@@ -950,6 +972,8 @@ class TaskSubmissionService:
         if submission is None:
             raise NotFoundError.for_resource("submission", version)
 
+        entry_tuples = await self._entries_from(contents, submitter_id=submitter_id)
+
         # Soft-delete existing entries for this submission.
         await self._entry_repo.soft_delete_by_membership_and_version(
             membership_id=participant_id,
@@ -959,18 +983,6 @@ class TaskSubmissionService:
         # Update submission timestamp
         submission.updated_at = datetime.now(UTC)
         submission = await self._submission_repo.save(submission)
-
-        entry_tuples: list[tuple[int, str | None, int | None]] = []
-        for idx, item in enumerate(contents):
-            text = item.get("text")
-            attachment_id_raw = item.get("attachmentId")
-            attachment_id: int | None = None
-            if attachment_id_raw is not None:
-                try:
-                    attachment_id = int(attachment_id_raw)
-                except (TypeError, ValueError):
-                    attachment_id = None
-            entry_tuples.append((idx, text, attachment_id))
 
         await self._entry_repo.create_entries(
             submission_id=submission.id,

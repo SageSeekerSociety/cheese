@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -524,6 +524,7 @@ class TestTaskSubmissionService:
         if attachments is None:
             attachments = AsyncMock()
             attachments.get_many.return_value = []
+        attachments.is_uploader = Mock(return_value=True)
         return TaskSubmissionService(
             submission_repo=submission_repo,
             entry_repo=entry_repo,
@@ -1470,6 +1471,7 @@ class TestTaskSubmissionServiceAdditional:
         if attachments is None:
             attachments = AsyncMock()
             attachments.get_many.return_value = []
+        attachments.is_uploader = Mock(return_value=True)
         return TaskSubmissionService(
             submission_repo=submission_repo,
             entry_repo=entry_repo,
