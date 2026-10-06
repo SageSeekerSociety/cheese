@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useDesktopApp } from '@/composables/useDesktopApp'
 
 import { inDesktopApp, openInBrowser } from '@/lib/desktopApp'
+import { docsUrl } from '@/lib/docsSite'
 import AccountService from '@/services/account'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -34,7 +35,7 @@ const hasUnread = computed(() => store.counts.unread > 0)
 const inApp = inDesktopApp()
 const { aboutOpen } = useDesktopApp()
 
-const DOCS = '/docs/'
+const DOCS = docsUrl()
 
 // 文档站在 app 的窗口里没有回来的路（窗口没有返回键），所以 app 里交给浏览器打开，
 // 和 app 对站外链接的处理一样；打不开浏览器的旧 app 照旧在窗口里跳过去。
@@ -46,7 +47,7 @@ function openDocs() {
  *  的回答，不是前端按 handle 猜的。反馈管理员落在队列上，只是平台管理员的落在看板上：
  *  队列不归他。 */
 const items = computed(() => {
-  // 使用文档是 nginx 直接发的静态站（/docs/），不在这个应用的路由里，所以走 href
+  // 使用文档是一个单独的静态站（自己的域名，或者平台的 /docs/），不在这个应用的路由里，所以走 href
   // 整页跳转而不是 `to`：交给路由器只会落到应用自己的 404。
   const all: { key: string; label: string; to?: string; href?: string; click?: () => void }[] = [
     inApp

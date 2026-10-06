@@ -127,12 +127,12 @@ beforeEach(() => {
 describe('成员名册', () => {
   it('右键一位成员：改角色和移出，弹在鼠标那一点上', async () => {
     await openRoster()
-    const bob = Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('@bob'))!
+    const bob = Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('Bob'))!
     await fireEvent.contextMenu(bob, { clientX: 20, clientY: 40 })
     await waitFor(() =>
       expect(
         Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim())
-      ).toEqual(['设为拥有者', '设为管理员', '移出话题'])
+      ).toEqual(['设为拥有者', '设为管理员', '移出频道'])
     )
   })
 
@@ -167,6 +167,15 @@ describe('成员名册', () => {
     )!
     expect(agentRow.textContent).toContain('AI 队友')
     expect(agentRow.querySelector('.roster__role')).toBeNull()
+  })
+
+  it('每个人名旁的角色都带着一句这个角色能做什么', async () => {
+    await openRoster()
+    const rowOf = (handle: string) =>
+      Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
+    // 名单只两行高，说明落在角色的 title 上，悬停可读。
+    expect(rowOf('alice').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('管理频道与成员')
+    expect(rowOf('bob').querySelector('.roster__role--btn')?.getAttribute('title')).toBe('参与频道讨论')
   })
 })
 
@@ -210,8 +219,8 @@ describe('外部成员在房间里', () => {
   it('名册上团队以外的人挂「外部」，团队里的人不挂', async () => {
     await openRoster()
     const rows = Array.from(document.querySelectorAll('.roster__item'))
-    const carol = rows.find((r) => r.textContent?.includes('@carol'))!
-    const bob = rows.find((r) => r.textContent?.includes('@bob'))!
+    const carol = rows.find((r) => r.textContent?.includes('Carol'))!
+    const bob = rows.find((r) => r.textContent?.includes('Bob'))!
     expect(carol.textContent).toContain('外部')
     expect(bob.textContent).not.toContain('外部')
   })
@@ -255,14 +264,14 @@ describe('名册上这个话题的工作电脑', () => {
     expect(agentRow().textContent).not.toContain('工作电脑')
     const rooms = document.querySelectorAll('[data-testid="future-machine"]')
     expect(rooms).toHaveLength(1)
-    expect(rooms[0].textContent).toContain('本话题运行在：实验室工作站')
+    expect(rooms[0].textContent).toContain('本频道运行在：实验室工作站')
     expect(rooms[0].textContent).toContain('改')
   })
 
   it('房间那一行跟着项目默认时标出来', async () => {
     await openRoster()
     const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('本话题运行在：云端沙箱')
+    expect(room.textContent).toContain('本频道运行在：云端沙箱')
     expect(room.textContent).toContain('项目默认')
   })
 
@@ -299,6 +308,6 @@ describe('名册上这个话题的工作电脑', () => {
     })
     await settle()
     const notices = emitted()['machine-access'] as [string | null][]
-    expect(notices.at(-1)).toEqual(['让它看到整台机器（能操作这台机器上的服务和其他房间）'])
+    expect(notices.at(-1)).toEqual(['让它看到整台机器（能操作这台机器上的服务和其他频道）'])
   })
 })

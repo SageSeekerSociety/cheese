@@ -54,7 +54,7 @@ def _say(
             s.add(
                 Block(
                     project_id=uuid.UUID(project_id),
-                    topic_id=uuid.UUID(room_id),
+                    conversation_id=uuid.UUID(room_id),
                     kind=BlockKind.message,
                     author_type=author_type,
                     author=author,
@@ -219,7 +219,7 @@ def _failure(
             s.add(
                 Block(
                     project_id=uuid.UUID(pid),
-                    topic_id=uuid.UUID(rid),
+                    conversation_id=uuid.UUID(rid),
                     turn_id=turn_id,
                     kind=BlockKind.message,
                     author_type=AuthorType.platform,
@@ -325,8 +325,7 @@ def _on_task(client, pid, rid, task_id, author, *, ago, author_type, meta):
             s.add(
                 Block(
                     project_id=uuid.UUID(pid),
-                    topic_id=uuid.UUID(rid),
-                    task_id=uuid.UUID(task_id),
+                    conversation_id=uuid.UUID(task_id),
                     kind=BlockKind.message,
                     author_type=author_type,
                     author=author,

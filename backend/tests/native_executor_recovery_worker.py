@@ -7,6 +7,7 @@ The worker never starts or stops the runner/native process.
 import asyncio
 import json
 import sys
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
@@ -93,6 +95,33 @@ class SocketChannel(SeatChannel):
             await writer.wait_closed()
 
 
+def follow_up_owed(state: str) -> bool:
+    """Whether a background task finished after the session's last turn ended.
+
+    The build then wakes the session for one more turn of its own (the
+    headless contract's ``background`` check), but the runner only counts that
+    turn as working once its first record arrives, after a model call. Until
+    then its ping reads idle with no task running, for as long as the model
+    takes to answer.
+    """
+    journal = Journal(Path(state) / "records.sqlite")
+    try:
+        owed, after = False, 0
+        while rows := journal.read(after):
+            after = rows[-1]["sequence"]
+            for row in rows:
+                record = row["record"]
+                if record.get("parent_tool_use_id") is not None:
+                    continue
+                if record.get("type") == "result":
+                    owed = False
+                elif record.get("subtype") == "task_notification":
+                    owed = True
+        return owed
+    finally:
+        journal.close()
+
+
 async def run(descriptor):
     engine = create_async_engine(descriptor["database"])
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -145,16 +174,34 @@ async def run(descriptor):
             async with asyncio.timeout(90):
                 while work_runner.turn_pending(turn):
                     await asyncio.sleep(0.05)
+        # Settled, not merely idle. In the busy HTTP case the gate-waiting Bash
+        # is in the background (see below) and can outlast the work's result;
+        # its notification then starts one more turn of the session's own,
+        # after `working` has already gone false once and the task has left
+        # `tasks`. So wait for nothing running in the foreground or the
+        # background and no such turn still to come, held for a second: a turn
+        # row that stays open past that is the bug asserted below, not a turn
+        # about to close.
+        quiet_since = None
         async with asyncio.timeout(90):
             while True:
                 status = await channel.call(channel.handle, "ping", {})
-                if not status["working"] and not chat._hook_work:
+                if (
+                    status["working"]
+                    or status["tasks"]
+                    or chat._hook_work
+                    or follow_up_owed(descriptor["state"])
+                ):
+                    quiet_since = None
+                elif quiet_since is None:
+                    quiet_since = time.monotonic()
+                elif time.monotonic() - quiet_since >= 1.0:
                     break
                 await asyncio.sleep(0.05)
         async with factory() as session:
             rows = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert len(rows) == (3 if http else 2)
@@ -186,7 +233,7 @@ async def run(descriptor):
                 }
             turns = list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                    select(AgentTurn).where(AgentTurn.conversation_id == topic)
                 )
             )
             # Leave the evidence behind if anything below fails.

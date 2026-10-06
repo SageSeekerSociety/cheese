@@ -37,7 +37,6 @@ def group(client, monkeypatch):
             "recipient_handle": seat,
             "asked_by": author,
             "asked": "user-1",
-            "task_id": None,
         }
 
     async def no_dispatch(*args, **kwargs):

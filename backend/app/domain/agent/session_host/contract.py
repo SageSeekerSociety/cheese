@@ -157,6 +157,9 @@ class Owner:
     #: The agent's account, to open its process as; not needed to reach one
     #: already running.
     user_id: int | None = None
+    #: Which seat of the place the session takes (`place.seat_key`), when the
+    #: agent may hold more than one there: empty is the agent's own.
+    seat: str = ""
 
 
 @dataclass(frozen=True)

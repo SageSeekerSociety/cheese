@@ -1,5 +1,5 @@
 import { createVuetify } from 'vuetify'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -36,6 +36,7 @@ vi.mock('vue-i18n', async () => {
 
 import AuditTask from './AuditTask.vue'
 
+import { setLocale } from '@/i18n'
 import { useSpaceStore } from '@/stores/space'
 
 describe('审核题目', () => {
@@ -139,6 +140,49 @@ describe('审核题目', () => {
     await waitFor(() =>
       expect(mocks.update).toHaveBeenCalledWith(202, { approved: 'DISAPPROVED', rejectReason: '题面缺少输入格式' })
     )
+    view.unmount()
+  })
+})
+
+// 读失败和「队列里真的没题」长得一模一样：两种都留一个空列表。从前失败只弹一条
+// 几秒的 toast，页面接着画「暂无待审核的题目」—— 那是在替服务端说一件没发生的事。
+describe('审核队列没读出来', () => {
+  async function mountWithListRejection(error: unknown) {
+    mocks.list.mockRejectedValue(error)
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useSpaceStore()
+    const view = render(AuditTask, { global: { plugins: [pinia, createVuetify()], stubs: { TipTapViewer: true } } })
+    store.currentSpaceId = 8
+    return view
+  }
+
+  // `v-alert` 自己也带 role="alert"，所以按类名取那一块，不按 role。
+  async function failureBlock(view: Awaited<ReturnType<typeof mountWithListRejection>>) {
+    await waitFor(() => expect(view.container.querySelector('.base-load-error')).toBeTruthy())
+    return view.container.querySelector('.base-load-error') as HTMLElement
+  }
+
+  it('失败时原地说明并给重试，不再说「暂无待审核的题目」', async () => {
+    const view = await mountWithListRejection(new Error('boom'))
+    const block = await failureBlock(view)
+
+    expect(view.queryByText('spaces.detail.auditTasks.noTasks')).toBeNull()
+
+    await fireEvent.click(within(block).getByRole('button'))
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
+    view.unmount()
+  })
+
+  it('403 说的是「没权限」，并且不给一颗按不动的重试', async () => {
+    // 「没权限」那句来自 `@/i18n`（BaseLoadError 自己取词），不是这一页那句被
+    // mock 成 key 的 `t`，所以要真的把语言定下来才看得到中文。
+    setLocale('zh-CN')
+    const view = await mountWithListRejection(Object.assign(new Error('nope'), { status: 403 }))
+    const block = await failureBlock(view)
+
+    expect(block.textContent).toContain('你没有权限查看')
+    expect(within(block).queryByRole('button')).toBeNull()
     view.unmount()
   })
 })

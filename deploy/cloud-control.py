@@ -17,9 +17,9 @@ async def main():
     connection = await asyncpg.connect(os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"))
     try:
         rows = await connection.fetch("""
-            select machine_id, device_id, ip, login_user from project_machines
+            select machine_id, device_id, ip, login_user from cloud_hosts
             where released_at is null and status not in ('deleted', 'deleting', 'error')
-              and device_id is not null and ip is not null
+              and machine_id is not null and device_id is not null and ip is not null
               and device_id in (select device_id from device where cloud_control_private)
             union
             select machine_id, device_id, ip, create_request->>'user' as login_user
@@ -46,6 +46,25 @@ def identity(row):
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", row["device_id"]):
         raise ValueError("invalid cloud device identity")
     return int(row["machine_id"]), row["device_id"], row["ip"], row["login_user"]
+
+
+async def running_backend(project="cheese"):
+    """The running backend container. On a box that releases without downtime it
+    is cheese-backend-1 or cheese-backend-b-1, whichever slot the last release
+    moved it to (deploy/app-container.sh), so it is looked up every cycle. This
+    file is installed on its own, so it cannot call that script."""
+    process = await asyncio.create_subprocess_exec(
+        "docker", "ps", "--filter", f"label=com.docker.compose.project={project}",
+        "--filter", "label=com.docker.compose.oneoff=False",
+        "--format", '{{.Label "com.docker.compose.service"}} {{.Names}}',
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    output, _ = await asyncio.wait_for(process.communicate(), 20)
+    for line in output.decode().splitlines():
+        service, _, name = line.partition(" ")
+        if service in ("backend", "backend-b"):
+            return name
+    raise RuntimeError("no running backend container")
 
 
 async def inventory(container):
@@ -148,7 +167,7 @@ async def run(args):
     try:
         while not stop.is_set():
             try:
-                desired = await inventory(args.backend_container)
+                desired = await inventory(args.backend_container or await running_backend())
                 await reconcile(tasks, desired,
                                 lambda key: forward(key, args.state_dir, args.backend_port,
                                                     args.owner_port))
@@ -166,7 +185,8 @@ async def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend-container", default="cheese-backend-1")
+    # Unset, the running backend is looked up every cycle.
+    parser.add_argument("--backend-container")
     parser.add_argument("--backend-port", type=int, default=8081)
     # The connection owner, published loopback-only by the standing
     # compose stack. Deploys never recreate it, which is the point of

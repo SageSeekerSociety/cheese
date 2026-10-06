@@ -1,6 +1,8 @@
+import { getSchema } from '@tiptap/core'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { filterSlashItems, SLASH_ITEMS } from './docSlashMenu'
+import { docExtensions } from './docSchema'
+import { convertsInPlace, filterSlashItems, SLASH_ITEMS } from './docSlashMenu'
 
 import { setLocale } from '@/i18n'
 
@@ -38,5 +40,21 @@ describe('slash 菜单的筛选', () => {
 
   it('认不出来就是空——菜单收起来，那段「/query」原样留在文档里', () => {
     expect(filterSlashItems('没有这种块')).toEqual([])
+  })
+})
+
+describe('行首手柄能把哪些块换成别的块', () => {
+  const schema = getSchema(docExtensions())
+
+  it('一段字的块能换', () => {
+    for (const name of ['paragraph', 'heading', 'bulletList', 'blockquote', 'callout']) {
+      expect(convertsInPlace(schema.nodes[name].create()), name).toBe(true)
+    }
+  })
+
+  it('有自己结构的块不能换，换成正文结构就丢了', () => {
+    for (const name of ['chart', 'table', 'timeline', 'stats', 'columns', 'horizontalRule']) {
+      expect(convertsInPlace(schema.nodes[name].create()), name).toBe(false)
+    }
   })
 })

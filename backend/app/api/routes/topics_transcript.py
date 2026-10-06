@@ -89,9 +89,9 @@ async def topic_transcript(
     after the fact returns fewer rows than asked for and reports `has_more`
     against the wrong set, so the caller pages through holes.
 
-    The room's own line. What one of its 分身 did is on that card, and is read
-    through it (`GET /topics/{room}/tasks/{card}`) — interleaving every card's
-    actions here would bury what the room itself did."""
+    One conversation's record — a room's own line, or a task's: each
+    conversation's session has its own, and interleaving every task's actions
+    into the room's would bury what the room did."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
@@ -103,24 +103,20 @@ async def topic_transcript(
         cursor = await repo.get(before)
         # Same rule as the conversation's pager: an unknown cursor must not
         # degrade into "newest N", which the caller cannot tell from a real page.
-        # A cursor from one of this room's CARDS is as wrong as one from
-        # another room.
-        if (
-            cursor is None
-            or cursor.topic_id != place.room_id
-            or cursor.task_id is not None
-        ):
+        # A cursor from another conversation in this room is as wrong as one
+        # from another room.
+        if cursor is None or cursor.conversation_id != place.conversation_id:
             raise NotFoundError(say("cursorEventNotFound"))
     if limit is None:
         site = [
             b
-            for b in await repo.list_for_topic(place.room_id)
+            for b in await repo.list_for_topic(place.conversation_id)
             if b.kind in kinds and (author is None or b.author == author)
         ]
         has_more = False
     else:
         result = await repo.page_for_topic(
-            place.room_id,
+            place.conversation_id,
             limit=limit,
             before=cursor,
             kinds=kinds,
@@ -135,7 +131,7 @@ async def topic_transcript(
     ]
     # A turn's first step comes after its preparation and the model's first
     # answer; the 现场 counts the turn from when it started.
-    starts = await turn_starts(db, place.room_id, (b.turn_id for b in site))
+    starts = await turn_starts(db, place.conversation_id, (b.turn_id for b in site))
     return ok(
         {
             **page(items, len(items)),
@@ -159,11 +155,10 @@ async def step_output(
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     block = await BlockRepository(db).get(block_id)
-    # Same door as the transcript: this room's own line, never a card's.
+    # Same door as the transcript: the one conversation it was asked about.
     if (
         block is None
-        or block.topic_id != place.room_id
-        or block.task_id is not None
+        or block.conversation_id != place.conversation_id
         or block.kind != BlockKind.event
     ):
         raise NotFoundError(say("stepNotFound"))

@@ -48,7 +48,7 @@ def _blocks(client, room: str) -> list[Block]:
             return list(
                 await session.scalars(
                     select(Block)
-                    .where(Block.topic_id == uuid.UUID(room))
+                    .where(Block.conversation_id == uuid.UUID(room))
                     .order_by(Block.created_at)
                 )
             )
@@ -119,7 +119,7 @@ def test_a_message_the_next_backend_already_holds_starts_one_turn(client):
                 list(
                     await session.scalars(
                         select(AgentTurn.id).where(
-                            AgentTurn.topic_id == uuid.UUID(room)
+                            AgentTurn.conversation_id == uuid.UUID(room)
                         )
                     )
                 )

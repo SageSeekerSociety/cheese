@@ -61,7 +61,7 @@ function room(id: string): Topic {
 function message(roomId: string, id: string, createdAt: string, content: string) {
   return {
     id,
-    topic_id: roomId,
+    conversation_id: roomId,
     kind: 'message',
     author_type: 'participant' as const,
     author: '张衡',

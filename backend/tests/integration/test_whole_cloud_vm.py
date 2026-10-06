@@ -39,8 +39,10 @@ from app.domain.machine.models import (
     MachineStatus,
 )
 from app.domain.machine.repositories import CloudHostRepository
+from app.domain.machine.runner import ComputeMeterSweeper
 from app.domain.machine.services import HostPool
 from app.domain.topic.models import Topic
+from app.domain.usage.models import ComputeRun, ResourceUsage
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import OFFERING, FakeMicroCloud
@@ -217,7 +219,7 @@ def _room_lines(case, seat) -> list[str]:
             rows = await db.scalars(
                 select(Block.content)
                 .where(
-                    Block.topic_id == seat.room,
+                    Block.conversation_id == seat.room,
                     Block.kind == BlockKind.event,
                     Block.meta["event_type"]
                     .as_string()
@@ -582,7 +584,7 @@ def test_a_vm_is_kept_while_its_session_or_room_is_at_work(cloud):
             db.add(
                 AgentTurn(
                     id=uuid.uuid4(),
-                    topic_id=seat.room,
+                    conversation_id=seat.room,
                     continuation_id=uuid.uuid4(),
                     author="alice",
                     started_at=datetime.now(UTC) - timedelta(hours=1),
@@ -617,3 +619,96 @@ def test_an_idle_vm_whose_push_fails_is_kept_with_its_work(cloud, monkeypatch):
     case.calls.reset_mock()
     assert _release_idle(case) == 0
     assert not _pushed_on(case, device_id)
+
+
+# --- what it costs -----------------------------------------------------------
+
+
+def _meter(case):
+    return case.client.portal.call(
+        ComputeMeterSweeper(case.client.test_request_factory).sweep
+    )
+
+
+def _vm_runs(case) -> list[ComputeRun]:
+    async def read():
+        async with case.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(ComputeRun).where(
+                        ComputeRun.project_id == case.project_id,
+                        ComputeRun.kind == "vm",
+                    )
+                )
+            )
+
+    return case.client.portal.call(read)
+
+
+def _vm_charges(case) -> list[ResourceUsage]:
+    async def read():
+        async with case.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(ResourceUsage).where(
+                        ResourceUsage.project_id == case.project_id,
+                        ResourceUsage.route == "compute",
+                    )
+                )
+            )
+
+    return case.client.portal.call(read)
+
+
+def test_a_whole_vm_is_charged_its_sizes_price_from_creation_to_release(cloud):
+    case = cloud
+    seat = _room(case, WHOLE_VM)
+    _working(case, seat)
+    host = _host(case, seat)
+    _meter(case)
+    [run] = _vm_runs(case)
+    assert (run.spec, run.started_at, run.topic_id) == (
+        "4c8g",
+        host.created_at,
+        seat.room,
+    )
+
+    # An hour after it was created, the hour is charged at the size's price
+    # (30 an hour in the suite), and nothing at a sandbox's.
+    async def an_hour_ago():
+        async with case.client.test_request_factory() as db:
+            then = datetime.now(UTC) - timedelta(hours=1)
+            await db.execute(
+                update(ComputeRun)
+                .where(ComputeRun.id == run.id)
+                .values(started_at=then, billed_until=then)
+            )
+            await db.commit()
+
+    case.client.portal.call(an_hour_ago)
+    _meter(case)
+    [charge] = _vm_charges(case)
+    assert (charge.kind, charge.credits) == ("vm", pytest.approx(30))
+
+    # Released once idle; its run ends where the VM did.
+    _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
+    assert _release_idle(case) == 1
+    _sweep(case)
+    _meter(case)
+    [ended] = _vm_runs(case)
+    assert ended.ended_at is not None
+    assert sum(c.credits for c in _vm_charges(case)) == pytest.approx(30 + 30 / 60)
+
+
+def test_no_whole_vm_is_created_for_a_size_with_no_price(cloud, monkeypatch):
+    case = cloud
+    monkeypatch.setattr(settings, "cloud_vm_credits_per_hour", {})
+    seat = _room(case, WHOLE_VM)
+
+    answer = _lease(case, seat, timeout=0.001).json()["data"]
+
+    assert answer["unavailable"] == (
+        "云虚拟机暂时无法启动：平台还没有设定这种规格的价格。对话和平台工具仍可用。"
+    )
+    assert case.provider.created == []
+    assert _host(case, seat) is None

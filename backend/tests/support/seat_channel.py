@@ -99,7 +99,7 @@ class SeatChannel:
     _session_factory = None
 
     def __init__(self, *, harness: str = CLAUDE_CODE, **policy: float) -> None:
-        # (topic, acting agent) → the conversation's key in its room, and the
+        # (conversation, acting agent) → the session, and the
         # state directory its runner is reached at.
         self.seats: dict[tuple[uuid.UUID, str], tuple[SessionRef, str]] = {}
         #: What each screen was asked to be brought up with, in order.
@@ -187,11 +187,11 @@ class SeatChannel:
 
     @asynccontextmanager
     async def prepare_session(
-        self, *, session, token, env, precheck, runtime_factory
+        self, *, session, token, env, precheck, runtime_factory, reading=False
     ) -> AsyncIterator[PreparedSession]:
         agent = token_agent_handle(token) or precheck.agent_handle
         placed = runtime_factory(session.topic_id)
-        self.seats[(session.topic_id, agent)] = (session, placed["state"])
+        self.seats[(session.conversation_id, agent)] = (session, placed["state"])
         yield PreparedSession(
             device_id=self.device,
             agent_user_id=0,
@@ -236,7 +236,7 @@ class SeatChannel:
             self.root
             / "mirrors"
             / str(session.project_id)
-            / str(session.topic_id)
+            / str(session.conversation_id)
             / harness
             / hashlib.sha256(f"{session.topic_id}{agent}".encode()).hexdigest()
             / driver.mirror

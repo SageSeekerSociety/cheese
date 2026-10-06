@@ -106,3 +106,16 @@ describe('reading Markdown outside the editor', () => {
     expect(line).toContain('✗ 超时')
   })
 })
+
+describe('a table of figures', () => {
+  it('lines a column of figures up on the right, and leaves a column of words alone', () => {
+    const host = show(
+      '| 周 | 改版前 | 结论 |\n| --- | --- | --- |\n| 第 1 周 | 1,020 | 保留 |\n| 第 2 周 | 1,060 | 改回 |'
+    )
+    const column = (i: number) =>
+      Array.from(host.querySelectorAll('tr')).map((row) => (row.children[i] as HTMLElement).dataset.num !== undefined)
+    expect(column(1)).toEqual([true, true, true])
+    expect(column(0)).toEqual([false, false, false])
+    expect(column(2)).toEqual([false, false, false])
+  })
+})

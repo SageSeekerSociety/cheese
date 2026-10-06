@@ -70,10 +70,13 @@ function mountSteps(el) {
   // steps; the stage says when a step has finished playing, and only then does
   // the list move on — a fixed GAP would cut a long step off halfway.
   const stage = $('[data-dm-embed]', el)
-  const show = (andPlay) => stage?.contentWindow?.postMessage({ cheeseDemo: 'go', step: pos - 1, play: andPlay }, location.origin)
+  // The stage is the platform's page: the same origin under /docs/, another one
+  // from the docs host.
+  const stageOrigin = stage && new URL(stage.getAttribute('src'), location.href).origin
+  const show = (andPlay) => stage?.contentWindow?.postMessage({ cheeseDemo: 'go', step: pos - 1, play: andPlay }, stageOrigin)
   if (stage) {
     window.addEventListener('message', (e) => {
-      if (e.source !== stage.contentWindow || e.origin !== location.origin) return
+      if (e.source !== stage.contentWindow || e.origin !== stageOrigin) return
       const kind = e.data?.cheeseDemo
       if (kind === 'ready') show(playing)
       if (kind === 'done' && playing && e.data.step === pos - 1) timer = setTimeout(tick, GAP / 3)
@@ -176,6 +179,18 @@ function mountSim(el) {
 
   el.addEventListener('input', paint)
   paint()
+}
+
+// The stages are the platform's pages. From the docs' own host they cannot read
+// this site's theme preference (another origin's storage), so each is told the
+// theme in its address; a changed address reloads it, and it comes back on the
+// step the list is at.
+export function themeStages(dark, root = document) {
+  $$('iframe[data-dm-embed]', root).forEach((f) => {
+    const url = new URL(f.getAttribute('src'), location.href)
+    url.searchParams.set('theme', dark ? 'dark' : 'light')
+    if (f.getAttribute('src') !== url.href) f.setAttribute('src', url.href)
+  })
 }
 
 export function mountDemos(root = document) {

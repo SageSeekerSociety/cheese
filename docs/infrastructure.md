@@ -198,14 +198,60 @@ no content domain, or one the operator disabled, is left alone. The owner's
 internal RPC path (`/_internal/preview/`) is reachable only inside the compose
 network, never through nginx.
 
-The deploy starts a healthy successor, switches app-router to it, drains old
-workers, recreates the compose service, switches back and drains again before
-removing the successor. The minimum drain is 31 seconds: the worker shutdown
-deadline is 30 seconds, plus one second for signal delivery. Business streams
-longer than the deadline can reconnect; device and model connections bypass
-these workers. `ACTIVE_FRONTEND_DIR` enables the same procedure for the
-frontend behind the persistent **:18080** entry. Frontends still reach APIs
-through `API_UPSTREAM=host.docker.internal:8081`.
+A release switches app-router once. The backend has two slots, compose
+services `backend` and `backend-b` on `BACKEND_PORT` and `BACKEND_PORT_NEXT`;
+with `ACTIVE_FRONTEND_DIR` the frontend has two as well, `frontend` and
+`frontend-b` on loopback `FRONTEND_SLOT_PORT` (18088) and `FRONTEND_PORT_NEXT`.
+The deploy starts the idle slot of each on the new image, waits for its health
+check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
+The old backend is told to hand its work over 5 seconds after that switch, and
+`collab` is replaced at once, while the old frontend still runs. After a
+31-second drain (`DEPLOY_DRAIN_SECONDS`) the old slots stop gracefully, in
+parallel: the frontend's nginx gets up to 120 seconds to finish its requests, the
+backend 60 seconds to finish its handover. The next release goes back into the
+slots this one left. The `-b` services are written at deploy time from
+compose's merged model, after every value the deploy exports, so they carry
+every overlay and differ only in their port and in answering to the service's
+network name (`backend`, dialled by `device-connection` and the office editor;
+`frontend`, by the backend's docs index).
+
+The containers therefore alternate between `cheese-backend-1` and
+`cheese-backend-b-1` (likewise for the frontend); anything that needs one asks
+`deploy/app-container.sh backend`. A release of a commit from before the two
+slots, a revert or a manual dispatch, runs that commit's script. It installs
+its own `app-router.conf` and reloads, which ends app-router's sockets 30
+seconds later at that config's deadline, pulls and migrates, and then refuses
+to switch while app-router names `BACKEND_PORT_NEXT` or `FRONTEND_PORT_NEXT`.
+If a revert lands while the `-b` slots serve, no commit on main has the slots,
+and every automatic deploy of main does that until someone dispatches the deploy
+workflow on the last SHA that contains them (#2770), which moves back to
+`backend` and `frontend`; the next release of main then goes through. From the first slots an older commit
+releases as it always did. `deploy/tests/test-pre-slot-release.sh`
+runs the last such commit's script against both states.
+
+The box's own frontend ports, :8080 and :80, which the edge reaches directly,
+belong to app-router: `frontend.conf`, written by
+`deploy/llm-tunnel/configure-frontend-upstream.sh`, carries a server on them
+that forwards to whichever frontend slot serves. They live in that file because
+every `app-router.conf`, an older commit's included, includes it, so an older
+commit's release keeps them; its own frontend switch drops them just before it
+recreates the compose frontend on them, 31 seconds later. The first release with
+two frontend slots adds them once the compose frontend that still published
+them has stopped, which it gives 5 seconds since its traffic has moved; the
+ports are closed from that stop to app-router's second reload of that release.
+If app-router cannot take them, that frontend is started again to serve them
+and the next release takes them at its switch. A one-off
+`cheese-backend-next` or `cheese-frontend-next` left by an interrupted release
+from before the slots is removed by the next release when app-router does not
+send traffic to it, and stops the release when it does.
+
+App-router's `worker_shutdown_timeout` is 240 seconds, longer than the
+handover pause, the drain and the longer graceful stop together (5 + 31 + 120),
+so the workers the one reload
+retires keep their connections until the container they lead to stops. Device
+and model connections bypass these workers. The persistent **:18080** entry
+routes to app-router's frontend upstream. Frontends still reach APIs through
+`API_UPSTREAM=host.docker.internal:8081`.
 
 Each backend switch is also a handover of the running work. One backend at a
 time owns it (the sessions it listens to, the turns it watches, the periodic
@@ -217,7 +263,7 @@ lets the prompts it is still sending arrive, stops reading its sessions, lets go
 of its turns without ending them and releases the lock. The successor then picks every running turn up
 where it stands and starts any turn a message was left waiting for. The whole
 of that fits in the backend's 60-second `stop_grace_period`, which is why the
-successor is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
+old slot is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
 The in-place recreate on boxes without `ACTIVE_BACKEND_DIR` hands over the same
 way, to the container that replaces it.
 
@@ -505,9 +551,10 @@ evidence the deploy had already removed — that is how 257 turn failures on
 gone:
 
 ```bash
-sudo journalctl -t cheese-backend-1 --since "2 hours ago"   # by container name
+# by container name; on a box with an app-router the backend is one of two
+sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "2 hours ago"
 sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
-sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
+sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "09:00" --until "09:30"
 ```
 
 `sudo` (or membership of `systemd-journal`) is required — an ordinary user sees
@@ -520,7 +567,7 @@ never below 40 GB free on the disk, whichever is tighter. At journald's own
 default (a tenth of the filesystem, at most 4 GB) dev kept about thirteen hours
 on 2026-09-29, and the evidence for a failure was gone before anyone looked.
 `sudo journalctl --disk-usage` and
-`sudo journalctl -t cheese-backend-1 -o short-iso | head -1` (the oldest line)
+`sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 -o short-iso | head -1` (the oldest line)
 say how far back a box reaches now.
 
 How long that is depends on what the app tier writes, so some lines are not
@@ -565,7 +612,7 @@ Changing backend env (e.g. enabling an OAuth provider):
 
    ```bash
    cd ~/actions-runner/_work/cheese/cheese
-   SHA=$(docker inspect cheese-backend-1 --format '{{.Config.Image}}' | sed 's/.*://')
+   SHA=$(docker inspect "$(bash deploy/app-container.sh backend)" --format '{{.Config.Image}}' | sed 's/.*://')
    bash deploy/deploy-docker.sh "$SHA"
    ```
 
@@ -672,17 +719,30 @@ creating a database without naming the encoding, which is the rule above.
 
 ## Public edge: okcheese.com through Hong Kong, hand-managed
 
-`okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` resolve to the etrip
-box (8.217.1.152), and TLS for them ends there. Its Caddy owns public :443
-with a layer4 router ([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile))
-that hands those names to Caddy's own HTTPS site, which holds their
-certificate (ACME, renewed by Caddy) and redirects `www` and `hk` to the
-apex. The site proxies plain HTTP to `127.0.0.1:18453` or `127.0.0.1:18454`
-here. Each is the far end of a reverse SSH tunnel opened by the dev box, and
-both land on api-front's plain listener `127.0.0.1:18080` there (set up by
+`okcheese.com`, `www.okcheese.com`, `hk.okcheese.com` and `docs.okcheese.com`
+resolve to the etrip box (8.217.1.152), and TLS for them ends there. Their A
+records in the Cloudflare zone are DNS only, not proxied. Its Caddy owns
+public :443 with a layer4 router
+([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile)) that hands those names
+to Caddy's own HTTPS sites, which hold their certificates (ACME, renewed by
+Caddy). The okcheese.com site redirects `www` and `hk` to the apex. Both sites
+proxy plain HTTP to `127.0.0.1:18453` or `127.0.0.1:18454` here. Each is the
+far end of a reverse SSH tunnel opened by the dev box, and both land on
+api-front's plain listener `127.0.0.1:18080` there (set up by
 `deploy/llm-tunnel/configure-frontend.sh`). The SSH tunnel encrypts that leg.
 The dev box has no public inbound, so the site is up while at least one
 tunnel is up.
+
+`docs.okcheese.com` is the docs site's own host. Its site block has the same
+`reverse_proxy` settings as the okcheese.com block but is separate from it,
+because the okcheese.com block imports the snippet that answers `/assets/`
+from the SPA's files on this box (see below), and the docs host's `/assets/`
+are different files. Behind the tunnels the frontend container answers that
+Host with the docs server (`frontend/nginx/docs/host.conf`). The dev box's
+`~/ops/deploy.env` sets `DOCS_ORIGIN=https://docs.okcheese.com` and
+`FRONTEND_URL=https://okcheese.com`, so `okcheese.com/docs/…` answers with a
+301 to the same page on the docs host
+([docs site](manual/dev/docs-site.md)).
 
 Caddy keeps those upstream connections open and shares them between
 visitors, so a new visitor's connection pays only its TLS handshake with
@@ -726,6 +786,15 @@ against 1.4-3.9 s through Hong Kong.
 None of it is deployed by CI. The units below were installed by hand; change
 them by hand, keep a timestamped copy of every file you edit next to it, and
 note the rollback command before you start.
+
+Before reloading Caddy on etrip, validate the edited file with
+
+    /usr/local/lib/caddy-l4/caddy validate --config <file> --adapter caddyfile
+
+The service runs that binary (set by the drop-in
+`/etc/systemd/system/caddy.service.d/50-layer4.conf`), which has the layer4
+plugin. The bare `caddy` on that box's PATH does not, so it rejects this
+file at the `layer4` global option whatever else is in it.
 
 Each tunnel travels inside TLS on :443, not as SSH on :22:
 
@@ -830,7 +899,9 @@ TLS back on the dev box, on etrip: install the `scripts/ops/Caddyfile` from
 before the commit that moved TLS to etrip (its layer4 block routes SNI
 `okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` encrypted to
 `127.0.0.1:18443` and `:18444` with `proxy_protocol v1`), keeping a dated copy
-of the current one, then `sudo systemctl reload caddy`. The dev box's
+of the current one, then `sudo systemctl reload caddy`. That file has no site
+for `docs.okcheese.com`; carry over the current docs block and its `http://`
+redirect, or the docs host goes down with the rollback. The dev box's
 certificate is still renewed daily, so that listener is ready.
 
 The watchdog frees 18443 for the :22 tunnel as well, since it acts on whatever
@@ -869,11 +940,66 @@ stops competing with API calls inside them.
 Rollback: delete the `import` line from the okcheese.com site and
 `systemctl reload caddy`; then `systemctl disable --now cheese-edge-asset-sync`.
 
-The okcheese.com `reverse_proxy` carries `stream_close_delay 10m`. Without
+The `reverse_proxy` of both sites carries `stream_close_delay 10m`. Without
 it, a reload of this Caddy closes every WebSocket it proxies at once (room
 sockets, device connectors, preview tunnels); with it, sockets open at the
 reload stay up for up to ten minutes, and clients reconnect on their own
 schedule.
+
+## Beijing edge (pre-filing): the mainland entry for okcheese, hand-managed
+
+A second edge sits in the mainland so that visitors in China stop paying the
+Beijing → Hong Kong → Beijing detour. It is the Hong Kong design moved to
+Beijing: an Aliyun lightweight server (`47.95.114.66`, Ubuntu 24.04) whose
+Caddy ends TLS and sends plain HTTP into two reverse SSH tunnels from the dev
+box, each landing on the dev front door's `127.0.0.1:18080`. The client address
+travels in `X-Forwarded-For`, as through Hong Kong.
+
+**It serves nothing public until the ICP filing for `okcheese.cn` is approved.**
+A mainland server may not serve an unfiled domain on 80/443, so:
+
+- Caddy listens only on `:8443` with its internal CA (`scripts/ops/Caddyfile.beijing`).
+- Both firewalls (Aliyun's instance firewall and ufw) allow `:8443` only from a
+  few test addresses; 80 and 443 are disabled in the Aliyun firewall, not deleted.
+- No DNS record points at the box.
+
+When the filing is approved: give the site a public certificate, move it to
+`:443`, re-enable 80/443 in the Aliyun firewall, drop the `:8443` rules, and point
+`okcheese.cn` at the box.
+
+The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
+Kong tunnels inside TLS on `:443` do not apply inside the mainland.
+
+| Box | Path | What it is |
+|---|---|---|
+| dev | `/etc/systemd/system/cheese-bj-relay-a.service` | tunnel A: Beijing `127.0.0.1:18463` → dev `127.0.0.1:18080` |
+| dev | `/etc/systemd/system/cheese-bj-relay-b.service` | tunnel B: Beijing `127.0.0.1:18464` → dev `127.0.0.1:18080` |
+| dev | `/usr/local/libexec/cheese-bj-relay/tcp-proxy.py` | the tunnels' `ProxyCommand`; binds a source port from `TCP_PROXY_SOURCE_PORTS` |
+| dev | `/home/nictheboy/.ssh/id_bjrelay` | the tunnels' login key, used for nothing else |
+| Beijing | `/etc/caddy/Caddyfile` | `scripts/ops/Caddyfile.beijing` |
+| Beijing | `~bjrelay/.ssh/authorized_keys` | `restrict,port-forwarding`, may only listen on `127.0.0.1:18463` and `:18464` |
+| Beijing | `/etc/ssh/sshd_config.d/60-bjrelay.conf` | no passwords; `bjrelay` gets remote forwarding only, 10 s × 2 keepalive |
+
+Both tunnels currently leave through the default (Unicom) line. From the campus
+exit that Hong Kong's tunnel B uses (table 18443 via 119pve), the Beijing address
+times out on every port while Hong Kong answers, which points at 119pve's
+raw-table rules being keyed to the Hong Kong address. Giving Beijing tunnel B the
+campus line needs those rules extended on 119pve. Until then the two tunnels still
+cover a port held by a dead session, but not a failed line.
+
+Measured on 2026-10-05, new connection / reused connection, median of 12:
+
+| From | Hong Kong edge | Beijing edge |
+|---|---|---|
+| a Beijing Mobile line | 263 / 121 ms | 77 / 35 ms |
+| a Beijing Unicom line | 273 / 130 ms | 97 / 43 ms |
+
+A reused request through one Beijing tunnel costs 18–20 ms. Through Hong Kong it
+costs 117–152 ms.
+
+Rollback, on the dev box: `sudo systemctl disable --now cheese-bj-relay-a
+cheese-bj-relay-b`. Nothing else depends on the Beijing box, and the Hong Kong
+units are untouched by it.
 
 ## Access
 

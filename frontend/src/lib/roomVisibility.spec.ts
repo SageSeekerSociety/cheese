@@ -13,7 +13,7 @@ function evt(id: string, content: string, over: Partial<Block> & { meta?: Record
   return {
     id,
     project_id: 'p',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'cheese',

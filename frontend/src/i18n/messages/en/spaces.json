@@ -47,6 +47,7 @@
     "auditTasks": {
       "title": "Challenges awaiting review",
       "noTasks": "No challenges awaiting review",
+      "loadFailed": "Couldn't load the challenges awaiting review",
       "description": "Challenge description",
       "submissionRequirements": "Submission requirements",
       "noRequirements": "No submission requirements",
@@ -426,7 +427,8 @@
       "browse": "Or browse the spaces below to see what others are working on"
     },
     "explore": "Explore spaces",
-    "noSpaces": "No spaces"
+    "noSpaces": "No spaces",
+    "loadFailed": "Couldn't load the spaces"
   },
   "sidebar": {
     "back": "Back to home",
@@ -456,12 +458,23 @@
     "confirmTransfer": "Transfer ownership to {name}? You will become an admin.",
     "empty": "No members",
     "loadMembersFailed": "Couldn't load members",
+    "invite": "Invite members",
+    "inviteCodes": "Invite codes",
+    "inviteDomainGroups": "Email domain groups",
     "role": {
       "owner": "Owner",
       "admin": "Admin",
-      "member": "Member"
+      "member": "Member",
+      "ownerHint": "Full control, including member roles",
+      "adminHint": "Review challenges, data, categories and invites",
+      "memberHint": "Take part: challenges and announcements"
     },
     "count": "{n} people"
+  },
+  "manageDenied": {
+    "title": "You can't manage this space",
+    "body": "Members, data and settings are only open to this space's owner and admins.",
+    "backToTasks": "Back to challenges"
   },
   "settings": {
     "title": "Settings",

@@ -28,6 +28,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
 
+# The registry `conversation_id` points at: mapped wherever this is, so the
+# foreign key resolves in a process that never imports `app.models`.
+from app.domain.conversation.models import Conversation  # noqa: F401
+
 
 class GrantSource(StrEnum):
     """Where a credit pack came from; it decides when the pack lapses and where
@@ -161,10 +165,15 @@ class ComputeGrant(UuidPk, Timestamps, Base):
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
 
 
+#: The ``route`` of a usage row that charges cloud compute rather than a model
+#: call (``usage.compute``): no tokens, and no part of any count of calls.
+COMPUTE_ROUTE = "compute"
+
+
 class ResourceUsage(UuidPk, Timestamps, Base):
     __tablename__ = "resource_usage"
     #: 平台看板按天聚合这张表：`created_at` 的范围扫。等值的四条索引
-    #: （`project_id` / `topic_id` / `task_id` / `turn_id`）一条都服务不了它——
+    #: （`project_id` / `conversation_id` / `turn_id`）一条都服务不了它——
     #: 这是全仓增长最快的一张表，没有它就是每次看板全表顺序扫。迁移见
     #: `a9c4e7f12b60`。
     __table_args__ = (
@@ -189,15 +198,10 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE"), nullable=True
     )
-    # The room the spend happened in; NULL when it cannot be attributed at all.
-    topic_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
-    )
-    # Which piece of work inside it. NULL is the room's own main line — the
-    # distinction matters here because "what did this task cost" is a question
-    # people ask, and a room-level total cannot answer it.
-    task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    # The conversation the spend happened in, a room or a task; NULL when it
+    # cannot be attributed at all.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # The human message or platform work id this spend belongs to. One attributed
     # unit can write more than one row because the metering proxy logs every
@@ -225,7 +229,8 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     kind: Mapped[str] = mapped_column(String(24), default="chat")
     # The supply the traffic actually took (issue #218): "gateway" (LiteLLM),
-    # "subscription" (metering proxy), "native" (profile-pinned credentials).
+    # "subscription" (metering proxy), "native" (profile-pinned credentials);
+    # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
     # The team that paid, and the credits charged for this row (#2397). A row
@@ -254,3 +259,51 @@ class IngestCheckpoint(Base):
     source: Mapped[str] = mapped_column(String(128), primary_key=True)
     byte_offset: Mapped[int] = mapped_column(BigInteger, default=0)
     fingerprint: Mapped[str] = mapped_column(String(64), default="")
+
+
+class ComputeRun(UuidPk, Timestamps, Base):
+    """One stretch of cloud compute running for a project, from start to stop:
+    a cloud sandbox (``kind`` ``sandbox``) or a whole cloud VM (``vm``).
+
+    ``subject`` names what ran, a sandbox home's id or a VM's own id; one run
+    of it is open at a time. ``billed_until`` is how far the run has been
+    charged, in whole minutes from ``started_at``; a run is settled once that
+    has reached ``ended_at`` (``usage.compute``).
+    """
+
+    __tablename__ = "compute_runs"
+    __table_args__ = (
+        Index(
+            "uq_compute_runs_open_subject",
+            "subject",
+            unique=True,
+            postgresql_where=text("ended_at IS NULL"),
+        ),
+        # What the settlement reads: runs still running, and ended ones not
+        # charged to their end yet.
+        Index(
+            "ix_compute_runs_unsettled",
+            "billed_until",
+            postgresql_where=text("ended_at IS NULL OR billed_until < ended_at"),
+        ),
+        CheckConstraint("kind IN ('sandbox', 'vm')", name="ck_compute_runs_kind"),
+    )
+
+    kind: Mapped[str] = mapped_column(String(16))
+    # The price list entry: ``sandbox`` for a sandbox, the VM's spec name.
+    spec: Mapped[str] = mapped_column(String(64))
+    subject: Mapped[str] = mapped_column(String(64))
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    topic_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    billed_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Credits charged for it so far.
+    credits: Mapped[float] = mapped_column(Float, default=0.0)

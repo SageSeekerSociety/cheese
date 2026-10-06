@@ -42,6 +42,10 @@ def test_migrate_shared_delivery_without_inventing_independent_history(
             conn.execute(
                 sa.text("CREATE TABLE tasks (LIKE public.tasks INCLUDING ALL)")
             )
+            # The brief this migration copies lived on the task then.
+            conn.execute(
+                sa.text("ALTER TABLE tasks ADD COLUMN brief text NOT NULL DEFAULT ''")
+            )
             for column in (
                 "branch_name",
                 "workspace_name",

@@ -14,6 +14,7 @@ import type { AskAction, AskFormState } from '../../lib/askPresentation'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
+import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
@@ -37,6 +38,8 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
+  /** 私聊里的消息不能转为任务：不给「转为任务」。 */
+  noUpgrade?: boolean
   rows: NoticeRow[]
   /** 开头还没挂上的行数（首屏分批挂行，room/composables/useRowBatch）。 */
   hiddenRows?: number
@@ -101,10 +104,10 @@ const emit = defineEmits<{
   (e: 'edit', block: Block): void
   (e: 'edit-send', item: Outgoing): void
   (e: 'toggle-picker', blockId: string): void
-  (e: 'open-file', path: string, taskId: string | null): void
+  (e: 'open-file', path: string): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
-  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest): void
+  (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-action', block: Block, action: AskAction): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
@@ -235,11 +238,11 @@ watch(
 function emitChecklist(block: Block, items: TodoItem[]) {
   emit('checklist', block, items)
 }
-function emitOpenFile(path: string, taskId: string | null) {
-  emit('open-file', path, taskId)
+function emitOpenFile(path: string) {
+  emit('open-file', path)
 }
-function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest) {
-  emit('open-resource', resource, turnId, review)
+function emitOpenResource(resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
+  emit('open-resource', resource, turnId, review, document)
 }
 // 只有正在改的那一行会存。
 function emitSaveEdit(text: string) {
@@ -284,6 +287,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :is-agent="!!barBlock && isAgentBlock(barBlock)"
         :picker-open="!!barBlock && reactionPickerFor === barBlock.id"
         :editable="barEditable"
+        :no-upgrade="noUpgrade"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"

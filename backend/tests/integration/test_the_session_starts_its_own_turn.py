@@ -53,7 +53,7 @@ def _turns(client, topic_id: str) -> list[AgentTurn]:
         async with client.test_factory() as session:
             rows = await session.scalars(
                 select(AgentTurn)
-                .where(AgentTurn.topic_id == uuid.UUID(topic_id))
+                .where(AgentTurn.conversation_id == uuid.UUID(topic_id))
                 .order_by(AgentTurn.started_at)
             )
             return list(rows)
@@ -217,7 +217,7 @@ def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
     async def _queued() -> list[str]:
         async with client.test_factory() as session:
             rows = await session.scalars(
-                select(Block).where(Block.topic_id == uuid.UUID(room_id))
+                select(Block).where(Block.conversation_id == uuid.UUID(room_id))
             )
             return [
                 block.content or ""

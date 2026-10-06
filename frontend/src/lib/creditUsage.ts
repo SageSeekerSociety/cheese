@@ -2,15 +2,22 @@
 // `/teams/{id}/credits/usage` 的回答。额度数以点计（1 点 = 0.01 美元），时间窗口只给比例；
 // 不含 token。
 
-export type UsageLine = 'collab' | 'ask' | 'write'
+/** 协作、问答、写作是模型用量，算力是云端沙箱和云虚拟机跑的时间。 */
+export type UsageLine = 'collab' | 'ask' | 'write' | 'compute'
 
-export const USAGE_LINES: UsageLine[] = ['collab', 'ask', 'write']
+export const USAGE_LINES: UsageLine[] = ['collab', 'ask', 'write', 'compute']
 
 /** 词条键逐字写全：i18n 闸门照源码字面量认「这个键有人用」。 */
 export const LINE_KEY: Record<UsageLine, string> = {
   collab: 'usage.line.collab',
   ask: 'usage.line.ask',
   write: 'usage.line.write',
+  compute: 'usage.line.compute',
+}
+
+/** 这份用量分了哪几条线，按固定顺序：个人页四条都有，团队页只有协作和算力。 */
+export function linesOf(lines: Partial<Record<UsageLine, number>> | null | undefined): UsageLine[] {
+  return lines ? USAGE_LINES.filter((line) => line in lines) : []
 }
 
 export interface UsagePeriod {
@@ -50,7 +57,7 @@ export interface UsageDay {
   date: string
   /** 这一天用了多少点；还没到的日子为 `null`。 */
   credits: number | null
-  lines?: Record<UsageLine, number>
+  lines?: Partial<Record<UsageLine, number>>
 }
 
 export interface UsageProject {
@@ -89,8 +96,8 @@ export interface CreditUsage {
   packs: UsagePack[]
   days: UsageDay[]
   projects: UsageProject[]
-  /** 个人页才有：本月各产品线用了多少点。 */
-  lines?: Record<UsageLine, number>
+  /** 本月各条线用了多少点：个人页是协作、问答、写作、算力，团队页是协作和算力。 */
+  lines: Partial<Record<UsageLine, number>>
   /** 个人页才有：我所在的团队。 */
   teams?: UsageTeam[]
 }

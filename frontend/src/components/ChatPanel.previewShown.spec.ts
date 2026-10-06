@@ -48,7 +48,7 @@ const flush = () => vi.advanceTimersByTimeAsync(0)
 function block(kind: string, extra: Partial<Block> = {}): Block {
   return {
     id: `b-${kind}`,
-    topic_id: 't',
+    conversation_id: 't',
     kind,
     author_type: 'participant',
     author: 'someone-else',

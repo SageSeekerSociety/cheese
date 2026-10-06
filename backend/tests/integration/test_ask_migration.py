@@ -328,7 +328,7 @@ def test_the_new_reader_reads_migrated_history(client):
         engine = _engine()
         try:
             async with async_sessionmaker(engine, expire_on_commit=False)() as session:
-                return await BlockRepository(session).rooms_awaiting_an_answer(
+                return await BlockRepository(session).awaiting_an_answer(
                     [uuid.UUID(answered_room), uuid.UUID(unanswered_room)]
                 )
         finally:

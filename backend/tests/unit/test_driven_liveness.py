@@ -114,14 +114,14 @@ class Room:
                 # A steer can originate in one work and be read in another.
                 assert (
                     identity.project_id,
-                    identity.topic_id,
+                    identity.conversation_id,
                     identity.recipient_handle,
                     identity.harness,
                     identity.native_session_id,
                     identity.input_id,
                 ) == (
                     evidence.project_id,
-                    evidence.topic_id,
+                    evidence.conversation_id,
                     evidence.recipient_handle,
                     evidence.harness,
                     evidence.native_session_id,

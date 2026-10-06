@@ -186,7 +186,7 @@ def test_http_answer_continues_original_native_executor(
                                         AgentTurn, uuid.UUID(ping["work_id"])
                                     )
                                     assert original is not None
-                                    assert original.topic_id == topic
+                                    assert original.conversation_id == topic
                                     assert original.stopped_at is None
                                 return
                         await asyncio.sleep(0.01)
@@ -242,7 +242,7 @@ def test_http_answer_continues_original_native_executor(
         async def initial_work():
             async with client.test_request_factory() as session:
                 return await session.scalar(
-                    select(AgentTurn.id).where(AgentTurn.topic_id == topic)
+                    select(AgentTurn.id).where(AgentTurn.conversation_id == topic)
                 )
 
         native, original_work, process = (
@@ -307,7 +307,7 @@ def test_http_answer_continues_original_native_executor(
                         return list(
                             await session.scalars(
                                 select(NativeInput).where(
-                                    NativeInput.topic_id == topic,
+                                    NativeInput.conversation_id == topic,
                                     NativeInput.execution_work_id == high,
                                     NativeInput.completed_at.is_not(None),
                                 )
@@ -339,7 +339,7 @@ def test_http_answer_continues_original_native_executor(
                     rows = list(
                         await session.scalars(
                             select(NativeInput).where(
-                                NativeInput.topic_id == topic,
+                                NativeInput.conversation_id == topic,
                                 NativeInput.execution_work_id == high,
                             )
                         )
@@ -419,7 +419,7 @@ def test_http_answer_continues_original_native_executor(
                     rows = list(
                         await session.scalars(
                             select(NativeInput).where(
-                                NativeInput.topic_id == topic,
+                                NativeInput.conversation_id == topic,
                                 NativeInput.execution_work_id == high,
                             )
                         )
@@ -456,7 +456,9 @@ def test_http_answer_continues_original_native_executor(
                 async with client.test_request_factory() as session:
                     rows = list(
                         await session.scalars(
-                            select(NativeInput).where(NativeInput.topic_id == topic)
+                            select(NativeInput).where(
+                                NativeInput.conversation_id == topic
+                            )
                         )
                     )
                     assert len(rows) == 1 and rows[0].completed_at
@@ -490,7 +492,7 @@ def test_http_answer_continues_original_native_executor(
             async def verify_history():
                 async with client.test_request_factory() as session:
                     row = await session.scalar(
-                        select(NativeInput).where(NativeInput.topic_id == topic)
+                        select(NativeInput).where(NativeInput.conversation_id == topic)
                     )
                     assert bool(row.completed_at) == (mode == "history")
                     assert await seat_has_unfinished_input(
@@ -628,7 +630,7 @@ def test_http_answer_continues_original_native_executor(
                     async with service.session_factory() as session:
                         delivery = await session.scalar(
                             select(Delivery).where(
-                                Delivery.topic_id == topic,
+                                Delivery.conversation_id == topic,
                                 Delivery.attempt_id == turn,
                                 Delivery.recipient_handle == asker,
                             )
@@ -691,11 +693,11 @@ def test_http_answer_continues_original_native_executor(
                 assert operations.count("steer") == 0
                 async with client.test_request_factory() as session:
                     delivery = await session.scalar(
-                        select(Delivery).where(Delivery.topic_id == topic)
+                        select(Delivery).where(Delivery.conversation_id == topic)
                     )
                     assert delivery.state == "pending" and delivery.sent_at is None
                     row = await session.scalar(
-                        select(NativeInput).where(NativeInput.topic_id == topic)
+                        select(NativeInput).where(NativeInput.conversation_id == topic)
                     )
                     assert row.completed_at is None
                 return
@@ -705,7 +707,7 @@ def test_http_answer_continues_original_native_executor(
                 async with client.test_request_factory() as session:
                     waiting = await session.scalar(
                         select(NativeInput).where(
-                            NativeInput.topic_id == topic,
+                            NativeInput.conversation_id == topic,
                             NativeInput.completed_at.is_(None),
                         )
                     )
@@ -736,7 +738,9 @@ def test_http_answer_continues_original_native_executor(
                         len(
                             list(
                                 await session.scalars(
-                                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                                    select(AgentTurn).where(
+                                        AgentTurn.conversation_id == topic
+                                    )
                                 )
                             )
                         )
@@ -744,7 +748,7 @@ def test_http_answer_continues_original_native_executor(
                     )
                     ordinary = await session.scalar(
                         select(Block).where(
-                            Block.topic_id == topic,
+                            Block.conversation_id == topic,
                             Block.content.contains("普通追加消息"),
                         )
                     )
@@ -809,7 +813,9 @@ def test_http_answer_continues_original_native_executor(
                 async with client.test_request_factory() as session:
                     registered = list(
                         await session.scalars(
-                            select(NativeInput).where(NativeInput.topic_id == topic)
+                            select(NativeInput).where(
+                                NativeInput.conversation_id == topic
+                            )
                         )
                     )
                     waiting = next(
@@ -839,7 +845,8 @@ def test_http_answer_continues_original_native_executor(
                 async with client.test_request_factory() as session:
                     deliveries = await session.scalars(
                         select(Delivery).where(
-                            Delivery.topic_id == topic, Delivery.state == "pending"
+                            Delivery.conversation_id == topic,
+                            Delivery.state == "pending",
                         )
                     )
                     for delivery in deliveries:
@@ -914,7 +921,8 @@ def test_http_answer_continues_original_native_executor(
                 async with client.test_request_factory() as session:
                     pending = await session.scalars(
                         select(Delivery).where(
-                            Delivery.topic_id == topic, Delivery.state == "pending"
+                            Delivery.conversation_id == topic,
+                            Delivery.state == "pending",
                         )
                     )
                     for delivery in pending:
@@ -929,7 +937,7 @@ def test_http_answer_continues_original_native_executor(
             async with client.test_request_factory() as session:
                 rows = list(
                     await session.scalars(
-                        select(NativeInput).where(NativeInput.topic_id == topic)
+                        select(NativeInput).where(NativeInput.conversation_id == topic)
                     )
                 )
                 assert len(rows) == (
@@ -951,7 +959,7 @@ def test_http_answer_continues_original_native_executor(
                 )
                 deliveries = list(
                     await session.scalars(
-                        select(Delivery).where(Delivery.topic_id == topic)
+                        select(Delivery).where(Delivery.conversation_id == topic)
                     )
                 )
                 assert len(deliveries) == (
@@ -963,7 +971,7 @@ def test_http_answer_continues_original_native_executor(
                 answers = list(
                     await session.scalars(
                         select(Block).where(
-                            Block.topic_id == topic,
+                            Block.conversation_id == topic,
                             Block.meta["answer_to"].as_string() == question["id"],
                         )
                     )
@@ -992,7 +1000,7 @@ def test_http_answer_continues_original_native_executor(
                         assert owners[0].delivery_id in {d.id for d in deliveries}
                 turns = list(
                     await session.scalars(
-                        select(AgentTurn).where(AgentTurn.topic_id == topic)
+                        select(AgentTurn).where(AgentTurn.conversation_id == topic)
                     )
                 )
                 assert len(turns) == (1 if mode == "busy" else 2), {

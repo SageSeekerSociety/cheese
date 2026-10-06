@@ -30,7 +30,11 @@
     <script>
       ;(function () {
         try {
-          var stored = localStorage.getItem('cheesex.theme')
+          // The docs page embedding this one may say which theme it shows
+          // (?theme=, see src/demo-main.ts): from the docs' own host it cannot
+          // share this origin's stored preference.
+          var asked = new URLSearchParams(location.search).get('theme')
+          var stored = asked === 'light' || asked === 'dark' ? asked : localStorage.getItem('cheesex.theme')
           var pref = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system'
           var dark =
             pref === 'dark' ||

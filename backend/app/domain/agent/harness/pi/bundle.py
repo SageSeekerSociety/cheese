@@ -34,15 +34,11 @@ def build() -> bytes:
             "domain/agent/harness/pi/project_skills.py",
             "domain/agent/harness/pi/relay.py",
             "domain/agent/harness/pi/subagents.py",
-            # How a subagent's prompt names the card its work lands on, read
-            # the way the other harnesses' adapters read it (`subagents.py`).
-            "domain/room_task/thread_label.py",
             "domain/agent/harness/pi/runner.py",
             "domain/agent/harness/pi/entry.py",
             "domain/agent/harness/pi/host.py",
         ),
         extra={
-            "app/domain/room_task/__init__.py": "",
             "app/domain/agent/harness/pi/cheese.py": PLATFORM_TOOLS.read_text(),
         },
     )

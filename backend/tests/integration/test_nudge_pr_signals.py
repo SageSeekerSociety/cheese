@@ -16,6 +16,7 @@ import uuid
 
 import pytest
 
+from app.domain.conversation.services import of_room
 from app.domain.review import github_pr
 from app.domain.review.notes import NoteCode
 from app.domain.review.pr_signals import REVIEW_NUDGE_LIMIT, ReviewSignal
@@ -51,7 +52,9 @@ def _blocks(client, topic_id: str) -> list[dict]:
         async with client.test_factory() as session:
             rows = list(
                 await session.scalars(
-                    select(Block).where(Block.topic_id == uuid.UUID(topic_id))
+                    select(Block).where(
+                        of_room(Block.conversation_id, uuid.UUID(topic_id))
+                    )
                 )
             )
             return [
@@ -60,7 +63,7 @@ def _blocks(client, topic_id: str) -> list[dict]:
                     "kind": row.kind.value,
                     "content": row.content,
                     "meta": row.meta,
-                    "task_id": row.task_id,
+                    "conversation_id": row.conversation_id,
                 }
                 for row in rows
             ]
@@ -169,13 +172,13 @@ def test_a_red_ci_never_swallows_the_review_and_the_conflict(client, app_world):
             card = await session.get(AcceptCard, uuid.UUID(cid))
             rows = list(
                 await session.scalars(
-                    select(Delivery).where(Delivery.task_id == card.task_id)
+                    select(Delivery).where(Delivery.conversation_id == card.task_id)
                 )
             )
             assert len(rows) == 3
             for row in rows:
                 block = await session.get(Block, row.event_id)
-                assert block.task_id == card.task_id
+                assert block.conversation_id == card.task_id
                 assert row.state == "pending"  # no observed native parent yet
 
     asyncio.run(check_task_delivery())

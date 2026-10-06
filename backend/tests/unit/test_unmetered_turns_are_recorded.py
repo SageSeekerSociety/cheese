@@ -26,11 +26,11 @@ class _Session:
     async def flush(self) -> None:
         return None
 
-    async def get(self, _model, _pk):
-        """No such task — spend attributed to a room's own main line.
+    async def scalar(self, _statement):
+        """No such task — spend attributed to a room's own line.
 
-        The repository resolves the place id it is handed into (room, thread),
-        and a place that is not a task IS the room. Returning None says that.
+        The repository resolves the conversation it is handed into (room, task),
+        and a conversation that is not a task IS the room. None says that.
         """
         return None
 
@@ -41,7 +41,7 @@ async def test_an_unmetered_turn_is_still_written():
 
     await UsageRepository(session).add(
         project_id=project,
-        topic_id=topic,
+        conversation_id=topic,
         model="glm-4.6",
         input_tokens=0,
         output_tokens=0,
@@ -63,7 +63,7 @@ async def test_a_metered_turn_keeps_its_plain_kind():
 
     await UsageRepository(session).add(
         project_id=uuid.uuid4(),
-        topic_id=None,
+        conversation_id=None,
         model="glm-4.6",
         input_tokens=100,
         output_tokens=20,

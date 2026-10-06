@@ -80,7 +80,7 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
     async def _seed_them(s):
         older = Block(
             project_id=uuid.UUID(project),
-            topic_id=uuid.UUID(room),
+            conversation_id=uuid.UUID(room),
             kind=BlockKind.weekly,
             author_type=AuthorType.participant,
             author="alice",
@@ -91,7 +91,7 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
         )
         newer = Block(
             project_id=uuid.UUID(project),
-            topic_id=uuid.UUID(room),
+            conversation_id=uuid.UUID(room),
             kind=BlockKind.weekly,
             author_type=AuthorType.participant,
             author="alice",
@@ -118,8 +118,7 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
     newest = payload["data"][0]
     assert newest == {
         "id": ids["newer"],
-        "topic_id": room,
-        "task_id": None,
+        "conversation_id": room,
         "kind": "weekly",
         "author_type": "participant",
         "author": "alice",
@@ -164,12 +163,14 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
             room_id=uuid.UUID(room),
             title="第一件",
             created_at=OLDER,
+            started_at=OLDER,
         )
         second = Task(
             project_id=uuid.UUID(project),
             room_id=uuid.UUID(room),
             title="第二件",
             created_at=NEWER,
+            started_at=NEWER,
         )
         s.add_all([first, second])
         await s.flush()
@@ -200,7 +201,7 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
     assert no_card["room_id"] == room
     assert no_card["presentation"] == {
         "column": "building",
-        "phrase": Building.not_started,
+        "phrase": Building.started,
     }
 
     # 有卡的那一行：`card` 窄到侧栏画得出来的四个字段，一个不多一个不少。
@@ -236,6 +237,7 @@ def _carded_tasks(client, project: str, room: str, cards: list[dict]) -> dict[st
                 room_id=uuid.UUID(room),
                 title=f"活 {i}",
                 created_at=OLDER,
+                started_at=OLDER,
             )
             s.add(task)
             await s.flush()
@@ -390,3 +392,46 @@ def test_an_unmirrored_pending_card_really_is_waiting_for_review(client):
         "pr_number": None,
         "pr_url": None,
     }
+
+
+def test_a_thread_says_when_it_last_moved(client):
+    """The rail lists the most recently active work first: a thread someone
+    spoke in says when, and one nobody spoke in says when it was made."""
+    project = _project(client)
+    room = _room(client, project)
+    ids: dict[str, str] = {}
+    spoken = datetime(2026, 9, 3, 10, 0, tzinfo=UTC)
+
+    async def _seed_them(s):
+        quiet = Task(
+            project_id=uuid.UUID(project),
+            room_id=uuid.UUID(room),
+            title="没人说话",
+            created_at=OLDER,
+        )
+        talked = Task(
+            project_id=uuid.UUID(project),
+            room_id=uuid.UUID(room),
+            title="有人说话",
+            created_at=OLDER,
+        )
+        s.add_all([quiet, talked])
+        await s.flush()
+        s.add(
+            Block(
+                project_id=uuid.UUID(project),
+                conversation_id=talked.id,
+                kind=BlockKind.message,
+                author_type=AuthorType.participant,
+                author="alice",
+                content="进展如何",
+                created_at=spoken,
+            )
+        )
+        ids["quiet"], ids["talked"] = str(quiet.id), str(talked.id)
+
+    _seed(client, _seed_them)
+
+    rows = {row["id"]: row for row in _list(client, project, "tasks")["data"]}
+    assert datetime.fromisoformat(rows[ids["talked"]]["last_activity_at"]) == spoken
+    assert datetime.fromisoformat(rows[ids["quiet"]]["last_activity_at"]) == OLDER

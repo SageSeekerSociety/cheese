@@ -35,11 +35,13 @@ async def list_topic_members(
     from app.domain.identity.repositories import AgentBindingRepository
     from app.domain.user.repositories import UserProfileRepository, UserRepository
 
-    topic = await TopicService(db).get_or_404(topic_id)
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await TopicService(db).place_or_404(topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    topic_id = topic.id
     members, total = await TopicMemberService(db).list_for_topic(topic_id)
     # Attach display names and avatars so the UI can draw the roster without a
     # second round-trip.

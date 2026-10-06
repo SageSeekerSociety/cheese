@@ -197,7 +197,7 @@ def test_the_rooms_that_would_lose_their_owner_are_named_as_a_list(client, beare
     assert r.status_code == 422, r.text
     assert (
         r.json()["message"]
-        == "你是话题「周会」、「设计讨论」唯一的 owner，先把话题交给别人"
+        == "你是频道「周会」、「设计讨论」唯一的 owner，先把频道交给别人"
     )
     assert r.json()["error"]["i18n"] == {
         "key": "soleTopicOwner",
@@ -206,7 +206,7 @@ def test_the_rooms_that_would_lose_their_owner_are_named_as_a_list(client, beare
 
 
 def test_an_unnamed_room_is_named_in_the_readers_language(client, bearer):
-    """A room nobody has named yet is stored under the placeholder 「新话题」, which
+    """A room nobody has named yet is stored under the placeholder 「新频道」, which
     is the Chinese screen's word for "untitled", not the room's name. The refusal
     names it as a sentence, so an English screen says "New topic" instead of
     showing Chinese inside an English line."""
@@ -218,7 +218,7 @@ def test_an_unnamed_room_is_named_in_the_readers_language(client, bearer):
     r = _leave(client, pid, "alice")
 
     assert r.status_code == 422, r.text
-    assert r.json()["message"] == "你是话题「新话题」唯一的 owner，先把话题交给别人"
+    assert r.json()["message"] == "你是频道「新频道」唯一的 owner，先把频道交给别人"
     assert r.json()["error"]["i18n"] == {
         "key": "soleTopicOwner",
         "params": {
@@ -419,7 +419,7 @@ def test_a_previous_owner_leaves_the_project_and_stays_on_its_team(client, beare
 
     refused = _leave(client, pid, "alice")
     assert refused.status_code == 422, refused.text
-    assert "项目总览" in refused.json()["message"]
+    assert "综合" in refused.json()["message"]
     # 什么也没写：她还在名册上（按小队读出来的那一行）。
     assert "alice" in _project_handles(client, pid)
 

@@ -159,9 +159,9 @@ export interface ChecklistMeta {
 }
 
 export interface Block {
-  task_id?: string | null
   id: string
-  topic_id: string
+  // The conversation it was said in: a room's id, or a task's.
+  conversation_id: string
   kind: string
   author_type: AuthorType
   author: string
@@ -237,20 +237,20 @@ export interface TodoItem {
 export interface RoomTask {
   id: string
   project_id: string
-  // 它挂在哪个房间里。永远是房间——活不嵌套。
-  room_id: string
+  room_id: string // 它挂在哪个房间里；任务不嵌套
   title: string
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
-  // 谁来验收这条活 —— 派活那一刻定下的（显式指定，否则项目的默认验收人）。递卡
-  // 沿用它。null 只可能来自历史记录。
-  reviewer_handle?: string | null
+  contributor_handles?: string[] // 协作者：负责人拉进来的人，也能在任务里和 AI 队友对话
+  reviewer_handle?: string | null // 谁审阅它的改动，开始时定下
   created_by?: string | null
   branch_name?: string | null
-  // 派它出去时说的那份要求，和分身交回来的那句话，都住在卡上：做活的分身拿的是房间的
-  // token，够不着「活自己的实况文档」，那份文档从播种起就再没人改过。
-  brief?: string
+  agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
+  document_id?: string | null // 实况文档；第一次打开任务时才建
+  started_at?: string | null // 开始的时刻、人和文档版本：审阅时与它相比
+  started_by?: string | null
+  started_doc_version?: number | null
   conclusion?: string | null
   base_branch?: string | null
   base_task_id?: string | null
@@ -265,9 +265,8 @@ export interface RoomTask {
   upgraded_from_block_id?: string | null
   created_at: string
   updated_at: string
-  // 项目级那条列表（`GET /projects/{id}/tasks`）和房间级那条（`GET
-  // /topics/{id}/tasks`）都带它——「等人验收」也是安静的，没有它就和「闲着」
-  // 在屏幕上长得一模一样。
+  last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
+  // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
   // 这条活在看板上落哪一列、卡上写哪句话。**必有字段，不是可选的**：状态从今往后
   // 只在后端算一次，前端没有一条退回本地推导的路——留一条兜底路，两个算法就会同时
@@ -277,19 +276,20 @@ export interface RoomTask {
 
 /** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
  *  下一步在平台手上还是在人手上，落在不同的列里。
- *
- *    building   施工中 —— 还没递出交付
- *    delivering 交付中 —— 下一步在平台/芝士手上
+ *    not_started 未开始 —— 还在讨论，负责人还没点「开始」
+ *    building   进行中 —— 已开始，还没递出交付
+ *    delivering 检查中 —— 下一步在平台/芝士手上
  *    needs_you  待处理 —— 下一步在人手上
  *    done       已完成 —— 已采纳，或已关闭且没交付
  *    archived   已归档 —— 房间才有；活不归档
  */
-export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
+export type BoardColumn = 'not_started' | 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
-type BuildingPhrase = 'running' | 'started' | 'not_started' | 'returned' | 'idle' | 'draft' | 'lost'
+type BuildingPhrase = 'running' | 'started' | 'idle' | 'draft'
 type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
 type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer'
-export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | 'accepted' | 'closed' | 'archived'
+type DonePhrase = 'accepted' | 'completed' | 'closed' | 'archived'
+export type BoardPhrase = 'discussing' | BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | DonePhrase
 
 /** 后端算好的呈现（`room_task/presentation.py`），前端不推状态。`phrase` 是码，由 `lib/board.ts` 按读者的语言画。 */
 export interface Presentation {

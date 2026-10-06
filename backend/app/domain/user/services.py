@@ -110,12 +110,14 @@ async def set_language(session: AsyncSession, user_id: int, language: str) -> bo
 
 
 async def lookup_account(session: AsyncSession, q: str) -> dict | None:
-    """``{handle, name, avatar_id}`` for an exact username or email, or None."""
+    """``{id, handle, name, avatar_id}`` for an exact username or email, or None.
+
+    The id is what a team invitation names the person by."""
     found = await UserRepository(session).lookup_account(q)
     if found is None:
         return None
-    handle, name, avatar_id = found
-    return {"handle": handle, "name": name, "avatar_id": avatar_id}
+    user_id, handle, name, avatar_id = found
+    return {"id": user_id, "handle": handle, "name": name, "avatar_id": avatar_id}
 
 
 async def search_accounts(
@@ -216,6 +218,14 @@ def normalize_nickname(raw: str) -> str:
             "Nickname must contain at least one letter, digit or Chinese character"
         )
     return nickname
+
+
+def user_service(session: AsyncSession) -> "UserService":
+    """接在这个 session 上的 ``UserService`` —— 和 ``team.services.team_service``
+    同一个用意：别的领域要用户资料就走这里，不必为了接线去 import
+    ``user.repositories``（守卫见 ``tests/unit/test_domain_import_guard.py``）。
+    """
+    return UserService(UserProfileRepository(session))
 
 
 class UserService:

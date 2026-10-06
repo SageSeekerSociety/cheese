@@ -21,8 +21,10 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
+from app.domain.machine import lease_claim
 from app.domain.machine import session_work as work_lease
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
@@ -247,29 +249,14 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         }
     }
     from app.domain.agent_instance.models import AgentInstance
-    from app.domain.room_task.models import Task
 
     async with client.test_factory() as db:
-        instance = AgentInstance(project_id=project_id, handle="ada", configuration={})
-        db.add(instance)
+        db.add(AgentInstance(project_id=project_id, handle="ada", configuration={}))
         db.add(AgentInstance(project_id=project_id, handle="bob", configuration={}))
         await db.flush()
         first = await AgentSessionService(db).by_id(first_id)
         second = await AgentSessionService(db).by_id(second_id)
         first.resume_token, second.resume_token = "native-ada", "native-bob"
-        child = Task(
-            project_id=project_id,
-            room_id=topic_id,
-            title="Ada's background child",
-            owner_handle="bob",
-            subagent_id="ada-child",
-            execution_agent_instance_id=instance.id,
-            execution_parent_session_id="native-ada",
-            execution_turn_id=uuid.uuid4(),
-        )
-        db.add(child)
-        await db.flush()
-        child_id = child.id
         await db.commit()
     bob_tools = client.post(
         f"/topics/{topic_id}/sessions/{second_id}/work-lease",
@@ -300,28 +287,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]
         is old_online
     )
-    from app.domain.room_task.models import Task, TaskStatus
-
-    async with client.test_factory() as db:
-        db.add(
-            Task(
-                project_id=project_id,
-                room_id=topic_id,
-                title="Finished child",
-                subagent_id="historical-child",
-                status=TaskStatus.closed,
-            )
-        )
-        db.add(
-            Task(
-                project_id=project_id,
-                room_id=topic_id,
-                title="Concluded child",
-                subagent_id="concluded-child",
-                conclusion="Handed back",
-            )
-        )
-        await db.commit()
     # An agent may change its own work destination once its work is pushed on
     # the machine it leaves. Away from a machine that cannot be reached for
     # that, only a person may switch, and says so explicitly.
@@ -331,7 +296,7 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         turn = AgentTurn(
             id=uuid.uuid4(),
             continuation_id=uuid.uuid4(),
-            topic_id=topic_id,
+            conversation_id=topic_id,
             author=actor_handle,
             started_at=datetime.now(UTC),
         )
@@ -408,8 +373,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         for call in remote.await_args_list
         if call.args[1] == "control"
     )
-    async with client.test_factory() as db:
-        assert (await db.get(Task, child_id)).conclusion is None
     async with client.test_factory() as db:
         # 整个房间一起搬：发起的这一条和房间里的另一条都把手交了出来。
         for sid in (first_id, second_id):
@@ -1337,3 +1300,231 @@ async def test_an_own_machine_that_just_dropped_is_called_not_refused(
     back = lease()
     assert back.status_code == 200, back.text
     assert back.json()["data"]["target"]["device_id"] == device_id
+
+
+async def _a_room_on_its_own_machine(client):
+    """A room on a person's own machine, with one session placed and the
+    credential its tools present: ``(lease path, token, session id)``."""
+    project = post_project(
+        client, json={"name": "Session hands"}, owner="alice"
+    ).json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("ada"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        topic.compute_config = {
+            "name": "ada",
+            "profile": "device",
+            "device_id": device.device_id,
+        }
+        session = await AgentSessionService(db).ensure(
+            topic_id, "cheese", harness="claude-code"
+        )
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session.id),
+        )
+        session_id = session.id
+        await db.commit()
+    return f"/topics/{topic_id}/sessions/{session_id}/work-lease", token, session_id
+
+
+def _a_machine_that_installs(monkeypatch, install):
+    """The machine answers what an executor it has running would; ``install``
+    stands in for installing one."""
+    import hashlib
+
+    from app.domain.agent.harness.claude_code import executor_launch
+    from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+    hub = SimpleNamespace(
+        target=lambda _device: "linux-amd64",
+        is_online=lambda _: True,
+        exec=AsyncMock(side_effect=install),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+
+    async def execute(target, method, params, **kwargs):
+        if method == "ping":
+            return {
+                "capabilities": ["prepare"],
+                # Installed isolated, as a room nobody gave the machine is.
+                "sandbox": True,
+                "protocol_version": runtime.PROTOCOL_VERSION,
+                "files": {
+                    name: hashlib.sha256(value.encode()).hexdigest()
+                    for name, value in executor_launch.file_sources().items()
+                },
+            }
+        if method == "prepare":
+            return INSTALLED
+        return {"ran": method}
+
+    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=execute))
+    return hub
+
+
+INSTALLED = {"state": "/executor/state", "workspace": "/work", "mcp_servers": []}
+
+
+async def test_an_installation_whose_backend_is_gone_does_not_hold_the_next_start(
+    client, monkeypatch
+):
+    """The backend process installing a session's executor goes away mid-way —
+    a deploy restarts it, it crashes, it is killed — and with it everything it
+    was running: nothing finishes the installation and nothing ends its claim.
+    The session's next start, which takes its machine with no wait at all, gets
+    it again within a short bound instead of being refused as "being prepared"
+    for the rest of the installation's time."""
+    import asyncio
+    import time
+
+    monkeypatch.setattr(lease_claim, "CLAIM_TTL_S", 1.0)
+    monkeypatch.setattr(lease_claim, "CLAIM_RENEW_S", 0.2)
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
+    path, token, _session_id = await _a_room_on_its_own_machine(client)
+    installs = []
+
+    async def install(*_args, **_kwargs):
+        installs.append(None)
+        if len(installs) == 1:
+            # The first one never comes back: its process is about to go.
+            await asyncio.Event().wait()
+        return {"exit": 0, "stdout": json.dumps(INSTALLED)}
+
+    hub = _a_machine_that_installs(monkeypatch, install)
+
+    def ask(**body):
+        response = client.post(path, headers={"X-Cheese-Token": token}, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    assert ask(timeout=0.001).get("preparing") is True
+    # The answer comes back before the installation it set off has reached the
+    # machine; wait for it to, or there is nothing yet to be cut off.
+    reached = time.monotonic() + 5
+    while hub.exec.await_count == 0 and time.monotonic() < reached:
+        await asyncio.sleep(0.05)
+    assert hub.exec.await_count == 1
+    # The process goes: every installation it ran stops where it was, and
+    # whatever would have ended its claim never runs.
+    for running_install in list(work_lease._INSTALLS):
+        client.portal.call(running_install.cancel)
+
+    gone = time.monotonic()
+    started = None
+    while started is None and time.monotonic() < gone + 10:
+        answer = ask(timeout=0.001)
+        started = answer if "target" in answer else None
+        if started is None:
+            await asyncio.sleep(0.1)
+    assert started is not None, answer
+    assert time.monotonic() - gone < lease_claim.CLAIM_TTL_S + 2
+    assert hub.exec.await_count == 2
+
+
+async def test_an_installation_still_running_elsewhere_keeps_its_claim(
+    client, monkeypatch
+):
+    """During a rollout two backends serve at once, and an installation the
+    outgoing one is still running is alive. However long it takes, a start of
+    the session meanwhile — through any backend: the claim is read from the
+    session's row, which they all share — waits for it rather than starting a
+    second installation beside it, and then gets what it installed."""
+    import asyncio
+    import threading
+    import time
+
+    # A claim lapses once it goes unrenewed for CLAIM_TTL_S, and nothing renews
+    # it while the event loop is held. Shortened for the test, the TTL still
+    # has to outlast the longest stall a loaded CI runner gives this process's
+    # loop (over a second has been seen), or a start arriving behind one
+    # finds the claim lapsed and rightly installs a second time.
+    monkeypatch.setattr(lease_claim, "CLAIM_TTL_S", 3.0)
+    monkeypatch.setattr(lease_claim, "CLAIM_RENEW_S", 0.3)
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
+    path, token, session_id = await _a_room_on_its_own_machine(client)
+    release = threading.Event()
+
+    async def install(*_args, **_kwargs):
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        return {"exit": 0, "stdout": json.dumps(INSTALLED)}
+
+    hub = _a_machine_that_installs(monkeypatch, install)
+
+    def ask(**body):
+        response = client.post(path, headers={"X-Cheese-Token": token}, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    assert ask(timeout=0.001).get("preparing") is True
+    # Twice as long as a claim stands unrenewed.
+    hold_until = time.monotonic() + 2 * lease_claim.CLAIM_TTL_S
+    while time.monotonic() < hold_until:
+        assert ask(timeout=0.001).get("preparing") is True
+        async with client.test_factory() as db:
+            lease = (await AgentSessionService(db).by_id(session_id)).work_lease
+        assert lease_claim.still_preparing(lease), lease
+        await asyncio.sleep(0.1)
+    assert hub.exec.await_count == 1
+
+    release.set()
+    started = None
+    give_up = time.monotonic() + 10
+    while started is None and time.monotonic() < give_up:
+        answer = ask(timeout=0.001)
+        started = answer if "target" in answer else None
+        if started is None:
+            await asyncio.sleep(0.1)
+    assert started is not None, answer
+    assert hub.exec.await_count == 1
+
+
+async def test_a_wait_that_runs_out_on_the_rooms_lock_still_answers_preparing(
+    client, monkeypatch
+):
+    """A switch of the room's machine holds the room while it pushes each
+    session's work, which can take longer than a start of a session waits. A
+    start that runs out of time still waiting for the room answers that the
+    machine is being prepared, as it does when any other step outlasts it, and
+    the session asks again."""
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 0.5)
+    path, token, _session_id = await _a_room_on_its_own_machine(client)
+    room = uuid.UUID(path.split("/")[2])
+
+    async with client.test_factory() as switching:
+        await TopicService(switching).lock_for_execution(room)
+        response = client.post(
+            path, headers={"X-Cheese-Token": token}, json={"timeout": 0.001}
+        )
+        await switching.rollback()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"].get("preparing") is True

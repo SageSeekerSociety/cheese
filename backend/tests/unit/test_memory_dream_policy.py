@@ -202,15 +202,19 @@ def test_the_dream_prompt_has_all_four_phases_in_order():
 
 
 def test_the_dream_prompt_keeps_the_two_hard_rules():
-    """两条规矩必须原样在：private 不许升进 team、和 CLAUDE.md 冲突只标注。
+    """两条规矩必须原样在：private 不许升进 team、和仓库的说明文件冲突只标注。
 
     它们不影响「整理跑没跑起来」，只影响跑偏的那一次有没有人拦住——而跑偏一次就
     是某个人的私人偏好被写进了全项目共看的那棵树，事后无从分辨哪一条本来是私人的。
     """
-    prompt = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=False))
-    assert "不许把 private 的内容升级进 team" in prompt
-    assert "不要改 CLAUDE.md" in prompt
-    assert "拿不准就留着" in prompt
+    for code_project in (True, False):
+        prompt = dream_prompt(
+            DreamBriefing(scopes={}, rooms=[], code_project=code_project)
+        )
+        assert "不许把 private 的内容升级进 team" in prompt
+        assert "拿不准就留着" in prompt
+    code = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=True))
+    assert "不要改说明文件" in code
 
 
 def test_the_dream_prompt_says_what_it_may_write_and_what_it_may_not():
@@ -222,9 +226,21 @@ def test_the_dream_prompt_says_what_it_may_write_and_what_it_may_not():
 def test_a_code_project_is_told_about_its_repository_and_a_doc_project_is_not():
     code = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=True))
     doc = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=False))
-    assert "CLAUDE.md" in code
-    assert "## 仓库与 CLAUDE.md" in code
-    assert "## 仓库与 CLAUDE.md" not in doc
+    assert "## 仓库\n" in code
+    assert "## 和仓库的说明文件核对" in code
+    assert "## 仓库\n" not in doc
+    assert "## 和仓库的说明文件核对" not in doc
+    assert "CLAUDE.md" not in doc
+
+
+def test_a_code_project_is_not_told_which_instruction_file_it_has():
+    """A hosted repository may have a CLAUDE.md, an AGENTS.md, or none: the
+    prompt has it look, and never says one is there or already in front of it."""
+    code = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=True))
+    assert "AGENTS.md" in code
+    assert "CLAUDE.md 在仓库根目录" not in code
+    assert "系统提示词里有这个项目的 CLAUDE.md" not in code
+    assert "这一段其余跳过" in code
 
 
 def test_the_briefing_carries_the_rooms_into_the_prompt():

@@ -11,10 +11,10 @@ Why the endpoint is shaped the way it is:
 * **204, always.** The caller is a page that has already rendered; there is
   nobody to show an error to, and the beacon is fire-and-forget by design. A
   refused or malformed visit is dropped, not reported.
-* **Auth is optional, and best effort.** A signed-in reader is recorded by
-  account; an anonymous one by the random id their browser keeps. Neither is
-  required — the docs are public, so requiring a token would silently lose
-  every signed-out visit.
+* **Auth is optional, and best effort.** A reader signed in to the docs (their
+  cookie, ``docs_site/access.py``) is recorded by account; an anonymous one by
+  the random id their browser keeps. Neither is required — the docs are
+  public, so requiring a sign-in would silently lose every signed-out visit.
 * **No IP, no user agent.** See ``domain/docs_site/visits.py`` for what is
   stored and why. The request carries nothing about the caller beyond the two
   optional fields below.
@@ -22,15 +22,13 @@ Why the endpoint is shaped the way it is:
 
 import logging
 import re
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.routes.admin_common import DbSession
-from app.common.auth import get_optional_user_id
 from app.core.redis import get_redis_client
-from app.domain.docs_site import visits
+from app.domain.docs_site import access, visits
 from app.domain.docs_site.visits import VisitLimits
 
 logger = logging.getLogger(__name__)
@@ -64,17 +62,17 @@ class VisitIn(BaseModel):
 
 
 @router.post("/visit", status_code=204)
-async def record_visit(
-    body: VisitIn,
-    db: DbSession,
-    user_id: Annotated[int | None, Depends(get_optional_user_id)],
-) -> Response:
+async def record_visit(body: VisitIn, request: Request, db: DbSession) -> Response:
     """Count one reader's visit to the docs, at most once a day.
 
     A visitor with neither an account nor a usable random id is accepted and
     ignored: the beacon has nothing we may key a day on, and inventing one would
     be worse than the gap.
     """
+    reader = await access.reader(
+        db, request.cookies.get(access.cookie_name()), request.headers.get("host")
+    )
+    user_id = reader.user_id if reader else None
     who = visits.visitor_id(user_id, body.visitor)
     if who is None:
         return Response(status_code=204)

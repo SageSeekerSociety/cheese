@@ -44,6 +44,10 @@ Retiring something means deleting its code; adopting a replacement means deletin
 
 Judge a mechanism by what it does now, not by why it was created. A check written after an incident points at where that incident surfaced; the code that causes it moves on.
 
+## One table holds one kind of thing
+
+A new kind of data does not go into an existing table as one more type value or one more `meta` key. A column only some kind of row would ever fill says that kind needs a table of its own. Different things share interfaces — references, search, permissions, events — not tables.
+
 ## Assume other agents are working right now
 
 Concurrently, in this repo, on adjacent files. Before starting a fix, look for an open PR already making it. Before handing work off, review every path your change touches; a cache directory in that list is a stop sign.
@@ -67,3 +71,7 @@ The commit that completes the fix for a report in the dev deployment's feedback 
 ## Fix bugs freely; propose product and interaction changes first
 
 A bug — the product failing to do what it already sets out to do, including a message that says something untrue — is fixed without asking. A change to what people see or do is proposed to whoever you are working for, and waits for their yes before it merges: a new, moved or removed control, a new element on screen, new behaviour behind an existing action. This holds when the change is the natural fix for a bug; ship the part that restores the intended behaviour and propose the rest.
+
+## Legal texts are not the work
+
+The work here is code. Do not read or edit the terms or the privacy policy (`backend/app/domain/legal/texts/`). Only a task that names one of these texts makes it yours, and "Fix bugs freely" does not reach them.

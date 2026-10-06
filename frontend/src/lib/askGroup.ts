@@ -70,7 +70,7 @@ export function groupOf(block: Block): AskGroupScope | null {
     g.members[g.index] !== block.id
   )
     return null
-  return { topic_id: block.topic_id, asked_by: g.asked_by, id: g.id, members: g.members, total: g.total }
+  return { topic_id: block.conversation_id, asked_by: g.asked_by, id: g.id, members: g.members, total: g.total }
 }
 
 export function groupKey(g: AskGroupScope): string {

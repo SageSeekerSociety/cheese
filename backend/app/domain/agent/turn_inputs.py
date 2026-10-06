@@ -376,7 +376,7 @@ async def ensure_interval_and_input(
 
     await AgentTurnRepository(db).open(
         turn_id=turn_id,
-        topic_id=topic_id,
+        conversation_id=topic_id,
         continuation_id=continuation_id or turn_id,
         author=author,
         content=content,

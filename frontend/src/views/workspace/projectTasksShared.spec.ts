@@ -49,7 +49,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'needs_you', phrase: 'not_started' },
+    presentation: { column: 'needs_you', phrase: 'started' },
     ...over,
   }
 }

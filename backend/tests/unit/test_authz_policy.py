@@ -155,7 +155,7 @@ async def test_unverifiable_token_is_refused_as_expired():
 async def test_tokenless_socket_is_refused():
     assert _refusal(authenticated=False, token_presented=False) == (
         "auth_required",
-        "请先登录再进入话题",
+        "请先登录再进入频道",
     )
 
 

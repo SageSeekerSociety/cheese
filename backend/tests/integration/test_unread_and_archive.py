@@ -5,7 +5,7 @@ import asyncio
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 
 
 def _create_project_and_topic(client, title: str = "话题A") -> tuple[str, str]:
@@ -46,7 +46,7 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
         async with client.test_factory() as session:
             await BlockRepository(session).add(
                 project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(topic_id),
+                conversation_id=uuid.UUID(topic_id),
                 author=author,
                 author_type=AuthorType.participant,
                 content="msg",
@@ -212,10 +212,10 @@ def test_root_topic_cannot_be_archived(client):
 
 def test_archive_cascades_to_the_work_in_the_room(client):
     """归档整件事：putting a room away closes the work still open inside it —
-    a thread left running with its room gone has nobody left to report to.
+    a task left running with its room gone has nobody left to report to.
 
-    Room and thread end in different words on purpose: a room is `archived`
-    (a person put it away) and a thread is `closed` (its work stopped).
+    Room and task end in different words on purpose: a room is `archived`
+    (a person put it away) and a task is `closed` (its work stopped).
     """
     pr = post_project(client, json={"name": "P"}, owner="u")
     pid = pr.json()["data"]["id"]
@@ -225,15 +225,8 @@ def test_archive_cascades_to_the_work_in_the_room(client):
         headers=session_auth_headers("u"),
     )
     parent = t.json()["data"]["id"]
-    c1 = client.post(
-        f"/topics/{parent}/split",
-        json=dict(reviewer_handle="alice", **{"title": "子1"}),
-    ).json()["data"]["id"]
-    wait_work_idle()
-    c2 = client.post(
-        f"/topics/{parent}/split",
-        json=dict(reviewer_handle="alice", **{"title": "子2"}),
-    ).json()["data"]["id"]
+    c1 = open_task(client, parent, "子1", owner="u", reviewer="u")["id"]
+    c2 = open_task(client, parent, "子2", owner="u", reviewer="u")["id"]
     wait_work_idle()
 
     r = client.post(
@@ -247,6 +240,6 @@ def test_archive_cascades_to_the_work_in_the_room(client):
     }
     for tid in (c1, c2):
         assert cards[tid]["status"] == "closed", tid
-    # The cascaded card records why it went — on its own timeline, so whoever
+    # The cascaded task records why it went — on its own timeline, so whoever
     # opens it later sees why the work stopped mid-sentence.
-    assert any("随父话题" in (b.get("content") or "") for b in cards[c1]["blocks"])
+    assert any("随所在频道" in (b.get("content") or "") for b in cards[c1]["blocks"])

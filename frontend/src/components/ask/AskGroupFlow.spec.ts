@@ -60,7 +60,7 @@ function fixture(members: string[] = ['q1', 'q2']): AskGroupState {
       receipt: null,
       blocks: members.map((id, index) => ({
         id,
-        topic_id: 'room',
+        conversation_id: 'room',
         kind: 'message',
         author_type: 'participant',
         author: 'agent',

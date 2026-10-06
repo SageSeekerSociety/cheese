@@ -15,6 +15,7 @@ import AcceptPrChecks from './AcceptPrChecks.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { columnDotStyle } from '@/lib/board'
 
 defineProps<{
@@ -115,7 +116,10 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
               :active="mbr.user_handle === card.reviewer_handle"
               @click="emit('reassign', mbr.user_handle)"
             >
-              <v-list-item-title class="text-body-2"> @{{ mbr.user_handle }} </v-list-item-title>
+              <v-list-item-title class="text-body-2">
+                {{ memberName(mbr) || mbr.user_handle }}
+                <span v-if="memberName(mbr)" class="text-medium-emphasis">{{ mbr.user_handle }}</span>
+              </v-list-item-title>
               <v-list-item-subtitle class="text-caption">
                 {{ mbr.role }}
               </v-list-item-subtitle>

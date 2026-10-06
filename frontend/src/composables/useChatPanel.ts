@@ -71,6 +71,13 @@ export type { ChatPanelEmit, ChatPanelOptions } from './chatPanelContract'
 
 export function useChatPanel(opts: ChatPanelOptions) {
   const { topic, alwaysSummon, showComposer, members, topicList, unreadOnOpen, focusBlock, emit } = opts
+  // 这一栏读的那段对话：房间自己，或房间里的一个任务（`conversationId`）。消息、连接、
+  // 发送、草稿走它；名册、附件、标题还是房间的（`topic()`）。
+  function place(): Topic | null {
+    const room = topic()
+    const id = opts.conversationId?.()
+    return room && id && id !== room.id ? { ...room, id } : room
+  }
 
   // Message rendering (markdown / plain / reference chips) lives in
   // ../lib/renderMessage and happens in the row components; here we only fill the
@@ -145,7 +152,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   watch(turns.turnStarts, (v) => emit('site-turns', v))
   // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
   function toSite(b: Block) {
-    if (b.kind === 'event' && !b.task_id) emit('site-block', b)
+    if (b.kind === 'event') emit('site-block', b)
   }
 
   const { askStates, askAction, askViewer, askAccount } = useAskAnswers({
@@ -175,7 +182,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
   const { postChecklist, changeChecklist } = useOwnChecklist({
-    topicId: () => topic()?.id,
+    topicId: () => place()?.id,
     show: replaceShown,
     fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.checklist.saveFailed')),
   })
@@ -223,7 +230,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     isConnectRefusal,
     retryLater,
   } = useRoomSocket({
-    topicId: () => topic()?.id,
+    topicId: () => place()?.id,
     onFrame: (frame) => {
       handleFrame(frame)
       noteFrame()
@@ -235,7 +242,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
-      const current = topic()
+      const current = place()
       if (current?.id === topicId) void loadTopic(current)
     },
     errorMsg,
@@ -399,7 +406,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     historyChanges = changes
     const reactions = new Map<string, ReactionAgg[]>()
     historyReactions = reactions
-    const stillHere = () => !disposed && generation === historyGeneration && topic()?.id === room.id
+    const stillHere = () => !disposed && generation === historyGeneration && place()?.id === room.id
     // 地址点名了一条消息：落到它上面，而不是上次停的地方。
     const focus = focusBlock() ?? null
     errorMsg.value = null
@@ -585,7 +592,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pause: pauseOutbox,
   } = useOutbox({
     send: (item, signal) => {
-      const room = topic()
+      const room = place()
       if (!room) return Promise.reject(new DOMException('no room', 'AbortError'))
       const body = outgoingMessageBody(item)
       return postChatMessage(room.id, body, signal).catch((error: unknown) => {
@@ -604,7 +611,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     },
     onDelivered: (block) => {
       // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
-      if (block.topic_id !== topic()?.id) return
+      if (block.conversation_id !== place()?.id) return
       delivered.add(block.id)
       pushBlock(block)
       autoScroll()
@@ -647,7 +654,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // Each block below owns one job, so no single file has to hold the whole
   // room; the panel keeps the wiring and what is shared between them.
   const paging = useChatPaging({
-    topic,
+    topic: place,
     focusBlock,
     timeline,
     scrollRef,
@@ -673,7 +680,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const { arrived, sentNow, delivered, flashId, flash, settleArrival, settleSent, outboxLeave, jumpToUnseen } = motion
 
   const composer = useChatComposer({
-    topic,
+    topic: place,
     alwaysSummon,
     showComposer,
     rows,
@@ -763,8 +770,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
     { immediate: true, deep: true }
   )
 
+  // 「从这里拆出了一个任务」只画在房间的对话里：任务自己的对话里没有拆出去这回事。
   const splitMarkers = computed(() =>
-    placeSplitMarkers(roomTasks.value, {
+    placeSplitMarkers(place()?.id === topic()?.id ? roomTasks.value : [], {
       blocks: visible.value,
       hasMore: hasMore.value,
       hasNewer: hasNewer.value,
@@ -855,7 +863,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // plain Enter. Track composition ourselves and swallow the trailing Enter.
 
   watch(
-    () => topic()?.id,
+    () => place()?.id,
     (id, oldId) => {
       // Save where we were in the topic we're leaving, so coming back restores it.
       if (oldId) rememberScroll(oldId)
@@ -863,7 +871,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         composer.rememberComposer(oldId)
         pauseOutbox()
       }
-      const room = topic()
+      const room = place()
       if (room) {
         // loadTopic clears the pending attachments synchronously before its first
         // await, so this topic's own draft has to be restored AFTER the call.
@@ -881,8 +889,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   onBeforeUnmount(() => {
     disposed = true
     // persist position across an unmount (e.g. leaving the view)
-    rememberScroll(topic()?.id)
-    const room = topic()
+    rememberScroll(place()?.id)
+    const room = place()
     if (room) composer.rememberComposer(room.id)
     // 链路和回声计时器由各自的 composable 在 scope 停掉时收，这里不重复一遍。
   })

@@ -26,7 +26,7 @@ Traceback (most recent call last):
   File "/h/.cheese/remote-execution/executor_transport.py", line 515, in acquire
     raise PlatformHTTPError(response.status, body)
 executor_transport.PlatformHTTPError: Platform HTTP 504: {"code":504}"""
-SENTENCE = "Claude Code 启动失败：这个房间的工作电脑还在准备"
+SENTENCE = "Claude Code 启动失败：这个频道的工作电脑还在准备"
 
 
 class DiesOnItsWayUp(StubChannel):

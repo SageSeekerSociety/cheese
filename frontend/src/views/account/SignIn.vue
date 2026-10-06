@@ -1,94 +1,23 @@
+<!--
+  Signing in: the ways in (providers, a passkey, a mailed code) and the
+  username/password form. It reads the address it was reached at, keeps the
+  order the browser last used, and runs every way through the network. What it
+  shows is SignInView.vue.
+-->
 <template>
-  <div>
-    <AccountHeading :title="t('account.signIn.title')">
-      {{ t('account.signIn.noAccount') }}
-      <router-link to="signup" class="account-link">{{ t('account.signIn.createAccount') }}</router-link>
-    </AccountHeading>
-
-    <v-alert v-if="errorMessage" type="error" variant="tonal" density="comfortable" class="mb-6">
-      {{ errorMessage }}
-    </v-alert>
-    <v-alert v-else-if="notice" type="success" variant="tonal" density="comfortable" class="mb-6">
-      {{ notice }}
-    </v-alert>
-
-    <!-- Whichever way this browser last used goes first; with no history, the
-         one-click ways lead and the password form follows. Rendered in that
-         order, not reordered by CSS, so the keyboard walks it the same way. -->
-    <template v-for="part in parts" :key="part">
-      <div v-if="part === 'alt'" class="signin-alt">
-        <BaseButton
-          v-for="way in alternatives"
-          :key="way.key"
-          block
-          kind="secondary"
-          size="lg"
-          class="signin-alt__btn"
-          :prepend-icon="way.icon"
-          :loading="busy === way.key"
-          :disabled="!!busy && busy !== way.key"
-          @click="way.go"
-        >
-          {{ way.label }}
-          <span v-if="way.key === last" class="signin-alt__last">{{ t('account.signIn.lastUsed') }}</span>
-        </BaseButton>
-      </div>
-
-      <div v-else-if="part === 'or'" class="signin-or">{{ t('account.signIn.or') }}</div>
-
-      <v-form v-else @submit.prevent="login">
-        <AccountField :label="t('account.field.username')" input-id="signin-username">
-          <!-- `webauthn` lets the browser offer this device's passkeys right in
-               the field's suggestions. -->
-          <v-text-field
-            id="signin-username"
-            v-model="username"
-            name="username"
-            autocomplete="username webauthn"
-            autocapitalize="none"
-            autocorrect="off"
-            spellcheck="false"
-            v-bind="usernameProps"
-          />
-        </AccountField>
-
-        <AccountField :label="t('account.field.password')" input-id="signin-password">
-          <template #aside>
-            <router-link to="recover/password" class="account-link account-link--quiet">
-              {{ t('account.signIn.forgotPassword') }}
-            </router-link>
-          </template>
-          <PasswordField
-            id="signin-password"
-            v-model="password"
-            name="password"
-            autocomplete="current-password"
-            v-bind="passwordProps"
-          />
-        </AccountField>
-
-        <BaseButton
-          block
-          kind="primary"
-          size="lg"
-          type="submit"
-          class="account-submit"
-          :loading="isSubmitting"
-          :disabled="waiting"
-        >
-          {{ t('account.signIn.submit') }}
-        </BaseButton>
-      </v-form>
-    </template>
-
-    <!-- 登录不建号（建号都在注册页和第三方首次建号页，那两处各有明确的
-         同意），所以这里是告知，不是复选框（#1486）。放在所有登录方式
-         下面，对哪一种都成立。 -->
-    <p class="account-fine">
-      {{ t('account.signInMeansYouAgreeTo') }}
-      <LegalLinks />
-    </p>
-  </div>
+  <SignInView
+    :error-message="errorMessage"
+    :notice="notice"
+    :parts="parts"
+    :alternatives="alternatives"
+    :last="last"
+    :busy="busy"
+    :submitting="submitting"
+    :waiting="waiting"
+    :initial-username="initialUsername"
+    @alt="chooseWay"
+    @submit="login"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -96,6 +25,7 @@ import type { AuthenticationResponseJSON } from '@simplewebauthn/browser'
 import type { OAuthProvider } from '@/network/api/users/types'
 import type { User } from '@/types/users'
 import type { SignInMethod } from './lastSignIn'
+import type { SignInWay } from './SignInView.vue'
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -106,11 +36,6 @@ import {
   startAuthentication,
   WebAuthnAbortService,
 } from '@simplewebauthn/browser'
-import { toTypedSchema } from '@vee-validate/zod'
-import { useForm } from 'vee-validate'
-import { z } from 'zod'
-
-import { vuetifyConfig } from '@/utils/form'
 
 import { attemptMessage, useAttemptWait } from './attemptWait'
 import { lastSignIn, rememberSignIn } from './lastSignIn'
@@ -118,12 +43,8 @@ import { oauthProviderIcon } from './oauthProvider'
 import { firstStepAccepted, landingAfterSignIn, takeFirstStep, upgradeAfterPasswordSignIn } from './passkeyEnrollment'
 import { passkeyWrongHostMessage } from './passkeyHost'
 import { signInNotice } from './signInNotice'
+import SignInView from './SignInView.vue'
 
-import AccountField from '@/components/account/AccountField.vue'
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import LegalLinks from '@/components/account/LegalLinks.vue'
-import PasswordField from '@/components/account/PasswordField.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -133,23 +54,8 @@ import AccountService from '@/services/account'
 const router = useRouter()
 const route = useRoute()
 
-// Signing in names an existing account, so only presence is checked here: the
-// server is the one that knows whether the name and password are right.
-const { handleSubmit, defineField, isSubmitting } = useForm({
-  validationSchema: computed(() =>
-    toTypedSchema(
-      z.object({
-        username: z.string().min(1),
-        password: z.string().min(1),
-      })
-    )
-  ),
-})
-
-const [username, usernameProps] = defineField('username', vuetifyConfig)
-const [password, passwordProps] = defineField('password', vuetifyConfig)
-
 const errorMessage = ref('')
+const submitting = ref(false)
 const { waiting, waitFor } = useAttemptWait()
 const notice = computed(() => signInNotice(route.query.message))
 const webAuthnSupported = browserSupportsWebAuthn()
@@ -157,9 +63,7 @@ const last = lastSignIn()
 /** The way in progress, so the others wait for it. */
 const busy = ref<SignInMethod | null>(null)
 
-if (route.query.username) {
-  username.value = route.query.username as string
-}
+const initialUsername = typeof route.query.username === 'string' ? route.query.username : ''
 
 // The provider list rarely changes, so the last one seen is drawn straight
 // away and the request only corrects it: the buttons above the form would
@@ -175,29 +79,16 @@ function cachedProviders(): OAuthProvider[] {
 }
 const oAuthProviders = ref<OAuthProvider[]>(cachedProviders())
 
-interface Way {
-  key: SignInMethod
-  label: string
-  icon: string
-  go: () => void
-}
-
-const alternatives = computed<Way[]>(() => {
-  const ways: Way[] = oAuthProviders.value.map((p) => ({
+const alternatives = computed<SignInWay[]>(() => {
+  const ways: SignInWay[] = oAuthProviders.value.map((p) => ({
     key: `oauth:${p.id}` as const,
     label: t('account.signIn.withProvider', { provider: p.name }),
     icon: oauthProviderIcon(p.id),
-    go: () => handleOAuthLogin(p.id),
   }))
   if (webAuthnSupported) {
-    ways.push({ key: 'passkey', label: t('account.signIn.passkey'), icon: 'mdi-key-chain', go: handlePasskeyLogin })
+    ways.push({ key: 'passkey', label: t('account.signIn.passkey'), icon: 'mdi-key-chain' })
   }
-  ways.push({
-    key: 'email_code',
-    label: t('account.signIn.emailCode'),
-    icon: 'mdi-email-outline',
-    go: () => router.push({ name: 'SignInEmailCode', query: { redirect: route.query.redirect } }),
-  })
+  ways.push({ key: 'email_code', label: t('account.signIn.emailCode'), icon: 'mdi-email-outline' })
   const i = ways.findIndex((w) => w.key === last)
   if (i > 0) ways.unshift(...ways.splice(i, 1))
   return ways
@@ -207,6 +98,19 @@ const parts = computed(() => {
   if (!alternatives.value.length) return ['form'] as const
   return last === 'password' ? (['form', 'or', 'alt'] as const) : (['alt', 'or', 'form'] as const)
 })
+
+/** The view picked one of the ways in; each runs its own request. */
+function chooseWay(key: SignInMethod) {
+  if (key === 'passkey') {
+    handlePasskeyLogin()
+    return
+  }
+  if (key === 'email_code') {
+    router.push({ name: 'SignInEmailCode', query: { redirect: route.query.redirect } })
+    return
+  }
+  handleOAuthLogin(key.slice('oauth:'.length))
+}
 
 async function signedIn(
   method: SignInMethod,
@@ -222,9 +126,10 @@ async function signedIn(
   router.replace(await landingAfterSignIn(upgrade, postLoginTarget(route.query)))
 }
 
-const login = handleSubmit(async (value) => {
+async function login(value: { username: string; password: string }) {
   if (waiting.value) return
   errorMessage.value = ''
+  submitting.value = true
   try {
     const { data } = await UserApi.login(value)
     if (data.requires2FA) {
@@ -244,8 +149,10 @@ const login = handleSubmit(async (value) => {
   } catch (e) {
     errorMessage.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signIn.failed'))
     waitFor(e)
+  } finally {
+    submitting.value = false
   }
-})
+}
 
 async function finishPasskey(assertion: AuthenticationResponseJSON) {
   const { data } = await UserApi.verifyPasskeyAuthentication(assertion)
@@ -353,47 +260,3 @@ function stopAutofill() {
 
 onBeforeUnmount(stopAutofill)
 </script>
-
-<style scoped>
-.signin-alt {
-  display: grid;
-  gap: 10px;
-}
-
-.signin-alt__btn {
-  position: relative;
-  border-color: var(--line-2);
-}
-
-.signin-alt__last {
-  position: absolute;
-  top: 50%;
-  right: 10px;
-  padding: 1px 7px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: var(--lh-12);
-  color: var(--muted);
-  background: var(--fill-2);
-  border-radius: var(--radius-sm);
-  transform: translateY(-50%);
-}
-
-.signin-or {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin: 24px 0;
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--faint);
-}
-
-.signin-or::before,
-.signin-or::after {
-  flex: 1;
-  height: 1px;
-  content: '';
-  background: var(--line);
-}
-</style>

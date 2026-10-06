@@ -84,7 +84,7 @@ def test_cloning_a_room_that_never_ran_is_refused_in_english(client):
     error = r.json()["error"]
     assert error["i18n"] == {"key": "topicCloneNeverRan", "params": {}}
     assert _english(error) == (
-        "The source topic hasn't run yet (there's no session to clone)"
+        "The source channel hasn't run yet (there's no session to clone)"
     )
 
 

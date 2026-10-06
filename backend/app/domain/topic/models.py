@@ -35,6 +35,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
 
+# The registry `conversation_id` points at: mapped wherever this is, so the
+# foreign key resolves in a process that never imports `app.models`.
+from app.domain.conversation.models import Conversation  # noqa: F401
+
 
 class TopicStatus(enum.StrEnum):
     active = "active"
@@ -273,12 +277,13 @@ class RawTranscript(UuidPk, Timestamps, Base):
 
 
 class TopicReadState(UuidPk, Timestamps, Base):
-    """Per-user read cursor on a topic (话题级未读, Feishu-style).
+    """Per-user read cursor on a conversation: a room's or a task's.
 
-    One row per (topic, user); last_read_at is bumped whenever the user opens
-    the topic. Unread = message blocks by OTHERS created after this cursor
+    One row per (conversation, user); last_read_at is bumped whenever the user
+    opens it. Unread = message blocks by OTHERS created after this cursor
     (no row = everything by others is unread). Deliberately a cursor, not a
-    per-message read table — cheap to bump, cheap to count against.
+    per-message read table — cheap to bump, cheap to count against. Which
+    conversations count for whom is `TopicRepository.unread_counts`.
     """
 
     __tablename__ = "topic_read_states"
@@ -286,8 +291,9 @@ class TopicReadState(UuidPk, Timestamps, Base):
         UniqueConstraint("topic_id", "user_handle", name="uq_topic_read_user"),
     )
 
+    # A conversation id (`conversations`): the room's own, or a task's.
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -309,8 +315,8 @@ class TopicProgress(UuidPk, Timestamps, Base):
 
     This row is that missing layer, and it is deliberately NOT memory: memory is
     stable facts injected into every prompt, and a running checklist would both
-    bloat it and go stale. One row per PLACE — a room's own main line, or one
-    thread in it — overwritten in place: the current state of the work, not its
+    bloat it and go stale. One row per conversation — a room or a task —
+    overwritten in place: the current state of the work, not its
     history (the timeline already keeps history).
 
     ``items`` is the checklist as the UI renders it: ``[{"id", "subject",
@@ -321,32 +327,9 @@ class TopicProgress(UuidPk, Timestamps, Base):
     """
 
     __tablename__ = "topic_progress"
-    # `topic_id` used to BE the primary key. It cannot be any more: a thread's
-    # row is identified by (room, thread), and a primary key cannot hold the
-    # NULL that says "the room's own main line". The pair of partial unique
-    # indexes says what the old primary key said, once per half — one wider
-    # index over (topic_id, task_id) would not, because NULL is not equal to
-    # NULL in a unique index and every room row would stop being exclusive.
-    __table_args__ = (
-        Index(
-            "uq_topic_progress_room",
-            "topic_id",
-            unique=True,
-            postgresql_where=text("task_id IS NULL"),
-        ),
-        Index(
-            "uq_topic_progress_thread",
-            "task_id",
-            unique=True,
-            postgresql_where=text("task_id IS NOT NULL"),
-        ),
-    )
 
-    topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
-    )
-    task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), unique=True
     )
     items: Mapped[list[dict]] = mapped_column(JSON, default=list)
     # The turn that last wrote this, for telling "left over from a turn that

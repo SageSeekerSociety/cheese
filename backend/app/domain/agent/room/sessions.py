@@ -43,6 +43,7 @@ from app.domain.agent.harness.driven.subscription import (
     Seat,
 )
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.agent.place import seat_key
 from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_CODE,
     PROMPT_UNDELIVERED_MESSAGE,
@@ -333,21 +334,21 @@ class RoomSessions:
     async def _hear_receipt(self, receipt: InputReceipt) -> None:
         identity = receipt.identity
         await self._hear(
-            self._room(identity.project_id, identity.topic_id),
+            self._room(identity.project_id, identity.conversation_id),
             Read(str(identity.work_id), Received(receipt)),
             required=True,
         )
 
     async def _hear_completion(self, completion: WorkCompletion) -> None:
         await self._hear(
-            self._room(completion.project_id, completion.topic_id),
+            self._room(completion.project_id, completion.conversation_id),
             Read(str(completion.work_id), Completed(completion)),
             required=True,
         )
 
     async def _hear_termination(self, termination: WorkTermination) -> None:
         await self._hear(
-            self._room(termination.project_id, termination.topic_id),
+            self._room(termination.project_id, termination.conversation_id),
             Read(str(termination.work_id), Terminated(termination)),
             required=True,
         )
@@ -510,8 +511,8 @@ class RoomSessions:
 
     @staticmethod
     def _seat_of(session: SessionRef) -> Seat:
-        """The seat a session ref names: (topic, agent)."""
-        return (session.topic_id, session.agent_handle)
+        """The seat a session ref names: (conversation, agent)."""
+        return (session.conversation_id, session.agent_handle)
 
     async def _attach(self, live: Live) -> Live:
         """Make ``live`` the seat's session, read from now on by one reading
@@ -762,9 +763,11 @@ class RoomSessions:
         env: dict[str, str] | None = None,
         acting: str | None = None,
         needs_place: bool = True,
+        reads_only: bool = False,
     ) -> Live:
         """The seat's session, started where the room's placement puts it if it
-        has to be."""
+        has to be. ``reads_only``: a task's session before its owner starts it,
+        which may read the machine and change nothing on it."""
         seat = self._seat_of(session)
         previous = self.live.get(seat)
         if previous is not None and not previous.takes_inputs:
@@ -787,22 +790,30 @@ class RoomSessions:
         agent = acting or precheck.agent_handle
         placed: dict = {}
 
+        # A task's session is a conversation of its own beside the room's, for
+        # the same agent: its state and every file it starts from live apart
+        # from the room seat's.
+        state_key = seat_key(agent, session.task_id)
+
         def place(resource) -> dict:
             placed.update(
                 harness=self.harness,
                 agent_handle=agent,
                 state=machine_launcher.state_dir(
-                    session.project_id, resource, self.harness, agent
+                    session.project_id, resource, self.harness, state_key
                 ),
             )
             return placed
 
         async with self.channel.prepare_session(
             session=session,
-            token=mint_session_token(session.project_id, session.topic_id, agent),
+            token=mint_session_token(
+                session.project_id, session.conversation_id, agent
+            ),
             env=env,
             precheck=precheck,
             runtime_factory=place,
+            reading=reads_only,
         ) as prepared:
             ref = CoreRef(self.harness, _home(placed["state"]))
             spec = SessionSpec(
@@ -813,8 +824,16 @@ class RoomSessions:
                 env={
                     **prepared.env,
                     "CHEESE_PROJECT": str(session.project_id),
-                    "CHEESE_TOPIC": str(session.topic_id),
+                    # The conversation: a room, or the task this session works.
+                    "CHEESE_TOPIC": str(session.conversation_id),
                     "CHEESE_AUTHOR": prepared.agent_handle,
+                    # Part of the launch, so starting the task relaunches
+                    # an idle session with a credential that may write.
+                    **(
+                        {"CHEESE_TASK_READS_ONLY": "1" if reads_only else "0"}
+                        if session.task_id is not None
+                        else {}
+                    ),
                 },
                 acting=prepared.agent_handle,
                 skills=session_skill_files(session.project_id),
@@ -828,11 +847,12 @@ class RoomSessions:
                 host=prepared.device_id,
                 owner=Owner(
                     session.project_id,
-                    session.topic_id,
+                    session.conversation_id,
                     prepared.env["CHEESE_RESOURCE_ID"],
                     session.agent_handle,
                     prepared.agent_handle,
                     prepared.agent_user_id,
+                    seat=state_key,
                 ),
             )
             status = await self.host.start(ref, spec, access)
@@ -865,6 +885,7 @@ class RoomSessions:
         env: dict[str, str] | None = None,
         acting: str | None = None,
         needs_place: bool = True,
+        reads_only: bool = False,
         images: list[dict] | None = None,
         owes_reply: bool = False,
         session_opening: str = "",
@@ -903,6 +924,7 @@ class RoomSessions:
                 env=env,
                 acting=acting,
                 needs_place=needs_place,
+                reads_only=reads_only,
             )
             message = self._with_project_state(
                 seat, live, resume_token, session_opening, opening_changes, message
@@ -913,7 +935,7 @@ class RoomSessions:
         on_mark(work_id)
         await self._consume(
             session.project_id,
-            session.topic_id,
+            session.conversation_id,
             work_id,
             AgentSessionInfo(
                 session_id=live.conversation,
@@ -940,7 +962,7 @@ class RoomSessions:
         await self.reconcile_memory(session.topic_id)
         identity = InputIdentity(
             session.project_id,
-            session.topic_id,
+            session.conversation_id,
             live.acting,
             self.harness,
             live.conversation,
@@ -1346,7 +1368,7 @@ class RoomSessions:
                     host=placed.machine,
                     owner=Owner(
                         placed.session.project_id,
-                        placed.session.topic_id,
+                        placed.session.conversation_id,
                         placed.resource_id,
                         placed.session.agent_handle,
                         placed.agent_handle,

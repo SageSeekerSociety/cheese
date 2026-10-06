@@ -92,7 +92,7 @@ describe('话题清单读失败时的侧栏', () => {
     const { container } = mount({ error: '服务器错误' })
     const alert = container.querySelector('.base-load-error[role="alert"]')
     expect(alert, '读失败应当就地画出错误块').not.toBeNull()
-    expect(alert!.textContent).toContain('加载话题失败')
+    expect(alert!.textContent).toContain('加载频道失败')
     expect(alert!.textContent).toContain('服务器错误')
     expect(alert!.querySelector('button')?.textContent?.trim()).toBe('重试')
     expect(container.querySelector('.skel'), '失败态不该还画骨架').toBeNull()

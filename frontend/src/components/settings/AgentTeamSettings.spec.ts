@@ -124,8 +124,8 @@ describe('队友名册', () => {
       total: 2,
     })
     mountPage()
-    expect(await screen.findByText('@cheese · 通用')).toBeTruthy()
-    expect(await screen.findByText('@reviewer · 代码评审')).toBeTruthy()
+    expect(await screen.findByText('cheese · 通用')).toBeTruthy()
+    expect(await screen.findByText('reviewer · 代码评审')).toBeTruthy()
   })
 
   it('每一行写着模型和思考强度，跟随项目时写出项目那个模型', async () => {
@@ -209,7 +209,7 @@ describe('停用', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
     expect(await screen.findByText('停用「评审」')).toBeTruthy()
-    expect(screen.getByText(/已在用它的话题照常工作/)).toBeTruthy()
+    expect(screen.getByText(/已在用它的频道照常工作/)).toBeTruthy()
     expect(deactivateProjectAgent).not.toHaveBeenCalled()
   })
 

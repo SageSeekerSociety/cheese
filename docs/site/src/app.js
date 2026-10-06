@@ -1,8 +1,8 @@
 // Behaviour for the prerendered docs pages. Every page is complete HTML without
 // this script; it adds search, 问芝士, the theme switch and the interactive demos.
 import { ic } from './content.js'
-import { freshToken, signInUrl } from './session.js'
-import { mountDemos } from './demo-dom.mjs'
+import { BASE, PLATFORM } from './where.mjs'
+import { mountDemos, themeStages } from './demo-dom.mjs'
 import { stepOf, walkHtml } from './walk.mjs'
 import { recordVisit } from './visit.js'
 
@@ -29,15 +29,17 @@ function setupToc() {
 // ---------- theme ----------
 // Stored the way the app stores it (`cheesex.theme`, a preference, not a
 // result): picking the side the system is already on goes back to following
-// the system. The demo scenes embedded from the app read the same key, so they
-// are reloaded to pick the new one up; they come back on the step they were at.
+// the system. Under /docs/ that is the app's own preference; on the docs' own
+// host it is this site's, kept in that origin's storage. The demo scenes are
+// the platform's pages, which cannot read this site's storage from another
+// origin, so each is told the theme in its address (`themeStages`).
 function toggleTheme() {
   const dark = !isDark()
   const system = matchMedia('(prefers-color-scheme: dark)').matches
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
   try { localStorage.setItem('cheesex.theme', dark === system ? 'system' : dark ? 'dark' : 'light') } catch { /* private mode */ }
   loadDiagrams()
-  $$('iframe[data-dm-embed]').forEach((f) => { f.src = f.src })
+  themeStages(isDark())
 }
 
 // ---------- search ----------
@@ -46,7 +48,7 @@ async function loadIndex() {
   if (index) return index
   const get = (u) => fetch(u, { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : [])).catch(() => [])
   // The developer index is served only to admins (nginx asks the backend); anyone else gets a 401 and an empty list.
-  const [pub, dev] = await Promise.all([get('/docs/search.json'), PAGE.section === 'dev' ? get('/docs/dev/search.json') : []])
+  const [pub, dev] = await Promise.all([get(`${BASE}/search.json`), PAGE.section === 'dev' ? get(`${BASE}/dev/search.json`) : []])
   index = [...pub, ...dev]
   return index
 }
@@ -77,7 +79,7 @@ async function doSearch() {
   }
   sel = 0
   $('#res').innerHTML = hits.length
-    ? hits.map((h, n) => `<a class="hit${n === 0 ? ' on' : ''}" href="${h.u}" data-i="${n}"><span class="hi">${ic(h.u.startsWith('/docs/dev/') ? 'code' : 'doc')}</span><div style="min-width:0"><b>${mark(h.t, terms)}${h.h ? ` <span class="sub-h">› ${mark(h.h, terms)}</span>` : ''}</b><small>${terms.length ? mark(snippet(h.x, terms), terms) : esc(h.g)}</small></div><span class="go">${ic('arrow')}</span></a>`).join('')
+    ? hits.map((h, n) => `<a class="hit${n === 0 ? ' on' : ''}" href="${h.u}" data-i="${n}"><span class="hi">${ic(h.u.startsWith(`${BASE}/dev/`) ? 'code' : 'doc')}</span><div style="min-width:0"><b>${mark(h.t, terms)}${h.h ? ` <span class="sub-h">› ${mark(h.h, terms)}</span>` : ''}</b><small>${terms.length ? mark(snippet(h.x, terms), terms) : esc(h.g)}</small></div><span class="go">${ic('arrow')}</span></a>`).join('')
     : `<div class="none">文档里没找到「${esc(q)}」，按 ⌘↵ 问问芝士</div>`
   $('#askTxt').textContent = q ? `问芝士：「${q}」` : '没找到？直接问芝士'
 }
@@ -124,7 +126,7 @@ function greet() {
 function renderAnswer(text, sources = []) {
   const pages = new Set(sources.map((c) => c.url.split('#')[0]))
   const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((\/docs\/[\w/#-]+)\)/g, (m, label, url) => pages.has(url.split('#')[0]) ? `<a class="link" href="${url}">${label}</a>` : label)
+    .replace(/\[([^\]]+)\]\((\/[\w/#-]+)\)/g, (m, label, url) => pages.has(url.split('#')[0]) ? `<a class="link" href="${BASE}${url}">${label}</a>` : label)
   const blocks = text.split(/\n{2,}/).map((b) => {
     const lines = b.split('\n')
     if (lines.every((l) => /^\s*([-*]|\d+\.)\s/.test(l))) return `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*([-*]|\d+\.)\s/, ''))}</li>`).join('')}</ul>`
@@ -132,7 +134,7 @@ function renderAnswer(text, sources = []) {
   })
   return blocks.join('')
 }
-const citeHtml = (c) => `<a class="cite" href="${esc(c.url)}">${ic('doc')}<span>${esc(c.title)}${c.heading ? ` · ${esc(c.heading)}` : ''}</span><small>${esc(c.url)}</small></a>`
+const citeHtml = (c) => `<a class="cite" href="${esc(BASE + c.url)}">${ic('doc')}<span>${esc(c.title)}${c.heading ? ` · ${esc(c.heading)}` : ''}</span><small>${esc(BASE + c.url)}</small></a>`
 async function ask(q) {
   if (asking) return
   const chat = $('#chat'), quoted = quote
@@ -141,11 +143,6 @@ async function ask(q) {
   chat.insertAdjacentHTML('beforeend', `<div class="q">${quoted ? `<span class="q-quote">${esc(quoted.length > 120 ? quoted.slice(0, 120) + '…' : quoted)}</span>` : ''}${esc(q)}</div><div class="a"><span class="brand-mark sm"><img src="${$('.brand-mark img').src}" alt=""></span><div class="body"><span class="typing"><i></i><i></i><i></i></span></div></div>`)
   const body = $$('.a .body', chat).pop()
   chat.scrollTop = chat.scrollHeight
-  const token = await freshToken()
-  if (!token) {
-    body.innerHTML = `<p>问芝士需要先登录知是：答案按你的账号限额，防止被滥用。</p><a class="btn btn-primary" href="${signInUrl()}">登录后再问</a>`
-    return
-  }
   asking = new AbortController()
   $('#askSend').disabled = true
   let text = '', sources = [], steps = [], answered = false, ended = false
@@ -165,16 +162,21 @@ async function ask(q) {
   try {
     const res = await fetch('/api/docs/ask', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
-      body: JSON.stringify({ question: q, page: $('#ctxUse')?.checked && PAGE.kind === 'doc' ? PAGE.md.replace(/^\/docs\/|\.md$/g, '') : null, history: history.slice(-4), quote: quoted || null }),
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ question: q, page: $('#ctxUse')?.checked && PAGE.kind === 'doc' && !PAGE.dev ? PAGE.slug : null, history: history.slice(-4), quote: quoted || null }),
       signal: asking.signal,
     })
+    if (res.status === 401) {
+      body.innerHTML = `<p>问芝士需要先登录知是：答案按你的账号限额，防止被滥用。</p><a class="btn btn-primary" href="${signInUrl()}">登录后再问</a>`
+      return
+    }
     if (!res.ok || !res.body) {
       const err = await res.json().catch(() => ({}))
-      const msg = res.status === 429 ? (err.message || '提问太频繁了，稍后再试。') : res.status === 401 ? '登录已过期，请重新登录。' : (err.message || '芝士暂时答不上来，稍后再试。')
+      const msg = res.status === 429 ? (err.message || '提问太频繁了，稍后再试。') : (err.message || '芝士暂时答不上来，稍后再试。')
       // Refused for credits: say where the month's usage is.
       const credits = /^credits/.test((err.error && err.error.i18n && err.error.i18n.key) || '')
-      body.innerHTML = `<p>${esc(msg)}${credits ? ` <a href="/users/settings/usage">查看用量</a>` : ''}</p>`
+      body.innerHTML = `<p>${esc(msg)}${credits ? ` <a href="${PLATFORM}/users/settings/usage">查看用量</a>` : ''}</p>`
       return
     }
     const reader = res.body.getReader(), dec = new TextDecoder()
@@ -280,19 +282,38 @@ function loadDiagrams() {
   $$('iframe[data-diagram]').forEach((f) => { const src = `${f.dataset.diagram}?embed=1&theme=${isDark() ? 'dark' : 'light'}`; if (f.getAttribute('src') !== src) f.setAttribute('src', src) })
 }
 
+// ---------- sign-in: through the platform, back with this site's own cookie ----------
+// The backend sends the reader to the platform's sign-in page, which checks they
+// are signed in there (or asks them to), mints a 30-second grant and posts it
+// back here, where it becomes an HttpOnly cookie for this host alone; then it
+// returns to `path`. The backend, not this file, knows where the platform is.
+const here = () => location.pathname + location.search + location.hash
+const signInUrl = () => `/api/docs/signin?path=${encodeURIComponent(here())}`
+
 // ---------- developer docs: the admin check ----------
+// nginx sends this page instead of a developer page whenever the backend says
+// no. Signed in but not an admin: say so. Not signed in: go through the
+// platform once on our own, so a signed-in admin never sees this page — but
+// not twice in a row, or a browser that refuses the cookie would loop.
+const BOUNCED = 'docs-signin-at'
 async function devGate() {
   const msg = $('#gateMsg'), actions = $('#gateActions')
-  const token = await freshToken()
-  if (!token) {
+  const res = await fetch('/api/docs/dev-access/check', { credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
+  if (res?.status === 204) { location.reload(); return }
+  if (res?.status === 401) {
+    let last = 0
+    try { last = +sessionStorage.getItem(BOUNCED) || 0 } catch { /* storage refused: no loop guard, so no automatic trip */ last = Date.now() }
+    if (Date.now() - last > 60_000) {
+      try { sessionStorage.setItem(BOUNCED, String(Date.now())) } catch { /* see above */ }
+      location.replace(signInUrl())
+      return
+    }
     msg.textContent = '请先用平台管理员账号登录知是。'
-    actions.innerHTML = `<a class="btn btn-primary" href="${signInUrl()}">登录</a><a class="btn btn-secondary" href="/docs/">回到使用文档</a>`
+    actions.innerHTML = `<a class="btn btn-primary" href="${signInUrl()}">登录</a><a class="btn btn-secondary" href="${BASE}/">回到使用文档</a>`
     return
   }
-  const res = await fetch('/api/docs/dev-access', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, credentials: 'same-origin' }).catch(() => null)
-  if (res?.ok) { location.reload(); return }
   msg.textContent = res?.status === 403 ? '你的账号不是平台管理员。开发文档写给维护这个平台的人；需要访问请联系平台管理员。' : '暂时无法确认你的身份，稍后再试。'
-  actions.innerHTML = `<a class="btn btn-secondary" href="/docs/">回到使用文档</a>`
+  actions.innerHTML = `<a class="btn btn-secondary" href="${BASE}/">回到使用文档</a>`
 }
 
 // ---------- events ----------
@@ -353,5 +374,6 @@ mountDemos()
 // what is sent (two fields) and what is deliberately not.
 recordVisit(PAGE)
 loadDiagrams()
+themeStages(isDark())
 mountSelAsk()
 if (PAGE.kind === 'dev-gate') devGate()

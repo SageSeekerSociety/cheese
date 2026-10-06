@@ -86,6 +86,8 @@ const props = withDefaults(
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
+    /** 整篇是空的时候那一行灰字；不给就用话题文档的那一句。 */
+    placeholder?: string
     /** 项目 AI 队友的名字和 handle（选中浮条上用）。 */
     agentName: string
     agentHandle?: string | null
@@ -100,6 +102,7 @@ const props = withDefaults(
     scrollTick: 0,
     agentHandle: null,
     title: '',
+    placeholder: '',
   }
 )
 
@@ -322,6 +325,16 @@ const refMenu = useDocRefMenu({ people: () => props.mentionPeople, topics: () =>
 // 因为 Collaboration 扩展只在建编辑器时认一次文档。
 const editor = shallowRef<DocEditor | undefined>()
 
+// 焦点环只给键盘：焦点被键盘带进正文时，编辑器盒子画一圈；鼠标点进来不画，光标本身
+// 就是落点。可编辑区对 `:focus-visible` 不分鼠标键盘（一点就亮），所以自己记：焦点进来
+// 之前按没按过鼠标。
+const keyFocus = ref(false)
+let pointing = false
+function onPointerDown() {
+  pointing = true
+  keyFocus.value = false
+}
+
 function buildEditor(session: DocSession): DocEditor {
   return new DocEditor({
     extensions: [
@@ -357,6 +370,14 @@ function buildEditor(session: DocSession): DocEditor {
     },
     onTransaction: () => {
       displayTick.value++
+    },
+    onFocus: () => {
+      keyFocus.value = !pointing
+      pointing = false
+    },
+    onBlur: () => {
+      keyFocus.value = false
+      pointing = false
     },
     onUpdate: ({ transaction }) => {
       // 正文在光标底下换了：浮条指着的段落已经不是原来那一段了。浮条自己改的格式除外。
@@ -411,21 +432,29 @@ defineExpose({
 })
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
-const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPlaceholder')))
+const emptyPlaceholder = computed(() => JSON.stringify(props.placeholder || t('work.room.doc.emptyPlaceholder')))
 const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHint')))
 </script>
 
 <template>
   <!-- 根元素上是那两件「针脚」：⌘S 从页面原样落到这里（存不存是取数那一半的事），
        鼠标经过转给浮层量坐标（坐标系就是这个壳的矩形）。 -->
-  <div class="doc-editor-wrap" @click="onDocClick" @mouseover="onHover">
+  <div class="doc-editor-wrap" @click="onDocClick" @mouseover="onHover" @pointerdown.capture="onPointerDown">
     <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
-         「AI 队友会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是空
-         的」——文档有内容、只是还没到，说的就是假话。编辑器本身不卸载
+         占位的那句灰字，而那句话的意思是「这篇文档是空的」——文档有内容、
+         只是还没到，说的就是假话。编辑器本身不卸载
          （v-show），卸了它每换一个话题都要重建一次。 -->
     <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
-    <EditorContent v-if="editor" v-show="!loading" :editor="editor" class="doc-editor" />
-    <DocLinkCallout v-if="linkTarget" :target="linkTarget" @close="linkTarget = null" />
+    <EditorContent
+      v-if="editor"
+      v-show="!loading"
+      :editor="editor"
+      class="doc-editor"
+      :class="{ 'doc-editor--keyfocus': keyFocus }"
+    />
+    <Transition name="doc-menu">
+      <DocLinkCallout v-if="linkTarget" :target="linkTarget" @close="linkTarget = null" />
+    </Transition>
     <MentionMenu
       :open="!!refMenu.menu.value"
       :matches="refMenu.menu.value?.items ?? []"
@@ -534,14 +563,14 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-review-new) {
   background: var(--ok-wash);
   cursor: pointer;
-  animation: docReviewIn 320ms var(--ease-out);
+  animation: docReviewIn var(--dur-slow) var(--ease-out);
 }
 .doc-editor :deep(.doc-review-old) {
   margin-right: 2px;
   color: var(--danger-ink);
   text-decoration: line-through var(--danger);
   user-select: none;
-  animation: docReviewIn 320ms var(--ease-out);
+  animation: docReviewIn var(--dur-slow) var(--ease-out);
 }
 @keyframes docReviewIn {
   from {
@@ -620,35 +649,26 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   margin: -3px -8px;
   padding: 3px 8px;
   box-sizing: content-box;
-  animation: nodeFlash 1.5s ease-out forwards;
+  /* 「这几段是它写的」：和改动同一种绿，不拿琥珀装饰（设计系统 §1.6）。 */
+  background: var(--ok-wash);
+  animation: nodeFlash 1.5s var(--ease-out) forwards;
 }
 @keyframes nodeFlash {
-  0% {
-    background: color-mix(in srgb, var(--accent) 24%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  0%,
+  40% {
+    background: var(--ok-wash);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent);
   }
   100% {
     background: transparent;
     box-shadow: 0 0 0 1px transparent;
   }
 }
-/* 文档里的 @/话题 chip：和聊天同一视觉词汇，可点。 */
-.doc-editor :deep(.mention) {
-  color: rgb(var(--v-theme-primary));
-  background: var(--fill);
-  border-radius: var(--radius-sm);
-  padding: 0 3px;
-  font-weight: 500;
-  cursor: pointer;
-}
-/* @person handle reads as a link: persistent accent underline. File/topic
-   refs (file icon / #) keep their chip look and only underline on hover. */
-.doc-editor :deep(.mention:not(.file-ref):not(.topic-ref)) {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.doc-editor :deep(.mention:hover) {
-  text-decoration: underline;
+/* 不动的时候它还得在：底色留着，到时由脚本拿走（flashBlocks）。 */
+@media (prefers-reduced-motion: reduce) {
+  .doc-editor-wrap :deep(.node-flash-overlay) {
+    animation: none;
+  }
 }
 /* 文件 chip 前的 mdi 图标（正文里的 <&path> 装饰，以及评论区的同款 chip）。 */
 :deep(.file-ref__icon) {
@@ -659,21 +679,24 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(.doc-prose) {
   outline: none;
   min-height: 240px;
+  /* 最后一块下面留一条能点的空白：点在这里，光标落到最后一块后面（见 blocks/blockEditing.ts）。 */
+  padding-bottom: 32px;
   max-width: 720px;
   margin: 0 auto;
+  /* 长文的阅读档，和文档站正文同一档（设计系统 §3.2）：一篇文档一读就是几屏，
+     聊天那一档 15 / 24 放在这里字偏小、行偏挤。 */
   font-size: 16px;
-  line-height: 1.5;
+  line-height: 28px;
   overflow-wrap: break-word;
   caret-color: var(--ink);
   color: var(--text);
 }
+/* 正文自己不画 outline；焦点环画在外面的编辑器盒子上，只在焦点由键盘带进来时
+   （keyFocus，见上面的脚本）。 */
 .doc-editor :deep(.doc-prose:focus) {
   outline: none;
 }
-/* 正文自己把 outline 去掉了（上面两条），键盘焦点就没有可见的落点。环改画在外面的
-   编辑器盒子上：`:focus-visible` 只在键盘进来时才亮，鼠标点进正文不亮，光标在一行
-   行里走的时候环也不跟着跳。用的是和别处一样的焦点令牌。 */
-.doc-editor:has(.doc-prose:focus-visible) {
+.doc-editor--keyfocus {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -692,7 +715,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   inset: 0;
   z-index: var(--z-raised-2);
   pointer-events: none;
-  background: rgba(var(--v-theme-primary), 0.1);
+  background: var(--selection-bg);
 }
 
 /* 有人评论的那几个字：浅琥珀底、下面一道琥珀线；正在看的那一串更重一些。 */
@@ -715,23 +738,31 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(h5),
 .doc-editor :deep(h6) {
   font-weight: 600;
-  line-height: 1.5;
-  margin: 12px 0 -4px;
   color: var(--ink);
 }
+/* 标题按设计系统的字号表（23 / 18），再往下与正文同大、只靠字重分级。上面空得比下面
+   多：标题跟着它下面那一段走。 */
 .doc-editor :deep(h1) {
-  font-size: 22px;
+  margin: 32px 0 8px;
+  font-size: 23px;
+  line-height: var(--lh-23);
 }
 .doc-editor :deep(h2) {
+  margin: 24px 0 8px;
   font-size: 18px;
+  line-height: var(--lh-18);
 }
 .doc-editor :deep(h3),
 .doc-editor :deep(h4) {
+  margin: 16px 0 4px;
   font-size: 16px;
+  line-height: 28px;
 }
 .doc-editor :deep(h5),
 .doc-editor :deep(h6) {
-  font-size: 14px;
+  margin: 16px 0 4px;
+  font-size: 15px;
+  line-height: var(--lh-15);
 }
 /* The doc starts flush: no phantom gap above a leading heading. */
 .doc-editor :deep(.doc-prose > :first-child) {
@@ -739,6 +770,10 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 }
 .doc-editor :deep(p) {
   margin: 0;
+}
+/* 连着的两段之间留一点：回车分开的就是两段话，挤在一起读着像一段。 */
+.doc-editor :deep(p + p) {
+  margin-top: 8px;
 }
 .doc-editor :deep(ul),
 .doc-editor :deep(ol) {
@@ -811,7 +846,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   color: var(--muted);
 }
 .doc-editor :deep(blockquote blockquote) {
-  margin: 0.4em 0;
+  margin: 8px 0;
   background: transparent;
 }
 .doc-editor :deep(blockquote p:last-child) {
@@ -820,22 +855,22 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(code) {
   font-family: var(--font-mono);
   background: var(--fill);
-  padding: 0.5px 5px;
+  padding: 0 4px;
   border-radius: var(--radius-sm);
-  font-size: 0.87em;
+  font-size: 14px;
 }
 /* 代码块: light ground + hairline, language tag in the top-right corner
    (hidden while hovered — the copy button takes that spot). */
 .doc-editor :deep(pre) {
   position: relative;
   background: var(--canvas);
-  border: 1px solid var(--line-2);
-  padding: 13px 15px;
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
   overflow-x: auto;
-  margin: 0.7em 0;
-  font-size: 0.855em;
-  line-height: 1.6;
+  margin: 16px 0;
+  font-size: 14px;
+  line-height: var(--lh-14-loose);
 }
 /* The static corner tag yields whenever the interactive code bar is up —
    two things must never occupy the corner at once. The bar anchors on the
@@ -869,7 +904,7 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 .doc-editor :deep(hr) {
   border: none;
   border-top: 1px solid var(--line-2);
-  margin: 1.6em 0;
+  margin: 24px 0;
 }
 /* 链接: 主题琥珀 ink, quiet until hover. */
 .doc-editor :deep(a) {
@@ -912,11 +947,14 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
 }
 .doc-editor :deep(img) {
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   display: block;
-  margin: 0.6em 0;
+  margin: 12px 0;
 }
-.doc-editor :deep(img.ProseMirror-selectednode) {
+/* 整块被选中（点了图表或图片，或在图表、表格这类块后面按一下退格）：框出来，再按
+   退格删掉的就是它。 */
+.doc-editor :deep(img.ProseMirror-selectednode),
+.doc-editor :deep(.doc-prose > .ProseMirror-selectednode) {
   outline: 2px solid rgb(var(--v-theme-primary));
   outline-offset: 2px;
 }

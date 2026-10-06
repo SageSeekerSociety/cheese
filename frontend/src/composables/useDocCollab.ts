@@ -77,14 +77,24 @@ function connectToService(ticket: () => Promise<DocTicket>, first: DocTicket) {
 }
 
 /** What the backend tells a document's open editors, as the service relays it. */
-function heard(document: string, payload: string, stored: () => void) {
+interface Heard {
+  stored: () => void
+  /** 改了名字（项目资料库里的文档才改得了名）。 */
+  renamed: () => void
+  /** 被删了：之后打的字不会存下来。 */
+  deleted: () => void
+}
+
+function heard(document: string, payload: string, on: Heard) {
   let frame: Record<string, unknown>
   try {
     frame = JSON.parse(payload)
   } catch {
     return
   }
-  if (frame.type === 'state' && frame.resource === 'doc') stored()
+  if (frame.type === 'state' && frame.resource === 'doc') on.stored()
+  else if (frame.type === 'state' && frame.resource === 'title') on.renamed()
+  else if (frame.type === 'state' && frame.resource === 'deleted') on.deleted()
   else if (frame.type === 'state' && frame.resource === 'comments') announceComments(document, { kind: 'changed' })
   else if (frame.type === 'comment_activity' && typeof frame.thread === 'string') {
     const state = frame.state === 'working' ? 'working' : 'queued'
@@ -106,6 +116,10 @@ export function useDocCollab(document: () => string | null) {
   const outdated = ref(false)
   /** How many times a version of this document was stored while it was open. */
   const stores = ref(0)
+  /** How many times it was renamed while it was open. */
+  const renames = ref(0)
+  /** Somebody deleted it while it was open: nothing typed here is kept any more. */
+  const deleted = ref(false)
   let close: (() => void) | null = null
   let generation = 0
 
@@ -123,6 +137,7 @@ export function useDocCollab(document: () => string | null) {
     teardown()
     error.value = null
     outdated.value = false
+    deleted.value = false
     let first: DocTicket
     try {
       first = await getDocTicket(id)
@@ -154,7 +169,17 @@ export function useDocCollab(document: () => string | null) {
       if (mine === generation && !session.value) session.value = { document: id, doc, provider, user }
     })
     provider.on('stateless', ({ payload }: { payload: string }) => {
-      if (mine === generation) heard(id, payload, () => stores.value++)
+      if (mine !== generation) return
+      heard(id, payload, {
+        stored: () => stores.value++,
+        renamed: () => renames.value++,
+        deleted: () => {
+          generation++
+          teardown()
+          deleted.value = true
+          connection.value = 'offline'
+        },
+      })
     })
     provider.on('authenticationFailed', ({ reason }: { reason: string }) => {
       if (mine !== generation) return
@@ -207,5 +232,5 @@ export function useDocCollab(document: () => string | null) {
     teardown()
   })
 
-  return { session, connection, synced, readOnly, peers, error, outdated, stores }
+  return { session, connection, synced, readOnly, peers, error, outdated, stores, renames, deleted }
 }

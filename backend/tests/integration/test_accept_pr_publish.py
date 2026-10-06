@@ -60,7 +60,7 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",

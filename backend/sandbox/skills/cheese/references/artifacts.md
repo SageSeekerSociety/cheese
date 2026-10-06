@@ -45,16 +45,22 @@
 - 房间里的文件（网页、图、PDF、文档）：`cheese show`，约 1 秒出现在预览里。
 - 要跑起来、要点的应用：前端项目先构建、再按静态文件起服务。开发服务器给每个模块发一个请求，全挤过预览隧道，首屏要几十秒；构建后只有几个打包文件。
 
+Vite 项目：
+
 ```bash
-npx vite build --outDir dist
-BACKEND_URL=<后端地址> nohup npx vite preview --outDir dist --port 4173 --strictPort >/tmp/preview.log 2>&1 &
-cheese serve 4173 "预览"
+PORT=4173
+PIDFILE="/tmp/preview-$(pwd | cksum | cut -d' ' -f1).pid"   # 按工作目录取名，别的任务的不会撞上
+[ -s "$PIDFILE" ] && { kill "$(cat "$PIDFILE")" 2>/dev/null; rm -f "$PIDFILE"; sleep 1; }   # 这个目录里上次起的，先停掉
+./node_modules/.bin/vite build --outDir dist || exit
+curl -s --max-time 2 --noproxy '*' -o /dev/null "127.0.0.1:$PORT" && { echo "$PORT 被别的服务占着，换一个 PORT"; exit 1; }
+nohup ./node_modules/.bin/vite preview --outDir dist --host 127.0.0.1 --port "$PORT" --strictPort >"/tmp/preview-$PORT.log" 2>&1 & echo $! >"$PIDFILE"
+cheese serve "$PORT" "<在跑什么>"
 ```
 
-- 端口加 `--strictPort`：端口被占时 vite 会静默换一个，报上来的那个没人应答。
-- `/api` 走 vite 的 proxy，`preview` 继承 `server.proxy`，用 `BACKEND_URL` 指到后端。
-- 构建被系统杀掉（大前端峰值可能超过 3 GB）就退回开发服务器：`BACKEND_URL=<后端> nohup npx vite --host 127.0.0.1 --port 4173 --strictPort &`，再 `cheese serve 4173`，并跟用户说首屏会慢。别清 `node_modules/.vite`，那是依赖预打包缓存，清了下次更慢。
-- 收工用 `pkill -f '[v]ite/bin/vite.js'`，按脚本路径匹配，别误杀别的 node 进程。
+- 先确认端口没人在用：别的任务的服务占着它时，`cheese serve` 探到的是那个服务，报上去的就是别人的预览；`--strictPort` 只让 vite 自己退出，挡不住这个。你在这个目录里上次起的那个，第三行已经停掉了；还被占着就是别人的，改 `PORT` 重跑整段。
+- 直接跑 `node_modules/.bin/vite`，不经过 `npx`，`$!` 才是服务本身的进程号；`echo $!` 和起服务写在同一行。
+- 构建被系统杀掉就退回开发服务器：不跑构建那一行，把起服务那一行的 `preview --outDir dist` 删掉，其余照跑，并跟用户说首屏会慢。别清 `node_modules/.vite`，那是依赖预打包缓存，清了下次更慢。
+- 换成了别的预览，或者这条任务已经采纳、关闭，才停它，而且只停你起的那个进程：在同一个工作目录里跑上面前三行。不要按名字杀（`pkill -f vite` 这类）：这台机器上别的任务的预览、用户自己开的开发服务器也叫这个名字。
 
 ## 用户给这个项目的文件
 

@@ -87,7 +87,7 @@ def _wrote(
                 s.add(
                     Block(
                         project_id=topic.project_id,
-                        topic_id=topic.id,
+                        conversation_id=topic.id,
                         kind=BlockKind.message,
                         author_type=author_type,
                         author="u1",

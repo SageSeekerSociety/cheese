@@ -219,7 +219,7 @@
       "handOffFailed": "This sign-in could not be handed to the Cheese app. Sign in again in the app.",
       "expired": "This sign-in has expired. Sign in again.",
       "confirmTitle": "Sign in to the Cheese app",
-      "confirmLede": "You will be signed in to the Cheese app as {name} ({'@'}{handle}). If you did not just start this in the app, click Cancel.",
+      "confirmLede": "You will be signed in to the Cheese app as {name} ({handle}). If you did not just start this in the app, click Cancel.",
       "confirm": "Continue",
       "switchAccount": "Use another account",
       "cancel": "Cancel"

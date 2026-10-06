@@ -12,3 +12,9 @@ export function scrollBehavior(): ScrollBehavior {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'auto'
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
 }
+
+/** 系统开了「减弱动效」。脚本自己画的动画（图表）要问它：CSS 的全局兜底管不到。 */
+export function reducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}

@@ -51,8 +51,7 @@ async def report_frontend_errors(body: FrontendErrorBatchIn, db: DbSession) -> d
         landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
         await blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author="frontend",
             author_type=AuthorType.platform,
             content=frontend_log.event_content(err),

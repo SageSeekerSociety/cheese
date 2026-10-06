@@ -21,8 +21,9 @@ Gather recent signal（找这段时间新出现的、值得留下的事）、Con
    这一份仓库和平台给的那一段输入，所以那一档换成「上面给的输入」。
 3. 两条芝士自己的规矩，CC 没有：**private 的内容不许升级进 team**（CC 的对应物是
    「不要把你的个人记忆塞进 team/」，芝士更硬：这条在下面再说一遍，因为芝士的
-   private 是「人 × 项目」，写错地方等于替某个人公开了他的偏好）；**和 CLAUDE.md
-   冲突时只标注、不改 CLAUDE.md**（CC 原文就有，这里保留并写死）。
+   private 是「人 × 项目」，写错地方等于替某个人公开了他的偏好）；**和仓库的说明
+   文件冲突时只标注、不改它**（CC 原文就有，说的是 CLAUDE.md；托管的仓库不一定有这一
+   份，所以这里让它自己去找仓库里实际有的那份）。
 
 **这不是给某一个会话写的。** 它进的是平台起的那一轮整理，跑在项目默认芝士身上，
 输入里带着 team 和各人的 private——所以「谁写的、写给谁看」在提示词里必须交代清楚，
@@ -41,8 +42,32 @@ TOOL_CONSTRAINTS = """**这一轮的工具约束：** 只有读，加上记忆�
 读是随便读的：`ls`、`find`、`grep`、`cat`、`head`、`tail`、`wc`、`stat` 这些只看
 不动的命令，以及读仓库里的任何文件。写只允许落在记忆目录（`{memory_dir}/`）里——
 改一个记忆文件、新建一个记忆文件、更新索引，都算；删除只允许删记忆目录里的 `.md`。
-别的地方一行都不许动：改代码、改 CLAUDE.md、跑测试、装依赖、提交、推送，都会被拒。
+别的地方一行都不许动：改代码、改仓库里的说明文件、跑测试、装依赖、提交、推送，都会被拒。
 这是整理记忆的一轮，不是干活的一轮。"""
+
+
+#: 「Reconcile memories against CLAUDE.md」那一段，只给代码项目：文档项目没有仓库，
+#: 也就没有说明文件可核。仓库里有哪一份、有没有，由它自己去看。
+RECONCILE = """## 和仓库的说明文件核对
+
+说明文件指 agent 在这个仓库里干活时会自动读进来的那几份：`CLAUDE.md`、`AGENTS.md`、
+`.claude/rules/` 这一类，在根目录或子目录里；子目录里的那份只管它那一片。依赖目录
+（`node_modules`、`.venv`）里的、个人的 `*.local.md` 都不算，README、`docs/` 这类写给人
+看的文档也不算。最后的交代里写上核对了哪几份；一份都没有，就在交代里写一句在哪儿找过、没找到，
+这一段其余跳过。
+
+有的话先读一遍。对每一条讲 `feedback` / `project` 的记忆，检查它和说明文件在同一件事上
+有没有冲突：
+
+- **记忆旧了** —— 同一件事，说明文件和记忆说的是两套做法：说明文件是被维护、进了
+  版本库的那一份。把记忆删掉，或者改成和它一致（`why` 还成立、`how` 已经不对的那
+  一条，留住 `why`）。
+- **说明文件可能旧了** —— 记忆明显晚于说明文件，而且是明确在纠正它：
+  **这一轮不要改说明文件**，在那条记忆上标一句「和 <那份文件从仓库根算起的路径>
+  冲突，需要确认哪个是现在的」，并写进你最后的交代里，让人去改。
+- **不是冲突** —— 记忆只是比说明文件细，或者带着理由收窄了它一条规矩：别动。
+
+"""
 
 
 @dataclass(frozen=True)
@@ -55,7 +80,7 @@ class DreamBriefing:
     scopes: dict[str, dict[str, str]] = field(default_factory=dict)
     #: 上次 dream 之后有新东西的房间：一行标题，加它的实况文档。
     rooms: list[str] = field(default_factory=list)
-    #: 这是不是一个代码项目（有仓库）。有仓库时那一段会请它对着 CLAUDE.md 核对。
+    #: 这是不是一个代码项目（有仓库）。有仓库时会请它找出仓库的说明文件、对着核对。
     code_project: bool = False
 
     def scope_names(self) -> list[str]:
@@ -88,14 +113,12 @@ def dream_prompt(briefing: DreamBriefing) -> str:
     tree = "\n\n".join(
         _render_scope(name, files) for name, files in sorted(briefing.scopes.items())
     )
-    claude_md = (
-        "\n\n## 仓库与 CLAUDE.md\n"
-        "这个项目有代码仓库，就在你当前的工作目录里。CLAUDE.md 在仓库根目录，"
-        "它是被维护、被评审、进了版本库的那一份项目约定。记忆里凡是讲 `feedback` / "
-        "`project` 的，都要和它核一遍——见下面「和 CLAUDE.md 核对」那一段。"
+    repository = (
+        "\n\n## 仓库\n这个项目有代码仓库，就在你当前的工作目录里。"
         if briefing.code_project
         else ""
     )
+    phase4 = _PHASE4.format(reconcile=RECONCILE if briefing.code_project else "")
     return f"""# dream：整理记忆
 
 你在做一次 dream —— 对记忆文件的一次反思式整理。把最近学到的东西提炼成持久、
@@ -109,7 +132,7 @@ def dream_prompt(briefing: DreamBriefing) -> str:
 
 ## 上一次整理之后有动静的房间
 
-{_render_rooms(briefing.rooms)}{claude_md}
+{_render_rooms(briefing.rooms)}{repository}
 
 {TOOL_CONSTRAINTS.format(memory_dir=MEMORY_DIR)}
 
@@ -143,7 +166,7 @@ def dream_prompt(briefing: DreamBriefing) -> str:
 - **删掉被推翻的说法** —— 今天这轮看出来它是错的了，就改在它自己的文件里，不要
   在旁边补一条「更正：」。
 
-{_PHASE4}"""
+{phase4}"""
 
 
 #: 第四阶段：修剪，以及把索引压回上限。CC 原文里这一段的标题是
@@ -161,20 +184,7 @@ _PHASE4 = """## 第四阶段 —— 修剪，并把索引压回去
 - 新变重要的事补一行指针。
 - 两条互相矛盾的，改错的那一条。
 
-## 和 CLAUDE.md 核对
-
-系统提示词里有这个项目的 CLAUDE.md。对每一条讲 `feedback` / `project` 的记忆，
-检查它和 CLAUDE.md 在同一条事上有没有冲突：
-
-- **记忆旧了** —— 同一件事，CLAUDE.md 和记忆说的是两套做法：CLAUDE.md 是被维护、
-  进了版本库的那一份。把记忆删掉，或者改成和它一致（`why` 还成立、`how` 已经不对
-  的那一条，留住 `why`）。
-- **CLAUDE.md 可能旧了** —— 记忆明显晚于 CLAUDE.md，而且是明确在纠正它：**这一轮
-  不要改 CLAUDE.md**，在那条记忆上标一句「和 CLAUDE.md 冲突，需要确认哪个是现在
-  的」，并写进你最后的交代里，让人去改。
-- **不是冲突** —— 记忆只是比 CLAUDE.md 细，或者带着理由收窄了它一条规矩：别动。
-
-## 关于 `team/`（比你自己那些文件要小心）
+{reconcile}## 关于 `team/`（比你自己那些文件要小心）
 
 `team/` 是全项目所有人和所有芝士共看、共写的一份。别人也在往那里写：
 
