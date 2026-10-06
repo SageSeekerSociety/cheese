@@ -27,6 +27,8 @@ const props = defineProps<{
   noUpgrade?: boolean
   /** 频道主线上的消息才有支线：私聊、任务、支线里都不给「在支线中回复」。 */
   threadable?: boolean
+  /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
+  processable?: boolean
   /** 停在哪条消息上。收起时还留着上一条，淡出的那一下里按钮不会先没了。 */
   block: Block | null
   shown: boolean
@@ -51,6 +53,7 @@ const emit = defineEmits<{
   (e: 'toggle-picker', blockId: string): void
   (e: 'reply', block: Block): void
   (e: 'thread', block: Block): void
+  (e: 'process', turnId: string): void
   (e: 'upgrade', blockId: string): void
   (e: 'edit', block: Block): void
   (e: 'pin', block: Block): void
@@ -153,6 +156,16 @@ const menuActions = computed<MenuAction[]>(() => {
             label: t('work.room.message.replyInThread'),
             icon: 'mdi-forum-outline',
             onSelect: () => emit('thread', block),
+          },
+        ]
+      : []),
+    ...(props.processable && target.isAgent && block.turn_id
+      ? [
+          {
+            key: 'process',
+            label: t('work.room.message.process'),
+            icon: 'mdi-timeline-text-outline',
+            onSelect: () => emit('process', block.turn_id!),
           },
         ]
       : []),
@@ -274,6 +287,17 @@ function onFocusOut(event: FocusEvent) {
           @click="emit('thread', block)"
         >
           <v-icon size="15">mdi-forum-outline</v-icon>
+        </button>
+        <button
+          v-if="processable && isAgent && block.turn_id"
+          type="button"
+          class="hover-bar__act"
+          :title="t('work.room.message.process')"
+          :aria-label="t('work.room.message.process')"
+          data-testid="message-process"
+          @click="emit('process', block.turn_id!)"
+        >
+          <v-icon size="15">mdi-timeline-text-outline</v-icon>
         </button>
         <button
           v-if="editable"

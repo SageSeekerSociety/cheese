@@ -26,6 +26,8 @@ const props = defineProps<{
   noUpgrade?: boolean
   /** 频道主线上的消息才有支线：别处不给「在支线中回复」。 */
   threadable?: boolean
+  /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
+  processable?: boolean
   /** 长按的那一条。面板收起时还留着，收起的那一下里内容不会先没了。 */
   block: Block | null
   isAgent: boolean
@@ -37,6 +39,7 @@ const emit = defineEmits<{
   (e: 'react', block: Block, emoji: string): void
   (e: 'reply', block: Block): void
   (e: 'thread', block: Block): void
+  (e: 'process', turnId: string): void
   (e: 'upgrade', blockId: string): void
   (e: 'edit', block: Block): void
 }>()
@@ -82,6 +85,16 @@ const actions = computed<MenuAction[]>(() => {
             label: t('work.room.message.replyInThread'),
             icon: 'mdi-forum-outline',
             onSelect: () => emit('thread', block),
+          },
+        ]
+      : []),
+    ...(props.processable && props.isAgent && block.turn_id
+      ? [
+          {
+            key: 'process',
+            label: t('work.room.message.process'),
+            icon: 'mdi-timeline-text-outline',
+            onSelect: () => emit('process', block.turn_id!),
           },
         ]
       : []),

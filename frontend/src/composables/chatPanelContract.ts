@@ -45,6 +45,8 @@ export interface ChatPanelEmit {
   (e: 'thread-status', threadId: string, record: Block): void
   // 主线上一条消息的支线：「在支线中回复」，或者点了它下面那一行。
   (e: 'open-thread', block: Block): void
+  /** 支线里一条 AI 队友的回复：看它那一轮的过程。 */
+  (e: 'open-process', turnId: string): void
   // 转为任务：the parent turns this message into a task of the channel.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).

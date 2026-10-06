@@ -66,6 +66,8 @@ const props = withDefaults(
     activity?: MemberActivityLine[]
     /** 这一格的取数（`composables/usePanelSite.ts` 那一包）。 */
     site: PanelSiteBundle
+    /** 只看这一轮（支线里「查看过程」）；null 是整段对话。 */
+    onlyTurn?: string | null
   }>(),
   {
     projectId: null,
@@ -75,6 +77,7 @@ const props = withDefaults(
     agentControl: null,
     agentName: () => t('work.room.defaultAgentName'),
     activity: () => [],
+    onlyTurn: null,
   }
 )
 
@@ -215,7 +218,10 @@ function onSayClick(event: MouseEvent): void {
 }
 
 // 在跑的那一轮的起始时间由取数那一层从对话栏记下（`usePanelSite`），这里只管分组。
-const turns = computed(() => groupByTurn(visible.value, turnStarts.value))
+const turns = computed(() => {
+  const all = groupByTurn(visible.value, turnStarts.value)
+  return props.onlyTurn ? all.filter((turn) => turn.key === props.onlyTurn) : all
+})
 
 // 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
 // 新一轮还没落下第一行时，上一轮的那一组会被说成进行中。
