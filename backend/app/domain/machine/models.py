@@ -100,10 +100,14 @@ MAX_ENROLL_ATTEMPTS = 5
 # waiting sessions are placed again. MicroCloud refuses quota, offering and spec
 # problems at create time, so `error` is a failure while building the machine (a
 # Proxmox task, SSH, init). A provider that fails every time would be asked
-# forever, so the pool stops creating hosts once this many failed within the
-# window.
+# forever, so once this many failed within the window the pool asks for one
+# host at a time, no sooner than the probe interval after the last failure: a
+# provider that recovers is found within minutes, not when the window runs out.
+# A failed host's row is kept for the window (`list_due`), or the count would
+# forget it as soon as the provider forgot the machine.
 MAX_PROVIDER_ERRORS = 3
 PROVIDER_ERROR_WINDOW = timedelta(hours=1)
+PROVIDER_PROBE_INTERVAL = timedelta(minutes=5)
 
 
 class WarmMachine(UuidPk, Timestamps, Base):

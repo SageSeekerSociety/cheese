@@ -39,6 +39,7 @@ from app.domain.task.repositories import (
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
     TaskSubmissionReviewRepository,
+    TaskSubmissionSchemaRepository,
 )
 from app.domain.task.submission_state import (
     COMPLETION_STATUS_NOT_SUBMITTED,
@@ -754,10 +755,12 @@ class TaskSubmissionService:
         entry_repo: TaskSubmissionEntryRepository,
         review_repo: TaskSubmissionReviewRepository,
         membership_repo: TaskMembershipRepository,
+        schema_repo: TaskSubmissionSchemaRepository,
         attachments: AttachmentService,
         session: AsyncSession | None = None,
     ) -> None:
         self._submission_repo = submission_repo
+        self._schema_repo = schema_repo
         self._entry_repo = entry_repo
         self._review_repo = review_repo
         self._membership_repo = membership_repo
@@ -821,6 +824,11 @@ class TaskSubmissionService:
         attachments = {
             a.id: a for a in await self._attachments.get_many(attachment_ids)
         }
+        # An entry is titled by the task's form, the item at the same index.
+        names = {
+            item.index: item.description
+            for item in await self._schema_repo.list_by_task_id(membership.task_id)
+        }
 
         def _entry_to_dto(idx: int, entry: TaskSubmissionEntry) -> dict:
             if entry.content_attachment_id is not None:
@@ -832,7 +840,10 @@ class TaskSubmissionService:
             if attachment is not None:
                 content_attachment = _submitted_file_to_api(attachment)
             return {
-                "title": f"Entry {idx + 1}",
+                # The form can be replaced after this was handed in, and lose
+                # the item, and an item's name may be blank; the entry is then
+                # numbered instead.
+                "title": names.get(entry.index) or f"Entry {idx + 1}",
                 "type": entry_type,
                 "contentText": entry.content_text,
                 "contentAttachment": content_attachment,

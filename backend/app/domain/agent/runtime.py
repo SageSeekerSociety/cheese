@@ -1507,11 +1507,6 @@ class AgentWorkRunner:
                     )
                 )
             )
-        # Delivery owns retries and receipt uncertainty. A generic resend would
-        # lose its recipient and attempt identity, and could duplicate a send.
-        entries = [
-            record for record in entries if record.turn_id not in delivery_attempts
-        ]
         delivered = {record.turn_id for record in entries if record.delivered}
         probe_ok = False
         try:
@@ -1521,9 +1516,13 @@ class AgentWorkRunner:
             probe_ok = True
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
             logger.exception("orphan block probe failed for %s", topic_id)
-        attach = bool(delivered) or not probe_ok
-        if probe_ok:  # what reached nobody leaves no live turn behind
+        if probe_ok:  # what reached nobody, a delivery too, leaves no live turn
             chat_service.retire_unheard({r.turn_id for r in entries} - delivered)
+        # Delivery owns retries and receipt uncertainty. A generic resend would
+        # lose its recipient and attempt identity, and could duplicate a send.
+        entries = [r for r in entries if r.turn_id not in delivery_attempts]
+        delivered -= delivery_attempts
+        attach = bool(delivered) or not probe_ok
 
         # Each re-send and the agent it goes back to (None: the room decides).
         resends: dict[str | None, TurnRecord] = {}

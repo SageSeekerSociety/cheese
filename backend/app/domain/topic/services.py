@@ -56,7 +56,7 @@ from app.domain.room_task.models import (
     TaskTitleSource,
 )
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
     NotifyLevel,
@@ -871,7 +871,7 @@ class TopicService:
             content=say(
                 "taskCreated",
                 actor=f"<@{actor}>",
-                title=task.title,
+                title=said_title(task),
                 owner=f"<@{task.owner_handle}>" if task.owner_handle else "",
             ),
             kind=BlockKind.event,

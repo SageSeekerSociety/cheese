@@ -1,7 +1,7 @@
 """Cloud host pool data access."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import NamedTuple
 
 from sqlalchemy import delete, func, or_, select, text, update
@@ -11,6 +11,7 @@ from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
     MAX_ENROLL_ATTEMPTS,
+    PROVIDER_ERROR_WINDOW,
     TRANSITIONAL,
     AiStatus,
     CloudHost,
@@ -83,15 +84,16 @@ class CloudHostRepository:
             for host_id, running, stored in rows.all()
         }
 
-    async def failures_since(self, since: datetime) -> int:
-        return int(
-            await self._session.scalar(
-                select(func.count())
-                .select_from(CloudHost)
-                .where(CloudHost.failed_at >= since)
+    async def failures_since(self, since: datetime) -> tuple[int, datetime | None]:
+        """How many hosts the provider failed since ``since``, and the last."""
+        count, last = (
+            await self._session.execute(
+                select(func.count(), func.max(CloudHost.failed_at)).where(
+                    CloudHost.failed_at >= since
+                )
             )
-            or 0
-        )
+        ).one()
+        return int(count), last
 
     # --- homes ---------------------------------------------------------------
 
@@ -359,8 +361,16 @@ class CloudHostRepository:
             .order_by(CloudHost.last_seen_at.asc().nulls_first())
             .limit(limit)
         )
+        # A host the provider failed stays until it is out of the window that
+        # counts failures (`HostPool._provider_failing`).
+        recently_failed = (
+            CloudHost.failed_at >= datetime.now(UTC) - PROVIDER_ERROR_WINDOW
+        )
         gone = await self._session.scalars(
-            select(CloudHost).where(CloudHost.status.in_(GONE))
+            select(CloudHost).where(
+                CloudHost.status.in_(GONE),
+                or_(CloudHost.failed_at.is_(None), ~recently_failed),
+            )
         )
         seen: dict[uuid.UUID, CloudHost] = {}
         for host in [*moving, *stale, *gone]:

@@ -17,6 +17,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
 
+from app.core.sentences import render
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_project_tree import _insert_block
@@ -83,6 +84,60 @@ def test_a_task_named_by_a_person_who_typed_the_placeholder_is_still_named(clien
     assert renamed.json()["data"]["title_source"] == "human"
 
 
+def _room_line(client, room_id: str, task_id: str, action: str) -> dict:
+    """The sentence of the room's line about ``task_id`` for ``action``."""
+    blocks = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
+    line = next(
+        b
+        for b in blocks
+        if (b.get("meta") or {}).get("action") == action
+        and b["meta"].get("task_id") == task_id
+    )
+    return line["meta"]["i18n"]["content"]
+
+
+def _unnamed_task(client, room_id: str) -> dict:
+    return client.post(
+        f"/topics/{room_id}/tasks", json={}, headers=session_auth_headers("alice")
+    ).json()["data"]
+
+
+def test_the_room_line_names_an_unnamed_task_in_the_readers_language(client):
+    _, room_id = _room(client)
+    task = _unnamed_task(client, room_id)
+
+    sentence = _room_line(client, room_id, task["id"], "task_created")
+
+    assert "“New task”" in render(sentence, "en")
+    assert "「新任务」" in render(sentence, "zh-CN")
+
+
+def test_the_room_line_names_an_unnamed_task_closed_before_it_was_named(client):
+    _, room_id = _room(client)
+    task = _unnamed_task(client, room_id)
+
+    closed = client.post(
+        f"/topics/{task['id']}/close", json={}, headers=session_auth_headers("alice")
+    )
+
+    assert closed.status_code == 200, closed.text
+    sentence = _room_line(client, room_id, task["id"], "task_closed")
+    assert "“New task”" in render(sentence, "en")
+
+
+def test_the_room_line_keeps_a_typed_title_as_typed(client):
+    _, room_id = _room(client)
+    task = client.post(
+        f"/topics/{room_id}/tasks",
+        json={"title": "新任务"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+
+    sentence = _room_line(client, room_id, task["id"], "task_created")
+
+    assert "“新任务”" in render(sentence, "en")
+
+
 def _upgrade(client) -> None:
     spec = importlib.util.spec_from_file_location("_mig_task_title", _MIGRATION)
     assert spec is not None and spec.loader is not None
@@ -123,3 +178,18 @@ def test_the_migration_marks_tasks_that_were_never_named(client):
 
     assert _listed(client, room_id, untouched["id"])["title_source"] == "placeholder"
     assert _listed(client, room_id, named["id"])["title_source"] == "human"
+
+
+def test_the_room_line_names_an_unnamed_task_started_before_it_was_named(client):
+    _, room_id = _room(client)
+    task = _unnamed_task(client, room_id)
+
+    started = client.post(
+        f"/topics/{task['id']}/start",
+        json={"reviewer_handle": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert started.status_code == 200, started.text
+    sentence = _room_line(client, room_id, task["id"], "task_started")
+    assert "“New task”" in render(sentence, "en")

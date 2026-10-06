@@ -735,3 +735,64 @@ class TestTaskSubmissionReviewIntegration:
         assert resp.status_code == 404, (
             f"Expected 404, got {resp.status_code}: {resp.text}"
         )
+
+    def test_an_entry_is_titled_by_the_tasks_own_entry_name(
+        self, setup_submission: dict, api_client: TestClient
+    ):
+        participant = setup_submission["participant"]
+        task_id = setup_submission["task_id"]
+        membership_id = setup_submission["membership_id"]
+
+        resp = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        [submission] = resp.json()["data"]["submissions"]
+        assert [c["title"] for c in submission["content"]] == ["Text Entry"]
+
+    def test_a_submission_still_reads_after_its_form_loses_the_entry(
+        self, setup_submission: dict, api_client: TestClient
+    ):
+        creator = setup_submission["creator"]
+        task_id = setup_submission["task_id"]
+        membership_id = setup_submission["membership_id"]
+        replaced = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"submissionSchema": []},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert replaced.status_code == 200, replaced.text
+
+        resp = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        [submission] = resp.json()["data"]["submissions"]
+        assert [c["contentText"] for c in submission["content"]] == [
+            "This is a test submission."
+        ]
+
+    def test_an_entry_whose_form_item_has_no_name_still_has_a_title(
+        self, setup_submission: dict, api_client: TestClient
+    ):
+        creator = setup_submission["creator"]
+        task_id = setup_submission["task_id"]
+        membership_id = setup_submission["membership_id"]
+        replaced = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"submissionSchema": [{"prompt": "", "type": "TEXT"}]},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert replaced.status_code == 200, replaced.text
+
+        resp = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+
+        [submission] = resp.json()["data"]["submissions"]
+        assert all(c["title"] for c in submission["content"])

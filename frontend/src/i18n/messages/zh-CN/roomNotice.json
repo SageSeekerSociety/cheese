@@ -305,6 +305,7 @@
   "subscriptionCredentialExpiredTitle": "模型订阅凭据已过期",
   "taskDispatched": "派出一条活：{title}",
   "taskCreated": "{actor} 创建了任务「{title}」，由 {owner} 负责",
+  "taskUntitled": "新任务",
   "taskStarted": "{actor} 开始了任务「{title}」",
   "taskCompleted": "任务「{title}」已完成：{conclusion}",
   "taskClosed": "任务「{title}」已关闭",

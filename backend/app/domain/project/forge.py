@@ -5,6 +5,7 @@ import hmac
 import logging
 import math
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -12,7 +13,8 @@ from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import column, func, select, table, text, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import forge_quota
@@ -31,19 +33,167 @@ from app.domain.agent.github_app import (
     GitHubAppError,
     GitHubAppTokens,
     github_app_tokens_for_project,
+    locate_repo,
+    repository_named,
 )
-from app.domain.project.models import Project, ProjectForge
+from app.domain.project.models import Project, ProjectForge, ProjectGitInstallation
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient
-from app.domain.review.github_pr import GitHubPRClient, default_client
+from app.domain.review.github_pr import (
+    GitHubPRClient,
+    default_client,
+    parse_github_repo,
+)
 
 
 async def binding_for_project(
     project_id: uuid.UUID, session: AsyncSession
 ) -> ProjectForge | None:
-    return await session.scalar(
+    binding = await session.scalar(
         select(ProjectForge).where(ProjectForge.project_id == project_id)
     )
+    if binding is not None and binding.kind == "github_app":
+        if await follow_github_rename(project_id, session):
+            binding = await session.scalar(
+                select(ProjectForge)
+                .where(ProjectForge.project_id == project_id)
+                .execution_options(populate_existing=True)
+            )
+    return binding
+
+
+# How long a GitHub binding's name is trusted before GitHub is asked again
+# whether the repository still goes by it. Also how long a rename on GitHub can
+# go unnoticed; the ask is a conditional GET, so a repeat costs no quota.
+_FOLLOW_EVERY_S = 60.0
+_followed_at: dict[uuid.UUID, float] = {}
+
+
+async def follow_github_rename(
+    project_id: uuid.UUID, session: AsyncSession, *, now: bool = False
+) -> bool:
+    """Bring a GitHub binding up to the repository's current name.
+
+    Renaming a repository on GitHub keeps its id and redirects the old name,
+    but everything here is written by name: the token mint (which GitHub
+    refuses outright for a stale name), the git and API paths, the card a PR
+    was filed under. So the binding follows the id to the name GitHub uses
+    now, at most every `_FOLLOW_EVERY_S` unless `now`, and rewrites every place
+    that holds the old one. True when something was rewritten.
+
+    The writes go through their own committed session: a reader that rolls
+    back (the git relay does, before streaming) must not take the new name
+    with it. Never raises — a binding that cannot be checked is served as it is.
+    """
+    if not settings.github_app_id or not settings.github_app_private_key_path:
+        return False
+    checked = _followed_at.get(project_id)
+    if not now and checked is not None and time.monotonic() - checked < _FOLLOW_EVERY_S:
+        return False
+    _followed_at[project_id] = time.monotonic()
+    log = logging.getLogger(__name__)
+    installation = await ProjectGitInstallationRepository(session).get_by_project(
+        project_id
+    )
+    if installation is None:
+        return False
+    try:
+        current = await locate_repo(installation)
+    except (GitHubAppError, httpx.HTTPError):
+        log.warning("could not look up project %s's GitHub repository", project_id)
+        return False
+    if current is None:
+        return False
+    repository_id, name = current
+    if (repository_id, name) == (installation.repository_id, installation.repo):
+        return False
+    try:
+        await _record_rename(
+            project_id, installation.repo, repository_id, name, session
+        )
+    except SQLAlchemyError:
+        log.warning(
+            "could not record project %s's GitHub repository as %s",
+            project_id,
+            name,
+            exc_info=True,
+        )
+        return False
+    if name != installation.repo:
+        log.info(
+            "project %s's repository %s is now %s", project_id, installation.repo, name
+        )
+    return True
+
+
+async def _record_rename(
+    project_id: uuid.UUID,
+    old: str,
+    repository_id: int,
+    name: str,
+    session: AsyncSession,
+) -> None:
+    sessions = async_sessionmaker(session.bind, expire_on_commit=False)
+    async with sessions() as writer:
+        # The reader may already hold one of these rows; wait briefly, then let
+        # the next look try again rather than hang the request behind it.
+        await writer.execute(text("SET LOCAL lock_timeout = '2s'"))
+        await writer.execute(
+            update(ProjectGitInstallation)
+            .where(ProjectGitInstallation.project_id == project_id)
+            .values(repo=name, repository_id=repository_id)
+        )
+        if name != old:
+            await writer.execute(
+                update(ProjectForge)
+                .where(
+                    ProjectForge.project_id == project_id,
+                    ProjectForge.kind == "github_app",
+                )
+                .values(repo=name, url=f"https://github.com/{name}.git")
+            )
+            project = await writer.get(Project, project_id)
+            upstream = (project.settings or {}) if project else {}
+            parsed = parse_github_repo(upstream.get("github_repository_url"))
+            if project and parsed and "/".join(parsed).lower() == old.lower():
+                project.settings = {
+                    **upstream,
+                    "github_repository_url": f"https://github.com/{name}",
+                }
+            # GitHub's redirect from the old name ends the day someone creates
+            # a repository under it, so a task's PR link moves with the rename.
+            # A review card's own record moves when the card is next used
+            # (`renamed_from`), in the review domain that owns it.
+            # The table, not the room_task model: room_task already depends on
+            # this module, and the import back would make the two domains a
+            # cycle (C3 in .importlinter). Only these two columns are touched.
+            tasks = table("tasks", column("project_id"), column("pr_url"))
+            before, after = f"https://github.com/{old}/", f"https://github.com/{name}/"
+            await writer.execute(
+                update(tasks)
+                .where(
+                    tasks.c.project_id == project_id,
+                    tasks.c.pr_url.startswith(before, autoescape=True),
+                )
+                .values(pr_url=after + func.substr(tasks.c.pr_url, len(before) + 1))
+            )
+        await writer.commit()
+
+
+async def renamed_from(project_id: uuid.UUID, name: str, session: AsyncSession) -> bool:
+    """Whether `name` is a former name of this project's GitHub repository —
+    GitHub still redirects it to the very repository the project is bound to.
+    False whenever that cannot be established."""
+    installation = await ProjectGitInstallationRepository(session).get_by_project(
+        project_id
+    )
+    if installation is None or installation.repository_id is None:
+        return False
+    try:
+        found = await repository_named(installation.installation_id, name)
+    except (GitHubAppError, httpx.HTTPError):
+        return False
+    return found is not None and found[0] == installation.repository_id
 
 
 async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):

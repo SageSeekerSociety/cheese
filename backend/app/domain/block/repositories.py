@@ -360,6 +360,22 @@ class BlockRepository:
         await self._session.flush()
         return block
 
+    async def running_notices(
+        self, turn_id: uuid.UUID, event_type: str
+    ) -> list[uuid.UUID]:
+        """The turn's notices of this kind still saying their news is under way
+        (``meta.state == "running"``), oldest first."""
+        rows = await self._session.scalars(
+            select(Block.id)
+            .where(
+                Block.turn_id == turn_id,
+                Block.meta["event_type"].as_string() == event_type,
+                Block.meta["state"].as_string() == "running",
+            )
+            .order_by(Block.created_at)
+        )
+        return list(rows)
+
     async def restate(
         self, block_id: uuid.UUID, *, content: str, meta: dict
     ) -> Block | None:

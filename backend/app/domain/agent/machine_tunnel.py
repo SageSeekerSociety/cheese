@@ -73,6 +73,13 @@ def _is_retryable(exc: BaseException) -> bool:
     TunnelError only when its raise site marked it so."""
     if isinstance(exc, TunnelError):
         return exc.retryable
+    # A certificate the helper will not accept is the far end answering, not
+    # its absence, and it stays refused for the whole window. Riding it out
+    # held every model request 60 s before failing it (dev, 2026-10-06: the
+    # gateway's certificate expired and each turn spent ten such attempts,
+    # about 13 minutes, before giving up with nothing said).
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return False
     return isinstance(exc, OSError)
 
 
