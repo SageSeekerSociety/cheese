@@ -65,6 +65,7 @@ def _room(hub: _Hub, db_factory) -> RoomSessions:
     # What the channel placed is read from the session rows; nothing is
     # started.
     channel.placed = CentralChannel.placed.__get__(channel)
+    channel.let_go = CentralChannel.let_go.__get__(channel)
     return RoomSessions(channel, PI, SessionHost(hub))  # type: ignore[arg-type]
 
 
