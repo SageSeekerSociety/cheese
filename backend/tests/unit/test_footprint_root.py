@@ -37,6 +37,7 @@ from app.domain.agent.place import (
     SANDBOXES_DIR,
     STAGED_DIR,
     footprint_root,
+    launcher_path,
     session_platform_dirs,
 )
 
@@ -206,7 +207,7 @@ def test_the_directories_a_room_is_given_are_inside_the_footprint():
         device_provider.device_home_dir(project, room),
         device_provider.device_work_dir(project, room),
         device_provider.device_store_dir(project),
-        device_provider.launcher_path(room),
+        launcher_path(room),
     ):
         inside_the_footprint(path)
 

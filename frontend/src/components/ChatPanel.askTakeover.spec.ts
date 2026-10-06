@@ -36,7 +36,7 @@ function askBlock(id: string, index: number, members: string[], answered = false
   return {
     id,
     project_id: 'p1',
-    topic_id: topic,
+    conversation_id: topic,
     kind: 'message',
     author_type: 'participant',
     author: 'agent',

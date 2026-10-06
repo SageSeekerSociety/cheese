@@ -132,7 +132,7 @@ async function chatMention(handle: string, name: string, agent: boolean): Promis
     data: [
       {
         id: 'b1',
-        topic_id: room.id,
+        conversation_id: room.id,
         kind: 'message',
         author_type: 'participant',
         author: 'me',

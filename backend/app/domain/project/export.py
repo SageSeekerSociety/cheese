@@ -26,6 +26,7 @@ from app.core.errors import (
     GatewayUnavailableError,
 )
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import of_rooms, room_column
 from app.domain.identity.services import IdentityService
 from app.domain.library.service import artifact_snapshot_path
 from app.domain.living_doc.services import Documents
@@ -198,12 +199,13 @@ async def create_archive(
         if binding
         else None
     )
+    room = room_column(Block.conversation_id)
     weeklies = list(
-        await db.scalars(
-            select(Block)
+        await db.execute(
+            select(Block, room)
             .where(
                 Block.project_id == project_id,
-                Block.topic_id.in_(visible),
+                of_rooms(Block.conversation_id, visible),
                 Block.kind == BlockKind.weekly,
             )
             .order_by(Block.created_at)
@@ -243,15 +245,15 @@ async def create_archive(
     docs.extend(
         {
             "id": row.id,
-            "topic_id": row.topic_id,
-            "task_id": row.task_id,
+            "topic_id": room_id,
+            "task_id": row.conversation_id if row.conversation_id != room_id else None,
             "kind": "weekly",
             "content": row.content,
             "doc_version": None,
             "struct_parent": None,
             "struct_order": None,
         }
-        for row in weeklies
+        for row, room_id in weeklies
     )
     allowed_cards = set(
         await db.scalars(select(AcceptCard.id).where(AcceptCard.topic_id.in_(visible)))

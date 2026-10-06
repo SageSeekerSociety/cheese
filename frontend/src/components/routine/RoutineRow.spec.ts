@@ -127,7 +127,7 @@ describe('一条规则这一行', () => {
   // 「随归档停止」，而不是把这一条说成「已暂停」。
   it('房间归档了：说「已随话题归档停止」，不说「下次 …」', () => {
     const { container } = mount({ ...base, room_archived: true })
-    expect(container.textContent).toContain('已随话题归档停止')
+    expect(container.textContent).toContain('已随频道归档停止')
     expect(container.textContent).not.toContain('下次')
     expect(container.textContent).toContain('执行中')
   })

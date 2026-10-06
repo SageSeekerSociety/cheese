@@ -275,7 +275,7 @@ async def test_every_decision_is_recorded_with_its_coordinates(service):
             DOCS + "/a.txt",
             GrantMode.READ_WRITE,
             actor_handle="cheese",
-            topic_id=topic_id,
+            conversation_id=topic_id,
         )
     )
     await service.authorize(ask("/etc/shadow", GrantMode.READ, actor_handle="cheese"))
@@ -289,7 +289,7 @@ async def test_every_decision_is_recorded_with_its_coordinates(service):
     assert allowed.grant_id == g.id
     assert allowed.device_id == DEVICE
     assert allowed.project_id == PROJECT
-    assert allowed.topic_id == topic_id
+    assert allowed.conversation_id == topic_id
     assert allowed.actor_handle == "cheese"
 
     assert denied.decision is Decision.DENIED

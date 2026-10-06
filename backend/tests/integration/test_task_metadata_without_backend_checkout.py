@@ -6,7 +6,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 
 
 def test_task_metadata_does_not_create_a_backend_workspace_descriptor(client):
@@ -15,9 +15,7 @@ def test_task_metadata_does_not_create_a_backend_workspace_descriptor(client):
     room = client.post("/topics", json={"project_id": project, "title": "room"}).json()[
         "data"
     ]["id"]
-    task = client.post(
-        f"/topics/{room}/split", json={"title": "work", "reviewer_handle": "alice"}
-    ).json()["data"]
+    task = open_task(client, room, "work")
     descriptors = Path(settings.workspace_root) / ".task-workspaces"
     assert not descriptors.exists()
     response = client.get(
@@ -39,9 +37,7 @@ def test_task_metadata_names_the_pr_while_it_is_in_the_merge_queue(client):
     room = client.post("/topics", json={"project_id": project, "title": "room"}).json()[
         "data"
     ]["id"]
-    task = client.post(
-        f"/topics/{room}/split", json={"title": "work", "reviewer_handle": "alice"}
-    ).json()["data"]["id"]
+    task = open_task(client, room, "work")["id"]
     token = mint_scoped_token(project_id=project, topic_id=room)
 
     def queued_pr():

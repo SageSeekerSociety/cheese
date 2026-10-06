@@ -14,7 +14,7 @@
         <UserAvatar :avatar="avatar" :name="user?.nickname || user?.username" size="32" />
         <div class="me__text">
           <span class="me__name">{{ user?.nickname || user?.username }}</span>
-          <span v-if="user" class="me__handle">@{{ user.username }}</span>
+          <span v-if="user" class="me__handle">{{ user.username }}</span>
         </div>
       </div>
     </template>

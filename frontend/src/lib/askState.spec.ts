@@ -17,7 +17,7 @@ import {
 
 const question = (): Block => ({
   id: 'question',
-  topic_id: 'room',
+  conversation_id: 'room',
   kind: 'message',
   author_type: 'participant',
   author: 'agent',
@@ -35,7 +35,7 @@ describe('Ask local state is not a server receipt', () => {
     saveAskDraft(localStorage, 'alice-id', block, draft())
     expect(loadAskDraft(localStorage, 'alice-id', block)).toEqual(draft())
     expect(loadAskDraft(localStorage, 'bob-id', block)).toBeNull()
-    expect(loadAskDraft(localStorage, 'alice-id', { ...block, topic_id: 'other' })).toBeNull()
+    expect(loadAskDraft(localStorage, 'alice-id', { ...block, conversation_id: 'other' })).toBeNull()
     expect(loadAskDraft(localStorage, 'alice-id', { ...block, content: 'Changed question' })).toBeNull()
     block.meta!.answer_log = [
       { v: 1, kind: 'option', option: 'B', note: null, by: 'alice', at: null, client_op_id: 'other' },

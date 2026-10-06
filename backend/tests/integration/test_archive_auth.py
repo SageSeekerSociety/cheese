@@ -48,8 +48,8 @@ def test_archive_requires_manager_and_records_actual_actor(client):
         ).json()["data"]["data"]
         return [b for b in blocks if phrase in (b.get("content") or "")]
 
-    assert events_saying(topic, "归档了房间") == []
-    (archive,) = events_saying(project["root_topic_id"], "归档了房间")
+    assert events_saying(topic, "归档了频道") == []
+    (archive,) = events_saying(project["root_topic_id"], "归档了频道")
     assert "「R」" in archive["content"]
     assert archive["author"] == "admin"
     assert "forged" not in archive["content"]

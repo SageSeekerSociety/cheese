@@ -18,7 +18,7 @@ const vuetify = createVuetify({ components, directives })
 function changes(paths: string[], omitted = 0): Block {
   return {
     id: 'c1',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'system',
@@ -89,7 +89,7 @@ describe('本轮改动的文件', () => {
 describe('平台自动改了标题', () => {
   const renamed = {
     id: 'rename-1',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'system',
@@ -124,7 +124,7 @@ describe('芝士起草、等人确认的那一行', () => {
   function proposed(meta: Record<string, unknown>): Block {
     return {
       id: 'p1',
-      topic_id: 't',
+      conversation_id: 't',
       kind: 'event',
       author_type: 'platform',
       author: 'system',

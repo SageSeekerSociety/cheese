@@ -86,7 +86,7 @@ async def propose(
     already = await session.scalar(
         select(Block.id)
         .where(
-            Block.topic_id == place.room_id,
+            Block.conversation_id == place.conversation_id,
             Block.meta[META_PROPOSAL_ID].as_string() == str(proposal_id),
         )
         .limit(1)

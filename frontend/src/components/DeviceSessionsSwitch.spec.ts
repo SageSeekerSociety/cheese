@@ -122,7 +122,7 @@ it('switches the selected agents one by one and says what happened to each', asy
     el.textContent?.replace(/\s+/g, ' ').trim()
   )
   expect(metas.some((m) => /^@助手b · 最近活动 .* · 正在运行任务$/.test(m ?? ''))).toBe(true)
-  expect(dialog().getByText('另有 2 个 agent 在你打不开的房间里')).toBeTruthy()
+  expect(dialog().getByText('另有 2 个 agent 在你打不开的频道里')).toBeTruthy()
   expect(dialog().getByRole('button', { name: '推送并更换' }).hasAttribute('disabled')).toBe(true)
 
   api.setTopicComputeChoice.mockImplementation(async (topic: string) => {

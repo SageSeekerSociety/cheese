@@ -554,7 +554,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // Opening a topic = reading it: bump the server-side cursor and clear the
   // badge locally (optimistic — the next refresh agrees).
   //
-  // 卡下的消息**故意**不计进未读（否则每条活说句话就把房间标红，红点变噪音）。
+  // `topicId` 是一段对话：频道自己的，或一个任务的（任务的未读只亮给负责人和协作者）。
   function markRead(topicId: string) {
     const me = myHandle()
     if (!me) return
@@ -690,17 +690,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  /** 升级出来的东西：房间里的消息变成这个房间的一张**卡**，私聊里的变成一个新
-   *  房间。调用方要据此决定去哪儿——钻进那张卡，还是跳进那个房间。 */
-  async function upgradeMessage(messageId: string): Promise<{ kind: 'card' | 'room'; id: string } | null> {
+  /** 转为任务：频道里的一条消息变成这个频道的一个任务，返回任务的 id。 */
+  async function upgradeMessage(messageId: string): Promise<string | null> {
     try {
       const made = await upgradeBlock(messageId)
       await refreshTopics()
-      // 卡带着「我挂在哪个房间」，房间没有这个问题——这就是分辨它们的那一位。
-      const kind = 'room_id' in made ? 'card' : 'room'
-      return { kind, id: made.id }
+      return made.id
     } catch (e) {
-      reportError(e, t('shell.workspaceErrors.convertToTopic'))
+      reportError(e, t('shell.workspaceErrors.convertMessage'))
       return null
     }
   }

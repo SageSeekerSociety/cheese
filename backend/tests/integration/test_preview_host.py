@@ -14,6 +14,7 @@ from app.domain.site.hosting import content_origin, mint_site_token
 from tests.integration.conftest import (
     add_external_member,
     join_project_team,
+    open_task,
     session_auth_headers,
     session_token,
 )
@@ -486,13 +487,7 @@ def test_private_room_roster_is_required_even_for_project_members(
     assert artifact.status_code == 200, artifact.text
     preview_id = room_id
     if dispatch_task:
-        task = client.post(
-            f"/topics/{room_id}/split",
-            json=dict(reviewer_handle="alice", **{"title": "Private work"}),
-            headers=owner,
-        )
-        assert task.status_code == 200, task.text
-        preview_id = task.json()["data"]["id"]
+        preview_id = open_task(client, room_id, "Private work", start=False)["id"]
     assert (
         client.post(
             f"/topics/{preview_id}/preview-session",
@@ -501,13 +496,13 @@ def test_private_room_roster_is_required_even_for_project_members(
         == 404
     )
     if dispatch_task:
-        # A task card does not own a room or a separate preview origin.
+        # A task has its own preview, seen by whoever may see its room.
         assert (
             client.post(
                 f"/topics/{preview_id}/preview-session",
                 headers=session_auth_headers("bob"),
             ).status_code
-            == 404
+            == 200
         )
         return
     _open_preview(client, preview_id, "bob")

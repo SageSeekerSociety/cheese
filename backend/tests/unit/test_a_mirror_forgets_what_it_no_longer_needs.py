@@ -170,7 +170,7 @@ async def test_old_facts_of_finished_calls_go_and_a_running_subagents_stay(tmp_p
         assert held is not None
         for facts in (Known.read(reading.path).facts, held.facts):
             assert "call:toolu_bash" not in facts
-            assert {"call:toolu_agent", "task:task-1"} <= facts.keys()
+            assert "call:toolu_agent" in facts
 
         # The subagent comes back after retention, and still reports as itself.
         journal.append(_returned(5, work, "toolu_agent", "The cache key changed."))

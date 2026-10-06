@@ -88,7 +88,7 @@ function topic(id: string): Topic {
 function block(id: string, content: string): Block {
   return {
     id,
-    topic_id: 'topic-A',
+    conversation_id: 'topic-A',
     kind: 'message',
     author_type: 'participant',
     author: 'cheese',

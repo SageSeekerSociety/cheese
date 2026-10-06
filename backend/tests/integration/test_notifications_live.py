@@ -54,9 +54,9 @@ def _notices_token(client: TestClient, page_token: str) -> str:
     return resp.json()["data"]["token"]
 
 
-def _deliver(client: TestClient, user_id: int, type_: NotificationType, payload: dict):
-    """What the delivery ledger does: write the inbox row, then commit. It runs on
-    the app's own loop, where the open connection is waiting."""
+def _deliver(client: TestClient, user_id: int, *notices: tuple[NotificationType, dict]):
+    """What the delivery ledger does: write the inbox rows, then commit once. It
+    runs on the app's own loop, where the open connection is waiting."""
 
     async def deliver() -> None:
         async with client.test_request_factory() as db:  # type: ignore[attr-defined]
@@ -68,6 +68,7 @@ def _deliver(client: TestClient, user_id: int, type_: NotificationType, payload:
                         payload=payload,
                         delivery_key=f"test:{uuid.uuid4()}",
                     )
+                    for type_, payload in notices
                 ]
             )
             await db.commit()
@@ -84,6 +85,14 @@ def _next(ws, kind: str) -> dict:
             return frame
 
 
+def _settled(ws) -> None:
+    """Read up to the count the server sends after every notices frame. Past it
+    the server only waits, so leaving the connection now cancels no query: the
+    test client cancels the server's task the moment the block exits, and one
+    cancelled while it takes a connection leaves that connection open."""
+    _next(ws, "waiting")
+
+
 QUESTION = {
     "question": "用哪个数据库？",
     "topicTitle": "迁移",
@@ -95,7 +104,7 @@ QUESTION = {
 def test_a_notice_reaches_the_open_connection_with_the_pushs_words(client):
     user_id, _, page = _signed_in(client, "ada")
     notices = _notices_token(client, page)
-    _deliver(client, user_id, NotificationType.ROOM_NOTICE, {"content": "装之前的事"})
+    _deliver(client, user_id, (NotificationType.ROOM_NOTICE, {"content": "装之前的事"}))
 
     with client.websocket_connect(
         "/notifications/live", headers={"Authorization": f"Bearer {notices}"}
@@ -104,10 +113,16 @@ def test_a_notice_reaches_the_open_connection_with_the_pushs_words(client):
         first = _next(ws, "notices")
         # A first connection is shown nothing from before it.
         assert first["items"] == []
+        _settled(ws)
 
-        _deliver(client, user_id, NotificationType.MENTION, {})  # never pushed
-        _deliver(client, user_id, NotificationType.CHEESE_QUESTION, QUESTION)
+        _deliver(
+            client,
+            user_id,
+            (NotificationType.MENTION, {}),  # never pushed
+            (NotificationType.CHEESE_QUESTION, QUESTION),
+        )
         live = _next(ws, "notices")
+        _settled(ws)
 
     assert [(i["title"], i["body"], i["url"]) for i in live["items"]] == [
         ("用哪个数据库？", "在「迁移」", "/projects/p1/topics/t1")
@@ -128,6 +143,7 @@ def test_the_app_speaks_the_language_the_person_picked(client):
     with client.websocket_connect("/notifications/live", headers=headers) as ws:
         ws.send_json({"after": None})
         stopped_at = _next(ws, "notices")["latest"] or 0
+        _settled(ws)
 
     line = say("acceptReady", pr=7, reviewer="ana")
     room_notice = {
@@ -135,12 +151,17 @@ def test_the_app_speaks_the_language_the_person_picked(client):
         "topicTitle": "迁移",
         **notice_message(with_keys(None, content=line)),
     }
-    _deliver(client, user_id, NotificationType.ROOM_NOTICE, room_notice)
-    _deliver(client, user_id, NotificationType.CHEESE_QUESTION, QUESTION)
+    _deliver(
+        client,
+        user_id,
+        (NotificationType.ROOM_NOTICE, room_notice),
+        (NotificationType.CHEESE_QUESTION, QUESTION),
+    )
 
     with client.websocket_connect("/notifications/live", headers=headers) as ws:
         ws.send_json({"after": stopped_at})
         missed = _next(ws, "notices")
+        _settled(ws)
 
     assert [(i["title"], i["body"]) for i in missed["items"]] == [
         ("PR #7 is ready to merge, waiting for ana to accept", "In “迁移”"),
@@ -157,17 +178,20 @@ def test_coming_back_hands_over_what_came_meanwhile_once(client):
     with client.websocket_connect("/notifications/live", headers=headers) as ws:
         ws.send_json({"after": None})
         stopped_at = _next(ws, "notices")["latest"] or 0
+        _settled(ws)
 
-    _deliver(client, user_id, NotificationType.ROOM_NOTICE, {"content": "改动已就绪"})
+    _deliver(client, user_id, (NotificationType.ROOM_NOTICE, {"content": "改动已就绪"}))
 
     with client.websocket_connect("/notifications/live", headers=headers) as ws:
         ws.send_json({"after": stopped_at})
         missed = _next(ws, "notices")
+        _settled(ws)
     assert [i["title"] for i in missed["items"]] == ["改动已就绪"]
 
     with client.websocket_connect("/notifications/live", headers=headers) as ws:
         ws.send_json({"after": missed["latest"]})
         assert _next(ws, "notices")["items"] == []
+        _settled(ws)
 
 
 def test_signing_out_ends_the_connection(client):

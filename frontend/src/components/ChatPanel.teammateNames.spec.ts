@@ -80,7 +80,7 @@ function block(fields: Partial<Block>): Block {
   return {
     id: `b${at}`,
     project_id: 'p1',
-    topic_id: 'room',
+    conversation_id: 'room',
     kind: 'message',
     author_type: 'participant',
     content: '',

@@ -121,7 +121,7 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(
                     Block(
                         id=block_id,
                         project_id=project,
-                        topic_id=topic,
+                        conversation_id=topic,
                         kind=BlockKind.message,
                         author_type=AuthorType.participant,
                         author="user-1",
@@ -133,7 +133,7 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(
                 Delivery(
                     id=delivery_id,
                     event_id=uuid.uuid4(),
-                    topic_id=topic,
+                    conversation_id=topic,
                     recipient_handle=identity.recipient_handle,
                     dedup_key=str(uuid.uuid4()),
                     type="mention",

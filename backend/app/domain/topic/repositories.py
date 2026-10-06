@@ -4,7 +4,21 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import (
+    JSON,
+    Select,
+    String,
+    Uuid,
+    and_,
+    case,
+    cast,
+    column,
+    func,
+    or_,
+    select,
+    table,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -15,10 +29,11 @@ from sqlalchemy.sql.elements import (
 )
 
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     agent_dm_key,
+    agent_handle_column,
     agent_instance_handle,
     looks_like_agent_handle,
 )
@@ -38,6 +53,19 @@ TopicSortField = Literal["updated_at", "title", "last_activity_at"]
 SortOrder = Literal["asc", "desc"]
 
 
+# Which room a task is in, and who takes part in it. A bare table: `room_task`
+# depends on this domain.
+_tasks = table(
+    "tasks",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("project_id", Uuid),
+    column("status", String),
+    column("owner_handle", String),
+    column("contributor_handles", JSON),
+)
+
+
 def _last_activity() -> ColumnElement[datetime]:
     """When something last HAPPENED in a topic — the newest block it holds.
 
@@ -52,19 +80,30 @@ def _last_activity() -> ColumnElement[datetime]:
     happened since it was made" is the truth for a room nobody has spoken in,
     and it keeps the value non-null so sorting and filtering stay total.
 
-    Threads COUNT here, and that is deliberate: a room whose work is running is
+    Tasks COUNT here, and that is deliberate: a room whose work is running is
     alive, and the normal state of such a room is that its own line is quiet.
     Note this is the opposite call from `unread_counts` below — same join, same
     two tables, opposite answer, because "is this place alive" and "is there
     something here for me to read" are different questions.
     """
-    newest_block = (
+    # Two maxima rather than one over "the room or any of its tasks": each is an
+    # equality on `conversation_id`, which `ix_blocks_conversation_created_at`
+    # answers from its last entry; an OR across the two would read every block
+    # of the room. GREATEST skips a NULL.
+    own = (
         select(func.max(Block.created_at))
-        .where(Block.topic_id == Topic.id)
+        .where(Block.conversation_id == Topic.id)
         .correlate(Topic)
         .scalar_subquery()
     )
-    return func.coalesce(newest_block, Topic.created_at)
+    in_tasks = (
+        select(func.max(Block.created_at))
+        .join(_tasks, _tasks.c.id == Block.conversation_id)
+        .where(_tasks.c.room_id == Topic.id)
+        .correlate(Topic)
+        .scalar_subquery()
+    )
+    return func.coalesce(func.greatest(own, in_tasks), Topic.created_at)
 
 
 def _order_by(sort: TopicSortField | None, order: SortOrder) -> UnaryExpression:
@@ -364,27 +403,26 @@ class TopicRepository:
     async def unread_counts(
         self, project_id: uuid.UUID, user_handle: str
     ) -> dict[uuid.UUID, int]:
-        """Unread message count per topic for one user, in one query.
+        """Unread message count per conversation for one user: rooms and tasks.
 
-        Unread = message blocks authored by OTHERS on the room's OWN line,
-        created after the user's read cursor (no cursor = all of them). Only
+        Unread = message blocks authored by OTHERS in that conversation, created
+        after the user's read cursor on it (no cursor = all of them). Only
         kind=message counts — doc edits / events / weeklies have their own
         surfaces. Other people's private chats are excluded.
 
-        Threads are excluded (`task_id IS NULL`), and that is the opposite call
-        from `last_activity_at` one screen over, which DOES count them. The two
-        answer different questions: a room with work running in it is alive and
-        should sort up, but a badge that lights every time any 分身 says anything
-        is a badge people learn to ignore. Reading the room does not mean you
-        read every thread in it either — the cursor is the room's.
+        A task counts only for the people who take part in it (its owner and
+        collaborators), and only what PEOPLE said there: the AI teammate talks
+        on every step, and a badge that lights each time is a badge nobody
+        reads. When it needs the person, the task's own mark says so. Everyone
+        else follows a task they do not take part in from the channel.
         """
-        stmt = (
-            select(Block.topic_id, func.count())
-            .join(Topic, Topic.id == Block.topic_id)
+        rooms = (
+            select(Block.conversation_id, func.count())
+            .join(Topic, Topic.id == Block.conversation_id)
             .outerjoin(
                 TopicReadState,
                 and_(
-                    TopicReadState.topic_id == Block.topic_id,
+                    TopicReadState.topic_id == Block.conversation_id,
                     TopicReadState.user_handle == user_handle,
                 ),
             )
@@ -392,17 +430,47 @@ class TopicRepository:
                 Topic.project_id == project_id,
                 _readable_by(user_handle),
                 Block.kind == BlockKind.message,
-                Block.task_id.is_(None),
                 Block.author != user_handle,
                 or_(
                     TopicReadState.last_read_at.is_(None),
                     Block.created_at > TopicReadState.last_read_at,
                 ),
             )
-            .group_by(Block.topic_id)
+            .group_by(Block.conversation_id)
         )
-        rows = (await self._session.execute(stmt)).all()
-        return {topic_id: int(count) for topic_id, count in rows}
+        tasks = (
+            select(Block.conversation_id, func.count())
+            .join(_tasks, _tasks.c.id == Block.conversation_id)
+            .outerjoin(
+                TopicReadState,
+                and_(
+                    TopicReadState.topic_id == Block.conversation_id,
+                    TopicReadState.user_handle == user_handle,
+                ),
+            )
+            .where(
+                _tasks.c.project_id == project_id,
+                _tasks.c.status == "open",
+                or_(
+                    _tasks.c.owner_handle == user_handle,
+                    cast(_tasks.c.contributor_handles, JSONB).contains([user_handle]),
+                ),
+                Block.kind == BlockKind.message,
+                Block.author != user_handle,
+                Block.author_type == AuthorType.participant,
+                ~agent_handle_column(Block.author),
+                or_(
+                    TopicReadState.last_read_at.is_(None),
+                    Block.created_at > TopicReadState.last_read_at,
+                ),
+            )
+            .group_by(Block.conversation_id)
+        )
+        counts: dict[uuid.UUID, int] = {}
+        for stmt in (rooms, tasks):
+            for conversation_id, count in (await self._session.execute(stmt)).all():
+                counts[conversation_id] = int(count)
+        return counts
 
     async def private_unread_counts(
         self, project_id: uuid.UUID, user_handle: str
@@ -465,7 +533,7 @@ class TopicRepository:
                     theirs.member_handle != user_handle,
                 ),
             )
-            .join(Block, Block.topic_id == Topic.id)
+            .join(Block, Block.conversation_id == Topic.id)
             .outerjoin(
                 TopicReadState,
                 and_(
@@ -482,10 +550,10 @@ class TopicRepository:
                 .scalar_subquery()
                 == 2,
                 Block.kind == BlockKind.message,
-                # A private room has threads too — resolving an upstream
+                # A private room has tasks too — resolving an upstream
                 # conflict opens one there — and the same rule applies: the
-                # badge is about the room's own line.
-                Block.task_id.is_(None),
+                # badge is about the room's own conversation, which the join
+                # on `conversation_id` already picks.
                 Block.author != user_handle,
                 or_(
                     TopicReadState.last_read_at.is_(None),
@@ -597,46 +665,34 @@ class TopicRepository:
 
 
 class TopicProgressRepository:
-    """进度层 storage: one checklist per place — a room's main line, or a
-    thread in it (#187)."""
+    """进度层 storage: one checklist per conversation — a room or a task (#187)."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> TopicProgress | None:
+    async def get(self, conversation_id: uuid.UUID) -> TopicProgress | None:
         stmt = select(TopicProgress).where(
-            TopicProgress.topic_id == topic_id,
-            TopicProgress.task_id.is_(None)
-            if task_id is None
-            else TopicProgress.task_id == task_id,
+            TopicProgress.conversation_id == conversation_id
         )
         return (await self._session.scalars(stmt)).first()
 
     async def save(
         self,
-        topic_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         items: list[dict],
         *,
-        task_id: uuid.UUID | None = None,
         turn_id: uuid.UUID | None = None,
     ) -> TopicProgress:
-        """Overwrite this place's checklist (upsert).
+        """Overwrite this conversation's checklist (upsert).
 
         Current state, not history — the conversation timeline is where history
         lives. Callers hand over a fresh list each time; the row is rewritten so
         a reader never sees a half-applied checklist.
-
-        Looked up by (room, thread) rather than by primary key: `topic_id` used
-        to BE the key and cannot be any more, because a thread's row is
-        identified by the pair and a primary key cannot hold the NULL that means
-        "the room's own main line".
         """
-        row = await self.get(topic_id, task_id=task_id)
+        row = await self.get(conversation_id)
         if row is None:
             row = TopicProgress(
-                topic_id=topic_id, task_id=task_id, items=[], turn_id=turn_id
+                conversation_id=conversation_id, items=[], turn_id=turn_id
             )
             self._session.add(row)
         # Rebind rather than mutate: SQLAlchemy does not track in-place edits of

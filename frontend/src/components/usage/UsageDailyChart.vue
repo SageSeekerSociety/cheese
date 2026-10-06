@@ -4,12 +4,12 @@ import type { UsageDay, UsageLine } from '@/lib/creditUsage'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { fmtMonthDay, fmtPoints, USAGE_LINES } from '@/lib/creditUsage'
+import { fmtMonthDay, fmtPoints, linesOf } from '@/lib/creditUsage'
 
-// 每天用量：一天一根柱子，高度按本月用得最多的那天折算。给了产品线就分三色叠起来。
+// 每天用量：一天一根柱子，高度按本月用得最多的那天折算。分了线就按线分色叠起来。
 const props = defineProps<{
   days: UsageDay[]
-  /** 按产品线叠色（个人页）。 */
+  /** 按线叠色：个人页四条线，团队页协作和算力。 */
   stacked?: boolean
 }>()
 
@@ -22,7 +22,7 @@ function height(value: number): string {
 }
 
 function parts(day: UsageDay): { line: UsageLine | 'all'; value: number }[] {
-  if (props.stacked && day.lines) return USAGE_LINES.map((line) => ({ line, value: day.lines?.[line] ?? 0 }))
+  if (props.stacked && day.lines) return linesOf(day.lines).map((line) => ({ line, value: day.lines?.[line] ?? 0 }))
   return [{ line: 'all', value: day.credits ?? 0 }]
 }
 
@@ -121,6 +121,10 @@ const ticks = computed(() => {
 
 .udc__part--write {
   background: var(--usage-write);
+}
+
+.udc__part--compute {
+  background: var(--usage-compute);
 }
 
 .udc__axis {

@@ -18,13 +18,23 @@ from pathlib import Path
 SITE_ADDRESS = "127.0.0.2"
 
 
-def site_hosts(host, machine="/etc/hosts"):
-    """The /etc/hosts a sandbox reads when its machine forwards the site
-    (`CHEESE_SITE_FORWARD`): the machine's, with `host` at `SITE_ADDRESS`,
-    whose port 443 the sandbox helper passes to the forward. The machine's
+def site_hosts(env, fds, machine="/etc/hosts"):
+    """When the backend says the machine forwards the deployment's site
+    (`CHEESE_SITE_FORWARD`, `machine_address.site_forward`), the /etc/hosts a
+    sandbox reads: the machine's, with the site's name at `SITE_ADDRESS`,
+    whose port 443 the sandbox helper passes to the forward. It goes to
+    bubblewrap on a pipe, `fds["hosts"]`, so nothing in the room can change
+    it. Answers the forward's port, or None when there is none. The machine's
     resolver answers the public address, which leaves the private network
     for the public relay and comes back through its tunnels."""
-    return Path(machine).read_text().rstrip("\n") + f"\n{SITE_ADDRESS} {host}\n"
+    host, _, port = (env.get("CHEESE_SITE_FORWARD") or "").rpartition(":")
+    if not host or not port.isdigit():
+        return None
+    text = Path(machine).read_text().rstrip("\n") + f"\n{SITE_ADDRESS} {host}\n"
+    fds["hosts"], write = os.pipe()
+    os.write(write, text.encode())
+    os.close(write)
+    return int(port)
 
 
 # The syscalls a sandbox is refused (`seccomp_filter`), by architecture:

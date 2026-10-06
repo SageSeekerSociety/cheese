@@ -60,18 +60,14 @@ def test_a_missing_target_ends_only_a_current_attempt(
                     id=delivery_id,
                     event_id=uuid.uuid4(),
                     recipient_handle=identity.recipient_handle,
-                    topic_id=identity.topic_id,
-                    task_id=uuid.uuid4(),  # The addressed task was deleted.
+                    conversation_id=uuid.uuid4(),  # The addressed task was deleted.
                     agent_instance_id=uuid.uuid4(),
                     state=state,
                     attempt_id=recorded_attempt,
                     lease_until=lease,
                     dedup_key=str(uuid.uuid4()),
                     type="task_instruction",
-                    payload={
-                        "worker_id": "deleted-worker",
-                        "parent_session_id": "native-parent",
-                    },
+                    payload={},
                     event_at=stamp,
                     recorded_at=stamp,
                 )
@@ -83,12 +79,7 @@ def test_a_missing_target_ends_only_a_current_attempt(
         unread = {}
         with pytest.raises(ValidationError):
             if caller == "begin_send":
-                await agent.begin_send(
-                    factory,
-                    delivery_id,
-                    requested_attempt,
-                    parent_session_id="native-parent",
-                )
+                await agent.begin_send(factory, delivery_id, requested_attempt)
             else:
                 registrar = input_registrar(
                     factory,
@@ -96,7 +87,6 @@ def test_a_missing_target_ends_only_a_current_attempt(
                     unread,
                     probe_unread=True,
                     fence_delivery=True,
-                    parent_session_id="native-parent",
                 )
                 await registrar(identity)
         assert unread == {}

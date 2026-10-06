@@ -239,8 +239,9 @@ describe('project settings', () => {
       const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
       const entries = Array.from(nav.querySelectorAll('.so__item'), (a) => a.textContent?.trim())
       expect(entries).toEqual([
+        '频道',
         'AI 队友',
-        '话题命名',
+        '频道命名',
         '工作电脑',
         '运行环境',
         '合并规则',

@@ -125,6 +125,7 @@ def test_a_persons_page_splits_their_spend_by_product_line(client, plan):
         "collab": pytest.approx(10),
         "ask": pytest.approx(8),
         "write": pytest.approx(2),
+        "compute": 0,
     }
     assert data["period"]["credits_used"] == pytest.approx(20)
     [project] = data["projects"]
@@ -171,7 +172,7 @@ def test_no_figure_is_a_persons_share_of_a_teams_projects(client, plan):
     # Spend in a shared team's project is the team's, not the person's.
     assert mine["period"]["used_ratio"] == 0
     assert mine["projects"] == []
-    assert mine["lines"] == {"collab": 0, "ask": 0, "write": 0}
+    assert mine["lines"] == {"collab": 0, "ask": 0, "write": 0, "compute": 0}
     [lab] = mine["teams"]
     assert lab["id"] == team and lab["credits_remaining"] == pytest.approx(60)
     # No tokens, costs or person ids anywhere.

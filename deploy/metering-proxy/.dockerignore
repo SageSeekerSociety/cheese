@@ -2,5 +2,7 @@
 !Dockerfile
 !billing_addon.py
 !cheese_billing_core.py
+!claude_accounts.py
+!claude_retry.py
 !control_answers.json
 !healthcheck.py

@@ -26,6 +26,7 @@ from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
+    open_task,
     post_message,
     post_project,
     session_auth_headers,
@@ -89,13 +90,8 @@ def test_writing_the_doc_refreshes_the_doc_panel(client, frames):
 
 
 def test_opening_a_piece_of_work_refreshes_the_rooms_work_list(client, frames):
-    pid, rid = _room(client)
-    r = client.post(
-        f"/topics/{rid}/split",
-        json={"title": "一件活", "reviewer_handle": "alice"},
-        headers=_agent(pid, rid),
-    )
-    assert r.status_code == 200, r.text
+    _pid, rid = _room(client)
+    open_task(client, rid, "一件活", start=False)
     assert _stale(frames, rid) == ["topics"]
 
 
@@ -121,21 +117,21 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
     pid, rid = _room(client)
     task = delivery_task_id(client, rid)
     filed = client.post(
-        f"/topics/{rid}/tasks/{task}/accept-card",
+        f"/topics/{task}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
         },
-        headers=_agent(pid, rid),
+        headers=_agent(pid, str(task)),
     )
     assert filed.status_code == 200, filed.text
     assert _stale(frames, rid) == ["accept"]
     frames.clear()
     corrected = client.post(
-        f"/topics/{rid}/tasks/{task}/accept-card/describe",
+        f"/topics/{task}/accept-card/describe",
         json={"change_subject": "chore(test): say what the card is for"},
-        headers=_agent(pid, rid),
+        headers=_agent(pid, str(task)),
     )
     assert corrected.status_code == 200, corrected.text
     assert _stale(frames, rid) == ["accept"]
@@ -199,7 +195,7 @@ class _CallsATool(StubChannel):
     reaches the platform: this stub runs nothing, which is the point."""
 
     tool = "mcp__native__cheese_doc_set"
-    arguments: dict = {"path": "/tmp/x.md"}
+    arguments: dict = {"content": "# 实况\n"}
 
     def emit_turn(
         self,
@@ -239,7 +235,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
-        ("mcp__native__cheese_doc_set", {"path": "/tmp/x.md"}),
+        ("mcp__native__cheese_doc_set", {"content": "# 实况\n"}),
         ("mcp__native__cheese_accept_request", {"task": "t", "subject": "fix: x"}),
         ("mcp__native__cheese_notify", {"title": "中期汇报"}),
     ],
@@ -310,7 +306,7 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
     async def cards() -> int:
         async with client.test_factory() as session:
             rows = await session.scalars(
-                select(Block).where(Block.topic_id == uuid.UUID(topic_id))
+                select(Block).where(Block.conversation_id == uuid.UUID(topic_id))
             )
             return sum((row.meta or {}).get("action") == "notify" for row in rows)
 

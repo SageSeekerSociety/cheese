@@ -87,7 +87,16 @@
             </v-btn-toggle> -->
           </v-card-title>
           <v-card-text class="px-4 py-4">
+            <!-- A failed read leaves `spaces` empty, so the scroll area would say "no spaces yet" — the same shape as a space list that really is empty. Replace the area instead of falling into it. -->
+            <BaseLoadError
+              v-if="spacesFailed"
+              :title="t('spaces.index.loadFailed')"
+              :error="loadFailureReason(error)"
+              :forbidden="isForbidden(error)"
+              @retry="refresh"
+            />
             <infinite-scroll
+              v-else
               :has-more="hasMore"
               :loading="loadingMore"
               :initial-loading="refreshing"
@@ -222,7 +231,7 @@
 import type { PostSpaceRequestData, SpaceApplication } from '@/network/api/spaces/types'
 import type { Space } from '@/types'
 
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
@@ -237,11 +246,13 @@ import { listProjects } from '@/api'
 import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { AvatarsApi } from '@/network/api/avatars'
 import { SpacesApi } from '@/network/api/spaces'
@@ -373,6 +384,11 @@ const {
   })
   return { data: data.spaces, page: data.page }
 })
+
+// 读失败时 `spaces` 是空的，光看 `is-empty` 分不出「读失败」和「一条都没有」。
+// 只有在**没有东西可显示**时才替换列表：翻页失败时前面那些卡片还在，替换掉它们
+// 等于把读到的东西也一起扔了。
+const spacesFailed = computed(() => error.value !== null && spaces.value.length === 0)
 
 const sortSpaces = (value: string) => {
   console.log(value)

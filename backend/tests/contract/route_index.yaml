@@ -44,9 +44,11 @@ auth_entries:
   dashboard.team.member: "dashboard._require_team_member resolves an authenticated actor with a current numeric user_id and requires team_service.is_team_member of the project's team; outsiders get NotFound. Source: app/api/routes/dashboard.py."
   dashboard.board: "dashboard._require_board_reader: require_verified_caller and membership in at least one project in the space board via may_read_project; global sandbox development override is explicit. Source: app/api/routes/dashboard.py."
   dashboard.person: "dashboard._signed_in resolves a verified handle; DashboardService filters profile/topics by viewer access. forget_understanding deletes only facts about that same viewer. Source: app/api/routes/dashboard.py,186,198,232."
-  docs.dev.cookie: "docs_site.check_dev_access verifies the dev docs cookie through docs_site.access; internal proof or holder still in AdminService allow-list is required for nginx auth_request. Source: app/api/routes/docs_site.py."
+  docs.dev.cookie: "docs_site.check_dev_access: internal proof, or the docs sign-in cookie resolved by docs_site.access.reader (docs host only, platform sign-in session still live) whose holder is in the AdminService allow-list; nginx auth_request. Source: app/api/routes/docs_site.py."
+  docs.session: "docs_site.docs_reader: the docs sign-in cookie resolved by docs_site.access.reader (signature, docs-host Host, platform sign-in session still live via SessionService.live_handle); non-GET requests must carry the docs Origin. Source: app/api/routes/docs_site.py, app/domain/docs_site/access.py."
+  docs.grant: "public(form post on the docs host): Origin must be the platform's; a 30-second docs grant spent once in Valkey, naming a still-live sign-in session, becomes the host-only docs cookie. Source: app/api/routes/docs_site.py open_docs_session, app/domain/docs_site/access.py."
   docs.agent: "docs_site._agent_scope resolves in named canonical room/project and calls authorize_topic (ordinary access setting applies), then library.reads_dev_docs checks that project dev-doc scope. No separate unconditional require_verified_caller is invented. Source: app/api/routes/docs_site.py."
-  docs.visit: "public(docs visit beacon) with optional get_optional_user_id attribution; random visitor id is accepted, unusable anonymous id is ignored, and visit rate limiting is not authorization. Source: app/api/routes/docs_visit.py."
+  docs.visit: "public(docs visit beacon) with optional docs sign-in cookie attribution (docs_site.access.reader); random visitor id is accepted, unusable anonymous id is ignored, and visit rate limiting is not authorization. Source: app/api/routes/docs_visit.py."
   feedback.read: "Feedback routes resolve optional caller (with ?topic=, in that room via _in_room, authorize_topic enforce=True, and _reader requires the room to be in a platform project: FeedbackService.require_platform_room), then FeedbackService.list_public / visible_row / visible_ref / may_see filters public, author, originating-room and admin visibility. _is_admin also applies refuse_management_action and agent-binding checks; it is not just an allow-list. Source: app/api/routes/feedback.py,260,336."
   feedback.write: "Feedback routes explicitly require authenticated actor/handle; FeedbackService owns author/moderator rights. _is_admin adds refuse_management_action with IdentityService agent binding. create refuses agent direct filing in the service. Source: app/api/routes/feedback.py and domain/feedback/services.py."
   feedback.claim: "_claimer resolves the caller from the credential (in the named room via _in_room, authorize_topic enforce=True, when ?topic= is given); FeedbackService.claim/release: visible_ref 404s what the caller cannot see, may_claim = feedback admin or works_on_platform (room project or a readable project in settings.docs_dev_repositories), release = holder or admin. Source: app/api/routes/feedback.py and domain/feedback/services.py, claims.py."
@@ -76,12 +78,14 @@ auth_entries:
   site.access: "ActorResolver resolves verified actor then site.services.require_site_access, for publication/read or minting a short-lived site grant. Source: app/api/routes/project_sites.py and site_sessions.py; app/domain/site/services.py."
   preview.access: "preview_sessions resolves authenticated actor then api/preview_host.require_preview_access, before minting resource-bound preview grant. Source: app/api/routes/preview_sessions.py; app/api/preview_host.py."
   workspace.access: "Decorator Depends(workspace.require_project_access): verify_scoped_token for project or auth.caller.may_access_project, then actual requested room/task containment + authorize_topic, with archive/task-ended PUT guards. Source: app/api/routes/workspace.py."
-  document.reader: "api/doc_access.reach: a room's document resolves the actor in its room then authorize_topic (the topic-access setting applies); a document in no room resolves in its project then authorize_project. Source: app/api/doc_access.py and the cited handler."
+  document.reader: "api/doc_access.reach: a room's document resolves the actor in its room then authorize_topic (the topic-access setting applies); a document in no room resolves in its project then doc_access.authorize_in_project (a member, or 芝士 with its session credential in the project). Source: app/api/doc_access.py and the cited handler."
   document.member: "document_comments._member uses api/doc_access.reach(enforce=True) (room roster for a room's document, project membership for one in no room) and doc_identity.operation_actor; mutations also bind the comment to its document. Source: app/api/routes/document_comments.py; app/api/doc_access.py."
   delegated.self: "ActorResolver.resolve(); the caller must be authenticated with a user id: a person's login, or a delegated credential (sandbox_auth.DelegatedClaims, cxdg_ prefix) that api.auth.DELEGATED_ROUTES admits here and resolves to the person the 芝士 answers for. Lists only that person's own rows. Source: app/api/routes/tasks/participation.py; app/api/auth.py."
   document.human: "document_agent._asker uses api/doc_access.reach(enforce=True) and doc_identity.human_operation_actor (verified human, not agent identity); a box conversation is held in Valkey with its asker and document, and only that person on that document may go on with it, stop it, or put its answer into a thread they started. Source: app/api/routes/document_agent.py; app/domain/agent/document/box.py; app/api/doc_identity.py."
   collab.service: "living_docs._service: the bearer derived from COLLAB_SECRET (living_doc.collab.verify_service); only the collaboration service holds it. Identity in a store comes from the actors it carries, which the service took from backend-signed tickets or from the backend's own replace call. Source: app/api/routes/living_docs.py."
-  living.document: "living_docs resolves through api/doc_access.reach (room roster for a room's document, project membership for one in no room); state-changing/history/receipt/restore branches enforce it and use doc_identity.operation_actor, and writes refuse an archived room or project (doc_access.require_writable). Source: app/api/routes/living_docs.py; app/api/doc_access.py. Endpoint-specific branch is kept in the map below."
+  project.documents: "living_docs project routes resolve in the project then api/doc_access.authorize_in_project: a member (authorize_project), or 芝士 with its session credential naming one of the project's rooms, refused once taken off that room (refuse_unseated_agent). Creating also requires an authenticated actor and refuses an archived project. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
+  document.own: "living_docs._own: api/doc_access.reach(enforce=True), refuses a room's living document (docBelongsToRoom), then doc_access.require_writable. Rename and delete apply only to the project's own documents. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
+  living.document: "living_docs resolves through api/doc_access.reach (room roster for a room's document, project membership, or 芝士's session credential in the project, for one in no room); state-changing/history/receipt/restore branches enforce it and use doc_identity.operation_actor, and writes refuse an archived room or project (doc_access.require_writable). Source: app/api/routes/living_docs.py; app/api/doc_access.py. Endpoint-specific branch is kept in the map below."
   editor.link: "room_files.editor_fetches_file authenticates the signed/expiring document link with documents.editor.read_link; that link is the only credential. Source: app/api/routes/room_files.py; domain/documents/editor.py."
   editor.callback: "room_files.editor_saves_file validates the link via editor.read_link and callback JWT/body via editor.verify_callback before saving. Internal download URL validation is a separate safety check. Source: app/api/routes/room_files.py; domain/documents/editor.py."
   capability.execution: "execution.execute validates scoped cheese claims, then device.owner_reads session_execution / legacy_execution and execution_device_authorized bind project/room/session/device. No ordinary Bearer dependency. Source: app/api/routes/execution.py; domain/device/owner_reads.py."
@@ -108,6 +112,7 @@ auth_entries:
   public.catalogue: "public(catalogue): the cited read handler returns published static/catalogue choices without credential dependencies. This entry is only used for agent types, public resource limits, installer and public metadata reads verified below."
   public.health: "public(health/readiness/metrics/version): no route credential dependency or authorization call. Handler exposes health/build/metrics data as currently implemented. Source: app/api/routes/health.py; app/main.py,842."
   public.legal: "public(legal document text/version): no credential dependency; consent operations use require_auth_user separately. Source: app/api/routes/legal.py onward."
+  public.redirect: "public(redirect only): docs_site.docs_sign_in answers a validated in-site path with a 303 to the platform's /docs-signin page; it reads no credential and grants nothing. Source: app/api/routes/docs_site.py."
   public.uploads: "public(local uploaded asset delivery): no credential check; _safe_path requires contained existing storage path, executable suffixes are served as download/inert content. Fixed local profile registers /uploads/{key:path}. Source: app/api/routes/uploads.py,61."
   public.mcp.metadata: "public(remote MCP OAuth client metadata): publishes only the OAuth client declaration; management and callbacks use separate gates. Source: app/api/routes/remote_mcp.py."
   observed.debug: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /debug/turns returns agent execution lifecycle summaries. Source: app/main.py."
@@ -351,10 +356,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/redoc", auth: "public.framework.docs", owner: "api.documentation"}
   - {protocol: "http", method: "HEAD", path: "/redoc", auth: "public.framework.docs", owner: "api.documentation"}
   # app.api.routes.accept
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/accept-card", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/push-fix", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/ready", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/accept-card/describe", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/accept-card", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/push-fix", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/ready", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/accept-card/describe", auth: "review.task", owner: "review"}
   - {protocol: "http", method: "GET", path: "/accept-cards/{card_id}/deliverable", auth: "review.download", owner: "review.delivery"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/accept-card", auth: "review.task", owner: "review"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/pr-checks", auth: "review.task", owner: "review"}
@@ -526,9 +531,11 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/users/me/understanding/{entry_id}", auth: "dashboard.person", owner: "memory"}
   # app.api.routes.doc_agent
   # app.api.routes.docs_site
-  - {protocol: "http", method: "POST", path: "/docs/dev-access", auth: "platform.admin", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/grant", auth: "user.session", owner: "docs_site"}
+  - {protocol: "http", method: "GET", path: "/docs/signin", auth: "public.redirect", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/session", auth: "docs.grant", owner: "docs_site"}
   - {protocol: "http", method: "GET", path: "/docs/dev-access/check", auth: "docs.dev.cookie", owner: "docs_site"}
-  - {protocol: "http", method: "POST", path: "/docs/ask", auth: "user.session", owner: "docs_site"}
+  - {protocol: "http", method: "POST", path: "/docs/ask", auth: "docs.session", owner: "docs_site"}
   - {protocol: "http", method: "POST", path: "/docs/agent/search", auth: "docs.agent", owner: "docs_site"}
   - {protocol: "http", method: "POST", path: "/docs/agent/read", auth: "docs.agent", owner: "docs_site"}
   # app.api.routes.docs_visit
@@ -664,6 +671,11 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   # app.api.routes.living_docs
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/document", auth: "actor.topic", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/about", auth: "document.reader", owner: "living_doc"}
+  - {protocol: "http", method: "PATCH", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
+  - {protocol: "http", method: "DELETE", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/ticket", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/documents/{document_id}", auth: "living.document", owner: "living_doc"}
@@ -671,6 +683,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/history", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/operations/{operation_id}", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/restore", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/compare", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   # app.api.routes.llm_proxy
@@ -729,6 +742,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/preview-session", auth: "preview.access", owner: "preview"}
   # app.api.routes.project_context
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/context/search", auth: "context.rooms", owner: "project.context"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/documents/search", auth: "context.rooms", owner: "project.context"}
   # app.api.routes.project_environment
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/environment", auth: "environment.user", owner: "project.environment"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/environment", auth: "environment.user", owner: "project.environment"}
@@ -1036,8 +1050,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/split", auth: "actor.topic", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/check-result", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/check-result", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/lock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unlock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/clone-from", auth: "actor.topic", owner: "topic"}
@@ -1094,10 +1107,15 @@ routes:
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/upgrade", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_tasks
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks/{task_id}", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/messages", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/title", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/start", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/accept", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_title
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title/undo", auth: "actor.topic.verified", owner: "topic"}

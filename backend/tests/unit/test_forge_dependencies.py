@@ -338,31 +338,22 @@ async def assign_parent(factory, task_id):
                 role=TopicRole.member,
             )
         )
-        task.execution_agent_instance_id = agent.id
-        task.execution_parent_session_id = "native-parent"
-        task.execution_turn_id = uuid.uuid4()
-        task.subagent_id = "child-worker"
+        task.agent_handle = agent.handle
         await session.commit()
 
 
 @pytest.mark.anyio
-async def test_dependency_notice_waits_for_parent_and_recovers_only_unsent_claim(
+async def test_dependency_notice_reaches_the_task_and_recovers_only_unsent_claim(
     db_factory, monkeypatch
 ):
     from app.domain.delivery.models import Delivery
 
     parent, child = await seed(db_factory, delivered=False)
+    await assign_parent(db_factory, child.id)
     await retarget_completed_dependencies(db_factory)
     chat = SimpleNamespace(session_factory=db_factory)
     runner = Mock()
     monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
-    await pr_poll.deliver_dependency_notices(chat)
-    runner.submit.assert_not_called()
-    await assign_parent(db_factory, child.id)
-    async with db_factory() as session:
-        row = await session.scalar(select(Delivery))
-        row.retry_at = None
-        await session.commit()
     await pr_poll.deliver_dependency_notices(chat)
     assert runner.submit.call_count == 1
     first_attempt = runner.submit.call_args.kwargs["turn_id"]
@@ -377,7 +368,8 @@ async def test_dependency_notice_waits_for_parent_and_recovers_only_unsent_claim
     )
     assert runner.submit.call_count == 2
     assert runner.submit.call_args.kwargs["turn_id"] != first_attempt
-    assert "native child=child-worker" in runner.submit.call_args.kwargs["content"]
+    # It is the task's own conversation that is asked, not the room's.
+    assert runner.submit.call_args.args[1] == child.id
 
 
 async def _registered_input(
@@ -413,7 +405,7 @@ def _other_input(registered: InputIdentity) -> InputIdentity:
     """A well-formed identity nobody registered — not this input, not any input."""
     return InputIdentity(
         registered.project_id,
-        registered.topic_id,
+        registered.conversation_id,
         registered.recipient_handle,
         registered.harness,
         registered.native_session_id,
@@ -443,17 +435,7 @@ async def test_dependency_delivery_needs_the_matching_native_receipt(
     monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
     await pr_poll.deliver_dependency_notices(chat)
     attempt = runner.submit.call_args.kwargs
-    async with db_factory() as session:
-        task = await session.get(Task, child.id)
-        # Same native parent and child, observed again on a later turn.
-        task.execution_turn_id = uuid.uuid4()
-        await session.commit()
-    await begin_send(
-        db_factory,
-        attempt["delivery_id"],
-        attempt["turn_id"],
-        parent_session_id="native-parent",
-    )
+    await begin_send(db_factory, attempt["delivery_id"], attempt["turn_id"])
     # A dependency notice is an input like any other: it is registered against
     # this exact delivery attempt before any receipt may settle it. The
     # in-memory ``_pending_receipts`` stand-in for that registration is gone, so
@@ -461,7 +443,7 @@ async def test_dependency_delivery_needs_the_matching_native_receipt(
     identity = await _registered_input(
         db_factory,
         project_id=child.project_id,
-        topic_id=child.room_id,
+        topic_id=child.id,
         work_id=attempt["turn_id"],
         delivery_id=attempt["delivery_id"],
     )

@@ -1,6 +1,7 @@
 // Server-side templates: every page of the site is rendered here at build time,
 // so each URL is a complete HTML document. src/app.js only adds behaviour.
 import { ic, TAG } from './content.js'
+import { BASE, SITE, PLATFORM } from './where.mjs'
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 
@@ -9,7 +10,7 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&am
 // cannot quietly ship an address the site does not serve.
 export function docHref(href) {
   const m = /^\/((?:dev\/)?[\w-]+)(?:\.md)?(?:#([\w-]+))?$/.exec(String(href))
-  return m ? `/docs/${m[1]}${m[2] ? `#${m[2]}` : ''}` : String(href)
+  return m ? `${BASE}/${m[1]}${m[2] ? `#${m[2]}` : ''}` : String(href)
 }
 export const REPO = 'https://github.com/SageSeekerSociety/cheese'
 
@@ -33,7 +34,7 @@ export function shell(ctx, { title, description, section, bodyClass = '', main, 
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description || site.description)}">
 <link rel="icon" href="${assets.logo}">
-<link rel="alternate" type="application/rss+xml" title="知是更新日志" href="/docs/changelog.xml">
+<link rel="alternate" type="application/rss+xml" title="知是更新日志" href="${BASE}/changelog.xml">
 <link rel="stylesheet" href="${assets.css}">
 <script>document.documentElement.classList.add('js');${THEME_BOOT}</script>
 </head>
@@ -41,13 +42,13 @@ export function shell(ctx, { title, description, section, bodyClass = '', main, 
 <a class="skip" href="#main">跳到正文</a>
 <header class="hdr" id="hdr">
   <button class="icon-btn menu-btn" id="menuBtn" aria-label="打开导航">${ic('list')}</button>
-  <a class="brand" href="/docs/" aria-label="知是文档首页">${ctx.lockup}<span class="brand-sub">文档</span></a>
+  <a class="brand" href="${BASE}/" aria-label="知是文档首页">${ctx.lockup}<span class="brand-sub">文档</span></a>
   <nav class="tabs" aria-label="文档分区">${sectionLinks(site, section, 'tab')}</nav>
   <div class="hdr-actions">
     <button class="search-btn" data-open-search>${ic('search')}<span>搜索</span><kbd>⌘K</kbd></button>
     <button class="ghost-btn" data-open-ask>${ic('chat')}<span>问芝士</span></button>
     <button class="icon-btn" id="themeBtn" aria-label="切换深浅色"><span class="theme-ico">${ic('sun').replace('class="ico"', 'class="ico sun"')}${ic('moon').replace('class="ico"', 'class="ico moon"')}</span></button>
-    <a class="btn btn-primary hide-sm" href="/">进入知是</a>
+    <a class="btn btn-primary hide-sm" href="${PLATFORM}/">进入知是</a>
   </div>
 </header>
 <div id="main">${main}</div>
@@ -83,10 +84,10 @@ ${footer(ctx)}
 export function footer(ctx) {
   const { site } = ctx
   return `<footer class="foot"><div class="foot-row">
- <div><a class="brand" href="/docs/" aria-label="知是文档首页">${ctx.lockup}</a><div class="fine">和 AI 队友一起做项目的地方。<br>© 2026 SageSeekerSociety</div></div>
- <div><h6>文档</h6>${site.userSections.map((s) => `<a href="${s.href}">${esc(s.label)}</a>`).join('')}<a href="/docs/dev/overview">开发文档</a><a href="/docs/changelog">更新日志</a></div>
- <div><h6>产品</h6><a href="/">进入知是</a><a href="/docs/download">桌面端与连接器</a><a href="/legal/terms">服务条款</a><a href="/legal/privacy">隐私政策</a><a href="/feedback">帮助与反馈</a></div>
- <div><h6>给 AI 与开发者</h6><a href="/docs/llms.txt">llms.txt</a><a href="/docs/manual.zip">下载全部文档（Markdown）</a><a href="/docs/changelog.xml">更新日志 RSS</a><a href="${REPO}" rel="noopener">GitHub</a></div>
+ <div><a class="brand" href="${BASE}/" aria-label="知是文档首页">${ctx.lockup}</a><div class="fine">和 AI 队友一起做项目的地方。<br>© 2026 SageSeekerSociety</div></div>
+ <div><h6>文档</h6>${site.userSections.map((s) => `<a href="${s.href}">${esc(s.label)}</a>`).join('')}<a href="${BASE}/dev/overview">开发文档</a><a href="${BASE}/changelog">更新日志</a></div>
+ <div><h6>产品</h6><a href="${PLATFORM}/">进入知是</a><a href="${BASE}/download">桌面端与连接器</a><a href="${PLATFORM}/legal/terms">服务条款</a><a href="${PLATFORM}/legal/privacy">隐私政策</a><a href="${PLATFORM}/feedback">帮助与反馈</a></div>
+ <div><h6>给 AI 与开发者</h6><a href="${BASE}/llms.txt">llms.txt</a><a href="${BASE}/manual.zip">下载全部文档（Markdown）</a><a href="${BASE}/changelog.xml">更新日志 RSS</a><a href="${REPO}" rel="noopener">GitHub</a></div>
 </div></footer>`
 }
 
@@ -112,7 +113,7 @@ function devMeta(page) {
 
 export function docPage(ctx, page, nav, prev, next) {
   const dev = page.section === 'dev'
-  const base = dev ? '/docs/dev/' : '/docs/'
+  const base = dev ? `${BASE}/dev/` : `${BASE}/`
   const edit = page.src && !page.generated ? `<a class="edit" href="${REPO}/edit/main/${page.src}" rel="noopener">${ic('pen', 'width:14px;height:14px')}在 GitHub 上修改这一页</a>` : ''
   const main = `<div class="layout">${sidebar(ctx, page.section, navGroups(nav, page.slug, base))}<main class="main"><article class="article" id="article">
     ${dev ? `<div class="admin-note">${ic('lock', 'width:14px;height:14px')}<span><b>仅管理员可见</b>这一栏按当前代码撰写，写给改这个仓库的人和 agent。</span></div>` : ''}
@@ -123,7 +124,7 @@ export function docPage(ctx, page, nav, prev, next) {
        <button data-copy-page>${ic('copy')}<span><b>复制本页</b><small>以 Markdown 格式复制，给大模型用</small></span></button>
        <a href="${page.mdUrl}">${ic('md')}<span><b>查看 Markdown 原文</b><small>${esc(page.mdUrl)}</small></span></a>
        <button data-open-ask>${ic('chat')}<span><b>问芝士这一页</b><small>带着这一页的内容提问</small></span></button>
-       <a href="${dev ? '/docs/dev/llms.txt' : '/docs/llms.txt'}">${ic('list')}<span><b>llms.txt</b><small>全部目录，给 AI 读的入口</small></span></a>
+       <a href="${BASE}${dev ? '/dev/llms.txt' : '/llms.txt'}">${ic('list')}<span><b>llms.txt</b><small>全部目录，给 AI 读的入口</small></span></a>
       </div></div></div>
     ${devMeta(page)}
     ${page.lede ? `<p class="lede">${page.lede}</p>` : ''}
@@ -146,7 +147,7 @@ export function changelogPage(ctx, releases) {
   const counts = { all: 0, feat: 0, imp: 0, fix: 0 }
   releases.forEach((r) => Object.entries(r.hl).forEach(([t, it]) => { counts[t] += it.length; counts.all += it.length }))
   const main = `<div class="layout no-toc">${sidebar(ctx, 'changelog', `<div class="side-group"><h4>版本</h4>${releases.map((r, i) => `<a href="#${r.id}"${i ? '' : ' class="on"'}>${esc(r.ver)}<span class="side-meta">${esc(r.date.slice(0, 10))}</span></a>`).join('')}</div>
-   <div class="side-group"><h4>订阅</h4><a href="/docs/changelog.xml">${ic('rss', 'width:14px;height:14px')}RSS</a><a href="${REPO}/releases" rel="noopener">${ic('git', 'width:14px;height:14px')}GitHub Releases</a></div>`)}
+   <div class="side-group"><h4>订阅</h4><a href="${BASE}/changelog.xml">${ic('rss', 'width:14px;height:14px')}RSS</a><a href="${REPO}/releases" rel="noopener">${ic('git', 'width:14px;height:14px')}GitHub Releases</a></div>`)}
   <main class="main"><article class="article" id="article">
    <div class="crumb">更新日志</div><div class="page-head"><h1>知是每一版变了什么</h1></div>
    <p class="lede">按版本列出你用得到的变化，写成人话；每一条都链到对应的 PR。完整的改动清单在每个版本末尾展开。</p>
@@ -164,7 +165,7 @@ export function changelogFeed(releases) {
   const rfc = (d) => new Date(`${d.slice(0, 10)}T00:00:00+08:00`).toUTCString()
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
-<title>知是更新日志</title><link>https://okcheese.com/docs/changelog</link><description>知是 · Cheese 每一版变了什么</description><language>zh-CN</language>
+<title>知是更新日志</title><link>${SITE}${BASE}/changelog</link><description>知是 · Cheese 每一版变了什么</description><language>zh-CN</language>
 ${items.map((x) => `<item><title>${esc(x.h)}</title><link>${REPO}/pull/${x.pr}</link><guid isPermaLink="false">cheese-pr-${x.pr}</guid><category>${esc(x.ver)}</category><pubDate>${rfc(x.date)}</pubDate></item>`).join('\n')}
 </channel></rss>
 `
@@ -187,7 +188,7 @@ export function downloadPage(ctx, desktop) {
     <p>第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」；Windows 点「更多信息 → 仍要运行」。登录后在「我的设备 → 添加设备」点「接入这台电脑」，芝士就能在这台电脑上干活。</p>
     <p>桌面端每次启动都会检查新版本，下载完成后自动安装并重启。当前版本见 <a class="link" href="${REPO}/releases/tag/desktop-latest" rel="noopener">GitHub 发布页</a>。</p>
     <h2 id="connector">连接器<a class="anchor" href="#connector">#</a></h2>
-    <p>连接器 <code>cheesehost</code> 是一个命令行程序：装在服务器或不装桌面端的电脑上，批准后芝士就能在这台机器上干活。详细步骤见<a class="link" href="/docs/devices#devices">设备与运行环境</a>。</p>
+    <p>连接器 <code>cheesehost</code> 是一个命令行程序：装在服务器或不装桌面端的电脑上，批准后芝士就能在这台机器上干活。详细步骤见<a class="link" href="${BASE}/devices#devices">设备与运行环境</a>。</p>
     <div class="code"><div class="code-bar"><span class="code-lang">Mac / Linux</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><span class="c"># 安装连接器 cheesehost</span>
 curl -fsSL https://okcheese.com/connector/install.sh | sh
 <span class="c"># 登录并保持连接：打开它给出的链接，点「批准并绑定到我」</span>
@@ -217,7 +218,7 @@ export function redirectPage(to) {
 }
 
 export function notFoundPage(ctx) {
-  const main = `<div class="gate"><div class="gate-card"><h1>没有找到这一页</h1><p>它可能已经改名或移动了。试试搜索，或者问芝士。</p><div class="gate-actions"><button class="btn btn-primary" data-open-search>搜索文档</button><a class="btn btn-secondary" href="/docs/">回到文档首页</a></div></div></div>`
+  const main = `<div class="gate"><div class="gate-card"><h1>没有找到这一页</h1><p>它可能已经改名或移动了。试试搜索，或者问芝士。</p><div class="gate-actions"><button class="btn btn-primary" data-open-search>搜索文档</button><a class="btn btn-secondary" href="${BASE}/">回到文档首页</a></div></div></div>`
   return shell(ctx, { title: '没有找到这一页 · 知是 · Cheese 文档', section: '', main, pageData: { kind: '404' } })
 }
 

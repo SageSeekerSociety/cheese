@@ -125,8 +125,12 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: Keys that only replay stored room/notification descriptors; new notices must
 #: not say them. Ordinary comments no longer schedule agent turns, and agents no
 #: longer record decisions or add milestones (the 「记录了决策」 and 「添加了里程碑」
-#: lines stay on old rooms). A comment naming the agent is answered in its
-#: thread, not by a turn of the room (「在文档评论里提到了」 stays on old rooms).
+#: lines stay on old rooms). A task is created by a person and worked in its
+#: own conversation rather than dispatched to a room's subagent (「派出一条活」,
+#: the room's 「已转为任务」 line and the subagent's start and empty stop stay on
+#: old rooms). A comment naming the agent is answered in its thread, not by a
+#: turn of the room (「在文档评论里提到了」 stays on old rooms). A private chat's
+#: message no longer becomes a channel (「一条消息已转为频道」 stays on old ones).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
         "docCommented",
@@ -134,6 +138,14 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "docCommentMentioned",
         "actionDecision",
         "actionMilestone",
+        "taskDispatched",
+        "blockUpgradedToTask",
+        "blockUpgradedTaskId",
+        "blockUpgradedToRoom",
+        "blockUpgradedRoomId",
+        "labelUpgradedTo",
+        "subagentStart",
+        "subagentStopEmpty",
     }
 )
 

@@ -1,7 +1,7 @@
 /** 已归档话题里的活不上三列。
  *
  * 活不归档，房间归档：房间收了尾，里面没走完的活（已退回、待回答）后端照样按自己的
- * 状态落在施工中 / 交付中 / 待处理里，一挂就是几周。三列答的是「接下来谁要动什么」，
+ * 状态落在进行中 / 检查中 / 待处理里，一挂就是几周。三列答的是「接下来谁要动什么」，
  * 它们不该在上面，计数里也不该还算着。已完成照旧留着——交付过就是交付过。
  */
 import type { Component } from 'vue'
@@ -135,7 +135,7 @@ function countOf(container: Element, column: string): string {
 }
 
 describe('已归档话题里的活', () => {
-  it('不出现在施工中 / 交付中 / 待处理，列头计数也不算它们', async () => {
+  it('不出现在进行中 / 检查中 / 待处理，列头计数也不算它们', async () => {
     const { container } = mount()
     await waitFor(() => expect(titlesInColumn(container, 'needs_you')).toEqual(['活着的待处理']))
     expect(titlesInColumn(container, 'building')).toEqual([])

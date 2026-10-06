@@ -100,6 +100,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
+from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -129,15 +130,27 @@ async def send_chat_message(
 
     `request_id` makes a retry safe: the same id returns the message already
     stored instead of posting it twice.
+
+    In a task only the people working it speak — its owner and the
+    collaborators the owner brought in — and its own session, publishing in
+    its turn. What anyone else has to say about a task they say in the room.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Sign in to send a message")
-    members = TopicMemberService(db)
-    if await members.holds_an_agent_seat(place.room, actor.handle):
+    task = place.task
+    if task is not None:
+        if actor.via == "cheese":
+            if resolver.credential_conversation() != task.id:
+                raise ForbiddenError(say("taskOwnerOnly"))
+            return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
+        if not TaskService.takes_part(task, actor.handle):
+            raise ForbiddenError(say("taskParticipantsOnly"))
+        TaskService.require_open(task)
+    elif await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
-    if actor.via == "cheese":
+    if task is None and actor.via == "cheese":
         # An agent credential whose seat in this room was revoked. The seat is
         # the grant, so it may not go on writing here under a person's rules.
         raise ForbiddenError("An agent must hold a seat in this room to write here")
@@ -151,7 +164,7 @@ async def send_chat_message(
     # The turn a person's message starts is named after the block it anchors.
     anchor_id = await get_broker().receive_message(
         chat,
-        place.room_id,
+        place.conversation_id,
         author=actor.handle,
         content=content,
         reply_to=str(body.reply_to) if body.reply_to else None,
@@ -177,20 +190,17 @@ async def _publish_as_agent(
         raise ValidationError("content must not be blank")
     if body.reply_to is not None:
         parent = await BlockRepository(db).get(body.reply_to)
-        if (
-            parent is None
-            or parent.topic_id != place.room_id
-            or parent.task_id is not None
-        ):
+        if parent is None or parent.conversation_id != place.conversation_id:
             raise ValidationError("reply_to must belong to this conversation")
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     # The input request can finish while its terminal session is still working.
     runner = get_work_runner()
-    work = runner.live_work_for_topic(place.room_id)
+    work = runner.live_work_for_topic(place.conversation_id)
     turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
     payload = await chat._persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
+        task_id=place.task_id,
         text=content,
         turn_id=turn_id,
         reply_to=body.reply_to,
@@ -204,11 +214,12 @@ async def _publish_as_agent(
         else None,
     )
     await get_broker().publish(
-        str(place.room_id), {"type": "assistant_block", "block": payload}
+        str(place.conversation_id), {"type": "assistant_block", "block": payload}
     )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
-    if payload is not None:
+    # A task's session names nobody into its task: only its owner speaks there.
+    if payload is not None and place.task is None:
         await _summon_the_named(chat, runner, place, payload, author)
     return payload
 

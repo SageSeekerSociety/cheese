@@ -91,7 +91,6 @@ def test_two_tasks_edit_the_same_path_without_sharing_commits(client):
     head_b = machine_commits(project, second.id, {"result.txt": "second\n"})
     assert first.branch_name != second.branch_name
     assert head_a != head_b
-    assert first.subagent_id is None and second.subagent_id is None
 
     async def check_files():
         async with client.test_factory() as session:

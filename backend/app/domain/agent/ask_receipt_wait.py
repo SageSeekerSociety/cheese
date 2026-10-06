@@ -31,11 +31,11 @@ def nudge_ask_receipts(chat, identity):
         except Exception:
             logging.getLogger(__name__).exception(
                 "Ask receipt wake failed topic=%s work=%s",
-                identity.topic_id,
+                identity.conversation_id,
                 identity.work_id,
             )
 
-    task = asyncio.create_task(scan(), name=f"ask-receipt:{identity.topic_id}")
+    task = asyncio.create_task(scan(), name=f"ask-receipt:{identity.conversation_id}")
     runner._tasks.add(task)
     task.add_done_callback(runner._tasks.discard)
 
@@ -53,7 +53,7 @@ async def wake_ask_receipts(chat, identity, *, runner):
             await session.scalars(
                 select(Delivery)
                 .where(
-                    Delivery.topic_id == identity.topic_id,
+                    Delivery.conversation_id == identity.conversation_id,
                     Delivery.recipient_handle == identity.recipient_handle,
                     Delivery.state == "pending",
                     Delivery.sent_at.is_(None),
@@ -79,7 +79,7 @@ async def wake_ask_receipts(chat, identity, *, runner):
                 select(NativeInput)
                 .where(
                     NativeInput.project_id == identity.project_id,
-                    NativeInput.topic_id == identity.topic_id,
+                    NativeInput.conversation_id == identity.conversation_id,
                     NativeInput.recipient_handle == identity.recipient_handle,
                 )
                 .execution_options(populate_existing=True)
@@ -95,7 +95,7 @@ async def wake_ask_receipts(chat, identity, *, runner):
                 select(Block)
                 .where(
                     Block.project_id == identity.project_id,
-                    Block.topic_id == identity.topic_id,
+                    Block.conversation_id == identity.conversation_id,
                     or_(
                         Block.id.in_(held_ids),
                         Block.meta["delivery_event_id"]
@@ -116,7 +116,7 @@ async def wake_ask_receipts(chat, identity, *, runner):
             await session.scalars(
                 select(Delivery)
                 .where(
-                    Delivery.topic_id == identity.topic_id,
+                    Delivery.conversation_id == identity.conversation_id,
                     Delivery.recipient_handle == identity.recipient_handle,
                     Delivery.event_id.in_(events),
                 )

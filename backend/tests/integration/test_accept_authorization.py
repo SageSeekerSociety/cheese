@@ -150,7 +150,7 @@ def test_revoke_without_auth_401(client):
     assert r.status_code == 401
     assert (
         client.get(
-            f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}",
+            f"/topics/{delivery_task_id(client, tid)}/task",
             headers=delivery_headers(client, tid),
         ).json()["data"]["accepted_by"]
         == "alice"
@@ -180,7 +180,7 @@ def test_revoke_ignores_spoofed_body_identity(client):
     assert r.status_code == 422
     assert (
         client.get(
-            f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}",
+            f"/topics/{delivery_task_id(client, tid)}/task",
             headers=delivery_headers(client, tid),
         ).json()["data"]["accepted_by"]
         == "alice"
@@ -289,7 +289,7 @@ def test_reassign_to_self_then_accept_is_refused_for_a_non_member(client):
     assert cards[0]["reviewer_handle"] == "alice"
     assert cards[0]["decided_by"] is None
     task = client.get(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}",
+        f"/topics/{delivery_task_id(client, tid)}/task",
         headers=delivery_headers(client, tid),
     ).json()["data"]
     assert task["accepted_by"] is None
@@ -338,7 +338,7 @@ def test_every_card_decision_route_refuses_a_non_member(client, route, body):
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403, r.text
-    assert "你不是这个话题的成员" in r.json()["message"]
+    assert "你不是这个频道的成员" in r.json()["message"]
 
     card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["status"] == "pending"

@@ -63,12 +63,12 @@
   },
   "workspaceErrors": {
     "loadProject": "Couldn’t load the project",
-    "loadTopics": "Couldn’t load topics",
+    "loadTopics": "Couldn’t load channels",
     "rename": "Couldn’t rename",
     "undo": "Couldn’t undo",
     "archive": "Couldn’t archive",
     "unarchive": "Couldn’t unarchive",
-    "createTopic": "Couldn’t create the topic",
-    "convertToTopic": "Couldn’t turn it into a topic"
+    "createTopic": "Couldn’t create the channel",
+    "convertMessage": "Couldn’t convert this message"
   }
 }

@@ -12,7 +12,7 @@ import { setLocale } from '@/i18n'
 function event(id: string, seconds: number, content: string, state?: string): Block {
   return {
     id,
-    topic_id: 'room',
+    conversation_id: 'room',
     kind: 'event',
     author: 'system',
     author_type: 'platform',

@@ -260,7 +260,7 @@ async function confirmDeactivate() {
                   t('work.projectSettings.agents.inactive')
                 }}</v-chip>
               </div>
-              <div class="t-meta c-muted agent-head__name">@{{ a.handle }} · {{ typeLabel(types, a.type_name) }}</div>
+              <div class="t-meta c-muted agent-head__name">{{ a.handle }} · {{ typeLabel(types, a.type_name) }}</div>
             </div>
           </div>
           <div class="agent-head__actions">

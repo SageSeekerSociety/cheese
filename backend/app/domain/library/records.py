@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import of_rooms, room_of
 from app.domain.library import service
 from app.domain.library.models import LibraryFileRecord
 
@@ -157,6 +158,10 @@ async def describe(
         .order_by(Block.created_at)
     ):
         first_sent.setdefault(block.content, block)
+    sent_in = {
+        ref: await room_of(session, block.conversation_id)
+        for ref, block in first_sent.items()
+    }
     counts: dict[str, int] = {}
     if rooms:
         for content, n in await session.execute(
@@ -165,7 +170,7 @@ async def describe(
                 Block.project_id == project_id,
                 Block.kind == BlockKind.attachment,
                 Block.content.in_(refs),
-                Block.topic_id.in_(list(rooms)),
+                of_rooms(Block.conversation_id, rooms),
             )
             .group_by(Block.content)
         ):
@@ -175,7 +180,7 @@ async def describe(
         ref = service.library_ref(f["path"])
         row = recorded.get(f["path"])
         sent = first_sent.get(ref)
-        room_id = row.room_id if row else (sent.topic_id if sent else None)
+        room_id = row.room_id if row else sent_in.get(ref)
         added_at = row.created_at if row else (sent.created_at if sent else None)
         return {
             **f,

@@ -112,7 +112,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
                     raise RuntimeError("Historical settlement consumers are not bound")
                 completion = WorkCompletion(
                     self.session.project_id,
-                    self.session.topic_id,
+                    self.session.conversation_id,
                     self.recipient_handle,
                     self.session.harness,
                     self.session_id,
@@ -166,7 +166,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         return InputReceipt(
             InputIdentity(
                 self.session.project_id,
-                self.session.topic_id,
+                self.session.conversation_id,
                 self.recipient_handle,
                 self.session.harness,
                 stamp["receipt_session_id"],
@@ -210,7 +210,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             logger.warning(
                 "legacy completion left unsettled, retained evidence incomplete "
                 "topic=%s agent=%s work=%s",
-                self.session.topic_id,
+                self.session.conversation_id,
                 self.recipient_handle,
                 stamp["work_id"],
             )
@@ -226,7 +226,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             await self.receipts(receipt)
         completion = WorkCompletion(
             self.session.project_id,
-            self.session.topic_id,
+            self.session.conversation_id,
             self.recipient_handle,
             self.session.harness,
             self.session_id,
@@ -252,7 +252,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             raise ValueError("Native completion has a different or unfinished identity")
         return WorkCompletion(
             self.session.project_id,
-            self.session.topic_id,
+            self.session.conversation_id,
             self.recipient_handle,
             self.session.harness,
             stamp["completion_session_id"],
@@ -287,7 +287,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             raise ValueError(f"Native termination has an unknown reason: {reason!r}")
         return WorkTermination(
             self.session.project_id,
-            self.session.topic_id,
+            self.session.conversation_id,
             self.recipient_handle,
             self.session.harness,
             stamp["termination_session_id"],

@@ -65,7 +65,7 @@ function event(roomId: string, content: string, meta: Record<string, unknown> | 
   blockSeq += 1
   return {
     id: `ev-${blockSeq}`,
-    topic_id: roomId,
+    conversation_id: roomId,
     kind: 'event',
     author_type: 'platform',
     author: 'system',
@@ -81,7 +81,7 @@ async function flush() {
 
 function mountRoom(blocks: Block[]) {
   const id = freshRoom()
-  listBlocks.mockResolvedValue({ data: blocks.map((b) => ({ ...b, topic_id: id })), has_more: false })
+  listBlocks.mockResolvedValue({ data: blocks.map((b) => ({ ...b, conversation_id: id })), has_more: false })
   const vuetify = createVuetify({ components, directives })
   const utils = render(ChatPanel, {
     props: { topic: room(id), topicList: [room(id)] },
@@ -204,6 +204,68 @@ describe('agent status messages', () => {
     expect(visibleText(frame)).toContain('完整的处理说明')
   })
 
+  it("opens the library document a line is about, not the room's, with the changes to mark", async () => {
+    listTopicMembers.mockResolvedValue({ data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }] })
+    const made = {
+      ...event('', '测试助手 新建了文档《竞品定价对比》', {
+        action: 'doc',
+        document: { id: 'lib-doc', title: '竞品定价对比' },
+        doc_created: true,
+        doc_edits: [],
+      }),
+      author: 'agent-test',
+    }
+    const changed = {
+      ...event('', '测试助手 改了文档《竞品定价对比》', {
+        action: 'doc',
+        document: { id: 'lib-doc', title: '竞品定价对比' },
+        doc_created: false,
+        doc_edits: [{ old: '年付', new: '年付折扣' }],
+      }),
+      author: 'agent-test',
+    }
+    const { container, emitted } = mountRoom([made, changed])
+    await flush()
+    const cards = Array.from(container.querySelectorAll('button')).filter((b) =>
+      b.textContent?.includes('竞品定价对比')
+    )
+    expect(cards).toHaveLength(2)
+    cards[0].click()
+    cards[1].click()
+    expect(emitted()['open-resource']).toEqual([
+      ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
+      [
+        'doc',
+        undefined,
+        { requester: '', edits: [{ old: '年付', new: '年付折扣' }] },
+        { id: 'lib-doc', title: '竞品定价对比' },
+      ],
+    ])
+  })
+
+  it('says a rewritten library document was updated, and how many changes were only suggested', async () => {
+    listTopicMembers.mockResolvedValue({ data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }] })
+    const card = (meta: Record<string, unknown>) => ({
+      ...event('', '测试助手 改了文档《方案》', {
+        action: 'doc',
+        document: { id: 'lib-doc', title: '方案' },
+        doc_created: false,
+        ...meta,
+      }),
+      author: 'agent-test',
+    })
+    const { container } = mountRoom([
+      card({ doc_edits: [] }),
+      { ...event('', '编辑者 说了一句', null), kind: 'message' as const, author: 'someone' },
+      card({ doc_edits: [{ old: 'a', new: 'b' }], doc_suggested: true, doc_suggestions: ['s1'] }),
+    ])
+    await flush()
+    const cards = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.includes('方案'))
+    expect(cards[0].textContent).toContain('已更新')
+    expect(cards[0].textContent).not.toContain('改了')
+    expect(cards[1].textContent).toContain('提了 1 处建议')
+  })
+
   it('keeps a human document edit separate from an agent edit and preserves the document action', async () => {
     listTopicMembers.mockResolvedValue({
       data: [
@@ -224,7 +286,7 @@ describe('agent status messages', () => {
     expect(cards).toHaveLength(2)
     expect(cards[1].closest('.agent-status')).toBeNull()
     ;(cards[0].querySelector('button') as HTMLButtonElement).click()
-    expect(emitted()['open-resource']).toEqual([['doc', undefined, undefined]])
+    expect(emitted()['open-resource']).toEqual([['doc', undefined, undefined, undefined]])
   })
 
   // 同一位队友连着的几件事和它连着说的几句话一样：头像和名字只出现一次。
@@ -455,7 +517,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
     const id = 'r'
     const said: Block = {
       id: 'msg-1',
-      topic_id: id,
+      conversation_id: id,
       kind: 'message',
       author_type: 'participant',
       author: '张衡',

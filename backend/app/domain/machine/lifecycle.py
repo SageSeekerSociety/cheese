@@ -10,7 +10,8 @@ reads (``running_commands``) — keeps an idle sandbox up too, but only until
 ``cloud_sandbox_background_cap_s`` after that activity. A process the agent
 detached itself (``nohup … &``, a dev server) is not work in progress and keeps
 nothing up. A home its session left is idle by definition and is measured by
-its own activity alone.
+its own activity alone. A sandbox whose project has run out of credits is
+stopped as soon as its room runs no turn (``metering``), idle or not.
 
 **Asleep**, a sandbox's executor and everything still running in its home are
 stopped (``sandbox_home.sleep``). The home stays on the host's disk and holds
@@ -52,7 +53,12 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.machine import sandbox_home
 from app.domain.machine.models import CloudHost, CloudHostHome
-from app.domain.machine.progress import publish_line, tell_archive_lost, tell_asleep
+from app.domain.machine.progress import (
+    publish_line,
+    tell_archive_lost,
+    tell_asleep,
+    tell_unpaid,
+)
 from app.domain.machine.repositories import CloudHostRepository
 
 logger = logging.getLogger("cheese.machine.lifecycle")
@@ -149,7 +155,19 @@ class SandboxLifecycle:
         return self._storage or private_storage()
 
     async def sweep(self) -> dict[str, int]:
+        from app.domain.machine import metering
+
         asleep = await self.stop_idle()
+        for home in await metering.unpaid_sandboxes(self._session):
+            if self._hub.is_online(home.device_id) and await self._stop(
+                home.id,
+                home.topic_id
+                if home.session_id is not None and home.left_at is None
+                else None,
+                home.device_id,
+                None,
+            ):
+                asleep += 1
         archived = await self.archive_due() if archives_configured() else 0
         return {"asleep": asleep, "archived": archived}
 
@@ -160,6 +178,7 @@ class SandboxLifecycle:
         now = datetime.now(UTC)
         idle_for = timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
         from app.domain.agent.models import AgentTurn
+        from app.domain.conversation.services import room_column
 
         # A turn running in the room, or one that ended within the idle time,
         # keeps every sandbox of the room awake; a home its session left is
@@ -168,7 +187,7 @@ class SandboxLifecycle:
         room_active = (
             select(AgentTurn.id)
             .where(
-                AgentTurn.topic_id == CloudHostHome.topic_id,
+                room_column(AgentTurn.conversation_id) == CloudHostHome.topic_id,
                 or_(
                     AgentTurn.stopped_at.is_(None),
                     AgentTurn.stopped_at > now - idle_for,
@@ -234,6 +253,7 @@ class SandboxLifecycle:
         """Since when the session has been idle for at least ``idle_for``, or
         None while it is not."""
         from app.domain.agent.models import AgentTurn
+        from app.domain.conversation.services import of_room
 
         if home.left_at is not None or home.session_id is None:
             return home.active_at
@@ -242,7 +262,7 @@ class SandboxLifecycle:
                 select(
                     func.count().filter(AgentTurn.stopped_at.is_(None)),
                     func.max(AgentTurn.stopped_at),
-                ).where(AgentTurn.topic_id == home.topic_id)
+                ).where(of_room(AgentTurn.conversation_id, home.topic_id))
             )
         ).one()
         await self._session.commit()
@@ -286,8 +306,10 @@ class SandboxLifecycle:
         home_id: uuid.UUID,
         room_id: uuid.UUID | None,
         device_id: str,
-        idle: timedelta,
+        idle: timedelta | None,
     ) -> bool:
+        """Stop one sandbox: idle for ``idle``, or, with ``idle`` None, because
+        its project's credits ran out (``metering.unpaid_sandboxes``)."""
         from app.domain.topic.services import TopicService
 
         if room_id is not None:
@@ -302,8 +324,11 @@ class SandboxLifecycle:
             home is None
             or home.stopped_at is not None
             or (home.busy_until is not None and home.busy_until > now)
-            or now - home.active_at
-            < timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
+            or (
+                idle is not None
+                and now - home.active_at
+                < timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
+            )
         ):
             await self._session.commit()
             return False
@@ -333,14 +358,22 @@ class SandboxLifecycle:
             home.busy_until = None
             home.stopped_at = datetime.now(UTC)
             if home.session_id is not None and home.left_at is None:
-                line = await tell_asleep(
-                    self._session, home, max(1, int(idle.total_seconds() // 60))
+                line = (
+                    await tell_unpaid(self._session, home)
+                    if idle is None
+                    else await tell_asleep(
+                        self._session, home, max(1, int(idle.total_seconds() // 60))
+                    )
                 )
             await self._session.commit()
             await publish_line(topic_id, line)
         else:
             await self._session.commit()
-        logger.info("cloud sandbox %s asleep after %s idle", home_id, idle)
+        logger.info(
+            "cloud sandbox %s asleep %s",
+            home_id,
+            "with its credits spent" if idle is None else f"after {idle} idle",
+        )
         return home is not None
 
     # --- archive -------------------------------------------------------------
@@ -463,6 +496,7 @@ class SandboxLifecycle:
         home.archive_key = key
         home.archive_size = int(written["size"])
         home.archive_md5 = str(written["md5"])
+        home.archive_published = written.get("published") is True
         await self._session.commit()
         await self._drop(device_id, home_id, project, resource)
         await self._release(home_id)
@@ -543,6 +577,7 @@ class SandboxLifecycle:
         if home is not None:
             home.busy_until = None
             home.archive_key = home.archive_size = home.archive_md5 = None
+            home.archive_published = None
             if answer.get("missing"):
                 logger.warning("sandbox archive %s was gone at restore", key)
                 line = await tell_archive_lost(self._session, home)

@@ -64,7 +64,7 @@ def _call(
         meta["detail"] = detail
     return Block(
         project_id=project.id,
-        topic_id=project.root_topic_id,
+        conversation_id=project.root_topic_id,
         kind=kind,
         author_type=AuthorType.platform,
         author="system",

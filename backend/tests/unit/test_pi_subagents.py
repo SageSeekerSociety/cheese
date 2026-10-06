@@ -7,10 +7,8 @@ with the platform extension against a scripted model endpoint and a stand-in for
 the platform's admission, and reads back what the room reads: the runner's log,
 through pi's translator.
 
-The four things a harness must answer before a room may run it
-(``SubagentRequirement``) are each played: a subagent starts on the model it
-was given (or the project's subagent default), everything it does carries the
-thread label its prompt gave, its parent can tell it more while it runs, and its
+Each promise is played: a subagent starts on the model it was given (or the
+project's subagent default), its parent can tell it more while it runs, and its
 parent can stop it and leave its siblings running — and it ends with its parent.
 """
 
@@ -35,18 +33,13 @@ from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
-    AgentSubagentStart,
-    AgentSubagentStop,
     AgentToolResult,
 )
-from app.domain.room_task.thread_label import thread_label
 from tests.pinned_claude import pi_binary
 from tests.support.completions_fixture import Completions
 from tests.support.room_machine import room_machine
 
 PARENT = "parent-model"
-LABEL = thread_label(uuid.UUID("4f1c2a9b-8d7e-4c1f-a0b3-c5d6e7f80912"))
-SIBLING = thread_label(uuid.UUID("00000000-0000-4000-8000-000000000004"))
 
 
 class Admission:
@@ -155,8 +148,14 @@ class Session:
                 raise AssertionError(f"timed out; log: {self.records()!r}")
             await asyncio.sleep(0.1)
 
-    def stops(self) -> list[AgentSubagentStop]:
-        return [e for e in self.events() if isinstance(e, AgentSubagentStop)]
+    def stops(self) -> list[dict]:
+        """How each subagent that ended, ended: its description, status and
+        the words it handed back."""
+        return [
+            {"id": agent.id, "description": agent.description, **agent.ended.result()}
+            for agent in self.runner.children.started.values()
+            if agent.ended.done()
+        ]
 
     def results(self) -> list[AgentResult]:
         return [e for e in self.events() if isinstance(e, AgentResult)]
@@ -222,7 +221,7 @@ async def test_a_subagent_runs_the_model_it_was_given_and_reports_back(tmp_path)
                 "tool": "Task",
                 "arguments": {
                     "description": "查一下分页",
-                    "prompt": f"简报见下。线程标识：{LABEL}\nSAY:查到了",
+                    "prompt": "SAY:查到了",
                     "model": "child-model",
                 },
             }
@@ -244,17 +243,9 @@ async def test_a_subagent_runs_the_model_it_was_given_and_reports_back(tmp_path)
         assert not session.requests("child-default")
 
         events = session.events()
-        (start,) = [e for e in events if isinstance(e, AgentSubagentStart)]
-        (stop,) = [e for e in events if isinstance(e, AgentSubagentStop)]
-        assert start.thread_label == LABEL
-        assert stop.agent_id == start.agent_id
-        assert (stop.text, stop.thread_label) == ("查到了", LABEL)
-        # What it said is on its card, and only there.
-        words = [e for e in events if isinstance(e, AgentMessage)]
-        assert [(e.text, e.thread_label) for e in words] == [
-            ("查到了", LABEL),
-            ("收到", None),
-        ]
+        assert [s["text"] for s in session.stops()] == ["查到了"]
+        words = [e.text for e in events if isinstance(e, AgentMessage)]
+        assert words == ["查到了", "收到"]
         (returned,) = [e for e in events if isinstance(e, AgentToolResult)]
         assert (returned.name, returned.text, returned.description) == (
             "Task",
@@ -290,7 +281,7 @@ async def test_a_subagent_given_no_model_runs_the_project_subagent_default(tmp_p
 
         assert [a["model"] for a in session.admission.asked] == [None]
         assert session.requests("child-default")
-        assert [s.text for s in session.stops()] == ["用的默认"]
+        assert [s["text"] for s in session.stops()] == ["用的默认"]
 
 
 async def test_a_model_the_platform_refuses_starts_nothing(tmp_path):
@@ -313,7 +304,7 @@ async def test_a_model_the_platform_refuses_starts_nothing(tmp_path):
         await session.until(lambda: len(session.results()) == 1)
 
         assert [body["model"] for body in session.model.requests] == [PARENT, PARENT]
-        assert not [e for e in session.events() if isinstance(e, AgentSubagentStart)]
+        assert not session.runner.children.started
         # The model was told why, in the platform's words.
         told = text_of(last(session.requests(PARENT)[-1]))
         assert "不在这个项目的模型目录里" in told
@@ -338,7 +329,7 @@ async def test_a_parent_tells_a_running_subagent_more_and_it_does_that(tmp_path)
                 "tool": "Task",
                 "arguments": {
                     "description": "改分页",
-                    "prompt": f"线程标识：{LABEL}\n先改前端",
+                    "prompt": "先改前端",
                     "run_in_background": True,
                 },
             }
@@ -354,7 +345,7 @@ async def test_a_parent_tells_a_running_subagent_more_and_it_does_that(tmp_path)
         await session.until(lambda: len(session.stops()) == 1, timeout=90)
 
         (stop,) = session.stops()
-        assert (stop.text, stop.thread_label) == ("改成只动后端了", LABEL)
+        assert stop["text"] == "改成只动后端了"
         # It read the new instruction as a message of its own thread.
         child = [r for r in session.records() if r.get("subagent")]
         assert any("先只改后端" in json.dumps(r, ensure_ascii=False) for r in child)
@@ -377,7 +368,7 @@ async def test_stopping_one_subagent_leaves_its_sibling_running(tmp_path):
                 "tool": "Task",
                 "arguments": {
                     "description": "查分页",
-                    "prompt": f"线程标识：{LABEL}\n查分页",
+                    "prompt": "查分页",
                     "run_in_background": True,
                 },
             }
@@ -386,7 +377,7 @@ async def test_stopping_one_subagent_leaves_its_sibling_running(tmp_path):
                 "tool": "Task",
                 "arguments": {
                     "description": "写用例",
-                    "prompt": f"线程标识：{SIBLING}\n写用例",
+                    "prompt": "写用例",
                     "run_in_background": True,
                 },
             }
@@ -399,19 +390,16 @@ async def test_stopping_one_subagent_leaves_its_sibling_running(tmp_path):
         await session.send("派两个")
         await session.until(lambda: len(session.stops()) == 2, timeout=90)
 
-        by_label = {s.thread_label: s for s in session.stops()}
-        stopped = [
-            r for r in session.records() if r.get("type") == "cheese_subagent_stopped"
-        ]
-        status = {r["subagent"]["label"]: r["status"] for r in stopped}
-        assert status == {LABEL: "stopped", SIBLING: "completed"}
-        assert by_label[SIBLING].text == "写完用例"
+        by_work = {s["description"]: s for s in session.stops()}
+        status = {work: s["status"] for work, s in by_work.items()}
+        assert status == {"查分页": "stopped", "写用例": "completed"}
+        assert by_work["写用例"]["text"] == "写完用例"
         # Stopped before it said anything, it hands back nothing — not the
         # abort pi records for the call it cut short.
-        assert by_label[LABEL].text == ""
+        assert by_work["查分页"]["text"] == ""
         # A stopped subagent takes no more instructions.
         with pytest.raises(ValueError, match="已经停了"):
-            await session.runner.children.send(by_label[LABEL].agent_id, "再改一版")
+            await session.runner.children.send(by_work["查分页"]["id"], "再改一版")
 
 
 async def test_subagents_end_with_the_session_that_started_them(tmp_path):
@@ -423,7 +411,7 @@ async def test_subagents_end_with_the_session_that_started_them(tmp_path):
                 "tool": "Task",
                 "arguments": {
                     "description": "慢活",
-                    "prompt": f"线程标识：{LABEL}\n慢慢做",
+                    "prompt": "慢慢做",
                     "run_in_background": True,
                 },
             }
@@ -448,7 +436,7 @@ async def test_interrupting_the_session_stops_its_subagents(tmp_path):
                 "tool": "Task",
                 "arguments": {
                     "description": "慢活",
-                    "prompt": f"线程标识：{LABEL}\n慢慢做",
+                    "prompt": "慢慢做",
                 },
             }
         return {"text": "停了"}
@@ -460,7 +448,7 @@ async def test_interrupting_the_session_stops_its_subagents(tmp_path):
         assert (await session.runner.dispatch("abort", {}))["aborted"] is True
 
         (stop,) = session.stops()
-        assert stop.thread_label == LABEL
+        assert stop["status"] == "stopped"
         (agent,) = session.runner.children.started.values()
         assert agent.status == "stopped"
         assert agent.process is not None and agent.process.returncode is not None

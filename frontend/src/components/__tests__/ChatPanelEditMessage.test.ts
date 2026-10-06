@@ -48,7 +48,7 @@ const topic: Topic = {
 function said(id: string, author: string, content: string): Block {
   return {
     id,
-    topic_id: topic.id,
+    conversation_id: topic.id,
     kind: 'message',
     author_type: 'participant',
     author,

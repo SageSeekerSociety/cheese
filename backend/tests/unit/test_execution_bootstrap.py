@@ -248,6 +248,35 @@ def test_a_new_executor_machine_is_given_the_platform_skills(tmp_path, monkeypat
         assert (home / ".claude/skills/documents/references/word.md").is_file()
 
 
+def test_installing_a_release_over_a_silent_executor_is_refused(tmp_path, monkeypatch):
+    """A state is served by one executor at a time. An install that finds the
+    state held by something that does not answer must say so — not install a
+    release over it, and not read as a start that failed."""
+    import fcntl
+
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    env = {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"}
+    payload = payload_for(project, resource, env, sandbox=False, platform_machine=False)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    state = (
+        tmp_path / ".cheese/home" / str(project) / str(resource) / ".cheese/executor"
+    )
+    state.mkdir(parents=True)
+    (state / "config.json").write_text(json.dumps({"release": "the one before"}))
+    with (state / "service.lock").open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="did not stop"):
+            with bootstrap.prepared(
+                payload, tmp_path, refresh_runtime=True, fetch_toolchain=False
+            ):
+                pytest.fail(
+                    "a release was installed over a state another executor owns"
+                )
+
+
 def test_preparing_again_restores_them_and_an_older_payload_still_prepares(
     tmp_path, monkeypatch
 ):

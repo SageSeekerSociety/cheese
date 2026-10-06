@@ -91,9 +91,18 @@ async def main():
         }:
             storage.create_bucket(Bucket=settings.transcript_s3_bucket)
         for task in request["tasks"]:
+            # Each task is worked by its own session, whose credential is
+            # minted in the task's conversation; the machine's commands still
+            # name the room as theirs.
+            task_env = dict(
+                env,
+                CHEESE_TOKEN=mint_scoped_token(
+                    project_id=project, topic_id=task["id"], agent_handle=actor
+                ),
+            )
             subprocess.run(
                 ["cheese", "worktree", task["id"]],
-                env=env,
+                env=task_env,
                 check=True,
                 stdout=sys.stderr,
             )
@@ -104,14 +113,14 @@ async def main():
             for args in (["add", "src/login.txt"], ["commit", "-m", "Seed task file"]):
                 subprocess.run(
                     ["git", "-C", str(tree), *args],
-                    env=env,
+                    env=task_env,
                     check=True,
                     stdout=sys.stderr,
                 )
             subprocess.run(
                 ["cheese", "sync", "--task", task["id"]],
                 cwd=tree,
-                env=env,
+                env=task_env,
                 check=True,
                 stdout=sys.stderr,
             )
@@ -156,7 +165,7 @@ async def main():
         await socket.send(json.dumps({"t": "hello", "executor": True}))
         async with async_session_factory() as session:
             await AgentSessionService(session).remember_place(
-                topic_id=room_id,
+                conversation_id=room_id,
                 agent_handle=actor,
                 work_lease={
                     "kind": "device",

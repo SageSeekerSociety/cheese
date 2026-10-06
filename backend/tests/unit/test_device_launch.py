@@ -1622,9 +1622,11 @@ def test_nothing_in_the_settings_observes_the_session():
     """The runner reads what the session does from its stdout. A hook left here
     to report it would be a second, racing account of the same turn."""
     hooks = session_settings()["hooks"]
-    assert set(hooks) == {"SessionStart", "UserPromptSubmit"}
-    for entries in hooks.values():
-        (entry,) = entries
+    # SubagentStart's hook hands each new agent the step-title rule
+    # (test_every_agent_reads_the_step_title_rule); it reports nothing.
+    assert set(hooks) == {"SessionStart", "UserPromptSubmit", "SubagentStart"}
+    for event in ("SessionStart", "UserPromptSubmit"):
+        (entry,) = hooks[event]
         assert [hook["command"] for hook in entry["hooks"]] == [
             "cheese sync-agents || true"
         ]

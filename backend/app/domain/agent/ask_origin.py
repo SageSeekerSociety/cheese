@@ -90,7 +90,11 @@ async def ask_origin(chat, project_id, topic_id, author):
         return None
     async with chat.session_factory() as session:
         turn = await AgentTurnRepository(session).get(state.work_id)
-        if turn is None or turn.topic_id != topic_id or turn.stopped_at is not None:
+        if (
+            turn is None
+            or turn.conversation_id != topic_id
+            or turn.stopped_at is not None
+        ):
             refused(
                 "turn row missing or closed",
                 topic_id,
@@ -100,7 +104,6 @@ async def ask_origin(chat, project_id, topic_id, author):
             )
             return None
         asked = turn.author if names_a_person(turn.author) else None
-        task_id = str(turn.task_id) if turn.task_id else None
     # Delivery addresses the authenticated roster seat; native lookup used the
     # project's session handle above.
     return {
@@ -108,5 +111,4 @@ async def ask_origin(chat, project_id, topic_id, author):
         "recipient_handle": author,
         "asked_by": author,
         "asked": asked,
-        "task_id": task_id,
     }

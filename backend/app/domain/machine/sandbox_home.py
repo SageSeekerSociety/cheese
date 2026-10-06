@@ -9,7 +9,10 @@ runs there with nothing of ours importable, like that one.
   ended. The home stays on the disk.
 - ``archive``: write the stopped home to one ``.tar.gz`` and PUT it to the URL
   the platform signed for it. Answers the bytes' size and MD5, which the
-  platform compares with what the bucket stored before it lets the home go.
+  platform compares with what the bucket stored before it lets the home go,
+  and whether everything in the home is on its remote: the room's cleanup
+  deletes an archive only when it was, since an archive is where unpushed
+  work goes once its home leaves the host.
 - ``drop``: delete the home from this host, once its archive is verified.
 - ``restore``: GET the archive, check it is the one that was written, and
   unpack it as the session's home, replacing any older copy left here.
@@ -120,6 +123,7 @@ def archive(cleanup, project, resource, url):
         raise RuntimeError("the session's home is not on this host")
     # A still image: nothing may be writing while it is taken.
     cleanup["check_no_writers"]([home, work])
+    published = _published(cleanup, home, work, resource)
     part = _scratch(cleanup) / f"{resource}.tar.gz"
     interpreters = _interpreters(project)
 
@@ -154,9 +158,27 @@ def archive(cleanup, project, resource, url):
             )
             with urllib.request.urlopen(request, timeout=600) as response:
                 response.read()
-        return {"size": counted.size, "md5": counted.md5.hexdigest()}
+        return {
+            "size": counted.size,
+            "md5": counted.md5.hexdigest(),
+            "published": published,
+        }
     finally:
         part.unlink(missing_ok=True)
+
+
+def _published(cleanup, home, work, resource):
+    """Whether the stopped home holds nothing its remote does not: the check
+    the room's cleanup makes before it deletes a home (``publication`` in
+    ``resource_cleanup.main``), made here because once archived the home is on
+    no machine to be asked. Any refusal, or a check that cannot be made, is
+    an answer of no."""
+    try:
+        if cleanup["session_target"](home, resource) is None:
+            cleanup["check_resource_publication"](home, work)
+    except RuntimeError:
+        return False
+    return True
 
 
 def drop(cleanup, project, resource):

@@ -229,7 +229,7 @@ def _said(text: str) -> str:
 
 
 async def _conversation(session: AsyncSession, room_id: uuid.UUID) -> list[Line]:
-    """The room's own main line, newest ``_MESSAGES`` messages, oldest first.
+    """The room's own conversation, newest ``_MESSAGES`` messages, oldest first.
 
     Only what people and agents said: platform notices, tool activity and
     messages hidden from the room are not what the room is about."""
@@ -237,8 +237,7 @@ async def _conversation(session: AsyncSession, room_id: uuid.UUID) -> list[Line]
         await session.scalars(
             select(Block)
             .where(
-                Block.topic_id == room_id,
-                Block.task_id.is_(None),
+                Block.conversation_id == room_id,
                 Block.kind == BlockKind.message,
                 Block.author_type == AuthorType.participant,
             )
@@ -451,8 +450,7 @@ async def _messages_since(
     session: AsyncSession, room_id: uuid.UUID, since: datetime | None
 ) -> int:
     stmt = select(func.count()).where(
-        Block.topic_id == room_id,
-        Block.task_id.is_(None),
+        Block.conversation_id == room_id,
         Block.kind == BlockKind.message,
         Block.author_type == AuthorType.participant,
     )
@@ -800,7 +798,11 @@ async def undo(
     is still the current title. Undoing is a person's choice, so it sticks."""
     block = await session.get(Block, event_id)
     meta = (block.meta or {}) if block is not None else {}
-    if block is None or block.topic_id != room.id or meta.get("action") != "title":
+    if (
+        block is None
+        or block.conversation_id != room.id
+        or meta.get("action") != "title"
+    ):
         raise ValidationError(say("renameRecordNotThisTopic"))
     if room.title_source != TitleSource.auto or room.title != meta.get("to"):
         raise ValidationError(say("titleUndoStale"))

@@ -20,7 +20,7 @@ import i18n, { setLocale } from '@/i18n'
 function said(id: string, content: string): Block {
   return {
     id,
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'message',
     author_type: 'participant',
     author: 'me',

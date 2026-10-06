@@ -191,7 +191,7 @@ def _delivered_run(client, room, routine_id, delivered_ago):
         session.add(
             AgentTurn(
                 id=attempt,
-                topic_id=uuid.UUID(room),
+                conversation_id=uuid.UUID(room),
                 continuation_id=attempt,
                 author="system",
                 content="",
@@ -271,7 +271,7 @@ def test_a_turn_the_room_says_failed_fails_the_run_with_its_reason(client):
             Block(
                 id=uuid.uuid4(),
                 project_id=uuid.UUID(routine["project_id"]),
-                topic_id=uuid.UUID(room),
+                conversation_id=uuid.UUID(room),
                 author="system",
                 author_type=AuthorType.platform,
                 kind=BlockKind.event,
@@ -431,7 +431,7 @@ def test_a_turn_that_never_started_says_why(client):
         session.add(
             AgentTurn(
                 id=attempt,
-                topic_id=uuid.UUID(room),
+                conversation_id=uuid.UUID(room),
                 continuation_id=attempt,
                 author="system",
                 content="",
@@ -444,7 +444,7 @@ def test_a_turn_that_never_started_says_why(client):
             Block(
                 id=uuid.uuid4(),
                 project_id=uuid.UUID(routine["project_id"]),
-                topic_id=uuid.UUID(room),
+                conversation_id=uuid.UUID(room),
                 author="system",
                 author_type=AuthorType.platform,
                 kind=BlockKind.event,

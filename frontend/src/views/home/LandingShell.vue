@@ -5,6 +5,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import i18n, { t } from '@/i18n'
+import { docsUrl } from '@/lib/docsSite'
 import AccountService from '@/services/account'
 
 // The bar and footer shared by the public pages: the homepage for the people who
@@ -20,7 +21,7 @@ const homeHref = computed(() => (loggedIn.value ? '/about' : '/'))
 const entryHref = computed(() => (loggedIn.value ? '/' : '/account/signin'))
 const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
 
-// On a phone the four nav links do not fit beside the lockup, so the same links
+// On a phone the nav links do not fit beside the lockup, so the same links
 // live behind a disclosure button instead: without it /download and /docs/ are
 // unreachable from the homepage. `Esc` closes it and hands focus back to the
 // button that opened it.
@@ -71,7 +72,7 @@ onBeforeUnmount(() => {
       </router-link>
       <!-- Router links, so moving between the public pages does not reload the app;
            the router's scrollBehavior lands each one at its top. The docs are a
-           separate site under /docs/, so that one is a real navigation. The same
+           separate site (docsUrl), so that one is a real navigation. The same
            element is the phone disclosure panel; a click closes it so the panel
            does not stay over the page the router just opened. -->
       <nav id="site-menu" class="site-nav" :aria-label="t('publicSite.mainNavigation')" @click="menuOpen = false">
@@ -81,13 +82,16 @@ onBeforeUnmount(() => {
         >
           {{ t('publicSite.navProduct') }}
         </router-link>
+        <router-link :to="page === 'home' ? { hash: '#use-cases' } : { path: homeHref, hash: '#use-cases' }">
+          {{ t('publicSite.navUseCases') }}
+        </router-link>
         <router-link to="/solutions" :aria-current="page === 'solutions' ? 'page' : undefined">
           {{ t('publicSite.navSolutions') }}
         </router-link>
         <router-link to="/download" :aria-current="page === 'download' ? 'page' : undefined">
           {{ t('publicSite.navDownload') }}
         </router-link>
-        <a href="/docs/">{{ t('publicSite.navDocs') }}</a>
+        <a :href="docsUrl()">{{ t('publicSite.navDocs') }}</a>
       </nav>
       <div class="site-actions">
         <LanguageToggle />

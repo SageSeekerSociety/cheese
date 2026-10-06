@@ -26,6 +26,7 @@ ENV VITE_API_BASE_URL=__VITE_API_BASE_URL__
 ENV VITE_NEW_API_BASE_URL=__VITE_NEW_API_BASE_URL__
 ENV VITE_AI_API_BASE_URL=__VITE_AI_API_BASE_URL__
 ENV VITE_CONNECTOR_WS_BASE=__VITE_CONNECTOR_WS_BASE__
+ENV VITE_DOCS_ORIGIN=__VITE_DOCS_ORIGIN__
 # The commit this build is made from, shown in the desktop app's 关于 dialog.
 ARG GIT_SHA=
 ENV VITE_WEB_BUILD=$GIT_SHA
@@ -37,10 +38,16 @@ RUN pnpm build
 
 FROM nginx:1.25.4 as prod
 COPY nginx.conf /etc/nginx/nginx.conf
+# The docs' two ways of being served; docker-entrypoint.sh picks one at start.
+COPY nginx/docs /etc/nginx/docs-modes
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY scripts/check-static-assets.sh /usr/local/bin/check-static-assets
-RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets
+COPY scripts/docs-mode.sh /usr/local/bin/docs-mode
+RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets /usr/local/bin/docs-mode
 COPY --from=build /app/dist /usr/share/nginx/html
+# The docs built for a host of their own (DOCS_BASE=, build.yml), outside the
+# html root so no platform path reaches it.
+COPY docs-host /usr/share/nginx/docs-host
 RUN /usr/local/bin/check-static-assets /usr/share/nginx/html
 HEALTHCHECK --interval=15s --timeout=8s --start-period=10s --retries=5 \
   CMD /usr/local/bin/check-static-assets /usr/share/nginx/html >/dev/null \

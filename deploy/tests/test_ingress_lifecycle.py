@@ -122,11 +122,17 @@ def main():
             "127.0.0.1:8093": f"127.0.0.1:{owner.server_port}",
         }
 
+        # The box's own frontend ports live in frontend.conf, which every
+        # app-router.conf includes, and follow every frontend switch.
+        box_port, box_direct = free_port(), free_port()
+
         def configure(target):
-            for name in ("backend", "frontend"):
-                (active / f"{name}.conf").write_text(
-                    f"upstream {name}_active {{ server 127.0.0.1:{target.server_port}; }}\n"
-                )
+            (active / "backend.conf").write_text(
+                f"upstream backend_active {{ server 127.0.0.1:{target.server_port}; }}\n"
+            )
+            subprocess.run(["bash", str(ROOT / "deploy/llm-tunnel/configure-frontend-upstream.sh"),
+                            str(active), str(target.server_port), str(box_port),
+                            f"127.0.0.1:{box_direct}"], check=True)
 
         configure(old)
         # The front door carries the preview tunnel to the owner too (its 4th
@@ -201,7 +207,7 @@ def main():
                     for sock in sockets:
                         echo(sock)
                     time.sleep(0.25)
-                for port in (api, public):
+                for port in (api, public, box_port, box_direct):
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
                         assert json.load(response)["name"] == target.name
                 # The preview owner is never the business target, so its routes

@@ -121,6 +121,7 @@ def test_reason_for_answers_only_about_the_people_it_named():
 
 #: 逐列写死的期望。看板多一列，这里就得多一行，由下面那条完整性断言逼出来。
 COLUMN_HANDS = [
+    (Column.not_started, Hand.participant),
     (Column.building, Hand.platform),
     (Column.delivering, Hand.platform),
     (Column.needs_you, Hand.participant),

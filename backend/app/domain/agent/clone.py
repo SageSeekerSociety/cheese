@@ -1,7 +1,7 @@
 """Clone a topic's Claude conversation into another topic (transcript-fork).
 
-This is NOT 分身 (that is a *fresh* subagent session + task brief — see
-fusion-design §6 and TopicService.dispatch_task). Clone is the other thing:
+This is NOT a task (that is a *fresh* session of its own, started from its
+document — see TopicService.create_task). Clone is the other thing:
 a **deep copy of one agent's full conversation state** onto a new session — the
 「复制自」template, or "fork the current state and explore in parallel" (Claude
 Code's ``/fork``).

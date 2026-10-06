@@ -62,7 +62,7 @@ class FakeWebSocket {
 function block(id: string, author: string, content: string, second: number, extra: Partial<Block> = {}): Block {
   return {
     id,
-    topic_id: topic.id,
+    conversation_id: topic.id,
     kind: 'message',
     author_type: author === 'system' ? 'platform' : 'participant',
     author,

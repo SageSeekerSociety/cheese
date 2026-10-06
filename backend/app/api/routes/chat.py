@@ -116,11 +116,11 @@ async def chat(
                 conn_actor, token_presented=bool(token)
             )
             if refusal is None:
-                # A card is not a room, but it has a channel of its own: its
-                # 分身's events and checklist go out on the card id (chat.py,
-                # `todo_write`). Whoever may watch it is whoever may enter its
-                # room, found through the card; otherwise an outsider holding
-                # the id from a `?card=` link finds no room and is let in.
+                # A task is a conversation of its own, on a channel of its own:
+                # everything its turns publish goes out on the task id. Whoever
+                # may watch it is whoever may enter its room, found through the
+                # task; otherwise an outsider holding a task id finds no room
+                # and is let in.
                 card = await TaskService(auth_session).get(topic_id)
                 room_id = card.room_id if card is not None else topic_id
                 project_id = await resolver.project_of_topic(room_id)
@@ -138,11 +138,7 @@ async def chat(
                     # then the recreated one), so a turn started before it, or
                     # on the other container while both ran, is missing from it
                     # though its agent is still at work.
-                    open_turns = await open_turns_on(
-                        auth_session,
-                        room_id,
-                        task_id=card.id if card is not None else None,
-                    )
+                    open_turns = await open_turns_on(auth_session, topic_id)
         if refusal is not None:
             code, message = refusal
             _log.info("chat_ws_refused", code=code, topic=str(topic_id))

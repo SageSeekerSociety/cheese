@@ -99,7 +99,8 @@ function mount(inner: Record<string, unknown> = {}) {
 
 /** 打开项目头那个菜单，返回菜单里的行文字。 */
 async function openProjectMenu(container: Element, baseElement: Element): Promise<string[]> {
-  const header = container.querySelector('[title="项目菜单"]') ?? baseElement.querySelector('[title="项目菜单"]')
+  const header =
+    container.querySelector('[aria-label="项目菜单"]') ?? baseElement.querySelector('[aria-label="项目菜单"]')
   await fireEvent.click(header as Element)
   return menuRows(baseElement).map((el) => el.textContent?.replace(/\s+/g, '') ?? '')
 }

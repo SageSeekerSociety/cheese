@@ -65,7 +65,9 @@ def _turns(client, room: str) -> list[AgentTurn]:
         async with client.test_factory() as session:
             return list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == uuid.UUID(room))
+                    select(AgentTurn).where(
+                        AgentTurn.conversation_id == uuid.UUID(room)
+                    )
                 )
             )
 
@@ -76,7 +78,7 @@ def _questions(client, room: str) -> list[str]:
     async def read() -> list[str]:
         async with client.test_factory() as session:
             blocks = await session.scalars(
-                select(Block).where(Block.topic_id == uuid.UUID(room))
+                select(Block).where(Block.conversation_id == uuid.UUID(room))
             )
             return [b.content for b in blocks if (b.meta or {}).get("ask_group")]
 

@@ -14,14 +14,15 @@ export type Space = {
   reviewStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
   /**
    * 这块板的默认「给 AI 队友的指导」（#944）。四级继承的最外层，与
-   * `SpaceCategory.teaching` 同形状；`{}` = 没说。
+   * `SpaceCategory.teaching` 同形状；六格全空 = 没说。
    */
   teaching?: SpaceTeaching
 }
 
 /**
  * 「给 AI 队友的指导」（`Space.teaching` / `SpaceCategory.teaching` / 题目覆盖；
- * 服务端见 `backend/app/domain/task/teaching.py`）。四级继承里的同一份形状：
+ * 服务端见 `backend/app/domain/task/teaching.py`，读写都是这六个 camelCase 键，
+ * 读的那一侧在 `teaching_to_api`）。四级继承里的同一份形状：
  * 空间 → 项目集 → 题目 → 项目，整份替换、不深合 —— 某一层留空就是「没说」，
  * 下一级原样说话。
  *
@@ -107,7 +108,7 @@ export type SpaceCategory = {
   createdAt: number
   updatedAt: number
   archivedAt: number | null
-  /** 项目集级的「给 AI 队友的指导」；没设的分类是 `{}`。 */
+  /** 项目集级的「给 AI 队友的指导」；没设的分类六格全空。 */
   teaching?: SpaceTeaching
 }
 

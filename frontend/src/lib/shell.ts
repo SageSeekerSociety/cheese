@@ -1,7 +1,7 @@
 /**
  * 壳 (shell)：一套底座 + 不同的壳。
  *
- * 一个壳只能**开关、排序、换词**（home / nav / hidden / terms），里面没有一行
+ * 一个壳只能**开关、排序、换词**（home / nav / terms），里面没有一行
  * 逻辑。它是一份声明，不是一段配置——这也是「加第五个壳」不用碰任何组件的原因。
  *
  * **权威在服务端。** 壳的真身在 `backend/app/domain/shell/catalog.py`，随
@@ -30,8 +30,6 @@ export interface Shell {
   /** 进项目的第一屏（路由名）；null = 就别动，这个地址本身就是目的地。 */
   home: string | null
   nav: ShellNav
-  /** 默认收进「更多」的项目页。收起的仍然找得到——见 `projectPagePlan`。 */
-  hidden: readonly string[]
   /** 词表。`{"project": "工作"}` = 这个壳把「项目」叫「工作」。 */
   terms: Readonly<Record<string, string>>
 }
@@ -80,20 +78,27 @@ export function orderedNav(shell: Shell, surface: ShellSurface, known: readonly 
 }
 
 /**
- * 项目侧栏要画的两组页：正常露出的，和收进「更多」的。
+ * 项目名下面那一行能摆的页：除了首页（看板），只有资料库。
  *
- * **「更多」装的是「没有露出来的全部」**，不是「壳的 hidden 列表」：壳写错了 key、
- * 前端多了一个壳没听说过的页面，都会落进这里而不是凭空消失。收起的语义始终是
- * 「默认收起」，不是「禁止」——`hidden` 只决定谁开局是收着的。
- *
- * `revealed` 是**这个人**手动打开过的：打开过一次就记住了，个人级压过壳。
+ * **这一行不再加东西。** 它每加一格，频道就往下挪一行；几个版本之后这里又是一摞
+ * 入口，而用户整理过不止一次（2026-10-05）。新页面一律进点项目名弹出的那个菜单。
+ * 守着这条的是 shell.spec.ts 里「项目名下那一行只有看板和资料库」，规则写在
+ * `.claude/rules/project-sidebar.md`。
  */
-export function projectPagePlan(
-  shell: Shell,
-  known: readonly string[],
-  revealed: ReadonlySet<string>
-): { visible: string[]; more: string[] } {
+export const PROJECT_BAR_PAGES: readonly string[] = ['project-library']
+
+/**
+ * 项目侧栏要画的两组页：项目名下那一行（`bar`），和点项目名弹出的菜单（`menu`）。
+ *
+ * 那一行是首页加上 `PROJECT_BAR_PAGES` 里壳摆出来了的那几页；壳不摆资料库（老师的
+ * 课程壳），资料库就进菜单。**菜单装的是「这一行之外的全部」**：壳写错了 key、前端
+ * 多了一个壳没听说过的页面，都落进菜单，不会凭空消失。菜单里先按壳的顺序，壳没提到
+ * 的接在后面。
+ */
+export function projectPageLayout(shell: Shell, known: readonly string[]): { bar: string[]; menu: string[] } {
   const shown = orderedNav(shell, 'project', known)
-  const visible = shown.filter((key) => !shell.hidden.includes(key) || revealed.has(key))
-  return { visible, more: known.filter((key) => !visible.includes(key)) }
+  const home = shell.home && known.includes(shell.home) ? [shell.home] : []
+  const bar = [...home, ...PROJECT_BAR_PAGES.filter((key) => shown.includes(key) && !home.includes(key))]
+  const menu = [...shown, ...known.filter((key) => !shown.includes(key))].filter((key) => !bar.includes(key))
+  return { bar, menu }
 }

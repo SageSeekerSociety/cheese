@@ -20,7 +20,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import registered, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -675,12 +675,16 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
         assert (await session.get(CloudHost, host_id)).released_at is None
 
 
-async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_from_the_bucket(
-    client, monkeypatch
+@pytest.mark.parametrize("pushed", [True, False, None])
+async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_only_once_pushed(
+    client, monkeypatch, pushed
 ):
     """A session whose home was archived holds no directory on any machine:
-    its host may be gone. The room's cleanup does not wait for that host, and
-    the archive goes with the room."""
+    its host may be gone. The room's cleanup does not wait for that host. The
+    archive goes with the room when its host found everything in it pushed;
+    otherwise it is the only copy of that work, and the cleanup waits, still
+    cancellable by unarchiving the room. An archive with no answer (written
+    before hosts were asked) is not taken for pushed."""
     from app.domain.agent_session.services import AgentSessionService
     from app.domain.machine import lifecycle
 
@@ -719,16 +723,37 @@ async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_from_the_bucket(
                 archive_key="sandbox-archives/home.tar.gz",
                 archive_size=13,
                 archive_md5="0" * 32,
+                archive_published=pushed,
             )
         )
         await session.commit()
 
-    assert _sweep(client) == {"completed": 1, "pending": 0}
+    if pushed:
+        assert _sweep(client) == {"completed": 1, "pending": 0}
+        assert bucket.objects == {}
+        async with client.test_factory() as session:
+            assert (
+                await session.scalar(
+                    select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
+                )
+            ) is None
+        return
 
-    assert bucket.objects == {}
+    assert _sweep(client) == {"completed": 0, "pending": 1}
+    assert _sweep(client) == {"completed": 0, "pending": 1}
+    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
+    status = client.get(
+        f"/topics/{room_id}/cleanup", headers=session_auth_headers("owner")
+    ).json()["data"]
+    assert status["state"] == "pending"
+    assert "not pushed" in status["reason"]
     async with client.test_factory() as session:
-        assert (
-            await session.scalar(
-                select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
-            )
-        ) is None
+        await TopicService(session).unarchive(room_id, by="owner")
+        await session.commit()
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, cleanup_id)).state == "cancelled"
+        kept = await session.scalar(
+            select(CloudHostHome).where(CloudHostHome.topic_id == room_id)
+        )
+        assert kept.archive_key == "sandbox-archives/home.tar.gz"
+    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}

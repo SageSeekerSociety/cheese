@@ -146,8 +146,7 @@ async def close_cards_for_archived_topic(
             )
         await BlockRepository(session).add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author="cheese",
             author_type=AuthorType.platform,
             content=say("archiveStoppedFollowing", pr=card.pr_number),

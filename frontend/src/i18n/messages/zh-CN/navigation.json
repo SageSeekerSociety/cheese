@@ -8,15 +8,16 @@
     "members": "成员",
     "docs": "项目文档",
     "settings": "项目设置",
-    "general": "全局",
+    "general": "综合",
     "routines": "定时与触发",
-    "skills": "技能"
+    "skills": "技能",
+    "pages": "项目页面"
   },
   "spaces": "空间",
   "teams": "团队",
   "term": {
     "project": "项目",
-    "topic": "话题"
+    "topic": "频道"
   },
   "workspace": "工作区",
   "feedback": {
@@ -81,7 +82,7 @@
     "archived": "已归档",
     "recent": "最近去过",
     "best": "最匹配",
-    "topics": "话题",
+    "topics": "频道",
     "projects": "项目",
     "members": "成员",
     "pages": "页面",
@@ -89,7 +90,7 @@
     "close": "关闭",
     "theme": "外观：{mode}",
     "showTab": "切到{tab}",
-    "newTopic": "新建话题",
+    "newTopic": "新建频道",
     "messages": "消息",
     "tasks": "任务",
     "docs": "文档",
@@ -105,7 +106,7 @@
     "save": "保存",
     "back": "返回",
     "dm": "发私信",
-    "openRoom": "打开所在话题",
+    "openRoom": "打开所在频道",
     "copyHandle": "复制 {'@'}{handle}",
     "searchIn": "项目内搜索",
     "leaveScope": "移除项目范围，跨项目搜索名称",
@@ -148,6 +149,7 @@
     "feedbackDetail": "反馈详情",
     "openPreview": "打开预览",
     "openSite": "打开网站",
+    "openDocs": "打开文档",
     "connect": "连接设备",
     "market": "市场",
     "notFound": "页面未找到",

@@ -118,7 +118,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 项目表、读额度。拆模块没有新增跨包的边，只是发起方从 chat.py 换成了
         # work_policy.py，所以按同一笔债入账。
         ("app.domain.agent.work_policy", "app.domain.project.repositories"),
-        ("app.domain.agent.work_policy", "app.domain.topic.repositories"),
         # agent.memory_ledger 是从 agent.chat 里拆出来的那一块（这一间房的记忆
         # 账：每轮对一次账、以及平台自己过一遍的整理）。它摸的三个 repository
         # 正是原先 chat.py 那一组里跟着它走的：读话题表（这一间房是谁的）、读
@@ -144,7 +143,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- platform_stats（看板的读模型聚合，和 dashboard 同构，单独还）。
         #     block 领域**没有** service 层（只有 repositories / models），
         #     pipeline 那一块问的是「哪几条活/房间停在未回答的提问上」——
-        #     正是 block.repositories.tasks_awaiting_an_answer 的那个读，
+        #     正是 block.repositories.awaiting_an_answer 的那个读，
         #     走不了「调对方的 service」。等 block 长出 service 就把这行删掉。
         ("app.domain.platform_stats.pipeline", "app.domain.block.repositories"),
         ("app.domain.dashboard.services", "app.domain.project.repositories"),
@@ -295,7 +294,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.topics", "app.domain.block.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
         ("app.api.routes.topics", "app.domain.review.repositories"),
-        ("app.api.routes.topics", "app.domain.room_task.repositories"),
         ("app.api.routes.topics", "app.domain.topic.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
         # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读

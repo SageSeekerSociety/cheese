@@ -19,6 +19,7 @@ import yaml
 from litellm.proxy.pass_through_endpoints.llm_provider_handlers import (
     anthropic_passthrough_logging_handler,
 )
+from litellm.proxy.utils import create_model_info_response
 
 
 def main() -> None:
@@ -272,8 +273,19 @@ def main() -> None:
         cost = result["response_cost"]
         assert isclose(cost, expected, rel_tol=0.00001), (ttl, cost, expected)
         assert logging.model_call_details["response_cost"] == cost
+    # Claude Code compacts by the max_input_tokens /v1/models reports and asks
+    # for 128,000 output tokens; DeepSeek refuses a request whose input plus
+    # max_tokens exceeds 1,048,576. A conversation must be compacted before
+    # it reaches the size DeepSeek refuses.
+    listed = create_model_info_response(
+        model_id="deepseek-flash", provider="deepseek", llm_router=router
+    )
+    deepseek_input = listed.get("max_input_tokens")
+    assert deepseek_input is not None, listed
+    assert deepseek_input + 128_000 <= 1_048_576, listed
     print(
         "PASS: DeepSeek thinking, Kimi effort, and MiMo thinking verified; "
+        f"deepseek-flash listed at {deepseek_input} input tokens; "
         "Kimi/MiMo image and tool history preserved; "
         "Kimi buffered/streamed cache costs verified; "
         f"{len(offered)} offered model(s) billable on both directions; "

@@ -7,15 +7,9 @@ several content blocks, so the events a record comes out as each get their own
 id: the record's ``uuid`` (Claude Code's, stable across a re-read) plus the
 block's index.
 
-Which card a sub-thread's work lands on is the contract's ``thread_label``
-(结论 43), and no field of a Claude Code record carries one. The agent writes it
-into the prompt it gives the subagent, so it is read there, when the spawning
-call is seen, and bound to what later names that sub-thread: the call's own id
-(``parent_tool_use_id`` on the subagent's stdout records) and the agent id the
-build mints for it (``task_started``, and every line of its transcript file). An
-agent a subagent starts without a label of its own is working for the same
-card. Those bindings are ``facts``: worked out once, in journal order, when a
-page is mirrored (``bind``), and read back by every later pass.
+What a call was (its name and description) is a ``fact``: worked out once, in
+journal order, when a page is mirrored (``bind``), and read back by every later
+pass.
 
 A tool's return is written onto the step it belongs to (``AgentStepOutput``),
 and a failed one also marks that step. A subagent's return is its conclusion,
@@ -39,16 +33,10 @@ from app.domain.agent.service import (
     AgentSessionInfo,
     AgentStepFailed,
     AgentStepOutput,
-    AgentSubagentStart,
-    AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
 )
-from app.domain.room_task.thread_label import label_in_text
 
-#: The tools that start a sub-thread. `Task` is the older build's name for
-#: `Agent`; a workflow starts several.
-SPAWNING = {"Agent", "Task", "Workflow"}
 #: The tools whose RETURN the room needs: a subagent reports only to whoever
 #: spawned it.
 SUBAGENT_TOOLS = {"Agent", "Task"}
@@ -112,7 +100,7 @@ def _authored(
     return events
 
 
-def _retrying(record: dict, label: str | None) -> AgentRetrying:
+def _retrying(record: dict) -> AgentRetrying:
     """``system/api_retry``, as the pinned build writes it: ``attempt``,
     ``max_retries``, ``retry_delay_ms``, ``error_status`` (null for a
     connection error), ``error``, the kind of failure, and — only when the
@@ -127,56 +115,40 @@ def _retrying(record: dict, label: str | None) -> AgentRetrying:
         no_response_ms=_count(no_response.get("waited_ms"))
         if isinstance(no_response, dict)
         else None,
-        thread_label=label,
     )
 
 
-def _compacting(record: dict, label: str | None) -> list[AgentEvent]:
+def _compacting(record: dict) -> list[AgentEvent]:
     """``system/status``, as the pinned build writes it around a compaction:
     ``status: "compacting"`` when it starts, then ``status: null`` with
     ``compact_result`` (``"success"`` / ``"failed"``) and, on failure,
     ``compact_error``. The same record also reports other status changes
     (a permission mode), which carry neither and say nothing to the room."""
     if record.get("status") == "compacting":
-        return [AgentCompacting(thread_label=label)]
+        return [AgentCompacting()]
     result = record.get("compact_result")
     if result not in ("success", "failed"):
         return []
     error = str(record.get("compact_error") or "failed") if result == "failed" else ""
-    return [AgentCompacting(done=True, error=error, thread_label=label)]
+    return [AgentCompacting(done=True, error=error)]
 
 
-def _message(record: dict) -> tuple[dict, str | None]:
-    """The transcript-shaped part of a record, and which thread it came from.
-
-    The thread is named the way the facts are keyed: ``call:<id>`` for a
-    subagent whose records are on stdout, ``agent:<id>`` for one read from its
-    own file, None for the session's own thread.
-    """
+def _message(record: dict) -> dict:
+    """The transcript-shaped part of a record: the record itself, or the entry
+    of an agent's own transcript file it carries."""
     if record.get("type") == "cheese_file":
-        return record.get("entry") or {}, f"agent:{record.get('agent_id')}"
-    parent = record.get("parent_tool_use_id")
-    return record, f"call:{parent}" if parent else None
+        return record.get("entry") or {}
+    return record
 
 
 def bind(record: dict, facts: Mapping[str, str]) -> dict[str, str]:
     """The facts this record establishes, given the ones already known.
 
-    ``facts`` maps ``spawned:<call id>`` and ``agent:<agent id>`` to the label of
-    the card that sub-thread works on ("" for none), ``call:<call id>`` to the
-    call's name and description, and ``task:<task id>`` to what kind of task the
-    build started.
+    ``facts`` maps ``call:<call id>`` to the call's name and description, and
+    ``error`` to the API's refusal of the turn, when it refused one.
     """
     learned: dict[str, str] = {}
-
-    def label_of(thread: str | None) -> str:
-        if thread is None:
-            return ""
-        kind, _, key = thread.partition(":")
-        name = f"spawned:{key}" if kind == "call" else f"agent:{key}"
-        return learned.get(name, facts.get(name, ""))
-
-    message, thread = _message(record)
+    message = _message(record)
     kind = message.get("type")
     if record.get("type") == "result":
         learned["error"] = ""
@@ -185,7 +157,6 @@ def bind(record: dict, facts: Mapping[str, str]) -> dict[str, str]:
         # failed, and this is the one record that says how.
         learned["error"] = str(message["error"])
     if kind == "assistant":
-        owner = label_of(thread)
         for block in (message.get("message") or {}).get("content") or []:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
@@ -197,28 +168,6 @@ def bind(record: dict, facts: Mapping[str, str]) -> dict[str, str]:
                 {"name": name, "description": str(arguments.get("description") or "")},
                 ensure_ascii=False,
             )
-            if name in SPAWNING:
-                written = arguments.get("prompt") or arguments.get("script")
-                learned[f"spawned:{call}"] = (
-                    label_in_text(written if isinstance(written, str) else None)
-                    or owner
-                )
-    elif kind == "system" and record.get("subtype") == "task_started":
-        learned[f"task:{record.get('task_id')}"] = str(record.get("task_type") or "")
-        if record.get("task_type") in ("local_agent", "local_workflow"):
-            call = str(record.get("tool_use_id"))
-            written = record.get("prompt")
-            learned[f"agent:{record.get('task_id')}"] = label_in_text(
-                written if isinstance(written, str) else None
-            ) or learned.get(f"spawned:{call}", facts.get(f"spawned:{call}", ""))
-    elif kind == "system" and record.get("subtype") == "task_progress":
-        workflow = learned.get(
-            f"agent:{record.get('task_id')}",
-            facts.get(f"agent:{record.get('task_id')}", ""),
-        )
-        for entry in record.get("workflow_progress") or []:
-            if isinstance(entry, dict) and entry.get("agentId"):
-                learned.setdefault(f"agent:{entry['agentId']}", workflow)
     return learned
 
 
@@ -228,13 +177,6 @@ class Assembler:
     def __init__(self, facts: MutableMapping[str, str], session_id: str | None = None):
         self.facts = facts
         self.session_id = session_id
-
-    def _label(self, thread: str | None) -> str | None:
-        if thread is None:
-            return None
-        kind, _, key = thread.partition(":")
-        name = f"spawned:{key}" if kind == "call" else f"agent:{key}"
-        return self.facts.get(name) or None
 
     def _call(self, call: str) -> dict:
         try:
@@ -262,19 +204,18 @@ class Assembler:
             ]
         if kind == "system":
             return self._system(record)
-        message, thread = _message(record)
+        message = _message(record)
         if message.get("type") == "assistant":
-            return _authored(self._assistant(message, thread), record, self.session_id)
+            return _authored(self._assistant(message), record, self.session_id)
         if message.get("type") == "user" and not message.get("isReplay"):
-            return _authored(self._returned(message, thread), record, self.session_id)
+            return _authored(self._returned(message), record, self.session_id)
         return []
 
-    def _assistant(self, message: dict, thread: str | None) -> list[AgentEvent]:
+    def _assistant(self, message: dict) -> list[AgentEvent]:
         if message.get("error"):
             # The build's own line for an API error. The turn's result reports
             # the failure; this would be the same news as a message from 芝士.
             return []
-        label = self._label(thread)
         events: list[AgentEvent] = []
         for index, block in enumerate(
             (message.get("message") or {}).get("content") or []
@@ -289,7 +230,6 @@ class Assembler:
                         eid=eid,
                         eids=(eid,),
                         at=_at(message),
-                        thread_label=label,
                     )
                 )
             elif block.get("type") == "tool_use":
@@ -300,14 +240,12 @@ class Assembler:
                         arguments if isinstance(arguments, dict) else {},
                         eid=eid,
                         call_id=str(block.get("id")),
-                        thread_label=label,
                         at=_at(message),
                     )
                 )
         return events
 
-    def _returned(self, message: dict, thread: str | None) -> list[AgentEvent]:
-        label = self._label(thread)
+    def _returned(self, message: dict) -> list[AgentEvent]:
         content = (message.get("message") or {}).get("content")
         events: list[AgentEvent] = []
         for index, block in enumerate(content if isinstance(content, list) else []):
@@ -325,14 +263,11 @@ class Assembler:
                         text=" ".join(EXIT_HEADER.sub("", said).split())[
                             -STEP_ERROR_MAX:
                         ],
-                        thread_label=label,
                     )
                 )
             if made.get("name") not in SUBAGENT_TOOLS or block.get("is_error"):
                 if said.strip():
-                    events.append(
-                        AgentStepOutput(call_id=call, text=said, thread_label=label)
-                    )
+                    events.append(AgentStepOutput(call_id=call, text=said))
                 continue
             result = message.get("tool_use_result")
             report = (
@@ -345,7 +280,6 @@ class Assembler:
                         text=report.strip(),
                         description=made.get("description", ""),
                         eid=f"claude:{message.get('uuid')}:{index}",
-                        thread_label=label,
                     )
                 )
         return events
@@ -353,32 +287,9 @@ class Assembler:
     def _system(self, record: dict) -> list[AgentEvent]:
         subtype = record.get("subtype")
         if subtype == "api_retry":
-            return [_retrying(record, self._label(_message(record)[1]))]
+            return [_retrying(record)]
         if subtype == "status":
-            return _compacting(record, self._label(_message(record)[1]))
-        task = str(record.get("task_id") or "")
-        # Only an agent is a worker the room tracks: a background command or a
-        # workflow reports its tasks here too.
-        if not task or self.facts.get(f"task:{task}") != "local_agent":
-            return []
-        label = self.facts.get(f"agent:{task}", "")
-        if subtype == "task_started":
-            return [
-                AgentSubagentStart(
-                    agent_id=task, thread_label=label, session_id=self.session_id
-                )
-            ]
-        if subtype == "task_notification":
-            path = record.get("output_file")
-            return [
-                AgentSubagentStop(
-                    agent_id=task,
-                    text=str(record.get("summary") or ""),
-                    thread_label=label,
-                    transcript_path=str(path) if path else None,
-                    session_id=self.session_id,
-                )
-            ]
+            return _compacting(record)
         return []
 
     def _result(self, record: dict) -> AgentResult:

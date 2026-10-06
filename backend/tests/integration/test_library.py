@@ -467,7 +467,7 @@ def test_a_file_from_before_the_records_takes_its_source_from_the_message(client
             session.add(
                 Block(
                     project_id=uuid.UUID(project_id),
-                    topic_id=uuid.UUID(topic_id),
+                    conversation_id=uuid.UUID(topic_id),
                     kind=BlockKind.attachment,
                     author_type=AuthorType.participant,
                     author="user-1",

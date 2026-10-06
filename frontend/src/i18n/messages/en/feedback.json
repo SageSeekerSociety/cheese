@@ -529,7 +529,7 @@
       "title": "You haven't filed any feedback, and none is assigned to you",
       "action": "File one"
     },
-    "foot": "Finished feedback (fixed, shipped, won't fix) stays in the list but no longer accepts support; private items are visible only to you, platform admins, and the people who were in the room where it was filed."
+    "foot": "Finished feedback (fixed, shipped, won't fix) stays in the list but no longer accepts support; private items are visible only to you, platform admins, and the people who were in the channel where it was filed."
   },
   "status": {
     "received": "Received",
@@ -571,7 +571,7 @@
     "agent": "Found by an agent"
   },
   "private": "Private",
-  "privateHint": "Private feedback: only you, platform admins, and the people who were in the room where it was filed can see it.",
+  "privateHint": "Private feedback: only you, platform admins, and the people who were in the channel where it was filed can see it.",
   "security": "Security",
   "closedHint": "Already closed — no need to support it",
   "sessionLine": "Session {id}",
@@ -646,7 +646,7 @@
       "supports": "Supporters",
       "comments": "Comments",
       "source": "Source",
-      "topic": "Found in a conversation in a topic"
+      "topic": "Found in a conversation in a channel"
     },
     "action": {
       "support": "Support this feedback",
@@ -663,7 +663,7 @@
     },
     "missing": {
       "title": "This feedback doesn't exist",
-      "desc": "It may have been deleted — or only the person who filed it, platform admins, and the people who were in the room when it was filed can see it."
+      "desc": "It may have been deleted — or only the person who filed it, platform admins, and the people who were in the channel when it was filed can see it."
     },
     "error": {
       "title": "Couldn't load the details",
@@ -738,7 +738,7 @@
       },
       "private": {
         "title": "Private",
-        "hintWithRoom": "Only you, platform admins, and the people who were in the room where it was raised. It stays out of public lists and cannot be supported.",
+        "hintWithRoom": "Only you, platform admins, and the people who were in the channel where it was raised. It stays out of public lists and cannot be supported.",
         "hintNoRoom": "Only you and platform admins. It stays out of public lists and cannot be supported."
       },
       "once": "You decide this now, and only now — not even an admin has a way to make it public afterwards."
@@ -747,7 +747,7 @@
       "title": "From Cheese's investigation",
       "note": "This feedback will be attributed to the AI teammate that found it, and you will be recorded as the submitter — both are kept, so \"how much of what Cheese raised actually got filed\" has an answer.",
       "attach": "Include this context",
-      "attachHint": "The context may contain your code snippets, file paths, or conversation text. With \"Private\", the people who can see it are you, platform admins, and the people who were in the room where it was raised.",
+      "attachHint": "The context may contain your code snippets, file paths, or conversation text. With \"Private\", the people who can see it are you, platform admins, and the people who were in the channel where it was raised.",
       "whatHappened": "What happened",
       "repro": "Repro steps",
       "evidence": "Evidence",

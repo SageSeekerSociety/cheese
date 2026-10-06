@@ -78,10 +78,17 @@ export function dispatchedTasks(tasks: readonly RoomTask[]): SplitMarker[] {
  * 消息」之间。
  */
 export function placeSplitMarkers(tasks: readonly RoomTask[], timeline: TimelineWindow): SplitMarkerPlacement {
-  const markers = dispatchedTasks(tasks)
+  const { blocks, hasMore, hasNewer = false } = timeline
+  // 创建任务时房间里已经落下一行（`action` 为 `task_created`，更早的是 `split`）：
+  // 那一行在窗口里，就不再派生第二行。
+  const announced = new Set(
+    blocks
+      .map((b) => (b.meta as Record<string, unknown> | null | undefined)?.task_id)
+      .filter((id): id is string => typeof id === 'string')
+  )
+  const markers = dispatchedTasks(tasks).filter((m) => !announced.has(m.taskId))
   if (!markers.length) return empty()
 
-  const { blocks, hasMore, hasNewer = false } = timeline
   // 空窗口：还没有任何消息在屏幕上。整段历史都在手里（hasMore=false）时，标记就是
   // 仅有的几行；否则位置未知，先不显示。
   if (!blocks.length) return { before: new Map(), tail: hasMore || hasNewer ? [] : markers.slice() }
