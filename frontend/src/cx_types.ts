@@ -65,6 +65,8 @@ export interface Topic {
   project_id: string
   parent_id: string | null
   title: string
+  // 频道是做什么的，管理者写的一句话。没写是 null。
+  description?: string | null
   kind: string
   status: string
   created_at: string
@@ -79,19 +81,18 @@ export interface Topic {
   accepted_at?: string | null
   archived_at?: string | null
   cleanup_due_at?: string | null
-  can_archive?: boolean
+  // 我管不管这个频道（创建者或项目管理员）：改名、写说明、归档、加人移人。
+  can_manage?: boolean
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
   // 状态，有的是成员在做什么（backend `agent/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
-  // 我和这个话题有没有关系：我在名册里 / 是我建的 / 我是验收人 / 我被 @ 过，
-  // 四者取一。只有 list/get 话题时才带。
-  i_participate?: boolean
+  // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
+  joined?: boolean
   // 这个话题在等我拍板：有点名给我的待办验收卡、没答的决策请求，或芝士停在
-  // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。为真时
-  // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
+  // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
   // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
@@ -99,7 +100,7 @@ export interface Topic {
   waits?: MemberWait[]
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
-  // 和上面 `activity` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
+  // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
   // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
   // 着，而屏幕上那个颜色是哪一个算出来的，谁也说不清。
@@ -443,10 +444,10 @@ export interface ProjectInvitation {
 // owner/admin/member (distinct from ProjectMemberRow's lead/member/mentor);
 // `agent` marks 芝士 (the AI member) so the UI can badge it.
 export interface TopicMemberRow {
-  id: string
   topic_id: string
   member_handle: string
-  role: 'owner' | 'admin' | 'member'
+  // `owner` 是建这个频道的人；「综合」里的人都是 `member`。
+  role: 'owner' | 'member'
   // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
@@ -455,7 +456,6 @@ export interface TopicMemberRow {
   // null，画彩色首字母。别拿它去取 /avatars/default。
   avatar_id?: number | null
   agent?: boolean
-  created_at: string
 }
 
 // GET /api/projects/{id}/inbox?target_handle=

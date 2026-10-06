@@ -32,6 +32,8 @@ function topic(id: string, parentId: string | null, kind = 'topic'): Topic {
     title: id,
     kind,
     status: 'active',
+    can_manage: true,
+    joined: true,
     created_by: 'u',
     created_at: '2026-08-10T00:00:00Z',
     updated_at: '2026-08-10T00:00:00Z',

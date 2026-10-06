@@ -3,6 +3,8 @@ import type { EncodedCursorPage } from '@/types'
 export type NotificationType =
   | 'MENTION'
   | 'REPLY'
+  // 我参与过的支线里有人回复了。payload 带 thread_id，topic_id 是支线所在的频道。
+  | 'THREAD_REPLY'
   | 'REACTION'
   | 'PROJECT_INVITE'
   | 'DEADLINE_REMIND'

@@ -27,11 +27,13 @@ import { topicActions } from '@/commands/topicActions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
+import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
   topic: Topic
@@ -66,8 +68,10 @@ const state = computed(() =>
 )
 const shortId = computed(() => topicShortId(props.topic.id))
 const title = computed(() => topicTitle(props.topic))
-// 项目本体 is not a work topic — it has no id badge and no roster.
+// 「综合」是项目本身，不是一件事：没有编号，也没有「进行中」这类状态。
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
+// 我对这个频道的通知档位（铃铛）。
+const store = useWorkspaceStore()
 // ---- 用量 popover (was the 资源 drawer) ----
 const usageOpen = ref(false)
 const usageLoading = ref(false)
@@ -161,6 +165,9 @@ useCommands(roomCommands)
       <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
       <div class="topic-header__text">
         <span class="topic-header__title t-title" :title="title">{{ title }}</span>
+        <span v-if="mdAndUp && topic.description" class="topic-header__description" :title="topic.description">{{
+          topic.description
+        }}</span>
         <span class="topic-header__meta">
           <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
           <span v-if="isWorkTopic && state" class="pr-state" :class="state.cls">{{ state.label }}</span>
@@ -176,12 +183,20 @@ useCommands(roomCommands)
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
       <TopicMembers
-        v-if="isWorkTopic"
         :topic-id="topic.id"
+        :can-manage="topic.can_manage === true"
+        :general="!isWorkTopic"
         :project-id="topic.project_id"
         :project-members="members"
         :me="me"
         @machine-access="machineNotice = $event"
+      />
+
+      <ChannelNotifyMenu
+        v-if="topic.joined"
+        :level="store.levelOf(topic.id)"
+        :muted-until="store.mutedUntil(topic.id)"
+        @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"
       />
 
       <!-- 专注模式开着的时候，出口必须摆在外面：对话栏已经让开了，这一颗就是
@@ -329,6 +344,16 @@ useCommands(roomCommands)
      overflow: hidden，g / y 这些下伸的字母下缘被切掉约 0.75px。高度是字号阶梯
      的属性，不在调用点另定一个数（docs/design-system.md §3.2）。 */
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 频道说明：标题后面一句，比标题弱，挤不下就截断——完整的在 title 里。 */
+.topic-header__description {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

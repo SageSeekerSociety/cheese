@@ -32,6 +32,8 @@ function topic(id: string, parentId: string | null, kind = 'channel'): Topic {
     title: id,
     kind,
     status: 'active',
+    can_manage: true,
+    joined: true,
     created_by: 'u',
     created_at: '2026-08-10T00:00:00Z',
     updated_at: '2026-08-10T00:00:00Z',
@@ -205,7 +207,7 @@ describe('私聊的未读落在项目名那一行上', () => {
   })
 
   it('话题的未读不会漏到项目名那一行上——两种未读不是一回事', () => {
-    const { container } = mount({ unreadMap: { a: 4 } })
+    const { container } = mount({ unreadMap: { a: { count: 4, new: true, messages: 4 } } })
     expect(header(container).querySelector('.unread-badge')).toBeNull()
   })
 })
@@ -373,7 +375,7 @@ describe('行左边那一个槽', () => {
   })
 
   it('选中的行和有未读的行给的不是同一个标记', () => {
-    const { container } = mount({ selectedTopicId: 'a', unreadMap: { b: 3 } })
+    const { container } = mount({ selectedTopicId: 'a', unreadMap: { b: { count: 3, new: true, messages: 3 } } })
     const selected = topicRowFor(container, 'a')
     const unread = topicRowFor(container, 'b')
     expect(selected.classList.contains('is-active')).toBe(true)

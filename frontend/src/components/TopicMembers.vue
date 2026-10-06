@@ -1,9 +1,7 @@
 <script setup lang="ts">
-// 话题成员名册 (群聊房间的地基, fusion-design §3): a topic is a group room, and
-// this is who's in it. A compact header count ("3 人 + 芝士") opens a roster
-// drawer showing every member with their role; an owner/admin can add project
-// members, remove them, or change roles. 芝士 (the AI member) wears an Agent
-// badge, mirroring the @-mention menu.
+// 频道里有谁：页头一小串头像，点开是名单。频道管理者（创建者、项目管理员）能从
+// 项目成员里加人、移人、请 AI 队友；「综合」是项目里的所有人，管理者在那里只管
+// AI 队友。AI 队友带「AI 队友」标，和 @ 菜单里一样。
 //
 // 名册底下一行写这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻
 // 结论 60）：房间里的 AI 队友都在这一台上，所以不再每个队友各写一行。
@@ -13,7 +11,7 @@ import type { MenuAction } from './common/menuAction'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { addTopicMember, getTopicComputeProfile, removeTopicMember, updateTopicMemberRole } from '../api'
+import { addTopicMember, getTopicComputeProfile, removeTopicMember } from '../api'
 import { useRowMenu } from '../composables/useRowMenu'
 import { t } from '../i18n'
 import { memberName } from '../lib/agentNames'
@@ -37,6 +35,10 @@ const props = defineProps<{
   projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
+  /** 我管不管这个频道（创建者或项目管理员）。 */
+  canManage: boolean
+  /** 这是「综合」：项目里的人都在，名单上只有 AI 队友能加减。 */
+  general?: boolean
 }>()
 const emit = defineEmits<{
   // 有 AI 队友能访问整台机器。这是权限，不是设置，名册合着的时候页头也要写着——
@@ -51,8 +53,6 @@ const busy = ref(false)
 const error = ref('')
 const open = ref(false)
 const addHandle = ref<string | null>(null)
-
-const ROLES = ['owner', 'admin', 'member'] as const
 
 async function load() {
   if (!props.topicId) return
@@ -123,33 +123,22 @@ const MAX_FACES = 3
 const stackFaces = computed(() => members.value.slice(0, MAX_FACES))
 const overflow = computed(() => Math.max(0, members.value.length - MAX_FACES))
 
-// My role in THIS topic decides whether the management controls show at all.
-const myRole = computed(() => members.value.find((m) => m.member_handle === props.me)?.role ?? null)
-const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'admin')
-const ownerCount = computed(() => members.value.filter((m) => m.role === 'owner').length)
+// 谁能被移出：管理者能移出任何一位，只是「综合」里的人不在这份名单上的话就移不出——
+// 那里的人是项目成员，要离开得退出项目。AI 队友在哪都能移出。
+function removable(m: TopicMemberRow): boolean {
+  return props.canManage && (m.agent === true || !props.general)
+}
 
-// 右键一位成员：行里那个角色菜单和移出按钮，收成一份弹在鼠标那一点上。最后一个拥有者
-// 不能被降级或移出，那几项和行里一样点不动。
+// 右键一位成员：行里那颗移出按钮，弹在鼠标那一点上。
 const rowMenu = useRowMenu<string>()
 function memberActions(m: TopicMemberRow): MenuAction[] {
-  const lastOwner = m.role === 'owner' && ownerCount.value <= 1
-  const roles: MenuAction[] = m.agent
-    ? []
-    : ROLES.filter((r) => r !== m.role).map((r) => ({
-        key: `role.${r}`,
-        label: t('work.room.roster.setRole', { role: roleLabel(r) }),
-        icon: 'mdi-account-key-outline',
-        disabled: busy.value || lastOwner,
-        onSelect: () => void onSetRole(m.member_handle, r),
-      }))
   return [
-    ...roles,
     {
       key: 'remove',
       label: t('work.room.roster.remove'),
       icon: 'mdi-account-remove-outline',
       danger: true,
-      disabled: busy.value || lastOwner,
+      disabled: busy.value,
       onSelect: () => void onRemove(m.member_handle),
     },
   ]
@@ -165,15 +154,19 @@ const externals = computed(() => externalHandles(props.projectMembers))
 // 份拼起来。已停用的队友不列：停用就是为了挡住新的邀请。
 const addable = computed(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
-  return props.projectMembers
-    .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
-    .map((m) => ({
-      title: memberName(m) || m.user_handle,
-      value: m.user_handle,
-      agent: !!m.agent,
-      external: externals.value.has(m.user_handle),
-      face: m.avatar_id != null && !broken.value.has(m.user_handle) ? getAvatarUrl(m.avatar_id) : null,
-    }))
+  return (
+    props.projectMembers
+      .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
+      // 「综合」里本来就有项目里的每个人，只剩 AI 队友可请。
+      .filter((m) => !props.general || m.agent)
+      .map((m) => ({
+        title: memberName(m) || m.user_handle,
+        value: m.user_handle,
+        agent: !!m.agent,
+        external: externals.value.has(m.user_handle),
+        face: m.avatar_id != null && !broken.value.has(m.user_handle) ? getAvatarUrl(m.avatar_id) : null,
+      }))
+  )
 })
 
 // 头像：本人挑过就画本人的，没挑过画按 handle 哈希出的彩色首字母。种子用
@@ -194,17 +187,6 @@ function initial(name: string): string {
   return avatarInitial(name)
 }
 
-function roleLabel(role: string): string {
-  return ROLES.includes(role as (typeof ROLES)[number]) ? t(`work.room.roster.role.${role}`) : role
-}
-
-/** What the role can do, shown beside each option in the role menu and as the tooltip on
- *  the resting label. The roster row is only two lines tall, so the list keeps the label
- *  and the explanation lives one hover away. */
-function roleHint(role: string): string {
-  return ROLES.includes(role as (typeof ROLES)[number]) ? t(`work.room.roster.roleHint.${role}`) : ''
-}
-
 async function guard<T>(fn: () => Promise<T>): Promise<void> {
   busy.value = true
   error.value = ''
@@ -221,16 +203,12 @@ async function guard<T>(fn: () => Promise<T>): Promise<void> {
 async function onAdd() {
   const handle = addHandle.value
   if (!handle) return
-  await guard(() => addTopicMember(props.topicId, handle, 'member'))
+  await guard(() => addTopicMember(props.topicId, handle))
   addHandle.value = null
 }
 
 async function onRemove(handle: string) {
   await guard(() => removeTopicMember(props.topicId, handle))
-}
-
-async function onSetRole(handle: string, role: string) {
-  await guard(() => updateTopicMemberRole(props.topicId, handle, role))
 }
 </script>
 
@@ -245,7 +223,7 @@ async function onSetRole(handle: string, role: string) {
         :title="`${t('work.room.roster.title')} · ${countLabel}`"
       >
         <span class="members-mini__stack">
-          <template v-for="(m, i) in stackFaces" :key="m.id">
+          <template v-for="(m, i) in stackFaces" :key="m.member_handle">
             <CheeseAvatar
               v-if="m.agent"
               class="members-mini__ai"
@@ -286,12 +264,12 @@ async function onSetRole(handle: string, role: string) {
       <ul v-else class="roster__list">
         <li
           v-for="m in members"
-          :key="m.id"
+          :key="m.member_handle"
           class="roster__item"
-          @contextmenu="canManage && rowMenu.open(m.member_handle, $event)"
+          @contextmenu="removable(m) && rowMenu.open(m.member_handle, $event)"
         >
           <AdaptiveMenu
-            v-if="canManage"
+            v-if="removable(m)"
             v-bind="rowMenu.bind(m.member_handle)"
             :actions="memberActions(m)"
             :title="memberName(m) || m.member_handle"
@@ -317,50 +295,18 @@ async function onSetRole(handle: string, role: string) {
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />
 
-          <!-- Owner/admin: change role via a small menu; else a static chip.
-               队友没有角色菜单——它在房间里的身份是「AI 队友」那个标——但和人一样
-               能被移出。 -->
-          <template v-if="canManage">
-            <v-menu v-if="!m.agent" location="bottom end">
-              <template #activator="{ props: rp }">
-                <button
-                  v-bind="rp"
-                  type="button"
-                  class="roster__role roster__role--btn"
-                  :disabled="busy"
-                  :title="roleHint(m.role)"
-                >
-                  {{ roleLabel(m.role) }}
-                  <v-icon size="12">mdi-chevron-down</v-icon>
-                </button>
-              </template>
-              <v-list density="compact">
-                <v-list-item
-                  v-for="r in ROLES"
-                  :key="r"
-                  :active="r === m.role"
-                  :disabled="m.role === 'owner' && r !== 'owner' && ownerCount <= 1"
-                  @click="onSetRole(m.member_handle, r)"
-                >
-                  <v-list-item-title class="text-body-2">
-                    {{ roleLabel(r) }}
-                  </v-list-item-title>
-                  <v-list-item-subtitle class="text-caption">{{ roleHint(r) }}</v-list-item-subtitle>
-                </v-list-item>
-              </v-list>
-            </v-menu>
-            <button
-              type="button"
-              class="roster__remove"
-              :disabled="busy || (m.role === 'owner' && ownerCount <= 1)"
-              :title="t('work.room.roster.remove')"
-              @click="onRemove(m.member_handle)"
-            >
-              <v-icon size="15">mdi-close</v-icon>
-            </button>
-          </template>
-          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义。 -->
-          <span v-else-if="!m.agent" class="roster__role" :title="roleHint(m.role)">{{ roleLabel(m.role) }}</span>
+          <!-- 建这个频道的人标一个「创建者」：他和项目管理员一起管这个频道。 -->
+          <span v-if="m.role === 'owner' && !m.agent" class="roster__role">{{ t('work.room.roster.creator') }}</span>
+          <button
+            v-if="removable(m)"
+            type="button"
+            class="roster__remove"
+            :disabled="busy"
+            :title="t('work.room.roster.remove')"
+            @click="onRemove(m.member_handle)"
+          >
+            <v-icon size="15">mdi-close</v-icon>
+          </button>
         </li>
       </ul>
 
@@ -383,7 +329,7 @@ async function onSetRole(handle: string, role: string) {
         <button type="button" class="roster__retry" @click="loadMachines">{{ t('work.roomMachine.retry') }}</button>
       </div>
 
-      <!-- Add a project member (owner/admin only). -->
+      <!-- 管理者从项目成员里加人；「综合」里只剩 AI 队友可加。 -->
       <div v-if="canManage" class="roster__add">
         <v-select
           v-model="addHandle"

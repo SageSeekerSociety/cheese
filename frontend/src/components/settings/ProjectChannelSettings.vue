@@ -1,9 +1,12 @@
 <script setup lang="ts">
-// 项目设置里的「频道」：新建、改名、归档、取消归档都在这里。侧栏上不放「新建频道」
-// ——频道少而稳定，新建是一年做几次的事；要做成的一件事建成任务，不为它开频道。
+// 项目设置里的「频道」：这个项目的全部频道。项目里的每个人在这里看到每个频道是做
+// 什么的、自己加入没有，加入或退出；侧栏只列加入了的，这里是找到别的频道的地方
+// （侧栏频道下面那一行「浏览频道」通到这里）。管频道的人（创建者、项目管理员）在这里
+// 改名、写说明、归档、取消归档。已归档的频道只在这里列出。
 //
-// 建好就打开它（去哪儿由页面决定）。数据就是侧栏那一份（工作区 store）：这一页叠在项目上面，改了什么侧栏当场跟着变，
-// 不需要再拉一次。
+// 新建也在这里，不在侧栏上——频道少而稳定，新建是一年做几次的事；要做成的一件事建成
+// 任务，不为它开频道。建好就打开它（去哪儿由页面决定）。数据就是侧栏那一份（工作区
+// store）：改了什么侧栏当场跟着变，不需要再拉一次。
 import type { Topic } from '@/cx_types'
 
 import { computed, ref } from 'vue'
@@ -20,21 +23,25 @@ const props = defineProps<{ projectId: string }>()
 const store = useWorkspaceStore()
 const emit = defineEmits<{ (e: 'open-channel', topic: Topic): void }>()
 
+const DESCRIPTION_MAX_LENGTH = 500
+
 const mine = computed<Topic[]>(() => store.topics.filter((topic) => topic.project_id === props.projectId))
 const root = computed(() => mine.value.find((topic) => inferTopicKind(topic) === 'root') ?? null)
 const active = computed(() => mine.value.filter((topic) => topic.status !== 'archived' && topic.id !== root.value?.id))
 const archived = computed(() => mine.value.filter((topic) => topic.status === 'archived'))
 
 const draft = ref('')
+const draftDescription = ref('')
 const creating = ref(false)
 async function create() {
   const title = draft.value.trim()
   if (!title || creating.value) return
   creating.value = true
   try {
-    const topic = await store.create(title)
+    const topic = await store.create(title, draftDescription.value)
     if (!topic) return
     draft.value = ''
+    draftDescription.value = ''
     emit('open-channel', topic)
   } finally {
     creating.value = false
@@ -44,6 +51,7 @@ async function create() {
 const renamingId = ref<string | null>(null)
 const renameDraft = ref('')
 function startRename(topic: Topic) {
+  describingId.value = null
   renamingId.value = topic.id
   renameDraft.value = topic.title
 }
@@ -52,6 +60,31 @@ async function commitRename(topic: Topic) {
   renamingId.value = null
   const title = normalizeTopicTitle(renameDraft.value, topic.title)
   if (title) await store.renameTopic(topic.id, title)
+}
+
+const describingId = ref<string | null>(null)
+const describeDraft = ref('')
+function startDescribe(topic: Topic) {
+  renamingId.value = null
+  describingId.value = topic.id
+  describeDraft.value = topic.description ?? ''
+}
+async function commitDescribe(topic: Topic) {
+  if (describingId.value !== topic.id) return
+  describingId.value = null
+  const next = describeDraft.value.trim()
+  if (next !== (topic.description ?? '')) await store.describe(topic.id, next)
+}
+
+// 加入、退出的那一下：按钮转圈，别的频道照常能点。
+const toggling = ref<string | null>(null)
+async function setJoined(topic: Topic, joined: boolean) {
+  toggling.value = topic.id
+  try {
+    await store.setJoined(topic.id, joined)
+  } finally {
+    toggling.value = null
+  }
 }
 </script>
 
@@ -69,6 +102,15 @@ async function commitRename(topic: Topic) {
         hide-details
         autocomplete="off"
       />
+      <v-text-field
+        v-model="draftDescription"
+        :label="t('work.projectSettings.channels.descriptionLabel')"
+        :maxlength="DESCRIPTION_MAX_LENGTH"
+        density="compact"
+        variant="outlined"
+        hide-details
+        autocomplete="off"
+      />
       <BaseButton type="submit" kind="primary" :loading="creating" :disabled="!draft.trim() || creating">
         {{ t('work.projectSettings.channels.create') }}
       </BaseButton>
@@ -77,32 +119,79 @@ async function commitRename(topic: Topic) {
     <ul class="channel-list" :aria-label="t('work.projectSettings.channels.activeLabel')">
       <li v-if="root" class="channel-row">
         <v-icon size="16" class="channel-row__glyph" icon="mdi-pound" />
-        <span class="channel-row__name">{{ topicTitle(root) }}</span>
-        <span class="t-meta c-faint">{{ t('work.projectSettings.channels.rootNote') }}</span>
+        <span class="channel-row__main">
+          <button type="button" class="channel-row__name" @click="emit('open-channel', root)">
+            {{ topicTitle(root) }}
+          </button>
+          <span class="channel-row__about">{{ t('work.projectSettings.channels.rootNote') }}</span>
+        </span>
       </li>
       <li v-for="topic in active" :key="topic.id" class="channel-row" :data-channel="topic.id">
         <v-icon size="16" class="channel-row__glyph" icon="mdi-pound" />
-        <v-text-field
-          v-if="renamingId === topic.id"
-          v-model="renameDraft"
-          class="channel-row__field"
-          :maxlength="TOPIC_TITLE_MAX_LENGTH"
-          density="compact"
-          variant="outlined"
-          hide-details
-          autofocus
-          autocomplete="off"
-          @keyup.enter="commitRename(topic)"
-          @keyup.esc="renamingId = null"
-          @blur="commitRename(topic)"
-        />
-        <span v-else class="channel-row__name" data-user-content>{{ topicTitle(topic) }}</span>
-        <BaseButton kind="ghost" size="sm" @click="startRename(topic)">
-          {{ t('work.projectSettings.channels.rename') }}
+        <span class="channel-row__main">
+          <v-text-field
+            v-if="renamingId === topic.id"
+            v-model="renameDraft"
+            class="channel-row__field"
+            :label="t('work.projectSettings.channels.nameLabel')"
+            :maxlength="TOPIC_TITLE_MAX_LENGTH"
+            density="compact"
+            variant="outlined"
+            hide-details
+            autofocus
+            autocomplete="off"
+            @keyup.enter="commitRename(topic)"
+            @keyup.esc="renamingId = null"
+            @blur="commitRename(topic)"
+          />
+          <button v-else type="button" class="channel-row__name" data-user-content @click="emit('open-channel', topic)">
+            {{ topicTitle(topic) }}
+          </button>
+          <v-text-field
+            v-if="describingId === topic.id"
+            v-model="describeDraft"
+            class="channel-row__field"
+            :label="t('work.projectSettings.channels.descriptionLabel')"
+            :maxlength="DESCRIPTION_MAX_LENGTH"
+            density="compact"
+            variant="outlined"
+            hide-details
+            autofocus
+            autocomplete="off"
+            @keyup.enter="commitDescribe(topic)"
+            @keyup.esc="describingId = null"
+            @blur="commitDescribe(topic)"
+          />
+          <span v-else-if="topic.description" class="channel-row__about" data-user-content>{{
+            topic.description
+          }}</span>
+        </span>
+        <span v-if="topic.joined" class="channel-row__joined t-meta">{{
+          t('work.projectSettings.channels.joined')
+        }}</span>
+        <BaseButton
+          v-if="topic.joined"
+          kind="ghost"
+          size="sm"
+          :loading="toggling === topic.id"
+          @click="setJoined(topic, false)"
+        >
+          {{ t('work.channel.leave') }}
         </BaseButton>
-        <BaseButton kind="ghost" size="sm" @click="store.archive(topic.id)">
-          {{ t('work.projectSettings.channels.archive') }}
+        <BaseButton v-else kind="secondary" size="sm" :loading="toggling === topic.id" @click="setJoined(topic, true)">
+          {{ t('work.channel.join') }}
         </BaseButton>
+        <template v-if="topic.can_manage">
+          <BaseButton kind="ghost" size="sm" @click="startRename(topic)">
+            {{ t('work.projectSettings.channels.rename') }}
+          </BaseButton>
+          <BaseButton kind="ghost" size="sm" @click="startDescribe(topic)">
+            {{ t('work.projectSettings.channels.describe') }}
+          </BaseButton>
+          <BaseButton kind="ghost" size="sm" @click="store.archive(topic.id)">
+            {{ t('work.projectSettings.channels.archive') }}
+          </BaseButton>
+        </template>
       </li>
     </ul>
 
@@ -111,8 +200,18 @@ async function commitRename(topic: Topic) {
       <ul class="channel-list" :aria-label="t('work.projectSettings.channels.archivedLabel')">
         <li v-for="topic in archived" :key="topic.id" class="channel-row" :data-channel="topic.id">
           <v-icon size="16" class="channel-row__glyph" icon="mdi-pound" />
-          <span class="channel-row__name c-muted" data-user-content>{{ topicTitle(topic) }}</span>
-          <BaseButton kind="ghost" size="sm" @click="store.unarchive(topic.id)">
+          <span class="channel-row__main">
+            <button
+              type="button"
+              class="channel-row__name c-muted"
+              data-user-content
+              @click="emit('open-channel', topic)"
+            >
+              {{ topicTitle(topic) }}
+            </button>
+            <span v-if="topic.description" class="channel-row__about" data-user-content>{{ topic.description }}</span>
+          </span>
+          <BaseButton v-if="topic.can_manage" kind="ghost" size="sm" @click="store.unarchive(topic.id)">
             {{ t('work.projectSettings.channels.unarchive') }}
           </BaseButton>
         </li>
@@ -124,9 +223,13 @@ async function commitRename(topic: Topic) {
 <style scoped>
 .channel-new {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 16px;
+}
+.channel-new > .v-input {
+  flex: 1 1 200px;
 }
 .channel-list {
   list-style: none;
@@ -149,12 +252,40 @@ async function commitRename(topic: Topic) {
   flex: none;
   color: var(--faint);
 }
-.channel-row__name {
+.channel-row__main {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+  padding-block: 4px;
+}
+.channel-row__name {
+  max-width: 100%;
   overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+.channel-row__name:hover {
+  text-decoration: underline;
+}
+.channel-row__about {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.channel-row__joined {
+  flex: none;
+  color: var(--faint);
 }
 .channel-row__field {
   flex: 1 1 auto;

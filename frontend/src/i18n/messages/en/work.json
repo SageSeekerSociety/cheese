@@ -323,9 +323,9 @@
       "mute": "Mute",
       "unmute": "Unmute",
       "muted": "Muted",
-      "muteFailed": "Couldn't save the mute setting",
       "markAllRead": "Mark all as read",
-      "markAllReadFailed": "Couldn't mark everything as read"
+      "markAllReadFailed": "Couldn't mark everything as read",
+      "notifyFailed": "Couldn't save the notification setting"
     },
     "archiveNotice": {
       "done": "Archived",
@@ -1048,26 +1048,16 @@
       "loadFailed": "Couldn't load members",
       "count": "No members | 1 member | {count} members",
       "agentBadge": "AI teammate",
-      "role": {
-        "owner": "Owner",
-        "admin": "Admin",
-        "member": "Member"
-      },
-      "roleHint": {
-        "owner": "Manage the channel and its members",
-        "admin": "Manage members and their roles",
-        "member": "Take part in the channel"
-      },
       "failed": "Something went wrong",
       "title": "Channel members",
       "remove": "Remove from channel",
       "addPlaceholder": "Add a member…",
       "allIn": "Every project member and teammate is already in this channel",
       "add": "Add",
-      "readOnly": "Only owners and admins can change members",
+      "readOnly": "Only the channel's creator and the project's managers can change members",
       "listSeparator": ", ",
       "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
-      "setRole": "Make {role}"
+      "creator": "Creator"
     },
     "mail": {
       "noSubject": "(No subject)",
@@ -1088,11 +1078,6 @@
     },
     "mention": {
       "back": "Back",
-      "notInTopic": "Not in channel",
-      "outsideNotice": "{names} aren't in this channel and won't be notified",
-      "addToTopic": "Add to channel",
-      "dismissOutside": "Dismiss",
-      "nameJoiner": ", ",
       "library": "Library",
       "noFiles": "No matching files",
       "noMatch": "No matches",
@@ -1343,9 +1328,7 @@
       "topic": "Channel"
     },
     "archived": "Archived",
-    "archivedUnread": "New messages in archived channels",
     "projectMenu": "Project menu",
-    "others": "Other channels",
     "collapse": "Collapse",
     "expand": "Expand",
     "expandStalled": "Expand: someone in here is stuck",
@@ -1359,9 +1342,6 @@
     "switchProject": "Switch project",
     "chooseProjectFirst": "Choose a project first",
     "topics": "Channels",
-    "noneMine": "No channels involve you yet",
-    "othersUnread": "New messages in other channels",
-    "empty": "No channels yet",
     "workingTip": "{name} is working here",
     "expandWorking": "Expand: a teammate is working in here",
     "moreMembers": "+{count}",
@@ -1838,15 +1818,18 @@
       "accountConnected": "GitHub account connected"
     },
     "channels": {
-      "intro": "Channels separate discussion by group or area. Something to get done becomes a task; it does not need a channel of its own.",
+      "intro": "Every channel in the project is here, and every project member can read and join it. Your sidebar lists only the channels you've joined. For a piece of work, create a task rather than a channel.",
       "nameLabel": "Channel name",
       "create": "New channel",
       "activeLabel": "Channels in use",
       "archivedLabel": "Archived",
-      "rootNote": "Comes with the project; cannot be archived",
+      "rootNote": "Everyone in the project is here; it can't be left or archived",
       "rename": "Rename",
       "archive": "Archive",
-      "unarchive": "Unarchive"
+      "unarchive": "Unarchive",
+      "descriptionLabel": "Description (optional)",
+      "describe": "Edit description",
+      "joined": "Joined"
     }
   },
   "computeChoice": {
@@ -2073,5 +2056,31 @@
     "closed": "Closed",
     "empty": "No tasks here",
     "loadFailed": "Could not load the tasks"
+  },
+  "channel": {
+    "notify": {
+      "title": "Notifications",
+      "all": "All new messages",
+      "allHint": "Every new message in the main line counts",
+      "mentions": "Mentions and my threads",
+      "mentionsHint": "Counts when someone mentions me or everyone, or a thread I took part in gets a reply",
+      "mute": "Mute",
+      "muteHint": "Only a direct mention counts and notifies me",
+      "mutedForever": "Muted until you turn it off",
+      "mutedUntil": "Muted until {time}",
+      "forHour": "1 hour",
+      "forEightHours": "8 hours",
+      "untilTomorrow": "Until 9 a.m. tomorrow",
+      "forWeek": "1 week",
+      "untilUnmuted": "Until I turn it off"
+    },
+    "join": "Join channel",
+    "leave": "Leave channel",
+    "joinFailed": "Couldn't join the channel",
+    "leaveFailed": "Couldn't leave the channel",
+    "notJoined": "You haven't joined this channel. Join to post in the main line, or reply in a message's thread.",
+    "archivedNotice": "This channel is archived and read-only",
+    "describeFailed": "Couldn't save the channel description",
+    "browse": "Browse channels"
   }
 }

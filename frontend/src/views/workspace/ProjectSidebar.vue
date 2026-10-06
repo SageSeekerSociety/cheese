@@ -85,6 +85,11 @@ watch(
 function openAllTasks(channelId: string) {
   void router.push({ name: 'workspace-channel-tasks', params: { projectId: props.projectId, topicId: channelId } })
 }
+// 「浏览频道」就是项目设置的「频道」一栏：全部频道都在那里，加入、退出也在那里。
+function browseChannels() {
+  void router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'channels' } })
+}
+const browsingChannels = computed(() => route.name === 'project-settings' && route.params.section === 'channels')
 function openTask(task: { roomId: string; taskId: string }) {
   void router.push({
     name: 'workspace-task',
@@ -165,21 +170,22 @@ useCommands(() => [
       :room-task-totals="roomTaskTotals"
       :all-tasks-channel-id="activeAllTasks"
       :selected-task-id="activeTaskId"
+      :browsing-channels="browsingChannels"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
       :active-docs="activeDocs"
-      :unread-map="store.badgeUnreadMap"
+      :unread-map="store.unreadMap"
       :muted-of="store.isMuted"
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @select-task="openTask"
       @all-tasks="openAllTasks"
+      @browse-channels="browseChannels"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @leave-topic="cancelPrefetch"
       @select-docs="openDocs"
       @retry="store.reloadTopics()"
-      @unarchive-topic="store.unarchive"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     >
       <!-- 手机上进项目落在话题列表上而不是看板上，所以看板的一句话摘要放在列表最顶上，

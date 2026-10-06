@@ -25,6 +25,8 @@ import RenderTeamRequestRejectedNotification from '@/components/common/Notificat
 const notificationRendererRegistry: Record<NotificationType, Component> = {
   MENTION: RenderMentionNotification,
   REPLY: RenderReplyNotification,
+  // 标题和正文是后端写好的那一句，照原样显示。
+  THREAD_REPLY: RenderDefaultNotification,
   REACTION: RenderReactionNotification,
   PROJECT_INVITE: RenderProjectInviteNotification,
   DEADLINE_REMIND: RenderDeadlineRemindNotification,
@@ -62,6 +64,8 @@ export function getNotificationIcon(type: NotificationType): string {
       return 'mdi-at'
     case 'REPLY':
       return 'mdi-reply'
+    case 'THREAD_REPLY':
+      return 'mdi-forum-outline'
     case 'REACTION':
       return 'mdi-emoticon'
     case 'PROJECT_INVITE':

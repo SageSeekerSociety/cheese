@@ -969,7 +969,7 @@
   "skillAdd": "添加技能",
   "skillImport": "导入技能",
   "skillImportUnreadable": "无法读取这个文件",
-  "topicNotifyLevelInvalid": "通知只能设为「所有新消息」「@我和我参与的支线」或「静音」",
+  "topicNotifyLevelInvalid": "通知设置只能从三个档位里选",
   "libraryVersionNotFound": "找不到这一版",
   "libraryVersionIsCurrent": "这一版已经是现在这一份",
   "personalTeamCannotDisband": "个人团队跟着你的账号，不能解散",

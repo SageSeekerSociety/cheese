@@ -15,7 +15,7 @@ export interface TaskComparison {
   after: string
 }
 
-export function useTaskPage(opts: { taskId: () => string | undefined; roomMembers: () => TopicMemberRow[] }) {
+export function useTaskPage(opts: { taskId: () => string | undefined; people: () => TopicMemberRow[] }) {
   const ME = myHandle()
   const task = ref<RoomTask | null>(null)
   const loading = ref(false)
@@ -54,7 +54,8 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
     () => isOwner.value || (!!task.value && (task.value.contributor_handles ?? []).includes(ME))
   )
   const isOpen = computed(() => task.value?.status === 'open')
-  const people = computed(() => opts.roomMembers().filter((m) => !m.agent))
+  // 能接这件事、能来协作的人：项目里的人（不含 AI 队友）。
+  const people = computed(() => opts.people().filter((m) => !m.agent))
 
   // ---- 开始 ----
   // 项目没有默认审阅人时，开始会被拒，负责人在页头下面指定一位再开始。

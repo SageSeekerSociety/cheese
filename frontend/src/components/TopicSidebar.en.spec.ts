@@ -39,7 +39,7 @@ const theirs = {
   title: 'Launch plan',
   kind: 'channel',
   status: 'active',
-  i_participate: false,
+  joined: false,
 } as Topic
 
 const project = { id: 'p1', name: 'Course', created_at: '2026-08-10T00:00:00Z' } as unknown as Project
@@ -123,11 +123,11 @@ describe('the topic sidebar in English', () => {
 
   it('in a project with no topics yet', () => {
     const { baseElement, getByText } = mount({})
-    getByText('No channels yet')
+    getByText('Browse channels')
     expect(chineseIn(baseElement)).toEqual([])
   })
 
-  it('when the only topics belong to other people', () => {
+  it('when the only other channels are ones I have not joined', () => {
     const { baseElement, getByText } = mount({ topics: [root, theirs] })
     getByText('General')
     expect(chineseIn(baseElement)).toEqual([])

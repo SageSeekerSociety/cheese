@@ -174,7 +174,19 @@ const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId
 
 // ---- 任务页 ----
 // 页头、总览、能不能说话都读这一份；对话和面板的其余几格按任务的 id 自己读。
-const taskPage = useTaskPage({ taskId: () => props.taskId, roomMembers: () => roomMembers.value })
+// 任务交给谁、请谁协作，从项目里的人挑：被选中的人随之加入这个频道（后端）。
+const projectPeople = computed<TopicMemberRow[]>(() =>
+  store.members
+    .filter((m) => !m.agent && m.active !== false)
+    .map((m) => ({
+      topic_id: props.topicId,
+      member_handle: m.user_handle,
+      role: 'member' as const,
+      name: m.name,
+      avatar_id: m.avatar_id ?? null,
+    }))
+)
+const taskPage = useTaskPage({ taskId: () => props.taskId, people: () => projectPeople.value })
 // 第一次由 openPlace 记已读；之后在同一个频道里进出任务，页面不重建，换到哪段对话
 // 就是读了哪段。
 let placeOpened = false
@@ -208,7 +220,13 @@ const {
 // 任务里只有负责人能说话，关了就谁都不能说了：输入框的位置换成这一句。
 const composerClosed = computed(() => {
   const task = taskPage.task.value
-  if (!props.taskId || !task) return null
+  if (!props.taskId) {
+    // 频道的主线：归档了只能看；没加入的人在这里只读，加入后才能说话（支线里照样能回）。
+    const topic = selectedTopic.value
+    if (topic?.status === 'archived') return t('work.channel.archivedNotice')
+    return topic?.joined === false ? t('work.channel.notJoined') : null
+  }
+  if (!task) return null
   if (!taskPage.isOpen.value) return t('work.task.closedNotice')
   return taskPage.takesPart.value ? null : t('work.task.ownerOnlyNotice', { name: store.agentName })
 })
@@ -498,7 +516,7 @@ async function handleUpgradeMessage(messageId: string) {
 
 // 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
 // 所以在归零之前抓一次，交给对话栏去画那条线。
-const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
+const unreadOnOpen = store.unreadMap[props.topicId]?.messages ?? 0
 
 // 这个房间名册上每个 handle 叫什么。「现场」那一格给每一行署名用它，人和 AI 队
 // 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。

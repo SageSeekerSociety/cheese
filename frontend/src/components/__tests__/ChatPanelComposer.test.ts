@@ -41,8 +41,8 @@ vi.mock('../../api', async () => {
     // 后缀，而项目名册里只有人。
     listTopicMembers: vi.fn().mockResolvedValue({
       data: [
-        { id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
-        { id: 'm2', member_handle: 'cheese-topica', name: '芝士', role: 'member', agent: true },
+        { member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
+        { member_handle: 'cheese-topica', name: '芝士', role: 'member', agent: true },
       ],
       total: 2,
     }),
@@ -254,8 +254,8 @@ describe('对话栏自己的输入栏', () => {
     const api = await import('../../api')
     vi.mocked(api.listTopicMembers).mockResolvedValueOnce({
       data: [
-        { id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
-        { id: 'm2', member_handle: 'cheese-spark', name: '火花', role: 'member', agent: true },
+        { member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
+        { member_handle: 'cheese-spark', name: '火花', role: 'member', agent: true },
       ],
       total: 2,
     } as never)
@@ -504,7 +504,7 @@ describe('对话栏自己的输入栏', () => {
   it('房间名册里没有 AI 队友时，@ 候选里也没有', async () => {
     const api = await import('../../api')
     vi.mocked(api.listTopicMembers).mockResolvedValueOnce({
-      data: [{ id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
+      data: [{ member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
       total: 1,
     } as Awaited<ReturnType<typeof api.listTopicMembers>>)
 
@@ -674,8 +674,8 @@ describe('对话栏自己的输入栏', () => {
         release = () =>
           resolve({
             data: [
-              { id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
-              { id: 'm2', member_handle: 'cheese-topicL', name: '芝士', role: 'member', agent: true },
+              { member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
+              { member_handle: 'cheese-topicL', name: '芝士', role: 'member', agent: true },
             ],
             total: 2,
           } as Awaited<ReturnType<typeof api.listTopicMembers>>)
@@ -744,7 +744,7 @@ describe('对话栏自己的输入栏', () => {
   it('还不知道芝士是谁的时候，⌘/Ctrl+Enter 只是普通发送', async () => {
     const api = await import('../../api')
     vi.mocked(api.listTopicMembers).mockResolvedValue({
-      data: [{ id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
+      data: [{ member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
       total: 1,
     } as Awaited<ReturnType<typeof api.listTopicMembers>>)
 

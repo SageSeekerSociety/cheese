@@ -969,7 +969,7 @@
   "skillAdd": "add a skill",
   "skillImport": "import a skill",
   "skillImportUnreadable": "This file can't be read",
-  "topicNotifyLevelInvalid": "Notifications must be set to “All new messages”, “Mentions and my threads” or “Mute”",
+  "topicNotifyLevelInvalid": "Choose one of the three notification levels",
   "libraryVersionNotFound": "That version could not be found",
   "libraryVersionIsCurrent": "That version is already the current one",
   "personalTeamCannotDisband": "Your personal team belongs to your account and can't be disbanded",
