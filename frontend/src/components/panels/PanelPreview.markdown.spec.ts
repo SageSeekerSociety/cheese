@@ -18,7 +18,6 @@ import { setLocale } from '@/i18n'
 import { previewBundles } from '@/test/panelBundles'
 
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 
 const SOURCE = '# 配置\n\n失败以后重试 3 次。\n'
 

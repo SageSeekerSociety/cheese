@@ -23,7 +23,6 @@ vi.mock('./preview/PreviewSlides.vue', () => ({
   },
 }))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 beforeEach(() => {
   vi.resetAllMocks()
   setLocale('zh-CN')

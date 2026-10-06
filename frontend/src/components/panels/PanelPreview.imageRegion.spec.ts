@@ -26,7 +26,6 @@ vi.mock('../../api', async (importOriginal) => {
   }
 })
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 
 const bytes = new Uint8Array([1, 2, 3, 4]).buffer
 const version = createHash('sha256').update(new Uint8Array(bytes)).digest('hex').slice(0, 16)
