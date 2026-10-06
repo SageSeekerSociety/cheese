@@ -114,8 +114,12 @@ async def push_grants(
     connection is held while the machine is asked, which can take up to the
     push's timeout.
 
-    Once the machine has acknowledged a set, the set is read again, and sent
-    again if it changed in the meantime. Pushes to one machine come from any
+    Once a set may have reached the machine, the set is read again, and sent
+    again if it changed in the meantime. "May have" covers the machine
+    acknowledging it, and also a push that timed out or whose answer the
+    connection owner did not relay: the frame can already be on the link, and
+    the machine applies frames in the order they arrive, so a newer set sent
+    now still lands after it. Pushes to one machine come from any
     backend (the routes, and every backend's reconnect handling), and each reads
     the set before sending it, so a push that read the set just before a revoke
     committed can reach the machine after the revoke's own push, and the machine
@@ -125,8 +129,8 @@ async def push_grants(
     """
     effective = await _read_set(service, device_id, end_read)
     for _ in range(_SENDS_PER_PUSH):
-        outcome = await _send(link, device_id, effective)
-        if not outcome.delivered:
+        outcome, may_have_landed = await _send(link, device_id, effective)
+        if not may_have_landed:
             return outcome
         current = await _read_set(service, device_id, end_read)
         if current.fingerprint == effective.fingerprint:
@@ -154,7 +158,10 @@ async def _read_set(
 
 async def _send(
     link: DeviceLink, device_id: str, effective: DeviceGrants
-) -> PushOutcome:
+) -> tuple[PushOutcome, bool]:
+    """One trip to the machine: what to report, and whether the set may have
+    reached it. A machine that is not linked, or that refused the set, holds
+    what it held before; a timeout or a lost answer says nothing either way."""
     payload = [grant_wire(grant) for grant in effective.grants]
 
     try:
@@ -164,7 +171,7 @@ async def _send(
             delivered=False,
             reason="device_offline",
             detail="这台电脑现在不在线，授权已记录；它下次连上来时会自动生效",
-        )
+        ), False
     except (DeviceCallError, TimeoutError) as exc:
         # The grant is already recorded and is the authoritative record; a device
         # that answered badly has not made the grant wrong, it has only not been
@@ -179,7 +186,7 @@ async def _send(
             delivered=False,
             reason="device_error",
             detail=f"已记录授权，但下发给这台电脑时出错（{exc}），它下次连上来时会重试",
-        )
+        ), isinstance(exc, TimeoutError)
     except httpx.HTTPError:
         # The connection owner unreachable, or answering with a status of its
         # own (an owner older than this call answers 404). Not the machine's
@@ -196,7 +203,7 @@ async def _send(
             delivered=False,
             reason="platform_error",
             detail="已记录授权，但平台这边没能把它下发给这台电脑；它下次连上来时会重新下发",
-        )
+        ), True
 
     fingerprint = None
     if isinstance(answer, dict):
@@ -206,7 +213,7 @@ async def _send(
         reason="delivered",
         detail="授权已下发到这台电脑，立即生效",
         fingerprint=fingerprint if isinstance(fingerprint, str) else None,
-    )
+    ), True
 
 
 async def push_grants_on_connect(

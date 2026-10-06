@@ -224,6 +224,45 @@ async def test_a_revoke_committed_while_a_push_is_in_flight_reaches_the_machine(
     assert [g["path"] for g in link.pushed[-1][1]] == ["/home/alice/Notes"]
 
 
+async def test_a_revoke_committed_while_an_unanswered_push_is_out_reaches_the_machine():
+    """A push that timed out may still be applied by the machine, after the
+    revoke's own push. The set is read again, and the newer one sent after it."""
+    service = service_with(InMemoryLocalFsRepository())
+    paper = await service.grant_directory(
+        device_id=DEVICE,
+        owner_user_id=OWNER,
+        path="/home/alice/Paper",
+        platform=Platform.LINUX,
+        mode=GrantMode.READ,
+        scope=GrantScope.USER,
+    )
+
+    class SlowThenRevoked(FakeLink):
+        async def push_local_fs_grants(self, device_id, grants, *, timeout=20):
+            if not self.pushed:
+                self.pushed.append((device_id, grants))
+                await service.revoke(paper.id, owner_user_id=OWNER)
+                raise TimeoutError
+            return await super().push_local_fs_grants(
+                device_id, grants, timeout=timeout
+            )
+
+    link = SlowThenRevoked()
+    await push_grants(service, link, DEVICE)
+
+    assert link.pushed[-1][1] == []
+
+
+async def test_an_unanswered_push_of_an_unchanged_set_is_not_repeated():
+    service = service_with(InMemoryLocalFsRepository())
+    link = FakeLink(raises=TimeoutError())
+
+    outcome = await push_grants(service, link, DEVICE)
+
+    assert outcome.reason == "device_error"
+    assert len(link.pushed) == 1
+
+
 async def test_the_read_is_ended_before_the_machine_is_asked():
     """The machine can take up to the push's timeout to answer; a database
     connection held for that long, once per machine, empties the pool."""
