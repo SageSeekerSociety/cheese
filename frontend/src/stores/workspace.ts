@@ -78,6 +78,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projects = ref<Project[]>([])
   const projectsSettled = ref(false)
   const topics = ref<Topic[]>([])
+  // 项目的任务清单变了（新建、改名、关闭）。任务清单不在这个 store 里，读它的地方
+  // （侧栏）看着这个数，一变就重读。
+  const tasksChanged = ref(0)
+  function noteTasksChanged() {
+    tasksChanged.value += 1
+  }
   const members = ref<ProjectMemberRow[]>([])
   // 名册上的外部成员（团队以外、被邀请进这个项目的人）。聊天署名、@ 候选、房间名册
   // 都拿它来挂「外部」那个标，所以放在 store 里算一次，谁问都是同一份。
@@ -697,6 +703,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     accessDenied,
     openedProject,
     topics,
+    tasksChanged,
+    noteTasksChanged,
     members,
     agentName,
     agentHandle,

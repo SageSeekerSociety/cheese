@@ -388,7 +388,12 @@ function handleTurnDone() {
 // A platform resource in this room changed (the API handler that changed it
 // sent the frame) — refresh the affected panel live (§3.1.1).
 function handleStateChanged(resource: string) {
-  if (resource === 'topics') void store.refreshTopics()
+  // 「topics」也说任务清单变了（建、改名、关），任务页自己的页头和侧栏都要跟着变。
+  if (resource === 'topics') {
+    void store.refreshTopics()
+    store.noteTasksChanged()
+    if (props.taskId) void taskPage.load(true)
+  }
   // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
