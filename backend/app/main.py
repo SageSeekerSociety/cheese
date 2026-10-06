@@ -290,6 +290,16 @@ async def lifespan(application: FastAPI):
         get_consumptions().run(), name="questions nobody reads"
     )
 
+    # FastAPI builds the OpenAPI document, and with it every included route's
+    # dependencies and validators, the first time a request needs them, then
+    # keeps them. That is ~1.3 s of pure Python, and a new process used to pay
+    # it on the event loop inside its first requests: each blue-green switch on
+    # dev logged an `event loop stalled` there. It is done here, before this
+    # process takes a request. A thread would not help, since the work holds the
+    # GIL; and it runs before the lag watchdog starts, so startup work is not
+    # reported as a stall of the requests it never delayed.
+    application.openapi()
+
     from app.core.loop_lag import watch_loop_lag
     from app.core.net_io import watch_api_io, watch_net_io
 
@@ -376,13 +386,6 @@ async def lifespan(application: FastAPI):
             "asked to hand the running work over; still serving requests"
         )
         hand_over_once()
-
-    # FastAPI builds the OpenAPI document on the first request for it and keeps
-    # it. Building it is ~1.3 s of pure Python on the event loop (the document is
-    # 800 kB), and every new process met that on whichever request came first:
-    # each blue-green switch on dev logged an `event loop stalled` there.
-    # Built here, in a worker thread, before the first request arrives.
-    await asyncio.to_thread(application.openapi)
 
     loop = asyncio.get_running_loop()
     try:
