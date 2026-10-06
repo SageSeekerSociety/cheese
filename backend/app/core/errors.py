@@ -445,8 +445,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         exception into the wire, and `DeviceHubRPC._request` turns the wire back
         into the same exception, so a caller reads one type whichever side of
         the owner it runs on.
+
+        Relayed through the owner, the failure is logged at INFO: the same
+        exception reaches the caller, and only the caller knows whether it was
+        expected — a session's greeting asks a runner whose state is not there
+        yet, and an idle session's runner is gone by design. The caller logs
+        what it did not expect, and a public route that fails still warns here.
         """
-        _log.warning(
+        relayed = request.url.path.startswith("/internal/device-connection/")
+        (_log.info if relayed else _log.warning)(
             "device_call_failed",
             path=request.url.path,
             method=request.method,
