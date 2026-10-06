@@ -11,17 +11,22 @@
 # Only stdout carries `export ...` lines (that is what makes `eval` safe); every
 # progress/diagnostic message goes to stderr.
 #
-# Binaries come from two prebuilt wheels fetched by `uv run --no-project` on a
-# pinned Python 3.12: `postgresql-binaries` (relocatable PostgreSQL 17 with the
-# contrib extensions) and `redislite` (bundled redis-server 6.2). They are
-# deliberately NOT backend dependencies — see the note at resolve_bins() below.
-# ParadeDB's pg_search extension is added to that PostgreSQL from ParadeDB's
-# release package — see install_pg_search().
+# The servers are pinned releases installed once into $SERVER_HOME: PostgreSQL 17
+# with contrib from the theseus-rs/postgresql-binaries release, ParadeDB's
+# pg_search added to it (see install_pg_search), and Valkey, the server CI runs,
+# built from its source release (see install_valkey).
 # The harness builds are npm packages; they land in $TOOL_CACHE, outside
 # $DATA_DIR, so `stop --purge` does not throw away the download.
 set -euo pipefail
 
-DATA_DIR="${CHEESEX_DEV_DB_DIR:-${TMPDIR:-/tmp}/cheesex-dev-db}"
+# Neither the servers nor their data live in a cache or temp directory. A running
+# postgres loads plpgsql and pg_search from its $libdir in every new connection
+# that uses them, so a `uv cache prune` or disk cleanup that deletes them leaves
+# a server that is up but fails those queries; and macOS's
+# dirhelper deletes files under $TMPDIR that are older than three days, every
+# night at 03:35, data files of a running cluster included.
+DATA_DIR="${CHEESEX_DEV_DB_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-db}"
+SERVER_HOME="${CHEESEX_DEV_SERVER_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-servers}"
 PG_PORT="${CHEESEX_DEV_PG_PORT:-5433}"
 REDIS_PORT="${CHEESEX_DEV_REDIS_PORT:-6379}"
 TOOL_CACHE="${CHEESEX_DEV_TOOL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cheesex-dev-db}"
@@ -45,59 +50,147 @@ REDIS_DIR="$DATA_DIR/redis"
 PG_LOG="$DATA_DIR/pg.log"
 REDIS_LOG="$DATA_DIR/redis.log"
 REDIS_PID="$DATA_DIR/redis.pid"
-BIN_CACHE="$DATA_DIR/bins.env"
 
 log() { printf '%s\n' "$*" >&2; }
 die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
 
 # The Postgres build must ship contrib: the migrations run
 # `CREATE EXTENSION pg_trgm`, which a core-only build (such as the `pgserver`
-# wheel) cannot satisfy, so `alembic upgrade head` would fail on it.
-# `postgresql-binaries` repackages the theseus-rs/postgresql-binaries release
-# tarball unchanged, contrib included; its bin() unpacks it next to itself on
-# first call. Keep its major on the one dev and production run (17).
-#
-# These are test-host tools, not something the backend imports, so they stay
-# out of backend's dependency groups. `redislite` publishes wheels up to cp312
-# only (elsewhere it compiles redis from its sdist), so both wheels are fetched
-# onto their own throwaway 3.12 interpreter. That interpreter runs nothing but
-# the servers; the test suite still runs on the project's 3.13. uv caches wheels
-# and interpreter, so only the first call downloads, and the resolved paths are
-# then cached in $BIN_CACHE so repeat starts skip uv entirely.
-PG_WHEEL='postgresql-binaries==17.11.0'
-REDIS_WHEEL='redislite==6.2.912183'
+# wheel) cannot satisfy, so `alembic upgrade head` would fail on it. The
+# theseus-rs/postgresql-binaries release tarballs are relocatable and carry
+# contrib. Keep the major on the one dev and production run (17).
+PG_RELEASE=17.11.0
+PG_HOME="$SERVER_HOME/postgresql-$PG_RELEASE"
+PG_BIN="$PG_HOME/bin"
+
+# Valkey is what CI runs as its Redis service. Valkey publishes no macOS build,
+# so its source release is built here, the same way on every host; the build
+# needs only make and a C compiler and takes under a minute. Redis 6.2 is not enough: EXPIRE ... NX,
+# which session_host/consumptions.py sends, arrived in 7.0.
+VALKEY_VERSION=8.0.2
+VALKEY_SHA256=e052c45b3cbe512e24fdfdc3fd337f9f5e4b8f8b8713f349ba867b829c8ff11a
+VALKEY_HOME="$SERVER_HOME/valkey-$VALKEY_VERSION"
+REDIS_BIN="$VALKEY_HOME/bin"
+
 resolve_bins() {
-    # BIN_PINS makes a cache written for other pins count as stale: the binaries
-    # it points at usually still exist and run, so the -x checks alone pass.
-    if [ -f "$BIN_CACHE" ]; then
-        # shellcheck disable=SC1090
-        . "$BIN_CACHE"
-        if [ "${BIN_PINS:-}" = "$PG_WHEEL $REDIS_WHEEL pg_search==$PG_SEARCH_VERSION" ] \
-            && [ -x "${PG_BIN:-}/pg_ctl" ] && [ -x "${REDIS_BIN:-}/redis-server" ] \
-            && pg_search_installed; then
-            return
-        fi
-        log "cached binary paths are stale (pins changed or uv cache pruned) — re-resolving"
-    fi
-
-    log "resolving server binaries via uv (first run downloads ~50MB, then cached)"
-    local out
-    out="$(uv run --no-project --python 3.12 \
-        --with "$PG_WHEEL" --with "$REDIS_WHEEL" \
-        python -c '
-import pathlib, postgresql_binaries, redislite
-print("PG_BIN=" + str(postgresql_binaries.bin()))
-print("REDIS_BIN=" + str(pathlib.Path(redislite.__file__).parent / "bin"))
-')" || die "could not resolve server binaries (is uv installed and the network up?)"
-
-    eval "$out"
-    [ -x "$PG_BIN/pg_ctl" ] || die "pg_ctl not executable at $PG_BIN"
-    [ -x "$REDIS_BIN/redis-server" ] || die "redis-server not executable at $REDIS_BIN"
+    mkdir -p "$SERVER_HOME"
+    pg_installed || install_pg
     pg_search_installed || install_pg_search
+    valkey_installed || install_valkey
+}
 
-    # Written last, so a failed download or install leaves no cache that passes.
-    mkdir -p "$DATA_DIR"
-    printf '%s\nBIN_PINS=%q\n' "$out" "$PG_WHEEL $REDIS_WHEEL pg_search==$PG_SEARCH_VERSION" > "$BIN_CACHE"
+dl_suffix() { if [ "$(uname -s)" = Darwin ]; then echo dylib; else echo so; fi; }
+
+pg_installed() {
+    local tool libdir
+    for tool in postgres pg_ctl initdb psql pg_isready pg_config; do
+        [ -x "$PG_BIN/$tool" ] || return 1
+    done
+    libdir="$("$PG_BIN/pg_config" --pkglibdir 2>/dev/null)" || return 1
+    [ -f "$libdir/plpgsql.$(dl_suffix)" ] && [ -f "$libdir/pg_trgm.$(dl_suffix)" ]
+}
+
+valkey_installed() { [ -x "$REDIS_BIN/valkey-server" ] && [ -x "$REDIS_BIN/valkey-cli" ]; }
+
+# Download $1 to $3 unless a file with sha256 $2 is already there. Plain Python,
+# so the host needs no curl. The file is written under a temporary name and
+# renamed into place, so a concurrent start never reads half a download.
+fetch() {
+    uv run --no-project --quiet python - "$@" <<'PY' || die "download of $1 failed (see above)"
+import hashlib, os, pathlib, sys, time, urllib.request
+
+url, want, dest = sys.argv[1:]
+dest = pathlib.Path(dest)
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+if not (dest.is_file() and sha256(dest) == want):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(f"{dest.name}.{os.getpid()}.part")
+    for attempt in range(3):
+        try:
+            urllib.request.urlretrieve(url, part)
+            break
+        except OSError as e:
+            if attempt == 2:
+                sys.exit(f"download of {url} failed: {e}")
+            time.sleep(2)
+    got = sha256(part)
+    if got != want:
+        part.unlink()
+        sys.exit(f"{url} has sha256 {got}, expected {want}")
+    os.replace(part, dest)
+PY
+}
+
+# Move the finished install $1 to $2. $2 appears only once complete, so a
+# concurrent start sees all of an install or none of it. An install that won a
+# race to $2 is kept; it is just as complete.
+place() {
+    [ -e "$2" ] || mv "$1" "$2"
+    # Lost the race between the test and the mv, which then put $1 inside $2.
+    rm -rf "${2:?}/$(basename "$1")"
+}
+
+# An install that exists but fails its check had files deleted from under it.
+# It is not repaired in place: servers may be running from it, and swapping
+# files under them is how they got into this state.
+damaged() {
+    die "$1 is missing files (something deleted part of it); stop the servers running from it, delete that directory, and start again."
+}
+
+install_pg() {
+    [ ! -e "$PG_HOME" ] || damaged "the PostgreSQL install in $PG_HOME"
+    local target sha256
+    case "$(uname -s)/$(uname -m)" in
+        Darwin/arm64)
+            target=aarch64-apple-darwin
+            sha256=fd4b62794b160e26973a768a1eef3248aef9d2ff23ebd6d884a4299485e28e57 ;;
+        Linux/x86_64)
+            target=x86_64-unknown-linux-gnu
+            sha256=b7a1ba6bae6499d8296e3e81b0171eecfd1766ca9aaa0057e41ad3e844e5e2e0 ;;
+        Linux/aarch64 | Linux/arm64)
+            target=aarch64-unknown-linux-gnu
+            sha256=abffda09209280ec1502b73720dc4d254fb7fff9a072e324926c600a5b16c221 ;;
+        *)
+            die "no PostgreSQL $PG_RELEASE build is set up for $(uname -s)/$(uname -m), only for
+       macOS arm64 and Linux x86_64 and aarch64, the platforms pg_search is set up for." ;;
+    esac
+    local asset="postgresql-$PG_RELEASE-$target.tar.gz" work
+    log "installing PostgreSQL $PG_RELEASE into $PG_HOME (first run downloads ~15MB)"
+    fetch "https://github.com/theseus-rs/postgresql-binaries/releases/download/$PG_RELEASE/$asset" \
+        "$sha256" "$TOOL_CACHE/postgresql/$asset"
+    work="$(mktemp -d "$SERVER_HOME/.install.XXXXXX")"
+    tar -xzf "$TOOL_CACHE/postgresql/$asset" -C "$work" \
+        || { rm -rf "$work"; die "cannot unpack $TOOL_CACHE/postgresql/$asset"; }
+    place "$work/postgresql-$PG_RELEASE-$target" "$PG_HOME"
+    rm -rf "$work"
+    pg_installed || damaged "the PostgreSQL install in $PG_HOME"
+}
+
+install_valkey() {
+    [ ! -e "$VALKEY_HOME" ] || damaged "the Valkey install in $VALKEY_HOME"
+    { command -v make && command -v cc; } >/dev/null 2>&1 \
+        || die "building Valkey $VALKEY_VERSION needs make and a C compiler (cc); this host lacks one."
+    local archive="$TOOL_CACHE/valkey/valkey-$VALKEY_VERSION.tar.gz" work
+    log "building Valkey $VALKEY_VERSION into $VALKEY_HOME (first run only)"
+    fetch "https://github.com/valkey-io/valkey/archive/refs/tags/$VALKEY_VERSION.tar.gz" \
+        "$VALKEY_SHA256" "$archive"
+    work="$(mktemp -d "$SERVER_HOME/.install.XXXXXX")"
+    { tar -xzf "$archive" -C "$work" \
+        && make -C "$work/valkey-$VALKEY_VERSION" -j4 \
+        && make -C "$work/valkey-$VALKEY_VERSION" PREFIX="$work/valkey" install; } >"$work/build.log" 2>&1 \
+        || { tail -20 "$work/build.log" >&2; rm -rf "$work"; die "building Valkey $VALKEY_VERSION failed (log tail above)"; }
+    place "$work/valkey" "$VALKEY_HOME"
+    rm -rf "$work"
+    valkey_installed || damaged "the Valkey install in $VALKEY_HOME"
 }
 
 # The migrations run `CREATE EXTENSION pg_search` (ParadeDB's BM25 index, which
@@ -154,43 +247,18 @@ install_pg_search() {
     libdir="$("$PG_BIN/pg_config" --pkglibdir)" || die "pg_config at $PG_BIN does not run"
     sharedir="$("$PG_BIN/pg_config" --sharedir)" || die "pg_config at $PG_BIN does not run"
     log "installing pg_search $PG_SEARCH_VERSION into $libdir (first run downloads ~70MB, then cached)"
-    # Plain Python, so the host needs no curl, ar or xz. The .deb is kept in
-    # $TOOL_CACHE, so `stop --purge` keeps it too. Each file is written under a
+    # The .deb is kept in $TOOL_CACHE, so `stop --purge` keeps it too. Plain
+    # Python, so the host needs no ar or xz. Each file is written under a
     # temporary name and renamed into place, so a start running concurrently
     # never loads a half-written library.
-    uv run --no-project --python 3.12 python - \
-        "$url" "$sha256" "$TOOL_CACHE/pg_search/$asset" "$libdir" "$sharedir/extension" <<'PY' \
+    fetch "$url" "$sha256" "$TOOL_CACHE/pg_search/$asset"
+    uv run --no-project --quiet python - \
+        "$TOOL_CACHE/pg_search/$asset" "$libdir" "$sharedir/extension" <<'PY' \
         || die "installing pg_search $PG_SEARCH_VERSION failed (see above)"
-import hashlib, io, os, pathlib, shutil, sys, tarfile, time, urllib.request
+import io, os, pathlib, shutil, sys, tarfile
 
-url, want, deb_path, libdir, extdir = sys.argv[1:]
+deb_path, libdir, extdir = sys.argv[1:]
 deb = pathlib.Path(deb_path)
-
-
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-if not (deb.is_file() and sha256(deb) == want):
-    deb.parent.mkdir(parents=True, exist_ok=True)
-    part = deb.with_name(f"{deb.name}.{os.getpid()}.part")
-    for attempt in range(3):
-        try:
-            urllib.request.urlretrieve(url, part)
-            break
-        except OSError as e:
-            if attempt == 2:
-                sys.exit(f"download of {url} failed: {e}")
-            time.sleep(2)
-    got = sha256(part)
-    if got != want:
-        part.unlink()
-        sys.exit(f"{url} has sha256 {got}, expected {want}")
-    os.replace(part, deb)
 
 # A .deb is an ar archive; the installed files are in its data.tar.* member.
 data = None
@@ -234,8 +302,8 @@ PY
 # macOS arm64 takes ParadeDB's installer package for Homebrew's PostgreSQL 17,
 # built on macOS 15 and loading on later releases. Its library links nothing
 # beyond the system's own, so, as on Linux, only the library and the extension's
-# SQL and control files are taken, into this server's own directories. curl and
-# pkgutil ship with macOS.
+# SQL and control files are taken, into this server's own directories. pkgutil
+# ships with macOS.
 install_pg_search_macos() {
     local asset="pg_search@17--$PG_SEARCH_VERSION.arm64_sequoia.pkg"
     local sha256=ffc8a840b191cb72367ee5d846ebe0f5d9509eea09518e7734cfabbd71f5e76a
@@ -244,13 +312,7 @@ install_pg_search_macos() {
     libdir="$("$PG_BIN/pg_config" --pkglibdir)" || die "pg_config at $PG_BIN does not run"
     extdir="$("$PG_BIN/pg_config" --sharedir)/extension" || die "pg_config at $PG_BIN does not run"
     log "installing pg_search $PG_SEARCH_VERSION into $libdir (first run downloads ~80MB, then cached)"
-    if [ "$(shasum -a 256 "$pkg" 2>/dev/null | cut -d' ' -f1)" != "$sha256" ]; then
-        mkdir -p "$(dirname "$pkg")"
-        curl -fsSL --retry 3 -o "$pkg.$$.part" "$url" || die "download of $url failed"
-        [ "$(shasum -a 256 "$pkg.$$.part" | cut -d' ' -f1)" = "$sha256" ] \
-            || { rm -f "$pkg.$$.part"; die "$url does not have sha256 $sha256"; }
-        mv "$pkg.$$.part" "$pkg"
-    fi
+    fetch "$url" "$sha256" "$pkg"
     work="$(mktemp -d)"
     pkgutil --expand-full "$pkg" "$work/pkg" >/dev/null || { rm -rf "$work"; die "cannot expand $pkg"; }
     local payload="$work/pkg/Payload" from to
@@ -269,8 +331,10 @@ install_pg_search_macos() {
 }
 
 pg_running() { [ -d "$PGDATA" ] && "$PG_BIN/pg_ctl" -D "$PGDATA" status >/dev/null 2>&1; }
-pg_pins() { printf '%s' "$PG_WHEEL pg_search==$PG_SEARCH_VERSION"; }
-redis_running() { "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1; }
+# The install path is part of the pins, so a server started from somewhere else
+# (an older version of this script ran it out of the uv cache) is replaced too.
+pg_pins() { printf '%s' "postgresql-$PG_RELEASE pg_search==$PG_SEARCH_VERSION $PG_HOME"; }
+redis_running() { "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1; }
 
 # --- identity guards -------------------------------------------------------
 # A port that answers is NOT proof the server behind it is ours. Silently reusing
@@ -290,7 +354,7 @@ pg_pidfile_port() { [ -s "$PGDATA/postmaster.pid" ] && awk 'NR==4' "$PGDATA/post
 # A server that refuses CONFIG GET (renamed or disabled) reports nothing and so
 # fails this check — which is the right answer, because ours never refuses.
 redis_reported_dir() {
-    "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" config get dir 2>/dev/null | tail -1
+    "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" config get dir 2>/dev/null | tail -1
 }
 redis_is_ours() {
     local want got
@@ -410,7 +474,45 @@ start_pg() {
     pg_pins >"$PGDATA/$PG_STAMP"
 }
 
+# "Valkey 8.0.2", or "Redis 6.2.x" for a server that is not Valkey.
+redis_server_version() {
+    "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" info server 2>/dev/null | tr -d '\r' \
+        | awk -F: '$1 == "valkey_version" { v = "Valkey " $2 } $1 == "redis_version" { r = "Redis " $2 }
+                   END { print (v != "" ? v : r) }'
+}
+
+# A Redis of ours that is not the pinned Valkey (an older version of this script
+# ran redislite's 6.2) is replaced on the same terms as an outdated postgres:
+# only while no other client is connected.
+replace_outdated_redis() {
+    local had clients
+    had="$(redis_server_version)"
+    clients="$("$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" info clients 2>/dev/null \
+        | tr -d '\r' | sed -n 's/^connected_clients://p')"
+    [ -n "$clients" ] || die "the redis on port $REDIS_PORT ($REDIS_DIR, ${had:-unknown version}) was started by this
+       script before it pinned Valkey $VALKEY_VERSION, but asking it for its clients failed,
+       so it is left running. Stop it by hand once it is idle, then start again."
+    clients=$((clients - 1)) # the connection asking
+    if [ "$clients" != 0 ]; then
+        die "the redis on port $REDIS_PORT ($REDIS_DIR) is ${had:-of unknown version}, not Valkey $VALKEY_VERSION,
+       and it has $clients client connection(s). Replacing it would cut them off mid-run,
+       so it is left running. Start again once it is idle, or use
+       CHEESEX_DEV_REDIS_PORT/CHEESEX_DEV_DB_DIR for a server of your own."
+    fi
+    log "replacing the idle redis on port $REDIS_PORT ($had → Valkey $VALKEY_VERSION)"
+    "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
+    local i
+    for i in $(seq 1 50); do
+        redis_running || return 0
+        sleep 0.2
+    done
+    die "the redis on port $REDIS_PORT did not shut down within 10s"
+}
+
 start_redis() {
+    if redis_running && redis_is_ours && [ "$(redis_server_version)" != "Valkey $VALKEY_VERSION" ]; then
+        replace_outdated_redis
+    fi
     if redis_running; then
         if redis_is_ours; then
             log "redis already running on port $REDIS_PORT ($REDIS_DIR)"
@@ -430,18 +532,18 @@ start_redis() {
     mkdir -p "$REDIS_DIR"
     log "starting redis on 127.0.0.1:$REDIS_PORT"
     # --save '' : test state is disposable, so skip RDB snapshots entirely.
-    "$REDIS_BIN/redis-server" \
+    "$REDIS_BIN/valkey-server" \
         --bind 127.0.0.1 --port "$REDIS_PORT" \
         --dir "$REDIS_DIR" --pidfile "$REDIS_PID" --logfile "$REDIS_LOG" \
         --daemonize yes --save '' --appendonly no \
-        || die "redis-server failed to start"
+        || die "valkey-server failed to start"
     local i
     for i in $(seq 1 30); do
         redis_running && break
         sleep 0.2
         [ "$i" = 30 ] && { log "--- redis log ---"; tail -20 "$REDIS_LOG" >&2; die "redis never became ready"; }
     done
-    # --daemonize yes makes redis-server exit 0 before it binds, so a bind failure
+    # --daemonize yes makes valkey-server exit 0 before it binds, so a bind failure
     # leaves us pinging whoever DID win the port. Confirm the answer is ours.
     redis_is_ours || { log "--- redis log ---"; tail -20 "$REDIS_LOG" >&2
         die "port $REDIS_PORT answers, but not from the server we just started — it lost the bind to another Redis."; }
@@ -554,7 +656,7 @@ cmd_stop() {
         # would kill a Redis that belongs to someone else entirely.
         if redis_is_ours; then
             log "stopping redis"
-            "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
+            "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
         else
             log "redis on port $REDIS_PORT is not ours — leaving it alone"
         fi
@@ -576,6 +678,8 @@ cmd_status() {
         running_port="$(pg_pidfile_port)" || running_port=""
         log "postgres: RUNNING on 127.0.0.1:${running_port:-?} ($PGDATA)"
         [ "$running_port" = "$PG_PORT" ] || log "          NOTE: that is not the \$CHEESEX_DEV_PG_PORT ($PG_PORT) this call assumes"
+        [ "$(cat "$PGDATA/$PG_STAMP" 2>/dev/null)" = "$(pg_pins)" ] \
+            || log "          NOTE: started under other pins; the next start replaces it once it is idle"
     elif port_in_use "$PG_PORT"; then
         log "postgres: stopped — but port $PG_PORT is occupied by someone else"
     else
@@ -583,7 +687,7 @@ cmd_status() {
     fi
     if redis_running; then
         if redis_is_ours; then
-            log "redis:    RUNNING on 127.0.0.1:$REDIS_PORT ($REDIS_DIR)"
+            log "redis:    RUNNING on 127.0.0.1:$REDIS_PORT ($REDIS_DIR, $(redis_server_version))"
         else
             local foreign_dir
             foreign_dir="$(redis_reported_dir)" || foreign_dir=""
@@ -606,11 +710,13 @@ usage: bash .claude/scripts/dev-db.sh <start|stop [--purge]|status|env>
   start           start postgres + redis, install the pinned
                   harness builds, print export lines on stdout
   stop            stop the servers; --purge also deletes $DATA_DIR
-                  (downloads in $TOOL_CACHE are kept)
+                  (the servers in $SERVER_HOME and downloads in
+                  $TOOL_CACHE are kept)
   status          report whether each server is running
   env             print the export lines without starting anything
 
-env overrides: CHEESEX_DEV_DB_DIR (default \${TMPDIR:-/tmp}/cheesex-dev-db),
+env overrides: CHEESEX_DEV_DB_DIR (default \${XDG_DATA_HOME:-~/.local/share}/cheesex-dev-db),
+               CHEESEX_DEV_SERVER_HOME (default \${XDG_DATA_HOME:-~/.local/share}/cheesex-dev-servers),
                CHEESEX_DEV_PG_PORT (5433), CHEESEX_DEV_REDIS_PORT (6379),
                CHEESEX_DEV_TOOL_CACHE (default \${XDG_CACHE_HOME:-~/.cache}/cheesex-dev-db)
 EOF
