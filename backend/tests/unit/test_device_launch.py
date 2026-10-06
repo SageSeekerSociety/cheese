@@ -1099,20 +1099,6 @@ def test_a_deployment_without_a_tunnel_writes_and_runs_none_of_it():
     assert 'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then' in script
 
 
-def test_a_helper_running_older_code_is_retired_not_adopted():
-    """The launcher rewrites the helper on every launch, and `cheese-tunnel-up`
-    adopts a live one. Without a version check a shipped fix would never reach a
-    machine whose helper is still running — it would serve the old code forever,
-    and nothing about that looks wrong from outside."""
-    script = _launch_with_tunnel()
-    # The stamp is what makes "same helper" decidable at all.
-    assert "cheese-tunnel.stamp" in script
-    assert 'cksum "$HOME/.cheese/cheese-tunnel.py"' in script
-    # Adoption is conditional on it, and the mismatch path kills.
-    assert '[ "$WANT" = "$HAVE" ]' in script
-    assert 'kill "$PID"' in script
-
-
 def _tunnel_up_home(tmp_path, name: str = "home"):
     """A room HOME laid out the way the launcher leaves one, with the real helper
     and the real up-script. The helper only dials its URL when a client connects,
@@ -1251,17 +1237,6 @@ def _up(home, url: str = _HELPER_URL) -> int:
     return port
 
 
-def _stamp_of(home) -> str:
-    """The stamp a helper started by `_up` leaves: its code and its URL."""
-    code = subprocess.run(
-        ["cksum", str(home / ".cheese" / "cheese-tunnel.py")],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.split()[0]
-    return f"{code} {_HELPER_URL}"
-
-
 @pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
 def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
     """A caller can run this script as the command of its own tmux window, and
@@ -1343,158 +1318,46 @@ def test_rooms_launched_together_each_get_their_own_helper(tmp_path):
             _kill_helper(home)
 
 
-def test_a_foreign_listener_on_the_recorded_port_is_never_adopted(tmp_path):
-    """The recorded port is only a preference. While this room's helper was gone,
-    anything — another room's helper among them — may have bound it, and a
-    readiness check that asks only "does something answer there" hands this
-    room's `claude` to that listener. The script must start a helper of its own
-    somewhere else and report THAT port."""
-
+def test_each_launch_starts_a_helper_of_its_own(tmp_path):
+    """A helper belongs to the launch that started it, which stops it when it
+    ends. A second launch of the seat therefore never takes over the first
+    one's helper: the first launch would stop it under the second one's
+    `claude`."""
     home, _up_script = _tunnel_up_home(tmp_path)
-    cheese = home / ".cheese"
-    with socket.socket() as foreign:
-        foreign.bind(("127.0.0.1", 0))
-        foreign.listen(8)
-        taken = foreign.getsockname()[1]
-        # What a room is left with after its helper died: its port, its stamp,
-        # and a pid that no longer resolves.
-        dead = subprocess.Popen(["true"])
-        dead.wait()
-        (cheese / "cheese-tunnel.pid").write_text(f"{dead.pid}\n")
-        (cheese / "cheese-tunnel.stamp").write_text(f"{_stamp_of(home)}\n")
-        (cheese / "cheese-tunnel.port").write_text(f"{taken}\n")
-        try:
-            port = _up(home)
-
-            assert port != taken, "reported ready on somebody else's listener"
-            assert _listening(port)
-            # It is ours: our helper going away takes that port with it, and the
-            # foreign listener is untouched.
-            _kill_helper(home)
-            assert _await(lambda: not _listening(port))
-            assert _listening(taken)
-        finally:
-            _kill_helper(home)
-
-
-def test_a_live_pid_that_does_not_hold_the_recorded_port_is_not_adopted(tmp_path):
-    """After a reboot the recorded pid can name some unrelated process, and the
-    recorded port can be held by another room's helper. A live pid, a matching
-    stamp and an answering port are all true then, and none of them makes that
-    listener this room's. Adoption asks whether the pid holds the port."""
-
-    home, _up_script = _tunnel_up_home(tmp_path)
-    cheese = home / ".cheese"
-    unrelated = subprocess.Popen(["sleep", "30"])
+    first_port = _up(home)
+    first = _helper_pid(home)
     try:
-        with socket.socket() as foreign:
-            foreign.bind(("127.0.0.1", 0))
-            foreign.listen(8)
-            taken = foreign.getsockname()[1]
-            (cheese / "cheese-tunnel.pid").write_text(f"{unrelated.pid}\n")
-            (cheese / "cheese-tunnel.stamp").write_text(f"{_stamp_of(home)}\n")
-            (cheese / "cheese-tunnel.port").write_text(f"{taken}\n")
-
-            port = _up(home)
-
-            assert port != taken, "adopted a listener the recorded pid does not hold"
-            assert _helper_pid(home) != unrelated.pid
-            assert _listening(port)
-            assert _listening(taken)
-    finally:
-        _kill_helper(home)
-        unrelated.kill()
-        unrelated.wait()
-
-
-def test_a_helper_it_already_started_is_adopted_on_its_port(tmp_path):
-    """Runs before every agent start or claim. Restarting a working helper each
-    time would reset every in-flight connection, and would move the port out from
-    under anything already dialling it."""
-    home, _up_script = _tunnel_up_home(tmp_path)
-    try:
-        port = _up(home)
-        first = _helper_pid(home)
-
-        assert _up(home) == port
-        assert _helper_pid(home) == first, "a healthy helper was restarted"
-        assert _listening(port)
-    finally:
-        _kill_helper(home)
-
-
-def test_a_helper_dialling_another_url_is_retired_not_adopted(tmp_path):
-    """A machine's tunnel address can move — a cloud machine's onto its
-    loopback forward — while its helper is still alive. Adopting that helper
-    would keep the room on the old address, which may no longer answer."""
-    home, _up_script = _tunnel_up_home(tmp_path)
-    moved = "ws://127.0.0.1:10/llm/tunnel"
-    try:
-        _up(home)
-        first = _helper_pid(home)
-
-        port = _up(home, moved)
+        second_port = _up(home)
         second = _helper_pid(home)
 
-        assert second != first, "a helper dialling the old URL was adopted"
-        assert _await(lambda: not _pid_alive(first))
-        assert _listening(port)
-        args = subprocess.run(
-            ["ps", "-o", "args=", "-p", str(second)],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-        assert moved in args
-        # Asked again with the same URL, the new helper is the one kept.
-        assert _up(home, moved) == port
-        assert _helper_pid(home) == second
+        assert second != first
+        assert second_port != first_port
+        # The first is its own launch's to stop, not this one's.
+        assert _listening(first_port) and _listening(second_port)
     finally:
+        import signal
+
+        with contextlib.suppress(OSError):
+            os.kill(first, signal.SIGKILL)
         _kill_helper(home)
 
 
-def test_a_helper_that_died_comes_back_on_the_port_it_had(tmp_path):
-    """A helper that exits is started again on the port it recorded when that port
-    is still free, so the address a room uses changes only when something else
-    has taken it."""
-    home, _up_script = _tunnel_up_home(tmp_path)
-    try:
-        port = _up(home)
-        first = _helper_pid(home)
-        _kill_helper(home)
-        assert _await(lambda: not _listening(port))
+def test_a_launchs_helper_stops_when_the_launch_ends(tmp_path):
+    """The seat's runner lets an idle session go, and the launch that ran it
+    ends with it. Its helper must end then too: nothing else would stop it, and
+    a session host collected dozens of them."""
+    owner, _session, _work, _claude, env = _machine(tmp_path)
+    env["CHEESE_TUNNEL_URL"] = _HELPER_URL
+    env["CHEESE_CONNECT_TOKEN"] = "scoped"
 
-        assert _up(home) == port
-        assert _helper_pid(home) != first
-        assert _listening(port)
-    finally:
-        _kill_helper(home)
+    result = _launch(tmp_path, env)
 
-
-def test_a_recorded_pid_that_is_alive_but_serves_no_port_is_replaced(tmp_path):
-    """The recorded pid being alive proves only that SOME process holds that
-    number — after a reboot, or on a box that has burnt through the pid space,
-    that is a coincidence. Adopting on it would leave the port dead for the life
-    of the screen, which is the failure this script exists to end."""
-    home, _up_script = _tunnel_up_home(tmp_path)
-    cheese = home / ".cheese"
-    impostor = subprocess.Popen(["sh", "-c", "sleep 300"])
-    try:
-        port = _up(home)
-        _kill_helper(home)
-        # The state the box is actually found in: a pid that resolves, a stamp
-        # that matches the helper on disk, a port file, and nothing listening.
-        (cheese / "cheese-tunnel.pid").write_text(f"{impostor.pid}\n")
-        assert not _listening(port)
-
-        replaced = _up(home)
-
-        assert _listening(replaced), "an impostor pid was adopted as a live helper"
-        assert _helper_pid(home) != impostor.pid
-    finally:
-        _kill_helper(home)
-        impostor.terminate()
-        impostor.wait(timeout=5)
+    assert result.returncode == 0, result.stderr
+    [pid_file] = list(owner.rglob("seats/*/cheese-tunnel.pid"))
+    pid = int(pid_file.read_text())
+    assert _await(lambda: not _pid_alive(pid), timeout=5), (
+        "the launch ended and left its tunnel helper running"
+    )
 
 
 def test_a_helper_that_cannot_start_fails_the_launch_loudly(tmp_path):
@@ -1505,7 +1368,6 @@ def test_a_helper_that_cannot_start_fails_the_launch_loudly(tmp_path):
     (home / ".cheese" / "cheese-tunnel.py").write_text(
         "import sys\nprint('cannot bind', file=sys.stderr)\nraise SystemExit(1)\n"
     )
-    (home / ".cheese" / "cheese-tunnel.port").write_text("40999\n")
 
     started = time.monotonic()
     result = _run_tunnel_up(home)
