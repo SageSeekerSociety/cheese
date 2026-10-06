@@ -114,6 +114,8 @@ describe('本轮摘要', () => {
       evt('a', '更新了文档', { action: 'doc' }, null),
       evt('b', '发送了通知', { action: 'notify' }, null),
     ])
-    expect(rows.map((r) => r.notice?.mode)).toEqual(['action', 'action'])
+    // 同一位队友连着做的可以合成一行（noticeRepeats），但不当成同一轮的摘要。
+    const each = rows.flatMap((r) => (r.notice?.mode === 'repeats' ? r.notice.rows : [r]))
+    expect(each.map((r) => r.notice?.mode)).toEqual(['action', 'action'])
   })
 })

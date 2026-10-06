@@ -19,6 +19,19 @@ import time
 #: seconds of the last keystroke, as Slack's does.
 TYPING_TTL_S = 5.0
 
+#: Frames that are standalone facts, not turn progress: fanned out live and
+#: never buffered for a reconnect (`InProcessBroker.publish`). A 支线's
+#: status on its channel's main line (`thread_status`) is one: replayed, it
+#: would say a teammate is still queued long after it started.
+LIVE_ONLY = (
+    "reaction",
+    "agent_control",
+    "live",
+    "activity",
+    "comment_activity",
+    "thread_status",
+)
+
 TYPING = "typing"
 WORKING = "working"
 

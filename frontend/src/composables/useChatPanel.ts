@@ -37,7 +37,7 @@ import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useRowBatch } from '../components/room/composables/useRowBatch'
-import { runRecordOf, useRunRecords } from '../components/room/composables/useRunRecords'
+import { runRecordOf, threadStatusOf, useRunRecords } from '../components/room/composables/useRunRecords'
 import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
@@ -303,6 +303,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
       runRecords.receive(recorded)
       toSite(recorded)
     }
+    const told = threadStatusOf(frame)
+    if (told) emit('thread-status', told.threadId, told.record)
     switch (frame.type) {
       case 'user_block':
         if (settleOutbox(frame.block)) delivered.add(frame.block.id)

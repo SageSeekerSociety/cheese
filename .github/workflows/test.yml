@@ -354,6 +354,18 @@ jobs:
           test "$((block_size * blocks))" = 4294967296
           echo "CHEESE_CI_POSTGRES_PID=$pid" >> "$GITHUB_ENV"
 
+      # The pure layer has lost an xdist worker without a word four times since
+      # 2026-10-02 (`[gwN] node down: Not properly terminated`, then a hang to
+      # the timeout), well under 1% of runs; memory stays above 11 GB and
+      # nothing signals a worker in a run that passes. Every kill signal sent to
+      # a Python process is recorded until the next one shows who sent it.
+      - name: Trace kill signals to Python processes
+        if: matrix.layer == 'pure'
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bpftrace
+          mkdir -p "$RUNNER_TEMP/backend-results"
+          sudo nohup bpftrace -e 'tracepoint:signal:signal_generate /(args->sig == 9 || args->sig == 15 || args->sig == 6 || args->sig == 1 || args->sig == 2) && (args->comm == "python3" || args->comm == "python")/ { printf("%lld sig=%d from=%d(%s) to=%d(%s)\n", nsecs / 1000000, args->sig, pid, comm, args->pid, args->comm); }' > "$RUNNER_TEMP/backend-results/signals.log" 2>&1 &
+
       - name: Run the selected layer partition
         timeout-minutes: ${{ matrix.timeout }}
         env:
@@ -394,6 +406,16 @@ jobs:
           uv run python -m scripts.report_failed_cases
           "$RUNNER_TEMP/backend-results/results.xml"
           --log "$RUNNER_TEMP/backend-results/pytest.log"
+
+      - name: Name what ended a lost worker
+        if: ${{ !cancelled() && matrix.layer == 'pure' }}
+        run: |
+          sudo pkill bpftrace || true
+          if grep -q "node down" "$RUNNER_TEMP/backend-results/pytest.log"; then
+            grep -E "node down|crashed while running" "$RUNNER_TEMP/backend-results/pytest.log"
+            # Times are milliseconds since boot; the worker's death is among the last.
+            tail -40 "$RUNNER_TEMP/backend-results/signals.log"
+          fi
 
       - name: Verify the partition ran without skips
         if: ${{ !cancelled() }}

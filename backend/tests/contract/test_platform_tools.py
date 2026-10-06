@@ -135,6 +135,7 @@ CALLS = {
         "DELETE",
         "/feedback/FB-12/claim",
     ),
+    "cheese_run_records": ({"group": "errors"}, "GET", "/run-records"),
     "cheese_machine": (
         {"profile": "cloud"},
         "PUT",
