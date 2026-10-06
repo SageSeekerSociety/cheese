@@ -1,23 +1,39 @@
 """Documents of the project's own: the library's documents.
 
-Members make, list, rename and delete them; a room's living document stays the
-room's and is not listed, though the library's search finds it and a member
-may keep a copy. When 芝士 makes or changes one while working in a room, that
-room gets a line with the document on it; a person's change does not.
+Members make, list, rename and delete them; a task's living document and the
+project's overview are not listed, nor renamed or deleted on their own, though a
+member may keep a copy of one. When 芝士 makes or changes one while working in
+a room, that room gets a line with the document on it; a person's change does
+not.
 """
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.living_doc import collab
-from tests.integration.conftest import room_agent_seat, session_auth_headers
-from tests.integration.test_docs import _topic
-from tests.support.living_doc import document_of
+from tests.integration.conftest import (
+    open_task,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
+from tests.support.living_doc import document_of, overview_of
 
 OWNER = session_auth_headers("owner")
 OUTSIDER = session_auth_headers("outsider")
 
 
-def _project_of(client, room) -> str:
-    return client.get(f"/topics/{room}").json()["data"]["project_id"]
+def _room(client) -> tuple[str, str]:
+    """A room, in a project of its own, of owner's; returns (room, project)."""
+    project = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    room = client.post(
+        "/topics", json={"project_id": project, "title": "话题"}, headers=OWNER
+    ).json()["data"]["id"]
+    return room, project
+
+
+def _task_doc(client, room) -> str:
+    """The living document of a new task of owner's in the room."""
+    task = open_task(client, room, owner="owner", start=False)["id"]
+    return document_of(client, task, headers=OWNER)
 
 
 def _setup(client, rooms: int = 1) -> list[tuple[str, str, dict[str, str]]]:
@@ -26,8 +42,7 @@ def _setup(client, rooms: int = 1) -> list[tuple[str, str, dict[str, str]]]:
     test says who."""
     made = []
     for _ in range(rooms):
-        room = _topic(client)
-        project = _project_of(client, room)
+        room, project = _room(client)
         token = mint_scoped_token(
             project_id=project,
             topic_id=str(room),
@@ -68,9 +83,11 @@ def test_members_make_list_rename_and_delete_the_projects_documents(client):
     assert [(d["id"], d["title"], d["author"]) for d in _listed(client, project)] == [
         (made["id"], "竞品定价对比", "owner")
     ]
-    # The room's own document is the room's, and is not in the library.
-    room_doc = document_of(client, room, headers=OWNER)
-    assert room_doc not in [d["id"] for d in _listed(client, project)]
+    # A task's document is the task's, and the overview the project's: neither
+    # is in the library.
+    listed = [d["id"] for d in _listed(client, project)]
+    assert _task_doc(client, room) not in listed
+    assert overview_of(client, project, headers=OWNER) not in listed
 
     renamed = client.patch(
         f"/documents/{made['id']}", json={"title": "定价对比"}, headers=OWNER
@@ -100,12 +117,17 @@ def test_nobody_outside_the_project_reaches_its_documents(client):
     assert _listed(client, project)[0]["title"] == "内部"
 
 
-def test_a_rooms_document_is_neither_renamed_nor_deleted_on_its_own(client):
-    [(room, _, _)] = _setup(client)
-    path = f"/documents/{document_of(client, room, headers=OWNER)}"
-    assert client.patch(path, json={"title": "x"}, headers=OWNER).status_code == 403
-    assert client.delete(path, headers=OWNER).status_code == 403
-    assert client.get(f"{path}/about", headers=OWNER).status_code == 200
+def test_the_overview_and_a_tasks_document_are_not_renamed_or_deleted_alone(client):
+    [(room, project, _)] = _setup(client)
+    for what, doc in (
+        ("the overview", overview_of(client, project, headers=OWNER)),
+        ("a task's document", _task_doc(client, room)),
+    ):
+        path = f"/documents/{doc}"
+        renamed = client.patch(path, json={"title": "x"}, headers=OWNER)
+        assert renamed.status_code == 403, what
+        assert client.delete(path, headers=OWNER).status_code == 403, what
+        assert client.get(f"{path}/about", headers=OWNER).status_code == 200
 
 
 def test_an_archived_project_takes_no_new_document(client):
@@ -119,18 +141,11 @@ def test_an_archived_project_takes_no_new_document(client):
     assert _listed(client, project) == []
 
 
-def test_the_library_search_finds_its_documents_and_the_rooms(client):
-    [(room, project, _)] = _setup(client)
+def test_the_library_search_finds_its_documents(client):
+    [(_, project, _)] = _setup(client)
     by_title = _create(client, project, title="定价方案")
     by_text = _create(client, project, title="周会", content="下周讨论定价和退款")
     _create(client, project, title="无关", content="首页草图")
-    room_doc = document_of(client, room, headers=OWNER)
-    written = client.put(
-        f"/documents/{room_doc}",
-        json={"content": "团队版的定价按人数算", "expected_version": 0},
-        headers=OWNER,
-    )
-    assert written.status_code == 200, written.text
 
     found = client.get(
         f"/projects/{project}/documents/search", params={"q": "定价"}, headers=OWNER
@@ -138,8 +153,6 @@ def test_the_library_search_finds_its_documents_and_the_rooms(client):
     assert found.status_code == 200, found.text
     data = found.json()["data"]
     assert {d["id"] for d in data["library"]} == {by_title["id"], by_text["id"]}
-    assert [(d["id"], d["room_title"]) for d in data["rooms"]] == [(room_doc, "话题")]
-    assert "定价" in data["rooms"][0]["snippet"]
 
     refused = client.get(
         f"/projects/{project}/documents/search", params={"q": "定价"}, headers=OUTSIDER
@@ -149,15 +162,14 @@ def test_the_library_search_finds_its_documents_and_the_rooms(client):
 
 def test_a_kept_copy_and_its_original_change_apart(client):
     [(room, project, _)] = _setup(client)
-    room_doc = document_of(client, room, headers=OWNER)
+    task_doc = _task_doc(client, room)
     client.put(
-        f"/documents/{room_doc}",
+        f"/documents/{task_doc}",
         json={"content": "原来的结论", "expected_version": 0},
         headers=OWNER,
     )
-    copy = _create(client, project, copy_of=room_doc)
-    # Named after the room it came from, and says what the room's said.
-    assert copy["title"] == "话题"
+    copy = _create(client, project, copy_of=task_doc)
+    # It says what the task's document said.
     assert _content(client, copy["id"]) == "原来的结论"
 
     edited = client.post(
@@ -167,14 +179,14 @@ def test_a_kept_copy_and_its_original_change_apart(client):
     )
     assert edited.status_code == 200, edited.text
     assert _content(client, copy["id"]) == "副本的结论"
-    assert _content(client, room_doc) == "原来的结论"
+    assert _content(client, task_doc) == "原来的结论"
 
 
 def test_a_copy_of_another_projects_document_is_refused(client):
     [(room, _, _), (_, other, _)] = _setup(client, rooms=2)
-    room_doc = document_of(client, room, headers=OWNER)
+    task_doc = _task_doc(client, room)
     refused = client.post(
-        f"/projects/{other}/documents", json={"copy_of": room_doc}, headers=OWNER
+        f"/projects/{other}/documents", json={"copy_of": task_doc}, headers=OWNER
     )
     assert refused.status_code == 404
     assert _listed(client, other) == []
@@ -279,8 +291,6 @@ def test_cheese_suggesting_changes_to_a_document_tells_the_room_so(client):
 def test_a_tasks_document_is_the_tasks_not_the_librarys(client):
     """A task's living document sits in no room, like the project's own, but
     it is the task's: the library neither lists nor finds it."""
-    from tests.integration.conftest import open_task
-
     [(room, project, _)] = _setup(client)
     task = open_task(client, room, owner="owner", reviewer="owner")
     task_doc = client.get(f"/topics/{task['id']}/document", headers=OWNER)

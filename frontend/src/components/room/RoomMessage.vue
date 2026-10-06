@@ -25,6 +25,7 @@ import ExternalTag from '../common/ExternalTag.vue'
 import MarkdownView from '../common/MarkdownView.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
+import FileBlockMenu from './FileBlockMenu.vue'
 import MessageEditor from './MessageEditor.vue'
 import MessageQuote from './MessageQuote.vue'
 import RollingNumber from './RollingNumber.vue'
@@ -78,6 +79,10 @@ const props = defineProps<{
   editing?: boolean
   editText?: string
   saving?: boolean
+  /** 这一行在频道主线上、我能在那里说话：文件的 ⋯ 里能置顶到频道。 */
+  pinnable?: boolean
+  /** 这一行置顶在频道上：名字旁边、文件旁边带一个小图钉。 */
+  pinned?: boolean
 }>()
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
@@ -104,7 +109,14 @@ const emit = defineEmits<{
   (e: 'cancel-edit'): void
   /** 自己的清单改了一步：改过之后的整份。 */
   (e: 'checklist', block: Block, items: TodoItem[]): void
+  /** 文件的 ⋯：存进资料库、置顶到频道、取消置顶。 */
+  (e: 'keep', block: Block): void
+  (e: 'pin', block: Block): void
+  (e: 'unpin', block: Block): void
 }>()
+
+// 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
+const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
 
 // 作者改过它：正文后面标一句「已编辑」。
 const edited = computed(() => !!props.block.meta?.edited_at)
@@ -274,6 +286,9 @@ function renderPlain(text: string): string {
           <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
           <ExternalTag v-if="external && !isAgent" />
           <span class="im-time">{{ time }}</span>
+          <v-icon v-if="pinned && !fileBlock" size="13" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')"
+            >mdi-pin</v-icon
+          >
         </template>
       </div>
       <!-- B3: a reply shows the message it threads under -->
@@ -281,42 +296,60 @@ function renderPlain(text: string): string {
         <v-icon size="12">mdi-reply</v-icon>
         {{ t('work.room.composer.replyTo', { name: parentName, text: replySnippet(parent, refs) }) }}
       </button>
-      <!-- 图片输入: an attachment block renders as the image itself
-         (click opens the original in a new tab). 字节在 AttachmentImage
-         里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
-      <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
-      <BaseButton
-        v-else-if="block.kind === 'attachment'"
-        kind="ghost"
-        prepend-icon="mdi-file-document-outline"
-        append-icon="mdi-download-outline"
-        class="im-file-link"
-        :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
-        @click="emit('download', block)"
-      >
-        <span class="text-truncate">{{ artifactName(block) }}</span>
-      </BaseButton>
-      <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
-         写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
-         分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——
-         和芝士随口说了个路径长得一模一样。
-         点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
-      <button
-        v-else-if="block.kind === 'artifact'"
-        type="button"
-        class="im-artifact"
-        :title="t('work.room.message.openFile', { name: artifactName(block) })"
-        @click="emit('open-file', block.content)"
-      >
-        <span class="att-face im-artifact__face">
-          <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>
-        </span>
-        <span class="im-artifact__text">
-          <span class="im-artifact__name">{{ artifactName(block) }}</span>
-          <span class="im-artifact__kind t-meta">{{ artifactKind(block) }}</span>
-        </span>
-        <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
-      </button>
+      <!-- 一份文件：发来的附件（图片直接画成图），或芝士摆出来的东西。旁边一颗 ⋯ 收着
+           这一份能做的事；置顶了的带一个小图钉。 -->
+      <div v-if="fileBlock" class="im-file">
+        <!-- 图片输入: an attachment block renders as the image itself
+           (click opens the original in a new tab). 字节在 AttachmentImage
+           里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
+        <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
+        <BaseButton
+          v-else-if="block.kind === 'attachment'"
+          kind="ghost"
+          prepend-icon="mdi-file-document-outline"
+          append-icon="mdi-download-outline"
+          class="im-file-link"
+          :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
+          @click="emit('download', block)"
+        >
+          <span class="text-truncate">{{ artifactName(block) }}</span>
+        </BaseButton>
+        <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
+           写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
+           分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——
+           和芝士随口说了个路径长得一模一样。
+           点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
+        <button
+          v-else-if="block.kind === 'artifact'"
+          type="button"
+          class="im-artifact"
+          :title="t('work.room.message.openFile', { name: artifactName(block) })"
+          @click="emit('open-file', block.content)"
+        >
+          <span class="att-face im-artifact__face">
+            <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>
+          </span>
+          <span class="im-artifact__text">
+            <span class="im-artifact__name">{{ artifactName(block) }}</span>
+            <span class="im-artifact__kind t-meta">{{ artifactKind(block) }}</span>
+          </span>
+          <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
+        </button>
+        <v-icon v-if="pinned" size="14" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')">mdi-pin</v-icon>
+        <FileBlockMenu
+          :name="artifactName(block)"
+          :can-open="block.kind === 'artifact'"
+          :can-download="block.kind === 'attachment'"
+          :can-keep="block.kind === 'artifact' && !!topicId"
+          :pinnable="pinnable"
+          :pinned="pinned"
+          @open="emit('open-file', block.content)"
+          @download="emit('download', block)"
+          @keep="emit('keep', block)"
+          @pin="emit('pin', block)"
+          @unpin="emit('unpin', block)"
+        />
+      </div>
       <MessageEditor
         v-else-if="editing"
         :text="editText ?? block.content"
@@ -556,6 +589,17 @@ function renderPlain(text: string): string {
 .im-artifact__go {
   flex: none;
   color: var(--faint);
+}
+.im-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+}
+.im-pin-mark {
+  flex: none;
+  color: var(--accent-ink);
 }
 .im-file-link {
   max-width: 100%;

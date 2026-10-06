@@ -14,7 +14,6 @@ from app.domain.site.hosting import content_origin, mint_site_token
 from tests.integration.conftest import (
     add_external_member,
     join_project_team,
-    open_task,
     session_auth_headers,
     session_token,
 )
@@ -463,9 +462,8 @@ def test_revocation_blocks_an_already_issued_grant_and_cookie(client, static_pre
 
 
 @pytest.mark.parametrize("authz_enabled", [True, False])
-@pytest.mark.parametrize("dispatch_task", [False, True])
 def test_private_room_roster_is_required_even_for_project_members(
-    client, preview_config, monkeypatch, authz_enabled, dispatch_task
+    client, preview_config, monkeypatch, authz_enabled
 ):
     monkeypatch.setattr(settings, "authz_enforce_topic_access", authz_enabled)
     project, _ = _project_topic(client)
@@ -486,8 +484,6 @@ def test_private_room_roster_is_required_even_for_project_members(
     )
     assert artifact.status_code == 200, artifact.text
     preview_id = room_id
-    if dispatch_task:
-        preview_id = open_task(client, room_id, "Private work", start=False)["id"]
     assert (
         client.post(
             f"/topics/{preview_id}/preview-session",
@@ -495,16 +491,6 @@ def test_private_room_roster_is_required_even_for_project_members(
         ).status_code
         == 404
     )
-    if dispatch_task:
-        # A task has its own preview, seen by whoever may see its room.
-        assert (
-            client.post(
-                f"/topics/{preview_id}/preview-session",
-                headers=session_auth_headers("bob"),
-            ).status_code
-            == 200
-        )
-        return
     _open_preview(client, preview_id, "bob")
     origin = preview_origin(uuid.UUID(preview_id))
     assert client.get(origin + "/").text == served("private preview")

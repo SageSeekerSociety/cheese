@@ -49,16 +49,12 @@ class Documents:
     async def get(self, document_id: uuid.UUID) -> Document | None:
         return await self._repo.get(document_id)
 
-    async def of_room(self, room_id: uuid.UUID) -> Document | None:
-        """The room's living document, if anyone has opened or written it."""
-        return await self._repo.of_room(room_id)
-
     async def of_rooms(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, Document]:
-        """Several rooms' living documents at once, keyed by room id."""
+        """The documents still kept by old rooms, keyed by room id."""
         return await self._repo.of_rooms(room_ids)
 
     async def of_project(self, project_id: uuid.UUID) -> list[Document]:
-        """The project's own documents, in no room, the latest changed first."""
+        """The project's own documents, the latest changed first."""
         return await self._repo.of_project(project_id)
 
     async def create(
@@ -70,13 +66,6 @@ class Documents:
         return await self._repo.create(
             project_id=project_id, title=title, author=author
         )
-
-    async def ensure_for_room(
-        self, *, room_id: uuid.UUID, project_id: uuid.UUID
-    ) -> Document:
-        """The room's living document, created empty (version 0) the first time
-        anyone needs to address it."""
-        return await self._repo.ensure_for_room(room_id=room_id, project_id=project_id)
 
     async def nodes(self, doc: Document) -> list[DocumentNode]:
         """The document's top-level blocks, in order."""

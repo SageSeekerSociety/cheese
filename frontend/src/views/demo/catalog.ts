@@ -401,7 +401,7 @@ export const CATALOG: CatalogEntry[] = [
         name: '手机上',
         note: '窄屏上这条栏加高、横向滚动，阶段自动选中的那一格会被带回视野里。',
         props: { tabs: TABS, active: 'site', phone: true },
-        expect: '总览',
+        expect: '概览',
       },
     ],
   },
@@ -886,7 +886,7 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'panel-doc',
     title: 'PanelDocView',
-    about: '总览那一格的文档：工具条、正文和评论侧栏，窄面板中评论以抽屉展开。',
+    about: '概览那一格的文档：工具条、正文和评论侧栏，窄面板中评论以抽屉展开。',
     file: 'src/components/panels/PanelDocView.vue',
     component: PanelDocView,
     needs: UI,

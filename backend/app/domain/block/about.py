@@ -2,15 +2,16 @@
 
 事件从前没有「关于什么」这一栏：每个产生事件的调用点自己挑一个落点，于是同一个问题
 在十几处各答了一遍，没有一处答得出别处的答案是什么。**落点不是每个调用点的自由，
-是一张封闭表上的三行**：
+是一张封闭表上的四行**：
 
 | 事件关于 | 落在哪 | 例子 |
 |---|---|---|
 | 一件活 | 那张卡（任务自己的对话） | 检查红了、上游冲突、这一轮换了模型 |
+| 一条支线 | 那条支线 | 芝士在支线里建了一份文档 |
 | 一个房间 | 房间时间线（房间自己的对话） | 机器离线、成员加入、有人说话 |
 | 一个项目 | 项目总览（`TopicKind.root` 那个房间） | 巡检到点、名册变化 |
 
-调用点改说**它关于什么**，落点由 `landing()` 给。三档是封闭的：多出第四种事件时
+调用点改说**它关于什么**，落点由 `landing()` 给。四档是封闭的：多出第五种事件时
 这里会缺一行，而不是某个调用点又自己挑一个房间。
 
 **架在现有的列上，不新开列。**「关于什么」能从对话 id 推出来（任务的 id 就是卡的
@@ -32,9 +33,10 @@ from dataclasses import dataclass
 
 
 class EventAbout(enum.StrEnum):
-    """一条事件关于的那个东西。三档，封闭。"""
+    """一条事件关于的那个东西。四档，封闭。"""
 
     task = "task"
+    thread = "thread"
     room = "room"
     project = "project"
 
@@ -53,6 +55,7 @@ def landing(
     project_id: uuid.UUID,
     room_id: uuid.UUID | None = None,
     task_id: uuid.UUID | None = None,
+    thread_id: uuid.UUID | None = None,
 ) -> Landing:
     """按「关于什么」给出落点。
 
@@ -65,6 +68,11 @@ def landing(
                 # i18n-exempt: developer declaration check, never shown to a user
                 raise ValueError("卡的事要有房间和卡：room_id 与 task_id 都不能空")
             return Landing(project_id=project_id, conversation_id=task_id)
+        case EventAbout.thread:
+            if thread_id is None:
+                # i18n-exempt: developer declaration check, never shown to a user
+                raise ValueError("支线的事要有支线：thread_id 不能空")
+            return Landing(project_id=project_id, conversation_id=thread_id)
         case EventAbout.room:
             if room_id is None:
                 # i18n-exempt: developer declaration check, never shown to a user

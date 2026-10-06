@@ -1,11 +1,11 @@
 """Who may reach a document, and whether it takes writes.
 
-A room's living document is the room's: whoever may enter the room may read it
-and write it. A task's living document is read by whoever may enter the task's
-room, and written by the task's owner and the task's own session: what others
-have to say about a task they say in the room. A document of the project's own,
-in no room, is the project's members', and 芝士's wherever in the project it
-works. Every document route asks here, so they never disagree.
+A task's living document is read by whoever may enter the task's channel, and
+written by the people working the task and the task's own session: what others
+have to say about a task they say in the channel. A document of the project's
+own — the project overview among them — is the project's members', and 芝士's
+wherever in the project it works. Every document route asks here, so they never
+disagree.
 """
 
 import uuid

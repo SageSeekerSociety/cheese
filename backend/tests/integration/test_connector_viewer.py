@@ -11,7 +11,6 @@ from starlette.websockets import WebSocketDisconnect
 from app.domain.agent.device_hub import HubScreen, device_hub
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, session_auth_headers, session_token
-from tests.support.living_doc import document_of
 
 
 def _login(client, handle: str) -> str:
@@ -145,16 +144,19 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
         ).status_code
         == 200
     )
-    alice = session_auth_headers("alice")
-    document = document_of(client, topic["id"], headers=alice)
     try:
-        r = client.put(
-            f"/documents/{document}",
-            json={"content": "# hi", "expected_version": 0},
+        r = client.post(
+            f"/topics/{topic['id']}/messages",
+            json={"content": "hi", "request_id": str(uuid.uuid4())},
             headers={"X-Cheese-Screen": screen.token},
         )
         assert r.status_code == 200, r.text
-        assert r.json()["data"]["author"] == "agent-macbook"
+        blocks = client.get(
+            f"/topics/{topic['id']}/blocks", headers=session_auth_headers("alice")
+        ).json()["data"]["data"]
+        assert [b["author"] for b in blocks if b["content"] == "hi"] == [
+            "agent-macbook"
+        ]
     finally:
         _unregister(screen)
 
@@ -166,14 +168,16 @@ def test_cheese_call_without_screen_header_is_not_the_agent(client):
     ).json()["data"]
     # No X-Cheese-Screen → the screen attribution never fires: the write is the
     # signed-in person's.
-    alice = session_auth_headers("alice")
-    r = client.put(
-        f"/documents/{document_of(client, topic['id'], headers=alice)}",
-        json={"content": "# hi", "expected_version": 0},
+    r = client.post(
+        f"/topics/{topic['id']}/messages",
+        json={"content": "hi", "request_id": str(uuid.uuid4())},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["author"] == "alice"
+    blocks = client.get(
+        f"/topics/{topic['id']}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    assert [b["author"] for b in blocks if b["content"] == "hi"] == ["alice"]
 
 
 def test_write_gate_and_route_use_the_same_screen_participant(client):

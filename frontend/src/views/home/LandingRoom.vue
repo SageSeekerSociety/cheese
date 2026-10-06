@@ -78,7 +78,7 @@ function block(line: Extract<Line, { kind: 'message' }>): Block {
 }
 
 function marker(line: Extract<Line, { kind: 'marker' }>): SplitMarker {
-  return { taskId: line.id, title: line.title, status: props.step >= line.doneAt ? 'closed' : 'open', createdAt: '' }
+  return { taskId: line.id, title: line.title, level: props.step >= line.doneAt ? 'done' : 'running', createdAt: '' }
 }
 
 function runStart(index: number) {

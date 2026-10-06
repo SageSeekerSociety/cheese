@@ -107,7 +107,7 @@ steps:
   - label: 项目总览
     check: 项目总览
     cat: state
-    desc: 项目总览的实况文档。
+    desc: 项目总览：项目自己的一份文档（`projects.overview_document_id`），每段对话读同一份。只注入「项目是什么」那一块；项目现在在做什么不在这里，芝士要看就查各频道的任务。
     tip: 限 6000 字（`OVERVIEW_DOC_CHAR_BUDGET`），超了压缩并提示用 `cheese_doc_get` 读全文。
   - label: 实况文档
     check: 实况文档现在的内容
@@ -273,7 +273,7 @@ then:
 2. 「随时推送」的约定；步骤清单（`todo_write`）的用法；向人提问只用 `cheese_ask`，问完就结束这一轮，有人回复时那句回复开启下一轮；自带的提问工具（例如 Codex 的 `request_user_input_async`）问出去的话只落在现场，房间里没人看得到。
 3. 写作规则：先写结论、不反驳没人说过的话、不写推理过程和修辞、写短。聊天、文档、记忆、PR 说明都按它写。
 4. 写给人读的文档先加载 `cheese-docs` 技能；房间里怎么说话（`skill_library/chat.md` 的全文，私聊再补 `private_chat.md`）。
-5. 实况文档写哪五块、怎么改（`skill_library/doc_form.md`），只在有文档位的房间里有。
+5. 实况文档写哪五块、怎么改（`skill_library/doc_form.md`），只在任务里有。
 6. 记忆说明，只给会把记忆对账回平台的骨架；紧跟着是什么时候提议存一项项目技能，每个骨架都有（见[技能](/dev/skills#proposals)）。
 7. 这个 AI 队友的专家角色。
 

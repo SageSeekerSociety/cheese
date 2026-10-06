@@ -59,7 +59,7 @@ okcheese.com 这个部署配的是 `DOCS_ORIGIN=https://docs.okcheese.com`：文
 
 ### 用产品里的真组件演 {#demos-embed}
 
-`demo-steps` 多写一行 `embed: <名字>`，步骤列表上方就多一块画面：前端的公开页 `/demo/<名字>?embed=1` 嵌在 iframe 里，用产品自己的消息行（`RoomMessage`）和右边的工作面板（页签条 `PanelTabs` 加 `PanelOverview` / `PanelChanges` / `PanelPreview` / `PanelSite` 这四格）按剧本演，做法和首页的 `LandingRoom.vue` 一样。
+`demo-steps` 多写一行 `embed: <名字>`，步骤列表上方就多一块画面：前端的公开页 `/demo/<名字>?embed=1` 嵌在 iframe 里，用产品自己的消息行（`RoomMessage`）和右边的工作面板（页签条 `PanelTabs` 加 `PanelDoc` / `PanelChanges` / `PanelPreview` / `PanelSite` 这四格）按剧本演，做法和首页的 `LandingRoom.vue` 一样。
 
 - **剧本**在 `frontend/src/views/demo/scenes/<名字>.json`：每一步一串带毫秒时刻的事件（有人说话、一位队友开一轮、现场里一步工具调用、一轮结束、座位卡和机器栏换字）。`demoScene.ts` 把「第几步的第几毫秒」从头重放成一帧，所以往回跳和顺着放得到同一帧。
 - **右边停在哪一格**：某一步想让人看别处，就写一行 `panel:`（`overview` / `changes` / `preview` / `site`），再把那一格里的东西写在同一步的 `overview:` / `changes:` / `preview:` 上（改动只写文件路径和那几行 diff，文件头和 hunk 头由 `demoPanels.ts` 补）。写一次就留在那儿，后面几步只说 `panel:` 就行；哪一步都不写就是现场（`site`）。`checkScene` 会挡下「停在一格却没人写它的内容」。

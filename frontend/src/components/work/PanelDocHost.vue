@@ -10,9 +10,8 @@
 // 得站在场景之外；`components/**` 又不许直接连接口层（`pnpm run lint:boundary`），
 // 所以取数走 `composables/`。同一条理由见 `components/routine/RoutinePanelHost.vue`。
 //
-// 三个调用点：工作面板自由区的资料库文档页签（一个页签一只，所以外壳按页签渲染）、
-// 项目文档页的章程、任务页的实况文档。房间总览那一格的文档不在这儿 —— 它和看板、进度
-// 清单同居一格，由 `components/work/PanelOverviewHost.vue` 一起接线。
+// 调用点：工作面板自由区的资料库文档页签（一个页签一只，所以外壳按页签渲染）、项目
+// 文档页的章程（项目总览）、任务概览里的实况文档、「综合」概览里的项目总览。
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
@@ -45,6 +44,8 @@ const props = withDefaults(
     bare?: boolean
     /** 顶栏画到页面上的哪个位置，见 PanelDoc。 */
     barTo?: string
+    /** 跟着外面那一列一起滚，见 PanelDocView。 */
+    flow?: boolean
   }>(),
   {
     taskId: null,
@@ -55,6 +56,7 @@ const props = withDefaults(
     members: () => [],
     bare: false,
     barTo: undefined,
+    flow: false,
   }
 )
 
@@ -100,10 +102,13 @@ defineExpose({
     :agent-handle="props.agentHandle"
     :bare="props.bare"
     :bar-to="props.barTo"
+    :flow="props.flow"
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
     @titled="emit('titled', $event)"
     @delete="emit('delete')"
-  />
+  >
+    <template #lead><slot name="lead" /></template>
+  </PanelDoc>
 </template>

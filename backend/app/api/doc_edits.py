@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.block.documents import whose_document
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
@@ -89,14 +90,16 @@ async def decide(
 ) -> Decision:
     """How ``actor``'s edits are applied to ``doc``. ``asked`` is the mode the
     caller asked for, if any; ``content`` the document as stored. An agent
-    editing a room's document in a turn somebody started edits for them."""
+    editing a task's document in a turn somebody started edits for them."""
     if not await IdentityService(db).is_agent(actor):
         return Decision(mode="direct", requested_by=None)
+    room, task = await whose_document(db, doc)
+    conversation = task or room
     author = (
         await AgentTurnRepository(db).open_turn_author_for_topic(
-            doc.room_id, agent_handle=actor
+            conversation, agent_handle=actor
         )
-        if doc.room_id is not None
+        if conversation is not None
         else None
     )
     if author and author != "system" and not await IdentityService(db).is_agent(author):

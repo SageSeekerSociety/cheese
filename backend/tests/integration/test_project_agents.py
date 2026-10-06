@@ -21,6 +21,7 @@ from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     chat_ws_url,
     in_thread,
+    open_task,
     post_message,
     post_project,
     session_auth_headers,
@@ -413,13 +414,14 @@ def test_a_project_credential_is_refused_where_its_agent_has_no_seat(client):
 
     pid = _project(client)
     room = _topic(client, pid)
+    task = open_task(client, room, owner="u", start=False)["id"]
     seat = next(a for a in _agents(client, pid) if a["is_default"])["seat_handle"]
     dropped = client.delete(
         f"/topics/{room}/members/{seat}", headers=session_auth_headers("u")
     )
     assert dropped.status_code == 200, dropped.text
 
-    doc = document_of(client, room, headers=session_auth_headers("u"))
+    doc = document_of(client, task, headers=session_auth_headers("u"))
     r = client.post(
         f"/documents/{doc}/comments",
         json={"content": "从项目级凭据发出的"},

@@ -23,6 +23,7 @@ from app.domain.block.documents import (
     DocumentWriter,
     persisted_notice,
     tell_room_of_document,
+    whose_document,
 )
 from app.domain.block.models import Block
 from app.domain.block.schemas import BlockOut
@@ -44,6 +45,9 @@ class Stored:
     changed: bool = False
     #: The notice is an earlier line extended, not a new one.
     merged: bool = False
+    #: The conversation whose living document this is — a task's, or an old
+    #: room's; None for a document of the project's own.
+    conversation_id: uuid.UUID | None = None
 
 
 def snapshot(doc: Document, operation_id: uuid.UUID | None) -> dict:
@@ -79,6 +83,8 @@ async def store(
     """
     journal = DocumentJournal(db)
     await journal.lock(doc.id)
+    room, task = await whose_document(db, doc)
+    conversation_id = task or room
     claim = None
     operation_id = None
     if operation is not None:
@@ -100,17 +106,22 @@ async def store(
     if claim is not None and claim.receipt is not None:
         # A replayed operation: its version is already recorded. The state the
         # service sent still holds it, so keeping that state loses nothing.
-        return Stored(answer=claim.receipt)
+        return Stored(answer=claim.receipt, conversation_id=conversation_id)
     writer = DocumentWriter(db, summarize_doc_change)
     if suggested:
         notice = await writer.suggest(
             doc, actor=actors[0], suggestion_ids=proposed, reason=reason
         )
         return Stored(
-            answer=snapshot(doc, None), notice=notice, merged=writer.notice_merged
+            answer=snapshot(doc, None),
+            notice=notice,
+            merged=writer.notice_merged,
+            conversation_id=conversation_id,
         )
     if content is None:
-        return Stored(answer={"doc_version": doc.version})
+        return Stored(
+            answer={"doc_version": doc.version}, conversation_id=conversation_id
+        )
     recorded, notice = await writer.record(
         doc,
         content=content,
@@ -127,17 +138,22 @@ async def store(
             notice=notice,
             changed=changed,
             merged=writer.notice_merged,
+            conversation_id=conversation_id,
         )
     receipt = snapshot(doc, operation_id)
     await journal.finish(claim, receipt)
     return Stored(
-        answer=receipt, notice=notice, changed=changed, merged=writer.notice_merged
+        answer=receipt,
+        notice=notice,
+        changed=changed,
+        merged=writer.notice_merged,
+        conversation_id=conversation_id,
     )
 
 
 async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
     """After the commit: tell the document's open editors what the store
-    changed, and, for a room's document, the room."""
+    changed, and the conversation whose living document it is."""
     if stored.changed:
         # The editors already hold the text; what refreshes on this frame is
         # everything derived from the stored version: comment anchors, the
@@ -146,24 +162,26 @@ async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
     if stored.changed:
         # A task's document rewritten: a moment its direction may show.
         naming.nudge_document(doc.id)
-    room_id = doc.room_id
-    if room_id is None:
+    conversation = stored.conversation_id
+    if conversation is None:
         return
     broker = get_broker()
     if stored.notice is not None:
         # An extended line is replaced where it stands on every open page.
         await broker.publish(
-            str(room_id),
+            str(conversation),
             {
                 "type": "block_updated" if stored.merged else "event_block",
                 "block": BlockOut.model_validate(stored.notice).model_dump(mode="json"),
             },
         )
         if line := persisted_notice(stored.notice):
-            await chat.notify_running_turn(room_id, line, blocks=[stored.notice.id])
+            await chat.notify_running_turn(
+                conversation, line, blocks=[stored.notice.id]
+            )
     if stored.changed:
-        # The room's overview shows what the document says.
-        await broker.publish(str(room_id), {"type": "state", "resource": "doc"})
+        # The conversation's overview shows what the document says.
+        await broker.publish(str(conversation), {"type": "state", "resource": "doc"})
 
 
 async def tell_origin_room(
@@ -178,11 +196,12 @@ async def tell_origin_room(
 ) -> None:
     """芝士 made or changed ``doc``, a document of the project's own, while
     working in ``conversation_id`` (a room, or one of its tasks): that
-    conversation gets a line with the document on it. A room's own document
-    is told by its store (`announce`); a change made from no conversation (a
-    person's, or 芝士 answering on the document itself) is in the document's
-    history and nowhere else."""
-    if conversation_id is None or doc.room_id is not None:
+    conversation gets a line with the document on it. A conversation's own
+    living document — a task's, or an old room's — is told by its store
+    (`announce`); a change made from no conversation (a person's, or 芝士
+    answering on the document itself) is in the document's history and
+    nowhere else."""
+    if conversation_id is None or await whose_document(db, doc) != (None, None):
         return
     from app.domain.room_task.place import PlaceResolver
 
@@ -193,6 +212,7 @@ async def tell_origin_room(
         db,
         room_id=place.room_id,
         task_id=place.task_id,
+        thread_id=place.thread_id,
         doc=doc,
         actor=actor,
         created=created,

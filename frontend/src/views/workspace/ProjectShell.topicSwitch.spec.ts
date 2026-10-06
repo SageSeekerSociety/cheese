@@ -64,6 +64,8 @@ vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   // The roster's work computers: a neighbour of what this test is about.
   getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
+  // 频道概览里的任务：这里没有。
+  listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
   listTopicMembers: vi.fn((topicId: string) =>
     topicId === 'topic-a'
       ? Promise.resolve({ data: [member('old-member', 'Old Roster Person')], total: 1 })
@@ -79,6 +81,8 @@ vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store.value }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 // 频道的支线清单：这几条测试不看它。
 vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
+// 频道概览的置顶：这几条测试不看它。
+vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
 
 // Neighbours of what this test is about; each owns its own loading and is not
 // what carries a proposal card or a roster.

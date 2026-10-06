@@ -14,7 +14,7 @@
 // does not: the composer (useChatComposer), the pointer affordances on a row
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
-import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
+import type { Block, ChatAttachment, ReactionAgg, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
@@ -48,7 +48,6 @@ import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
-import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
@@ -58,6 +57,7 @@ import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
+import { useRoomTasks } from './useRoomTasks'
 
 import { t } from '@/i18n'
 
@@ -303,6 +303,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'state':
         // A platform resource changed → parent refreshes that panel live.
         // The clickable record of the action is a persisted event_block (below).
+        if (frame.resource === 'topics' || frame.resource === 'tasks') void reloadRoomTasks()
         emit('state-changed', frame.resource)
         break
       case 'event_block':
@@ -360,6 +361,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
         break
       case 'activity_snapshot':
         activity.snapshot(frame.members)
+        break
+      case 'thread_activity':
+        emit('thread-activity', frame.thread_id, frame.member, frame.active)
         break
       case 'turn_started':
         turns.started(frame.turn_id, frame.agent)
@@ -729,20 +733,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   //
   // 单独拉一次而不是从 topicList 里挑：一件活不再是话题树上的一个节点，话题列表里
   // 根本没有它了。`limit: 1` 是因为标记只要支线本身，不要它们的对话。
-  const roomTasks = ref<RoomTask[]>([])
-  watch(
-    () => topic()?.id,
-    async (id) => {
-      roomTasks.value = id ? cachedTopicPanel('roomTasks', id)?.data ?? [] : [] // 先画上次那份，背后再重取
-      if (!id) return
-      try {
-        roomTasks.value = (await fetchRoomTasks(id)).data
-      } catch {
-        // 标记是派生出来的装饰，不是内容。拉不到就少几行标记，不该让整个时间线红掉。
-      }
-    },
-    { immediate: true }
-  )
+  const { tasks: roomTasks, reload: reloadRoomTasks } = useRoomTasks(() => topic()?.id)
 
   // <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的
   // chip 只会写「#话题」。

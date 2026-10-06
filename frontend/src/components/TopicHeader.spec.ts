@@ -70,9 +70,10 @@ function profile(machineAccess: boolean): TopicComputeProfile {
   } as TopicComputeProfile
 }
 
-function mountHeader(focus = false, over: Partial<Topic> = {}) {
+// 专注模式只在面板和对话并排开着时成立；默认按并排开着来挂。
+function mountHeader(focus = false, over: Partial<Topic> = {}, canFocus = true) {
   return render(Header, {
-    props: { topic: { ...topic, ...over }, members: [], me: 'me', connected: true, focus },
+    props: { topic: { ...topic, ...over }, members: [], me: 'me', connected: true, focus, canFocus },
     global: {
       plugins: [
         createVuetify({ components, directives }),
@@ -150,6 +151,15 @@ describe('话题头', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '专注模式' }))
 
     expect(emitted()['toggle-focus']).toHaveLength(1)
+  })
+
+  it('面板没并排开着时，⋯ 里没有专注模式', async () => {
+    getTopicComputeProfile.mockResolvedValue(profile(false))
+    mountHeader(false, {}, false)
+
+    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    await waitFor(() => expect(document.querySelector('.room-menu')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: '专注模式' })).toBeNull()
   })
 
   it('在专注模式里，出口摆在这一行上', async () => {

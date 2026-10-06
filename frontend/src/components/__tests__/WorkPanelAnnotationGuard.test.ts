@@ -4,9 +4,8 @@
  * 落地的后续动作当成做过了。
  *
  * 两件事钉在这里：
- *   1. `pulse` / `highlightTurn` / `reviewDoc` 是「把总览里某样东西掀到眼前」，图那
- *      一格用 `v-show` 留着、笔画不会丢——所以它们不该走守卫，也不该留下一个空转的
- *      后续动作。
+ *   1. `showOverview` 是「把总览掀到眼前」（聊天里点了「查看改动 / 看这一轮」），图那
+ *      一格用 `v-show` 留着、笔画不会丢——所以它不该走守卫。
  *   2. `openFile` 是用户点了一份文件，该问；但问不到「可以走」时，它得当场放弃，不能
  *      转手去动一份没露面的「改动」。
  */
@@ -69,33 +68,19 @@ beforeAll(() => {
   vuetify = createVuetify({ components, directives })
 })
 
-const overview = { pulse: vi.fn(), highlightTurn: vi.fn(), reviewEdits: vi.fn() }
 const changes = { openFile: vi.fn() }
 
-const PanelOverviewStub = defineComponent({
-  name: 'PanelOverviewHost',
-  setup(_, { expose }) {
-    expose({
-      pulse: () => overview.pulse(),
-      highlightTurn: (turnId: string) => overview.highlightTurn(turnId),
-      reviewEdits: (request: unknown) => overview.reviewEdits(request),
-    })
-    return () => h('div', { class: 'stub-overview' })
-  },
-})
 const PanelChangesStub = defineComponent({
   name: 'PanelChanges',
   setup(_, { expose }) {
-    expose({ openFile: (path: string, taskId?: string) => changes.openFile(path, taskId) })
+    expose({ openFile: (path: string) => changes.openFile(path) })
     return () => h('div', { class: 'stub-changes' })
   },
 })
 
 interface PanelApi {
-  pulse: () => void
-  highlightTurn: (turnId: string) => void
-  reviewDoc: (request: unknown) => void
-  openFile: (path: string, taskId?: string | null) => void
+  showOverview: () => Promise<void>
+  openFile: (path: string) => void
 }
 
 function harness() {
@@ -108,6 +93,8 @@ function harness() {
           panel = instance as PanelApi | null
         },
         topic,
+        // 现场、改动这几格只有任务有。
+        taskId: 'task-1',
         activityTick: 0,
         // 面板把「这一步走去哪一格」报上来；包了一层组件，事件得自己接住。
         'onUpdate:tab': (key: string) => tabs.push(key),
@@ -118,7 +105,6 @@ function harness() {
     global: {
       plugins: [vuetify, i18n],
       stubs: {
-        PanelOverviewHost: PanelOverviewStub,
         PanelChanges: PanelChangesStub,
         PanelSiteHost: true,
         PanelPreview: true,
@@ -135,14 +121,11 @@ async function flush() {
 
 beforeEach(() => {
   confirmDiscard.mockReset()
-  overview.pulse.mockReset()
-  overview.highlightTurn.mockReset()
-  overview.reviewEdits.mockReset()
   changes.openFile.mockReset()
 })
 
-describe('后台掀开总览不弹框、也不空转', () => {
-  it('pulse：有未发标注也照样掀开，不去问人', async () => {
+describe('后台掀开总览不弹框', () => {
+  it('有未发标注也照样掀开，不去问人', async () => {
     confirmDiscard.mockResolvedValue(true)
     const { ui, panel, currentTab } = harness()
     await flush()
@@ -153,32 +136,11 @@ describe('后台掀开总览不弹框、也不空转', () => {
     // 此刻有人在标注：守卫会拦。
     confirmDiscard.mockResolvedValue(false)
     confirmDiscard.mockClear()
-    await panel().pulse()
+    await panel().showOverview()
     await flush()
 
     expect(confirmDiscard).not.toHaveBeenCalled()
     expect(currentTab()).toBe('overview')
-    // 不是空操作：总览那东西真被点动了。
-    expect(overview.pulse).toHaveBeenCalledTimes(1)
-  })
-
-  it('highlightTurn / reviewDoc 同理', async () => {
-    confirmDiscard.mockResolvedValue(true)
-    const { ui, panel, currentTab } = harness()
-    await flush()
-    await fireEvent.click(await ui.findByRole('tab', { name: /现场/ }))
-    await waitFor(() => expect(currentTab()).toBe('site'))
-
-    confirmDiscard.mockResolvedValue(false)
-    confirmDiscard.mockClear()
-    await panel().highlightTurn('turn-1')
-    await flush()
-    expect(confirmDiscard).not.toHaveBeenCalled()
-    expect(overview.highlightTurn).toHaveBeenCalledWith('turn-1')
-
-    await panel().reviewDoc({ requester: 'me', edits: [{ block: 'b1', summary: 's' }] })
-    await flush()
-    expect(overview.reviewEdits).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -220,6 +182,6 @@ describe('开文件被拦下时不装作开了', () => {
     await flush()
 
     expect(currentTab()).toBe('changes')
-    expect(changes.openFile).toHaveBeenCalledWith('src/a.ts', undefined)
+    expect(changes.openFile).toHaveBeenCalledWith('src/a.ts')
   })
 })

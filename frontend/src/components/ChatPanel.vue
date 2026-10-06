@@ -7,14 +7,17 @@
 // one RoomMessage already draws around a row — a composable knows what the room
 // is doing, a view knows what it looks like — and the views under ./chat are
 // those pieces: header, timeline, new-message pill, error toast.
-import type { ProjectMemberRow, Topic } from '../cx_types'
+import type { Block, ProjectMemberRow, Topic } from '../cx_types'
+import type { ProgressLevel } from '../lib/taskProgress'
 
 import { computed, watch } from 'vue'
 
+import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { useGettingStarted } from '../composables/useGettingStarted'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { createQuestionSubmit } from '../lib/previewQuestion'
+import { progressLevel } from '../lib/taskProgress'
 
 import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
@@ -104,6 +107,12 @@ const threadable = computed(() => mainLine.value && props.topic?.status !== 'arc
 const forward = emit as unknown as (event: string, ...args: unknown[]) => void
 const panelEmit = ((event: string, ...args: unknown[]) => {
   if (event === 'state-changed' && args[0] === 'threads') void threadLines.refresh()
+  if (event === 'state-changed' && args[0] === 'pins') void pins.reload()
+  if (event === 'thread-activity') {
+    const [threadId, member, active] = args as [string, string, boolean]
+    void threadLines.onActivity(threadId, member, active)
+    return
+  }
   forward(event, ...args)
 }) as ChatPanelEmit
 
@@ -127,6 +136,23 @@ const threadLines = useThreadLines({
   timeline: panel.timeline,
   agentNameOf: (handle) => (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value,
 })
+// 置顶：只在频道主线上、我能在这里说话（加入了这个频道）、频道没归档时能做。
+const pinnable = computed(() => threadable.value && props.topic?.joined !== false)
+const pins = useChannelPins({
+  channelId: () => (mainLine.value ? props.topic?.id ?? null : null),
+  report: (message) => (panel.errorMsg.value = message),
+  seen: () => panel.timeline.messages.value.some((m) => typeof m.meta?.pinned_block_id === 'string'),
+})
+function keepFile(block: Block) {
+  if (props.topic) pins.keep(props.topic.id, block)
+}
+// 频道里一件任务此刻到哪一档：「创建了任务」那一行、支线下面那一行、已派出那一行都写它。
+const taskLevels = computed(
+  () => new Map(panel.roomTasks.value.map((task) => [task.id, progressLevel(task.presentation, task.status)]))
+)
+function taskLevel(taskId: string): ProgressLevel | null {
+  return taskLevels.value.get(taskId) ?? null
+}
 function nameOf(handle: string): string {
   return panel.refMaps.mentionNames[handle] || handle
 }
@@ -317,6 +343,9 @@ defineExpose({ send, connected, submitQuestion })
           :no-upgrade="noUpgrade"
           :threadable="threadable"
           :replying-for="threadLines.replyingFor"
+          :pinnable="pinnable"
+          :pinned-ids="pins.pinnedIds.value"
+          :task-level="taskLevel"
           :name-of="nameOf"
           :rows="rows"
           :hidden-rows="hiddenRows"
@@ -395,6 +424,9 @@ defineExpose({ send, connected, submitQuestion })
           @settle-arrival="settleArrival"
           @settle-sent="settleSent"
           @outbox-leave="outboxLeave"
+          @pin="pins.pin"
+          @unpin="pins.unpin"
+          @keep="keepFile"
         >
           <template #timeline-end><slot name="timeline-end" /></template>
         </ChatTimeline>
@@ -431,49 +463,51 @@ defineExpose({ send, connected, submitQuestion })
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
 
-      <div v-if="showComposer && !composerClosed && draftQuote" class="composer-quote">
-        <MessageQuote :quote="draftQuote" />
-        <button type="button" class="composer-quote__remove" @click="clearDraftQuote">
-          {{ t('slides.removeQuote') }}
-        </button>
-      </div>
-      <div v-if="showComposer && composerClosed" class="composer-closed">
-        <div class="composer-closed__box t-body">
-          <span class="composer-closed__text">{{ composerClosed }}</span>
-          <slot name="composer-closed" />
+      <!-- 输入框那一块。「谁在忙」浮在它正上方，压在最后一条消息上淡出，不另占一行：
+           没人在忙时那里什么都没有，输入框也不跟着上下跳。 -->
+      <div class="composer-zone">
+        <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" />
+        <div v-if="showComposer && !composerClosed && draftQuote" class="composer-quote">
+          <MessageQuote :quote="draftQuote" />
+          <button type="button" class="composer-quote__remove" @click="clearDraftQuote">
+            {{ t('slides.removeQuote') }}
+          </button>
         </div>
+        <div v-if="showComposer && composerClosed" class="composer-closed">
+          <div class="composer-closed__box t-body">
+            <span class="composer-closed__text">{{ composerClosed }}</span>
+            <slot name="composer-closed" />
+          </div>
+        </div>
+        <!-- Built-in composer (private chat / standalone use). A question 芝士 asked
+             never takes its place: its quick replies sit under the question. -->
+        <RoomComposer
+          v-else-if="showComposer"
+          ref="composerRef"
+          v-model="draft"
+          :topic="topic"
+          :mention-pool="mentionPool"
+          :topic-list="topicList"
+          :agent-seat="agentSeat"
+          :agent-name="agentName"
+          :always-summon="alwaysSummon"
+          :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
+          :atts="pendingAtts"
+          :atts-uploading="attsUploading"
+          :reply-label="replyLabel"
+          :post-checklist="postChecklist"
+          @send="onComposerSend"
+          @clear-reply="clearReply"
+          @files="(files) => void addFiles(files)"
+          @drop-files="onComposerDrop"
+          @paste="onComposerPaste"
+          @remove-att="removePendingAtt"
+          @retry-att="(i: number) => void retryPendingAtt(i)"
+          @add-library-file="(path) => void addLibraryFile(path)"
+        >
+          <template #composer-chips><slot name="composer-chips" /></template>
+        </RoomComposer>
       </div>
-      <!-- Built-in composer (private chat / standalone use). A question 芝士 asked
-           never takes its place: its quick replies sit under the question. -->
-      <RoomComposer
-        v-else-if="showComposer"
-        ref="composerRef"
-        v-model="draft"
-        :topic="topic"
-        :mention-pool="mentionPool"
-        :topic-list="topicList"
-        :agent-seat="agentSeat"
-        :agent-name="agentName"
-        :always-summon="alwaysSummon"
-        :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
-        :atts="pendingAtts"
-        :atts-uploading="attsUploading"
-        :reply-label="replyLabel"
-        :post-checklist="postChecklist"
-        @send="onComposerSend"
-        @clear-reply="clearReply"
-        @files="(files) => void addFiles(files)"
-        @drop-files="onComposerDrop"
-        @paste="onComposerPaste"
-        @remove-att="removePendingAtt"
-        @retry-att="(i: number) => void retryPendingAtt(i)"
-        @add-library-file="(path) => void addLibraryFile(path)"
-      >
-        <template #composer-chips><slot name="composer-chips" /></template>
-      </RoomComposer>
-      <!-- 谁在这个房间里忙，和 Slack 一样贴在输入框正下方：「Alice 正在输入…」
-           「Cedar 正在工作…」。说的是成员，不是房间。 -->
-      <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" reserve />
     </template>
   </div>
 </template>
@@ -526,16 +560,32 @@ defineExpose({ send, connected, submitQuestion })
   height: 100%;
   background: var(--surface);
 }
-/* 这一列最后一行永远是「谁在工作」那一行（MemberActivity，showComposer 时一直画着，
-   用 reserve 占住高度）。手机底部的安全区（Home 横杠 / 圆角）由它一个人出：它上面
-   的输入区把自己那份让掉。两边各留一份的话，横杠上方会叠出两倍的空。 */
-.chat .composer {
-  padding-bottom: 8px;
+/* 手机底部的安全区（Home 横杠 / 圆角）由输入框这一块的最后一样东西出：输入区，
+   或者说明为什么不能说话的那一格。 */
+.chat .composer,
+.chat .composer-closed {
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
 }
+.composer-zone {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+/* 浮在输入框上方：盖住时间线最下面的一截，底下垫一层由透明到底色的渐变，最后一条
+   消息从它下面淡出去。不接点击，点到的仍然是下面的消息。 */
 .chat .composer-activity {
-  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  padding: 10px 16px 2px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  background: linear-gradient(to bottom, transparent, var(--surface) 55%);
+  pointer-events: none;
 }
-/* 输入框和它下面那行状态收成和对话同一栏（时间线那一份在 ChatTimeline）：桌面上
+/* 输入框和它上面那行状态收成和对话同一栏（时间线那一份在 ChatTimeline）：桌面上
    是读的一栏 --page-w-read，手机外壳里是 --page-w。三块（时间线、输入框、贴在上
    面的那一条）用同一个值，栏才对齐。 */
 .composer,

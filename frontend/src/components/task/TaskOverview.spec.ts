@@ -30,6 +30,8 @@ vi.mock('../../api/docCollab', async () => ({
   // 这个任务的实况文档：测试里固定一篇，字在 fakeDocCollab 里按这个 id 预置。
   getRoomDocument: async () => ({ id: 'doc-1' }),
 }))
+// 产出那一块自己取数；这份 spec 只看文档那一半。
+vi.mock('./TaskOutputs.vue', () => ({ default: { name: 'TaskOutputs', template: '<div />' } }))
 vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))
@@ -94,6 +96,11 @@ function open(task: RoomTask, extra: Record<string, unknown> = {}) {
       comparing: false,
       comparison: null,
       compareError: null,
+      checklist: [],
+      related: null,
+      canRetry: false,
+      retrying: false,
+      retryError: null,
       ...extra,
     },
     global: { plugins: [vuetify] },
@@ -104,7 +111,7 @@ function prose(container: Element): string {
   return container.querySelector('.doc-prose')?.textContent ?? ''
 }
 
-describe('任务的总览', () => {
+describe('任务的概览', () => {
   it('画的是这个任务的实况文档', async () => {
     seedRoom('doc-1', '任务开工时写的第一段')
     const { container } = open(task('task-1', 't1'))
@@ -121,6 +128,6 @@ describe('任务的总览', () => {
     })
 
     await waitFor(() => expect(container.textContent).toContain('修改 1 段'))
-    expect(container.querySelector('.task-overview__doc')).toBeNull()
+    expect(container.querySelector('.doc-prose')).toBeNull()
   })
 })

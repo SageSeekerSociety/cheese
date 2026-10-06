@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, Uuid, column, func, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.living_doc.models import Document, DocumentComment, DocumentNode
@@ -33,14 +33,57 @@ class Hit:
     score: float
 
 
+# Which documents tasks and projects point at. Bare tables: ``room_task`` and
+# ``project`` depend on this domain.
+_tasks = table(
+    "tasks", column("id", Uuid), column("room_id", Uuid), column("document_id", Uuid)
+)
+_projects = table(
+    "projects", column("root_topic_id", Uuid), column("overview_document_id", Uuid)
+)
+
+
+async def homes(
+    session: AsyncSession, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID | None]]:
+    """Where each living document of these channels is read, by document id:
+    ``(channel, task)``. A task's document is under its task; the project's
+    overview under 综合; an old room's document under that room."""
+    if not room_ids:
+        return {}
+    out: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID | None]] = {}
+    tasks = await session.execute(
+        select(_tasks.c.document_id, _tasks.c.room_id, _tasks.c.id).where(
+            _tasks.c.room_id.in_(room_ids), _tasks.c.document_id.is_not(None)
+        )
+    )
+    for document_id, room_id, task_id in tasks:
+        out[document_id] = (room_id, task_id)
+    overviews = await session.execute(
+        select(_projects.c.overview_document_id, _projects.c.root_topic_id).where(
+            _projects.c.root_topic_id.in_(room_ids),
+            _projects.c.overview_document_id.is_not(None),
+        )
+    )
+    for document_id, room_id in overviews:
+        out[document_id] = (room_id, None)
+    rooms = await session.execute(
+        select(Document.id, Document.room_id).where(Document.room_id.in_(room_ids))
+    )
+    for document_id, room_id in rooms:
+        out[document_id] = (room_id, None)
+    return out
+
+
 async def readable(
     session: AsyncSession, room_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, Document]:
-    """The written documents of these rooms, by id."""
-    if not room_ids:
+    """The written living documents of these channels, by id (see `homes`)."""
+    where = await homes(session, room_ids)
+    if not where:
         return {}
     rows = await session.scalars(
-        select(Document).where(Document.room_id.in_(room_ids), Document.version > 0)
+        select(Document).where(Document.id.in_(list(where)), Document.version > 0)
     )
     return {row.id: row for row in rows}
 

@@ -1,121 +1,41 @@
 <script setup lang="ts">
-// 这个房间里的东西 (#1085 结论四)。
+// 任务的产出 (#1085 结论四)：AI 队友在这件任务里摆出来的东西，新的在前。
 //
-// 一个房间常有好几样值得看的东西 —— 一份改好的 .docx、一张图、一个跑起来的应用
-// —— 而上面那块预览只显示最后摆出来的那一样。这几行是全部，新的在前。
+// 它们属于这件任务：看完拿走，事情就结束了。想把一份留下来以后还用，按「保存到资料
+// 库」——按了才算，平台不猜、不自动留。留下来的那一份按原名进资料库，别处也引用得到。
 //
-// 它们属于这个房间：用户看完拿走，事情就结束了。想把一份留下来以后还用，按一下
-// 「保存到资料库」——按了才算，平台不猜、不自动留。留下来的那一份按原名进资料库，
-// 别的房间也引用得到，和用户自己上传的那些并排。
+// 它不因此上产物清单：清单上的一项是**要交出去的**东西，而留着以后用的是资料。真交付
+// 的那一下由 AI 队友在提交审阅时声明，和这个按钮无关。
 //
-// 它不因此上产物清单：清单上的一项是**要交出去的**东西，而留着以后用的是资料。真
-// 交付的那一下由 芝士 在递卡时声明，那条路和这个按钮无关。
-//
-// 只有一样东西时这一块照样出现：上面那块预览只是在看它，而这个动作只在这里有。
-//
-// 它挂在总览的最底下、实况文档下面，默认收起，只露小标题那一行（带件数）。它原先
-// 在预览那一格的底部，和预览抢高度；预览那一格现在只放预览。小标题那一行是折叠开
-// 关，摊开后列表有高度上限、自己滚，不把上面的文档挤没。
+// 它在任务概览里、实况文档下面，跟着整列一起滚，没有自己的折叠和滚动条。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { DocumentTemplate, RoomOutput } from '@/types/roomOutput'
 
-import { computed, ref, useId, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useRowMenu } from '@/composables/useRowMenu'
+import { useTaskOutputs } from '@/composables/useTaskOutputs'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
-// **只吃 props**：取数在 `components/work/PanelOverviewHost.vue`（它渲染整个总览）。
-// 这里留下的只有「这一格长什么样」：折叠态、正在存哪一份、存完了叫什么、出错了说什么。
-// `components/panels/**` 下每个 SFC 都是「场景」，场景不取数，也不自己定义怎么取。
-const props = withDefaults(
-  defineProps<{
-    topicId: string | null
-    /** 这个房间摆出来的东西，新的在前。读不到就是空的。 */
-    outputs?: RoomOutput[]
-    /** 标准模板。第一次点「从模板新建」时由上面那一层去取，取到的再传回来。 */
-    templates?: DocumentTemplate[]
-    /** 去取一次模板列表。 */
-    loadTemplates?: () => void
-    /** 把一份存进资料库，返回它在资料库里叫什么（撞名时那边会加 `(2)`）。 */
-    saveToLibrary?: (path: string) => Promise<string>
-    /** 从模板建一份。建完的列表刷新和打开由上面那一层做——这里只管按钮的忙碌和报错。 */
-    createFromTemplate?: (templateId: string, path: string) => Promise<void>
-  }>(),
-  {
-    topicId: null,
-    outputs: () => [],
-    templates: () => [],
-    loadTemplates: undefined,
-    saveToLibrary: undefined,
-    createFromTemplate: undefined,
-  }
-)
-
+const props = defineProps<{ topicId: string | null }>()
 const emit = defineEmits<{
-  /** 点开这一份：上面那块只看得到最后一样，前面几样从这里开成自己的页签。 */
+  /** 点开这一份：开成面板里的一个页签。 */
   (e: 'open', path: string): void
 }>()
 
+const io = useTaskOutputs(() => props.topicId)
+const outputs = io.outputs
+const templates = io.templates
 const saving = ref('')
 const error = ref('')
 const saved = ref<Record<string, string>>({})
 
 /** 跑着的应用没有文件可存：它是一个进程，不是一份东西。 */
-const files = computed(() => props.outputs.filter((o) => o.kind === 'file'))
-
-// ---- 折叠 ----
-// 按话题存人自己按的那一下；键不在 = 没按过 = 收起。v1 是它还在预览格里、默认按
-// 列表长短摊开时存的，搬进总览后默认变了，旧值不再沿用。
-const EXPANDED_PREFIX = 'cheesex.roomOutputsExpanded.v2:'
-
-function storageKey(topicId: string | null): string | null {
-  const id = (topicId ?? '').trim()
-  return id ? `${EXPANDED_PREFIX}${encodeURIComponent(id)}` : null
-}
-
-/** null = 没存过（人没按过），调用方取默认的收起。 */
-function loadExpanded(topicId: string | null): boolean | null {
-  const key = storageKey(topicId)
-  if (!key || typeof localStorage === 'undefined') return null
-  try {
-    const raw = localStorage.getItem(key)
-    return raw === '1' ? true : raw === '0' ? false : null
-  } catch {
-    return null
-  }
-}
-
-function saveExpanded(topicId: string | null, expanded: boolean): void {
-  const key = storageKey(topicId)
-  if (!key || typeof localStorage === 'undefined') return
-  try {
-    localStorage.setItem(key, expanded ? '1' : '0')
-  } catch {
-    // 隐私模式/配额满：这一下仍然在内存里生效，只是刷新后回到默认。
-  }
-}
-
-const expanded = ref(false)
-
-const rowsId = `room-outputs-${useId()}`
-
-function toggleExpanded() {
-  expanded.value = !expanded.value
-  saveExpanded(props.topicId, expanded.value)
-}
-
-/** 人按过的那一下优先；没按过就收起。 */
-function applyDefault() {
-  expanded.value = loadExpanded(props.topicId) ?? false
-}
-
-// 换一个话题就是换一份列表，折叠态也跟着换一份。列表本身由上面那一层跟着换。
-applyDefault()
-watch(() => props.topicId, applyDefault)
+const files = computed(() => outputs.value.filter((o) => o.kind === 'file'))
 
 // 右键一个文件：打开它、存进资料库（已经存过的不再给），弹在鼠标那一点上。
 const rowMenu = useRowMenu<string>()
@@ -140,17 +60,11 @@ function outputActions(output: RoomOutput): MenuAction[] {
 }
 
 async function save(output: RoomOutput) {
-  const toLibrary = props.saveToLibrary
-  if (!toLibrary) return
   saving.value = output.path
   error.value = ''
   try {
-    // 说出它在资料库里叫什么：撞名时那边会加 `(2)`，而人下次找的是那个名字。
-    const name = await toLibrary(output.path)
-    saved.value = {
-      ...saved.value,
-      [output.path]: t('tasks.preview.roomOutputs.savedToLibrary', { name }),
-    }
+    const name = await io.save(output.path)
+    if (name) saved.value = { ...saved.value, [output.path]: t('tasks.preview.roomOutputs.savedToLibrary', { name }) }
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('tasks.preview.roomOutputs.saveFailed')
   } finally {
@@ -158,7 +72,7 @@ async function save(output: RoomOutput) {
   }
 }
 
-// 从标准模板新建：建出来的是房间里的一份文件，建好就打开，进编辑器接着写。
+// 从标准模板新建：建出来的是这件任务里的一份文件，建好就打开，进编辑器接着写。
 const picking = ref<DocumentTemplate | null>(null)
 const newPath = ref('')
 const creating = ref(false)
@@ -167,7 +81,7 @@ const choosing = ref(false)
 function toggleTemplates() {
   choosing.value = !choosing.value
   picking.value = null
-  if (choosing.value) props.loadTemplates?.()
+  if (choosing.value) void io.loadTemplates()
 }
 
 function pick(template: DocumentTemplate) {
@@ -177,14 +91,14 @@ function pick(template: DocumentTemplate) {
 
 async function create() {
   const template = picking.value
-  const make = props.createFromTemplate
-  if (!template || !make) return
+  if (!template) return
   creating.value = true
   error.value = ''
   try {
-    await make(template.id, newPath.value.trim())
+    const made = await io.create(template.id, newPath.value.trim())
     picking.value = null
     choosing.value = false
+    if (made) emit('open', made)
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('tasks.preview.roomOutputs.createFailed')
   } finally {
@@ -195,28 +109,17 @@ async function create() {
 function name(path: string): string {
   return path.split('/').pop() || path
 }
+
+defineExpose({ reload: io.load })
 </script>
 
 <template>
   <section v-if="topicId" class="outs" data-testid="room-outputs">
     <div class="outs__head">
-      <!-- 小标题这一行就是折叠开关：点它摊开／收起整个列表。 -->
-      <button
-        type="button"
-        class="outs__toggle"
-        data-testid="room-outputs-toggle"
-        :title="expanded ? t('tasks.preview.roomOutputs.collapse') : t('tasks.preview.roomOutputs.expand')"
-        :aria-expanded="expanded"
-        :aria-controls="rowsId"
-        @click="toggleExpanded"
-      >
-        <v-icon size="16" class="outs__chevron">
-          {{ expanded ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
-        </v-icon>
-        <span class="outs__title t-eyebrow c-muted">{{ t('tasks.preview.roomOutputs.title') }}</span>
-        <!-- 有几样东西是这一块唯一该说清的事，收起时更得说。 -->
+      <h3 class="outs__title">
+        {{ t('work.task.outputs') }}
         <span v-if="files.length" class="outs__count t-meta">· {{ files.length }}</span>
-      </button>
+      </h3>
       <BaseButton
         kind="ghost"
         size="sm"
@@ -254,7 +157,8 @@ function name(path: string): string {
       </BaseButton>
     </div>
     <p v-if="error" role="alert" class="outs__error t-meta">{{ error }}</p>
-    <ul v-show="expanded" :id="rowsId" class="outs__list">
+    <p v-if="!files.length" class="t-meta c-faint">{{ t('work.task.noOutputs') }}</p>
+    <ul v-else class="outs__list">
       <li v-for="output in files" :key="output.path" class="outs-row" @contextmenu="rowMenu.open(output.path, $event)">
         <AdaptiveMenu v-bind="rowMenu.bind(output.path)" :actions="outputActions(output)" :title="name(output.path)">
           <template #activator />
@@ -280,7 +184,7 @@ function name(path: string): string {
 <style scoped>
 .outs {
   flex: none;
-  padding: 8px 12px;
+  padding: 16px;
   border-top: 1px solid var(--line);
 }
 .outs__head {
@@ -290,24 +194,10 @@ function name(path: string): string {
 }
 .outs__title {
   margin: 0;
-}
-/* 折叠开关就是小标题那一行本身：读起来是标题，点起来是开关。 */
-.outs__toggle {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
-  background: transparent;
-  border: 0;
-}
-.outs__toggle:hover .outs__title {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  font-weight: 600;
   color: var(--ink);
-}
-.outs__chevron {
-  flex: none;
-  color: var(--faint);
 }
 .outs__count {
   margin-left: 4px;
@@ -349,9 +239,6 @@ function name(path: string): string {
   list-style: none;
   padding: 0;
   margin: 6px 0 0;
-  /* 摊开了也只占总览约四成高，再多就自己滚：上面的文档才是这一格的主体。 */
-  max-height: 40vh;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;

@@ -1,4 +1,4 @@
-// 内容里的「文档」：房间的文档正文和文档边上的评论。点开进那个房间的总览。
+// 内容里的「文档」：任务文档、项目总览的正文和文档边上的评论。点开进它所在的概览。
 import type { ContentKind } from './projectSearch'
 
 import { contentSource, searchAuthor, searchRoomTitle, whereAndWhen } from './projectSearch'

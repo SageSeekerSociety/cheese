@@ -93,6 +93,43 @@ def persisted_notice(block: Block) -> str | None:
     return agent_notice(block)
 
 
+async def whose_document(
+    session: AsyncSession, doc: Document
+) -> tuple[uuid.UUID | None, uuid.UUID | None]:
+    """``(room, task)`` whose living document this is: a task's (told in the
+    task, where its session reads it), an old room's, or ``(None, None)`` for
+    one of the project's own."""
+    if doc.room_id is not None:
+        return doc.room_id, None
+    owner = (
+        await session.execute(
+            select(_tasks.c.id, _tasks.c.room_id).where(_tasks.c.document_id == doc.id)
+        )
+    ).first()
+    if owner is None:
+        return None, None
+    return owner[1], owner[0]
+
+
+async def seed(session: AsyncSession, doc: Document, content: str) -> None:
+    """The first version of a document, written by the platform from words it
+    already had (a new project's overview). The caller holds its lock."""
+    if doc.version != 0:
+        raise _doc_conflict(doc.version)
+    written = await Documents(session).write(
+        doc, content, author="system", expected_version=0
+    )
+    if written is None:
+        raise _doc_conflict(doc.version)
+    await DocumentJournal(session).append(
+        document_id=doc.id,
+        version=doc.version,
+        content=content,
+        actor="system",
+        base_version=0,
+    )
+
+
 class DocumentWriter:
     def __init__(self, session: AsyncSession, summarize: Callable[[str, str], str]):
         self._session = session
@@ -102,24 +139,6 @@ class DocumentWriter:
         #: Whether the last record extended an earlier notice instead of
         #: adding one (the caller announces an update, not a new line).
         self.notice_merged = False
-
-    async def seed(self, doc: Document, content: str) -> None:
-        """The first version of a room's document, written by the platform
-        (a newborn room's brief). The caller holds the document's lock."""
-        if doc.version != 0:
-            raise _doc_conflict(doc.version)
-        written = await self._docs.write(
-            doc, content, author="system", expected_version=0
-        )
-        if written is None:
-            raise _doc_conflict(doc.version)
-        await DocumentJournal(self._session).append(
-            document_id=doc.id,
-            version=doc.version,
-            content=content,
-            actor="system",
-            base_version=0,
-        )
 
     async def record(
         self,
@@ -154,19 +173,7 @@ class DocumentWriter:
         """
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
-        room_id = doc.room_id
-        task_id = None
-        if room_id is None:
-            # A task's document is told in the task, where its session reads it.
-            owner = (
-                await self._session.execute(
-                    select(_tasks.c.id, _tasks.c.room_id).where(
-                        _tasks.c.document_id == doc.id
-                    )
-                )
-            ).first()
-            if owner is not None:
-                task_id, room_id = owner
+        room_id, task_id = await whose_document(self._session, doc)
         project_id = doc.project_id
         self.notice_merged = False
         author = actors[0]
@@ -326,17 +333,22 @@ class DocumentWriter:
         suggestion_ids: list[str],
         reason: str | None = None,
     ) -> Block | None:
-        """Tell the room ``actor`` proposed changes to the document.
+        """Tell the conversation whose document it is that ``actor`` proposed
+        changes to it.
 
         A suggestion is not a version — the text is what it was until someone
         accepts it — so this only writes the line, and extends the last one
         when it is the same writer's suggestions within the window.
         """
         self.notice_merged = False
-        if doc.room_id is None or not suggestion_ids:
+        room_id, task_id = await whose_document(self._session, doc)
+        if room_id is None or not suggestion_ids:
             return None
         landed = landing(
-            EventAbout.room, project_id=doc.project_id, room_id=doc.room_id
+            EventAbout.task if task_id is not None else EventAbout.room,
+            project_id=doc.project_id,
+            room_id=room_id,
+            task_id=task_id,
         )
         earlier = await self._mergeable_notice(landed, doc.id, kind="suggested")
         if earlier is not None and (earlier.meta or {}).get(_DOC_ACTORS_KEY) != [actor]:
@@ -407,22 +419,28 @@ async def tell_room_of_document(
     doc: Document,
     actor: str,
     task_id: uuid.UUID | None = None,
+    thread_id: uuid.UUID | None = None,
     created: bool = False,
     edits: list[dict] | None = None,
     suggested: list[str] | None = None,
 ) -> tuple[Block, bool]:
-    """Put in the room (or its task ``task_id``) that ``actor`` made or changed
+    """Put in the room (or its task ``task_id``, or its 支线 ``thread_id``) that
+    ``actor`` made or changed
     ``doc``, a document of the project's own: a line with the document on it, to
     open beside the conversation. ``suggested`` are the ids of changes proposed
     instead of made. A run of changes of one kind to the same document by the same
     actor is one line, as with a room's document. Returns the line and whether it
     extended the last one."""
     blocks = BlockRepository(session)
-    landed = landing(
-        EventAbout.task if task_id is not None else EventAbout.room,
-        project_id=doc.project_id,
-        room_id=room_id,
-        task_id=task_id,
+    landed = (
+        landing(EventAbout.thread, project_id=doc.project_id, thread_id=thread_id)
+        if thread_id is not None
+        else landing(
+            EventAbout.task if task_id is not None else EventAbout.room,
+            project_id=doc.project_id,
+            room_id=room_id,
+            task_id=task_id,
+        )
     )
     changed = [{"old": e["old"], "new": e["new"]} for e in edits or []]
     last = await blocks.latest_for_topic(landed.conversation_id)

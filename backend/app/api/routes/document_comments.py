@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_consumptions, get_session_host
-from app.api.doc_access import Reached, frozen, reach
+from app.api.doc_access import Reached, reach, require_writable
 from app.api.doc_identity import operation_actor
 from app.api.response import ok, page
 from app.api.routes.topics import DbSession
@@ -70,8 +70,8 @@ async def add_comment(
     without one). An archived room's document, and every document of an
     archived project, is frozen and takes no comments."""
     reached = await reach(db, resolver, document_id)
-    if await frozen(db, reached):
-        raise ValidationError(say("commentDocFrozen"))
+    # Says why: an archived project, a closed task, or someone not working it.
+    await require_writable(db, reached)
     content = body.content.strip()
     if not content:
         raise ValidationError(say("commentEmpty"))
@@ -156,8 +156,7 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     )
     if operation.receipt is not None:
         return operation.receipt
-    if await frozen(db, reached):
-        raise ValidationError(say("commentDocFrozen"))
+    await require_writable(db, reached)
     result = await CommentThreads(db).mutate(
         reached.doc,
         comment_id=comment_id,

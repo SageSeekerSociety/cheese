@@ -253,6 +253,8 @@
   "resendInterrupted": "A platform restart interrupted the last resend; the message was not delivered",
   "resendInterruptedDetail": "A message is resent only once, never in an automatic loop. Finished changes are all in the workspace; to continue, retry and it will pick up where it stopped.",
   "roomArchived": "{actor} archived channel “{room}”",
+  "pinnedMessage": "{actor} pinned a message",
+  "pinnedFile": "{actor} pinned “{name}”",
   "roomArchivedWithParent": "Channel “{room}” was archived along with its parent channel “{parent}”",
   "roomUnarchived": "{actor} unarchived channel “{room}”; it is active again",
   "routineFailed": "failed",

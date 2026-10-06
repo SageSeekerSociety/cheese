@@ -226,6 +226,8 @@ class _HookStream(Protocol):
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None: ...
 
+    async def thread_replied(self, conversation_id: uuid.UUID) -> None: ...
+
     async def _close_open_turns(
         self, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> None: ...
@@ -751,6 +753,11 @@ async def _consume_hook_event(
             )
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
+                # In a 支线 nobody has replied to yet, this line is the only
+                # thing in it: the main line reads its 支线 again, so the
+                # message it hangs under says the reply failed.
+                if inner_id is not None:
+                    await service.thread_replied(inner_id)
         elif event.text.strip():
             # Terminal output, the final response included, stays in
             # activity: a reply reaches the room only through chat_send,

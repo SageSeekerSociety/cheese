@@ -366,8 +366,8 @@ class InProcessBroker:
                     self._last_activity_at.pop(channel, None)
 
         self._fan_out(channel, frame)
-        if followed is not None:
-            self._fan_out(channel, followed)
+        for to, extra in self.activity.told(channel, followed):
+            self._fan_out(to, extra)
 
     def _fan_out(self, channel: str, frame: Frame) -> None:
         for q in list(self._subs.get(channel, ())):

@@ -255,7 +255,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 ## 工作面板 {#panels}
 
-`src/components/panels/` 下的 27 个 SFC，也就是房间那一块工作面板和它五个页签的内容。
+`src/components/panels/` 下的 21 个 SFC，也就是频道和任务页右侧那一块工作面板和它几个页签的内容。
 
 | 面板 | 档 | 卡在哪 |
 |---|---|---|
@@ -265,26 +265,21 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `components/panels/PanelChangesView.vue` | A | 只吃 props 和事件 |
 | `components/panels/PanelDoc.vue` | C | 经 `composables/usePanelDoc.ts` 取数 |
 | `components/panels/PanelDocView.vue` | A | 只吃 props 和事件 |
-| `components/panels/PanelOverview.vue` | A | 只吃 props 和事件 |
 | `components/panels/PanelPreview.vue` | C | 经 `composables/usePanelPreview.ts` 取数 |
 | `components/panels/PanelPreviewView.vue` | A | 只吃 props 和事件 |
-| `components/panels/PanelProgress.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/PanelSite.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/PanelTabs.vue` | A | 只吃 props 和事件 |
 | `components/panels/SiteStepOutput.vue` | C | 直接取数（`api.ts`） |
-| `components/panels/TaskProgress.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/TodoChecklist.vue` | A | 只吃 props 和事件 |
 | `components/panels/doc/DocComments.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/doc/DocOverlays.vue` | A | 只吃 props 和事件 |
 | `components/panels/doc/DocSlashMenu.vue` | A | 只吃 props 和事件 |
 | `components/panels/doc/DocSurface.vue` | A | 只吃 props 和事件 |
-| `components/panels/doc/OverviewAuto.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/preview/PreviewPages.vue` | A | 只吃 props 和事件 |
 | `components/panels/preview/PreviewSheet.vue` | A | 只吃 props 和事件 |
 | `components/panels/preview/RevisionList.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/preview/RoomFileEditor.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/preview/RoomFileHistory.vue` | C | 直接取数（`api.ts`） |
-| `components/panels/preview/RoomOutputs.vue` | C | 直接取数（`api.ts`） |
 
 **三个外壳正在被拆空。** `PanelDoc` / `PanelChanges` / `PanelPreview` 今天都是 C，但它们是「页签的外壳」：取数在 `composables/usePanelDoc.ts`、`usePanelChanges.ts`、`usePanelPreview.ts` 里，外壳把结果整理成 props 交给视图。三个视图自己也不取数，但它们在模板里渲染的子组件（`AttachmentImage`、`preview/RoomFileEditor`、`doc/DocComments` 等）会取数，所以判据修好之后**它们是 C**，要看下一层拆得干不干净。方向不变：**把 C 留在外壳上，把 A 一层层攒出来**。
 
@@ -318,7 +313,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 ## 下一步 {#next}
 
 1. **已经拆出来的三个视图挂上目录**：`PanelChangesView`、`PanelPreviewView`、`PanelDocView`，每个带 loading / 空 / 有数据 / 出错几种状态。上一版已经做了。
-2. **A 档的先补目录**，成本几乎为零：`--list` 现在会打出 15 个没挂的（7 个页面 + 8 个面板：`ChangesFileTree`、`PanelOverview`、`TodoChecklist`、`doc/DocOverlays`、`doc/DocSlashMenu`、`doc/DocSurface`、`preview/PreviewPages`、`preview/PreviewSheet`）。挂上去之后，改外观和改排版就有地方看效果。
+2. **A 档的先补目录**，成本几乎为零：`--list` 现在会打出 14 个没挂的（7 个页面 + 7 个面板：`ChangesFileTree`、`TodoChecklist`、`doc/DocOverlays`、`doc/DocSlashMenu`、`doc/DocSurface`、`preview/PreviewPages`、`preview/PreviewSheet`）。挂上去之后，改外观和改排版就有地方看效果。
 3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；每拆出一个就跑 `pnpm run lint:scenes:update` 把它从 `debt` 搬进 `ready`。
 4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/` 已按「参数当 props 进视图」拆完（2026-10-05），`views/workspace/`、`views/spaces/` 两块各还要一个方案，动哪块由产品定。
 5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：97 → 0。

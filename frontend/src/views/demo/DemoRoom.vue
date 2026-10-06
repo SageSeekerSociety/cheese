@@ -12,7 +12,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 import { answer } from './demoBackend'
 import DemoBackstage from './DemoBackstage.vue'
-import { DEMO_PROJECT, DEMO_TOPIC, installPanelAnswers } from './demoPanels'
+import { DEMO_PROJECT, DEMO_TOPIC, demoTaskId, installPanelAnswers } from './demoPanels'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import DispatchedMarker from '@/components/DispatchedMarker.vue'
@@ -23,7 +23,7 @@ import RoomNotice from '@/components/room/RoomNotice.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import PanelChangesHost from '@/components/work/PanelChangesHost.vue'
-import PanelOverviewHost from '@/components/work/PanelOverviewHost.vue'
+import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
@@ -313,12 +313,12 @@ watch(
         <!-- 当前那一格。四格都在这里，切走的是藏起来的那几格（和产品一样），
              它们的接口调用由各格自己在「轮到我上场」那一下发起。 -->
         <div class="demo-tabbody" data-region="panel">
-          <PanelOverviewHost
+          <PanelDocHost
             v-if="mounted.has('overview')"
             v-show="frame.panel === 'overview'"
             :topic="topic"
+            :task-id="DEMO_TOPIC"
             :activity-tick="frame.step"
-            :active="frame.panel === 'overview'"
           />
           <PanelSiteHost
             v-if="mounted.has('site')"
@@ -336,6 +336,7 @@ watch(
             v-if="mounted.has('changes')"
             v-show="frame.panel === 'changes'"
             :topic-id="DEMO_TOPIC"
+            :task-id="demoTaskId(frame.overview?.tasks)"
             :project-id="DEMO_PROJECT"
             :active="frame.panel === 'changes'"
           />

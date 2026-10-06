@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 话题页右侧「改动」这一格 —— 一只薄容器。
+// 任务页右侧「改动」这一格 —— 一只薄容器。
 //
 // 它以前是一个 1709 行的组件：自己引十个接口函数、自己按 20 秒轮询、自己挂
 // `beforeunload`、自己读共享草稿，然后又自己把那一切画出来。于是「改动」这个界面
@@ -7,7 +7,7 @@
 // 写的十几条路由）。
 //
 // 现在两边分家，和 #2118 拆 UserRef 是同一个形状：
-//   - 取数（接口、轮询、来源切换、读到写、草稿、冲突）
+//   - 取数（接口、轮询、读到写、草稿、冲突）
 //     → `composables/usePanelChanges.ts`
 //   - 画（树上标了什么、diff 什么颜色、空态写哪句话）
 //     → `components/panels/PanelChangesView.vue`，只凭 props 渲染
@@ -32,22 +32,11 @@ const props = withDefaults(
 )
 
 const {
-  // 房间改动那一页
-  overview,
-  taskOptions,
   taskLoadError,
-  tasksLoaded,
   selectedTask,
   currentTask,
-  sourceTitle,
   sourceStatus,
   sourceUnavailable,
-  requestedPath,
-  overviewDiffs,
-  overviewErrors,
-  expandedTasks,
-  toggleTaskFiles,
-  // 看某个来源时的那一格
   showAll,
   fileSource,
   fileToolReady,
@@ -90,9 +79,7 @@ const {
   // 动作
   loadAll,
   selectFile,
-  navigateSource,
   selectVersion,
-  openOverview,
   openFile,
   toggleDir,
   downloadOpenFile,
@@ -116,9 +103,6 @@ function setDraft(v: string) {
 function refresh() {
   void loadAll({ silent: true })
 }
-function onOpenFileInTask(path: string, taskId: string) {
-  void openFile(path, taskId)
-}
 function onSelectFile(path: string) {
   void selectFile(path)
 }
@@ -139,19 +123,11 @@ defineExpose({ openFile })
   <PanelChangesView
     :topic-id="props.topicId"
     :read-only="props.readOnly"
-    :overview="overview"
-    :task-options="taskOptions"
     :task-load-error="taskLoadError"
-    :tasks-loaded="tasksLoaded"
     :selected-task="selectedTask"
     :current-task="currentTask"
-    :source-title="sourceTitle"
     :source-status="sourceStatus"
     :source-unavailable="sourceUnavailable"
-    :requested-path="requestedPath"
-    :overview-diffs="overviewDiffs"
-    :overview-errors="overviewErrors"
-    :expanded-tasks="expandedTasks"
     :show-all="showAll"
     :file-source="fileSource"
     :file-tool-ready="fileToolReady"
@@ -191,12 +167,8 @@ defineExpose({ openFile })
     :doc-loading="docLoading"
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"
-    @open-task="navigateSource"
-    @open-overview="openOverview"
-    @open-file-in-task="onOpenFileInTask"
     @select-file="onSelectFile"
     @select-version="onSelectVersion"
-    @toggle-task-files="toggleTaskFiles"
     @toggle-dir="toggleDir"
     @refresh="refresh"
     @download="onDownload"

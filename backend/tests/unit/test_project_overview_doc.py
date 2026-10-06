@@ -1,21 +1,10 @@
-"""项目总览：① 从文档里取，②③ 从结构化数据现拼（#1889 第 1 条）。
+"""项目总览：注入每段对话的只有「项目是什么」那一块。
 
-这一版改造的要点是「谁写哪一块」：人 / 芝士只写「项目是什么」，其余两块由平台
-现拼，抄不进正文也不受正文影响。这里钉的就是这条界线——把 ① 之外的正文写进
-文档，注入的总览里一个字都不该出现；反过来，结构化数据里有的，不写文档也要在。
+人和芝士都只该写「项目是什么」；写进别的小节的正文，注入的总览里一个字都不该
+出现——而一份还没按这个结构写过的总览，不能因此整个消失。
 """
 
-from app.domain.topic.overview import (
-    ACTIVE_TOPICS_KEY,
-    ACTIVE_TOPICS_LIMIT,
-    ACTIVE_TOPICS_TITLE,
-    CLOSED_TOPICS_KEY,
-    CLOSED_TOPICS_TITLE,
-    overview_auto_blocks,
-    project_brief,
-    render_overview_auto,
-    topic_status,
-)
+from app.domain.project.overview import project_brief
 
 DOC = """## 项目是什么
 
@@ -31,18 +20,6 @@ DOC = """## 项目是什么
 """
 
 
-def _topic(**overrides) -> dict:
-    row = {
-        "id": "t-1",
-        "title": "分页接口",
-        "owner": "@张衡",
-        "status": "进行中",
-        "conclusion": "用 cursor，不用 offset。",
-    }
-    row.update(overrides)
-    return row
-
-
 def test_only_the_project_brief_reaches_the_prompt():
     brief = project_brief(DOC)
 
@@ -55,120 +32,3 @@ def test_only_the_project_brief_reaches_the_prompt():
 def test_a_document_without_the_brief_heading_still_arrives():
     # 一份还没按新结构写过的总览不能整个消失——静默丢掉项目共识更糟。
     assert project_brief("## 目标\n\n做一件事。\n") == "## 目标\n\n做一件事。"
-
-
-def test_the_status_block_yields_its_first_sentence():
-    topic_doc = (
-        "## 目标\n\n支持翻页。\n\n## 现状\n\n"
-        "分页方案已定：用 cursor（决策见 @分页调研）。\n待办：@张衡 过一遍。\n"
-    )
-
-    assert topic_status(topic_doc) == ("分页方案已定：用 cursor（决策见 @分页调研）。")
-    assert topic_status("## 目标\n\n支持翻页。\n") is None
-
-
-def test_a_doc_still_on_the_old_template_gives_its_conclusion():
-    old_doc = "## 目标\n\n支持翻页。\n\n## 当前结论\n\n用 cursor。\n"
-
-    assert topic_status(old_doc) == "用 cursor。"
-
-
-def test_the_status_block_wins_over_an_old_conclusion_block():
-    both = "## 当前结论\n\n旧的说法。\n\n## 现状\n\n等张衡审阅。\n"
-
-    assert topic_status(both) == "等张衡审阅。"
-
-
-def test_what_is_happening_now_is_one_linked_line_per_topic():
-    text = render_overview_auto(active_topics=[_topic()], closed_topics=[])
-
-    assert "## 现在在做什么" in text
-    assert "<#t-1> 分页接口" in text
-    assert "负责人：@张衡" in text
-    assert "进行中" in text
-    assert "现状：用 cursor，不用 offset。" in text
-
-
-def test_every_automatic_block_comes_from_structured_data():
-    text = render_overview_auto(
-        active_topics=[_topic()],
-        closed_topics=[{"id": "t-2", "title": "选型", "conclusion": "用 Postgres。"}],
-    )
-
-    assert "## 已结束的话题" in text
-    assert "<#t-2> 选型" in text and "结论：用 Postgres。" in text
-
-
-def test_an_empty_block_is_not_rendered_at_all():
-    text = render_overview_auto(active_topics=[_topic()], closed_topics=[])
-
-    assert "## 已结束的话题" not in text
-    assert render_overview_auto(active_topics=[], closed_topics=[]) == ""
-
-
-def test_each_block_stops_at_its_own_count():
-    text = render_overview_auto(
-        active_topics=[
-            _topic(id=f"t-{n}", title=f"话题 {n}")
-            for n in range(ACTIVE_TOPICS_LIMIT + 5)
-        ],
-        closed_topics=[],
-    )
-
-    assert text.count("- <#t-") == ACTIVE_TOPICS_LIMIT
-
-
-def test_a_topic_that_never_wrote_a_conclusion_says_so():
-    # 「没写」和「没有结论」对读者是两件事；编一句「进行中」出来会被当成事实。
-    text = render_overview_auto(
-        active_topics=[_topic(conclusion=None)],
-        closed_topics=[],
-    )
-
-    assert "现状：（没写）" in text
-
-
-def test_the_structured_blocks_carry_where_each_line_leads():
-    """结构化那一份给的是点得动的条目，不是排好版的字。
-
-    界面要拿它跳转到话题房间，所以每条都带着自己的去处；同一
-    批数据在 markdown 那一份里排成 `<#id>` 的样子。两边读的是同一个 `_*_items()`，
-    所以字段永远不会一头有一头没有。
-    """
-    blocks = overview_auto_blocks(
-        active_topics=[_topic()],
-        closed_topics=[{"id": "t-2", "title": "选型", "conclusion": "用 Postgres。"}],
-    )
-
-    assert [b["key"] for b in blocks] == [ACTIVE_TOPICS_KEY, CLOSED_TOPICS_KEY]
-    assert [b["title"] for b in blocks] == [ACTIVE_TOPICS_TITLE, CLOSED_TOPICS_TITLE]
-    active, closed = (b["items"][0] for b in blocks)
-    assert active == {
-        "kind": "topic",
-        "topic_id": "t-1",
-        "title": "分页接口",
-        "owner": "@张衡",
-        "status": "进行中",
-        "conclusion": "用 cursor，不用 offset。",
-    }
-    assert closed["topic_id"] == "t-2" and closed["conclusion"] == "用 Postgres。"
-
-
-def test_an_empty_block_is_left_out_of_the_structured_blocks_too():
-    """空块整块不出现——一份「已结束的话题（暂无）」对读者也是噪音。"""
-    blocks = overview_auto_blocks(active_topics=[_topic()], closed_topics=[])
-
-    assert [b["key"] for b in blocks] == [ACTIVE_TOPICS_KEY]
-    assert overview_auto_blocks(active_topics=[], closed_topics=[]) == []
-
-
-def test_the_structured_blocks_stop_at_the_same_counts_as_the_markdown():
-    blocks = overview_auto_blocks(
-        active_topics=[
-            _topic(id=f"t-{n}", title=f"话题 {n}")
-            for n in range(ACTIVE_TOPICS_LIMIT + 5)
-        ],
-        closed_topics=[],
-    )
-
-    assert len(blocks[0]["items"]) == ACTIVE_TOPICS_LIMIT
