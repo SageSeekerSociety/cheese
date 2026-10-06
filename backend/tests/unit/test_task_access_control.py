@@ -507,7 +507,10 @@ class TestEnrichTaskModelsAccessDomainGroups:
             patch(
                 "app.api.task_serialization.UserProfileRepository",
                 return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={})
+                    get_profiles_by_user_ids=AsyncMock(return_value={}),
+                    # Nobody here picked a face, so the mapping is empty and the
+                    # client draws the initial (see the repository method).
+                    chosen_avatar_ids=AsyncMock(return_value={}),
                 ),
             ),
             patch(
@@ -577,7 +580,10 @@ class TestEnrichTaskModelsAccessDomainGroups:
             patch(
                 "app.api.task_serialization.UserProfileRepository",
                 return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={})
+                    get_profiles_by_user_ids=AsyncMock(return_value={}),
+                    # Nobody here picked a face, so the mapping is empty and the
+                    # client draws the initial (see the repository method).
+                    chosen_avatar_ids=AsyncMock(return_value={}),
                 ),
             ),
             patch(
@@ -643,7 +649,10 @@ class TestEnrichTaskModelsAccessDomainGroups:
             patch(
                 "app.api.task_serialization.UserProfileRepository",
                 return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={})
+                    get_profiles_by_user_ids=AsyncMock(return_value={}),
+                    # Nobody here picked a face, so the mapping is empty and the
+                    # client draws the initial (see the repository method).
+                    chosen_avatar_ids=AsyncMock(return_value={}),
                 ),
             ),
             patch(
