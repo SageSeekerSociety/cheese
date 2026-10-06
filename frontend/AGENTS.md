@@ -14,7 +14,7 @@ pnpm run lint:boundary          # what CI runs
 pnpm run lint:boundary:update   # after you fix some, rewrite the baseline
 ```
 
-127 violations across 82 components are frozen in
+74 violations across 58 components are frozen in
 `import-boundary-baseline.json`; only new ones fail. It is a separate ESLint
 config (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs`
 for exactly that reason — as a plain rule it reddens the whole tree on day one.
@@ -45,7 +45,10 @@ does nothing is worse than no thing at all.
 
 Type a `to` prop as `NavTarget` from `lib/navTarget.ts`, not
 `RouteLocationRaw` from `vue-router` — an `import type` from `vue-router`
-counts as a boundary violation just like a value import.
+counts as a boundary violation just like a value import. The API layer's half
+is looser: `import type { User } from '@/network/api/users/types'` is left
+alone, because a type binding is erased before anything runs and so cannot
+fetch. Only the vue-router half has an alternative to point you at.
 
 ## The component preview site
 
