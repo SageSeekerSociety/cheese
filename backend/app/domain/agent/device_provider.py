@@ -837,13 +837,14 @@ class DeviceChannel(Channel):
         session_id: str = "",
         *,
         seat: str,
+        background: bool = False,
     ) -> bool:
-        """Release this seat's helpers, then reload its plugin and MCP."""
+        """Bring this seat's helpers to this release; False when it must wait."""
         seat = seat_dir(home_dir, seat)
         sources = resident_release.sources()
         version = resident_release.digest(sources)
         if release.get("version") == version:
-            return False
+            return True
 
         async def execute(function, *args):
             result = await self._hub.exec(
@@ -858,18 +859,17 @@ class DeviceChannel(Channel):
                 )
             return json.loads(result["stdout"])
 
-        staged = await execute("stage", home_dir, sources, seat, session_id)
+        staged = await execute("stage", home_dir, sources, seat, session_id, background)
         if staged.get("busy"):
-            # Helpers are not replaced under a conversation that is still
-            # running. This turn runs on the release it has; the marker stays
-            # behind, so the next turn tries again.
+            # Not under a running conversation: this turn keeps the release it
+            # has, and the screen stays unsettled so the next turn tries again.
             logger.info(
                 "resident release deferred topic=%s reason=conversation_busy",
                 screen.topic_id,
             )
             return False
         if not staged["changed"]:
-            return False
+            return True
         await self._command(screen.device_id, state, "/reload-plugins")
         await self._control(screen.device_id, state, "mcp_reconnect")
         await self._await_native_connected(screen.device_id, state)
@@ -1305,24 +1305,24 @@ class DeviceChannel(Channel):
             elif release_state is not None and self._resident_release_due(
                 release_state
             ):
-                # Releasing in place is an optimisation: a fresh launch starts
-                # on the current release. So a process the release cannot reach
-                # (its runner cannot be asked right now), or one it failed to
-                # reach, is replaced instead of failing the turn — and failing
-                # it again on every turn after.
+                # Releasing in place is an optimisation: a process the release
+                # cannot reach, or failed to, is replaced instead of failing
+                # this turn and every turn after. A release leaves background
+                # commands running, so only a turn in flight waits for it.
                 if "unknown" in status:
                     retire_reason = "resident_release_unreachable"
-                elif status.get("working") or status.get("tasks"):
+                elif status.get("working"):
                     settled = False
                 else:
                     try:
-                        await self._refresh_resident(
+                        settled = await self._refresh_resident(
                             existing,
                             home_dir,
                             place.state,
                             release_state,
                             status.get("session_id", ""),
                             seat=seat,
+                            background=bool(status.get("tasks")),
                         )
                     except ScreenSetupError:
                         logger.warning(

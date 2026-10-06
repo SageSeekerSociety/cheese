@@ -239,6 +239,57 @@ def test_staged_release_keeps_a_forwarded_view_used_as_the_native_cwd(
     assert result["changed"]
 
 
+def _seat_with_a_mounted_view(tmp_path, monkeypatch, central_workspace):
+    (tmp_path / ".claude").mkdir(exist_ok=True)
+    directory = tmp_path / ".cheese" / "remote-session"
+    (tmp_path / ".cheese" / "remote-execution").mkdir(parents=True)
+    forwarded = directory / "forwarded-project"
+    forwarded.mkdir(parents=True)
+    (directory / "execution.json").write_text(
+        json.dumps(
+            {"kind": "device", "central_workspace": str(central_workspace(forwarded))}
+        )
+    )
+    (directory / "settings.json").write_text("{}")
+    monkeypatch.setattr(release.os.path, "ismount", lambda path: True)
+    unmounted = []
+    monkeypatch.setattr(release.shutil, "which", lambda name: "/bin/" + name)
+    monkeypatch.setattr(
+        release.subprocess, "run", lambda argv, **_kw: unmounted.append(argv)
+    )
+    return unmounted
+
+
+def test_a_background_command_holds_off_a_release_that_would_unmount_its_view(
+    tmp_path, monkeypatch
+):
+    unmounted = _seat_with_a_mounted_view(
+        tmp_path, monkeypatch, lambda forwarded: tmp_path / "room"
+    )
+    result = release.stage(
+        str(tmp_path),
+        {"client.py": "new", "proxy.js": "new", "cheese.py": CHEESE},
+        background=True,
+    )
+    assert result["busy"] and not result["changed"]
+    assert unmounted == []
+
+
+def test_a_background_command_does_not_hold_off_a_release_that_keeps_its_view(
+    tmp_path, monkeypatch
+):
+    unmounted = _seat_with_a_mounted_view(
+        tmp_path, monkeypatch, lambda forwarded: forwarded
+    )
+    result = release.stage(
+        str(tmp_path),
+        {"client.py": "new", "proxy.js": "new", "cheese.py": CHEESE},
+        background=True,
+    )
+    assert result["changed"]
+    assert unmounted == []
+
+
 def test_staged_release_only_removes_the_managed_context_hook(tmp_path):
     config = tmp_path / ".claude"
     config.mkdir(exist_ok=True)
@@ -507,7 +558,8 @@ async def test_a_release_already_in_place_asks_the_session_nothing(
     hub = _Runner()
     version = release.digest(release.sources())
 
-    assert not await _channel(hub)._refresh_resident(
+    # Already on this release: settled, and nothing is asked of the session.
+    assert await _channel(hub)._refresh_resident(
         SCREEN, str(tmp_path), STATE, {"version": version}, seat=SCREEN.agent_handle
     )
     assert hub.calls == []
