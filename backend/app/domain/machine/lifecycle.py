@@ -78,7 +78,7 @@ URL_TTL_S = 3600
 #: A sandbox whose background command keeps it up is asked again this often.
 RECHECK = timedelta(minutes=1)
 #: An archive that failed — a file the host cannot read, a home over the
-#: archive limit, a home not on its host — is tried again after this long, not
+#: archive limit — is tried again after this long, not
 #: on every sweep; the home stays where it is meanwhile.
 ARCHIVE_RETRY = timedelta(hours=6)
 #: Stops and archives made per sweep: stopping is quick, archiving is not.
@@ -485,18 +485,29 @@ class SandboxLifecycle:
                 resource=resource,
                 url=url,
             )
-            stored = await bucket.stat(key)
-            if stored != (int(written["size"]), str(written["md5"])):
-                raise SandboxHomeError(
-                    f"the bucket holds {stored}, the host wrote "
-                    f"{(written['size'], written['md5'])}"
-                )
+            if not written.get("absent"):
+                stored = await bucket.stat(key)
+                if stored != (int(written["size"]), str(written["md5"])):
+                    raise SandboxHomeError(
+                        f"the bucket holds {stored}, the host wrote "
+                        f"{(written['size'], written['md5'])}"
+                    )
         except BaseException as exc:
             await self._release(home_id, failed=str(exc) or type(exc).__name__)
             await delete_archive(key)
             raise
 
         home = await self._repo.lock_home(home_id)
+        if written.get("absent"):
+            # Its directory is gone from the host, so nothing of it is kept
+            # anywhere: the home goes, as when the room's cleanup removes one,
+            # and no longer holds its host. Its session, if it comes back,
+            # is placed like a new one.
+            if home is not None and home.host_id is not None:
+                await self._repo.delete_home(home)
+            await self._session.commit()
+            logger.warning("sandbox home %s was not on its host; let go", home_id)
+            return False
         if home is None or home.host_id is None:
             # The room's cleanup took the home meanwhile.
             await self._session.commit()

@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -658,6 +659,28 @@ def test_a_home_that_cannot_be_archived_is_not_tried_on_every_sweep(cloud):
     assert kept.host_id is not None and kept.archive_error
     assert (home / "room" / "notes.md").exists()
     assert cloud.bucket.objects == {}
+
+
+def test_a_sleeping_home_no_longer_on_its_host_lets_the_host_go(cloud):
+    """Its directory was removed from the host, so there is nothing to archive
+    and nothing for the host to keep: the host is released, and the session's
+    next tool call gets a sandbox like a new one. On dev, hosts adopted from
+    before the pool were kept for days by homes like this (2026-10-06)."""
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-a")
+    asleep(cloud, seat)
+    shutil.rmtree(home)
+
+    time_passes(cloud, seat, timedelta(days=8))
+    sweep(cloud)
+    machine = host_of_machine(cloud, "host-a")
+    maintain(cloud)
+
+    assert machine in cloud.provider.deleted
+    assert cloud.bucket.objects == {}
+    assert tool_call(cloud, seat).get("preparing")
+    host_comes_up(cloud, seat, "host-b")
+    assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"
 
 
 def test_an_archive_stops_as_soon_as_it_passes_the_limit():
