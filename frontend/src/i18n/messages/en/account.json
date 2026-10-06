@@ -390,7 +390,8 @@
       "app": "Desktop app"
     },
     "closeHint": "Close settings (Esc)",
-    "usage": "Cheese credits"
+    "usage": "Cheese credits",
+    "notifications": "Notifications"
   },
   "emailCode": {
     "title": "Sign in with an email code",
@@ -447,6 +448,54 @@
     "openAtLogin": "Open at login",
     "openAtLoginHint": "Runs in the background after you log in, so it can let you know when something needs you",
     "saveFailed": "Couldn't save"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "lede": "Which kinds of events reach you on which channel, when to stay quiet, how often to get a summary. Each change saves on its own.",
+    "saveFailed": "Couldn't save",
+    "loading": "Loading your notification settings",
+    "loadFailed": "Couldn't load your notification settings",
+    "toggleEvent": "Toggle {channel} for “{event}”",
+    "channels": {
+      "title": "Channels",
+      "inApp": "In-app",
+      "inAppHint": "Inbox and the sidebar badge",
+      "push": "Browser push",
+      "pushHint": "Off means no system notifications",
+      "email": "Email",
+      "emailHint": "Sent to your account email",
+      "emailInstant": "Instantly",
+      "emailDigest": "Digest",
+      "emailOff": "Off"
+    },
+    "quiet": {
+      "title": "Quiet hours",
+      "window": "Quiet hours",
+      "windowHint": "In your time zone ({zone}): no push or instant email in this window; the digest still comes",
+      "windowOn": "{start} – {end}",
+      "windowOff": "None",
+      "digest": "Digest frequency",
+      "digestHint": "One email summarising what happened while you were away",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "off": "Off"
+    },
+    "matrix": {
+      "title": "By type",
+      "desc": "Each kind picks its own channels",
+      "event": "Event",
+      "inApp": "In-app",
+      "push": "Push",
+      "email": "Email",
+      "mention": "Someone {'@'}-mentions me",
+      "reply": "My message gets a reply",
+      "reaction": "Someone reacts to my message",
+      "waitsOnMe": "An accept card or decision request waits on me",
+      "deviceInUse": "Someone is using my device",
+      "invitation": "Team / project invitation",
+      "announcement": "Space announcement",
+      "billing": "Credit and billing reminders"
+    }
   },
   "devices": {
     "lede": "Connect your own computers so AI teammates can run tasks on them",

@@ -97,8 +97,9 @@ class NotificationType(str, Enum):
     DEVICE_IN_USE = "DEVICE_IN_USE"
 
     #: 空间里发了一条公告，告诉这个空间里除发布人以外的每个人
-    #: （`space.announcement_service`）。只进站内：不发邮件、不推送
-    #: （`outbox.MAILBOX_ONLY`）。改公告不再发；删公告连它发出去的这些一起撤回。
+    #: （`space.announcement_service`）。走哪个渠道由收件人的偏好矩阵决定
+    #: （`preferences` 的「空间公告」一行：默认站内 + 邮件，不推送）。改公告不再发；
+    #: 删公告连它发出去的这些一起撤回。
     SPACE_ANNOUNCEMENT = "SPACE_ANNOUNCEMENT"
 
     #: 平台报告自己的那三种（原 `AlertKind`）。值保持小写原样：`cheese_notify

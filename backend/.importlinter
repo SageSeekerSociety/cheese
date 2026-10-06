@@ -95,6 +95,7 @@ ignore_imports =
     app.core.background -> app.domain.delivery.timer
     app.core.background -> app.domain.docs_site.assistant
     app.core.background -> app.domain.machine.warm
+    app.core.background -> app.domain.notification.digest
     app.core.background -> app.domain.notification.maintenance
     app.core.background -> app.domain.notification.push_delivery
     app.core.background -> app.domain.project.forge
@@ -305,6 +306,7 @@ ignore_imports =
     app.domain.mentions -> app.domain.membership.roster
     app.domain.mentions -> app.domain.topic.models
     app.domain.mentions -> app.domain.topic.repositories
+    app.domain.notification.digest -> app.domain.delivery.models
     app.domain.notification.legacy_queue -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.notification.maintenance

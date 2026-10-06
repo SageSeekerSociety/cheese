@@ -229,6 +229,74 @@ def _dark_css() -> str:
     return f"@media (prefers-color-scheme:dark){{{body}}}"
 
 
+def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
+    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。"""
+    c = _LIGHT
+    e = html.escape
+    base = settings.frontend_url.rstrip("/")
+    return "".join(
+        [
+            '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<meta name="color-scheme" content="light dark">'
+            '<meta name="supported-color-schemes" content="light dark">'
+            f"<title>{e(title)}</title>"
+            f"<style>{_dark_css()}</style></head>"
+            f'<body class="c-canvas" style="margin:0;padding:0;'
+            f'background:{c["canvas"]};">',
+            # 收件箱列表里标题后面那一行预览。不放它，客户端就抓正文第一段字 —— 那
+            # 是标志的 alt 和类别小字。
+            '<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">'
+            f"{e(_clip(preview, 140))}</div>",
+            f'<table role="presentation" class="c-canvas" width="100%" cellpadding="0" '
+            f'cellspacing="0" border="0" style="background:{c["canvas"]};">'
+            '<tr><td align="center" style="padding:40px 16px;">',
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            'border="0" style="max-width:560px;">',
+            f'<tr><td class="c-card" style="background:{c["surface"]};'
+            f"border:1px solid {c['line']};border-radius:12px;padding:36px 36px 32px;"
+            f'font-family:{_FONT};">',
+            f'<img src="{e(base, quote=True)}/email-mark.png" width="36" height="36" '
+            'alt="知是" style="display:block;border:0;width:36px;height:36px;">',
+            *card,
+            "</td></tr>",
+            f'<tr><td class="c-faint" style="padding:20px 36px 0;font-family:{_FONT};'
+            f'font-size:12px;line-height:20px;color:{c["faint"]};">{e(why)}'
+            f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
+            f'style="color:{c["faint"]};">查看全部通知</a></td></tr>',
+            "</table></td></tr></table></body></html>",
+        ]
+    )
+
+
+def _eyebrow(text: str, *, top: int = 28) -> str:
+    c = _LIGHT
+    return (
+        f'<p class="c-muted" style="margin:{top}px 0 8px;font-size:13px;'
+        f'line-height:20px;color:{c["muted"]};">{html.escape(text)}</p>'
+    )
+
+
+def _button(label: str, link: str) -> list[str]:
+    c = _LIGHT
+    e = html.escape
+    href = e(link, quote=True)
+    return [
+        # 按钮的底色画在表格单元上而不是链接上：Outlook 不给 <a> 画背景和内边距。
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:28px 0 0;"><tr><td bgcolor="{c["accent"]}" '
+        f'style="background:{c["accent"]};border-radius:8px;">'
+        f'<a href="{href}" style="display:inline-block;padding:11px 22px;'
+        f"font-family:{_FONT};font-size:15px;line-height:22px;font-weight:600;"
+        f'color:{c["on_accent"]};text-decoration:none;">{e(label)}</a>'
+        "</td></tr></table>",
+        f'<p class="c-faint" style="margin:20px 0 0;font-size:12px;line-height:18px;'
+        f'color:{c["faint"]};word-break:break-all;">按钮打不开的话，复制这个地址到浏览器：'
+        f'<br><a href="{href}" class="c-faint" style="color:{c["faint"]};">'
+        f"{e(link)}</a></p>",
+    ]
+
+
 def render_html(letter: Letter) -> str:
     """一张居中的卡片：标志、一行类别、标题、引文、明细、按钮，卡片下面一行来由。
 
@@ -237,41 +305,14 @@ def render_html(letter: Letter) -> str:
     """
     c = _LIGHT
     e = html.escape
-    base = settings.frontend_url.rstrip("/")
-    href = e(letter.link, quote=True)
-
-    preview = letter.quote or " · ".join(v for _, v in letter.details)
-    parts: list[str] = [
-        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<meta name="color-scheme" content="light dark">'
-        '<meta name="supported-color-schemes" content="light dark">'
-        f"<title>{e(letter.subject)}</title>"
-        f"<style>{_dark_css()}</style></head>"
-        f'<body class="c-canvas" style="margin:0;padding:0;background:{c["canvas"]};">',
-        # 收件箱列表里标题后面那一行预览。不放它，客户端就抓正文第一段字 —— 那是
-        # 标志的 alt 和类别小字。
-        '<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">'
-        f"{e(_clip(preview, 140))}</div>",
-        f'<table role="presentation" class="c-canvas" width="100%" cellpadding="0" '
-        f'cellspacing="0" border="0" style="background:{c["canvas"]};">'
-        '<tr><td align="center" style="padding:40px 16px;">',
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-        'border="0" style="max-width:560px;">',
-        # —— 卡片
-        f'<tr><td class="c-card" style="background:{c["surface"]};'
-        f"border:1px solid {c['line']};border-radius:12px;padding:36px 36px 32px;"
-        f'font-family:{_FONT};">',
-        f'<img src="{e(base, quote=True)}/email-mark.png" width="36" height="36" '
-        'alt="知是" style="display:block;border:0;width:36px;height:36px;">',
-        f'<p class="c-muted" style="margin:28px 0 8px;font-size:13px;line-height:20px;'
-        f'color:{c["muted"]};">{e(letter.eyebrow)}</p>',
+    card = [
+        _eyebrow(letter.eyebrow),
         f'<h1 class="c-ink" style="margin:0;font-size:20px;line-height:30px;'
         f'font-weight:600;color:{c["ink"]};white-space:pre-wrap;">'
         f"{e(letter.headline)}</h1>",
     ]
     if letter.quote:
-        parts.append(
+        card.append(
             f'<div class="c-quote" style="margin:20px 0 0;padding:14px 16px;'
             f"background:{c['fill']};border-radius:8px;font-size:15px;line-height:24px;"
             f'color:{c["text"]};white-space:pre-wrap;">{e(letter.quote)}</div>'
@@ -284,33 +325,54 @@ def render_html(letter: Letter) -> str:
             f'color:{c["text"]};">{e(v)}</td></tr>'
             for k, v in letter.details
         )
-        parts.append(
+        card.append(
             '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
             f'style="margin:20px 0 0;">{rows}</table>'
         )
-    parts += [
-        # 按钮的底色画在表格单元上而不是链接上：Outlook 不给 <a> 画背景和内边距。
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-        f'style="margin:28px 0 0;"><tr><td bgcolor="{c["accent"]}" '
-        f'style="background:{c["accent"]};border-radius:8px;">'
-        f'<a href="{href}" style="display:inline-block;padding:11px 22px;'
-        f"font-family:{_FONT};font-size:15px;line-height:22px;font-weight:600;"
-        f'color:{c["on_accent"]};text-decoration:none;">{e(letter.action)}</a>'
-        "</td></tr></table>",
-        f'<p class="c-faint" style="margin:20px 0 0;font-size:12px;line-height:18px;'
-        f'color:{c["faint"]};word-break:break-all;">按钮打不开的话，复制这个地址到浏览器：'
-        f'<br><a href="{href}" class="c-faint" style="color:{c["faint"]};">'
-        f"{e(letter.link)}</a></p>",
-        "</td></tr>",
-        # —— 卡片下面：为什么收到这封信
-        f'<tr><td class="c-faint" style="padding:20px 36px 0;font-family:{_FONT};'
-        f'font-size:12px;line-height:20px;color:{c["faint"]};">'
-        "你收到这封邮件，是因为知是上有一条发给你的通知。"
-        f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
-        f'style="color:{c["faint"]};">查看全部通知</a></td></tr>',
-        "</table></td></tr></table></body></html>",
+    card += _button(letter.action, letter.link)
+    return _page(
+        title=letter.subject,
+        preview=letter.quote or " · ".join(v for _, v in letter.details),
+        card=card,
+        why="你收到这封邮件，是因为知是上有一条发给你的通知。",
+    )
+
+
+def render_digest_html(subject: str, letters: list[Letter]) -> str:
+    """摘要：同一张卡片，标题说有几条，下面一条一行 —— 类别小字、标题链接到那件事，
+    有原话就跟一行灰字。末尾一个按钮去收件箱，那里列着全部。"""
+    c = _LIGHT
+    e = html.escape
+    card = [
+        _eyebrow("通知摘要"),
+        f'<h1 class="c-ink" style="margin:0;font-size:20px;line-height:30px;'
+        f'font-weight:600;color:{c["ink"]};">{e(subject)}</h1>',
     ]
-    return "".join(parts)
+    for i, letter in enumerate(letters):
+        rule = "" if i == 0 else f"border-top:1px solid {c['line']};"
+        quote = (
+            f'<p class="c-muted" style="margin:4px 0 0;font-size:13px;line-height:20px;'
+            f'color:{c["muted"]};">{e(_clip(letter.quote, 120))}</p>'
+            if letter.quote
+            else ""
+        )
+        card.append(
+            f'<div class="c-rule" style="margin:{20 if i == 0 else 0}px 0 0;'
+            f'padding:14px 0;{rule}">'
+            f'<p class="c-faint" style="margin:0 0 2px;font-size:12px;line-height:18px;'
+            f'color:{c["faint"]};">{e(letter.eyebrow)}</p>'
+            f'<a href="{e(letter.link, quote=True)}" class="c-ink" '
+            f'style="font-size:15px;line-height:24px;font-weight:600;'
+            f'color:{c["ink"]};text-decoration:none;">{e(letter.headline)}</a>'
+            f"{quote}</div>"
+        )
+    card += _button("查看全部通知", f"{settings.frontend_url.rstrip('/')}/inbox")
+    return _page(
+        title=subject,
+        preview=" · ".join(letter.headline for letter in letters),
+        card=card,
+        why="你收到这封摘要，是因为这些通知按你的通知设置攒到了一起。",
+    )
 
 
 def render_text(letter: Letter) -> str:
@@ -321,4 +383,11 @@ def render_text(letter: Letter) -> str:
     if letter.details:
         lines += ["", *(f"{k}：{v}" for k, v in letter.details)]
     lines += ["", f"{letter.action}：{letter.link}"]
+    return "\n".join(lines)
+
+
+def render_digest_text(subject: str, letters: list[Letter]) -> str:
+    lines = [subject, ""]
+    for letter in letters:
+        lines += [f"· {letter.headline}", f"  {letter.link}"]
     return "\n".join(lines)

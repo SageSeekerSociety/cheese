@@ -109,6 +109,23 @@ async def set_language(session: AsyncSession, user_id: int, language: str) -> bo
     return True
 
 
+async def timezones_by_ids(
+    session: AsyncSession, user_ids: Iterable[int]
+) -> dict[int, str | None]:
+    """用户 id -> 他浏览器报上来的时区（没报过是 None），安静时段按它的钟点算。"""
+    users = await UserRepository(session).get_by_ids(list(set(user_ids)))
+    return {uid: user.timezone for uid, user in users.items()}
+
+
+async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> bool:
+    """记下这个人浏览器所在的时区；账号不在了返回 False。取值由调用方先校验。"""
+    user = await UserRepository(session).get_by_id(user_id)
+    if user is None:
+        return False
+    user.timezone = timezone
+    return True
+
+
 async def lookup_account(session: AsyncSession, q: str) -> dict | None:
     """``{id, handle, name, avatar_id}`` for an exact username or email, or None.
 
@@ -508,6 +525,8 @@ class UserAuthService:
             base["emailMissing"] = is_placeholder_email(user.email)
             # Their own pick only: the page adopts it wherever they sign in.
             base["language"] = user.language
+            # The page compares it with the browser's and reports a change.
+            base["timezone"] = user.timezone
 
         base.update(
             {
