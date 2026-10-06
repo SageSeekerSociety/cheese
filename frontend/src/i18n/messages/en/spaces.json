@@ -131,69 +131,39 @@
       "createSuccess": "Challenge created",
       "createSuccessAndWaitingAudit": "Challenge created — awaiting review",
       "createFailed": "Couldn't create challenge",
-      "spaceIdNotFound": "Space ID not found",
       "initializationFailed": "Couldn't start",
       "attachmentsUploading": "Attachments are still uploading. Publish once they finish.",
-      "pendingQueue": "Pending review",
-      "mode": {
-        "write": "Write one",
-        "pdf": "Generate from PDF"
-      },
-      "quick": {
-        "noFile": "Choose a PDF to upload first",
-        "tooLarge": "The PDF can't be larger than 15 MB",
-        "noDrafts": "No challenge drafts found in the PDF",
-        "parametersName": "PDF batch publish parameters",
-        "parsed": "Parsed: 1 challenge draft found | Parsed: {n} challenge drafts found",
-        "previewFailed": "Couldn't parse the PDF",
-        "nothingToPublish": "No drafts to publish. Parse a PDF first.",
-        "published": "Published 1 challenge | Published {n} challenges",
-        "publishFailed": "Couldn't publish the drafts",
-        "title": "Quick publish from PDF",
-        "subtitle": "Upload a PDF of challenges to get drafts; fill in the publish settings once in the form below",
-        "uploadLabel": "Upload a challenge PDF",
-        "hint": "PDF files up to 15 MB. If the address names a template, that template is used; otherwise a blank one.",
-        "readOnlyNote": "Parsing only reads the PDF and creates drafts. Nothing is published yet.",
-        "preview": "Parse and preview",
-        "resultTitle": "Parsed drafts",
-        "resultSubtitle": "Challenge drafts found: {n}. Submitting the form below applies these settings to all of them.",
-        "resultSubtitleTokens": "Challenge drafts found: {n}. Submitting the form below applies these settings to all of them. This used about {tokens} tokens.",
-        "untitled": "Untitled challenge",
-        "draftChip": "PDF draft",
-        "intro": "Summary: {intro}",
-        "description": "Preview: {text}",
-        "confirmNote": "Once confirmed, these {n} go into the {queue} queue together. Fill in the settings in the form below.",
-        "clear": "Clear preview"
-      },
-      "lifecycle": {
-        "title": "After you publish",
-        "pending": "Only you and the admins can see the challenge.",
-        "reviewedLabel": "Reviewed",
-        "reviewedManager": "You can approve it yourself.",
-        "reviewedMember": "It goes live once the owner or an admin approves it.",
-        "visibleLabel": "Live",
-        "visible": "Everyone can see and claim it, and claims start counting.",
-        "trackLabel": "What you see",
-        "track": "Mine → Published shows the challenge's claim trend, who claimed it and how they did.",
-        "rejectedNote": "A rejected challenge comes back with the reason. Edit it and resubmit; no need to start over."
-      },
-      "checks": {
-        "title": "Before you submit",
-        "ok": "Looks good.",
-        "waiting": "Once the form loads, anything blocking submission is listed here.",
-        "submit": "Submit for review"
-      },
       "teaching": {
-        "title": "Guidance for the AI teammate",
-        "subtitle": "Just for this challenge. Leave it blank to use the board's default; filling it in replaces that default whole.",
-        "expand": "Expand",
-        "collapse": "Collapse"
-      }
-    },
-    "selectTemplate": {
-      "title": "Choose a challenge template",
-      "back": "Back",
-      "blankTemplate": "Start from a blank challenge"
+        "title": "AI guidance",
+        "subtitle": "Applies to projects created from this challenge",
+        "inherit": "Use the space default",
+        "own": "Set for this challenge"
+      },
+      "publish": "Publish",
+      "publishMany": "Publish {n} challenges",
+      "needsReview": "An admin reviews it after publishing",
+      "blocking": "{n} fields are missing or invalid",
+      "import": "Import from file",
+      "useTemplate": "Use template",
+      "drafts": {
+        "source": "{file} · {total} found, {picked} selected",
+        "replace": "Replace file",
+        "discard": "Discard import",
+        "pick": "Select {name}",
+        "untitled": "Untitled",
+        "missingName": "Name missing",
+        "missingDescription": "Description missing",
+        "page": "Page {n}",
+        "content": "Challenge {n} · Content",
+        "shared": "The settings below apply to the {n} selected challenges"
+      },
+      "importErrors": {
+        "notPdf": "Only PDF files can be imported",
+        "tooLarge": "The file is larger than 15 MB",
+        "noDrafts": "No challenges were found in the file",
+        "failed": "Import failed: {reason}"
+      },
+      "publishedMany": "{n} challenges published"
     },
     "tasks": {
       "searchPlaceholder": "Search this space",
@@ -205,7 +175,6 @@
       "publishTask": "Publish challenge",
       "noTasks": "No challenges yet",
       "topic": "Topic",
-      "category": "Category",
       "allTopics": "All topics",
       "scope": {
         "all": "All",
@@ -274,70 +243,6 @@
       "noRealName": "No real name needed",
       "realNameNote": "Participants must verify their real name to take part. It is stored encrypted and access is tightly controlled",
       "cancel": "Cancel"
-    },
-    "pdfGenerate": {
-      "blankTemplate": "Blank template (this space has no challenge template)",
-      "noCategory": "No category (uses the space's default)",
-      "categoryFallback": "Category #{id}",
-      "unknownError": "Unknown error",
-      "error": {
-        "spaceNotReady": "The space is still loading. Try again in a moment.",
-        "noFile": "Choose a PDF first.",
-        "notPdf": "Only PDFs are accepted: this file is neither application/pdf nor named .pdf.",
-        "tooLarge": "A PDF can be at most 15 MB; this one is {size} MB.",
-        "noDrafts": "No drafts this time: the PDF was read, but no challenges were found ({tokens} tokens used).",
-        "parseFailed": "Couldn't parse: {reason}",
-        "publishFailed": "Couldn't publish: {reason}"
-      },
-      "receipt": {
-        "title": "Published",
-        "body": "The {count} challenges you just published are in the {queue} queue. Parsing doesn't skip review; someone still checks them before they go live.",
-        "hint": "Each challenge's summary carries a source marker {marker}, so reviewers can see which page it came from right in the queue.",
-        "again": "Parse another PDF",
-        "viewMine": "View my published challenges",
-        "toQueue": "Go to the review queue"
-      },
-      "upload": {
-        "title": "Upload a PDF",
-        "subtitle": "PDF only, up to 15 MB per file, at most {max} challenges per parse",
-        "hint": "Parsing only reads the PDF and drafts challenges from the template; {notPublished}. It runs a large model and takes from a few seconds to about a minute.",
-        "notPublished": "nothing is published yet"
-      },
-      "meta": {
-        "template": "Template: {name}",
-        "images": "Images extracted: {n}",
-        "tokens": "Tokens used: {n}",
-        "warn": "Drafts {notYet}; they enter the review queue once you confirm",
-        "notYet": "are not challenges yet"
-      },
-      "parse": "Parse into challenge drafts",
-      "parseNote": "The template comes from {param} in the address, or a blank template if there is none; at most {max} per parse.",
-      "drafts": {
-        "title": "Parsed drafts",
-        "subtitle": "{picked} / {total} selected to publish. Edit titles and descriptions in place.",
-        "pick": "Select {name}",
-        "name": "Title",
-        "description": "Description",
-        "intro": "Summary (published as is): {intro}",
-        "page": "PDF · page {page}",
-        "images": "1 image | {n} images",
-        "imagesNote": "The image count comes from the image links in each draft: extracted images are uploaded and linked from the description, so they are published with it."
-      },
-      "attach": {
-        "title": "Attach for participants",
-        "count": "These {n} files are attached to {every} generated challenge",
-        "every": "every",
-        "pdf": "Original PDF",
-        "images": "Extracted images ({n})",
-        "pdfFile": "Original PDF: {name}",
-        "imageFiles": "Images: {names}",
-        "separator": ", ",
-        "noPdf": "No \"Original PDF\" option: this preview didn't save the PDF as an attachable file.",
-        "noImages": "No \"Extracted images\" option: no images could be attached (none were extracted, or none ended up in a draft)."
-      },
-      "confirmNote": "Once confirmed, these {n} go into the {queue} queue. They still need review before going live.",
-      "cancel": "Cancel",
-      "confirm": "Publish {n}"
     },
     "data": {
       "loadFailed": "Couldn't load the space",

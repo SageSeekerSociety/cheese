@@ -1,23 +1,18 @@
 /**
- * 发题表单里所有「会动」的东西：那张 zod 表、十六对 `defineField`、两道理性闸门
- * （实名信息、视频链接）和右栏那张「提交前」清单的接线。
- *
- * 为什么搬到这里（#2143）：1089 行的 `TaskForm.vue` 顶到了 `frontend/src` 那一千行
- * 的上限，而它里面真正不是「画」的部分全在这一个文件里。剩下的几张卡只吃 props、
- * 只往上发事件，于是每一张都能单独摆在预览站里（`views/demo/catalogTaskForm.ts`）。
+ * 发题表单里所有「会动」的东西：那张 zod 表、各个字段的 `defineField`、实名那一道
+ * 确认，以及「点了发布还有几项没过」那个数。
  *
  * 形状和验收卡（`useAcceptCard.ts`）一致：容器把 props 和 emit 交进来，拿回一份可以
  * 直接铺在模板上的东西 —— 每个字段都是一对，`v-model:<字段>` 给值、`:control` 给
  * `defineField` 那另一半（`error-messages` / `error`）。
  *
- * 一处与验收卡不同的地方：这里还要读一次富文本编辑器里的正文，而读的**时机**是行为
- * 的一部分 —— 是「提交那一刻的正文」，不是每一次敲键盘。所以它以 `readDescriptionText`
- * 回调传进来（拿不到编辑器时给 `undefined`，与原来 `descriptionEditor.value?.…` 一样），
- * 而不是让编辑器往外发一串事件。
+ * 这里还要读一次富文本编辑器里的正文，而读的**时机**是行为的一部分 —— 是「提交那一刻
+ * 的正文」，不是每一次敲键盘。所以它以 `readDescriptionText` 回调传进来。
  */
+import type { JSONContent } from '@tiptap/core'
 import type { DomainGroup, SpaceCategory, TaskFormSubmitData, Topic } from '@/types'
 
-import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
@@ -25,38 +20,53 @@ import { z } from 'zod'
 
 import { truncateString, vuetifyConfig } from '@/utils/form'
 
-import { evaluatePublishChecks, PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
+import { EMPTY_DOC, jsonContent, markdownContent } from '@/components/common/Editor/richText'
 
 /** 容器那份 props 的形状。`TaskForm.vue` 里仍写着同一份，靠结构对上。 */
 export interface TaskFormProps {
   initialData?: Partial<TaskFormSubmitData> | null
-  submitButtonText: string
   isEditing?: boolean
   classificationTopics: Topic[]
   categories?: SpaceCategory[]
   selectedCategoryId?: number
   domainGroups?: DomainGroup[]
-  descriptionFormat?: 'markdown' | 'tiptap'
-  originalDescription?: string
+  /** 一次发好几道：名称和描述逐道在外面填，这张表只管共用的那些。 */
   parametersOnly?: boolean
 }
 
-/** 富文本那一份内容：TipTap 的 JSON 文档（`description` 这个 ref 装的就是它）。 */
-export interface DescriptionDoc {
-  type: string
-  content: { type: string }[]
-}
+/** 富文本那一份内容：编辑器的 JSON 文档（`description` 这个 ref 装的就是它）。 */
+export type DescriptionDoc = JSONContent
 
-/** 容器往外报的两件事。 */
+/** 容器往外报的事。 */
 export interface TaskFormEmits {
   (event: 'submit', data: TaskFormSubmitData): void
-  (event: 'cancel'): void
+  (event: 'invalid', count: number): void
+}
+
+/**
+ * 存下来的描述读成编辑器的文档：编辑器的 JSON（对象或字符串）照原样，其余的字符串是从
+ * PDF 导入时存下的 Markdown。
+ */
+export function descriptionDoc(value: unknown): DescriptionDoc {
+  if (typeof value === 'string') {
+    if (!value.trim()) return EMPTY_DOC
+    try {
+      const parsed: unknown = JSON.parse(value)
+      if (typeof parsed === 'object' && parsed !== null && (parsed as JSONContent).type === 'doc') {
+        return jsonContent(parsed)
+      }
+    } catch {
+      // 不是 JSON：是 Markdown。
+    }
+    return markdownContent(value)
+  }
+  return jsonContent(value)
 }
 
 export function useTaskForm(
   props: TaskFormProps,
   emit: TaskFormEmits,
-  /** 读富文本编辑器现在的正文；Markdown 那条路上编辑器不在，给 `undefined`。 */
+  /** 读富文本编辑器现在的正文；编辑器不在时给 `undefined`。 */
   readDescriptionText: () => string | undefined
 ) {
   const { t } = useI18n()
@@ -65,18 +75,45 @@ export function useTaskForm(
     () => props.categories?.map((category) => ({ title: category.name, value: category.id })) ?? []
   )
 
-  const { handleSubmit, defineField, isSubmitting, values } = useForm({
-    validationSchema: toTypedSchema(
+  // 跟着 `parametersOnly` 走：表单挂着的时候从文件里读出了好几道，名称这一格就不再归它管。
+  const validationSchema = computed(() =>
+    toTypedSchema(
       z
         .object({
-          name: z.string().min(1).max(100),
-          submitterType: z.enum(['USER', 'TEAM']),
+          // 一次发好几道时名称逐道在外面填，这张表里没有这一格。
+          name: props.parametersOnly
+            ? z.string().optional()
+            : z
+                .string({ required_error: t('tasks.form.validation.nameRequired') })
+                .trim()
+                .min(1, t('tasks.form.validation.nameRequired'))
+                .max(100),
+          submitterType: z.enum(['USER', 'TEAM'], { required_error: t('tasks.form.validation.submitterTypeRequired') }),
           registrationStartAt: z.date().optional().nullable(),
           deadline: z.date().nullable(),
-          defaultDeadline: z.number().int().default(30),
-          rank: z.number().int().min(1).max(3),
+          defaultDeadline: z
+            .number({
+              required_error: t('tasks.form.validation.completionRequired'),
+              invalid_type_error: t('tasks.form.validation.completionRequired'),
+            })
+            .int()
+            .min(1, t('tasks.form.validation.completionRequired')),
+          rank: z
+            .number({
+              required_error: t('tasks.form.validation.rankRequired'),
+              invalid_type_error: t('tasks.form.validation.rankRequired'),
+            })
+            .int()
+            .min(1, t('tasks.form.validation.rankRequired'))
+            .max(3),
           topics: z.array(z.number()).optional(),
-          categoryId: z.number().int().min(1, t('tasks.form.validation.categoryRequired')),
+          categoryId: z
+            .number({
+              required_error: t('tasks.form.validation.categoryRequired'),
+              invalid_type_error: t('tasks.form.validation.categoryRequired'),
+            })
+            .int()
+            .min(1, t('tasks.form.validation.categoryRequired')),
           minTeamSize: z.number().int().min(1).optional(),
           maxTeamSize: z.number().int().min(1).optional(),
           requireRealName: z.boolean().optional().default(false),
@@ -84,30 +121,19 @@ export function useTaskForm(
           teamLockingPolicy: z.enum(['NO_LOCK', 'LOCK_ON_APPROVAL']).optional(),
           accessControlEnabled: z.boolean().optional().default(false),
           accessDomainGroupIds: z.array(z.number()).optional(),
-          videoUrl: z
-            .string()
-            .optional()
-            .refine(
-              (v) => {
-                if (!v) return true
-                try {
-                  const parsed = new URL(v)
-                  return parsed.protocol === 'https:'
-                } catch {
-                  return false
-                }
-              },
-              { message: t('tasks.form.validation.httpsRequired') }
-            ),
         })
         .refine((arg) => !arg.maxTeamSize || !arg.minTeamSize || arg.maxTeamSize >= arg.minTeamSize, {
           message: t('tasks.form.validation.teamSizeOrder'),
           path: ['maxTeamSize'],
         })
-    ),
+    )
+  )
+
+  const { handleSubmit, defineField, isSubmitting, errors, submitCount } = useForm({
+    validationSchema,
     initialValues: {
       ...(props.initialData ?? {}),
-      name: props.initialData?.name ?? (props.parametersOnly ? t('tasks.form.pdfParametersName') : ''),
+      name: props.initialData?.name ?? '',
       registrationStartAt: props.initialData?.registrationStartAt
         ? new Date(props.initialData.registrationStartAt)
         : null,
@@ -127,7 +153,6 @@ export function useTaskForm(
       teamLockingPolicy: props.initialData?.teamLockingPolicy ?? 'NO_LOCK',
       accessControlEnabled: props.initialData?.accessControlEnabled ?? false,
       accessDomainGroupIds: props.initialData?.accessDomainGroupIds ?? [],
-      videoUrl: props.initialData?.videoUrl ?? '',
     },
   })
 
@@ -137,25 +162,22 @@ export function useTaskForm(
   const [registrationStartAt, registrationStartAtProps] = defineField('registrationStartAt', vuetifyConfig)
   const [deadline, deadlineProps] = defineField('deadline', vuetifyConfig)
   const [defaultDeadline, defaultDeadlineProps] = defineField('defaultDeadline', vuetifyConfig)
-  const [topics, topicsProps] = defineField('topics', vuetifyConfig)
+  const [topics] = defineField('topics', vuetifyConfig)
   const [minTeamSize, minTeamSizeProps] = defineField('minTeamSize', vuetifyConfig)
   const [maxTeamSize, maxTeamSizeProps] = defineField('maxTeamSize', vuetifyConfig)
   const [categoryId, categoryIdProps] = defineField('categoryId', vuetifyConfig)
-  const [requireRealName, requireRealNameProps] = defineField('requireRealName', vuetifyConfig)
+  const [requireRealName] = defineField('requireRealName', vuetifyConfig)
   const [participantLimit, participantLimitProps] = defineField('participantLimit', vuetifyConfig)
-  const [teamLockingPolicy, teamLockingPolicyProps] = defineField('teamLockingPolicy', vuetifyConfig)
-  const [accessControlEnabled, accessControlEnabledProps] = defineField('accessControlEnabled', vuetifyConfig)
-  const [accessDomainGroupIds, accessDomainGroupIdsProps] = defineField('accessDomainGroupIds', vuetifyConfig)
-  const [videoUrl, videoUrlProps] = defineField('videoUrl', vuetifyConfig)
+  const [teamLockingPolicy] = defineField('teamLockingPolicy', vuetifyConfig)
+  const [accessControlEnabled] = defineField('accessControlEnabled', vuetifyConfig)
+  const [accessDomainGroupIds] = defineField('accessDomainGroupIds', vuetifyConfig)
 
   // 「不限」那一勾。不是表单字段（不进 zod、不进 payload）：它只描述旁边那个数现在算不算数。
-  // 勾上 = 把那个数放回初始的那份 `null`（这个表单里「不填」就是不限，`min(1)` 那条只管
-  // 填了的值），并把输入框锁上 —— 交出去的 payload 与「从头就没填过」一模一样
-  // （`participantLimit` 那一项是 `undefined`，见 `submitFormData`）。
+  // 勾上 = 把那个数放回 `null`（这个表单里「不填」就是不限），并把输入框锁上 —— 交出去的
+  // payload 与「从头就没填过」一模一样。
   //
-  // 默认只在**改一道本来就上限为空的题**时勾上：那是它真实的状态（`null`，老行里也可能
-  // 是 0）。新发一道题不勾 —— 与原型那张卡一样，框空着、想设上限直接填。
-  const participantLimitUnlimited = ref(props.isEditing && !((props.initialData?.participantLimit ?? 0) > 0))
+  // 新发一道题和改一道本来就不限的题时勾着：那是它真实的状态。
+  const participantLimitUnlimited = ref(!((props.initialData?.participantLimit ?? 0) > 0))
 
   watch(participantLimitUnlimited, (unlimited) => {
     if (unlimited) participantLimit.value = null
@@ -165,68 +187,34 @@ export function useTaskForm(
     () => props.domainGroups?.map((g) => ({ title: g.name, value: g.id, subtitle: g.domains.join(', ') })) ?? []
   )
 
-  const createEmptyDescription = () => ({
-    type: 'doc',
-    content: [{ type: 'paragraph' }],
-  })
+  const description = ref<DescriptionDoc>(descriptionDoc(props.initialData?.description))
 
-  const description = ref<string | DescriptionDoc>(props.initialData?.description || createEmptyDescription())
-  // Markdown 格式的描述内容
-  const markdownDescription = ref(props.originalDescription || '')
+  /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。 */
+  const invalidCount = computed(() => (submitCount.value > 0 ? Object.keys(errors.value).length : 0))
+  watch(invalidCount, (count) => emit('invalid', count), { immediate: true })
 
-  const pendingSubmissionData = ref<{ descriptionText: string | undefined; values: any } | null>(null)
-
-  const isBilibiliUrl = (v: string): boolean => {
-    if (!v) return true
-    return /bilibili\.com\/video\/BV[\w]+/.test(v)
-  }
+  const pendingSubmission = ref<{ descriptionText: string | undefined; values: any } | null>(null)
 
   const submitForm = handleSubmit((values) => {
     if (requireRealName.value && !wasRealNameEnabled.value) {
       privacyDialogOpen.value = true
-      pendingSubmissionData.value = {
-        descriptionText: readDescriptionText(),
-        values,
-      }
-      return
-    }
-    if (videoUrl.value && !isBilibiliUrl(videoUrl.value)) {
-      videoUrlDialogOpen.value = true
-      pendingSubmissionData.value = {
-        descriptionText: readDescriptionText(),
-        values,
-      }
+      pendingSubmission.value = { descriptionText: readDescriptionText(), values }
       return
     }
     submitFormData(values)
   })
 
   const submitFormData = (values: any) => {
-    const descriptionText = pendingSubmissionData.value?.descriptionText ?? readDescriptionText()
+    const descriptionText = pendingSubmission.value?.descriptionText ?? readDescriptionText()
     const deadlineDate = values.deadline ? new Date(values.deadline) : null
     const registrationStartAtDate = values.registrationStartAt ? new Date(values.registrationStartAt) : null
     deadlineDate?.setHours(23, 59, 59, 999)
 
-    // 根据原始格式决定保存的描述内容
-    let savedDescription: string
-    let introText: string
-    if (props.parametersOnly) {
-      savedDescription = ''
-      introText = ''
-    } else if (props.descriptionFormat === 'markdown') {
-      // 如果原始是 markdown 格式，保存纯文本内容
-      savedDescription = markdownDescription.value || ''
-      introText = markdownDescription.value || ''
-    } else {
-      // 如果原始是 TipTap JSON 格式，保存 JSON
-      savedDescription = JSON.stringify(description.value)
-      introText = descriptionText || ''
-    }
-
     const submissionData: TaskFormSubmitData = {
       ...values,
-      description: savedDescription,
-      intro: truncateString(introText, 255),
+      name: props.parametersOnly ? '' : values.name.trim(),
+      description: props.parametersOnly ? '' : JSON.stringify(description.value),
+      intro: props.parametersOnly ? '' : truncateString(descriptionText || '', 255),
       registrationStartAt: registrationStartAtDate ? registrationStartAtDate.getTime() : null,
       deadline: deadlineDate?.getTime() ?? null,
       ...(props.isEditing ? { hasDeadline: deadlineDate !== null } : {}),
@@ -240,78 +228,28 @@ export function useTaskForm(
       teamLockingPolicy: submitterType.value === 'TEAM' ? teamLockingPolicy.value : undefined,
       accessControlEnabled: accessControlEnabled.value,
       accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
-      videoUrl: videoUrl.value || null,
     }
     emit('submit', submissionData)
   }
 
-  // --- 发题页右栏那张「提交前」清单 ------------------------------------------------
-  //
-  // 表单把自己现在**拦着你的**那几条报给挂着这一页的外壳（`lib/taskPublishChecks.ts`
-  // 里那份规则表就是上面这份 zod schema 的逐条对译），并把自己的提交交出去 ——
-  // 清单那张卡上的「提交审核」按钮走的就是它，不是另开一条假路。
-  //
-  // 不 provide 就没有这一段（老树、改题页都照旧）：规则表只读 `values`，一个字段都
-  // 不动，也不替表单校验 —— vee-validate 该什么时候标红还是什么时候标红。
-  const publishChecksSink = inject(PUBLISH_CHECKS_SINK, null)
-  if (publishChecksSink) {
-    watch(values, (current) => publishChecksSink.report(evaluatePublishChecks(current)), {
-      deep: true,
-      immediate: true,
-    })
-    publishChecksSink.handOverSubmit(submitForm)
-    onBeforeUnmount(() => publishChecksSink.handOverSubmit(null))
-  }
-
   const privacyDialogOpen = ref(false)
-  const wasRealNameEnabled = ref(false)
+  // 本来就要求实名的题，改的时候不再问一遍。
+  const wasRealNameEnabled = ref(!!props.initialData?.requireRealName)
 
   const cancelSubmitWithRealName = () => {
     requireRealName.value = false
     wasRealNameEnabled.value = false
     privacyDialogOpen.value = false
-    pendingSubmissionData.value = null
+    pendingSubmission.value = null
   }
 
   const confirmSubmitWithRealName = () => {
     wasRealNameEnabled.value = true
     privacyDialogOpen.value = false
-    if (pendingSubmissionData.value) {
-      submitFormData(pendingSubmissionData.value.values)
-      pendingSubmissionData.value = null
+    if (pendingSubmission.value) {
+      submitFormData(pendingSubmission.value.values)
+      pendingSubmission.value = null
     }
-  }
-
-  const videoUrlDialogOpen = ref(false)
-
-  const cancelVideoUrlDialog = () => {
-    videoUrlDialogOpen.value = false
-    pendingSubmissionData.value = null
-  }
-
-  const confirmVideoUrlDialog = () => {
-    videoUrlDialogOpen.value = false
-    if (pendingSubmissionData.value) {
-      submitFormData(pendingSubmissionData.value.values)
-      pendingSubmissionData.value = null
-    }
-  }
-
-  // 初始化wasRealNameEnabled
-  wasRealNameEnabled.value = !!props.initialData?.requireRealName
-
-  watch(
-    () => props.initialData?.name,
-    (value) => {
-      if (props.parametersOnly && value && value !== name.value) {
-        name.value = value
-      }
-    },
-    { immediate: true }
-  )
-
-  const handleCancel = () => {
-    emit('cancel')
   }
 
   return {
@@ -331,7 +269,6 @@ export function useTaskForm(
     defaultDeadline,
     defaultDeadlineProps,
     topics,
-    topicsProps,
     minTeamSize,
     minTeamSizeProps,
     maxTeamSize,
@@ -339,28 +276,17 @@ export function useTaskForm(
     categoryId,
     categoryIdProps,
     requireRealName,
-    requireRealNameProps,
     participantLimit,
     participantLimitProps,
     teamLockingPolicy,
-    teamLockingPolicyProps,
     accessControlEnabled,
-    accessControlEnabledProps,
     accessDomainGroupIds,
-    accessDomainGroupIdsProps,
-    videoUrl,
-    videoUrlProps,
     participantLimitUnlimited,
     description,
-    markdownDescription,
     isSubmitting,
     submitForm,
-    handleCancel,
     privacyDialogOpen,
     cancelSubmitWithRealName,
     confirmSubmitWithRealName,
-    videoUrlDialogOpen,
-    cancelVideoUrlDialog,
-    confirmVideoUrlDialog,
   }
 }

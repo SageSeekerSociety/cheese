@@ -1,4 +1,3 @@
-import type { PatchTaskRequestData } from '@/network/api/tasks/types'
 import type { useTaskData } from './useTaskData'
 
 import { useRouter } from 'vue-router'
@@ -8,22 +7,9 @@ import { t } from '@/i18n'
 import { TasksApi } from '@/network/api/tasks'
 import { useDialog } from '@/plugins/dialog'
 export function useTaskManagement(taskDataModule: ReturnType<typeof useTaskData>) {
-  const { taskData, loadTaskData } = taskDataModule
+  const { taskData } = taskDataModule
   const router = useRouter()
   const dialogs = useDialog()
-
-  const submitEditTask = async (updatedTaskData: PatchTaskRequestData) => {
-    if (!taskData.value) return
-
-    try {
-      await TasksApi.update(taskData.value.id, updatedTaskData)
-      toast.success(t('tasks.detail.updateSuccess'))
-      await loadTaskData()
-    } catch (error) {
-      toast.error(t('global.updateFailed'))
-      console.error('更新失败', error)
-    }
-  }
 
   const confirmDeleteTask = async () => {
     if (!taskData.value) return
@@ -48,7 +34,6 @@ export function useTaskManagement(taskDataModule: ReturnType<typeof useTaskData>
   }
 
   return {
-    submitEditTask,
     confirmDeleteTask,
   }
 }

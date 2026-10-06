@@ -113,6 +113,9 @@ const fieldSlotProps = computed(() => ({
 <style scoped>
 .base-field {
   display: grid;
+  /* 一栏的宽度由外面定：宽的控件（编辑器的工具条）不能把它撑出去。 */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: 6px;
 }
 

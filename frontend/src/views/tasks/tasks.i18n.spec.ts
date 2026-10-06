@@ -202,13 +202,12 @@ describe('task pages in English', () => {
       props: {
         initialData: { submitterType: 'TEAM', requireRealName: true },
         isEditing: true,
-        descriptionFormat: 'tiptap',
-        originalDescription: '',
+        classificationTopics: [],
       },
       global: { plugins: plugins() },
     })
-    expect(document.body.textContent).toContain('Real-name requirement')
-    expect(document.body.textContent).toContain('Lock on approval')
+    expect(document.body.textContent).toContain('Real name required')
+    expect(document.body.textContent).toContain('Locked on approval')
     expect(cjkIn(pageText())).toEqual([])
   })
 

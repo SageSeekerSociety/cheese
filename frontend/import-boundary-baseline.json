@@ -52,7 +52,6 @@
     "src/components/settings/AgentTeamSettings.vue": 1,
     "src/components/settings/CreditsPanel.vue": 1,
     "src/components/spaces/SpaceSidebar.vue": 1,
-    "src/components/tasks/TaskAttachmentPicker.vue": 1,
     "src/components/tasks/TaskSubmissionHistory.vue": 1,
     "src/components/TopicComputePicker.vue": 1,
     "src/components/TopicHeader.vue": 2,

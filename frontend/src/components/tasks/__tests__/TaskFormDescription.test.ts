@@ -64,10 +64,10 @@ describe('发题：交出去的正文就是编辑器里的正文', () => {
   it('改完最后一笔就交，存下的 JSON 和简介里都有这一笔', async () => {
     const view = render(TaskForm as Component, {
       props: {
-        submitButtonText: '提交',
         initialData: { ...FILLED, description: DESCRIPTION },
         isEditing: true,
-        descriptionFormat: 'tiptap',
+        classificationTopics: [],
+        categories: [{ id: 3, name: '课程作业', displayOrder: 0 }],
       },
       global: { plugins: [createVuetify({ components, directives }), i18n] },
     })

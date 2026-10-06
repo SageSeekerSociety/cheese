@@ -73,7 +73,12 @@ const FILLED = { name: '用 gdb 定位一次段错误', submitterType: 'USER', r
 
 function mountForm(initialData: Record<string, unknown> = {}, isEditing = false) {
   return render(TaskForm as Component, {
-    props: { submitButtonText: '提交', initialData, isEditing },
+    props: {
+      initialData,
+      isEditing,
+      classificationTopics: [],
+      categories: [{ id: 3, name: '课程作业', displayOrder: 0 }],
+    },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
@@ -98,39 +103,36 @@ async function submitted(view: View) {
 }
 
 describe('发题表单：领取人数「不限」', () => {
-  it('勾上「不限」：框锁上、数清掉，交出去与「从头就没填」一模一样', async () => {
+  it('新发一道题默认不限：框锁着，交出去不带这一项', async () => {
     const view = mountForm(FILLED)
-    const box = limitBox(view)
-    const unlimited = unlimitedBox(view)
 
-    await fireEvent.update(box, '5')
-    expect(unlimited.checked).toBe(false)
-    expect(box.disabled).toBe(false)
-
-    await toggle(unlimited)
-
-    expect(box.disabled).toBe(true)
-    expect(box.value).toBe('')
-    const payload = await submitted(view)
-    expect(payload.participantLimit).toBeUndefined()
-    // 从没填过的那一份：同一个词、同一个意思。
-    const untouched = mountForm(FILLED)
-    const baseline = await submitted(untouched)
-    expect(payload.participantLimit).toEqual(baseline.participantLimit)
+    expect(unlimitedBox(view).checked).toBe(true)
+    expect(limitBox(view).disabled).toBe(true)
+    expect((await submitted(view)).participantLimit).toBeUndefined()
   })
 
-  it('取消勾选之后又能填：填几就是几，照旧送出去', async () => {
+  it('取消「不限」就能填：填几就是几；再勾上，数清掉，交出去与从没填过一样', async () => {
     const view = mountForm(FILLED)
     const box = limitBox(view)
     const unlimited = unlimitedBox(view)
 
     await toggle(unlimited)
-    await toggle(unlimited)
     expect(box.disabled).toBe(false)
+    await fireEvent.update(box, '5')
 
-    await fireEvent.update(box, '7')
-    const payload = await submitted(view)
-    expect(payload.participantLimit).toBe(7)
+    await toggle(unlimited)
+    expect(box.disabled).toBe(true)
+    expect(box.value).toBe('')
+    expect((await submitted(view)).participantLimit).toBeUndefined()
+  })
+
+  it('取消「不限」填一个数：交出去就是它', async () => {
+    const view = mountForm(FILLED)
+
+    await toggle(unlimitedBox(view))
+    await fireEvent.update(limitBox(view), '7')
+
+    expect((await submitted(view)).participantLimit).toBe(7)
   })
 
   it('改一道上限为空的题：打开就是勾上的，交出去不带这一项', async () => {

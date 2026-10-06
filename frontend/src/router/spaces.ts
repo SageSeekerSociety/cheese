@@ -270,11 +270,5 @@ export default {
         },
       ],
     },
-    {
-      path: 'select-template',
-      name: 'SpacesDetailSelectTemplate',
-      meta: { backTo: 'SpacesDetailTasksList' },
-      component: () => import('@/views/spaces/detail/SelectTemplate.vue'),
-    },
   ],
 } as RouteRecordRaw
