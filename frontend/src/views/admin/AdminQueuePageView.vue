@@ -107,7 +107,7 @@ const emit = defineEmits<{
   'select-lane': [lane: AdminTab]
   'update:draft': [v: string]
   'update:status': [v: FeedbackStatus | 'all']
-  'clear-window': [key: string]
+  'clear-window': [key: QueueWindowKey]
   'update:activeIndex': [index: number]
   activate: [id: string]
   open: [id: string]
