@@ -29,7 +29,12 @@ from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner
 from app.domain.agent.harness.pi.subscription import Subscription
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE, SUBAGENT_TODO_WRITE
+from app.domain.agent.harness.prompt import (
+    PLATFORM_NOTICE,
+    SHARED_CHECKOUT,
+    STEP_TITLES,
+    SUBAGENT_TODO_WRITE,
+)
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
@@ -295,9 +300,13 @@ async def test_a_subagent_given_no_model_runs_the_project_subagent_default(tmp_p
         assert [s["text"] for s in session.stops()] == ["用的默认"]
 
 
-async def test_a_subagent_is_told_to_keep_the_step_checklist(tmp_path):
-    """The session's system prompt says when to write the step checklist; a
-    subagent reads none of it, and its work would never move the list (FB-74)."""
+async def test_a_subagent_is_told_the_rules_every_agent_of_the_session_keeps(
+    tmp_path,
+):
+    """A subagent reads none of the session's system prompt, yet it is the one
+    doing the work: it writes the step checklist (FB-74), shares the checkout
+    and the machine with other tasks, and titles the steps people watch — what
+    a Claude Code agent of the session is told too."""
 
     def route(body):
         if body["model"] != PARENT:
@@ -314,8 +323,9 @@ async def test_a_subagent_is_told_to_keep_the_step_checklist(tmp_path):
         await session.until(lambda: len(session.results()) == 1)
 
         (first, *_) = session.requests("child-default")
-        rule = json.dumps(SUBAGENT_TODO_WRITE, ensure_ascii=False)[1:-1]
-        assert rule in json.dumps(first, ensure_ascii=False)
+        request = json.dumps(first, ensure_ascii=False)
+        for rule in (SUBAGENT_TODO_WRITE, SHARED_CHECKOUT, STEP_TITLES):
+            assert json.dumps(rule, ensure_ascii=False)[1:-1] in request, rule
 
 
 async def test_a_model_the_platform_refuses_starts_nothing(tmp_path):
