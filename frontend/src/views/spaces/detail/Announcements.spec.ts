@@ -14,7 +14,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -223,5 +223,54 @@ describe('公告页', () => {
     await mount()
 
     await waitFor(() => expect(buttonLabelled(document, '发布公告')).toBeDefined())
+  })
+})
+
+// 读失败和「一条公告都没有」在屏幕上曾经是同一句话：失败留下的也是空数组，
+// 「暂无公告」分不出来（docs/design-system.md §3.10）。这一组钉住失败**留在原地**
+// ——说没读到、给一条重试的路，绝不替服务端说「一条都没有」；401/403 是「不给你
+// 看」，说没权限且不给重试（再试一次还是同一个 401/403）。
+describe('公告没读出来', () => {
+  /** 让取公告那一次失败，并等错误块出现。 */
+  async function failedPage(error: unknown) {
+    listAnnouncements.mockRejectedValue(error)
+    const view = await mount()
+    await waitFor(() => expect(view.container.querySelector('.base-load-error')).toBeTruthy())
+    return view
+  }
+
+  it('读失败留在原地说明并给重试，不说成「暂无公告」，也不停在转圈上', async () => {
+    const view = await failedPage(new Error('炸了'))
+    const block = view.container.querySelector('.base-load-error') as HTMLElement
+
+    expect(block.textContent).toContain('加载公告失败')
+    expect(view.queryByText('暂无公告')).toBeNull()
+    // 错误的这一块替掉的就是那块内容，不该再留一个还在转的载入指示。
+    expect(view.container.querySelector('.v-progress-circular')).toBeNull()
+    expect(view.container.querySelector('.loading-container')).toBeNull()
+    expect(view.container.querySelector('[role="progressbar"]')).toBeNull()
+  })
+
+  it('重试那颗按钮再打一次取数的 api，读成了就把公告画出来', async () => {
+    const view = await failedPage(new Error('炸了'))
+    const block = view.container.querySelector('.base-load-error') as HTMLElement
+
+    // 这一次让它读成了：重试进去之后错误块应当让位给真正的公告。
+    listAnnouncements.mockResolvedValue({ data: { current: CURRENT, expired: EXPIRED, notifyCount: 3 } })
+    await fireEvent.click(within(block).getByRole('button'))
+
+    await waitFor(() => expect(listAnnouncements).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(cardTitled('置顶的公告')).toBeDefined())
+  })
+
+  it('403 说的是「没权限」，并且不给一颗按不动的重试', async () => {
+    // `code: 403` 是 axios 拦截器翻出来的那种（`BusinessError`，见
+    // `lib/loadFailure.ts` 的 `isForbidden`），不是 `status`。
+    const view = await failedPage(Object.assign(new Error('nope'), { code: 403 }))
+    const block = view.container.querySelector('.base-load-error') as HTMLElement
+
+    expect(block.textContent).toContain('你没有权限查看')
+    expect(within(block).queryByRole('button')).toBeNull()
+    expect(view.queryByText('暂无公告')).toBeNull()
   })
 })
