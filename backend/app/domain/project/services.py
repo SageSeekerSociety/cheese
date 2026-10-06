@@ -202,9 +202,16 @@ class ProjectService:
             doc = await documents.get(project.overview_document_id)
             if doc is not None:
                 return doc
-        # Two first readers at once must not make two overviews.
+        # Two first readers at once must not make two overviews. NO KEY
+        # UPDATE, not FOR UPDATE: this runs inside a turn's assembly, and a
+        # full row lock on the project stops every write whose foreign key
+        # names the project (each block takes KEY SHARE on it) until the turn
+        # commits — which deadlocked an archive that held its room's row and
+        # was writing its note. Two creators still wait for each other.
         await self._session.execute(
-            select(Project.id).where(Project.id == project.id).with_for_update()
+            select(Project.id)
+            .where(Project.id == project.id)
+            .with_for_update(key_share=True)
         )
         await self._session.refresh(project, ["overview_document_id"])
         if project.overview_document_id is not None:
@@ -415,6 +422,8 @@ class ProjectService:
             )
             if belongs:
                 await self._session.execute(
-                    select(Project.id).where(Project.id == project.id).with_for_update()
+                    select(Project.id)
+                    .where(Project.id == project.id)
+                    .with_for_update(key_share=True)
                 )
                 await self._accept_task_protocol(project, task.id)

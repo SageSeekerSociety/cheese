@@ -151,7 +151,7 @@ async def save_environment(
 ) -> dict:
     await access(db, project_id, user, write=True)
     project = await db.scalar(
-        select(Project).where(Project.id == project_id).with_for_update()
+        select(Project).where(Project.id == project_id).with_for_update(key_share=True)
     )
     config = body.snapshot()
     if project is None:
