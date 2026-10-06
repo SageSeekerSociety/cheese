@@ -81,6 +81,50 @@ beforeEach(() => {
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
+describe('任务里提的卡，在任务里看得见', () => {
+  // 任务是一段自己的对话：芝士在任务里提的任务卡、反馈卡都落在这个任务上。
+  // 打开任务时要按任务去取、画在任务的时间线末尾，否则哪儿都看不到。
+  it('任务里提的任务卡画在任务里，反馈卡也按这个任务去取', async () => {
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      asked.push(String(url))
+      const proposals = String(url).includes('/topics/task-9/task-proposals')
+      return {
+        ok: true,
+        status: 200,
+        json: async () =>
+          proposals
+            ? {
+                code: 200,
+                data: [
+                  {
+                    id: 'tp-1',
+                    title: '把登录页的报错改成中文',
+                    summary: '',
+                    proposed_by: 'cheese',
+                    state: 'open',
+                    created_at: '2026-10-06T00:00:00Z',
+                  },
+                ],
+              }
+            : { code: 200, data: { data: [], total: 0, has_more: false } },
+      }
+    })
+    const FeedbackProbe = { props: ['topicId'], template: '<i class="feedback-probe">{{ topicId }}</i>' }
+    const { findByText, container } = render(Column, {
+      props: { topic, taskId: 'task-9', members: [], topicList: [] },
+      global: {
+        plugins: [vuetify, createPinia(), i18n],
+        stubs: { TopicAcceptCard: true, AgentFeedbackCard: FeedbackProbe },
+      },
+    })
+    await settle()
+    expect(await findByText('把登录页的报错改成中文')).toBeTruthy()
+    expect(asked.some((u) => u.includes('/topics/tc-1/task-proposals'))).toBe(false)
+    expect(container.querySelector('.feedback-probe')?.textContent).toBe('task-9')
+  })
+})
+
 describe('对话栏的接线', () => {
   it('首次连上不重读文档；房间推来 state/doc 帧才刷新', async () => {
     history = []
