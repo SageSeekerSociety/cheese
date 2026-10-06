@@ -31,7 +31,7 @@ The rules this module is the whole of:
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, String, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -483,3 +483,21 @@ async def stamp_delivery_fact(
             await session.commit()
     except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
         logger.exception("could not stamp delivery for turn %s", turn_id)
+
+
+async def close_dead_turns(session_factory, turn_ids) -> None:
+    """Close turns the orphan sweep found dead, and end the inputs they held.
+
+    Nothing will ever report on those inputs: the session that took them is
+    gone. Left unfinished, they refuse the seat every later message for good
+    (``seat_has_unfinished_input``), and the deliveries behind them retry
+    forever. In the same transaction as the close, so a turn is never ended
+    with its inputs still owed.
+    """
+    from app.domain.agent.repositories import AgentTurnRepository
+    from app.domain.delivery.receipts import terminate_inputs_of_dead_works
+
+    async with session_factory() as session:
+        await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
+        await terminate_inputs_of_dead_works(session, turn_ids, reason="orphaned")
+        await session.commit()

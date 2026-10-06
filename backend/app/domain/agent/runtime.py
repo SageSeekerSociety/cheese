@@ -1365,7 +1365,7 @@ class AgentWorkRunner:
         # — a turn that opened while the activity probe awaited is still open,
         # and a running turn no sweep can see is how the next death goes silent
         # again, which is the whole bug.
-        await _close_turns(chat_service.session_factory, orphans)
+        await turn_inputs.close_dead_turns(chat_service.session_factory, orphans)
         for turn_id in orphans:
             # A turn with a coroutine gets its marks dropped by that coroutine's
             # own `finally`; one without (a self-started turn, or anything left
