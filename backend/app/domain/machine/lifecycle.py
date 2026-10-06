@@ -178,16 +178,22 @@ class SandboxLifecycle:
         now = datetime.now(UTC)
         idle_for = timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
         from app.domain.agent.models import AgentTurn
-        from app.domain.conversation.services import room_column
 
-        # A turn running in the room, or one that ended within the idle time,
-        # keeps every sandbox of the room awake; a home its session left is
-        # measured by its own activity alone. Decided here, not after a limit:
-        # a busy room's homes would otherwise take every place in the batch.
-        room_active = (
+        # A turn running in the conversation the home's session works in, or
+        # one that ended within the idle time, keeps that sandbox awake; a
+        # home its session left is measured by its own activity alone. Not the
+        # room's turns: every task of a channel hangs under it, and one task at
+        # work kept the sandboxes of all the others up for days. Decided here,
+        # not after a limit: busy homes would otherwise take every place in the
+        # batch.
+        session_active = (
             select(AgentTurn.id)
             .where(
-                room_column(AgentTurn.conversation_id) == CloudHostHome.topic_id,
+                AgentTurn.conversation_id
+                == select(AgentSession.conversation_id)
+                .where(AgentSession.id == CloudHostHome.session_id)
+                .correlate(CloudHostHome)
+                .scalar_subquery(),
                 or_(
                     AgentTurn.stopped_at.is_(None),
                     AgentTurn.stopped_at > now - idle_for,
@@ -220,7 +226,7 @@ class SandboxLifecycle:
                 or_(
                     CloudHostHome.left_at.is_not(None),
                     CloudHostHome.session_id.is_(None),
-                    ~room_active,
+                    ~session_active,
                 ),
             )
             .order_by(CloudHostHome.active_at)
@@ -253,7 +259,6 @@ class SandboxLifecycle:
         """Since when the session has been idle for at least ``idle_for``, or
         None while it is not."""
         from app.domain.agent.models import AgentTurn
-        from app.domain.conversation.services import of_room
 
         if home.left_at is not None or home.session_id is None:
             return home.active_at
@@ -262,7 +267,12 @@ class SandboxLifecycle:
                 select(
                     func.count().filter(AgentTurn.stopped_at.is_(None)),
                     func.max(AgentTurn.stopped_at),
-                ).where(of_room(AgentTurn.conversation_id, home.topic_id))
+                ).where(
+                    AgentTurn.conversation_id
+                    == select(AgentSession.conversation_id)
+                    .where(AgentSession.id == home.session_id)
+                    .scalar_subquery()
+                )
             )
         ).one()
         await self._session.commit()
