@@ -238,8 +238,8 @@ def test_the_question_that_credential_asks_is_not_an_input_it_must_read(
     # 芝士在支线里回答，题也在那里问。
     room = {**room, "id": in_thread(client, room["id"], "alice")}
 
-    # 提问要有在跑的那一轮（它就是「这道题在等谁」的出处），所以题是在这一轮里
-    # 问出口的，用的仍是那张项目凭证。
+    # 题在一轮里问出口（那一轮的发起人就是「这道题在等谁」），用的仍是那张项目
+    # 凭证。
     with active_ask(client, stub_hooks, monkeypatch, room["id"], actor="alice"):
         asked = client.post(
             f"/topics/{room['id']}/asks",

@@ -28,7 +28,8 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence
-from app.domain.agent.announce import announce, settle_questions_answered_by
+from app.domain.agent.announce import announce, answer_questions
+from app.domain.agent.ask import publish_answered
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.compute import ComputePool
 
@@ -1061,11 +1062,6 @@ class ChatService(SessionRecovery, RoomTurns):
 
         await confirm_receipt(self, receipt)
 
-    def nudge_ask_receipts(self, identity):
-        from app.domain.agent.ask_receipt_wait import nudge_ask_receipts
-
-        nudge_ask_receipts(self, identity)
-
     async def confirm_work_completion(self, completion: WorkCompletion) -> None:
         """Settle a journaled completion without process-local work context."""
         from app.domain.agent.pending_messages import finish_work
@@ -1995,6 +1991,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 or (seats is not None and looks_like_agent_handle(seats[1])),
             }
             anchor_id: uuid.UUID | None = None
+            answered: list[Block] = []
             attribution_id = turn_id
             # B3: a reply threads under a block IN THIS TOPIC. A client that
             # kept a stale reply target across a topic switch would otherwise
@@ -2060,7 +2057,8 @@ class ChatService(SessionRecovery, RoomTurns):
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
                 await announce_mentions(session, topic, user_block, author, roster)
-                await settle_questions_answered_by(session, user_block)
+                # A reply to an agent's question goes to that agent (`recipient`).
+                answered = await answer_questions(session, user_block, recipient)
                 if len(agent_handles) > 1:
                     # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
                     # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
@@ -2130,6 +2128,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     },
                 )
             await session.commit()
+        await publish_answered(place.conversation_id, answered)
         # A person's words are what a task gets named by (room_task/naming.py).
         if names_a_person(author) and place.task is not None:
             naming.nudge(place.task.id, "message")

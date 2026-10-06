@@ -1,17 +1,16 @@
 """A delivered message that reached nobody leaves no live turn behind either.
 
-A message the delivery ledger hands to 芝士 (an answered question, a mention
-it routes) runs as a turn of its own. When that turn's write fails with no
+A message the delivery ledger hands to 芝士 (a mention it routes, a
+platform instruction) runs as a turn of its own. When that turn's write fails with no
 word from the session, the orphan sweep closes it, and the delivery keeps the
 message: it is not sent again behind its back. The closed turn used to stay on
 the service's list of live work for that teammate all the same, so the room
-read as busy for a turn nobody runs, and once someone spoke again every
-question the next turn asked was refused with 403
-「无法确认原生提问会话和执行区间」(FB-72, after the sweep learned to let go of
-the turns it re-sends itself).
+read as busy for a turn nobody runs (FB-72, after the sweep learned to let go
+of the turns it re-sends itself). The next turn still runs, and asks.
 """
 
 import asyncio
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -19,12 +18,13 @@ from sqlalchemy import select
 
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
+from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.models import Delivery
 from app.main import app
 from tests.ask_fixtures import agent_credential
-from tests.conftest import stub_compute
+from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
     in_thread,
@@ -32,12 +32,57 @@ from tests.integration.conftest import (
     post_project,
     room_agent_seat,
 )
-from tests.integration.test_ask_after_an_unheard_turn import (
-    QUESTION,
-    FirstSendLost,
-    _turns,
-    _until,
-)
+
+QUESTION = {
+    "questions": [
+        {
+            "question": "预算按哪个口径统计",
+            "options": [{"text": "按部门"}, {"text": "按项目"}],
+        }
+    ]
+}
+
+
+class FirstSendLost(StubChannel):
+    """The first prompt's write fails without the session saying anything;
+    every later prompt arrives, and the session keeps working on it."""
+
+    def __init__(self):
+        super().__init__()
+        self.lost = False
+
+    async def call(self, handle, method, params):
+        if method == "send" and not self.lost:
+            self.lost = True
+            raise RuntimeError("executor response interrupted")
+        return await super().call(handle, method, params)
+
+    def emit_turn(self, topic_id, prompt, reply, *, agent=None):
+        del reply
+        self.starts(topic_id, agent=agent)
+        self.acknowledges(topic_id, prompt, agent=agent)
+        self.uses(topic_id, "Bash", agent=agent, command="sleep 600")
+
+
+def _turns(client, room: str) -> list[AgentTurn]:
+    async def read() -> list[AgentTurn]:
+        async with client.test_factory() as session:
+            return list(
+                await session.scalars(
+                    select(AgentTurn)
+                    .where(AgentTurn.conversation_id == uuid.UUID(room))
+                    .order_by(AgentTurn.started_at)
+                )
+            )
+
+    return asyncio.run(read())
+
+
+def _until(predicate, what: str) -> None:
+    deadline = time.monotonic() + 15
+    while not predicate():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.05)
 
 
 def _deliver(client, project: str, room: str, seat: str) -> uuid.UUID:
@@ -58,7 +103,7 @@ def _deliver(client, project: str, room: str, seat: str) -> uuid.UUID:
                 conversation_id=uuid.UUID(room),
                 dedup_key=str(uuid.uuid4()),
                 type="mention",
-                payload={"content": f"<@{seat}> 问题组已提交：按部门"},
+                payload={"content": f"<@{seat}> 按部门"},
                 event_at=datetime.now(UTC),
                 recorded_at=datetime.now(UTC),
             )

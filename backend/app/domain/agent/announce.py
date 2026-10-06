@@ -45,6 +45,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import room_of
 from app.domain.delivery.addressing import (
     NAMES_NOBODY,
     Event,
@@ -52,8 +53,10 @@ from app.domain.delivery.addressing import (
     address,
 )
 from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.topic_membership.services import TopicMemberService
 
 #: `who` 码 → 下一步在谁手上。`who` 回答的是「谁在管这件事」，那正是投递要问的那一
 #: 句，只是用的是通知契约的词，所以这里不做第二次判断，只把同一个答案翻成投递这一
@@ -148,7 +151,7 @@ async def notify_question(
     asker: str,
     asked: str | None,
 ) -> None:
-    """芝士提出待确认问题，本轮停止等待 —— 通知等这个回答的人。
+    """芝士问了一个问题、这一轮就此结束 —— 通知等这个回答的人。
 
     **不走 `announce`。** 提问本身就是时间线上那条消息（`kind=message`，作者是
     芝士），再 announce 一次等于同一件事在房间里说两遍。所以这里只做投递这一半。
@@ -157,8 +160,8 @@ async def notify_question(
     由平台决定。这一条是芝士自己的话，长度取决于它怎么问，两者不是一种东西 ——
     共用一个码，前端就无法区分该按哪一种渲染。
 
-    这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：本轮**停在这个问题上
-    了**，在他回答之前没有任何一方能往下走。`asked` 是那个人，None 是「这个问题指
+    这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：这件事**停在这个问题
+    上了**，在他回答之前没有任何一方能往下走。`asked` 是那个人，None 是「这个问题指
     不到具体的人」（平台发起的轮次），那就谁也不通知。
     """
     await deliver(
@@ -174,8 +177,7 @@ async def notify_question(
                 "topicTitle": place.title,
                 "question": question,
                 "asker": asker,
-                # 提问固定在对话末尾（本轮停在它这里），所以进入房间即可看到 ——
-                # 这个 id 留给「定位到该条消息」用，当前不依赖它也能找到。
+                # 那条提问消息：通知据它定位到房间里的那一行。
                 "blockId": str(block.id),
             },
             # 问出口的那一刻，不是走到这一行的那一刻 —— 收下整个 block 而不是它的
@@ -186,28 +188,138 @@ async def notify_question(
     )
 
 
-#: 通知里引一句打字的回答，最多这么长 —— 那是一行说明，不是聊天记录。
+#: 通知里引一句回答，最多这么长 —— 那是一行说明，不是聊天记录。
 ANSWER_EXCERPT_CHARS = 40
 
 
-async def settle_questions_answered_by(session: AsyncSession, reply: Block) -> None:
-    """被问的人没点选项、直接打字回了一句 —— 那几道题的通知跟着结掉。
+async def answer_questions(
+    session: AsyncSession, reply: Block, recipient: dict
+) -> list[Block]:
+    """``reply`` 答掉了哪几道题：记在题上、结掉题的通知，并把它送到提问的那位手上。
 
-    点选项的那条路自己会 `settle`（`answer_options`）；打字这条路以前没人去碰
-    通知，于是房间和待处理都已经不再等他，通知却还写着「待你回答」。哪几道题算被
-    这句话答了，由 `questions_a_reply_answers` 定，和看板读的是同一条判据。
+    点选项就是回一句话（选项文字，回复那道题），打字也是回一句话，两条走的是同一扇
+    门；哪几道题算被这句话答了由 `BlockRepository.questions_a_reply_answers` 定，和
+    看板读的是同一条判据。每一句回答都追加进题上的 `answer_log`，几个人都答了就记
+    几条。
 
-    通知里写的是他说的话本身：点他队友名字的 `<@handle>` 不是回答的一部分，太长
-    的截到 `ANSWER_EXCERPT_CHARS`。
+    这句话没点任何 agent 的名、却答了题，它就是说给提问的那位听的：``recipient``
+    （这条消息的 `agent_recipient`，原地改）指到那个席位并记为点了名，于是它开的
+    就是那位的下一轮 —— 和人 @ 它一模一样。提问的那一轮早就结束了也没关系，这里
+    不找任何一轮。提问的那位已经不在房间里，答案照样记下，只是没人可送。
     """
-    questions = await BlockRepository(session).questions_a_reply_answers(reply)
+    named = set(_MENTION_RE.findall(reply.content or ""))
+    questions = await BlockRepository(session).questions_a_reply_answers(
+        reply, first_word_only=not named
+    )
+    if reply.reply_to is None:
+        questions = _typed_answers(reply, questions)
     if not questions:
-        return
+        return []
     said = " ".join(_MENTION_RE.sub("", reply.content or "").split())
-    if len(said) > ANSWER_EXCERPT_CHARS:
-        said = said[:ANSWER_EXCERPT_CHARS] + "…"
     for question in questions:
-        await settle(session, question.id, {"answered": said})
+        meta = dict(question.meta or {})
+        picked = _offered(meta).get(said)
+        meta["answer_log"] = [
+            *(meta.get("answer_log") or []),
+            {
+                # One of its options (what a click sends), or words of his own.
+                "kind": "option" if picked else "note",
+                "option": picked,
+                "note": None if picked else said,
+                "by": reply.author,
+                "at": reply.created_at.isoformat(),
+                "reply_id": str(reply.id),
+            },
+        ]
+        question.meta = meta
+    excerpt = said[:ANSWER_EXCERPT_CHARS] + (
+        "…" if len(said) > ANSWER_EXCERPT_CHARS else ""
+    )
+    for notice in await _notices_now_answered(session, questions):
+        await settle(session, notice, {"answered": excerpt})
+    seat = questions[-1].author
+    if not recipient.get("mentioned") and seat in await TopicMemberService(
+        session
+    ).agent_handles(await room_of(session, reply.conversation_id)):
+        instance = await instance_of_seat(session, reply.project_id, seat)
+        if instance is not None:
+            recipient["instance_id"] = str(instance.id)
+            recipient["handle"] = instance.handle
+        # A seat still under the room-derived handle names no instance, and that
+        # seat IS the agent the room points at: the recipient already names it.
+        recipient["mentioned"] = True
+        reply.meta = {**(reply.meta or {}), "agent_recipient": dict(recipient)}
+    return questions
+
+
+def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
+    """Which open questions a message that replies to nothing answers.
+
+    It is said to one asker: the one it @-mentions, or else whoever asked most
+    recently. A question that waits on nobody in particular (asked in a turn the
+    platform started) is answered only by a message that names its asker:
+    people talking to each other in the room is not an answer to it.
+    """
+    named = set(_MENTION_RE.findall(reply.content or ""))
+    if named:
+        # Addressed to the one who asked, it answers whatever is open of his.
+        return [q for q in questions if named == {q.author}]
+    questions = [q for q in questions if (q.meta or {}).get("asked") == reply.author]
+    if not questions:
+        return []
+    seat = questions[-1].author
+    return [q for q in questions if q.author == seat]
+
+
+def _offered(meta: dict) -> dict[str, str]:
+    """A question's options by what a click sends (the text without the model's
+    " (Recommended)" mark) and by their own text. A question a person asked
+    before options carried explanations stores them as plain strings."""
+    offered: dict[str, str] = {}
+    for option in meta.get("options") or []:
+        text = option.get("text") if isinstance(option, dict) else option
+        if isinstance(text, str):
+            offered[text] = text
+            offered.setdefault(text.removesuffix(" (Recommended)"), text)
+    return offered
+
+
+async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
+    """The question notices every question of which now has an answer.
+
+    One `cheese_ask` call sends one notice for all its questions (keyed by the
+    first, `meta.notice_id`); it is settled only once none of them is open.
+    """
+    from sqlalchemy import select
+
+    done = []
+    for notice in {(q.meta or {}).get("notice_id") or str(q.id) for q in questions}:
+        siblings = list(
+            await session.scalars(
+                select(Block).where(
+                    Block.conversation_id == questions[0].conversation_id,
+                    Block.meta["notice_id"].as_string() == notice,
+                )
+            )
+        )
+        pending = [
+            q
+            for q in siblings
+            if q not in questions and not (q.meta or {}).get("answer_log")
+        ]
+        if not pending:
+            done.append(uuid.UUID(notice))
+    return done
+
+
+async def instance_of_seat(session: AsyncSession, project_id, seat: str):
+    """The agent instance behind ``seat`` in this project, or None."""
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    for instance in await AgentInstanceService(session).list_for_project(project_id):
+        if agent_instance_handle(instance.id) == seat:
+            return instance
+    return None
 
 
 async def _notify(

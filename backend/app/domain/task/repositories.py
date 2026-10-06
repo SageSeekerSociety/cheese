@@ -1030,15 +1030,16 @@ class TaskSubmissionEntryRepository:
         self,
         *,
         submission_id: int,
-        entries: list[tuple[int, str | None, int | None]],
+        entries: list[tuple[int, str | None, int | None, str | None]],
     ) -> None:
         now = datetime.now(UTC)
-        for idx, text, attachment_id in entries:
+        for idx, text, attachment_id, prompt in entries:
             row = TaskSubmissionEntry(
                 task_submission_id=submission_id,
                 index=idx,
                 content_text=text,
                 content_attachment_id=attachment_id,
+                prompt=prompt,
                 created_at=now,
                 updated_at=now,
                 deleted_at=None,

@@ -59,6 +59,10 @@ class Runtime(RoomSessions):
     def _listen(self, seat, *, recovered=False):
         pass
 
+    async def ensure(self, session, **_):
+        # The seat's session is already live: nothing is started.
+        return self.live[self._seat_of(session)]
+
 
 FAILURES = {
     # What the host raises when it never reached the write.
@@ -115,7 +119,6 @@ def test_an_input_never_sent_is_withdrawn_and_one_maybe_sent_is_kept(
                     ref,
                     "start on the report",
                     system_prompt="",
-                    expected_native_session="conversation",
                     work_id=work,
                     on_mark=lambda _: None,
                     register_input=register,

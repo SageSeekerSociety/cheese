@@ -37,6 +37,12 @@ def _runtime(host, session: SessionRef) -> tuple[RoomSessions, tuple, Live]:
         takes_inputs=True,
     )
     runtime.live[seat] = live
+
+    async def ensure(_session, **_):
+        # The seat's session is already live: nothing is started.
+        return live
+
+    runtime.ensure = ensure  # type: ignore[method-assign]
     return runtime, seat, live
 
 
@@ -72,7 +78,6 @@ async def test_a_message_put_to_a_live_session_says_which_step_took_the_time(cap
             work_id=work,
             on_mark=lambda _: None,
             register_input=register,
-            expected_native_session=live.conversation,
         )
     finally:
         reading.cancel()
@@ -93,6 +98,11 @@ async def test_a_message_that_never_reaches_the_session_is_still_accounted_for(c
     work = uuid.uuid4()
     runtime = RoomSessions(SimpleNamespace(name="device"), CLAUDE_CODE, object())
 
+    async def no_session(_session, **_):
+        raise ValidationError("The session could not be started")
+
+    runtime.ensure = no_session  # type: ignore[method-assign]
+
     async def register(identity):
         pytest.fail("nothing may be registered for a refused message")
 
@@ -104,7 +114,6 @@ async def test_a_message_that_never_reaches_the_session_is_still_accounted_for(c
             work_id=work,
             on_mark=lambda _: None,
             register_input=register,
-            expected_native_session="a conversation that is gone",
         )
 
     [line] = _timing_lines(caplog)

@@ -19,7 +19,7 @@ import uuid
 
 import pytest
 
-from tests.ask_fixtures import active_ask, legacy_question
+from tests.ask_fixtures import active_ask, question_row
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
@@ -297,12 +297,12 @@ def test_a_question_waits_on_whoever_summoned_the_agent(
 def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
     """没点选项、直接回了一句话，也是回应过了；别人说话不算他回应。
 
-    题上记着等谁（`meta.asked`），所以只有他那句话算数。组题不走这条：组的答案
-    要明确提交，聊天里的一句话不是回答。
+    题上记着等谁（`meta.asked`），所以只有他那句话算数。
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    legacy_question(client, tid, question="按哪个口径", asked="bob")
+    # A person asks it, in the channel's main line: an answer wakes no agent.
+    question_row(client, tid, author="alice", question="按哪个口径", asked="bob")
     for who in ("bob", "carol"):
         joined = client.post(f"/topics/{tid}/join", headers=session_auth_headers(who))
         assert joined.status_code == 200, joined.text

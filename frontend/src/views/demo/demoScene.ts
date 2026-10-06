@@ -370,7 +370,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
             author: e.who,
             content: e.text,
             created_at,
-            ...(e.options ? { meta: { options: e.options, allow_other: true, reject_option: true } } : {}),
+            ...(e.options ? { meta: { options: e.options } } : {}),
           }
           chat.push({ kind: 'message', id: block.id, author: e.who, text: e.text, time: hhmm(clock), block })
           break
@@ -384,13 +384,11 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
                 ...line.block.meta,
                 answer_log: [
                   {
-                    v: 1,
                     kind: 'option',
                     option: e.option,
                     note: null,
                     by: e.by,
                     at: `${created_at}`,
-                    client_op_id: 'demo',
                   },
                 ],
               },

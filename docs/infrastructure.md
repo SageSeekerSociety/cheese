@@ -257,8 +257,7 @@ Each backend switch is also a handover of the running work. One backend at a
 time owns it (the sessions it listens to, the turns it watches, the periodic
 jobs), and a Postgres advisory lock says which (`app/core/ownership.py`). A
 successor serves requests at once but holds the turns asked of it until the lock
-reaches it, and so does a question (`cheese_ask`) that a running turn asks it:
-only the owner knows which turn is running. The outgoing backend, on SIGTERM,
+reaches it. The outgoing backend, on SIGTERM,
 lets the prompts it is still sending arrive, stops reading its sessions, lets go
 of its turns without ending them and releases the lock. The successor then picks every running turn up
 where it stands and starts any turn a message was left waiting for. The whole
@@ -557,6 +556,7 @@ gone:
 # by container name; on a box with an app-router the backend is one of two
 sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "2 hours ago"
 sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
+sudo journalctl -t cheese-metering-proxy -t cheese-gateway-litellm-1 --since today # model traffic
 sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "09:00" --until "09:30"
 ```
 

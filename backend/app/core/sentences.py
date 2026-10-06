@@ -133,8 +133,12 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: message no longer becomes a channel (「一条消息已转为频道」 stays on old ones).
 #: The platform renames tasks quietly, without a line (「标题自动更新为」 stays on
 #: old rooms).
+#: An answer to an agent's question is an ordinary message now and has no
+#: conversation of its own to miss (「一条答案没能送达」 stays on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        "askAnswerUndelivered",
+        "askAnswerUndeliveredDetail",
         "docCommented",
         "docCommentedHandedTo",
         "docCommentMentioned",

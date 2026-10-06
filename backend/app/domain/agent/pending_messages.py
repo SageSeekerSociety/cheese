@@ -12,7 +12,7 @@ from app.domain.agent.platform_notices import EVENT_DELIVERY_FALLBACK, EVENT_TUR
 from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
 
 DEFERRED_INPUT = "deferred_native_input"

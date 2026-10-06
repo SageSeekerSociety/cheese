@@ -1,21 +1,19 @@
-"""The session tool creates one complete question group over the platform HTTP API.
+"""The session tool posts its questions in one platform request and says to stop.
 
 The backend is a loopback HTTP fixture; the actual shipped CLI, request encoder,
-credential headers and response reader run unchanged. Group transactions and
-executor recovery belong to the backend's integration tests.
+credential headers and response reader run unchanged. What the backend does
+with the questions belongs to `tests/integration/test_ask_as_messages.py`.
 """
 
-import copy
 import importlib.util
 import json
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
-
-GROUP = "c319a264-4948-4255-87b7-542999e073d8"
 
 
 def _load():
@@ -34,8 +32,6 @@ def _question(index=0):
             {"text": "方案 A", "explain": "统一处理"},
             {"text": "方案 B", "explain": "分别处理"},
         ],
-        "allow_other": True,
-        "reject_option": False,
     }
 
 
@@ -52,22 +48,14 @@ def platform():
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             calls.append((self.path, payload, dict(self.headers)))
             status = failures.pop(0) if failures else 200
-            members = [
-                f"question-{i}" for i in range(len(payload.get("questions", [])))
-            ]
             body = json.dumps(
                 {
                     "data": {
-                        "group": {
-                            "topic_id": "room",
-                            "asked_by": "original-agent",
-                            "id": payload.get("ask_group", GROUP),
-                            "members": members,
-                            "total": len(members),
-                        },
-                        "blocks": [{"id": member} for member in members],
-                        "settlement": None,
-                        "receipt": None,
+                        "blocks": [
+                            {"id": f"question-{i}"}
+                            for i in range(len(payload.get("questions", [])))
+                        ],
+                        "request_id": payload.get("request_id"),
                     }
                 }
                 if status == 200
@@ -101,40 +89,30 @@ def platform():
         server.server_close()
 
 
-@pytest.mark.parametrize("total", [1, 8])
-def test_complete_group_is_one_platform_request_with_object_options(platform, total):
+@pytest.mark.parametrize("total", [1, 3])
+def test_the_questions_go_out_in_one_request_and_the_agent_is_told_to_stop(
+    platform, total
+):
     cli, host, calls, _ = platform
     questions = [_question(i) for i in range(total)]
-    original = copy.deepcopy(questions)
     result = cli.run_platform_tool(
-        "cheese_ask",
-        {"questions": questions, "ask_group": GROUP, "author": "spoof"},
-        host,
+        "cheese_ask", {"questions": questions, "author": "spoof"}, host
     )
 
     assert len(calls) == 1
     path, body, headers = calls[0]
     assert path == "/topics/room/asks"
-    assert body == {"questions": questions, "ask_group": GROUP}
-    assert questions == original
+    assert body["questions"] == questions
+    assert "author" not in body
+    uuid.UUID(body["request_id"])
     assert headers["X-Cheese-Token"] == "fixture-agent-credential"
     assert headers["X-Cheese-Turn"] == "original-turn"
-    created = json.loads(result)
-    assert created["group"]["id"] == GROUP
-    assert created["group"]["members"] == [f"question-{i}" for i in range(total)]
-    assert [block["id"] for block in created["blocks"]] == created["group"]["members"]
-    assert created["settlement"] is None
-    assert created["receipt"] is None
-
-
-def test_optional_group_id_and_answer_permissions_are_left_to_the_backend(platform):
-    cli, host, calls, _ = platform
-    question = _question()
-    del question["allow_other"]
-    del question["reject_option"]
-    result = cli.run_platform_tool("cheese_ask", {"questions": [question]}, host)
-    assert calls[0][1] == {"questions": [question]}
-    assert json.loads(result)["group"]["id"] == GROUP
+    # The agent learns where its questions are, how to retry, and that it does
+    # not wait: the answer starts its next turn.
+    for i in range(total):
+        assert f"question-{i}" in result
+    assert body["request_id"] in result
+    assert "结束这一轮" in result
 
 
 @pytest.mark.parametrize(
@@ -142,7 +120,7 @@ def test_optional_group_id_and_answer_permissions_are_left_to_the_backend(platfo
     [
         {"question": "旧入口", "option": ["A", "B"]},
         {"questions": []},
-        {"questions": [_question(i) for i in range(9)]},
+        {"questions": [_question(i) for i in range(4)]},
         {"questions": [{**_question(), "question": " "}]},
         {"questions": [{**_question(), "options": ["A", "B"]}]},
         {"questions": [{**_question(), "options": [{"text": "A"}]}]},
@@ -152,38 +130,32 @@ def test_optional_group_id_and_answer_permissions_are_left_to_the_backend(platfo
             ]
         },
         {"questions": [{**_question(), "options": [{"text": " "}, {"text": "B"}]}]},
-        {"questions": [{**_question(), "allow_other": "false"}]},
-        {"questions": [{**_question(), "reject_option": "false"}]},
-        {"questions": [_question()], "ask_group": " "},
         {"questions": [_question(), {**_question(), "options": ["A", "B"]}]},
+        {"questions": [_question()], "request_id": "not-a-uuid"},
     ],
 )
-def test_invalid_group_never_publishes_even_its_valid_first_question(
-    platform, arguments
-):
+def test_invalid_questions_never_publish_even_a_valid_first_one(platform, arguments):
     cli, host, calls, _ = platform
-    with pytest.raises(cli.PlatformToolError):
+    with pytest.raises((cli.PlatformToolError, ValueError)):
         cli.run_platform_tool("cheese_ask", arguments, host)
     assert calls == []
 
 
-def test_explicit_retry_preserves_group_id_and_payload_without_automatic_replay(
-    platform,
-):
+def test_a_retry_with_the_returned_request_id_sends_the_same_request(platform):
     cli, host, calls, failures = platform
-    arguments = {"questions": [_question()], "ask_group": GROUP}
+    request_id = str(uuid.uuid4())
+    arguments = {"questions": [_question()], "request_id": request_id}
     failures.append(503)
     with pytest.raises(cli.PlatformHTTPError) as failed:
         cli.run_platform_tool("cheese_ask", arguments, host)
     assert failed.value.status == 503
-    assert len(calls) == 1
-    result = cli.run_platform_tool("cheese_ask", arguments, host)
+    cli.run_platform_tool("cheese_ask", arguments, host)
     assert len(calls) == 2
-    assert calls[0][1] == calls[1][1] == arguments
-    assert json.loads(result)["group"]["id"] == GROUP
+    assert calls[0][1] == calls[1][1]
+    assert calls[1][1]["request_id"] == request_id
 
 
-def test_missing_creation_response_is_not_reported_as_a_created_question():
+def test_missing_creation_response_is_not_reported_as_a_question_asked():
     cli = _load()
 
     class EmptyResponse:
