@@ -169,6 +169,7 @@ function onState(resource: string) {
         :conversation-id="threadId"
         hide-header
         show-composer
+        :composer-closed="room.status === 'archived' ? t('work.channel.archivedNotice') : null"
         in-thread
         :members="members"
         :topic-list="topicList"

@@ -74,13 +74,21 @@ def _manage(client, project_id: str, handle: str) -> None:
 
 
 def _archive(client, topic_id: str, by: str = "bob") -> dict:
-    """``by`` archives the channel as someone who manages its project."""
-    _manage(client, _topic(client, topic_id)["project_id"], by)
+    """Put the channel away together with the work still open in it. A person
+    cannot archive a channel that holds open tasks, so the way a channel goes
+    with its work is its project being archived, by the project's owner."""
+    project_id = _topic(client, topic_id)["project_id"]
+    owner = (
+        client.get(f"/projects/{project_id}", headers=session_auth_headers(by))
+        .json()["data"]
+        .get("owner_handle")
+        or by
+    )
     r = client.post(
-        f"/topics/{topic_id}/archive", json={"by": by}, headers=session_auth_headers(by)
+        f"/projects/{project_id}/archive", headers=session_auth_headers(owner)
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    return _topic(client, topic_id)
 
 
 def _make_project(client) -> str:

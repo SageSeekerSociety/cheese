@@ -33,7 +33,7 @@
   "commentDocFrozen": "频道已归档，不能再评论",
   "cursorEventNotFound": "游标事件不存在",
   "stepNotFound": "步骤不存在",
-  "roomArchivedUnarchiveFirst": "频道已归档，请先取消归档再继续工作",
+  "roomArchivedUnarchiveFirst": "频道已归档，取消归档后才能继续",
   "projectRootCannotArchive": "项目本体不能归档",
   "unarchiveWhileSessionStopping": "会话正在停止并保存记录，确认完成后即可取消归档",
   "topicArchivedFrozen": "频道已归档，取消归档后才能把消息转为任务",
@@ -986,5 +986,6 @@
   "taskOwnerNotInProject": "只能转交给项目成员",
   "contributorNotInProject": "只能把项目成员加为协作者",
   "routineOwnerNotInProject": "{handle} 不是项目成员，结果无法通知到",
-  "topicMuteUntilPast": "静音的截止时间必须晚于现在"
+  "topicMuteUntilPast": "静音的截止时间必须晚于现在",
+  "channelArchiveOpenTasks": "频道里还有进行中的任务，先关闭这些任务再归档"
 }

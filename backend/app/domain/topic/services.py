@@ -592,9 +592,11 @@ class TopicService:
     # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
 
     async def archive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
-        """Manually archive a topic (idempotent) — CASCADING: a topic's active
-        subtopics go with it (归档整件事，分身是这件事的一部分；漏下的孤儿分身
-        没有父上下文，毫无意义). The root topic (项目本体) can't be archived."""
+        """A person archives a channel (idempotent): it leaves everyone's
+        sidebar and is read, not spoken in, until someone unarchives it. A
+        channel still holding open tasks is refused: archiving it would close
+        work its owners are still doing, and that is theirs to close or move.
+        综合 is never archived."""
         topic = await self._repo.lock(topic_id)
         if topic is None:
             raise NotFoundError("Topic not found")
@@ -602,6 +604,11 @@ class TopicService:
             raise ValidationError(say("projectRootCannotArchive"))
         if topic.status == TopicStatus.archived:
             return topic
+        if any(
+            task.status == TaskStatus.open
+            for task in await TaskService(self._session).list_in_room(topic.id)
+        ):
+            raise ValidationError(say("channelArchiveOpenTasks"))
         await self._archive_one(topic, by=by)
         await self._archive_children(topic, by=by)
         await self._session.flush()

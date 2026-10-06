@@ -155,6 +155,10 @@ async def send_chat_message(
         # An agent credential whose seat in this room was revoked. The seat is
         # the grant, so it may not go on writing here under a person's rules.
         raise ForbiddenError("An agent must hold a seat in this room to write here")
+    if place.room.status == "archived":
+        # An archived channel is read, not spoken in: its main line, its 支线
+        # and its tasks alike. Unarchiving it is how it is spoken in again.
+        raise ForbiddenError(say("roomArchivedUnarchiveFirst"))
     if place.inner_id is None and not await TopicMemberService(db).may_speak(
         place.room, actor.handle
     ):

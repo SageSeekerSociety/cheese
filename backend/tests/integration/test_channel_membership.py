@@ -164,6 +164,25 @@ def test_only_a_member_speaks_in_the_main_line(client):
     assert _say(client, tid, "bob", "我也说一句").status_code == 200
 
 
+def test_an_archived_channel_is_read_not_spoken_in(client):
+    p = _project(client)
+    tid = _channel(client, p["id"])
+    said = post_message(client, tid, "alice", {"content": "收尾了"})
+    thread = _thread_under(client, said["id"], "alice")
+    assert _say(client, thread, "alice", "支线里也说一句").status_code == 200
+    archived = client.post(
+        f"/topics/{tid}/archive", headers=session_auth_headers("alice")
+    )
+    assert archived.status_code == 200, archived.text
+
+    assert _say(client, tid, "alice", "还能说吗").status_code == 403
+    assert _say(client, thread, "alice", "支线呢").status_code == 403
+    # The history is still there to read.
+    history = client.get(f"/topics/{tid}/blocks", headers=session_auth_headers("bob"))
+    assert history.status_code == 200
+    assert any(b.get("content") == "收尾了" for b in history.json()["data"]["data"])
+
+
 def test_everyone_in_the_project_speaks_in_general(client):
     p = _project(client)
     assert _say(client, p["root_topic_id"], "carol", "大家好").status_code == 200

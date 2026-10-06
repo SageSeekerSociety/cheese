@@ -100,6 +100,8 @@ const emit = defineEmits<ChatPanelEmit>()
 
 // 频道的主线：消息可以有支线。私聊、任务、支线里都没有。
 const mainLine = computed(() => !!props.topic && !props.noUpgrade && !props.conversationId)
+// 已归档的频道只能看：不再开新的支线。
+const threadable = computed(() => mainLine.value && props.topic?.status !== 'archived')
 // 频道说它的支线变了：先把屏幕上那几行换新，再照常往上报（概览里的「支线」那一页也要读）。
 const forward = emit as unknown as (event: string, ...args: unknown[]) => void
 const panelEmit = ((event: string, ...args: unknown[]) => {
@@ -330,7 +332,7 @@ defineExpose({ send, connected, submitQuestion })
         <ChatTimeline
           :topic="topic"
           :no-upgrade="noUpgrade"
-          :threadable="mainLine"
+          :threadable="threadable"
           :replying-for="threadLines.replyingFor"
           :name-of="nameOf"
           :rows="rows"
@@ -422,7 +424,7 @@ defineExpose({ send, connected, submitQuestion })
         :is-agent="!!sheetBlock && isAgentBlock(sheetBlock)"
         :editable="!!sheetBlock && canEdit(sheetBlock)"
         :no-upgrade="noUpgrade"
-        :threadable="mainLine"
+        :threadable="threadable"
         @react="onReact"
         @reply="setReply"
         @thread="emit('open-thread', $event)"

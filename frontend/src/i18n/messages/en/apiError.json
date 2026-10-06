@@ -33,7 +33,7 @@
   "commentDocFrozen": "This channel is archived and takes no more comments",
   "cursorEventNotFound": "That event doesn't exist",
   "stepNotFound": "This step doesn't exist",
-  "roomArchivedUnarchiveFirst": "This channel is archived. Unarchive it before continuing work",
+  "roomArchivedUnarchiveFirst": "This channel is archived. Unarchive it to continue",
   "projectRootCannotArchive": "The project itself can't be archived",
   "unarchiveWhileSessionStopping": "The session is stopping and saving its record. You can unarchive once that's done",
   "topicArchivedFrozen": "This channel is archived. Unarchive it to turn a message into a task",
@@ -986,5 +986,6 @@
   "taskOwnerNotInProject": "A task can only be handed to a project member",
   "contributorNotInProject": "Only project members can be added as collaborators",
   "routineOwnerNotInProject": "{handle} isn't a project member, so the results can't be sent to them",
-  "topicMuteUntilPast": "The end of a mute must be in the future"
+  "topicMuteUntilPast": "The end of a mute must be in the future",
+  "channelArchiveOpenTasks": "This channel still has open tasks. Close them before archiving it"
 }

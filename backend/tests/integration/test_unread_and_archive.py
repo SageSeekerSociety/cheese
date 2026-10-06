@@ -215,13 +215,9 @@ def test_root_topic_cannot_be_archived(client):
     assert r.status_code == 422
 
 
-def test_archive_cascades_to_the_work_in_the_room(client):
-    """归档整件事：putting a room away closes the work still open inside it —
-    a task left running with its room gone has nobody left to report to.
-
-    Room and task end in different words on purpose: a room is `archived`
-    (a person put it away) and a task is `closed` (its work stopped).
-    """
+def test_a_channel_with_open_tasks_is_not_archived(client):
+    """Archiving a channel would stop work its owners are still doing, so a
+    channel with open tasks stays where it is until they are closed."""
     pr = post_project(client, json={"name": "P"}, owner="u")
     pid = pr.json()["data"]["id"]
     t = client.post(
@@ -230,21 +226,15 @@ def test_archive_cascades_to_the_work_in_the_room(client):
         headers=session_auth_headers("u"),
     )
     parent = t.json()["data"]["id"]
-    c1 = open_task(client, parent, "子1", owner="u", reviewer="u")["id"]
-    c2 = open_task(client, parent, "子2", owner="u", reviewer="u")["id"]
+    task = open_task(client, parent, "子1", owner="u", reviewer="u")["id"]
     wait_work_idle()
 
     r = client.post(
         f"/topics/{parent}/archive", json={"by": "u"}, headers=session_auth_headers("u")
     )
-    assert r.status_code == 200
-    assert client.get(f"/topics/{parent}").json()["data"]["status"] == "archived"
-
+    assert r.status_code == 422
+    assert client.get(f"/topics/{parent}").json()["data"]["status"] == "active"
     cards = {
         c["id"]: c for c in client.get(f"/topics/{parent}/tasks").json()["data"]["data"]
     }
-    for tid in (c1, c2):
-        assert cards[tid]["status"] == "closed", tid
-    # The cascaded task records why it went — on its own timeline, so whoever
-    # opens it later sees why the work stopped mid-sentence.
-    assert any("随所在频道" in (b.get("content") or "") for b in cards[c1]["blocks"])
+    assert cards[task]["status"] == "open"
