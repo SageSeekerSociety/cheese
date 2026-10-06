@@ -20,7 +20,7 @@
       </p>
       <div v-for="item in applications" :key="item.id" class="py-3">
         <div class="d-flex flex-wrap align-center ga-2 mb-1">
-          <v-avatar v-if="item.avatarId" size="32" :image="getAvatarUrl(item.avatarId)" />
+          <UserAvatar kind="org" :avatar="getAvatarUrl(item.avatarId)" :name="item.name" size="32" />
           <h3 class="text-body-1 font-weight-medium application-copy" data-user-content>{{ item.name }}</h3>
           <span class="text-body-2 text-medium-emphasis">{{ t(`spaces.review.${item.reviewStatus}`) }}</span>
         </div>
@@ -115,32 +115,13 @@
                 <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4" lg="3" xl="2">
                   <v-card flat rounded="lg" class="space-card elevation-0 border" :to="spaceEntryRoute(space)">
                     <v-card-item>
-                      <!-- 首字母走 text-surface 而不是 text-white：底色是琥珀，深色主题下
-                           它会提亮到 #FFA733，白字只有 1.9:1；surface 在深色下是深墨。 -->
-                      <v-avatar
+                      <UserAvatar
+                        kind="org"
+                        :avatar="getAvatarUrl(space.avatarId)"
+                        :name="space.name"
                         size="60"
-                        :rounded="false"
-                        :style="{ borderRadius: squareRadius(60) }"
-                        color="primary"
                         class="mt-2 mb-4"
-                      >
-                        <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)">
-                          <!-- seed avatars may be invalid; fall back to the initial.
-                               The #error slot fills the v-img, so the char must be a
-                               flex-centered fill or it sits top-left, not centered. -->
-                          <template #error>
-                            <span class="space-avatar-char text-h5 text-surface font-weight-medium" data-user-content>{{
-                              (space.name || '·').trim().charAt(0)
-                            }}</span>
-                          </template>
-                        </v-img>
-                        <span
-                          v-else
-                          class="space-avatar-char text-h5 text-surface font-weight-medium"
-                          data-user-content
-                          >{{ (space.name || '·').trim().charAt(0) }}</span
-                        >
-                      </v-avatar>
+                      />
                       <v-card-title class="text-h6 mb-2" data-user-content>{{ space.name }}</v-card-title>
                       <v-card-subtitle class="text-body-2 text-medium-emphasis" data-user-content>{{
                         space.intro
@@ -236,7 +217,6 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { squareRadius } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 import { usePaging } from '@/utils/paging'
 
@@ -252,6 +232,7 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { AvatarsApi } from '@/network/api/avatars'
@@ -481,15 +462,6 @@ onMounted(async () => {
     transform 0.2s ease;
   height: 100%;
   border: 1px solid transparent;
-}
-
-.space-avatar-char {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  line-height: 1;
 }
 
 .space-card:hover {

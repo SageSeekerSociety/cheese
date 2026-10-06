@@ -16,7 +16,6 @@ function sources(projectCount: number, workspaceProjectId: string | null = null)
   return {
     projects,
     workspaceProjectId,
-    projectAvatar: (name: string) => `avatar:${name}`,
     createProject: () => {},
   }
 }

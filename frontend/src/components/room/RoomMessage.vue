@@ -17,12 +17,12 @@ import { foldHeight, overflowsFold } from '../../lib/chatFold'
 import { fileIcon } from '../../lib/fileKind'
 import { cancelMeasure, observeSize, queueMeasure } from '../../lib/foldMeasure'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
-import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 import MarkdownView from '../common/MarkdownView.vue'
+import UserAvatar from '../common/UserAvatar.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
 import FileBlockMenu from './FileBlockMenu.vue'
@@ -102,7 +102,6 @@ const emit = defineEmits<{
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
-  (e: 'avatar-error', handle: string): void
   (e: 'retry'): void
   (e: 'edit'): void
   (e: 'save-edit', text: string): void
@@ -256,22 +255,11 @@ function renderPlain(text: string): string {
              悬停时每秒闪一下；这个气泡原地换字。 -->
         <v-tooltip v-if="faceLabel" activator="parent" location="top" :text="personLabel" />
         <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" :handle="block.author" :state="face ?? null" />
-        <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
-           底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
-           变的只有色块里的字。 -->
-        <img
-          v-else-if="avatar"
-          class="im-avatar im-avatar--photo"
-          :src="avatar"
-          :alt="authorName"
-          width="28"
-          height="28"
-          decoding="async"
-          @error="emit('avatar-error', block.author)"
-        />
-        <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(block.author) }">
-          {{ avatarInitial(authorName) }}
-        </div>
+        <!-- 真人头像一律交给 UserAvatar：挑过头像就上图，没挑过或图取不到就退成按
+             handle 哈希的彩色首字母 —— 退化只此一处，加载失败也由它记进
+             utils/avatarFailures，这里不再自己画、也不再 emit('avatar-error')。
+             底色的种子用 handle（换成昵称会让每个人的颜色都变），变的只有色块里的字。 -->
+        <UserAvatar v-else :avatar="avatar ?? ''" :name="authorName" :seed="block.author" :size="28" />
       </button>
       <!-- 续话没有名字那一行，时间在悬停时出现在头像列里，和正文第一行对齐。 -->
       <span v-else-if="!outgoing" class="im-gutter-time">{{ time }}</span>

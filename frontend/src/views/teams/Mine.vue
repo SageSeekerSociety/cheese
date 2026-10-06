@@ -45,11 +45,19 @@
                 :title="team.name"
                 :subtitle="team.intro"
                 data-user-content
-                :prepend-avatar="getAvatarUrl(team.avatarId)"
                 :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                 rounded="md"
                 class="my-team-item mb-2"
               >
+                <template #prepend>
+                  <UserAvatar
+                    kind="org"
+                    :avatar="getAvatarUrl(team.avatarId)"
+                    :name="team.name"
+                    size="40"
+                    class="mr-3"
+                  />
+                </template>
                 <template #append>
                   <v-icon icon="mdi-chevron-right" color="on-surface-variant"></v-icon>
                 </template>
@@ -70,6 +78,7 @@ import { onMounted, ref } from 'vue'
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
 

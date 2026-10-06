@@ -45,7 +45,6 @@ export interface NavSources {
   projects: Project[]
   /** 工作区那一格落到哪个项目：当前打开的 → 上次打开的 → 第一个。 */
   workspaceProjectId: string | null
-  projectAvatar: (name: string) => string
   createProject: () => void
   /** 待我处理的件数；还没读到是 0。桌面首页那一格和手机底栏「待办」都画它。 */
   awaitingCount?: number
@@ -134,7 +133,6 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
           // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
           // 会盖掉链接本来算出的激活态。
           match: (path: string) => path === `/projects/${p.id}` || path.startsWith(`/projects/${p.id}/`),
-          img: src.projectAvatar(p.name),
           menu: src.projectMenu?.(p),
           ...projectMarks(src, p.id),
         }

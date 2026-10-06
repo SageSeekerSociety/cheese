@@ -23,6 +23,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
@@ -298,19 +299,19 @@ const joinOpen = ref(false)
             <v-icon size="16" class="home-nav__caret">{{
               isOpen(team) ? 'mdi-chevron-down' : 'mdi-chevron-right'
             }}</v-icon>
-            <v-avatar
+            <!-- 团队头像走 UserAvatar：挑过就画那张，没挑过 / 取不到就画彩色首字母，失败
+                 记忆也归它一处管。形状照 GitHub——本人那一行是圆的（person），团队是圆角
+                 方块（org），由 UserAvatar 的 kind 决定，这里不再自己写 border-radius。
+                 getAvatarUrl(null) 回空串（不是 /avatars/default），所以没图的团队不会去
+                 打一个注定 404 的请求。 -->
+            <UserAvatar
               size="22"
               class="home-nav__mark"
-              :class="{ 'home-nav__mark--person': team.personal }"
-              data-user-content
-            >
-              <!-- avatarId 为空时不发请求：getAvatarUrl(null) 回的是 /avatars/default，
-                 后端在默认头像缺文件时按设计回 404，会把控制台刷出一条错误。 -->
-              <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)">
-                <template #error>{{ team.name.slice(0, 1) }}</template>
-              </v-img>
-              <template v-else>{{ team.name.slice(0, 1) }}</template>
-            </v-avatar>
+              :avatar="getAvatarUrl(team.avatarId)"
+              :name="team.name"
+              :seed="team.handle"
+              :kind="team.personal ? 'person' : 'org'"
+            />
           </template>
           <v-list-item-title class="home-nav__name" data-user-content>{{ team.name }}</v-list-item-title>
           <template #append>
@@ -359,9 +360,9 @@ const joinOpen = ref(false)
     <v-list-subheader>{{ t('navigation.spaces') }}</v-list-subheader>
     <v-list-item v-for="space in spaces" :key="space.id" rounded="lg" :to="spaceEntryRoute(space)">
       <template #prepend>
-        <span class="home-nav__mark home-nav__mark--letter" aria-hidden="true" data-user-content>{{
-          space.name.slice(0, 1)
-        }}</span>
+        <!-- 空间头像也走 UserAvatar（org = 圆角方块）：它只拿到 id 和名字，没有头像图，
+             所以画的是按 id 派生的彩色首字母，和团队、人的那几格同一套形状规则。 -->
+        <UserAvatar size="22" class="home-nav__mark" :name="space.name" :seed="String(space.id)" kind="org" />
       </template>
       <v-list-item-title class="home-nav__name" data-user-content>{{ space.name }}</v-list-item-title>
       <template #append>
@@ -417,43 +418,17 @@ const joinOpen = ref(false)
   width: 22px;
 }
 
+/* 头像（团队 / 空间那几格）现在整支交给 UserAvatar：底色、首字母字色、圆形 / 圆角方块，
+   都在它里面一处定，这里只留布局上的 `flex: none`。以前这里自己写 border-radius、
+   font-size、background 复刻一份，还带一个 `--person` 圆/方的分支，和 UserAvatar 的
+   规则一旦漂移就会两处不一致。 */
 .home-nav__mark {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  background: var(--fill-2);
-
-  /* 形状照 GitHub：人是圆的，团队、空间是圆角方块。 */
-  border-radius: var(--radius-md) !important;
   flex: none;
-}
-
-/* 头像读不到（没传过、或头像服务不在）时退回首字，和空间那一格同一个样子。 */
-
-/* 自己名下那一行是本人：用人的圆形。 */
-.home-nav__mark--person {
-  border-radius: var(--radius-pill) !important;
-}
-
-.home-nav__mark :deep(.v-img__error) {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
 }
 
 .home-nav__more {
   width: 24px;
   height: 24px;
-}
-
-.home-nav__mark--letter {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-md);
 }
 
 .home-nav__caret {

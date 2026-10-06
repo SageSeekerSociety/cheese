@@ -39,6 +39,7 @@ export function peopleItems(pool: MentionPoolEntry[], query: string): RefItem[] 
     agent: p.agent,
     external: !!p.external,
     handle: p.handle,
+    avatar: p.avatar,
     token: `<@${p.handle}>`,
   }))
 }

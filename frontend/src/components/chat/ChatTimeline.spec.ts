@@ -71,7 +71,7 @@ function mount(overrides: Record<string, unknown> = {}) {
       isAgentBlock,
       isMine: () => true,
       isExternal: () => false,
-      avatarSrc: () => null,
+      avatarOf: () => null,
       displayName: (m: Block) => m.author,
       noticeAgent: () => null,
       parentOf: () => undefined,

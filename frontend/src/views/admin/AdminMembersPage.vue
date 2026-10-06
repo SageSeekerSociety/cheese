@@ -114,9 +114,9 @@ interface AddedRowView extends RowView {
   createdAt: string
 }
 
-/** 头像 URL。`avatar_id` 为 null 时给**空串**而不是 `getAvatarUrl(null)`：后者回的是
- *  `/avatars/default`，也就是所有没挑过头像的人共用同一张脸 —— 那比按 handle 派生的
- *  彩色首字母更难把人分辨开，而分辨人正是头像唯一的活（`UserAvatar` 的约定）。 */
+/** 头像 URL。`avatar_id` 为 null 时给**空串**：空串就是「没有图」，`UserAvatar` 会画
+ *  按 handle 派生的彩色首字母。给一张所有人的共用默认脸，等于这一列分不出谁是谁，
+ *  而分辨人正是头像唯一的活（`UserAvatar` 的约定）。 */
 function avatarUrl(avatarId: number | null): string {
   return avatarId == null ? '' : getAvatarUrl(avatarId)
 }

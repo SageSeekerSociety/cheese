@@ -89,6 +89,8 @@ def _make_service(
     answer_repo = answer_repo or AsyncMock()
     profile_repo = profile_repo or AsyncMock()
     profile_repo.get_profiles_by_user_ids.return_value = {}
+    # 作者头像按 chosen 判据取（契约 §3.14）：默认没人挑过，dto 的 avatarId 就是 None。
+    profile_repo.chosen_avatar_ids.return_value = {}
     # get_question now calls repo.count_views; default it so tests that don't
     # care about view tracking still pass.
     repo.count_views.return_value = 0
@@ -192,8 +194,14 @@ class TestInvitationToDto:
 class TestProfileToUser:
     def test_non_none_profile(self):
         p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
-        result = _profile_to_user(p)
+        # avatarId 走 chosen 判据，由调用方查过再传进来（契约 §3.14）。
+        result = _profile_to_user(p, chosen_avatar_id=7)
         assert result == {"id": 3, "nickname": "bob", "avatarId": 7, "intro": "hey"}
+
+    def test_unchosen_avatar_is_null(self):
+        p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
+        # 没传 chosen（= 没挑过）时回 None，不把档案里那张全局默认照原样吐出来。
+        assert _profile_to_user(p)["avatarId"] is None
 
     def test_none_profile(self):
         assert _profile_to_user(None) is None
@@ -334,6 +342,8 @@ class TestGetQuestion:
         repo.get_by_id.return_value = q
         topic_repo.get_topics_for_question.return_value = [{"id": 1, "name": "Python"}]
         profile_repo.get_profile_by_user_id.return_value = _profile()
+        # 作者挑过第 5 张，dto 的 avatarId 才该是 5（契约 §3.14：看挑没挑过）。
+        profile_repo.chosen_avatar_ids.return_value = {50: 5}
         repo.count_followers.return_value = 5
         repo.is_following.return_value = True
         repo.count_votes.return_value = {"POSITIVE": 3, "NEGATIVE": 1}

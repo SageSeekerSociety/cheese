@@ -36,6 +36,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.avatars.models import Avatar
 from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import (
     DeliveryEvent,
@@ -317,20 +318,28 @@ class SpaceAnnouncementService:
         if ids:
             result = await self._session.execute(
                 select(
-                    User.id, User.username, UserProfile.nickname, UserProfile.avatar_id
+                    User.id,
+                    User.username,
+                    UserProfile.nickname,
+                    UserProfile.avatar_id,
+                    Avatar.avatar_type,
                 )
                 .outerjoin(
                     UserProfile,
                     (UserProfile.user_id == User.id) & UserProfile.deleted_at.is_(None),
                 )
+                # 判据和 user / team / project 三处逐字一致：只有挂在非 ``default``
+                # 那张脸上才算「挑过」。没挑过回 None，前端才退成首字母底色，而不是
+                # 把全站默认那张脸当成这个人的头像发出去。
+                .outerjoin(Avatar, Avatar.id == UserProfile.avatar_id)
                 .where(User.id.in_(ids))
             )
-            for user_id, username, nickname, avatar_id in result.all():
+            for user_id, username, nickname, avatar_id, avatar_type in result.all():
                 authors[user_id] = Author(
                     id=user_id,
                     username=username,
                     nickname=nickname or username,
-                    avatar_id=avatar_id,
+                    avatar_id=None if avatar_type in (None, "default") else avatar_id,
                 )
         return [
             AnnouncementView(

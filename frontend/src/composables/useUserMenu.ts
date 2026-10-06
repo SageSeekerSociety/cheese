@@ -1,7 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { avatarColor, avatarInitial } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from './useChosenAvatar'
@@ -30,12 +29,11 @@ export function useUserMenu() {
   const nickname = computed(() => AccountService._user.value?.nickname ?? '')
   const intro = computed(() => AccountService._user.value?.intro ?? '')
 
-  // Default-avatar fallback: colored initial derived from the user's identity.
-  // Seed on nickname, falling back to the user id so the color is still stable
-  // when the nickname is empty.
-  const avatarSeed = computed(() => nickname.value || String(AccountService._user.value?.id ?? ''))
-  const avatarInitialRef = computed(() => avatarInitial(avatarSeed.value))
-  const avatarColorRef = computed(() => avatarColor(avatarSeed.value))
+  // 这里**不再**导出 avatarInitial / avatarColor 那套兜底：彩色首字母只由 UserAvatar
+  // 一处画（契约 §3.14），它自己按 `seed` 取色、按 `name` 取首字母。给用户的颜色种子
+  // 用 handle（username），不是昵称——改个昵称不该换一身颜色，而且同一个人在左栏、右
+  // 上菜单卡、顶栏三处得是同一个色。调用方把 `avatar` 和 `currentUser.username` 一起
+  // 交给 UserAvatar 即可。
 
   // 头像要判「这是不是那张全局默认图」，而那一行的 id 因环境而异，得问后端。
   // 那个接口要登录，所以等登录了再问（已登录的话 immediate 当场就问）。
@@ -59,8 +57,6 @@ export function useUserMenu() {
     loggedIn,
     currentUser,
     avatar,
-    avatarInitial: avatarInitialRef,
-    avatarColor: avatarColorRef,
     nickname,
     intro,
 

@@ -62,13 +62,17 @@ class AnswersService:
             limit=page_size,
             cursor_id=page_start if page_start else (all_ids[0] if all_ids else None),
         )
-        profiles = await self._profile_repo.get_profiles_by_user_ids(
-            list({row.created_by_id for row in rows})
-        )
+        author_ids = list({row.created_by_id for row in rows})
+        profiles = await self._profile_repo.get_profiles_by_user_ids(author_ids)
+        # 一次问清这批人各自挑没挑过头像，别一个个查。
+        chosen = await self._profile_repo.chosen_avatar_ids(author_ids)
         items: list[dict] = []
         for row in rows:
             dto = _answer_to_dto(
-                row, author=_profile_to_dto(profiles.get(row.created_by_id))
+                row,
+                author=_profile_to_dto(
+                    profiles.get(row.created_by_id), chosen.get(row.created_by_id)
+                ),
             )
             await self._attach_answer_stats(dto, answer_id=row.id, viewer_id=viewer_id)
             items.append(dto)
@@ -143,7 +147,10 @@ class AnswersService:
             content=content,
         )
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
-        return _answer_to_dto(answer, author=_profile_to_dto(profile))
+        chosen = await self._profile_repo.chosen_avatar_ids([user_id])
+        return _answer_to_dto(
+            answer, author=_profile_to_dto(profile, chosen.get(user_id))
+        )
 
     async def _ensure_question_exists(self, question_id: int) -> None:
         question = await self._question_repo.get_by_id(question_id)
@@ -221,7 +228,11 @@ class AnswersService:
     ) -> tuple[dict, dict | None]:
         answer = await self._ensure_answer_exists(answer_id)
         profile = await self._profile_repo.get_profile_by_user_id(answer.created_by_id)
-        dto = _answer_to_dto(answer, author=_profile_to_dto(profile))
+        chosen = await self._profile_repo.chosen_avatar_ids([answer.created_by_id])
+        dto = _answer_to_dto(
+            answer,
+            author=_profile_to_dto(profile, chosen.get(answer.created_by_id)),
+        )
         await self._attach_answer_stats(dto, answer_id=answer_id, viewer_id=user_id)
 
         question = await self._question_repo.get_by_id(answer.question_id)
@@ -229,6 +240,9 @@ class AnswersService:
         if question:
             author_profile = await self._profile_repo.get_profile_by_user_id(
                 question.created_by_id
+            )
+            author_chosen = await self._profile_repo.chosen_avatar_ids(
+                [question.created_by_id]
             )
             created_at_ms = (
                 int(question.created_at.timestamp() * 1000)
@@ -249,7 +263,9 @@ class AnswersService:
                 "bounty": question.bounty,
                 "acceptedAnswerId": question.accepted_answer_id,
                 "createdBy": question.created_by_id,
-                "author": _profile_to_dto(author_profile),
+                "author": _profile_to_dto(
+                    author_profile, author_chosen.get(question.created_by_id)
+                ),
                 "createdAt": created_at_ms,
                 "updatedAt": updated_at_ms,
             }
@@ -265,7 +281,10 @@ class AnswersService:
             raise BadRequestError("content cannot be empty")
         updated = await self._repo.update_answer(answer, content=content)
         profile = await self._profile_repo.get_profile_by_user_id(updated.created_by_id)
-        return _answer_to_dto(updated, author=_profile_to_dto(profile))
+        chosen = await self._profile_repo.chosen_avatar_ids([updated.created_by_id])
+        return _answer_to_dto(
+            updated, author=_profile_to_dto(profile, chosen.get(updated.created_by_id))
+        )
 
     async def delete_answer(self, *, answer_id: int, user_id: int) -> None:
         answer = await self._ensure_answer_exists(answer_id)
@@ -288,12 +307,17 @@ class AnswersService:
         return {"favoriteCount": count, "isFavorited": False}
 
 
-def _profile_to_dto(profile) -> dict | None:
+def _profile_to_dto(profile, chosen_avatar_id: int | None = None) -> dict | None:
+    """把档案拼成作者 dto。``chosen_avatar_id`` 由调用方从
+    ``UserProfileRepository.chosen_avatar_ids`` 取：档案上的 ``avatar_id`` 含注册时
+    写死的全局默认头像，直接回它会让所有没挑过的人共用同一张脸（契约 §3.14）。
+    没挑过就是 ``None``，前端画彩色首字母。
+    """
     if profile is None:
         return None
     return {
         "id": profile.user_id,
         "nickname": profile.nickname,
-        "avatarId": profile.avatar_id,
+        "avatarId": chosen_avatar_id,
         "intro": profile.intro,
     }

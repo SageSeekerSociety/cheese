@@ -6,6 +6,8 @@ import type { RoomTask } from '@/cx_types'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { getAvatarUrl } from '@/utils/materials'
+
 import { newTask } from '@/commands/topicActions'
 import { memberName } from '@/lib/agentNames'
 import { readProjectTasks } from '@/lib/projectTasks'
@@ -22,6 +24,8 @@ const store = useWorkspaceStore()
 
 const tasks = ref<RoomTask[]>([])
 const names = ref<Record<string, string>>({})
+// handle → 头像图。和 names 同一份名册来的：画面那头只按 handle 查，不碰名册本身。
+const avatars = ref<Record<string, string>>({})
 const loading = ref(true)
 const failed = ref(false)
 
@@ -41,6 +45,8 @@ async function loadNames() {
   try {
     const rows = (await fetchTopicMembers(props.topicId)).data
     names.value = Object.fromEntries(rows.map((m) => [m.member_handle, memberName(m) || m.member_handle]))
+    // 没挑过头像（avatar_id 是 null）时 getAvatarUrl 给空串，交给 UserAvatar 画首字母。
+    avatars.value = Object.fromEntries(rows.map((m) => [m.member_handle, getAvatarUrl(m.avatar_id)]))
   } catch {
     // 名字取不到就显示 handle。
   }
@@ -77,6 +83,7 @@ function create() {
     :channel-title="channel ? topicTitle(channel) : null"
     :tasks="tasks"
     :names="names"
+    :avatars="avatars"
     :me="myHandle()"
     :loading="loading"
     :failed="failed"

@@ -122,10 +122,13 @@ class GroupsService:
             role="OWNER",
         )
         user_profile = await self._user_profile_repo.get_profile_by_user_id(user_id)
+        # 所有者头像走 chosen 判据（契约 §3.14）：档案里的 avatar_id 含注册时写死的
+        # 全局默认，直接回它会让没挑过的人共用同一张脸，没挑过回 None。
+        chosen = await self._user_profile_repo.chosen_avatar_ids([user_id])
         owner_dto: dict = {"id": user_id}
         if user_profile:
             owner_dto["nickname"] = user_profile.nickname
-            owner_dto["avatarId"] = user_profile.avatar_id
+            owner_dto["avatarId"] = chosen.get(user_id)
         return _group_to_dto(
             group,
             profile,
@@ -214,9 +217,11 @@ class GroupsService:
             return None
         owner_dto: dict = {"id": owner_id}
         owner_profile = await self._user_profile_repo.get_profile_by_user_id(owner_id)
+        # 同 create_group：头像走 chosen 判据（契约 §3.14），没挑过回 None。
+        chosen = await self._user_profile_repo.chosen_avatar_ids([owner_id])
         if owner_profile:
             owner_dto["nickname"] = owner_profile.nickname
-            owner_dto["avatarId"] = owner_profile.avatar_id
+            owner_dto["avatarId"] = chosen.get(owner_id)
         return owner_dto
 
     async def list_members(
@@ -248,6 +253,8 @@ class GroupsService:
         profiles = await self._user_profile_repo.get_profiles_by_user_ids(
             list(member_ids)
         )
+        # 一次问清这批成员各自挑没挑过头像（契约 §3.14），没挑过回 None。
+        chosen_by_id = await self._user_profile_repo.chosen_avatar_ids(list(member_ids))
 
         members = []
         for m in memberships:
@@ -255,7 +262,7 @@ class GroupsService:
             dto = {
                 "id": m.member_id,
                 "nickname": profile.nickname if profile else "",
-                "avatarId": profile.avatar_id if profile else None,
+                "avatarId": chosen_by_id.get(m.member_id) if profile else None,
                 "intro": profile.intro if profile else "",
                 "role": m.role,
             }

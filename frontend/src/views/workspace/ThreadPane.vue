@@ -12,13 +12,15 @@ import type { Thread } from '@/types/threads'
 
 import { computed, ref, toRef, watch } from 'vue'
 
-import { avatarColor, avatarInitial } from '@/utils/avatar'
+import { getAvatarUrl } from '@/utils/materials'
 
 import { ApiError } from '@/api'
 import { getThread } from '@/api/threads'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import TaskProposalCard from '@/components/room/TaskProposalCard.vue'
 import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
@@ -96,6 +98,11 @@ const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} 
 function nameOf(handle: string): string {
   return props.memberNames[handle] || handle
 }
+// 这个人的头像图：从成员名册查他挑过的素材 id。名册上没有他、或者他从没挑过
+// （avatar_id 是 null）都给空串，让 UserAvatar 画彩色首字母——别再退回全站默认脸。
+function avatarOf(handle: string): string {
+  return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
+}
 const subtitle = computed(() => {
   const head = `#${topicTitle(props.room)}`
   return root.value
@@ -160,9 +167,23 @@ function onState(resource: string) {
     <p v-if="error" class="thread-pane__error t-meta" role="alert">{{ error }}</p>
     <template v-else>
       <article v-if="root" v-show="!processTurn" class="thread-root">
-        <span class="thread-root__avatar" :style="{ backgroundColor: avatarColor(root.author) }">{{
-          avatarInitial(nameOf(root.author))
-        }}</span>
+        <!-- 队友一律 CheeseAvatar（和消息行同一套标记）；人走 UserAvatar：挑过头像的显示
+             头像，没挑过就按 handle 取色画首字母（颜色跟 handle，不跟昵称）。 -->
+        <CheeseAvatar
+          v-if="isAgentBlock(root)"
+          class="thread-root__avatar"
+          :size="28"
+          :name="nameOf(root.author)"
+          :handle="root.author"
+        />
+        <UserAvatar
+          v-else
+          class="thread-root__avatar"
+          :size="28"
+          :name="nameOf(root.author)"
+          :avatar="avatarOf(root.author)"
+          :seed="root.author"
+        />
         <div class="thread-root__body">
           <div class="thread-root__head">
             <span class="thread-root__name">{{ nameOf(root.author) }}</span>
@@ -282,16 +303,6 @@ function onState(resource: string) {
 }
 .thread-root__avatar {
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-pill);
-  /* stylelint-disable-next-line color-no-hex -- 压在 avatarColor() 算出来的底色上，底色不随主题变。 */
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
 }
 .thread-root__body {
   min-width: 0;

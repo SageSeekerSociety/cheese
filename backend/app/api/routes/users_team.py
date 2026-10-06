@@ -155,10 +155,16 @@ async def list_my_team_requests(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, teams_map = await load_application_maps(db, apps)
+    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
+        db, apps
+    )
     items = [
         application_to_api_model(
-            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+            app,
+            users_map=users_map,
+            profiles_map=profiles_map,
+            avatars_map=avatars_map,
+            teams_map=teams_map,
         )
         for app in apps
     ]
@@ -191,10 +197,16 @@ async def list_my_team_invitations(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, teams_map = await load_application_maps(db, apps)
+    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
+        db, apps
+    )
     items = [
         application_to_api_model(
-            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+            app,
+            users_map=users_map,
+            profiles_map=profiles_map,
+            avatars_map=avatars_map,
+            teams_map=teams_map,
         )
         for app in apps
     ]

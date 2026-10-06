@@ -160,6 +160,11 @@ class UserRealNameService:
         )
         accessor_ids: Sequence[int] = [row.accessor_id for row in rows]
         profiles = await self._profile_repo.get_profiles_by_user_ids(accessor_ids)
+        # 头像走「挑过的」判据，别回档案上的 avatar_id：每个注册路径都往那一列写死了
+        # 全局默认（见 UserProfileRepository.chosen_avatar_ids），直接回它会让所有没
+        # 挑过头像的人共用同一张脸。没挑过的人不在映射里，回 None，画头像的地方据此
+        # 画彩色首字母。
+        chosen_avatars = await self._profile_repo.chosen_avatar_ids(accessor_ids)
 
         accessor_users: dict[int, User] = {}
         for uid in accessor_ids:
@@ -190,7 +195,7 @@ class UserRealNameService:
                 "id": user.id,
                 "username": user.username,
                 "nickname": profile.nickname,
-                "avatarId": profile.avatar_id,
+                "avatarId": chosen_avatars.get(log.accessor_id),
                 "intro": profile.intro,
             }
             aware = (

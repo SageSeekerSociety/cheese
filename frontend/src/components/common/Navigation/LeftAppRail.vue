@@ -51,14 +51,14 @@
         transition="scale-transition"
       >
         <template #activator="{ props }">
-          <v-avatar
-            class="cursor-pointer mb-4"
-            size="32"
-            rounded="circle"
-            :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
-            v-bind="props"
-            @pointerenter="rememberAvatar"
-          >
+          <!-- 头像走 UserAvatar 一支：挑过就画那张，没挑过 / 取不到就画按 handle 派生的
+               彩色首字母，失败记忆归 utils/avatarFailures 一处管。以前这里自己拼了一份
+               `v-avatar` + `rail-avatar-char`，和右侧菜单卡、顶栏各画一份，同一个人在
+               三处会画出三种样子。 -->
+          <!-- 这一层 div 只是给菜单和 tooltip 当锚点：UserAvatar 的根是它自己的
+               `v-avatar`，没有再开插槽，tooltip 塞不进去，所以拿这层当 `activator`。
+               类名 rail-avatar 留给 tooltip 的指针测试定位。 -->
+          <div class="cursor-pointer mb-4 rail-avatar" v-bind="props" @pointerenter="rememberAvatar">
             <!-- 组件写法而不是 v-tooltip 指令：指令没有开关，浮层开出去就收不回来。 -->
             <v-tooltip
               v-model="avatarTipOpen"
@@ -67,17 +67,13 @@
               :text="userMenu.nickname.value"
               :disabled="userMenu.menuOpen.value"
             />
-            <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
-              <!-- avatar service (localhost:8081) may be down in the merged demo:
-                 fall back to a colored initial instead of a broken white tile -->
-              <template #error>
-                <span class="rail-avatar-char" :style="{ backgroundColor: userMenu.avatarColor.value }">{{
-                  userMenu.avatarInitial.value
-                }}</span>
-              </template>
-            </v-img>
-            <span v-else class="rail-avatar-char">{{ userMenu.avatarInitial.value }}</span>
-          </v-avatar>
+            <UserAvatar
+              :avatar="userMenu.avatar.value ?? ''"
+              :name="userMenu.nickname.value"
+              :seed="userMenu.currentUser.value?.username"
+              :size="32"
+            />
+          </div>
         </template>
 
         <UserMenuCard :menu="userMenu" />
@@ -115,6 +111,7 @@ import { NavBarProps, NavGenericItem } from './types'
 import UserMenuCard from './UserMenuCard.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { type DropEdge, dropTargetAt } from '@/lib/projectOrder'
 
@@ -267,26 +264,7 @@ useEventListener(
   }
 }
 
-/* Colored-initial fallback for the default user avatar (no uploaded image). */
-.rail-avatar-char {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  line-height: 1;
-  // Deliberately a literal, and one of the few that is CORRECT in both themes:
-  // the background here is not a theme token but the `#rrggbb` that
-  // `avatarColor()` computes — a fixed PERCEPTUAL lightness (OKLCH L = 0.54 /
-  // C = 0.12), identical in light and dark. This is "on-avatar" ink, so it must
-  // not follow --v-theme-on-surface (that would turn it near-black on light and
-  // pale-grey on dark, over the same colour). Do not "fix" it to a token.
-  // The contrast caveat this comment used to carry is gone: the old
-  // hsl(h, 55%, 55%) formula dropped to ~1.7:1 on yellow/green hues, while the
-  // OKLCH one lands every hue between 4.75:1 and 5.43:1 against this white —
-  // asserted hue-by-hue in src/utils/avatar.spec.ts.
-  color: #fff;
-  font-weight: 600;
-  font-size: 14px;
-}
+/* `.rail-avatar-char` 那份自画的彩色首字母没了：现在整支交给 UserAvatar，尺寸/字色那
+   几条规则（连同压在 avatarColor() 底色上的 #fff）跟着住在 UserAvatar 里，不再在这里
+   复刻一份，省得两处漂移。 */
 </style>

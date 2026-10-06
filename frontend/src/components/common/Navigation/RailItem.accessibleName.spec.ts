@@ -1,9 +1,9 @@
 // 左侧项目栏的每个格子必须有「可访问名称」。
 //
 // 线上抓到的现象：`document.querySelectorAll('a[href^="/project/"]')` 出来的链接
-// 全是 title=null / aria-label=null / innerText=""。项目格子渲染的是首字方块
-// （projectAvatar(p.name)），12 个项目里有 4 个方块都是「机」——读屏读不出来，
-// 用户也只能一个个点开试。
+// 全是 title=null / aria-label=null / innerText=""。项目格子渲染的是一个首字母
+// 方块（没挑过头像时 UserAvatar 画的那个），12 个项目里有 4 个方块都是「机」——
+// 读屏读不出来，用户也只能一个个点开试。
 //
 // App.vue 早就把 `title: p.name` 放进 rail item 了，漏的是渲染层没把它落到 <a>
 // 上。所以这里测的是「渲染层有没有把 title 落成可访问名称」，不是数据构造。
@@ -58,15 +58,18 @@ describe('RailItem 的可访问名称', () => {
       key: 'cx-1',
       type: 'item',
       title: '知是 2.0 融合演示',
+      projectId: 'p1',
       to: '/project/p1',
-      img: 'data:image/svg+xml,<svg/>',
+      // 没挑过头像 → 格子退成首字母方块（img 是空串，不是一张真头像）。
+      img: '',
       shortcut: 2,
     })
 
     const link = container.querySelector('a[href^="/project/"]') as HTMLAnchorElement | null
     expect(link).not.toBeNull()
-    // 这一格没有任何可见文字，可访问名称只能来自 aria-label——线上就是它为 null。
-    expect(link!.textContent?.trim()).toBe('')
+    // 方格里那一格首字母对读屏隐身（UserAvatar 默认 aria-hidden），链接本身没有可读
+    // 文字——可访问名称只能来自 aria-label，线上就是它为 null。
+    expect(link!.querySelector('.user-avatar-char')?.textContent?.trim()).toBe('知')
     expect(link!.getAttribute('aria-label')).toBe('知是 2.0 融合演示')
   })
 

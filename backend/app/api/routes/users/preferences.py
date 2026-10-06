@@ -114,6 +114,14 @@ async def get_user_favorite_answers(
         user_id=user_id, limit=page_size, offset=offset
     )
 
+    # 头像只给这位作者**自己挑过**的那张：``profile.avatar_id`` 是原始值，注册时人人
+    # 被写上全局默认那一行，直接回它会让所有没挑过的人共用一张脸。判据只有一处
+    # （``UserProfileRepository.chosen_avatar_ids``），没挑过的人不在映射里，回 null，
+    # 由前端的 UserAvatar 画彩色首字母。
+    chosen_ids = await profile_repo.chosen_avatar_ids(
+        [row.created_by_id for row in rows if row.created_by_id is not None]
+    )
+
     answers = []
     for row in rows:
         created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
@@ -124,7 +132,7 @@ async def get_user_favorite_answers(
             sender = {
                 "id": profile.user_id,
                 "nickname": profile.nickname,
-                "avatarId": profile.avatar_id,
+                "avatarId": chosen_ids.get(profile.user_id),
                 "intro": profile.intro,
             }
         dto = {
@@ -230,6 +238,12 @@ async def list_users(
                 filtered_profiles.append(profile)
         profiles = filtered_profiles
 
+    # 这一列头像和名册同一条契约：只给本人**自己挑过**的那张，没挑过回 null。判据只有
+    # 一处（``UserProfileRepository.chosen_avatar_ids``）。``build_user_dto`` 回的是原始
+    # ``profile.avatar_id``（那是登录者自己的记录，前端靠 ``isChosenAvatar`` 判），
+    # 列表这里按名册的规矩把全局默认那一张判掉，否则一列人共用同一张脸。
+    chosen_ids = await profile_repo.chosen_avatar_ids([p.user_id for p in profiles])
+
     users = []
     for profile in profiles:
         user = await user_repo.get_by_id(profile.user_id)
@@ -239,6 +253,7 @@ async def list_users(
                 profile=profile,
                 viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
             )
+            dto["avatarId"] = chosen_ids.get(user.id)
             users.append(dto)
 
     returned = len(users)

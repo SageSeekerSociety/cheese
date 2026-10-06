@@ -265,7 +265,6 @@ const {
   onReact,
   setReply,
   downloadAttachment,
-  onAvatarError,
   isAgentBlock,
   AUTHOR,
 } = panel
@@ -389,7 +388,7 @@ defineExpose({ send, connected, submitQuestion })
           :is-agent-block="isAgentBlock"
           :is-mine="isMine"
           :is-external="isExternal"
-          :avatar-src="avatarSrc"
+          :avatar-of="avatarSrc"
           :display-name="displayName"
           :notice-agent="noticeAgent"
           :agent-faces="agentFaces"
@@ -423,7 +422,6 @@ defineExpose({ send, connected, submitQuestion })
           @checklist="changeChecklist"
           @download="downloadAttachment"
           @jump="openAt"
-          @avatar-error="onAvatarError"
           @save-edit="saveEdit"
           @cancel-edit="editingId = null"
           @retry="retryNow"

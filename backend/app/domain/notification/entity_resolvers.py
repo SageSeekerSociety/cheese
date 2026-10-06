@@ -49,6 +49,12 @@ class TeamEntityResolver:
             return {}
 
         teams_by_id = await self._team_service.get_teams_by_ids(numeric_ids)
+        # 只有**自己挑过**头像的团队才有脸可发。不能看 team.avatar_id：新建团队默认
+        # 写死 1（`CreateTeamRequest`），而那一行是全站默认头像，于是「有 avatar_id」
+        # 的团队全部回同一张脸。这和 UserEntityResolver（走 chosen_avatar_ids）是同一条
+        # 判据，团队这边由 `TeamService.chosen_avatar_ids` 提供。不在映射里 = 没脸，
+        # 客户端画彩色首字母。
+        chosen_avatars = await self._team_service.chosen_avatar_ids(numeric_ids)
 
         result: dict[str, ResolvedEntityInfoDTO | None] = {}
         for raw_id in id_strs:
@@ -58,9 +64,12 @@ class TeamEntityResolver:
                 result[raw_id] = None
                 continue
 
-            avatar_url = None
-            if getattr(team, "avatar_id", None) is not None:
-                avatar_url = f"{self._avatar_base_url}/avatars/{team.avatar_id}"
+            chosen_avatar_id = chosen_avatars.get(tid)
+            avatar_url = (
+                f"{self._avatar_base_url}/avatars/{chosen_avatar_id}"
+                if chosen_avatar_id is not None
+                else None
+            )
 
             result[raw_id] = ResolvedEntityInfoDTO(
                 id=str(team.id),
@@ -134,6 +143,12 @@ class UserEntityResolver:
 
         profiles_by_user_id = await self._user_service.get_users_by_ids(numeric_ids)
         handles_by_user_id = await self._user_service.get_handles_by_ids(numeric_ids)
+        # Only a person who picked an avatar has a face to send. The profile's
+        # `avatar_id` is not it: every registration path writes the global default
+        # there, so reading it would put one shared face on everyone who never
+        # picked one — and when it is None it built `/avatars/None`, a URL that
+        # 404s. Absent from this map = no URL, and the client draws the initial.
+        chosen_avatars = await self._user_service.chosen_avatar_ids(numeric_ids)
 
         result: dict[str, ResolvedEntityInfoDTO | None] = {}
         for raw_id in id_strs:
@@ -143,7 +158,12 @@ class UserEntityResolver:
                 result[raw_id] = None
                 continue
 
-            avatar_url = f"{self._avatar_base_url}/avatars/{profile.avatar_id}"
+            chosen_avatar_id = chosen_avatars.get(uid)
+            avatar_url = (
+                f"{self._avatar_base_url}/avatars/{chosen_avatar_id}"
+                if chosen_avatar_id is not None
+                else None
+            )
 
             result[raw_id] = ResolvedEntityInfoDTO(
                 id=str(uid),

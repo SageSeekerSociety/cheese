@@ -30,6 +30,8 @@ const props = defineProps<{
   agentName: string
   mentionNames: Record<string, string>
   nameOf: (handle: string) => string
+  /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
+  avatarOf?: (handle: string) => string
   /** 能写（话题没归档）。 */
   writable: boolean
   /** 看没解决的，还是已解决的。 */
@@ -209,6 +211,7 @@ defineExpose({ open, locate })
         :agent-name="agentName"
         :mention-names="mentionNames"
         :name-of="nameOf"
+        :avatar-of="avatarOf"
         :writable="writable"
         :draft-key="`cheese.doc-thread.draft.v1:${author}:${topicId}:${thread.comment.id}`"
         @select="select(thread.comment.id)"

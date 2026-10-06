@@ -23,9 +23,13 @@ from app.domain.notification.entity_resolvers import (
 
 
 class TestTeamEntityResolver:
-    def _make_resolver(self, teams_by_id=None):
+    def _make_resolver(self, teams_by_id=None, chosen_avatars=None):
         team_service = AsyncMock()
         team_service.get_teams_by_ids.return_value = teams_by_id or {}
+        # Who actually picked a face. A team row alone is not enough: every team is
+        # created with the global default avatar id (`CreateTeamRequest`), so an
+        # avatar_id on the team says nothing about whether anyone chose it.
+        team_service.chosen_avatar_ids.return_value = chosen_avatars or {}
         return TeamEntityResolver(
             team_service, avatar_base_url="https://cdn.example.com/"
         )
@@ -49,7 +53,7 @@ class TestTeamEntityResolver:
     @pytest.mark.anyio
     async def test_resolve_found(self):
         team = SimpleNamespace(id=1, handle="alpha", name="Team Alpha", avatar_id=42)
-        resolver = self._make_resolver(teams_by_id={1: team})
+        resolver = self._make_resolver(teams_by_id={1: team}, chosen_avatars={1: 42})
 
         result = await resolver.resolve(["1"])
         assert "1" in result
@@ -67,6 +71,29 @@ class TestTeamEntityResolver:
 
         result = await resolver.resolve(["1"])
         assert result["1"].avatarUrl is None
+
+    @pytest.mark.anyio
+    async def test_resolve_no_avatar_for_teams_that_never_picked_one(self):
+        # Every team is created with the global default avatar id, so a row that
+        # carries one still means "never picked". Sending that URL would give
+        # every such team the same face.
+        never_picked = SimpleNamespace(id=1, handle="alpha", name="Alpha", avatar_id=1)
+        resolver = self._make_resolver(teams_by_id={1: never_picked}, chosen_avatars={})
+
+        result = await resolver.resolve(["1"])
+        assert result["1"].avatarUrl is None
+
+    @pytest.mark.anyio
+    async def test_resolve_only_the_teams_that_picked_one_get_a_url(self):
+        picked = SimpleNamespace(id=1, handle="alpha", name="Alpha", avatar_id=9)
+        never = SimpleNamespace(id=2, handle="beta", name="Beta", avatar_id=1)
+        resolver = self._make_resolver(
+            teams_by_id={1: picked, 2: never}, chosen_avatars={1: 9}
+        )
+
+        result = await resolver.resolve(["1", "2"])
+        assert result["1"].avatarUrl == "https://cdn.example.com/avatars/9"
+        assert result["2"].avatarUrl is None
 
     @pytest.mark.anyio
     async def test_resolve_not_found(self):
@@ -91,10 +118,13 @@ class TestTeamEntityResolver:
 
 
 class TestUserEntityResolver:
-    def _make_resolver(self, users_by_id=None, handles_by_id=None):
+    def _make_resolver(self, users_by_id=None, handles_by_id=None, chosen_avatars=None):
         user_service = AsyncMock()
         user_service.get_users_by_ids.return_value = users_by_id or {}
         user_service.get_handles_by_ids.return_value = handles_by_id or {}
+        # Who actually picked a face. A profile row alone is not enough: every
+        # registration path writes the global default avatar into `avatar_id`.
+        user_service.chosen_avatar_ids.return_value = chosen_avatars or {}
         return UserEntityResolver(
             user_service, avatar_base_url="https://cdn.example.com/"
         )
@@ -119,7 +149,9 @@ class TestUserEntityResolver:
     async def test_resolve_found(self):
         profile = SimpleNamespace(nickname="Alice", avatar_id=10)
         resolver = self._make_resolver(
-            users_by_id={1: profile}, handles_by_id={1: "alice"}
+            users_by_id={1: profile},
+            handles_by_id={1: "alice"},
+            chosen_avatars={1: 10},
         )
 
         result = await resolver.resolve(["1"])
@@ -138,6 +170,38 @@ class TestUserEntityResolver:
 
         result = await resolver.resolve(["99"])
         assert result["99"] is None
+
+    @pytest.mark.anyio
+    async def test_resolve_no_avatar_for_people_who_never_picked_one(self):
+        # Registration hardcodes the global default into `avatar_id`, so a row
+        # that has one still means "never picked". Sending that URL would give
+        # every such person the same face; a row whose id is None used to build
+        # `/avatars/None`. Both must come back as "no face", not as a URL.
+        never_picked = SimpleNamespace(nickname="Alice", avatar_id=1)
+        no_row_at_all = SimpleNamespace(nickname="Bob", avatar_id=None)
+        resolver = self._make_resolver(
+            users_by_id={1: never_picked, 2: no_row_at_all},
+            handles_by_id={1: "alice", 2: "bob"},
+            chosen_avatars={},
+        )
+
+        result = await resolver.resolve(["1", "2"])
+        assert result["1"].avatarUrl is None
+        assert result["2"].avatarUrl is None
+
+    @pytest.mark.anyio
+    async def test_resolve_only_the_people_who_picked_one_get_a_url(self):
+        picked = SimpleNamespace(nickname="Alice", avatar_id=10)
+        never = SimpleNamespace(nickname="Bob", avatar_id=1)
+        resolver = self._make_resolver(
+            users_by_id={1: picked, 2: never},
+            handles_by_id={1: "alice", 2: "bob"},
+            chosen_avatars={1: 10},
+        )
+
+        result = await resolver.resolve(["1", "2"])
+        assert result["1"].avatarUrl == "https://cdn.example.com/avatars/10"
+        assert result["2"].avatarUrl is None
 
 
 # ---------------------------------------------------------------------------
