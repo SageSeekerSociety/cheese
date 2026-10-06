@@ -366,11 +366,11 @@ jobs:
           fi
           # DIAGNOSTIC BRANCH ONLY (never merged): loop the session tests.
           fails=0
-          for i in $(seq 1 20); do
+          for i in $(seq 1 30); do
             echo "=== round $i"
             uv run python -m pytest tests/unit/test_consumptions.py tests/unit/test_personal_sessions.py \
               tests/unit/test_a_person_is_answered_before_anything_else.py tests/unit/test_pi_subagents.py \
-              -n "$CHEESE_CI_TEST_WORKERS" --dist worksteal --tb=long -q -p no:cacheprovider \
+              -n 8 --dist worksteal --tb=long -q -p no:cacheprovider \
               --show-capture=all > "$RUNNER_TEMP/round.log" 2>&1 || {
               fails=$((fails+1))
               grep -E "^FAILED|AssertionError|no words in" "$RUNNER_TEMP/round.log" | head -20
@@ -378,7 +378,7 @@ jobs:
             }
             tail -1 "$RUNNER_TEMP/round.log"
           done
-          echo "rounds failed: $fails/20"
+          echo "rounds failed: $fails/30"
           exit $(( fails > 0 ))
           observe=()
           if [ "$TEST_LAYER" = integration ]; then
