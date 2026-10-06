@@ -100,6 +100,9 @@ async def get_task_submission_service(db=Depends(get_db)) -> TaskSubmissionServi
         entry_repo=entry_repo,
         review_repo=review_repo,
         membership_repo=membership_repo,
+        attachments=AttachmentService.from_session(
+            session=db, storage=get_storage_backend()
+        ),
         session=db,
     )
 

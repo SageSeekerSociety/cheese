@@ -515,16 +515,21 @@ class TestTaskSubmissionService:
         entry_repo=None,
         review_repo=None,
         membership_repo=None,
+        attachments=None,
     ):
         submission_repo = submission_repo or AsyncMock()
         entry_repo = entry_repo or AsyncMock()
         review_repo = review_repo or AsyncMock()
         membership_repo = membership_repo or AsyncMock()
+        if attachments is None:
+            attachments = AsyncMock()
+            attachments.get_many.return_value = []
         return TaskSubmissionService(
             submission_repo=submission_repo,
             entry_repo=entry_repo,
             review_repo=review_repo,
             membership_repo=membership_repo,
+            attachments=attachments,
         )
 
     @pytest.mark.anyio
@@ -744,11 +749,22 @@ class TestTaskSubmissionService:
         review_repo = AsyncMock()
         review_repo.get_by_submission_id.return_value = None
 
+        attachments = AsyncMock()
+        attachments.get_many.return_value = [
+            SimpleNamespace(
+                id=77,
+                type="file",
+                url="/uploads/attachments/file/report.pdf",
+                meta={"filename": "report.pdf", "size": 12, "contentType": "a/b"},
+            )
+        ]
+
         svc = self._build_service(
             submission_repo=submission_repo,
             entry_repo=entry_repo,
             review_repo=review_repo,
             membership_repo=membership_repo,
+            attachments=attachments,
         )
 
         result = await svc.submit_task(
@@ -762,6 +778,7 @@ class TestTaskSubmissionService:
         assert len(content) == 1
         assert content[0]["type"] == "FILE"
         assert content[0]["contentAttachment"]["id"] == 77
+        assert content[0]["contentAttachment"]["meta"]["name"] == "report.pdf"
 
 
 # ---------------------------------------------------------------------------
@@ -1444,16 +1461,21 @@ class TestTaskSubmissionServiceAdditional:
         entry_repo=None,
         review_repo=None,
         membership_repo=None,
+        attachments=None,
     ):
         submission_repo = submission_repo or AsyncMock()
         entry_repo = entry_repo or AsyncMock()
         review_repo = review_repo or AsyncMock()
         membership_repo = membership_repo or AsyncMock()
+        if attachments is None:
+            attachments = AsyncMock()
+            attachments.get_many.return_value = []
         return TaskSubmissionService(
             submission_repo=submission_repo,
             entry_repo=entry_repo,
             review_repo=review_repo,
             membership_repo=membership_repo,
+            attachments=attachments,
         )
 
     @pytest.mark.anyio

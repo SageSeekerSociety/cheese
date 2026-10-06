@@ -16,6 +16,8 @@ from app.core.domain_errors import (
     TeamSizeTooLargeError,
 )
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.domain.attachment.models import Attachment
+from app.domain.attachment.services import AttachmentService
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
@@ -715,6 +717,28 @@ class TaskMembershipService:
         }
 
 
+def _submitted_file_to_api(attachment: Attachment) -> dict:
+    """A handed-in file as the submission view reads it: the ``Attachment``
+    contract, ``meta`` in its ``FileMeta`` shape (``name / size / mime``).
+
+    The row's own ``meta`` stores ``filename / contentType``, so it is mapped
+    rather than passed through. ``url`` is the storage link itself: no gated
+    download route lets the teacher read a file someone else uploaded, so the
+    link is how the reviewer opens it — and only the people allowed to read the
+    submission are sent this DTO.
+    """
+    return {
+        "id": attachment.id,
+        "type": attachment.type,
+        "url": attachment.url,
+        "meta": {
+            "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
+            "size": attachment.meta.get("size", 0),
+            "mime": attachment.meta.get("contentType", "application/octet-stream"),
+        },
+    }
+
+
 class TaskSubmissionService:
     """Simplified Python port of TaskSubmissionService.
 
@@ -730,12 +754,14 @@ class TaskSubmissionService:
         entry_repo: TaskSubmissionEntryRepository,
         review_repo: TaskSubmissionReviewRepository,
         membership_repo: TaskMembershipRepository,
+        attachments: AttachmentService,
         session: AsyncSession | None = None,
     ) -> None:
         self._submission_repo = submission_repo
         self._entry_repo = entry_repo
         self._review_repo = review_repo
         self._membership_repo = membership_repo
+        self._attachments = attachments
         # 推进完成状态要在同一个事务里读提交表、写领取行 —— 仓库共用这一个 session，
         # 路由的工厂（``get_task_submission_service``）永远把它传进来。为 None 只有
         # 单元测试那种「四个仓库全是 AsyncMock」的构造：那里没有库可写，也就不推。
@@ -789,18 +815,22 @@ class TaskSubmissionService:
         member_summary = await self._build_member_summary(membership)
         submitter_summary = await self._build_submitter_summary(submission.submitter_id)
 
+        attachment_ids = [
+            e.content_attachment_id for e in entries if e.content_attachment_id
+        ]
+        attachments = {
+            a.id: a for a in await self._attachments.get_many(attachment_ids)
+        }
+
         def _entry_to_dto(idx: int, entry: TaskSubmissionEntry) -> dict:
             if entry.content_attachment_id is not None:
                 entry_type = "FILE"
             else:
                 entry_type = "TEXT"
             content_attachment = None
-            if entry.content_attachment_id is not None:
-                content_attachment = {
-                    "id": entry.content_attachment_id,
-                    "type": "",
-                    "url": "",
-                }
+            attachment = attachments.get(entry.content_attachment_id or 0)
+            if attachment is not None:
+                content_attachment = _submitted_file_to_api(attachment)
             return {
                 "title": f"Entry {idx + 1}",
                 "type": entry_type,
