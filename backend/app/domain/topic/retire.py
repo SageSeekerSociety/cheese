@@ -35,6 +35,34 @@ logger = logging.getLogger("cheesex.topic.retire")
 # session and does not read them either.
 TRANSCRIPT_RETENTION = timedelta(days=30)
 
+# A cleanup that fails again for the same reason is tried again later and
+# later: a minute, then twice that each time, an hour at most. What holds one
+# (unpushed work, a device that is gone) seldom goes away within the minute,
+# and a sweep that tried every held cleanup every minute ran two commands on
+# their devices for each of them, all day (dev, 2026-10-07: 63 of them). A
+# new reason starts again at a minute, and one that goes away is found
+# within the hour.
+RETRY_FIRST = timedelta(minutes=1)
+RETRY_MOST = timedelta(hours=1)
+
+
+def _held_back(operation: RoomCleanup, reason: str) -> bool:
+    """Record that ``operation`` failed for ``reason`` and when to try again.
+    Whether the reason is new, which is when it is worth saying."""
+    changed = reason != operation.last_error
+    operation.failures = 1 if changed else (operation.failures or 0) + 1
+    operation.last_error = reason
+    operation.due_at = datetime.now(UTC) + min(
+        RETRY_MOST, RETRY_FIRST * 2 ** min(operation.failures - 1, 10)
+    )
+    return changed
+
+
+def _went_on(operation: RoomCleanup) -> None:
+    """The cleanup got past what held it."""
+    operation.last_error = None
+    operation.failures = 0
+
 
 def _keeps_transcripts(entry: dict) -> bool:
     """Whether this resource's transcripts are kept when its home is removed.
@@ -338,9 +366,8 @@ async def _sweep_once(sessions: SessionFactory) -> dict[str, int]:
                     await session.rollback()
                     operation = await session.get(RoomCleanup, cleanup_id)
                     reason = str(exc)[:2048]
-                    changed = operation is None or reason != operation.last_error
+                    changed = operation is None or _held_back(operation, reason)
                     if operation is not None:
-                        operation.last_error = reason
                         await session.commit()
                     if isinstance(exc, resource_cleanup.StillRunning):
                         # Something still has the room open: the sweep waits it
@@ -432,7 +459,7 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                 exc,
                 exc_info=True,
             )
-            operation.last_error = str(exc)[:2048]
+            _held_back(operation, str(exc)[:2048])
             await session.commit()
             return
         operation.state = "preparing"
@@ -522,7 +549,7 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             for screen in list(device_hub.screens_for_topic(operation.topic_id)):
                 await device_hub.close_screen(screen.device_id, screen.sid)
             operation.state = "claimed"
-            operation.last_error = None
+            _went_on(operation)
             await session.commit()
         except Exception as exc:
             operation.state = (
@@ -537,8 +564,7 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             # 2026-09-15 were repeating a six-line remote traceback about once a
             # minute each, filling over half of the only window anyone can read
             # the backend's log through, for hours.
-            changed = reason != operation.last_error
-            operation.last_error = reason
+            changed = _held_back(operation, reason)
             await session.commit()
             logger.log(
                 logging.WARNING if changed else logging.DEBUG,
@@ -607,7 +633,7 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
         operation.due_at = datetime.now(UTC) + TRANSCRIPT_RETENTION
     else:
         operation.state = "complete"
-    operation.last_error = None
+    _went_on(operation)
     await session.commit()
     logger.info(
         "cleanup %s operation=%s room=%s",
@@ -635,7 +661,7 @@ async def _expire_transcripts(session, operation: RoomCleanup) -> None:
         ]
         await session.commit()
     operation.state = "complete"
-    operation.last_error = None
+    _went_on(operation)
     await session.commit()
     logger.info(
         "cleanup transcripts expired operation=%s room=%s",

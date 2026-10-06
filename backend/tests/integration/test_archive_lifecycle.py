@@ -25,6 +25,15 @@ from tests.integration.conftest import registered, session_auth_headers
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def _retry_at_once(monkeypatch, request):
+    """These are about what one attempt does, so a held cleanup is due again at
+    once. How long it waits is its own test below."""
+    if "backs_off" not in request.node.name:
+        monkeypatch.setattr(retire, "RETRY_FIRST", timedelta(0))
+        monkeypatch.setattr(retire, "RETRY_MOST", timedelta(0))
+
+
 async def test_archive_deadline_is_stable_across_retries_and_configuration_changes(
     business_db_factory, monkeypatch
 ):
@@ -931,3 +940,38 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(
         operation = await session.get(RoomCleanup, cleanup_id)
         assert operation.state == "pending"
         assert "not pushed" in operation.last_error
+
+
+async def test_a_cleanup_held_for_the_same_reason_backs_off(client, monkeypatch):
+    """Held again for the same reason, a cleanup waits longer before the next
+    try, an hour at most; a new reason starts again at a minute."""
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    reasons = ["the room has unpublished work"]
+
+    async def step(device_id, project_id, resource_id, name, *rest):
+        if name == "publication":
+            raise RuntimeError(reasons[-1])
+
+    monkeypatch.setattr(retire, "_device_action", AsyncMock(side_effect=step))
+
+    async def wait() -> timedelta:
+        async with client.test_factory() as session:
+            operation = await session.get(RoomCleanup, cleanup_id)
+            waited = operation.due_at - datetime.now(UTC)
+            operation.due_at = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
+            return waited
+
+    waits = []
+    for _ in range(9):
+        assert _sweep(client) == {"completed": 0, "pending": 1}
+        waits.append(await wait())
+    assert waits[1] > waits[0] * 1.5, "同一个原因第二次没有等得更久"
+    assert all(w <= retire.RETRY_MOST for w in waits)
+    assert waits[-1] > timedelta(minutes=50), "一直失败也没有拉到一小时"
+
+    reasons.append("a new reason")
+    assert _sweep(client) == {"completed": 0, "pending": 1}
+    assert await wait() <= retire.RETRY_FIRST, "换了原因还在按老的间隔等"
