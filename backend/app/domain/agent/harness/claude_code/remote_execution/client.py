@@ -1048,8 +1048,7 @@ def _deliver_stop(target, command_id, pipe):
     refused (`runtime.py` `shell`). Delivery is retried across a dropped link
     for as long as the executor would keep the command for its reader.
     """
-    received = b""
-    number = None
+    received, number = b"", None
     while number is None:
         chunk = os.read(pipe, 256)
         received += chunk
@@ -1060,6 +1059,8 @@ def _deliver_stop(target, command_id, pipe):
             number = int(found.group(1))
         elif not chunk:
             number = int(signal.SIGTERM)
+    if _current_target(target).get("kind") == "unavailable":
+        return  # a session with no machine started nothing there
     client = RemoteClient(_current_target(target))
 
     def send(signalled):
@@ -1079,7 +1080,6 @@ def _deliver_stop(target, command_id, pipe):
             except Exception:  # noqa: BLE001 — link down or refused: retry, backing off
                 client = RemoteClient(_current_target(target))
                 time.sleep(min(30.0, max(1.0, time.monotonic() - started)))
-        return {}
 
     send(number)
     ready = select.select([pipe], [], [], SHELL_STOP_GRACE_S)[0]
