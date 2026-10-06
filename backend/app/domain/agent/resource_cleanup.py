@@ -801,7 +801,15 @@ def stop_sandboxed_executor(home: Path) -> None:
         os.close(descriptor)
         descriptor = following
     try:
-        state = Path(f"/proc/self/fd/{descriptor}")
+        if sys.platform == "darwin":
+            # No /proc on macOS: the directory the descriptor holds, by the
+            # path the kernel resolved when it was opened, as the install
+            # named it (`bootstrap.executor_state`). A `/proc/self/fd` name
+            # derives a socket that never exists here, and no stop is sent.
+            named = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
+            state = Path(named.split(b"\0", 1)[0].decode())
+        else:
+            state = Path(f"/proc/self/fd/{descriptor}")
         runtime = platform_program(home, "remote-execution/runtime.py")
         helper = runpy.run_path(str(runtime))
         if Path(helper["socket_path"](state)).exists():

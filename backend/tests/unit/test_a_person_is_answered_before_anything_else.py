@@ -431,61 +431,65 @@ async def codex(tmp_path: Path, steps: list):
         check=True,
         timeout=30,
     )
-    backend = Backend(executor_state)
-    model = Responses(
-        [
-            {"tool": "Bash", "arguments": {"command": value}}
-            if kind == "shell"
-            else {"text": value}
-            if kind == "say"
-            else {"tool": "cheese_chat_list", "arguments": {}}
-            if kind == "read"
-            else {"tool": "chat_send", "arguments": {"content": value}}
-            for kind, value in steps
-        ]
-    )
-    workspace = tmp_path / "codex-workspace"
-    workspace.mkdir()
-    subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
-    state = tmp_path / "runner"
-    # Where the launch places the archive before it calls ``configure``.
-    artifact = tmp_path / "codex-runner.pyz"
-    artifact.write_bytes(codex_archive())
-    started = await asyncio.to_thread(
-        start_codex,
-        {
-            "state": str(state),
-            "config": {
-                "execution_target": {
-                    "kind": "device",
-                    "url": backend.url + "/execution",
-                    "workspace": str(machine),
-                },
-                "opening": {"system_prompt": "FIXTURE"},
-                "binary": codex_binary(),
-                "cwd": str(workspace),
-            },
-            "codex_config": model.config(),
-            "artifact": str(artifact),
-            "env": backend.room_env(),
-        },
-    )
-
-    async def call(method, params):
-        return await asyncio.to_thread(_ask, socket_path(state), method, params)
-
-    session = CodexSession(machine, model.requests, call)
-    session.backend = backend
+    backend = model = started = None
+    # Everything after the start is inside: a step that fails before the
+    # session is up still leaves an executor to stop.
     try:
+        backend = Backend(executor_state)
+        model = Responses(
+            [
+                {"tool": "Bash", "arguments": {"command": value}}
+                if kind == "shell"
+                else {"text": value}
+                if kind == "say"
+                else {"tool": "cheese_chat_list", "arguments": {}}
+                if kind == "read"
+                else {"tool": "chat_send", "arguments": {"content": value}}
+                for kind, value in steps
+            ]
+        )
+        workspace = tmp_path / "codex-workspace"
+        workspace.mkdir()
+        subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
+        state = tmp_path / "runner"
+        # Where the launch places the archive before it calls ``configure``.
+        artifact = tmp_path / "codex-runner.pyz"
+        artifact.write_bytes(codex_archive())
+        started = await asyncio.to_thread(
+            start_codex,
+            {
+                "state": str(state),
+                "config": {
+                    "execution_target": {
+                        "kind": "device",
+                        "url": backend.url + "/execution",
+                        "workspace": str(machine),
+                    },
+                    "opening": {"system_prompt": "FIXTURE"},
+                    "binary": codex_binary(),
+                    "cwd": str(workspace),
+                },
+                "codex_config": model.config(),
+                "artifact": str(artifact),
+                "env": backend.room_env(),
+            },
+        )
+
+        async def call(method, params):
+            return await asyncio.to_thread(_ask, socket_path(state), method, params)
+
+        session = CodexSession(machine, model.requests, call)
+        session.backend = backend
         yield session
     finally:
-        os.kill(started["pid"], 15)
-        for _ in range(100):
-            try:
-                os.kill(started["pid"], 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.1)
+        if started is not None:
+            os.kill(started["pid"], 15)
+            for _ in range(100):
+                try:
+                    os.kill(started["pid"], 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
         subprocess.run(
             [
                 sys.executable,
@@ -497,8 +501,10 @@ async def codex(tmp_path: Path, steps: list):
             capture_output=True,
             timeout=30,
         )
-        model.close()
-        backend.close()
+        if model is not None:
+            model.close()
+        if backend is not None:
+            backend.close()
 
 
 # --- pi ------------------------------------------------------------------------

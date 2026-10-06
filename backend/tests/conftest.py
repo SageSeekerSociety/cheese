@@ -21,6 +21,8 @@ import json
 import logging
 import os
 import re
+import signal
+import subprocess
 import sys
 import tempfile
 import threading
@@ -976,6 +978,74 @@ def _redis_client_per_loop() -> Iterator[None]:
     get_redis_client.cache_clear()
     yield
     get_redis_client.cache_clear()
+
+
+#: An executor on a process list: its service, and the worker beside it that
+#: serves the platform CLI.
+_EXECUTOR_PROGRAMS = (
+    "remote-execution/runtime.py serve",
+    "remote-execution/cli_worker.py",
+)
+
+
+def _executors_under(directory: Path) -> dict[int, str]:
+    """Executors whose programs or state lie under `directory`, by pid."""
+    # -ww: a long tmp path is otherwise cut at the terminal width.
+    listing = subprocess.run(
+        ["ps", "-A", "-ww", "-o", "pid=,args="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    root = str(directory.resolve()) + os.sep
+    found = {}
+    for line in listing.stdout.splitlines():
+        pid, _, args = line.strip().partition(" ")
+        if root in args and any(program in args for program in _EXECUTOR_PROGRAMS):
+            found[int(pid)] = args
+    return found
+
+
+@pytest.fixture(autouse=True)
+def _no_executor_outlives_its_test(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[None]:
+    """No executor a test started is still running once the test is over.
+
+    An executor runs in a session of its own (`runtime.py start`), so nothing
+    ends it with the test or with the xdist worker: one a teardown missed
+    stays up, reparented to init, holding memory after the run has exited.
+    Checked after the test's own fixtures have torn down — this one is set up
+    before them — under this worker's base temp, which holds every test's
+    `tmp_path` and nothing of another worker or another run. Whatever is found
+    is killed, so the rest of the run is not left with it, and the test that
+    left it fails by name.
+
+    Only for tests that have a `tmp_path`, which is where every fixture that
+    starts an executor puts it; a process listing per test is not free.
+    """
+    yield
+    if sys.platform == "win32" or "tmp_path" not in request.fixturenames:
+        return
+    basetemp = tmp_path_factory.getbasetemp()
+    # A stop returns once the executor has let go of its lock; its exit can
+    # trail that by a moment.
+    deadline = time.monotonic() + 5
+    while (left := _executors_under(basetemp)) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if not left:
+        return
+    for pid in left:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    pytest.fail(
+        f"{request.node.nodeid} left {len(left)} executor process(es) running"
+        " after its fixtures tore down (killed now):\n"
+        + "\n".join(f"  pid={pid} {args}" for pid, args in left.items()),
+        pytrace=False,
+    )
 
 
 @pytest.fixture
