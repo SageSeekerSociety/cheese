@@ -254,6 +254,42 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
     assert ran.exists() is not sandbox
 
 
+def test_a_room_started_from_an_earlier_release_is_stopped_where_a_helper_runs(
+    tmp_path, monkeypatch
+):
+    """A sandbox on a cloud host lives in the helper's cgroup, and stopping it
+    is the helper bringing that down. The room may have been started from a
+    release older than anything the stop would otherwise ask it for, and it
+    still has to stop: a room that never stops is never asleep, and is billed
+    for as running."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home = tmp_path / ".cheese/home" / project / resource
+    (home / ".cheese/executor").mkdir(parents=True)
+    release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
+    (release / "remote-execution").mkdir(parents=True)
+    shutil.copy(RUNTIME, release / "remote-execution/runtime.py")
+    (release / "cheese-environment.py").write_text("# an earlier release\n")
+    marker = tmp_path / ".cheese/sandboxes" / project / resource
+    marker.parent.mkdir(parents=True)
+    marker.write_text(str(release))
+
+    asked = tmp_path / "helper-was-asked"
+    helper = tmp_path / "cheese-sandbox"
+    helper.write_text(f'#!/bin/sh\necho "$@" > {asked}\n')
+    helper.chmod(0o755)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "sudo").write_text('#!/bin/sh\n[ "$1" = -n ] && shift\nexec "$@"\n')
+    (bin_dir / "sudo").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(cleanup, "SANDBOX_HOST", str(helper))
+
+    cleanup.stop_executor(home, resource)
+
+    assert asked.read_text().split() == ["down", resource]
+
+
 def test_the_install_writes_through_no_link_a_room_left_in_its_home(
     tmp_path, monkeypatch
 ):
