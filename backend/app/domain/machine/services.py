@@ -410,10 +410,11 @@ class HostPool:
         """Put ``home`` on a host with a free slot, if there is one. Called
         holding the pool; commits when it placed."""
         load = await self._repo.occupancy()
+        now = datetime.now(UTC)
         free = [
             host
             for host in await self._repo.live()
-            if accepting(host) and free_slots(host, load)
+            if accepting(host) and free_slots(host, load) and self._can_start(host, now)
         ]
         if not free:
             return None
@@ -429,6 +430,15 @@ class HostPool:
         host.idle_since = None
         await self._session.commit()
         return host
+
+    def _can_start(self, host: CloudHost, now: datetime) -> bool:
+        """Whether a sandbox placed on ``host`` can start soon: its connector
+        is up, or the host is new enough that it may still be dialling in. One
+        enrolled past ``CONNECT_GRACE`` whose connector is gone may stay gone
+        for hours, and a session put there waits on it all that time."""
+        if host.device_id is None or self._hub.is_online(host.device_id):
+            return True
+        return host.enrolled_at is None or now - host.enrolled_at < CONNECT_GRACE
 
     async def _require_room_to_grow(self, *, whole_machine: bool = False) -> None:
         """Refuse to add a host while the provider keeps failing them, or when

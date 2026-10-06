@@ -235,6 +235,29 @@ def test_sessions_of_two_projects_share_a_host_with_room(pool):
     assert len(pool.cloud.created) == 1
 
 
+def test_a_host_whose_connector_went_away_takes_no_new_session(pool):
+    """A host whose connector was up and has been gone past the time a
+    connector takes to dial in cannot run a sandbox now, and may not for
+    hours. A new session is not put there to wait on it: it goes where a
+    sandbox can start."""
+    [alice] = pool.room("alice", 1)
+    [bob] = pool.room("bob", 1)
+    first = pool.place("alice", alice)
+    device = pool.up(first)
+
+    async def gone_since_long_ago():
+        async with pool.client.test_request_factory() as db:
+            host = await db.get(CloudHost, first)
+            host.enrolled_at = datetime.now(UTC) - timedelta(hours=1)
+            host.last_seen_at = datetime.now(UTC) - timedelta(minutes=50)
+            await db.commit()
+
+    pool.run(gone_since_long_ago)
+    pool.online.discard(device)
+
+    assert pool.place("bob", bob) != first
+
+
 def test_sessions_placed_at_once_share_the_one_host_being_created(pool):
     [alice] = pool.room("alice", 1)
     [bob] = pool.room("bob", 1)
