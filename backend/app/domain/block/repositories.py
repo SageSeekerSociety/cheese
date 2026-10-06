@@ -6,8 +6,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, overload
 
-from sqlalchemy import Text, and_, cast, func, or_, select, tuple_
-from sqlalchemy.dialects.postgresql import JSONB, array
+from sqlalchemy import (
+    Text,
+    Uuid,
+    and_,
+    any_,
+    bindparam,
+    cast,
+    func,
+    or_,
+    select,
+    tuple_,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import with_keys
@@ -1022,9 +1033,13 @@ class BlockRepository:
         first appearance on the block, authors by reaction time (Slack)."""
         if not block_ids:
             return {}
+        # One array parameter, not an IN list: the whole timeline of a busy room
+        # is tens of thousands of ids, and asyncpg refuses more than 32767 bound
+        # values in one statement.
+        among = any_(bindparam(None, list(block_ids), type_=ARRAY(Uuid)))
         stmt = (
             select(BlockReaction)
-            .where(BlockReaction.block_id.in_(block_ids))
+            .where(BlockReaction.block_id == among)
             .order_by(BlockReaction.created_at, BlockReaction.id)
         )
         rows = (await self._session.scalars(stmt)).all()
