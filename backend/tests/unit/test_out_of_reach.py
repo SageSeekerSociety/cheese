@@ -344,3 +344,41 @@ def test_a_connection_reset_mid_answer_is_not_the_machine_being_gone(
         client.call("context_fs")
 
     assert not isinstance(raised.value, executor_transport.MachineOutOfReach)
+
+
+def _bound_token(*, reading: bool) -> str:
+    from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
+
+    launch = mint_scoped_token(project_id="project", topic_id="room")
+    return bind_resource_token(
+        launch, "room", session_id="session", lease_generation="lease", reading=reading
+    )
+
+
+def test_a_refusal_to_a_credential_that_only_reads_says_why_and_not_to_retry(
+    monkeypatch, tmp_path
+):
+    """还没开始的任务、支线，凭证只读工作机器；执行命令被拒时 agent 要知道是这个原因。
+
+    说成「这一个可以重试」，agent 会约时间再试并告诉人机器坏了，而机器好好的。
+    """
+    client = failing_client(monkeypatch, tmp_path, 403)
+    (tmp_path / "execution.token").write_text(_bound_token(reading=True))
+
+    with pytest.raises(RuntimeError) as raised:
+        client.call("invoke")
+
+    assert str(raised.value) == executor_transport.READ_ONLY_REFUSED
+    assert not re.search(r"\d{3}", str(raised.value))
+
+
+def test_a_403_to_a_credential_that_may_write_is_not_called_read_only(
+    monkeypatch, tmp_path
+):
+    client = failing_client(monkeypatch, tmp_path, 403)
+    (tmp_path / "execution.token").write_text(_bound_token(reading=False))
+
+    with pytest.raises(RuntimeError) as raised:
+        client.call("invoke")
+
+    assert str(raised.value) == executor_transport.EXECUTOR_CALL_FAILED
