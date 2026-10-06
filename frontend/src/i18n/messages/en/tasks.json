@@ -292,6 +292,7 @@
     "search": "Search by name",
     "loading": "Loading",
     "denied": "Only the challenge's publisher and space admins can see participants",
+    "loadFailed": "Couldn't load the participants",
     "noMatch": "No matching participants",
     "empty": "No participants",
     "col": {
@@ -463,6 +464,7 @@
       "inProgress": "In progress",
       "rejected": "Not passed"
     },
+    "loadFailed": "Couldn't load this challenge's data",
     "team": "Team",
     "solo": "Individual",
     "claims": "Claims",

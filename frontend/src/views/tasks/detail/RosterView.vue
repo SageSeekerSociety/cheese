@@ -25,6 +25,15 @@
 
     <p v-if="loading" class="rs__note">{{ t('tasks.roster.loading') }}</p>
     <p v-else-if="denied" class="rs__note">{{ t('tasks.roster.denied') }}</p>
+    <!-- 除了「不给你看」，还有一种「这次没读到」。原来两种合成了一条 catch，500 也被
+         说成没权限 —— 出题人会去查自己的权限，而该做的是再试一次。 -->
+    <BaseLoadError
+      v-else-if="failed"
+      class="rs__note"
+      :title="t('tasks.roster.loadFailed')"
+      :error="failureReason"
+      @retry="emit('retry')"
+    />
     <BaseEmptyState
       v-else-if="!visible.length"
       size="inline"
@@ -216,6 +225,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
@@ -261,8 +271,12 @@ const props = defineProps<{
   /** participantId → 最新那一版提交。 */
   latestByParticipant: Map<number, Latest>
   loading: boolean
-  /** 名单接口由服务端按 `may_teach_task` 把关；拿不到就说为什么，不画一张空表。 */
+  /** 名单接口由服务端按 `may_teach_task` 把关；403 是「不给你看」，说的是这一句。 */
   denied: boolean
+  /** 读失败，而且一行都没读到：画失败，不画「暂无领取者」。判断在 `Roster.vue`。 */
+  failed: boolean
+  /** 服务端给的那句原因，有就照原样显示。 */
+  failureReason: string | null
   /** 正在批准的那一行。 */
   busyId: number | null
 }>()
@@ -272,6 +286,7 @@ const emit = defineEmits<{
   reject: [id: number, reason: string]
   deadline: [id: number, at: number]
   review: [who: { id: number; name: string }]
+  retry: []
 }>()
 
 const { t } = useI18n()
