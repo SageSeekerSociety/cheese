@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -83,7 +82,7 @@ func start(cfgPath string) error {
 	if err != nil {
 		return err
 	}
-	logFile, err := os.OpenFile(filepath.Join(filepath.Dir(cfgPath), "cheese.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	logFile, err := openLog(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -115,9 +114,19 @@ func stop(cfgPath string) error {
 // RunForeground runs the host in this process (`cheesehost run`): the login
 // entry and start both land here. The runtime the server's commands need is
 // placed first, so the machine is only announced once it can do the work.
+//
+// Its output goes to cheese.log whichever way it was started. The login entry
+// runs it under a headless console and an update hands off to a new process
+// with no output attached, so before this a failed self-update or runtime
+// download was written nowhere at all.
 func RunForeground(cfgPath string) error {
 	if other := state.PID(cfgPath); other > 0 && other != os.Getpid() {
 		return nil // already running; two would share one credential
+	}
+	if logFile, err := openLog(cfgPath); err == nil {
+		fmt.Fprintf(os.Stderr, "cheese: writing to %s\n", logFile.Name())
+		os.Stdout, os.Stderr = logFile, logFile
+		fmt.Fprintf(logFile, "cheese: started %s\n", time.Now().UTC().Format(time.RFC3339))
 	}
 	if self, err := update.SelfPath(); err == nil {
 		update.CleanupReplaced(self)

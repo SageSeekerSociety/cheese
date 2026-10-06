@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -69,6 +70,35 @@ func binaryURL(base, dir string) (string, error) {
 	}
 	origin := u.Scheme + "://" + u.Host
 	return origin + "/connector/latest/" + dir + "/" + BinaryName(dir), nil
+}
+
+// A download is given up when no data has arrived for stallAfter, not after a
+// fixed total: the connector is tens of megabytes, and on a slow link in China
+// it took 268 s against a 300 s limit, so updates failed whenever the link was
+// a little slower, and the failure was only ever written to a stderr nobody
+// reads. downloadLimit only bounds a download that keeps trickling.
+var (
+	stallAfter    = 60 * time.Second
+	downloadLimit = time.Hour
+)
+
+// watchedBody counts what has arrived and tells the stall watchdog about it.
+type watchedBody struct {
+	r        io.Reader
+	n        int64
+	progress chan struct{}
+}
+
+func (w *watchedBody) Read(p []byte) (int, error) {
+	n, err := w.r.Read(p)
+	if n > 0 {
+		w.n += int64(n)
+		select {
+		case w.progress <- struct{}{}:
+		default:
+		}
+	}
+	return n, err
 }
 
 // ErrCurrent is Fetch's answer when the origin publishes exactly the bytes this
@@ -133,7 +163,7 @@ func Fetch(ctx context.Context, base string) (string, error) {
 	tmpPath := tmp.Name()
 	cleanup := func() { tmp.Close(); os.Remove(tmpPath) }
 
-	dlCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	dlCtx, cancel := context.WithTimeout(ctx, downloadLimit)
 	defer cancel()
 	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -151,9 +181,33 @@ func Fetch(ctx context.Context, base string) (string, error) {
 		return "", fmt.Errorf("update: download %s: HTTP %d", rawURL, resp.StatusCode)
 	}
 	digest := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, digest), resp.Body); err != nil {
+	body := &watchedBody{r: resp.Body, progress: make(chan struct{}, 1)}
+	var stalled atomic.Bool
+	go func() {
+		timer := time.NewTimer(stallAfter)
+		defer timer.Stop()
+		for {
+			select {
+			case <-dlCtx.Done():
+				return
+			case <-body.progress:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				timer.Reset(stallAfter)
+			case <-timer.C:
+				stalled.Store(true)
+				cancel()
+				return
+			}
+		}
+	}()
+	if _, err := io.Copy(io.MultiWriter(tmp, digest), body); err != nil {
 		cleanup()
-		return "", fmt.Errorf("update: write: %w", err)
+		if stalled.Load() {
+			return "", fmt.Errorf("update: download stalled: no data for %s after %d bytes", stallAfter, body.n)
+		}
+		return "", fmt.Errorf("update: write after %d bytes: %w", body.n, err)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)

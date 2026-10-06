@@ -23,9 +23,9 @@ def _only_warning(caplog) -> dict:
     return warnings[0]
 
 
-async def _drive(app, path: str = "/x") -> list[dict]:
+async def _drive(app, path: str = "/x", method: str = "GET") -> list[dict]:
     """把一个 ASGI app 跑一遍，收集它发出的 message。"""
-    scope = {"type": "http", "path": path, "method": "GET", "headers": []}
+    scope = {"type": "http", "path": path, "method": method, "headers": []}
     sent: list[dict] = []
 
     async def receive() -> dict:
@@ -187,3 +187,18 @@ async def test_a_request_the_server_cancels_is_logged_with_its_path(caplog) -> N
     assert (record["method"], record["path"]) == ("POST", "/topics/t1/work-lease")
     assert record["started"] is False
     assert "graceful shutdown" in record["reason"]
+
+
+@pytest.mark.anyio
+async def test_a_head_declares_a_length_it_never_sends(caplog) -> None:
+    """HEAD 只发头，不发 body：它声明的长度不是缺的字节。"""
+    await _drive(_responder(32752128, b""), method="HEAD")
+
+    assert "response truncated" not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_a_get_cut_short_is_still_reported(caplog) -> None:
+    await _drive(_responder(32752128, b""), method="GET")
+
+    assert _only_warning(caplog)["event"] == "response truncated"
