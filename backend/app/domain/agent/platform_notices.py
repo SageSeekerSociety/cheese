@@ -95,6 +95,9 @@ EVENT_MEMORY_ORGANIZING: Final = "memory_organizing"
 #: 芝士自己的事：一条记忆是 agent 写下的一份观察，没有人在等它，所以谁也不点。
 #: 改动本身收进 `detail`，按树的归属分别说进项目总览 / 本人的私聊。
 EVENT_MEMORY_CHANGED: Final = "memory_changed"
+#: A message written into the running session whose arrival is still being
+#: checked. It is not sent again.
+EVENT_DELIVERY_CHECKING: Final = "delivery_checking"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
@@ -217,6 +220,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ENVIRONMENT_REPAIRED,
         EVENT_MEMORY_ORGANIZING,
         EVENT_MEMORY_CHANGED,
+        EVENT_DELIVERY_CHECKING,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,
@@ -264,6 +268,30 @@ EVENT_TYPES: Final = frozenset(
 )
 
 
+#: 平台运行中的事：不在对话里说，记成运行记录（`run_record`），在现场和管理后台
+#: 看。读聊天的人用不着它们；想知道这一轮为什么慢的人去现场看。
+#: `post_system_event` 遇到这几类自动改记，不用每个调用点自己判断。
+RUN_RECORD_EVENTS: Final = frozenset(
+    {
+        EVENT_TURN_QUEUED,
+        EVENT_DELIVERY_CHECKING,
+        EVENT_DELIVERY_FALLBACK,
+        EVENT_TOOLS_RECOVERED,
+        EVENT_PROMPT_REPLAYED,
+        EVENT_API_RETRY,
+        EVENT_CONTEXT_COMPACT,
+        EVENT_DEVICE_WAITING,
+        EVENT_TIMED_DELIVERY,
+        "cloud_startup",
+        "cloud_provisioning",
+        "sandbox_asleep",
+        EVENT_MEMORY_CHANGED,
+        "backend_error",
+        "frontend_error",
+    }
+)
+
+
 def notice(
     event_type: str,
     *,
@@ -297,13 +325,45 @@ def notice(
     }
 
 
+def tools_recovered_notice() -> tuple[str, dict]:
+    """工具断了是平台的事，平台自己接回来并重发；房间里的人不用动手。"""
+    return say("toolsRecovered"), notice(
+        EVENT_TOOLS_RECOVERED,
+        severity=SEVERITY_WARN,
+        who=WHO_PLATFORM,
+        detail=say("toolsRecoveredDetail"),
+        detail_label=say("labelNote"),
+    )
+
+
+def catching_up_notice() -> tuple[str, dict]:
+    """等的是这段对话自己的记录接回来，平台自己会往前推，没人需要动手。"""
+    return say("catchingUp"), notice(
+        EVENT_TURN_QUEUED,
+        severity=SEVERITY_INFO,
+        who=WHO_PLATFORM,
+        detail=say("catchingUpDetail"),
+        detail_label=say("labelWhatHappensNext"),
+    )
+
+
+def delivery_checking_notice() -> tuple[str, dict]:
+    """A message whose write into the running session is still being
+    checked: it went in once, and will not be sent twice."""
+    return (
+        say("deliveryChecking"),
+        notice(EVENT_DELIVERY_CHECKING, severity=SEVERITY_INFO, who=WHO_PLATFORM),
+    )
+
+
 def delivery_fallback_notice() -> tuple[str, dict]:
-    """The single room-visible error for live-delivery fallback."""
+    """A message that could not enter the running session went to the queue:
+    the platform handles it from there."""
     return (
         say("deliveryFallback"),
         notice(
             EVENT_DELIVERY_FALLBACK,
-            severity=SEVERITY_ERROR,
+            severity=SEVERITY_WARN,
             who=WHO_PLATFORM,
             detail=say("deliveryFallbackDetail"),
             detail_label=say("labelNote"),

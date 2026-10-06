@@ -66,28 +66,28 @@
     "abandonTitle": "Change without pushing?"
   },
   "roomMachine": {
-    "taskHeading": "This task's work computer",
+    "taskHeading": "This task's environment",
     "taskHint": "Changing it first pushes this task's changes to its branch and switches only once they are pushed; if they cannot be, nothing changes and the reason is shown.",
     "edit": "Edit",
-    "heading": "This channel's work computer",
+    "heading": "This channel's environment",
     "hint": "Every AI teammate in the channel shares this one. Changing it pushes each teammate’s work to its branch first and switches only when all of them are pushed; otherwise nothing moves and you are told why.",
     "more": "Other configurations and devices",
     "projectDefault": "Project default",
-    "wholeMachine": "Can access the whole machine",
-    "wholeMachineNotice": "Lets it see the whole machine: it can operate this machine's services and other channels",
+    "wholeMachine": "Can access the whole computer",
+    "wholeMachineNotice": "Lets it see the whole computer: it can operate this computer's services and other channels",
     "online": "Online",
     "offline": "Offline",
     "removed": "Removed from the team",
-    "loadFailed": "Could not load work computers",
-    "saveFailed": "Could not choose the work computer",
+    "loadFailed": "Could not load environments",
+    "saveFailed": "Could not choose the environment",
     "retry": "Retry",
     "here": "This channel runs on: {name}",
     "abandon": "The old computer is unreachable: switch without pushing",
     "accessHeading": "What this channel sees of {name}",
     "isolated": "Isolated environment",
     "isolatedHint": "Its own work directory and the project's package cache. Not the owner's files, the tools installed in their home folder, or other channels.",
-    "host": "Full machine access",
-    "hostOwnerOnly": "Only the machine's owner can turn this on"
+    "host": "Full computer access",
+    "hostOwnerOnly": "Only the computer's owner can turn this on"
   },
   "deviceInUse": {
     "line": "In use: {project} · {room} · {agent}",
@@ -109,16 +109,16 @@
     "defaultLabel": "New agents use",
     "change": "Change",
     "collapse": "Collapse",
-    "hint": "Only affects agents that have not started; agents already working keep their own computer",
+    "hint": "Only affects agents that have not started; agents already working keep their own environment",
     "distribution": "Where agents are now",
-    "onCloud": "Cloud sandbox · {agents}",
+    "onCloud": "Cloud environment · {agents}",
     "onCloudVm": "Whole cloud VM · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "1 agent | {count} agents",
     "noneStarted": "No agents have started",
     "managedBy": "Project managers can change the default",
-    "loadFailed": "Could not load work computer settings",
-    "saveFailed": "Could not save work computer settings"
+    "loadFailed": "Could not load environment settings",
+    "saveFailed": "Could not save environment settings"
   },
   "teamLink": {
     "title": "Team link",
@@ -165,7 +165,7 @@
     "failed": "Something went wrong. Please try again",
     "retry": "Retry",
     "loading": "Loading",
-    "joinHint": "Once you confirm, you become a team member and can use the team's projects and work computers",
+    "joinHint": "Once you confirm, you become a team member and can use the team's projects and devices",
     "join": "Join team",
     "edit": "Edit team profile",
     "editTitle": "Edit team profile",
@@ -249,10 +249,11 @@
         "retrying": "Retrying",
         "retryingCount": "Retrying (attempt {attempt})",
         "compacting": "Compacting context",
-        "waiting": "Waiting for the machine",
-        "elapsed": "{span} so far"
+        "waiting": "Waiting for the environment",
+        "elapsed": "{span} so far",
+        "queued": "Queued",
+        "queuedBehind": "Queued, {ahead} ahead"
       },
-      "frontendError": "Frontend error",
       "span": {
         "seconds": "{s}s",
         "minutes": "{m}m {s}s",
@@ -300,7 +301,15 @@
       "live": "In progress",
       "steps": "No steps | 1 step | {count} steps",
       "collapse": "Collapse",
-      "expandAll": "Show all ({count} lines)"
+      "expandAll": "Show all ({count} lines)",
+      "record": {
+        "queue": "Queue",
+        "delivery": "Delivery",
+        "retry": "Retry",
+        "compact": "Compaction",
+        "environment": "Environment",
+        "memory": "Memory"
+      }
     },
     "menu": {
       "more": "More",
@@ -404,12 +413,8 @@
         "human": "Needs a person"
       },
       "working": "{name} is on it",
-      "sandboxReady": "Sandbox ready",
-      "sandboxPreparing": "Preparing the sandbox",
-      "cloudVmReady": "Cloud VM ready",
-      "cloudVmPreparing": "Preparing the cloud VM",
       "incident": {
-        "title": "Work computer temporarily unavailable",
+        "title": "Environment temporarily unavailable",
         "cleaning": "Cleaning up automatically",
         "recovering": "Recovering",
         "retryable": "Can retry",
@@ -520,7 +525,7 @@
     "changes": {
       "scopeChanged": "Changes",
       "scopeAll": "All files",
-      "liveFile": "Live files on the machine",
+      "liveFile": "Live files in the environment",
       "committedVersion": "Committed version",
       "download": "Download",
       "refresh": "Refresh",
@@ -1305,8 +1310,8 @@
       "waited": "waiting {waited}",
       "waitedLong": "waiting a long time",
       "pr": "PR #{pr}: ",
-      "device": "{agent}'s machine can't be reached, {long}. Someone probably needs to turn that device on or connect it",
-      "provisioning": "{agent}'s machine isn't created yet, {long}",
+      "device": "{agent}'s environment can't be reached, {long}. Someone probably needs to turn that computer on or connect it",
+      "provisioning": "{agent}'s environment isn't ready yet, {long}",
       "environment": "{agent}'s environment hasn't recovered yet, {long}",
       "check": "{pr}Checks failed, {long}, and {agent} isn't on it",
       "conflict": "{pr}Merge conflicts, {long}, and {agent} isn't on it",
@@ -1496,7 +1501,7 @@
     "back": "Back to project settings",
     "market": "Market",
     "defaultModel": "Default model",
-    "defaultComputer": "Default work computer",
+    "defaultComputer": "Default environment",
     "groups": {
       "collab": "Collaboration",
       "ai": "AI",
@@ -1508,7 +1513,6 @@
       "channels": "Channels",
       "agents": "AI teammates",
       "task-naming": "Task names",
-      "computer": "Work computer",
       "environment": "Environment",
       "merge": "Merge rules",
       "repository": "Repository and credit",
@@ -1704,13 +1708,13 @@
     },
     "environment": {
       "state": {
-        "unbound": "No machine connected",
+        "unbound": "No computer connected",
         "pending": "Waiting for next start",
         "preparing": "Preparing",
         "ready": "Ready",
         "failed": "Preparation failed",
         "stopped": "AI teammate stopped",
-        "offline": "Machine offline"
+        "offline": "Computer offline"
       },
       "loadFailed": "Couldn't load the environment",
       "statusFailed": "Couldn't load the preparation status",
@@ -1727,8 +1731,8 @@
       "startupLabel": "Prepare project (startup script)",
       "startupHint": "Runs each time a task's working directory is created or reopened, installing that branch's dependencies",
       "howTitle": "How it runs",
-      "how1": "Cloud and your own devices use the same scripts, so the machine must support their commands",
-      "how2": "The setup script runs in the channel directory and the startup script in the task's code directory. Both use Bash, each for at most 30 minutes, with the machine's current permissions. Environment variables go to both scripts and the AI teammate; an export in a script doesn't carry to the next step. Tools can be installed to $HOME/.local/bin",
+      "how1": "Cloud and your own devices use the same scripts, so the environment must support their commands",
+      "how2": "The setup script runs in the channel directory and the startup script in the task's code directory. Both use Bash, each for at most 30 minutes, with the environment's current permissions. Environment variables go to both scripts and the AI teammate; an export in a script doesn't carry to the next step. Tools can be installed to $HOME/.local/bin",
       "how3": "For the setup script, $HOME is this project's shared tool directory on the machine, so tools are installed once and later channels use them. The startup script and the AI teammate have each channel's own $HOME, so don't write anything channel-specific in the setup script",
       "varsTitle": "Environment variables",
       "varsHint": "Project members and AI teammates can see these values. Don't store passwords or API keys here",
@@ -1822,13 +1826,13 @@
     }
   },
   "computeChoice": {
-    "cloud": "Cloud sandbox",
+    "cloud": "Cloud environment",
     "cloudVm": "Whole cloud VM",
     "deviceOnline": "{name} · Online",
     "deviceOffline": "{name} · Offline",
-    "computer": "Work computer",
-    "none": "No work computers available",
-    "cloudHint": "Each session works in a cloud sandbox of its own, prepared on the first run",
+    "computer": "Own device",
+    "none": "No environments available",
+    "cloudHint": "Each session works in a cloud environment of its own, prepared on the first run",
     "cloudVmHint": "Each session gets a virtual machine of its own, with sudo, Docker, KVM and kernel modules. Preparing one takes a few minutes; once the session is idle, its changes are pushed to their branches and the VM is released",
     "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
     "submit": "Use this configuration"
@@ -1896,7 +1900,7 @@
       "file": "SKILL.md or a skill folder as .zip",
       "read": "Read",
       "readFailed": "Couldn't read the skill",
-      "scripts": "Includes {n} script(s) that will run on the work computer. Look them over before adding",
+      "scripts": "Includes {n} script(s) that will run in the environment. Look them over before adding",
       "skipped": "These files aren't text or are over 200 KB and won't be added: {files}",
       "title": "Import",
       "upload": "Upload",
@@ -1940,14 +1944,14 @@
     "view": "View"
   },
   "nodeBoard": {
-    "loadFailed": "Couldn't load machine status",
-    "title": "Machine status",
-    "hint": "Whether work computers are available now",
+    "loadFailed": "Couldn't load environment status",
+    "title": "Environment status",
+    "hint": "Whether environments are available now",
     "active": "{count} runs in progress across the platform",
     "online": "Online",
     "offline": "Offline",
     "device": "Own device",
-    "cloud": "Cloud sandbox",
+    "cloud": "Cloud environment",
     "current": "Used when nothing is chosen"
   },
   "needsYou": {
@@ -1993,7 +1997,7 @@
   },
   "task": {
     "agent": "AI teammate",
-    "machine": "Work computer",
+    "machine": "Environment",
     "followsRoom": "Follows the channel",
     "details": "Task details",
     "ownerOnlyNotice": "Only the owner and collaborators can talk to {name} here",
@@ -2024,7 +2028,7 @@
     "opening": {
       "drafting": "{name} is drafting…",
       "draftingWhat": "Turning the discussion into this task's doc: goal, current state, decided, open",
-      "waiting": "Not started yet; continues once the work computer is connected",
+      "waiting": "Not started yet; continues once the environment is connected",
       "failed": "{name} could not draft the doc",
       "failedWhy": "This turn did not finish",
       "retry": "Retry",

@@ -38,6 +38,7 @@
 | 通知 | **notification** | `network/api/notifications/`、`notifications.common.notificationCenter = 通知中心`。**不用 alert**：alert 是弹窗 |
 | 附件 | **attachment** | `network/api/attachments/` |
 | 标签 | **tag** | `network/api/tags/` |
+| 环境 | **environment** | AI 队友干活的地方：云端的写 **cloud environment**，项目设置那一页是 **Environment**（在哪运行、准备脚本与环境变量、额度）。**不用 work computer / sandbox / machine**：点名一台设备时才说 **computer**，成员接入的电脑统称 **device** |
 | 工作台 | **workspace** | 既有 `publicSite.openWorkspace = "Open workspace"`、`navigation.workspace = "Workspace"`。**不用 dashboard / console**：dashboard 在本产品另有位置（空间的数据看板）。中文自己也不统一——`navigation.workspace` 写「工作区」、`publicSite.openWorkspace` 写「进入工作台」，英文一律 workspace |
 
 **「活」不是界面词。** 房间对话里说的「这条活」是**平台内部的黑话**，对应的界面概念就是「任务」= **task**。

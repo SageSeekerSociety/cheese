@@ -121,6 +121,7 @@ from app.domain.agent.platform_notices import (
     EVENT_MCP_NOT_CONNECTED,
     SEVERITY_WARN,
     WHO_HUMAN,
+    delivery_checking_notice,
     delivery_fallback_notice,
     notice,
 )
@@ -660,13 +661,10 @@ class ChatService(SessionRecovery, RoomTurns):
                 attachments,
             )
             if isinstance(delivered, InputReconciliationPending):
-                payload = await self.post_system_event(
-                    topic_id,
-                    "输入已登记，发送结果正在核对；不会重复发送",
-                    turn_id,
+                checking, checking_meta = delivery_checking_notice()
+                await self.post_system_event(
+                    topic_id, checking, turn_id, meta=checking_meta
                 )
-                if payload is not None:
-                    yield {"type": "event_block", "block": payload}
                 return
             if delivered is True:
                 # The answer streams out of the turn already in flight, which
@@ -681,11 +679,9 @@ class ChatService(SessionRecovery, RoomTurns):
                 delivered,
             )
             fallback_text, fallback_meta = delivery_fallback_notice()
-            fallback = await self.post_system_event(
+            await self.post_system_event(
                 topic_id, fallback_text, turn_id, meta=fallback_meta
             )
-            if fallback is not None:
-                yield {"type": "event_block", "block": fallback}
 
         recipient_handle = None
         if recipient_instance_id is not None:

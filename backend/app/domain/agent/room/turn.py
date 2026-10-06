@@ -32,8 +32,11 @@ from app.domain.agent.harness.prompt import (
 from app.domain.agent.hook_stream import _HookWorkState
 from app.domain.agent.platform_notices import (
     EVENT_PROMPT_REPLAYED,
+    EVENT_TURN_QUEUED,
+    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_PLATFORM,
+    delivery_checking_notice,
     notice,
 )
 from app.domain.agent.prompt import (
@@ -1165,21 +1168,16 @@ class RoomTurns:
         # whole point is that this turn may produce nothing either — a notice
         # written afterwards is exactly the one that never gets written.
         if replay_notice is not None:
-            payload = await self.post_system_event(
+            await self.post_system_event(
                 topic_id,
                 replay_notice,
                 turn_id,
-                # 「又重投了一次」是一条码说了算的事。它以前只有开头那个 🔁 —— 一个
-                # 字符同时当类别、当轻重、当给人看的记号，读它的人和读它的代码都得
-                # 猜。码在这里，前端照码渲染。
                 meta=notice(
                     EVENT_PROMPT_REPLAYED,
                     severity=SEVERITY_WARN,
                     who=WHO_PLATFORM,
                 ),
             )
-            if payload is not None:
-                yield {"type": "event_block", "block": payload}
 
         # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
         # but deliberately NOT awaited here: git_log ensures the repo exists, and
@@ -1336,13 +1334,10 @@ class RoomTurns:
                 topic_id,
                 exc.identity.input_id,
             )
-            payload = await self.post_system_event(
-                topic_id,
-                "输入已登记，发送结果正在核对；不会重复发送",
-                turn_id,
+            checking, checking_meta = delivery_checking_notice()
+            await self.post_system_event(
+                topic_id, checking, turn_id, meta=checking_meta
             )
-            if payload is not None:
-                yield {"type": "event_block", "block": payload}
             return
         except Exception as exc:  # noqa: BLE001 — a failed write must be SAID
             # Nothing else will close this turn. `session_lifecycle` above told
@@ -1423,11 +1418,12 @@ class RoomTurns:
         yield {"type": "prompt_delivered"}
         if ready is False:
             marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
-            payload = await self.post_system_event(
+            await self.post_system_event(
                 topic_id,
                 say("sessionStartingMessageQueued"),
                 marked_work_id,
+                meta=notice(
+                    EVENT_TURN_QUEUED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+                ),
             )
-            if payload is not None:
-                yield {"type": "event_block", "block": payload}
         return

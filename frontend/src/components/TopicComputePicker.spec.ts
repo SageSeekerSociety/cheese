@@ -137,7 +137,7 @@ describe('room work computer choice', () => {
   it('keeps the default first without listing every team device', async () => {
     mountPicker(profile({ project_default: lab, choice: cloud }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    const list = screen.getAllByRole('button').filter((b) => /自有设备|独立沙箱/.test(b.textContent ?? ''))
+    const list = screen.getAllByRole('button').filter((b) => /自有设备|独立环境/.test(b.textContent ?? ''))
     expect(list).toHaveLength(2)
     expect(list[0].textContent).toContain('实验室工作站')
     expect(within(list[0]).getByText('项目默认')).toBeTruthy()
@@ -236,7 +236,7 @@ describe('what the room sees of its machine', () => {
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     const host = screen.getByTestId('room-machine-host') as HTMLButtonElement
     expect(host.disabled).toBe(true)
-    expect(host.textContent).toContain('只有这台机器的主人能开启')
+    expect(host.textContent).toContain('只有这台电脑的主人能开启')
   })
   it('says why a machine has no isolated environment, in the reader language', async () => {
     setLocale('en')
@@ -244,7 +244,7 @@ describe('what the room sees of its machine', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     const isolated = screen.getByTestId('room-machine-isolated') as HTMLButtonElement
     expect(isolated.disabled).toBe(true)
-    expect(isolated.textContent).toContain('which Windows machines do not have')
+    expect(isolated.textContent).toContain('which Windows computers do not have')
     expect((screen.getByTestId('room-machine-host') as HTMLButtonElement).disabled).toBe(false)
   })
   it('names the machine an automatic room is on when access is chosen for it', async () => {
@@ -315,7 +315,7 @@ describe('whole cloud VM choice', () => {
 
   it('is not offered where the deployment has none', async () => {
     await openForm(profile({ choice: lab, project_default: lab, cloud_vm_available: false }))
-    expect(await screen.findByRole('option', { name: '云端沙箱' })).toBeTruthy()
+    expect(await screen.findByRole('option', { name: '云端环境' })).toBeTruthy()
     expect(screen.queryByRole('option', { name: '整台云虚拟机' })).toBeNull()
   })
 
@@ -325,6 +325,6 @@ describe('whole cloud VM choice', () => {
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     const current = screen.getByRole('button', { name: /整台云虚拟机/ })
     expect(current.textContent).toContain('每个会话一台独立的云虚拟机')
-    expect(screen.getByRole('button', { name: /云端沙箱/ })).not.toBe(current)
+    expect(screen.getByRole('button', { name: /云端环境/ })).not.toBe(current)
   })
 })

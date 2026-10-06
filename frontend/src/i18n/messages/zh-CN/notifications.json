@@ -137,7 +137,7 @@
   "DEVICE_IN_USE": {
     "title": "{agent} 开始在「{device}」上工作",
     "body": "{project} · {room}",
-    "wholeMachine": "能访问整台机器"
+    "wholeMachine": "能访问整台电脑"
   },
   "SPACE_ANNOUNCEMENT": {
     "tag": "公告",

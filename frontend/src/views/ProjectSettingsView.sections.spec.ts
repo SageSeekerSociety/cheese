@@ -188,7 +188,7 @@ describe('上游仓库地址', () => {
     // 上游那一块自己没有提示位；它的结果和「连接 GitHub 仓库」共用仓库那一块的提示。
     await waitFor(() => expect(section(container, '连接 GitHub 仓库').textContent).toContain('保存上游仓库失败：网络'))
     // 不是整页的 error 横幅：设置各块照旧在页面上，按钮还能再按一次。
-    expect(container.textContent).toContain('工作电脑')
+    expect(container.textContent).toContain('合并规则')
     expect(button(container, '保存')).toBeTruthy()
   })
 })

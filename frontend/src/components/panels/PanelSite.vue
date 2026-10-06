@@ -24,6 +24,7 @@ import {
   isLongSiteEntry,
   isNarration,
   isProseArg,
+  isRunRecord,
   SITE_CLAMP_LINES,
 } from '../../lib/siteLog'
 import { isPlatformEvent } from '../../lib/toolLabels'
@@ -175,6 +176,10 @@ function eventDetail(b: Block): string {
 function eventError(b: Block): string {
   return b.meta?.error ?? ''
 }
+// 平台写的一句里点到的人是 `<@handle>`：照对话栏换成名字，认不出的留 handle。
+function named(text: string): string {
+  return text.replace(/<@([^>\s]+)>/g, (_, handle: string) => props.memberNames?.[handle] ?? handle)
+}
 // 没有参数的那种行（平台提示、后端报错），整句就压在动词上。它会折到三行
 // （见样式里的 `.site-act--solo`），全文挂到 title 上，鼠标停一下看全。
 function soloVerb(b: Block): string {
@@ -279,10 +284,10 @@ function isLive(index: number): boolean {
         <div v-if="hasOlder" class="site-older">
           {{ loadingOlder ? t('work.room.site.loadingOlder') : t('work.room.site.older') }}
         </div>
-        <section v-for="(turn, index) in turns" :key="turn.key" class="turn">
+        <section v-for="(turn, index) in turns" :key="turn.key" class="turn" :class="{ 'turn--loose': turn.loose }">
           <!-- 组头：这一轮从什么时候开始、几步、多久。触发这一轮的那句话在对话
                栏，现场读不到它（人写的块不带 turn_id），所以这里不写标题。 -->
-          <div class="turn__head">
+          <div v-if="!turn.loose" class="turn__head">
             <span v-if="turnAuthor(turn.entries)" class="turn__who" data-testid="turn-who">
               {{ agentLabel(turnAuthor(turn.entries)!) }}
             </span>
@@ -306,10 +311,12 @@ function isLive(index: number): boolean {
                 'site-act--platform': eventPlatform(b),
                 'site-act--failed': eventFailed(b),
                 'site-act--solo': !eventArg(b),
+                'site-act--record': isRunRecord(b),
+                'site-act--warn': isRunRecord(b) && b.meta?.severity === 'warn',
               }"
             >
               <i class="site-act__dot" :class="{ 'site-act__dot--platform': eventPlatform(b) }" />
-              <span class="site-act__verb" :title="soloVerb(b) || undefined">{{ eventVerb(b) }}</span>
+              <span class="site-act__verb" :title="named(soloVerb(b)) || undefined">{{ named(eventVerb(b)) }}</span>
               <button
                 v-if="eventArg(b)"
                 type="button"
@@ -484,6 +491,13 @@ function isLive(index: number): boolean {
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
+/* 不属于哪一轮的那一条（环境休眠了、某人改了文档）只是一行：没有组头，上下也不
+   像一轮那样隔开。 */
+.turn--loose + .turn,
+.turn + .turn--loose {
+  margin-top: 8px;
+  padding-top: 8px;
+}
 .turn__head {
   display: flex;
   align-items: baseline;
@@ -561,7 +575,9 @@ function isLive(index: number): boolean {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  /* 只隔开同一行里的几列。错误摘要折到第二行时，行与行之间不另加空隙：它紧贴着
+     出错的那一步。 */
+  column-gap: 8px;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
@@ -644,6 +660,22 @@ function isLive(index: number): boolean {
 }
 .site-act__dot--platform {
   background: var(--ink);
+}
+/* 运行记录：平台运行中记下的事，不是芝士做的一步。同一套行，空心圆点、正文退一档；
+   要留意的（重试、等机器）圆点和正文换成提醒色。 */
+.site-act--record .site-act__dot {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--faint);
+}
+.site-act--record .site-act__argtext {
+  font-family: var(--font-sans);
+  color: var(--muted);
+}
+.site-act--warn .site-act__dot {
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.site-act--warn .site-act__argtext {
+  color: var(--warn-ink);
 }
 /* 4em = 四个汉字，绝大多数动词正好这么宽，参数因此对齐成一列。更长的那几个
    （平台动作）自己把这一行的参数推开，而它们本来就该显眼。 */

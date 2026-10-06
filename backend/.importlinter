@@ -103,6 +103,7 @@ ignore_imports =
     app.core.background -> app.domain.review.gate_sweep
     app.core.background -> app.domain.review.pr_poll
     app.core.background -> app.domain.routine.service
+    app.core.background -> app.domain.run_record.service
     app.core.background -> app.domain.task.deadline_scheduler
     app.core.background -> app.domain.topic_membership.services
     app.core.background -> app.domain.usage.subscription_ingest

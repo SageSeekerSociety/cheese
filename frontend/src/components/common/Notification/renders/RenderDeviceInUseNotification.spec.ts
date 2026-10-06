@@ -37,7 +37,7 @@ it('tells the owner which agent works on their device, where, and what it can se
 
   expect(view.container.textContent).toMatch(/@Cedar\s*开始在「workstation」上工作/)
   expect(view.container.querySelector('.mention')?.textContent).toBe('@Cedar')
-  expect(view.getByText('Orchard · Pricing · 能访问整台机器')).toBeTruthy()
+  expect(view.getByText('Orchard · Pricing · 能访问整台电脑')).toBeTruthy()
 })
 
 it('says nothing about the whole machine when the agent cannot see it', () => {
@@ -47,5 +47,5 @@ it('says nothing about the whole machine when the agent cannot see it', () => {
   })
 
   expect(view.getByText('Orchard · Pricing')).toBeTruthy()
-  expect(view.queryByText(/能访问整台机器/)).toBeNull()
+  expect(view.queryByText(/能访问整台电脑/)).toBeNull()
 })

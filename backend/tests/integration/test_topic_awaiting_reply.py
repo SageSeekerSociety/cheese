@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.models import Project
+from app.domain.run_record.models import RunRecord
 from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import a_team
 
@@ -576,6 +577,7 @@ def _reason(client, project_id: str, room_id: str) -> str | None:
 
 
 def _machine(client, pid, rid, event_type, *, ago):
+    """A machine event said in the room (an environment repaired)."""
     return _say(
         client,
         pid,
@@ -587,6 +589,26 @@ def _machine(client, pid, rid, event_type, *, ago):
     )
 
 
+def _waiting_for_machine(client, pid, rid, *, ago):
+    """A turn waiting for its machine: recorded for the 现场, not said."""
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                RunRecord(
+                    project_id=uuid.UUID(pid),
+                    conversation_id=uuid.UUID(rid),
+                    kind="device_waiting",
+                    severity="warn",
+                    content="…",
+                    created_at=datetime.now(UTC) - ago,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_add())
+
+
 def test_a_plain_summons_waits_for_the_agent(client):
     pid, rid = _room(client)
     _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
@@ -596,17 +618,17 @@ def test_a_plain_summons_waits_for_the_agent(client):
 def test_a_machine_event_during_the_wait_explains_it(client):
     pid, rid = _room(client)
     _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
-    _machine(client, pid, rid, "machine_provisioning", ago=timedelta(minutes=8))
-    assert _reason(client, pid, rid) == "machine_provisioning"
-    # 最近的那一条说了算：机器建好了又在等设备回来。
-    _machine(client, pid, rid, "device_waiting", ago=timedelta(minutes=4))
+    _machine(client, pid, rid, "environment_repaired", ago=timedelta(minutes=8))
+    assert _reason(client, pid, rid) == "environment_repaired"
+    # 最近的那一条说了算：环境修好了又在等设备回来。
+    _waiting_for_machine(client, pid, rid, ago=timedelta(minutes=4))
     assert _reason(client, pid, rid) == "device_waiting"
 
 
 def test_a_machine_event_before_the_wait_does_not_explain_it(client):
     """等待开始前机器就已经好了，这次没回话就跟机器无关。"""
     pid, rid = _room(client)
-    _machine(client, pid, rid, "sandbox_rebuilt", ago=timedelta(minutes=20))
+    _waiting_for_machine(client, pid, rid, ago=timedelta(minutes=20))
     _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
     assert _reason(client, pid, rid) == "mention"
 

@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.block.models import Block
+from app.domain.run_record.models import RunRecord
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
@@ -23,6 +24,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support.run_records import record_frames, records_of
 
 
 def _alice() -> dict:
@@ -62,6 +64,18 @@ def _blocks(client, room: str) -> list[Block]:
 
 def _of_type(blocks: list[Block], event_type: str) -> list[Block]:
     return [b for b in blocks if (b.meta or {}).get("event_type") == event_type]
+
+
+def _recorded(client, room: str, kind: str) -> list[RunRecord]:
+    """What the platform recorded about the room's running: kept for the 现场,
+    and never a line in the conversation itself."""
+
+    async def read() -> list[RunRecord]:
+        async with client.test_factory() as session:
+            return await records_of(session, room, kind)
+
+    assert _of_type(_blocks(client, room), kind) == []
+    return asyncio.run(read())
 
 
 def _retry(stub, topic, attempt: int) -> None:
@@ -130,30 +144,20 @@ def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
         frames = _until(ws, _done)
     wait_work_idle()
 
-    retries = _of_type(_blocks(client, room), "api_retry")
+    retries = _recorded(client, room, "api_retry")
     assert [b.meta["attempt"] for b in retries] == [3, 1]
     assert "3/10" in retries[0].content
     assert retries[0].meta["max_attempts"] == 10
     assert "429" in retries[0].meta["detail"]
-    # Both lines belong to the turn and to the agent doing it, which is what
+    # Both records belong to the turn and to the agent doing it, which is what
     # 现场 groups and filters on.
     assert all(b.turn_id is not None for b in retries)
-    assert all(b.author != "system" for b in retries)
+    assert all(b.seat is not None for b in retries)
 
+    sent = record_frames(frames, "api_retry")
     first = str(retries[0].id)
-    landed = [
-        f["block"]["id"]
-        for f in frames
-        if f["type"] == "event_block"
-        and (f["block"]["meta"] or {}).get("event_type") == "api_retry"
-    ]
-    restated = [
-        f["block"]["meta"]["attempt"]
-        for f in frames
-        if f["type"] == "block_updated" and f["block"]["id"] == first
-    ]
-    assert landed == [first, str(retries[1].id)]
-    assert restated == [2, 3]
+    assert list(dict.fromkeys(r["id"] for r in sent)) == [first, str(retries[1].id)]
+    assert [r["meta"]["attempt"] for r in sent if r["id"] == first] == [1, 2, 3]
 
 
 def test_a_retry_that_got_no_response_says_so(client, stub_hooks):
@@ -184,7 +188,7 @@ def test_a_retry_that_got_no_response_says_so(client, stub_hooks):
         _until(ws, _done)
     wait_work_idle()
 
-    [retry] = _of_type(_blocks(client, room), "api_retry")
+    [retry] = _recorded(client, room, "api_retry")
     assert "30 秒" in retry.meta["detail"]
     assert "没收到" in retry.meta["detail"]
     assert "unknown" not in retry.meta["detail"]
@@ -214,26 +218,15 @@ def test_a_compaction_says_so_while_it_runs_and_when_it_is_over(client, stub_hoo
         frames = _until(ws, _done)
     wait_work_idle()
 
-    lines = _of_type(_blocks(client, room), "context_compact")
+    lines = _recorded(client, room, "context_compact")
     assert len(lines) == 1
     assert lines[0].meta["state"] == "over"
     assert "整理" in lines[0].content
     assert lines[0].turn_id is not None
 
-    line = str(lines[0].id)
-    landed = [
-        f["block"]
-        for f in frames
-        if f["type"] == "event_block"
-        and (f["block"]["meta"] or {}).get("event_type") == "context_compact"
-    ]
-    assert [b["id"] for b in landed] == [line]
-    assert landed[0]["meta"]["state"] == "running"
-    assert [
-        f["block"]["meta"]["state"]
-        for f in frames
-        if f["type"] == "block_updated" and f["block"]["id"] == line
-    ] == ["over"]
+    sent = record_frames(frames, "context_compact")
+    assert {r["id"] for r in sent} == {str(lines[0].id)}
+    assert [r["meta"]["state"] for r in sent] == ["running", "over"]
 
 
 def test_a_compaction_that_fails_says_why(client, stub_hooks):
@@ -257,7 +250,7 @@ def test_a_compaction_that_fails_says_why(client, stub_hooks):
         _until(ws, _done)
     wait_work_idle()
 
-    [line] = _of_type(_blocks(client, room), "context_compact")
+    [line] = _recorded(client, room, "context_compact")
     assert line.meta["state"] == "over"
     assert line.meta["detail"] == "prompt too long"
 
@@ -276,7 +269,7 @@ def test_a_turn_that_ends_mid_compaction_does_not_leave_it_running(client, stub_
         _until(ws, _done)
     wait_work_idle()
 
-    [line] = _of_type(_blocks(client, room), "context_compact")
+    [line] = _recorded(client, room, "context_compact")
     assert line.meta["state"] == "over"
 
 
@@ -294,15 +287,15 @@ def test_a_status_record_about_something_else_says_nothing(client, stub_hooks):
         _until(ws, _done)
     wait_work_idle()
 
-    assert _of_type(_blocks(client, room), "context_compact") == []
+    assert _recorded(client, room, "context_compact") == []
 
 
 def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
     client, stub_hooks, monkeypatch
 ):
     """While the device is out of reach nothing the session does can arrive, so
-    the room is told it is waiting — once — and the same line says when the
-    machine is back."""
+    the 现场 records that it is waiting — once — and the same record says when
+    the machine is back."""
     offline = {"now": False}
     reach = stub_hooks.call
 
@@ -331,17 +324,15 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
         waiting = _until(
             ws,
             lambda f: (
-                f["type"] == "event_block"
-                and (f["block"]["meta"] or {}).get("event_type") == "device_waiting"
+                f["type"] == "run_record"
+                and (f["record"]["meta"] or {}).get("event_type") == "device_waiting"
             ),
-        )[-1]["block"]
+        )[-1]["record"]
         offline["now"] = False
         back = _until(
             ws,
-            lambda f: (
-                f["type"] == "block_updated" and f["block"]["id"] == waiting["id"]
-            ),
-        )[-1]["block"]
+            lambda f: f["type"] == "run_record" and f["record"]["id"] == waiting["id"],
+        )[-1]["record"]
         stub_hooks.returns(topic, "Bash", "built")
         stub_hooks.stops(topic, "编好了")
         _until(ws, _done)
@@ -350,7 +341,7 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
     assert waiting["meta"]["state"] == "waiting"
     assert "offline" in waiting["meta"]["detail"]
     assert back["meta"]["state"] == "over"
-    assert len(_of_type(_blocks(client, room), "device_waiting")) == 1
+    assert len(_recorded(client, room, "device_waiting")) == 1
 
 
 def test_a_socket_that_joins_mid_turn_learns_when_the_turn_started(client, stub_hooks):

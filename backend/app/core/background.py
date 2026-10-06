@@ -377,6 +377,7 @@ def periodic_jobs(
     from app.domain.ratchet.ingest import ingest_snapshots as ingest_ratchet_snapshots
     from app.domain.review import pr_poll
     from app.domain.routine.service import sweep as sweep_routines
+    from app.domain.run_record.service import purge_expired as purge_run_records
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
     from app.domain.usage.subscription_ingest import ingest_once
 
@@ -493,6 +494,13 @@ def periodic_jobs(
             "backend error flush",
             settings.backend_error_flush_interval_s,
             backend_log.flush_expired,
+        ),
+        # Run records are kept for a month: past that, the logs and the alerts
+        # are where an older failure is read.
+        PeriodicRunner(
+            "run record expiry",
+            settings.run_record_expiry_interval_s,
+            lambda: purge_run_records(sessions),
         ),
         # The only consumer of the Redis list every email notification is pushed
         # onto. Unrun, that key is not slow — it grows forever and no mail goes.

@@ -294,6 +294,7 @@ owners:
   feature_stats: "Feature usage catalogue and reports; domain/feature_stats registry/stats."
   platform_stats: "Platform usage/performance/product/pipeline/integration reports; domain/platform_stats services."
   ratchet: "Ratchet board ingestion and state; domain/ratchet board/store/ingest."
+  run_record: "What the platform did while running a conversation and its own errors, for the admin page; domain/run_record/admin.py."
   space.review: "Platform review of spaces; domain/space/review_service.py."
   space.materials: "A board's shared material library and its two visibility tiers; domain/space/material_service.py over the material rows domain/materials owns. Bytes leave only through the permission-checked download route; the material url never appears in a response."
   integration: "Personal and room mail/Feishu connections, drafts and OAuth callback; domain/integration/IntegrationService."
@@ -423,6 +424,9 @@ routes:
   # app.api.routes.admin_ratchet
   - {protocol: "http", method: "GET", path: "/admin/ratchet", auth: "platform.admin", owner: "ratchet"}
   - {protocol: "http", method: "POST", path: "/admin/ratchet/refresh", auth: "platform.admin", owner: "ratchet"}
+  # app.api.routes.admin_run_records
+  - {protocol: "http", method: "GET", path: "/admin/run-records", auth: "platform.admin", owner: "run_record"}
+  - {protocol: "http", method: "GET", path: "/admin/run-records/detail", auth: "platform.admin", owner: "run_record"}
   # app.api.routes.admin_spaces
   - {protocol: "http", method: "GET", path: "/admin/spaces", auth: "platform.admin", owner: "space.review"}
   - {protocol: "http", method: "POST", path: "/admin/spaces/{space_id}/review", auth: "platform.admin", owner: "space.review"}

@@ -24,7 +24,6 @@ from datetime import datetime
 
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.service import (
-    STEP_ERROR_MAX,
     AgentCompacting,
     AgentEvent,
     AgentMessage,
@@ -35,6 +34,7 @@ from app.domain.agent.service import (
     AgentStepOutput,
     AgentToolResult,
     AgentToolUse,
+    step_error,
 )
 
 #: The tools whose RETURN the room needs: a subagent reports only to whoever
@@ -260,9 +260,7 @@ class Assembler:
                 events.append(
                     AgentStepFailed(
                         call_id=call,
-                        text=" ".join(EXIT_HEADER.sub("", said).split())[
-                            -STEP_ERROR_MAX:
-                        ],
+                        text=step_error(EXIT_HEADER.sub("", said)),
                     )
                 )
             if made.get("name") not in SUBAGENT_TOOLS or block.get("is_error"):

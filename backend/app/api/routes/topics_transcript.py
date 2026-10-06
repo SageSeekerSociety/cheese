@@ -43,6 +43,7 @@ the same prefix and tags, is all it takes.
 """
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Query
 
@@ -58,6 +59,7 @@ from app.api.routes.topics import (
 )
 from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.domain.agent.run_records import for_site
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_times import turn_starts
 from app.domain.topic.services import TopicService
@@ -129,6 +131,23 @@ async def topic_transcript(
     items = [
         without_output(BlockOut.model_validate(b).model_dump(mode="json")) for b in site
     ]
+    # The platform's own running (a turn queued, a sandbox woken, a model
+    # request retried) is kept apart from the conversation; the 现场 shows it
+    # among the steps of the same span. The span is the page's: from its
+    # oldest step (or the start, on the last page) to its newest (or now, on
+    # the first).
+    records = await for_site(
+        db,
+        place.conversation_id,
+        since=site[0].created_at if site and has_more else None,
+        until=cursor.created_at if cursor is not None else None,
+        author=author,
+    )
+    if records:
+        items = sorted(
+            [*items, *records],
+            key=lambda item: datetime.fromisoformat(str(item["created_at"])),
+        )
     # A turn's first step comes after its preparation and the model's first
     # answer; the 现场 counts the turn from when it started.
     starts = await turn_starts(db, place.conversation_id, (b.turn_id for b in site))

@@ -1,6 +1,6 @@
 // 话题头这一行常驻的只有标题、状态、成员；专注模式收在 ⋯ 里，工作电脑写在成员名册里。
 //
-// 名册里的东西有一样不能跟着藏：有 AI 队友能访问整台机器。那是权限，不是设置——
+// 名册里的东西有一样不能跟着藏：有 AI 队友能访问整台电脑。那是权限，不是设置——
 // 名册合着的时候它也得在这一行上。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
@@ -115,21 +115,21 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('话题头', () => {
-  it('有 AI 队友能访问整台机器时，名册合着这一行上也写着', async () => {
+  it('有 AI 队友能访问整台电脑时，名册合着这一行上也写着', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(true))
     mountHeader()
 
-    await waitFor(() => expect(bar().textContent).toContain('能访问整台机器'))
-    expect(bar().querySelector('[title="让它看到整台机器（能操作这台机器上的服务和其他频道）"]')).toBeTruthy()
+    await waitFor(() => expect(bar().textContent).toContain('能访问整台电脑'))
+    expect(bar().querySelector('[title="让它看到整台电脑（能操作这台电脑上的服务和其他频道）"]')).toBeTruthy()
   })
 
-  it('看不到能访问整台机器时这一行不提它', async () => {
+  it('看不到能访问整台电脑时这一行不提它', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(false))
     mountHeader()
 
     await waitFor(() => expect(getTopicComputeProfile).toHaveBeenCalled())
     await new Promise((r) => setTimeout(r, 0))
-    expect(bar().textContent).not.toContain('能访问整台机器')
+    expect(bar().textContent).not.toContain('能访问整台电脑')
   })
 
   it('⋯ 里没有工作电脑，它在成员名册里', async () => {
@@ -138,8 +138,8 @@ describe('话题头', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '更多' }))
     await screen.findByRole('button', { name: '专注模式' })
-    expect(document.body.textContent).not.toContain('工作电脑')
-    expect(bar().textContent).not.toContain('云端沙箱')
+    expect(document.body.textContent).not.toContain('这个频道的环境')
+    expect(bar().textContent).not.toContain('云端环境')
   })
 
   it('专注模式从 ⋯ 里进', async () => {

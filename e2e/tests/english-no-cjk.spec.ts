@@ -349,7 +349,6 @@ test("workspace: inbox, board, room, accept card, library, project settings", as
     ...[
       "agents",
       "task-naming",
-      "computer",
       "environment",
       "merge",
       "repository",

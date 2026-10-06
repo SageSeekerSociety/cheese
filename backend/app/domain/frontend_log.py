@@ -1,16 +1,16 @@
-"""Frontend error intake → 现场 event blocks.
+"""Frontend error intake → run records the admin page reads.
 
-The dogfooding debugger is usually an AGENT, and an agent can never read a
-user's browser console — so frontend errors must land somewhere the platform
-can query. They become ``kind=event`` blocks (``meta.event_type =
-"frontend_error"``) on the topic that was open (or the project's root topic):
-the same 现场 timeline everything else already lives in.
+Nobody can read a user's browser console, so frontend errors must land
+somewhere the platform can query: a run record (``kind = "frontend_error"``)
+with the project and the conversation that was open. It belongs to no
+conversation — the people in a room are not who reads the platform's own
+errors.
 
 Guard rails live here, not in the route: a render-loop error can fire hundreds
-of times a second and blocks are forever, so intake is deduped (same
-fingerprint within a window collapses to one block) and rate-limited per
-project. In-memory state matches the platform's single-process reality (same
-assumption as the per-topic chat locks).
+of times a second, so intake is deduped (same fingerprint within a window
+collapses to one record) and rate-limited per project. In-memory state
+matches the platform's single-process reality (same assumption as the
+per-topic chat locks).
 """
 
 import hashlib
@@ -18,8 +18,14 @@ import time
 import uuid
 
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import alerting
+from app.core.errors import NotFoundError
 from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
+from app.domain.conversation.models import Conversation
+from app.domain.project.models import Project
+from app.domain.run_record.service import keep as keep_record
 
 DEDUP_WINDOW_S = 600.0
 MAX_BLOCKS_PER_WINDOW = 30  # per project
@@ -84,8 +90,6 @@ def event_content(err: FrontendErrorIn) -> str:
 
 
 def event_meta(err: FrontendErrorIn) -> dict:
-    # 这类事件在房间里是隐藏的 (lib/platformNotice.ts)，但轻重照样随事件走 ——
-    # 读它的下一个消费者不该再去解析那句话。
     meta: dict = {
         "event_type": "frontend_error",
         "severity": SEVERITY_ERROR,
@@ -98,3 +102,41 @@ def event_meta(err: FrontendErrorIn) -> dict:
     if err.page:
         meta["page"] = err.page
     return meta
+
+
+async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
+    """Admit the batch and keep the survivors. A dropped duplicate still counts
+    as received: the reporting client never retries."""
+    conversation = await db.get(Conversation, body.topic_id) if body.topic_id else None
+    if conversation is not None and conversation.project_id != body.project_id:
+        conversation = None
+    project = await db.get(Project, body.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    accepted = 0
+    for err in body.errors:
+        if not intake.admit(str(body.project_id), fingerprint(err)):
+            continue
+        meta = event_meta(err)
+        if conversation is not None:
+            meta["conversation"] = str(conversation.id)
+        await keep_record(
+            db,
+            project_id=project.id,
+            conversation_id=None,
+            content=event_content(err),
+            meta=meta,
+        )
+        accepted += 1
+        # Only here: `admit` returned True, so this fingerprint is one nobody has
+        # seen in the dedup window. Every repeat of it is already excluded above,
+        # which is what keeps a render loop from becoming a thousand alerts.
+        alerting.send(
+            f"前端报错：{err.message}",
+            [
+                f"页面：{err.page or '未知'}",
+                f"位置：{err.source or '未知'}",
+                f"项目：{project.id}",
+            ],
+        )
+    return {"accepted": accepted, "dropped": len(body.errors) - accepted}

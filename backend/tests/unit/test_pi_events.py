@@ -149,6 +149,8 @@ def test_a_long_failure_keeps_its_ending():
 
     assert failed.text.endswith("FAILED test_y")
     assert len(failed.text) == STEP_ERROR_MAX
+    # Cut at the front, and saying so: it does not open on half a word.
+    assert failed.text.startswith("…")
 
 
 # ---- pi 1.0 记进日志、而我们不翻的那两条 ----
