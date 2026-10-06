@@ -163,9 +163,11 @@ class Case:
 def pool(client, monkeypatch):
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
-    # Two slots a host: two cores, one sandbox each.
+    # Two slots a host: two cores, one sandbox each, and memory for both.
     monkeypatch.setattr(settings, "microcloud_default_cores", 2)
     monkeypatch.setattr(settings, "cloud_host_slots_per_core", 1)
+    monkeypatch.setattr(settings, "microcloud_default_memory_mb", 4096)
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 1536)
     monkeypatch.setattr(settings, "cloud_pool_min_free_slots", 0)
     monkeypatch.setattr(settings, "cloud_host_idle_hold_s", 600)
     monkeypatch.setattr(settings, "cloud_pool_max_hosts", 20)
@@ -254,6 +256,19 @@ def test_a_host_whose_connector_went_away_takes_no_new_session(pool):
 
     pool.run(gone_since_long_ago)
     pool.online.discard(device)
+
+    assert pool.place("bob", bob) != first
+
+
+def test_a_host_takes_no_more_sandboxes_than_its_memory_holds(pool, monkeypatch):
+    """Cores leave room for two sandboxes, but a 4 GiB host keeps 1 GiB for
+    itself and has 3 GiB for its sandboxes: one at a 3 GiB limit. The second
+    session's sandbox goes to another host."""
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
+    [alice] = pool.room("alice", 1)
+    [bob] = pool.room("bob", 1)
+    first = pool.place("alice", alice)
+    pool.up(first)
 
     assert pool.place("bob", bob) != first
 
