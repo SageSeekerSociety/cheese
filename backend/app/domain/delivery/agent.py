@@ -272,7 +272,7 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
             if row is not None:
                 if row.state == "claimed":
                     row.state = "pending"
-                    row.retry_at = now() + timedelta(seconds=RETRY_SECONDS)
+                    row.retry_at = now() + timedelta(seconds=retry_after(row.attempts))
                     row.last_error = (
                         "Input was not dispatched; "
                         "admission or preparation did not complete"
