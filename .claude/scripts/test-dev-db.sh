@@ -5,7 +5,11 @@
 #     when it has no clients, and refused with the count when it has some;
 #   - a server of ours under the current pins is reused, not restarted;
 #   - a server this script did not start is refused and left alone;
-#   - `stop --purge` stops an older server of ours before deleting its data.
+#   - `stop --purge` stops an older server of ours before deleting its data;
+#   - a Redis of ours that is not the pinned Valkey is replaced when it has no
+#     other clients, and refused with the count when it has some;
+#   - an install that lost files is refused by name, and nothing is started,
+#     while `stop` still stops the server that was running from it.
 # Every binary it runs is a stand-in on PATH; the "postgres" is a python3
 # listener that writes a postmaster.pid, so this needs only bash and python3.
 set -euo pipefail
@@ -24,9 +28,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The pins the script expects, read from the script itself.
-eval "$(grep -E '^(PG_WHEEL|REDIS_WHEEL|PG_SEARCH_VERSION)=' "$dev_db")"
-pins="$PG_WHEEL pg_search==$PG_SEARCH_VERSION"
+# The pins the script expects, read from the script itself. The installed
+# servers are the stand-ins below, linked into a server home of their own.
+eval "$(grep -E '^(PG_RELEASE|VALKEY_VERSION|PG_SEARCH_VERSION)=' "$dev_db")"
+servers="$sandbox/servers"
+pins="postgresql-$PG_RELEASE pg_search==$PG_SEARCH_VERSION $servers/postgresql-$PG_RELEASE"
+mkdir -p "$servers/postgresql-$PG_RELEASE" "$servers/valkey-$VALKEY_VERSION"
+ln -s "$stub" "$servers/postgresql-$PG_RELEASE/bin"
+ln -s "$stub" "$servers/valkey-$VALKEY_VERSION/bin"
+# The manifest dev-db.sh checks an install against: the files it was unpacked with.
+printf '%s\n' bin/postgres bin/pg_ctl bin/initdb bin/psql bin/pg_isready bin/pg_config \
+    bin/lib/plpgsql.so bin/lib/plpgsql.dylib >"$servers/postgresql-$PG_RELEASE/.dev-db-files"
+printf '%s\n' bin/valkey-server bin/valkey-cli >"$servers/valkey-$VALKEY_VERSION/.dev-db-files"
 
 # --- stand-ins ---------------------------------------------------------------
 cat >"$stub/postgres" <<'PY'
@@ -104,25 +117,30 @@ cat >"$stub/pg_config" <<'SH'
 case "$1" in --pkglibdir) echo "$STUB/lib" ;; --sharedir) echo "$STUB/share" ;; esac
 SH
 mkdir -p "$stub/lib" "$stub/share/extension"
-touch "$stub/lib/pg_search.so" "$stub/lib/pg_search.dylib"
+for library in plpgsql pg_trgm pg_search; do touch "$stub/lib/$library.so" "$stub/lib/$library.dylib"; done
 echo "default_version = '$PG_SEARCH_VERSION'" >"$stub/share/extension/pg_search.control"
 
-# Redis: a file per port records the --dir it was started with.
-cat >"$stub/redis-server" <<'SH'
+# Redis: a file per port records the --dir it was started with, and one beside
+# it the INFO server lines it answers. $STATE/redis-clients holds how many
+# clients INFO reports, the one asking included.
+cat >"$stub/valkey-server" <<SH
 #!/usr/bin/env bash
-while [ $# -gt 0 ]; do
-    case "$1" in --port) port="$2"; shift 2 ;; --dir) dir="$2"; shift 2 ;; *) shift ;; esac
+while [ \$# -gt 0 ]; do
+    case "\$1" in --port) port="\$2"; shift 2 ;; --dir) dir="\$2"; shift 2 ;; *) shift ;; esac
 done
-(cd "$dir" && pwd -P) >"$STATE/redis-$port"
+(cd "\$dir" && pwd -P) >"\$STATE/redis-\$port"
+printf 'redis_version:7.2.4\nvalkey_version:%s\n' "$VALKEY_VERSION" >"\$STATE/redis-\$port.info"
 SH
-cat >"$stub/redis-cli" <<'SH'
+cat >"$stub/valkey-cli" <<'SH'
 #!/usr/bin/env bash
 port=""; while [ "${1:-}" = -h ] || [ "${1:-}" = -p ]; do [ "$1" = -p ] && port="$2"; shift 2; done
 f="$STATE/redis-$port"
-case "$1" in
-    ping) [ -e "$f" ] ;;
-    config) [ -e "$f" ] && { echo dir; cat "$f"; } ;;
-    shutdown) rm -f "$f" ;;
+case "$1 ${2:-}" in
+    "ping "*) [ -e "$f" ] ;;
+    "config "*) [ -e "$f" ] && { echo dir; cat "$f"; } ;;
+    "info server") [ -e "$f" ] && cat "$f.info" ;;
+    "info clients") [ -e "$f" ] && echo "connected_clients:$(cat "$STATE/redis-clients" 2>/dev/null || echo 1)" ;;
+    "shutdown "*) rm -f "$f" "$f.info" ;;
 esac
 SH
 
@@ -148,12 +166,9 @@ chmod +x "$stub"/* "$harness"/* "$pi_dir/pi"
 # --- helpers -----------------------------------------------------------------
 free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 
-# A data dir with the binary cache already resolved to the stand-ins.
 new_data_dir() {
     local d="$sandbox/$1"
     mkdir -p "$d"
-    printf 'PG_BIN=%q\nREDIS_BIN=%q\nBIN_PINS=%q\n' "$stub" "$stub" \
-        "$PG_WHEEL $REDIS_WHEEL pg_search==$PG_SEARCH_VERSION" >"$d/bins.env"
     printf '%s' "$d"
 }
 
@@ -171,7 +186,8 @@ dev_db() {  # dev_db <data dir> <port> <args...>; output in $sandbox/{out,err}, 
     set +e
     PATH="$stub:$PATH" STUB="$stub" STATE="$state" \
         CHEESEX_DEV_DB_DIR="$d" CHEESEX_DEV_PG_PORT="$port" \
-        CHEESEX_DEV_REDIS_PORT="$(free_port)" CHEESEX_DEV_TOOL_CACHE="$tools" \
+        CHEESEX_DEV_REDIS_PORT="${redis_port:-$(free_port)}" CHEESEX_DEV_TOOL_CACHE="$tools" \
+        CHEESEX_DEV_SERVER_HOME="$servers" \
         bash "$dev_db" "$@" >"$sandbox/out" 2>"$sandbox/err"
     status=$?
     set -e
@@ -256,6 +272,41 @@ dev_db "$d" "$port" stop --purge
 check purge "stop succeeds" [ "$status" = 0 ]
 check purge "older server stopped" dead "$old"
 check purge "data dir removed" [ ! -e "$d" ]
+
+# 8. A Redis of ours that is not the pinned Valkey: replaced when only the
+#    asking client is connected, refused with the count otherwise.
+d="$(new_data_dir old-redis)"; port="$(free_port)"; redis_port="$(free_port)"
+mkdir -p "$d/redis"
+(cd "$d/redis" && pwd -P) >"$state/redis-$redis_port"
+echo redis_version:6.2.12 >"$state/redis-$redis_port.info"
+echo 3 >"$state/redis-clients"
+dev_db "$d" "$port" start
+check old-redis-busy "start refuses" [ "$status" != 0 ]
+check old-redis-busy "the refusal names the clients" grep -q "2 client connection" "$sandbox/err"
+check old-redis-busy "old redis left running" grep -q 6.2.12 "$state/redis-$redis_port.info"
+echo 1 >"$state/redis-clients"
+dev_db "$d" "$port" start
+check old-redis-idle "start succeeds" [ "$status" = 0 ]
+check old-redis-idle "now runs the pinned Valkey" grep -q "valkey_version:$VALKEY_VERSION" "$state/redis-$redis_port.info"
+dev_db "$d" "$port" stop
+unset redis_port
+rm -f "$state/redis-clients"
+
+# 9. An install that lost files under a running server: start refuses by name
+#    and starts nothing; stop still stops the server.
+d="$(new_data_dir damaged)"; port="$(free_port)"
+dev_db "$d" "$port" start
+running="$(server_pid "$d/pg17")"
+mv "$stub/lib/plpgsql.so" "$stub/lib/plpgsql.so.away"; mv "$stub/lib/plpgsql.dylib" "$stub/lib/plpgsql.dylib.away"
+: >"$state/calls"
+dev_db "$d" "$port" start
+check damaged "start refuses" [ "$status" != 0 ]
+check damaged "the refusal names the install" grep -q "postgresql-$PG_RELEASE is missing files" "$sandbox/err"
+check damaged "no server started" [ ! -s "$state/calls" ]
+dev_db "$d" "$port" stop
+check damaged "stop succeeds" [ "$status" = 0 ]
+check damaged "the running server is stopped" dead "$running"
+mv "$stub/lib/plpgsql.so.away" "$stub/lib/plpgsql.so"; mv "$stub/lib/plpgsql.dylib.away" "$stub/lib/plpgsql.dylib"
 
 if [ "$failures" != 0 ]; then
     echo "$failures check(s) failed"
