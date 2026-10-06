@@ -74,9 +74,6 @@ from app.domain.agent.platform_notices import (
 from app.domain.block.repositories import BlockRepository as BlockRepository
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository as ProjectRepository
-from app.domain.review import (
-    commit_message,
-)
 from app.domain.review.models import (
     AcceptStatus,
 )
@@ -255,21 +252,18 @@ _NOTHING_TO_DELIVER = (
 
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 
-#: Refusal for a card filed with no commit subject at all. It is long on
-#: purpose: the reader is an agent one turn away from re-filing, and an error
-#: that only says "缺少 change_subject" costs a whole turn to act on. The
-#: example is a real, valid subject — copy-pasteable, not a placeholder.
+#: Refusal for a card filed with no commit subject at all. The reader is an
+#: agent one turn away from re-filing, so it says where the right format comes
+#: from — the repository's own convention — rather than only "缺少 subject".
 _MISSING_SUBJECT = (
-    "递卡必须带提交标题（subject）。它不是给人看的说明，是这次改动留在 "
-    "git 历史里的那一行：递卡开 PR 用它当标题，采纳时整个分支被压成一个"
+    "递卡必须带提交标题（subject）。它不是写给验收人的话（那是 reason），是这次"
+    "改动留在 git 历史里的那一行：递卡开 PR 用它当标题，采纳时整个分支被压成一个"
     "提交，标题还是它。\n"
-    "写法：`type(scope): description`，type 取值 "
-    f"{', '.join(commit_message.TYPES)}；英文祈使句，"
-    f"≤{commit_message.MAX_SUBJECT} 字符，结尾不加句号。\n"
-    "例：\n"
-    "  subject: fix(accept): open the PR as the requester, not the bot\n"
-    "  body: PRs opened with the App token belong to the bot on GitHub, "
-    "so the person whose work it is gets no attribution."
+    "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
+    "没有就照默认分支上最近的提交标题"
+    "（`git log --no-merges --format=%s -20 origin/<默认分支>`），"
+    "不看你这条分支上的；看不出惯例就用英文。"
+    "只写一行，末尾的 (#N) 平台会加，不要写；原因写进 body。"
 )
 
 #: Where an alembic revision lives. Two live cards each ADDING a file under

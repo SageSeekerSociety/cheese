@@ -320,7 +320,10 @@ changes before merging.
 `.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
 It calls the existing suites selected by `.github/scripts/required-ci-paths.json`.
 Documentation-only changes run repository guards. Failed scope detection, failed
-or cancelled selected suites, and unexpected skips fail `CI required`. Remote
+or cancelled selected suites, and unexpected skips fail `CI required`. The same
+job checks this repo's commit titles with `.github/scripts/check-commit-title.py`:
+the PR title on a pull request, and every squash commit about to land in the
+merge queue. Remote
 execution acceptance remains advisory pending the stability target in #1279; the
 MCP latest-version canary runs on schedule or manual dispatch.
 

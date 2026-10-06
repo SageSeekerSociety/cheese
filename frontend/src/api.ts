@@ -1018,7 +1018,7 @@ export type DeliverableKind = 'file' | 'link' | 'merge'
 export interface ArtifactVersion {
   number: number
   card_id: string
-  /** 这次交付改了什么（卡上那句 Conventional Commit 标题）。 */
+  /** 这次交付改了什么（卡上那句提交标题）。 */
   subject: string | null
   delivered_at: string | null
   decided_by: string | null

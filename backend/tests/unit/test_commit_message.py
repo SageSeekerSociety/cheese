@@ -1,90 +1,84 @@
-"""The Conventional Commits gate on the one commit a topic leaves behind.
+"""What the platform accepts as the title of the one commit a topic leaves
+behind. The format and language are the hosted repository's: a title in any
+convention, in any language, is accepted, and only a title the platform cannot
+use as a PR title or a commit's first line is refused."""
 
-What these pin down is the *boundary*: which subjects a card can be filed with
-and which it cannot. The prose rules that no parser can check (is the subject
-about the change? does the body say why?) live in CLAUDE.md — asserting on them
-here would only pin the linter's blind spots in place.
-"""
+import uuid
 
 import pytest
 
 from app.core.sentences import in_language
+from app.domain.review import pr_text
 from app.domain.review.commit_message import (
-    MAX_SUBJECT,
     InvalidSubject,
     check_subject,
-    merge_subject,
     valid_subject,
 )
+from app.domain.review.models import AcceptCard
+from app.domain.topic.models import Topic
 
 
 @pytest.mark.parametrize(
     "subject",
     [
         "fix(accept): open the PR as the requester, not the bot",
-        "feat: add cursor pagination to the topic list",
-        "chore: snapshot workspace after agent turn",
-        "feat(api)!: drop the v1 topic endpoints",
-        # Starts with a capital because the WORD is capitalised. Rejecting this
-        # is the false positive that a "lowercase the description" rule buys.
-        "fix(oauth): GitHub token refresh silently returns None",
+        "修复分页越界",
+        "fix: 修复分页越界",
+        "Update the README.",
+        "[core] Add retry to the uploader",
+        "x" * 200,
     ],
 )
-def test_accepts_well_formed_subjects(subject):
+def test_accepts_a_title_in_any_convention_or_language(subject):
     assert check_subject(subject) == subject
 
 
-@pytest.mark.parametrize(
-    ("subject", "because"),
-    [
-        ("修一下分页的 bug", "no type prefix"),
-        ("update stuff", "no type prefix"),
-        ("misc: tidy things", "type is not in the closed list"),
-        ("fix: 修复分页越界", "the description is not English"),
-        ("fix: stop the crash.", "trailing period"),
-        (f"feat: {'x' * MAX_SUBJECT}", "longer than the subject limit"),
-        ("fix: one\nfix: two", "more than one line"),
-        ("   ", "empty"),
-    ],
-)
-def test_rejects_malformed_subjects(subject, because):
-    with pytest.raises(InvalidSubject):
-        check_subject(subject), because
+def test_surrounding_whitespace_is_not_part_of_the_title():
+    assert check_subject("  修复分页越界 \n") == "修复分页越界"
 
 
-def test_the_rejection_says_what_to_write_instead():
-    """An error that only says "invalid" costs a whole turn to act on — the
-    example in the message is the part that closes the loop."""
-    with pytest.raises(InvalidSubject) as exc:
-        check_subject("做完了分页")
-    assert "type(scope): description" in str(exc.value)
-    assert "fix(accept)" in str(exc.value)
+@pytest.mark.parametrize("subject", ["", "   ", "\n"])
+def test_refuses_an_empty_title(subject):
+    with pytest.raises(InvalidSubject) as caught:
+        check_subject(subject)
+    assert caught.value.args[0] == "提交标题不能为空"
+
+
+def test_refuses_a_title_of_more_than_one_line():
+    """A PR title and a commit's first line cannot hold a line break."""
+    with pytest.raises(InvalidSubject) as caught:
+        check_subject("fix: one\nfix: two")
+    said = caught.value.args[0]
+    assert in_language(said, "en") == (
+        "The commit title can only be one line. Put the explanation in the body"
+    )
+    assert said == "提交标题只能有一行；解释写进正文（body）"
 
 
 def test_valid_subject_is_the_non_raising_read_path():
-    assert valid_subject("fix: stop the crash") == "fix: stop the crash"
-    assert valid_subject("做完了") is None
+    assert valid_subject("修复分页越界") == "修复分页越界"
+    assert valid_subject("a\nb") is None
     assert valid_subject(None) is None
     assert valid_subject("") is None
 
 
-def test_merge_subject_appends_the_pr_number():
-    assert merge_subject("fix: stop the crash", 213) == "fix: stop the crash (#213)"
+def _topic(title: str) -> Topic:
+    return Topic(id=uuid.uuid4(), project_id=uuid.uuid4(), title=title)
 
 
-def test_merge_subject_keeps_the_whole_line_inside_the_limit():
-    """The number is not optional (GitHub only auto-appends it to titles it
-    derived itself), so it is the subject that gives way, not the suffix."""
-    line = merge_subject("feat: " + "x" * MAX_SUBJECT, 213)
-    assert len(line) <= MAX_SUBJECT
-    assert line.endswith("… (#213)")
+def test_the_merge_title_is_the_whole_subject_and_the_pr_number():
+    """A long subject is the repository's to allow: nothing is cut off it."""
+    subject = "修复分页越界：" + "很长的说明" * 20
+    card = AcceptCard(change_subject=subject)
+    title = pr_text.merge_commit_title(card, _topic("话题"), 213)
+    assert title == f"{subject} (#213)"
 
 
-def test_a_refused_title_says_why_in_the_readers_language():
-    """The refusal is the catalog sentence: the CLI and agents read the Chinese,
-    an English screen renders the same key in English."""
-    with pytest.raises(InvalidSubject) as caught:
-        check_subject("fix(accept): keep the branch.")
-    said = caught.value.args[0]
-    assert said == "提交标题结尾不加句号"
-    assert in_language(said, "en") == "The commit title doesn't end with a period"
+def test_a_card_without_a_subject_falls_back_to_the_topic_title_as_is():
+    title = pr_text.merge_commit_title(None, _topic("做一个东西"), 7)
+    assert title == "做一个东西 (#7)"
+
+
+def test_the_fallback_stays_within_a_pr_title():
+    """A topic title may run to 300 characters; a GitHub PR title to 256."""
+    assert len(pr_text.change_subject(None, _topic("长" * 300))) <= 255
