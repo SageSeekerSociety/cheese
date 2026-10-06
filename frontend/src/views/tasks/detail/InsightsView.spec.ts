@@ -1,7 +1,7 @@
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import InsightsView from './InsightsView.vue'
@@ -40,8 +40,11 @@ function claim(over: Record<string, unknown>) {
   }
 }
 
-/** 画这一页签：名单与提交都是外面取好给的。 */
-function mount(participants: ReturnType<typeof claim>[]) {
+/** 画这一页签：名单与提交都是外面取好给的，读没读出来也由外面说。 */
+function mount(
+  participants: ReturnType<typeof claim>[],
+  opts: { failed?: boolean; failureReason?: string | null; forbidden?: boolean } = {}
+) {
   return render(InsightsView, {
     props: {
       task: task() as never,
@@ -49,6 +52,9 @@ function mount(participants: ReturnType<typeof claim>[]) {
       reviewByParticipant: new Map(),
       canManage: true,
       loading: false,
+      failed: opts.failed ?? false,
+      failureReason: opts.failureReason ?? null,
+      forbidden: opts.forbidden ?? false,
     },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
@@ -107,5 +113,26 @@ describe('单题看板的「小队构成」', () => {
     ])
 
     expect(buckets()).toEqual({ 小队: '1 人', 单人: '1 人' })
+  })
+
+  // 这一页是出题人拿来决策的：读失败留下的空名单画出来是「0 人领、0 份提交、通过率 0%」，
+  // 和「这道题确实没人领」一模一样。失败要说出来，别装成一组真的数字。
+  it('没读出来时画失败说明，不画一张全 0 的看板', async () => {
+    const view = mount([], { failed: true, failureReason: '服务端打盹了' })
+
+    expect(view.getByText('这道题的数据没读出来')).toBeTruthy()
+    expect(view.getByText('服务端打盹了')).toBeTruthy()
+    expect(view.queryByText('领取人数')).toBeNull()
+    expect(panel('小队构成')).toBeUndefined()
+
+    await fireEvent.click(view.getByText('重试'))
+    expect(view.emitted('retry')).toHaveLength(1)
+  })
+
+  it('不给你看：说没权限，不摆重试', () => {
+    const view = mount([], { failed: true, forbidden: true })
+
+    expect(view.getByText('你没有权限查看')).toBeTruthy()
+    expect(view.queryByText('重试')).toBeNull()
   })
 })

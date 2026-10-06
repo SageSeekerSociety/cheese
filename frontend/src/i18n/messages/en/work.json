@@ -151,6 +151,7 @@
     "loginHint": "Sign in to see the team and join it",
     "login": "Sign in and continue",
     "notFound": "Team not found. It may have been disbanded or is not visible to you",
+    "loadFailed": "Couldn't load this team",
     "invalid": "This team link no longer works. Ask a team admin for a new one",
     "owner": "Owner: {name}",
     "memberCount": "{count} members",

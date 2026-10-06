@@ -7,6 +7,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import BarList from '@/components/spaces/BarList.vue'
 import MetricCard from '@/components/spaces/MetricCard.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
@@ -26,7 +27,15 @@ const props = defineProps<{
   reviewByParticipant: Map<number, TaskSubmissionReview | undefined>
   canManage: boolean
   loading: boolean
+  /** 名单和提交都没读出来：下面那些 0 是假的，是没读到。判断在 `Insights.vue`。 */
+  failed: boolean
+  /** 服务端给的那句原因，有就照原样显示。 */
+  failureReason: string | null
+  /** 401/403：不是「这次没读到」，是「不给你看」，不给重试。 */
+  forbidden: boolean
 }>()
+
+const emit = defineEmits<{ retry: [] }>()
 
 /** 没领到 / 没权限的人看到的是一句说明，不是一张空表（真接口也会对无权的人 403）。 */
 const claimedRoster = computed(() => props.roster.filter((r) => r.approved !== 'DISAPPROVED'))
@@ -108,75 +117,87 @@ const claimTrend = computed(() => {
 
 <template>
   <div v-if="task" class="ins">
-    <div class="ins__kpis">
-      <MetricCard
-        :label="t('tasks.insights.claims')"
-        :value="task.participantLimit ? `${totalClaims} / ${task.participantLimit}` : `${totalClaims}`"
-        icon="mdi-hand-extended-outline"
-        :hint="
-          task.participantLimit
-            ? t('tasks.insights.placesLeft', { n: Math.max(0, task.participantLimit - totalClaims) })
-            : t('tasks.insights.noLimit')
-        "
-      />
-      <MetricCard
-        :label="t('tasks.insights.submitted')"
-        :value="submitted"
-        icon="mdi-tray-arrow-up"
-        :hint="t('tasks.insights.submittedHint')"
-      />
-      <MetricCard
-        :label="t('tasks.insights.passRate')"
-        :value="`${rate(passed, submitted)}%`"
-        icon="mdi-progress-check"
-        :hint="t('tasks.insights.passRateHint')"
-      />
-      <MetricCard
-        :label="t('tasks.insights.stalled')"
-        :value="stalled.length"
-        icon="mdi-alert-circle-outline"
-        :tone="stalled.length ? 'warn' : 'muted'"
-        :hint="stalled.length ? t('tasks.insights.stalledHint') : t('tasks.insights.noStalled')"
-      />
-    </div>
+    <!-- 名单和提交都没读到时，屏幕上原来是一张全 0 的看板：0 人领、0 份提交、通过率 0%，
+         和「这道题确实没人领」长得一模一样。读失败要说出来，并留住本来要看的东西。 -->
+    <BaseLoadError
+      v-if="failed"
+      :title="t('tasks.insights.loadFailed')"
+      :error="failureReason"
+      :forbidden="forbidden"
+      @retry="emit('retry')"
+    />
 
-    <div class="ins__grid">
-      <PanelCard
-        class="ins__span2"
-        :title="t('tasks.insights.trendTitle')"
-        :subtitle="t('tasks.insights.trendSubtitle')"
-      >
-        <TrendChart
-          v-if="totalClaims"
-          :labels="DAY_LABELS"
-          :series="[{ name: t('tasks.insights.trendSeries'), values: claimTrend }]"
-          :height="200"
+    <template v-else>
+      <div class="ins__kpis">
+        <MetricCard
+          :label="t('tasks.insights.claims')"
+          :value="task.participantLimit ? `${totalClaims} / ${task.participantLimit}` : `${totalClaims}`"
+          icon="mdi-hand-extended-outline"
+          :hint="
+            task.participantLimit
+              ? t('tasks.insights.placesLeft', { n: Math.max(0, task.participantLimit - totalClaims) })
+              : t('tasks.insights.noLimit')
+          "
         />
-        <BaseEmptyState
-          v-else
-          size="compact"
-          icon="mdi-chart-timeline-variant"
-          :title="t('tasks.insights.trendEmptyTitle')"
-          :desc="t('tasks.insights.trendEmptyText')"
+        <MetricCard
+          :label="t('tasks.insights.submitted')"
+          :value="submitted"
+          icon="mdi-tray-arrow-up"
+          :hint="t('tasks.insights.submittedHint')"
         />
-      </PanelCard>
+        <MetricCard
+          :label="t('tasks.insights.passRate')"
+          :value="`${rate(passed, submitted)}%`"
+          icon="mdi-progress-check"
+          :hint="t('tasks.insights.passRateHint')"
+        />
+        <MetricCard
+          :label="t('tasks.insights.stalled')"
+          :value="stalled.length"
+          icon="mdi-alert-circle-outline"
+          :tone="stalled.length ? 'warn' : 'muted'"
+          :hint="stalled.length ? t('tasks.insights.stalledHint') : t('tasks.insights.noStalled')"
+        />
+      </div>
 
-      <PanelCard :title="t('tasks.insights.progressTitle')">
-        <SplitBar :segments="statusSegments" />
-        <p class="ins__note">
-          {{ t('tasks.insights.progressNote', { rate: rate(passed, submitted), rejected: counts.REJECTED }) }}
-        </p>
-      </PanelCard>
+      <div class="ins__grid">
+        <PanelCard
+          class="ins__span2"
+          :title="t('tasks.insights.trendTitle')"
+          :subtitle="t('tasks.insights.trendSubtitle')"
+        >
+          <TrendChart
+            v-if="totalClaims"
+            :labels="DAY_LABELS"
+            :series="[{ name: t('tasks.insights.trendSeries'), values: claimTrend }]"
+            :height="200"
+          />
+          <BaseEmptyState
+            v-else
+            size="compact"
+            icon="mdi-chart-timeline-variant"
+            :title="t('tasks.insights.trendEmptyTitle')"
+            :desc="t('tasks.insights.trendEmptyText')"
+          />
+        </PanelCard>
 
-      <PanelCard :title="t('tasks.insights.teamsTitle')">
-        <BarList :rows="teamRows" :format="peopleCount" :empty="t('tasks.insights.teamsEmpty')" />
-      </PanelCard>
-    </div>
+        <PanelCard :title="t('tasks.insights.progressTitle')">
+          <SplitBar :segments="statusSegments" />
+          <p class="ins__note">
+            {{ t('tasks.insights.progressNote', { rate: rate(passed, submitted), rejected: counts.REJECTED }) }}
+          </p>
+        </PanelCard>
 
-    <!-- 只有出题人/管理员打得到这一页；打不到的人应该被告知为什么，而不是看到一张空表。 -->
-    <v-alert v-if="!canManage" type="info" variant="tonal" class="ins__guard">
-      {{ t('tasks.insights.guard') }}
-    </v-alert>
+        <PanelCard :title="t('tasks.insights.teamsTitle')">
+          <BarList :rows="teamRows" :format="peopleCount" :empty="t('tasks.insights.teamsEmpty')" />
+        </PanelCard>
+      </div>
+
+      <!-- 只有出题人/管理员打得到这一页；打不到的人应该被告知为什么，而不是看到一张空表。 -->
+      <v-alert v-if="!canManage" type="info" variant="tonal" class="ins__guard">
+        {{ t('tasks.insights.guard') }}
+      </v-alert>
+    </template>
   </div>
 
   <BaseEmptyState v-else-if="!loading" icon="mdi-help-circle-outline" :title="t('tasks.insights.notFound')" />

@@ -5,6 +5,10 @@
     :review-by-participant="reviewByParticipant"
     :can-manage="Boolean(isCreator || isAdmin)"
     :loading="loading"
+    :failed="failed"
+    :failure-reason="failureReason"
+    :forbidden="forbidden"
+    @retry="load"
   />
 </template>
 
@@ -20,11 +24,12 @@
 // - `GET /spaces/{id}/submissions?taskId=…` —— 这道题的所有提交（含判没判、判过没过）
 import type { Task, TaskMembership, TaskSubmissionReview } from '@/types'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import InsightsView from './InsightsView.vue'
 
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 
@@ -39,11 +44,20 @@ const route = useRoute()
 const roster = ref<TaskMembership[]>([])
 const reviewByParticipant = ref(new Map<number, TaskSubmissionReview | undefined>())
 const loading = ref(true)
+/** 这两个接口有一个没读到，下面的数字就都不是真的。空名单和「没人领」长得一样，得另记。 */
+const loadError = ref<unknown>(null)
+
+// 是「不给你看」还是「这次没读到」，在这里判：画面只拿布尔值、那句话说，不认状态码。
+const failed = computed(() => loadError.value !== null)
+const failureReason = computed(() => loadFailureReason(loadError.value))
+const forbidden = computed(() => isForbidden(loadError.value))
 
 async function load() {
   const taskId = props.taskData?.id
   if (!taskId) return
   loading.value = true
+  // 上一次的失败不许留到这一次：重新问一次，屏幕上先干净。
+  loadError.value = null
   try {
     const [rosterRes, subsRes] = await Promise.all([
       TasksApi.getParticipants(taskId),
@@ -60,9 +74,12 @@ async function load() {
       }
     }
     reviewByParticipant.value = new Map([...byVersion.entries()].map(([pid, v]) => [pid, v.review]))
-  } catch {
+  } catch (error) {
+    // 名单清空是给「重新试一次」留一张干净的画面，但清空之后屏幕上是一张全 0 的
+    // 看板 —— 和「这道题确实没人领」分不出来，所以这个错要单独交出去。
     roster.value = []
     reviewByParticipant.value = new Map()
+    loadError.value = error
   } finally {
     loading.value = false
   }
