@@ -285,6 +285,17 @@ class LocalDirectoryService:
             fingerprint=_fingerprint(live),
         )
 
+    async def ever_granted(self, device_id: str) -> bool:
+        """Whether any directory on this machine was ever authorized, revoked
+        ones included.
+
+        A machine with only revoked grants still has to be sent its (empty) set:
+        it may be holding one of them. A machine with none has nothing to hold.
+        """
+        return bool(
+            await self._repo.list_grants_for_device(device_id, include_revoked=True)
+        )
+
     # -- the decision ------------------------------------------------------
 
     async def authorize(self, request: AuthorizeRequest) -> Verdict:

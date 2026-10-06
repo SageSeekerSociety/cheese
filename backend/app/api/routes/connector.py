@@ -92,6 +92,19 @@ _recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
 
 
 async def recover_business_state(device_id: str) -> None:
+    from app.core.background import spawn
+    from app.core.db import async_session_factory
+    from app.domain.local_fs.enforcement import push_grants_on_connect
+
+    # The machine enforces its own copy of its directory grants, so it is sent
+    # the current set as it connects, before anything else waits. It is not
+    # behind the queue below: a revoke made while the machine was away is in
+    # force on it only once this lands. And not behind the session-owner check:
+    # every backend may send it, since the set is replaced whole on the machine.
+    spawn(
+        push_grants_on_connect(async_session_factory, device_hub, device_id),
+        name="local grants device reconnect",
+    )
     async with _recovering:
         await _recover_business_state(device_id)
 

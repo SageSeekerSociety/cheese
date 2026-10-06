@@ -18,7 +18,6 @@ import pytest
 
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.local_fs.enforcement import (
-    PushOutcome,
     grant_wire,
     plan_local_access,
     push_grants,
@@ -124,7 +123,6 @@ async def test_an_offline_machine_does_not_fail_the_grant():
 
     assert outcome.delivered is False
     assert outcome.reason == "device_offline"
-    assert outcome.needs_retry is True
     # The detail is what the owner reads, so it has to say what happened AND what
     # will happen next, not just that something failed.
     assert "不在线" in outcome.detail
@@ -139,7 +137,6 @@ async def test_a_machine_that_answers_badly_is_reported_not_raised():
 
     assert outcome.delivered is False
     assert outcome.reason == "device_error"
-    assert outcome.needs_retry is True
 
 
 async def test_a_machine_that_does_not_answer_is_reported_not_raised():
@@ -177,14 +174,13 @@ async def test_a_fault_in_this_code_is_raised_not_blamed_on_the_machine():
         await push_grants(service, link, DEVICE)
 
 
-async def test_a_delivered_set_is_not_retried():
+async def test_a_delivered_set_carries_the_machines_fingerprint():
     repo = InMemoryLocalFsRepository()
     service = service_with(repo)
     link = FakeLink()
     outcome = await push_grants(service, link, DEVICE)
     assert outcome.delivered is True
     assert outcome.fingerprint == "fp-1"
-    assert outcome.needs_retry is False
 
 
 async def test_revoking_pushes_an_emptied_set():
@@ -323,8 +319,3 @@ def test_a_revoked_grant_is_not_a_reason_to_degrade():
     )
     plan = plan_local_access(device_online=False, grants=[revoked])
     assert plan.reason == "no_grant"
-
-
-def test_an_outcome_only_asks_for_a_retry_when_it_did_not_land():
-    assert PushOutcome(True, "delivered", "").needs_retry is False
-    assert PushOutcome(False, "device_offline", "").needs_retry is True

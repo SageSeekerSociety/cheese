@@ -9,9 +9,10 @@ Two facts make this module exist rather than a call site doing it inline:
   the machine is allowed to do.
 * **The owner's computer is not always on.** A push that fails because the machine
   is not connected is not a failure of the grant — the platform is the
-  authoritative record either way, and the set is pushed again when the device
-  reattaches. A grant that could only be created while the machine happened to be
-  online would make 「本机离线时项目照常可用」 false at the first step.
+  authoritative record either way, and :func:`push_grants_on_connect` sends the
+  machine its current set every time it connects. A grant that could only be
+  created while the machine happened to be online would make 「本机离线时项目照常
+  可用」 false at the first step.
 
 So :func:`push_grants` never raises for an absent machine. It returns an outcome
 that says what happened, and :func:`plan_local_access` turns that — plus the
@@ -23,16 +24,22 @@ work has to go on somewhere.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.local_fs.records import DirectoryGrant
 from app.domain.local_fs.service import LocalDirectoryService
+from app.domain.local_fs.wiring import sql_local_directory_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +50,7 @@ __all__ = [
     "grant_wire",
     "plan_local_access",
     "push_grants",
+    "push_grants_on_connect",
 ]
 
 
@@ -65,16 +73,6 @@ class PushOutcome:
     reason: str
     detail: str
     fingerprint: str | None = None
-
-    @property
-    def needs_retry(self) -> bool:
-        """Whether the set should be offered again when the machine reattaches.
-
-        True for an absent machine and for one that answered badly. False only
-        when the device confirmed the set it now holds — re-pushing an
-        acknowledged set on every reconnect would be churn with no effect.
-        """
-        return not self.delivered
 
 
 def grant_wire(grant: DirectoryGrant) -> dict[str, Any]:
@@ -112,6 +110,47 @@ async def push_grants(
     :meth:`LocalDirectoryService.device_grants` for why filtering by project here
     would silently disable the narrower kind of grant, which is the safer kind.
     """
+    async with _one_push_at_a_time(device_id):
+        return await _send_current_set(service, link, device_id)
+
+
+# Per machine: the lock, and how many pushes hold or wait on it. An entry goes
+# when its count reaches zero, so the map holds only machines being pushed to.
+_push_locks: dict[str, asyncio.Lock] = {}
+_push_waiting: dict[str, int] = {}
+
+
+@asynccontextmanager
+async def _one_push_at_a_time(device_id: str) -> AsyncIterator[None]:
+    """Read the set and send it, one push per machine at a time.
+
+    Two pushes that overlap, say a reconnect's and a revoke's, each read the
+    set and then send it. Unordered, the one that read first can arrive last,
+    and the machine keeps the older set: the one that still has the revoked
+    directory. Under this lock the push that reads later also sends later.
+    Granting and revoking commit before they push, so the later read sees the
+    change.
+
+    This orders the pushes made by one process. Two backends pushing to the
+    same machine at the same instant, which only a rolling deploy produces, are
+    not ordered against each other; the machine's next connection sends it the
+    current set either way.
+    """
+    lock = _push_locks.setdefault(device_id, asyncio.Lock())
+    _push_waiting[device_id] = _push_waiting.get(device_id, 0) + 1
+    try:
+        async with lock:
+            yield
+    finally:
+        _push_waiting[device_id] -= 1
+        if not _push_waiting[device_id]:
+            del _push_waiting[device_id]
+            del _push_locks[device_id]
+
+
+async def _send_current_set(
+    service: LocalDirectoryService, link: DeviceLink, device_id: str
+) -> PushOutcome:
     effective = await service.device_grants(device_id)
     payload = [grant_wire(grant) for grant in effective.grants]
 
@@ -143,8 +182,8 @@ async def push_grants(
         # own (an owner older than this call answers 404). Not the machine's
         # doing, and the error names the owner's internal address, so it goes to
         # the log and the person is told only that the platform did not get it
-        # there. The whole set travels on every push, so the next grant or
-        # revoke on this machine carries this one too.
+        # there. The whole set travels on every push, so the machine's next
+        # connection carries this one, and so does the next grant or revoke.
         logger.warning(
             "local grants push to %s did not reach the owner",
             device_id,
@@ -153,7 +192,7 @@ async def push_grants(
         return PushOutcome(
             delivered=False,
             reason="platform_error",
-            detail="已记录授权，但平台这边没能把它下发给这台电脑；下次授权或撤销时会一并下发",
+            detail="已记录授权，但平台这边没能把它下发给这台电脑；它下次连上来时会重新下发",
         )
 
     fingerprint = None
@@ -165,6 +204,43 @@ async def push_grants(
         detail="授权已下发到这台电脑，立即生效",
         fingerprint=fingerprint if isinstance(fingerprint, str) else None,
     )
+
+
+async def push_grants_on_connect(
+    session_factory: async_sessionmaker[AsyncSession],
+    link: DeviceLink,
+    device_id: str,
+) -> PushOutcome | None:
+    """Send a machine that has just connected the set the platform holds now.
+
+    The machine enforces its own copy, so a grant or a revocation made while it
+    was away, or one it refused, is not in force on it until it is sent the
+    current set. This is what makes 「它下次连上来时会自动生效」 true. It runs on
+    every connection, not only after a push that failed: the platform does not
+    know what the machine kept across its own restart, and the machine replaces
+    its set whole, so sending the same set again changes nothing.
+
+    A machine that was never granted a directory is not sent anything (None).
+    One whose grants were all revoked is sent the empty set.
+
+    A push that does not land is logged and not raised. Nobody waits on this:
+    it runs in the background of a connection, and the machine's next
+    connection sends the set again.
+    """
+    async with session_factory() as session:
+        service = sql_local_directory_service(session)
+        if not await service.ever_granted(device_id):
+            return None
+        outcome = await push_grants(service, link, device_id)
+    if not outcome.delivered:
+        logger.warning(
+            "local grants not delivered to %s on connect (%s): %s; "
+            "sent again on its next connect",
+            device_id,
+            outcome.reason,
+            outcome.detail,
+        )
+    return outcome
 
 
 @dataclass(frozen=True, slots=True)
