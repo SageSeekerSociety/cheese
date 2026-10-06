@@ -21,6 +21,8 @@ from app.core.sentences import exception_text, say
 from app.domain.agent import turn_inputs
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
+    TASK_MACHINE_READS_ONLY,
+    TASK_MACHINE_STARTED,
     UNTITLED_TASK,
     build_session_opening,
     build_system_prompt,
@@ -235,6 +237,9 @@ class _TurnContext:
     # writes the task's document, and changes nothing in the project. A 支线's
     # always only reads: what changes the project is done in a task.
     reads_only: bool
+    # What a task's session is told it may do on the machine; None outside a
+    # task. It changes when the task starts, and is told again then.
+    task_machine: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +267,12 @@ class _MemoryBooks(Protocol):
     """What a turn tells the service's memory ledger (``agent.memory_ledger``)."""
 
     def remember_turn(
-        self, topic_id: uuid.UUID, *, acting: str, speakers: tuple[str, ...]
+        self,
+        room_id: uuid.UUID,
+        seat: tuple[uuid.UUID, str],
+        *,
+        acting: str,
+        speakers: tuple[str, ...],
     ) -> None: ...
 
 
@@ -624,7 +634,12 @@ class RoomTurns:
             memory = await memory_index(
                 session, topic.project_id, speaker_handles=list(speakers)
             )
-            self._memory.remember_turn(topic.id, acting=acting_agent, speakers=speakers)
+            self._memory.remember_turn(
+                topic.id,
+                (place.conversation_id, agent.handle),
+                acting=acting_agent,
+                speakers=speakers,
+            )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
@@ -964,6 +979,11 @@ class RoomTurns:
             inner_id=place.inner_id,
             reads_only=place.thread is not None
             or (task is not None and task.started_at is None),
+            task_machine=None
+            if task is None or place.thread is not None
+            else TASK_MACHINE_READS_ONLY
+            if task.started_at is None
+            else TASK_MACHINE_STARTED,
             acting_agent=acting_agent,
             agent=agent,
             agent_pool=agent_pool,
@@ -1078,6 +1098,7 @@ class RoomTurns:
         )
         opening = build_session_opening(
             thread=prepared.thread_context,
+            machine=prepared.task_machine,
             doc=doc_text,
             memory=memory,
             # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前

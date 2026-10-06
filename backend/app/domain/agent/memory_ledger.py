@@ -8,7 +8,7 @@
 其余名字都从本模块取。
 
 **四份状态只在这里读写**，它们原先是 `ChatService` 构造函数里的四个字段：
-`_turns`（这一轮署谁的名、算谁的 private）、`_dreams`（正在跑整理的房间）、
+`_turns`（每个座位这一轮署谁的名、算谁的 private）、`_dreams`（正在跑整理的房间）、
 `_refusals`（对账时挡下来的删除）、`_syncs`（每间房的对账锁）。谁在读它们，只由
 这一簇自己回答，所以它们跟着这一簇走。
 
@@ -21,6 +21,7 @@
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -103,6 +104,15 @@ class _MemoryHost(Protocol):
     ) -> tuple[dict, str]: ...
 
 
+@dataclass(frozen=True)
+class _Turn:
+    """一个座位最近那一轮的记忆账。"""
+
+    room_id: uuid.UUID
+    acting: str
+    speakers: tuple[str, ...]
+
+
 class MemoryLedger:
     """记忆的对账与整理。见模块开头。"""
 
@@ -122,10 +132,11 @@ class MemoryLedger:
         self._gateway_lock = gateway_lock
         self._base_prompt = base_prompt
         self._host = host
-        # 每一间房这一轮的记忆账：署谁的名、算谁的 private（组装那一轮时记下，
-        # 见 `remember_turn`）。两个对账时刻手上只有一个 topic id，所以这份点名
-        # 只能从别的时刻留下来。没记过的房间按「只有 team」对。
-        self._turns: dict[uuid.UUID, tuple[str, tuple[str, ...]]] = {}
+        # 每一个座位（对话, agent）这一轮的记忆账：在哪间房、署谁的名、算谁的
+        # private（组装那一轮时记下，见 `remember_turn`）。两个对账时刻手上只有
+        # 那个座位的会话，所以这份点名只能从别的时刻留下来。没记过的座位按「只
+        # 有 team」对、署 system。
+        self._turns: dict[tuple[uuid.UUID, str], _Turn] = {}
         # 正在跑整理的那几间房（一场整理一次，跑完就撤）。它只改一件事：这一轮
         # 结束时的对账多问一句「这次是不是要删掉一大半」——见 `sync_once`。
         # 会话自己有一条同样的兜底（`tree._too_many_to_delete`），但那条只会把
@@ -138,43 +149,55 @@ class MemoryLedger:
         self._syncs: dict[uuid.UUID, asyncio.Lock] = {}
 
     def remember_turn(
-        self, topic_id: uuid.UUID, *, acting: str, speakers: tuple[str, ...]
+        self,
+        room_id: uuid.UUID,
+        seat: tuple[uuid.UUID, str],
+        *,
+        acting: str,
+        speakers: tuple[str, ...],
     ) -> None:
-        """记下这一轮的记忆账：署谁的名、算谁的 private。
+        """记下一个座位（对话, agent）这一轮的记忆账：署谁的名、算谁的 private。
 
         组装一轮的时候才知道这两件事（`_assemble_turn`），而对账的两个时刻（输入
-        之前、这一轮结束之后）手上只有一个 topic id。记的是刚才 `memory_index`
+        之前、这一轮结束之后）手上只有那个座位的会话。记的是刚才 `memory_index`
         读过的那几个人，所以「注入里看得见的」和「铺到会话目录里的」是同一批。
         """
-        self._turns.pop(topic_id, None)
-        self._turns[topic_id] = (acting, speakers)
+        self._turns.pop(seat, None)
+        self._turns[seat] = _Turn(room_id, acting, speakers)
         while len(self._turns) > MEMORY_TURNS_KEPT:
             del self._turns[next(iter(self._turns))]
 
-    def _scopes(self, topic_id: uuid.UUID) -> list[tuple[MemoryFileScope, str | None]]:
-        """这一次对账要点名的那几棵树：team 一份，本轮发言人一人一份 private。
+    def _scopes(self, room_id: uuid.UUID) -> list[tuple[MemoryFileScope, str | None]]:
+        """这一次对账要点名的那几棵树：team 一份，这间房里每个座位最近一轮的发
+        言人一人一份 private。
 
         点过名的作用域才是这一次对账的范围（`memory.session` 的开头那一段）：
         没点到的 private 既不铺也不收，别人的偏好不会被这一间房的一次对账碰掉。
+        按房间合起来，因为记忆树是一间房一棵（会话的家是那间房的）：只点这个座
+        位的发言人，会把另一个座位正在用的那个人的 private 从同一棵树上收走。
         """
-        _, speakers = self._turns.get(topic_id, ("", ()))
+        speakers: dict[str, None] = {}
+        for turn in self._turns.values():
+            if turn.room_id == room_id:
+                speakers.update(dict.fromkeys(turn.speakers))
         return [
             (MemoryFileScope.team, None),
             *((MemoryFileScope.private, handle) for handle in speakers),
         ]
 
-    async def sync(self, topic_id: uuid.UUID) -> None:
-        """对一遍这一间房的记忆账；同一间房的两场对账排队，不交错。
+    async def sync(self, session: SessionRef) -> None:
+        """对一遍这个座位的会话的记忆账；同一间房的两场对账排队，不交错。
 
-        一轮结束时，钩子要对一次账，整理那一轮收尾时自己也要当场对一次。两场交错时，
-        后一场读到的是前一场提交之前的数据库：它把平台的旧版铺回会话，整理拿它算出
-        的「改了哪些」也是空的，而那些改动其实已经落库了。
+        一轮结束时，钩子要对一次账，整理那一轮收尾时自己也要当场对一次；一间房里
+        几个座位的会话用的是同一棵树。两场交错时，后一场读到的是前一场提交之前的
+        数据库：它把平台的旧版铺回会话，整理拿它算出的「改了哪些」也是空的，而那
+        些改动其实已经落库了。
         """
-        async with self._syncs.setdefault(topic_id, asyncio.Lock()):
-            await self.sync_once(topic_id)
+        async with self._syncs.setdefault(session.topic_id, asyncio.Lock()):
+            await self.sync_once(session)
 
-    async def sync_once(self, topic_id: uuid.UUID) -> None:
-        """对一遍这一间房的记忆账：平台这一份铺下去，会话改过的收回来。
+    async def sync_once(self, session: SessionRef) -> None:
+        """对一遍这个座位的会话的记忆账：平台这一份铺下去，会话改过的收回来。
 
         两个时刻问它：输入之前（让 agent 一睁眼读到的就是平台现在这一份，别人刚
         改的也在里面）和这一轮结束之后（它是在这一轮里写的，写的时候这一轮还没
@@ -184,15 +207,17 @@ class MemoryLedger:
         一次对账是跨机的一次往返，所以中间不持有事务：先把数据库这一份读出来、
         放开，再问会话，最后在一个短事务里写回、把改动说进房间。
         """
+        topic_id = session.topic_id
         scopes = self._scopes(topic_id)
-        updated_by = self._turns.get(topic_id, ("system", ()))[0] or "system"
-        async with self._sessions() as session:
-            topic = await TopicRepository(session).get(topic_id)
+        turn = self._turns.get((session.conversation_id, session.agent_handle))
+        updated_by = (turn.acting if turn else "") or "system"
+        async with self._sessions() as db:
+            topic = await TopicRepository(db).get(topic_id)
             if topic is None:
                 return
             project_id = topic.project_id
-            stored = await read_tree(session, project_id, scopes)
-        answer = await self._compute.memory(topic_id, {"scopes": stored.scopes})
+            stored = await read_tree(db, project_id, scopes)
+        answer = await self._compute.memory(session, {"scopes": stored.scopes})
         if answer is None:
             # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
             # 不落记忆文件。两种都只是「这里没有这件事」，不是失败。
@@ -209,9 +234,9 @@ class MemoryLedger:
             logger.warning("memory dream refused a bulk delete: %s", refusal)
             self._refusals[topic_id] = refusal
             return
-        async with self._sessions() as session:
+        async with self._sessions() as db:
             change = await apply_tree(
-                session,
+                db,
                 project_id,
                 stored,
                 answer,
@@ -222,10 +247,11 @@ class MemoryLedger:
                 # 一次对账大部分时候答的是这个。什么都没变就什么都不说：这条事
                 # 件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
                 return
+            # 说给写它的那段对话：一间房里的任务是它自己的一段对话。
             await _say_memory_change(
-                session, project_id, change, scopes, writer_room=topic_id
+                db, project_id, change, scopes, writer_room=session.conversation_id
             )
-            await session.commit()
+            await db.commit()
 
     # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
 
@@ -330,9 +356,6 @@ class MemoryLedger:
             dream.briefing(stored.scopes, rooms, code_project=code_project)
         )
 
-        # 这一轮点名的作用域也在这里定下来：`send` 会在输入之前按它铺一遍（记忆
-        # 那时才落到会话的磁盘上），一轮结束时又按它收回来。
-        self.remember_turn(root_topic_id, acting=agent_handle, speakers=tuple(owners))
         self._dreams.add(root_topic_id)
         runtime = self._compute.platform_work(compute_id)
         system_prompt = build_system_prompt(
@@ -358,17 +381,26 @@ class MemoryLedger:
                         project_id, runtime, root_topic_id, platform=True
                     )
                 )[0]
+                dreamer = SessionRef(
+                    project_id,
+                    root_topic_id,
+                    model_kwargs["session_agent"],
+                    harness=runtime.harness,
+                )
+                # 这一轮点名的作用域也在这里定下来：`send` 会在输入之前按它铺一遍
+                # （记忆那时才落到会话的磁盘上），一轮结束时又按它收回来。
+                self.remember_turn(
+                    root_topic_id,
+                    (root_topic_id, dreamer.agent_handle),
+                    acting=agent_handle,
+                    speakers=tuple(owners),
+                )
                 # Read here rather than heard by the room: nobody waits on it
                 # in a timeline, and the run is worth exactly as much as this
                 # reading of it.
                 async with runtime.reading(run_id) as events:
                     await runtime.send(
-                        SessionRef(
-                            project_id,
-                            root_topic_id,
-                            model_kwargs["session_agent"],
-                            harness=runtime.harness,
-                        ),
+                        dreamer,
                         prompt,
                         system_prompt=system_prompt,
                         model=model_kwargs.get("model"),
@@ -391,7 +423,7 @@ class MemoryLedger:
                 # 收回来。自己再对一次账，不等那一侧的回调：这一轮的结果就在眼前，
                 # 而「整理到底成了没有」要一个当场的答案（对账幂等，回调先跑过也
                 # 只会是一次空账）。
-                await self.sync(root_topic_id)
+                await self.sync(dreamer)
         finally:
             # 撤掉整理这一轮的标记：它只在这一轮里有效，留着会把下一轮普通对话也
             # 按「删多了就整轮作废」处理。

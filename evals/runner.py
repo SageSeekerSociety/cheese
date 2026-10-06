@@ -185,6 +185,7 @@ async def _amain(args: argparse.Namespace) -> int:
         backend.ws_base_url,
         sandbox_token=backend.sandbox_token,
         jwt_secret=backend.jwt_secret,
+        platform_admin_handle=backend.platform_admin_handle,
     )
     ctx = EvalContext(api=api, log=log)
     results: list[ScenarioResult] = []

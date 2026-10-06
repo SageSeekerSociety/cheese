@@ -1456,32 +1456,22 @@ async def test_a_tunnel_screen_is_handed_no_loopback_port(monkeypatch, tmp_path)
     assert env["CHEESE_MODEL_PROXY"] == "1"
 
 
-@pytest.mark.parametrize("kind", ["session_host", "private_cloud", "elsewhere"])
-async def test_every_machine_finds_the_tunnel_on_the_backend_it_already_dials(
-    monkeypatch, tmp_path, kind
+async def test_the_session_host_finds_the_tunnel_on_the_backend_it_already_dials(
+    monkeypatch, tmp_path
 ):
-    """A machine reaches the model tunnel the way it reaches the backend: the
-    session host over its own base, a private-control cloud machine (isolated
-    from private networks) over its loopback forward, any other machine over the
-    public base. A second address for the tunnel is one that can point
-    somewhere the machine never reaches — an intranet gateway an enrolled
-    laptop cannot see, or a certificate nobody renews."""
+    """The session host, where every agent runs, reaches the model tunnel the
+    way it reaches the backend: over its own configured base. A second address
+    for the tunnel is one that can point somewhere it never reaches, or carry a
+    certificate nobody renews."""
     from urllib.parse import urlsplit
 
     from app.domain.agent import machine_address
     from app.domain.device.supply import Supply
 
     _subscription_settings(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        settings,
-        "agent_session_device_id",
-        "dev1" if kind == "session_host" else None,
-    )
+    monkeypatch.setattr(settings, "agent_session_device_id", "dev1")
     monkeypatch.setattr(settings, "agent_session_api_base", "http://172.17.0.1:8081")
-    machine = SimpleNamespace(
-        supply=Supply.cloud if kind == "private_cloud" else Supply.self_hosted,
-        cloud_control_private=kind == "private_cloud",
-    )
+    machine = SimpleNamespace(supply=Supply.self_hosted, cloud_control_private=False)
 
     class Session:
         async def get(self, _row, _device_id):
@@ -1500,12 +1490,7 @@ async def test_every_machine_finds_the_tunnel_on_the_backend_it_already_dials(
     assert (tunnel.hostname, tunnel.port) == (api.hostname, api.port)
     assert tunnel.scheme == {"http": "ws", "https": "wss"}[api.scheme]
     assert tunnel.path == api.path.rstrip("/") + "/llm/tunnel"
-    expected_host = {
-        "session_host": "172.17.0.1",
-        "private_cloud": "127.0.0.1",
-        "elsewhere": "cheese.test",
-    }[kind]
-    assert tunnel.hostname == expected_host
+    assert tunnel.hostname == "172.17.0.1"
     assert "HTTPS_PROXY" not in env
 
 

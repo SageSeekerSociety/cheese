@@ -243,6 +243,9 @@ async def get_topic_compute_profile(
 class WorkLeaseRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=660, gt=0, le=660)
+    # The caller hands the answer's `notice` to the agent with its tool's result
+    # (`session_work.ensure`).
+    tells_agent: bool = False
 
 
 @router.post("/{topic_id}/sessions/{session_id}/work-lease")
@@ -281,6 +284,7 @@ async def acquire_session_work_lease(
                     env=body.env,
                     wait_s=min(work_lease.PREPARING_WAIT_S, body.timeout),
                     gone=request.is_disconnected,
+                    tells_agent=body.tells_agent,
                 )
             )
     except TimeoutError:

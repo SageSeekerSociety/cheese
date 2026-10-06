@@ -74,7 +74,17 @@ after pushing gives its home back; one that leaves without pushing (`abandon_unp
 its home, on its host or in its archive, until its room's cleanup removes it. A host the
 provider fails before it is enrolled holds nothing of anyone's: the pool gives it up, deletes
 it, and places its sessions again; after three such failures within an hour it stops creating
-hosts for the rest of the hour. An enrolled host in `error` keeps its sessions.
+hosts for the rest of the hour.
+
+Sandboxes are disposable: what counts is what was pushed. So the pool also gives up on an
+enrolled host the provider reports in `error`, and on one whose connector has been away for
+ten minutes (`services.LOST_AFTER`, counted by the sweep in `cloud_hosts.offline_since`) while
+another host of the pool is online. With none online, the sweep takes the outage for the
+platform's own (a restart, a cut link) and gives up on nothing. Each session that worked on
+the host is placed in a new sandbox on its next tool call; that call's result tells the agent,
+once, that its workspace came from git again and what it had not pushed is gone, and the room
+hears 「环境所在的机器不再响应，环境已换成新的……」. Only the `error` report counts toward the
+three failures. Whole cloud VMs are not given up this way.
 
 ### Whole cloud VMs
 

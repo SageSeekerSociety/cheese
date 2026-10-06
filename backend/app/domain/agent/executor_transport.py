@@ -648,7 +648,9 @@ class RemoteClient:
         this asks again until ``deadline``; the machine still being prepared
         then, or not to be had at all, raises with the platform's reason.
         `MACHINE_PREPARING` is written to the text stream ``preparing`` once,
-        as soon as the platform says the machine is being prepared. Returns
+        as soon as the platform says the machine is being prepared, and so is
+        a notice the platform has for the agent with the hands (a sandbox that
+        was replaced): only a caller with a stream asks for one. Returns
         whether the hands are another lease than the ones this client held."""
         # Whoever wants to be told asks first without waiting: a waiting
         # request answers "preparing" only after the platform's bounded wait,
@@ -664,6 +666,7 @@ class RemoteClient:
                         "body": {
                             "env": self.config.get("setup_env", {}),
                             "timeout": max(0.001, remaining) if told else 0.001,
+                            "tells_agent": preparing is not None,
                         },
                     }
                 )
@@ -699,6 +702,8 @@ class RemoteClient:
         if result.get("unavailable"):
             raise RuntimeError(result["unavailable"])
         target = result["target"]
+        if result.get("notice") and preparing is not None:
+            print(result["notice"], file=preparing, flush=True)
         changed_lease = self.config.get("generation") != target.get("generation")
         self.config.update(target)
         token_file = self.config.get("token_file")

@@ -3,7 +3,7 @@
 # Addresses cover the real regenerated profiled snapshot in scripts/route_index.json.
 # Each address is explicit. Catalog ids only share explanatory text; the app never reads this sidecar.
 # Preserve duplicate leaf registrations in scripts/route_index.json; a shared address note is not a leaf id.
-# Intent still unconfirmed: /debug/turns, /frontend-errors, /market/nodes, question followers,
+# Intent still unconfirmed: /frontend-errors, /market/nodes, question followers,
 # cross-user favorites and learning-task team eligibility. Notes record existing gates, not policy approval.
 version: 1
 auth_entries:
@@ -112,12 +112,11 @@ auth_entries:
   cheese.project.gate: "main.cheese_token_gate matches a project-scoped POST path in _CHEESE_WRITE_PATHS and checks project scope / explicit global sandbox / authorized project-agent credential. Source: app/main.py,721."
   memory.closed.write: "POST project memory remains in main.cheese_token_gate, but projects.add_memory unconditionally rejects the obsolete write with ValidationError. No memory is persisted; this is a closed operation, not a newly granted permission. Source: app/api/routes/projects.py; app/main.py."
   public.catalogue: "public(catalogue): the cited read handler returns published static/catalogue choices without credential dependencies. This entry is only used for agent types, public resource limits, installer and public metadata reads verified below."
-  public.health: "public(health/readiness/metrics/version): no route credential dependency or authorization call. Handler exposes health/build/metrics data as currently implemented. Source: app/api/routes/health.py; app/main.py,842."
+  public.health: "public(health/readiness/version): /healthz, /readyz, /health and /version take no credential and call no authorization. They are what a deployment probe and the frontend version badge read; /readyz also carries the check payload in its 503 body, so an outage stays diagnosable. /health/detailed and /metrics are platform.admin. Source: app/api/routes/health.py; app/main.py,842."
   public.legal: "public(legal document text/version): no credential dependency; consent operations use require_auth_user separately. Source: app/api/routes/legal.py onward."
   public.redirect: "public(redirect only): docs_site.docs_sign_in answers a validated in-site path with a 303 to the platform's /docs-signin page; it reads no credential and grants nothing. Source: app/api/routes/docs_site.py."
   public.uploads: "public(local uploaded asset delivery): no credential check; _safe_path requires contained existing storage path, executable suffixes are served as download/inert content. Fixed local profile registers /uploads/{key:path}. Source: app/api/routes/uploads.py,61."
   public.mcp.metadata: "public(remote MCP OAuth client metadata): publishes only the OAuth client declaration; management and callbacks use separate gates. Source: app/api/routes/remote_mcp.py."
-  observed.debug: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /debug/turns returns agent execution lifecycle summaries. Source: app/main.py."
   observed.frontend.errors: "当前路由无认证或授权校验；公开访问意图尚未确认。仅校 project/topic 存在；frontend_log.intake 限流/去重不构成授权。Source: app/api/routes/frontend_log.py."
   observed.compute.nodes: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /market/nodes returns compute availability and deployment active-turn count. Source: app/api/routes/market.py."
   project.can_manage.read: "ActorResolver.resolve + authorize_project gates the read; MemberService.require_manager is caught to return can_manage true/false, not to reject a nonmanager. Source: projects.get_task_naming and projects_run_config.get_default_model/get_compute_configs."
@@ -622,8 +621,8 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/groups/{group_id}/questions/{question_id}", auth: "legacy.groups.create_group_target", owner: "groups"}
   # app.api.routes.health
   - {protocol: "http", method: "GET", path: "/healthz", auth: "public.health", owner: "core.health"}
-  - {protocol: "http", method: "GET", path: "/health/detailed", auth: "public.health", owner: "core.health"}
-  - {protocol: "http", method: "GET", path: "/metrics", auth: "public.health", owner: "core.health"}
+  - {protocol: "http", method: "GET", path: "/health/detailed", auth: "platform.admin", owner: "core.health"}
+  - {protocol: "http", method: "GET", path: "/metrics", auth: "platform.admin", owner: "core.health"}
   - {protocol: "http", method: "GET", path: "/readyz", auth: "public.health", owner: "core.health"}
   # app.api.routes.installer
   - {protocol: "http", method: "GET", path: "/connector/install.sh", auth: "public.catalogue", owner: "installer"}
@@ -1232,6 +1231,6 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/diff", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/topics/{topic_id}/work-summary", auth: "workspace.access", owner: "repository.transport"}
   # app.main
-  - {protocol: "http", method: "GET", path: "/debug/turns", auth: "observed.debug", owner: "agent.execution"}
+  - {protocol: "http", method: "GET", path: "/debug/turns", auth: "platform.admin", owner: "agent.execution"}
   - {protocol: "http", method: "GET", path: "/health", auth: "public.health", owner: "core.health"}
   - {protocol: "http", method: "GET", path: "/version", auth: "public.health", owner: "core.health"}

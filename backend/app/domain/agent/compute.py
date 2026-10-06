@@ -250,18 +250,25 @@ class ComputePool:
         """The backend holding this seat's session, if this process holds it."""
         return self._owners.get((topic_id, agent_handle))
 
-    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
-        """Relay a memory reconciliation to whichever runtime owns this room.
+    async def memory(self, session: "SessionRef", request: dict) -> dict | None:
+        """Relay a memory reconciliation to whichever runtime holds this seat.
 
-        ``None`` means «这个房间现在没有能对账的会话» — no live session, or a
+        ``None`` means «这个座位现在没有能对账的会话» — no live session, or a
         harness whose sessions keep no memory files. Both are ordinary answers,
         not failures.
         """
-        candidates = [
-            runtime for (topic, _), runtime in self._owners.items() if topic == topic_id
-        ] or [runtime for runtime in self._runtimes() if runtime.holds(topic_id)]
+        owner = self._owners.get((session.topic_id, session.agent_handle))
+        candidates = (
+            [owner]
+            if owner is not None
+            else [
+                runtime
+                for runtime in self._runtimes()
+                if runtime.holds(session.conversation_id, session.agent_handle)
+            ]
+        )
         for runtime in candidates:
-            answer = await runtime.memory(topic_id, request)
+            answer = await runtime.memory(session, request)
             if answer is not None:
                 return answer
         return None
