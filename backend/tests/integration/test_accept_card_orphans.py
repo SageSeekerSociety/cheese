@@ -44,20 +44,38 @@ def _topic(client, topic_id: str) -> dict:
     return client.get(f"/topics/{topic_id}").json()["data"]
 
 
+def _manage(client, project_id: str, handle: str) -> None:
+    """Make ``handle`` an admin of the project's team: someone who manages the
+    project, and so archives its channels."""
+    from sqlalchemy import update
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    join_project_team(client, project_id, handle)
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            project = await session.get(Project, uuid.UUID(project_id))
+            user = await UserRepository(session).get_by_username(handle)
+            assert project is not None and user is not None
+            await session.execute(
+                update(TeamUserRelation)
+                .where(
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.user_id == user.id,
+                )
+                .values(role=TeamMemberRole.ADMIN)
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
 def _archive(client, topic_id: str, by: str = "bob") -> dict:
-    roster = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
-    owner = next(
-        member["member_handle"] for member in roster if member["role"] == "owner"
-    )
-    if owner != by:
-        project_id = _topic(client, topic_id)["project_id"]
-        join_project_team(client, project_id, by)
-        response = client.post(
-            f"/topics/{topic_id}/members",
-            json={"handle": by, "role": "admin"},
-            headers=session_auth_headers(owner),
-        )
-        assert response.status_code in {200, 409}, response.text
+    """``by`` archives the channel as someone who manages its project."""
+    _manage(client, _topic(client, topic_id)["project_id"], by)
     r = client.post(
         f"/topics/{topic_id}/archive", json={"by": by}, headers=session_auth_headers(by)
     )

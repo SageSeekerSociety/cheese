@@ -7,7 +7,7 @@ changed, and "最近活跃的话题" came out empty or in the wrong order.
 
 from datetime import UTC, datetime, timedelta
 
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _make_project(client) -> str:
@@ -68,8 +68,13 @@ def test_metadata_edits_do_not_count_as_activity(client):
     tid = _make_topic(client, pid, "A")
     block_at = _add_block(client, tid, "ship it")
 
-    r = client.post(f"/topics/{tid}/title", json={"title": "renamed"})
-    assert r.status_code == 200
+    # Renamed by the project's owner, who manages its channels.
+    r = client.post(
+        f"/topics/{tid}/title",
+        json={"title": "renamed"},
+        headers=session_auth_headers("owner"),
+    )
+    assert r.status_code == 200, r.text
 
     after = client.get(f"/topics/{tid}").json()["data"]
     assert after["title"] == "renamed"

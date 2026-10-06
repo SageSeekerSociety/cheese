@@ -72,6 +72,11 @@ def test_topic_unread_counts_and_read_cursor(client):
     project_id, topic_id = _create_project_and_topic(client)
     for h in ("user-1", "mentor-1"):
         _add_member(client, project_id, h)
+    # A channel's badge is for the people in it.
+    joined = client.post(
+        f"/topics/{topic_id}/join", headers=session_auth_headers("mentor-1")
+    )
+    assert joined.status_code == 200, joined.text
 
     # No messages yet → no unread entries at all.
     assert _unread(client, project_id, "user-1") == {}
@@ -79,13 +84,13 @@ def test_topic_unread_counts_and_read_cursor(client):
     # Two messages by others → 2 unread for user-1.
     _seed_message(client, project_id, topic_id, "cheese")
     _seed_message(client, project_id, topic_id, "mentor-1")
-    assert _unread(client, project_id, "user-1").get(topic_id) == 2
+    assert _unread(client, project_id, "user-1")[topic_id]["messages"] == 2
 
     # Own messages never count as unread.
     _seed_message(client, project_id, topic_id, "user-1")
-    assert _unread(client, project_id, "user-1").get(topic_id) == 2
+    assert _unread(client, project_id, "user-1")[topic_id]["messages"] == 2
     # ...but they do for the other side.
-    assert _unread(client, project_id, "mentor-1").get(topic_id) == 2
+    assert _unread(client, project_id, "mentor-1")[topic_id]["messages"] == 2
 
     # Opening the topic (mark read) clears the badge for that user only. The
     # cursor belongs to the verified caller; the body handle is just an assertion.
@@ -96,11 +101,11 @@ def test_topic_unread_counts_and_read_cursor(client):
     )
     assert r.status_code == 200
     assert topic_id not in _unread(client, project_id, "user-1")
-    assert _unread(client, project_id, "mentor-1").get(topic_id) == 2
+    assert _unread(client, project_id, "mentor-1")[topic_id]["messages"] == 2
 
     # A new message after the cursor lights it up again.
     _seed_message(client, project_id, topic_id, "cheese")
-    assert _unread(client, project_id, "user-1").get(topic_id) == 1
+    assert _unread(client, project_id, "user-1")[topic_id]["messages"] == 1
 
 
 def test_mark_read_requires_a_verified_caller(client):

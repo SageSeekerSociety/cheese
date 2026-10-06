@@ -47,7 +47,7 @@ def _join(client, room_id: str, handle: str) -> None:
     join_project_team(client, pid, handle)
     r = client.post(
         f"/topics/{room_id}/members",
-        json={"handle": handle, "role": "member", "actor": "alice"},
+        json={"handle": handle, "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
@@ -97,13 +97,14 @@ def _rooms(client, project_id: str, viewer: str) -> dict[str, dict]:
 
 
 def _unread(client, project_id: str, room_id: str, viewer: str) -> int:
-    """The badge map, which omits whatever is at zero — so a missing room IS
-    a zero, and the two cases have to read the same here."""
+    """How many messages came for ``viewer`` since they last read this place.
+    The map omits whatever has nothing — so a missing room IS a zero, and the
+    two cases have to read the same here."""
     r = client.get(
         f"/projects/{project_id}/topic-unread", headers=session_auth_headers(viewer)
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"].get(room_id, 0)
+    return r.json()["data"].get(room_id, {}).get("messages", 0)
 
 
 def test_work_in_a_room_keeps_the_room_alive(client):

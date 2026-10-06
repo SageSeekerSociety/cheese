@@ -334,10 +334,10 @@ def test_project_membership_never_opens_someone_elses_private_chat(
 
 
 def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
-    project, origin, _ = _rooms(client)
+    project, origin, other = _rooms(client)
     auth = _agent(client, project, origin)
     handle = _seated_agent(client, origin)
-    endpoint = f"/topics/{origin}/members"
+    endpoint = f"/topics/{other}/members"
     join_project_team(client, project["id"], "bob")
     assert (
         client.post(endpoint, json={"handle": "bob", "actor": "alice"}).status_code
@@ -349,14 +349,9 @@ def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
         ).status_code
         == 403
     )
-    assert (
-        client.put(
-            f"{endpoint}/{handle}",
-            json={"role": "admin"},
-            headers=session_auth_headers("alice"),
-        ).status_code
-        == 200
-    )
+    # Once it manages the project — as an admin of its team, the way a person
+    # would — it manages the channel too.
+    join_project_team(client, project["id"], handle, admin=True)
     assert (
         client.post(endpoint, json={"handle": "bob"}, headers=auth).status_code == 200
     )
