@@ -28,8 +28,8 @@ from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import of_room, of_rooms
 
 #: How much of the end of the log the line keeps: what failed is at the end,
-#: and the line shows what it keeps from the top, so it keeps little.
-LOG_TAIL_LINES = 40
+#: and the line shows what it keeps from the top, so it keeps what fits.
+LOG_TAIL_LINES = 15
 LOG_TAIL_CHARS = 8000
 
 
