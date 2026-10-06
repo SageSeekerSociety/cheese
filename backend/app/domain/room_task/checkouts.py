@@ -33,6 +33,24 @@ logger = logging.getLogger("cheesex.room_task.checkouts")
 
 # Removing checkouts of a few GB each, after one `lsof` over all of them.
 EXEC_TIMEOUT_S = 300.0
+# The most characters of task ids one exec names. Windows refuses a command
+# line over 32,767 characters ("The filename or extension is too long"), and
+# a room on dev has 1,250 closed tasks, about 46,000 characters of ids; so the
+# list goes in batches under that, and under cmd.exe's 8,191. Naming a task
+# again is harmless (`remove_task_checkouts`), so a batch can be retried alone.
+ARGV_BUDGET = 8000
+
+
+def _batches(tasks: list[str]) -> list[list[str]]:
+    batches: list[list[str]] = [[]]
+    size = 0
+    for task in tasks:
+        if batches[-1] and size + len(task) + 1 > ARGV_BUDGET:
+            batches.append([])
+            size = 0
+        batches[-1].append(task)
+        size += len(task) + 1
+    return batches
 
 
 async def remove_closed_checkouts(
@@ -87,38 +105,41 @@ async def remove_closed_checkouts(
         tasks = closed.get(room)
         if not tasks or not device_hub.is_online(device):
             continue
-        try:
-            result = await device_hub.exec(
-                device,
-                ["python3", "-", "tasks", str(project), resource, "-", "-", *tasks],
-                stdin=script,
-                timeout=EXEC_TIMEOUT_S,
-            )
-            if result.get("exit") != 0 or result.get("truncated"):
-                raise RuntimeError(
-                    str(result.get("stderr") or "no answer from the machine")[-1500:]
+        for batch in _batches(tasks):
+            try:
+                result = await device_hub.exec(
+                    device,
+                    ["python3", "-", "tasks", str(project), resource, "-", "-", *batch],
+                    stdin=script,
+                    timeout=EXEC_TIMEOUT_S,
                 )
-            outcome = json.loads(result["stdout"])
-        except Exception:  # noqa: BLE001 — one machine must not stop the others
-            # WARNING, not ERROR: a machine going away mid-run is the usual
-            # cause, and its next connection runs this again.
-            logger.warning(
-                "closed task checkouts not removed device=%s room=%s",
-                device,
-                room,
-                exc_info=True,
-            )
-            continue
-        counts["removed"] += len(outcome["removed"])
-        counts["kept"] += len(outcome["kept"])
-        for task, reason in outcome["kept"].items():
-            logger.info(
-                "closed task checkout kept device=%s room=%s task=%s: %s",
-                device,
-                room,
-                task,
-                reason,
-            )
+                if result.get("exit") != 0 or result.get("truncated"):
+                    raise RuntimeError(
+                        str(result.get("stderr") or "no answer from the machine")[
+                            -1500:
+                        ]
+                    )
+                outcome = json.loads(result["stdout"])
+            except Exception:  # noqa: BLE001 — one machine must not stop the others
+                # WARNING, not ERROR: a machine going away mid-run is the usual
+                # cause, and its next connection runs this again.
+                logger.warning(
+                    "closed task checkouts not removed device=%s room=%s",
+                    device,
+                    room,
+                    exc_info=True,
+                )
+                break
+            counts["removed"] += len(outcome["removed"])
+            counts["kept"] += len(outcome["kept"])
+            for task, reason in outcome["kept"].items():
+                logger.info(
+                    "closed task checkout kept device=%s room=%s task=%s: %s",
+                    device,
+                    room,
+                    task,
+                    reason,
+                )
     return counts
 
 
