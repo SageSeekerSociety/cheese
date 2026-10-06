@@ -25,14 +25,14 @@ const minutes = computed(() => {
 </script>
 
 <template>
-  <div class="run-line" :class="{ 'run-line--missed': missed }" data-testid="routine-run-line">
+  <div class="run-line t-meta" :class="{ 'run-line--missed': missed }" data-testid="routine-run-line">
     <span class="run-line__chip t-meta">{{ t('routines.line.chip', { title: run.title }) }}</span>
     <span v-if="going" class="t-meta c-muted" data-testid="routine-run-going">{{ t('routines.line.going') }}</span>
     <span v-else-if="missed" class="run-line__reason t-meta" data-testid="routine-run-missed">
       {{ run.reason ? t('routines.line.missedBecause', { reason: run.reason }) : t('routines.line.missed') }}
     </span>
     <span v-else-if="minutes" class="t-meta c-faint">{{ t('routines.line.took', { minutes }) }}</span>
-    <button v-if="!threaded" type="button" class="run-line__open t-meta" @click="emit('open')">
+    <button v-if="!threaded" type="button" class="run-line__open" @click="emit('open')">
       {{ t('routines.line.open') }}
     </button>
   </div>
@@ -59,6 +59,7 @@ const minutes = computed(() => {
   padding: 0;
   border: 0;
   background: none;
+  font: inherit;
   color: var(--muted);
   cursor: pointer;
   transition: color var(--dur-quick) var(--ease-standard);

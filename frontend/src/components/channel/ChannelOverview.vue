@@ -6,7 +6,7 @@ import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
@@ -81,15 +81,33 @@ function latest(task: RoomTask): string | null {
 const overviewBody = ref<HTMLElement | null>(null)
 const overviewOpen = ref(false)
 const overviewClipped = ref(false)
+// 正文是读法加载好、画出来之后才有高度的（MarkdownView 第一次画时才加载），所以
+// 量的时机跟着它长高走，不跟着字变走。
+let watching: ResizeObserver | null = null
+function measure() {
+  const el = overviewBody.value
+  overviewClipped.value = !!el && el.scrollHeight > el.clientHeight + 1
+}
 watch(
-  () => [props.overviewText, overviewBody.value] as const,
-  async () => {
-    await nextTick()
-    const el = overviewBody.value
-    overviewClipped.value = !!el && el.scrollHeight > el.clientHeight + 1
+  overviewBody,
+  (el) => {
+    watching?.disconnect()
+    watching = null
+    if (!el) return
+    if (typeof ResizeObserver !== 'undefined') {
+      watching = new ResizeObserver(measure)
+      watching.observe(el)
+      for (const child of Array.from(el.children)) watching.observe(child)
+    }
+    void nextTick(measure)
   },
   { immediate: true }
 )
+watch(
+  () => props.overviewText,
+  () => void nextTick(measure)
+)
+onBeforeUnmount(() => watching?.disconnect())
 watch(
   () => props.topic.id,
   () => (overviewOpen.value = false)

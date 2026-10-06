@@ -4,7 +4,7 @@
 // 采用了才会保存并重试；不采用什么都不变。
 import type { EnvironmentDiagnosis, EnvironmentFailure } from '@/types/environment'
 
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -28,6 +28,17 @@ const emit = defineEmits<{
   (e: 'adopt'): void
   (e: 'dismiss'): void
 }>()
+
+// 出错的地方在日志的最后：框里先露出结尾。
+const logBox = ref<HTMLElement | null>(null)
+watch(
+  [logBox, () => props.failure.log],
+  async () => {
+    await nextTick()
+    if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
+  },
+  { immediate: true }
+)
 
 const stage = computed(() =>
   props.failure.stage === 'startup'
@@ -73,7 +84,7 @@ const changes = computed(() => {
           >
         </div>
       </div>
-      <div v-if="canEdit" class="env-failure__actions">
+      <div v-if="canEdit && !diagnosis" class="env-failure__actions">
         <BaseButton
           kind="secondary"
           prepend-icon="mdi-creation-outline"
@@ -89,7 +100,7 @@ const changes = computed(() => {
         </BaseButton>
       </div>
     </div>
-    <pre v-if="failure.log" class="env-failure__log">{{ failure.log }}</pre>
+    <pre v-if="failure.log" ref="logBox" class="env-failure__log">{{ failure.log }}</pre>
 
     <div v-if="diagnosis" class="env-failure__answer" data-testid="environment-diagnosis">
       <p class="t-body">

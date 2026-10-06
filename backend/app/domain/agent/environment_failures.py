@@ -27,8 +27,10 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import of_room, of_rooms
 
-#: How much of the end of the log the line keeps: what failed is at the end.
-LOG_TAIL = 8000
+#: How much of the end of the log the line keeps: what failed is at the end,
+#: and the line shows what it keeps from the top, so it keeps little.
+LOG_TAIL_LINES = 40
+LOG_TAIL_CHARS = 8000
 
 
 def _failures():
@@ -64,7 +66,8 @@ async def tell_failed(
     line = say(
         "environmentFailedStartup" if stage == "startup" else "environmentFailedSetup"
     )
-    log = str(status.get("log") or "")[-LOG_TAIL:]
+    log = "\n".join(str(status.get("log") or "").splitlines()[-LOG_TAIL_LINES:])
+    log = log[-LOG_TAIL_CHARS:]
     block = await announce(
         session,
         place_id=room_id,
