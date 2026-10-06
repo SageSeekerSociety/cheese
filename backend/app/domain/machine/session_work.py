@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
-from app.core.sentences import say
+from app.core.sentences import exception_text, say
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
@@ -786,8 +786,17 @@ async def _move_session(
                 old, start, keeps_files=not leaving_cloud
             )
             pushed = True
-        except WorkComputerUnreachable:
-            if not (abandon_unpushed and actor.via == "token"):
+        except WorkComputerUnreachable as refused:
+            if actor.via != "token":
+                # Only a person can switch past it, so an agent is told who
+                # can and where, and asks them instead of stopping (FB-51).
+                raise WorkComputerUnreachable(
+                    say(
+                        "switchOldComputerUnreachableAskPerson",
+                        refusal=exception_text(refused),
+                    )
+                ) from refused
+            if not abandon_unpushed:
                 raise
         await TopicService(db).lock_for_execution(topic_id)
         row = await AgentSessionService(db).by_id(session_id, lock=True)

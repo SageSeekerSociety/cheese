@@ -743,6 +743,7 @@
   "deliverableBoth": "deliver 和 deliver_url 只能给一个：这次交出去的要么是一份文件，要么是一个地址。",
   "pdfDraftNotOpen": "从 PDF 生成草稿暂未开放，稍后再试。",
   "switchOldComputerUnreachableBecause": "原来那个环境连不上，无法推送改动，没有更换：{error}",
+  "switchOldComputerUnreachableAskPerson": "{refusal}。不推送就更换只有人能做：请房间里的人在环境菜单里选「不推送，直接更换」，原来那台上没推送的改动会留在那台上。",
   "sandboxTokenRequired": "需要登录或有效的沙箱 token",
   "tokenOtherProject": "这个 token 属于别的项目，不能在这里操作",
   "tokenOtherTopic": "这个 token 属于别的频道，不能在这里操作",
