@@ -145,8 +145,8 @@ async def _manages_project(
 async def _sees_room(
     db: AsyncSession, actor: Actor, project_id: uuid.UUID, topic_id: uuid.UUID
 ) -> bool:
-    """May ``actor`` read what happens in this room: it is on the roster (the
-    room's own AI teammate included), or it manages the project.
+    """May ``actor`` read what happens in this room: it is in the channel (the
+    channel's own AI teammate included), or it manages the project.
 
     Narrower than ``authorize_topic_access``, and deliberately: that policy lets
     anyone in the project into a non-private room, which is right for the room's
@@ -154,7 +154,7 @@ async def _sees_room(
     """
     if not settings.authz_enforce_topic_access:
         return True
-    seated = await TopicMemberService(db).topic_ids_for_member([topic_id], actor.handle)
+    seated = await TopicMemberService(db).joined_ids([topic_id], actor.handle)
     if topic_id in seated:
         return True
     return await _manages_project(db, actor, project_id)
@@ -266,14 +266,14 @@ async def _readable_rules(
     """The rows of one project the caller may read, and whether it manages it.
 
     项目总览今天把整个项目的规则都发给每个成员，于是「谁在哪个房间里设了什么」
-    是项目里人人可见的。规则是房间的：看得见的只有它所在房间的名册，加项目管理员。
+    是项目里人人可见的。规则是频道的：看得见的只有这个频道里的人，加项目管理员。
     """
     if not settings.authz_enforce_topic_access or resolver.on_the_dev_credential(actor):
         return rows, False
     admin = await _manages_project(db, actor, project_id)
     if admin:
         return rows, True
-    mine = await TopicMemberService(db).topic_ids_for_member(
+    mine = await TopicMemberService(db).joined_ids(
         list({r.topic_id for r in rows}), actor.handle
     )
     return [r for r in rows if r.topic_id in mine], False

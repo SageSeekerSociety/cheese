@@ -22,6 +22,7 @@ from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -32,6 +33,8 @@ async def set_title(
 ) -> dict:
     """给这个地方起/改标题: a person renaming a channel or a task, or a task's
     own session naming it (`cheese_title`, only where the platform cannot).
+
+    A channel is renamed by whoever manages it (`TopicMemberService.manages`).
 
     A task's id names the task: a person taking part in it renames it, and that
     title is final; its own session's title the platform may still change
@@ -63,6 +66,9 @@ async def set_title(
         await announce_stale(place.room_id, "topics")
         await announce_stale(task.id, "topics")
         return ok(out)
+    # A channel is renamed by whoever manages it, as the rest of its settings
+    # are.
+    await TopicMemberService(db).require_manager(place.room_id, actor.handle)
     place.room.title = title[:80]
     await db.flush()
     out = TopicOut.model_validate(place.room).model_dump(mode="json")

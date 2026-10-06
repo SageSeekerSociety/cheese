@@ -130,16 +130,6 @@ class ProjectService:
         # an agent that exists.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
-        # 总览 = 项目本体: its roster mirrors the whole project (fusion-design §3).
-        # Seed it with every current project member; 芝士 is already seated above.
-        # 问的是名册那一个读法，不是人那一半：本文件在 roster() 的下游（它 import
-        # ProjectService），所以这条 import 只能在函数里。
-        from app.domain.membership.roster import roster
-
-        member_handles = [m.handle for m in await roster(self._session, project.id)]
-        await self._members.seed_root(
-            root.id, owner_handle=owner_handle, member_handles=member_handles
-        )
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":

@@ -201,13 +201,14 @@ class RoutineService:
             agent = await self._agent_for(topic.id, agent_handle or by)
             if not owner_handle:
                 raise ValidationError(say("routineDraftNeedsOwner"))
-            members, _ = await TopicMemberService(self._session).list_for_topic(
-                topic.id
-            )
-            seats = await TopicMemberService(self._session).agent_handles(topic.id)
-            people = {m.member_handle for m in members} - set(seats)
-            if owner_handle not in people:
-                raise ValidationError(say("routineOwnerNotInRoom", handle=owner_handle))
+            # The owner is told the results, so they are a person of the
+            # project, and the channel the routine runs in becomes theirs too.
+            members = TopicMemberService(self._session)
+            if owner_handle not in await members.project_people(topic.project_id):
+                raise ValidationError(
+                    say("routineOwnerNotInProject", handle=owner_handle)
+                )
+            await members.take_in(topic.id, owner_handle)
             owner = owner_handle
         else:
             agent = await self._agent_for(topic.id, agent_handle)

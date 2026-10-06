@@ -68,13 +68,7 @@ class TopicMembershipRepository:
         self, topic_ids: list[uuid.UUID], member_handle: str
     ) -> dict[uuid.UUID, TopicRole]:
         """The role this handle holds in each of these topics, in ONE query.
-
-        ``topic_ids_for_member`` answers 在不在里面; this answers 坐的是哪把椅子.
-        ``hand_over_project_seats`` needs the second question — it seats the
-        successor in the chair the transferor held — and asking it one topic at
-        a time is a round trip per room. Topics the handle is not in simply do
-        not appear in the result.
-        """
+        Topics the handle is not in simply do not appear in the result."""
         if not topic_ids:
             return {}
         stmt = select(TopicMembership.topic_id, TopicMembership.role).where(
@@ -91,80 +85,6 @@ class TopicMembershipRepository:
             .where(TopicMembership.topic_id == topic_id)
         )
         return int((await self._session.scalar(stmt)) or 0)
-
-    async def count_owners(self, topic_id: uuid.UUID) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(TopicMembership)
-            .where(
-                TopicMembership.topic_id == topic_id,
-                TopicMembership.role == TopicRole.owner,
-            )
-        )
-        return int((await self._session.scalar(stmt)) or 0)
-
-    async def owners_by_topic(
-        self, topic_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, list[str]]:
-        """Who owns each of these topics, in ONE query.
-
-        By topic-SET for the same reason as ``topic_ids_for_member``: the caller
-        is a project-level exit (退项目 / 被移出项目) asking one question about
-        every room the leaver holds a seat in — "would revoking this seat leave
-        the room with nobody in charge". Asking it per topic is the N+1 that
-        makes a hundred-topic project expensive, and the answer comes back
-        grouped here.
-
-        Handles, not a count: the asker has to tell "he is the only one left"
-        apart from "others are still there", and a number cannot say which.
-
-        ``FOR UPDATE``, because the answer decides whether the caller deletes
-        the only owner of a room: 两个人同时退同一个项目，各自读到「这间房有两个
-        owner」，各自删掉自己，房间就没人管了。锁住这些 owner 行之后，两个事务排队，
-        后一个读到的是前一个已提交的结果，看见的是一间只剩一个 owner 的房，正确地
-        拒掉。锁的粒度是本次问到的那些 owner 行，不锁全表 —— 退项目只关心自己手上
-        的那几间房。
-        """
-        if not topic_ids:
-            return {}
-        stmt = (
-            select(TopicMembership.topic_id, TopicMembership.member_handle)
-            .where(
-                TopicMembership.topic_id.in_(topic_ids),
-                TopicMembership.role == TopicRole.owner,
-            )
-            .with_for_update()
-        )
-        owners: dict[uuid.UUID, list[str]] = {}
-        for topic_id, member_handle in (await self._session.execute(stmt)).all():
-            owners.setdefault(topic_id, []).append(member_handle)
-        return owners
-
-    async def seats_by_topic(
-        self, topic_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, dict[str, TopicRole]]:
-        """Everyone seated in each of these topics and the chair they hold, in ONE
-        query — same reason as ``owners_by_topic``: the project-level exit asks it
-        about a set of rooms."""
-        if not topic_ids:
-            return {}
-        stmt = select(
-            TopicMembership.topic_id,
-            TopicMembership.member_handle,
-            TopicMembership.role,
-        ).where(TopicMembership.topic_id.in_(topic_ids))
-        seated: dict[uuid.UUID, dict[str, TopicRole]] = {}
-        for topic_id, handle, role in (await self._session.execute(stmt)).all():
-            seated.setdefault(topic_id, {})[handle] = role
-        return seated
-
-    async def update_role(
-        self, member: TopicMembership, *, role: TopicRole
-    ) -> TopicMembership:
-        member.role = role
-        await self._session.flush()
-        await self._session.refresh(member)
-        return member
 
     async def delete(self, member: TopicMembership) -> None:
         await self._session.delete(member)

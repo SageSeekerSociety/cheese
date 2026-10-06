@@ -65,6 +65,7 @@ _FONT: Final = (
 _HEADLINES: Final[dict[str, str]] = {
     "MENTION": "有人在讨论中提到了你",
     "REPLY": "有人回复了你的评论",
+    "THREAD_REPLY": "你参与的支线有新回复",
     "REACTION": "有人对你的内容做出了反应",
     "PROJECT_INVITE": "你收到了项目邀请",
     "DEADLINE_REMIND": "有一个截止时间快到了",
