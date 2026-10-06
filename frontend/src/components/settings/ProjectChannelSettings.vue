@@ -327,6 +327,11 @@ async function setJoined(topic: Topic, joined: boolean) {
 .channel-new > .channel-new__private {
   flex-basis: 100%;
 }
+/* Vuetify sets a hint's line-height to its font size, so a hint that wraps on a
+   phone has its two lines touching. */
+.channel-new__private :deep(.v-messages__message) {
+  line-height: 1.4;
+}
 .channel-list {
   list-style: none;
   margin: 0;
@@ -381,5 +386,15 @@ async function setJoined(topic: Topic, joined: boolean) {
 }
 .channel-row__field {
   flex: 1 1 auto;
+}
+/* On a phone a row is narrower than its buttons: they wrap onto the next lines
+   instead of squeezing the name to nothing. */
+@media (max-width: 767.98px) {
+  .channel-row {
+    flex-wrap: wrap;
+  }
+  .channel-row__main {
+    flex-basis: 180px;
+  }
 }
 </style>
