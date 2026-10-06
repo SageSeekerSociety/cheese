@@ -81,26 +81,32 @@ resolve_bins() {
 
 dl_suffix() { if [ "$(uname -s)" = Darwin ]; then echo dylib; else echo so; fi; }
 
-pg_installed() {
-    local tool libdir
-    for tool in postgres pg_ctl initdb psql pg_isready pg_config; do
-        [ -x "$PG_BIN/$tool" ] || return 1
-    done
-    libdir="$("$PG_BIN/pg_config" --pkglibdir 2>/dev/null)" || return 1
-    [ -f "$libdir/plpgsql.$(dl_suffix)" ] && [ -f "$libdir/pg_trgm.$(dl_suffix)" ]
+# An install is complete when every file it was unpacked with is still there:
+# install_into writes that list as $MANIFEST, last, before the install appears
+# at its final path. A cleanup that took any one file is caught here, not by a
+# server that fails later on the missing piece.
+MANIFEST=.dev-db-files
+install_complete() {
+    local f
+    [ -s "$1/$MANIFEST" ] || return 1
+    while IFS= read -r f; do
+        [ -e "$1/$f" ] || return 1
+    done <"$1/$MANIFEST"
 }
-
-valkey_installed() { [ -x "$REDIS_BIN/valkey-server" ] && [ -x "$REDIS_BIN/valkey-cli" ]; }
+pg_installed() { install_complete "$PG_HOME"; }
+valkey_installed() { install_complete "$VALKEY_HOME"; }
 
 # Download $1 to $3 unless a file with sha256 $2 is already there. Plain Python,
 # so the host needs no curl. The file is written under a temporary name and
 # renamed into place, so a concurrent start never reads half a download.
 fetch() {
     uv run --no-project --quiet python - "$@" <<'PY' || die "download of $1 failed (see above)"
-import hashlib, os, pathlib, sys, time, urllib.request
+import hashlib, os, pathlib, socket, sys, time, urllib.request
 
 url, want, dest = sys.argv[1:]
 dest = pathlib.Path(dest)
+# Without a timeout a stalled transfer hangs forever and never reaches a retry.
+socket.setdefaulttimeout(60)
 
 
 def sha256(path):
@@ -130,15 +136,6 @@ if not (dest.is_file() and sha256(dest) == want):
 PY
 }
 
-# Move the finished install $1 to $2. $2 appears only once complete, so a
-# concurrent start sees all of an install or none of it. An install that won a
-# race to $2 is kept; it is just as complete.
-place() {
-    [ -e "$2" ] || mv "$1" "$2"
-    # Lost the race between the test and the mv, which then put $1 inside $2.
-    rm -rf "${2:?}/$(basename "$1")"
-}
-
 # An install that exists but fails its check had files deleted from under it.
 # It is not repaired in place: servers may be running from it, and swapping
 # files under them is how they got into this state.
@@ -146,8 +143,34 @@ damaged() {
     die "$1 is missing files (something deleted part of it); stop the servers running from it, delete that directory, and start again."
 }
 
+# Called when $1 failed its check. If it exists, either a concurrent start has
+# just finished placing it (then it passes now) or it is damaged.
+needs_install() {
+    [ -e "$1" ] || return 0
+    install_complete "$1" && return 1
+    damaged "the install in $1"
+}
+
+# Run "$2..." in a fresh work directory under $SERVER_HOME, then move the tree it
+# leaves in "$work/out" to $1 with its manifest. $1 appears only once complete,
+# so a concurrent start sees all of an install or none of it, and an install
+# that won the race to $1 is kept: it is just as complete.
+install_into() {
+    local dest="$1"; shift
+    work="$(mktemp -d "$SERVER_HOME/.install.XXXXXX")"
+    # An interrupted install leaves nothing behind under $SERVER_HOME.
+    trap 'rm -rf "$work"' EXIT
+    "$@"
+    (cd "$work/out" && find . ! -type d ! -name "$MANIFEST*" | sed 's|^\./||' >"$MANIFEST.part" && mv "$MANIFEST.part" "$MANIFEST")
+    [ -e "$dest" ] || mv "$work/out" "$dest" 2>/dev/null || [ -e "$dest" ] || die "cannot move the install to $dest"
+    # Lost the race between the test and the mv, which then put out/ inside $dest.
+    rm -rf "${dest:?}/out" "$work"
+    trap - EXIT
+    install_complete "$dest" || damaged "the install in $dest"
+}
+
 install_pg() {
-    [ ! -e "$PG_HOME" ] || damaged "the PostgreSQL install in $PG_HOME"
+    needs_install "$PG_HOME" || return 0
     local target sha256
     case "$(uname -s)/$(uname -m)" in
         Darwin/arm64)
@@ -163,34 +186,34 @@ install_pg() {
             die "no PostgreSQL $PG_RELEASE build is set up for $(uname -s)/$(uname -m), only for
        macOS arm64 and Linux x86_64 and aarch64, the platforms pg_search is set up for." ;;
     esac
-    local asset="postgresql-$PG_RELEASE-$target.tar.gz" work
+    PG_ASSET="postgresql-$PG_RELEASE-$target"
     log "installing PostgreSQL $PG_RELEASE into $PG_HOME (first run downloads ~15MB)"
-    fetch "https://github.com/theseus-rs/postgresql-binaries/releases/download/$PG_RELEASE/$asset" \
-        "$sha256" "$TOOL_CACHE/postgresql/$asset"
-    work="$(mktemp -d "$SERVER_HOME/.install.XXXXXX")"
-    tar -xzf "$TOOL_CACHE/postgresql/$asset" -C "$work" \
-        || { rm -rf "$work"; die "cannot unpack $TOOL_CACHE/postgresql/$asset"; }
-    place "$work/postgresql-$PG_RELEASE-$target" "$PG_HOME"
-    rm -rf "$work"
-    pg_installed || damaged "the PostgreSQL install in $PG_HOME"
+    fetch "https://github.com/theseus-rs/postgresql-binaries/releases/download/$PG_RELEASE/$PG_ASSET.tar.gz" \
+        "$sha256" "$TOOL_CACHE/postgresql/$PG_ASSET.tar.gz"
+    install_into "$PG_HOME" unpack_pg
+}
+
+unpack_pg() {
+    tar -xzf "$TOOL_CACHE/postgresql/$PG_ASSET.tar.gz" -C "$work" \
+        || die "cannot unpack $TOOL_CACHE/postgresql/$PG_ASSET.tar.gz"
+    mv "$work/$PG_ASSET" "$work/out"
 }
 
 install_valkey() {
-    [ ! -e "$VALKEY_HOME" ] || damaged "the Valkey install in $VALKEY_HOME"
+    needs_install "$VALKEY_HOME" || return 0
     { command -v make && command -v cc; } >/dev/null 2>&1 \
         || die "building Valkey $VALKEY_VERSION needs make and a C compiler (cc); this host lacks one."
-    local archive="$TOOL_CACHE/valkey/valkey-$VALKEY_VERSION.tar.gz" work
     log "building Valkey $VALKEY_VERSION into $VALKEY_HOME (first run only)"
     fetch "https://github.com/valkey-io/valkey/archive/refs/tags/$VALKEY_VERSION.tar.gz" \
-        "$VALKEY_SHA256" "$archive"
-    work="$(mktemp -d "$SERVER_HOME/.install.XXXXXX")"
-    { tar -xzf "$archive" -C "$work" \
-        && make -C "$work/valkey-$VALKEY_VERSION" -j4 \
-        && make -C "$work/valkey-$VALKEY_VERSION" PREFIX="$work/valkey" install; } >"$work/build.log" 2>&1 \
-        || { tail -20 "$work/build.log" >&2; rm -rf "$work"; die "building Valkey $VALKEY_VERSION failed (log tail above)"; }
-    place "$work/valkey" "$VALKEY_HOME"
-    rm -rf "$work"
-    valkey_installed || damaged "the Valkey install in $VALKEY_HOME"
+        "$VALKEY_SHA256" "$TOOL_CACHE/valkey/valkey-$VALKEY_VERSION.tar.gz"
+    install_into "$VALKEY_HOME" build_valkey
+}
+
+build_valkey() {
+    local src="$work/valkey-$VALKEY_VERSION"
+    { tar -xzf "$TOOL_CACHE/valkey/valkey-$VALKEY_VERSION.tar.gz" -C "$work" \
+        && make -C "$src" -j4 && make -C "$src" PREFIX="$work/out" install; } >"$work/build.log" 2>&1 \
+        || { tail -20 "$work/build.log" >&2; die "building Valkey $VALKEY_VERSION failed (log tail above)"; }
 }
 
 # The migrations run `CREATE EXTENSION pg_search` (ParadeDB's BM25 index, which
@@ -206,8 +229,8 @@ PG_SEARCH_VERSION=0.24.0
 PG_SEARCH_GLIBC_MIN=2.34
 
 pg_search_installed() {
-    local libdir sharedir library=pg_search.so
-    [ "$(uname -s)" != Darwin ] || library=pg_search.dylib
+    local libdir sharedir library
+    library="pg_search.$(dl_suffix)"
     libdir="$("$PG_BIN/pg_config" --pkglibdir 2>/dev/null)" || return 1
     sharedir="$("$PG_BIN/pg_config" --sharedir 2>/dev/null)" || return 1
     [ -f "$libdir/$library" ] \
@@ -330,11 +353,31 @@ install_pg_search_macos() {
     pg_search_installed || die "pg_search $PG_SEARCH_VERSION is still missing from $libdir after install"
 }
 
-pg_running() { [ -d "$PGDATA" ] && "$PG_BIN/pg_ctl" -D "$PGDATA" status >/dev/null 2>&1; }
+# The pid of the live postmaster of the cluster in $1. Read from its own
+# postmaster.pid, so stop and status need no binaries and still work when the
+# install they ran from is damaged or gone. A pid file left behind by a crash
+# can name a pid since reused, hence the process check.
+cluster_pid() {
+    local pid
+    [ -s "$1/postmaster.pid" ] || return 1
+    pid="$(head -1 "$1/postmaster.pid")"
+    kill -0 "$pid" 2>/dev/null || return 1
+    case "$(ps -o args= -p "$pid" 2>/dev/null)" in *postgres*) echo "$pid" ;; *) return 1 ;; esac
+}
+pg_running() { cluster_pid "$PGDATA" >/dev/null; }
 # The install path is part of the pins, so a server started from somewhere else
 # (an older version of this script ran it out of the uv cache) is replaced too.
 pg_pins() { printf '%s' "postgresql-$PG_RELEASE pg_search==$PG_SEARCH_VERSION $PG_HOME"; }
 redis_running() { "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1; }
+# The pid of the Redis this data dir started on $REDIS_PORT, from its own pid
+# file: lets stop and status work without binaries, as cluster_pid does.
+redis_pid() {
+    local pid
+    [ -s "$REDIS_PID" ] || return 1
+    pid="$(cat "$REDIS_PID")"
+    kill -0 "$pid" 2>/dev/null || return 1
+    case "$(ps -o args= -p "$pid" 2>/dev/null)" in *-server*":$REDIS_PORT"*) echo "$pid" ;; *) return 1 ;; esac
+}
 
 # --- identity guards -------------------------------------------------------
 # A port that answers is NOT proof the server behind it is ours. Silently reusing
@@ -366,26 +409,23 @@ redis_is_ours() {
 # The cluster directory under $DATA_DIR whose live postmaster serves $PG_PORT,
 # whichever version of this script started it (older ones used other directory
 # names, e.g. `pg` for PostgreSQL 16). Proof of ownership is the postmaster.pid
-# inside our own data dir naming this port, with its pid alive and a postgres
-# process; a pid file left behind by a crash can name a pid since reused.
+# inside our own data dir naming this port, with a live postmaster.
 our_cluster_on_port() {
-    local pidfile pid
+    local pidfile
     for pidfile in "$DATA_DIR"/*/postmaster.pid; do
         [ -s "$pidfile" ] || continue
         [ "$(awk 'NR==4' "$pidfile")" = "$PG_PORT" ] || continue
-        pid="$(head -1 "$pidfile")"
-        kill -0 "$pid" 2>/dev/null || continue
-        case "$(ps -o args= -p "$pid" 2>/dev/null)" in *postgres*) ;; *) continue ;; esac
+        cluster_pid "$(dirname "$pidfile")" >/dev/null || continue
         dirname "$pidfile"
         return
     done
     return 1
 }
 
-# Stop our server in $1 so the current pins can take the port: fast shutdown by
-# signal, since the pg_ctl of the version that started it may be gone from the
-# uv cache. A cluster in another directory belongs to another major and will
-# never start again, so its (throwaway) data goes with it.
+# Stop our server in $1: fast shutdown by signal, which needs no binaries, so it
+# works whatever install the server was started from and whatever state that is
+# in. A cluster in another directory belongs to another major and will never
+# start again, so its (throwaway) data goes with it.
 stop_our_cluster() {
     local dir="$1" pid i
     pid="$(head -1 "$dir/postmaster.pid")"
@@ -440,8 +480,9 @@ start_pg() {
         die "the cluster in $PGDATA is up but does not serve port $PG_PORT (see its postmaster.pid)."
     fi
     if port_in_use "$PG_PORT"; then
-        die "port $PG_PORT is already taken by a server this script did not start.
-       Reusing it would run the suite against someone else's database — the
+        die "port $PG_PORT is already taken by a server whose data dir is not under $DATA_DIR,
+       the data dir this call uses (CHEESEX_DEV_DB_DIR sets it). Reusing it would
+       run the suite against a database this call did not start — the
        failures would read as application bugs, not as a port collision.
        Free the port, or re-run with CHEESEX_DEV_PG_PORT=<free port>."
     fi
@@ -510,8 +551,13 @@ replace_outdated_redis() {
 }
 
 start_redis() {
-    if redis_running && redis_is_ours && [ "$(redis_server_version)" != "Valkey $VALKEY_VERSION" ]; then
-        replace_outdated_redis
+    if redis_running && redis_is_ours; then
+        local running
+        running="$(redis_server_version)"
+        # An INFO that failed reports nothing; that is not evidence of an old server.
+        if [ -n "$running" ] && [ "$running" != "Valkey $VALKEY_VERSION" ]; then
+            replace_outdated_redis
+        fi
     fi
     if redis_running; then
         if redis_is_ours; then
@@ -633,14 +679,15 @@ cmd_start() {
     print_env
 }
 
+# stop and status touch no install: they read the pid files the servers wrote
+# into $DATA_DIR, so they work offline, and when the install the servers run
+# from is damaged, which is when they are needed most.
 cmd_stop() {
-    local purge=0
+    local purge=0 pid i
     [ "${1:-}" = "--purge" ] && purge=1
-    resolve_bins
     if pg_running; then
         log "stopping postgres"
-        "$PG_BIN/pg_ctl" -D "$PGDATA" -m fast -w -t 60 stop >/dev/null 2>&1 \
-            || log "pg_ctl stop reported an error — check $PG_LOG"
+        stop_our_cluster "$PGDATA"
     else
         log "postgres not running"
     fi
@@ -651,15 +698,17 @@ cmd_stop() {
         log "stopping the older postgres in $ours"
         stop_our_cluster "$ours"
     fi
-    if redis_running; then
-        # Same guard as start, for a bigger reason: an unconditional SHUTDOWN here
-        # would kill a Redis that belongs to someone else entirely.
-        if redis_is_ours; then
-            log "stopping redis"
-            "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
-        else
-            log "redis on port $REDIS_PORT is not ours — leaving it alone"
-        fi
+    # Only the Redis whose pid file is ours: an unconditional SHUTDOWN on the
+    # port would kill a Redis that belongs to someone else entirely.
+    if pid="$(redis_pid)"; then
+        log "stopping redis"
+        kill -TERM "$pid" 2>/dev/null || true
+        for i in $(seq 1 50); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.2
+        done
+    elif port_in_use "$REDIS_PORT"; then
+        log "redis on port $REDIS_PORT is not ours — leaving it alone"
     else
         log "redis not running"
     fi
@@ -672,7 +721,6 @@ cmd_stop() {
 }
 
 cmd_status() {
-    resolve_bins
     if pg_running; then
         local running_port
         running_port="$(pg_pidfile_port)" || running_port=""
@@ -685,17 +733,17 @@ cmd_status() {
     else
         log "postgres: stopped"
     fi
-    if redis_running; then
-        if redis_is_ours; then
-            log "redis:    RUNNING on 127.0.0.1:$REDIS_PORT ($REDIS_DIR, $(redis_server_version))"
-        else
-            local foreign_dir
-            foreign_dir="$(redis_reported_dir)" || foreign_dir=""
-            log "redis:    port $REDIS_PORT answers, but it is NOT ours (dir: ${foreign_dir:-unreported})"
-        fi
+    pg_installed || log "          NOTE: the install in $PG_HOME is missing or incomplete"
+    if redis_pid >/dev/null; then
+        local version=""
+        valkey_installed && version=", $(redis_server_version)"
+        log "redis:    RUNNING on 127.0.0.1:$REDIS_PORT ($REDIS_DIR$version)"
+    elif port_in_use "$REDIS_PORT"; then
+        log "redis:    port $REDIS_PORT is taken, but not by a Redis this data dir started"
     else
         log "redis:    stopped"
     fi
+    valkey_installed || log "          NOTE: the install in $VALKEY_HOME is missing or incomplete"
 }
 
 case "${1:-start}" in

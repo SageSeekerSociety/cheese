@@ -8,7 +8,8 @@
 #   - `stop --purge` stops an older server of ours before deleting its data;
 #   - a Redis of ours that is not the pinned Valkey is replaced when it has no
 #     other clients, and refused with the count when it has some;
-#   - an install that lost files is refused by name, and nothing is started.
+#   - an install that lost files is refused by name, and nothing is started,
+#     while `stop` still stops the server that was running from it.
 # Every binary it runs is a stand-in on PATH; the "postgres" is a python3
 # listener that writes a postmaster.pid, so this needs only bash and python3.
 set -euo pipefail
@@ -35,6 +36,10 @@ pins="postgresql-$PG_RELEASE pg_search==$PG_SEARCH_VERSION $servers/postgresql-$
 mkdir -p "$servers/postgresql-$PG_RELEASE" "$servers/valkey-$VALKEY_VERSION"
 ln -s "$stub" "$servers/postgresql-$PG_RELEASE/bin"
 ln -s "$stub" "$servers/valkey-$VALKEY_VERSION/bin"
+# The manifest dev-db.sh checks an install against: the files it was unpacked with.
+printf '%s\n' bin/postgres bin/pg_ctl bin/initdb bin/psql bin/pg_isready bin/pg_config \
+    bin/lib/plpgsql.so bin/lib/plpgsql.dylib >"$servers/postgresql-$PG_RELEASE/.dev-db-files"
+printf '%s\n' bin/valkey-server bin/valkey-cli >"$servers/valkey-$VALKEY_VERSION/.dev-db-files"
 
 # --- stand-ins ---------------------------------------------------------------
 cat >"$stub/postgres" <<'PY'
@@ -287,13 +292,20 @@ dev_db "$d" "$port" stop
 unset redis_port
 rm -f "$state/redis-clients"
 
-# 9. An install that lost files: refused by name, nothing started.
+# 9. An install that lost files under a running server: start refuses by name
+#    and starts nothing; stop still stops the server.
 d="$(new_data_dir damaged)"; port="$(free_port)"
+dev_db "$d" "$port" start
+running="$(server_pid "$d/pg17")"
 mv "$stub/lib/plpgsql.so" "$stub/lib/plpgsql.so.away"; mv "$stub/lib/plpgsql.dylib" "$stub/lib/plpgsql.dylib.away"
+: >"$state/calls"
 dev_db "$d" "$port" start
 check damaged "start refuses" [ "$status" != 0 ]
 check damaged "the refusal names the install" grep -q "postgresql-$PG_RELEASE is missing files" "$sandbox/err"
-check damaged "no server started" [ ! -e "$d/pg17/postmaster.pid" ]
+check damaged "no server started" [ ! -s "$state/calls" ]
+dev_db "$d" "$port" stop
+check damaged "stop succeeds" [ "$status" = 0 ]
+check damaged "the running server is stopped" dead "$running"
 mv "$stub/lib/plpgsql.so.away" "$stub/lib/plpgsql.so"; mv "$stub/lib/plpgsql.dylib.away" "$stub/lib/plpgsql.dylib"
 
 if [ "$failures" != 0 ]; then
