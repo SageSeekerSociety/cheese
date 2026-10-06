@@ -34,11 +34,11 @@ vi.mock('../../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
-import PanelDoc from './PanelDoc.vue'
+import PanelDocHost from './PanelDocHost.vue'
 
 import { setLocale, t } from '@/i18n'
 
-const Doc = PanelDoc as unknown as Component
+const Doc = PanelDocHost as unknown as Component
 
 beforeEach(() => {
   setLocale('zh-CN')
