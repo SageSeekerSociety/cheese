@@ -371,11 +371,24 @@ class TaskService:
             reporter_handle=reporter_handle,
             contributor_handles=contributor_handles or [],
         )
-        task.branch_name = f"task/{task.id.hex[:8]}"
-        task.workspace_name = f"task_{task.id.hex[:8]}"
+        self._name_branch(task)
         task.base_branch, task.base_task_id = base, base_task_id
         await self._session.flush()
         return task
+
+    async def give_branch(self, task: Task) -> None:
+        """The branch a task that arrived without one is worked on, cut from the
+        project's default branch like a new task's."""
+        from app.domain.project.forge import default_branch
+
+        task.base_branch = await default_branch(task.project_id, self._session)
+        self._name_branch(task)
+        await self._session.flush()
+
+    @staticmethod
+    def _name_branch(task: Task) -> None:
+        task.branch_name = f"task/{task.id.hex[:8]}"
+        task.workspace_name = f"task_{task.id.hex[:8]}"
 
     async def threads_for_room(
         self, room_id: uuid.UUID, *, limit: int | None = None
