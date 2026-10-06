@@ -1,5 +1,5 @@
-"""Being in a channel, and what it says about itself: joining, leaving, and its
-description.
+"""Being in a channel, and what it says about itself: joining, leaving, its
+description, and whether it is private.
 
 Everyone in a project reads every public channel; joining is what puts one in
 a person's sidebar and lets them speak in its main line
@@ -10,6 +10,7 @@ includes every module-level `APIRouter` under `app.api.routes`.
 import uuid
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
@@ -72,6 +73,26 @@ async def set_description(
     room = await TopicMemberService(db).require_manager(topic_id, actor.handle)
     room.description = str(body.get("description") or "").strip()[:500] or None
     await db.flush()
+    out = TopicOut.model_validate(room).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(topic_id, "topics")
+    return ok(out)
+
+
+class MembersOnlyIn(BaseModel):
+    members_only: bool
+
+
+@router.put("/{topic_id}/members-only")
+async def set_members_only(
+    topic_id: uuid.UUID, body: MembersOnlyIn, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Make a channel private (its managers) or public again (whoever manages
+    the project, from inside it). Whoever made it private stays in it."""
+    _, actor = await _person(db, resolver, topic_id)
+    room = await TopicMemberService(db).set_members_only(
+        topic_id, body.members_only, actor=actor.handle
+    )
     out = TopicOut.model_validate(room).model_dump(mode="json")
     await db.commit()
     await announce_stale(topic_id, "topics")

@@ -217,8 +217,10 @@ class TopicService:
         description: str | None = None,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
+        members_only: bool = False,
     ) -> Topic:
-        """Open a channel, under the name whoever creates it gave it."""
+        """Open a channel, under the name whoever creates it gave it. A private
+        one (``members_only``) starts with its owner as its only person."""
         title = title.strip()
         if not title:
             raise ValidationError(say("titleRequired"))
@@ -249,6 +251,7 @@ class TopicService:
             created_by=created_by,
         )
         topic.description = (description or "").strip() or None
+        topic.members_only = members_only
         # No branch parent: this path only ever makes ROOMS now, and a room forks
         # the base branch. Binding one to its parent would have made the project
         # root a fork point, which nothing has ever wanted.
@@ -383,11 +386,13 @@ class TopicService:
         self,
         project_id: uuid.UUID,
         *,
+        viewer: str | None,
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
         active_since: datetime | None = None,
     ) -> tuple[list[Topic], dict[uuid.UUID, datetime], int]:
-        """The project's topics, their 最后活动时间, and the total.
+        """The project's topics ``viewer`` sees, their 最后活动时间, and the
+        total. A private channel is listed only to the people in it.
 
         Activity comes back with the rows because the query that ordered them
         already derived it; fetching it separately made the database compute
@@ -395,6 +400,7 @@ class TopicService:
         """
         rows = await self._repo.list_for_project_with_activity(
             project_id,
+            viewer=viewer,
             sort=sort,
             order=order,
             active_since=_as_utc(active_since),
@@ -407,7 +413,7 @@ class TopicService:
         total = (
             len(topics)
             if active_since is not None
-            else await self._repo.count_for_project(project_id)
+            else await self._repo.count_for_project(project_id, viewer=viewer)
         )
         return topics, last_activity, total
 
@@ -656,6 +662,14 @@ class TopicService:
         assert project.root_topic_id is not None  # create() 一定播种了总览。
         return project.root_topic_id
 
+    async def _where_said(self, topic: Topic) -> uuid.UUID:
+        """Where what happens to a channel is said: the project overview, which
+        everyone in the project reads — except for a private channel, whose
+        name and work nobody outside it sees, so it is said there."""
+        if topic.members_only:
+            return topic.id
+        return await self._overview_room(topic.project_id)
+
     async def _archive_one(
         self, topic: Topic, *, by: str, cascaded_from: str | None = None
     ) -> None:
@@ -679,7 +693,7 @@ class TopicService:
         # 去向与理由见 review/archive.py 的模块 docstring。
         from app.domain.review.archive import close_cards_for_archived_topic
 
-        overview_room = await self._overview_room(topic.project_id)
+        overview_room = await self._where_said(topic)
         await close_cards_for_archived_topic(
             self._session,
             topic_id=topic.id,
@@ -739,7 +753,7 @@ class TopicService:
         landed = landing(
             EventAbout.project,
             project_id=topic.project_id,
-            room_id=await self._overview_room(topic.project_id),
+            room_id=await self._where_said(topic),
         )
         await self._blocks.add(
             project_id=landed.project_id,

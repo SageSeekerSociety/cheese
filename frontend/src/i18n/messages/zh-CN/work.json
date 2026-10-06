@@ -1833,7 +1833,7 @@
       "accountConnected": "已连接 GitHub 账号"
     },
     "channels": {
-      "intro": "项目里的每个频道都在这里，项目成员都能看、能加入。侧栏只列你加入的频道。一件要做成的事建成任务，不用为它新建频道。",
+      "intro": "项目里的公开频道都在这里，项目成员都能看、能加入；私密频道只有频道里的人看得到。侧栏只列你加入的频道。一件要做成的事建成任务，不用为它新建频道。",
       "nameLabel": "频道名称",
       "create": "新建频道",
       "activeLabel": "在用的频道",
@@ -1843,7 +1843,15 @@
       "archive": "归档",
       "unarchive": "取消归档",
       "descriptionLabel": "频道说明（选填）",
-      "describe": "编辑说明"
+      "describe": "编辑说明",
+      "privateLabel": "设为私密频道",
+      "privateHint": "只有频道里的人能看到它和其中的任务，其他人要由频道里的人邀请",
+      "makePrivate": "设为私密",
+      "makePublic": "设为公开",
+      "makePrivateTitle": "将「{name}」设为私密？",
+      "makePrivateBody": "设为私密后，只有频道里的人能看到它和其中的任务，其他人要由频道里的人邀请。",
+      "makePublicTitle": "将「{name}」设为公开？",
+      "makePublicBody": "设为公开后，项目里的所有人都能看到它的全部历史消息和任务。"
     }
   },
   "computeChoice": {
@@ -2139,6 +2147,8 @@
     "notJoined": "你还没有加入这个频道。加入后可以在主线发言，也可以直接在消息的支线里回复。",
     "archivedNotice": "这个频道已归档，只能查看",
     "describeFailed": "频道说明没保存",
-    "browse": "浏览频道"
+    "browse": "浏览频道",
+    "visibilityFailed": "频道可见范围没改成",
+    "privateTip": "私密频道"
   }
 }

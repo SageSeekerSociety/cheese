@@ -142,6 +142,12 @@ describe('成员名册', () => {
     expect(document.querySelector('.roster__select')).toBeNull()
   })
 
+  it('私密频道里的人不管频道也能拉人，但移不了人', async () => {
+    await openRoster({ canManage: false, canInvite: true })
+    expect(document.querySelector('.roster__select')).not.toBeNull()
+    expect(document.querySelector('.roster__remove')).toBeNull()
+  })
+
   it('「综合」里的人移不出去，只有 AI 队友能请进请出', async () => {
     await openRoster({ general: true })
     const rows = Array.from(document.querySelectorAll('.roster__item'))

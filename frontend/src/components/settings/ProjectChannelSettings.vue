@@ -7,18 +7,27 @@
 // 新建也在这里，不在侧栏上——频道少而稳定，新建是一年做几次的事；要做成的一件事建成
 // 任务，不为它开频道。建好就打开它（去哪儿由页面决定）。数据就是侧栏那一份（工作区
 // store）：改了什么侧栏当场跟着变，不需要再拉一次。
+//
+// 私密频道只有频道里的人看得到，所以这里只列出我在里面的那些，名字前面是一把锁。
+// 管频道的人能把公开频道设为私密；设回公开会把全部历史给项目里所有人看，只给项目
+// 管理员（和 Slack 只给工作区管理员一样）。两个方向都先确认一次。
 import type { Topic } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
-import { topicTitle } from '@/lib/topicState'
+import { channelGlyph, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { inferTopicKind } from '@/lib/topicTree'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-const props = defineProps<{ projectId: string }>()
+const props = defineProps<{
+  projectId: string
+  /** 我管这个项目：私密频道才有「设为公开」。页面问项目要来，后端动手时按同一条规则再判一次。 */
+  canMakePublic?: boolean
+}>()
 
 const store = useWorkspaceStore()
 const emit = defineEmits<{ (e: 'open-channel', topic: Topic): void }>()
@@ -32,16 +41,18 @@ const archived = computed(() => mine.value.filter((topic) => topic.status === 'a
 
 const draft = ref('')
 const draftDescription = ref('')
+const draftPrivate = ref(false)
 const creating = ref(false)
 async function create() {
   const title = draft.value.trim()
   if (!title || creating.value) return
   creating.value = true
   try {
-    const topic = await store.create(title, draftDescription.value)
+    const topic = await store.create(title, draftDescription.value, draftPrivate.value)
     if (!topic) return
     draft.value = ''
     draftDescription.value = ''
+    draftPrivate.value = false
     emit('open-channel', topic)
   } finally {
     creating.value = false
@@ -74,6 +85,34 @@ async function commitDescribe(topic: Topic) {
   describingId.value = null
   const next = describeDraft.value.trim()
   if (next !== (topic.description ?? '')) await store.describe(topic.id, next)
+}
+
+// 正在确认的那一次：把哪个频道设为私密（true）还是公开（false）。
+const converting = ref<{ topic: Topic; membersOnly: boolean } | null>(null)
+const convertOpen = computed({
+  get: () => converting.value !== null,
+  set: (open: boolean) => {
+    if (!open) converting.value = null
+  },
+})
+const convertTitle = computed(() => {
+  const pending = converting.value
+  if (!pending) return ''
+  const key = pending.membersOnly
+    ? 'work.projectSettings.channels.makePrivateTitle'
+    : 'work.projectSettings.channels.makePublicTitle'
+  return t(key, { name: topicTitle(pending.topic) })
+})
+const convertingBusy = ref(false)
+async function confirmConvert() {
+  const pending = converting.value
+  if (!pending || convertingBusy.value) return
+  convertingBusy.value = true
+  try {
+    if (await store.setMembersOnly(pending.topic.id, pending.membersOnly)) converting.value = null
+  } finally {
+    convertingBusy.value = false
+  }
 }
 
 // 加入、退出的那一下：按钮转圈，别的频道照常能点。
@@ -114,6 +153,15 @@ async function setJoined(topic: Topic, joined: boolean) {
       <BaseButton type="submit" kind="primary" :loading="creating" :disabled="!draft.trim() || creating">
         {{ t('work.projectSettings.channels.create') }}
       </BaseButton>
+      <v-checkbox
+        v-model="draftPrivate"
+        class="channel-new__private"
+        data-testid="channel-new-private"
+        :label="t('work.projectSettings.channels.privateLabel')"
+        :hint="t('work.projectSettings.channels.privateHint')"
+        persistent-hint
+        density="compact"
+      />
     </form>
 
     <ul class="channel-list" :aria-label="t('work.projectSettings.channels.activeLabel')">
@@ -127,7 +175,12 @@ async function setJoined(topic: Topic, joined: boolean) {
         </span>
       </li>
       <li v-for="topic in active" :key="topic.id" class="channel-row" :data-channel="topic.id">
-        <v-icon size="16" class="channel-row__glyph" icon="mdi-pound" />
+        <v-icon
+          size="16"
+          class="channel-row__glyph"
+          :icon="channelGlyph(topic)"
+          :title="topic.members_only ? t('work.channel.privateTip') : undefined"
+        />
         <span class="channel-row__main">
           <v-text-field
             v-if="renamingId === topic.id"
@@ -185,6 +238,22 @@ async function setJoined(topic: Topic, joined: boolean) {
           <BaseButton kind="ghost" size="sm" @click="startDescribe(topic)">
             {{ t('work.projectSettings.channels.describe') }}
           </BaseButton>
+          <BaseButton
+            v-if="!topic.members_only"
+            kind="ghost"
+            size="sm"
+            @click="converting = { topic, membersOnly: true }"
+          >
+            {{ t('work.projectSettings.channels.makePrivate') }}
+          </BaseButton>
+          <BaseButton
+            v-else-if="canMakePublic"
+            kind="ghost"
+            size="sm"
+            @click="converting = { topic, membersOnly: false }"
+          >
+            {{ t('work.projectSettings.channels.makePublic') }}
+          </BaseButton>
           <BaseButton kind="ghost" size="sm" @click="store.archive(topic.id)">
             {{ t('work.projectSettings.channels.archive') }}
           </BaseButton>
@@ -196,7 +265,12 @@ async function setJoined(topic: Topic, joined: boolean) {
       <h2 class="t-eyebrow c-muted mt-6 mb-2">{{ t('work.projectSettings.channels.archivedLabel') }}</h2>
       <ul class="channel-list" :aria-label="t('work.projectSettings.channels.archivedLabel')">
         <li v-for="topic in archived" :key="topic.id" class="channel-row" :data-channel="topic.id">
-          <v-icon size="16" class="channel-row__glyph" icon="mdi-pound" />
+          <v-icon
+            size="16"
+            class="channel-row__glyph"
+            :icon="channelGlyph(topic)"
+            :title="topic.members_only ? t('work.channel.privateTip') : undefined"
+          />
           <span class="channel-row__main">
             <button
               type="button"
@@ -214,6 +288,28 @@ async function setJoined(topic: Topic, joined: boolean) {
         </li>
       </ul>
     </template>
+
+    <AdaptiveDialog
+      v-model="convertOpen"
+      size="sm"
+      :title="convertTitle"
+      :primary-label="
+        converting?.membersOnly
+          ? t('work.projectSettings.channels.makePrivate')
+          : t('work.projectSettings.channels.makePublic')
+      "
+      :primary-loading="convertingBusy"
+      :close-disabled="convertingBusy"
+      @primary="confirmConvert"
+    >
+      <p class="t-body">
+        {{
+          converting?.membersOnly
+            ? t('work.projectSettings.channels.makePrivateBody')
+            : t('work.projectSettings.channels.makePublicBody')
+        }}
+      </p>
+    </AdaptiveDialog>
   </div>
 </template>
 
@@ -227,6 +323,9 @@ async function setJoined(topic: Topic, joined: boolean) {
 }
 .channel-new > .v-input {
   flex: 1 1 200px;
+}
+.channel-new > .channel-new__private {
+  flex-basis: 100%;
 }
 .channel-list {
   list-style: none;

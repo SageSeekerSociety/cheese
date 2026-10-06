@@ -956,6 +956,8 @@
   "channelManagerOnly": "Only the channel's creator and the project's managers can manage this channel",
   "channelArchivedNoJoin": "This channel is archived and can't be joined",
   "channelGeneralNoLeave": "General includes everyone in the project and can't be left",
+  "channelGeneralNotPrivate": "General includes everyone in the project and can't be made private",
+  "channelPublicProjectManagerOnly": "Only the project's managers can make a private channel public",
   "channelJoinToPost": "Join this channel to post in it",
   "taskOwnerNotInProject": "A task can only be handed to a project member",
   "contributorNotInProject": "Only project members can be added as collaborators",

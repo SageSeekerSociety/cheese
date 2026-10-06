@@ -37,6 +37,8 @@ const props = defineProps<{
   me: string
   /** 我管不管这个频道（创建者或项目管理员）。 */
   canManage: boolean
+  /** 不管频道也能拉人进来：私密频道里的人都能邀请别人，移出仍只归管理者。 */
+  canInvite?: boolean
   /** 这是「综合」：项目里的人都在，名单上只有 AI 队友能加减。 */
   general?: boolean
 }>()
@@ -329,8 +331,8 @@ async function onRemove(handle: string) {
         <button type="button" class="roster__retry" @click="loadMachines">{{ t('work.roomMachine.retry') }}</button>
       </div>
 
-      <!-- 管理者从项目成员里加人；「综合」里只剩 AI 队友可加。 -->
-      <div v-if="canManage" class="roster__add">
+      <!-- 管理者从项目成员里加人；「综合」里只剩 AI 队友可加。私密频道里的人都能拉人。 -->
+      <div v-if="canManage || canInvite" class="roster__add">
         <v-select
           v-model="addHandle"
           autocomplete="off"

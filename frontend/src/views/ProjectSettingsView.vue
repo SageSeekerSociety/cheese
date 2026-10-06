@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -8,6 +8,7 @@ import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
+import { getProject } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -54,6 +55,20 @@ const workspace = useWorkspaceStore()
 const project = computed(() => workspace.projects.find((p) => p.id === props.projectId) ?? null)
 const projectName = computed(() => project.value?.name ?? '')
 const ownsProject = computed(() => !!project.value?.owner_handle && project.value.owner_handle === myHandle())
+// 我管不管这个项目：「频道」一栏据此给不给「设为公开」（后端动手时按同一条规则再判一次）。
+const managesProject = ref(false)
+watch(
+  () => props.projectId,
+  (id) => {
+    managesProject.value = false
+    void getProject(id)
+      .then((row) => {
+        if (id === props.projectId) managesProject.value = row.can_manage_members === true
+      })
+      .catch(() => undefined)
+  },
+  { immediate: true }
+)
 
 const {
   loading,
@@ -246,6 +261,7 @@ function close() {
         <ProjectChannelSettings
           v-else-if="section === 'channels'"
           :project-id="projectId"
+          :can-make-public="managesProject"
           @open-channel="(topic) => router.push({ name: 'workspace-topic', params: { projectId, topicId: topic.id } })"
         />
         <section v-else-if="section === 'task-naming'" class="page-section">

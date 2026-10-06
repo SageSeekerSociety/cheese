@@ -16,6 +16,7 @@ from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.room_task.place import Place
 from app.domain.topic.models import room_ref
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 
 
@@ -69,11 +70,25 @@ async def readable_rooms(
 
     一样东西要说出它出自哪个房间时用：读不了的房间（别人的私聊）连名字也不该从
     旁边漏出去，所以只给读得了的那些。"""
-    rooms, _, _ = await TopicService(db).list_for_project(project_id)
+    rooms, _, _ = await TopicService(db).list_for_project(
+        project_id, viewer=actor.handle if actor.authenticated else None
+    )
     readable = await resolver.readable_topic_ids(
         actor, project_id=project_id, topics=rooms
     )
     return {room.id: room_ref(room) for room in rooms if room.id in readable}
+
+
+async def rooms_seen(
+    db: AsyncSession, resolver: ActorResolver, actor: Actor, project_id: uuid.UUID
+) -> set[uuid.UUID]:
+    """The ids of this project's channels whose work a project-wide list shows
+    ``actor``, once it may read the project: every public channel, and the
+    private channels it sits in. On the development credential alone, which
+    names nobody (``ActorResolver.on_the_dev_credential``), every channel."""
+    viewer = None if resolver.on_the_dev_credential(actor) else actor.handle
+    rooms = await TopicRepository(db).list_for_project(project_id, only_seen_by=viewer)
+    return {room.id for room in rooms}
 
 
 async def task_conversation(

@@ -16,6 +16,8 @@ class TopicCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     description: str | None = Field(default=None, max_length=500)
     parent_id: uuid.UUID | None = None
+    # 私密频道: only the people in it see it. Its creator is its first.
+    members_only: bool = False
 
 
 class MemberActivityOut(BaseModel):
@@ -45,6 +47,8 @@ class TopicOut(BaseModel):
     description: str | None = None
     kind: TopicKind
     status: TopicStatus
+    # 私密频道: listed, searched and read only by the people in it.
+    members_only: bool = False
     created_at: datetime
     # The topics ROW's mtime: it moves when the topic's own fields change
     # (title, status, session id), NOT when a block lands in it. For "was there

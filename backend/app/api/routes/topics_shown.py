@@ -251,6 +251,10 @@ async def save_shown_to_library(
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.require_verified_caller(project_id=place.project_id)
     await resolver.authorize_project(actor, project_id=place.project_id)
+    # The file is the room's: only someone the room lets in copies it out.
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
     name = await room_files.save_to_library(
         db,
         project_id=place.project_id,

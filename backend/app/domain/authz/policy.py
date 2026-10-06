@@ -1,8 +1,9 @@
 """Participant authorization, independent of whether a user is human or an agent.
 
 Verified room members and project members can access shared rooms. Private
-rooms require exact room membership. Missing credentials or an empty roster
-grant nothing. Credential scope is checked by ActorResolver before this policy.
+rooms — private chats and private channels — require exact room membership.
+Missing credentials or an empty roster grant nothing. Credential scope is
+checked by ActorResolver before this policy.
 Managing a project — its external members and the settings that used to need a
 lead — requires the project's owner or an owner/admin of the project's team.
 """
@@ -30,18 +31,19 @@ async def authorize_topic_access(
     topic_id: uuid.UUID,
     topic_role: TopicRoleReader,
     is_project_member: ProjectMemberCheck,
-    is_private: bool = False,
+    seats_only: bool = False,
 ) -> bool:
     """May ``actor`` read/act in this topic's group room?
 
     Authenticated people and agents need room or project membership. Private
-    rooms require membership in that exact room. Credential scope is checked
-    separately at the request boundary."""
+    rooms (``seats_only``: a private chat or a private channel) require
+    membership in that exact room. Credential scope is checked separately at
+    the request boundary."""
     if not actor.authenticated:
         return False
     role = await topic_role(topic_id, actor.handle)
-    if is_private:
-        # Project membership never grants access to someone else's private room.
+    if seats_only:
+        # Project membership never grants access to a private room.
         return actor.authenticated and role is not None
     if role is not None:
         return True

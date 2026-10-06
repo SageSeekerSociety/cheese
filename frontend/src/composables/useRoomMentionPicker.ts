@@ -179,7 +179,8 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
       })),
       ...deps
         .topicList()
-        .filter((tp) => tp.kind !== 'root')
+        // 私密频道的名字不在别处变成链接（后端也不认），所以不给它候选。
+        .filter((tp) => tp.kind !== 'root' && !tp.members_only)
         .map((tp) => ({
           label: tp.title,
           kind: 'topic' as const,
