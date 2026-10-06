@@ -13,13 +13,13 @@ from app.core.config import settings
 from app.core.sentences import render
 from app.domain.living_doc import collab
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.support.living_doc import document_of
 
 
-def _doc(client, room) -> str:
-    """The room's document, as its routes address it."""
-    return f"/documents/{document_of(client, room)}"
+def _doc(client, task) -> str:
+    """The task's document, as its routes address it."""
+    return f"/documents/{document_of(client, task)}"
 
 
 def _english(error: dict) -> str | None:
@@ -150,10 +150,12 @@ def test_a_document_write_with_the_service_down_says_so_in_english(client, monke
 
     monkeypatch.setattr(collab, "transport", httpx.MockTransport(down))
     _, room = _room(client)
+    task = open_task(client, room, owner="owner", start=False)["id"]
 
     r = client.put(
-        _doc(client, room),
+        _doc(client, task),
         json={"content": "写不进去", "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
 
     assert r.status_code == 503, r.text

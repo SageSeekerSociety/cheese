@@ -1,16 +1,24 @@
 <script setup lang="ts">
-// 主线上一条消息下面的那一行：它的支线里有几条回复、最后一句是谁说的什么（最多两
-// 行）。点它打开支线。支线还没有回复、而这条消息叫了 AI 队友时，写「芝士 正在回复」：
-// 回答不在主线上，这一行告诉人去哪儿等。
+// 主线上一条消息下面的那一行：谁在支线里说过话（头像）、有几条回复、最后一句是谁说的
+// 什么（最多两行）、AI 队友此刻是不是正在里面回答，以及它变成了哪件任务、那件任务
+// 到了哪一档。点它打开支线。
 import type { Block } from '../../cx_types'
 import type { RefNames } from '../../lib/refChip'
+import type { ProgressLevel } from '../../lib/taskProgress'
 import type { ThreadSummary } from '../../types/threads'
 
 import { computed } from 'vue'
 
+import { isAgentHandle } from '../../lib/authorship'
 import { replySnippet } from '../../lib/blockDisplay'
+import { progressLabel } from '../../lib/taskProgress'
+import { avatarColor, avatarInitial } from '../../utils/avatar'
+import CheeseAvatar from '../CheeseAvatar.vue'
 
 import { t } from '@/i18n'
+
+/** 头像最多叠几个；再多的人从回复数和支线里看。 */
+const FACES = 3
 
 const props = defineProps<{
   summary: ThreadSummary | null
@@ -20,9 +28,20 @@ const props = defineProps<{
   nameOf: (handle: string) => string
   /** 最后一条回复的时间，已经按房间的写法格式化好。 */
   time: string | null
+  /** 一个人的头像图；没有就画首字母。 */
+  avatarOf?: (handle: string) => string | null
+  /** 支线变成的那件任务此刻到哪一档；不认得就是 null。 */
+  taskLevel?: (taskId: string) => ProgressLevel | null
 }>()
 
 const emit = defineEmits<{ (e: 'open'): void }>()
+
+const replies = computed(() => props.summary?.reply_count ?? 0)
+const faces = computed(() => (props.summary?.participants ?? []).slice(0, FACES))
+const task = computed(() => props.summary?.task ?? null)
+// 一轮出错、还没有任何回复的支线：那句为什么没回答在支线里，这一行是去看它的入口。
+const failed = computed(() => !props.replying && !!props.summary?.failed)
+const level = computed(() => (task.value ? props.taskLevel?.(task.value.id) ?? null : null))
 
 const last = computed(() => {
   const reply = props.summary?.last_reply
@@ -45,29 +64,60 @@ const last = computed(() => {
 
 <template>
   <button
-    v-if="summary && summary.reply_count > 0"
+    v-if="replies > 0 || replying || task || failed"
     type="button"
     class="thread-line"
-    data-testid="thread-line"
+    :data-testid="replies > 0 ? 'thread-line' : replying ? 'thread-replying' : failed ? 'thread-failed' : 'thread-line'"
     @click="emit('open')"
   >
     <span class="thread-line__head">
-      <v-icon size="14" class="thread-line__icon">mdi-forum-outline</v-icon>
-      <span class="thread-line__count">{{ t('work.room.thread.replies', { count: summary.reply_count }) }}</span>
-      <span v-if="time" class="thread-line__time t-meta">{{ time }}</span>
+      <span v-if="faces.length" class="thread-line__faces" aria-hidden="true">
+        <template v-for="handle in faces" :key="handle">
+          <CheeseAvatar
+            v-if="isAgentHandle(handle)"
+            class="thread-line__face"
+            :size="18"
+            :name="nameOf(handle)"
+            :handle="handle"
+          />
+          <img
+            v-else-if="avatarOf?.(handle)"
+            class="thread-line__face thread-line__face--person"
+            :src="avatarOf(handle)!"
+            alt=""
+            width="18"
+            height="18"
+          />
+          <span
+            v-else
+            class="thread-line__face thread-line__face--person"
+            :style="{ backgroundColor: avatarColor(handle) }"
+            >{{ avatarInitial(nameOf(handle)) }}</span
+          >
+        </template>
+      </span>
+      <v-icon v-else size="14" class="thread-line__icon">mdi-forum-outline</v-icon>
+      <span v-if="replies > 0" class="thread-line__count">{{ t('work.room.thread.replies', { count: replies }) }}</span>
+      <span v-if="replies > 0 && time" class="thread-line__time t-meta">{{ time }}</span>
+      <span v-if="failed" class="thread-line__failed">{{ t('work.room.thread.failed') }}</span>
+      <template v-if="replying">
+        <span class="thread-line__replying">{{ t('work.room.thread.replying', { name: replying }) }}</span>
+        <span class="thread-line__dots" aria-hidden="true"><span /><span /><span /></span>
+      </template>
     </span>
     <span v-if="last" class="thread-line__last">{{ last }}</span>
-  </button>
-  <button v-else-if="replying" type="button" class="thread-line" data-testid="thread-replying" @click="emit('open')">
-    <span class="thread-line__head">
-      <v-icon size="14" class="thread-line__icon">mdi-forum-outline</v-icon>
-      <span class="thread-line__replying">{{ t('work.room.thread.replying', { name: replying }) }}</span>
-      <span class="thread-line__dots" aria-hidden="true"><span /><span /><span /></span>
+    <span v-if="task" class="thread-line__task" data-testid="thread-task">
+      <v-icon size="12" aria-hidden="true">mdi-call-split</v-icon>
+      <span class="thread-line__task-title">{{ t('work.room.thread.becameTask', { title: task.title }) }}</span>
+      <span v-if="level" class="thread-line__level" :data-level="level">{{ progressLabel(level) }}</span>
     </span>
   </button>
 </template>
 
 <style scoped>
+.thread-line__failed {
+  color: var(--danger-ink);
+}
 .thread-line {
   display: flex;
   flex-direction: column;
@@ -115,6 +165,52 @@ const last = computed(() => {
   line-height: var(--lh-13);
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+.thread-line__faces {
+  display: inline-flex;
+  align-items: center;
+}
+.thread-line__face {
+  flex: none;
+  box-shadow: 0 0 0 2px var(--fill);
+}
+.thread-line__face + .thread-line__face {
+  margin-left: -5px;
+}
+.thread-line__face--person {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  object-fit: cover;
+  color: var(--inverse-ink);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.thread-line__task {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+.thread-line__task-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-line__level {
+  flex: none;
+}
+.thread-line__level[data-level='review'] {
+  color: var(--accent-ink);
 }
 .thread-line__dots {
   display: inline-flex;

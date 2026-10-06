@@ -24,6 +24,7 @@
 
 import hashlib
 import re
+import uuid
 from dataclasses import dataclass
 
 from app.domain.agent.skills import load_skills
@@ -209,7 +210,8 @@ TODO_WRITE = (
 #: 所以只能在这里说清楚。
 ASK_ONLY_CHEESE_ASK = (
     "## 向人提问\n"
-    "要人回答或拍板时只用 `cheese_ask`。你自带的其他提问工具（例如 "
+    "要人回答或拍板时只用 `cheese_ask`：问题作为带快捷回复的消息发进对话，问完就"
+    "结束这一轮，别等；有人回复，那句回复会开启你的下一轮。你自带的其他提问工具（例如 "
     "`request_user_input_async`）不要用：它问出去的话只落在现场，对话里没人看得到，"
     "也不会有人回答。"
 )
@@ -461,6 +463,7 @@ def build_session_opening(
     topics: list[dict] | None = None,
     artifacts: list[dict] | None = None,
     overview_doc: str | None = None,
+    overview_doc_id: uuid.UUID | None = None,
     environment: list[str] | None = None,
     teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
@@ -525,31 +528,18 @@ def build_session_opening(
         )
     if overview_doc:
         # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
-        # 有一份总览文档，每段对话都读到同一份，谁改了都留痕。
-        #
-        # 这一份**分三块，只有第一块是写的**（#1889 第 1 条）。②③ 由平台从结构
-        # 化数据现拼，进不了文档正文：手抄一份进去，读的人读到的不是它，而抄的人
-        # 会以为事情办完了。哪一块谁写必须在这里说清——不说清，写的人只会照旧把
-        # 手抄的结论贴回来。
-        #
-        # 传进来的那一段已经按这个结构拼好了（`chat._project_overview`）：① 从总览
-        # 文档里取，②③ 只在「综合」拼。帽子仍然戴在整段上，防的是一份还没按新
-        # 结构写过的老总览——那时 ① 取不到，注入的就是全文。
+        # 有一份总览，每段对话都读到同一份，谁改了都留痕。
+        where = f"（`document: {overview_doc_id}`）" if overview_doc_id else ""
         sections["overview"] = (
             "## 项目总览（全项目共看的那一份）\n"
-            "项目所有人和所有芝士共同看的就是它：项目是什么、现在在做什么、定了"
-            "什么、谁在负责。它分三块，**只有第一块是写的**：\n"
-            "- **① 项目是什么** —— 你和人写，正文只有这一块（用 `cheese_doc_edit` 改"
-            "「综合」频道的实况文档）：目标、范围（做 / 不做）、"
-            "对外口径，≤1500 字。它很少变，变了才改。\n"
-            "- **② 现在在做什么 / ③ 已结束的任务** —— "
-            "**平台从结构化数据现拼，不在文档正文里**。要改就改源头：任务本身、"
-            "结掉的那张卡。往正文里抄一份，"
-            "谁都不会读到它（没拼给你的那几块，自己查：`/topics`）。\n"
+            "项目所有人和所有芝士共同看的就是它：这个项目是什么——目标、范围"
+            "（做 / 不做）、对外口径，≤1500 字。它很少变，变了才改，用 "
+            f"`cheese_doc_edit`{where}。项目现在在做什么不写在这里，要看就查各"
+            "频道里的任务。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
-                full_read_hint="对「综合」频道调 `cheese_doc_get` 读全文",
+                full_read_hint=f"用 `cheese_doc_get`{where}读全文",
             )
         )
     if doc:
@@ -575,13 +565,22 @@ def build_session_opening(
     return SessionOpening(sections)
 
 
-def task_opening_prompt(*, title: str, owner: str | None, source: str) -> str:
-    """What a new task's agent is told first: where the task came from, and to
-    draft the task's document from it before anything else."""
+def task_opening_prompt(
+    *, title: str, owner: str | None, source: str, materials: str = ""
+) -> str:
+    """What a new task's agent is told first: where the task came from, what
+    was put on the table there, and to draft the task's document from it
+    before anything else."""
     who = f"负责人是 @{owner}。" if owner else ""
+    put = (
+        f"{materials}\n整理时读一读它们，文档里写明依据的是哪一份。\n\n"
+        if materials
+        else ""
+    )
     return (
         f"这里是任务「{title}」，{who}它从频道里的讨论中创建：\n\n"
         f"---\n{source}\n---\n\n"
+        f"{put}"
         "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入：目标、现状、"
         "需要谁做什么、已确定、待决；讨论里否掉的做法写进已确定，标明不采用及原因。"
         "然后用 chat_send 在任务里和负责人"

@@ -9,7 +9,7 @@ from tests.integration.conftest import (
     create_approved_space,
     unique_int,
 )
-from tests.support.living_doc import document_of
+from tests.support.living_doc import overview_of
 
 
 class TestTaskIntegration:
@@ -101,9 +101,8 @@ class TestTaskIntegration:
             response = api_client.get(f"/projects/{project['id']}", headers=headers)
             assert response.status_code == 200, response.text
             assert response.json()["data"]["external_task_id"] == task_id
-            document = document_of(
-                api_client, project["root_topic_id"], headers=headers
-            )
+            # The 赛题 is the project's overview, which every member reads.
+            document = overview_of(api_client, project["id"], headers=headers)
             response = api_client.get(f"/documents/{document}", headers=headers)
             assert response.status_code == 200, response.text
             assert "三个需要改善的路口" in response.text

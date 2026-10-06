@@ -8,12 +8,15 @@ call asks for its hands the way the session's client does.
 
 from datetime import datetime, timedelta
 
+from sqlalchemy import select
+
+from app.domain.block.models import Block, BlockKind
 from app.domain.machine import services
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
     host_comes_up,
     maintain,
-    room_lines,
+    run,
     working_on,
 )
 
@@ -23,8 +26,8 @@ NOTICE = (
 )
 
 ROOM_LINE = (
-    "沙箱所在的机器不再响应，沙箱已换成新的："
-    "新沙箱从仓库里已推送的内容开始，没推送的改动不在了"
+    "环境所在的机器不再响应，环境已换成新的："
+    "新环境从仓库里已推送的内容开始，没推送的改动不在了"
 )
 
 
@@ -35,6 +38,26 @@ def _later(monkeypatch, by: timedelta) -> None:
             return datetime.now(tz) + by
 
     monkeypatch.setattr(services, "datetime", Later)
+
+
+def _said(case, seat) -> list[str]:
+    """What the platform said in the room's conversation about its sandbox."""
+
+    async def read():
+        async with case.client.test_request_factory() as db:
+            return list(
+                await db.scalars(
+                    select(Block.content)
+                    .where(
+                        Block.conversation_id == seat.room,
+                        Block.kind == BlockKind.event,
+                        Block.meta["event_type"].as_string() == "cloud_startup",
+                    )
+                    .order_by(Block.created_at)
+                )
+            )
+
+    return run(case, read)
 
 
 def _tool_call(case, seat, *, tells_agent: bool) -> dict:
@@ -71,7 +94,7 @@ def test_the_agent_is_told_once_that_its_sandbox_was_replaced(cloud, monkeypatch
     assert told["target"]["device_id"] == "host-c"
     assert told["notice"] == NOTICE
     assert "notice" not in again
-    assert ROOM_LINE in room_lines(cloud, lost_seat)
+    assert _said(cloud, lost_seat) == [ROOM_LINE]
     # The session on the host that answers keeps its sandbox and hears nothing.
     other = _tool_call(cloud, other_seat, tells_agent=True)
     assert other["target"]["device_id"] == "host-b"

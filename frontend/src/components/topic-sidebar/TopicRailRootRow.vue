@@ -20,7 +20,9 @@ defineProps<{
   selectedTopicId: string | null
   page: boolean
   unreadOf: (id: string) => number
-  /** 我静音了的频道：行尾画一个静音标记（未读已经不计了）。 */
+  /** 主线上有没有我没读过的新消息：名字加粗。 */
+  freshOf?: (id: string) => boolean
+  /** 我静音了的频道：名字变灰，行尾画一个静音标记。 */
   mutedOf?: (id: string) => boolean
   /** 这一行的操作（和频道行 ⋯ 同一份），右键弹出来。 */
   rootActions?: MenuAction[]
@@ -63,14 +65,18 @@ const emit = defineEmits<{
           <v-icon
             size="16"
             class="row-glyph"
-            :class="{ 'row-glyph--unread': unreadOf(rootTopic.id) > 0 }"
+            :class="{ 'row-glyph--unread': unreadOf(rootTopic.id) > 0 || freshOf?.(rootTopic.id) }"
             icon="mdi-pound"
           />
         </span>
       </template>
-      <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">{{
-        topicTitle(rootTopic)
-      }}</v-list-item-title>
+      <v-list-item-title
+        :class="{
+          'title-unread': unreadOf(rootTopic.id) > 0 || freshOf?.(rootTopic.id),
+          'title-muted': mutedOf?.(rootTopic.id) && unreadOf(rootTopic.id) === 0,
+        }"
+        >{{ topicTitle(rootTopic) }}</v-list-item-title
+      >
       <AdaptiveMenu
         v-if="!page && rootActions?.length"
         v-bind="rowMenu.bind('root')"
@@ -104,6 +110,9 @@ const emit = defineEmits<{
   font-size: 14px;
   line-height: var(--lh-14);
   color: var(--text);
+}
+.title-muted {
+  color: var(--faint);
 }
 .title-unread {
   font-weight: 650;

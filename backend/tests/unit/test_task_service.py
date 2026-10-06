@@ -97,6 +97,7 @@ def _make_entry(**overrides):
         "index": 0,
         "content_text": "Answer text",
         "content_attachment_id": None,
+        "prompt": None,
         "created_at": _NOW,
         "updated_at": _NOW,
         "deleted_at": None,
@@ -525,11 +526,14 @@ class TestTaskSubmissionService:
             attachments = AsyncMock()
             attachments.get_many.return_value = []
         attachments.is_uploader = Mock(return_value=True)
+        schema_repo = AsyncMock()
+        schema_repo.list_by_task_id.return_value = []
         return TaskSubmissionService(
             submission_repo=submission_repo,
             entry_repo=entry_repo,
             review_repo=review_repo,
             membership_repo=membership_repo,
+            schema_repo=schema_repo,
             attachments=attachments,
         )
 
@@ -1472,11 +1476,14 @@ class TestTaskSubmissionServiceAdditional:
             attachments = AsyncMock()
             attachments.get_many.return_value = []
         attachments.is_uploader = Mock(return_value=True)
+        schema_repo = AsyncMock()
+        schema_repo.list_by_task_id.return_value = []
         return TaskSubmissionService(
             submission_repo=submission_repo,
             entry_repo=entry_repo,
             review_repo=review_repo,
             membership_repo=membership_repo,
+            schema_repo=schema_repo,
             attachments=attachments,
         )
 

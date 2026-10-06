@@ -64,7 +64,7 @@ tasks:
   # Components take props and emit events. Nothing under src/components/** may
   # import the network layer (@/api, @/services/*, @/network/*) or vue-router —
   # a component that fetches cannot be tested or reused without a server.
-  # Ratcheted: 127 violations across 82 components
+  # Ratcheted: 59 violations across 47 components
   # (import-boundary-baseline.json) are frozen, so only NEW ones fail.
   # Writer: `pnpm run lint:boundary:update`. Read-only, like `lint:style`.
   lint:boundary:

@@ -1,12 +1,12 @@
 import type { ChatAttachment, FileContent } from '@/cx_types'
-import type { DocumentIdentity, DocumentSnapshot } from '@/lib/documentBytes'
+import type { DocumentIdentity, DocumentSnapshot } from '@/lib/documentIdentity'
 import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
 import type { PagePin, SlideSource } from './slidesContext'
 
 import { ref } from 'vue'
 
 import { t } from '@/i18n'
-import { sameDocumentIdentity } from '@/lib/documentBytes'
+import { sameDocumentIdentity } from '@/lib/documentIdentity'
 import { isQuotedContext } from '@/lib/quotedContext'
 
 interface PagePinProps {

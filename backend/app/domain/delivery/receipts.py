@@ -6,18 +6,15 @@ Nothing here resubmits an input whose outcome is uncertain.
 """
 
 import uuid
-from dataclasses import replace
 from datetime import UTC, datetime
 
-from sqlalchemy import or_, select, true, update
+from sqlalchemy import delete, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.block.input_effects import apply_input_echo, consume_input_blocks
 from app.domain.block.models import Block
-from app.domain.delivery.answer_ownership import unread_input_with_over_work
-from app.domain.delivery.ask_inputs import guard_ask_inputs
-from app.domain.delivery.ask_receipt_wait import AskReceiptPending
+from app.domain.delivery.input_holds import unread_input_with_over_work
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.thread.services import thread_opening
@@ -34,7 +31,6 @@ async def register_input(
     session, identity: InputIdentity, effects: InputEffects
 ) -> None:
     """Caller commits this before sending; retry cannot replace receiver identity."""
-    effects = await guard_ask_inputs(session, identity, effects)
     event_id = None
     delivery = None
     if effects.delivery_id is not None:
@@ -51,35 +47,6 @@ async def register_input(
             or delivery.recipient_handle != identity.recipient_handle
         ):
             raise ValidationError("Input does not own the addressed delivery attempt")
-        origin = delivery.payload.get("ask_origin")
-        if origin is not None:
-            if any(
-                origin.get(field) != getattr(identity, field)
-                for field in ("recipient_handle", "harness", "native_session_id")
-            ):
-                raise ValidationError(
-                    "Ask answer cannot enter a replacement native session"
-                )
-            try:
-                members = tuple(
-                    uuid.UUID(value) for value in delivery.payload["block_ids"]
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ValidationError(
-                    "Ask delivery has invalid member effects"
-                ) from exc
-            # Complete group consumption is tied to successful work, not RPC or
-            # echo. The exact echo alone may add the recipient's read marks.
-            effects = replace(
-                effects,
-                held_block_ids=tuple(
-                    sorted(set(effects.held_block_ids) | set(members))
-                ),
-                seen_block_ids=tuple(
-                    sorted(set(effects.seen_block_ids) | set(members))
-                ),
-                seen_by=identity.recipient_handle,
-            )
         event_id = delivery.event_id
     elif effects.attempt_id is not None:
         raise ValidationError("An attempt must name its delivery")
@@ -141,7 +108,7 @@ async def register_input(
         | set(effects.block_ids)
         | set(effects.seen_block_ids)
     )
-    blocks = await _lock_blocks(session, identity, affected)
+    await _lock_blocks(session, identity, affected)
     if effects.seen_by is not None and effects.seen_by != identity.recipient_handle:
         raise ValidationError("Input cannot mark blocks as read by another receiver")
     if effects.held_block_ids:
@@ -152,241 +119,8 @@ async def register_input(
             recipient_handle=identity.recipient_handle,
             exclude_input_id=row.id,
         )
-        overlap = held.intersection(effects.held_block_ids)
-        if overlap and (
-            delivery is None
-            or delivery.payload.get("ask_origin") is None
-            or not overlap <= set(members)
-            or not await _shared_ask_members(
-                session, identity, row.id, delivery, members, overlap, blocks
-            )
-        ):
+        if held.intersection(effects.held_block_ids):
             raise ValidationError("Input batch is already held by another native input")
-
-
-async def _shared_ask_members(
-    session, identity, input_row_id, delivery, members, overlap, blocks
-):
-    """Share one group's questions only inside its proven original native work.
-
-    Registration reserves an input; only an earlier native echo proves the work.
-    Each answer wake stays exclusive, and this never stamps a new input's receipt.
-    Read immutable identities without adding a Block-to-Input/Delivery lock edge.
-    """
-    origin = delivery.payload["ask_origin"]
-    if origin.get("work_id") != str(identity.work_id):
-        return await _shared_ask_continuation(
-            session, identity, input_row_id, delivery, members, overlap, blocks
-        )
-    group_id = delivery.payload.get("ask_group")
-    member_ids = {str(member) for member in members}
-    questions = [block for block in blocks if block.id in members]
-    if (
-        not group_id
-        or origin.get("work_id") != str(identity.work_id)
-        or len(questions) != len(member_ids)
-        or any(
-            block.author != identity.recipient_handle
-            or block.turn_id != identity.work_id
-            or block.meta.get("ask_origin") != origin
-            or block.meta.get("ask_group", {}).get("id") != group_id
-            or block.meta.get("ask_group", {}).get("asked_by")
-            != identity.recipient_handle
-            or set(block.meta.get("ask_group", {}).get("members", [])) != member_ids
-            for block in questions
-        )
-    ):
-        return False
-    inputs = list(
-        await session.execute(
-            select(NativeInput, Delivery)
-            .outerjoin(Delivery, Delivery.id == NativeInput.delivery_id)
-            .where(
-                NativeInput.project_id == identity.project_id,
-                NativeInput.conversation_id == identity.conversation_id,
-                NativeInput.recipient_handle == identity.recipient_handle,
-                NativeInput.id != input_row_id,
-            )
-            .execution_options(populate_existing=True)
-        )
-    )
-    if not any(
-        prior.harness == identity.harness
-        and prior.native_session_id == identity.native_session_id
-        and prior.work_id == identity.work_id
-        and prior.execution_work_id == identity.work_id
-        and prior.echoed_at is not None
-        and prior.settled_at is not None
-        and prior.completed_at is None
-        for prior, _ in inputs
-    ):
-        return False
-    remaining = set(overlap)
-    for prior, previous in inputs:
-        held = set(prior.held_block_ids) - set(prior.released_block_ids)
-        shared = {uuid.UUID(block) for block in held}.intersection(overlap)
-        if not shared:
-            continue
-        if (
-            prior.harness != identity.harness
-            or prior.native_session_id != identity.native_session_id
-            or prior.work_id != identity.work_id
-            or prior.execution_work_id not in (None, identity.work_id)
-            or prior.completed_at is not None
-            or previous is None
-            or previous.conversation_id != identity.conversation_id
-            or previous.recipient_handle != identity.recipient_handle
-            or prior.event_id != previous.event_id
-            or previous.payload.get("ask_origin") != origin
-            or previous.payload.get("ask_group") != group_id
-            or previous.payload.get("block_ids") != delivery.payload["block_ids"]
-        ):
-            return False
-        remaining.difference_update(shared)
-    return not remaining
-
-
-async def _shared_ask_continuation(
-    session, identity, input_row_id, delivery, members, overlap, blocks
-):
-    """Share questions after this same native session echoed their answer wake.
-
-    The question keeps the work which asked it. The continuation's execution
-    owner comes only from a live settled native echo carrying this group's wake.
-    Registration hints and unrelated prompt echoes cannot provide that proof.
-    All additional reads are unlocked; the caller already locked the questions.
-    """
-    origin = delivery.payload["ask_origin"]
-    group_id = delivery.payload.get("ask_group")
-    member_ids = {str(member) for member in members}
-    questions = [block for block in blocks if block.id in members]
-    try:
-        asked_work = uuid.UUID(origin["work_id"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    if (
-        not group_id
-        or len(questions) != len(member_ids)
-        or any(
-            block.author != identity.recipient_handle
-            or block.turn_id != asked_work
-            or block.meta.get("ask_origin") != origin
-            or block.meta.get("ask_group", {}).get("id") != group_id
-            or block.meta.get("ask_group", {}).get("asked_by")
-            != identity.recipient_handle
-            or set(block.meta.get("ask_group", {}).get("members", [])) != member_ids
-            for block in questions
-        )
-    ):
-        return False
-    inputs = list(
-        await session.execute(
-            select(NativeInput, Delivery)
-            .outerjoin(Delivery, Delivery.id == NativeInput.delivery_id)
-            .where(
-                NativeInput.project_id == identity.project_id,
-                NativeInput.conversation_id == identity.conversation_id,
-                NativeInput.recipient_handle == identity.recipient_handle,
-                NativeInput.id != input_row_id,
-            )
-            .execution_options(populate_existing=True)
-        )
-    )
-    holders = []
-    wake_ids = set()
-    for prior, previous in inputs:
-        held = {uuid.UUID(value) for value in prior.held_block_ids}
-        held.difference_update(uuid.UUID(value) for value in prior.released_block_ids)
-        if not held.intersection(overlap):
-            continue
-        if (
-            prior.harness != identity.harness
-            or prior.native_session_id != identity.native_session_id
-            or prior.work_id != identity.work_id
-            or prior.execution_work_id not in (None, identity.work_id)
-            or prior.completed_at is not None
-        ):
-            return False
-        holders.append((prior, previous, held))
-        wake_ids.update(held.difference(members))
-    wakes = list(
-        await session.scalars(
-            select(Block)
-            .where(
-                Block.project_id == identity.project_id,
-                Block.conversation_id == identity.conversation_id,
-                Block.id.in_(wake_ids),
-            )
-            .execution_options(populate_existing=True)
-        )
-    )
-    wake_events = {}
-    for wake in wakes:
-        meta = wake.meta or {}
-        if (
-            meta.get("answer_group") != group_id
-            or meta.get("answer_to") not in member_ids
-        ):
-            continue
-        try:
-            wake_events[wake.id] = uuid.UUID(meta["delivery_event_id"])
-        except (KeyError, TypeError, ValueError):
-            return False
-    deliveries = list(
-        await session.scalars(
-            select(Delivery)
-            .where(
-                Delivery.conversation_id == identity.conversation_id,
-                Delivery.recipient_handle == identity.recipient_handle,
-                Delivery.event_id.in_(set(wake_events.values())),
-            )
-            .execution_options(populate_existing=True)
-        )
-    )
-
-    def same_group(previous):
-        return (
-            previous is not None
-            and previous.conversation_id == identity.conversation_id
-            and previous.recipient_handle == identity.recipient_handle
-            and previous.payload.get("ask_origin") == origin
-            and previous.payload.get("ask_group") == group_id
-            and previous.payload.get("block_ids") == delivery.payload["block_ids"]
-            and previous.payload.get("answer_to") in member_ids
-        )
-
-    by_event = {
-        previous.event_id: previous for previous in deliveries if same_group(previous)
-    }
-    remaining = set(overlap)
-    proven = False
-    for prior, previous, held in holders:
-        if prior.delivery_id is not None and (
-            not same_group(previous) or prior.event_id != previous.event_id
-        ):
-            return False
-        matching_wake = any(
-            wake_id in held
-            and event in by_event
-            and (prior.delivery_id is None or by_event[event].id == prior.delivery_id)
-            for wake_id, event in wake_events.items()
-        )
-        if not matching_wake:
-            return False
-        proven = proven or (
-            prior.execution_work_id == identity.work_id
-            and prior.echoed_at is not None
-            and prior.settled_at is not None
-        )
-        remaining.difference_update(held.intersection(overlap))
-    if not proven and not remaining:
-        raise AskReceiptPending(
-            identity,
-            delivery_id=delivery.id,
-            attempt_id=delivery.attempt_id,
-            group_id=group_id,
-        )
-    return proven and not remaining
 
 
 async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
@@ -542,6 +276,38 @@ async def complete_work_inputs(
             )
             row.released_block_ids = sorted(released)
     return consumed
+
+
+async def withdraw_input(session, identity: InputIdentity, effects: InputEffects):
+    """Undo a registration whose send stopped before anything left.
+
+    The input never reached the session, so it is not a terminal outcome to
+    record but a registration that should not exist: the row goes, which frees
+    the seat and the blocks it would have held, and a fenced delivery attempt
+    goes back to ``claimed`` so its attempt ends as an ordinary retry instead
+    of an outcome nobody may repeat. A row the session has already answered
+    for (accepted, echoed or settled) is evidence and stays."""
+    await session.execute(
+        delete(NativeInput).where(
+            NativeInput.harness == identity.harness,
+            NativeInput.native_session_id == identity.native_session_id,
+            NativeInput.input_id == identity.input_id,
+            NativeInput.accepted_at.is_(None),
+            NativeInput.echoed_at.is_(None),
+            NativeInput.completed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+        )
+    )
+    if effects.delivery_id is not None:
+        await session.execute(
+            update(Delivery)
+            .where(
+                Delivery.id == effects.delivery_id,
+                Delivery.attempt_id == effects.attempt_id,
+                Delivery.state == "sending",
+            )
+            .values(state="claimed")
+        )
 
 
 async def terminate_work_inputs(

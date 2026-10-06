@@ -4,11 +4,14 @@
  * 修订仍然列出来——它们是这份文档的一部分，读者有权看见谁改了哪里；能做的只是不动
  * 它：接受一处修订会改写所有房间都在引用的那一份，而没有人要求过这件事。
  */
+import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+import { useDocumentRevisions } from '../../../composables/useDocumentRevisions'
 
 import RevisionList from './RevisionList.vue'
 
@@ -46,11 +49,22 @@ beforeEach(() => {
   })
 })
 
+// 这一只只画：清单由宿主取（产品里是 `components/work/PanelChangesHost.vue` 和
+// `PanelPreviewHost.vue`），所以这里也搭一个最小的宿主，取数照旧走被 mock 掉的接口层。
 function mount(path: string) {
-  return render(RevisionList, {
-    props: { topicId: 'topic-A', path, version: 'v7' },
-    global: { plugins: [vuetify] },
+  const Host = defineComponent({
+    setup() {
+      const revs = useDocumentRevisions({
+        topicId: () => 'topic-A',
+        path: () => path,
+        version: () => 'v7',
+        task: () => null,
+        source: () => 'live',
+      })
+      return () => h(RevisionList, { revs, path })
+    },
   })
+  return render(Host, { global: { plugins: [vuetify] } })
 }
 
 function buttons(container: Element): string[] {

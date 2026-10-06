@@ -6,7 +6,7 @@
 // 它的 JSON（公告存 HTML）：文字颜色、字体、字号、高亮色、上下标、段落对齐、附件图。编辑器
 // 读到 schema 里没有的节点或标记会把内容丢掉，没有的属性会悄悄去掉，所以这些都要认得。
 // 工具栏上不给它们按钮，但带着它们的老内容打开、再保存，一样不少。
-import type { AnyExtension, JSONContent } from '@tiptap/core'
+import type { AnyExtension, JSONContent, Node } from '@tiptap/core'
 
 import Highlight from '@tiptap/extension-highlight'
 import Subscript from '@tiptap/extension-subscript'
@@ -16,7 +16,7 @@ import { Color, FontFamily, FontSize, TextStyle } from '@tiptap/extension-text-s
 
 import { AttachmentImage } from './attachmentImage'
 
-import { docExtensions } from '@/lib/docSchema'
+import { docExtensions, parseMarkdown } from '@/lib/docSchema'
 
 // 老编辑器存字号存的是不带单位的数（`"16"`），自己画的时候补 px。原样存回去，只在画的时候补。
 const BARE_NUMBER = /^\d+(\.\d+)?$/
@@ -64,10 +64,14 @@ const LegacyHighlight = Highlight.extend({
 
 export function richTextExtensions(): AnyExtension[] {
   return [
-    // 实况文档的 `image` 节点按地址引外链图；这几处的图一律是附件（下面的 attachmentImage），
-    // 粘贴进来的外链图原先也不收，这里照旧。高亮这几处有自己的一份（带颜色，下面的
-    // LegacyHighlight）。
-    ...docExtensions({ standalone: true }).filter((extension) => !['image', 'highlight'].includes(extension.name)),
+    // 高亮这几处有自己的一份（带颜色，下面的 LegacyHighlight）。实况文档的 `image` 节点按
+    // 地址引外链图：这几处插的图一律是附件（下面的 attachmentImage），粘贴进来的外链图
+    // 照旧不收；它只认 Markdown 里写的图，从 PDF 导入的题目描述靠它带着插图。
+    ...docExtensions({ standalone: true }).flatMap((extension) => {
+      if (extension.name === 'highlight') return []
+      if (extension.name === 'image') return [(extension as Node).extend({ parseHTML: () => [] })]
+      return [extension]
+    }),
     TextAlign.configure({ types: ['heading', 'paragraph'] }),
     TextStyle,
     Color,
@@ -118,4 +122,9 @@ export function viewerContent(value: unknown): JSONContent | string {
     return value
   }
   return jsonContent(value)
+}
+
+/** 存成 Markdown 的那一份（从 PDF 导入的题目描述）读成编辑器的文档。 */
+export function markdownContent(markdown: string): JSONContent {
+  return jsonContent(parseMarkdown(markdown).toJSON())
 }

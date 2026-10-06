@@ -2,7 +2,8 @@
 // 「退出项目」的确认框，从成员页打开。「点了之后发生什么」只有这一份：确认、
 // DELETE /projects/{id}/membership、刷新名册和项目列表、离开这个项目。
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import { leaveProject, listProjectMembers } from '@/api'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
@@ -13,7 +14,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 const props = defineProps<{ projectId: string }>()
 const open = defineModel<boolean>({ required: true })
 
-const router = useRouter()
+const navigation = useNavigation()
 const store = useWorkspaceStore()
 
 // 「退出的是项目不是团队」只对随团队进来的人成立：被邀请进来的外部成员、自己名下
@@ -67,7 +68,7 @@ async function confirmLeave() {
   // 拿到 409。
   await Promise.allSettled([store.refreshMembers(), store.refreshProjects()])
   // replace：退出成功后再按回退键，人不该又落回这个项目 —— 名册里已经没有他了。
-  void router.replace({ name: 'HomeSpaces' })
+  navigation?.navigate({ name: 'HomeSpaces' }, { replace: true })
   leaving.value = false
 }
 </script>

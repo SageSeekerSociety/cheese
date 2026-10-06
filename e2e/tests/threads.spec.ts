@@ -38,8 +38,11 @@ test.describe('支线', () => {
     const asked = main.locator('.im-text', { hasText: text }).last();
     await expect(asked).toBeVisible({ timeout: 15_000 });
 
-    // 消息下面那一行：还在回答时写「正在回复」，有了回复写几条回复。点它打开支线。
-    const line = main.locator('[data-testid="thread-replying"], [data-testid="thread-line"]').last();
+    // 消息下面那一行：还在回答时写「正在回复」，有了回复写几条回复，这一轮出错了写
+    // 「回复失败」（e2e 里没有工作电脑，多半是这一种）。点它打开支线。
+    const line = main
+      .locator('[data-testid="thread-replying"], [data-testid="thread-line"], [data-testid="thread-failed"]')
+      .last();
     await expect(line).toBeVisible({ timeout: 15_000 });
     await line.click();
 

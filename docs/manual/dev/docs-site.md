@@ -59,7 +59,7 @@ okcheese.com 这个部署配的是 `DOCS_ORIGIN=https://docs.okcheese.com`：文
 
 ### 用产品里的真组件演 {#demos-embed}
 
-`demo-steps` 多写一行 `embed: <名字>`，步骤列表上方就多一块画面：前端的公开页 `/demo/<名字>?embed=1` 嵌在 iframe 里，用产品自己的消息行（`RoomMessage`）和右边的工作面板（页签条 `PanelTabs` 加 `PanelOverview` / `PanelChanges` / `PanelPreview` / `PanelSite` 这四格）按剧本演，做法和首页的 `LandingRoom.vue` 一样。
+`demo-steps` 多写一行 `embed: <名字>`，步骤列表上方就多一块画面：前端的公开页 `/demo/<名字>?embed=1` 嵌在 iframe 里，用产品自己的消息行（`RoomMessage`）和右边的工作面板（页签条 `PanelTabs` 加 `PanelDoc` / `PanelChanges` / `PanelPreview` / `PanelSite` 这四格）按剧本演，做法和首页的 `LandingRoom.vue` 一样。
 
 - **剧本**在 `frontend/src/views/demo/scenes/<名字>.json`：每一步一串带毫秒时刻的事件（有人说话、一位队友开一轮、现场里一步工具调用、一轮结束、座位卡和机器栏换字）。`demoScene.ts` 把「第几步的第几毫秒」从头重放成一帧，所以往回跳和顺着放得到同一帧。
 - **右边停在哪一格**：某一步想让人看别处，就写一行 `panel:`（`overview` / `changes` / `preview` / `site`），再把那一格里的东西写在同一步的 `overview:` / `changes:` / `preview:` 上（改动只写文件路径和那几行 diff，文件头和 hunk 头由 `demoPanels.ts` 补）。写一次就留在那儿，后面几步只说 `panel:` 就行；哪一步都不写就是现场（`site`）。`checkScene` 会挡下「停在一格却没人写它的内容」。
@@ -154,6 +154,23 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [记忆](/dev/memory) | 一轮里记忆怎么流转 | `demo-steps` + `embed: memory` | 这一页各节；画面是剧本 `scenes/memory.json` |
 | [设备与机器接入](/dev/machines) | 一台机器怎么接进来、出错时怎么办 | `demo-steps` + `embed: machines` | 这一页各节；画面是剧本 `scenes/machines.json` |
 | [计费流程](/dev/billing) | 两道刹车各在什么时候拦 | `demo-sim` | 这一页「额度 = 花费 ÷ 每额度价格」的折算 |
+
+## 页面组件 {#blocks}
+
+除了交互演示，页面还能用四种写法，都由 `build.mjs` 在渲染 Markdown 时展开成静态 HTML，不需要脚本也完整。
+
+| 写法 | 展开成 | 文字版里 |
+|---|---|---|
+| `:::steps` … `:::`，里面每个 `###` 标题开一步 | 带编号和竖线的步骤列表（`ol.steps`），标题照常进目录 | 去掉 `:::` 两行，剩下普通的 `###` 小节 |
+| `:::cards` … `:::`，里面一个列表，每项 `- [标题](/页面#锚点)：一句话` | 两列链接卡片，和首页的卡片同一套样式；窄屏一列 | 去掉 `:::` 两行，剩下链接列表 |
+| 语言写 `prompt` 的代码块 | 一条「发给芝士」的消息，正文用正文字体、自动换行，右上角复制按钮 | 原样保留 |
+| 第一行是 `[!TIP]`、`[!NOTE]` 或 `[!WARNING]` 的引用 | 提示、说明、注意三种提示框；不带标记的引用仍是说明框 | 原样保留 |
+
+- 写错种类会让构建失败：`:::` 后面只认 `steps` 和 `cards`，提示框只认上面三种，`:::cards` 里只能有一个列表且每项以链接开头，`:::steps` 里至少有一个 `###`。
+- 「文字版」是每页的 `.md`、`llms.txt`、搜索索引和 `ask-index.json` 用的那一份，和演示的文字版同一条路（`renderMarkdown` 里的 `text`）。
+- 复制按钮和代码块共用 `src/app.js` 里同一个 `[data-copy]` 处理，复制的是消息正文。
+- 样式只用设计系统的 token（`--accent-wash`、`--fill`、`--line` 等），深浅色跟着走。
+- 什么时候用哪一种，写在 `.agents/skills/cheese-docs-writing/SKILL.md` 的「教程」和「页面组件」两节。
 
 ## 首页与截图 {#home}
 

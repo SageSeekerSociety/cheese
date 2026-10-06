@@ -9,6 +9,7 @@ reads.
 """
 
 import uuid
+from collections.abc import Callable
 
 from sqlalchemy import (
     DateTime,
@@ -26,7 +27,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.block.indexed_rows import FAILED_TURN_ROWS
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import agent_handle_column, names_a_person
 from app.domain.thread.models import Thread
 
@@ -87,33 +90,6 @@ async def said_before(session: AsyncSession, root: Block, *, limit: int) -> list
     return list(reversed(list(rows)))
 
 
-async def _last_replies(
-    session: AsyncSession, thread_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, Block]:
-    if not thread_ids:
-        return {}
-    ranked = (
-        select(
-            Block.id,
-            func.row_number()
-            .over(
-                partition_by=Block.conversation_id,
-                order_by=(Block.created_at.desc(), Block.id.desc()),
-            )
-            .label("rank"),
-        )
-        .where(
-            Block.conversation_id == _among(thread_ids),
-            Block.kind == BlockKind.message,
-        )
-        .subquery()
-    )
-    rows = await session.scalars(
-        select(Block).join(ranked, ranked.c.id == Block.id).where(ranked.c.rank == 1)
-    )
-    return {block.conversation_id: block for block in rows}
-
-
 def _reply(block: Block | None) -> dict | None:
     if block is None:
         return None
@@ -121,6 +97,32 @@ def _reply(block: Block | None) -> dict | None:
         "author": block.author,
         "content": block.content[:LAST_REPLY_CHARS],
         "created_at": block.created_at.isoformat(),
+    }
+
+
+async def _failed(session: AsyncSession, threads: list[Thread]) -> set[uuid.UUID]:
+    """The 支线 whose last turn ended in an error after its last reply.
+
+    Only people's and AI teammates' messages count as replies, so a 支线 where
+    the AI teammate's turn failed before it said anything has no reply and no
+    one answering in it: without this its message would show nothing under it,
+    and the reason the question went unanswered would sit unseen in the 支线."""
+    if not threads:
+        return set()
+    rows = await session.execute(
+        select(Block.conversation_id, func.max(Block.created_at))
+        .where(
+            Block.conversation_id == _among([t.id for t in threads]),
+            Block.kind == BlockKind.event,
+            FAILED_TURN_ROWS,
+        )
+        .group_by(Block.conversation_id)
+    )
+    by_id = {t.id: t for t in threads}
+    return {
+        thread_id
+        for thread_id, at in rows
+        if by_id[thread_id].last_reply_at is None or at > by_id[thread_id].last_reply_at
     }
 
 
@@ -138,21 +140,31 @@ def _summary(thread: Thread, last: Block | None) -> dict:
 
 
 async def under_messages(
-    session: AsyncSession, block_ids: list[uuid.UUID]
+    session: AsyncSession,
+    block_ids: list[uuid.UUID],
+    *,
+    replying: Callable[[uuid.UUID], list[str]] = lambda _thread: [],
 ) -> dict[uuid.UUID, dict]:
-    """The line under each of these main-line messages that has a 支线 with a
-    reply in it, keyed by the message."""
+    """The line under each of these main-line messages whose 支线 has a reply
+    in it, an AI teammate answering in it now, or a turn that failed in it,
+    keyed by the message: what `in_room` says of a 支线, and who is answering
+    (``replying``: the seats with a turn running in a 支线)."""
     if not block_ids:
         return {}
-    threads = list(
+    found = list(
         await session.scalars(
-            select(Thread).where(
-                Thread.root_block_id == _among(block_ids), Thread.reply_count > 0
-            )
+            select(Thread).where(Thread.root_block_id == _among(block_ids))
         )
     )
-    last = await _last_replies(session, [t.id for t in threads])
-    return {t.root_block_id: _summary(t, last.get(t.id)) for t in threads}
+    failed = await _failed(session, [t for t in found if t.reply_count == 0])
+    threads = [
+        t for t in found if t.reply_count > 0 or replying(t.id) or t.id in failed
+    ]
+    rows = await _describe(session, threads, viewer=None)
+    return {
+        thread.root_block_id: {**row, "replying": replying(thread.id)}
+        for thread, row in zip(threads, rows, strict=True)
+    }
 
 
 async def _participants(
@@ -184,6 +196,16 @@ async def _participants(
         if author not in said[conversation_id]:
             said[conversation_id].append(author)
     return said
+
+
+async def people_in(session: AsyncSession, thread_id: uuid.UUID) -> list[str]:
+    """The people who took part in a 支线: who wrote the message it hangs under
+    and who said something in it. Empty when ``thread_id`` is no 支线."""
+    thread = await session.get(Thread, thread_id)
+    if thread is None:
+        return []
+    said = (await _participants(session, [thread])).get(thread.id, [])
+    return [h for h in said if names_a_person(h)]
 
 
 async def _unread(
@@ -221,20 +243,38 @@ async def _unread(
 async def in_room(
     session: AsyncSession, room_id: uuid.UUID, *, viewer: str | None, limit: int
 ) -> list[dict]:
-    """A channel's 支线 that have replies, the latest reply first: the message
-    each hangs under, its last reply, who took part, whether it became a task,
-    and whether something new is waiting for ``viewer``."""
+    """A channel's 支线 that have replies or a failed turn, the latest first:
+    the message each hangs under, its last reply, who took part, whether it
+    became a task, and whether something new is waiting for ``viewer``."""
+    failed_turn = (
+        select(Block.id)
+        .where(
+            Block.conversation_id == Thread.id,
+            Block.kind == BlockKind.event,
+            FAILED_TURN_ROWS,
+        )
+        .exists()
+    )
     threads = list(
         await session.scalars(
             select(Thread)
-            .where(Thread.room_id == room_id, Thread.reply_count > 0)
+            .where(Thread.room_id == room_id, or_(Thread.reply_count > 0, failed_turn))
             .order_by(Thread.last_reply_at.desc().nulls_last(), Thread.id)
             .limit(limit)
         )
     )
     if not threads:
         return []
-    last = await _last_replies(session, [t.id for t in threads])
+    return await _describe(session, threads, viewer=viewer)
+
+
+async def _describe(
+    session: AsyncSession, threads: list[Thread], *, viewer: str | None
+) -> list[dict]:
+    """Each 支线 as a screen shows it, in the order given."""
+    if not threads:
+        return []
+    last = await BlockRepository(session).last_messages([t.id for t in threads])
     roots = {
         block.id: block
         for block in await session.scalars(
@@ -257,6 +297,7 @@ async def in_room(
     }
     said = await _participants(session, threads)
     unread = await _unread(session, threads, viewer) if viewer else set()
+    failed = await _failed(session, threads)
     out = []
     for thread in threads:
         root = roots.get(thread.root_block_id)
@@ -267,6 +308,7 @@ async def in_room(
                 **_summary(thread, last.get(thread.id)),
                 "root": _reply(root),
                 "participants": people,
+                "failed": thread.id in failed,
                 "task": {
                     "id": str(task.id),
                     "title": task.title,

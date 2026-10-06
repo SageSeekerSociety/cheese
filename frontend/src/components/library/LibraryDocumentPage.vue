@@ -1,12 +1,13 @@
 <script setup lang="ts">
 // 资料库里打开的一份文档：整页是它，页头写「资料库 / 标题」，文档自己的顶栏（在线的
-// 人、评论、芝士、⋯）摆在页头右边。和对话旁边的文档是同一个面板，只是直接给编号。
+// 人、评论、芝士、⋯）摆在页头右边。和对话旁边的文档是同一个面板，只是直接给编号；
+// 面板只吃 props，取数在它的接线外壳（`components/work/PanelDocHost.vue`）里。
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
 
 import { useDisplay } from 'vuetify'
 
-import PanelDoc from '../panels/PanelDoc.vue'
+import PanelDocHost from '../work/PanelDocHost.vue'
 
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
@@ -42,7 +43,7 @@ const { mdAndUp } = useDisplay()
       <div id="library-doc-bar" class="library-doc__bar" />
     </template>
     <p v-if="error" role="alert" class="t-body c-danger pa-6">{{ error }}</p>
-    <PanelDoc
+    <PanelDocHost
       v-if="document"
       class="library-doc"
       :bar-to="mdAndUp ? '#library-doc-bar' : undefined"

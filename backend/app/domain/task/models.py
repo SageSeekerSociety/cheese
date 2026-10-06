@@ -76,7 +76,6 @@ class Task(Base):
     reject_reason: Mapped[str] = mapped_column(
         "reject_reason", String, nullable=False, default=""
     )
-    video_url: Mapped[str | None] = mapped_column("video_url", String, nullable=True)
     team_locking_policy: Mapped[str] = mapped_column(
         "team_locking_policy", String(50), nullable=False, default="NO_LOCK"
     )
@@ -261,6 +260,11 @@ class TaskSubmissionEntry(Base):
         nullable=True,
         comment="References attachment.id; kept nullable for pure-text entries.",
     )
+    # The name of the form item this entry answered, as the form read when the
+    # entry was written. The form can be reordered, renamed or cut down later;
+    # the entry keeps the name it was answered under. NULL when that item had
+    # no name, or the form had no item at this position.
+    prompt: Mapped[str | None] = mapped_column("prompt", Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

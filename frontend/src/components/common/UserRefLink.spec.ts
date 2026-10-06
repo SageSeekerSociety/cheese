@@ -59,13 +59,6 @@ vi.mock('@/api', async () => {
   }
 })
 
-// 私聊页挂的是真的对话栏，进房间时它会读一次「我还欠哪些组」。这一条比的是 @chip 的
-// 落地地址，不关心组题，答「没有」即可，免得落到 setup-network 的未 mock 请求守卫上。
-vi.mock('@/services/askGroups', async () => ({
-  ...(await vi.importActual<typeof import('@/services/askGroups')>('@/services/askGroups')),
-  listAwaitingAskGroups: vi.fn().mockResolvedValue([]),
-}))
-
 import UserRefLink from './UserRefLink.vue'
 
 import DmView from '@/views/workspace/DmView.vue'

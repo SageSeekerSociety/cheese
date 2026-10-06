@@ -1,4 +1,5 @@
-"""重放可见 (#416): a batch confirmed not sent must say when it is retried.
+"""重放可见 (#416): a batch confirmed not sent must say when it is retried —
+in the 现场, where whoever wonders why the room is slow looks.
 
 A turn only stamps `consumed_turn` when it FINISHES. A failed launch has sent
 nothing and its batch can be retried. Once a native input is registered, its
@@ -128,13 +129,20 @@ def _system_lines(client, topic_id: str) -> list[str]:
 
 
 def _replay_notices(client, topic_id: str) -> list[str]:
-    """房间里「又重投了一次」那几行——按类别码找，不按开头那个字符找。"""
+    """现场里「又重投了一次」那几行——按类别码找，不按开头那个字符找。它只在现场
+    里，不在对话里。"""
+
+    def replayed(rows: list[dict]) -> list[str]:
+        return [
+            b["content"]
+            for b in rows
+            if (b.get("meta") or {}).get("event_type") == "prompt_replayed"
+        ]
+
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    return [
-        b["content"]
-        for b in blocks
-        if (b.get("meta") or {}).get("event_type") == "prompt_replayed"
-    ]
+    assert replayed(blocks) == []
+    site = client.get(f"/topics/{topic_id}/transcript").json()["data"]["data"]
+    return replayed(site)
 
 
 def _opened_by(client, text: str) -> str:

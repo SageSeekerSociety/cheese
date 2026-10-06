@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent import resource_cleanup as cleanup
-from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
 
 # The same fixtures as the Linux tests, by name: their parameters below shadow
 # these imports, which is how pytest finds them.
@@ -95,6 +95,17 @@ def test_a_session_on_a_mac_signals_and_dials_nothing_of_the_persons(rooms):  # 
     finally:
         sleeper.kill()
         listening.close()
+
+
+def test_the_teardown_stops_a_sandboxed_rooms_executor_on_a_mac(rooms):  # noqa: F811
+    """Stopping a room ends its executor: afterwards nothing answers on it."""
+    room = rooms()
+    assert room.bash("echo up") == "up"
+
+    room.stop()
+
+    with pytest.raises(OSError):
+        runtime.request(room.state, "ping")
 
 
 def test_teardown_git_on_a_mac_runs_inside_the_rooms_directories(owner, rooms):  # noqa: F811

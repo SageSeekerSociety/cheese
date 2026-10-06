@@ -48,8 +48,7 @@ jobs:
         with:
           # Nothing below pushes, and the lockfile has zero git: specifiers, so
           # there is no reason to leave the token in .git/config while
-          # third-party postinstall scripts run — and package.json does have
-          # one (`postinstall: husky install`).
+          # dependencies' install scripts run.
           persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

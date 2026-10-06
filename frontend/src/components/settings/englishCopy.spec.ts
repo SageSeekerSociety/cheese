@@ -193,7 +193,7 @@ describe('English settings copy', () => {
       },
       ...mountOpts(),
     })
-    await screen.findByText(/Each session works in a cloud sandbox of its own/)
+    await screen.findByText(/Each session works in a cloud environment of its own/)
     expectNoChinese()
   })
 

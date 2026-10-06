@@ -35,7 +35,6 @@ from app.domain.agent.personal import session as personal
 from app.domain.agent.session_host.answer import Answer, Tool, Words, ask
 from app.domain.agent.session_host.contract import Prompt
 from app.domain.agent.session_host.host import SessionHost
-from tests.support.hang import HANG_S
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
@@ -112,14 +111,14 @@ class Platform:
                     self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
                     self.wfile.flush()
                     if held is not None and chunk["choices"][0]["delta"].get("content"):
-                        # The rest of the answer waits for the reader to see
-                        # its first words: a whole answer written faster than
-                        # one read is handed on in one piece, rightly.
-                        # Bounded only so a reader that never sees them
-                        # fails the test instead of hanging it: how long a
-                        # reader takes is the runner's load, and an answer
-                        # let go early ends before the test can act on it.
-                        held.wait(HANG_S)
+                        # The rest of the answer waits for the test to let it
+                        # go: a whole answer written faster than one read is
+                        # handed on in one piece, rightly. No deadline here:
+                        # how long a reader takes is the runner's load, and an
+                        # answer let go on a clock ends before a slow reader's
+                        # test can act on it. A test that never lets it go
+                        # fails on its own wait, and `close` lets it go then.
+                        held.wait()
                         held = None
                     time.sleep(0.02)
                 self.wfile.write(b"data: [DONE]\n\n")
@@ -139,6 +138,8 @@ class Platform:
         self.url = f"http://127.0.0.1:{self.server.server_port}"
 
     def close(self):
+        if self.rest_held_until is not None:
+            self.rest_held_until.set()
         self.server.shutdown()
         self.server.server_close()
 

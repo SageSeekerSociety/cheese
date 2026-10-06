@@ -19,13 +19,13 @@
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import AskTakeoverDemo from './AskTakeoverDemo.vue'
+import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
+
 import { AGENT_NAME } from './catalogFixtures'
 
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
-import OutsideMentionNotice from '@/components/room/OutsideMentionNotice.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
@@ -48,7 +48,7 @@ const PEOPLE: MentionItem[] = [
   { label: '波比', kind: 'member', insert: '波比', sub: '@bobby', agent: false, external: true, handle: 'bobby' },
 ]
 
-/** 项目里的人，但不在这个话题里：@ 得到，候选上说一句他不在。 */
+/** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面。 */
 const OUTSIDER: MentionItem = {
   label: '陈卡',
   kind: 'member',
@@ -104,6 +104,27 @@ const ACTIONS_BASE = {
   agentName: AGENT_NAME,
 }
 
+/** 芝士问的一道题，`answer_log` 由各格给。 */
+function askBlock(answerLog: Record<string, unknown>[]) {
+  return {
+    id: 'demo-question',
+    topic_id: 'demo-room',
+    kind: 'message',
+    author: 'cheese',
+    author_type: 'participant',
+    content: '预算按哪个口径统计？',
+    created_at: '2026-10-05T09:00:00Z',
+    meta: {
+      options: [
+        { text: '按部门 (Recommended)', explain: '和去年的报表对得上' },
+        { text: '按项目', explain: '每个项目一张表' },
+      ],
+      asked: 'alice',
+      answer_log: answerLog,
+    },
+  }
+}
+
 export const ROOM_ENTRIES: CatalogEntry[] = [
   {
     id: 'room-mention-menu',
@@ -126,8 +147,8 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         expect: '资料库',
       },
       {
-        name: '有人不在这个话题里',
-        note: '项目里的人都 @ 得到，但话题里的人排在前面；不在话题里的跟在后面，右边挂「不在频道中」——他读不到这段对话。',
+        name: '有人没加入这个频道',
+        note: '项目里的人都 @ 得到，但频道里的人排在前面；没加入的跟在后面。',
         props: {
           open: true,
           matches: [PEOPLE[0], ...BROADCAST, PEOPLE[1], OUTSIDER],
@@ -135,7 +156,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
           level: 'root',
           enterSends: true,
         },
-        expect: '不在频道中',
+        expect: '陈卡',
       },
       {
         name: '高亮移到别人身上',
@@ -172,28 +193,6 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '菜单不消失，说的是文件那一件事：「暂无匹配的文件」。空态和一级上那个同一副骨架。',
         props: { open: true, matches: [], activeIndex: 0, level: 'library', enterSends: false },
         expect: '暂无匹配的文件',
-      },
-    ],
-  },
-  {
-    id: 'room-outside-mention-notice',
-    title: 'OutsideMentionNotice',
-    about: '刚发出去的那条 @ 了不在话题里的人：说一句他们收不到通知，能管名册的人顺手拉进来。',
-    file: 'src/components/room/OutsideMentionNotice.vue',
-    component: OutsideMentionNotice,
-    needs: UI_T,
-    states: [
-      {
-        name: '能管名册的人',
-        note: '话题的 owner / admin 看到「拉进频道」：走的是名册抽屉「添加成员」那一条接口，加完 @ 候选立刻跟上。',
-        props: { names: '陈卡、波比', canAdd: true, busy: false, error: '' },
-        expect: '拉进频道',
-      },
-      {
-        name: '普通成员',
-        note: '只有那句话，没有按钮——按下去后端也会拒。',
-        props: { names: '陈卡', canAdd: false, busy: false, error: '' },
-        expect: '不在频道中',
       },
     ],
   },
@@ -272,27 +271,32 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
   },
 
   {
-    id: 'ask-takeover',
-    title: 'AskTakeoverDemo',
-    about: '提问接管输入框：有题要答时输入框那一格画的是提问面板，答完它自己回来；Esc 收起后靠一条提示收回。',
-    file: 'src/views/demo/AskTakeoverDemo.vue',
-    component: AskTakeoverDemo,
+    id: 'ask-quick-replies',
+    title: 'AskQuickReplies',
+    about:
+      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」。输入框始终在，不被它占用。',
+    file: 'src/components/ask/AskQuickReplies.vue',
+    component: AskQuickReplies,
     needs: UI_T,
     states: [
       {
-        name: '一组两题，正在接管',
-        note: '按真实聊天栏的尺寸摆：上面是对话区、下面是输入那一格。这一格里的「输入框」其实是提问面板。',
-        props: { questions: 2 },
+        name: '刚问出来',
+        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。',
+        props: {
+          block: askBlock([]),
+          names: {},
+        },
       },
       {
-        name: '只剩一题',
-        note: '一题时不画 i of N 的前后按钮。',
-        props: { questions: 1 },
-      },
-      {
-        name: '收起之后',
-        note: 'Esc 只收起当前这一组，输入框上方出现「有 N 个问题待回答」，点它把面板叫回来。',
-        props: { questions: 2, dismissed: true },
+        name: '有人答过了',
+        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。',
+        props: {
+          block: askBlock([
+            { kind: 'option', option: '按部门', note: null, by: 'alice', at: null },
+            { kind: 'note', option: null, note: '外包单列一栏', by: 'bob', at: null },
+          ]),
+          names: { alice: 'Alice', bob: 'Bob' },
+        },
       },
     ],
   },

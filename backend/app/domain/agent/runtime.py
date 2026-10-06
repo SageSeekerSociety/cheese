@@ -59,6 +59,7 @@ from app.domain.agent.platform_notices import (
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
+    delivery_checking_notice,
     delivery_fallback_notice,
     notice,
 )
@@ -366,8 +367,8 @@ class InProcessBroker:
                     self._last_activity_at.pop(channel, None)
 
         self._fan_out(channel, frame)
-        if followed is not None:
-            self._fan_out(channel, followed)
+        for to, extra in self.activity.told(channel, followed):
+            self._fan_out(to, extra)
 
     def _fan_out(self, channel: str, frame: Frame) -> None:
         for q in list(self._subs.get(channel, ())):
@@ -603,8 +604,8 @@ class AgentWorkRunner:
         return max(len(self._tasks), self._broker.active_count())
 
     async def drain(self, timeout_s: float = 5.0) -> None:
-        """Wait for every task this runner still has in flight — a turn, a
-        follow-up wake — instead of a caller guessing how long the tail takes.
+        """Wait for every task this runner still has in flight — a turn, the
+        tasks it starts as it ends — instead of guessing how long the tail takes.
 
         A turn's own coroutine keeps running after it has published its last
         frame (settling conclusion cards, closing the interval; see the tail of
@@ -617,10 +618,10 @@ class AgentWorkRunner:
         it is on the caller to decide what that means (a test's own teardown
         check is what turns a task still pending here into a named failure).
         """
-        pending = {t for t in self._tasks if not t.done()}
-        if not pending:
-            return
-        await asyncio.wait(pending, timeout=timeout_s)
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(timeout_s):
+                while pending := {t for t in self._tasks if not t.done()}:
+                    await asyncio.wait(pending)
 
     def topic_work(self, topic_id: uuid.UUID) -> dict | None:
         """Latest lifecycle record for this topic. `ceiling_s` is this turn's
@@ -871,19 +872,9 @@ class AgentWorkRunner:
             recipient_instance_id=recipient_instance_id,
         )
         if delivery_id is not None:
-            from app.domain.agent.answer_delivery import run_with_answer_offer
             from app.domain.delivery.agent import run_attempt
 
-            work = run_with_answer_offer(
-                self, chat_service, topic_id, delivery_id, turn_id, content, work
-            )
-            work = run_attempt(
-                chat_service.session_factory,
-                delivery_id,
-                turn_id,
-                work,
-                chat=chat_service,
-            )
+            work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
         task = asyncio.create_task(
             work,
             name=f"turn:{turn_id}",
@@ -1517,11 +1508,6 @@ class AgentWorkRunner:
                     )
                 )
             )
-        # Delivery owns retries and receipt uncertainty. A generic resend would
-        # lose its recipient and attempt identity, and could duplicate a send.
-        entries = [
-            record for record in entries if record.turn_id not in delivery_attempts
-        ]
         delivered = {record.turn_id for record in entries if record.delivered}
         probe_ok = False
         try:
@@ -1531,9 +1517,13 @@ class AgentWorkRunner:
             probe_ok = True
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
             logger.exception("orphan block probe failed for %s", topic_id)
-        attach = bool(delivered) or not probe_ok
-        if probe_ok:  # what reached nobody leaves no live turn behind
+        if probe_ok:  # what reached nobody, a delivery too, leaves no live turn
             chat_service.retire_unheard({r.turn_id for r in entries} - delivered)
+        # Delivery owns retries and receipt uncertainty. A generic resend would
+        # lose its recipient and attempt identity, and could duplicate a send.
+        entries = [r for r in entries if r.turn_id not in delivery_attempts]
+        delivered -= delivery_attempts
+        attach = bool(delivered) or not probe_ok
 
         # Each re-send and the agent it goes back to (None: the room decides).
         resends: dict[str | None, TurnRecord] = {}
@@ -1988,11 +1978,9 @@ class AgentWorkRunner:
                 ),
             )
             if isinstance(delivered, InputReconciliationPending):
+                checking, checking_meta = delivery_checking_notice()
                 await self._post_event(
-                    chat_service,
-                    topic_id,
-                    turn_id,
-                    "输入已登记，发送结果正在核对；不会重复发送",
+                    chat_service, topic_id, turn_id, checking, meta=checking_meta
                 )
                 return True
             if delivered is True:
@@ -2091,14 +2079,12 @@ class AgentWorkRunner:
             return
         lifecycle = {"started": False, "session_owned": False}
         try:
-            from app.domain.agent.answer_delivery import admitted_initial
+            from app.domain.agent.initial_admission import admitted_initial
 
             async with admitted_initial(
                 chat_service,
                 topic_id,
                 delivery_id,
-                turn_id,
-                content,
                 user_block_id=landed_user_block_id,
                 recipient_instance_id=recipient_instance_id,
                 recipient_handle=recipient_handle,
@@ -2182,7 +2168,7 @@ class AgentWorkRunner:
                 await gate.release()
             from app.domain.agent.pending_messages import nudge_messages
 
-            nudge_messages(chat_service, topic_id)
+            nudge_messages(chat_service, topic_id, runner=self)
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?

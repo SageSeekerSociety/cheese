@@ -52,5 +52,53 @@
     "deniedTitle": "这一页是管理员后台",
     "deniedBody": "你的账号不在管理员名单里，无法访问管理后台。",
     "toFeedbackCenter": "回到反馈中心"
+  },
+  "runRecords": {
+    "sub": "平台在各个项目里遇到的报错和它自己处理掉的事，保留 30 天",
+    "kpi": {
+      "errors": "报错",
+      "kinds": "种",
+      "errorCount": "报错次数",
+      "recovered": "平台自己处理"
+    },
+    "windowLabel": "时间范围",
+    "groupLabel": "类别",
+    "window": {
+      "day": "24 小时",
+      "week": "7 天",
+      "month": "30 天"
+    },
+    "group": {
+      "all": "全部",
+      "errors": "报错",
+      "recovered": "平台自己处理"
+    },
+    "search": "项目、接口或报错内容",
+    "empty": "暂无运行记录",
+    "col": {
+      "kind": "类别",
+      "what": "是什么",
+      "projects": "项目",
+      "count": "次数",
+      "span": "首次 → 最近",
+      "trend": "分布"
+    },
+    "kind": {
+      "backend": "后端报错",
+      "frontend": "前端报错",
+      "recovered": "平台处理"
+    },
+    "detail": "详情",
+    "close": "关闭",
+    "field": {
+      "where": "位置",
+      "count": "次数",
+      "countValue": "{count} 次，涉及 {projects} 个项目",
+      "request": "请求编号",
+      "stack": "调用栈",
+      "places": "出现在"
+    },
+    "noProject": "不属于项目",
+    "morePlaces": "另有 {count} 处"
   }
 }

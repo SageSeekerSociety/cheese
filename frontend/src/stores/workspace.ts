@@ -1,4 +1,4 @@
-import type { TopicNotifyLevel } from '@/api'
+import type { TopicNotifyLevel, TopicNotifySetting, TopicUnread } from '@/api'
 import type { Project, ProjectMemberRow, Topic } from '@/cx_types'
 
 import { computed, ref } from 'vue'
@@ -12,11 +12,14 @@ import {
   getTopic,
   getTopicNotifyLevels,
   getTopicUnread,
+  joinChannel,
+  leaveChannel,
   listProjectMembers,
   listProjects,
   listTopics,
   markAllTopicsRead,
   markTopicRead,
+  setChannelDescription,
   setTopicNotifyLevel,
   setTopicTitle,
   unarchiveProject,
@@ -40,6 +43,8 @@ const LAYOUT_KEY = 'cheesex.layout'
 
 interface StoredLayout {
   chatPct?: number
+  /** 右侧面板开着还是收着，这个人自己选过一次之后就照它来；没选过按宽度定。 */
+  panelOpen?: boolean
   lastProjectId?: string
   /** 每个项目上次打开的话题 id：回到那个项目时，rail 那一格直接落回这个房间。 */
   lastTopicByProject?: Record<string, string>
@@ -141,21 +146,22 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // out of.
   const TOPIC_SORT = { sort: 'last_activity_at', order: 'desc' } as const
 
-  // 话题级未读 (Feishu-style badges), and 私聊未读 keyed by peer handle
-  // ('cheese' = the 芝士 DM) — DM rows come from the roster and carry no topic id.
-  const unreadMap = ref<Record<string, number>>({})
+  // 每个频道和任务在等我的东西（`TopicUnread`：行上的数字、名字加不加粗、上次读后来了
+  // 几条），和私聊未读——私聊按对方的 handle 编址（'cheese' = 和芝士那一间），因为私聊
+  // 的行来自成员名单，没有话题 id。频道的数字已经按我设的通知档位算过了（后端）。
+  const unreadMap = ref<Record<string, TopicUnread>>({})
   const privateUnreadMap = ref<Record<string, number>>({})
-  // 我静音了哪些房间（{topic_id: 'mute'}，默认的不在里面）。静音的房间未读照样记在
-  // unreadMap 里——打开它时「新消息从哪开始」那条线要用——但不进任何角标与总数：
-  // 侧栏用的是下面的 badgeUnreadMap。
-  const notifyLevels = ref<Record<string, TopicNotifyLevel>>({})
-  const badgeUnreadMap = computed<Record<string, number>>(() => {
-    const muted = notifyLevels.value
-    if (!Object.keys(muted).length) return unreadMap.value
-    return Object.fromEntries(Object.entries(unreadMap.value).filter(([id]) => muted[id] !== 'mute'))
-  })
+  // 我不在默认档位的频道（{topic_id: {level, muted_until}}）。过了期的静音后端不列；
+  // 页面开着的时候静音到点，下一次轮询会把它拿掉。
+  const notifyLevels = ref<Record<string, TopicNotifySetting>>({})
+  function levelOf(topicId: string): TopicNotifyLevel {
+    return notifyLevels.value[topicId]?.level ?? 'mentions'
+  }
+  function mutedUntil(topicId: string): string | null {
+    return notifyLevels.value[topicId]?.muted_until ?? null
+  }
   function isMuted(topicId: string): boolean {
-    return notifyLevels.value[topicId] === 'mute'
+    return levelOf(topicId) === 'mute'
   }
   // 本地刚改过（静音、全部已读）就 +1：那一刻已经在飞的轮询回来时认得出自己是改之前
   // 发出去的，不把旧答案盖回来。
@@ -169,6 +175,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   const stored = loadLayout()
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
+  const panelPref = ref<boolean | null>(typeof stored.panelOpen === 'boolean' ? stored.panelOpen : null)
   // 每个项目上次打开的话题。rail 的项目格子用它落回那个房间，而不是每次都落在
   // 项目首页（每天都走的主路径不该多加一跳）。
   const lastTopicByProject = ref<Record<string, string>>(validTopicMap(stored.lastTopicByProject))
@@ -177,6 +184,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       LAYOUT_KEY,
       JSON.stringify({
         chatPct: chatPct.value,
+        panelOpen: panelPref.value ?? undefined,
         lastProjectId: projectId.value ?? undefined,
         lastTopicByProject: lastTopicByProject.value,
       })
@@ -184,6 +192,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
   function setChatPct(pct: number) {
     chatPct.value = clampNum(pct, 25, 80)
+    persistLayout()
+  }
+  function setPanelPref(open: boolean) {
+    panelPref.value = open
     persistLayout()
   }
 
@@ -488,8 +500,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       // 时刻：刷新页面时 unreadMap 是空的，于是**每一个**有未读的话题都算「变多
       // 了」，一个两百多话题的项目会在同一瞬间打出几十个 GET /blocks，占满后端
       // 的数据库连接池——被挤掉的不只是这些预取，还有用户此刻真正在等的那个请求。
-      for (const [tid, n] of Object.entries(map)) {
-        if (n > (unreadMap.value[tid] ?? 0) && cachedWindow(tid)) void refreshBlockCache(tid)
+      for (const [tid, unread] of Object.entries(map)) {
+        if (unread.messages > (unreadMap.value[tid]?.messages ?? 0) && cachedWindow(tid)) void refreshBlockCache(tid)
       }
       unreadMap.value = map
     } catch {
@@ -509,23 +521,56 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  /** 静音 / 取消静音一间房。先改本地，失败了改回去并说一声。 */
-  async function setMuted(topicId: string, muted: boolean) {
-    // 只改、只还原这一间：别的房间这期间被轮询或另一次静音改过的，不跟着回滚。
-    const put = (on: boolean) => {
+  /** 改我对一个频道的通知档位（静音可以带截止时间）。先改本地，失败了改回去并说一声。 */
+  async function setNotifyLevel(topicId: string, level: TopicNotifyLevel, until: string | null = null) {
+    // 只改、只还原这一个：别的频道这期间被轮询或另一次设置改过的，不跟着回滚。
+    const before = notifyLevels.value[topicId]
+    const put = (setting: TopicNotifySetting | undefined) => {
       const next = { ...notifyLevels.value }
-      if (on) next[topicId] = 'mute'
+      if (setting && setting.level !== 'mentions') next[topicId] = setting
       else delete next[topicId]
       notifyLevels.value = next
     }
     levelsWrite += 1
-    put(muted)
+    put({ level, muted_until: level === 'mute' ? until : null })
     try {
-      await setTopicNotifyLevel(topicId, muted ? 'mute' : 'all')
+      await setTopicNotifyLevel(topicId, level, level === 'mute' ? until : null)
     } catch (e) {
-      put(!muted)
-      reportError(e, t('work.room.menu.muteFailed'))
+      put(before)
+      reportError(e, t('work.room.menu.notifyFailed'))
     }
+    // 数字跟着档位变，以服务器为准再拉一次。
+    void refreshUnread()
+  }
+
+  /** 写频道说明（管理者）。成功之后这一行跟着变。 */
+  async function describe(topicId: string, description: string): Promise<boolean> {
+    try {
+      const saved = await setChannelDescription(topicId, description)
+      topicRevision += 1
+      topics.value = topics.value.map((topic) =>
+        topic.id === topicId ? { ...topic, description: saved.description ?? null } : topic
+      )
+      return true
+    } catch (e) {
+      reportError(e, t('work.channel.describeFailed'))
+      return false
+    }
+  }
+
+  /** 加入 / 退出一个频道。成功之后这一行的 `joined` 跟着变，侧栏随之出现或消失。 */
+  async function setJoined(topicId: string, joined: boolean): Promise<boolean> {
+    try {
+      await (joined ? joinChannel(topicId) : leaveChannel(topicId))
+    } catch (e) {
+      reportError(e, t(joined ? 'work.channel.joinFailed' : 'work.channel.leaveFailed'))
+      return false
+    }
+    topicRevision += 1
+    topics.value = topics.value.map((topic) => (topic.id === topicId ? { ...topic, joined } : topic))
+    void refreshTopics()
+    void refreshUnread()
+    return true
   }
 
   /** 全部标为已读：先清掉本地角标，再让服务器把每一间的已读位推到现在。 */
@@ -666,13 +711,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // navigate to it — creating a topic without opening it is never what was meant.
   // 房间是个群聊，建出来时坐着项目的默认队友；要请别的队友进来，和请人一样走
   // 成员名册。
-  async function create(title: string): Promise<Topic | null> {
+  async function create(title: string, description = ''): Promise<Topic | null> {
     const pid = projectId.value
     const name = title.trim()
     if (!pid || !name) return null
     const epoch = projectEpoch
     try {
-      const topic = await createTopic(pid, name)
+      const topic = await createTopic(pid, name, description.trim() || undefined)
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
       topics.value.unshift(topic)
@@ -711,20 +756,25 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     isExternal,
     loadingTopics,
     unreadMap,
-    badgeUnreadMap,
     notifyLevels,
+    levelOf,
+    mutedUntil,
     isMuted,
-    setMuted,
+    setNotifyLevel,
+    setJoined,
+    describe,
     markAllRead,
     privateUnreadMap,
     activeTopicId,
     activeDmPeer,
     chatPct,
+    panelPref,
     error,
     topicsError,
     rootTopic,
     projectName,
     setChatPct,
+    setPanelPref,
     reportError,
     refreshProjects,
     refreshMembers,

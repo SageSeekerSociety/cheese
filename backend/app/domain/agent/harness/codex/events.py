@@ -4,7 +4,6 @@ import re
 from datetime import UTC, datetime
 
 from app.domain.agent.service import (
-    STEP_ERROR_MAX,
     AgentCompacting,
     AgentEvent,
     AgentMessage,
@@ -14,6 +13,7 @@ from app.domain.agent.service import (
     AgentStepFailed,
     AgentStepOutput,
     AgentToolUse,
+    step_error,
 )
 
 #: "attempt/limit" inside the message of an `error` notification that will be
@@ -118,7 +118,7 @@ class Assembler:
                     steps.append(
                         AgentStepFailed(
                             call_id=item["id"],
-                            text=" ".join(said.split())[-STEP_ERROR_MAX:],
+                            text=step_error(said),
                         )
                     )
                 if said.strip():

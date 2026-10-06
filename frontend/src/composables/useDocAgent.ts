@@ -22,12 +22,12 @@ import type { DocEdit } from '../lib/docEdits'
 
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 
-import { StreamCut } from '../api/eventStream'
 import { isChinese } from '../lib/docAgent'
 import { anchorComment } from '../lib/docCommentSpots'
 import { editMarks, nearestText, setEditMarks } from '../lib/docEditMarks'
 import { editFailure, plainOf } from '../lib/docEdits'
 import { rewriteTarget } from '../lib/docRewrite'
+import { StreamCut } from '../lib/streamCut'
 
 import { t } from '@/i18n'
 

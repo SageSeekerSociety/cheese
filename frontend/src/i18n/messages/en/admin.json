@@ -52,5 +52,53 @@
     "deniedTitle": "This is the admin console",
     "deniedBody": "Your account isn’t an admin, so you can’t open the admin console.",
     "toFeedbackCenter": "Go to the feedback center"
+  },
+  "runRecords": {
+    "sub": "Errors the platform hit across projects and what it handled itself, kept for 30 days",
+    "kpi": {
+      "errors": "Errors",
+      "kinds": "kinds",
+      "errorCount": "Error count",
+      "recovered": "Handled by the platform"
+    },
+    "windowLabel": "Time range",
+    "groupLabel": "Category",
+    "window": {
+      "day": "24 hours",
+      "week": "7 days",
+      "month": "30 days"
+    },
+    "group": {
+      "all": "All",
+      "errors": "Errors",
+      "recovered": "Handled by the platform"
+    },
+    "search": "Project, endpoint or error text",
+    "empty": "No run records",
+    "col": {
+      "kind": "Category",
+      "what": "What",
+      "projects": "Projects",
+      "count": "Count",
+      "span": "First → latest",
+      "trend": "Spread"
+    },
+    "kind": {
+      "backend": "Backend error",
+      "frontend": "Frontend error",
+      "recovered": "Platform"
+    },
+    "detail": "Details",
+    "close": "Close",
+    "field": {
+      "where": "Where",
+      "count": "Count",
+      "countValue": "{count} times in {projects} projects",
+      "request": "Request ID",
+      "stack": "Stack trace",
+      "places": "Seen in"
+    },
+    "noProject": "No project",
+    "morePlaces": "{count} more"
   }
 }

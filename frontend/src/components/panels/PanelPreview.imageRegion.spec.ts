@@ -12,7 +12,8 @@ import { setLocale } from '../../i18n'
 import { nextMillisecond } from '../../test/nextMillisecond'
 
 import DesignImage from './preview/DesignImage.vue'
-import PanelPreview from './PanelPreview.vue'
+
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
@@ -25,7 +26,6 @@ vi.mock('../../api', async (importOriginal) => {
   }
 })
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 
 const bytes = new Uint8Array([1, 2, 3, 4]).buffer
 const version = createHash('sha256').update(new Uint8Array(bytes)).digest('hex').slice(0, 16)
@@ -63,7 +63,7 @@ function file(fingerprint: string | null, path = 'design.png'): FileContent {
   return { path, content: null, version: fingerprint, bytes: 4, binary: true, too_large: false, source: 'committed' }
 }
 function mount() {
-  return render(PanelPreview, {
+  return render(PanelPreviewHost, {
     props: panelProps,
     global: {
       plugins: [createVuetify()],

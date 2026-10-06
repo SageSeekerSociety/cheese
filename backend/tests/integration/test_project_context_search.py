@@ -11,8 +11,10 @@ from app.domain.living_doc.models import DocumentNode
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.services import TaskService
 from app.domain.topic.repositories import TopicRepository
 from tests.integration.conftest import (
+    open_task,
     post_project,
     registered,
     session_auth_headers,
@@ -65,13 +67,12 @@ def _say(project: str, room: str, text: str, kind=BlockKind.message, author=OWNE
     return go
 
 
-def _paragraph(project: str, room: str, text: str):
-    """A paragraph of the room's document."""
+def _paragraph(project: str, task: str, text: str):
+    """A paragraph of the task's document."""
 
     async def go(db):
-        doc = await Documents(db).ensure_for_room(
-            room_id=uuid.UUID(room), project_id=uuid.UUID(project)
-        )
+        task_row = await db.get(Task, uuid.UUID(task))
+        doc = await Documents(db).get(await TaskService(db).ensure_document(task_row))
         doc.version = max(doc.version, 1)
         db.add(
             DocumentNode(
@@ -287,10 +288,8 @@ def test_a_busy_conversation_does_not_crowd_out_the_documents(client):
         client,
         _say(project, room, long + "上线日期定在 10 月 8 日", kind=BlockKind.weekly),
     )
-    _seed(
-        client,
-        _paragraph(project, room, long + "上线日期以周报为准"),
-    )
+    task = open_task(client, room, owner=OWNER, start=False)["id"]
+    _seed(client, _paragraph(project, task, long + "上线日期以周报为准"))
 
     r = client.get(
         f"/projects/{project}/context/search",
@@ -340,10 +339,11 @@ def test_paging_through_one_kind_gives_every_hit_once(client):
 def test_one_page_can_hold_several_kinds(client):
     project = _project(client)
     room = _room(client, project, "文档")
-    _seed(client, _paragraph(project, room, "接口约定写在这里"))
+    task = open_task(client, room, owner=OWNER, start=False)["id"]
+    _seed(client, _paragraph(project, task, "接口约定写在这里"))
     owner = session_auth_headers(OWNER)
     commented = client.post(
-        f"/documents/{document_of(client, room, headers=owner)}/comments",
+        f"/documents/{document_of(client, task, headers=owner)}/comments",
         json={"content": "接口约定第二段要改", "quote": "接口约定"},
         headers=owner,
     )
@@ -518,7 +518,8 @@ def test_a_hit_names_a_person_by_the_nickname_they_have_now(client):
     room = _room(client, project, "限流")
     _seed(client, _nickname(OWNER, "Ada"))
     _seed(client, _say(project, room, "限流阈值定为每秒五十"))
-    _seed(client, _paragraph(project, room, "限流阈值写进文档"))
+    task = open_task(client, room, owner=OWNER, start=False)["id"]
+    _seed(client, _paragraph(project, task, "限流阈值写进文档"))
     _seed(client, _say(project, room, "限流先观察一周", author="no-such-person"))
 
     everything = _authors(client, project, "限流阈值")

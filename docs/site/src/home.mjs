@@ -7,7 +7,7 @@ import { BASE } from './where.mjs'
 // One line per card: what that part of the docs is for.
 const DOORS = {
   start: '十分钟上手：建项目、开话题，把第一件事交给芝士，再验收它交回来的东西。',
-  tutorials: '按身份把一件事从头走到尾：学生交作业、老师开课、办公协作。',
+  tutorials: '一篇教一件事，从头走到尾：和同学一起做项目、完成一道题目。',
   features: '每个功能是什么、在哪、怎么用、有什么限制，按用途分组。',
   faq: '芝士没回复、机器没连上、额度用完……遇到问题先看这里。',
 }

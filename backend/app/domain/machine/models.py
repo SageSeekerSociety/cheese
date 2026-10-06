@@ -100,10 +100,14 @@ MAX_ENROLL_ATTEMPTS = 5
 # waiting sessions are placed again. MicroCloud refuses quota, offering and spec
 # problems at create time, so `error` is a failure while building the machine (a
 # Proxmox task, SSH, init). A provider that fails every time would be asked
-# forever, so the pool stops creating hosts once this many failed within the
-# window.
+# forever, so once this many failed within the window the pool asks for one
+# host at a time, no sooner than the probe interval after the last failure: a
+# provider that recovers is found within minutes, not when the window runs out.
+# A failed host's row is kept for the window (`list_due`), or the count would
+# forget it as soon as the provider forgot the machine.
 MAX_PROVIDER_ERRORS = 3
 PROVIDER_ERROR_WINDOW = timedelta(hours=1)
+PROVIDER_PROBE_INTERVAL = timedelta(minutes=5)
 
 
 class WarmMachine(UuidPk, Timestamps, Base):
@@ -329,12 +333,26 @@ class CloudHostHome(UuidPk, Timestamps, Base):
     archive_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+def sandboxes_memory_mb(total_mb: int) -> int:
+    """What every sandbox on a host of ``total_mb`` may hold together. A copy of
+    ``sandbox_host.sandboxes_memory``, which sets it as the sandboxes' shared
+    cgroup limit on the host; test_footprint_root.py holds the two together."""
+    return total_mb - min(max(1024, total_mb // 4), total_mb // 2)
+
+
 def capacity(host: CloudHost) -> int:
     """The sandboxes a host runs at once: per core, by the deployment's
-    setting. A whole cloud VM has none to give: it is its one session's."""
+    setting, and no more than fit in the memory the host gives its sandboxes,
+    each at its full limit. Counted by cores alone, a 4 GiB host took four 3 GiB
+    sandboxes; two of them were enough to stall it for five hours (dev,
+    2026-10-05). A whole cloud VM has none to give: it is its one session's."""
     if host.whole_machine:
         return 0
-    return max(1, int(host.cores)) * settings.cloud_host_slots_per_core
+    by_cores = max(1, int(host.cores)) * settings.cloud_host_slots_per_core
+    by_memory = (
+        sandboxes_memory_mb(int(host.memory_mb)) // settings.cloud_sandbox_memory_mb
+    )
+    return min(by_cores, by_memory)
 
 
 def disk_capacity(host: CloudHost) -> int:

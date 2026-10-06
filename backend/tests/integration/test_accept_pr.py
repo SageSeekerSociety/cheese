@@ -3024,15 +3024,15 @@ def test_a_correction_is_refused_once_the_card_has_been_accepted(client, sweepin
     r = _describe(client, tid, change_subject="fix(x): too late")
 
     assert r.status_code == 422, r.text
-    assert "没有待处理的验收卡" in r.json()["message"]
+    assert r.json()["error"]["i18n"]["key"] == "reviewNoPendingCard"
 
 
 def test_a_correction_is_validated_like_the_original_subject(client, sweeping):
-    """标题走的是同一道 Conventional Commits 校验：更正入口不能成为绕过它的路。"""
+    """标题走的是递卡时的同一道校验：更正入口不能成为绕过它的路。"""
     pid, tid = _room_with_work(client)
     _make_card(client, tid)
 
-    r = _describe(client, tid, change_subject="随便写点什么。")
+    r = _describe(client, tid, change_subject="第一行\n第二行")
 
     assert r.status_code == 422, r.text
     assert sweeping["patched"] == []

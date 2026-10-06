@@ -10,14 +10,12 @@ credential, so what is checked is what the room gets.
 
 import importlib.util
 import json
-import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
 
 from app.domain.agent.harness.channel import mint_session_token
-from tests.ask_fixtures import legacy_question
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
@@ -92,15 +90,6 @@ def _roster(client, tid) -> dict[str, str]:
     return {row["member_handle"]: row["role"] for row in rows}
 
 
-def _set_role(client, tid, handle, role):
-    r = client.put(
-        f"/topics/{tid}/members/{handle}",
-        json={"role": role},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-
-
 def test_an_operation_is_found_with_what_it_takes(room):
     *_, agent = room
 
@@ -108,11 +97,10 @@ def test_an_operation_is_found_with_what_it_takes(room):
 
     assert "POST /blocks/{block_id}/reactions" in found
     assert "emoji" in found
-    answering = cheese.run_platform_tool(
-        "platform_request", {"find": "option question"}, agent
+    asking = cheese.run_platform_tool(
+        "platform_request", {"find": "questions quick replies"}, agent
     )
-    assert "POST /topics/blocks/{block_id}/answers" in answering
-    assert "option" in answering
+    assert "POST /topics/{topic_id}/asks" in asking
 
 
 def test_the_agent_reacts_to_a_message_in_its_room(client, room):
@@ -147,66 +135,30 @@ def test_the_agent_cannot_react_in_a_room_it_does_not_sit_in(client, room):
     )
 
 
-def test_the_agent_answers_another_members_question(client, room):
-    pid, tid, seat, agent = room
-    teammate = client.post(f"/projects/{pid}/agents", json={"handle": "opus"})
-    assert teammate.status_code == 200, teammate.text
-    other = teammate.json()["data"]["seat_handle"]
-    joined = client.post(
-        f"/topics/{tid}/members",
-        json={"handle": other, "role": "member"},
-        headers=session_auth_headers("alice"),
-    )
-    assert joined.status_code == 200, joined.text
-    block = legacy_question(client, tid, seat=other)
-
-    client_op_id = str(uuid.uuid4())
-    answered = agent.call(
-        "POST",
-        f"/topics/blocks/{block['id']}/answers",
-        {
-            "kind": "option",
-            "option": "cursor",
-            "client_op_id": client_op_id,
-            "expect_version": 0,
-        },
-    )
-
-    (answer,) = answered["data"]["meta"]["answer_log"]
-    assert answer["option"] == "cursor"
-    assert answer["by"] == seat
-    assert answer["client_op_id"] == client_op_id
-
-
 def test_a_plain_member_agent_is_refused_the_roster(client, room):
     _, tid, seat, agent = room
     assert _roster(client, tid)[seat] == "member"
 
     assert agent.refused("POST", f"/topics/{tid}/members", {"handle": "bob"}) == 403
-    assert (
-        agent.refused("PUT", f"/topics/{tid}/members/alice", {"role": "member"}) == 403
-    )
     assert agent.refused("DELETE", f"/topics/{tid}/members/alice") == 403
     assert "bob" not in _roster(client, tid)
     assert _roster(client, tid)["alice"] == "owner"
 
 
-def test_an_admin_agent_manages_the_roster_as_an_admin_would(client, room):
-    _, tid, seat, agent = room
-    _set_role(client, tid, seat, "admin")
+def test_a_managing_agent_manages_the_channel_as_a_person_would(client, room):
+    """An agent that manages the project — an admin of its team, as a person
+    would be — manages its channels too, under the same rules."""
+    pid, tid, seat, agent = room
+    join_project_team(client, pid, seat, admin=True)
 
     agent.call("POST", f"/topics/{tid}/members", {"handle": "bob"})
     assert _roster(client, tid)["bob"] == "member"
-    agent.call("PUT", f"/topics/{tid}/members/bob", {"role": "admin"})
-    assert _roster(client, tid)["bob"] == "admin"
     agent.call("DELETE", f"/topics/{tid}/members/bob")
     assert "bob" not in _roster(client, tid)
 
-    # What no admin may do, it may not either: leave the room without an owner,
-    # or seat someone the project does not have.
-    assert agent.refused("DELETE", f"/topics/{tid}/members/alice") == 422
+    # What no manager may do, it may not either: seat someone the project
+    # does not have.
     assert agent.refused("POST", f"/topics/{tid}/members", {"handle": "eve"}) == 422
-    assert _roster(client, tid)["alice"] == "owner"
 
 
 def test_the_agent_reads_its_own_inbox_and_nobody_elses(client, room):

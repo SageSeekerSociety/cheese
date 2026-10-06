@@ -22,7 +22,6 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import registered
-from tests.support.living_doc import document_of
 
 pytestmark = pytest.mark.anyio
 
@@ -138,23 +137,22 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
             looks_like_agent_handle(b.author) and b.kind == BlockKind.message
             for b in blocks
         )
-        return screen, topic_id, blocks
+        return screen, project.id, blocks
 
-    screen, topic_id, blocks = client.portal.call(run)
+    screen, project_id, blocks = client.portal.call(run)
     if private:
         # Exercise the same scoped credential given to Cheese CLI, against the
-        # real document API and database rather than the shell HTTP fixture.
+        # real document API and database rather than the shell HTTP fixture: a
+        # private chat has no document of its own, so its draft is one of the
+        # project's.
         headers = {"X-Cheese-Token": screen.openings[0]["token"]}
-        doc = document_of(client, topic_id, headers=headers)
-        saved = client.put(
-            f"/documents/{doc}",
+        saved = client.post(
+            f"/projects/{project_id}/documents",
             headers=headers,
-            json={
-                "content": "# Private draft",
-                "expected_version": 0,
-            },
+            json={"title": "草稿", "content": "# Private draft"},
         )
         assert saved.status_code == 200, saved.text
+        doc = saved.json()["data"]["id"]
         loaded = client.get(f"/documents/{doc}", headers=headers)
         assert loaded.status_code == 200, loaded.text
         assert loaded.json()["data"]["content"] == "# Private draft"

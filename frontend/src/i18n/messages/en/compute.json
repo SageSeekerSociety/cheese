@@ -2,19 +2,11 @@
   "choice": {
     "device": "Own device",
     "deviceOnFirstRun": "An online device, picked on the first run",
-    "sandbox": "A sandbox of its own for each session · prepared on the first run",
+    "sandbox": "An environment of its own for each session · prepared on the first run",
     "vm": "A virtual machine of its own for each session, with Docker and sudo · prepared on first run",
-    "cloud": "Cloud sandbox",
+    "cloud": "Cloud environment",
     "cloudVm": "Whole cloud VM",
     "anyDevice": "Own device · Picked automatically"
-  },
-  "startup": {
-    "elapsed": "Took",
-    "waited": "Waiting",
-    "seconds": "{s}s",
-    "minutes": "{m}m {s}s",
-    "quiet": "No new startup progress for {duration}. Last update: {time}.",
-    "log": "Startup log"
   },
   "usage": {
     "unknown": "Unknown",

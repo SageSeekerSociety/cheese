@@ -25,10 +25,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import memory_changed_notice
+from app.domain.agent.platform_notices import (
+    EVENT_MEMORY_CHANGED,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    memory_changed_notice,
+    notice,
+)
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import AGENT_NOTICE_META_KEY, AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import agent_instance_handle
@@ -41,6 +47,7 @@ from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.run_record.service import record as keep_record
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -303,22 +310,11 @@ def _dream_refusal_phrase(before: dict[str, str], answer: dict) -> str:
     return "；".join(parts)
 
 
-async def _memory_room(
-    session: AsyncSession,
-    project_id: uuid.UUID,
-    scope: MemoryFileScope,
-    owner: str | None,
+async def _private_room(
+    session: AsyncSession, project_id: uuid.UUID, owner: str | None
 ) -> uuid.UUID | None:
-    """这一棵树改动了，说进哪间房。
-
-    team 说进项目总览 —— 全项目共看的那一间。private 说进这个人和芝士的私聊
-    （`get_or_create_private` 先找后建，同一个人打开的是同一间）。私聊不在话题
-    树里，所以这条事件也不会在总览上多出一个角标：它是一条 kind=event 的灰
-    字，不是一条消息。
-    """
-    if scope is MemoryFileScope.team:
-        project = await ProjectRepository(session).get(project_id)
-        return project.root_topic_id if project is not None else None
+    """这个人和芝士的私聊：他 private 那棵树的改动记在这里
+    （`get_or_create_private` 先找后建，同一个人打开的是同一间）。"""
     if not owner:
         return None
     from app.domain.topic.services import TopicService
@@ -334,23 +330,30 @@ async def _say_memory_change(
     project_id: uuid.UUID,
     change: MemoryChange,
     scopes: list[tuple[MemoryFileScope, str | None]],
+    *,
+    writer_room: uuid.UUID,
 ) -> None:
-    """改动的折叠事件：team 的说进项目总览，private 的说进那个人的私聊。
+    """改动记成运行记录：team 的记在写它的那段对话（`writer_room`）的现场里，
+    private 的记在那个人的私聊里。
 
-    带 diff，谁的名都不点：一条记忆是 agent 写下的一份观察，房间里没有人在等
-    它。两棵树分开说，因为读它们的人不是一批：把某个人 private 的 diff 说进
-    总览，等于把一个人的偏好广播给整个项目。
+    不进对话：一条记忆是 agent 写下的一份观察，没有人在等它，想知道这一轮改了
+    哪几条的人去现场看。两棵树分开记，因为读它们的人不是一批：把某个人 private
+    的 diff 记进一间多人的房间，等于把一个人的偏好广播给房间里的人。
 
-    被平台盖回去的那几条走另一条路（`memory_changed_notice` 把它写进
-    `agent_notice`）：这条灰字是给人看的，而「你刚才写的那一版被盖了」是说给
-    那个还在会话机上的 agent 的。
+    被平台盖回去、或超了上限没收的那几条，还要说给**写它的那个 agent**：它在
+    `writer_room`（这次对账的那间房）里，而灰字落的是那棵树的房间——team 的是
+    总览，多数时候不是它所在的那一间。`agent_notice` 只进本房间下一轮的
+    prompt，跟着灰字进了总览，写它的 agent 一个字都读不到，以为写成功了；读到
+    的反倒是总览里那位，而它什么都没写过。所以那一句从灰字上拿下来，单独落进
+    `writer_room`，不露面（`in_room: False`）：房间里的人已经在那棵树的房间看
+    到了这件事。
     """
+    #: (灰字那一行, 说给写它的 agent 的那一句)。那一行只是这条块自己的正文：
+    #: 它不露面，读到它的只有 prompt 里的 `agent_notice`。
+    told: list[tuple[str, str]] = []
     for scope, owner in scopes:
         part = change.scoped(prefix_of_scope(scope, owner))
         if part.is_empty() and not part.refused and not part.rejected:
-            continue
-        room = await _memory_room(session, project_id, scope, owner)
-        if room is None:
             continue
         content, meta = memory_changed_notice(
             where=(
@@ -363,7 +366,28 @@ async def _say_memory_change(
             refused=part.refused,
             rejected=part.rejected,
         )
-        await announce(session, place_id=room, content=content, meta=meta)
+        if for_writer := meta.pop(AGENT_NOTICE_META_KEY, None):
+            told.append((content, for_writer))
+        room = (
+            writer_room
+            if scope is MemoryFileScope.team
+            else await _private_room(session, project_id, owner)
+        )
+        if room is not None:
+            await keep_record(session, conversation_id=room, content=content, meta=meta)
+    if told:
+        await announce(
+            session,
+            place_id=writer_room,
+            content="\n".join(line for line, _ in told),
+            meta={
+                **notice(
+                    EVENT_MEMORY_CHANGED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+                ),
+                "in_room": False,
+                AGENT_NOTICE_META_KEY: "\n\n".join(said for _, said in told),
+            },
+        )
 
 
 def _model_policy_call(project, agent=None) -> gate.Call:

@@ -35,7 +35,7 @@ covers:
 - **计量代理**（mitmproxy，`deploy/metering-proxy/`）：所有模型流量的出口，见[模型调用流程](/dev/llm)。
 - **模型网关**（LiteLLM，`deploy/compose/docker-compose.gateway.yml`）：项目虚拟 key 与预算刹车。独立一套 compose，发版不碰它。
 - **网页渲染**（`browser-render`，一个共享的无头 Chromium）、**Office 渲染**（`office-render`，LibreOffice）和**在线编辑器**（`office-editor`，OnlyOffice，可缺省）：给芝士读网页、给房间里显示和编辑 Word 和 PPT，见[房间文件与 Office](/dev/documents)。
-- **文档协同**（`collab`，Hocuspocus，`frontend/collab/`）：房间实况文档和项目章程的实时多人编辑。浏览器经前端 nginx 的 `/collab` 连上来，凭主 API 签的短时票据；它从主 API 读文档、停手几秒后存回去，存回才记一版。芝士和其他写入也经它改文档。随发版一起替换，健康检查和回滚都算它一份。
+- **文档协同**（`collab`，Hocuspocus，`frontend/collab/`）：任务文档、项目总览和资料库文档的实时多人编辑。浏览器经前端 nginx 的 `/collab` 连上来，凭主 API 签的短时票据；它从主 API 读文档、停手几秒后存回去，存回才记一版。芝士和其他写入也经它改文档。随发版一起替换，健康检查和回滚都算它一份。
 - **Forgejo**：平台自带的代码托管，账号由平台创建。
 
 数据库是 Postgres，缓存是 Valkey。正式环境用主机外部的数据库，etrip 环境由 `docker-compose.etrip.yml` 在容器里起。
@@ -113,6 +113,7 @@ covers:
 | 平台与安全 | [登录与令牌](/dev/auth) | 浏览器存了什么、每次请求带什么、芝士和机器用什么令牌 |
 | 平台与安全 | [席位与权限判定](/dev/seats) | 谁能在哪里做什么 |
 | 平台与安全 | [平台管理员](/dev/admins) | 后台管理的入口与名单 |
+| 平台与安全 | [运行记录](/dev/run-records) | 平台运行中记下的事：不进对话，给现场、状态行和管理后台读 |
 | 平台与安全 | [后端结构与接口约定](/dev/backend-app) | 四个进程、路由发现、信封与错误、写面闸门、幂等与归属锁 |
 | 平台与安全 | [前端结构](/dev/frontend) | 两个入口、壳与路由、房间两栏、工作面板与质量闸 |
 | 部署与运维 | [部署拓扑](/dev/topology) | 两个环境怎么部署，发版换什么、不换什么 |

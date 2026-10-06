@@ -26,8 +26,6 @@
 #                           this box, and such a project is refused.
 #   CHEESE_TOKEN_CAP        rolling-window backstop, 0 = off
 #   CHEESE_ALLOW_HEADER_ATTR  1 ONLY on bridge-only single-host deployments
-#   CONNECT_BIND_HOST       bind address for the CONNECT listener (see below);
-#                           0.0.0.0 on a box that serves MicroCloud machines
 #   CHEESE_CHATGPT_KEY      the Bearer the ChatGPT listener (:8445) demands:
 #                           the api_key of the gateway deployments pointed at
 #                           it. Empty refuses every request there.
@@ -52,29 +50,16 @@
 # The reverse listener (:443) stays on the docker bridge (172.17.0.1): only
 # sandboxes on this box reach it, and they are steered there by --add-host.
 #
-# The CONNECT listener (:8444) is where every BARE process reaches the meter via
-# HTTPS_PROXY — a local device screen, and (measured 2026-08-14) a MicroCloud
-# machine, which has no root, no docker and no /etc/hosts to steer. Its bind
-# address is therefore a per-box decision, CONNECT_BIND_HOST:
+# The CONNECT listener (:8444) is where a device screen's traffic arrives: the
+# screen's `claude` dials its machine's tunnel helper through HTTPS_PROXY, and
+# the model tunnel (`/llm/tunnel`) connects here on the bridge address. No
+# machine dials it directly, so like the reverse listener it is bridge-only.
 #
-#   172.17.0.1  (default) local screens only — a remote machine cannot route to
-#               the bridge address even though it CAN route to the box: measured
-#               from machine 192.168.31.2, 192.168.16.5:22 answers while
-#               172.17.0.1:8444 does not. The gap was never routing.
-#   0.0.0.0     boxes whose MicroCloud machines run subscription turns. NOT the
-#               LAN address alone: local screens still reach the bridge address,
-#               so a single bind has to cover both.
-#
-# Widening it is safe because the listener authenticates: it demands a scoped
-# cheese token as Proxy-Authorization before relaying anything (#198), and with
-# no CHEESE_SCOPED_SECRET configured it refuses every CONNECT rather than
-# relaying — so a wider bind cannot silently become an open relay. It also only
-# ever MITMs the Anthropic names; everything else tunnels raw, so device shell
-# tools that honor HTTPS_PROXY but not our CA keep working.
-#
-# The backend half is subscription_device_proxy_host: the address a machine is
-# TOLD to use. Publishing here without setting that leaves machines pointed at
-# the bridge address (the backend logs an error per launch, device_provider.py).
+# It authenticates anyway: it demands a scoped cheese token as
+# Proxy-Authorization before relaying anything (#198), and with no
+# CHEESE_SCOPED_SECRET configured it refuses every CONNECT rather than relaying.
+# It only ever MITMs the Anthropic names; everything else tunnels raw, so device
+# shell tools that honor HTTPS_PROXY but not our CA keep working.
 services:
   metering-proxy:
     image: ${METERING_PROXY_IMAGE:?Use the Release metering proxy workflow}
@@ -93,6 +78,13 @@ services:
     # container (a restart) instead of taking down every other service on the
     # box. Raise it on hosts that run many concurrent subscription turns.
     mem_limit: 2g
+    # journald, for the reason the app containers use it
+    # (docs/infrastructure.md, "Logs"): every release recreates this
+    # container, and a json-file log goes with the container it belonged to.
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
     # mitmproxy puts no timeout on opening an upstream connection, so an
     # unreachable one (a credential egress across a flaky tailnet relay) waited
     # out the kernel's 6 SYN retries, ~135 s, per request. At 3 it fails in
@@ -110,7 +102,7 @@ services:
       -s /addons/billing_addon.py
     ports:
       - "172.17.0.1:443:8443"
-      - "${CONNECT_BIND_HOST:-172.17.0.1}:8444:8444"
+      - "172.17.0.1:8444:8444"
     networks:
       # Listed because naming any network drops the implicit one: the
       # published listeners and the way out to Anthropic stay on it.

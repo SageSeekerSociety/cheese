@@ -18,7 +18,10 @@ import { isAgentHandle } from '../../../lib/authorship'
 export function useRoomTurns(options: {
   /** 时间线上此刻有的块：落下来的轮次是谁的，从块上认。 */
   messages: Ref<Block[]>
+  /** 平台记下的运行记录（重试、整理上下文、等机器）：队友此刻在等什么，从它们读。 */
+  records?: Ref<Block[]>
 }) {
+  const seen = computed(() => [...options.messages.value, ...(options.records?.value ?? [])])
   const awaitingReply = ref(false)
   const activeTurnIds = ref<Set<string>>(new Set())
 
@@ -55,7 +58,7 @@ export function useRoomTurns(options: {
   // 还没开始就失败了，别的块都还没落，只有它说得出来。
   const turnOwners = computed(() => {
     const owners: Record<string, string> = {}
-    for (const m of options.messages.value) {
+    for (const m of seen.value) {
       const seat = m.meta?.seat
       if (m.turn_id && typeof seat === 'string') owners[m.turn_id] = seat
     }
@@ -126,9 +129,7 @@ export function useRoomTurns(options: {
   onScopeDispose(clearEnded)
 
   /** 每位在干活（或刚干完）的队友此刻的表情，按 handle。 */
-  const faces = computed(() =>
-    agentFaces(options.messages.value, turnStarts.value, turnOwners.value, recentlyEnded.value)
-  )
+  const faces = computed(() => agentFaces(seen.value, turnStarts.value, turnOwners.value, recentlyEnded.value))
 
   /** 一轮结束。返回是否已经没有在跑的轮次。 */
   function finished(id: string): boolean {

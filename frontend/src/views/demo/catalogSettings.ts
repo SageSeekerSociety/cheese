@@ -267,7 +267,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
         name: '云端可用',
         note: '默认选中云端沙箱，下面说明每个会话在自己的沙箱里工作；另有两台自有设备（一台离线）。',
         props: { devices: COMPUTE_DEVICES, cloudAvailable: true },
-        expect: '每个会话在自己的云端沙箱里工作，首次运行时自动准备',
+        expect: '每个会话在自己的云端环境里工作，首次运行时自动准备',
       },
     ],
   },

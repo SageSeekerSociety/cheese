@@ -40,6 +40,10 @@ const props = defineProps<{
   editable: boolean
   /** 右键这一条时鼠标的位置：每次右键一个新对象，认到就在那一点打开 ⋯。 */
   menuAt?: { x: number; y: number } | null
+  /** 这是频道主线、我能在这里说话：⋯ 里能把消息置顶到频道。 */
+  pinnable?: boolean
+  /** 已经置顶的那几条（block id）：它们的 ⋯ 里是「取消置顶」。 */
+  pinnedIds?: ReadonlySet<string>
 }>()
 
 const emit = defineEmits<{
@@ -49,6 +53,8 @@ const emit = defineEmits<{
   (e: 'thread', block: Block): void
   (e: 'upgrade', blockId: string): void
   (e: 'edit', block: Block): void
+  (e: 'pin', block: Block): void
+  (e: 'unpin', block: Block): void
 }>()
 
 // 复制之后原地说一声「已复制」，一会儿再换回来；换了一条消息就不再说。
@@ -164,6 +170,17 @@ const menuActions = computed<MenuAction[]>(() => {
       icon: 'mdi-link-variant',
       onSelect: () => void copyLink(block),
     })
+  if (props.pinnable && block.kind === 'message')
+    actions.push(
+      props.pinnedIds?.has(block.id)
+        ? {
+            key: 'unpin',
+            label: t('work.room.pin.unpin'),
+            icon: 'mdi-pin-off-outline',
+            onSelect: () => emit('unpin', block),
+          }
+        : { key: 'pin', label: t('work.room.pin.pin'), icon: 'mdi-pin-outline', onSelect: () => emit('pin', block) }
+    )
   if (target.editable)
     actions.push({
       key: 'edit',

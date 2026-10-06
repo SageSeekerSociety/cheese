@@ -5,7 +5,14 @@
 // [key, tab label, icon, groups: [group label, [slug, ...]]]
 export const SECTIONS = [
   ['start', '开始使用', 'rocket', [['入门', ['overview', 'quickstart', 'working-with-cheese']]]],
-  ['tutorials', '教程', 'bulb', [['按身份', ['student-tutorial', 'office-tutorial']]]],
+  // One tutorial teaches one task, step by step; grouped by what the task is about.
+  ['tutorials', '教程', 'bulb', [
+    ['组队协作', ['team-project', 'invite-to-project', 'join-a-team', 'split-work']],
+    ['做题目', ['solve-a-challenge', 'ask-about-a-challenge', 'team-challenge', 'resubmit']],
+    ['出题目', ['publish-a-challenge', 'guide-the-teammate']],
+    ['成果', ['review-changes', 'publish-a-site']],
+    ['工作电脑', ['use-your-computer']],
+  ]],
   ['features', '功能说明', 'layers', [
     ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
@@ -24,7 +31,7 @@ export const DEV = [
   ['机器与执行', ['machines', 'execution', 'preview', 'sites', 'local-fs', 'cleanup']],
   ['交付与成果', ['tasks', 'accept', 'forge', 'documents', 'library', 'boards']],
   ['协作', ['teams', 'spaces', 'notifications', 'feedback', 'routine', 'integrations']],
-  ['平台与安全', ['auth', 'seats', 'admins', 'backend-app', 'frontend', 'arch-metrics', 'scenes', 'feature-stats']],
+  ['平台与安全', ['auth', 'seats', 'admins', 'run-records', 'backend-app', 'frontend', 'arch-metrics', 'scenes', 'feature-stats']],
   ['部署与运维', ['topology', 'data', 'ci', 'docs-site', 'deploy-scripts']],
   ['参考（自动生成）', ['ref-cli', 'ref-env', 'ref-ci']],
   ['索引（自动生成）', ['by-path']],

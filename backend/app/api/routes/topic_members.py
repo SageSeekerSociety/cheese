@@ -1,5 +1,6 @@
-"""Topic membership routes (nested under /api/topics) — the group-room roster
-(fusion-design §3)."""
+"""Who is in a channel (nested under /api/topics): reading the list, and its
+managers adding and removing people and AI teammates. Joining and leaving by
+oneself is in `topics_channel.py`."""
 
 import uuid
 from typing import Annotated
@@ -16,11 +17,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic.services import TopicService
-from app.domain.topic_membership.schemas import (
-    TopicMemberCreate,
-    TopicMemberOut,
-    TopicMemberRoleUpdate,
-)
+from app.domain.topic_membership.schemas import TopicMemberCreate, TopicMemberOut
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topic-members"])
@@ -42,7 +39,7 @@ async def list_topic_members(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     topic_id = topic.id
-    members, total = await TopicMemberService(db).list_for_topic(topic_id)
+    seats = await TopicMemberService(db).seats(topic)
     # Attach display names and avatars so the UI can draw the roster without a
     # second round-trip.
     users = UserRepository(db)
@@ -50,7 +47,7 @@ async def list_topic_members(
     bindings = AgentBindingRepository(db)
     # Resolve handles → users once, then derive is-agent from the binding (never
     # a hard-coded handle check): a member is an agent iff it carries a binding.
-    rows = await users.get_by_handles([m.member_handle for m in members])
+    rows = await users.get_by_handles([m.member_handle for m in seats])
     user_ids = [u.id for u in rows.values()]
     agent_ids = await bindings.agent_user_ids(user_ids)
     # The human-readable display name lives on the profile (nickname); the core
@@ -63,7 +60,7 @@ async def list_topic_members(
     # showed two teammates as the same person — the same defect the mention
     # roster had. A seat still under the room-derived handle belongs to the
     # agent the room points at, which is what `fallback_name` is.
-    seats = {
+    instances = {
         agent_instance_handle(instance.id): instance
         for instance in await AgentInstanceService(db).list_for_project(
             topic.project_id
@@ -71,16 +68,16 @@ async def list_topic_members(
     }
     fallback = await TopicService(db).resolve_agent(topic)
     items = []
-    for m in members:
-        d = TopicMemberOut.model_validate(m).model_dump(mode="json")
+    for m in seats:
+        d = m.model_dump(mode="json")
         user = rows.get(m.member_handle)
         profile = profile_by_uid.get(user.id) if user is not None else None
         # Agent members wear an Agent badge — derived from the execution binding.
         is_agent = user is not None and user.id in agent_ids
         d["agent"] = is_agent
         if is_agent:
-            seated = seats.get(m.member_handle)
-            agent = AgentInstanceService.resolved(seated) if seated else fallback
+            instance = instances.get(m.member_handle)
+            agent = AgentInstanceService.resolved(instance) if instance else fallback
             d["name"] = agent.display_name
             d["name_source"] = agent.name_source.value
         else:
@@ -91,7 +88,7 @@ async def list_topic_members(
         # initial rather than the one face everybody else who never picked has.
         d["avatar_id"] = avatar_by_uid.get(user.id) if user is not None else None
         items.append(d)
-    return ok(page(items, total))
+    return ok(page(items, len(items)))
 
 
 @router.post("/{topic_id}/members")
@@ -105,25 +102,7 @@ async def add_topic_member(
     if not who.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).add(
-        topic_id=topic_id, handle=body.handle, role=body.role, actor=who.handle
-    )
-    await db.commit()
-    return ok(TopicMemberOut.model_validate(member).model_dump(mode="json"))
-
-
-@router.put("/{topic_id}/members/{handle}")
-async def update_topic_member_role(
-    topic_id: uuid.UUID,
-    handle: str,
-    body: TopicMemberRoleUpdate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    who = await resolver.resolve(topic_id=topic_id)
-    if not who.authenticated:
-        raise AuthenticationRequiredError("A verified member identity is required")
-    member = await TopicMemberService(db).update_role(
-        topic_id=topic_id, handle=handle, role=body.role, actor=who.handle
+        topic_id=topic_id, handle=body.handle, actor=who.handle
     )
     await db.commit()
     return ok(TopicMemberOut.model_validate(member).model_dump(mode="json"))

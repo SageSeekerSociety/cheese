@@ -141,23 +141,30 @@ async def test_a_room_is_looked_at_once_per_window_however_much_is_typed(
     old, closed, seat = client.portal.call(
         _running_then_let_go, service, claude, hub, project, topic
     )
-    monkeypatch.setattr(prewarm, "ROOM_AGAIN_AFTER_S", 1.0)
     room_full = AsyncMock(return_value=False)
     monkeypatch.setattr(service.prewarm._memory, "has_room", room_full)
 
     with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
-        # Looked at on opening, while the host had no room for it.
-        client.portal.call(asyncio.sleep, 0.3)
+        # Looked at on opening, while the host had no room for it. The look
+        # runs after the socket is accepted, so wait for it rather than for a
+        # fixed time: on a busy runner it can take longer than any guess.
+        client.portal.call(_until, lambda: room_full.await_count >= 1)
         assert room_full.await_count == 1
         room_full.return_value = True
         for _ in range(5):
             ws.send_json({"type": "typing"})
+        # The socket answers frames in order: the pong means all five were read.
+        ws.send_json({"type": "ping"})
+        while ws.receive_json()["type"] != "pong":
+            pass
         client.portal.call(asyncio.sleep, 0.3)
         # Still inside the window: nothing started for all that typing.
         assert room_full.await_count == 1
         assert hub.closed == closed
 
-        client.portal.call(asyncio.sleep, 1.0)
+        # The window has passed. Shortening it stands in for waiting it out,
+        # which on the wall clock races however long the reads above took.
+        monkeypatch.setattr(prewarm, "ROOM_AGAIN_AFTER_S", 0.0)
         ws.send_json({"type": "typing"})
 
         async def started():

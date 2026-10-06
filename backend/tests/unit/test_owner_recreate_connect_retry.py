@@ -69,3 +69,47 @@ async def test_the_snapshot_read_does_not_wait() -> None:
     with pytest.raises(httpx.ConnectError):
         await hub.refresh()
     assert transport.attempts == 1
+
+
+class _OwnerDraining(httpx.AsyncBaseTransport):
+    """An owner being released: it turns the first `refusals` calls away with
+    its draining mark (or without it), then the replacement answers."""
+
+    def __init__(self, refusals: int, *, marked: bool = True) -> None:
+        self.refusals = refusals
+        self.marked = marked
+        self.attempts = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.attempts += 1
+        if self.attempts <= self.refusals:
+            return httpx.Response(
+                503,
+                json={"detail": "device connection owner is draining"},
+                headers=(
+                    {device_hub_rpc.OWNER_DRAINING_HEADER: "1"} if self.marked else {}
+                ),
+            )
+        return httpx.Response(200, json={"result": {"exit": 0}})
+
+
+@pytest.mark.anyio
+async def test_a_call_the_draining_owner_turned_away_is_sent_again() -> None:
+    """A release stops the owner taking new calls while the ones in flight
+    finish; a call it turned away was never dispatched and reaches the new
+    owner instead of failing."""
+    transport = _OwnerDraining(refusals=3)
+    hub = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+
+    assert await hub.exec("machine-7", ["true"]) == {"exit": 0}
+    assert transport.attempts == 4
+
+
+@pytest.mark.anyio
+async def test_an_unmarked_503_is_not_sent_again() -> None:
+    transport = _OwnerDraining(refusals=1, marked=False)
+    hub = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await hub.exec("machine-7", ["true"])
+    assert transport.attempts == 1

@@ -127,12 +127,11 @@ watch(
 const { mdAndUp } = useDisplay()
 const router = useRouter()
 
-/** 十栏；归档只有所有者看得到。 */
+/** 九栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
   { group: 'collab', key: 'channels', icon: 'mdi-pound' },
   { group: 'ai', key: 'agents', icon: 'mdi-robot-outline' },
   { group: 'ai', key: 'task-naming', icon: 'mdi-format-title' },
-  { group: 'run', key: 'computer', icon: 'mdi-server-outline' },
   { group: 'run', key: 'environment', icon: 'mdi-console' },
   { group: 'code', key: 'merge', icon: 'mdi-source-merge' },
   { group: 'code', key: 'repository', icon: 'mdi-source-repository' },
@@ -253,7 +252,9 @@ function close() {
           <ProjectTaskNamingSettings :project-id="projectId" />
         </section>
 
-        <template v-else-if="section === 'computer'">
+        <!-- 环境：在哪运行、怎么准备、还能跑多久，一页说完。环境出了问题跳到这里，
+             要改的都在眼前。 -->
+        <template v-else-if="section === 'environment'">
           <section class="page-section">
             <div class="page-section-head">
               <v-icon size="14" class="c-faint">mdi-server-outline</v-icon>
@@ -263,10 +264,9 @@ function close() {
               <ProjectComputeSettings :project-id="projectId" />
             </div>
           </section>
+          <ProjectEnvironmentSettings :project-id="projectId" />
           <CreditsPanel :project-id="projectId" />
         </template>
-
-        <ProjectEnvironmentSettings v-else-if="section === 'environment'" :project-id="projectId" />
 
         <!-- 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页的顺序。 -->
         <BranchProtectionSection

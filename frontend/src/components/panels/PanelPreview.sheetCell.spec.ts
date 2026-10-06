@@ -16,6 +16,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
+import { previewBundles } from '@/test/panelBundles'
 
 // 真查看器用 exceljs 读字节，不属于这一格要证明的事。替身报出的是读者点一格时真查看器
 // 会发的那一个事件：工作簿带工作表名，CSV 没有（和 `PreviewSheet` 一致）。
@@ -30,7 +31,6 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
   },
 }))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 
 const docBytes = new ArrayBuffer(8)
 const context = {
@@ -43,6 +43,7 @@ const context = {
 
 function props(overrides: Record<string, unknown> = {}) {
   return {
+    ...previewBundles(),
     topicId: 'room',
     projectId: 'project',
     frameName: 'frame',

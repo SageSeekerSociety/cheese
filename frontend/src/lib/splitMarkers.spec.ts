@@ -72,7 +72,13 @@ describe('已派出标记落点', () => {
 
   it('带上标题和当前状态，点得进去', () => {
     const blocks = [block('b1', '2026-08-11T09:00:00Z'), block('b2', '2026-08-11T09:30:00Z')]
-    const tasks = [task('t1', '2026-08-11T09:04:31Z', { title: '进度层与记忆落地', status: 'closed' })]
+    const tasks = [
+      task('t1', '2026-08-11T09:04:31Z', {
+        title: '进度层与记忆落地',
+        status: 'closed',
+        presentation: { column: 'done', phrase: 'completed' },
+      }),
+    ]
 
     const p = placeSplitMarkers(tasks, { blocks, hasMore: false })
 
@@ -80,10 +86,22 @@ describe('已派出标记落点', () => {
       {
         taskId: 't1',
         title: '进度层与记忆落地',
-        status: 'closed',
+        level: 'done',
         createdAt: '2026-08-11T09:04:31Z',
       },
     ])
+  })
+
+  it('四档都从看板的呈现读：没开始是讨论中，等人看是待审阅', () => {
+    const blocks = [block('b1', '2026-08-11T09:00:00Z')]
+    const levels = (presentation: RoomTask['presentation']) =>
+      placeSplitMarkers([task('t1', '2026-08-11T09:04:31Z', { presentation })], { blocks, hasMore: false }).tail[0]
+        .level
+    expect(levels({ column: 'not_started', phrase: 'discussing' })).toBe('discussing')
+    expect(levels({ column: 'building', phrase: 'running' })).toBe('running')
+    expect(levels({ column: 'needs_you', phrase: 'awaiting_review' })).toBe('review')
+    expect(levels({ column: 'needs_you', phrase: 'checks_failed' })).toBe('running')
+    expect(levels({ column: 'done', phrase: 'accepted' })).toBe('done')
   })
 
   it('刚派出去、之后房间里还没人说话 —— 排在时间线最后', () => {

@@ -89,7 +89,7 @@ describe('opening a team link', () => {
     detail.mockResolvedValue({ data: { team: team({ joinApproval: false }) } })
     join.mockResolvedValue({ data: { team: team({ joinApproval: false, joinStatus: 'member' }) } })
     mount()
-    await screen.findByText('确认后你将成为团队成员，可以使用团队的项目和工作电脑')
+    await screen.findByText('确认后你将成为团队成员，可以使用团队的项目和设备')
     expect(screen.queryByLabelText('申请理由（选填）')).toBeNull()
     await fireEvent.click(screen.getByRole('button', { name: '加入团队' }))
     await screen.findByText('你已经在这个团队里')

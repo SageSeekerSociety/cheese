@@ -50,7 +50,6 @@ def _make_task(**overrides):
         "reject_reason": "",
         "team_locking_policy": "NO_LOCK",
         "access_control_enabled": False,
-        "video_url": None,
         "created_at": NOW,
         "updated_at": NOW,
         "deleted_at": None,

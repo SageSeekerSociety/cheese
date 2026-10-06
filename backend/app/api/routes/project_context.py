@@ -238,10 +238,13 @@ async def _page(
                 (float(value or 0), _record(b, by_conversation, readable, terms))
                 for b, value in rows
             ]
+        doc_homes = await doc_search.homes(db, in_readable)
         docs = await doc_search.readable(db, in_readable)
         for kind in (k for k in kinds if k in doc_search.KINDS):
             found = await doc_search.find(db, kind, terms, docs, limit=offset + limit)
-            ranked += [(h.score, _doc_record(h, readable, terms)) for h in found]
+            ranked += [
+                (h.score, _doc_record(h, doc_homes, readable, terms)) for h in found
+            ]
         ranked.sort(key=lambda pair: -pair[0])
         hits["records"] = [record for _, record in ranked[offset : offset + limit]]
         await _name_authors(db, project_id, hits["records"])
@@ -317,10 +320,13 @@ def _record(
 
 
 def _doc_record(
-    hit: doc_search.Hit, readable: dict[uuid.UUID, Topic], terms: list[str]
+    hit: doc_search.Hit,
+    homes: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID | None]],
+    readable: dict[uuid.UUID, Topic],
+    terms: list[str],
 ) -> dict:
-    assert hit.document.room_id is not None
-    room = readable[hit.document.room_id]
+    room_id, task_id = homes[hit.document.id]
+    room = readable[room_id]
     return {
         "room_id": str(room.id),
         "room_title": room.title,
@@ -328,7 +334,7 @@ def _doc_record(
         "kind": hit.kind,
         "author": hit.author,
         "created_at": hit.created_at.isoformat(),
-        "task_id": None,
+        "task_id": str(task_id) if task_id else None,
         "snippet": _snippet(hit.content, terms),
     }
 
@@ -414,13 +420,14 @@ async def search_everything(
         # Each kind gets its own `limit`: a busy conversation would otherwise
         # fill every slot, and the decision or document paragraph that also
         # matches would never be listed.
+        doc_homes = await doc_search.homes(db, in_readable)
         docs = await doc_search.readable(db, in_readable)
         by_conversation = await _conversation_rooms(db, in_readable)
         records: list[dict] = []
         for kind in RECORD_KINDS:
             if kind in doc_search.KINDS:
                 found = await doc_search.find(db, kind, terms, docs, limit=limit)
-                records += [_doc_record(h, readable, terms) for h in found]
+                records += [_doc_record(h, doc_homes, readable, terms) for h in found]
                 continue
             records += [
                 _record(b, by_conversation, readable, terms)
@@ -473,14 +480,16 @@ async def search_documents(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> dict:
     """The library's search: the project's own documents by title and by what
-    they say, and the documents of the rooms the caller may read by what they
-    say. A room's document is not in the library's list, but it is found here,
-    under its room, to open there or keep a copy of."""
+    they say, and the living documents of the channels the caller may read —
+    tasks' documents, the project overview — by what they say. Those are not
+    in the library's list, but they are found here, under their channel and
+    task, to open there or keep a copy of."""
     q = _query(q)
     readable, _ = await _readable_rooms(db, resolver, project_id, None)
     terms = bm25.words(q)
     await bm25.serial_scans(db)
     own = await doc_search.own(db, project_id)
+    homes = await doc_search.homes(db, list(readable))
     rooms = await doc_search.readable(db, list(readable))
     written = {i: d for i, d in own.items() if d.version > 0}
     found = await doc_search.find(db, "doc", terms, {**written, **rooms}, limit=limit)
@@ -491,7 +500,7 @@ async def search_documents(
     ]
     library_hits: list[dict] = []
     seen: set[uuid.UUID] = set()
-    for doc in [*by_title, *(h.document for h in found if h.document.room_id is None)]:
+    for doc in [*by_title, *(h.document for h in found if h.document.id not in homes)]:
         if doc.id in seen or len(library_hits) >= limit:
             continue
         seen.add(doc.id)
@@ -501,10 +510,12 @@ async def search_documents(
     room_hits = [
         {
             **document_row(h.document),
-            "room_title": readable[h.document.room_id].title,
+            "room_id": str(homes[h.document.id][0]),
+            "task_id": str(task) if (task := homes[h.document.id][1]) else None,
+            "room_title": readable[homes[h.document.id][0]].title,
             "snippet": _snippet(h.content, terms),
         }
         for h in found
-        if h.document.room_id is not None and h.document.room_id in readable
+        if h.document.id in homes
     ]
     return ok({"query": q, "library": library_hits, "rooms": room_hits})

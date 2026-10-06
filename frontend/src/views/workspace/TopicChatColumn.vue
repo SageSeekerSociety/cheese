@@ -10,8 +10,9 @@ import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useSkillProposals } from './useSkillProposals'
+import { useTaskProposals } from './useTaskProposals'
 
-import { acceptTaskProposal, dismissTaskProposal, listTaskProposals, type TaskProposal } from '@/api/tasks'
+import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
@@ -88,13 +89,16 @@ const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(nu
 const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
 const router = useRouter()
-// 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换房间就重读。
+// 卡片属于提出它的那段对话：在任务里就是这个任务，否则是房间本身。三种卡都按它
+// 取、按它决定 —— 任务里提的卡落在任务里，按房间去取就一张也看不到。
+const conversationId = computed(() => props.taskId ?? props.topic.id)
+// 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换对话就重读。
 const skills = useSkillProposals(
   toRef(() => props.topic.project_id),
-  toRef(() => props.topic.id)
+  conversationId
 )
 onMounted(skills.load)
-watch(() => props.topic.id, skills.load)
+watch(conversationId, skills.load)
 function openSkill(skill: { id: string }) {
   void router.push({
     name: 'project-skills',
@@ -103,42 +107,27 @@ function openSkill(skill: { id: string }) {
   })
 }
 
-// AI 队友提议的任务：列的是这个房间里还在等人决定的那些，接在对话后面。点「创建
-// 任务」的人就是负责人，创建好就去任务页。
 const store = useWorkspaceStore()
-const proposals = ref<TaskProposal[]>([])
-const deciding = ref<string | null>(null)
-async function loadProposals() {
-  const room = props.topic.id
+
+// 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。
+const joining = ref(false)
+async function join() {
+  joining.value = true
   try {
-    const rows = await listTaskProposals(room)
-    if (props.topic.id === room) proposals.value = Array.isArray(rows) ? rows : []
-  } catch {
-    // 拉不到就先不画，下一次房间有动静时再读。
+    await store.setJoined(props.topic.id, true)
+  } finally {
+    joining.value = false
   }
 }
-onMounted(loadProposals)
-watch(() => props.topic.id, loadProposals)
+// AI 队友提议的任务（`useTaskProposals`）：创建好就去任务页。
+const {
+  proposals,
+  deciding,
+  load: loadProposals,
+  decide: decideProposal,
+} = useTaskProposals(conversationId, (id) => emit('open-card', id))
 function proposerName(handle: string): string {
   return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
-}
-async function decideProposal(proposal: TaskProposal, decision: 'accept' | 'dismiss') {
-  if (deciding.value) return
-  deciding.value = proposal.id
-  try {
-    if (decision === 'accept') {
-      const task = await acceptTaskProposal(props.topic.id, proposal.id)
-      emit('open-card', task.id)
-    } else {
-      await dismissTaskProposal(props.topic.id, proposal.id)
-    }
-    proposals.value = proposals.value.filter((p) => p.id !== proposal.id)
-  } catch (e) {
-    store.reportError(e, t('work.task.proposal.failed'))
-    void loadProposals()
-  } finally {
-    deciding.value = null
-  }
 }
 
 const connected = computed(() => !!chatRef.value?.connected)
@@ -204,14 +193,14 @@ defineExpose({
           @review="emit('review')"
         />
       </template>
-      <template v-if="!taskId" #timeline-end>
+      <template #timeline-end>
         <!-- Agent 反馈卡：「这一轮结束时，平台要人做的一个决定」，接在这一轮的
              对话后面。
              什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
              （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
              换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
-        <AgentFeedbackCard ref="feedbackRef" :topic-id="topic.id" />
+        <AgentFeedbackCard ref="feedbackRef" :topic-id="conversationId" />
         <!-- 技能提议卡：芝士把一套做法整理好了，请人就地决定存不存。同样由服务端
              说了算：列的是这个房间里还在等人的提议，没有就什么都不画。 -->
         <SkillProposalCard
@@ -239,6 +228,15 @@ defineExpose({
         <button v-if="taskId" type="button" class="back-to-room" @click="emit('open-room')">
           {{ t('work.task.backToRoom', { room: topicTitle(topic) }) }}
         </button>
+        <BaseButton
+          v-else-if="topic.joined === false && topic.status !== 'archived'"
+          kind="primary"
+          size="sm"
+          :loading="joining"
+          @click="join"
+        >
+          {{ t('work.channel.join') }}
+        </BaseButton>
       </template>
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">

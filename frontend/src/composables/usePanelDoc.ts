@@ -51,7 +51,12 @@ export interface PanelDocProps {
   agentName?: string
   /** 项目 AI 队友的 handle。 */
   agentHandle?: string | null
+  /** 画在一整页里（资料库的那份章程）：总览的其余两块不在那儿画，也就不去取。 */
+  bare?: boolean
 }
+
+/** 「文档」这一格的取数原样递给面板（props）：面板自己不认识接口。 */
+export type PanelDocBundle = ReturnType<typeof usePanelDoc>
 
 /** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
 export function usePanelDoc(props: PanelDocProps) {

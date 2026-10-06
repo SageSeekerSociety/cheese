@@ -729,7 +729,7 @@ async def test_the_wait_before_a_turn_assembles_is_accounted_for(db_factory, cap
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("delivery_result", [False, None])
-async def test_live_delivery_fallback_reports_error_then_runs_normally(
+async def test_live_delivery_fallback_is_noted_then_runs_normally(
     db_factory,
     delivery_result,
 ):
@@ -761,7 +761,8 @@ async def test_live_delivery_fallback_reports_error_then_runs_normally(
         "turn_finished",
     ]
     assert frames[1]["block"]["meta"]["event_type"] == "delivery_fallback"
-    assert frames[1]["block"]["meta"]["severity"] == "error"
+    # The platform took the message on itself: nobody has to do anything.
+    assert frames[1]["block"]["meta"]["severity"] == "warn"
     assert frames[1]["block"]["meta"]["who"] == "platform"
     assert len(chat.converse_calls) == 1
     await _until(lambda: runner.active_work_count() == 0)

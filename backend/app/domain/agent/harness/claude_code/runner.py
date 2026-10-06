@@ -59,6 +59,10 @@ from app.domain.memory.tree import (
 # 30,000 characters) or an image the session was handed. A line over the limit
 # kills the reader, so the limit is a ceiling nothing legitimate reaches.
 LINE_LIMIT = 64 * 1024 * 1024
+#: How long a launch must keep running before a greeting takes it as started
+#: (``Runner.starting``). A failing bootstrap or a missing program ends well
+#: inside it; a session that comes up costs a greeting no more than this.
+SETTLE_S = 0.5
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
 # How long a new turn waits to see the project's context as it is now before it
@@ -375,6 +379,7 @@ class Runner(runner.Runner[Journal]):
         self.execution: str | None = None
         self.helpers: list[asyncio.Task] = []
         self.proven = False
+        self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
 
@@ -428,6 +433,7 @@ class Runner(runner.Runner[Journal]):
         self.errors = (self.state / "claude.log").open("ab")
         # Earlier starts appended here too; this start's words begin here.
         self.errors_from = self.errors.tell()
+        self.launched_at = time.monotonic()
         self.process = await asyncio.create_subprocess_exec(
             "sh",
             "-c",
@@ -448,6 +454,24 @@ class Runner(runner.Runner[Journal]):
         ]
         await self.listen(LINE_LIMIT)
         return self.session_id
+
+    def starting(self) -> bool:
+        """Still inside ``SETTLE_S`` of the launch, and not yet answered.
+
+        The launch command is a shell string (the executor client's bootstrap
+        in front of Claude Code), so a process is running the moment it is
+        spawned, whether or not what it runs will come up: a missing program
+        or a refused work lease ends it a moment later. A greeting answered in
+        that moment would take the session as started and lose the reason it
+        ended. Until the launch has outlived that moment, or Claude Code has
+        answered, the greeting is told to keep asking.
+        """
+        return (
+            self.alive()
+            and not self.proven
+            and self.launched_at is not None
+            and time.monotonic() - self.launched_at < SETTLE_S
+        )
 
     async def stopped(self) -> None:
         with contextlib.suppress(Exception):
@@ -1155,6 +1179,7 @@ class Runner(runner.Runner[Journal]):
                 "work_id": self.work if self.working else None,
                 "tasks": dict(self.tasks),
                 "alive": self.alive(),
+                "starting": self.starting(),
                 "capabilities": list(self.capabilities),
             }
         raise ValueError(f"Unknown Claude Code session operation: {method}")

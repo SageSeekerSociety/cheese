@@ -20,7 +20,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import PanelSite from './PanelSite.vue'
+import PanelSite from '../work/PanelSiteHost.vue'
 
 import { setLocale } from '@/i18n'
 
@@ -75,7 +75,9 @@ async function openSite(blocks: Block[], props: Record<string, unknown> = {}) {
     props: { topicId: topic.id, active: true, ...props },
     global: { plugins: [vuetify] },
   })
-  await waitFor(() => expect(utils.container.querySelector('.site-msg__body')).not.toBeNull())
+  // 正文是懒加载的阅读器画的（common/MarkdownView），首帧那一块是空的：
+  // 等它真的画出来再交回去，不然下面断言读的是还没画的那一帧。
+  await waitFor(() => expect(utils.container.querySelector('.site-msg__body')?.textContent?.trim()).toBeTruthy())
   return utils
 }
 

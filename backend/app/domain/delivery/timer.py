@@ -15,15 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
-from app.core.sentences import say, with_keys
+from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_TIMED_DELIVERY,
     SEVERITY_INFO,
     WHO_CHEESE,
     notice,
 )
-from app.domain.block.authorship import AuthorType
-from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent, Ledger
@@ -31,6 +29,7 @@ from app.domain.delivery.models import TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
+from app.domain.run_record.service import keep as keep_record
 from app.domain.topic.models import Topic
 from app.domain.user.services import user_by_handle
 
@@ -84,29 +83,23 @@ async def deliver_at(
 
 
 async def _hand_to_agent(session: AsyncSession, row: TimedDelivery) -> None:
-    """An agent reads its room: the delivery lands there as a platform line, and
-    the ledger hands the same event to the agent's seat."""
-    session.add(
-        Block(
-            id=row.id,
-            project_id=row.project_id,
-            conversation_id=row.conversation_id,
-            author="system",
-            author_type=AuthorType.platform,
-            kind=BlockKind.event,
-            content=DELIVERED_AS_ASKED,
-            # A row, not `BlockRepository.add`: the key is recorded here.
-            meta=with_keys(
-                notice(
-                    EVENT_TIMED_DELIVERY,
-                    severity=SEVERITY_INFO,
-                    who=WHO_CHEESE,
-                    detail=row.content,
-                    detail_label=say("labelTimedDeliveryNote"),
-                ),
-                content=DELIVERED_AS_ASKED,
-            ),
-        )
+    """The ledger hands the event to the agent's seat. The conversation is not
+    told: the agent asked for it, and nobody else is waiting on it. It is kept
+    as a run record under the delivery's own id, which the ledger's event
+    carries, so the 现场 shows the turn it started."""
+    await keep_record(
+        session,
+        project_id=row.project_id,
+        conversation_id=row.conversation_id,
+        content=DELIVERED_AS_ASKED,
+        meta=notice(
+            EVENT_TIMED_DELIVERY,
+            severity=SEVERITY_INFO,
+            who=WHO_CHEESE,
+            detail=row.content,
+            detail_label=say("labelTimedDeliveryNote"),
+        ),
+        record_id=row.id,
     )
     assert row.agent_instance_id is not None
     await record_agent(

@@ -66,28 +66,28 @@
     "abandonTitle": "不推送直接更换？"
   },
   "roomMachine": {
-    "taskHeading": "这个任务的工作电脑",
+    "taskHeading": "这个任务的环境",
     "taskHint": "更换时先把这个任务的改动推送到分支，推上去才换；推不上去就不换，并说明原因。",
     "edit": "改",
-    "heading": "这个频道的工作电脑",
+    "heading": "这个频道的环境",
     "hint": "频道里所有 AI 队友共用这一台。更换时每个队友先把改动推送到分支，全部推上去才换；推不上去就整个不换，并说明原因。",
     "more": "其他配置与设备",
     "projectDefault": "项目默认",
-    "wholeMachine": "能访问整台机器",
-    "wholeMachineNotice": "让它看到整台机器（能操作这台机器上的服务和其他频道）",
+    "wholeMachine": "能访问整台电脑",
+    "wholeMachineNotice": "让它看到整台电脑（能操作这台电脑上的服务和其他频道）",
     "online": "在线",
     "offline": "离线",
     "removed": "已移出团队",
-    "loadFailed": "工作电脑加载失败",
-    "saveFailed": "选择工作电脑失败",
+    "loadFailed": "环境加载失败",
+    "saveFailed": "选择环境失败",
     "retry": "重试",
     "here": "本频道运行在：{name}",
     "abandon": "原来那台连不上：不推送，直接更换",
     "accessHeading": "这个频道在 {name} 上能看到什么",
     "isolated": "隔离环境",
-    "isolatedHint": "只有自己的工作目录和本项目的包缓存；看不到机器主人的文件、装在主人用户目录里的工具，也看不到别的频道。",
-    "host": "整台机器",
-    "hostOwnerOnly": "只有这台机器的主人能开启"
+    "isolatedHint": "只有自己的工作目录和本项目的包缓存；看不到电脑主人的文件、装在主人用户目录里的工具，也看不到别的频道。",
+    "host": "整台电脑",
+    "hostOwnerOnly": "只有这台电脑的主人能开启"
   },
   "deviceInUse": {
     "line": "正在用：{project} · {room} · {agent}",
@@ -109,16 +109,16 @@
     "defaultLabel": "新 AI 队友默认使用",
     "change": "更换",
     "collapse": "收起",
-    "hint": "只影响尚未开始运行的 AI 队友，已在运行的继续用原来的工作电脑",
+    "hint": "只影响尚未开始运行的 AI 队友，已在运行的继续用原来的环境",
     "distribution": "当前分布",
-    "onCloud": "云端沙箱 · {agents}",
+    "onCloud": "云端环境 · {agents}",
     "onCloudVm": "整台云虚拟机 · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "{count} 个 AI 队友",
     "noneStarted": "暂无运行中的 AI 队友",
-    "managedBy": "仅项目负责人可更换默认工作电脑",
-    "loadFailed": "加载工作电脑设置失败",
-    "saveFailed": "保存工作电脑设置失败"
+    "managedBy": "仅项目负责人可更换默认环境",
+    "loadFailed": "加载环境设置失败",
+    "saveFailed": "保存环境设置失败"
   },
   "teamLink": {
     "title": "团队链接",
@@ -151,6 +151,7 @@
     "loginHint": "登录后可查看团队信息，再决定是否加入",
     "login": "登录并继续",
     "notFound": "找不到这个团队，它可能已解散或不对你公开",
+    "loadFailed": "团队信息没读出来",
     "invalid": "团队链接已失效，请向团队管理员索取新链接",
     "owner": "所有者：{name}",
     "memberCount": "{count} 名成员",
@@ -164,7 +165,7 @@
     "failed": "操作失败，请重试",
     "retry": "重试",
     "loading": "加载中",
-    "joinHint": "确认后你将成为团队成员，可以使用团队的项目和工作电脑",
+    "joinHint": "确认后你将成为团队成员，可以使用团队的项目和设备",
     "join": "加入团队",
     "edit": "编辑团队资料",
     "editTitle": "编辑团队资料",
@@ -248,10 +249,11 @@
         "retrying": "重试中",
         "retryingCount": "重试中（第 {attempt} 次）",
         "compacting": "整理上下文中",
-        "waiting": "等待机器",
-        "elapsed": "已用 {span}"
+        "waiting": "等待环境",
+        "elapsed": "已用 {span}",
+        "queued": "排队中",
+        "queuedBehind": "排队中，前面还有 {ahead} 个"
       },
-      "frontendError": "前端报错",
       "span": {
         "seconds": "{s} 秒",
         "minutes": "{m} 分 {s} 秒",
@@ -299,7 +301,15 @@
       "live": "进行中",
       "steps": "{count} 步",
       "collapse": "收起",
-      "expandAll": "展开全部（{count} 行）"
+      "expandAll": "展开全部（{count} 行）",
+      "record": {
+        "queue": "排队",
+        "delivery": "投递",
+        "retry": "重试",
+        "compact": "整理",
+        "environment": "环境",
+        "memory": "记忆"
+      }
     },
     "menu": {
       "more": "更多",
@@ -323,21 +333,13 @@
       "mute": "静音",
       "unmute": "取消静音",
       "muted": "已静音",
-      "muteFailed": "静音设置没保存",
       "markAllRead": "全部标为已读",
-      "markAllReadFailed": "全部标为已读没成功"
+      "markAllReadFailed": "全部标为已读没成功",
+      "notifyFailed": "通知设置没保存"
     },
     "archiveNotice": {
       "done": "已归档",
       "undo": "撤销"
-    },
-    "progress": {
-      "title": "进度",
-      "tally": "完成 {done}/{total}"
-    },
-    "overviewAuto": {
-      "badge": "平台自动生成，不可编辑",
-      "failed": "无法加载这部分内容"
     },
     "accept": {
       "change": "改动",
@@ -411,12 +413,8 @@
         "human": "需要手动处理"
       },
       "working": "{name}正在处理",
-      "sandboxReady": "沙箱已就绪",
-      "sandboxPreparing": "正在准备沙箱",
-      "cloudVmReady": "云虚拟机已就绪",
-      "cloudVmPreparing": "正在准备云虚拟机",
       "incident": {
-        "title": "工作电脑暂时不可用",
+        "title": "环境暂时不可用",
         "cleaning": "正在自动清理",
         "recovering": "正在恢复",
         "retryable": "可以重试",
@@ -527,15 +525,10 @@
     "changes": {
       "scopeChanged": "改动",
       "scopeAll": "全部文件",
-      "liveFile": "机器实时文件",
+      "liveFile": "环境里的实时文件",
       "committedVersion": "已提交版本",
       "download": "下载",
       "refresh": "刷新",
-      "roomChanges": "频道改动",
-      "switchSource": "切换来源",
-      "switchSourceTo": "切换来源：{source}",
-      "fileSource": "文件来源",
-      "projectCode": "项目当前代码",
       "readOnly": "只读",
       "fileList": "文件列表",
       "noFileOpen": "未打开文件",
@@ -551,20 +544,11 @@
       "version": "版本",
       "liveNote": "包含尚未提交的修改",
       "committedNote": "只读，不包含尚未提交的修改",
-      "pickTaskToView": "选择一个任务，查看 {path}",
-      "loading": "加载中…",
-      "noTaskChanges": "暂无任务改动",
-      "fileCount": "{count} 个文件",
-      "collapseFiles": "收起改动文件",
-      "expandFiles": "展开改动文件",
-      "collapseFilesOf": "收起「{title}」的改动文件",
-      "expandFilesOf": "展开「{title}」的改动文件",
       "noChanges": "暂无改动",
       "sourceUnavailable": "无法打开这个任务，换一个来源查看",
       "noRepo": "暂无代码仓库",
       "switchToCommitted": "切换到已提交版本",
       "missingInTask": "{path} 不在这个任务里",
-      "missingInProject": "{path} 不在项目当前代码里",
       "conflict": "你编辑期间，这个文件已被修改，直接保存会覆盖这些修改",
       "reloadLatest": "载入最新版本",
       "saveAnyway": "仍要保存",
@@ -579,9 +563,7 @@
       "draftsKept": "未保存的修改已暂存，回到对应文件可以继续编辑",
       "fileAdded": "新增",
       "fileRemoved": "删除",
-      "taskUnavailable": "任务不可用",
       "statusReadOnly": "{status} · 只读",
-      "loadChangesFailed": "改动加载失败",
       "loadTasksFailed": "任务加载失败",
       "downloadFailed": "下载失败",
       "loadFailed": "加载失败",
@@ -592,7 +574,7 @@
       "pinHint": "{path}（双击固定这个页签）",
       "close": "关闭 {name}",
       "chat": "对话",
-      "overview": "总览",
+      "overview": "概览",
       "site": "现场",
       "changes": "改动",
       "preview": "预览",
@@ -769,18 +751,10 @@
       "fileCount": "{count} 个文件",
       "newChanges": "有新改动",
       "pickTopic": "选择一个频道查看文档",
-      "open": "展开工作面板",
-      "close": "收起工作面板"
+      "label": "概览",
+      "open": "打开概览",
+      "close": "收起概览"
     },
-    "taskProgress": {
-      "loadFailed": "任务列表加载失败",
-      "title": "看板",
-      "count": "{count} 件",
-      "sep": "，",
-      "needsYou": "{count} 件待处理",
-      "row": "第 {n} 件：{title}"
-    },
-    "card": {},
     "doc": {
       "delete": "删除文档",
       "deleted": "这份文档已被删除",
@@ -956,7 +930,8 @@
         "plain": {
           "chart": "图表",
           "diagram": "流程图",
-          "image": "图片"
+          "image": "图片",
+          "video": "视频"
         }
       },
       "historyView": "右边显示",
@@ -1048,26 +1023,16 @@
       "loadFailed": "加载成员失败",
       "count": "{count} 位",
       "agentBadge": "AI 队友",
-      "role": {
-        "owner": "拥有者",
-        "admin": "管理员",
-        "member": "成员"
-      },
-      "roleHint": {
-        "owner": "管理频道与成员",
-        "admin": "管理成员与角色",
-        "member": "参与频道讨论"
-      },
       "failed": "操作失败",
       "title": "频道成员",
       "remove": "移出频道",
       "addPlaceholder": "添加成员…",
       "allIn": "项目成员和队友都已在频道中",
       "add": "加入",
-      "readOnly": "只有拥有者和管理员能修改成员",
+      "readOnly": "只有频道创建者和项目管理员能修改成员",
       "listSeparator": "、",
       "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
-      "setRole": "设为{role}"
+      "creator": "创建者"
     },
     "mail": {
       "noSubject": "（无主题）",
@@ -1088,11 +1053,6 @@
     },
     "mention": {
       "back": "返回上一级",
-      "notInTopic": "不在频道中",
-      "outsideNotice": "{names} 不在频道中，他们不会收到通知",
-      "addToTopic": "拉进频道",
-      "dismissOutside": "知道了",
-      "nameJoiner": "、",
       "library": "资料库",
       "noFiles": "暂无匹配的文件",
       "noMatch": "暂无匹配",
@@ -1234,7 +1194,27 @@
       "taskStatus": {
         "open": "进行中",
         "closed": "已关闭"
-      }
+      },
+      "failed": "回复失败"
+    },
+    "pin": {
+      "pin": "置顶到频道",
+      "unpin": "取消置顶",
+      "pinned": "已置顶",
+      "view": "查看",
+      "failed": "置顶没有成功，请稍后再试"
+    },
+    "file": {
+      "open": "打开",
+      "download": "下载",
+      "keep": "保存到资料库",
+      "keepFailed": "没能保存到资料库，请稍后再试",
+      "more": "「{name}」的更多操作"
+    },
+    "projectFile": {
+      "current": "项目当前版本 · 只读",
+      "missing": "项目当前版本里没有这个文件",
+      "inTask": "在任务「{title}」里看"
     }
   },
   "board": {
@@ -1315,10 +1295,10 @@
     "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单"
   },
   "topicState": {
-    "accepted": "已采纳",
     "draft": "草稿",
     "done": "已完成",
-    "open": "进行中"
+    "open": "进行中",
+    "archived": "已归档"
   },
   "sidebar": {
     "wait": {
@@ -1330,8 +1310,8 @@
       "waited": "已等 {waited}",
       "waitedLong": "等了很久",
       "pr": "PR #{pr} ",
-      "device": "{agent}的机器够不着，{long}——多半要有人去把那台设备开机或连上网",
-      "provisioning": "{agent}的机器还没创建好，{long}",
+      "device": "{agent}的环境连不上，{long}——多半要有人去把那台电脑开机或连上网",
+      "provisioning": "{agent}的环境还没准备好，{long}",
       "environment": "{agent}的运行环境还没恢复，{long}",
       "check": "{pr}检查没通过，{long}，没有{agent}在处理",
       "conflict": "{pr}有合并冲突，{long}，没有{agent}在处理",
@@ -1343,9 +1323,7 @@
       "topic": "频道"
     },
     "archived": "已归档",
-    "archivedUnread": "归档频道里有新消息",
     "projectMenu": "项目菜单",
-    "others": "其他频道",
     "collapse": "收起",
     "expand": "展开",
     "expandStalled": "展开：里面有成员卡住了",
@@ -1359,9 +1337,6 @@
     "switchProject": "切换项目",
     "chooseProjectFirst": "先选择一个项目",
     "topics": "频道",
-    "noneMine": "暂无与你相关的频道",
-    "othersUnread": "其他频道里有新消息",
-    "empty": "暂无频道",
     "workingTip": "{name}正在这里工作",
     "expandWorking": "展开：里面有队友在工作",
     "moreMembers": "+{count}",
@@ -1526,7 +1501,7 @@
     "back": "返回项目设置",
     "market": "市场",
     "defaultModel": "默认模型",
-    "defaultComputer": "默认工作电脑",
+    "defaultComputer": "默认环境",
     "groups": {
       "collab": "协作",
       "ai": "AI",
@@ -1538,8 +1513,7 @@
       "channels": "频道",
       "agents": "AI 队友",
       "task-naming": "任务命名",
-      "computer": "工作电脑",
-      "environment": "运行环境",
+      "environment": "环境",
       "merge": "合并规则",
       "repository": "仓库与署名",
       "mcp": "MCP 服务器",
@@ -1734,13 +1708,13 @@
     },
     "environment": {
       "state": {
-        "unbound": "未接入机器",
+        "unbound": "未接入电脑",
         "pending": "等待下次启动",
         "preparing": "准备中",
         "ready": "已就绪",
         "failed": "准备失败",
         "stopped": "AI 队友已停止",
-        "offline": "机器离线"
+        "offline": "电脑离线"
       },
       "loadFailed": "加载运行环境失败",
       "statusFailed": "加载准备状态失败",
@@ -1757,8 +1731,8 @@
       "startupLabel": "准备项目（启动脚本）",
       "startupHint": "每次创建或重新打开任务工作目录后运行，安装该任务分支的依赖",
       "howTitle": "运行说明",
-      "how1": "云端和自有设备使用同一份脚本，机器需要支持脚本中的命令",
-      "how2": "初始化脚本在频道目录运行，启动脚本在任务代码目录运行。两者都用 Bash，每段最多 30 分钟，使用机器当前的权限。环境变量会同时传给两个脚本和 AI 队友，脚本里的 export 不会传到下一步。工具可以安装到 $HOME/.local/bin",
+      "how1": "云端和自有设备使用同一份脚本，环境需要支持脚本中的命令",
+      "how2": "初始化脚本在频道目录运行，启动脚本在任务代码目录运行。两者都用 Bash，每段最多 30 分钟，使用环境当前的权限。环境变量会同时传给两个脚本和 AI 队友，脚本里的 export 不会传到下一步。工具可以安装到 $HOME/.local/bin",
       "how3": "初始化脚本的 $HOME 是这个项目在这台机器上共用的工具目录，工具只装一份，之后开的频道直接使用。启动脚本和 AI 队友的 $HOME 属于各个频道，所以不要在初始化脚本里写入某个频道专有的内容",
       "varsTitle": "环境变量",
       "varsHint": "项目成员和 AI 队友都能看到这些值，不要在这里保存密码或 API 密钥",
@@ -1838,25 +1812,27 @@
       "accountConnected": "已连接 GitHub 账号"
     },
     "channels": {
-      "intro": "频道用来按人群或领域分开讨论。一件要做成的事建成任务，不用为它新建频道。",
+      "intro": "项目里的每个频道都在这里，项目成员都能看、能加入。侧栏只列你加入的频道。一件要做成的事建成任务，不用为它新建频道。",
       "nameLabel": "频道名称",
       "create": "新建频道",
       "activeLabel": "在用的频道",
       "archivedLabel": "已归档",
-      "rootNote": "项目自带，不能归档",
+      "rootNote": "项目里的所有人都在，不能退出或归档",
       "rename": "重命名",
       "archive": "归档",
-      "unarchive": "取消归档"
+      "unarchive": "取消归档",
+      "descriptionLabel": "频道说明（选填）",
+      "describe": "编辑说明"
     }
   },
   "computeChoice": {
-    "cloud": "云端沙箱",
+    "cloud": "云端环境",
     "cloudVm": "整台云虚拟机",
     "deviceOnline": "{name} · 在线",
     "deviceOffline": "{name} · 离线",
-    "computer": "工作电脑",
-    "none": "暂无可用的工作电脑",
-    "cloudHint": "每个会话在自己的云端沙箱里工作，首次运行时自动准备",
+    "computer": "自有设备",
+    "none": "暂无可用的环境",
+    "cloudHint": "每个会话在自己的云端环境里工作，首次运行时自动准备",
     "cloudVmHint": "每个会话一台独立的云虚拟机，有 sudo，能跑 Docker、要 KVM 的任务和内核模块。准备要几分钟；会话闲置后先把改动推送到分支，再释放虚拟机",
     "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
     "submit": "使用此配置"
@@ -1924,7 +1900,7 @@
       "file": "SKILL.md 或技能文件夹的 .zip",
       "read": "读取",
       "readFailed": "读取失败",
-      "scripts": "含 {n} 个脚本，会在工作电脑上运行。添加前先看一遍",
+      "scripts": "含 {n} 个脚本，会在环境里运行。添加前先看一遍",
       "skipped": "以下文件不是文本或超过 200 KB，不会添加：{files}",
       "title": "导入",
       "upload": "上传文件",
@@ -1968,14 +1944,14 @@
     "view": "查看"
   },
   "nodeBoard": {
-    "loadFailed": "加载机器状态失败",
-    "title": "机器状态",
-    "hint": "工作电脑现在是否可用",
+    "loadFailed": "加载环境状态失败",
+    "title": "环境状态",
+    "hint": "环境现在是否可用",
     "active": "全平台进行中 {count} 轮",
     "online": "在线",
     "offline": "离线",
     "device": "自有设备",
-    "cloud": "云端沙箱",
+    "cloud": "云端环境",
     "current": "没有选择时落在这里"
   },
   "needsYou": {
@@ -2021,7 +1997,7 @@
   },
   "task": {
     "agent": "AI 队友",
-    "machine": "工作电脑",
+    "machine": "环境",
     "followsRoom": "跟随频道",
     "details": "任务信息",
     "ownerOnlyNotice": "只有负责人和协作者可以在这里和{name}对话",
@@ -2046,6 +2022,26 @@
     "compareFailed": "无法读取开始时的文档",
     "compareSame": "开始后文档没有改动",
     "conclusion": "结论",
+    "outputs": "产出",
+    "noOutputs": "暂无产出",
+    "checklist": "{name}这一轮的清单",
+    "opening": {
+      "drafting": "{name}正在整理…",
+      "draftingWhat": "把原讨论整理成这件任务的文档：目标、现状、已确定、待决",
+      "waiting": "还没能开始，环境连上后会继续",
+      "failed": "{name}没能整理出文档",
+      "failedWhy": "这一轮没有完成",
+      "retry": "重试",
+      "writeMyself": "自己写"
+    },
+    "related": {
+      "title": "相关",
+      "fromThread": "原讨论 · 支线 {count} 条回复",
+      "fromChannel": "原讨论 · 频道主线",
+      "quote": "{name}：{text}",
+      "untitled": "未命名文档",
+      "by": "{name}"
+    },
     "proposal": {
       "byline": "{name} 提议了一个任务",
       "accept": "创建任务",
@@ -2073,5 +2069,55 @@
     "closed": "已关闭",
     "empty": "暂无任务",
     "loadFailed": "无法加载任务"
+  },
+  "channel": {
+    "overview": {
+      "project": "项目总览",
+      "projectNote": "{name}在每段对话里都会读这一份",
+      "description": "频道说明",
+      "edit": "编辑",
+      "save": "保存",
+      "cancel": "取消",
+      "noDescription": "暂无频道说明",
+      "running": "进行中 · {count}",
+      "noRunning": "暂无进行中的任务",
+      "latest": "{name}：{text}",
+      "owner": "{name} 负责 · {when}",
+      "recentDone": "最近完成",
+      "allTasks": "全部任务"
+    },
+    "pins": {
+      "title": "置顶 · {count}",
+      "jump": "跳到原消息",
+      "unpin": "取消置顶",
+      "pinnedBy": "{name} 置顶 · {when}",
+      "said": "{name} · {when}",
+      "menu": "置顶的操作",
+      "unpinFailed": "取消置顶失败"
+    },
+    "notify": {
+      "title": "通知",
+      "all": "所有新消息",
+      "allHint": "主线的每条新消息都计数",
+      "mentions": "{'@'}我和我参与的支线",
+      "mentionsHint": "有人 {'@'}我或 {'@'}所有人，或我参与的支线有新回复时计数",
+      "mute": "静音",
+      "muteHint": "只有直接 {'@'}我时计数和通知",
+      "mutedForever": "静音中，直到你取消",
+      "mutedUntil": "静音到 {time}",
+      "forHour": "1 小时",
+      "forEightHours": "8 小时",
+      "untilTomorrow": "到明天上午 9 点",
+      "forWeek": "1 周",
+      "untilUnmuted": "直到我取消"
+    },
+    "join": "加入频道",
+    "leave": "退出频道",
+    "joinFailed": "未能加入频道",
+    "leaveFailed": "未能退出频道",
+    "notJoined": "你还没有加入这个频道。加入后可以在主线发言，也可以直接在消息的支线里回复。",
+    "archivedNotice": "这个频道已归档，只能查看",
+    "describeFailed": "频道说明没保存",
+    "browse": "浏览频道"
   }
 }

@@ -55,8 +55,8 @@
       "individualContest": "个人题目",
       "resubmittable": "可多次提交",
       "editableSubmission": "可编辑提交内容",
-      "teamLockingPolicyNoLock": "队伍成员可自由调整",
-      "teamLockingPolicyLockOnApproval": "队伍成员审核后锁定",
+      "teamLockingPolicyNoLock": "队伍成员允许变更",
+      "teamLockingPolicyLockOnApproval": "队伍成员报名通过后锁定",
       "approve": "通过",
       "reject": "驳回",
       "operationSuccess": "操作成功",
@@ -131,69 +131,39 @@
       "createSuccess": "创建任务成功",
       "createSuccessAndWaitingAudit": "创建任务成功，等待审核",
       "createFailed": "创建任务失败",
-      "spaceIdNotFound": "未找到空间 ID",
       "initializationFailed": "初始化失败",
       "attachmentsUploading": "附件还在上传，请稍候再发布",
-      "pendingQueue": "待审核",
-      "mode": {
-        "write": "手写一道",
-        "pdf": "从 PDF 生成"
-      },
-      "quick": {
-        "noFile": "请先选择要上传的 PDF 文件",
-        "tooLarge": "PDF 文件不能超过 15MB",
-        "noDrafts": "未识别到可发布的题目草稿",
-        "parametersName": "PDF 批量发布参数",
-        "parsed": "解析完成，共识别 {n} 个题目草稿",
-        "previewFailed": "PDF 解析预览失败",
-        "nothingToPublish": "没有可发布的草稿，请先解析预览",
-        "published": "已发布 {n} 个题目",
-        "publishFailed": "PDF 批量发布失败",
-        "title": "PDF 快速发布",
-        "subtitle": "上传题目 PDF 后系统会解析出草稿；发布参数在下面那张表单里统一填写",
-        "uploadLabel": "上传题目 PDF",
-        "hint": "支持 PDF 文件，单文件大小不超过 15MB。地址栏带模板参数时优先用那份模板，否则用空白模板。",
-        "readOnlyNote": "解析是只读的：读一遍 PDF、生成草稿，不会直接发出去。",
-        "preview": "解析预览",
-        "resultTitle": "解析预览结果",
-        "resultSubtitle": "共识别 {n} 个题目草稿，提交下面那张表单时会批量应用发布参数",
-        "resultSubtitleTokens": "共识别 {n} 个题目草稿，提交下面那张表单时会批量应用发布参数。本次约消耗 {tokens} tokens",
-        "untitled": "未命名题目",
-        "draftChip": "PDF 草稿",
-        "intro": "简介：{intro}",
-        "description": "内容预览：{text}",
-        "confirmNote": "确认之后这 {n} 道会一起进{queue}队列；参数在下面那张表单里填。",
-        "clear": "清空预览"
-      },
-      "lifecycle": {
-        "title": "发出去之后",
-        "pending": "题目只有你自己和管理员看得到。",
-        "reviewedLabel": "有人审了",
-        "reviewedManager": "你可以直接通过（自己发的题自己审）。",
-        "reviewedMember": "所有者或管理员通过后就上板。",
-        "visibleLabel": "上板",
-        "visible": "所有人可见可领，领取进度开始计。",
-        "trackLabel": "你能看到",
-        "track": "「我的 → 我发布的」里有这道题的领取走势、领取者名单和完成情况。",
-        "rejectedNote": "被驳回会带原因退回，改完可以重新提交，不用重写一遍。"
-      },
-      "checks": {
-        "title": "提交前",
-        "ok": "看起来没问题。",
-        "waiting": "表单装好之后，这里会逐条列出它现在拦着你的规则。",
-        "submit": "提交审核"
-      },
       "teaching": {
-        "title": "给 AI 队友的指导",
-        "subtitle": "这道题自己的。留空就用这块板的默认；写上一份会整份盖过它。",
-        "expand": "展开",
-        "collapse": "收起"
-      }
-    },
-    "selectTemplate": {
-      "title": "选择题目模板",
-      "back": "返回",
-      "blankTemplate": "从空白题目开始"
+        "title": "AI 指导",
+        "subtitle": "用于从本题创建的项目",
+        "inherit": "沿用空间默认",
+        "own": "为本题单独设置"
+      },
+      "publish": "发布",
+      "publishMany": "发布 {n} 道题",
+      "needsReview": "发布后需管理员审核",
+      "blocking": "{n} 项未填写或填写有误",
+      "import": "从文件导入",
+      "useTemplate": "使用模板",
+      "drafts": {
+        "source": "{file} · 识别出 {total} 道题，已选 {picked} 道",
+        "replace": "更换文件",
+        "discard": "取消导入",
+        "pick": "选中 {name}",
+        "untitled": "未命名",
+        "missingName": "缺少名称",
+        "missingDescription": "缺少描述",
+        "page": "第 {n} 页",
+        "content": "第 {n} 道 · 题目内容",
+        "shared": "以下设置适用于已选的 {n} 道题"
+      },
+      "importErrors": {
+        "notPdf": "只能导入 PDF 文件",
+        "tooLarge": "文件超过 15 MB",
+        "noDrafts": "未能从文件中识别出题目",
+        "failed": "导入失败：{reason}"
+      },
+      "publishedMany": "已发布 {n} 道题"
     },
     "tasks": {
       "searchPlaceholder": "在当前空间中搜索",
@@ -206,7 +176,6 @@
       "publishTask": "发布题目",
       "noTasks": "暂无题目",
       "topic": "话题",
-      "category": "所属分类",
       "allTopics": "全部话题",
       "scope": {
         "all": "全部",
@@ -274,70 +243,6 @@
       "noRealName": "不需要实名信息",
       "realNameNote": "参与者需完成实名认证才能参与这道题，信息加密存储，访问受到严格控制",
       "cancel": "取消"
-    },
-    "pdfGenerate": {
-      "blankTemplate": "空白模板（这块板没有配题模板）",
-      "noCategory": "未指定分类（落这块板的默认分类）",
-      "categoryFallback": "分类 #{id}",
-      "unknownError": "未知错误",
-      "error": {
-        "spaceNotReady": "空间还没装好，稍等一下再试。",
-        "noFile": "先选一份 PDF。",
-        "notPdf": "只收 PDF：这个文件既不是 application/pdf，也不叫 .pdf。",
-        "tooLarge": "单个 PDF 不能超过 15MB，这一份 {size}MB。",
-        "noDrafts": "这次没解析出草稿：后端读了 PDF，但一条题也没识别出来（已消耗 {tokens} tokens）。",
-        "parseFailed": "解析失败：{reason}",
-        "publishFailed": "发布失败：{reason}"
-      },
-      "receipt": {
-        "title": "已发布",
-        "body": "刚发的 {count} 道题已经进了{queue}队列 —— 解析不会绕开审核，上板还是要人看一眼。",
-        "hint": "每道题的简介里都带了出处标记 {marker} ，审核的人在队列那一行就能看出它来自哪一页。",
-        "again": "再解析一份 PDF",
-        "viewMine": "查看我发布的题目",
-        "toQueue": "去审核队列"
-      },
-      "upload": {
-        "title": "上传 PDF",
-        "subtitle": "只收 PDF，单个文件最大 15MB，一次最多解析 {max} 道题",
-        "hint": "解析是只读的：读一遍 PDF、按题目模板生成草稿，{notPublished}。这一步要跑大模型，几秒到几十秒。",
-        "notPublished": "不会直接发出去"
-      },
-      "meta": {
-        "template": "模板：{name}",
-        "images": "抽出插图 {n} 张",
-        "tokens": "消耗 {n} tokens",
-        "warn": "草稿{notYet}，确认之后才会进审核队列",
-        "notYet": "还没有成为题目"
-      },
-      "parse": "解析成题目草稿",
-      "parseNote": "模板这一版跟老页同一口径（地址栏里的 {param}，没有就是空白模板）；一次最多 {max} 道。",
-      "drafts": {
-        "title": "解析出的草稿",
-        "subtitle": "勾选要发的 {picked} / {total} 道，标题和题干都能就地改",
-        "pick": "勾选「{name}」",
-        "name": "标题",
-        "description": "题干",
-        "intro": "简介（原样发出去）：{intro}",
-        "page": "PDF · 第 {page} 页",
-        "images": "含 {n} 张插图",
-        "imagesNote": "插图数是从草稿正文里的图片链接数出来的 —— 后端把抽出的插图传上存储，再把正文里的图片标记换成链接，所以那几张图跟着题干一起发出去。"
-      },
-      "attach": {
-        "title": "附带给领取者",
-        "count": "这 {n} 个文件会附在{every}生成出来的题上",
-        "every": "每一道",
-        "pdf": "原 PDF",
-        "images": "抽出的插图（{n} 张）",
-        "pdfFile": "原 PDF：{name}",
-        "imageFiles": "插图：{names}",
-        "separator": "、",
-        "noPdf": "这一项没画「原 PDF」那颗勾：这次预览没有把 PDF 落成可附的文件（响应里没有这一项），勾了也带不走。",
-        "noImages": "这一项没画「抽出的插图」那颗勾：这次没有抽到能当附件的插图（没抽到图，或抽到的图没进到任何一条草稿正文里）。"
-      },
-      "confirmNote": "确认后这 {n} 道都会进{queue}队列 —— 解析归解析，上板还是要人审。",
-      "cancel": "取消",
-      "confirm": "确认发布 {n} 道"
     },
     "data": {
       "loadFailed": "获取空间信息失败",
@@ -589,6 +494,7 @@
     "publish": "发布公告",
     "editTitle": "编辑公告",
     "empty": "暂无公告",
+    "loadFailed": "加载公告失败",
     "pinnedTag": "置顶",
     "pin": "置顶",
     "unpin": "取消置顶",

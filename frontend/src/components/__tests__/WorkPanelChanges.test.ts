@@ -17,7 +17,7 @@
 import type { PropType } from 'vue'
 import type { FileContent, Topic } from '../../cx_types'
 
-import { defineComponent } from 'vue'
+import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -116,18 +116,20 @@ function textFile(path: string, content: string, version = 'v1'): FileContent {
   return { path, content, version, bytes: content.length, binary: false, too_large: false }
 }
 
+// 改动只长在任务上：面板画的是房间 `id` 里的第一件任务（`task-<房间>`）。
 function mountPanel(id: string) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
-    props: { topic: topic(id), activityTick: 0 },
+    props: { topic: topic(id), taskId: `task-${id}`, activityTick: 0 },
     global: {
       plugins: [vuetify, i18n],
     },
   })
 }
 
-/** The panel as the topic page holds it: rebuilt for every topic (ProjectShell keys
- *  the page on the topic id), with the memory that outlives topics provided above. */
+/** The panel as the task page holds it: rebuilt for every page (ProjectShell keys
+ *  the page on it), with the memory that outlives pages provided above. Switching
+ *  the room here also switches the task it shows. */
 function mountSwitchable(id: string) {
   const vuetify = createVuetify({ components, directives })
   const Page = defineComponent({
@@ -136,7 +138,7 @@ function mountSwitchable(id: string) {
     setup() {
       provideTopicMemory()
     },
-    template: '<WorkPanel :key="topic.id" :topic="topic" :activity-tick="0" />',
+    template: '<WorkPanel :key="topic.id" :topic="topic" :task-id="`task-${topic.id}`" :activity-tick="0" />',
   })
   return render(Page, { props: { topic: topic(id) }, global: { plugins: [vuetify, i18n] } })
 }
@@ -161,13 +163,6 @@ async function fromMenu(container: Element, name: string) {
   await fireEvent.click(screen.getByText(name, { selector: '.v-list-item-title' }))
   await flush()
 }
-async function chooseSource(container: Element, name: string) {
-  await fireEvent.click(container.querySelector('.panel-changes [title="切换来源"]')!)
-  await flush()
-  await fireEvent.click(screen.getByText(name, { selector: '.v-list-item-title' }))
-  await flush()
-}
-
 function editor(container: Element): HTMLTextAreaElement | null {
   return container.querySelector('.stub-editor')
 }
@@ -179,11 +174,6 @@ async function openFilesTool(container: Element) {
   expect(tab, '找不到 改动 tab').toBeTruthy()
   await fireEvent.click(tab!)
   await flush()
-  const group = container.querySelector('.task-change-heading')
-  if (group) {
-    await fireEvent.click(group)
-    await flush()
-  }
   await fromMenu(container, '全部文件')
 }
 
@@ -218,37 +208,11 @@ describe('文件面板', () => {
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v2' })
   })
 
-  it('loads closed task diffs on opening but only polls open tasks', async () => {
-    const tasks = await listRoomTasks('topic-A')
-    tasks.data[1]!.status = 'closed'
-    const originalList = vi.mocked(listRoomTasks).getMockImplementation()!
-    vi.mocked(listRoomTasks).mockResolvedValue(tasks)
-    const intervals = vi.spyOn(window, 'setInterval')
-    const panel = mountPanel('topic-A')
-    try {
-      await flush()
-      const tab = buttons(panel.container).find((button) => button.getAttribute('title')?.startsWith('改动'))
-      await fireEvent.click(tab!)
-      await flush()
-      expect(getGitDiff).toHaveBeenCalledWith('p1', 'topic-A', 'task-topic-A-two')
-      const tick = intervals.mock.calls.find((call) => call[1] === 20_000)?.[0]
-      expect(typeof tick).toBe('function')
-      getGitDiff.mockClear()
-      ;(tick as () => void)()
-      await flush()
-      expect(getGitDiff.mock.calls).toEqual([['p1', 'topic-A', 'task-topic-A']])
-    } finally {
-      panel.unmount()
-      intervals.mockRestore()
-      vi.mocked(listRoomTasks).mockImplementation(originalList)
-    }
-  })
-
   // Two topics are two worktrees of the SAME repo, so the same path usually
   // exists in both. That is what made the carried-over draft dangerous: the open
   // path was still valid in the new topic, so nothing forced a re-read, and the
   // editor kept showing — and 保存 kept writing — the other topic's content.
-  it('切到别的话题后，编辑器显示的是新话题的文件，不是上个话题的草稿', async () => {
+  it('切到别的任务后，编辑器显示的是新任务的文件，不是上一个任务的草稿', async () => {
     const { container, rerender } = mountSwitchable('topic-A')
     await flush()
     await openFilesTool(container)
@@ -266,7 +230,7 @@ describe('文件面板', () => {
     expect(editor(container)!.value).toBe('B 话题的内容\n')
   })
 
-  it('切话题后按保存，写的是新话题的内容和版本，不会把上个话题的草稿写进来', async () => {
+  it('切任务后按保存，写的是新任务的内容和版本，不会把上一个任务的草稿写进来', async () => {
     const { container, rerender } = mountSwitchable('topic-A')
     await flush()
     await openFilesTool(container)
@@ -292,7 +256,7 @@ describe('文件面板', () => {
     expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '在 B 里改的\n', 'topic-B', 'vB', 'task-topic-B')
   })
 
-  it('an unsaved edit is still there after going to another topic and coming back', async () => {
+  it('an unsaved edit is still there after going to another task and coming back', async () => {
     const { container, rerender } = mountSwitchable('topic-A')
     await flush()
     await openFilesTool(container)
@@ -323,19 +287,6 @@ describe('文件面板', () => {
     await flush()
 
     expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', 'v1', 'task-topic-A')
-  })
-
-  it('项目已采纳的文本仍显示全文，并保持只读', async () => {
-    const { container } = mountPanel('topic-A')
-    await flush()
-    await openFilesTool(container)
-    await chooseSource(container, '项目当前代码')
-    await fromMenu(container, '全部文件')
-    await flush()
-    expect(editor(container)!.value).toBe('A 话题的内容\n')
-    expect(editor(container)!.readOnly).toBe(true)
-    expect(container.textContent).not.toContain('非文本文件，无法编辑')
-    expect(writeFile).not.toHaveBeenCalled()
   })
 
   it('任务关闭后刷新会保留文本，但禁止继续保存', async () => {
@@ -383,7 +334,7 @@ describe('文件面板', () => {
     expect(editor(container)!.value).toBe('A 话题的内容\n')
   })
 
-  it('同一房间切换任务后，旧任务的迟到文件响应不会覆盖新任务', async () => {
+  it('同一房间换到另一件任务后，上一件任务迟到的文件不会盖住它', async () => {
     let finishOldRead!: (value: FileContent) => void
     readFile.mockImplementation((_project, path, _room, task) => {
       if (task === 'task-topic-A') {
@@ -393,13 +344,13 @@ describe('文件面板', () => {
       }
       return Promise.resolve(textFile(path, '第二条任务\n', 'v-task-two'))
     })
-    const { container } = mountPanel('topic-A')
+    const { container, rerender } = mountPanel('topic-A')
     await flush()
     await openFilesTool(container)
     expect(finishOldRead).toBeTypeOf('function')
-    await chooseSource(container, 'two')
-    await fromMenu(container, '全部文件')
+    await rerender({ topic: topic('topic-A'), taskId: 'task-topic-A-two', activityTick: 0 })
     await flush()
+    await openFilesTool(container)
     finishOldRead(textFile('a.py', '迟到的第一条任务\n', 'v-old'))
     await flush()
     expect(editor(container)!.value).toBe('第二条任务\n')
@@ -497,7 +448,7 @@ describe('文件面板', () => {
     expect(editor(container)?.readOnly).toBe(true)
     expect(buttonByText(container, '保存')).toBeUndefined()
     expect(listFiles).toHaveBeenLastCalledWith('p1', 'topic-A', 'task-topic-A', 'committed')
-    await fromMenu(container, '机器实时文件')
+    await fromMenu(container, '环境里的实时文件')
     await flush()
     expect(editor(container)?.value).toBe('Unsaved human draft')
     await fireEvent.click(buttonByText(container, '保存')!)
@@ -564,14 +515,9 @@ new file mode 100644
     expect(tab, '找不到 改动 tab').toBeTruthy()
     await fireEvent.click(tab!)
     await flush()
-    const group = container.querySelector('.task-change-heading')
-    if (group) {
-      await fireEvent.click(group)
-      await flush()
-    }
   }
 
-  it('默认只列这个话题改过的文件，没动过的不在清单里', async () => {
+  it('默认只列这个任务改过的文件，没动过的不在清单里', async () => {
     const { container } = mountPanel('topic-A')
     await openChanges(container)
 
@@ -640,25 +586,6 @@ new file mode 100644
 })
 
 describe('task file navigation', () => {
-  it('总览不重复页签的名字；项目当前代码是列表末尾的一个来源', async () => {
-    const { container } = mountPanel('topic-A')
-    await flush()
-    const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
-    await fireEvent.click(tab!)
-    await flush()
-    const panel = container.querySelector('.panel-changes')!
-    expect(panel.textContent).not.toContain('房间改动')
-
-    const projectCode = buttons(panel).find((b) => b.textContent?.includes('项目当前代码'))
-    expect(projectCode, '总览里找不到项目当前代码').toBeTruthy()
-    await fireEvent.click(projectCode!)
-    await flush()
-
-    expect(listFiles).toHaveBeenLastCalledWith('p1', 'topic-A', null, 'committed')
-    expect(panel.querySelector('.source-heading')?.textContent).toContain('项目当前代码')
-    expect(panel.querySelector('.source-status')?.textContent).toBe('只读')
-  })
-
   const diff = `diff --git a/a.py b/a.py
 --- a/a.py
 +++ b/a.py
@@ -676,60 +603,62 @@ describe('task file navigation', () => {
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v2' })
   })
 
-  async function openRoom(container: Element) {
+  it('does not resurrect a draft after the user undoes all changes', async () => {
+    const { container, rerender } = mountSwitchable('topic-A')
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.click(buttonByText(container, '编辑')!)
+    await flush()
+    await fireEvent.update(editor(container)!, 'temporary edit')
+    await rerender({ topic: topic('topic-B') })
+    await rerender({ topic: topic('topic-A') })
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.update(editor(container)!, 'file:task-topic-A')
+    await rerender({ topic: topic('topic-B') })
+    await rerender({ topic: topic('topic-A') })
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.click(buttonByText(container, '编辑')!)
+    await flush()
+    expect(editor(container)!.value).toBe('file:task-topic-A')
+    expect(buttonByText(container, '保存')?.disabled).toBe(true)
+  })
+
+  it('preserves an unsaved draft and its original version while going to another task', async () => {
+    const { container, rerender } = mountSwitchable('topic-A')
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.click(buttonByText(container, '编辑')!)
+    await flush()
+    await fireEvent.update(editor(container)!, 'unsaved first task')
+    await rerender({ topic: topic('topic-B') })
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.click(buttonByText(container, '编辑')!)
+    await flush()
+    expect(editor(container)!.value).toBe('file:task-topic-B')
+    await rerender({ topic: topic('topic-A') })
+    await flush()
+    await openFilesTool(container)
+    expect(editor(container)!.value).toBe('unsaved first task')
+    await fireEvent.click(buttonByText(container, '保存')!)
+    await flush()
+    expect(writeFile).toHaveBeenCalledWith(
+      'p1',
+      'a.py',
+      'unsaved first task',
+      'topic-A',
+      'v:task-topic-A',
+      'task-topic-A'
+    )
+  })
+
+  async function openChangesTab(container: Element) {
     await flush()
     await fireEvent.click(buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))!)
     await flush()
   }
-
-  /** 铺开一条任务自己的改动清单。清单默认是收起的，要看得先点它那个箭头。 */
-  async function expandTask(group: Element) {
-    await fireEvent.click(group.querySelector('.task-change-toggle')!)
-    await flush()
-  }
-
-  it('每个任务默认收起，点箭头就地铺开这一条，且只铺开这一条', async () => {
-    const { container } = mountPanel('topic-A')
-    await openRoom(container)
-    const groups = Array.from(container.querySelectorAll('.task-change-group'))
-    expect(groups).toHaveLength(2)
-    const toggles = groups.map((g) => g.querySelector('.task-change-toggle')!)
-    // 收起态：两条都只剩标题那一行，文件一个也不在页面上。
-    for (const group of groups) {
-      expect(group.querySelector('.task-change-file')).toBeNull()
-      expect(group.textContent).toContain('个文件')
-    }
-    expect(toggles.map((t) => t.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
-
-    await expandTask(groups[0])
-    expect(groups[0].querySelector('.task-change-file')?.textContent).toContain('a.py')
-    expect(groups[1].querySelector('.task-change-file')).toBeNull()
-    expect(toggles.map((t) => t.getAttribute('aria-expanded'))).toEqual(['true', 'false'])
-    // 铺开是就地展开，不是进任务：这一页还在，也还没读任何文件。
-    expect(container.querySelector('.room-changes')).not.toBeNull()
-    expect(readFile).not.toHaveBeenCalled()
-
-    await expandTask(groups[0])
-    expect(groups[0].querySelector('.task-change-file')).toBeNull()
-    expect(toggles[0].getAttribute('aria-expanded')).toBe('false')
-  })
-
-  it('groups the same path under each task and opens the selected version', async () => {
-    const { container } = mountPanel('topic-A')
-    await openRoom(container)
-    const groups = container.querySelectorAll('.task-change-group')
-    expect(groups).toHaveLength(2)
-    await expandTask(groups[0])
-    await expandTask(groups[1])
-    expect(groups[0].textContent).toContain('a.py')
-    expect(groups[1].textContent).toContain('a.py')
-    expect(readFile).not.toHaveBeenCalled()
-    await fireEvent.click(groups[1].querySelector('.task-change-file')!)
-    await flush()
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A-two', 'live')
-    expect(container.querySelector('.source-heading')?.textContent).toContain('two')
-    expect(container.querySelector('.task-select')).toBeNull()
-  })
 
   it('keeps a directed file open reserved while the read is pending', async () => {
     listFiles.mockResolvedValue({
@@ -746,11 +675,20 @@ describe('task file navigation', () => {
           finishRead = resolve
         })
     )
-    const { container } = mountPanel('topic-A')
-    await openRoom(container)
-    await expandTask(container.querySelectorAll('.task-change-group')[0])
-    await fireEvent.click(container.querySelector('.task-change-file')!)
+    // 对话里点了一颗 <&a.py>：任务页把这份文件交给面板去开。
+    const panel = ref<{ openFile: (path: string) => Promise<void> } | null>(null)
+    const Host = defineComponent(
+      () => () => h(WorkPanel, { ref: panel, topic: topic('topic-A'), taskId: 'task-topic-A', activityTick: 0 })
+    )
+    const { container } = render(Host, {
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
+    })
     await flush()
+    // 读还没回来：开文件这一步要等它，所以不在这里等。
+    void panel.value!.openFile('a.py')
+    await flush()
+
+    // 列表里排第一的是 first.py，但人要的是 a.py：读的只有它，读完开着的也是它。
     expect(readFile).toHaveBeenCalledTimes(1)
     expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A', 'live')
     finishRead(textFile('a.py', 'directed content'))
@@ -758,83 +696,13 @@ describe('task file navigation', () => {
     expect(container.querySelector('.changes-bar__path')?.textContent).toBe('a.py')
   })
 
-  it('does not resurrect a draft after the user undoes all changes', async () => {
-    const { container } = mountPanel('topic-A')
-    await flush()
-    await openFilesTool(container)
-    await fireEvent.click(buttonByText(container, '编辑')!)
-    await flush()
-    await fireEvent.update(editor(container)!, 'temporary edit')
-    await chooseSource(container, 'two')
-    await chooseSource(container, 'one')
-    await fireEvent.update(editor(container)!, 'file:task-topic-A')
-    await chooseSource(container, 'two')
-    await chooseSource(container, 'one')
-    await fireEvent.click(buttonByText(container, '编辑')!)
-    await flush()
-    expect(editor(container)!.value).toBe('file:task-topic-A')
-    expect(buttonByText(container, '保存')?.disabled).toBe(true)
-  })
-
-  it('opens a single task without asking users to select it again', async () => {
-    const original = vi.mocked(listRoomTasks).getMockImplementation()!
-    vi.mocked(listRoomTasks).mockResolvedValue({
-      data: [
-        {
-          id: 'single',
-          project_id: 'p1',
-          room_id: 'single-room',
-          created_at: '2026-09-09T00:00:00Z',
-          updated_at: '2026-09-09T00:00:00Z',
-          title: 'Only task',
-          status: 'open',
-          branch_name: 'task/single',
-          presentation: { column: 'building', phrase: 'running' },
-          blocks: [],
-        },
-      ],
-      total: 1,
-    } as Awaited<ReturnType<typeof listRoomTasks>>)
-    const { container } = mountPanel('single-room')
-    await openRoom(container)
-    vi.mocked(listRoomTasks).mockImplementation(original)
-    expect(container.querySelector('.room-changes')).toBeNull()
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'single-room', 'single', 'live')
-  })
-
-  it('preserves an unsaved draft and its original version while switching tasks', async () => {
-    const { container } = mountPanel('topic-A')
-    await flush()
-    await openFilesTool(container)
-    await fireEvent.click(buttonByText(container, '编辑')!)
-    await flush()
-    await fireEvent.update(editor(container)!, 'unsaved first task')
-    await chooseSource(container, 'two')
-    await fireEvent.click(buttonByText(container, '编辑')!)
-    await flush()
-    expect(editor(container)!.value).toBe('file:task-topic-A-two')
-    await chooseSource(container, 'one')
-    expect(editor(container)!.value).toBe('unsaved first task')
-    await fireEvent.click(buttonByText(container, '保存')!)
-    await flush()
-    expect(writeFile).toHaveBeenCalledWith(
-      'p1',
-      'a.py',
-      'unsaved first task',
-      'topic-A',
-      'v:task-topic-A',
-      'task-topic-A'
-    )
-  })
-
   it('does not substitute project code when a task version cannot be loaded', async () => {
-    const { container } = mountPanel('topic-A')
-    await openRoom(container)
     listFiles.mockRejectedValue(new Error('任务版本不可用'))
-    await fireEvent.click(container.querySelector('.task-change-heading')!)
-    await flush()
+    const { container } = mountPanel('topic-A')
+    await openChangesTab(container)
+
     expect(container.textContent).toContain('任务版本不可用')
-    expect(container.querySelector('.source-heading')?.textContent).toContain('one')
+    expect(listFiles.mock.calls.length).toBeGreaterThan(0)
     expect(listFiles.mock.calls.every((call) => call[2] === 'task-topic-A')).toBe(true)
   })
 })

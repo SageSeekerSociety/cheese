@@ -39,6 +39,8 @@ export interface ChatPanelEmit {
   (e: 'site-block', block: Block): void
   // 正在跑的轮次，各自从什么时候开始（毫秒）。现场靠它分出哪一组还在进行。
   (e: 'site-turns', turns: Record<string, number>): void
+  // 一位 AI 队友在某条支线里开始或停下回答（主线上那一行写「正在回复」）。
+  (e: 'thread-activity', threadId: string, member: string, active: boolean): void
   // 主线上一条消息的支线：「在支线中回复」，或者点了它下面那一行。
   (e: 'open-thread', block: Block): void
   // 转为任务：the parent turns this message into a task of the channel.

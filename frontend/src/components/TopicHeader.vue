@@ -19,19 +19,20 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
-
 import { getProjectUsage, getTopicUsage } from '@/api'
 import { menuActionOf, useCommands } from '@/commands'
 import { topicActions } from '@/commands/topicActions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
+import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
+import PanelToggle from '@/components/room/PanelToggle.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
   topic: Topic
@@ -41,7 +42,9 @@ const props = defineProps<{
   connected: boolean
   /** 专注模式 (spec §7.1): the panel spans the workspace, the chat is hidden. */
   focus: boolean
-  /** 平板横放那一档里工作面板是不是开着——这颗开关的 aria-expanded 读它。 */
+  /** 专注模式只在面板和对话并排开着时成立。 */
+  canFocus?: boolean
+  /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
 }>()
 
@@ -54,9 +57,6 @@ const emit = defineEmits<{
 }>()
 
 const { mdAndUp } = useDisplay()
-// 平板横放（960–1180）：工作面板是一只从右边拉出来的浮层，页头这里放它的开关。
-// 宽档里面板就在旁边常驻、手机上它又是 tab 栏的第一格，这颗都不出现。
-const compact = useCompactDesktop()
 
 // 房间自己的生命周期只在不寻常时说一句（已归档 / 草稿），和侧栏那一行同一个规矩。
 // 房间没有「在干活 / 待审阅」这种状态：干活的是成员（输入框下面那一行），待审阅
@@ -66,8 +66,10 @@ const state = computed(() =>
 )
 const shortId = computed(() => topicShortId(props.topic.id))
 const title = computed(() => topicTitle(props.topic))
-// 项目本体 is not a work topic — it has no id badge and no roster.
+// 「综合」是项目本身，不是一件事：没有编号，也没有「进行中」这类状态。
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
+// 我对这个频道的通知档位（铃铛）。
+const store = useWorkspaceStore()
 // ---- 用量 popover (was the 资源 drawer) ----
 const usageOpen = ref(false)
 const usageLoading = ref(false)
@@ -161,6 +163,9 @@ useCommands(roomCommands)
       <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
       <div class="topic-header__text">
         <span class="topic-header__title t-title" :title="title">{{ title }}</span>
+        <span v-if="mdAndUp && topic.description" class="topic-header__description" :title="topic.description">{{
+          topic.description
+        }}</span>
         <span class="topic-header__meta">
           <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
           <span v-if="isWorkTopic && state" class="pr-state" :class="state.cls">{{ state.label }}</span>
@@ -176,12 +181,20 @@ useCommands(roomCommands)
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
       <TopicMembers
-        v-if="isWorkTopic"
         :topic-id="topic.id"
+        :can-manage="topic.can_manage === true"
+        :general="!isWorkTopic"
         :project-id="topic.project_id"
         :project-members="members"
         :me="me"
         @machine-access="machineNotice = $event"
+      />
+
+      <ChannelNotifyMenu
+        v-if="topic.joined && topic.status !== 'archived'"
+        :level="store.levelOf(topic.id)"
+        :muted-until="store.mutedUntil(topic.id)"
+        @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"
       />
 
       <!-- 专注模式开着的时候，出口必须摆在外面：对话栏已经让开了，这一颗就是
@@ -195,20 +208,8 @@ useCommands(roomCommands)
         @click="emit('toggle-focus')"
       />
 
-      <!-- 平板横放：工作面板的开关。开着时再点一次收起它，Esc 也关（焦点回到这颗）。
-           宽档里这栏就在旁边常驻、手机上是 tab 栏第一格，都不需要这颗。 -->
-      <BaseButton
-        v-if="compact"
-        data-panel-toggle
-        icon="mdi-page-layout-sidebar-right"
-        size="sm"
-        class="tap-target"
-        :aria-expanded="panelOpen ? 'true' : 'false'"
-        aria-controls="topic-panel"
-        :aria-label="panelOpen ? t('work.room.panel.close') : t('work.room.panel.open')"
-        :title="panelOpen ? t('work.room.panel.close') : t('work.room.panel.open')"
-        @click="emit('toggle-panel')"
-      />
+      <!-- 右侧面板的开关。手机上面板是页签里的一格，没有这颗。 -->
+      <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
 
       <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
            看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
@@ -230,7 +231,7 @@ useCommands(roomCommands)
                永远只有一个窗格，没有第二栏可以让开；平板横放那一档里对话永远占满
                整宽、面板才是那只浮层，所以专注在这里也没有位置。 -->
           <button
-            v-if="mdAndUp && !compact"
+            v-if="mdAndUp && canFocus"
             type="button"
             class="room-menu__row room-menu__row--action"
             @click="toggleFocus"
@@ -329,6 +330,16 @@ useCommands(roomCommands)
      overflow: hidden，g / y 这些下伸的字母下缘被切掉约 0.75px。高度是字号阶梯
      的属性，不在调用点另定一个数（docs/design-system.md §3.2）。 */
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 频道说明：标题后面一句，比标题弱，挤不下就截断——完整的在 title 里。 */
+.topic-header__description {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

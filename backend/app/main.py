@@ -60,7 +60,7 @@ configure_logging()
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(application: FastAPI):
     # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process left behind (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
@@ -289,6 +289,16 @@ async def lifespan(_: FastAPI):
     reading_questions = asyncio.create_task(
         get_consumptions().run(), name="questions nobody reads"
     )
+
+    # FastAPI builds the OpenAPI document, and with it every included route's
+    # dependencies and validators, the first time a request needs them, then
+    # keeps them. That is ~1.3 s of pure Python, and a new process used to pay
+    # it on the event loop inside its first requests: each blue-green switch on
+    # dev logged an `event loop stalled` there. It is done here, before this
+    # process takes a request. A thread would not help, since the work holds the
+    # GIL; and it runs before the lag watchdog starts, so startup work is not
+    # reported as a stall of the requests it never delayed.
+    application.openapi()
 
     from app.core.loop_lag import watch_loop_lag
     from app.core.net_io import watch_api_io, watch_net_io

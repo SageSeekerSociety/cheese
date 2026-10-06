@@ -53,6 +53,7 @@ from app.domain.membership.roster import roster_rows
 from app.domain.mentions import canonicalize_refs, expand_mention_names
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
+from app.domain.thread import reads as thread_reads
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -235,6 +236,40 @@ async def project_refs_text(
     )
 
 
+async def _tell_thread(
+    session: AsyncSession, topic: Topic, block: Block, author: str, *, told: set[str]
+) -> None:
+    """A person's reply in a 支线 reaches the people who took part in it,
+    except whoever it already @-ed and whoever muted the channel. 芝士's
+    replies do not: it answers in every 支线 it is asked in, the rule the
+    支线's own mark follows (`thread.reads`)."""
+    if looks_like_agent_handle(author) or block.conversation_id == topic.id:
+        return
+    people = [
+        h
+        for h in await thread_reads.people_in(session, block.conversation_id)
+        if h != author and h not in told
+    ]
+    if not people:
+        return
+    muted = await TopicRepository(session).muted_among(topic.id, people)
+    notifs = ProjectNotificationService(session)
+    preview = markdown_preview(block.content, 200)
+    for h in people:
+        if h in muted:
+            continue
+        await notifs.create(
+            project_id=topic.project_id,
+            level=NotificationLevel.light,
+            kind=NotificationType.THREAD_REPLY,
+            title=f"{author} 在「{topic.title}」的支线里回复了",
+            body=preview,
+            target_handle=h,
+            topic_id=topic.id,
+            payload={"thread_id": str(block.conversation_id)},
+        )
+
+
 async def announce_mentions(
     session: AsyncSession,
     topic: Topic,
@@ -259,20 +294,21 @@ async def announce_mentions(
     told, flagged = _resolve_mentions(before, roster) if before else ([], [])
     fresh = [h for h in resolved if h not in told]
     concrete = [h for h in fresh if h not in _SPECIAL_MENTIONS]
+    topics = TopicRepository(session)
     if any(h in _SPECIAL_MENTIONS for h in fresh):
-        # Expand @all/@here to the topic's members. @here should be the
-        # ACTIVE members, but there's no presence signal yet, so it equals
-        # @all for now (TODO: intersect with presence once it lands).
+        # Expand @all/@here to the channel's people, less whoever muted it: a
+        # muted channel reaches someone only by their own name. @here should
+        # be the ACTIVE members, but there's no presence signal yet, so it
+        # equals @all for now (TODO: intersect with presence once it lands).
         #
-        # A broadcast reaches the room's humans only: every 芝士 in the room
-        # already reads the timeline, so notifying them adds nothing. An
-        # explicit <@handle> is different and is NOT filtered here — that is
-        # how one agent addresses another, which a room hosting several 芝士
-        # depends on.
-        member_service = TopicMemberService(session)
-        members, _ = await member_service.list_for_topic(topic.id)
-        agents = set(await member_service.agent_handles(topic.id))
-        concrete += [m.member_handle for m in members if m.member_handle not in agents]
+        # A broadcast reaches people only: every 芝士 in the room already
+        # reads the timeline, so notifying them adds nothing. An explicit
+        # <@handle> is different and is NOT filtered here — that is how one
+        # agent addresses another, which a room hosting several 芝士 depends
+        # on.
+        people = await TopicMemberService(session).people_in(topic)
+        muted = await topics.muted_among(topic.id, people)
+        concrete += [h for h in people if h not in muted]
     # Nobody needs a notification for their own message.
     targets = [h for h in dict.fromkeys(concrete) if h != author]
     if targets:
@@ -289,6 +325,8 @@ async def announce_mentions(
                 target_handle=h,
                 topic_id=topic.id,
             )
+    if not before:
+        await _tell_thread(session, topic, block, author, told=set(targets))
     refs = [f"user:{h}" for h in resolved] + _topic_refs(text)
     if refs or before:
         block.refs = refs

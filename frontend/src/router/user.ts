@@ -42,6 +42,12 @@ export default {
           component: () => import('@/views/user/settings/RealName.vue'),
         },
         {
+          // 通知：哪一类事件走哪个渠道、安静时段、摘要频率。改一项存一项。
+          path: 'notifications',
+          name: 'UserSettingsNotifications',
+          component: () => import('@/views/user/settings/Notifications.vue'),
+        },
+        {
           // 接入的电脑：这个人的工作电脑，哪个项目都能用。
           path: 'devices',
           name: 'UserSettingsDevices',

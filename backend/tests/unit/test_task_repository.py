@@ -53,7 +53,6 @@ def _task(**overrides):
         "min_team_size": None,
         "max_team_size": None,
         "team_locking_policy": "NONE",
-        "video_url": None,
         "reject_reason": "",
         "published_at": None,
         "ended_at": None,
@@ -422,7 +421,6 @@ class TestTaskRepository:
             min_team_size=2,
             max_team_size=5,
             team_locking_policy="ALWAYS",
-            video_url="https://example.com/video",
         )
         assert result.name == "Task With Deadline"
         assert result.deadline is not None
@@ -715,7 +713,7 @@ class TestTaskSubmissionEntryRepository:
 
         await repo.create_entries(
             submission_id=1,
-            entries=[(0, "text content", None), (1, None, 100)],
+            entries=[(0, "text content", None, "Essay"), (1, None, 100, None)],
         )
         assert session.add.call_count == 2
         session.flush.assert_awaited_once()

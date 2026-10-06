@@ -12,7 +12,7 @@ import type { Block, Topic } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import i18n, { setLocale } from '@/i18n'
@@ -57,7 +57,23 @@ vi.mock('../../api', async () => {
     listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 总览里「进度」那一段会读它；这里不关心它，给一份空的。
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
-    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    // 面板画的是这个房间里的任务 task-1：改动那一格要在房间的任务里找到它。
+    listRoomTasks: vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: 'task-1',
+          project_id: 'p1',
+          room_id: 'topic-A',
+          title: '任务',
+          status: 'open',
+          branch_name: 'task/1',
+          presentation: { column: 'building', phrase: 'running' },
+          created_at: '2026-08-12T08:00:00Z',
+          updated_at: '2026-08-12T08:00:00Z',
+        },
+      ],
+      total: 1,
+    }),
     getTranscript: (...a: unknown[]) => getTranscript(...a),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
     // Everything else the panel calls on mount — quiet, empty answers.
@@ -97,10 +113,11 @@ function block(id: string, content: string): Block {
   } as Block
 }
 
+// 现场、改动只长在任务上：频道那一侧没有这两格。
 function mountPanel(id: string) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
-    props: { topic: topic(id), activityTick: 0 },
+    props: { topic: topic(id), taskId: 'task-1', activityTick: 0 },
     global: { plugins: [vuetify, i18n] },
   })
 }
@@ -164,7 +181,9 @@ describe('现场面板', () => {
     await flush()
     await openTab(container, '现场')
 
-    expect(container.textContent).toContain('最新的一条')
+    // 正文是懒加载的阅读器画的（common/MarkdownView），首帧那一块是空的：等它真的
+    // 画出来再断言，不然读的是还没画的那一帧。
+    await waitFor(() => expect(container.textContent).toContain('最新的一条'))
     expect(scrollBox(container, '.panel-site').scrollTop).toBe(SCROLL_HEIGHT)
   })
 

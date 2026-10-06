@@ -160,3 +160,47 @@ describe('在支线中回复', () => {
     expect(container.querySelector('[data-testid="reply-in-thread"]')).toBeNull()
   })
 })
+
+// 置顶在消息上原地做：只有能在频道主线上说话的人（加入了频道）才有这一项；已经置顶的
+// 那一条，这一项换成「取消置顶」。
+describe('置顶到频道', () => {
+  async function menuItems(extra: Record<string, unknown>) {
+    vi.stubGlobal('visualViewport', {
+      width: 1280,
+      height: 800,
+      offsetLeft: 0,
+      offsetTop: 0,
+      scale: 1,
+      addEventListener() {},
+      removeEventListener() {},
+    })
+    vi.stubGlobal('devicePixelRatio', 1)
+    const elementFromPoint = document.elementFromPoint
+    document.elementFromPoint = () => null
+    ;(window as unknown as { innerWidth: number }).innerWidth = 1280
+    const { rerender, unmount } = renderBar(block('m1'), undefined, extra)
+    await rerender({ menuAt: { x: 30, y: 60 } })
+    await flush()
+    const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) =>
+      el.textContent?.trim()
+    )
+    unmount()
+    await flush()
+    document.elementFromPoint = elementFromPoint
+    vi.unstubAllGlobals()
+    return items
+  }
+
+  it('没加入频道的人看不到这一项', async () => {
+    const items = await menuItems({ pinnable: false })
+    expect(items).not.toContain('置顶到频道')
+    expect(items).not.toContain('取消置顶')
+  })
+
+  it('能在主线说话的人能置顶；已经置顶的那一条是取消置顶', async () => {
+    expect(await menuItems({ pinnable: true })).toContain('置顶到频道')
+    const pinned = await menuItems({ pinnable: true, pinnedIds: new Set(['m1']) })
+    expect(pinned).toContain('取消置顶')
+    expect(pinned).not.toContain('置顶到频道')
+  })
+})

@@ -1,9 +1,9 @@
-"""Backend error reports → 现场 (see app.domain.backend_log).
+"""Backend error reports → run records (see app.domain.backend_log).
 
 The receiving end of the push channel. A process that raised an unhandled
-exception POSTs it here and it becomes an event block in the room — the same
-timeline the browser reporter already writes to, so a backend 500 and the
-frontend error it caused lie side by side.
+exception POSTs it here and it is kept as a run record for the admin page, next
+to what the browser reporter keeps, so a backend 500 and the frontend error it
+caused lie side by side.
 
 Authenticated, unlike `/api/frontend-errors`: a browser cannot hold a secret,
 but a reporting backend runs in a container that already carries one. A scoped
@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import require_seated_agent
 from app.api.response import ok
 from app.core.db import get_db
-from app.core.errors import BadRequestError, NotFoundError, UnauthorizedError
+from app.core.errors import BadRequestError, UnauthorizedError
 from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.backend_log import BackendErrorBatchIn
@@ -60,21 +60,17 @@ async def report_backend_errors(
     db: DbSession,
     x_cheese_token: Annotated[str, Header(alias="X-Cheese-Token")] = "",
 ) -> dict:
-    """Persist unhandled backend failures as 现场 event blocks so agents (who can
-    reach neither `docker logs` nor the host's log file) and humans debug from
-    the same timeline. Dedup, burst-summarization and the hourly cap happen in
-    the intake — a silently dropped report still returns 200, so a reporter in a
-    crash loop never retries and never amplifies."""
+    """Keep unhandled backend failures as run records. Dedup,
+    burst-summarization and the hourly cap happen in the intake — a silently
+    dropped report still returns 200, so a reporter in a crash loop never
+    retries and never amplifies."""
     project_id, topic_id = _room(x_cheese_token, body)
     if project_id is not None and not is_global_sandbox_token(x_cheese_token):
-        # A report becomes a block in the room, which an agent taken off it may
-        # no longer write.
+        # An agent taken off the room may no longer report for it.
         await require_seated_agent(
             db, x_cheese_token, project_id=project_id, topic_id=topic_id
         )
     result = await backend_log.record(
         db, project_id=project_id, topic_id=topic_id, errors=body.errors
     )
-    if result is None:
-        raise NotFoundError("No topic to attach backend errors to")
     return ok(result)

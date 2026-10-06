@@ -19,6 +19,7 @@ from app.domain.project.services import ProjectService
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel
 from tests.integration.conftest import registered
+from tests.support.run_records import records_of
 
 SECRET = "only-bob-knows"
 SUMMARY = f"整理完了，顺手看了 bob 的 {SECRET}。"
@@ -71,7 +72,7 @@ def test_the_run_record_lists_every_file_the_dream_changed(
 
 
 async def _dream_and_listen(client, tmp_path) -> tuple[dict, list[str]]:
-    """跑一次整理，交回它的结果和总览房间里每条事件说的话（正文加展开的那一段）。"""
+    """跑一次整理，交回它的结果和总览里每条事件、每条运行记录说的话（正文加展开的那一段）。"""
     factory = client.test_request_factory
     screen = DreamingScreen(tmp_path)
     svc = ChatService(
@@ -126,7 +127,8 @@ async def _dream_and_listen(client, tmp_path) -> tuple[dict, list[str]]:
                 )
             )
         ).all()
+        kept = await records_of(session, root_topic_id)
     return result, [
-        (block.content or "") + str((block.meta or {}).get("detail") or "")
-        for block in events
+        (row.content or "") + str((row.meta or {}).get("detail") or "")
+        for row in [*events, *kept]
     ]

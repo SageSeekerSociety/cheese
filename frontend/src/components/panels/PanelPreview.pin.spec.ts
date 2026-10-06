@@ -16,6 +16,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
+import { previewBundles } from '@/test/panelBundles'
 
 const page = vi.hoisted(() => ({
   blob: null as Blob | null,
@@ -59,7 +60,6 @@ vi.mock('./preview/PreviewPages.vue', () => ({
   }),
 }))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 
 const docBytes = new ArrayBuffer(8)
 const context = {
@@ -70,6 +70,7 @@ const context = {
   version: 'v7',
 }
 const props = {
+  ...previewBundles(),
   topicId: 'room',
   projectId: 'project',
   path: 'deck.pdf',

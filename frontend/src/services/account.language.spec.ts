@@ -11,6 +11,7 @@ vi.mock('@/network/api/users', () => ({
   UserApi: {
     setLanguage: (...args: unknown[]) => setLanguage(...args),
     getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
+    setTimezone: () => Promise.resolve({ data: {} }),
   },
 }))
 

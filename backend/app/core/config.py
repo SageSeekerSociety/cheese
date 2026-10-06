@@ -176,6 +176,10 @@ class Settings(BaseSettings):
     # Feishu group's custom-bot webhook URL; empty disables alerting entirely,
     # which is what a developer's machine and every test wants.
     feishu_alert_webhook: str = ""
+    # Where each new feedback report is announced (`feedback/announce.py`): the
+    # team group's Feishu custom-bot webhook URL. Empty sends nothing, which is
+    # the default until a deployment names the group that works the queue.
+    feishu_feedback_webhook: str = ""
 
     # Coordinated ingress cutover is a separate release. No implicit fallback.
     preview_connection_mode: Literal["legacy", "owner"] = "legacy"
@@ -596,23 +600,10 @@ class Settings(BaseSettings):
     subscription_proxy_port: int = 8443
     # The metering proxy's CONNECT (regular-mode) listener. Containers are steered
     # by --add-host on 443; a DEVICE screen is a bare process with no root and no
-    # docker, so its `claude` reaches the proxy via HTTPS_PROXY instead — that env
-    # needs a listener that speaks CONNECT, which reverse mode does not.
+    # docker, so its `claude` goes through HTTPS_PROXY to the machine's tunnel
+    # helper, and the tunnel (`/llm/tunnel`) delivers that CONNECT traffic here —
+    # a listener that speaks CONNECT, which reverse mode does not.
     subscription_proxy_connect_port: int = 8444
-    # Host a DEVICE reaches the CONNECT listener at. Empty = subscription_proxy_host,
-    # which must resolve from every enrolled device's network. Otherwise configure
-    # a tunnel; an unreachable direct address fails on connect (loud, not silent).
-    subscription_device_proxy_host: str = ""
-    # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
-    # cannot reach the CONNECT listener directly. On the ghg network it cannot:
-    # measured 2026-08-14, packets to the box's listener port never reach its NIC,
-    # dropped at a hypervisor bridge the box can neither see nor change. Set, every
-    # device's subscription turns ride the tunnel: a private-control cloud machine
-    # dials it through its loopback forward to the backend
-    # (`machine_address.tunnel_url`), every other device dials this URL. Empty =
-    # no tunnel, and a device dials `subscription_device_proxy_host` directly
-    # (right for a flat network).
-    subscription_tunnel_url: str = ""
     # Where the proxy's own CA is mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
     # an opaque TLS error far from its cause.
@@ -676,9 +667,12 @@ class Settings(BaseSettings):
     microcloud_offering_id: int = 0
     # The size every cloud host is created with. Every value is clamped into the
     # chosen offering's own range, so these are preferences, not guarantees.
-    microcloud_default_cores: int = 2
-    microcloud_default_memory_mb: int = 4096
-    microcloud_default_disk_gb: int = 20
+    # Four sandboxes at their full 3 GiB limit fit in 16 GiB less the host's own
+    # quarter (`models.capacity`); a 4 GiB host held one. Disk keeps eight homes
+    # at `cloud_sandbox_disk_gb`, running or asleep.
+    microcloud_default_cores: int = 4
+    microcloud_default_memory_mb: int = 16384
+    microcloud_default_disk_gb: int = 40
     # Prepare the default CPU offering; zero disables replenishment.
     microcloud_warm_pool_size: int = Field(default=0, ge=0, le=5)
     # Requires deploy/cloud-control.py on the backend host before enrollment.
@@ -687,13 +681,14 @@ class Settings(BaseSettings):
     microcloud_login_user: str = "cheese"
     # What one session's sandbox on a Cloud machine may use
     # (`remote_execution/sandbox_host.py`), whatever else shares the machine.
-    # Memory: 3 GiB of the default 4 GiB machine. Sessions in this repository's
+    # Memory: 3 GiB, a quarter of what the default 16 GiB host gives its
+    # sandboxes. Sessions in this repository's
     # own earlier sandboxes had `pnpm run build` and `vue-tsc` OOM-killed at
     # 2 GiB (docs/topics), and the limit is there so that a session over it is
     # killed alone, not to share the machine out evenly. No swap, so a session
     # at its limit is killed instead of pushing the machine into swap. CPU:
-    # the default machine's two cores, a ceiling that only binds on larger
-    # machines; below it sessions share by equal weight. Processes: stops a
+    # two cores each, so a session alone on a host gets half of it; when they
+    # all run, sessions share by equal weight. Processes: stops a
     # fork bomb, well above the threads a Node or JVM build starts.
     cloud_sandbox_memory_mb: int = Field(default=3072, ge=64)
     cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
@@ -712,7 +707,9 @@ class Settings(BaseSettings):
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
     # Sandbox slots per host core: how many sessions' sandboxes one host runs at
-    # once. A sandbox holds its slot while it runs; one asleep holds only disk.
+    # once, unless its memory holds fewer at `cloud_sandbox_memory_mb` each
+    # (`models.capacity`). A sandbox holds its slot while it runs; one asleep
+    # holds only disk.
     cloud_host_slots_per_core: int = Field(default=2, ge=1, le=16)
     # The disk a session's home is budgeted on its host. A host keeps at most
     # `disk_gb // this` homes, running or asleep (never fewer than its slots).
@@ -738,8 +735,10 @@ class Settings(BaseSettings):
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
     # The most hosts the pool holds at once, legacy hosts draining excluded. It
     # protects the MicroCloud cluster; a session that finds the pool full is told
-    # capacity is tight and to try later.
-    cloud_pool_max_hosts: int = Field(default=20, ge=1, le=500)
+    # capacity is tight and to try later. Ten hosts' disks written full are
+    # 400 GB, within what 119pve's shared thin pool had free (464 GB, 2026-10-06);
+    # twenty would not be.
+    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
@@ -969,6 +968,9 @@ class Settings(BaseSettings):
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
+    # Run records (the 现场's platform lines, the admin page's errors) older
+    # than `run_record.models.RETENTION` are deleted this often. 0 disables.
+    run_record_expiry_interval_s: int = 3600
     # --- notifications and deadlines ---
     # Two jobs nothing in a request path can do. An undrained email queue is an
     # inbox that never receives; an unswept deadline is a promise the platform
@@ -978,6 +980,9 @@ class Settings(BaseSettings):
     #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
     #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。
     notification_push_drain_interval_s: int = 15
+    #: 通知摘要（设计稿「摘要频率」）。攒够一个人选的周期（每天 / 每周）才发一封，
+    #: 所以这个间隔只是「多久去看一眼谁攒够了」，比周期密就行 —— 默认每小时。0 关闭。
+    notification_digest_interval_s: int = 3600
     #: 投递账本的补发。「写入之后、发出之前崩掉」那一档没有别的出路：那一行已经和
     #: 事件一起提交了，发送这一半没人再碰它。不跑就是一份丢失记录，不是一次补救。
     delivery_resend_interval_s: int = 60

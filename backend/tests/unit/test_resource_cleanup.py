@@ -495,6 +495,58 @@ def test_resource_helpers_stop_even_without_an_executor(tmp_path, name, has_exec
             child.wait(timeout=5)
 
 
+def test_a_home_restored_onto_a_fresh_host_stops_with_nothing_running(tmp_path):
+    """A sandbox's home comes back from its archive with its links into the
+    release it last ran from, but the fresh host never staged that release and
+    the room has not been prepared there yet. Putting it to sleep must succeed:
+    no executor of it can be running on this host."""
+    resource = str(uuid.uuid4())
+    home = tmp_path / resource
+    directory = home / ".cheese"
+    (directory / "remote-execution").mkdir(parents=True)
+    (directory / "execution-owner.json").write_text(json.dumps({"resource": resource}))
+    gone = tmp_path / ".cheese/executor-releases" / ("0" * 64)
+    (directory / "remote-execution/runtime.py").symlink_to(
+        gone / "remote-execution/runtime.py"
+    )
+
+    cleanup.stop_executor(home, resource)
+
+
+def test_each_seats_tunnel_helper_stops_with_its_room(tmp_path):
+    """A room seats several agents, each with its own tunnel helper whose pid
+    file is in that seat's directory. Closing the room stops every one."""
+    resource = str(uuid.uuid4())
+    home = tmp_path / resource
+    directory = home / ".cheese"
+    directory.mkdir(parents=True)
+    helper = directory / "cheese-tunnel.py"
+    helper.write_text(
+        "import sys, time\nfrom pathlib import Path\n"
+        "Path(sys.argv[1]).touch()\ntime.sleep(60)\n"
+    )
+    processes = []
+    try:
+        for seat in ("aaaa", "bbbb"):
+            seat_dir = directory / "seats" / seat
+            seat_dir.mkdir(parents=True)
+            ready = seat_dir / "ready"
+            process = subprocess.Popen([sys.executable, str(helper), str(ready)])
+            processes.append(process)
+            wait_for(ready.exists)
+            (seat_dir / "cheese-tunnel.pid").write_text(str(process.pid))
+
+        cleanup.stop_executor(home, resource)
+
+        for process in processes:
+            assert process.wait(timeout=5) != 0
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+
+
 def test_teardown_stops_the_executor_a_previous_root_installed(tmp_path):
     """Closing a room reads what preparing it wrote.
 

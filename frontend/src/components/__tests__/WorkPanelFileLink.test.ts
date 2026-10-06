@@ -10,6 +10,7 @@
  */
 import type { Topic } from '../../cx_types'
 
+import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -60,7 +61,7 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    // 总览里「进度」那一段会读它；这里不关心它，给一份空的。
+    // 概览里「进度」那一段会读它；这里不关心它，给一份空的。
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     readPreviewFile: (...a: unknown[]) => readPreviewFile(...a),
     listFiles: (...a: unknown[]) => listFiles(...a),
@@ -78,30 +79,73 @@ vi.mock('../../api', async () => {
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
     listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    // 面板画的是房间 topic-A 里的任务 task-1。
+    listRoomTasks: vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: 'task-1',
+          project_id: 'p1',
+          room_id: 'topic-A',
+          title: '写报告',
+          status: 'open',
+          branch_name: 'task/report',
+          presentation: { column: 'building', phrase: 'running' },
+          blocks: [],
+          created_at: '2026-09-09T00:00:00Z',
+          updated_at: '2026-09-09T00:00:00Z',
+        },
+      ],
+      total: 1,
+    }),
     listRoomTrees: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTopicWorkSummary: vi.fn().mockResolvedValue({ changed_files: ['a.py'], has_run: true }),
   }
 })
 
 import { seedRoom } from '../../test/fakeDocCollab'
+import PanelDocHost from '../work/PanelDocHost.vue'
 import WorkPanel from '../WorkPanel.vue'
 
-// 文档那一格的正文在协同文档里。
+// 任务概览里的实况文档：它的正文在协同文档里，按任务的 id 认。
 function docSays(content: string) {
-  seedRoom('topic-A', content)
+  seedRoom('task-1', content)
 }
 
 function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
 }
 
+/** 任务页上的面板：概览里是任务的实况文档，文档里点的 chip 交给面板去开——和任务页
+ *  接的是同一根线。 */
 function mountPanel() {
   const vuetify = createVuetify({ components, directives })
-  return render(WorkPanel, {
-    props: { topic: topic('topic-A'), activityTick: 0 },
-    global: { plugins: [vuetify, i18n] },
-  })
+  let panel: { openFile: (path: string) => Promise<void> } | null = null
+  const room = topic('topic-A')
+  const Host = defineComponent(
+    () => () =>
+      h(
+        WorkPanel,
+        {
+          ref: (instance: unknown) => {
+            panel = instance as typeof panel
+          },
+          topic: room,
+          taskId: 'task-1',
+          activityTick: 0,
+        },
+        {
+          overview: () =>
+            h(PanelDocHost, {
+              flow: true,
+              topic: room,
+              taskId: 'task-1',
+              activityTick: 0,
+              onOpenFile: (path: string) => void panel?.openFile(path),
+            }),
+        }
+      )
+  )
+  return render(Host, { global: { plugins: [vuetify, i18n] } })
 }
 
 async function flush() {
@@ -204,7 +248,8 @@ describe('点一个文件，落在它真的在的那一格', () => {
     await clickChip(container, 'src/b.ts')
 
     expect(visible(container, '.panel-changes')).toBe(true)
-    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null, 'committed')
+    // 任务页上，文件就是这件任务工作树上的那一份。
+    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', 'task-1', 'live')
     // 不是文档也不是图片，预览显示不了它，所以连问都不问。
     expect(readPreviewFile).not.toHaveBeenCalled()
   })
@@ -277,7 +322,7 @@ describe('自由区', () => {
     expect(freeTabs(container)).toEqual(['一.docx', '~二.docx'])
   })
 
-  it('关掉正看着的那一格，落到它旁边那一格；都关了回总览', async () => {
+  it('关掉正看着的那一格，落到它旁边那一格；都关了回概览', async () => {
     docSays('见 <&一.docx> 和 <&二.docx>\n')
     const { container } = mountPanel()
     await flush()
@@ -296,20 +341,20 @@ describe('自由区', () => {
     await fireEvent.click(container.querySelector('[aria-label="关闭 一.docx"]')!)
     await flush()
     expect(freeTabs(container)).toEqual([])
-    expect(selectedTab(container)).toContain('总览')
+    expect(selectedTab(container)).toContain('概览')
   })
 
-  it('地址点名了一份文件，打开房间就开着它', async () => {
+  it('地址点名了一份文件，打开任务就开着它', async () => {
     const vuetify = createVuetify({ components, directives })
     const { container } = render(WorkPanel, {
-      props: { topic: topic('topic-A'), activityTick: 0, tab: 'file:报告.docx' },
+      props: { topic: topic('topic-A'), taskId: 'task-1', activityTick: 0, tab: 'file:报告.docx' },
       global: { plugins: [vuetify, i18n] },
     })
     await flush()
 
     expect(freeTabs(container)).toEqual(['~报告.docx'])
     expect(selectedTab(container)).toBe('报告.docx')
-    expect(readPreviewFile).toHaveBeenCalledWith('topic-A', '报告.docx')
+    expect(readPreviewFile).toHaveBeenCalledWith('task-1', '报告.docx')
   })
 
   it('房间里的网页开成它自己的页签：内容域按路径画得了它', async () => {

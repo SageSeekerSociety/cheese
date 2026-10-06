@@ -611,6 +611,69 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
     # A named platform incident waits for recovery; it never re-runs the turn.
     await asyncio.sleep(0.05)
     assert svc.converse_calls == 1
+    await runner.drain()
+
+
+@pytest.mark.anyio
+async def test_a_turns_closing_scan_ends_with_the_runner_that_ran_the_turn(db_factory):
+    """When a turn ends, it looks for messages left waiting in its room. That
+    scan belongs to the runner that ran the turn: draining that runner waits for
+    it, whichever runner the process bound for incoming messages."""
+    from app.domain.agent import pending_messages
+
+    previous = pending_messages.current_runner()
+    elsewhere = AgentWorkRunner(InProcessBroker())
+    pending_messages.bind_runner(elsewhere)
+    release = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def sessions():
+        task = asyncio.current_task()
+        if task is not None and task.get_name().startswith("pending-messages:"):
+            await release.wait()
+        async with db_factory() as session:
+            yield session
+
+    class _Full(WorkChat):
+        session_factory = staticmethod(sessions)
+
+        def replaying(self, topic_id):
+            return None
+
+        async def converse(self, **_):
+            raise OSError(errno.ENOSPC, "No space left on device")
+            yield  # pragma: no cover
+
+        async def post_system_event(
+            self, topic_id, content, turn_id=None, *, meta=None
+        ):
+            return {"id": "storage-1", "kind": "event", "content": content}
+
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    topic = await a_topic(db_factory)
+    try:
+        async with broker.subscribe(str(topic)) as q:
+            runner.submit(
+                _Full(),
+                topic,
+                author="u",
+                content="hi",
+                addressed=addressed_to_agent("cheese-seat"),
+            )
+            await _next_frame(q, "error")
+        asyncio.get_running_loop().call_later(0.2, release.set)
+        await runner.drain()
+        waiting = [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == f"pending-messages:{topic}" and not task.done()
+        ]
+        assert waiting == []
+    finally:
+        release.set()
+        await elsewhere.drain()
+        pending_messages.bind_runner(previous)
 
 
 @pytest.mark.anyio
@@ -2143,3 +2206,25 @@ async def test_reconnected_tools_re_deliver_the_message_once(db_factory):
     assert resent["is_resume"] is True
     assert resent["resume_reason"] == AgentWorkRunner.TOOLS_REASON
     assert chat.tool_checks == 1, "the re-delivery must not ask again"
+
+
+@pytest.mark.anyio
+async def test_the_main_line_hears_who_is_answering_in_a_thread():
+    """An AI teammate answering in a 支线 is shown under the message the 支线
+    hangs under, so the channel's main line is told when it starts and stops —
+    and not of anything else said in the 支线."""
+    broker = InProcessBroker()
+    room, thread, turn = uuid.uuid4(), uuid.uuid4(), "t1"
+    broker.activity.note_thread(thread, room)
+    async with broker.subscribe(str(room)) as q:
+        await broker.publish(
+            str(thread), {"type": "turn_started", "turn_id": turn, "agent": "cheese"}
+        )
+        await broker.publish(str(thread), {"type": "delta", "text": "a"})
+        await broker.publish(str(thread), {"type": "turn_finished", "turn_id": turn})
+        heard = [q.get_nowait() for _ in range(q.qsize())]
+    assert [(f["type"], f["member"], f["active"]) for f in heard] == [
+        ("thread_activity", "cheese", True),
+        ("thread_activity", "cheese", False),
+    ]
+    assert {f["thread_id"] for f in heard} == {str(thread)}

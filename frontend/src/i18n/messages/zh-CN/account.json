@@ -390,7 +390,8 @@
       "app": "桌面端"
     },
     "closeHint": "关闭设置（Esc）",
-    "usage": "芝士额度"
+    "usage": "芝士额度",
+    "notifications": "通知"
   },
   "emailCode": {
     "title": "邮箱验证码登录",
@@ -447,6 +448,54 @@
     "openAtLogin": "开机时启动",
     "openAtLoginHint": "登录电脑后在后台运行，有事时通知你",
     "saveFailed": "保存失败"
+  },
+  "notifications": {
+    "title": "通知",
+    "lede": "哪一类事件走哪个渠道、什么时候安静下来、多久收一次摘要。改一项存一项。",
+    "saveFailed": "保存失败",
+    "loading": "正在读取通知设置",
+    "loadFailed": "通知设置没读出来",
+    "toggleEvent": "切换「{event}」的{channel}",
+    "channels": {
+      "title": "渠道",
+      "inApp": "站内",
+      "inAppHint": "收件箱与侧栏角标",
+      "push": "浏览器推送",
+      "pushHint": "关掉后不再弹系统通知",
+      "email": "邮件",
+      "emailHint": "发送到你的账号邮箱",
+      "emailInstant": "即时",
+      "emailDigest": "摘要",
+      "emailOff": "关闭"
+    },
+    "quiet": {
+      "title": "免打扰",
+      "window": "安静时段",
+      "windowHint": "按你所在时区（{zone}）的钟点，此时段内不发推送与即时邮件，摘要照常",
+      "windowOn": "{start} – {end}",
+      "windowOff": "不设",
+      "digest": "摘要频率",
+      "digestHint": "把你不在时发生的事合成一封",
+      "daily": "每天",
+      "weekly": "每周",
+      "off": "关闭"
+    },
+    "matrix": {
+      "title": "按类型",
+      "desc": "每一类都能单独挑渠道",
+      "event": "事件",
+      "inApp": "站内",
+      "push": "推送",
+      "email": "邮件",
+      "mention": "有人 {'@'} 我",
+      "reply": "我的消息被回复",
+      "reaction": "有人回应了我的消息",
+      "waitsOnMe": "等你审阅的改动 / 决策请求",
+      "deviceInUse": "我的设备有人在用",
+      "invitation": "团队 / 项目邀请",
+      "announcement": "空间公告",
+      "billing": "额度与计费提醒"
+    }
   },
   "devices": {
     "lede": "接入自己的电脑，AI 队友可在上面运行任务",

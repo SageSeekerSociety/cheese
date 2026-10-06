@@ -367,6 +367,7 @@ def periodic_jobs(
     from app.domain.delivery.timer import deliver_due
     from app.domain.docs_site.assistant import purge_old_questions
     from app.domain.machine.warm import sweep_warm_pool
+    from app.domain.notification.digest import run_notification_digests
     from app.domain.notification.maintenance import drain_email_queue
     from app.domain.notification.push_delivery import drain_push_queue
     from app.domain.project.forge import (
@@ -376,6 +377,7 @@ def periodic_jobs(
     from app.domain.ratchet.ingest import ingest_snapshots as ingest_ratchet_snapshots
     from app.domain.review import pr_poll
     from app.domain.routine.service import sweep as sweep_routines
+    from app.domain.run_record.service import purge_expired as purge_run_records
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
     from app.domain.usage.subscription_ingest import ingest_once
 
@@ -493,6 +495,13 @@ def periodic_jobs(
             settings.backend_error_flush_interval_s,
             backend_log.flush_expired,
         ),
+        # Run records are kept for a month: past that, the logs and the alerts
+        # are where an older failure is read.
+        PeriodicRunner(
+            "run record expiry",
+            settings.run_record_expiry_interval_s,
+            lambda: purge_run_records(sessions),
+        ),
         # The only consumer of the Redis list every email notification is pushed
         # onto. Unrun, that key is not slow — it grows forever and no mail goes.
         PeriodicRunner(
@@ -506,6 +515,13 @@ def periodic_jobs(
             "notification push drain",
             settings.notification_push_drain_interval_s,
             lambda: drain_push_queue(sessions),
+        ),
+        # 通知摘要（设计稿「摘要频率」）：攒够一个人的周期（每天 / 每周）才发一封。
+        # 这个 job 只是「多久去看一眼谁攒够了」，不跑就没有任何一封摘要会出去。
+        PeriodicRunner(
+            "notification digest",
+            settings.notification_digest_interval_s,
+            lambda: run_notification_digests(sessions),
         ),
         # 投递账本上那些「记下了、没发出去」的行的唯一出路。那一行已经和引发它的
         # 事件一起提交了，而发送这一半的进程可能在中间就没了 —— 不跑这个 job，账本

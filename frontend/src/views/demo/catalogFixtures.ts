@@ -52,6 +52,7 @@ import { localDocSession } from '@/lib/docLocalSession'
 import { DOCUMENT_TYPES } from '@/lib/fileKind'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
+import { previewBundles, revisionsBundle } from '@/test/panelBundles'
 
 const SCENE = SCENES.quickstart
 
@@ -121,15 +122,13 @@ export const ACCEPT_CARD = frame(4).card
 export const ACCEPT_CHECKS = frame(4).checks
 
 /**
- * `cheese_ask` 的一条真问题 —— 产品**现状**那一版，不是这次要做的新版。
+ * `cheese_ask` 的一条真问题。
  *
- * 画它的是 `RoomMessage.vue` 本身，所以这两格就是「现在长什么样」的对照图：
- * `meta.options` 躺在那儿，房间画出一排一键按钮；有人答过之后 `meta.answer_log`
- * 的末条落在同一条上，房间画成「谁选了什么」的回执。
+ * 画它的是 `RoomMessage.vue` 本身：`meta.options` 躺在那儿，消息下面是一排快捷回复；
+ * 有人答过之后 `meta.answer_log` 记下答过的每一句，房间画成「谁说了什么」。
  *
- * 字段形状照后端写：`meta.asked` 是**在等谁答**那个 handle 或 null
- * （`topics_messages.py` 建问题那处写 `{"options": …, "asked": …}`），不是布尔。
- * 答完也**不清它** —— `answer_options` 只往 `answer_log` 追加，末条是生效的那一版。
+ * 字段形状照后端写（`block/questions.py`）：`meta.asked` 是**在等谁答**那个 handle
+ * 或 null，不是布尔。
  */
 const ASK_TEXT = '这次的作业按哪种方式收？'
 const ASK_OPTIONS = [{ text: '课程平台收文件' }, { text: '发到课程邮箱' }, { text: '课上交纸质' }]
@@ -141,13 +140,11 @@ function askRow(answered: { option: string; by: string } | null): RoomRow {
   if (answered) {
     meta.answer_log = [
       {
-        v: 1,
         kind: 'option',
         option: answered.option,
         note: null,
         by: answered.by,
         at: '2026-09-30T10:24:00Z',
-        client_op_id: 'demo',
       },
     ]
   }
@@ -169,9 +166,9 @@ function askRow(answered: { option: string; by: string } | null): RoomRow {
   }
 }
 
-/** 还没答：一排一键选项，点一下就交上去。 */
+/** 还没答：一排快捷回复，点一个就是回了那一句。 */
 export const ASK_OPEN = askRow(null)
-/** 已经有人答了：整排收成一句回执「某某 选了「什么」」。 */
+/** 已经有人答了：整排收成「某某：说了什么」。 */
 export const ASK_ANSWERED = askRow({ option: ASK_OPTIONS[0].text, by: 'wang' })
 
 /**
@@ -591,7 +588,7 @@ export const RAIL_ROWS = {
     activity: [{ member: 'cheese-a1', kind: 'working', since: 1790845200 }],
   }),
   /** 有事等你拍板：琥珀点（未读的 @ 不点这颗灯，所以未读和它是两回事）。 */
-  awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, i_participate: true }),
+  awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, joined: true }),
   /** 收起来的父话题：开关自己带聚合色（里面有话题在等人），右边是聚上来的未读。 */
   collapsed: railRow(
     { id: 't-3', title: '期末复习' },
@@ -605,8 +602,6 @@ export const RAIL_ROWS = {
     title: '把成绩单导出成 CSV',
     waits: [{ member: 'cheese-a1', reason: 'failed', since: '2026-09-29T08:41:00Z' }],
   }),
-  /** 归档行：标题压暗一档，行尾是「取消归档」（`TopicRailArchivedGroup` 那一组）。 */
-  archived: { id: 't-7', title: '第 1 题：写一段自我介绍', kind: 'topic' } as Topic,
 }
 
 /** 侧栏一行右边那几位成员（`useTopicRail.memberMarks` 在真环境里给的就是这个形状）。 */
@@ -697,21 +692,15 @@ const CHANGES_COMMITS: GitCommit[] = [
 ]
 
 const CHANGES_BASE = {
+  // 修订清单那一包：这一格只画，清单本身另有它自己的用例（`RevisionList.library.spec.ts`）。
+  revs: revisionsBundle(),
   topicId: DEMO_TOPIC,
   readOnly: false,
-  overview: false,
-  taskOptions: [CHANGES_TASK],
   taskLoadError: null,
-  tasksLoaded: true,
   selectedTask: CHANGES_TASK.id,
   currentTask: CHANGES_TASK,
-  sourceTitle: '整理第一周的课件',
-  sourceStatus: '等你验收',
+  sourceStatus: '待审阅',
   sourceUnavailable: false,
-  requestedPath: null,
-  overviewDiffs: {},
-  overviewErrors: {},
-  expandedTasks: new Set<string>(),
   showAll: false,
   fileSource: 'committed' as FileSource,
   fileToolReady: true,
@@ -781,6 +770,8 @@ const PREVIEW_FILE: FileContent = {
 }
 
 const PREVIEW_BASE = {
+  // 修订清单、那一栏历史、编辑器那一份会话：预览站里它们只画，取数在 `usePanelPreview`。
+  ...previewBundles(),
   topicId: DEMO_TOPIC,
   projectId: DEMO_PROJECT,
   frameName: 'cheese-preview-demo',

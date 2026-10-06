@@ -1,5 +1,5 @@
-// 工作面板的 tab 栏：那几格永远都在，打开房间时挑哪一格由房间所处的阶段说，但只挑
-// 有东西可看的那一格。
+// 工作面板的 tab 栏：那几格永远都在，打开任务时挑哪一格由任务所处的阶段说，但只挑
+// 有东西可看的那一格。频道是人说话的地方，只有概览、支线、定时与触发。
 //
 // 这一份钉的是两件以前出过错的事：一格时有时无，同一个房间两次打开 tab 栏不一样
 // 长；和待验收的房间没有改动文件时（项目还没接仓库），一进来就落在「改动」那一格
@@ -80,10 +80,9 @@ function mount(props: Record<string, unknown> = {}) {
     global: {
       plugins: [vuetify, i18n],
       stubs: {
-        PanelOverview: true,
-        PanelSite: true,
-        PanelChanges: true,
-        PanelPreview: true,
+        PanelSiteHost: true,
+        PanelChangesHost: true,
+        PanelPreviewHost: true,
         RoutinePanelHost: true,
       },
     },
@@ -95,10 +94,16 @@ function selected(container: Element): string {
 }
 
 describe('tab 栏', () => {
-  it('一个还没跑过的房间也是这几格，顺序不变', async () => {
+  it('频道只有概览、支线、定时与触发：没有电脑在它名下干活', async () => {
     const { findAllByRole } = mount()
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).toEqual(['总览', '支线', '现场', '改动', '预览', '定时与触发'])
+    expect(labels).toEqual(['概览', '支线', '定时与触发'])
+  })
+
+  it('一个还没跑过的任务也是这几格，顺序不变', async () => {
+    const { findAllByRole } = mount({ taskId: 'task1' })
+    const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
+    expect(labels).toEqual(['概览', '现场', '改动', '预览'])
   })
 
   it('任务里没有支线这一格：支线只挂在频道主线的消息下面', async () => {
@@ -122,7 +127,7 @@ describe('tab 栏', () => {
 
   it('没东西的那一格字是浅的，有东西的不是', async () => {
     workSummary.mockResolvedValue({ has_run: true, changed_files: [] })
-    const { findByRole } = mount()
+    const { findByRole } = mount({ taskId: 'task1' })
     const site = await findByRole('tab', { name: /现场/ })
     const changes = await findByRole('tab', { name: /改动/ })
     await waitFor(() => expect(site.classList.contains('tabbar__tab--empty')).toBe(false))
@@ -130,41 +135,41 @@ describe('tab 栏', () => {
   })
 })
 
-describe('打开房间时开在哪一格', () => {
+describe('打开任务时开在哪一格', () => {
   it('待验收、而且真有改动：开在「改动」', async () => {
     workSummary.mockResolvedValue({ has_run: true, changed_files: ['a.ts'] })
-    const { container } = mount({ cardPhase: 'pending' })
+    const { container } = mount({ taskId: 'task1', cardPhase: 'pending' })
     await waitFor(() => expect(selected(container)).toMatch(/^改动/))
   })
 
-  it('待验收、但一个改动文件都没有：留在「总览」，不落在一格空的上', async () => {
-    const { container, emitted } = mount({ cardPhase: 'pending' })
+  it('待验收、但一个改动文件都没有：留在「概览」，不落在一格空的上', async () => {
+    const { container, emitted } = mount({ taskId: 'task1', cardPhase: 'pending' })
     await waitFor(() => expect(workSummary).toHaveBeenCalled())
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(selected(container)).toBe('总览')
+    expect(selected(container)).toBe('概览')
     expect(emitted()['update:tab']).toBeUndefined()
   })
 })
 
-// 平板横放（960–1180）：进房间时自动挑中的那一格，只是「你打开面板时看哪一格」，不能
-// 写进地址——地址里一有 ?tab，那一档的浮层就跟着被拉起来了，而这一刻并没有人打开它。
-// 宽档里没有浮层，地址照走（面板和地址永远一致）。
-describe('平板横放：进房间不自动把面板拉起来', () => {
+// 面板收着（浮层，或并排但收起）时：进任务时自动挑中的那一格，只是「你打开面板时看
+// 哪一格」，不能写进地址——地址里一有 ?tab，面板就跟着被拉开了，而这一刻并没有人打开
+// 它。面板开着时地址照走（面板和地址永远一致）。
+describe('面板收着：进任务不自动把面板拉开', () => {
   it('芝士在干活：选中的是「现场」，但不告诉地址', async () => {
-    const { container, emitted } = mount({ compact: true, working: true, cardPhase: null })
+    const { container, emitted } = mount({ taskId: 'task1', compact: true, working: true, cardPhase: null })
     await waitFor(() => expect(selected(container)).toBe('现场'))
     expect(emitted()['update:tab']).toBeUndefined()
   })
 
   it('待验收、真有改动：选中的是「改动」，同样不告诉地址', async () => {
     workSummary.mockResolvedValue({ has_run: true, changed_files: ['a.ts'] })
-    const { container, emitted } = mount({ compact: true, cardPhase: 'pending' })
+    const { container, emitted } = mount({ taskId: 'task1', compact: true, cardPhase: 'pending' })
     await waitFor(() => expect(selected(container)).toMatch(/^改动/))
     expect(emitted()['update:tab']).toBeUndefined()
   })
 
-  it('宽档里同一个情形照旧告诉地址，面板和地址一致', async () => {
-    const { emitted } = mount({ working: true, cardPhase: null })
+  it('面板开着时同一个情形照旧告诉地址，面板和地址一致', async () => {
+    const { emitted } = mount({ taskId: 'task1', working: true, cardPhase: null })
     await waitFor(() => expect(emitted()['update:tab']).toContainEqual(['site']))
   })
 })

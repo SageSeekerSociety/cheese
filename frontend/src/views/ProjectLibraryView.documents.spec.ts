@@ -35,9 +35,9 @@ vi.mock('../api/projectDocuments', () => ({
   deleteDocument: vi.fn(),
   getDocumentAbout: vi.fn(),
 }))
-// 打开的那一份文档是协同面板，它自己的事在它自己的测试里；这里只要知道开的是哪一份，
-// 以及它的「删除」交给了这一页。
-vi.mock('../components/panels/PanelDoc.vue', async () => {
+// 打开的那一份文档是协同面板（取数在它的接线外壳里），它自己的事在它自己的测试里；
+// 这里只要知道开的是哪一份，以及它的「删除」交给了这一页。
+vi.mock('../components/work/PanelDocHost.vue', async () => {
   const { defineComponent: define, h: el } = await import('vue')
   return {
     default: define({

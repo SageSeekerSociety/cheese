@@ -45,10 +45,22 @@ MACHINE_OUT_OF_REACH = (
 # 台机器上的执行器比后端旧 —— 手好好的，下一次工具调用照样通。把它们也说成够不着，
 # agent 会照着这句话放弃这一轮全部文件与命令操作、并向人报告机器掉线，而那是假话。
 OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
+# The connection owner's mark on a call it turned away because it is being
+# released (`device_connection_app.DRAINING_HEADER`): like a refused connect,
+# nothing was dispatched, so the same call is sent again.
+OWNER_DRAINING_HEADER = "X-Device-Connection-Draining"
 
 # 够不着以外的那些。同样不给裸状态码（结论 23）：数字会把 agent 送回自己的工具调用
 # 里找 bug。数字和响应体进的是进程日志 —— agent 读不到它们，平台读得到。
 EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
+
+# 这次会话的凭证只读工作机器（还没开始的任务、支线），而这一次要的是读以外的事
+# （`routes/execution.py` 的 `_reads`）。说成「可以重试」，agent 会照着去重试、
+# 约时间再试，并告诉人机器坏了；可机器好好的，重试只会再被拒一次。
+READ_ONLY_REFUSED = (
+    "这个会话对工作机器只读：可以看文件和 git 记录，不能执行命令、不能改文件。"
+    "这不是故障，重试结果一样；还没开始的任务要等负责人开始之后才能动手。"
+)
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
 # 够不着；可这一次做没做过不知道，所以也不能说「可以重试」—— 照做一遍，改动就可能
@@ -75,6 +87,18 @@ def _device_is_offline(response) -> bool:
     a retryable one-call failure while chat and platform tools kept working.
     """
     return response.status == 409 and response.getheader("X-Device-Id") is not None
+
+
+def _reads_only(token: str) -> bool:
+    """Whether this execution credential was issued to only read the machine
+    (``sandbox_auth.bind_resource_token``'s ``ro`` claim). Read off the token's
+    own claims: the refusal's body is the backend's wording, not a contract."""
+    body = token.rpartition(".")[0].removeprefix("cxss_")
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except ValueError:
+        return False
+    return isinstance(claims, dict) and claims.get("ro") is True
 
 
 def _link_interrupted(response) -> bool:
@@ -959,6 +983,15 @@ class RemoteClient:
                     )
                     response = connection.getresponse()
                     data = response.read()
+                    if response.status == 503 and response.getheader(
+                        OWNER_DRAINING_HEADER
+                    ):
+                        connection.close()
+                        self.transport.connection = None
+                        if not _retry_connect(attempt, deadline):
+                            raise MachineOutOfReach
+                        attempt += 1
+                        continue
                     if response.status != 200:
                         # agent 读到的那句话里没有状态码，平台这边一个都不少：
                         # 少了这一行，后端事后连「当时是哪个码」都查不出来。
@@ -972,6 +1005,10 @@ class RemoteClient:
                             or _device_is_offline(response)
                         ):
                             raise MachineOutOfReach
+                        if response.status == 403 and _reads_only(
+                            self.execution_token()
+                        ):
+                            raise RuntimeError(READ_ONLY_REFUSED)
                         raise RuntimeError(EXECUTOR_CALL_FAILED)
                     return json.loads(data)
                 except ConnectionRefusedError as exc:

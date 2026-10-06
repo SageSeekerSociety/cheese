@@ -39,7 +39,6 @@ import type {
   MarketPools,
   MemberSummary,
   OAuthConnectionInfo,
-  OverviewAuto,
   PrChecks,
   PreviewInfo,
   ProfileTopic,
@@ -66,6 +65,7 @@ import type {
 import type { DocComment } from './lib/docThreadTypes'
 import type { AgentFieldChoice } from './lib/modelChoices'
 import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from './types/compute'
+import type { DocumentTemplate, RoomOutput } from './types/roomOutput'
 import type { SitePage } from './types/site'
 
 import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
@@ -477,9 +477,9 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
+export function createTopic(projectId: string, title: string, description?: string): Promise<Topic> {
   const body: Record<string, string> = { project_id: projectId, title }
-  if (parentId) body.parent_id = parentId
+  if (description) body.description = description
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -1018,7 +1018,7 @@ export type DeliverableKind = 'file' | 'link' | 'merge'
 export interface ArtifactVersion {
   number: number
   card_id: string
-  /** 这次交付改了什么（卡上那句 Conventional Commit 标题）。 */
+  /** 这次交付改了什么（卡上那句提交标题）。 */
   subject: string | null
   delivered_at: string | null
   decided_by: string | null
@@ -1122,15 +1122,6 @@ export function deleteProjectArtifact(projectId: string, artifactId: string): Pr
 }
 
 // ---- 这个房间里摆出来的东西 (#1085 结论四) ----
-
-// 摆出来的东西属于这个房间：用户看完拿走就完了。要把它留下来以后还用，由人按
-// 「保存到资料库」——留着要用的东西是资料；交出去的东西走交付，那才上产物清单。
-export interface RoomOutput {
-  path: string
-  mime: string
-  kind: 'file' | 'app'
-  shown_at: string
-}
 
 export function listRoomOutputs(topicId: string): Promise<ListPayload<RoomOutput>> {
   return request<ListPayload<RoomOutput>>(`/topics/${encodeURIComponent(topicId)}/shown`)
@@ -1297,14 +1288,6 @@ export async function downloadFile(rawUrl: string, filename: string): Promise<vo
   link.click()
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
-// 项目总览的自动区 (#1889): the overview room's ②③, structured so the doc
-// panel can render them below the body and make each line clickable. Only the
-// project's root topic has one — any other room answers 404 — and the caller
-// must be able to read the room, same as the doc itself.
-export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
-  return request<OverviewAuto>(`/topics/${encodeURIComponent(topicId)}/overview`)
 }
 
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
@@ -1714,7 +1697,7 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
 }
 
 // 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
-export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
+export { addTopicMember, joinChannel, leaveChannel, removeTopicMember, setChannelDescription } from './api/topicMembers'
 
 // 一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`
 // 的 `getTask`（`/topics/{task}/task`）。
@@ -2820,14 +2803,6 @@ export interface RoomFileEditorSession {
 
 export function openRoomFileEditor(topicId: string, path: string): Promise<RoomFileEditorSession> {
   return request(`/topics/${encodeURIComponent(topicId)}/files/editor?path=${encodeURIComponent(path)}`)
-}
-
-/** 平台的一份标准模板：从它新建的是一份带样式和【占位】的 Office 文件。 */
-export interface DocumentTemplate {
-  id: string
-  name: string
-  suffix: 'docx' | 'pptx' | 'xlsx'
-  about: string
 }
 
 export function listDocumentTemplates(topicId: string): Promise<{ data: DocumentTemplate[]; total: number }> {

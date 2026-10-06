@@ -63,46 +63,26 @@ class TopicKind(enum.StrEnum):
     subtopic = "subtopic"  # 历史值: task 的前身
 
 
+class NotifyLevel(enum.StrEnum):
+    """How much of a channel reaches one person (`TopicReadState.notify_level`)."""
+
+    all = "all"  # 所有新消息
+    mentions = "mentions"  # 只在 @我和我参与的支线有回复时（默认）
+    mute = "mute"  # 静音：只有 @我
+
+
 def room_ref(room: "Topic") -> dict:
     """A room named inside another listing: its id and title."""
     return {"id": str(room.id), "title": room.title}
 
 
 class TopicRole(enum.StrEnum):
-    """A member's role in a topic's roster (话题成员名册, fusion-design §3).
+    """A seat's role in a channel. ``owner`` is the person who created it, and
+    manages it alongside whoever manages the project; everyone else is a
+    ``member``."""
 
-    A topic is a group room; its membership governs who can manage the roster
-    and who @all/@here reaches.
-
-    The three are RANKED — see :attr:`rank`. Which seat outranks which is a fact
-    about this enum rather than something each caller re-derives: owner outranks
-    admin outranks member, and code that means 「至少这么高」 asks ``rank``.
-    """
-
-    owner = "owner"  # 话题创建者, 不可被移除到只剩空 owner
-    admin = "admin"
+    owner = "owner"
     member = "member"
-
-    @property
-    def rank(self) -> int:
-        """How senior this seat is — owner > admin > member.
-
-        A lookup rather than comparisons between the members, because these are
-        ``str``s and their built-in comparison is the *alphabetical* one:
-        ``TopicRole.member >= TopicRole.admin`` is True ("m" > "a"), which is
-        backwards, and nothing about the obvious spelling warns you. Roster
-        succession (「接手人不能比他接的那把椅子低」) asks this instead.
-        """
-        return _ROLE_RANKS[self]
-
-
-# owner (2) > admin (1) > member (0). Written after the class it ranks, because
-# its keys are the members.
-_ROLE_RANKS: dict[TopicRole, int] = {
-    TopicRole.owner: 2,
-    TopicRole.admin: 1,
-    TopicRole.member: 0,
-}
 
 
 class Topic(UuidPk, Timestamps, Base):
@@ -116,6 +96,8 @@ class Topic(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
     )
     title: Mapped[str] = mapped_column(String(300))
+    # What a channel is for, in its managers' words. Shown under its name.
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     kind: Mapped[TopicKind] = mapped_column(
         Enum(TopicKind, native_enum=False, length=16), default=TopicKind.topic
     )
@@ -225,11 +207,15 @@ class TopicReadState(UuidPk, Timestamps, Base):
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    # 这个人对这间房的通知级别：`all`（默认）或 `mute`。静音的房间自己那一行照样记
-    # 未读数，但不计入任何总数（侧栏分组角标、桌面角标、标签页标题）。用字符串不用
-    # 布尔，以后加「只提到我」是多一个值，不是多一列。
+    # 这个人对这个频道的通知档位（`NotifyLevel`）：所有新消息、只在 @我和我参与的
+    # 支线有回复时（默认）、静音。读的人一律经过 `effective_level`，那里把过了期的
+    # 静音当成默认。
     notify_level: Mapped[str] = mapped_column(
-        String(16), default="all", server_default="all"
+        String(16), default="mentions", server_default="mentions"
+    )
+    # 静音到什么时候；空 = 直到本人取消。只在 `mute` 时有值。
+    muted_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 

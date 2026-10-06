@@ -1,14 +1,14 @@
 // 演示房间右侧那几格的数据：剧本里写的东西（`demoScene` 算出来的帧）→ 产品组件要
 // 的形状 → 演示后端的那几条路由。
 //
-// 那几格用的是产品里真的面板（`PanelOverview` / `PanelChanges` / `PanelPreview`），
-// 它们不接 props 拿数据，而是自己去 `/api/...` 取。演示页没有后端，所以这里把剧本
-// 声明的那点东西翻译成后端会回的信封，交给 `demoBackend.answer`。产品组件一行不改，
+// 那几格用的是产品里真的面板（经 `components/work/` 下的接线外壳：`PanelDocHost` /
+// `PanelChangesHost` / `PanelPreviewHost`），它们不接 props 拿数据，而是由外壳去
+// `/api/...` 取（面板本身只吃 props）。演示页没有后端，所以这里把
+// 剧本声明的那点东西翻译成后端会回的信封，交给 `demoBackend.answer`。产品组件一行不改，
 // 演示和真界面画的于是是同一段代码——「产品一改、演示跟着变」这句在这里才成立。
 //
 // 剧本只写要讲的东西（哪几个文件、改哪几行、文档正文），信封里那些和这一步无关的
 // 字段（版本号、字节数、时间戳）由这里补。
-import type { RoomOutput } from '@/api'
 import type {
   Block,
   BoardPhrase,
@@ -19,6 +19,7 @@ import type {
   TopicProgress,
   WorkspaceFile,
 } from '@/cx_types'
+import type { RoomOutput } from '@/types/roomOutput'
 import type { ChangesScene, Frame, OverviewScene, PreviewScene, SceneTask } from './demoScene'
 
 import { answer } from './demoBackend'
@@ -28,6 +29,10 @@ export const DEMO_TOPIC = 'demo'
 export const DEMO_DOCUMENT = 'demo-doc'
 /** 它挂在的那个项目。改动那一格按项目取 diff，所以要有一个。 */
 export const DEMO_PROJECT = 'demo'
+/** 「改动」那一格看的任务：画面里第一件任务，或者补上的那一件。 */
+export function demoTaskId(tasks: SceneTask[] | undefined): string {
+  return tasks?.[0]?.id ?? 'demo-task-1'
+}
 
 const HOUR = 3600_000
 const MINUTE = 60_000
@@ -44,7 +49,7 @@ function since(msAgo: number): string {
   return new Date(Date.now() - msAgo).toISOString()
 }
 
-// ---- 总览 ----
+// ---- 概览 ----
 
 /** 一件活：剧本里只写要讲的那几项，其余按一件普通的、开着分支的活补齐。 */
 export function roomTask(task: SceneTask, index: number): RoomTask & { blocks: Block[] } {
@@ -156,6 +161,8 @@ export function installPanelAnswers(frame: Frame): void {
   const overview = frame.overview
   const changes = frame.changes
   const tasks = (overview?.tasks ?? []).map(roomTask)
+  // 「改动」那一格看的是一件任务：画面里没列任务、却有改动时，补一件没名字的。
+  if (!tasks.length && changes) tasks.push(roomTask({ title: '' }, 0))
   // 房间里摆出来的东西：改动那一格列的是文件，预览那一格看的也是房间里的一份。
   const shown: RoomOutput[] = frame.preview
     ? [

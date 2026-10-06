@@ -28,7 +28,8 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence
-from app.domain.agent.announce import announce, settle_questions_answered_by
+from app.domain.agent.announce import announce, answer_questions
+from app.domain.agent.ask import publish_answered
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.compute import ComputePool
 
@@ -120,6 +121,7 @@ from app.domain.agent.platform_notices import (
     EVENT_MCP_NOT_CONNECTED,
     SEVERITY_WARN,
     WHO_HUMAN,
+    delivery_checking_notice,
     delivery_fallback_notice,
     notice,
 )
@@ -139,7 +141,6 @@ from app.domain.agent.prompt import (
     _pending_input_blocks,
     _progress_lines,  # noqa: F401
     _prompt_topic_refs,  # noqa: F401
-    project_overview,
 )
 
 # 兼容门面：不碰实例状态的问答（这一轮谁答、项目 key 带多少额度、这条记忆改动
@@ -660,13 +661,10 @@ class ChatService(SessionRecovery, RoomTurns):
                 attachments,
             )
             if isinstance(delivered, InputReconciliationPending):
-                payload = await self.post_system_event(
-                    topic_id,
-                    "输入已登记，发送结果正在核对；不会重复发送",
-                    turn_id,
+                checking, checking_meta = delivery_checking_notice()
+                await self.post_system_event(
+                    topic_id, checking, turn_id, meta=checking_meta
                 )
-                if payload is not None:
-                    yield {"type": "event_block", "block": payload}
                 return
             if delivered is True:
                 # The answer streams out of the turn already in flight, which
@@ -681,11 +679,9 @@ class ChatService(SessionRecovery, RoomTurns):
                 delivered,
             )
             fallback_text, fallback_meta = delivery_fallback_notice()
-            fallback = await self.post_system_event(
+            await self.post_system_event(
                 topic_id, fallback_text, turn_id, meta=fallback_meta
             )
-            if fallback is not None:
-                yield {"type": "event_block", "block": fallback}
 
         recipient_handle = None
         if recipient_instance_id is not None:
@@ -1060,11 +1056,6 @@ class ChatService(SessionRecovery, RoomTurns):
         from app.domain.agent.input_registration import confirm_receipt
 
         await confirm_receipt(self, receipt)
-
-    def nudge_ask_receipts(self, identity):
-        from app.domain.agent.ask_receipt_wait import nudge_ask_receipts
-
-        nudge_ask_receipts(self, identity)
 
     async def confirm_work_completion(self, completion: WorkCompletion) -> None:
         """Settle a journaled completion without process-local work context."""
@@ -1995,6 +1986,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 or (seats is not None and looks_like_agent_handle(seats[1])),
             }
             anchor_id: uuid.UUID | None = None
+            answered: list[Block] = []
             attribution_id = turn_id
             # B3: a reply threads under a block IN THIS TOPIC. A client that
             # kept a stale reply target across a topic switch would otherwise
@@ -2060,7 +2052,8 @@ class ChatService(SessionRecovery, RoomTurns):
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
                 await announce_mentions(session, topic, user_block, author, roster)
-                await settle_questions_answered_by(session, user_block)
+                # A reply to an agent's question goes to that agent (`recipient`).
+                answered = await answer_questions(session, user_block, recipient)
                 if len(agent_handles) > 1:
                     # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
                     # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
@@ -2130,6 +2123,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     },
                 )
             await session.commit()
+        await publish_answered(place.conversation_id, answered)
         # A person's words are what a task gets named by (room_task/naming.py).
         if names_a_person(author) and place.task is not None:
             naming.nudge(place.task.id, "message")
@@ -2743,32 +2737,6 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id=turn_id,
             session=session,
             text=text,
-        )
-
-    async def _project_overview(
-        self,
-        session: AsyncSession,
-        *,
-        project: Project,
-        conversation_id: uuid.UUID,
-        room_doc: str | None,
-        overview_doc: str | None,
-        all_topics: list[Topic],
-        roster: list[dict],
-    ) -> str:
-        """一行委托：拼总览的那段是纯的，住在 `agent/prompt.py` 的 project_overview。
-
-        留这个方法当接缝：它唯一的调用点（`_assemble_turn`）和驱动这个服务的测试
-        都照原来的样子读，搬动只换了实现住在哪个文件。
-        """
-        return await project_overview(
-            session,
-            project=project,
-            conversation_id=conversation_id,
-            room_doc=room_doc,
-            overview_doc=overview_doc,
-            all_topics=all_topics,
-            roster=roster,
         )
 
 

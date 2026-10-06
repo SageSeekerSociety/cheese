@@ -26,10 +26,10 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
-from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent import attachments, machine_launcher
 from app.domain.agent.device_hub import DeviceOffline
@@ -69,14 +69,17 @@ from app.domain.agent.session_host.contract import (
     Access,
     Image,
     InputProtocolUnavailable,
+    InputUnconfirmed,
     Owner,
     Prompt,
+    SessionError,
     SessionSpec,
 )
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.agent.session_host.host import RunnerUnsupported, SessionHost
 from app.domain.delivery.input_identity import (
     InputIdentity,
+    InputNotSent,
     InputOutcomeUnconfirmed,
     InputReceipt,
     InputRegistrar,
@@ -889,7 +892,6 @@ class RoomSessions:
         on_mark: Callable[[uuid.UUID], None],
         register_input: InputRegistrar,
         resume_token: str | None = None,
-        expected_native_session: str | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
         acting: str | None = None,
@@ -909,10 +911,9 @@ class RoomSessions:
 
         An ack, not an answer: what the agent does about it arrives through the
         seat's reading — possibly minutes later, possibly to a different process
-        than the one that sent this. ``expected_native_session`` is an Ask's
-        answer: it may go only into that live conversation, never a cold one.
-        ``owes_reply``: a person wrote this, and the session answers them in the
-        room before it does anything else (`driven/runner.py`)."""
+        than the one that sent this. ``owes_reply``: a person wrote this, and
+        the session answers them in the room before it does anything else
+        (`driven/runner.py`)."""
         # One line per message put to a session: where the platform spent the
         # time between the turn opening and the runner holding the input.
         with timed(
@@ -923,32 +924,21 @@ class RoomSessions:
             work=work_id,
         ) as mark:
             seat = self._seat_of(session)
-            if expected_native_session is not None:
-                live = self.live.get(seat)
-                if (
-                    live is None
-                    or live.conversation != expected_native_session
-                    or live.session.project_id != session.project_id
-                ):
-                    raise ValidationError(
-                        "The original Ask session is not live; no replacement started"
-                    )
-            else:
-                live = await self.ensure(
-                    session,
-                    system_prompt=system_prompt,
-                    resume_token=resume_token,
-                    model=model,
-                    env=env,
-                    acting=acting,
-                    needs_place=needs_place,
-                    reads_only=reads_only,
-                    phases=mark.phases,
-                )
-                mark.lap()
-                message = self._with_project_state(
-                    seat, live, resume_token, session_opening, opening_changes, message
-                )
+            live = await self.ensure(
+                session,
+                system_prompt=system_prompt,
+                resume_token=resume_token,
+                model=model,
+                env=env,
+                acting=acting,
+                needs_place=needs_place,
+                reads_only=reads_only,
+                phases=mark.phases,
+            )
+            mark.lap()
+            message = self._with_project_state(
+                seat, live, resume_token, session_opening, opening_changes, message
+            )
             if not live.takes_inputs:
                 raise InputProtocolUnavailable()
             pictures = self._images(session, images)
@@ -999,6 +989,7 @@ class RoomSessions:
                     identity,
                     Prompt(work_id, message, images=pictures, owes_reply=owes_reply),
                     steer=False,
+                    register_input=register_input,
                 )
                 mark("submit")
             finally:
@@ -1083,11 +1074,18 @@ class RoomSessions:
             identity,
             Prompt(identity.input_id, text, images=pictures, owes_reply=owes_reply),
             steer=True,
+            register_input=register_input,
         )
         return True
 
     async def _submit(
-        self, live: Live, identity: InputIdentity, prompt: Prompt, *, steer: bool
+        self,
+        live: Live,
+        identity: InputIdentity,
+        prompt: Prompt,
+        *,
+        steer: bool,
+        register_input: InputRegistrar,
     ) -> None:
         accepted = False
         try:
@@ -1100,6 +1098,15 @@ class RoomSessions:
             # must never gate the send that admits it.
             if self.host.reads_on_accept(live.ref):
                 await self._hear_receipt(InputReceipt(identity, "accepted"))
+        except SessionError as exc:
+            if accepted or isinstance(exc, InputUnconfirmed):
+                raise InputOutcomeUnconfirmed(identity, accepted=accepted) from exc
+            # The host raises InputUnconfirmed for anything after the write was
+            # attempted; any other SessionError means it never got that far (the
+            # session is not this process's, or could not be started again), so
+            # the input is certainly not in the session: nothing to reconcile.
+            await register_input.withdraw(identity)
+            raise InputNotSent(identity, str(exc)) from exc
         except Exception as exc:
             # Even a transport error can follow admission at the remote end.
             # Keep the committed identity; the caller must not queue a new UUID.
@@ -1148,45 +1155,6 @@ class RoomSessions:
             yield events()
         finally:
             self.queues.pop(work_id, None)
-
-    async def ask_origin(self, project_id, topic_id, agent_handle) -> dict | None:
-        """The seat's exact live native identity, starting and sending nothing:
-        the work its session is doing is the work this process has open."""
-        from app.domain.agent.ask_origin import refused
-
-        seat = (topic_id, agent_handle)
-        live = self.live.get(seat)
-        work = self.work.get(seat)
-        if live is None or work is None or live.session.project_id != project_id:
-            refused(
-                "no live session work",
-                topic_id,
-                agent_handle,
-                live=live is not None,
-                work=work,
-            )
-            return None
-        status = await self.host.status(live.ref)
-        if status is None or not status.working or status.work_id != str(work):
-            refused(
-                "session not working on it",
-                topic_id,
-                agent_handle,
-                work=work,
-                reachable=status is not None,
-                working=status.working if status is not None else None,
-                session_work=status.work_id if status is not None else None,
-            )
-            return None
-        if self.live.get(seat) is not live or self.work.get(seat) != work:
-            refused("session changed while reading", topic_id, agent_handle, work=work)
-            return None
-        return {
-            "harness": self.harness,
-            "native_session_id": live.conversation,
-            "work_id": str(work),
-            "recipient_handle": agent_handle,
-        }
 
     async def interrupt(self, session: SessionRef) -> bool:
         """Take the seat's work away; the session and its conversation stay.
@@ -1258,19 +1226,6 @@ class RoomSessions:
         return {
             conversation for pair_seat, conversation in self.dead if pair_seat == seat
         }
-
-    def holds_conversation(self, topic_id, harness, conversation) -> bool:
-        """Is that exact conversation still attached somewhere in this room?
-
-        A seat outlives its conversations, and an Ask answer may enter only the
-        one that asked it: ``send`` refuses to start another for it. The
-        conversation id is the harness's own, and a room holds it at most once,
-        so the room is enough to identify it."""
-        return self.harness == harness and any(
-            live.conversation == conversation
-            for seat, live in self.live.items()
-            if seat[0] == topic_id
-        )
 
     def holds(self, topic_id, agent_handle=None) -> bool:
         """Is there a session here this process can still reach — for this
@@ -1377,12 +1332,24 @@ class RoomSessions:
         process is gone counts as the conversation's death only when it names
         the stored resume token (FB-56 legacy③); a runner that could not be
         asked is unknown, never dead.
+
+        A runner the machine says is gone is recorded on its placement, and no
+        later restart asks again: its death is the stored answer, until the
+        next message starts the session and places it afresh. Every deploy
+        restarts the backend, and asked each time, the same few hundred gone
+        runners made a burst of failed calls on every one.
         """
         # These answer for THIS round only — a conversation the last round
         # reached says nothing about this one. (The cumulative witness is
         # `dead`: a death once seen stays seen.)
         self.found_conversations.clear()
         self.terminal_conversations.clear()
+        asked_at = datetime.now(UTC)
+        placements = await self.channel.placed(self.harness, device_id)
+        for placed in placements:
+            if placed.let_go and placed.resume_token:
+                seat = self._seat_of(placed.session)
+                self.terminal_conversations.add((seat, placed.resume_token))
         found: list[tuple[SessionRef, CoreRef, Access, str | None, str]] = [
             (
                 placed.session,
@@ -1403,10 +1370,12 @@ class RoomSessions:
                 placed.resume_token,
                 placed.agent_handle,
             )
-            for placed in await self.channel.placed(self.harness, device_id)
+            for placed in placements
+            if not placed.let_go
         ]
         await self.host.adopt([(ref, access) for _, ref, access, _, _ in found])
         recovered: list[SessionRef] = []
+        gone: list[SessionRef] = []
         for session, ref, access, resume_token, acting in found:
             seat = self._seat_of(session)
             room_id = session.topic_id
@@ -1420,6 +1389,8 @@ class RoomSessions:
             if status is None:
                 continue
             if not status.alive:
+                if status.runner_gone:
+                    gone.append(session)
                 # A runner that is gone ran the placement's stored
                 # conversation; one that answered names its own.
                 if resume_token and (
@@ -1446,6 +1417,8 @@ class RoomSessions:
                 self.clocks[seat] = Clock(opened=now, progressed=now)
             self.unchecked.add(seat)
             recovered.append(session)
+        if gone:
+            await self.channel.let_go(gone, placed_before=asked_at)
         # Chat restores room bookkeeping before replay starts reading.
         return recovered
 

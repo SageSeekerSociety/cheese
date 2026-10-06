@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 话题页右侧「文档」这一格 —— 一只薄容器。
 //
-// 它以前是一个 2439 行的组件：自己 import 五个接口函数、自己每 2.5 秒把正文写回去、自己
+// 它以前是一个 2439 行的组件：自己引五个接口函数、自己每 2.5 秒把正文写回去、自己
 // 管着服务端版本号与冲突，然后又自己把这一切画出来。于是「文档」这个界面在测试和 /demo
 // 里都得先立一个假后端，而任何一行样式调整都要在一个两千行的文件里找。
 //
@@ -12,18 +12,17 @@
 //     → `components/panels/PanelDocView.vue`，只凭 props 渲染
 //   - 编辑器本身（tiptap 实例、几种装饰、别人的光标、段落闪一下）
 //     → `components/panels/doc/DocSurface.vue`，画不动的一层放在那儿
-// 这一只只负责把两边接起来：状态递下去、事件接回来。加取数动作在组合式函数里加，加画法
-// 在展示组件里加，这一只基本不再长。props 一次摊开而不是 v-bind 一整包：这二十来样东西
-// 就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
-import type { PanelDocument } from '../../composables/usePanelDoc'
-import type { ProjectMemberRow, Topic } from '../../cx_types'
+// 取数的那几个组合式函数由上一层的接线外壳调用（`components/work/PanelDocHost.vue`）：
+// 场景棘轮里面板自己必须只吃 props，取数一滴都不能漏进 `components/panels/**`。这一只因此只做两件事——把外壳递来的
+// 三包状态摊给展示组件，把事件接回来。props 一次摊开而不是 v-bind 一整包：这二十来样东
+// 西就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
+import type { DocPeopleBundle } from '../../composables/useDocPeople'
+import type { DocThreadsBundle } from '../../composables/useDocThreads'
+import type { PanelDocBundle, PanelDocument } from '../../composables/usePanelDoc'
+import type { Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
 import { ref, watch } from 'vue'
-
-import { useDocPeople } from '../../composables/useDocPeople'
-import { useDocThreads } from '../../composables/useDocThreads'
-import { usePanelDoc } from '../../composables/usePanelDoc'
 
 import PanelDocView from './PanelDocView.vue'
 
@@ -45,12 +44,18 @@ const props = withDefaults(
     agentName?: string
     /** 项目 AI 队友的 handle：评论里 @ 它要写成它的点名，它才收得到。 */
     agentHandle?: string | null
-    /** 项目名册：正文里 @ 得到的人，`<@账号>` 标签上的名字。 */
-    members?: ProjectMemberRow[]
     /** 画在一整页里，见 PanelDocView。 */
     bare?: boolean
     /** 顶栏画到页面上的哪个位置，见 PanelDocView。 */
     barTo?: string
+    /** 跟着外面那一列一起滚，见 PanelDocView。 */
+    flow?: boolean
+    /** 这一格的取数（`composables/usePanelDoc.ts` 那一包）。 */
+    docPanel: PanelDocBundle
+    /** 评论串那一包（`composables/useDocThreads.ts`）。 */
+    docThreads: DocThreadsBundle
+    /** 名册读成名字那一包（`composables/useDocPeople.ts`）。 */
+    docPeople: DocPeopleBundle
   }>(),
   {
     taskId: null,
@@ -58,9 +63,9 @@ const props = withDefaults(
     topicList: () => [],
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
-    members: () => [],
     bare: false,
     barTo: undefined,
+    flow: false,
   }
 )
 
@@ -79,14 +84,10 @@ const emit = defineEmits<{
 
 const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
 
-const doc = usePanelDoc(props)
+const doc = props.docPanel
+const docThreads = props.docThreads
+const people = props.docPeople
 
-const docThreads = useDocThreads(() => doc.documentId.value)
-const people = useDocPeople({
-  members: () => props.members,
-  agentHandle: () => props.agentHandle,
-  agentName: () => props.agentName,
-})
 // 回复里 @ 的 AI 队友，和发评论一样写成点名。
 const threads = {
   state: docThreads.state,
@@ -171,6 +172,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :bare="props.bare"
     :untitled="!!props.taskId"
     :bar-to="props.barTo"
+    :flow="props.flow"
     :session="doc.session.value"
     :editable="doc.editable.value"
     :read-only="doc.readOnly.value"
@@ -203,5 +205,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     @open-file="emit('open-file', $event)"
     @rename="rename"
     @delete="emit('delete')"
-  />
+  >
+    <template #lead><slot name="lead" /></template>
+  </PanelDocView>
 </template>

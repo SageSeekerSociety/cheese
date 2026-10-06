@@ -340,10 +340,10 @@ async def test_project_factory_mints_only_its_repository_and_isolates_cache(
         github_app_module.settings, "github_app_private_key_path", key_path
     )
     monkeypatch.setattr(github_app_module, "_instances", {})
-    repo_name = "acme/widgets"
+    bound = SimpleNamespace(repo="acme/widgets", repository_id=11, installation_id=2)
 
     async def binding(self, project_id):
-        return SimpleNamespace(repo=repo_name, installation_id=2)
+        return bound
 
     monkeypatch.setattr(
         github_app_module.ProjectGitInstallationRepository, "get_by_project", binding
@@ -351,11 +351,23 @@ async def test_project_factory_mints_only_its_repository_and_isolates_cache(
     first = await github_app_module.github_app_tokens_for_project(uuid.uuid4(), None)
     assert first is not None
     await first.installation_token()
-    repo_name = "acme/second"
+    bound = SimpleNamespace(repo="acme/second", repository_id=12, installation_id=2)
     second = await github_app_module.github_app_tokens_for_project(uuid.uuid4(), None)
     assert second is not None
     await second.installation_token()
-    assert [m["body"]["repositories"] for m in mints] == [["widgets"], ["second"]]
+    # Bound before ids were kept: limited by name until the id is learned.
+    bound = SimpleNamespace(repo="acme/third", repository_id=None, installation_id=2)
+    third = await github_app_module.github_app_tokens_for_project(uuid.uuid4(), None)
+    assert third is not None
+    await third.installation_token()
+    # By id, which a rename on GitHub does not change.
+    assert [
+        {k: v for k, v in m["body"].items() if k != "permissions"} for m in mints
+    ] == [
+        {"repository_ids": [11]},
+        {"repository_ids": [12]},
+        {"repositories": ["third"]},
+    ]
 
 
 @pytest.mark.anyio

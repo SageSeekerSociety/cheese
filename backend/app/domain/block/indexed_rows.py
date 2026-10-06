@@ -24,15 +24,12 @@ migration is a snapshot and must not change when this file does;
 
 from sqlalchemy import text
 
-#: Platform events on the machine side. When one landed during a wait, the
-#: member is most likely not stuck: the machine under it is not ready yet, and
-#: the sidebar picks a longer threshold and different words for it.
-MACHINE_EVENTS = (
-    "machine_provisioning",
-    "device_waiting",
-    "sandbox_rebuilt",
-    "environment_repaired",
-)
+#: Platform events on the machine side said in the conversation. When one
+#: landed during a wait, the member is most likely not stuck: the machine under
+#: it is not ready yet, and the sidebar picks a longer threshold and different
+#: words for it. A machine the turn is waiting for is a run record
+#: (`run_record.models.RunRecord`, kind `device_waiting`) and read from there.
+MACHINE_EVENTS = ("environment_repaired",)
 
 #: "This turn broke": an unclassified failure (HTTP 502/404, an exception's own
 #: words) and a classified platform fault. Timeouts and deploy interruptions are
@@ -49,10 +46,6 @@ QUESTION_ROWS = text("kind = 'message' AND (meta ->> 'options') IS NOT NULL")
 
 #: A platform event saying the machine under a room is not ready yet.
 MACHINE_EVENT_ROWS = text(f"(meta ->> 'event_type') IN ({_one_of(MACHINE_EVENTS)})")
-
-#: The room's 「机器正在创建并接入」 event, the watermark every turn starts from
-#: (`BlockRepository.turn_history`).
-CLOUD_PROVISIONING_ROWS = text("(meta ->> 'event_type') = 'cloud_provisioning'")
 
 #: A platform event saying a turn ended in an error.
 FAILED_TURN_ROWS = text(

@@ -87,10 +87,24 @@ watch(
 /** 表单里的几样人话 → 后端要的 `spec`。 */
 function specFromForm(): Record<string, unknown> {
   if (form.trigger !== 'schedule') return { scope: form.scope }
+  return { ...whenFromForm(), ...keptFromRoutine() }
+}
+
+function whenFromForm(): Record<string, unknown> {
   if (form.freq === 'hourly') return { freq: 'hourly', minute: Number(form.minute) }
   if (form.freq === 'weekly') return { freq: 'weekly', time: form.time, weekdays: [...form.weekdays] }
   if (form.freq === 'monthly') return { freq: 'monthly', time: form.time, day: Number(form.day) }
   return { freq: 'daily', time: form.time }
+}
+
+/**
+ * 定时规则里表单没有画出来的那一项：`feedback_batch`（每次附上几条待分诊反馈，
+ * 见后端 `routine/schedule.py`）。改钟点时把整份 `spec` 换成表单这几格的话，
+ * 它就被悄悄删掉，分诊从此不再附反馈，而界面上什么也看不出来。
+ */
+function keptFromRoutine(): Record<string, unknown> {
+  const spec = (editing.value?.spec ?? {}) as Record<string, unknown>
+  return 'feedback_batch' in spec ? { feedback_batch: spec.feedback_batch } : {}
 }
 
 function submit() {

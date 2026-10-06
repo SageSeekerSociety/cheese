@@ -7,7 +7,6 @@ import pytest
 from app.domain.authz.policy import (
     authorize_topic_access,
     can_manage_project_members,
-    can_manage_roster,
     refuse_management_action,
     refuse_unauthenticated_chat,
 )
@@ -156,28 +155,6 @@ async def test_tokenless_socket_is_refused():
     assert _refusal(authenticated=False, token_presented=False) == (
         "auth_required",
         "请先登录再进入频道",
-    )
-
-
-async def test_can_manage_roster_owner_admin_only():
-    async def role_owner(_t, _h):
-        return TopicRole.owner
-
-    async def role_member(_t, _h):
-        return TopicRole.member
-
-    assert (
-        await can_manage_roster(_actor("token"), topic_id=TID, topic_role=role_owner)
-        is True
-    )
-    assert (
-        await can_manage_roster(_actor("token"), topic_id=TID, topic_role=role_member)
-        is False
-    )
-    # Fallback path defers to the service's own role check → permissive here.
-    assert (
-        await can_manage_roster(_actor("handle"), topic_id=TID, topic_role=role_member)
-        is True
     )
 
 

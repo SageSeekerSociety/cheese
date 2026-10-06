@@ -801,7 +801,15 @@ def stop_sandboxed_executor(home: Path) -> None:
         os.close(descriptor)
         descriptor = following
     try:
-        state = Path(f"/proc/self/fd/{descriptor}")
+        if sys.platform == "darwin":
+            # No /proc on macOS: the directory the descriptor holds, by the
+            # path the kernel resolved when it was opened, as the install
+            # named it (`bootstrap.executor_state`). A `/proc/self/fd` name
+            # derives a socket that never exists here, and no stop is sent.
+            named = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
+            state = Path(named.split(b"\0", 1)[0].decode())
+        else:
+            state = Path(f"/proc/self/fd/{descriptor}")
         runtime = platform_program(home, "remote-execution/runtime.py")
         helper = runpy.run_path(str(runtime))
         if Path(helper["socket_path"](state)).exists():
@@ -826,8 +834,14 @@ def stop_executor(home: Path, resource: str) -> None:
             raise RuntimeError("execution marker names another resource generation")
         runtime = platform_program(home, "remote-execution/runtime.py")
         state = installed / "executor"
-        helper = runpy.run_path(str(runtime))
-        if Path(helper["socket_path"](state)).exists():
+        # A home restored from its archive onto a fresh host keeps its links
+        # into the release it last ran from, which this host never staged:
+        # until the room is prepared here again, no executor of it can be
+        # running here, and there is nothing to stop.
+        if (
+            runtime.exists()
+            and Path(runpy.run_path(str(runtime))["socket_path"](state)).exists()
+        ):
             result = run_command(
                 [sys.executable, str(runtime), "stop", "--state", str(state)]
             )
@@ -864,7 +878,7 @@ def stop_executor(home: Path, resource: str) -> None:
     # directories of their own, and a machine that still has one is worth
     # stopping too.
     markers = [home / ".cheese" / "cheese-preview.pid"]
-    markers += sorted((home / ".cheese" / SEATS_DIR).glob("cheese-tunnel.pid"))
+    markers += sorted((home / ".cheese" / SEATS_DIR).glob("*/cheese-tunnel.pid"))
     markers.append(home / ".cheese" / "cheese-tunnel.pid")
     for marker in markers:
         name = marker.name[: -len(".pid")]

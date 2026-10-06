@@ -122,7 +122,6 @@ defineExpose({ scrollActiveIntoView })
               <span v-if="mm.agent" class="mention-agent-badge">{{ t('work.room.roster.agentBadge') }}</span>
               <ExternalTag v-else-if="mm.external" />
               <span class="mention-menu-sub">{{ mm.sub }}</span>
-              <span v-if="mm.outsideTopic" class="mention-menu-outside">{{ t('work.room.mention.notInTopic') }}</span>
               <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
               <span v-else-if="i === activeIndex && enterSends" class="mention-menu-hint">Enter</span>
             </button>
@@ -313,17 +312,6 @@ defineExpose({ scrollActiveIntoView })
 .mention-menu-sub {
   font-size: 12px;
   color: var(--faint);
-}
-/* 「不在话题中」：@ 得到，但他读不到这段对话。靠右、次要色——是一句要读的说明，
-   不是状态标签，所以不上底色。 */
-.mention-menu-outside {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.mention-menu-outside + .mention-menu-hint {
-  margin-left: 8px;
 }
 .mention-menu-hint {
   margin-left: auto;

@@ -55,8 +55,6 @@ WHO_CHEESE: Final = "cheese"
 WHO_HUMAN: Final = "human"
 
 # --- event_type: 类别码 ------------------------------------------------------
-#: 一条答案等不到它提问的那段对话：那段对话已经结束，平台不再重试。
-EVENT_ASK_ANSWER_UNDELIVERED: Final = "ask_answer_undelivered"
 #: PR 的 CI 没过。
 EVENT_CI_FAILED: Final = "ci_failed"
 #: 质量闸门跑了，没通过 —— 芝士要去改代码。
@@ -97,6 +95,9 @@ EVENT_MEMORY_ORGANIZING: Final = "memory_organizing"
 #: 芝士自己的事：一条记忆是 agent 写下的一份观察，没有人在等它，所以谁也不点。
 #: 改动本身收进 `detail`，按树的归属分别说进项目总览 / 本人的私聊。
 EVENT_MEMORY_CHANGED: Final = "memory_changed"
+#: A message written into the running session whose arrival is still being
+#: checked. It is not sent again.
+EVENT_DELIVERY_CHECKING: Final = "delivery_checking"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
@@ -201,7 +202,6 @@ EVENT_MENTION_FUSED: Final = "mention_fused"
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
     {
-        EVENT_ASK_ANSWER_UNDELIVERED,
         EVENT_CI_FAILED,
         EVENT_GATE_FAILED,
         EVENT_GATE_BLOCKED,
@@ -220,6 +220,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ENVIRONMENT_REPAIRED,
         EVENT_MEMORY_ORGANIZING,
         EVENT_MEMORY_CHANGED,
+        EVENT_DELIVERY_CHECKING,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,
@@ -267,6 +268,30 @@ EVENT_TYPES: Final = frozenset(
 )
 
 
+#: 平台运行中的事：不在对话里说，记成运行记录（`run_record`），在现场和管理后台
+#: 看。读聊天的人用不着它们；想知道这一轮为什么慢的人去现场看。
+#: `post_system_event` 遇到这几类自动改记，不用每个调用点自己判断。
+RUN_RECORD_EVENTS: Final = frozenset(
+    {
+        EVENT_TURN_QUEUED,
+        EVENT_DELIVERY_CHECKING,
+        EVENT_DELIVERY_FALLBACK,
+        EVENT_TOOLS_RECOVERED,
+        EVENT_PROMPT_REPLAYED,
+        EVENT_API_RETRY,
+        EVENT_CONTEXT_COMPACT,
+        EVENT_DEVICE_WAITING,
+        EVENT_TIMED_DELIVERY,
+        "cloud_startup",
+        "cloud_provisioning",
+        "sandbox_asleep",
+        EVENT_MEMORY_CHANGED,
+        "backend_error",
+        "frontend_error",
+    }
+)
+
+
 def notice(
     event_type: str,
     *,
@@ -300,36 +325,45 @@ def notice(
     }
 
 
-def ask_answer_undelivered_notice() -> tuple[str, dict]:
-    """一条答案等不到它提问的那段对话，平台不再重试了：说给房间。
-
-    ``ask_session_wait`` 等满一天就放弃投递。这句话必须说出来：答的人只会看到
-    自己的答案躺在那里没人理，而芝士的 prompt 里从来就没有它（它被挡在轮次
-    之外，正是为了让这一座的其余消息还能跑）。
-    """
-    meta = notice(
-        EVENT_ASK_ANSWER_UNDELIVERED,
+def tools_recovered_notice() -> tuple[str, dict]:
+    """工具断了是平台的事，平台自己接回来并重发；房间里的人不用动手。"""
+    return say("toolsRecovered"), notice(
+        EVENT_TOOLS_RECOVERED,
         severity=SEVERITY_WARN,
-        # 平台到头了：那段对话不会再回来，只能由人把答案重说一遍。
-        who=WHO_HUMAN,
-        detail=say("askAnswerUndeliveredDetail"),
-        detail_label=say("labelDetails"),
+        who=WHO_PLATFORM,
+        detail=say("toolsRecoveredDetail"),
+        detail_label=say("labelNote"),
     )
-    # 灰字事件 agent 一个字的 prompt 都读不到，所以这一句单独挂给它：
-    # 它需要知道那个人答过、而它从没收到。
-    meta[AGENT_NOTICE_META_KEY] = (
-        "房间里有一条答案没能送进提问时的那段对话（那段对话已经结束，不会再\n回来），平台已经停止投递：这条答案不会出现在你的任何一轮里。需要这个回答\n的话，把问题重新问一次。"
+
+
+def catching_up_notice() -> tuple[str, dict]:
+    """等的是这段对话自己的记录接回来，平台自己会往前推，没人需要动手。"""
+    return say("catchingUp"), notice(
+        EVENT_TURN_QUEUED,
+        severity=SEVERITY_INFO,
+        who=WHO_PLATFORM,
+        detail=say("catchingUpDetail"),
+        detail_label=say("labelWhatHappensNext"),
     )
-    return say("askAnswerUndelivered"), meta
+
+
+def delivery_checking_notice() -> tuple[str, dict]:
+    """A message whose write into the running session is still being
+    checked: it went in once, and will not be sent twice."""
+    return (
+        say("deliveryChecking"),
+        notice(EVENT_DELIVERY_CHECKING, severity=SEVERITY_INFO, who=WHO_PLATFORM),
+    )
 
 
 def delivery_fallback_notice() -> tuple[str, dict]:
-    """The single room-visible error for live-delivery fallback."""
+    """A message that could not enter the running session went to the queue:
+    the platform handles it from there."""
     return (
         say("deliveryFallback"),
         notice(
             EVENT_DELIVERY_FALLBACK,
-            severity=SEVERITY_ERROR,
+            severity=SEVERITY_WARN,
             who=WHO_PLATFORM,
             detail=say("deliveryFallbackDetail"),
             detail_label=say("labelNote"),
@@ -355,7 +389,9 @@ def memory_changed_notice(
     **被盖回去这件事必须进 `agent_notice`**（`AGENT_NOTICE_META_KEY`）。那条灰字
     事件是给人看的，agent 一个字的 prompt 都读不到它：写记忆的 agent 在会话机上，
     它看到的世界就是那棵树，而它刚才写的那一版已经不在了。不说，它会以为写成功
-    了、下一轮再写一遍同一版，而每一轮都会被盖回去。
+    了、下一轮再写一遍同一版，而每一轮都会被盖回去。这一句落在哪间房由调用方
+    定（`queries._say_memory_change`）：写它的 agent 所在的那一间，不一定是这
+    棵树的房间。
     """
     rejected = rejected or {}
     line = (

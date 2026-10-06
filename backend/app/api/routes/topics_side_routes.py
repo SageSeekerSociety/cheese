@@ -47,6 +47,7 @@ from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.api.routes.topics import BlockRepository, DbSession
 from app.api.task_instructions import dispatch, source_text, tell_task
+from app.api.task_origin import discussion, materials, materials_text
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
@@ -67,8 +68,10 @@ async def project_topic_unread(
     resolver: ActorResolverDep,
     handle: str | None = None,
 ) -> dict:
-    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for the
-    calling user, one query. Topics with zero unread are omitted.
+    """What each channel and task has waiting for the calling user:
+    {conversation_id: {"count", "new", "messages"}} — the number on it,
+    whether its name is bold, and how many messages came since the last read
+    (`TopicRepository.unread_counts`). Ones with nothing are omitted.
 
     Read-state is per-person, so the recipient comes from the verified
     credential (``handle`` is only checked against it) — a caller without one
@@ -85,22 +88,39 @@ async def project_topic_unread(
         requested=handle, project_id=project_id, allow_anonymous=False
     )
     counts = await TopicService(db).unread_counts(project_id, recipient)
-    return ok({str(topic_id): count for topic_id, count in counts.items()})
+    return ok(
+        {
+            str(topic_id): {
+                "count": unread.count,
+                "new": unread.new,
+                "messages": unread.messages,
+            }
+            for topic_id, unread in counts.items()
+        }
+    )
 
 
 @project_router.get("/{project_id}/topic-notify-levels")
 async def project_topic_notify_levels(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """我在这个项目里改过通知级别的房间：{topic_id: level}，默认（`all`）的不列。
-    侧栏拿它把静音房间的未读排除出总数。同 ``topic-unread`` 的项目门和本人规则。"""
+    """我在这个项目里不在默认档位的频道：{topic_id: {"level", "muted_until"}}，
+    过了期的静音算回默认、不列。同 ``topic-unread`` 的项目门和本人规则。"""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     recipient = await resolver.resolve_recipient(
         requested=None, project_id=project_id, allow_anonymous=False
     )
     levels = await TopicService(db).notify_levels(project_id, recipient)
-    return ok({str(topic_id): level for topic_id, level in levels.items()})
+    return ok(
+        {
+            str(topic_id): {
+                "level": level,
+                "muted_until": until.isoformat() if until else None,
+            }
+            for topic_id, (level, until) in levels.items()
+        }
+    )
 
 
 @project_router.post("/{project_id}/read-all")
@@ -199,7 +219,9 @@ async def upgrade_block(
                 title=thread.title,
                 owner=thread.owner_handle,
                 source=await source_text(db, block),
+                materials=materials_text(materials((await discussion(db, thread))[1])),
             ),
+            opening=True,
         )
         await db.commit()
         await dispatch(chat)

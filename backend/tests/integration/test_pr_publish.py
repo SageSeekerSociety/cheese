@@ -341,9 +341,22 @@ def test_the_pr_body_claims_no_review_that_has_not_happened(client, monkeypatch)
     assert f"/topics/{tid}" in opened["body"]
 
 
-def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):
-    """Rejected where it can still be fixed cheaply — not silently normalised
-    into history, and not discovered by a human reading `git log` next month."""
+def test_a_subject_in_the_repositorys_own_language_is_accepted(client, monkeypatch):
+    """The commit convention is the hosted repository's: the platform does not
+    turn a Chinese title, or one without a `type:` prefix, away."""
+    _github_world(monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+
+    _make_card(client, tid, change_subject="修复分页越界")
+
+    [card] = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
+    assert card["change_subject"] == "修复分页越界"
+
+
+def test_a_subject_of_two_lines_is_refused_at_the_card(client, monkeypatch):
+    """A PR title and a commit's first line cannot hold a line break; rejected
+    where it can still be fixed cheaply."""
     _github_world(monkeypatch)
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -351,11 +364,11 @@ def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):
     r = client.post(
         f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
-        json={"reviewer_handle": "alice", "change_subject": "做完了分页"},
+        json={"reviewer_handle": "alice", "change_subject": "修复分页\n顺手改了文案"},
     )
 
     assert r.status_code == 422
-    assert "Conventional Commits" in r.text
+    assert "只能有一行" in r.text
     assert client.get(f"/topics/{tid}/accept-card").json()["data"]["total"] == 0
 
 
@@ -401,8 +414,7 @@ def test_a_legacy_card_still_gets_the_fallback_title(client, monkeypatch):
     )
 
     [opened] = _FakeClient.opened
-    # The fallback is meant to look wrong in a git log — that is the point.
-    assert opened["title"] == "chore: 做一个东西"
+    assert opened["title"] == "做一个东西"
 
 
 def test_a_card_with_no_subject_at_all_is_refused(client, monkeypatch):
@@ -421,15 +433,14 @@ def test_a_card_with_no_subject_at_all_is_refused(client, monkeypatch):
 
     assert r.status_code == 422
     # The refusal has to teach, not just refuse: the reader is an agent one
-    # turn away from re-filing, so the shape AND a copy-pasteable example.
-    assert "type(scope): description" in r.text
-    assert "subject: fix(accept):" in r.text
+    # turn away from re-filing, so it says where the format comes from.
+    assert "git log" in r.text
     assert client.get(f"/topics/{tid}/accept-card").json()["data"]["total"] == 0
 
 
 def test_a_blank_subject_is_refused_like_a_missing_one(client, monkeypatch):
     """Whitespace is not a subject. Without this the string survives the
-    presence check and `chore: <话题标题>` comes back through `valid_subject`."""
+    presence check and the topic title comes back through `valid_subject`."""
     _github_world(monkeypatch)
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -441,7 +452,7 @@ def test_a_blank_subject_is_refused_like_a_missing_one(client, monkeypatch):
     )
 
     assert r.status_code == 422
-    assert "type(scope): description" in r.text
+    assert "git log" in r.text
     assert client.get(f"/topics/{tid}/accept-card").json()["data"]["total"] == 0
 
 

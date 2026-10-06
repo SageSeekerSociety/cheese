@@ -52,7 +52,7 @@ steps:
     desc: 会话改过的收回来写进库。两边都改了同一条时平台那一份赢，会话那一版存成旁路的 .conflict.md，并请它重读再写。
     link: /dev/memory#write
   - label: 房间里的那条事件
-    desc: 有改动就留一条折叠的灰字事件，不点任何人的名。team 的改动说进总览房间，private 的改动说进那个人的私聊。
+    desc: 有改动就留一条折叠的灰字事件，不点任何人的名。team 的改动说进「综合」，private 的改动说进那个人的私聊。
     link: /dev/memory#events
   - label: 下一次开场
     desc: 别人刚改的也在铺进来的那一份里。换一个人说话，注入的 private 索引跟着换成他的。
@@ -98,7 +98,7 @@ steps:
 
 两次做的是同一件事，因为对账**幂等**：谁比谁新不靠调用点记，靠会话机上那份基线（`runner.MEMORY_BASELINE`，`$HOME/.cheese/memory/.baseline.json`）。**基线和这棵树同生同死**：它俩在一个目录里，会话的家被重建（`resource_cleanup` 会删掉它）时一起没了，于是「磁盘空、基线满」这个状态不会出现——真出现的话，读起来就是「这个会话把整棵树删光了」，而平台上那份团队记忆会被整批删掉、没有历史可以恢复。就算基线还在，也还有一道保险：一次对账里某个作用域要删的条数超过一半、而且超过 3 条时，取消这次删除、原样铺回平台的版本，并把拦下的路径写进 runner 日志（`tree.BULK_DELETE_RATIO` / `BULK_DELETE_MIN`，`TreeSync.held`）。批量删除是个信号，不是一步操作。
 
-合成哪一份的规矩在 `tree.sync_tree`（纯函数，两侧跑的是同一段代码），一句话：**平台这一份赢冲突**。三种情形——会话没动过 → 用平台那一份；平台没动过 → 用会话那一份；两边都动了 → 平台赢，会话那一版**存成旁路文件**（`<名字>.conflict.md`，同一个目录，`runner._keep_refused`）并在房间里说一句「重读再写」。旁路文件不在树里、不进索引、也不会被同步回库（`read_memory` 只收过得去 `check_scoped_path` 的 `.md`，那个名字带点，过不去），它只是留给写的人重读自己那一版的东西。**删除只在自己点过名的作用域里认**：这一轮没轮到的 `private` 会被从会话目录里收走，那是「收走」，不是「删掉」。
+合成哪一份的规矩在 `tree.sync_tree`（纯函数，两侧跑的是同一段代码），一句话：**平台这一份赢冲突**。三种情形——会话没动过 → 用平台那一份；平台没动过 → 用会话那一份；两边都动了 → 平台赢，会话那一版**存成旁路文件**（`<名字>.conflict.md`，同一个目录，`runner._keep_refused`）并在现场记一条运行记录、给写它的 agent 留一句「重读再写」（见[改动记在哪](#events)）。旁路文件不在树里、不进索引、也不会被同步回库（`read_memory` 只收过得去 `check_scoped_path` 的 `.md`，那个名字带点，过不去），它只是留给写的人重读自己那一版的东西。**删除只在自己点过名的作用域里认**：这一轮没轮到的 `private` 会被从会话目录里收走，那是「收走」，不是「删掉」。
 
 **正文没变就不写。** 每一次写入都推高 `version`，而版本号是冲突判据——每轮把整棵树推高一版，等于把这个判据作废（`session.apply_tree` 逐条比正文）。
 
@@ -141,16 +141,17 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 界面上还没有记忆面板（这套 API 是为了它先露出来的）。
 
-## 房间里的那条事件 {#events}
+## 改动记在哪 {#events}
 
-每次真的改了东西，说进那棵树自己的房间，**不点任何人的名**（`memory_changed`，`platform_notices.memory_changed_notice`）：
+每次真的改了东西，记成一条运行记录，**不进对话、不点任何人的名**（`memory_changed`，`platform_notices.memory_changed_notice`，`run_record`）：
 
-- `team/` 的改动 → **项目的根房间「综合」**；
-- `private/<handle>/` 的改动 → **那个人的私聊**（没有就现开一间）。
+- `team/` 的改动 → **写它的那段对话**的现场；
+- `private/<handle>/` 的改动 → **那个人的私聊**的现场（没有就现开一间）；
+- 整理（dream）改了 team 的哪几条 → 项目根房间「综合」的现场。
 
-一条记忆是 agent 写下的一份观察，没有人欠它一个动作，所以它是一条灰字事件，事件本身收进 `meta.detail`（统一 diff，按路径分段、每段上限 200 行）。两棵树分开说，因为读它们的人不是一批：把某个人的 private diff 说进总览，等于把一个人的偏好广播给整个项目。
+一条记忆是 agent 写下的一份观察，没有人欠它一个动作，所以它只在现场里，改动本身收进 `meta.detail`（统一 diff，按路径分段、每段上限 200 行）。两棵树分开记，因为读它们的人不是一批：把某个人的 private diff 记进一间多人的房间，等于把一个人的偏好广播给房间里的人。
 
-写记忆的那个 agent 读不到这条灰字事件——它在会话机上，它看到的世界就是那棵树。所以**有被平台盖回去的版本时，那条通知还带一句 `agent_notice`**（`platform_notices.memory_conflict_notice`）：点名哪几条被盖了、它写的那一版在哪个 `.conflict.md` 里、请重读再写。不说，它下一轮写的还是同一版，而每一轮都会被盖回去。超了单条上限没收的那几条同理，`agent_notice` 里点名哪几条、为什么、没收的那一版在哪个 `.rejected.md` 里（`platform_notices.memory_rejected_notice`）。**这两句里的路径按 agent 那一侧的写法写全**（`~/.cheese/memory/<作用域>/<名字>`，`files.prompt_path`）：只写 `team/x.md`，它的文件工具会把这次读写发去工作机，那里没有记忆树，读回来是「文件不存在」。被盖回去的那一版是删除时没有正文可留（`runner._keep_refused` 跳过空内容），那种情况那句话只说「没有副本」，不指一个文件名。
+写记忆的那个 agent 读不到运行记录——它在会话机上，它看到的世界就是那棵树。所以**有被平台盖回去的版本时，还要单独说给写它的 agent 一句 `agent_notice`**（`platform_notices.memory_conflict_notice`），落在**这次对账的那间房**、不露面（`in_room: false`）：`agent_notice` 只随 `blocks` 进本房间下一轮的 prompt，运行记录不进 prompt（`queries._say_memory_change`）。那句话：点名哪几条被盖了、它写的那一版在哪个 `.conflict.md` 里、请重读再写。不说，它下一轮写的还是同一版，而每一轮都会被盖回去。超了单条上限没收的那几条同理，`agent_notice` 里点名哪几条、为什么、没收的那一版在哪个 `.rejected.md` 里（`platform_notices.memory_rejected_notice`）。**这两句里的路径按 agent 那一侧的写法写全**（`~/.cheese/memory/<作用域>/<名字>`，`files.prompt_path`）：只写 `team/x.md`，它的文件工具会把这次读写发去工作机，那里没有记忆树，读回来是「文件不存在」。被盖回去的那一版是删除时没有正文可留（`runner._keep_refused` 跳过空内容），那种情况那句话只说「没有副本」，不指一个文件名。
 
 ## 为什么不是「条目池 + 关键词召回」 {#why}
 
@@ -184,7 +185,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 **怎么跑。** 派法是 `platform_work` + `send`：跑在这个项目**默认芝士**的会话上，用它自己的模型。读进来的是 team 和每个人的 private 的 L1 索引加 L2 正文、有新增对话的房间的记录与活文档、是代码项目的话还有仓库。工具只有只读的那些，加一只能在记忆目录里写和删的手。提示词照搬 Claude Code 2.1.283 的 dream 段（`strings` 从二进制里取出来，见 `dream_prompt.py`），翻成中文、按芝士的量纲改过：四段（Orient / Gather / Consolidate / Prune-and-index）、团队记忆那一段、以及「拿记忆和 `CLAUDE.md` 对一遍」都在。最后这段只给代码项目，由它自己在仓库里找 agent 会自动读进来的说明文件（`CLAUDE.md`、`AGENTS.md`、`.claude/rules/` 一类），一份都没有就跳过。**两条规矩写死**：private 的内容永远不许升级进 team；和说明文件冲突时只做标注，不改说明文件。
 
-**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、房间事件都一样）。收尾时在**总览房间**发一条折叠事件，只列 team 里改动的文件，**不点任何人的名**，然后把判据那个计数器归零。private 的文件名和整理的人写下的那段交代都不进总览：总览全项目都看得见，而那段交代是看着所有人的 private 写的；它们留在 `memory_dream_runs`（`files`、`summary`）。拒绝执行时也一样，总览只说「这一次没做」，拦下的是哪几条记在那一条运行记录里。
+**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、房间事件都一样）。收尾时在**「综合」**发一条折叠事件，只列 team 里改动的文件，**不点任何人的名**，然后把判据那个计数器归零。private 的文件名和整理的人写下的那段交代都不进总览：总览全项目都看得见，而那段交代是看着所有人的 private 写的；它们留在 `memory_dream_runs`（`files`、`summary`）。拒绝执行时也一样，总览只说「这一次没做」，拦下的是哪几条记在那一条运行记录里。
 
 同一间房的两场对账排队跑（`ChatService._sync_memory`）：整理那一轮结束时，轮次钩子和整理收尾各要对一次账，交错时后一场读到的是前一场提交之前的数据库，整理算出的「改了哪些」就会是空的。
 

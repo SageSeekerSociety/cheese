@@ -17,6 +17,7 @@ from app.domain.machine.models import (
 SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
 SANDBOX_WAKING = "沙箱正在唤醒；对话和平台工具仍可用。"
 SANDBOX_RESTORE_FAILED = "沙箱没能从归档恢复，稍后会再试；对话和平台工具仍可用。"
+EXECUTOR_SETUP_FAILED = "工作电脑上的执行器没能装好：{reason}；对话和平台工具仍可用。"
 VM_PREPARING = "云虚拟机正在准备；对话和平台工具仍可用。"
 VM_ERROR = "云虚拟机出错：供应方报告错误。对话和平台工具仍可用。"
 # What a session whose sandbox's host the pool gave up on is told, once, with

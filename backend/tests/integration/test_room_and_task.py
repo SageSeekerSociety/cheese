@@ -111,23 +111,26 @@ def test_a_room_takes_a_second_task_after_the_first_is_accepted(client):
     assert _status(client, room_id) == "active"
 
 
-def test_archiving_the_room_still_takes_its_tasks(client):
-    """Cascade downward is unchanged: closing the place closes the work in it —
-    a piece of work with no room has no context and no way back.
-
-    The two ends use different words on purpose: a room is `archived` (a person
-    put it away and its work面 froze); a thread is `closed` (its work ended).
-    """
+def test_archiving_waits_for_the_tasks_in_the_room(client):
+    """A channel with an open task is not archived; once the task is closed,
+    it is."""
     project_id = _project(client)
     room_id = _room(client, project_id)
     task = _task(client, project_id, room_id, "修登录")
 
-    r = client.post(
-        f"/topics/{room_id}/archive",
-        json={"by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
+    def archive():
+        return client.post(
+            f"/topics/{room_id}/archive",
+            json={"by": "alice"},
+            headers=session_auth_headers("alice"),
+        )
 
+    assert archive().status_code == 422
+    assert _status(client, room_id) != "archived"
+
+    closed = client.post(
+        f"/topics/{task['id']}/close", json={}, headers=session_auth_headers("alice")
+    )
+    assert closed.status_code == 200, closed.text
+    assert archive().status_code == 200
     assert _status(client, room_id) == "archived"
-    assert _card_status(client, room_id, task["id"]) == "closed"

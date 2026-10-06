@@ -129,7 +129,7 @@ def test_nobody_but_the_machines_owner_gives_a_room_the_whole_machine(client):
     refused = _choose(client, tid, machine, session_auth_headers(MEMBER), "host")
 
     assert refused.status_code == 403
-    owner_only = "只有机器的主人本人登录后，才能让频道访问整台机器"
+    owner_only = "只有电脑的主人本人登录后，才能让频道访问整台电脑"
     assert owner_only in refused.json()["message"]
     assert _binding(client, tid) is None
 
@@ -372,6 +372,36 @@ def test_the_install_is_asked_for_the_rooms_access_to_the_machine(
 
     assert answer.status_code == 200, answer.text
     assert asked == {"sandbox": sandbox, "platform_machine": False}
+
+
+def test_an_install_that_fails_on_the_machine_is_told_not_a_server_error(
+    client, monkeypatch
+):
+    """The install exits non-zero on the machine (here: its Python cannot
+    open https). The room's agent gets the machine's last line of why, not a
+    500 with nothing in it."""
+    pid, tid = _room(client)
+    machine = _machine(client, pid)
+    assert _choose(client, tid, machine, session_auth_headers(OWNER)).status_code == 200
+    why = "urllib.error.URLError: <urlopen error unknown url type: https>"
+
+    async def fail(_device, _argv, **_kwargs):
+        return {
+            "exit": 1,
+            "stderr": "Traceback (most recent call last):\n  ...\n" + why + "\n",
+        }
+
+    monkeypatch.setattr(work_lease, "device_hub", _hub("linux-amd64", fail))
+    session_id, token = asyncio.run(_session_on(client, tid, machine))
+
+    answer = client.post(
+        f"/topics/{tid}/sessions/{session_id}/work-lease",
+        headers={"X-Cheese-Token": token},
+        json={"env": {}},
+    )
+
+    assert answer.status_code == 200, answer.text
+    assert why in answer.json()["data"]["unavailable"]
 
 
 def test_a_machine_that_cannot_isolate_the_room_is_heard_out(client, monkeypatch):

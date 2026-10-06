@@ -77,19 +77,24 @@ async def proposal_source_text(db, proposal) -> str:
     return f"{said}\n\n提议之前的讨论：\n{_lines(earlier)}"
 
 
-async def tell_task(db, task, content: str) -> None:
+async def tell_task(db, task, content: str, *, opening: bool = False) -> None:
     """Keep an instruction for the task's own session; dispatched after commit
-    (`dispatch`)."""
+    (`dispatch`). ``opening`` marks the first one, which drafts the task's
+    document from where it came from (`agent/opening.py`)."""
+    from app.domain.agent.opening import OPENING, PURPOSE
     from app.domain.delivery.agent import record_task_instruction
     from app.domain.delivery.ledger import DeliveryEvent
     from app.domain.notification.models import NotificationType
 
+    payload = {"projectId": str(task.project_id), "topicId": str(task.room_id)}
+    if opening:
+        payload[PURPOSE] = OPENING
     await record_task_instruction(
         db,
         DeliveryEvent(
             id=uuid.uuid4(),
             type=NotificationType.ROOM_NOTICE,
-            payload={"projectId": str(task.project_id), "topicId": str(task.room_id)},
+            payload=payload,
             occurred_at=datetime.now(UTC),
         ),
         task=task,

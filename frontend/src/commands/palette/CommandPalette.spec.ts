@@ -70,7 +70,8 @@ function topic(id: string, title: string, extra: Partial<Topic> = {}): Topic {
     title,
     kind: 'topic',
     status: 'active',
-    can_archive: true,
+    can_manage: true,
+    joined: true,
     created_at: '',
     ...extra,
   } as Topic

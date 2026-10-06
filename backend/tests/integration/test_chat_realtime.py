@@ -41,6 +41,7 @@ from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import registered
 from tests.support.hang import HANG_S
 from tests.support.quoted_context import prompt_quote, slide_quote
+from tests.support.run_records import records_of
 from tests.support.threads import thread_in
 
 
@@ -1171,9 +1172,9 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     都没有**，于是最常见的几条（AI 接口错误 / 余额用尽 / 座位限流）全都退化成
     「朴素系统行 + 整段原话」。
 
-    现在：没命中也照样产出 `turn_failed` 的 meta，正文只留一行——而且那一行是
-    **服务自己的原话**，不是「AI 服务返回错误」这种把原因埋起来的标签。原话原样
-    躺在 `meta.detail` 里。
+    现在：没命中也照样产出 `turn_failed` 的 meta。对话里那一行只说这一轮没做完，
+    带重试：服务的原话多半是英文，对房间里的人没有用；它原样躺在 `meta.detail`
+    里，点开就有，一个字不少。
 
     而且它是一条系统事件，不是芝士说的话：把机器的报错顶着芝士的名字发出去，
     读的人会以为那是它的判断。
@@ -1209,10 +1210,10 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     assert not [b for b in rows if looks_like_agent_handle(b.author)]
     block = next(b for b in rows if b.kind == BlockKind.event)
     assert block.author == "system"
-    # 一行，是服务的原话开头，而且整段原话不在正文里。
+    # 一行人话，服务的原话不在这一行上。
     assert "\n" not in block.content
-    assert "session limit" in block.content
-    assert "服务原话" not in block.content
+    assert "session limit" not in block.content
+    assert meta_retryable(block)
     # 原话一字不差取得回来 —— 它没有第二个副本，丢了就真丢了。
     meta = block.meta
     assert meta["event_type"] == "turn_failed"
@@ -1221,6 +1222,10 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     assert meta["who"] == "human"
     assert "session limit" in meta["detail"]
     assert meta["detail_label"] == "详细说明"
+
+
+def meta_retryable(block) -> bool:
+    return (block.meta or {}).get("retryable") is True
 
 
 class StorageFullScreen(StubChannel):
@@ -1382,7 +1387,7 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
     from app.domain.agent.compute import ComputePool
     from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
     from app.domain.block.models import consumed_turn
-    from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+    from app.domain.delivery.input_holds import seat_has_unfinished_input
     from tests.conftest import close_topic_subscriptions
 
     factory = business_db_factory  # type: ignore[attr-defined]
@@ -1487,15 +1492,9 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
         second = asyncio.create_task(summoned("user-2", "第二件事"))
         await asyncio.wait_for(provider.tried.wait(), HANG_S)
         second_frames = await asyncio.wait_for(second, HANG_S)
-        notices = [
-            frame["block"]
-            for frame in second_frames
-            if frame["type"] == "event_block"
-            and "发送结果正在核对" in frame["block"]["content"]
-        ]
+        async with factory() as session:
+            notices = await records_of(session, topic_id, "delivery_checking")
         assert len(notices) == 1
-        assert notices[0]["content"] == "输入已登记，发送结果正在核对；不会重复发送"
-        assert notices[0]["author_type"] == "platform"
         assert all(frame["type"] not in {"done", "error"} for frame in second_frames)
         assert not any(
             frame["type"] == "event_block"
@@ -1522,9 +1521,16 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
         ]
         async with factory() as session:
             history = await BlockRepository(session).list_for_topic(topic_id)
-        assert [
-            block.id for block in history if "发送结果正在核对" in block.content
-        ] == [uuid.UUID(notices[0]["id"])]
+            kept = await records_of(session, topic_id, "delivery_checking")
+        # Still the one record, and never a line in the conversation.
+        assert [r.id for r in kept] == [notices[0].id]
+        assert not [
+            b
+            for b in history
+            if b.author_type == "platform"
+            and b.turn_id
+            and (b.meta or {}).get("event_type") == "delivery_checking"
+        ]
     finally:
         provider.release.set()
         tasks = [first] if second is None else [first, second]
@@ -1791,10 +1797,7 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
 
     async def notices() -> list[str]:
         async with factory() as session:
-            return [
-                block.content or ""
-                for block in await BlockRepository(session).list_for_topic(slow)
-            ]
+            return [r.content for r in await records_of(session, slow)]
 
     async with asyncio.timeout(HANG_S):
         while not any("断线期间" in text for text in await notices()):

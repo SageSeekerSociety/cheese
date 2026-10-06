@@ -95,6 +95,13 @@ class AgentToolUse:
 STEP_ERROR_MAX = 500
 
 
+def step_error(said: str) -> str:
+    """What a failed step said, on one line, its tail when it is too long — and
+    then marked as cut, so the line does not open on half a word."""
+    text = " ".join(said.split())
+    return text if len(text) <= STEP_ERROR_MAX else "…" + text[-STEP_ERROR_MAX + 1 :]
+
+
 @dataclass
 class AgentStepFailed:
     """A tool call came back an error.

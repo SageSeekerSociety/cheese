@@ -95,6 +95,8 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 
 工作面板开在哪个页签写进 URL（`?tab=`），所以「你来看一眼这个 diff」是一条能发出去的链接。地址是页面的事，不是面板的：面板只报告自己动了，页面负责写回 query。
 
+面板并排还是浮层、开着还是收着，由 `composables/useTopicPanel.ts` 按**主区**宽度（窗口减去侧栏）定，三档的分界在 `useWorkspaceLayout.ts`：至少 `PANEL_OPEN_MIN`（1000）并排、默认开；`PANEL_DOCK_MIN`（840）到它之间并排、默认收；更窄浮在对话上方、默认收。页头的「概览」（`room/PanelToggle.vue`）开合它；并排时这个人的选择记在 store 的 `panelPref`，浮层不记，只写或清 `?tab=`。地址里有 `?tab=` 时面板总是开着。
+
 ## 对话的行管线 {#rows}
 
 聊天区一行一行的东西有**三种**：一条消息、一条还没落库的消息（同一个组件的 pending 档）、以及「芝士正在做」那一行（`ChatPanel` 自己画的）。它们的几何只有一份，写在 `components/room/room-row.css` 里，三个组件各自 `<style scoped src>` 引进去 —— 复制三份的话，改了其中一处的留白，另外两行就会错位。
@@ -114,11 +116,11 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 ## 工作面板与页签 {#workpanel}
 
-`WorkPanel.vue` 只负责两件事：**哪一页签在屏幕上、到底有哪几页签**；以及那些「必须一直对、不随页签切走」的信号。一页签渲染和取的东西都属于它自己那个 SFC。唯一的跨页签线是 `open-file`：文档里（或聊天里）一个 `<&path>` chip 打开那个文件 —— 房间文件里能画的走自己的页签，否则走「改动」。
+`WorkPanel.vue` 只负责两件事：**哪一页签在屏幕上、到底有哪几页签**；以及那些「必须一直对、不随页签切走」的信号。一页签渲染和取的东西都属于它自己那个 SFC。唯一的跨页签线是 `open-file`：文档里（或聊天里）一个 `<&path>` chip 打开那个文件 —— 房间文件里能画的走自己的页签；在频道里，其余的开一格只读的文件页签（`ProjectFileTab` → `useProjectFile` → `panels/ProjectFileView`），读项目当前版本，带行号就滚到那几行；在任务里走「改动」，读这件任务的版本。「改动」只看这一件任务：别的任务在它们自己的页面上，整个仓库在 ⋯ →「范围」→「全部文件」。
 
-固定页签是五格：`chat`（对话）、`overview`（总览）、`site`（现场）、`changes`（改动）、`preview`（预览）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进总览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
+固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（支线）、`routines`（定时与触发）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
 
-页签的内容在 `components/panels/` 下：`PanelDoc`（总览）、`PanelSite`（现场，`SiteStepOutput`；顶上那一行是和输入框下面同一个 `room/MemberActivity`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelProgress`（任务进度）、`PanelCard`（共用外壳）。
+总览两边各是一个组件：频道是 `components/channel/ChannelOverview.vue`（频道说明，「综合」换成项目总览的 `PanelDoc`；置顶 `ChannelOverviewPins`；进行中；最近完成），任务是 `components/task/TaskOverview.vue`（开始信息、任务文档的 `PanelDoc`、这一轮的清单、`TaskOutputs` 产出、`TaskRelatedList` 相关）。其余页签的内容在 `components/panels/` 下：`PanelSite`（现场，`SiteStepOutput`；顶上那一行是和输入框上方同一个 `room/MemberActivity`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelCard`（共用外壳）。
 
 ## 空间页 {#space}
 
@@ -176,12 +178,12 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 | 闸门 | 命令 | 拦什么 |
 |---|---|---|
 | ESLint | `pnpm run lint`（`task fe:lint:check`） | 代码问题；故意不传 `--fix` —— 会重写工作区的闸门可以在它偷偷修好的违规上退出 0 |
-| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`@/network/*`、`vue-router` 导入（`import type` 也算）；判据和四条组件原则见 `.claude/rules/architecture.md` |
+| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`@/network/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算）；判据和四条组件原则见 `.claude/rules/architecture.md` |
 | 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
 | 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错 |
 | 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的） |
 
-棘轮的形状都一样：跑检查、解析报告、和基线比，**只拦新增**，`--update` 把基线降下来（`import-boundary-baseline.json` / `tsc-baseline.json` / `stylelint-baseline.json`）。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），`stylelint-baseline.json` 冻着 17 个文件的存量违规，`import-boundary-baseline.json` 冻着 82 个组件、127 条。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
+棘轮的形状都一样：跑检查、解析报告、和基线比，**只拦新增**，`--update` 把基线降下来（`import-boundary-baseline.json` / `tsc-baseline.json` / `stylelint-baseline.json`）。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），`stylelint-baseline.json` 冻着 17 个文件的存量违规，`import-boundary-baseline.json` 冻着 47 个组件、59 条。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
 
 仓库根还有两道：调色板（`color="grey-*"`、`bg-white` 这类固定色）与 `src/` 单文件行数上限（后端 1500、前端 1000，只判与 `origin/main` 不同的文件），分别在 `.claude/scripts/check-repo-rules.sh` 和 `.claude/scripts/check-file-sizes.py`，样式表那条的存量冻在 `frontend/palette-baseline.json`。所有基线都**只能降不能升**，理由见 `docs/design-system.md` §7：一个悄悄失效的闸门和一棵干净的树，输出一模一样。那里也列了没有闸门、只能靠 review 的部分（排版、文案、动效）。
 

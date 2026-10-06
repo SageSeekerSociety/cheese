@@ -59,7 +59,7 @@ from app.domain.room_task.services import (
 )
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, threads_of_rooms
-from app.domain.topic.models import Topic, TopicKind
+from app.domain.topic.models import Topic
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -108,12 +108,13 @@ async def create_topic(
     topic = await TopicService(db).create(
         project_id=body.project_id,
         title=body.title,
+        description=body.description,
         parent_id=body.parent_id,
         created_by=actor.handle if actor.authenticated else None,
     )
     service = TopicService(db)
     relevance = await service.relevance_for_topics([topic], _viewer(actor))
-    managed = await TopicMemberService(db).managed_topic_ids([topic.id], actor.handle)
+    managed = await TopicMemberService(db).managed_topic_ids([topic], actor.handle)
     response = ok(_topic_out(topic, set(), {}, relevance, managed_ids=managed))
     # The caller can configure or enter this room as soon as it gets the ID.
     # Dependency teardown commits after the response, which races that request.
@@ -237,9 +238,7 @@ def _topic_out(
     in and the one phrase to print on it, derived from the same facts the row
     already carries plus its live card (`room_task/presentation.py`)."""
     out = TopicOut.model_validate(topic)
-    out.can_archive = topic.kind != TopicKind.root and topic.id in (
-        managed_ids or set()
-    )
+    out.can_manage = topic.id in (managed_ids or set())
     # Assign before dumping so the instant is serialized by the same schema as
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
@@ -257,7 +256,7 @@ def _topic_out(
     # 芝士停在一道只有我能回答的问题上，同样是「在等我」——而且比一张卡更急：卡是
     # 一轮结束后的状态，提问是一轮**停在半路**。它也蕴含参与，理由同上。
     asking_me = topic.id in (asks_me or set())
-    out.i_participate = mine.i_participate or asking_me
+    out.joined = mine.joined
     out.awaits_me = mine.awaits_me or asking_me
     data = out.model_dump(mode="json")
     facts = presentation.facts_for_room(
@@ -300,8 +299,8 @@ async def list_topics(
     active at or after it — "最近活跃的话题". Neither reads `updated_at`, which
     only moves when the topic's own fields change.
 
-    Every row also carries 与我的相关性 (`i_participate`/`awaits_me`) for the
-    caller — this is the endpoint the sidebar groups from.
+    Every row also carries what it is to the caller (`joined`/`awaits_me`) —
+    this is the endpoint the sidebar lists from.
 
     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`etag_for_json`），`If-None-Match`
     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
@@ -319,9 +318,7 @@ async def list_topics(
     live = await _live_cards(db, [t.id for t in topics])
     cards = _own_cards(live)
     managed = (
-        await TopicMemberService(db).managed_topic_ids(
-            [t.id for t in topics], actor.handle
-        )
+        await TopicMemberService(db).managed_topic_ids(topics, actor.handle)
         if actor.authenticated
         else set()
     )
@@ -438,7 +435,7 @@ async def get_topic(
     live = await _live_cards(db, [topic.id])
     cards = _own_cards(live)
     managed = (
-        await TopicMemberService(db).managed_topic_ids([topic.id], actor.handle)
+        await TopicMemberService(db).managed_topic_ids([topic], actor.handle)
         if actor.authenticated
         else set()
     )
@@ -460,6 +457,11 @@ async def get_topic(
             waits=waits.get(topic.id),
         )
     )
+
+
+def _answering_in(thread_id: uuid.UUID) -> list[str]:
+    """The AI teammates with a turn running in a 支线 right now."""
+    return sorted(set(get_broker().activity.turn_agents(str(thread_id)).values()))
 
 
 @router.get("/{topic_id}/blocks")
@@ -554,7 +556,9 @@ async def list_topic_blocks(
     reactions = await repo.reactions_for_blocks([b.id for b in blocks])
     # The line under each main-line message that has a 支线: same batch shape.
     threads = (
-        await thread_reads.under_messages(db, [b.id for b in blocks])
+        await thread_reads.under_messages(
+            db, [b.id for b in blocks], replying=_answering_in
+        )
         if place.inner_id is None
         else {}
     )
@@ -968,28 +972,6 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.get("/{topic_id}/overview")
-async def get_topic_overview(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """总览房间的自动区（#1889）：②③，结构化，给文档面板正文下方那一栏。
-
-    总览文档是三块：① 写在文档正文里，②③ 由平台现拼。注入 agent 提示词的
-    那一份是同一批数据的 markdown 排版（`topic/overview.py`），这里给的是能
-    逐个点击的结构化条目。
-
-    授权和读文档那一份完全一样：先认出「谁在这儿」，再看他在不在这个房间的
-    名册上。只有根话题有总览，别处 404（见 `TopicService.overview_auto`）。
-    """
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    blocks = await topics.overview_auto(place.room_id)
-    return ok({"root_topic_id": str(place.room_id), "blocks": blocks})
-
-
 @router.post("/{topic_id}/summon")
 async def summon_agent(
     topic_id: uuid.UUID,
@@ -1189,8 +1171,8 @@ async def mark_topic_read(
 async def set_topic_notify_level(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """这间房对我的通知级别：`all` 或 `mute`。和已读位一样按人记，人是谁取自
-    已验证的凭据。"""
+    """这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO
+    时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。"""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
@@ -1200,8 +1182,15 @@ async def set_topic_notify_level(
         requested=None, project_id=topic.project_id, allow_anonymous=False
     )
     level = str(body.get("level") or "")
-    await TopicService(db).set_notify_level(topic_id, handle, level)
-    return ok({"topic_id": str(topic_id), "level": level})
+    until = _parse_moment(body.get("muted_until"))
+    await TopicService(db).set_notify_level(topic_id, handle, level, until)
+    return ok(
+        {
+            "topic_id": str(topic_id),
+            "level": level,
+            "muted_until": until.isoformat() if until else None,
+        }
+    )
 
 
 @router.post("/{topic_id}/archive")
@@ -1218,7 +1207,7 @@ async def archive_topic(
     )
     if not actor.authenticated:
         raise ForbiddenError(say("archiveSignIn"))
-    await TopicMemberService(db).require_archive_manager(topic_id, actor.handle)
+    await TopicMemberService(db).require_manager(topic_id, actor.handle)
     topic = await TopicService(db).archive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
@@ -1264,7 +1253,7 @@ async def unarchive_topic(
     )
     if not actor.authenticated:
         raise ForbiddenError(say("unarchiveSignIn"))
-    await TopicMemberService(db).require_archive_manager(topic_id, actor.handle)
+    await TopicMemberService(db).require_manager(topic_id, actor.handle)
     topic = await TopicService(db).unarchive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 

@@ -35,7 +35,8 @@ function topic(id: string, parentId: string | null, kind = 'topic'): Topic {
     title: `话题${id}`,
     kind,
     status: 'active',
-    can_archive: true,
+    can_manage: true,
+    joined: true,
     created_by: 'u',
     created_at: '2026-08-10T00:00:00Z',
     updated_at: '2026-08-10T00:00:00Z',
@@ -76,7 +77,7 @@ function mount() {
         selectedTopicId: null,
         loadingTopics: false,
         // 两行都算「我参与的」，平铺在上面那一组里。
-        unreadMap: { a: 3, b: 1 },
+        unreadMap: { a: { count: 3, new: true, messages: 3 }, b: { count: 1, new: true, messages: 1 } },
         onSelectTopic,
       },
     },

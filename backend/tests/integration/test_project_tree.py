@@ -7,7 +7,6 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import open_task, post_project, session_auth_headers
-from tests.support.living_doc import document_of
 
 
 def _project(client, owner: str = "owner", **kw) -> dict:
@@ -175,16 +174,10 @@ def test_archived_topic_is_frozen(client):
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
-    # Editing the frozen topic's doc is rejected.
-    r = client.put(
-        f"/documents/{document_of(client, topic['id'])}",
-        json={"content": "改一下", "expected_version": 0},
-    )
-    assert r.status_code == 422
 
 
 def test_upgrade_on_archived_topic_rejected(client):
-    # Consistent with opening a task or editing the doc: a frozen topic accepts
+    # Consistent with opening a task: a frozen topic accepts
     # no new work (§6.3).
     p = _project(client, owner="alice")
     topic = client.post(
@@ -255,11 +248,6 @@ def test_open_and_conclude_a_task(client):
     closed = r.json()["data"]
     assert closed["status"] == "closed"
     assert closed["conclusion"] == "数据清洗完成，去重后剩 8000 条"
-
-    # 结论住在任务上, so the room's own living doc is not rewritten behind its
-    # back — the room keeps its doc, the way every other place does.
-    doc = client.get(f"/documents/{document_of(client, topic['id'])}").json()["data"]
-    assert doc is None or "数据清洗完成" not in doc["content"]
 
 
 def test_concluding_something_that_is_not_a_task_fails(client):

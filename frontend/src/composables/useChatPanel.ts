@@ -14,7 +14,7 @@
 // does not: the composer (useChatComposer), the pointer affordances on a row
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
-import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
+import type { Block, ChatAttachment, ReactionAgg, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
@@ -37,6 +37,7 @@ import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useRowBatch } from '../components/room/composables/useRowBatch'
+import { runRecordOf, useRunRecords } from '../components/room/composables/useRunRecords'
 import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
@@ -48,18 +49,16 @@ import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
-import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
+import { currentUserName } from '../services/account'
 
-import { useAskAnswers } from './useAskAnswers'
-import { useAskGroups } from './useAskGroups'
-import { useAskTakeover } from './useAskTakeover'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
+import { useRoomTasks } from './useRoomTasks'
 
 import { t } from '@/i18n'
 
@@ -145,7 +144,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
   // 往上报（working / site-turns）是这里的事。
-  const turns = useRoomTurns({ messages })
+  const runRecords = useRunRecords()
+  const turns = useRoomTurns({ messages, records: runRecords.records })
   const { awaitingReply, turnAgentHandle } = turns
   watch(awaitingReply, (v) => emit('working', v))
   watch(turns.turnStarts, (v) => emit('site-turns', v))
@@ -154,24 +154,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (b.kind === 'event') emit('site-block', b)
   }
 
-  const { askStates, askAction, askViewer, askAccount } = useAskAnswers({
-    blocks: () => messages.value,
-    replace: replaceShown,
-  })
-
-  const {
-    askGroups,
-    askGroupAction,
-    openRoom: openAskGroups,
-  } = useAskGroups({
-    blocks: () => messages.value,
-    account: () => askAccount.value,
-    viewer: () => askViewer.value,
-    replace: replaceShown,
-  })
-  // 提问接管输入框：面板与 composer 互斥地驻留在同一格（见 useAskTakeover）。
-  const takeover = useAskTakeover({ groups: askGroups, viewer: () => askViewer.value })
-  const { askTakeover, askReturn, dismissAsk, restoreAsk } = takeover
+  // 看着这间房的人：表情里哪几个是自己点的，靠它认。
+  const viewer = computed(() => currentUserName.value ?? myHandle())
   /** 把这一条换进时间线（在的话）。 */
   function replaceShown(block: Block) {
     if (!timeline.find(block.id)) return
@@ -259,7 +243,14 @@ export function useChatPanel(opts: ChatPanelOptions) {
       (isAgentHandle(handle) ? agentDisplayName(handle) : memberByHandle.value.get(handle)?.name || handle),
     (handle) => turns.faces.value[handle]?.status
   )
-  watch(activityLines, (v) => emit('activity', v))
+  watch(
+    () => {
+      const busy = new Set(activityLines.value.map((l) => l.handle))
+      const queued = runRecords.waitingLines((h) => agentNameOf(h) ?? agentDisplayName(h))
+      return [...activityLines.value, ...queued.filter((l) => !busy.has(l.handle))]
+    },
+    (v) => emit('activity', v)
+  )
 
   // 每次连上，broker 都会把一轮进行中的帧一次性重放出来——先进追赶模式，这一阵里
   // 不逐帧滚动。
@@ -307,6 +298,12 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const unseen = ref<string[]>([])
 
   function handleFrame(frame: WsServerFrame) {
+    // 平台运行中记下的一件事：不进对话，现场和状态行读它。
+    const recorded = runRecordOf(frame)
+    if (recorded) {
+      runRecords.receive(recorded)
+      toSite(recorded)
+    }
     switch (frame.type) {
       case 'user_block':
         if (settleOutbox(frame.block)) delivered.add(frame.block.id)
@@ -321,6 +318,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'state':
         // A platform resource changed → parent refreshes that panel live.
         // The clickable record of the action is a persisted event_block (below).
+        if (frame.resource === 'topics' || frame.resource === 'tasks') void reloadRoomTasks()
         emit('state-changed', frame.resource)
         break
       case 'event_block':
@@ -379,11 +377,16 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'activity_snapshot':
         activity.snapshot(frame.members)
         break
+      case 'thread_activity':
+        emit('thread-activity', frame.thread_id, frame.member, frame.active)
+        break
       case 'turn_started':
         turns.started(frame.turn_id, frame.agent)
+        runRecords.turnBegan(frame.turn_id)
         break
       case 'turn_finished': {
         turns.finished(frame.turn_id)
+        runRecords.turnBegan(frame.turn_id)
         emit('turn-done')
         autoScroll()
         break
@@ -411,6 +414,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     typing.clear()
     activity.reset()
     liveSteps.reset()
+    runRecords.reset()
     reactionPickerFor.value = null
     rowActions.resetBar()
     unreadAnchorId.value = null
@@ -442,9 +446,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // Recovery keeps its history-first reconciliation for lost message echoes.
       await ensureFreshToken()
       if (!stillHere()) return
-      // 一进房间就问一次：这一间里我还欠哪些组的回答，不等它们在时间线里滚出来。
-      // 早先发的组可能不在默认加载的那一屏里，靠块登记的话面板要往上翻才接管。
-      void openAskGroups(room.id)
       const parallelSocket = entering && outbox.value.length === 0
       if (parallelSocket) connectSocket(room.id)
       // 打开话题的那次导航已经替它起了头（router/index.ts），它往往比下面这一条先
@@ -636,6 +637,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
     return true
   }
 
+  // 点一道题的快捷回复：把那几个字作为对这道题的回复发出去 —— 和在输入框里打字是
+  // 同一条消息，提问的那位队友因此开下一轮（后端认它是回这道题的）。输入框里写到
+  // 一半的话不动。
+  function replyToQuestion(question: Block, text: string) {
+    errorMsg.value = null
+    paging.backToNewest()
+    sentNow.add(enqueue({ content: text, replyTo: question.id }))
+    awaitingReply.value = true
+    scrollToBottom()
+  }
+
   // The conversation stream shows messages + lightweight system lines only.
   // doc blocks are document state (they live in the doc panel), and AI tool
   // events belong in 现场 — neither belongs in the group chat (spec §7.1).
@@ -739,20 +751,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   //
   // 单独拉一次而不是从 topicList 里挑：一件活不再是话题树上的一个节点，话题列表里
   // 根本没有它了。`limit: 1` 是因为标记只要支线本身，不要它们的对话。
-  const roomTasks = ref<RoomTask[]>([])
-  watch(
-    () => topic()?.id,
-    async (id) => {
-      roomTasks.value = id ? cachedTopicPanel('roomTasks', id)?.data ?? [] : [] // 先画上次那份，背后再重取
-      if (!id) return
-      try {
-        roomTasks.value = (await fetchRoomTasks(id)).data
-      } catch {
-        // 标记是派生出来的装饰，不是内容。拉不到就少几行标记，不该让整个时间线红掉。
-      }
-    },
-    { immediate: true }
-  )
+  const { tasks: roomTasks, reload: reloadRoomTasks } = useRoomTasks(() => topic()?.id)
 
   // <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的
   // chip 只会写「#话题」。
@@ -785,7 +784,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
-    if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
     // This event contains the worker's actual result, rather than a status notice.
     if (block.meta?.event_type === 'subagent_stop') return null
     if (isPersonBlock(block)) return null
@@ -971,15 +969,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
     connected,
     send,
-    askGroups,
-    askGroupAction,
-    askStates,
-    askTakeover,
-    askReturn,
-    dismissAsk,
-    restoreAsk,
-    askAction,
-    askViewer,
+    replyToQuestion,
+    viewer,
     postChecklist,
     changeChecklist,
     onReact,

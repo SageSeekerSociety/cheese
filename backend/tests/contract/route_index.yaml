@@ -103,8 +103,10 @@ auth_entries:
   github.state: "GitHub provider callback verifies signed install/account-link state and scopes the resulting binding; no ordinary login dependency at callback. Source: app/api/routes/github_install.py; github_account_link.py."
   app.sign_in.code: "app_sign_in.finish_app_sign_in requires same origin, signed code, PKCE verifier challenge and single-use claim before issuing session. Source: app/api/routes/app_sign_in.py."
   notice.ws: "notifications_live.live verifies dedicated notice token from Authorization then _signed_in confirms active user session, periodically rechecking. Source: app/api/routes/notifications_live.py."
-  topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService decides roster/role management for actual topic. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
-  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_archive_manager; archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService.require_manager admits the channel's creator and whoever manages the project. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
+  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.channel.self: "topics_channel resolves the authenticated person in the channel and authorize_topic; joining needs the person on the project's roster, a private room or a task is not a channel. Source: app/api/routes/topics_channel.py; domain/topic_membership/services.py."
+  topic.channel.manage: "topics_channel description goes through TopicMemberService.require_manager (creator or project manager) after authorize_topic. Source: app/api/routes/topics_channel.py."
   topic.names: "topics.list_topic_names resolves/rejects failed credential and limits names to caller visible project IDs; not a raw global room directory. Source: app/api/routes/topics.py."
   cheese.room.gate: "main.cheese_token_gate matches this exact POST path in _CHEESE_WRITE_PATHS: valid scoped cheese token, explicit global sandbox override or project-agent credential with actual room authorization, followed by handler room actor check. Source: app/main.py,721."
   cheese.project.gate: "main.cheese_token_gate matches a project-scoped POST path in _CHEESE_WRITE_PATHS and checks project scope / explicit global sandbox / authorized project-agent credential. Source: app/main.py,721."
@@ -268,6 +270,7 @@ owners:
   topic: "Canonical rooms and room hierarchy/read markers/title/archive; domain/topic/TopicService and related naming/retire queries."
   thread: "支线: the replies under a channel message as a conversation of their own; domain/thread services and reads."
   topic.membership: "Room participant roster and roles; domain/topic_membership/TopicMemberService."
+  topic.pins: "What a channel keeps at the top of its overview: domain/pin (Pins). Pinning needs main-line speaking rights (TopicMemberService.may_speak) and an active public channel; reading follows the channel."
   topic.chat: "Room messaging/live chat relay; domain/agent/ChatService and topic/member identity, with route owning delivery/broadcast ordering."
   delivery: "Room delivery timer requests and same-handle note dispatch; domain/delivery timer/addressing, composed by room route."
   documents: "Office/spreadsheet conversion, revisions and editor callbacks; domain/documents editor/convert/revisions/spreadsheet."
@@ -291,6 +294,7 @@ owners:
   feature_stats: "Feature usage catalogue and reports; domain/feature_stats registry/stats."
   platform_stats: "Platform usage/performance/product/pipeline/integration reports; domain/platform_stats services."
   ratchet: "Ratchet board ingestion and state; domain/ratchet board/store/ingest."
+  run_record: "What the platform did while running a conversation and its own errors, for the admin page; domain/run_record/admin.py."
   space.review: "Platform review of spaces; domain/space/review_service.py."
   space.materials: "A board's shared material library and its two visibility tiers; domain/space/material_service.py over the material rows domain/materials owns. Bytes leave only through the permission-checked download route; the material url never appears in a response."
   integration: "Personal and room mail/Feishu connections, drafts and OAuth callback; domain/integration/IntegrationService."
@@ -420,6 +424,9 @@ routes:
   # app.api.routes.admin_ratchet
   - {protocol: "http", method: "GET", path: "/admin/ratchet", auth: "platform.admin", owner: "ratchet"}
   - {protocol: "http", method: "POST", path: "/admin/ratchet/refresh", auth: "platform.admin", owner: "ratchet"}
+  # app.api.routes.admin_run_records
+  - {protocol: "http", method: "GET", path: "/admin/run-records", auth: "platform.admin", owner: "run_record"}
+  - {protocol: "http", method: "GET", path: "/admin/run-records/detail", auth: "platform.admin", owner: "run_record"}
   # app.api.routes.admin_spaces
   - {protocol: "http", method: "GET", path: "/admin/spaces", auth: "platform.admin", owner: "space.review"}
   - {protocol: "http", method: "POST", path: "/admin/spaces/{space_id}/review", auth: "platform.admin", owner: "space.review"}
@@ -674,6 +681,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/document", auth: "actor.topic", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/overview", auth: "project.documents", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/about", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "PATCH", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "DELETE", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
@@ -728,6 +736,9 @@ routes:
   - {protocol: "http", method: "GET", path: "/memory/files", auth: "memory.files.read", owner: "memory"}
   - {protocol: "http", method: "PUT", path: "/memory/files", auth: "memory.files.write", owner: "memory"}
   - {protocol: "http", method: "POST", path: "/memory/files/delete", auth: "memory.files.write", owner: "memory"}
+  # app.api.routes.notification_preferences
+  - {protocol: "http", method: "GET", path: "/notifications/preferences", auth: "user.session", owner: "notification"}
+  - {protocol: "http", method: "PUT", path: "/notifications/preferences", auth: "user.session", owner: "notification"}
   # app.api.routes.notifications_flat
   - {protocol: "http", method: "GET", path: "/notifications/unread-count", auth: "user.session", owner: "notification"}
   - {protocol: "http", method: "GET", path: "/notifications", auth: "user.session", owner: "notification"}
@@ -1026,7 +1037,6 @@ routes:
   # app.api.routes.topic_members
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/members", auth: "actor.topic", owner: "topic.membership"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/members", auth: "topic.members.manage", owner: "topic.membership"}
-  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
   - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
   # app.api.routes.topics
   - {protocol: "http", method: "POST", path: "/topics", auth: "actor.project", owner: "topic"}
@@ -1041,9 +1051,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/children", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/progress", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/progress", auth: "actor.topic.enforced", owner: "topic"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/overview", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/summon", auth: "actor.topic", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/blocks/{block_id}/answers", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/webhook-token", auth: "cheese.room.gate", owner: "webhook"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/weekly", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/read", auth: "actor.topic", owner: "topic"}
@@ -1059,6 +1067,14 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/attachments", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/raw", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/pdf", auth: "actor.topic", owner: "room.files"}
+  # app.api.routes.topics_channel
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/join", auth: "topic.channel.self", owner: "topic.membership"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/leave", auth: "topic.channel.self", owner: "topic.membership"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/description", auth: "topic.channel.manage", owner: "topic"}
+  # app.api.routes.topics_pins
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/pins", auth: "actor.topic", owner: "topic.pins"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/pins/{block_id}", auth: "topic.channel.self", owner: "topic.pins"}
+  - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}/pins/{block_id}", auth: "topic.channel.self", owner: "topic.pins"}
   # app.api.routes.document_comments
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/comments/threads", auth: "document.member", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/comments/{comment_id}/thread", auth: "document.member", owner: "living_doc"}
@@ -1090,9 +1106,6 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/note", auth: "cheese.room.gate", owner: "delivery"}
   # app.api.routes.topics_asks
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/asks", auth: "actor.topic.enforced", owner: "topic.chat"}
-  - {protocol: "http", method: "GET", path: "/topics/asks/{group_id}", auth: "actor.topic.enforced", owner: "topic.chat"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/asks/awaiting", auth: "actor.topic.enforced", owner: "topic.chat"}
-  - {protocol: "http", method: "POST", path: "/topics/asks/{group_id}/settle", auth: "actor.topic.enforced", owner: "topic.chat"}
   # app.api.routes.topics_preview
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/preview", auth: "actor.topic", owner: "preview"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/preview/file", auth: "actor.topic", owner: "preview"}
@@ -1112,6 +1125,8 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/close", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/start", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/opening", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/related", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
@@ -1138,6 +1153,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/users", auth: "legacy.users.register_user", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me", auth: "legacy.answers.list_answers", owner: "user"}
   - {protocol: "http", method: "PUT", path: "/users/me/language", auth: "user.session", owner: "user"}
+  - {protocol: "http", method: "PUT", path: "/users/me/timezone", auth: "user.session", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email/code", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me/auth-methods", auth: "legacy.answers.list_answers", owner: "user"}

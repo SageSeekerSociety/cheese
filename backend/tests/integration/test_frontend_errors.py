@@ -1,11 +1,13 @@
-"""POST /api/frontend-errors — browser errors become 现场 event blocks, so
-agents (who can't read a user's console) can debug them from the timeline."""
+"""POST /api/frontend-errors — browser errors are kept as run records for the
+admin page, with the room that was open, and never said in that room."""
 
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.domain import frontend_log
+from app.domain.run_record.models import RunRecord
 from tests.integration.conftest import post_project
 
 
@@ -28,16 +30,30 @@ def _make_topic(client, project_id: str) -> str:
 
 
 def _topic_events(client, topic_id: str) -> list[dict]:
+    """The errors kept for `topic_id`, after checking the room says none."""
     r = client.get(f"/topics/{topic_id}/blocks")
     assert r.status_code == 200
-    return [
+    assert not [
         b
         for b in r.json()["data"]["data"]
         if (b.get("meta") or {}).get("event_type") == "frontend_error"
     ]
 
+    async def read() -> list[dict]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(RunRecord).where(RunRecord.kind == "frontend_error")
+            )
+            return [
+                {"content": r.content, "meta": r.meta}
+                for r in rows
+                if (r.meta or {}).get("conversation") == topic_id
+            ]
 
-def test_errors_land_in_topic_timeline(client):
+    return client.portal.call(read)
+
+
+def test_errors_are_kept_with_the_open_room_and_not_said_there(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
 
@@ -95,7 +111,7 @@ def test_unknown_project_404(client):
 
 
 def test_a_new_error_reaches_a_person_and_a_repeat_does_not(client, monkeypatch):
-    """The timeline has had these errors all along; what it has never had is a
+    """The records have had these errors all along; what they have never had is a
     reader. An alert is that reader — but only for something not seen before,
     because the same error repeats hundreds of times a second in a render loop
     and a channel that receives all of them is muted by the end of the day."""

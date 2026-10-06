@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 
 def _intent_brief(intent: str) -> str:
-    """把用户写的那句话拼成新生房间的简报；没写就返回空串，调用方不写任何东西。
+    """把用户写的那句话拼成新项目总览的开头；没写就返回空串，调用方不写任何东西。
 
-    纯模板，不调模型——``seed_brief_doc`` 的约定是「平台把已有的文字搬个地方」，
-    所以它署 system 而不是芝士（见 ``TopicService.seed_brief_doc`` 的注释）。这也
+    纯模板，不调模型——``seed_overview`` 的约定是「平台把已有的文字搬个地方」，
+    所以它署 system 而不是芝士（见 ``ProjectService.seed_overview`` 的注释）。这也
     是赛题报名那条路径的形状：简报是拼出来的，房间里的第一句人话仍由人来说。
     """
     text = intent.strip()
@@ -85,7 +85,7 @@ class ProjectService:
 
         ``intent`` is what the person said they wanted to do, when the creation
         form asked (#946 片 C). It is stored as written and, if non-empty, copied
-        into the newborn room's document — see :func:`_intent_brief`.
+        into the project's overview — see :func:`_intent_brief`.
         """
         owner_handle = owner_handle or None  # '' would seed a broken root roster
         if project_id is not None and (earlier := await self._repo.get(project_id)):
@@ -130,29 +130,15 @@ class ProjectService:
         # an agent that exists.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
-        # 总览 = 项目本体: its roster mirrors the whole project (fusion-design §3).
-        # Seed it with every current project member; 芝士 is already seated above.
-        # 问的是名册那一个读法，不是人那一半：本文件在 roster() 的下游（它 import
-        # ProjectService），所以这条 import 只能在函数里。
-        from app.domain.membership.roster import roster
-
-        member_handles = [m.handle for m in await roster(self._session, project.id)]
-        await self._members.seed_root(
-            root.id, owner_handle=owner_handle, member_handles=member_handles
-        )
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":
             await provision_repository(project.id, self._session)
-        # What the person said they wanted to do, carried into the room they are
-        # about to land in. Without it the room opens empty and the only thing
-        # answering 「我该说什么」 is its starter block; with it, the first thing
-        # they read is their own sentence, and the next step is named.
+        # What the person said they wanted to do, carried into the project's
+        # overview, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)
         if brief:
-            from app.domain.topic.services import TopicService
-
-            await TopicService(self._session).seed_brief_doc(root, brief)
+            await self.seed_overview(project, brief)
         return project
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
@@ -193,7 +179,6 @@ class ProjectService:
             team_id=team_id,
             external_task_id=task.id,
         )
-        from app.domain.topic.services import TopicService
 
         # The original requirements may be rich-text JSON. Keep their canonical
         # page reachable instead of copying serialized editor data into Markdown.
@@ -204,11 +189,51 @@ class ProjectService:
         if task.deadline:
             deadline = task.deadline.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
             brief += f"\n\n提交截止时间：{deadline}"
-        assert project.root_topic_id is not None  # create() always seeds the root.
-        root = await self._topics.get(project.root_topic_id)
-        assert root is not None
-        await TopicService(self._session).seed_brief_doc(root, brief)
+        await self.seed_overview(project, brief)
         return project
+
+    async def overview_document(self, project: Project):
+        """The project's overview, made empty (version 0) the first time anyone
+        needs it: whoever opens, writes or comments on it needs its id first."""
+        from app.domain.living_doc.services import Documents
+
+        documents = Documents(self._session)
+        if project.overview_document_id is not None:
+            doc = await documents.get(project.overview_document_id)
+            if doc is not None:
+                return doc
+        # Two first readers at once must not make two overviews.
+        await self._session.execute(
+            select(Project.id).where(Project.id == project.id).with_for_update()
+        )
+        await self._session.refresh(project, ["overview_document_id"])
+        if project.overview_document_id is not None:
+            doc = await documents.get(project.overview_document_id)
+            if doc is not None:
+                return doc
+        doc = await documents.create(project_id=project.id)
+        project.overview_document_id = doc.id
+        await self._session.flush()
+        return doc
+
+    async def seed_overview(self, project: Project, content: str) -> None:
+        """Write a new project's overview from text it already had: what its
+        creator said they wanted, or its 赛题. Author is `system`: the platform
+        moved existing words, nobody wrote them here."""
+        from app.domain.block.documents import seed
+        from app.domain.living_doc.services import DocumentJournal
+
+        doc = await self.overview_document(project)
+        await DocumentJournal(self._session).lock(doc.id)
+        await seed(self._session, doc, content)
+
+    async def is_overview(self, document_id: uuid.UUID) -> bool:
+        """Whether a document is some project's overview."""
+        return (
+            await self._session.scalar(
+                select(Project.id).where(Project.overview_document_id == document_id)
+            )
+        ) is not None
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
         """项目本身，不存在返回 None。

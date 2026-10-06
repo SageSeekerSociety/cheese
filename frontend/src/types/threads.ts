@@ -8,7 +8,15 @@ export interface ThreadReply {
   created_at: string
 }
 
-/** 主线上一条消息下面的支线：它自己的 id（一段独立的对话），回复数和最后一句。 */
+/** 支线变成的那件任务。 */
+export interface ThreadTask {
+  id: string
+  title: string
+  status: string
+}
+
+/** 主线上一条消息下面的支线：它自己的 id（一段独立的对话），回复数、最后一句、谁说过
+ * 话（挂着的那条消息的作者在前）、变成了哪件任务，以及此刻哪几位 AI 队友正在里面回答。 */
 export interface ThreadSummary {
   id: string
   room_id: string
@@ -16,6 +24,12 @@ export interface ThreadSummary {
   reply_count: number
   last_reply_at: string | null
   last_reply: ThreadReply | null
+  participants: string[]
+  task: ThreadTask | null
+  /** 最后一条回复之后，AI 队友在这条支线里的一轮出错了。 */
+  failed?: boolean
+  /** 此刻在这条支线里有一轮在跑的 AI 队友（handle）。只在主线那一行上有。 */
+  replying?: string[]
 }
 
 /** 一条支线本身，以及它挂着的那条主线消息。 */
@@ -33,9 +47,16 @@ export interface Thread {
 /** 频道概览「支线」那一页的一行。 */
 export interface ThreadRow extends ThreadSummary {
   root: ThreadReply | null
-  participants: string[]
-  task: { id: string; title: string; status: string } | null
   unread: boolean
+}
+
+/** 一位 AI 队友在频道的某条支线里开始或停下回答：频道主线收到这一帧，那条消息下面
+ * 那一行据此写「正在回复」。支线自己的帧主线听不到。 */
+export interface ThreadActivityFrame {
+  type: 'thread_activity'
+  thread_id: string
+  member: string
+  active: boolean
 }
 
 // 主线上的一条消息下面有支线、而且里面有人回过话时，`GET /topics/{频道}/blocks` 在

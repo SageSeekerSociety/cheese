@@ -398,7 +398,8 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
         stub_hooks.alive = False
         frames = _until_done(ws)
     assert frames[-1]["type"] == "error", frames[-1]
-    assert "exited" in str(frames[-1])
+    # The line says the turn did not finish; why is folded under it.
+    assert "exited" in str(frames)
 
 
 class StillWorking(StubChannel):

@@ -20,7 +20,6 @@ import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
-import { useOutsideMentionPrompt } from '@/composables/useOutsideMentionPrompt'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
 import { pastedTextName } from '../../lib/attachments'
@@ -35,7 +34,6 @@ import ComposerActions from './ComposerActions.vue'
 import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import MentionMenu from './MentionMenu.vue'
-import OutsideMentionNotice from './OutsideMentionNotice.vue'
 import ReminderDialog from './ReminderDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -188,15 +186,6 @@ const {
 function pickActiveMention(): boolean {
   return picker.pickActive()
 }
-
-// 发出去的那条 @ 了不在话题里的人：输入框上方说一句，能管名册的人顺手拉进来。
-const outsidePrompt = useOutsideMentionPrompt({
-  topic: () => props.topic,
-  mentionPool: () => props.mentionPool,
-  me: myHandle,
-})
-const { outside: outsideMentioned, names: outsideNames, canAdd: canAddOutside } = outsidePrompt
-const { busy: addingOutside, error: addOutsideError } = outsidePrompt
 
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
@@ -359,7 +348,6 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
   emit('send', { content, summon: props.alwaysSummon || mentionsAgent(content) })
-  outsidePrompt.noteSent(content)
 }
 
 // 「提醒我」：对话框管填和发，这里只开它，和设好之后说一声几点会提醒。
@@ -405,15 +393,6 @@ defineExpose({
       @pick="picker.pick"
       @hover="picker.hover"
       @back="picker.backToRoot"
-    />
-    <OutsideMentionNotice
-      v-if="outsideMentioned.length"
-      :names="outsideNames"
-      :can-add="canAddOutside"
-      :busy="addingOutside"
-      :error="addOutsideError"
-      @add="outsidePrompt.add"
-      @dismiss="outsidePrompt.dismiss"
     />
     <!-- A very long plain-text paste: offer to carry it as a file instead of
          flooding the box. Inline and non-modal — ignoring it keeps the text

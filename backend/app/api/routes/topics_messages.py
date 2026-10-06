@@ -21,12 +21,8 @@ person or an agent, the @-mentions an agent's message wakes through
 writes a line and hands it to whoever is meant to read it; none of them reads
 the room's history back.
 
-The one-click option question (`POST /topics/{topic_id}/ask`) and its one-shot
-`POST /topics/blocks/{block_id}/answer` are gone again: a question is a whole
-group opened by `POST /topics/{topic_id}/asks` in `topics_asks.py`, and its
-answer is the versioned `POST /topics/blocks/{block_id}/answers` in topics.py.
-Rows an older question left behind keep their shape and are answered through
-that same versioned route.
+An agent's question is posted by `POST /topics/{topic_id}/asks`
+(`topics_asks.py`); its answer is an ordinary message through the route below.
 
 What stays behind, and why. `POST /{topic_id}/summon` stays: it is the
 general "wake an agent now" door that is not a message at all, and it reads
@@ -44,8 +40,7 @@ imported from topics.py for the second ratchet: the guard in
 `tests/unit/test_domain_import_guard.py` counts (route module, repository
 module) pairs, and that pair still belongs to topics.py.
 
-Question groups have their own routes in `topics_asks.py`. This module no
-longer reads `AgentTurnRepository`; its former repository exemption is removed.
+This module does not read `AgentTurnRepository`.
 
 The three function-level imports that travel with the code --
 `app.domain.delivery.mention` and `app.domain.delivery.agent` inside
@@ -155,6 +150,17 @@ async def send_chat_message(
         # An agent credential whose seat in this room was revoked. The seat is
         # the grant, so it may not go on writing here under a person's rules.
         raise ForbiddenError("An agent must hold a seat in this room to write here")
+    if place.room.status == "archived":
+        # An archived channel is read, not spoken in: its main line, its 支线
+        # and its tasks alike. Unarchiving it is how it is spoken in again.
+        raise ForbiddenError(say("roomArchivedUnarchiveFirst"))
+    if place.inner_id is None and not await TopicMemberService(db).may_speak(
+        place.room, actor.handle
+    ):
+        # A channel's main line is its members speaking. Anyone in the project
+        # reads it and answers in a 支线 under it; speaking in the main line
+        # is joining first.
+        raise ForbiddenError(say("channelJoinToPost"))
     content = body.content.strip()
     attachments = [
         {"path": a.path, "mime": a.mime}

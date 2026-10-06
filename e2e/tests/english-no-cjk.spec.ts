@@ -326,9 +326,9 @@ test("workspace: inbox, board, room, accept card, library, project settings", as
       },
     },
     {
-      name: "room overview",
+      name: "channel overview",
       path: `${project}/topics/${roomId}?tab=overview`,
-      ready: visible(".task-progress"),
+      ready: visible("[data-testid=channel-overview]"),
     },
     // The task's card carries its accept card, open.
     {
@@ -349,7 +349,6 @@ test("workspace: inbox, board, room, accept card, library, project settings", as
     ...[
       "agents",
       "task-naming",
-      "computer",
       "environment",
       "merge",
       "repository",

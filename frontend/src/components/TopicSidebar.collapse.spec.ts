@@ -146,13 +146,10 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
   beforeEach(() => localStorage.clear())
 
   it.each([true, false])('archive controls follow server permission: %s', async (allowed) => {
-    const active = { ...topic('managed', 'root'), can_archive: allowed }
-    const archived = { ...topic('old', 'root'), status: 'archived', can_archive: allowed } as Topic
-    const { container, queryByText } = mount({ topics: [topic('root', null, 'root'), active, archived] })
+    const active = { ...topic('managed', 'root'), can_manage: allowed, joined: true }
+    const { container, queryByText } = mount({ topics: [topic('root', null, 'root'), active] })
     await fireEvent.click(rowFor(container, 'managed').querySelector('[title="更多操作"]') as HTMLElement)
     await waitFor(() => expect(Boolean(queryByText(t('work.room.menu.archive')))).toBe(allowed))
-    await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
-    expect(Boolean(rowFor(container, 'old').querySelector('[title="取消归档"]'))).toBe(allowed)
   })
 
   it('默认收起 —— 房间派出去的活不摊在主导航上', () => {
@@ -196,7 +193,9 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
   })
 
   it('收着的时候未读冒到父行上，不会被折叠吞掉', () => {
-    const { container } = mount({ unreadMap: { a1x: 3, a2: 4 } })
+    const { container } = mount({
+      unreadMap: { a1x: { count: 3, new: true, messages: 3 }, a2: { count: 4, new: true, messages: 4 } },
+    })
     const row = rowFor(container, 'a')
     expect(row.querySelector('.unread-badge')?.textContent?.trim()).toBe('7')
   })
@@ -244,17 +243,5 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     const row = rowFor(container, 'a')
     expect(row.classList.contains('is-active')).toBe(true)
     expect(toggleFor(container, 'a').classList.contains('subtree-toggle--working')).toBe(true)
-  })
-
-  it('「已归档」分组不受影响', async () => {
-    const archived = { ...topic('old', 'root'), status: 'archived', archived_at: '2026-08-01T00:00:00Z' } as Topic
-    const { container } = mount({ topics: [...topics, archived] })
-    const group = container.querySelector('.archived-toggle') as HTMLElement | null
-    if (!group) throw new Error('没有找到「已归档」分组')
-    expect(group.textContent).toContain('已归档')
-    // 默认收起，展开后归档话题出现
-    expect(visibleTitles(container)).not.toContain('old')
-    await fireEvent.click(group)
-    expect(visibleTitles(container)).toContain('old')
   })
 })

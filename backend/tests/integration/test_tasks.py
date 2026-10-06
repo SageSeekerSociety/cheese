@@ -470,8 +470,8 @@ def test_only_the_owner_brings_collaborators_in(client):
         headers=session_auth_headers("bob"),
     )
     assert handed.status_code == 403
-    # Someone outside the room cannot be made one.
-    join_project_team(client, project_id, "dave")
+    # Someone outside the project cannot be made one.
+    post_project(client, owner="dave")
     assert _set_collaborators(client, task["id"], ["dave"]).status_code == 422
     assert _task(client, room_id, task["id"])["contributor_handles"] == ["bob"]
 

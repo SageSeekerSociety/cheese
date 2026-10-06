@@ -57,6 +57,7 @@ from app.domain.machine.models import (
     MAX_ENROLL_ATTEMPTS,
     MAX_PROVIDER_ERRORS,
     PROVIDER_ERROR_WINDOW,
+    PROVIDER_PROBE_INTERVAL,
     TRANSITIONAL,
     AiStatus,
     CloudHost,
@@ -110,8 +111,9 @@ class CloudKeepsFailing(Exception):
 
     def __init__(self, failures: int, *, whole_machine: bool = False) -> None:
         minutes = int(PROVIDER_ERROR_WINDOW.total_seconds() // 60)
+        probe = int(PROVIDER_PROBE_INTERVAL.total_seconds() // 60)
         key = "cloudVmKeepsFailing" if whole_machine else "cloudKeepsFailing"
-        super().__init__(say(key, failures=failures, minutes=minutes))
+        super().__init__(say(key, failures=failures, minutes=minutes, probe=probe))
 
 
 class CloudPoolFull(Exception):
@@ -440,6 +442,16 @@ class HostPool:
         await self._session.commit()
         return host
 
+    async def _provider_failing(self, now: datetime) -> int:
+        """How many hosts the provider failed within the window, when that is
+        enough to stop asking for another right now; 0 when one may be asked
+        for. Past the probe interval since the last failure one more is tried,
+        so a provider that recovered is used again within minutes."""
+        failures, last = await self._repo.failures_since(now - PROVIDER_ERROR_WINDOW)
+        if failures < MAX_PROVIDER_ERRORS or last is None:
+            return 0
+        return failures if now - last < PROVIDER_PROBE_INTERVAL else 0
+
     def _can_start(self, host: CloudHost, now: datetime) -> bool:
         """Whether a sandbox placed on ``host`` can start soon: its connector
         is up, or the host is new enough that it may still be dialling in. One
@@ -452,10 +464,8 @@ class HostPool:
     async def _require_room_to_grow(self, *, whole_machine: bool = False) -> None:
         """Refuse to add a host while the provider keeps failing them, or when
         the pool is at its cap. Called holding the pool."""
-        failures = await self._repo.failures_since(
-            datetime.now(UTC) - PROVIDER_ERROR_WINDOW
-        )
-        if failures >= MAX_PROVIDER_ERRORS:
+        failures = await self._provider_failing(datetime.now(UTC))
+        if failures:
             raise CloudKeepsFailing(failures, whole_machine=whole_machine)
         hosts = await self._repo.live()
         if sum(_counts_toward_cap(h) for h in hosts) >= settings.cloud_pool_max_hosts:
@@ -791,8 +801,7 @@ class HostPool:
         grow = (
             free < settings.cloud_pool_min_free_slots
             and sum(_counts_toward_cap(h) for h in live) < settings.cloud_pool_max_hosts
-            and await self._repo.failures_since(now - PROVIDER_ERROR_WINDOW)
-            < MAX_PROVIDER_ERRORS
+            and not await self._provider_failing(now)
         )
         await self._session.commit()
         for host in failed:
@@ -969,6 +978,17 @@ class HostPool:
             host.enroll_attempts,
             host.offline_since,
         )
+        failures, _ = await self._repo.failures_since(now - PROVIDER_ERROR_WINDOW)
+        if host.failed_at == now and failures >= MAX_PROVIDER_ERRORS:
+            # Every new session is refused a sandbox until a probe succeeds,
+            # and nobody watching the pool would otherwise know.
+            logger.error(
+                "cloud provider failed %s hosts within %s; the pool tries one "
+                "host every %s until one comes up",
+                failures,
+                PROVIDER_ERROR_WINDOW,
+                PROVIDER_PROBE_INTERVAL,
+            )
         await self._delete_at_provider(host)
 
     async def _delete_at_provider(self, host: CloudHost) -> None:
@@ -1141,6 +1161,16 @@ class HostPool:
                 await self._devices.delete_platform_provisioned(
                     host.device_id, actor_user_id=device.owner_user_id
                 )
+        if (
+            host.failed_at is not None
+            and datetime.now(UTC) - host.failed_at < PROVIDER_ERROR_WINDOW
+        ):
+            # Its row is what `_provider_failing` counts; it goes once it is out
+            # of the window (`list_due` hands it back then). Its homes go now.
+            await self._repo.unplace_archived(host.id)
+            for home in await self._repo.homes_on(host.id):
+                await self._repo.delete_home(home)
+            return
         await self._repo.delete(host)
 
     # --- enrollment: making the host a device ---------------------------------

@@ -29,6 +29,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support.run_records import records_of
 
 
 def _room(client) -> tuple[str, StubChannel, ChatService]:
@@ -56,6 +57,14 @@ def _blocks(client, room: str) -> list[Block]:
                     .order_by(Block.created_at)
                 )
             )
+
+    return asyncio.run(read())
+
+
+def _queued(client, room: str) -> list:
+    async def read() -> list:
+        async with client.test_factory() as session:
+            return await records_of(session, room, "turn_queued")
 
     return asyncio.run(read())
 
@@ -216,7 +225,7 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
     _say(client, busy, "@芝士 跑个长任务")
     _say(client, waiting, "@芝士 修一下登录页")
     deadline = time.monotonic() + 10
-    while len(_blocks(client, waiting)) < 2:
+    while not _queued(client, waiting):
         assert time.monotonic() < deadline, "the room was never told it is queued"
         time.sleep(0.05)
     assert _sent_to_the_session(channel, waiting) == []

@@ -214,12 +214,6 @@ class ContractHarness:
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         return None
 
-    async def ask_origin(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str
-    ) -> dict | None:
-        # This harness runs no native model, so it cannot authenticate an Ask.
-        return None
-
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         if agent_handle is None:
             return topic_id in self._held

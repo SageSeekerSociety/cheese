@@ -49,7 +49,7 @@ it('an invitation invalidates older pending roster reads', async () => {
   vi.stubGlobal('fetch', fetcher)
   const oldRead = listTopicMembers('room')
   await Promise.resolve()
-  await addTopicMember('room', 'bob', 'member')
+  await addTopicMember('room', 'bob')
   await listTopicMembers('room')
   expect(fetcher).toHaveBeenCalledTimes(3)
   resolve(response({ data: [] }))

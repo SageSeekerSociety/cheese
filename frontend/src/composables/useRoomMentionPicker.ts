@@ -27,7 +27,7 @@ export interface MentionPoolEntry {
   label: string
   agent: boolean
   external?: boolean
-  /** 项目里的人，但不在这个话题里：@ 得到，候选上挂「不在话题中」。 */
+  /** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面。 */
   outsideTopic?: boolean
   /** 在这个话题名册上的角色（owner / admin / member）；不在名册上的人没有。 */
   role?: string
@@ -43,7 +43,7 @@ export interface MentionItem {
   agent: boolean
   /** 团队以外、被邀请进这个项目的人：候选里挂「外部」，@ 之前就知道他不是自己人。 */
   external?: boolean
-  /** 不在这个话题里的人：排在话题里的人后面，右边挂「不在话题中」。 */
+  /** 没加入这个频道的人：排在频道里的人后面。 */
   outsideTopic?: boolean
   /** 二级菜单里这一项属于哪一组（同一组的标题只画一次）。 */
   group?: string
@@ -196,8 +196,8 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置
     // 它还是那两个 token。
     const agents = named.filter((i) => i.agent)
-    // 话题里的人在前，不在话题里的人跟在后面（和 Slack 一样）：@ 一个不在场的人
-    // 他读不到这段对话，所以他不该排在在场的人前面，挂的那个标说的也是这件事。
+    // 频道里的人在前，没加入的人跟在后面（和 Slack 一样）：在这里说话的多半是在找
+    // 频道里的人。
     const rest = [
       ...named.filter((i) => !i.agent && !i.outsideTopic),
       ...named.filter((i) => !i.agent && i.outsideTopic),

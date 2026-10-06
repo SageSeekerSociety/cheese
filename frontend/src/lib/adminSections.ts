@@ -24,7 +24,7 @@ export interface AdminSectionDef {
   badge: boolean
 }
 
-// 顺序：每天要看的队列在最前；看数的三块（看板、功能数据、棘轮）挨着；模型和看板看的
+// 顺序：每天要看的队列在最前；看数的几块（看板、运行记录、功能数据、棘轮）挨着；模型和看板看的
 // 是同一条链，方案与额度紧跟着模型；飞书应用是只填一次的设置，排在最后。
 export const ADMIN_SECTIONS: AdminSectionDef[] = [
   { to: '/admin/queue', name: 'AdminQueue', icon: 'mdi-tray-full', labelKey: 'navigation.admin.queue', badge: true },
@@ -33,6 +33,13 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     name: 'AdminDashboard',
     icon: 'mdi-chart-line',
     labelKey: 'navigation.admin.dashboard',
+    badge: false,
+  },
+  {
+    to: '/admin/run-records',
+    name: 'AdminRunRecords',
+    icon: 'mdi-pulse',
+    labelKey: 'navigation.admin.runRecords',
     badge: false,
   },
   {

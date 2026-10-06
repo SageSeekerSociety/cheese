@@ -17,6 +17,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.main import app
+from tests.ask_fixtures import wait_turn_idle
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
     chat_ws_url,
@@ -322,9 +323,18 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     assert f"[user-1]: <@{room_agent_seat(client, topic_id)}> 看看这张截图" in prompt
     assert "已附在本条消息里" in prompt
 
+    # The session hearing the prompt is not its answer having landed: what it
+    # says comes back through the reader afterwards. Wait for the 支线's turn
+    # to close before reading what it left there.
+    wait_turn_idle(client, thread)
     main = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["kind"] for b in main] == ["message", "attachment"]
-    answer = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+    # The turn's record reaches the 支线 by its own path: the session's records
+    # are read back and written after the prompt was handed over, so seeing the
+    # prompt does not mean the record is there yet. Wait for it.
+    while not (answer := client.get(f"/topics/{thread}/blocks").json()["data"]["data"]):
+        assert time.monotonic() < deadline, "the 支线's turn left no record"
+        time.sleep(0.2)
     assert [b["kind"] for b in answer] == ["event"]
     assert answer[0]["meta"]["in_room"] is False
 

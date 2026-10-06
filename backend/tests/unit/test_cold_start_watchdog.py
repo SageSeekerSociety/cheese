@@ -167,8 +167,8 @@ async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling(
     assert frame.get("code") is None
     # 而且**不能**说「已完成的改动都在」——什么都没跑，那句话是假的。
     assert "已完成的改动都在" not in frame["message"]
-    # 「按工作电脑没有启动处理」和那一串常见原因收进了展开区，房间里只剩一行。
-    assert backend.notices and "工作电脑" in backend.notices[0]
+    # 「按环境没有启动处理」和那一串常见原因收进了展开区，房间里只剩一行。
+    assert backend.notices and "按环境没有启动处理" in backend.notices[0]
 
 
 @pytest.mark.anyio
@@ -253,7 +253,7 @@ async def test_known_expired_credential_fast_fails_with_the_true_reason(db_facto
     # re-auth — NOT the misleading container/disk/network guesses.
     assert "凭据已过期" in frame["message"]
     assert "重新认证" in frame["message"]
-    assert "工作电脑" not in frame["message"]
+    assert "按环境没有启动处理" not in frame["message"]
     # And it does not promise an auto-retry — retrying burns another fuse on the
     # same dead credential.
     assert "会自动再试一次" not in frame["message"]

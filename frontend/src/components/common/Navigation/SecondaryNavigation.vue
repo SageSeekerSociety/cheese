@@ -22,6 +22,7 @@ import { useDisplay } from 'vuetify'
 import { storeToRefs } from 'pinia'
 
 import { useEscapeLayer } from '@/composables/useEscapeStack'
+import { useNavigation } from '@/composables/useNavigation'
 import { focusSidebarToggle, SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 import { useSidebarWidth } from '@/composables/useSidebarWidth'
 
@@ -136,12 +137,11 @@ const drawerClass = computed(() => {
   return classes.join(' ')
 })
 
-// 路由变化时自动关闭移动端抽屉
-import { useRouter } from 'vue-router'
-const router = useRouter()
-
+// 路由变化时自动关闭移动端抽屉。每次跳转都是一个新快照（`useNavigation` 那个
+// computed 跟着 `$route` 走），所以看它的身份就等于看「有没有跳转」，不必拼 fullPath。
+const navigation = useNavigation()
 watch(
-  () => router.currentRoute.value.fullPath,
+  () => navigation?.route,
   () => {
     if (!isDesktop.value) {
       closeSecondaryDrawer()

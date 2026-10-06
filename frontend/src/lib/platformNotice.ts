@@ -30,11 +30,9 @@
  * 缺少结构化字段的事件仍保留原文；没有作者或类别依据时，不猜它属于哪个 agent。
  */
 import type { Block } from '../cx_types'
-import type { BackendErrorPresentation } from './backendErrorEvent'
 import type { DocEdit } from './docEdits'
 import type { PlatformErrorPresentation } from './platformEvents'
 
-import { backendErrorPresentation } from './backendErrorEvent'
 import { noticeText } from './noticeText'
 import { platformErrorPresentation } from './platformEvents'
 
@@ -105,23 +103,17 @@ const WHO_LABEL: Record<WhoTag, string> = {
 // These events describe the room agent's work or execution environment. `who`
 // instead names the next responder, so it cannot decide the message's identity.
 export const AGENT_STATUS_EVENTS = new Set([
-  'cloud_provisioning',
-  'cloud_startup',
   'machine_provisioning',
-  'turn_queued',
   'turn_failed',
   'turn_timeout',
   'deploy_interrupted',
   'dispatch_unknown',
-  'delivery_fallback',
-  'tools_recovered',
   'sandbox_rebuilt',
   'host_failure',
   'platform_error',
   'environment_recovery',
   'environment_recovery_request',
   'subagent_start',
-  'prompt_replayed',
   'ci_failed',
   'gate_failed',
   'gate_blocked',
@@ -149,9 +141,6 @@ export const AGENT_STATUS_EVENTS = new Set([
   'pr_closed',
   'force_merged',
   'migration_collision',
-  'api_retry',
-  'context_compact',
-  'device_waiting',
   'doc_missing',
 ])
 
@@ -233,7 +222,6 @@ export interface NoticeAgent {
 
 export type PlatformNotice =
   /** 现场抽屉的东西（前端报错），房间里不显示。 */
-  | { mode: 'hidden' }
   /** 芝士写好的一封邮件：在房间里看全、由邮箱主人在这里确认发送。 */
   | { mode: 'mail-draft'; mail: MailDraftView; outcome: MailOutcome | null }
   /** 基础设施事故卡：正文压成一行，剩下的进展开区。 */
@@ -247,7 +235,6 @@ export type PlatformNotice =
       detailLabel: string
     }
   /** 后端报错：本来就是目标形态，原样保留（它是这套东西的样板）。 */
-  | { mode: 'backend-error'; error: BackendErrorPresentation }
   /** 芝士这轮干的活（更新了文档 / 提交了验收卡…）。 */
   | {
       mode: 'action'
@@ -290,7 +277,6 @@ export type PlatformNotice =
       /** 后端说现在点一下重试有用（`meta.retryable`）。 */
       retryable: boolean
     }
-  | { mode: 'agent-status'; line: string; updatedAt: string; occurrences: NoticeOccurrence[] }
   /** 老样子：居中、灰、12px、一行。 */
   | { mode: 'plain' }
 
@@ -426,9 +412,6 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
 
   const m = meta(block)
 
-  // 前端报错属于「现场」抽屉（调试面），不进群聊 —— 和 tool 事件同一条规矩。
-  if (str(m?.event_type) === 'frontend_error') return { mode: 'hidden' }
-
   // 顺序即优先级，和改动前的模板一致：事故卡 > 动作行 > 后端报错 > 折叠行 > 淡行。
   const incident = platformErrorPresentation(block)
   if (incident) {
@@ -455,33 +438,8 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
       ...docChange(block),
     }
 
-  const error = backendErrorPresentation(block)
-  if (error) return { mode: 'backend-error', error }
-
   const mail = mailDraftView(block)
   if (mail) return { mode: 'mail-draft', mail, outcome: null }
-
-  if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) {
-    const latest = run[run.length - 1] ?? block
-    const state = str(meta(latest)?.state)
-    // A session's whole cloud VM says so; everything else on cloud is a sandbox.
-    const vm = str(meta(latest)?.environment) === 'vm'
-    return {
-      mode: 'agent-status',
-      line:
-        state === 'ready'
-          ? t(vm ? 'work.room.notice.cloudVmReady' : 'work.room.notice.sandboxReady')
-          : state === 'waiting'
-            ? t(vm ? 'work.room.notice.cloudVmPreparing' : 'work.room.notice.sandboxPreparing')
-            : noticeText(latest),
-      updatedAt: latest.created_at,
-      occurrences: run.map((item) => ({
-        line: noticeText(item),
-        label: noticeText(item),
-        detail: noticeText(item, 'detail'),
-      })),
-    }
-  }
 
   if (str(m?.detail)) {
     return {
@@ -527,8 +485,6 @@ function foldKey(block: Block): string | null {
   const m = meta(block)
   // 每封草稿是一张要单独确认的卡，折在一起就只剩一张能点。
   if (str(m?.event_type) === 'mail_drafted') return null
-  // Cloud lifecycle updates share one row even when the final event has no detail.
-  if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) return 'cloud_provisioning'
   // 只有「折叠行」这一档参与按类别折叠：它有展开区，能把被折进来的每一条原文都
   // 摆出来。事故卡和后端报错各自只有一份正文/traceback，折进去就真丢了；而老事件
   // 压根没有 event_type，误折会把两件不同的事说成一件。
@@ -559,7 +515,6 @@ export interface NoticeRow {
  */
 export function collapseNotices(blocks: Block[]): NoticeRow[] {
   const rows: NoticeRow[] = []
-  let cloud: NoticeRow | undefined
   for (const block of blocks) {
     // 露不露面先问，再问它是什么 —— 这一格从来就不是事件专有的（见 showsInRoom
     // 的注释：它单独立一格，正是因为「谁写的」和「露不露面」是两个问题）。放在
@@ -575,18 +530,6 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       }
       continue
     }
-    if (str(meta(block)?.event_type) === 'frontend_error') continue
-
-    if (['cloud_startup', 'cloud_provisioning'].includes(str(meta(block)?.event_type))) {
-      if (cloud) cloud.run.push(block)
-      else {
-        cloud = { block, run: [block], notice: null }
-        rows.push(cloud)
-      }
-      if (['ready', 'failed'].includes(str(meta(block)?.state))) cloud = undefined
-      continue
-    }
-
     const prev = rows[rows.length - 1]
     const prevBlock = prev?.block
     if (prevBlock && prevBlock.kind === 'event' && showsInRoom(prevBlock)) {

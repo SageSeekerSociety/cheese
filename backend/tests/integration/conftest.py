@@ -357,6 +357,16 @@ def room_agent_headers(client, topic_id) -> dict[str, str]:
     return {"X-Cheese-Token": token}
 
 
+def task_agent_headers(project_id, task_id, seat: str) -> dict[str, str]:
+    """The credential a turn of the task's own session presents: scoped to the
+    task and signed with the agent ``seat`` working it. The task's document is
+    the agent's to write with it."""
+    token = mint_scoped_token(
+        project_id=str(project_id), topic_id=str(task_id), agent_handle=seat
+    )
+    return {"X-Cheese-Token": token}
+
+
 def session_auth_headers(handle: str) -> dict[str, str]:
     """``Authorization`` header carrying :func:`session_token` for ``handle``."""
     return {"Authorization": f"Bearer {session_token(handle)}"}
@@ -370,10 +380,12 @@ def open_task(
     owner: str = "alice",
     start: bool = True,
     reviewer: str | None = "alice",
+    contributors: list[str] | None = None,
 ) -> dict:
     """A task in ``room_id``, created by ``owner`` (who owns it) and, unless
     ``start`` is False, started by them with ``reviewer`` reviewing its changes
-    — the way a person makes one."""
+    — the way a person makes one. ``contributors`` are brought in to work it
+    beside the owner (they write its document too)."""
     r = client.post(
         f"/topics/{room_id}/tasks",
         json={"title": title},
@@ -381,6 +393,13 @@ def open_task(
     )
     assert r.status_code == 200, r.text
     task = r.json()["data"]
+    if contributors:
+        r = client.patch(
+            f"/topics/{task['id']}/task",
+            json={"contributor_handles": contributors},
+            headers=session_auth_headers(owner),
+        )
+        assert r.status_code == 200, r.text
     if start:
         r = client.post(
             f"/topics/{task['id']}/start",
@@ -631,6 +650,13 @@ def db_connection(_pg_schema, _portal: "BlockingPortal") -> Generator[AsyncConne
 
     async def _open() -> AsyncConnection:
         return await engine.connect()
+
+    from tests.conftest import drop_connections_left_in_the_app_pool
+
+    # Session fixtures are built before the per-test gate runs, so the first
+    # test to need this connection may follow one that left a connection on a
+    # closed loop in the pool.
+    drop_connections_left_in_the_app_pool()
 
     async def _close(conn: AsyncConnection) -> None:
         await conn.close()

@@ -1,12 +1,13 @@
-"""Backend error intake → 现场 event blocks (the mirror of ``frontend_log``).
+"""Backend error intake → run records the admin page reads (the mirror of
+``frontend_log``).
 
-Same reason, other half of the stack: the dogfooding debugger is usually an
-AGENT, and an agent can no more read ``docker logs`` than it can read a user's
-browser console. ``core.obs`` renders structlog to stdout and stops there — in
-production that ends up inside a container, in dev inside a file on the host,
-and 现场 can reach neither. So an unhandled backend exception must land
-somewhere the platform can *query*: a ``kind=event`` block (``meta.event_type =
-"backend_error"``) on the topic the request belonged to.
+``core.obs`` renders structlog to stdout and stops there — in production that
+ends up inside a container, in dev inside a file on the host — so an unhandled
+backend exception must also land somewhere the platform can *query*: a run
+record (``kind = "backend_error"``). It belongs to no conversation: a room is
+read by the people in it, and the platform's own tracebacks are not theirs to
+read. The project and conversation the request named are kept in ``meta``, so
+the admin page can say where it happened.
 
 **Push, not pull.** Errors are POSTed in (by the process that raised them, or by
 this app's own middleware), exactly like the frontend reporter. The alternative
@@ -15,15 +16,14 @@ declined: a user project's 分身 would reach the platform's own logs through th
 same opening. A push channel exposes no such handle. See #188 for where this
 channel's remit stops: it receives reports, nothing else.
 
-**The whole difficulty is granularity, not plumbing.** A room is a conversation,
-not a monitoring dashboard, so the defaults below are tuned for PRODUCTION
-volume (one broken route can raise thousands of times a minute), not for the
-once-per-bug rhythm of development:
+**The whole difficulty is granularity, not plumbing.** The defaults below are
+tuned for PRODUCTION volume (one broken route can raise thousands of times a
+minute), not for the once-per-bug rhythm of development:
 
 - Only *unhandled* failures arrive here. An expected 4xx is normal flow.
 - A fingerprint is reported **once per window**; repeats are counted in silence.
-- A burst collapses into ONE summary block ("这个错误 5 分钟内 800 次") when its
-  window closes — never one block per occurrence.
+- A burst collapses into ONE summary record ("这个错误 5 分钟内 800 次") when its
+  window closes — never one record per occurrence.
 - A per-project **hourly hard cap** silently drops everything beyond it.
 
 Deliberate under-reporting: anything past the hourly cap is gone, and a
@@ -51,16 +51,14 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
 from app.core.obs import scrub_secrets
 from app.core.sentences import say
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.repositories import TopicRepository
+from app.domain.conversation.models import Conversation
+from app.domain.run_record.service import keep as keep_record
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +161,8 @@ class ExpiredBurst:
 
     sample: BackendErrorIn
     count: int
-    project_uuid: uuid.UUID
-    topic_id: uuid.UUID
+    project_uuid: uuid.UUID | None
+    topic_id: uuid.UUID | None
 
 
 @dataclass(frozen=True)
@@ -249,12 +247,8 @@ class BackendErrorIntake:
             if window.count <= 1:
                 # It was reported in full when it opened; "1 次" adds nothing.
                 continue
-            if (
-                window.sample is None
-                or window.topic_id is None
-                or window.project_uuid is None
-            ):
-                continue  # opened without a room to write back into
+            if window.sample is None:
+                continue
             if not self._take_slot(key[0], now):
                 continue  # over the hourly cap — the cap outranks the summary
             bursts.append(
@@ -368,11 +362,9 @@ _PROJECT_IN_PATH = re.compile(
 def room_from_path(path: str) -> tuple[uuid.UUID | None, uuid.UUID | None]:
     """(project_id, topic_id) named by a request path, when it names one.
 
-    This is how an in-process failure finds its room: the URL that failed is the
-    only context the middleware reliably has. A path that names neither (say
-    ``/api/users/...``) has no 现场 to report into — the caller drops it rather
-    than guessing, exactly as the browser reporter drops errors raised outside a
-    project.
+    This is how an in-process failure says where it happened: the URL that
+    failed is the only context the middleware reliably has. A path that names
+    neither (say ``/api/users/...``) is kept with no project.
     """
     topic = _TOPIC_IN_PATH.search(path)
     project = _PROJECT_IN_PATH.search(path)
@@ -382,21 +374,29 @@ def room_from_path(path: str) -> tuple[uuid.UUID | None, uuid.UUID | None]:
     )
 
 
-async def _target_topic(
+async def _where(
     db: AsyncSession, project_id: uuid.UUID | None, topic_id: uuid.UUID | None
-):  # noqa: ANN202 — Topic model, imported lazily by the repositories
-    """The topic these errors belong on: the one named, else the project's root
-    topic (mirrors the frontend reporter's fallback). None = nowhere to put them."""
-    topics = TopicRepository(db)
-    topic = await topics.get(topic_id) if topic_id else None
-    if topic is not None and (project_id is None or topic.project_id == project_id):
-        return topic
+) -> tuple[uuid.UUID | None, uuid.UUID | None]:
+    """(project, conversation) the errors happened in, as far as either exists.
+    A conversation of another project than the one named is not believed."""
+    conversation = await db.get(Conversation, topic_id) if topic_id else None
+    if conversation is not None and project_id in (None, conversation.project_id):
+        return conversation.project_id, conversation.id
     if project_id is None:
-        return None
-    project = await ProjectRepository(db).get(project_id)
-    if project is None or project.root_topic_id is None:
-        return None
-    return await topics.get(project.root_topic_id)
+        return None, None
+    # Every project has a conversation (its 综合) from the moment it exists.
+    known = await db.scalar(
+        select(Conversation.project_id)
+        .where(Conversation.project_id == project_id)
+        .limit(1)
+    )
+    return known, None
+
+
+def _record_meta(meta: dict, conversation_id: uuid.UUID | None) -> dict:
+    if conversation_id is not None:
+        meta["conversation"] = str(conversation_id)
+    return meta
 
 
 async def record(
@@ -405,26 +405,22 @@ async def record(
     project_id: uuid.UUID | None,
     topic_id: uuid.UUID | None,
     errors: list[BackendErrorIn],
-) -> dict | None:
-    """Admit `errors` and write the survivors as 现场 event blocks.
+) -> dict:
+    """Admit `errors` and keep the survivors as run records.
 
-    Returns ``{"accepted", "dropped"}``, or ``None`` when there is no topic to
-    attach to. Does NOT commit — the caller owns the transaction. A dropped
-    duplicate is still a success for the reporter: it must never retry.
+    Returns ``{"accepted", "dropped"}``. Does NOT commit — the caller owns the
+    transaction. A dropped duplicate is still a success for the reporter: it
+    must never retry.
     """
-    topic = await _target_topic(db, project_id, topic_id)
-    if topic is None:
-        return None
-
-    blocks = BlockRepository(db)
+    project, conversation = await _where(db, project_id, topic_id)
     accepted = 0
     for err in errors:
         verdict = intake.admit(
-            str(topic.project_id),
+            str(project or ""),
             fingerprint(err),
             sample=err,
-            topic_id=topic.id,
-            project_uuid=topic.project_id,
+            topic_id=conversation,
+            project_uuid=project,
         )
         if not verdict:
             continue
@@ -433,15 +429,12 @@ async def record(
             if verdict.kind == "summary"
             else event_content(err)
         )
-        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
-        await blocks.add(
-            project_id=landed.project_id,
-            conversation_id=landed.conversation_id,
-            author="backend",
-            author_type=AuthorType.platform,
+        await keep_record(
+            db,
+            project_id=project,
+            conversation_id=None,
             content=content,
-            kind=BlockKind.event,
-            meta=event_meta(err, verdict),
+            meta=_record_meta(event_meta(err, verdict), conversation),
         )
         accepted += 1
         if err.where == "model gateway" and err.exc_type in (
@@ -453,8 +446,8 @@ async def record(
             alerting.send(
                 "模型请求失败",
                 [
-                    f"项目：{topic.project_id}",
-                    f"话题：{topic.id}",
+                    f"项目：{project}",
+                    f"对话：{conversation}",
                     scrub_secrets(err.message),
                     f"请求：{err.request_id or 'unknown'}",
                 ],
@@ -464,30 +457,25 @@ async def record(
 
 
 async def flush_expired(now: float | None = None) -> int:
-    """Write the summary line for every burst whose window has closed.
+    """Keep the summary record for every burst whose window has closed.
 
-    Returns how many blocks were written. Reads the session factory off the
+    Returns how many records were written. Reads the session factory off the
     module at call time so a test can point it at its own database.
     """
     bursts = intake.sweep(now)
     if not bursts:
         return 0
     async with async_session_factory() as session:
-        blocks = BlockRepository(session)
         for burst in bursts:
-            landed = landing(
-                EventAbout.room,
+            await keep_record(
+                session,
                 project_id=burst.project_uuid,
-                room_id=burst.topic_id,
-            )
-            await blocks.add(
-                project_id=landed.project_id,
-                conversation_id=landed.conversation_id,
-                author="backend",
-                author_type=AuthorType.platform,
+                conversation_id=None,
                 content=summary_content(burst.sample, burst.count),
-                kind=BlockKind.event,
-                meta=event_meta(burst.sample, Verdict("summary", burst.count)),
+                meta=_record_meta(
+                    event_meta(burst.sample, Verdict("summary", burst.count)),
+                    burst.topic_id,
+                ),
             )
         await session.commit()
     return len(bursts)
@@ -497,11 +485,12 @@ async def report_request_failure(
     exc: BaseException, *, method: str, path: str, request_id: str | None = None
 ) -> bool:
     """This app reporting ITSELF: the middleware hands over an exception that
-    escaped a request, and it lands in that request's room.
+    escaped a request, and it is kept with the project and conversation the
+    request's path names, if any.
 
     Best-effort in the strongest sense — it is running on the failure path of a
     request that is already broken, so every step swallows its own errors and
-    the original exception is never disturbed. Returns True iff a block was
+    the original exception is never disturbed. Returns True iff a record was
     written (tests and callers use it; nothing branches on it in production).
 
     The intake is consulted BEFORE the database is touched, so a route failing
@@ -510,16 +499,12 @@ async def report_request_failure(
     """
     try:
         project_id, topic_id = room_from_path(path)
-        if project_id is None and topic_id is None:
-            # No room named by the URL — nowhere to report. Same call the browser
-            # reporter makes outside a project: drop rather than guess.
-            return False
         err = from_exception(exc, where=f"{method} {path}", request_id=request_id)
         async with async_session_factory() as session:
             result = await record(
                 session, project_id=project_id, topic_id=topic_id, errors=[err]
             )
-            if result is None or not result["accepted"]:
+            if not result["accepted"]:
                 return False
             await session.commit()
             return True

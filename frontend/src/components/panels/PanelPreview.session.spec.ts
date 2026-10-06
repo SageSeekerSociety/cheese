@@ -20,7 +20,7 @@ vi.mock('../../api', () => ({
   requestPreviewSession: (...args: unknown[]) => requestPreviewSession(...args),
 }))
 
-import PanelPreview from './PanelPreview.vue'
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 
 const url = 'https://preview-topic-a.example/'
 const artifact = (kind: 'app' | 'file' = 'app', id = 'artifact-a'): PreviewInfo => ({
@@ -48,7 +48,7 @@ const fullscreenDescriptors = [
 }))
 
 function mount() {
-  return render(PanelPreview, {
+  return render(PanelPreviewHost, {
     props: { topicId: 'topic-a', projectId: 'project-a', active: true },
     global: { plugins: [createVuetify({ components, directives })] },
   })
@@ -56,7 +56,7 @@ function mount() {
 
 /** 自由区的一个页签：这一格只看房间里的这一份文件。 */
 function mountFile(path: string) {
-  return render(PanelPreview, {
+  return render(PanelPreviewHost, {
     props: { topicId: 'topic-a', projectId: 'project-a', active: true, path },
     global: { plugins: [createVuetify({ components, directives })] },
   })

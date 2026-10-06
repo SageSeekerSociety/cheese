@@ -112,6 +112,8 @@ def test_new_replies_are_news_only_to_the_people_who_took_part(client):
     project, room = _channel(client)
     join_project_team(client, project, "bob")
     join_project_team(client, project, "carol")
+    joined = client.post(f"/topics/{room}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
     said = post_message(client, room, "bob", {"content": "登录页要不要加记住我？"})
     thread = _open(client, said["id"], "alice")
     post_message(client, thread["id"], "alice", {"content": "要，七天"})

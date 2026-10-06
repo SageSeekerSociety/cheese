@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -36,7 +37,6 @@ from app.domain.agent.compute_configs import ComputeChoice, standard_choice
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import Block, BlockKind
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import lifecycle, sandbox_home
@@ -46,6 +46,8 @@ from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.services import HostPool
 from app.domain.project.models import Project
+from app.domain.room_task.models import Task
+from app.domain.run_record.models import RunRecord
 from app.domain.team.models import Team
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.user.repositories import UserRepository
@@ -388,15 +390,14 @@ def room_lines(case, seat) -> list[str]:
         async with case.client.test_request_factory() as db:
             return list(
                 await db.scalars(
-                    select(Block.content)
+                    select(RunRecord.content)
                     .where(
-                        Block.conversation_id == seat.room,
-                        Block.kind == BlockKind.event,
-                        Block.meta["event_type"]
-                        .as_string()
-                        .in_(["cloud_startup", "cloud_provisioning", "sandbox_asleep"]),
+                        RunRecord.conversation_id == seat.room,
+                        RunRecord.kind.in_(
+                            ["cloud_startup", "cloud_provisioning", "sandbox_asleep"]
+                        ),
                     )
-                    .order_by(Block.created_at)
+                    .order_by(RunRecord.created_at)
                 )
             )
 
@@ -416,7 +417,7 @@ def test_an_idle_sandbox_sleeps_with_its_files_kept_and_wakes_on_the_next_tool(c
         server.kill()
     assert (home / "room" / "notes.md").read_text() == "not committed anywhere\n"
     assert home_of(cloud, seat).stopped_at is not None
-    assert "沙箱 11 分钟没有活动，已休眠。文件都留着，下一条消息会唤醒它。" in (
+    assert "环境 11 分钟没有活动，已休眠。文件都留着，下一条消息会唤醒它。" in (
         room_lines(cloud, seat)
     )
 
@@ -425,7 +426,7 @@ def test_an_idle_sandbox_sleeps_with_its_files_kept_and_wakes_on_the_next_tool(c
     assert answer["target"]["device_id"] == "host-a"
     assert len(cloud.hosts.installs) == installs + 1
     assert home_of(cloud, seat).stopped_at is None
-    assert room_lines(cloud, seat)[-2:] == ["正在唤醒沙箱", "沙箱已就绪"]
+    assert room_lines(cloud, seat)[-2:] == ["正在唤醒环境", "环境已就绪"]
     assert (home / "room" / "notes.md").exists()
 
 
@@ -514,8 +515,8 @@ def test_a_long_asleep_home_is_archived_and_restored_where_the_session_lands(clo
     assert (restored / "room" / "notes.md").stat().st_mode & 0o777 == 0o664
     assert home_of(cloud, seat).archive_key is None
     assert cloud.bucket.objects == {}
-    assert "正在从归档恢复沙箱" in room_lines(cloud, seat)
-    assert room_lines(cloud, seat)[-1] == "沙箱已就绪"
+    assert "正在从归档恢复环境" in room_lines(cloud, seat)
+    assert room_lines(cloud, seat)[-1] == "环境已就绪"
 
 
 def test_a_home_whose_archive_does_not_verify_stays_on_its_host(cloud):
@@ -551,10 +552,10 @@ def test_a_sleeping_sandbox_on_a_full_host_moves_to_one_with_room(cloud):
 
     # The first comes back: host A has no slot to wake it in.
     assert tool_call(cloud, one).get("preparing")
-    assert room_lines(cloud, one)[-1] == "正在唤醒沙箱"
+    assert room_lines(cloud, one)[-1] == "正在唤醒环境"
     # Host A is up: the pool's sweep must not take that for the sandbox.
     maintain(cloud)
-    assert room_lines(cloud, one)[-1] == "正在唤醒沙箱"
+    assert room_lines(cloud, one)[-1] == "正在唤醒环境"
     assert sweep(cloud)["archived"] == 1
     assert home_of(cloud, one).host_id is None
 
@@ -563,7 +564,7 @@ def test_a_sleeping_sandbox_on_a_full_host_moves_to_one_with_room(cloud):
     assert tool_call(cloud, one)["target"]["device_id"] == "host-c"
     moved = sandbox_dir(cloud, one, "host-c")
     assert (moved / "room" / "notes.md").read_text() == "not committed anywhere\n"
-    assert room_lines(cloud, one)[-1] == "沙箱已就绪"
+    assert room_lines(cloud, one)[-1] == "环境已就绪"
 
 
 def host_of_machine(case, device_id) -> int:
@@ -657,6 +658,55 @@ def test_a_home_that_cannot_be_archived_is_not_tried_on_every_sweep(cloud):
     assert kept.host_id is not None and kept.archive_error
     assert (home / "room" / "notes.md").exists()
     assert cloud.bucket.objects == {}
+
+
+def test_an_unreadable_core_dump_does_not_stop_a_home_being_archived(cloud):
+    """A process that crashed in the sandbox left a core dump the host cannot
+    read. On dev one such file failed a home's archive every six hours
+    (2026-10-05). The dump is left out; the work around it is archived."""
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-a")
+    dump = home / "room" / "frontend" / "core.1"
+    dump.parent.mkdir(parents=True, exist_ok=True)
+    dump.write_bytes(b"\x7fELF")
+    dump.chmod(0)
+    try:
+        asleep(cloud, seat)
+        time_passes(cloud, seat, timedelta(days=8))
+        assert sweep(cloud)["archived"] == 1
+    finally:
+        if dump.exists():
+            dump.chmod(0o600)
+
+    maintain(cloud)
+    assert tool_call(cloud, seat).get("preparing")
+    host_comes_up(cloud, seat, "host-b")
+    assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"
+    restored = sandbox_dir(cloud, seat, "host-b")
+    assert (restored / "room" / "notes.md").read_text() == "not committed anywhere\n"
+    assert not (restored / "room" / "frontend" / "core.1").exists()
+
+
+def test_a_sleeping_home_no_longer_on_its_host_lets_the_host_go(cloud):
+    """Its directory was removed from the host, so there is nothing to archive
+    and nothing for the host to keep: the host is released, and the session's
+    next tool call gets a sandbox like a new one. On dev, hosts adopted from
+    before the pool were kept for days by homes like this (2026-10-06)."""
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-a")
+    asleep(cloud, seat)
+    shutil.rmtree(home)
+
+    time_passes(cloud, seat, timedelta(days=8))
+    sweep(cloud)
+    machine = host_of_machine(cloud, "host-a")
+    maintain(cloud)
+
+    assert machine in cloud.provider.deleted
+    assert cloud.bucket.objects == {}
+    assert tool_call(cloud, seat).get("preparing")
+    host_comes_up(cloud, seat, "host-b")
+    assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"
 
 
 def test_an_archive_stops_as_soon_as_it_passes_the_limit():
@@ -758,6 +808,35 @@ def test_a_room_mid_turn_does_not_keep_other_sandboxes_awake(cloud, monkeypatch)
 
     assert sweep(cloud)["asleep"] == 1
     assert home_of(cloud, quiet).stopped_at is not None
+
+
+def test_a_task_at_work_in_the_room_does_not_keep_another_sessions_sandbox_awake(
+    cloud,
+):
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+
+    async def task_turn_runs():
+        async with cloud.client.test_request_factory() as db:
+            task = Task(project_id=cloud.project_id, room_id=seat.room, title="Other")
+            db.add(task)
+            await db.flush()
+            db.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=task.id,
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    started_at=datetime.now(UTC),
+                )
+            )
+            await db.commit()
+
+    run(cloud, task_turn_runs)
+    time_passes(cloud, seat, timedelta(minutes=11))
+
+    assert sweep(cloud)["asleep"] == 1
+    assert home_of(cloud, seat).stopped_at is not None
 
 
 def test_a_home_on_an_offline_host_does_not_hold_up_other_archives(cloud, monkeypatch):

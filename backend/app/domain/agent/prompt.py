@@ -15,17 +15,11 @@
 `has_unread_input`、`_pending_receipts` 一族、`_restate_note`，以及
 `post_system_event` 的两个 compaction 分支。搬出来时按原样搬——入参出参就是
 它们与调用方之间全部的约定，所以行为一格没动。
-
-唯一改了形状的是 `_project_overview`：它是 `ChatService` 的方法却不碰 `self`——
-只拿一个 session 和已经读好的行——于是改成收参数的模块级 `project_overview`，
-`ChatService._project_overview` 留一行同名委托，调用点与测试都不用改。
 """
 
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.agent.harness.prompt import (
@@ -51,16 +45,10 @@ from app.domain.block.models import (
 )
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
-from app.domain.project.models import Project
 from app.domain.topic.models import (
     Topic,
     TopicKind,
     TopicStatus,
-)
-from app.domain.topic.overview import (
-    project_brief,
-    render_overview,
-    render_overview_auto,
 )
 
 _PROGRESS_MARK = {"completed": "x", "in_progress": "~", "pending": " "}
@@ -389,36 +377,3 @@ def _compaction_notice(event: AgentCompacting) -> tuple[str, dict]:
         "at": datetime.now(UTC).isoformat(),
     }
     return content, meta
-
-
-async def project_overview(
-    session: AsyncSession,
-    *,
-    project: Project,
-    conversation_id: uuid.UUID,
-    room_doc: str | None,
-    overview_doc: str | None,
-    all_topics: list[Topic],
-    roster: list[dict],
-) -> str:
-    """注入用的项目总览：① 从总览文档来，②③ 从结构化数据现拼（#1889）。
-
-    在「综合」的主线上（项目根频道），总览就是那里的实况文档，三块都拼给它；
-    别的对话——别的频道、任务、支线，包括综合里的——只注入 ① —— 它们读到「这个
-    项目是什么」就够了，其余两块要哪一块就自己去查哪一块，不必每轮往每段对话塞
-    一份项目快照。
-    """
-    in_overview_room = project.root_topic_id == conversation_id
-    source = room_doc if in_overview_room else overview_doc
-    auto = ""
-    if in_overview_room:
-        from app.domain.topic.services import TopicService
-
-        # ②③ 的取数在 topic 领域，和前端那一条
-        # （`TopicService.overview_auto`）是同一份：两个读者，一份来源。
-        auto = render_overview_auto(
-            **await TopicService(session).overview_auto_data(
-                project.id, all_topics=all_topics, roster=roster
-            )
-        )
-    return render_overview(brief=project_brief(source or ""), auto=auto)

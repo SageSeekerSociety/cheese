@@ -9,10 +9,12 @@ import { computed, inject, onMounted, ref, watch } from 'vue'
 import { listMyDevices, listTeamDevices, registerDeviceForTeam, unregisterDeviceFromTeam } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { screenAgentName, teammateName } from '@/lib/agentNames'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { topicTitle } from '@/lib/topicState'
 import { useDialog } from '@/plugins/dialog'
 
@@ -25,7 +27,11 @@ const scope = computed(() => (teamData.value?.personal ? 'own' : 'team'))
 const devices = ref<MyDevice[]>([])
 const myDevices = ref<MyDevice[]>([])
 const loading = ref(false)
+/** 写操作失败：一句话，可关，页面照旧（下面那块内容没受影响）。 */
 const error = ref<string | null>(null)
+/** 读失败：这一块内容根本没拿到，`devices` 空是假的。 */
+const loadError = ref<unknown>(null)
+const loadFailed = computed(() => loadError.value !== null)
 const busy = ref<string | null>(null)
 
 const myDeviceIds = computed(() => new Set(myDevices.value.map((device) => device.device_id)))
@@ -38,7 +44,7 @@ function errorMessage(value: unknown, fallback: string): string {
 
 async function load() {
   loading.value = true
-  error.value = null
+  loadError.value = null
   try {
     const [teamDevices, mine] = await Promise.all([
       listTeamDevices(teamId.value),
@@ -47,7 +53,8 @@ async function load() {
     devices.value = teamDevices.devices
     myDevices.value = mine.devices
   } catch (cause) {
-    error.value = errorMessage(cause, t('teams.compute.loadFailed'))
+    // 原来记在 `error` 里 —— 那条提示可关，关掉之后屏幕上只剩「还没有自己的机器」。
+    loadError.value = cause
   } finally {
     loading.value = false
   }
@@ -98,6 +105,8 @@ watch(teamId, load)
       </div>
     </div>
 
+    <!-- 写操作（添加/移除）失败是可关的一条提示，页面本身还在。读失败不是：整块内容
+         没读到，就得换成失败的样子，不能一边弹条一边画「还没有自己的机器」。 -->
     <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
       {{ error }}
     </v-alert>
@@ -105,6 +114,14 @@ watch(teamId, load)
     <div v-if="loading" class="py-12 text-center">
       <v-progress-circular indeterminate color="primary" />
     </div>
+
+    <BaseLoadError
+      v-else-if="loadFailed"
+      :title="t('teams.compute.loadFailed')"
+      :error="loadFailureReason(loadError)"
+      :forbidden="isForbidden(loadError)"
+      @retry="load"
+    />
 
     <template v-else>
       <section class="compute-section">

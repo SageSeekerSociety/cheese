@@ -21,8 +21,8 @@ import { parseDiffLines } from '../../lib/diff'
 import { noticeText } from '../../lib/noticeText'
 import { confirmTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
+import { progressLabel, type ProgressLevel } from '../../lib/taskProgress'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
-import CloudStartupStatus from '../CloudStartupStatus.vue'
 import NavLink from '../common/NavLink.vue'
 
 import MailDraftCard from './MailDraftCard.vue'
@@ -58,12 +58,16 @@ const props = defineProps<{
   retrying?: boolean
   /** 房间所在的项目：「去确认」要带人去项目级的页面。 */
   projectId?: string | null
+  /** 这个频道里一件任务此刻到哪一档（「创建了任务」那一行写在后面）；不认得就是 null。 */
+  taskLevel?: (taskId: string) => ProgressLevel | null
 }>()
 
 const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'open-card', taskId: string): void
   (e: 'retry'): void
+  /** 「置顶了一条消息」那一行的「查看」：去被置顶的那一条。 */
+  (e: 'jump', blockId: string): void
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
 }>()
 
@@ -82,13 +86,7 @@ const shownFiles = computed(
 const hiddenFiles = computed(() => (changes.value ? changes.value.filesTotal - shownFiles.value.length : 0))
 
 // 同类事件又来了一次：不加新行，这一行的计数滚一格、整行亮一下，说「又一次」。
-const repeats = computed(() =>
-  props.notice.mode === 'fold'
-    ? props.notice.count
-    : props.notice.mode === 'backend-error'
-      ? props.notice.error.count ?? 0
-      : 0
-)
+const repeats = computed(() => (props.notice.mode === 'fold' ? props.notice.count : 0))
 const bumped = ref(false)
 watch(repeats, async (next, prev) => {
   if (next <= prev) return
@@ -121,6 +119,15 @@ function docDiffText(line: string): string {
 const splitTask = computed(() => {
   if (props.notice.mode !== 'action' || !['split', 'task_created'].includes(props.notice.resource)) return null
   const id = (props.block.meta as Record<string, unknown> | null | undefined)?.task_id
+  return typeof id === 'string' && id ? id : null
+})
+
+// 「创建了任务」那一行后面写那件任务此刻到了哪一档：讨论中、进行中、待审阅、已完成。
+const splitLevel = computed(() => (splitTask.value ? props.taskLevel?.(splitTask.value) ?? null : null))
+
+// 「置顶了一条消息」那一行：被置顶的是哪一条，行尾一颗「查看」去它那里。
+const pinnedBlock = computed(() => {
+  const id = (props.block.meta as Record<string, unknown> | null | undefined)?.pinned_block_id
   return typeof id === 'string' && id ? id : null
 })
 
@@ -170,6 +177,12 @@ const ACTION_META: Record<string, { btn: string }> = {
        (归档/加入…): render it through the SAME token→chip path as messages. -->
   <div v-if="happening" class="room-happening im-event">
     <span v-html="renderPlain(noticeText(block))" /><span class="room-happening__time"> · {{ time }}</span>
+    <template v-if="pinnedBlock">
+      <span class="room-happening__time"> · </span>
+      <button type="button" class="room-happening__go" @click="emit('jump', pinnedBlock)">
+        {{ t('work.room.pin.view') }}
+      </button>
+    </template>
   </div>
   <AgentNoticeFrame
     v-else
@@ -279,6 +292,10 @@ const ACTION_META: Record<string, { btn: string }> = {
          through the shared token→chip path so the actor is clickable. -->
         <span class="sys-text">
           <span v-html="renderPlain(notice.text)" />
+          <template v-if="splitLevel">
+            <span class="sys-sep"> · </span>
+            <span class="task-level" :data-level="splitLevel">{{ progressLabel(splitLevel) }}</span>
+          </template>
           <template v-if="docRequest">
             <span class="sys-sep"> · </span>
             <span>{{ t('work.room.notice.docEditCount', { n: docRequest.edits.length }) }}</span>
@@ -338,29 +355,6 @@ const ACTION_META: Record<string, { btn: string }> = {
         <pre v-else class="sys-detail">{{ notice.detail }}</pre>
       </details>
     </div>
-    <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
-     person needs to know it happened. So the line shows by default
-     and the stack is one click away — a room is a conversation, not
-     a monitoring dashboard. -->
-    <details
-      v-else-if="notice.mode === 'backend-error'"
-      class="sys-row sys-row--warn backend-error"
-      data-testid="backend-error-event"
-    >
-      <summary class="sys-line">
-        <span class="sys-text sys-lead">{{ notice.error.line }}</span>
-        <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
-        <span v-if="notice.error.count" class="sys-num">×<RollingNumber :value="notice.error.count" /></span>
-      </summary>
-      <div class="sys-fold">
-        <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
-          <span v-if="notice.error.where">{{ notice.error.where }}</span>
-          <span v-if="notice.error.requestId"> req {{ notice.error.requestId }} </span>
-        </div>
-        <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
-      </div>
-    </details>
-    <CloudStartupStatus v-else-if="notice.mode === 'agent-status'" :events="run" />
     <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
      什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
      条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
@@ -717,5 +711,20 @@ details[open]::details-content {
 }
 .room-happening :deep(.mention:hover) {
   text-decoration: underline;
+}
+.room-happening__go {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.room-happening__go:hover {
+  text-decoration: underline;
+}
+/* 任务到了哪一档：等人看的那一档（待审阅）用琥珀色点出来，其余照这一行的颜色。 */
+.task-level[data-level='review'] {
+  color: var(--accent-ink);
 }
 </style>

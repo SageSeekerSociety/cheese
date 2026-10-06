@@ -3,7 +3,7 @@
   "loadFailed": "Couldn't load the market",
   "tabs": {
     "tasks": "Challenge matching",
-    "pools": "Models and work computers"
+    "pools": "Models and environments"
   },
   "tasksIntro": "Organizations publish {challenges} to the market; teams {apply} with their own projects. Once an application is accepted, the project is linked to the challenge and its resources and terms take effect right away.",
   "tasksIntroChallenges": "challenges",
@@ -11,8 +11,8 @@
   "poolsIntro": "These are the {models} and {computers} a project can use. Defaults are covered by the platform and work out of the box; devices you connect yourself are listed here too.",
   "aiModels": "AI models",
   "aiModelsHint": "The model each conversation uses",
-  "workComputers": "Work computers",
-  "workComputersHint": "Machines that run tasks",
+  "workComputers": "Environments",
+  "workComputersHint": "Where tasks run",
   "default": "Default",
   "available": "Available in projects",
   "unavailable": "Not available yet",

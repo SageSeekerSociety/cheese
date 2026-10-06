@@ -328,10 +328,6 @@ async def patch_task(
     if payload.description is not None:
         task.description = payload.description
 
-    # 视频链接 — use model_fields_set to detect explicit null vs absent
-    if "video_url" in payload.model_fields_set:
-        task.video_url = payload.video_url if payload.video_url else None
-
     # 布尔开关
     if payload.resubmittable is not None:
         task.resubmittable = payload.resubmittable

@@ -22,10 +22,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
-from app.domain.project.models import Project
 from app.domain.team.models import Team
-from app.domain.topic.models import Topic
-from app.domain.user.repositories import UserRepository
 from tests.conftest import _PG_BASE, _admin_recreate_db
 
 _REVISION = "c4e7a2d91f30"
@@ -95,8 +92,14 @@ async def _seed(db_name: str) -> dict:
     ids: dict = {}
     async with factory() as db:
         handle = f"pool-{uuid.uuid4().hex[:8]}"
-        user = await UserRepository(db).create_user(
-            username=handle, email=f"{handle}@example.com"
+        # A row, not today's model: `user` is at the revision before the pool too,
+        # and the model has columns that revision does not.
+        user_id = await db.scalar(
+            text(
+                'INSERT INTO "user" (username, email, created_at, updated_at) '
+                "VALUES (:handle, :email, :now, :now) RETURNING id"
+            ),
+            {"handle": handle, "email": f"{handle}@example.com", "now": now},
         )
         team = Team(
             name="Team",
@@ -110,18 +113,47 @@ async def _seed(db_name: str) -> dict:
         db.add(team)
         await db.flush()
         cloud_choice = {"name": None, "profile": "cloud", "device_id": None, **_SPEC}
-        project = Project(
-            name="P",
-            owner_handle=handle,
-            team_id=team.id,
-            settings={"compute_configs": {"default": cloud_choice}, "x": 1},
+        # A row as well: the projects table is at the revision before the pool.
+        project_id = uuid.uuid4()
+        await db.execute(
+            text(
+                "INSERT INTO projects (id, name, owner_handle, team_id, ai_mode,"
+                " settings, created_at, updated_at)"
+                " VALUES (:id, 'P', :owner, :team, 'collaborative',"
+                " CAST(:settings AS json), :now, :now)"
+            ),
+            {
+                "id": project_id,
+                "owner": handle,
+                "team": team.id,
+                "settings": json.dumps(
+                    {"compute_configs": {"default": cloud_choice}, "x": 1}
+                ),
+                "now": now,
+            },
         )
-        db.add(project)
-        await db.flush()
-        room = Topic(project_id=project.id, title="Room", compute_config=cloud_choice)
-        old_room = Topic(project_id=project.id, title="Old room")
-        db.add_all([room, old_room])
-        await db.flush()
+        # Rooms as rows too, for the same reason as the sessions below: the
+        # topics table is at the revision before the pool.
+        room_id, old_room_id = uuid.uuid4(), uuid.uuid4()
+        for topic_id, title, compute in (
+            (room_id, "Room", json.dumps(cloud_choice)),
+            (old_room_id, "Old room", None),
+        ):
+            await db.execute(
+                text(
+                    "INSERT INTO topics (id, project_id, title, kind, status,"
+                    " compute_config, created_at, updated_at)"
+                    " VALUES (:id, :project, :title, 'topic', 'active',"
+                    " CAST(:compute AS json), :now, :now)"
+                ),
+                {
+                    "id": topic_id,
+                    "project": project_id,
+                    "title": title,
+                    "compute": compute,
+                    "now": now,
+                },
+            )
         for device_id, supply in (
             ("dev-shared", Supply.cloud),
             ("dev-left", Supply.cloud),
@@ -133,14 +165,14 @@ async def _seed(db_name: str) -> dict:
                     device_id=device_id,
                     name=device_id,
                     token=f"token-{device_id}",
-                    owner_user_id=user.id,
+                    owner_user_id=user_id,
                     supply=supply,
                     created_at=now,
                 )
             )
             await db.flush()
             db.add(DeviceTeamRow(device_id=device_id, team_id=team.id))
-        resource = str(room.resource_id or room.id)
+        resource = str(room_id)
         # Written as rows, not through today's model: the table is at the
         # revision before the pool, and the model has moved on since.
         sessions = {
@@ -185,7 +217,7 @@ async def _seed(db_name: str) -> dict:
                 ),
                 {
                     "id": session_ids[handle],
-                    "topic": room.id,
+                    "topic": room_id,
                     "handle": handle,
                     "request": json.dumps(request),
                     "lease": None if lease is None else json.dumps(lease),
@@ -194,9 +226,9 @@ async def _seed(db_name: str) -> dict:
             )
         await db.commit()
         ids.update(
-            project=project.id,
-            room=room.id,
-            old_room=old_room.id,
+            project=project_id,
+            room=room_id,
+            old_room=old_room_id,
             room_resource=resource,
             working=session_ids["working"],
             pending=session_ids["pending"],

@@ -65,6 +65,8 @@ export interface Topic {
   project_id: string
   parent_id: string | null
   title: string
+  // 频道是做什么的，管理者写的一句话。没写是 null。
+  description?: string | null
   kind: string
   status: string
   created_at: string
@@ -79,19 +81,18 @@ export interface Topic {
   accepted_at?: string | null
   archived_at?: string | null
   cleanup_due_at?: string | null
-  can_archive?: boolean
+  // 我管不管这个频道（创建者或项目管理员）：改名、写说明、归档、加人移人。
+  can_manage?: boolean
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
   // 状态，有的是成员在做什么（backend `agent/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
-  // 我和这个话题有没有关系：我在名册里 / 是我建的 / 我是验收人 / 我被 @ 过，
-  // 四者取一。只有 list/get 话题时才带。
-  i_participate?: boolean
+  // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
+  joined?: boolean
   // 这个话题在等我拍板：有点名给我的待办验收卡、没答的决策请求，或芝士停在
-  // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。为真时
-  // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
+  // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
   // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
@@ -99,7 +100,7 @@ export interface Topic {
   waits?: MemberWait[]
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
-  // 和上面 `activity` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
+  // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
   // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
   // 着，而屏幕上那个颜色是哪一个算出来的，谁也说不清。
@@ -273,6 +274,10 @@ export interface RoomTask {
   // 只在后端算一次，前端没有一条退回本地推导的路——留一条兜底路，两个算法就会同时
   // 存在，而且谁也说不清屏幕上那个词是哪一个算出来的。
   presentation: Presentation
+  /** 从讨论转出来的任务，第一轮整理文档到哪了；文档有内容后是 null。只在单个任务上。 */
+  opening?: 'drafting' | 'waiting' | 'failed' | null
+  /** 这件任务里最后说的一句：频道概览上的「最新进展」。只在频道的任务列表里。 */
+  last_message?: Block | null
 }
 
 /** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
@@ -343,11 +348,11 @@ export type WsServerFrame =
   // An existing block's data changed in place (an option question got answered): replace it in the timeline.
   | { type: 'block_updated'; block: Block }
   | { type: 'pong' } // answer to the client's liveness ping; carries nothing
-  // The room's session state moved: a task started or finished (the harness's
-  // own, or a command the executor runs), or the session reported its model.
-  // The same shape `GET /topics/{id}/agent/control` answers.
+  // The room's session state moved (a task started or finished, or the session
+  // reported its model); the same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
   | import('./types/live').LiveFrame
+  | import('./types/threads').ThreadActivityFrame
 
 // An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
@@ -443,10 +448,10 @@ export interface ProjectInvitation {
 // owner/admin/member (distinct from ProjectMemberRow's lead/member/mentor);
 // `agent` marks 芝士 (the AI member) so the UI can badge it.
 export interface TopicMemberRow {
-  id: string
   topic_id: string
   member_handle: string
-  role: 'owner' | 'admin' | 'member'
+  // `owner` 是建这个频道的人；「综合」里的人都是 `member`。
+  role: 'owner' | 'member'
   // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
@@ -455,7 +460,6 @@ export interface TopicMemberRow {
   // null，画彩色首字母。别拿它去取 /avatars/default。
   avatar_id?: number | null
   agent?: boolean
-  created_at: string
 }
 
 // GET /api/projects/{id}/inbox?target_handle=
@@ -738,9 +742,9 @@ export interface AcceptCard {
   topic_id: string
   reviewer_handle: string
   routing_reason: string
-  // 提交与 PR 规范: the Conventional Commits subject + body this topic will be
-  // squash-merged under. Null on a card filed without them (the platform then
-  // falls back to `chore: <话题标题>`).
+  // 提交与 PR 规范: the commit subject + body this topic will be squash-merged
+  // under. Null on a card filed without them (the platform then falls back to
+  // the topic title).
   change_subject: string | null
   change_body: string | null
   status: AcceptStatus
@@ -809,41 +813,6 @@ export interface Notification {
   read_at: string | null
   feedback: 'up' | 'down' | null
   created_at: string
-}
-
-// ---- 项目总览的自动区 (GET /topics/{root_topic_id}/overview, #1889) ----
-
-// 总览是三块：①「项目是什么」写在文档正文里，②③ 由平台现拼。这一份是 ②③
-// 的结构化形态，给总览房间文档正文下面那一栏 —— 每条带着自己去的地方，人点得动。
-// 注入 AI 队友提示词的那一份 markdown 读的是同一次取数（backend
-// `domain/topic/overview.py`），所以两边不会各说各的。
-//
-// 空块整块不出现（没有「暂无」占位）：`blocks` 里少一块就是那一块现在没内容。
-export interface OverviewTopicItem {
-  kind: 'topic'
-  /** 去处：这个话题的房间。 */
-  topic_id: string
-  title: string
-  /** 最新那张任务卡的负责人，`@名字`。 */
-  owner: string | null
-  /** 它现在在做什么（「还没开活」/「在做」/「已收工」）。 */
-  status: string | null
-  /** 一句话结论，没有就是没写。 */
-  conclusion: string | null
-}
-
-export type OverviewAutoItem = OverviewTopicItem
-
-export interface OverviewAutoBlock {
-  /** `active_topics` / `closed_topics`。 */
-  key: string
-  title: string
-  items: OverviewAutoItem[]
-}
-
-export interface OverviewAuto {
-  root_topic_id: string
-  blocks: OverviewAutoBlock[]
 }
 
 // ---- 资源池市场 (design v3: AI 池 + 算力池) ----

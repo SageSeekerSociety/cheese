@@ -676,13 +676,12 @@ async def set_project_owner(
       project would sit in the transferor's team, where ``may_read_project``
       still reads it for them and ``MemberService.manages`` — team owner — is
       still true, so the same route could take the owner right back. On this
-      branch only, their ROOM seats go with the project too
-      (:meth:`TopicMemberService.hand_over_project_seats`): a project's
-      membership admits you to its topics, but each room keeps its own roster
-      and ``authorize_topic_access`` reads that first — so without the handover
-      the giver keeps receiving and speaking in 项目总览, which is 借 again,
-      one floor down. On the branch above the giver stays in the project on
-      purpose and their seats are left alone.
+      branch only, their channel seats are taken away too
+      (:meth:`TopicMemberService.revoke_project_seats`): a seat admits you to
+      its channel by itself, so without that the giver could keep speaking in
+      the channels they had joined, which is 借 again, one floor down. On the
+      branch above the giver stays in the project on purpose and their seats
+      are left alone.
     * **Off it, otherwise** — refused: the project is some team's, and the only
       people who may own it are that team's.
 
@@ -714,19 +713,16 @@ async def set_project_owner(
     project.owner_handle = handle
     await db.flush()
     if team_changed_from is not None and previous is not None:
-        # The move is not finished by swapping the field: the transferor still
-        # holds the topic seats they were seeded with (as the owner, the root
-        # topic's own `owner` row), and `authorize_topic_access` reads a room's
-        # roster BEFORE it asks whether you are a project member — so the seats
-        # keep every room open to them after the project's own door has shut.
-        # Handing those seats to the recipient first is what makes 「转完你就真
-        # 的出去了」 true rather than aspirational. Only on this branch: on the
-        # project's own team the giver stays a member on purpose.
-        moved = await TopicMemberService(db).hand_over_project_seats(
-            project_id=project_id, from_handle=previous, to_handle=handle
+        # The project left the transferor's team with them still seated in its
+        # channels, and a seat is a reason to reach a channel on its own
+        # (`authorize_topic_access` reads it before project membership). Taking
+        # the seats away is what makes 「转完你就真的出去了」 true. Only on this
+        # branch: on the project's own team the giver stays a member on purpose.
+        moved = await TopicMemberService(db).revoke_project_seats(
+            project_id=project_id, member_handle=previous
         )
         logger.info(
-            "project seats handed over project=%s from=%s to=%s rooms=%s by=%s",
+            "project seats revoked on transfer project=%s from=%s to=%s rooms=%s by=%s",
             project_id,
             previous,
             handle,
@@ -807,6 +803,9 @@ async def get_branch_protection(
     if project is None:
         raise NotFoundError("Project not found")
     bp = branch_protection_of(project)
+    from app.domain.project.forge import follow_github_rename
+
+    await follow_github_rename(project_id, db)
     installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
     if installation is None:
         merge_method, gh = "squash", GITHUB_UNBOUND

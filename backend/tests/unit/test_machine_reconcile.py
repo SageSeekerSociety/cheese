@@ -73,6 +73,7 @@ def _machine(**kw):
         device_id="dev-1",
         last_seen_at=None,
         owner_user_id=None,
+        failed_at=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)

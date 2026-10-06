@@ -64,6 +64,18 @@ class Project(UuidPk, Timestamps, Base):
         ),
         nullable=True,
     )
+    # The project's overview: what the project is, read by every conversation's
+    # AI teammate and shown at the top of 综合's overview. A document of the
+    # project's own that the library does not list.
+    overview_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_projects_overview_document_id",
+        ),
+        nullable=True,
+    )
     # The 赛题 this project was created from (main's int `task` table). The 1.0
     # team-project already carries this idea as `external_task_id`; a 2.0 project
     # needs it too, or "create a project from this 赛题" produces something with
@@ -222,7 +234,7 @@ class ProjectGitInstallation(UuidPk, Timestamps, Base):
     A project connects to one repo at a time, and a repo to one project.
     `installation_id` is NOT unique: one org installation covers many repos,
     so several projects can share it — each token is minted for its project's
-    repo alone (`GitHubAppTokens(repository=...)`).
+    repo alone (`GitHubAppTokens(repository_id=...)`).
     """
 
     __tablename__ = "project_git_installations"
@@ -231,8 +243,13 @@ class ProjectGitInstallation(UuidPk, Timestamps, Base):
         ForeignKey("projects.id", ondelete="CASCADE"), unique=True
     )
     installation_id: Mapped[int] = mapped_column(BigInteger)
-    # "owner/repo" full name, e.g. "SageSeekerSociety/cheese".
+    # "owner/repo" full name, e.g. "SageSeekerSociety/cheese". A name, so it goes
+    # stale when the repository is renamed on GitHub; `repository_id` is what
+    # identifies it, and `forge.follow_github_rename` refreshes this from it.
     repo: Mapped[str] = mapped_column(String(255), unique=True)
+    # GitHub's numeric repository id, which a rename or transfer keeps. NULL on
+    # a row bound before it was kept; the first lookup fills it in.
+    repository_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # The GitHub org or user login the installation lives under.
     account: Mapped[str] = mapped_column(String(255))
 

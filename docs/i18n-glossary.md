@@ -19,7 +19,9 @@
 | 中文 | 英文 | 依据 / 不采用什么 |
 |---|---|---|
 | 频道 | **channel** | 项目里人说话的地方（`work.sidebar.topics`、`navigation.term.topic`），默认那一个叫「综合 = General」。后端和路由仍叫 topic（`/topics/{topic_id}`），界面上不再出现 room 和 topic |
-| 话题 | **topic** | 只在空间里用：`views/spaces/detail/ManageTopics.vue`、`addTopic`，是给题目贴的分类标签。**不用 thread**：界面里没有「楼」的概念，用 thread 会让人以为能把一条讨论拆成多段。**不用 subject**：那是「学科/主题」的意思，会和赛题的「选题」撞车 |
+| 话题 | **topic** | 只在空间里用：`views/spaces/detail/ManageTopics.vue`、`addTopic`，是给题目贴的分类标签。**不用 thread**：thread 是支线。**不用 subject**：那是「学科/主题」的意思，会和赛题的「选题」撞车 |
+| 支线 | **thread** | 频道主线一条消息下面的讨论（`work.room.thread.title = Thread`，页签 `Threads`）。**不用 reply chain / sub-channel** |
+| 项目总览 | **project overview** | `work.channel.overview.project = Project overview`，后端 `projects.overview_document_id`。面板开关「概览」和页签「总览」是 **Overview**，不带 project |
 | 空间 | **space** | `views/spaces/`、`components/spaces/SpaceSidebar.vue`、`navigation.spaces = "Spaces"`。**不用 area / zone / room / channel**：channel 是项目里的频道 |
 | 项目 | **project** | `views/projects/`、后端 `/projects/{project_id}`。**不用 program**：那是「项目集」 |
 | 团队 | **team** | `views/teams/`、`navigation.teams = "Teams"`。**不用 group**：group 留给「域名组」 |
@@ -36,6 +38,7 @@
 | 通知 | **notification** | `network/api/notifications/`、`notifications.common.notificationCenter = 通知中心`。**不用 alert**：alert 是弹窗 |
 | 附件 | **attachment** | `network/api/attachments/` |
 | 标签 | **tag** | `network/api/tags/` |
+| 环境 | **environment** | AI 队友干活的地方：云端的写 **cloud environment**，项目设置那一页是 **Environment**（在哪运行、准备脚本与环境变量、额度）。**不用 work computer / sandbox / machine**：点名一台设备时才说 **computer**，成员接入的电脑统称 **device** |
 | 工作台 | **workspace** | 既有 `publicSite.openWorkspace = "Open workspace"`、`navigation.workspace = "Workspace"`。**不用 dashboard / console**：dashboard 在本产品另有位置（空间的数据看板）。中文自己也不统一——`navigation.workspace` 写「工作区」、`publicSite.openWorkspace` 写「进入工作台」，英文一律 workspace |
 
 **「活」不是界面词。** 房间对话里说的「这条活」是**平台内部的黑话**，对应的界面概念就是「任务」= **task**。

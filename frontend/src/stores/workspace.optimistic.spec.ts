@@ -22,7 +22,7 @@ import { archiveTopic, listTopics, unarchiveTopic } from '@/api'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const topic = (status: string): Topic =>
-  ({ id: 't1', project_id: 'p', kind: 'topic', status, title: '房间', can_archive: true }) as Topic
+  ({ id: 't1', project_id: 'p', kind: 'topic', status, title: '房间', can_manage: true }) as Topic
 
 beforeEach(() => {
   localStorage.clear()

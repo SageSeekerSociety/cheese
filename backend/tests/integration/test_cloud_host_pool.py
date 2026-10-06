@@ -9,6 +9,7 @@ on it that it did not push.
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -38,6 +39,7 @@ from app.domain.machine.services import (
     CloudPoolFull,
     HostPool,
 )
+from app.domain.run_record.models import RunRecord
 from app.domain.user.repositories import UserRepository
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
@@ -160,13 +162,29 @@ class Case:
         async def go():
             async with self.client.test_request_factory() as db:
                 rows = await db.scalars(
+                    select(RunRecord.content)
+                    .where(
+                        RunRecord.conversation_id == self.projects[owner]["room"],
+                        RunRecord.kind.in_(["cloud_startup", "cloud_provisioning"]),
+                    )
+                    .order_by(RunRecord.created_at)
+                )
+                return list(rows)
+
+        return self.run(go)
+
+    def said(self, owner: str) -> list[str]:
+        """What the platform said in the room's conversation about its
+        sandboxes: what a person there has to know."""
+
+        async def go():
+            async with self.client.test_request_factory() as db:
+                rows = await db.scalars(
                     select(Block.content)
                     .where(
                         Block.conversation_id == self.projects[owner]["room"],
                         Block.kind == BlockKind.event,
-                        Block.meta["event_type"]
-                        .as_string()
-                        .in_(["cloud_startup", "cloud_provisioning"]),
+                        Block.meta["event_type"].as_string() == "cloud_startup",
                     )
                     .order_by(Block.created_at)
                 )
@@ -179,9 +197,11 @@ class Case:
 def pool(client, monkeypatch):
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
-    # Two slots a host: two cores, one sandbox each.
+    # Two slots a host: two cores, one sandbox each, and memory for both.
     monkeypatch.setattr(settings, "microcloud_default_cores", 2)
     monkeypatch.setattr(settings, "cloud_host_slots_per_core", 1)
+    monkeypatch.setattr(settings, "microcloud_default_memory_mb", 4096)
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 1536)
     monkeypatch.setattr(settings, "cloud_pool_min_free_slots", 0)
     monkeypatch.setattr(settings, "cloud_host_idle_hold_s", 600)
     monkeypatch.setattr(settings, "cloud_pool_max_hosts", 20)
@@ -219,8 +239,8 @@ def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]
 
 
 LOST_LINE = (
-    "沙箱所在的机器不再响应，沙箱已换成新的："
-    "新沙箱从仓库里已推送的内容开始，没推送的改动不在了"
+    "环境所在的机器不再响应，环境已换成新的："
+    "新环境从仓库里已推送的内容开始，没推送的改动不在了"
 )
 
 
@@ -304,6 +324,19 @@ def test_a_host_whose_connector_went_away_takes_no_new_session(pool):
 
     pool.run(gone_since_long_ago)
     pool.online.discard(device)
+
+    assert pool.place("bob", bob) != first
+
+
+def test_a_host_takes_no_more_sandboxes_than_its_memory_holds(pool, monkeypatch):
+    """Cores leave room for two sandboxes, but a 4 GiB host keeps 1 GiB for
+    itself and has 3 GiB for its sandboxes: one at a 3 GiB limit. The second
+    session's sandbox goes to another host."""
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
+    [alice] = pool.room("alice", 1)
+    [bob] = pool.room("bob", 1)
+    first = pool.place("alice", alice)
+    pool.up(first)
 
     assert pool.place("bob", bob) != first
 
@@ -503,7 +536,7 @@ def test_a_host_the_provider_failed_is_let_go_and_its_session_placed_again(pool)
     assert pool.cloud.deleted == [host.machine_id]
     assert len(pool.cloud.created) == 2
     lines = pool.room_lines("alice")
-    assert lines == ["正在准备沙箱", "沙箱准备失败，正在重新准备"]
+    assert lines == ["正在准备环境", "环境准备失败，正在重新准备"]
 
 
 def test_a_provider_that_keeps_failing_stops_the_pool_creating_hosts(pool):
@@ -519,6 +552,64 @@ def test_a_provider_that_keeps_failing_stops_the_pool_creating_hosts(pool):
     assert len(pool.cloud.created) == 3
 
 
+def _fail_hosts(pool, owner, session, count):
+    """``count`` hosts in a row that the provider builds into ``error``, each
+    then deleted at the provider and forgotten by it, as MicroCloud does."""
+    for _ in range(count):
+        host_id = pool.place(owner, session)
+        pool.cloud.machines[pool.host(host_id).machine_id]["status"] = "error"
+        pool.pool("refresh_due")
+        pool.pool("maintain")
+        pool.pool("refresh_due")
+
+
+def test_failures_still_count_after_the_provider_forgot_the_machines(pool, monkeypatch):
+    monkeypatch.setattr(settings, "microcloud_reconcile_interval_s", 0)
+    [alice] = pool.room("alice", 1)
+    _fail_hosts(pool, "alice", alice, 3)
+
+    with pytest.raises(CloudKeepsFailing):
+        pool.place("alice", alice)
+    assert len(pool.cloud.created) == 3
+
+
+def test_a_failing_provider_is_tried_again_after_the_probe_interval(pool, monkeypatch):
+    monkeypatch.setattr(settings, "microcloud_reconcile_interval_s", 0)
+    [alice] = pool.room("alice", 1)
+    _fail_hosts(pool, "alice", alice, 3)
+
+    async def six_minutes_ago():
+        async with pool.client.test_request_factory() as db:
+            for host in await db.scalars(
+                select(CloudHost).where(CloudHost.failed_at.is_not(None))
+            ):
+                host.failed_at -= timedelta(minutes=6)
+            await db.commit()
+
+    pool.run(six_minutes_ago)
+
+    probe = pool.place("alice", alice)
+
+    assert len(pool.cloud.created) == 4
+    assert pool.host(probe).failed_at is None
+
+
+def test_the_failure_that_stops_the_pool_is_reported_as_an_error(
+    pool, monkeypatch, caplog
+):
+    monkeypatch.setattr(settings, "microcloud_reconcile_interval_s", 0)
+    [alice] = pool.room("alice", 1)
+
+    with caplog.at_level(logging.WARNING, logger="cheese.machine"):
+        _fail_hosts(pool, "alice", alice, 2)
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        _fail_hosts(pool, "alice", alice, 1)
+
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "failed 3 hosts" in errors[0].getMessage()
+
+
 def test_the_room_hears_about_the_sandbox_not_the_host(pool):
     [alice] = pool.room("alice", 1)
     host_id = pool.place("alice", alice)
@@ -529,7 +620,7 @@ def test_the_room_hears_about_the_sandbox_not_the_host(pool):
     pool.pool("maintain")
 
     lines = pool.room_lines("alice")
-    assert lines == ["正在准备沙箱", "沙箱已就绪"]
+    assert lines == ["正在准备环境", "环境已就绪"]
     hostname = pool.host(host_id).hostname
     assert not any(hostname in line for line in lines)
 
@@ -669,7 +760,7 @@ def test_an_enrolled_host_in_error_is_given_up_and_its_session_placed_again(pool
     assert host.failed_at is not None
     assert pool.cloud.deleted == [host.machine_id]
     assert pool.place("alice", alice) != host_id
-    assert pool.room_lines("alice") == [LOST_LINE]
+    assert pool.said("alice") == [LOST_LINE]
 
 
 def test_a_session_whose_host_stopped_answering_gets_a_new_sandbox(pool, monkeypatch):
@@ -692,8 +783,8 @@ def test_a_session_whose_host_stopped_answering_gets_a_new_sandbox(pool, monkeyp
     assert pool.cloud.deleted == [host.machine_id]
     assert pool.host(other).released_at is None
     assert pool.place("alice", alice) not in {lost, None}
-    assert pool.room_lines("alice") == [LOST_LINE]
-    assert pool.room_lines("bob") == []
+    assert pool.said("alice") == [LOST_LINE]
+    assert pool.said("bob") == []
 
 
 def test_with_every_host_away_nothing_is_given_up_until_one_answers(pool, monkeypatch):

@@ -32,8 +32,11 @@ from app.domain.agent.harness.prompt import (
 from app.domain.agent.hook_stream import _HookWorkState
 from app.domain.agent.platform_notices import (
     EVENT_PROMPT_REPLAYED,
+    EVENT_TURN_QUEUED,
+    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_PLATFORM,
+    delivery_checking_notice,
     notice,
 )
 from app.domain.agent.prompt import (
@@ -66,18 +69,17 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.repositories import BlockRepository
-from app.domain.delivery.ask_session_wait import waiting_ask_blocks
-from app.domain.delivery.ask_wake import expected_ask_session
 from app.domain.delivery.input_identity import InputEffects, InputOutcomeUnconfirmed
 from app.domain.delivery.receipts import held_blocks
 from app.domain.identity.actor import Actor
-from app.domain.living_doc.services import Documents
 from app.domain.membership.roster import roster_rows
 from app.domain.memory.files_store import MemoryIndex, memory_index
 from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
+from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus, TaskTitleSource
 from app.domain.room_task.place import Place, PlaceResolver, doc_text_of
@@ -201,12 +203,9 @@ class _TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
-    # 注入用的项目总览：① 从总览文档里取，②③ 从结构化数据现拼（#1889 第 1 条），
-    # 不是文档原文。每个房间都有 ①；②③ 只在总览房间拼，别处按需自己查。
-    #
-    # 总览房间自己那一轮没有 `doc_text` —— 这一份就是它的实况文档，同一份东西说
-    # 两遍只会让模型以为是两份。
+    # 注入用的项目总览（`project/overview.py`），和芝士读写它时要用的编号。
     overview_doc_text: str | None
+    overview_doc_id: uuid.UUID | None
     # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
     # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
     # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
@@ -381,18 +380,6 @@ class RoomTurns:
             text: str,
         ) -> dict: ...
 
-        async def _project_overview(
-            self,
-            session: AsyncSession,
-            *,
-            project: Project,
-            conversation_id: uuid.UUID,
-            room_doc: str | None,
-            overview_doc: str | None,
-            all_topics: list[Topic],
-            roster: list[dict],
-        ) -> str: ...
-
     async def dismiss(self, topic_id: uuid.UUID, seat: str) -> None:
         """Stop the work the teammate on rosters as ``seat`` still has running
         in this room: one taken off the room, whose every call there is now
@@ -460,10 +447,6 @@ class RoomTurns:
             agent = await self._session_agent(agents, topic, project, agent_handle)
             needs_place = not _is_dm(topic)
             doc_text = await doc_text_of(session, place, needs_place=needs_place)
-            if project.root_topic_id == place.room_id:
-                # The overview room's document is the project overview it is
-                # handed instead (`_assemble_turn`).
-                doc_text = None
             role = await agents.system_prompt(agent)
             harness, provider = self._compute.choose(
                 project.settings, resolve_compute_id(project.settings, topic)
@@ -586,14 +569,6 @@ class RoomTurns:
                 topic_id=place.conversation_id,
                 recipient_handle=acting_agent,
             )
-            # An answer whose Ask conversation is gone belongs to no prompt:
-            # carrying it would fail this turn on the fence that refuses it
-            # (`ask_session_wait`).
-            held |= await waiting_ask_blocks(
-                session,
-                topic_id=place.conversation_id,
-                recipient_handle=acting_agent,
-            )
             pending = [block for block in pending if block.id not in held]
             notices = [block for block in notices if block.id not in held]
             prompt_pending_ids = [b.id for b in pending]
@@ -665,19 +640,20 @@ class RoomTurns:
             teaching = await teaching_context.for_project(
                 session=session, project=project
             )
-            # 人和 agent 共同看的那一份（结论 7）：项目总览房间的实况文档。它不是
-            # 记忆，所以不走召回那条路——写它的人（或 agent）留了痕，读它的每一间
-            # 房间读到的是同一份，而这正是共享记忆池做不到的两件事。
-            # 总览房间自己那一轮不读第二遍：`doc_text` 已经是它（下面注入那一步会
-            # 把两者合起来，那里才是「注入什么」的决定）。
-            overview_root = (
-                await Documents(session).of_room(project.root_topic_id)
+            # 人和 agent 共同看的那一份（结论 7）：项目总览。它不是记忆，所以不走
+            # 召回那条路——写它的人（或 agent）留了痕，每段对话读到的是同一份，而
+            # 这正是共享记忆池做不到的两件事。
+            overview_doc = (
+                await ProjectService(session).overview_document(project)
                 if project is not None
-                and project.root_topic_id is not None
-                and project.root_topic_id != place.conversation_id
                 else None
             )
-            overview_doc_text = overview_root.content if overview_root else None
+            overview_doc_id = overview_doc.id if overview_doc is not None else None
+            overview_doc_text = (
+                render_overview(brief=project_brief(overview_doc.content))
+                if overview_doc is not None
+                else None
+            )
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
             # 骨架是这个项目在这台机器上跑的那一个（结论 28），不是这个参与者的属
@@ -705,26 +681,6 @@ class RoomTurns:
             topic_refs, topic_refs_for_prompt = _topic_ref_lists(
                 all_topics, exclude_id=topic.id
             )
-            if project is not None and project.root_topic_id is not None:
-                # 项目总览（#1889 第 1 条）：注入的不是文档原文，而是「① 从文档
-                # 来 + ②③ 从结构化数据现拼」的那一份。手抄进正文的旧内容因此读
-                # 不到——写在那儿的副本没人读，也就没人再写。
-                #
-                # 在「综合」的主线上它同时就是那里的实况文档：同一份东西说两遍，
-                # 模型会以为是两份，所以那里把 `doc_text` 交出去（它只喂提示词）。
-                # 问的是这段对话，不是它所在的频道：综合里的任务和支线读到的是
-                # 项目总览，任务自己的文档照旧是任务的。
-                overview_doc_text = await self._project_overview(
-                    session,
-                    project=project,
-                    conversation_id=place.conversation_id,
-                    room_doc=doc_text,
-                    overview_doc=overview_doc_text,
-                    all_topics=all_topics,
-                    roster=roster,
-                )
-                if project.root_topic_id == place.conversation_id:
-                    doc_text = None
             # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。不租地点的一轮里
             # 没有交付，那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，
             # 前者要说话（第一次交付只能新建），后者一个字都不说，所以给的是 None。
@@ -782,6 +738,12 @@ class RoomTurns:
                 if root is not None
                 else None
             )
+            if place.thread is not None:
+                # So the main line hears when an AI teammate starts and stops
+                # answering in this 支线 (`InProcessBroker.publish`).
+                from app.domain.agent.runtime import get_broker
+
+                get_broker().activity.note_thread(place.thread.id, place.room_id)
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
             # 先问这台机器上有没有可用的骨架，再过档位策略：策略那一步要解析模型，
@@ -1007,6 +969,7 @@ class RoomTurns:
             agent_pool=agent_pool,
             doc_text=doc_text,
             overview_doc_text=overview_doc_text,
+            overview_doc_id=overview_doc_id,
             memory=memory,
             pending_ids=pending_ids,
             notice_ids=[b.id for b in notices],
@@ -1049,7 +1012,6 @@ class RoomTurns:
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
-        expected_session = await expected_ask_session(self._sessions, delivery_id)
         preparation_started = time.monotonic()
         prepared = await self._assemble_turn(
             topic_id=topic_id,
@@ -1126,6 +1088,7 @@ class RoomTurns:
             topics=topic_refs_for_prompt,
             artifacts=artifact_refs,
             overview_doc=overview_doc_text,
+            overview_doc_id=prepared.overview_doc_id,
             teaching=teaching,
             environment=_session_opening_lines(
                 unconnected_mcp=(
@@ -1205,21 +1168,16 @@ class RoomTurns:
         # whole point is that this turn may produce nothing either — a notice
         # written afterwards is exactly the one that never gets written.
         if replay_notice is not None:
-            payload = await self.post_system_event(
+            await self.post_system_event(
                 topic_id,
                 replay_notice,
                 turn_id,
-                # 「又重投了一次」是一条码说了算的事。它以前只有开头那个 🔁 —— 一个
-                # 字符同时当类别、当轻重、当给人看的记号，读它的人和读它的代码都得
-                # 猜。码在这里，前端照码渲染。
                 meta=notice(
                     EVENT_PROMPT_REPLAYED,
                     severity=SEVERITY_WARN,
                     who=WHO_PLATFORM,
                 ),
             )
-            if payload is not None:
-                yield {"type": "event_block", "block": payload}
 
         # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
         # but deliberately NOT awaited here: git_log ensures the repo exists, and
@@ -1343,7 +1301,6 @@ class RoomTurns:
                 resume_token=resume_session_id,
                 session_opening=opening.text,
                 opening_changes=opening_changes(opening, told),
-                expected_native_session=expected_session,
                 model=model_kwargs.get("model"),
                 env=model_kwargs.get("env"),
                 acting=acting_agent,
@@ -1359,17 +1316,15 @@ class RoomTurns:
                 owes_reply=summoned,
             )
             _delivery_step("send")
-            # 这一轮把现状说到了：下一轮只补在这之后变了的。回答一道 Ask 的那一轮
-            # 接着原来的对话，runtime 不往里放现状（`RoomSessions.send`），所以不算。
-            if expected_session is None:
-                async with self._sessions() as session:
-                    await AgentSessionService(session).remember_told(
-                        conversation_id=topic_id,
-                        agent_handle=prepared.agent.handle,
-                        harness=prepared.harness,
-                        told=opening.digests(),
-                    )
-                    await session.commit()
+            # 这一轮把现状说到了：下一轮只补在这之后变了的。
+            async with self._sessions() as session:
+                await AgentSessionService(session).remember_told(
+                    conversation_id=topic_id,
+                    agent_handle=prepared.agent.handle,
+                    harness=prepared.harness,
+                    told=opening.digests(),
+                )
+                await session.commit()
             _delivery_step("remember_told")
         except InputOutcomeUnconfirmed as exc:
             # The session still owns this work. Its structured echo can settle
@@ -1379,13 +1334,10 @@ class RoomTurns:
                 topic_id,
                 exc.identity.input_id,
             )
-            payload = await self.post_system_event(
-                topic_id,
-                "输入已登记，发送结果正在核对；不会重复发送",
-                turn_id,
+            checking, checking_meta = delivery_checking_notice()
+            await self.post_system_event(
+                topic_id, checking, turn_id, meta=checking_meta
             )
-            if payload is not None:
-                yield {"type": "event_block", "block": payload}
             return
         except Exception as exc:  # noqa: BLE001 — a failed write must be SAID
             # Nothing else will close this turn. `session_lifecycle` above told
@@ -1466,11 +1418,12 @@ class RoomTurns:
         yield {"type": "prompt_delivered"}
         if ready is False:
             marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
-            payload = await self.post_system_event(
+            await self.post_system_event(
                 topic_id,
                 say("sessionStartingMessageQueued"),
                 marked_work_id,
+                meta=notice(
+                    EVENT_TURN_QUEUED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+                ),
             )
-            if payload is not None:
-                yield {"type": "event_block", "block": payload}
         return

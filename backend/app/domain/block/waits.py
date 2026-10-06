@@ -33,6 +33,7 @@ from app.domain.block.models import (
 )
 from app.domain.conversation.services import of_rooms, room_column
 from app.domain.identity.handles import agent_handle_column, recipient_seat
+from app.domain.run_record.models import RunRecord
 
 #: Only this far back. A wait is about someone waiting now; a message nobody
 #: answered a week ago is not that any more, and without a bound these queries
@@ -58,6 +59,9 @@ CHECKS_FOR_THE_AGENT = (
 
 #: The reason a failed turn is reported under.
 FAILED = "failed"
+
+#: Run records on the machine side: a turn waiting for the machine it runs on.
+MACHINE_RECORDS = ("device_waiting",)
 
 
 def _among(column, values, item_type):
@@ -89,7 +93,8 @@ class MemberWait:
     addressed it); `check` / `conflict` / `rejected` / `gate` (a card is stuck
     on an agent fix, see `presentation.agent_fix_kind`); or the type of the
     newest machine event that landed during the wait
-    (`indexed_rows.MACHINE_EVENTS`). `pr` is the stuck card's PR number.
+    (`indexed_rows.MACHINE_EVENTS`, `MACHINE_RECORDS`). `pr` is the stuck
+    card's PR number.
     """
 
     member: str | None
@@ -267,10 +272,14 @@ class MemberWaits:
         return found
 
     async def _machine_events(self, topic_ids, since, spoke):
-        """{room: (newest machine event, when)} since an agent last spoke there."""
+        """{room: (newest machine event, when)} since an agent last spoke there.
+
+        Two places hold them: what the conversation was told (an environment
+        repaired) and what was only recorded (a turn waiting for its machine)."""
+        newest: dict[uuid.UUID, tuple[str, datetime]] = {}
         event = Block.meta["event_type"].as_string()
         room = room_column(Block.conversation_id).label("room")
-        stmt = (
+        told = (
             select(room, event, Block.created_at)
             .where(
                 of_rooms(Block.conversation_id, topic_ids),
@@ -281,10 +290,26 @@ class MemberWaits:
             .order_by(room, Block.created_at.desc())
             .distinct(room)
         )
+        record_room = room_column(RunRecord.conversation_id).label("room")
+        recorded = (
+            select(record_room, RunRecord.kind, RunRecord.created_at)
+            .where(
+                of_rooms(RunRecord.conversation_id, topic_ids),
+                RunRecord.created_at >= since,
+                RunRecord.kind.in_(MACHINE_RECORDS),
+            )
+            .order_by(record_room, RunRecord.created_at.desc())
+            .distinct(record_room)
+        )
+        for stmt in (told, recorded):
+            for at_room, kind, at in (await self._session.execute(stmt)).all():
+                held = newest.get(at_room)
+                if held is None or at > held[1]:
+                    newest[at_room] = (kind, at)
         return {
-            room: (kind, at)
-            for room, kind, at in (await self._session.execute(stmt)).all()
-            if not self._answered(spoke, room, None, at)
+            at_room: found
+            for at_room, found in newest.items()
+            if not self._answered(spoke, at_room, None, found[1])
         }
 
     async def _failed_turns(self, topic_ids, since, spoke):

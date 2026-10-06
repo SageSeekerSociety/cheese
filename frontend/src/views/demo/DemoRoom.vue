@@ -12,20 +12,20 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 import { answer } from './demoBackend'
 import DemoBackstage from './DemoBackstage.vue'
-import { DEMO_PROJECT, DEMO_TOPIC, installPanelAnswers } from './demoPanels'
+import { DEMO_PROJECT, DEMO_TOPIC, demoTaskId, installPanelAnswers } from './demoPanels'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import DispatchedMarker from '@/components/DispatchedMarker.vue'
-import PanelChanges from '@/components/panels/PanelChanges.vue'
-import PanelOverview from '@/components/panels/PanelOverview.vue'
-import PanelPreview from '@/components/panels/PanelPreview.vue'
-import PanelSite from '@/components/panels/PanelSite.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import PanelChangesHost from '@/components/work/PanelChangesHost.vue'
+import PanelDocHost from '@/components/work/PanelDocHost.vue'
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
+import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
 const props = defineProps<{ scene: Scene; frame: Frame }>()
@@ -90,10 +90,10 @@ const working = computed(() => Object.keys(props.frame.running).length > 0)
 const workingNames = computed(() => props.frame.runningWho.map((h) => names.value[h] ?? h).join('、'))
 
 // ---- 把现场喂给真的 PanelSite ----
-// PanelSite 平时从接口拉一页、再从 socket 一行行收（receive）。演示不连后端：
-// 往前放时把新出来的几行 receive 进去；往回跳（或者哪一行变了样）就换一个新的
-// PanelSite，从头喂一遍 —— 它手上的记录只增不减，这是让它回到过去的唯一办法。
-const site = ref<InstanceType<typeof PanelSite> | null>(null)
+// PanelSite（经它的接线外壳 PanelSiteHost）平时从接口拉一页、再从 socket 一行行收
+// （receive）。演示不连后端：往前放时把新出来的几行 receive 进去；往回跳（或者哪一行
+// 变了样）就换一个新的，从头喂一遍 —— 它手上的记录只增不减，这是让它回到过去的唯一办法。
+const site = ref<InstanceType<typeof PanelSiteHost> | null>(null)
 const siteKey = ref(0)
 let fed: Block[] = []
 
@@ -313,33 +313,34 @@ watch(
         <!-- 当前那一格。四格都在这里，切走的是藏起来的那几格（和产品一样），
              它们的接口调用由各格自己在「轮到我上场」那一下发起。 -->
         <div class="demo-tabbody" data-region="panel">
-          <PanelOverview
+          <PanelDocHost
             v-if="mounted.has('overview')"
             v-show="frame.panel === 'overview'"
             :topic="topic"
+            :task-id="DEMO_TOPIC"
             :activity-tick="frame.step"
-            :member-names="names"
-            :active="frame.panel === 'overview'"
           />
-          <PanelSite
+          <PanelSiteHost
             v-if="mounted.has('site')"
             v-show="frame.panel === 'site'"
             :key="siteKey"
             ref="site"
             :topic-id="topic.id"
+            :project-id="DEMO_PROJECT"
             :active="false"
             :member-names="names"
             :working="working"
             :running-turns="frame.running"
           />
-          <PanelChanges
+          <PanelChangesHost
             v-if="mounted.has('changes')"
             v-show="frame.panel === 'changes'"
             :topic-id="DEMO_TOPIC"
+            :task-id="demoTaskId(frame.overview?.tasks)"
             :project-id="DEMO_PROJECT"
             :active="frame.panel === 'changes'"
           />
-          <PanelPreview
+          <PanelPreviewHost
             v-if="mounted.has('preview')"
             v-show="frame.panel === 'preview'"
             :topic-id="DEMO_TOPIC"

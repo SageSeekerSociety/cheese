@@ -13,7 +13,6 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
-from tests.support.living_doc import document_of
 
 
 def _rooms(client):
@@ -103,14 +102,6 @@ def test_cross_room_access_requires_membership_and_preserves_identity(
     )
     _join(client, other, handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 200
-    doc = document_of(client, other, headers=session_auth_headers("alice"))
-    written = client.post(
-        f"/documents/{doc}/comments",
-        json={"content": "A participant in both rooms"},
-        headers=auth,
-    )
-    assert written.status_code == 200, written.text
-    assert written.json()["data"]["author"] == handle
     response = client.post(
         f"/topics/{other}/weekly",
         json={"body": "Discussion in another joined room"},
@@ -125,7 +116,6 @@ def test_cross_room_access_requires_membership_and_preserves_identity(
     ):
         response = client.post(f"/topics/{thread}/asks", json=question, headers=auth)
         assert response.status_code == 200, response.text
-        assert response.json()["data"]["group"]["asked_by"] == handle
         assert [row["author"] for row in response.json()["data"]["blocks"]] == [handle]
     assert (
         client.delete(
@@ -280,9 +270,8 @@ def test_project_credential_has_one_identity_and_needs_a_grant(client):
     )
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
     _join(client, other, handle)
-    doc = document_of(client, other, headers=owner)
     written = client.post(
-        f"/documents/{doc}/comments", json={"content": "Fixed identity"}, headers=auth
+        f"/topics/{other}/weekly", json={"body": "Fixed identity"}, headers=auth
     )
     assert written.status_code == 200, written.text
     assert written.json()["data"]["author"] == handle
@@ -334,10 +323,10 @@ def test_project_membership_never_opens_someone_elses_private_chat(
 
 
 def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
-    project, origin, _ = _rooms(client)
+    project, origin, other = _rooms(client)
     auth = _agent(client, project, origin)
     handle = _seated_agent(client, origin)
-    endpoint = f"/topics/{origin}/members"
+    endpoint = f"/topics/{other}/members"
     join_project_team(client, project["id"], "bob")
     assert (
         client.post(endpoint, json={"handle": "bob", "actor": "alice"}).status_code
@@ -349,14 +338,9 @@ def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
         ).status_code
         == 403
     )
-    assert (
-        client.put(
-            f"{endpoint}/{handle}",
-            json={"role": "admin"},
-            headers=session_auth_headers("alice"),
-        ).status_code
-        == 200
-    )
+    # Once it manages the project — as an admin of its team, the way a person
+    # would — it manages the channel too.
+    join_project_team(client, project["id"], handle, admin=True)
     assert (
         client.post(endpoint, json={"handle": "bob"}, headers=auth).status_code == 200
     )
@@ -401,7 +385,7 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
         )
 
 
-def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions(
+def test_people_and_agents_record_weeklies_but_only_agents_create_questions(
     client, stub_hooks, monkeypatch
 ):
     project, origin, _ = _rooms(client)
@@ -416,22 +400,20 @@ def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions
         assert response.status_code == 200, response.text
         assert response.json()["data"]["author"] == handle
         assert response.json()["data"]["author_type"] == "participant"
-        # Membership alone cannot invent the native executor that owns an Ask.
-        assert (
-            client.post(
-                f"/topics/{origin}/asks",
-                json={
-                    "questions": [
-                        {
-                            "question": "Which?",
-                            "options": [{"text": "A"}, {"text": "B"}],
-                        }
-                    ]
-                },
-                headers=auth,
-            ).status_code
-            == 403
-        )
+        # A question is the agent's quick-reply message: a person's credential
+        # cannot post one, and an agent's needs no turn running to.
+        assert client.post(
+            f"/topics/{origin}/asks",
+            json={
+                "questions": [
+                    {
+                        "question": "Which?",
+                        "options": [{"text": "A"}, {"text": "B"}],
+                    }
+                ]
+            },
+            headers=auth,
+        ).status_code == (403 if handle == "alice" else 200)
     seat = _seated_agent(client, origin)
     if setup_token is not None:
         client.headers["X-Cheese-Token"] = setup_token
@@ -447,7 +429,6 @@ def test_people_and_agents_record_weeklies_but_only_live_agents_create_questions
             headers=_agent(client, project, origin),
         )
         assert response.status_code == 200, response.text
-        assert response.json()["data"]["group"]["asked_by"] == seat
         assert [row["author"] for row in response.json()["data"]["blocks"]] == [seat]
         assert response.json()["data"]["blocks"][0]["author_type"] == "participant"
 

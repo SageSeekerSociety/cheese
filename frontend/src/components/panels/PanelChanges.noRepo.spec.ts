@@ -32,7 +32,7 @@ vi.mock('@/api', async () => {
   }
 })
 
-import PanelChanges from './PanelChanges.vue'
+import PanelChangesHost from '../work/PanelChangesHost.vue'
 
 let vuetify: ReturnType<typeof createVuetify>
 
@@ -48,7 +48,18 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
-  listRoomTasks.mockReset().mockResolvedValue({ data: [], total: 0 })
+  listRoomTasks.mockReset().mockResolvedValue({
+    data: [
+      {
+        id: 't-1',
+        room_id: 'room-1',
+        status: 'open',
+        branch_name: 'cheese/t-1',
+        presentation: { column: 'building', phrase: 'running' },
+      },
+    ],
+    total: 1,
+  })
   const noRepo = () => Promise.reject(new Error('项目没有代码仓库'))
   getGitLog.mockReset().mockImplementation(noRepo)
   getGitDiff.mockReset().mockImplementation(noRepo)
@@ -57,8 +68,8 @@ beforeEach(() => {
 })
 
 function mount() {
-  return render(PanelChanges as unknown as Component, {
-    props: { topicId: 'room-1', projectId: 'p1', active: true },
+  return render(PanelChangesHost as unknown as Component, {
+    props: { topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true },
     global: { plugins: [vuetify] },
   })
 }

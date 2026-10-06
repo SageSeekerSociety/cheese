@@ -15,6 +15,7 @@ vi.mock('@/api', async () => ({
   getPrivateUnread: vi.fn().mockResolvedValue({}),
 }))
 
+import type { TopicUnread } from '@/api'
 import type { Topic } from '@/cx_types'
 
 import { archiveTopic, createTopic, getTopic, getTopicUnread, listTopics } from '@/api'
@@ -106,7 +107,7 @@ it('a refresh asked for while an older read is in flight reads the list again', 
 it('overlapping unread refreshes share one pending request', async () => {
   const store = useWorkspaceStore()
   store.projectId = 'a'
-  const response = deferred<Record<string, number>>()
+  const response = deferred<Record<string, TopicUnread>>()
   vi.mocked(getTopicUnread).mockReturnValueOnce(response.promise)
   const requests = Array.from({ length: 8 }, () => store.refreshUnread())
   expect(getTopicUnread).toHaveBeenCalledTimes(1)

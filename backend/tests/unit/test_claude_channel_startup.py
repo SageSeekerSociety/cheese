@@ -220,7 +220,7 @@ async def test_a_session_that_dies_on_its_way_up_is_reported_at_once(tmp_path):
     assert waited < 30, f"the room waited {waited:.0f}s for a runner already gone"
     # The room gets one sentence; what the bootstrap printed goes with it for
     # 现场, and none of it is in the sentence.
-    assert host.refusal == "Claude Code 启动失败：这个频道的工作电脑还在准备"
+    assert host.refusal == "Claude Code 启动失败：这个频道的环境还在准备"
     assert host.refused is not None and host.refused.log
     assert "Platform HTTP 504" in host.refused.log
     assert "status 1" in host.refused.log
@@ -235,9 +235,27 @@ async def test_a_missing_program_is_named_and_its_error_kept_for_the_site(
 
     await _start(host)
 
-    assert host.refusal == "Claude Code 启动失败：机器上缺少 Claude Code"
+    assert host.refusal == "Claude Code 启动失败：环境里缺少 Claude Code"
     assert host.refused is not None and "/nonexistent/bin/claude" in host.refused.log
     assert "/nonexistent" not in host.refusal
+
+
+@pytest.mark.anyio
+async def test_a_launch_that_fails_moments_after_it_starts_is_refused(tmp_path):
+    # The runner answers its socket as soon as the launch command is running.
+    # A bootstrap that fails a moment later must still be reported as a start
+    # that failed, not taken for a session that came up.
+    reason = "bootstrap: the work lease was refused"
+    host = Host(
+        tmp_path,
+        shlex.join(
+            ["sh", "-c", f"sleep 0.3; printf '%s\\n' {shlex.quote(reason)} >&2; exit 1"]
+        ),
+    )
+
+    await _start(host)
+
+    assert host.refused is not None and reason in host.refused.log
 
 
 @pytest.mark.anyio

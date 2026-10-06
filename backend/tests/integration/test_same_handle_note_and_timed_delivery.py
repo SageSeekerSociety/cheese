@@ -202,7 +202,10 @@ def test_a_timed_delivery_arrives_as_a_delivery_not_a_turn_the_platform_started(
     # 房间里读得到这一轮的缘由（结论 14）：平台说的话署平台的名，那一行写着它是
     # 谁当初请来的，原话收在 detail 里。
     assert kwargs["author"] == "system"
-    events = [b for b in _blocks(client, room) if b["content"] == DELIVERED_AS_ASKED]
+    # The room is not told: the agent asked for it. The 现场 shows it.
+    assert not [b for b in _blocks(client, room) if b["content"] == DELIVERED_AS_ASKED]
+    site = client.get(f"/topics/{room}/transcript").json()["data"]["data"]
+    events = [b for b in site if b["content"] == DELIVERED_AS_ASKED]
     assert len(events) == 1
     assert events[0]["meta"]["detail"] == "回来看一眼那条 PR"
 

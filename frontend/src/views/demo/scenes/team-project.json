@@ -1,0 +1,212 @@
+{
+  "title": "三个人和芝士做一份大作业",
+  "project": "数据结构大作业",
+  "topic": "B 树作业",
+  "machine": "本频道运行在：云端沙箱",
+  "people": {
+    "lin": {
+      "name": "林晓"
+    },
+    "chen": {
+      "name": "陈默"
+    },
+    "cheese": {
+      "name": "芝士",
+      "agent": true
+    }
+  },
+  "steps": [
+    {
+      "label": "讲清作业要什么",
+      "tag": "在任务里说的话都交给芝士",
+      "events": [
+        {
+          "at": 0,
+          "do": "say",
+          "who": "lin",
+          "text": "这是数据结构大作业的要求（作业要求.pdf）。用 C 实现一棵 3 阶 B 树，支持插入、删除、查找，再交一份实验报告。先说说你的理解，列出要做的几步。"
+        },
+        {
+          "at": 0,
+          "do": "turn",
+          "who": "cheese",
+          "turn": "t1"
+        },
+        {
+          "at": 0,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_library_get",
+          "arg": "作业要求.pdf",
+          "platform": true
+        },
+        {
+          "at": 0,
+          "do": "say",
+          "who": "cheese",
+          "text": "收到。要求是：C 实现 3 阶 B 树（插入、删除、查找），再交一份带测试结果的实验报告。我按四步做：数据结构、插入、删除、测试和报告。"
+        },
+        {
+          "at": 800,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Read",
+          "arg": "作业要求.pdf"
+        }
+      ]
+    },
+    {
+      "label": "芝士问清一个选择",
+      "tag": "按钮卡上点一下就是回答，它接着做",
+      "events": [
+        {
+          "at": 300,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "cheese_ask",
+          "arg": "删除时节点不够怎么办？",
+          "platform": true
+        },
+        {
+          "at": 600,
+          "do": "say",
+          "who": "cheese",
+          "id": "ask1",
+          "text": "删除后节点不够时，先向兄弟借，还是直接合并？要求里没写。",
+          "options": [
+            "先借，借不到再合并",
+            "直接合并",
+            "两种都写，报告里对比"
+          ]
+        },
+        {
+          "at": 2400,
+          "do": "answer",
+          "id": "ask1",
+          "option": "先借，借不到再合并",
+          "by": "lin"
+        },
+        {
+          "at": 3000,
+          "do": "note",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "林晓选了「先借，借不到再合并」。"
+        }
+      ]
+    },
+    {
+      "label": "同学在中途补一句",
+      "tag": "它跑着的时候发的话，这一轮里也会读到",
+      "events": [
+        {
+          "at": 300,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Write",
+          "arg": "btree.c"
+        },
+        {
+          "at": 900,
+          "do": "say",
+          "who": "chen",
+          "text": "测试里加一组连续删到根节点合并的例子，老师说会查这个"
+        },
+        {
+          "at": 2200,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Write",
+          "arg": "test_btree.c"
+        }
+      ]
+    },
+    {
+      "label": "看结果：说明加改动",
+      "tag": "读它的说明，再点「查看改动」核对文件",
+      "panel": "changes",
+      "changes": {
+        "files": [
+          {
+            "path": "实验报告.md",
+            "status": "added",
+            "diff": [
+              "+# B 树实验报告",
+              "+",
+              "+## 测试结果",
+              "+",
+              "+| 用例 | 结果 |",
+              "+|---|---|",
+              "+| 插入 1000 个随机键 | 通过 |",
+              "+| 删除到只剩根节点 | 通过 |",
+              "+| 查找不存在的键 | 通过 |"
+            ]
+          }
+        ]
+      },
+      "events": [
+        {
+          "at": 300,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Bash",
+          "arg": "make test"
+        },
+        {
+          "at": 1000,
+          "do": "say",
+          "who": "cheese",
+          "text": "做完了：btree.c 和测试，12 个用例全过，其中包括陈默要的删到根节点合并；实验报告写了测试结果和删除策略。"
+        },
+        {
+          "at": 1300,
+          "do": "notice",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "这一轮改了 3 个文件（+412 -0）",
+          "meta": {
+            "platform": true,
+            "changeset": {
+              "commit": "3fa91c0",
+              "commits": [
+                "3fa91c0"
+              ],
+              "files_total": 3,
+              "added": 412,
+              "removed": 0,
+              "files": [
+                {
+                  "path": "btree.c",
+                  "added": 268,
+                  "removed": 0
+                },
+                {
+                  "path": "test_btree.c",
+                  "added": 97,
+                  "removed": 0
+                },
+                {
+                  "path": "实验报告.md",
+                  "added": 47,
+                  "removed": 0
+                }
+              ],
+              "files_omitted": 0
+            }
+          }
+        },
+        {
+          "at": 1400,
+          "do": "end",
+          "turn": "t1"
+        }
+      ]
+    }
+  ]
+}

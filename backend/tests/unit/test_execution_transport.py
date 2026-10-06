@@ -1055,6 +1055,55 @@ def test_a_tool_call_waits_out_a_platform_that_is_being_redeployed(monkeypatch):
     )
 
 
+def test_a_call_the_draining_owner_turned_away_is_sent_again(monkeypatch):
+    """A release stops the connection owner taking new calls while the ones in
+    flight finish. The call it turned away was never dispatched, so it is sent
+    again and reaches the new owner instead of failing as out of reach."""
+    client = executor_transport.RemoteClient(
+        {"kind": "device", "url": "http://executor.test"}
+    )
+    monkeypatch.setenv("CHEESE_TOKEN", "t")
+    monkeypatch.setattr(executor_transport.time, "sleep", lambda _: None)
+    attempts = []
+
+    class Response:
+        def __init__(self, status, body, headers):
+            self.status = status
+            self._body = body
+            self._headers = headers
+
+        def read(self):
+            return self._body
+
+        def getheader(self, name, default=None):
+            return self._headers.get(name, default)
+
+    class Connection:
+        sock = None
+
+        def request(self, method, path, *, body, headers):
+            attempts.append(path)
+
+        @staticmethod
+        def getresponse():
+            if len(attempts) < 3:
+                return Response(
+                    503,
+                    b'{"detail": "device connection owner is draining"}',
+                    {executor_transport.OWNER_DRAINING_HEADER: "1"},
+                )
+            return Response(200, b'{"ok": true}', {})
+
+        @staticmethod
+        def close():
+            pass
+
+    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
+    client.transport.headers = {}
+    assert client.call("invoke") == {"ok": True}
+    assert len(attempts) == 3
+
+
 def test_a_refusal_that_outlasts_the_window_is_still_reported(monkeypatch):
     """窗口走完还是没人接，报的就是「这台机器够不着」。
 
