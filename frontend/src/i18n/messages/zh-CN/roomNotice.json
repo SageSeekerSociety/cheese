@@ -113,7 +113,6 @@
   "docEditedInLibrary": "{actor} 改了文档《{title}》",
   "docSuggestedInLibrary": "{actor} 对文档《{title}》提了修改建议",
   "docUntitled": "未命名文档",
-  "docMissing": "本频道已有进展但还没有实况文档，已请 AI 队友补上",
   "docSuggested": "{agent} 提了 {n} 处修改建议",
   "emptyValue": "（空）",
   "environmentFailedHandedOver": "环境准备失败，已交给「综合」处理。",

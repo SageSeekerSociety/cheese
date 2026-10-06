@@ -1012,16 +1012,15 @@ class DeviceChannel(Channel):
         )
         if screen is None or screen.project_id is None:
             return False
-        # A room kept under its own id is no task; any other screen may be one.
-        task = screen.resource_id not in (None, topic_id)
-        if task:
+        # A task's or a 支线's session sits on a seat of its own in the room.
+        if inner := screen.resource_id not in (None, topic_id):
             async with self._sessions() as db:
-                task = await conversations.is_task(db, topic_id)
+                inner = await conversations.is_inner(db, topic_id)
         state = machine_launcher.state_dir(
             screen.project_id,
             screen.resource_id or topic_id,
             CLAUDE_CODE,
-            seat_key(screen.agent_handle, topic_id if task else None),
+            seat_key(screen.agent_handle, topic_id if inner else None),
         )
         try:
             status = await self._control(screen.device_id, state, "mcp_status")

@@ -98,7 +98,13 @@ describe('tab 栏', () => {
   it('一个还没跑过的房间也是这几格，顺序不变', async () => {
     const { findAllByRole } = mount()
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).toEqual(['总览', '现场', '改动', '预览', '定时与触发'])
+    expect(labels).toEqual(['总览', '支线', '现场', '改动', '预览', '定时与触发'])
+  })
+
+  it('任务里没有支线这一格：支线只挂在频道主线的消息下面', async () => {
+    const { findAllByRole } = mount({ taskId: 'task1' })
+    const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
+    expect(labels).not.toContain('支线')
   })
 
   // 「定时与触发」永远有得看：没有规则时那一格是「还没有规则，点新建」，不是一个

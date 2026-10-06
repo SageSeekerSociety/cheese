@@ -38,6 +38,7 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
+from app.domain.conversation.services import of_room
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
@@ -852,8 +853,13 @@ class BlockRepository:
         query: str | None = None,
         reply_to: uuid.UUID | None = None,
         author: str | None = None,
+        whole_room: uuid.UUID | None = None,
     ) -> BlockPage:
         """The newest `limit` blocks, or a page before/after a cursor.
+
+        ``whole_room`` reads every conversation of that room instead of one —
+        its main line, its 支线 and its tasks — for a search that has to find
+        what was settled somewhere else in the channel.
 
         An after cursor reads the oldest newer records first, so catching up
         through multiple pages cannot skip intervening messages. Explicit kinds
@@ -868,7 +874,11 @@ class BlockRepository:
         a timestamp and single-column ordering wouldn't be a total order (the
         cursor could then skip or repeat the tied rows).
         """
-        stmt = select(Block).where(Block.conversation_id == conversation_id)
+        stmt = select(Block).where(
+            of_room(Block.conversation_id, whole_room)
+            if whole_room is not None
+            else Block.conversation_id == conversation_id
+        )
         # 现场 wants events and nothing else; narrowing HERE rather than in the
         # caller is the difference between paging and pretending to — filtering
         # a page after the fact returns fewer rows than asked for and reports

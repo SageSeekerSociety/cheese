@@ -1,0 +1,280 @@
+<script setup lang="ts">
+// 一条支线：页头写「支线」和它在哪个频道、挂着哪条消息，右边是「转为任务」（已经转
+// 过的，换成打开那个任务）；下面先是它挂着的那条消息，再是支线自己的对话和输入框。
+//
+// 对话就是频道那一栏，换了一段对话来读（`conversationId` 是支线的 id）：消息、连接、
+// 已读都走支线，名册和附件还是频道的。桌面上它占频道页右边那一半，手机上是一整页。
+import type { Block, ProjectMemberRow, Topic } from '@/cx_types'
+import type { Thread } from '@/types/threads'
+
+import { computed, ref, watch } from 'vue'
+
+import { avatarColor, avatarInitial } from '@/utils/avatar'
+
+import { ApiError } from '@/api'
+import { getThread } from '@/api/threads'
+import BaseButton from '@/components/base/BaseButton.vue'
+import ChatPanel from '@/components/ChatPanel.vue'
+import MarkdownView from '@/components/common/MarkdownView.vue'
+import { t } from '@/i18n'
+import { isAgentBlock } from '@/lib/authorship'
+import { replySnippet } from '@/lib/blockDisplay'
+import { renderPlain } from '@/lib/renderMessage'
+import { topicTitle } from '@/lib/topicState'
+import { useWorkspaceStore } from '@/stores/workspace'
+
+defineOptions({ name: 'ThreadPane' })
+
+const props = defineProps<{
+  room: Topic
+  threadId: string
+  members: ProjectMemberRow[]
+  topicList: Topic[]
+  memberNames: Record<string, string>
+  /** 整页（手机）：没有关闭键，返回在顶栏。 */
+  page?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'close'): void
+  (e: 'open-task', taskId: string): void
+  (e: 'to-task', rootBlockId: string): void
+  (e: 'open-file', path: string): void
+  (e: 'open-topic', topicId: string): void
+  (e: 'mention-click', handle: string): void
+}>()
+
+const store = useWorkspaceStore()
+const thread = ref<Thread | null>(null)
+const error = ref<string | null>(null)
+const busy = ref(false)
+
+async function load() {
+  const id = props.threadId
+  error.value = null
+  try {
+    const got = await getThread(id)
+    if (props.threadId === id) thread.value = got
+  } catch (e) {
+    if (props.threadId !== id) return
+    thread.value = null
+    error.value =
+      e instanceof ApiError && e.status === 404 ? t('work.room.thread.notFound') : t('work.room.thread.loadFailed')
+  }
+}
+// 打开就算读过：支线的未读只对说过话的人算，读过了概览里那个点就该灭。
+watch(
+  () => props.threadId,
+  (id) => {
+    thread.value = null
+    void load()
+    store.markRead(id)
+  },
+  { immediate: true }
+)
+
+const root = computed<Block | null>(() => thread.value?.root ?? null)
+const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} as Record<string, string> }))
+function nameOf(handle: string): string {
+  return props.memberNames[handle] || handle
+}
+const subtitle = computed(() => {
+  const head = `#${topicTitle(props.room)}`
+  return root.value
+    ? `${head} · ${t('work.room.thread.lastReply', { name: nameOf(root.value.author), text: replySnippet(root.value, refs.value, 40) })}`
+    : head
+})
+const rootTime = computed(() =>
+  root.value ? new Date(root.value.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+)
+const taskId = computed(() => root.value?.upgraded_to_task_id ?? null)
+
+function toTask() {
+  if (!root.value || busy.value) return
+  busy.value = true
+  emit('to-task', root.value.id)
+  // 转出去以后这一页跟着去任务页；没去成（失败了）就让按钮回来。
+  setTimeout(() => (busy.value = false), 1500)
+}
+
+// 有人在支线里回话、芝士答完：概览那一格和主线上那一行由频道自己的 `threads` 刷新，
+// 这里只需要在「转为任务」之后重读一次挂着的那条消息。
+function onState(resource: string) {
+  if (resource === 'topics') void load()
+}
+</script>
+
+<template>
+  <section class="thread-pane" :aria-label="t('work.room.thread.title')" data-testid="thread-pane">
+    <header class="thread-pane__head">
+      <div class="thread-pane__titles">
+        <h2 class="thread-pane__title t-title">{{ t('work.room.thread.title') }}</h2>
+        <div class="thread-pane__sub t-meta">{{ subtitle }}</div>
+      </div>
+      <BaseButton
+        v-if="taskId"
+        kind="secondary"
+        size="sm"
+        data-testid="thread-open-task"
+        @click="emit('open-task', taskId)"
+        >{{ t('work.room.thread.openTask') }}</BaseButton
+      >
+      <BaseButton
+        v-else-if="root"
+        kind="secondary"
+        size="sm"
+        :loading="busy"
+        data-testid="thread-to-task"
+        @click="toTask"
+        >{{ t('work.room.thread.toTask') }}</BaseButton
+      >
+      <BaseButton
+        v-if="!page"
+        icon="mdi-close"
+        size="sm"
+        :title="t('work.room.thread.close')"
+        :aria-label="t('work.room.thread.close')"
+        @click="emit('close')"
+      />
+    </header>
+
+    <p v-if="error" class="thread-pane__error t-meta" role="alert">{{ error }}</p>
+    <template v-else>
+      <article v-if="root" class="thread-root">
+        <span class="thread-root__avatar" :style="{ backgroundColor: avatarColor(root.author) }">{{
+          avatarInitial(nameOf(root.author))
+        }}</span>
+        <div class="thread-root__body">
+          <div class="thread-root__head">
+            <span class="thread-root__name">{{ nameOf(root.author) }}</span>
+            <span class="t-meta thread-root__time">{{ rootTime }}</span>
+          </div>
+          <MarkdownView
+            v-if="isAgentBlock(root)"
+            class="thread-root__text"
+            :source="root.content"
+            as="chat"
+            :names="refs"
+          />
+          <div v-else class="thread-root__text thread-root__text--plain" v-html="renderPlain(root.content, refs)" />
+        </div>
+      </article>
+      <div v-if="thread" class="thread-pane__divider t-meta">
+        <span>{{ t('work.room.thread.replies', { count: thread.reply_count }) }}</span>
+        <span class="thread-pane__rule" />
+      </div>
+      <ChatPanel
+        class="thread-pane__chat"
+        :topic="room"
+        :conversation-id="threadId"
+        hide-header
+        show-composer
+        in-thread
+        :members="members"
+        :topic-list="topicList"
+        @state-changed="onState"
+        @open-file="emit('open-file', $event)"
+        @open-topic="emit('open-topic', $event)"
+        @open-card="emit('open-task', $event)"
+        @mention-click="emit('mention-click', $event)"
+        @upgrade-message="emit('to-task', $event)"
+      />
+    </template>
+  </section>
+</template>
+
+<style scoped>
+.thread-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface);
+}
+.thread-pane__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.thread-pane__titles {
+  flex: 1;
+  min-width: 0;
+}
+.thread-pane__title {
+  margin: 0;
+}
+.thread-pane__sub {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.thread-pane__error {
+  padding: 16px;
+  color: var(--muted);
+}
+.thread-root {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px 4px;
+}
+.thread-root__avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  /* stylelint-disable-next-line color-no-hex -- 压在 avatarColor() 算出来的底色上，底色不随主题变。 */
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.thread-root__body {
+  min-width: 0;
+  flex: 1;
+}
+.thread-root__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.thread-root__name {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  font-weight: 600;
+  color: var(--ink);
+}
+.thread-root__time {
+  color: var(--faint);
+}
+.thread-root__text {
+  font-size: 15px;
+  line-height: var(--lh-15);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.thread-root__text--plain {
+  white-space: pre-wrap;
+}
+.thread-pane__divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 16px;
+  color: var(--muted);
+}
+.thread-pane__rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.thread-pane__chat {
+  flex: 1;
+  min-height: 0;
+}
+</style>

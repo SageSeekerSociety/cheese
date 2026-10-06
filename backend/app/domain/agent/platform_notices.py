@@ -185,8 +185,8 @@ EVENT_CONTEXT_COMPACT: Final = "context_compact"
 #: 这一轮开着，而跑它的机器够不着（离线、会话进程还没起来、连接在换）。平台在等
 #: 它回来；回来了同一行改成已恢复（`meta.state = "over"`）。
 EVENT_DEVICE_WAITING: Final = "device_waiting"
-#: 一间干过活的工作话题还没有实况文档，平台请刚才在这里干活的队友补第一版
-#: （`domain/topic/doc_nudge.py`）。每间房最多一次。
+#: 平台请房间里刚干过活的队友补第一版实况文档。频道不再有实况文档，平台也不再
+#: 这样提醒；这个值留给已经落在时间线上的那些行。
 EVENT_DOC_MISSING: Final = "doc_missing"
 #: 项目 `.mcp.json` 里的一个远程 MCP 服务器还没连接（或要重新连接、缺一个值），这
 #: 个房间的会话用不了它。每个房间每个服务器只说一次：要做的事在项目设置里，不在

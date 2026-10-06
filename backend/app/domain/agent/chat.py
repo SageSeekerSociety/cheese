@@ -231,7 +231,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.topic import doc_nudge
+from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -380,7 +380,7 @@ class ChatService(SessionRecovery, RoomTurns):
         # Losing an entry costs the accuracy of one label, never a wrong charge.
         self._session_route: dict[uuid.UUID, str] = {}
         self._conversation_rooms: dict[
-            uuid.UUID, tuple[uuid.UUID, uuid.UUID | None]
+            uuid.UUID, tuple[uuid.UUID, uuid.UUID | None, bool]
         ] = {}
         # The model each session was launched on, kept beside its route and for
         # the same reason: a self-started turn has no prompt to resolve it from.
@@ -1127,7 +1127,7 @@ class ChatService(SessionRecovery, RoomTurns):
         看到」、点下去却什么也没有可读，白烧一轮。
         """
         async with self._sessions() as session:
-            history = await BlockRepository(session).list_for_topic(topic_id)
+            history = await conversation_inputs(session, topic_id)
             return bool(_pending_input_blocks(history))
 
     async def pending_seat(self, topic_id: uuid.UUID) -> str | None:
@@ -1146,7 +1146,7 @@ class ChatService(SessionRecovery, RoomTurns):
         理由同它：一份近似的复制品会在窗口语义改动时悄悄和它分叉。
         """
         async with self._sessions() as session:
-            history = await BlockRepository(session).list_for_topic(topic_id)
+            history = await conversation_inputs(session, topic_id)
             # 从新到旧：最近一次点名是这批消息现在要交给谁的最新说法。
             for block in reversed(_pending_input_blocks(history)):
                 recipient = (block.meta or {}).get("agent_recipient") or {}
@@ -1239,14 +1239,14 @@ class ChatService(SessionRecovery, RoomTurns):
     ) -> dict | None:
         """Persist a system event into the conversation ``topic_id`` names —
         a room's own line, or a task's (room_events.py)."""
-        room_id, task_id = await self._room_of_conversation(topic_id)
+        room_id, inner_id = await self._room_of_conversation(topic_id)
         return await post_system_event(
             self._sessions,
             room_id,
             content,
             turn_id,
             meta=meta,
-            task_id=task_id,
+            inner_id=inner_id,
         )
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
@@ -1441,54 +1441,51 @@ class ChatService(SessionRecovery, RoomTurns):
             # The agent has said what it understood: the moment to check the
             # name a task got from its opening line (room_task/naming.py).
             naming.nudge(topic_id, "turn")
-            # 同一个时刻也看一眼文档：干过活的房间文档还空着，就请这个队友补上
-            # （topic/doc_nudge.py）。
-            doc_nudge.nudge(topic_id, self)
             from app.domain.agent.pending_messages import nudge_messages
 
             nudge_messages(self, topic_id)
 
-    @staticmethod
-    def room_is_a_work_room(topic: Topic) -> bool:
-        """这间房按不按房间的规矩来 —— ``_is_dm`` 的否定，``is_private`` 在这个
-        文件里唯一的那个读点推出来的两个答案之一（名册两席 / 这一轮不租地点）。
-
-        提示词给不给「本话题还没有实况文档」那一段，问的就是这个：`_assemble_turn`
-        的 `needs_place` 说的是同一句。`topic/doc_nudge.py` 按同一个答案决定要不要
-        提醒，所以那边不提 ``is_private``，问的是这里——两处必须是同一份声明，否则
-        一个模型会被提示词要求建文档、却收不到平台的提醒，或者反过来。
-
-        `doc_nudge` 经它手上的 ``chat_service`` 取这个方法（`runtime.py` 那一处收尾
-        不 import 本模块，手里只有同一个对象）。**取不到就什么都不做**：轮末那两行
-        之间没有 try，多抛一句出去，这一轮就永远是「在跑」（`_live` 摘不掉）。
-        """
-        return not _is_dm(topic)
-
     async def _room_of_conversation(
         self, conversation_id: uuid.UUID
     ) -> tuple[uuid.UUID, uuid.UUID | None]:
-        """``(room, task)`` for a conversation: a room is its own room with no
-        task, a task is the room it hangs in and itself.
+        """``(room, inner)`` for a conversation: a room is its own room with
+        nothing inside, a task or a 支线 is the room it is in and itself.
 
         Everything a session says arrives keyed by its conversation, while the
         roster, the machine and the files are its room's. A task stays in the
         room it hangs in until someone moves it, which drops the remembered
         answer (``forget_conversation``).
         """
+        room, inner, _thread = await self._conversation_place(conversation_id)
+        return room, inner
+
+    async def _conversation_place(
+        self, conversation_id: uuid.UUID
+    ) -> tuple[uuid.UUID, uuid.UUID | None, bool]:
+        """``_room_of_conversation``, and whether the conversation is a 支线."""
         known = self._conversation_rooms.get(conversation_id)
         if known is not None:
             return known
         async with self._sessions() as session:
             place = await PlaceResolver(session).conversation(conversation_id)
         answer = (
-            (place.room_id, place.task_id)
+            (place.room_id, place.inner_id, place.thread is not None)
             if place is not None
-            else (conversation_id, None)
+            else (conversation_id, None, False)
         )
         if len(self._conversation_rooms) >= _CONVERSATION_ROOMS_KEPT:
             self._conversation_rooms.pop(next(iter(self._conversation_rooms)))
         self._conversation_rooms[conversation_id] = answer
         return answer
+
+    async def thread_replied(self, conversation_id: uuid.UUID) -> None:
+        """A message landed in ``conversation_id``: when that is a 支线, its
+        channel's main line shows the 支线 grown."""
+        from app.domain.agent.runtime import announce_stale
+
+        room, _inner, thread = await self._conversation_place(conversation_id)
+        if thread:
+            await announce_stale(room, "threads")
 
     def forget_conversation(self, conversation_id: uuid.UUID) -> None:
         """A task moved to another room: read its room again next time."""
@@ -1871,14 +1868,14 @@ class ChatService(SessionRecovery, RoomTurns):
 
         # A task's changes are its branch's, shown on the task; the room's
         # change summary reads the room's checkout.
-        _room, task_id = await self._room_of_conversation(state.topic_id)
+        _room, inner_id = await self._room_of_conversation(state.topic_id)
         changeset = (
             await self._turn_changeset(
                 state.project_id,
                 state.topic_id,
                 None if state.known_commits is None else await state.known_commits,
             )
-            if task_id is None
+            if inner_id is None
             else None
         )
         if changeset is not None:
@@ -2068,11 +2065,13 @@ class ChatService(SessionRecovery, RoomTurns):
                     # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
                     # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
                     from app.domain.delivery.mention import record_mentions
+                    from app.domain.thread.services import answered_in
 
                     await record_mentions(
                         session,
                         project_id=topic.project_id,
                         room_id=place.room_id,
+                        conversation_id=await answered_in(session, user_block),
                         block_id=user_block.id,
                         author=author,
                         content=content,
@@ -2134,6 +2133,7 @@ class ChatService(SessionRecovery, RoomTurns):
         # A person's words are what a task gets named by (room_task/naming.py).
         if names_a_person(author) and place.task is not None:
             naming.nudge(place.task.id, "message")
+        await self.thread_replied(place.conversation_id)
         return payloads, anchor_id, block_ids, False
 
     async def ack_summon(
@@ -2214,7 +2214,7 @@ class ChatService(SessionRecovery, RoomTurns):
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         publish: bool = False,
         author: str | None = None,
         publication_id: str | None = None,
@@ -2260,7 +2260,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 platform_unsolicited=platform_unsolicited,
                 in_room=True,
                 author_type=AuthorType.platform,
-                task_id=task_id,
+                inner_id=inner_id,
             )
         meta: dict | None = (
             {"in_room": False, "progress": True} if as_progress else None
@@ -2342,14 +2342,14 @@ class ChatService(SessionRecovery, RoomTurns):
             ):
                 return None
             author = author or await self._agent_handle(session, topic_id)
-            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
             # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
             # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
             landed = landing(
-                EventAbout.task if task_id is not None else EventAbout.room,
+                EventAbout.task if inner_id is not None else EventAbout.room,
                 project_id=project_id,
                 room_id=topic_id,
-                task_id=task_id,
+                task_id=inner_id,
             )
             block = await blocks.add(
                 project_id=landed.project_id,
@@ -2393,7 +2393,7 @@ class ChatService(SessionRecovery, RoomTurns):
             # publisher's. Without a fallback at all, every remote publication
             # missed `last_chat_at` and the sweep kept "reminding" a turn that
             # had just spoken, counting the silence from turn start.
-            conversation_id = task_id or topic_id
+            conversation_id = inner_id or topic_id
             work_id = turn_id or self._attributed_work_id(conversation_id, author)
             state = (
                 self._hook_work.get((conversation_id, work_id))
@@ -2430,7 +2430,7 @@ class ChatService(SessionRecovery, RoomTurns):
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         platform_unsolicited: bool = False,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         author: str | None = None,
         at: datetime | None = None,
     ) -> dict | None:
@@ -2445,7 +2445,7 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id=turn_id,
             eid=eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
             author=author,
             at=at,
         )
@@ -2471,7 +2471,7 @@ class ChatService(SessionRecovery, RoomTurns):
         event: AgentRetrying,
         *,
         author: str | None,
-        task_id: uuid.UUID | None,
+        inner_id: uuid.UUID | None,
         channel: str,
     ) -> None:
         """Say the turn is retrying a failed request (hook_stream.py)."""
@@ -2482,7 +2482,7 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id,
             event,
             author=author,
-            task_id=task_id,
+            inner_id=inner_id,
             channel=channel,
         )
 
@@ -2523,7 +2523,7 @@ class ChatService(SessionRecovery, RoomTurns):
         meta: dict,
         *,
         author: str | None,
-        task_id: uuid.UUID | None,
+        inner_id: uuid.UUID | None,
         channel: str,
     ) -> None:
         """Land the turn's notice of this kind, or restate it (hook_stream.py)."""
@@ -2535,7 +2535,7 @@ class ChatService(SessionRecovery, RoomTurns):
             content,
             meta,
             author=author,
-            task_id=task_id,
+            inner_id=inner_id,
             channel=channel,
         )
 
@@ -2557,7 +2557,7 @@ class ChatService(SessionRecovery, RoomTurns):
         platform_unsolicited: bool = False,
         in_room: bool = False,
         author_type: AuthorType = AuthorType.participant,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         author: str | None = None,
         at: datetime | None = None,
     ) -> dict | None:
@@ -2573,7 +2573,7 @@ class ChatService(SessionRecovery, RoomTurns):
             platform_unsolicited=platform_unsolicited,
             in_room=in_room,
             author_type=author_type,
-            task_id=task_id,
+            inner_id=inner_id,
             author=author,
             at=at,
         )
@@ -2587,7 +2587,7 @@ class ChatService(SessionRecovery, RoomTurns):
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         platform_unsolicited: bool = False,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
     ) -> dict | None:
         return await _persist_subagent_result(
             self._sessions,
@@ -2598,7 +2598,7 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id=turn_id,
             eid=eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
         )
 
     async def _turn_changeset(
@@ -2750,7 +2750,7 @@ class ChatService(SessionRecovery, RoomTurns):
         session: AsyncSession,
         *,
         project: Project,
-        room_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         room_doc: str | None,
         overview_doc: str | None,
         all_topics: list[Topic],
@@ -2764,7 +2764,7 @@ class ChatService(SessionRecovery, RoomTurns):
         return await project_overview(
             session,
             project=project,
-            room_id=room_id,
+            conversation_id=conversation_id,
             room_doc=room_doc,
             overview_doc=overview_doc,
             all_topics=all_topics,

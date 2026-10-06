@@ -47,6 +47,8 @@ vi.mock('@/stores/workspace', () => ({
   }),
 }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
+// 频道的支线清单：这几条测试不看它。
+vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
 vi.mock('@/api', () => ({
   listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
   getRoomEnvironment: vi.fn(async () => ({ state: 'pending' })),

@@ -9,7 +9,7 @@
 
 import { t } from '@/i18n'
 
-export type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview' | 'routines'
+export type TabKey = 'chat' | 'overview' | 'threads' | 'site' | 'changes' | 'preview' | 'routines'
 
 export interface TabDef {
   key: TabKey
@@ -50,7 +50,12 @@ export function panelTabs(withChat: boolean): TabDef[] {
 // 演示照旧读 `panelTabs`，两边的四格仍然只有一个出处。
 export const ROUTINES_TAB: TabDef = tab('routines', 'mdi-clock-outline')
 
-/** 话题页右侧有哪几格：共用的那几格 + 只有产品有的「定时与触发」。 */
+// 频道里主线消息下面的支线，一条一行。同样只有产品有：演示里的房间没有支线。
+export const THREADS_TAB: TabDef = tab('threads', 'mdi-forum-outline')
+
+/** 话题页右侧有哪几格：共用的那几格，总览后面接「支线」，最后是「定时与触发」。 */
 export function workPanelTabs(withChat: boolean): TabDef[] {
-  return [...panelTabs(withChat), ROUTINES_TAB]
+  const shared = panelTabs(withChat)
+  const at = shared.findIndex((tabDef) => tabDef.key === 'overview') + 1
+  return [...shared.slice(0, at), THREADS_TAB, ...shared.slice(at), ROUTINES_TAB]
 }

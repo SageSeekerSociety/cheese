@@ -426,6 +426,7 @@ def _proposal_out(proposal) -> dict:
     return {
         "id": str(proposal.id),
         "room_id": str(proposal.room_id),
+        "conversation_id": str(proposal.conversation_id),
         "title": proposal.title,
         "summary": proposal.summary,
         "proposed_by": proposal.proposed_by,
@@ -471,6 +472,7 @@ async def propose_task(
     proposal = await TaskProposals(db).propose(
         project_id=place.project_id,
         room_id=place.room_id,
+        conversation_id=place.conversation_id,
         title=body.title,
         summary=body.summary,
         proposed_by=actor.handle,
@@ -479,7 +481,7 @@ async def propose_task(
     if key is not None:
         await idem.record_result(db, key, out)
     await db.commit()
-    await announce_stale(place.room_id, "task-proposals")
+    await announce_stale(place.conversation_id, "task-proposals")
     return ok(out)
 
 
@@ -489,7 +491,7 @@ async def list_task_proposals(
 ) -> dict:
     """The proposals in this room still waiting for someone."""
     place, _actor = await _room_actor(db, resolver, topic_id)
-    rows = await TaskProposals(db).open_in_room(place.room_id)
+    rows = await TaskProposals(db).open_in(place.conversation_id)
     return ok([_proposal_out(p) for p in rows])
 
 
@@ -535,7 +537,7 @@ async def accept_task_proposal(
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
-    await announce_stale(place.room_id, "task-proposals")
+    await announce_stale(proposal.conversation_id, "task-proposals")
     await announce_stale(place.room_id, "topics")
     await dispatch(chat)
     return ok(out)
@@ -556,5 +558,5 @@ async def dismiss_task_proposal(
     TaskProposals.decide(proposal, ProposalState.dismissed, by=actor.handle)
     out = _proposal_out(proposal)
     await db.commit()
-    await announce_stale(place.room_id, "task-proposals")
+    await announce_stale(proposal.conversation_id, "task-proposals")
     return ok(out)

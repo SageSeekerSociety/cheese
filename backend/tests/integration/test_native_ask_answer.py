@@ -29,6 +29,7 @@ from app.main import app
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     room_agent_seat,
@@ -79,7 +80,7 @@ def test_http_answer_continues_original_native_executor(
 
         @property
         def mirror(self):
-            return channel.mirror(self.session.topic_id, self.agent_handle)
+            return channel.mirror(self.session.conversation_id, self.agent_handle)
 
     class Channel(SeatChannel):
         name = "native-ask-fixture"
@@ -122,6 +123,8 @@ def test_http_answer_continues_original_native_executor(
         )
         assert joined.status_code == 200, joined.text
         assert asker != default_seat
+        # 芝士 answers — and so asks — in a 支线 of the channel.
+        topic = uuid.UUID(in_thread(client, str(topic), "alice"))
         machine = Machine(headless_contract, tmp_path)
         chat = ChatService(
             session_factory=client.test_request_factory,

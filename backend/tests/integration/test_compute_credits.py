@@ -19,6 +19,7 @@ from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
     free_plan_credits,
+    in_thread,
     post_message,
     post_project,
 )
@@ -227,10 +228,12 @@ def test_turn_deducts_credits_from_grant(client, tmp_path):
     task_id = _mk_task(client, compute_credits=1)
     project_id = _mk_project(client, from_task=task_id)
 
-    topic_id = _mk_topic(client, project_id)
+    room = _mk_topic(client, project_id)
+    # 芝士 answers in a 支线; the proxy logs the channel it works in.
+    topic_id = in_thread(client, room, "u1")
     log = tmp_path / "usage.jsonl"
     frames = _run_turn(
-        client, topic_id, lambda: _metered(client, project_id, topic_id, log)
+        client, topic_id, lambda: _metered(client, project_id, room, log)
     )
     assert frames[-1]["type"] == "done"
 
@@ -248,9 +251,11 @@ def test_deduction_drains_oldest_grant_first(client, tmp_path):
     project_id = _mk_project(client, from_task=task_a)
     _add_grant(client, project_id, 1, task_b)
 
-    topic_id = _mk_topic(client, project_id)
+    room = _mk_topic(client, project_id)
+    # 芝士 answers in a 支线; the proxy logs the channel it works in.
+    topic_id = in_thread(client, room, "u1")
     log = tmp_path / "usage.jsonl"
-    _run_turn(client, topic_id, lambda: _metered(client, project_id, topic_id, log))
+    _run_turn(client, topic_id, lambda: _metered(client, project_id, room, log))
 
     data = _credits(client, project_id)
     by_task = {g["source_task_id"]: g for g in data["grants"]}
@@ -266,11 +271,13 @@ def test_exhausted_credits_refuse_next_turn(client, tmp_path):
     task_id = _mk_task(client, compute_credits=0.0001)
     project_id = _mk_project(client, from_task=task_id)
 
-    topic_id = _mk_topic(client, project_id)
+    room = _mk_topic(client, project_id)
+    # 芝士 answers in a 支线; the proxy logs the channel it works in.
+    topic_id = in_thread(client, room, "u1")
     log = tmp_path / "usage.jsonl"
 
     def meter() -> None:
-        _metered(client, project_id, topic_id, log)
+        _metered(client, project_id, room, log)
 
     first = _run_turn(client, topic_id, meter)
     assert first[-1]["type"] == "done"  # had remaining balance → allowed to run
