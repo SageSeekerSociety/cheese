@@ -183,6 +183,69 @@ async def test_a_delivered_set_carries_the_machines_fingerprint():
     assert outcome.fingerprint == "fp-1"
 
 
+async def test_a_revoke_committed_while_a_push_is_in_flight_reaches_the_machine():
+    """A push that read the set just before a revoke committed is not the last
+    word on the machine.
+
+    Pushes to one machine come from any backend, and the revoke's own push can
+    land before this older one does. The set is read again once the machine
+    acknowledges, and sent again when it changed.
+    """
+    service = service_with(InMemoryLocalFsRepository())
+    paper = await service.grant_directory(
+        device_id=DEVICE,
+        owner_user_id=OWNER,
+        path="/home/alice/Paper",
+        platform=Platform.LINUX,
+        mode=GrantMode.READ,
+        scope=GrantScope.USER,
+    )
+    await service.grant_directory(
+        device_id=DEVICE,
+        owner_user_id=OWNER,
+        path="/home/alice/Notes",
+        platform=Platform.LINUX,
+        mode=GrantMode.READ,
+        scope=GrantScope.USER,
+    )
+
+    class RevokedMeanwhile(FakeLink):
+        async def push_local_fs_grants(self, device_id, grants, *, timeout=20):
+            if not self.pushed:
+                await service.revoke(paper.id, owner_user_id=OWNER)
+            return await super().push_local_fs_grants(
+                device_id, grants, timeout=timeout
+            )
+
+    link = RevokedMeanwhile()
+    outcome = await push_grants(service, link, DEVICE)
+
+    assert outcome.delivered is True
+    assert [g["path"] for g in link.pushed[-1][1]] == ["/home/alice/Notes"]
+
+
+async def test_the_read_is_ended_before_the_machine_is_asked():
+    """The machine can take up to the push's timeout to answer; a database
+    connection held for that long, once per machine, empties the pool."""
+    events: list[str] = []
+
+    class Asked(FakeLink):
+        async def push_local_fs_grants(self, device_id, grants, *, timeout=20):
+            events.append("ask")
+            return await super().push_local_fs_grants(
+                device_id, grants, timeout=timeout
+            )
+
+    async def end_read() -> None:
+        events.append("end read")
+
+    await push_grants(
+        service_with(InMemoryLocalFsRepository()), Asked(), DEVICE, end_read=end_read
+    )
+
+    assert events == ["end read", "ask", "end read"]
+
+
 async def test_revoking_pushes_an_emptied_set():
     """撤销后立刻失效, on the machine that holds its own copy.
 

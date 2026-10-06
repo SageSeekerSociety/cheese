@@ -24,10 +24,8 @@ work has to go on somewhere.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -35,7 +33,7 @@ import httpx
 
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.local_fs.records import DirectoryGrant
-from app.domain.local_fs.service import LocalDirectoryService
+from app.domain.local_fs.service import DeviceGrants, LocalDirectoryService
 from app.domain.local_fs.wiring import sql_local_directory_service
 
 if TYPE_CHECKING:
@@ -99,6 +97,8 @@ async def push_grants(
     service: LocalDirectoryService,
     link: DeviceLink,
     device_id: str,
+    *,
+    end_read: Callable[[], Awaitable[None]] | None = None,
 ) -> PushOutcome:
     """Send this machine the complete live set, and report whether it landed.
 
@@ -109,49 +109,52 @@ async def push_grants(
     The whole live set goes, both scopes — see
     :meth:`LocalDirectoryService.device_grants` for why filtering by project here
     would silently disable the narrower kind of grant, which is the safer kind.
+
+    ``end_read`` ends the caller's transaction after each read, so no database
+    connection is held while the machine is asked, which can take up to the
+    push's timeout.
+
+    Once the machine has acknowledged a set, the set is read again, and sent
+    again if it changed in the meantime. Pushes to one machine come from any
+    backend (the routes, and every backend's reconnect handling), and each reads
+    the set before sending it, so a push that read the set just before a revoke
+    committed can reach the machine after the revoke's own push, and the machine
+    would keep the revoked directory. The second read closes that: either it
+    sees the revoke and sends again, or it happened before the revoke committed,
+    so the revoke's own push was sent after this one landed and lands after it.
     """
-    async with _one_push_at_a_time(device_id):
-        return await _send_current_set(service, link, device_id)
+    effective = await _read_set(service, device_id, end_read)
+    for _ in range(_SENDS_PER_PUSH):
+        outcome = await _send(link, device_id, effective)
+        if not outcome.delivered:
+            return outcome
+        current = await _read_set(service, device_id, end_read)
+        if current.fingerprint == effective.fingerprint:
+            return outcome
+        effective = current
+    # Still changing after this many sends: whoever keeps changing it pushes
+    # after each change, and each of those pushes checks again.
+    return outcome
 
 
-# Per machine: the lock, and how many pushes hold or wait on it. An entry goes
-# when its count reaches zero, so the map holds only machines being pushed to.
-_push_locks: dict[str, asyncio.Lock] = {}
-_push_waiting: dict[str, int] = {}
+# One send, and up to two more for changes that landed while it was in flight.
+_SENDS_PER_PUSH = 3
 
 
-@asynccontextmanager
-async def _one_push_at_a_time(device_id: str) -> AsyncIterator[None]:
-    """Read the set and send it, one push per machine at a time.
-
-    Two pushes that overlap, say a reconnect's and a revoke's, each read the
-    set and then send it. Unordered, the one that read first can arrive last,
-    and the machine keeps the older set: the one that still has the revoked
-    directory. Under this lock the push that reads later also sends later.
-    Granting and revoking commit before they push, so the later read sees the
-    change.
-
-    This orders the pushes made by one process. Two backends pushing to the
-    same machine at the same instant, which only a rolling deploy produces, are
-    not ordered against each other; the machine's next connection sends it the
-    current set either way.
-    """
-    lock = _push_locks.setdefault(device_id, asyncio.Lock())
-    _push_waiting[device_id] = _push_waiting.get(device_id, 0) + 1
-    try:
-        async with lock:
-            yield
-    finally:
-        _push_waiting[device_id] -= 1
-        if not _push_waiting[device_id]:
-            del _push_waiting[device_id]
-            del _push_locks[device_id]
-
-
-async def _send_current_set(
-    service: LocalDirectoryService, link: DeviceLink, device_id: str
-) -> PushOutcome:
+async def _read_set(
+    service: LocalDirectoryService,
+    device_id: str,
+    end_read: Callable[[], Awaitable[None]] | None,
+) -> DeviceGrants:
     effective = await service.device_grants(device_id)
+    if end_read is not None:
+        await end_read()
+    return effective
+
+
+async def _send(
+    link: DeviceLink, device_id: str, effective: DeviceGrants
+) -> PushOutcome:
     payload = [grant_wire(grant) for grant in effective.grants]
 
     try:
@@ -231,7 +234,7 @@ async def push_grants_on_connect(
         service = sql_local_directory_service(session)
         if not await service.ever_granted(device_id):
             return None
-        outcome = await push_grants(service, link, device_id)
+        outcome = await push_grants(service, link, device_id, end_read=session.commit)
     if not outcome.delivered:
         logger.warning(
             "local grants not delivered to %s on connect (%s): %s; "
