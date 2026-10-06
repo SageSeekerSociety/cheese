@@ -2,6 +2,7 @@
 // 小队的对外一面：没加入的人看到的就是这一页。按地址打开（/teams/:handle）和按小队链接
 // 打开（/team-invites/:token）是同一个组件，只有「加入」走哪条接口不同，由调用方传进来。
 // 小队开着审批时，「加入」提交的是申请（带理由），结果是 pending；关着就直接成为成员。
+import type { ResolvedUserRef } from '@/composables/useUserRefResolver'
 import type { Team } from '@/types'
 
 import { computed, ref } from 'vue'
@@ -10,13 +11,18 @@ import { squareRadius } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
   team: Team
   join: (message: string) => Promise<void>
+  /** 句子里那个人点了去哪：由容器算好递进来（见 `composables/useUserRefResolver`），
+   *  这一半只认 props，名册查询与跳转都不在这里。 */
+  resolveUser: (handle: string | null | undefined) => ResolvedUserRef
 }>()
+
+defineEmits<{ navigate: [target: ResolvedUserRef['to']] }>()
 
 const message = ref('')
 const busy = ref(false)
@@ -54,7 +60,13 @@ async function submit() {
         <div class="t-meta c-muted mt-1">
           <span v-if="team.owner">
             <i18n-t keypath="work.teamProfile.owner" tag="span">
-              <template #name><UserRef :handle="team.owner.username" :name="team.owner.nickname" /></template>
+              <template #name
+                ><UserRef
+                  :handle="team.owner.username"
+                  :name="team.owner.nickname"
+                  :to="resolveUser(team.owner.username).to"
+                  @navigate="$emit('navigate', resolveUser(team.owner.username).to)"
+              /></template>
             </i18n-t>
             ·
           </span>

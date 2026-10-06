@@ -1,115 +1,48 @@
 <template>
-  <PageHeader icon="mdi-account-group" :title="t('teams.index.title')">
-    <template #tabs>
-      <v-tabs color="on-surface" slider-color="primary" bg-color="transparent">
-        <v-tab :to="{ name: 'HomeTeamsExplore' }">{{ t('teams.index.tabExplore') }}</v-tab>
-        <v-tab :to="{ name: 'HomeTeamsMine' }">{{ t('teams.index.tabMine') }}</v-tab>
-        <v-tab :to="{ name: 'HomeTeamsPending' }">{{ t('teams.index.tabPending') }}</v-tab>
-      </v-tabs>
-      <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" @click="openCreateTeamDialog">
-        {{ t('teams.index.create') }}
-      </BaseButton>
-    </template>
-  </PageHeader>
-
-  <router-view />
-
-  <!-- Create team dialog -->
-  <AdaptiveDialog
-    v-model="createTeamDialog"
-    :title="t('teams.index.create')"
-    :primary-label="t('teams.index.create')"
-    :cancel-label="t('teams.index.cancel')"
-    :primary-loading="creatingTeam"
-    @primary="createTeam"
-  >
-    <v-form>
-      <v-container fluid>
-        <v-row>
-          <v-col cols="12" md="4" class="text-center">
-            <avatar-uploader v-model="teamAvatar" />
-            <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.avatar') }}</p>
-          </v-col>
-          <v-col cols="12" md="8">
-            <v-text-field
-              v-model="teamName"
-              autocomplete="off"
-              :label="t('teams.index.name')"
-              variant="outlined"
-              color="primary"
-              :placeholder="t('teams.index.namePlaceholder')"
-              :rules="[(v) => !!v || t('teams.index.nameRequired')]"
-              :error-messages="teamNameError"
-              class="mb-4"
-              rounded="md"
-            ></v-text-field>
-
-            <v-text-field
-              v-model="teamHandle"
-              autocomplete="off"
-              :label="t('work.teamLink.address')"
-              :prefix="addressPrefix"
-              :hint="t('work.teamLink.createAddressHint')"
-              :error-messages="teamHandleError"
-              persistent-hint
-              variant="outlined"
-              color="primary"
-              class="mb-4"
-              rounded="md"
-            ></v-text-field>
-
-            <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.description') }}</p>
-            <tip-tap-editor
-              ref="teamDescriptionEditor"
-              v-model="teamDescription"
-              output="html"
-              :placeholder="t('teams.index.descriptionPlaceholder')"
-              class="team-description-editor rounded-md"
-            />
-          </v-col>
-        </v-row>
-      </v-container>
-    </v-form>
-  </AdaptiveDialog>
+  <IndexView
+    :address-prefix="addressPrefix"
+    :name-error="teamNameError"
+    :handle-error="teamHandleError"
+    :creating="creatingTeam"
+    @create="createTeam"
+  />
 </template>
 
 <script setup lang="ts">
+// 「团队」页（`/teams`）的**容器**：建队要的那几个接口（头像、建队、跳过去）与接口
+// 回的错都在这儿；画的那一半在 `IndexView.vue`。表单自己那几格（名字、地址、介绍、
+// 头像）归视图，提交时把这一份原样交上来。
 import type { JSONContent } from '@tiptap/core'
 
-import { defineAsyncComponent, ref } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import AvatarUploader from '@/components/common/AvatarUploader.vue'
-import PageHeader from '@/components/common/PageHeader.vue'
+import IndexView from './IndexView.vue'
+
 import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
 import { TeamsApi } from '@/network/api/teams'
 import { BusinessError } from '@/network/types/error'
 
-const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
-
-const createTeamDialog = ref(false)
-const teamName = ref('')
-const teamNameError = ref('')
-const teamHandle = ref('')
-const teamHandleError = ref('')
-const addressPrefix = `${window.location.host}/teams/`
-const teamDescription = ref<JSONContent>({ type: 'doc', content: [] })
-const teamDescriptionEditor = ref<InstanceType<typeof TipTapEditor>>()
-const teamAvatar = ref<File | undefined>()
-const creatingTeam = ref(false)
+/** 视图提交上来的那一份表单：接口要什么它就有什么。 */
+interface CreateTeamForm {
+  name: string
+  handle: string
+  description: JSONContent
+  avatar: File | undefined
+  intro: string
+}
 
 const router = useRouter()
 
-const openCreateTeamDialog = () => {
-  createTeamDialog.value = true
-}
+const teamNameError = ref('')
+const teamHandleError = ref('')
+const addressPrefix = `${window.location.host}/teams/`
+const creatingTeam = ref(false)
 
-const createTeam = async () => {
-  if (!teamName.value) {
+const createTeam = async (form: CreateTeamForm) => {
+  if (!form.name) {
     toast.error(t('teams.index.nameRequired'))
     return
   }
@@ -118,23 +51,19 @@ const createTeam = async () => {
   teamHandleError.value = ''
   try {
     creatingTeam.value = true
-    let intro = teamDescriptionEditor.value?.editor?.getText() ?? ''
-    if (intro.length > 250) {
-      intro = `${intro.slice(0, 250)}…`
-    }
 
     const {
       data: { avatarId },
-    } = teamAvatar.value ? await AvatarsApi.createAvatar(teamAvatar.value) : { data: { avatarId: null } }
+    } = form.avatar ? await AvatarsApi.createAvatar(form.avatar) : { data: { avatarId: null } }
 
     const {
       data: { team },
     } = await TeamsApi.create({
-      name: teamName.value,
-      description: JSON.stringify(teamDescription.value),
-      intro,
+      name: form.name,
+      description: JSON.stringify(form.description),
+      intro: form.intro,
       avatarId: avatarId ?? 1,
-      handle: teamHandle.value.trim() || undefined,
+      handle: form.handle.trim() || undefined,
     })
 
     toast.success(t('teams.index.createDone'))
@@ -157,5 +86,3 @@ const createTeam = async () => {
   }
 }
 </script>
-
-<style scoped></style>

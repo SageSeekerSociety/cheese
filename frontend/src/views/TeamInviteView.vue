@@ -5,6 +5,8 @@ import type { Team } from '@/types'
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useUserRefResolver } from '@/composables/useUserRefResolver'
+
 import TeamProfile from './teams/TeamProfile.vue'
 
 import { authToken } from '@/api'
@@ -15,6 +17,8 @@ import { BusinessError } from '@/network/types/error'
 
 const route = useRoute()
 const router = useRouter()
+// 小队对外一面里那颗人名：名册查询与跳转留在这儿（`TeamProfile` 只认 props）。
+const { resolve: resolveUser, navigate } = useUserRefResolver()
 const team = ref<Team | null>(null)
 const busy = ref(false)
 const error = ref('')
@@ -59,7 +63,7 @@ watch(() => route.params.token, load, { immediate: true })
 
 <template>
   <v-container class="fill-height justify-center pa-4" fluid>
-    <TeamProfile v-if="team" :team="team" :join="join" />
+    <TeamProfile v-if="team" :team="team" :join="join" :resolve-user="resolveUser" @navigate="navigate" />
     <v-card v-else class="pa-6" max-width="560" width="100%" rounded="lg" flat border>
       <div class="t-eyebrow c-muted mb-2">{{ t('work.teamProfile.eyebrow') }}</div>
       <h1 class="t-page-title mb-4">{{ t('work.teamProfile.joinTitle') }}</h1>
