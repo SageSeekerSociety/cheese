@@ -67,6 +67,8 @@
     }
   },
   "answer": {
-    "acceptSuccess": "采纳成功"
+    "acceptSuccess": "采纳成功",
+    "loadFailed": "无法加载回答",
+    "listLoadFailed": "无法加载回答列表"
   }
 }
