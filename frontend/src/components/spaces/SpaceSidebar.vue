@@ -74,17 +74,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { storeToRefs } from 'pinia'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useNavigation } from '@/composables/useNavigation'
+
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
 import { useSpaceStore } from '@/stores/space'
 
 const { t } = useI18n()
-const route = useRoute()
+const nav = useNavigation()
 const spaceStore = useSpaceStore()
 const { currentSpace: space, categories, isManager, pendingAuditCount } = storeToRefs(spaceStore)
 const { mdAndUp } = useDisplay()
@@ -94,15 +95,20 @@ const activeCategories = computed(() =>
   categories.value.filter((category) => !category.archivedAt).sort((a, b) => a.displayOrder - b.displayOrder)
 )
 
-const spaceId = computed(() => Number(route.params.spaceId))
+const spaceId = computed(() => Number(nav?.route?.params?.spaceId))
 /** 设置那一格：五个分栏和模板的新建、编辑页都算在里面。 */
-const isSettingsActive = computed(() => route.path.startsWith(`/spaces/${spaceId.value}/manage/settings`))
-const isUnderTasksSection = computed(() => route.matched.some((record) => record.name === 'SpacesDetailTasks'))
+const isSettingsActive = computed(
+  () => nav?.route?.path?.startsWith(`/spaces/${spaceId.value}/manage/settings`) ?? false
+)
+const isUnderTasksSection = computed(
+  () => nav?.route?.matched?.some((record) => record.name === 'SpacesDetailTasks') ?? false
+)
 
 /** 题目列表那几格（全部 / 各分类）亮不亮：只看地址里的分类。 */
 function isTasksLinkActive(query: Record<string, string> = {}): boolean {
   if (!isUnderTasksSection.value) return false
-  const current = typeof route.query.category === 'string' ? route.query.category : undefined
+  const category = nav?.route?.query?.category
+  const current = typeof category === 'string' ? category : undefined
   return current === query.category
 }
 </script>
