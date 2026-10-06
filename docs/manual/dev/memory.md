@@ -139,7 +139,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 别人的 `private` 答 **403**（不是 404）：「这里有一条，但不是你的」。**读得到的范围不等于写得动的范围**（`_readable` / `_writable`）：管理员看得见是为了出事时能查（比如说有人把密钥写进去了），不是为了替谁改——给他一支笔，那一条记忆就同时有了两个主人，而「这是谁的判断」正是 private 这一层唯一要保住的东西。路径最长 200 字符（`files.PATH_MAX`，和 `memory_files.path` 那一列的宽度一样），超了答 422。写入带 `version`，对不上就 409 并把当前那一版一起还回去——冲突是拒绝，不是合并：两版散文自动合并的唯一结果是两句互相矛盾的话安静地并排躺着。两个同时起手的新建同一个路径也会撞在唯一约束上，那一路同样答 409（对面赢了的证据就是那条约束）。
 
-界面上还没有记忆面板（这套 API 是为了它先露出来的）。
+界面上的记忆面板（「项目文档 → 记忆」，`GET /memory`，`api/routes/memory.py`）读的就是这棵树：项目共享的那一份，加上读的人自己那一份。它是一条**给人读**的路——正文按能读的样子给（frontmatter 那三行剥掉），修剪走 `MemoryFileStore.forget`，连同索引里指着它的那一行一起删（只删文件的话，下一轮注入的索引里会挂着一条指向不存在文件的指针）。
 
 ## 改动记在哪 {#events}
 
@@ -164,7 +164,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 所以照 Claude Code 2.1.283 换成了现在这套：**索引进上下文，正文在文件里，检索变成「看得见的列表 + 自己读」**。文件树跟会话走、跟项目走，谁写的、什么时候写的、改了哪一版都留在 diff 里。
 
-同一个方向上的收尾：`cheese_recall` 命令撤了，`/projects/{id}/memory/search` 那条路由撤了，`memory/pools.py` 删了，关键词切分（`memory/keywords.py`）只剩一个调用方——写记忆之前拿最重的几个词去检出目录里查一遍（`memory/redundant.py`）。旧表 `memory_entries` 不 drop，界面上还在读它。
+同一个方向上的收尾：`cheese_recall` 命令撤了，`/projects/{id}/memory/search` 那条路由撤了，`memory/pools.py` 删了，关键词切分（`memory/keywords.py`）只剩一个调用方——写记忆之前拿最重的几个词去检出目录里查一遍（`memory/redundant.py`）。旧表 `memory_entries` 不 drop：个人主页上「芝士对我的认识」那一栏读的还是它，而记忆面板已经改读这棵树。
 
 ## 整理（dream） {#dream}
 
