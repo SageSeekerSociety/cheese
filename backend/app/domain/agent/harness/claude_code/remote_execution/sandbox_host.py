@@ -358,9 +358,31 @@ def enable(directory):
         control.write_text(" ".join("+" + name for name in sorted(missing)))
 
 
+def machine_memory():
+    """The machine's memory in bytes: /proc/meminfo's total, which in a
+    MicroCloud LXC is the container's own limit (lxcfs)."""
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        if line.startswith("MemTotal:"):
+            return int(line.split()[1]) * 1024
+    raise RuntimeError("no MemTotal in /proc/meminfo")
+
+
+def sandboxes_memory(total):
+    """What every sandbox on a machine of `total` bytes may hold together:
+    the machine keeps a quarter, at least 1 GiB, for everything outside them.
+
+    Each sandbox's own limit does not add up to this: two 3 GiB sandboxes on a
+    4 GiB machine together drove it to its container limit (a dev pool host,
+    2026-10-05), and the reclaim that followed stalled every process in the
+    container, sshd, PID 1, dbus and logind with them, for five hours. Held
+    here, the kernel reclaims and kills inside the sandboxes instead."""
+    return total - min(max(1 << 30, total // 4), total // 2)
+
+
 def limit(name, pid, limits):
     enable(CGROUP_ROOT)
     CGROUP.mkdir(exist_ok=True)
+    (CGROUP / "memory.max").write_text(str(sandboxes_memory(machine_memory())))
     enable(CGROUP)
     group = CGROUP / name
     group.mkdir()
