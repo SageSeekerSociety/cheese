@@ -6,9 +6,13 @@ from unittest.mock import AsyncMock, Mock
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.block.models import CONSUMED_TURN_META_KEY, AuthorType
+from app.domain.block.repositories import BlockRepository
 from app.domain.project.environment_recovery import latest_recovery, report_failure
 from app.domain.project.models import Project
+from app.domain.topic.models import Topic
 from tests.integration.test_project_environment import project, room
+from tests.support.threads import thread_in
 
 
 def setup_incident(client, monkeypatch):
@@ -41,6 +45,26 @@ def setup_incident(client, monkeypatch):
     root_id, incident_id = client.portal.call(initialize)
     assert runner.submit.call_count == 1
     return project_id, topic_id, root_id, incident_id, owner, chat, runner
+
+
+async def _waiting_in_a_thread(chat, room_id: str) -> uuid.UUID:
+    """A 支线 of the room where a message calling 芝士 never reached it."""
+    async with chat.session_factory() as db:
+        room = await db.get(Topic, uuid.UUID(room_id))
+        thread = await thread_in(db, room, "alice")
+        await BlockRepository(db).add(
+            project_id=room.project_id,
+            conversation_id=thread,
+            author="alice",
+            author_type=AuthorType.participant,
+            content="@芝士 环境好了就继续",
+            meta={
+                "agent_recipient": {"handle": "cheese", "mentioned": True},
+                CONSUMED_TURN_META_KEY: None,
+            },
+        )
+        await db.commit()
+    return thread
 
 
 def test_only_overview_can_inspect_and_repair_once(client, monkeypatch):
@@ -101,9 +125,12 @@ def test_only_overview_can_inspect_and_repair_once(client, monkeypatch):
     state["attempt"] = "different"
     assert client.post(path, headers=headers, json=body).status_code == 422
     state["attempt"] = "first"
+    waiting = client.portal.call(_waiting_in_a_thread, chat, t)
     repaired = client.post(path, headers=headers, json=body)
     assert repaired.status_code == 200, repaired.text
+    # Repaired, 芝士 goes back to where a message to it is still waiting.
     assert runner.submit.call_count == 2
+    assert runner.submit.call_args.args[1] == waiting
     assert client.post(path, headers=headers, json=body).status_code == 422
     unchanged = client.get(f"/projects/{p}/environment", headers=owner).json()["data"]
     assert unchanged["config"]["setup_script"] == ""
