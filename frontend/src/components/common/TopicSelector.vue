@@ -1,50 +1,25 @@
 <template>
-  <v-autocomplete
-    v-model:search="topicInput"
-    autocomplete="off"
+  <TopicSelectorView
     :model-value="topics"
-    :items="addTopicItems"
+    :items="items"
     :loading="isLoading"
-    :label="t('shell.topicSelector.label')"
-    :placeholder="t('shell.topicSelector.placeholder')"
-    variant="outlined"
-    item-title="name"
-    item-value="id"
-    chips
-    closable-chips
-    multiple
-    return-object
-    :no-filter="true"
-    hide-no-data
-    auto-select-first
     @update:model-value="onTopicsUpdate"
-    @update:search="fetchTopics"
-    @focus="onFocus"
-  >
-    <template #chip="{ props, item }">
-      <v-chip v-bind="props" :text="item.raw.name"></v-chip>
-    </template>
-
-    <template #item="{ props, item }">
-      <v-list-item
-        v-if="item.raw.isFakeItem"
-        v-bind="props"
-        :title="t('questions.ask.buttons.createTopic', { name: item.raw.name })"
-        prepend-icon="mdi-plus"
-      ></v-list-item>
-      <v-list-item v-else v-bind="props" :title="item.raw.name"></v-list-item>
-    </template>
-  </v-autocomplete>
+    @search="search"
+    @focus="focus"
+  />
 </template>
 
-<script lang="ts" setup>
+<script setup lang="ts">
+// 话题选择器**取数的那一半**：搜话题 / 建话题 / 把假项补建成真的都在
+// `composables/useTopicSelector` 里，这里只把它和 `TopicSelectorView.vue` 接起来。
+//
+// 外部接口没变：`v-model` 交话题列表，props 还是 `max`（历史上就没用上）与
+// `defaultTopics`（输入框空着时先摆出来的那几项）。
 import type { Topic } from '@/types'
 
-import { ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { debounce } from 'lodash-es'
+import { useTopicSelector } from '@/composables/useTopicSelector'
 
-import { TagsApi } from '@/network/api/tags'
+import TopicSelectorView from './TopicSelectorView.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -57,107 +32,15 @@ const props = withDefaults(
   }
 )
 
-const { t } = useI18n()
-
 const topics = defineModel<Topic[]>({ default: () => [] })
 
-const topicInput = ref('')
-const isLoading = ref(false)
-const addTopicItems = ref<
-  {
-    id: number
-    name: string
-    isFakeItem?: boolean
-  }[]
->([])
+const { items, isLoading, search, focus, resolveTopics } = useTopicSelector({
+  defaultTopics: () => props.defaultTopics,
+})
 
-const createTopic = async (name: string) => {
-  try {
-    isLoading.value = true
-    const {
-      data: { id },
-    } = await TagsApi.create(name)
-    return id
-  } finally {
-    isLoading.value = false
-  }
-}
-
-const onTopicsUpdate = async (newTopics: Topic[]) => {
-  // Optimistic update
+async function onTopicsUpdate(newTopics: Topic[]) {
+  // 先乐观写回，再拿补建之后的最终列表覆盖一次。
   topics.value = newTopics
-
-  // Check if any topics need creation (id === -1)
-  // We use type assertion since the fake item comes from addTopicItems which has extra props
-  const hasFake = newTopics.some((t: any) => t.id === -1)
-  if (!hasFake) return
-
-  const finalTopics = [...newTopics]
-  let changed = false
-
-  for (let i = 0; i < finalTopics.length; i++) {
-    const topic = finalTopics[i] as any
-    if (topic.id === -1) {
-      try {
-        const newId = await createTopic(topic.name)
-        // successful creation, replace with real topic (stripping isFakeItem)
-        finalTopics[i] = { id: newId, name: topic.name }
-        changed = true
-      } catch (error) {
-        console.error('Create topic failed', error)
-        // If creation failed, remove it from list
-        finalTopics.splice(i, 1)
-        i--
-        changed = true
-      }
-    }
-  }
-
-  if (changed) {
-    topics.value = finalTopics
-  }
-}
-
-const fetchTopics = debounce(async (value: string) => {
-  const q = value?.trim()
-  if (!q) {
-    addTopicItems.value = [...props.defaultTopics]
-    return
-  }
-
-  try {
-    isLoading.value = true
-    const {
-      data: { topics: result },
-    } = await TagsApi.search(q)
-
-    const items: { id: number; name: string; isFakeItem?: boolean }[] = [...result]
-    // Add create option if it doesn't strictly match existing
-    if (!items.find((i) => i.name === q)) {
-      items.push({
-        id: -1,
-        name: q,
-        isFakeItem: true,
-      })
-    }
-
-    addTopicItems.value = items
-  } catch (error) {
-    console.error('获取话题失败:', error)
-    // On error, still allow creating?
-    addTopicItems.value = [{ id: -1, name: q, isFakeItem: true }]
-  } finally {
-    isLoading.value = false
-  }
-}, 300)
-
-const onFocus = () => {
-  if (!topicInput.value) {
-    fetchTopics('')
-  }
+  topics.value = await resolveTopics(newTopics)
 }
 </script>
-
-<style lang="scss">
-// Removed custom styles as v-autocomplete handles layout
-</style>
