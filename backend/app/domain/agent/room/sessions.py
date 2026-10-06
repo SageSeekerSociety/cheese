@@ -1418,7 +1418,11 @@ class RoomSessions:
             if status is None:
                 continue
             if not status.alive:
-                if resume_token and status.conversation == resume_token:
+                # A runner that is gone ran the placement's stored
+                # conversation; one that answered names its own.
+                if resume_token and (
+                    status.runner_gone or status.conversation == resume_token
+                ):
                     self.terminal_conversations.add((seat, resume_token))
                 continue
             self.found_conversations.add((seat, status.conversation))
