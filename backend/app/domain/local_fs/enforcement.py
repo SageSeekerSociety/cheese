@@ -27,7 +27,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from app.domain.agent.device_hub import DeviceOffline
+import httpx
+
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.local_fs.records import DirectoryGrant
 from app.domain.local_fs.service import LocalDirectoryService
 
@@ -118,10 +120,17 @@ async def push_grants(
             reason="device_offline",
             detail="这台电脑现在不在线，授权已记录；它下次连上来时会自动生效",
         )
-    except Exception as exc:  # noqa: BLE001 — a bad answer must not fail the grant
+    except (DeviceCallError, TimeoutError, httpx.HTTPError) as exc:
         # The grant is already recorded and is the authoritative record; a device
         # that answered badly has not made the grant wrong, it has only not been
         # told yet. Reported rather than raised for the same reason as offline.
+        #
+        # Only the ways the trip itself fails: the machine refusing the set, the
+        # machine (or the connection owner) not answering in time, the owner
+        # unreachable or answering with a status of its own. Anything else is a
+        # fault in this code, and caught here it read to the owner of the
+        # directory as a machine that answered badly: a backend whose hub had no
+        # `push_local_fs_grants` at all said that on every grant made on dev.
         return PushOutcome(
             delivered=False,
             reason="device_error",
