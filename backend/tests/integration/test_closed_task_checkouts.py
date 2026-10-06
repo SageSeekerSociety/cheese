@@ -234,3 +234,44 @@ async def test_open_tasks_are_never_named(client, tmp_path, monkeypatch):
     async with client.test_factory() as db:
         row = await db.get(Task, task)
         assert row is not None and row.status is TaskStatus.open
+
+
+async def test_a_room_with_a_thousand_closed_tasks_is_swept_on_windows(
+    client, tmp_path, monkeypatch
+):
+    """Windows refuses a command line past 32,767 characters; naming a
+    thousand closed tasks at once would pass it, and nothing would ever be
+    removed from that machine."""
+    room = await _room(client, tmp_path)
+    machine = room.machines["a"]
+    tasks = await _tasks(client, room, 1000)
+    published, unpushed = tasks[-1], tasks[0]
+    gone = machine.checkout(published, push=True)
+    stays = machine.checkout(unpushed, push=False)
+    async with client.test_factory() as db:
+        for task in tasks:
+            row = await db.get(Task, task)
+            assert row is not None
+            row.status = TaskStatus.closed
+        await db.commit()
+    _hub(monkeypatch, room.machines, online={"a"})
+    run_on_machine = hub_module.device_hub.exec
+
+    async def windows_exec(device, argv, *, stdin, timeout):
+        # CreateProcess counts the whole command line, separators included.
+        if len(" ".join(argv)) > 32767:
+            return {
+                "exit": 1,
+                "stdout": "",
+                "stderr": "fork/exec python3.exe: "
+                "The filename or extension is too long.",
+            }
+        return await run_on_machine(device, argv, stdin=stdin, timeout=timeout)
+
+    monkeypatch.setattr(hub_module.device_hub, "exec", windows_exec)
+
+    counts = await remove_closed_checkouts(client.test_factory, device_id="a")
+
+    assert counts == {"removed": 1, "kept": 1}
+    assert not gone.exists()
+    assert stays.exists()

@@ -33,6 +33,11 @@ logger = logging.getLogger("cheesex.room_task.checkouts")
 
 # Removing checkouts of a few GB each, after one `lsof` over all of them.
 EXEC_TIMEOUT_S = 300.0
+# How much of one command line the task ids may take. Windows refuses a
+# command line past 32,767 characters ("The filename or extension is too
+# long"), and a channel that has closed a thousand tasks names more than that;
+# so the ids go in batches well under it, leaving room for the interpreter path.
+ARGV_BUDGET = 8000
 
 
 async def remove_closed_checkouts(
@@ -87,18 +92,24 @@ async def remove_closed_checkouts(
         tasks = closed.get(room)
         if not tasks or not device_hub.is_online(device):
             continue
+        outcome: dict = {"removed": [], "kept": {}}
         try:
-            result = await device_hub.exec(
-                device,
-                ["python3", "-", "tasks", str(project), resource, "-", "-", *tasks],
-                stdin=script,
-                timeout=EXEC_TIMEOUT_S,
-            )
-            if result.get("exit") != 0 or result.get("truncated"):
-                raise RuntimeError(
-                    str(result.get("stderr") or "no answer from the machine")[-1500:]
+            for batch in _batches(tasks):
+                result = await device_hub.exec(
+                    device,
+                    ["python3", "-", "tasks", str(project), resource, "-", "-", *batch],
+                    stdin=script,
+                    timeout=EXEC_TIMEOUT_S,
                 )
-            outcome = json.loads(result["stdout"])
+                if result.get("exit") != 0 or result.get("truncated"):
+                    raise RuntimeError(
+                        str(result.get("stderr") or "no answer from the machine")[
+                            -1500:
+                        ]
+                    )
+                answer = json.loads(result["stdout"])
+                outcome["removed"].extend(answer["removed"])
+                outcome["kept"].update(answer["kept"])
         except Exception:  # noqa: BLE001 — one machine must not stop the others
             # WARNING, not ERROR: a machine going away mid-run is the usual
             # cause, and its next connection runs this again.
@@ -120,6 +131,19 @@ async def remove_closed_checkouts(
                 reason,
             )
     return counts
+
+
+def _batches(tasks: list[str]) -> list[list[str]]:
+    """The task ids in runs whose command line stays within ``ARGV_BUDGET``."""
+    batches: list[list[str]] = [[]]
+    used = 0
+    for task in tasks:
+        if batches[-1] and used + len(task) + 1 > ARGV_BUDGET:
+            batches.append([])
+            used = 0
+        batches[-1].append(task)
+        used += len(task) + 1
+    return batches
 
 
 def after_close(db: AsyncSession, room_id: uuid.UUID) -> None:
