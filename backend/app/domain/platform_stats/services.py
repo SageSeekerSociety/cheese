@@ -263,17 +263,16 @@ class PlatformStatsService:
 async def _health_snapshot() -> dict:
     """`/health/detailed` 的那几个检查，读成看板能画的形状。
 
-    **不 import 路由模块**（`api.routes.health` 里是 FastAPI handler，import 它会
-    把整条路由装配拖进领域层）。判据本身在那几个私有函数里，这里做的是同一件事的
-    第二次回答 —— 所以它只取「状态 + 一句话」，绝不重算健康与否：`status` 原样带
-    出来，页面照读。
+    **不调那条路由**（`/health/detailed` 要平台管理员，而这里没有请求、没有凭据）。
+    判据本身在 `health_report()` 里，这里做的是同一件事的第二次回答 —— 所以它只取
+    「状态 + 一句话」，绝不重算健康与否：`status` 原样带出来，页面照读。
 
     `overall` 是三者里最差的那一个（up < stalling < down），而不是「多数票」：
     一个 down 的 Redis 不该被两个 up 投成「healthy」。
     """
     from app.api.routes import health as health_routes
 
-    checks = await health_routes.detailed_health_check()
+    checks = await health_routes.health_report()
     return {
         "overall": checks.get("status", "unknown"),
         "checks": {

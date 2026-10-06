@@ -24,12 +24,21 @@ class EvalApi:
     """Thin typed wrapper over the backend's REST + WS surface."""
 
     def __init__(
-        self, base_url: str, ws_base_url: str, *, sandbox_token: str, jwt_secret: str
+        self,
+        base_url: str,
+        ws_base_url: str,
+        *,
+        sandbox_token: str,
+        jwt_secret: str,
+        platform_admin_handle: str,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._ws_base = ws_base_url.rstrip("/")
         self._sandbox_token = sandbox_token
         self._jwt_secret = jwt_secret
+        # Who reads /debug/turns: a platform-admin surface, so the backend must
+        # name this handle in PLATFORM_ADMIN_HANDLES for the call to answer.
+        self._platform_admin_handle = platform_admin_handle
         self._http = httpx.AsyncClient(base_url=self._base, timeout=30.0)
 
     def session_token(self, handle: str) -> str:
@@ -124,7 +133,12 @@ class EvalApi:
     # ---- turns / debug ------------------------------------------------------
 
     async def recent_turns(self) -> list[dict]:
-        resp = await self._http.get("/debug/turns")
+        # Signed in as the backend's platform admin: the summaries name rooms,
+        # people and failure reasons, so the route is gated now.
+        headers = {
+            "Authorization": f"Bearer {self.session_token(self._platform_admin_handle)}"
+        }
+        resp = await self._http.get("/debug/turns", headers=headers)
         resp.raise_for_status()
         return resp.json()["data"]
 
