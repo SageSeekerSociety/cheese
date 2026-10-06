@@ -223,6 +223,9 @@ class SessionStatus:
     takes_inputs: bool = True
     #: False when the runner answered that its harness process is gone.
     alive: bool = True
+    #: The machine answered that this session's runner is not there at all
+    #: (``host.attach``). Its process is gone with it.
+    runner_gone: bool = False
 
 
 class InputUnconfirmed(SessionError):
