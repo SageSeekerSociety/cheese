@@ -182,19 +182,23 @@ func Fetch(ctx context.Context, base string) (string, error) {
 	}
 	digest := sha256.New()
 	body := &watchedBody{r: resp.Body, progress: make(chan struct{}, 1)}
+	stall := stallAfter
 	var stalled atomic.Bool
+	copied := make(chan struct{})
+	watching := make(chan struct{})
 	go func() {
-		timer := time.NewTimer(stallAfter)
+		defer close(watching)
+		timer := time.NewTimer(stall)
 		defer timer.Stop()
 		for {
 			select {
-			case <-dlCtx.Done():
+			case <-copied:
 				return
 			case <-body.progress:
 				if !timer.Stop() {
 					<-timer.C
 				}
-				timer.Reset(stallAfter)
+				timer.Reset(stall)
 			case <-timer.C:
 				stalled.Store(true)
 				cancel()
@@ -202,10 +206,13 @@ func Fetch(ctx context.Context, base string) (string, error) {
 			}
 		}
 	}()
-	if _, err := io.Copy(io.MultiWriter(tmp, digest), body); err != nil {
+	_, err = io.Copy(io.MultiWriter(tmp, digest), body)
+	close(copied)
+	<-watching
+	if err != nil {
 		cleanup()
 		if stalled.Load() {
-			return "", fmt.Errorf("update: download stalled: no data for %s after %d bytes", stallAfter, body.n)
+			return "", fmt.Errorf("update: download stalled: no data for %s after %d bytes", stall, body.n)
 		}
 		return "", fmt.Errorf("update: write after %d bytes: %w", body.n, err)
 	}
