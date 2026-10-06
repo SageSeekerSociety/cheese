@@ -86,7 +86,7 @@ AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`�
 
 `cheese worktree <task_id>`（`backend/sandbox/cheese`）是机器上唯一建工作目录的地方：
 
-1. `POST /projects/{project_id}/git/tasks/{task_id}`——这一下**才是**把 `author_handle` 写上的地方（`TaskService.record_author`，只认第一个）。创建任务和房间成员都不证明是谁在干活。只有任务自己的会话（凭据签在任务的对话里）能打开它；房间里的会话来打开，答「这条任务由它自己对话里的 AI 队友来做」。房间不对答「这条任务不属于当前房间」，已结束答「这条任务已结束，请创建新任务」。房间的会话仍然读得到任务、存取得了它的备份：换工作电脑时 `cheese sync --all` 要同步这台机器上的每个任务目录（`git_http._task_for`）。
+1. `POST /projects/{project_id}/git/tasks/{task_id}`——这一下**才是**把 `author_handle` 写上的地方（`TaskService.record_author`，只认第一个）。创建任务和房间成员都不证明是谁在干活。只有任务自己的会话（凭据签在任务的对话里）能打开它；房间里的会话来打开，答「这条任务由它自己对话里的 AI 队友来做」。不是这个频道的任务答「这个频道里没有这条工作任务」，已结束答「这条任务已结束，请创建新任务」。房间的会话仍然读得到任务、存取得了它的备份：换工作电脑时 `cheese sync --all` 要同步这台机器上的每个任务目录（`git_http._task_for`）。
 2. 在 `~/.cheese/repositories/<project>.git` 造/复用一个裸仓，凭证由 `!cheese git-credential` 现取；`fetch --filter=blob:none` 只取提交不取历史 blob（注释里记着实测：同一份仓库整下 195 MB、这样 9.6 MB；一个 169 MB 的 fetch 曾冻住后端 3.7 秒）。历史仍在，`git log` 和与基准的 diff 照常，某个文件的旧内容真被读时才取。
 3. `git worktree add` 到 `/work/<task_id>`，起点是远端分支（还没开出来就是基准分支）。
 4. 写两个钩子：`post-commit` → `cheese sync`，`prepare-commit-msg` → `cheese git-attribution`。钩子装在裸仓上，同一裸仓的每个工作目录都会跑它们，包括在任务目录旁边用 `git worktree add` 另开的那种；只有带任务标记（`cheese-task.json`）的任务目录才署名、才同步，其余目录照普通 git 提交，不碰任何任务。
