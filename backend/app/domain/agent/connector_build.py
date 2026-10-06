@@ -18,9 +18,12 @@ the build that started reporting.
 """
 
 import asyncio
+import gzip
 import hashlib
 import logging
 import re
+import shutil
+import tempfile
 import time
 from pathlib import Path
 
@@ -90,6 +93,39 @@ def served_digest(target: str) -> str | None:
     hexdigest = digest.hexdigest()
     _digests[target] = (key, hexdigest)
     return hexdigest
+
+
+def gzipped(target: str) -> Path | None:
+    """A gzip copy of the connector served for ``target``, for a client that
+    accepts it; None when there is no build.
+
+    The connector is 31 MB and compresses to under a third. A machine on a slow
+    link updating itself downloaded it in 268 s against a 300 s limit, and
+    lost the race often enough that it never updated. Go's HTTP client asks
+    for gzip and decodes it unasked, so connectors already in the field get the
+    smaller download without a change of their own.
+
+    Named by the binary's digest, so a new build never reuses an old copy.
+    """
+    binary = binary_path(target)
+    digest = served_digest(target)
+    if binary is None or digest is None:
+        return None
+    cache = Path(tempfile.gettempdir()) / "cheese-connector-gzip"
+    compressed = cache / f"{digest}.gz"
+    if compressed.is_file():
+        return compressed
+    cache.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=cache, delete=False) as staged:
+        with (
+            binary.open("rb") as source,
+            gzip.GzipFile(
+                fileobj=staged, mode="wb", compresslevel=6, mtime=0
+            ) as packed,
+        ):
+            shutil.copyfileobj(source, packed)
+    Path(staged.name).replace(compressed)
+    return compressed
 
 
 def has_any_build() -> bool:

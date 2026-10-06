@@ -53,10 +53,20 @@ const emit = defineEmits<{
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
-.rail-all:hover,
-.rail-all--selected {
-  background: var(--fill);
+/* 三态和频道行、任务行同一套：静默透明 / hover --fill-2 / 选中 --line-2 加粗。
+   --fill 压在这条 rail 的 --canvas 上只有 1.027:1，原来 hover 和选中都用它，
+   两态彼此不可分，也等于没画（同 TopicRailRow.vue 那段注释）。 */
+.rail-all:hover {
+  background: var(--fill-2);
   color: var(--ink);
+}
+.rail-all--selected,
+.rail-all--selected:hover {
+  background: var(--line-2);
+  color: var(--ink);
+}
+.rail-all--selected .rail-all__label {
+  font-weight: 600;
 }
 /* 竖线到这一行为止：只画上半截，收在行的中线上。 */
 .rail-all::before {

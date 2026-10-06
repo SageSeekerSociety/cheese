@@ -154,6 +154,7 @@ covers:
 | delivery resend | `delivery_resend_interval_s` | 投递账本上「记下了没发出去」的行 |
 | docs question retention | 固定 86400s | 清过期的问芝士记录 |
 | timed deliveries | 固定 30s | 定时投递到点派发 |
+| overdue deliveries | `delivery_overdue_check_interval_s` | 给 AI 的投递记下超过 30 分钟还没送出去，就发告警（同一个问题一小时一条） |
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |
 | task deadline sweep | `task_deadline_sweep_interval_s` | 任务截止 |
 | memory dream | `memory_dream_sweep_interval_s` | 记忆整理 |

@@ -1,7 +1,7 @@
 """The rest of the run records leave the conversation
 
 Revision ID: 52fee3dd7773
-Revises: a6715909ab7d
+Revises: c9a4f2e15b7d
 Create Date: 2026-10-07
 
 b672fdeb358e left three things in the conversation that are not for it:
@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "52fee3dd7773"
-down_revision: str | Sequence[str] | None = "a6715909ab7d"
+down_revision: str | Sequence[str] | None = "c9a4f2e15b7d"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
