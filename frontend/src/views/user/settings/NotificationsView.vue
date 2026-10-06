@@ -9,8 +9,12 @@
  *
  * 拨一下开关就提交，所以保存结果（`saving` / `saved` / `error`）摆在页头右上角，
  * 就地留痕（docs/design-system.md §3.11）。
+ *
+ * 保存中只由 `pending` 指出**动的是哪一处**，那一处自己变忙（开关转圈、圆点变灰），
+ * 别处的显示一律不动 —— 整页控件一起变灰会让人以为「整页都在存」。
  */
 import type {
+  NotificationChangeKey,
   NotificationDigestCadence,
   NotificationEmailMode,
   NotificationEventCategory,
@@ -28,6 +32,7 @@ import { t } from '@/i18n'
 import {
   CATEGORY_LABEL_KEY,
   EVENT_CHANNEL_LABEL_KEY,
+  eventCellKey,
   NOTIFICATION_EVENT_CATEGORIES,
   NOTIFICATION_EVENT_CHANNELS,
 } from '@/lib/notificationPreferences'
@@ -44,6 +49,8 @@ const props = defineProps<{
   saving: boolean
   saved: boolean
   error: string
+  /** 正在存的是哪一处（字段名或矩阵格键）；没有就是 null。只有它该显出「在存」。 */
+  pending: NotificationChangeKey | null
 }>()
 
 const emit = defineEmits<{
@@ -127,7 +134,8 @@ function cellLabel(category: NotificationEventCategory, channel: NotificationEve
             <v-switch
               id="notif-in-app"
               :model-value="prefs.inAppEnabled"
-              :disabled="saving"
+              :loading="pending === 'inAppEnabled'"
+              :disabled="pending === 'inAppEnabled'"
               color="primary"
               density="compact"
               inset
@@ -142,7 +150,8 @@ function cellLabel(category: NotificationEventCategory, channel: NotificationEve
             <v-switch
               id="notif-push"
               :model-value="prefs.pushEnabled"
-              :disabled="saving"
+              :loading="pending === 'pushEnabled'"
+              :disabled="pending === 'pushEnabled'"
               color="primary"
               density="compact"
               inset
@@ -213,7 +222,7 @@ function cellLabel(category: NotificationEventCategory, channel: NotificationEve
                   :class="{ 'notif-dot--on': prefs.events[category][channel] }"
                   :aria-pressed="prefs.events[category][channel]"
                   :aria-label="cellLabel(category, channel)"
-                  :disabled="saving"
+                  :disabled="pending === eventCellKey(category, channel)"
                   @click="emit('toggleEvent', category, channel)"
                 />
               </td>

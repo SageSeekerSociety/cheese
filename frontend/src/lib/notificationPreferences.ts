@@ -56,6 +56,19 @@ export const NOTIFICATION_EVENT_CHANNELS: NotificationEventChannel[] = ['inApp',
 /** 整份里能单独改的顶层字段（矩阵那八行走另一个事件）。 */
 export type NotificationField = 'inAppEnabled' | 'pushEnabled' | 'emailMode' | 'quietHoursEnabled' | 'digestCadence'
 
+/** 矩阵一格的键：`类别.渠道`。和字段名同处一个命名空间，两者不会撞。 */
+export type NotificationCellKey = `${NotificationEventCategory}.${NotificationEventChannel}`
+
+/** 这一页改一次只动一处：一个顶层字段，或矩阵里的一格。界面靠它认「正在存的是哪一处」。 */
+export type NotificationChangeKey = NotificationField | NotificationCellKey
+
+export function eventCellKey(
+  category: NotificationEventCategory,
+  channel: NotificationEventChannel
+): NotificationCellKey {
+  return `${category}.${channel}`
+}
+
 /** 词条键逐字写全：i18n 闸门照源码字面量认「这个键有人用」。 */
 export const CATEGORY_LABEL_KEY: Record<NotificationEventCategory, string> = {
   mention: 'account.notifications.matrix.mention',
