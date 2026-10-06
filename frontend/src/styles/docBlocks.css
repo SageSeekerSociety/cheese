@@ -3,7 +3,9 @@
 
    Global on purpose: every editor built on the document schema renders these
    blocks (the document, a task description, a knowledge entry), and the node
-   views' popovers sit on <body>. Selectors are the blocks' own data attributes,
+   views' popovers sit on <body>. Selectors are the blocks' own data attributes
+   with their own values (`data-block='callout'`), or a class where the attribute
+   alone is common (`.doc-status`: roster and queue rows carry a `data-status`),
    so nothing else on the page matches them. Controls a block carries only
    show while the text can be edited; `.doc-reading` marks a page that is
    read (the editor while it cannot be edited, and the reader). */
@@ -119,7 +121,7 @@
 
 /* ---- Status tag --------------------------------------------------------- */
 
-[data-status] {
+.doc-status[data-status] {
   /* One tag is one word: it never breaks inside. */
   white-space: nowrap;
   padding: 1px 6px;
@@ -132,26 +134,26 @@
   box-decoration-break: clone;
 }
 
-[data-status]::before {
+.doc-status[data-status]::before {
   margin-right: 3px;
   content: '✓';
 }
 
-[data-status='no'] {
+.doc-status[data-status='no'] {
   color: var(--danger-ink);
   background: var(--danger-wash);
 }
 
-[data-status='no']::before {
+.doc-status[data-status='no']::before {
   content: '✗';
 }
 
-[data-status='warn'] {
+.doc-status[data-status='warn'] {
   color: var(--warn-ink);
   background: var(--warn-wash);
 }
 
-[data-status='warn']::before {
+.doc-status[data-status='warn']::before {
   font-weight: 700;
   content: '!';
 }
