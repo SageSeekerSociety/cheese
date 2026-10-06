@@ -61,7 +61,7 @@ covers:
 ## 主机之外 {#outside}
 
 - **浏览器和桌面端**：只和前端 nginx 打交道。
-- **设备与云机器**：用户电脑上的 Go 连接器（`cli/`）和云机器（MicroCloud）经机器连接服务接入，模型流量走模型隧道。
+- **设备与云机器**：用户电脑上的 Go 连接器（`cli/`）和云机器（MicroCloud）经机器连接服务接入，只执行命令、存文件；调模型只发生在会话主机上，走模型隧道。
 - **GitHub**：平台 GitHub App 的私钥只在主 API；沙盒要推代码时换一张一小时有效、只限绑定仓库的令牌（`backend/app/domain/agent/github_app.py`）。
 - **模型厂商**：只有计量代理和网关持有上游凭证。
 - **Cloudflare R2**：数据库备份的异地副本（`deploy/r2-upload.py`）。

@@ -12,7 +12,7 @@ from app.domain.device.supply import Supply
 
 # A private-control cloud machine's backend: the reverse SSH forward
 # `deploy/cloud-control.py` opens onto the machine's own loopback. It lands on
-# api-front, which routes the model tunnel as well as the backend.
+# api-front.
 CLOUD_LOOPBACK_BASE = "http://127.0.0.1:18080"
 # The site itself over TLS, on the same machine's loopback: the forward
 # `deploy/cloud-control.py` opens onto api-front's listener for it.
@@ -54,10 +54,10 @@ def ws_url(base: str, route: str) -> str:
 
 
 def tunnel_url(api_base: str) -> str:
-    """Where the model tunnel helper on a machine dials: the tunnel route on the
-    base that machine already dials, so the session host, a private-control
-    cloud machine and every other machine each reach the tunnel the way they
-    reach the backend, with no second address to keep true."""
+    """Where the model tunnel helper dials: the tunnel route on the base its
+    machine already dials, with no second address to keep true. The agent, and
+    so its helper, runs only on the session host (``central_provider`` places
+    every session there); cloud machines and people's computers only execute."""
     return ws_url(api_base, "/llm/tunnel")
 
 
