@@ -245,6 +245,28 @@ def test_a_sandbox_over_its_memory_is_killed_and_the_machine_is_not(
 
 
 @with_sandbox_host
+def test_the_sandboxes_together_leave_the_machine_memory_of_its_own(
+    rooms, machine_service
+):
+    rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    meminfo = Path("/proc/meminfo").read_text()
+    total = int(meminfo.split("MemTotal:")[1].split()[0]) * 1024
+
+    held = int((sandbox_host.CGROUP / "memory.max").read_text())
+
+    assert held <= total - max(1 << 30, total // 4)
+
+
+@pytest.mark.parametrize(("total_gib", "kept_gib"), [(4, 1), (8, 2), (16, 4), (2, 1)])
+def test_a_machine_keeps_a_quarter_of_its_memory_and_at_least_a_gib(
+    total_gib, kept_gib
+):
+    total = total_gib << 30
+
+    assert total - sandbox_host.sandboxes_memory(total) == kept_gib << 30
+
+
+@with_sandbox_host
 def test_a_sandbox_may_not_trace_nest_namespaces_or_use_io_uring(
     rooms, machine_service
 ):
