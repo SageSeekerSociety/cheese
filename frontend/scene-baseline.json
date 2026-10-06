@@ -5,6 +5,7 @@
     "src/components/panels/ChangesFileTree.vue",
     "src/components/panels/PanelRoutines.vue",
     "src/components/panels/PanelTabs.vue",
+    "src/components/panels/PanelThreads.vue",
     "src/components/panels/TodoChecklist.vue",
     "src/components/panels/doc/DocAgentBox.vue",
     "src/components/panels/doc/DocAgentResult.vue",

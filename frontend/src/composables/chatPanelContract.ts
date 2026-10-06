@@ -39,7 +39,9 @@ export interface ChatPanelEmit {
   (e: 'site-block', block: Block): void
   // 正在跑的轮次，各自从什么时候开始（毫秒）。现场靠它分出哪一组还在进行。
   (e: 'site-turns', turns: Record<string, number>): void
-  // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
+  // 主线上一条消息的支线：「在支线中回复」，或者点了它下面那一行。
+  (e: 'open-thread', block: Block): void
+  // 转为任务：the parent turns this message into a task of the channel.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
   (e: 'open-topic', topicId: string): void
