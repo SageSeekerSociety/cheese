@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import listing, say
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -434,7 +435,9 @@ class TopicMemberService:
         the same 芝士, because an agent's name comes from the agent and not from
         where it happens to be standing.
         """
-        room = room_id or topic_id
+        # A task is a conversation of its own with no roster: its room's
+        # answers for it, whichever caller forgot to say so.
+        room = room_id or await room_of(self._session, topic_id)
         handles = await self.agent_handles(room)
         if len(handles) == 1:
             return handles[0]
