@@ -128,7 +128,7 @@ export function useRoomRoster(options: {
   /** 界面上称呼它用的名字。名册没到时谁也不猜，就写「芝士」。 */
   const agentName = computed(() => agentSeat.value?.label || t('work.room.defaultAgentName'))
 
-  /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的**人**（带 `outsideTopic`）。 */
+  /** @ 得到的人：这个频道里的，加上项目里还没加入这个频道的**人**（带 `outsideTopic`，排在后面）。 */
   const mentionPool = computed<MentionPoolEntry[]>(() => {
     // 名册没到（切话题的那一瞬间）房间那半就是空的：宁可少一行，也不能把**上一个
     // 房间**的座位留在名单里——那一位的名字也写着「芝士」，@ 出来却是个不在这儿的
@@ -145,8 +145,8 @@ export function useRoomRoster(options: {
     // 什么也不会发生（后端点名只认这间房的席位），列出来就是一个点了没反应的名字。
     // 已停用的也不列：停用就是为了挡住新的活，补全菜单是派活的入口。
     //
-    // 这些人 @ 得到，但他不在这个话题里——候选上要说出来（「不在话题中」）。名册
-    // 没到时说不准谁在谁不在，那一刻不挂：挂错了，读的人会以为房间里的人被移出去了。
+    // 这些人 @ 得到：频道人人能读，被 @ 的人收得到通知，在支线里回得了话。只是他们
+    // 没加入这个频道，所以排在频道里的人后面。名册没到时说不准谁在谁不在，那一刻不分。
     const rest = options
       .members()
       .filter((m) => !inRoom.has(m.user_handle) && !m.agent && m.active !== false)

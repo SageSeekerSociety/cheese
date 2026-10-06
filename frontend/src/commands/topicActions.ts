@@ -40,15 +40,17 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
       icon: 'mdi-check-all',
       run: () => store.markRead(topic.id),
     })
-  // 静音：这间房的未读不再计入任何角标和总数。AI 队友说话频繁，一间一直在跑的房间
-  // 会让总数一直亮着，亮久了就没人看了。
-  const muted = store.isMuted(topic.id)
-  actions.push({
-    id: muted ? 'topic.unmute' : 'topic.mute',
-    title: muted ? t('work.room.menu.unmute') : t('work.room.menu.mute'),
-    icon: muted ? 'mdi-bell-outline' : 'mdi-bell-off-outline',
-    run: () => void store.setMuted(topic.id, !muted),
-  })
+  // 静音：只有直接 @我才计数和通知，直到我取消。要静音一段时间、或者要所有新消息，
+  // 在频道顶栏的铃铛里选。
+  if (topic.joined) {
+    const muted = store.isMuted(topic.id)
+    actions.push({
+      id: muted ? 'topic.unmute' : 'topic.mute',
+      title: muted ? t('work.room.menu.unmute') : t('work.room.menu.mute'),
+      icon: muted ? 'mdi-bell-outline' : 'mdi-bell-off-outline',
+      run: () => void store.setNotifyLevel(topic.id, muted ? 'mentions' : 'mute'),
+    })
+  }
   // 没归档的房间（包括综合）都能新建任务。
   if (topic.status !== 'archived') {
     actions.push({
@@ -58,27 +60,41 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
       run: () => void newTask(topic, router),
     })
   }
-  // 项目本体不是一件事：没有名字可改，也不能归档。
+  // 「综合」是项目本身：人人都在，退不出去，也不能改名、归档。
   if (topic.kind === 'root') return actions
+  if (topic.joined)
+    actions.push({
+      id: 'topic.leave',
+      title: t('work.channel.leave'),
+      icon: 'mdi-logout-variant',
+      run: () => void store.setJoined(topic.id, false),
+    })
+  else if (topic.status !== 'archived')
+    actions.push({
+      id: 'topic.join',
+      title: t('work.channel.join'),
+      icon: 'mdi-login-variant',
+      run: () => void store.setJoined(topic.id, true),
+    })
+  // 改名、归档只给管这个频道的人：创建者和项目管理员。
+  if (!topic.can_manage) return actions
   if (topic.status === 'archived') {
     // 已归档的不再改名，只剩「取消归档」。
-    if (topic.can_archive)
-      actions.push({
-        id: 'topic.unarchive',
-        title: t('work.room.menu.unarchive'),
-        icon: 'mdi-archive-arrow-up-outline',
-        run: () => void store.unarchive(topic.id),
-      })
+    actions.push({
+      id: 'topic.unarchive',
+      title: t('work.room.menu.unarchive'),
+      icon: 'mdi-archive-arrow-up-outline',
+      run: () => void store.unarchive(topic.id),
+    })
     return actions
   }
   actions.push({ id: 'topic.rename', title: t('work.room.menu.rename'), icon: 'mdi-pencil-outline', run: on.rename })
-  if (topic.can_archive)
-    actions.push({
-      id: 'topic.archive',
-      title: t('work.room.menu.archive'),
-      icon: 'mdi-archive-arrow-down-outline',
-      run: () => void archiveTopic(topic, router),
-    })
+  actions.push({
+    id: 'topic.archive',
+    title: t('work.room.menu.archive'),
+    icon: 'mdi-archive-arrow-down-outline',
+    run: () => void archiveTopic(topic, router),
+  })
   return actions
 }
 

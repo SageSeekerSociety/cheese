@@ -38,7 +38,7 @@ def _seed(client, room: str) -> dict[str, uuid.UUID]:
                 s.add(
                     AgentTurn(
                         id=turn_id,
-                        topic_id=uuid.UUID(room),
+                        conversation_id=uuid.UUID(room),
                         continuation_id=uuid.uuid4(),
                         author="alice",
                         content="做这件事",

@@ -116,20 +116,12 @@ function stopsShowingNothing(container: Element): string[] {
 describe('侧栏里 Tab 停得住的地方都看得见', () => {
   beforeEach(() => localStorage.clear())
 
-  it('没有别人的话题时，空出来的那一组不留停靠点', () => {
-    const { container } = mount({
-      topics: [topic('root', null), topic('mine', 'root', { i_participate: true })],
-      selectedTopicId: 'mine',
-    })
-    expect(stopsShowingNothing(container)).toEqual([])
-  })
-
-  it('「其他话题」收着的时候，一样不留', () => {
+  it('有没加入的频道时，侧栏不为它们留看不见的停靠点', () => {
     const { container } = mount({
       topics: [
         topic('root', null),
-        topic('mine', 'root', { i_participate: true }),
-        topic('theirs', 'root', { i_participate: false }),
+        topic('mine', 'root', { joined: true }),
+        topic('theirs', 'root', { joined: false }),
       ],
       selectedTopicId: 'mine',
     })
@@ -144,9 +136,9 @@ describe('Tab 逐行走得进话题行', () => {
     const { container } = mount({
       topics: [
         topic('root', null),
-        topic('mine', 'root', { i_participate: true }),
-        topic('second', 'root', { i_participate: true }),
-        topic('third', 'root', { i_participate: true }),
+        topic('mine', 'root', { joined: true }),
+        topic('second', 'root', { joined: true }),
+        topic('third', 'root', { joined: true }),
       ],
       selectedTopicId: 'mine',
     })
@@ -164,9 +156,9 @@ describe('行尾那颗 ⋯ 只在选中行上进 Tab 序列', () => {
     const { container } = mount({
       topics: [
         topic('root', null),
-        topic('mine', 'root', { i_participate: true }),
-        topic('second', 'root', { i_participate: true }),
-        topic('third', 'root', { i_participate: true }),
+        topic('mine', 'root', { joined: true }),
+        topic('second', 'root', { joined: true }),
+        topic('third', 'root', { joined: true }),
       ],
       selectedTopicId: 'mine',
     })

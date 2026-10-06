@@ -229,7 +229,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
    */
   function receive(block: Block): void {
     // 一行属于哪段对话：任务里的带着任务的 id，房间自己的没有。
-    if ((block.task_id ?? block.topic_id) !== hooks.topicId() || block.kind !== 'event') return
+    if (block.conversation_id !== hooks.topicId() || block.kind !== 'event') return
     // 名册先记上：别的队友在干活，tab 得出现（切过去时才读得到它的记录）。
     hooks.noteAgents([block])
     const viewing = hooks.viewing()

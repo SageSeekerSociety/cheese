@@ -28,7 +28,15 @@ function claim(id: number, name: string, approved: string, daysAgo: number) {
   }
 }
 
-function mount(opts: { participants?: unknown[]; latest?: Map<number, Latest>; denied?: boolean } = {}) {
+function mount(
+  opts: {
+    participants?: unknown[]
+    latest?: Map<number, Latest>
+    denied?: boolean
+    failed?: boolean
+    failureReason?: string | null
+  } = {}
+) {
   return render(RosterView, {
     props: {
       taskData: TASK as never,
@@ -36,6 +44,8 @@ function mount(opts: { participants?: unknown[]; latest?: Map<number, Latest>; d
       latestByParticipant: opts.latest ?? new Map(),
       loading: false,
       denied: opts.denied ?? false,
+      failed: opts.failed ?? false,
+      failureReason: opts.failureReason ?? null,
       busyId: null,
     },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
@@ -155,8 +165,26 @@ describe('领取者页签', () => {
   })
 
   it('拿不到名单：不画表', () => {
-    const view = mount({ denied: true })
+    const view = mount({ failed: true, failureReason: '服务端打盹了' })
 
     expect(view.container.querySelector('table')).toBeNull()
+  })
+
+  it('不给你看：说没权限，不摆重试', () => {
+    const view = mount({ denied: true })
+
+    expect(view.getByText(t('tasks.roster.denied'))).toBeTruthy()
+    expect(view.queryByText(t('global.loadError.retry'))).toBeNull()
+  })
+
+  // 出题人看到「没权限」会去查自己的权限；这一次没读到该做的是再试一次。
+  it('这次没读到：说没读出来并给重试，不说没权限', () => {
+    const view = mount({ failed: true, failureReason: '服务端打盹了' })
+
+    expect(view.queryByText(t('tasks.roster.denied'))).toBeNull()
+    expect(view.getByText(t('tasks.roster.loadFailed'))).toBeTruthy()
+    expect(view.getByText('服务端打盹了')).toBeTruthy()
+    expect(view.getByText(t('global.loadError.retry'))).toBeTruthy()
+    expect(view.queryByText(t('tasks.roster.empty'))).toBeNull()
   })
 })

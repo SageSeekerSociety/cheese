@@ -244,7 +244,7 @@ def _worth_reporting(result: Any) -> bool:
 async def last_block_at(
     sessions: SessionFactory, topic_ids: set[uuid.UUID]
 ) -> dict[uuid.UUID, datetime]:
-    """Newest block timestamp per topic — the liveness probe the orphan sweep
+    """Newest block timestamp per conversation — the liveness probe the orphan sweep
     judges silence on. It is the same signal a human reads off the topic
     (「最后一块是几点」), which is what makes a sweep verdict checkable, and it is
     passed IN to `AgentWorkRunner.sweep_orphans` because the runner has no DB
@@ -258,9 +258,9 @@ async def last_block_at(
     async with sessions() as session:
         rows = (
             await session.execute(
-                select(Block.topic_id, func.max(Block.created_at))
-                .where(Block.topic_id.in_(topic_ids))
-                .group_by(Block.topic_id)
+                select(Block.conversation_id, func.max(Block.created_at))
+                .where(Block.conversation_id.in_(topic_ids))
+                .group_by(Block.conversation_id)
             )
         ).all()
     out: dict[uuid.UUID, datetime] = {}
@@ -367,6 +367,7 @@ def periodic_jobs(
     from app.domain.delivery.timer import deliver_due
     from app.domain.docs_site.assistant import purge_old_questions
     from app.domain.machine.warm import sweep_warm_pool
+    from app.domain.notification.digest import run_notification_digests
     from app.domain.notification.maintenance import drain_email_queue
     from app.domain.notification.push_delivery import drain_push_queue
     from app.domain.project.forge import (
@@ -426,6 +427,15 @@ def periodic_jobs(
             "orphan sweep",
             settings.orphan_sweep_interval_s,
             lambda: sweep_orphan_turns(chat),
+        ),
+        # A message queued behind a turn starts when that turn's end nudges the
+        # scan. A nudge that finds the seat still busy is not repeated, so one
+        # missed wake-up left a message waiting until something unrelated woke
+        # the room (10.5 and 5.7 minutes on dev, 2026-10-05). This bounds that.
+        PeriodicRunner(
+            "queued message sweep",
+            settings.queued_message_sweep_interval_s,
+            lambda: get_work_runner().resume_lost_messages(chat, source="sweep"),
         ),
         PeriodicRunner(
             "chat progress reminder",
@@ -497,6 +507,13 @@ def periodic_jobs(
             "notification push drain",
             settings.notification_push_drain_interval_s,
             lambda: drain_push_queue(sessions),
+        ),
+        # 通知摘要（设计稿「摘要频率」）：攒够一个人的周期（每天 / 每周）才发一封。
+        # 这个 job 只是「多久去看一眼谁攒够了」，不跑就没有任何一封摘要会出去。
+        PeriodicRunner(
+            "notification digest",
+            settings.notification_digest_interval_s,
+            lambda: run_notification_digests(sessions),
         ),
         # 投递账本上那些「记下了、没发出去」的行的唯一出路。那一行已经和引发它的
         # 事件一起提交了，而发送这一半的进程可能在中间就没了 —— 不跑这个 job，账本

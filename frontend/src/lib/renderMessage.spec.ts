@@ -182,7 +182,7 @@ describe('historical fragmented Markdown compatibility', () => {
   function aiBlock(id: string, content: string, turnId = 'e56c632e-9ec3-4ed5-a670-e116299044dd'): Block {
     return {
       id,
-      topic_id: 'topic-1',
+      conversation_id: 'topic-1',
       kind: 'message',
       author_type: 'participant',
       author: 'cheese',

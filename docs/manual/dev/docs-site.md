@@ -155,6 +155,23 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [设备与机器接入](/dev/machines) | 一台机器怎么接进来、出错时怎么办 | `demo-steps` + `embed: machines` | 这一页各节；画面是剧本 `scenes/machines.json` |
 | [计费流程](/dev/billing) | 两道刹车各在什么时候拦 | `demo-sim` | 这一页「额度 = 花费 ÷ 每额度价格」的折算 |
 
+## 页面组件 {#blocks}
+
+除了交互演示，页面还能用四种写法，都由 `build.mjs` 在渲染 Markdown 时展开成静态 HTML，不需要脚本也完整。
+
+| 写法 | 展开成 | 文字版里 |
+|---|---|---|
+| `:::steps` … `:::`，里面每个 `###` 标题开一步 | 带编号和竖线的步骤列表（`ol.steps`），标题照常进目录 | 去掉 `:::` 两行，剩下普通的 `###` 小节 |
+| `:::cards` … `:::`，里面一个列表，每项 `- [标题](/页面#锚点)：一句话` | 两列链接卡片，和首页的卡片同一套样式；窄屏一列 | 去掉 `:::` 两行，剩下链接列表 |
+| 语言写 `prompt` 的代码块 | 一条「发给芝士」的消息，正文用正文字体、自动换行，右上角复制按钮 | 原样保留 |
+| 第一行是 `[!TIP]`、`[!NOTE]` 或 `[!WARNING]` 的引用 | 提示、说明、注意三种提示框；不带标记的引用仍是说明框 | 原样保留 |
+
+- 写错种类会让构建失败：`:::` 后面只认 `steps` 和 `cards`，提示框只认上面三种，`:::cards` 里只能有一个列表且每项以链接开头，`:::steps` 里至少有一个 `###`。
+- 「文字版」是每页的 `.md`、`llms.txt`、搜索索引和 `ask-index.json` 用的那一份，和演示的文字版同一条路（`renderMarkdown` 里的 `text`）。
+- 复制按钮和代码块共用 `src/app.js` 里同一个 `[data-copy]` 处理，复制的是消息正文。
+- 样式只用设计系统的 token（`--accent-wash`、`--fill`、`--line` 等），深浅色跟着走。
+- 什么时候用哪一种，写在 `.agents/skills/cheese-docs-writing/SKILL.md` 的「教程」和「页面组件」两节。
+
 ## 首页与截图 {#home}
 
 首页（`docs/site/src/home.mjs`）不写死内容：分区卡片来自 `structure.mjs`，常见问题来自 `troubleshooting.md`，更新来自 git 历史，`build.mjs` 只负责把数据传进去。

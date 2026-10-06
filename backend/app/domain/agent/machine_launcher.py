@@ -43,6 +43,7 @@ from app.domain.agent import (
     toolchain,
 )
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
+from app.domain.agent.place import seat_name
 from app.domain.agent.resource_cleanup import SESSION_TMP
 
 # The launcher below spells the platform's own directory literally, because the
@@ -94,10 +95,18 @@ from app.domain.agent.resource_cleanup import SESSION_TMP
 # script, whose process group is torn down — SIGHUP — the moment the script
 # returns.
 CHEESE_TUNNEL_UP = """#!/bin/sh
-PIDF="$HOME/.cheese/cheese-tunnel.pid"
-STAMPF="$HOME/.cheese/cheese-tunnel.stamp"
-PORTF="$HOME/.cheese/cheese-tunnel.port"
-LOG="$HOME/.cheese/cheese-tunnel.log"
+# $1: this seat's directory, as the launcher builds it. Everything that says
+# WHICH teammate the traffic is (--token-file below) or which process is this
+# seat's is per seat, because a room may seat more than one agent. One shared
+# helper carries one token: it stamps that token on every CONNECT it relays, so
+# two seats behind it were both billed as whichever of them wrote the token
+# file last — the other one's model silently replaced by that teammate's.
+# The helper's CODE stays one file in the room's `.cheese`: it holds nothing.
+SEATD="${1:-$HOME/.cheese}"
+PIDF="$SEATD/cheese-tunnel.pid"
+STAMPF="$SEATD/cheese-tunnel.stamp"
+PORTF="$SEATD/cheese-tunnel.port"
+LOG="$SEATD/cheese-tunnel.log"
 # Does pid $1 itself hold the LISTEN socket on port $2? Something answering there
 # is not enough: after this room's helper died, the kernel may have handed its
 # port to another room's helper. Linux answers from /proc; elsewhere lsof does.
@@ -166,7 +175,7 @@ start_helper() {
   rm -f "$NEWF"
   nohup python3 "$HOME/.cheese/cheese-tunnel.py" \\
     --port "$1" --port-file "$NEWF" --url "$CHEESE_TUNNEL_URL" \\
-    --token-file "$HOME/.cheese/cheese-tunnel.token" \\
+    --token-file "$SEATD/cheese-tunnel.token" \\
     >>"$LOG" 2>&1 &
   NEWPID=$!
   python3 - "$NEWPID" "$NEWF" <<'WAITPY'
@@ -484,6 +493,14 @@ def screen_env(
     ):
         if value:
             env[name] = value
+    # This seat's name inside the session home: the same one `place.seat_dir`,
+    # the launcher file and the runner's state directory are named by, derived
+    # from the handle alone. The launcher puts the seat's own files — the
+    # tunnel helper's credential above all — under it, because a room may seat
+    # several agents and one credential cannot serve two of them.
+    # Not gated on truth: an empty handle hashes to a name of its own, which is
+    # what keeps the room's own seat out of a teammate's directory.
+    env["CHEESE_SEAT"] = seat_name(place.agent_handle)
     if place.execution_target is not None:
         env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
     if place.project_id:
@@ -670,6 +687,19 @@ fi
 # read as deliberate to everyone who came after it. A harness that wants a
 # directory of its own makes it in `configure`.
 mkdir -p "$HOME/.cheese"
+# This seat's own directory, the one `place.seat_dir` names: a room may seat
+# several agents, and the tunnel helper is a CREDENTIAL, not a room amenity. It
+# stamps the scoped token from `--token-file` onto every CONNECT it relays, and
+# the meter reads the seat — and therefore the model — off that token. One
+# helper for a room that seats two teammates was therefore one credential for
+# both: whichever launched last overwrote the token file, and BOTH seats' turns
+# ran as that teammate, on that teammate's model.
+# CHEESE_SEAT is the seat's name — the same one the launcher file, the runner's
+# state directory and `seat_dir` are named by. `shared` is only for a launch
+# environment from before this variable existed, where the room seats what the
+# old shape could serve: one agent.
+SEATD="$HOME/.cheese/seats/${{CHEESE_SEAT:-shared}}"
+mkdir -p "$SEATD"
 cat > "$HOME/.cheese/cheese-environment.py" <<'CHEESE_ENV_PY'
 {environment_helper}CHEESE_ENV_PY
 {configure}# Ship the platform CLI with the launcher over the existing device
@@ -687,19 +717,21 @@ cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
 export PATH="$HOME/.cheese:$PATH"
 {toolchain}cheese_launch_phase files_written
 {credentials}\
-# The tunnel helper, for a machine that cannot reach the meter's listener
-# directly. Written on EVERY launch, token included: the helper re-reads the
+# The tunnel helper, the one way a launch that rides the meter reaches it.
+# Written on EVERY launch, token included: the helper re-reads the
 # token per connection, so replacing this file is how a refreshed credential
 # reaches a still-running helper (#385's shape, one layer down).
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   # Use the place-scoped CONNECT credential. CHEESE_TOKEN can have project
   # scope; the machine OAuth ticket is never a tunnel credential. A missing
   # CONNECT token must not fall back to either one.
-  cat > "$HOME/.cheese/cheese-tunnel.token.tmp" <<TUNNELTOK
+  # Into THIS SEAT's directory: the token names the teammate, and the meter
+  # reads the model off it (see $SEATD above).
+  cat > "$SEATD/cheese-tunnel.token.tmp" <<TUNNELTOK
 $CHEESE_CONNECT_TOKEN
 TUNNELTOK
-  chmod 600 "$HOME/.cheese/cheese-tunnel.token.tmp"
-  mv "$HOME/.cheese/cheese-tunnel.token.tmp" "$HOME/.cheese/cheese-tunnel.token"
+  chmod 600 "$SEATD/cheese-tunnel.token.tmp"
+  mv "$SEATD/cheese-tunnel.token.tmp" "$SEATD/cheese-tunnel.token"
   cat > "$HOME/.cheese/cheese-tunnel-up" <<'TUNNELUP'
 {tunnel_up}TUNNELUP
   chmod +x "$HOME/.cheese/cheese-tunnel-up"
@@ -750,7 +782,9 @@ trap 'exit 143' TERM
 trap cleanup EXIT
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   # The machine chose the port, so only this line can tell the agent which.
-  TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up")" || exit 1
+  # The seat's directory goes in: this seat gets its own helper, on its own
+  # port, holding its own token — the whole point of $SEATD above.
+  TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up" "$SEATD")" || exit 1
   export HTTPS_PROXY="http://127.0.0.1:$TUNNEL_PORT"
 fi
 if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then

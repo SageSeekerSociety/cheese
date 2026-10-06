@@ -69,23 +69,23 @@
     "taskHeading": "This task's work computer",
     "taskHint": "Changing it first pushes this task's changes to its branch and switches only once they are pushed; if they cannot be, nothing changes and the reason is shown.",
     "edit": "Edit",
-    "heading": "This topic's work computer",
-    "hint": "Every AI teammate in the room shares this one. Changing it pushes each teammate’s work to its branch first and switches only when all of them are pushed; otherwise nothing moves and you are told why.",
+    "heading": "This channel's work computer",
+    "hint": "Every AI teammate in the channel shares this one. Changing it pushes each teammate’s work to its branch first and switches only when all of them are pushed; otherwise nothing moves and you are told why.",
     "more": "Other configurations and devices",
     "projectDefault": "Project default",
     "wholeMachine": "Can access the whole machine",
-    "wholeMachineNotice": "Lets it see the whole machine: it can operate this machine's services and other topics",
+    "wholeMachineNotice": "Lets it see the whole machine: it can operate this machine's services and other channels",
     "online": "Online",
     "offline": "Offline",
     "removed": "Removed from the team",
     "loadFailed": "Could not load work computers",
     "saveFailed": "Could not choose the work computer",
     "retry": "Retry",
-    "here": "This topic runs on: {name}",
+    "here": "This channel runs on: {name}",
     "abandon": "The old computer is unreachable: switch without pushing",
-    "accessHeading": "What this room sees of {name}",
+    "accessHeading": "What this channel sees of {name}",
     "isolated": "Isolated environment",
-    "isolatedHint": "Its own work directory and the project's package cache. Not the owner's files, the tools installed in their home folder, or other rooms.",
+    "isolatedHint": "Its own work directory and the project's package cache. Not the owner's files, the tools installed in their home folder, or other channels.",
     "host": "Full machine access",
     "hostOwnerOnly": "Only the machine's owner can turn this on"
   },
@@ -100,7 +100,7 @@
     "meta": "{agent} · last active {time}",
     "working": "Working",
     "empty": "No agents",
-    "hidden": "1 more agent is in a room you cannot open | {count} more agents are in rooms you cannot open",
+    "hidden": "1 more agent is in a channel you cannot open | {count} more agents are in channels you cannot open",
     "pushFirst": "Changes not pushed on the old machine do not come along. Each agent's changes are pushed to its branch first; an agent whose push fails is not switched, and the reason is shown. Agents that are working are skipped",
     "done": "Switched",
     "loadFailed": "Could not load"
@@ -151,6 +151,7 @@
     "loginHint": "Sign in to see the team and join it",
     "login": "Sign in and continue",
     "notFound": "Team not found. It may have been disbanded or is not visible to you",
+    "loadFailed": "Couldn't load this team",
     "invalid": "This team link no longer works. Ask a team admin for a new one",
     "owner": "Owner: {name}",
     "memberCount": "{count} members",
@@ -261,7 +262,7 @@
         "label": "Session details",
         "connected": "Session connected",
         "none": "No session running",
-        "several": "{count} sessions are running in this room; pick a teammate to view one",
+        "several": "{count} sessions are running in this channel; pick a teammate to view one",
         "teammate": "Teammate",
         "expand": "Show details",
         "collapse": "Hide details",
@@ -310,12 +311,12 @@
       "rename": "Rename",
       "copyLink": "Copy link",
       "markRead": "Mark as read",
-      "renameTitle": "Rename topic",
-      "topicName": "Topic name",
+      "renameTitle": "Rename channel",
+      "topicName": "Channel name",
       "archive": "Archive",
       "unarchive": "Unarchive",
       "usage": "Usage",
-      "thisTopic": "This topic",
+      "thisTopic": "This channel",
       "wholeProject": "Whole project",
       "usageLine": "{turns} runs · {tokens} tokens · {cost}",
       "usageSplit": "Input {input} · Output {output}",
@@ -323,9 +324,9 @@
       "mute": "Mute",
       "unmute": "Unmute",
       "muted": "Muted",
-      "muteFailed": "Couldn't save the mute setting",
       "markAllRead": "Mark all as read",
-      "markAllReadFailed": "Couldn't mark everything as read"
+      "markAllReadFailed": "Couldn't mark everything as read",
+      "notifyFailed": "Couldn't save the notification setting"
     },
     "archiveNotice": {
       "done": "Archived",
@@ -425,7 +426,6 @@
       "action": {
         "doc": "View doc",
         "split": "View task",
-        "undo": "Undo",
         "accept": "Review"
       },
       "filesChanged": "Changed files: {n}",
@@ -455,14 +455,14 @@
       "save": "Save",
       "cancel": "Cancel",
       "saveFailed": "Could not save the edit",
-      "reply": "Reply",
+      "reply": "Quote reply",
+      "replyInThread": "Reply in thread",
       "react": "Add reaction",
       "upgrade": "Turn into a task",
-      "upgradeToTopic": "Move to a new topic",
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
       "upgradedToTask": "Moved to a task",
-      "upgradedToTopic": "Moved to a topic",
+      "upgradedToTopic": "Moved to a channel",
       "showMore": "Show more",
       "showLess": "Show less",
       "wrapCode": "Wrap lines",
@@ -521,7 +521,7 @@
       "statusCompleted": "Done"
     },
     "backToChat": "Back to chat",
-    "unselected": "Select a topic",
+    "unselected": "Select a channel",
     "backToLatest": "Back to latest",
     "loadFailed": "Failed to load messages",
     "messageGone": "This message no longer exists",
@@ -532,7 +532,7 @@
       "committedVersion": "Committed version",
       "download": "Download",
       "refresh": "Refresh",
-      "roomChanges": "Room changes",
+      "roomChanges": "Channel changes",
       "switchSource": "Switch source",
       "switchSourceTo": "Switch source: {source}",
       "fileSource": "File source",
@@ -599,7 +599,8 @@
       "preview": "Preview",
       "routines": "Routines",
       "scrollLeft": "Scroll tabs left",
-      "scrollRight": "Scroll tabs right"
+      "scrollRight": "Scroll tabs right",
+      "threads": "Threads"
     },
     "preview": {
       "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
@@ -636,7 +637,7 @@
       "download": "Download",
       "pick": "Pick",
       "webRegion": "Boxed a region",
-      "frameTitle": "Topic preview",
+      "frameTitle": "Channel preview",
       "authorizing": "Authorizing the preview…",
       "navigating": "Loading the new page…",
       "navigationTimeout": "The new page didn't load within {seconds} seconds. Try again.",
@@ -713,13 +714,13 @@
       "changedNote": ": {note}",
       "staleNote": "You're looking at the content from before that change. Loading the new version discards your unsaved changes here; if you save first, your changes are kept as a separate copy and nothing is overwritten.",
       "loadNew": "Load the new version",
-      "copyName": "Save in the room as",
+      "copyName": "Save in the channel as",
       "makeCopy": "Make a copy to edit",
       "originalKept": "The original stays in the library unchanged.",
       "unavailable": {
         "not_configured": "Online editing is not enabled on this deployment",
         "unsupported": "This kind of file can't be edited online",
-        "library_original": "Originals in the project library are read-only. Make a copy in the room to edit it"
+        "library_original": "Originals in the project library are read-only. Make a copy in the channel to edit it"
       }
     },
     "fileHistory": {
@@ -768,7 +769,7 @@
       "newContent": "new content",
       "fileCount": "no files | 1 file | {count} files",
       "newChanges": "new changes",
-      "pickTopic": "Select a topic to see its document",
+      "pickTopic": "Select a channel to see its document",
       "open": "Show work panel",
       "close": "Hide work panel"
     },
@@ -780,17 +781,14 @@
       "needsYou": "1 needs you | {count} need you",
       "row": "#{n}: {title}"
     },
-    "card": {
-      "steps": "No steps | 1 step | {count} steps",
-      "stepFailed": "A step failed"
-    },
+    "card": {},
     "doc": {
       "delete": "Delete doc",
       "deleted": "This doc has been deleted",
       "untitled": "Untitled doc",
       "titlePlaceholder": "Title",
       "titleLabel": "Doc title",
-      "pickTopic": "Select a topic to see its document",
+      "pickTopic": "Select a channel to see its document",
       "outdated": "This page has been updated. Refresh to keep editing",
       "reload": "Refresh",
       "loading": "Loading…",
@@ -1017,7 +1015,7 @@
       "note": "AI teammates and the code repository are both changed in Project settings: the first section is AI teammates, and the repository is under “Repository and credit”."
     },
     "chat": {
-      "pickTopic": "Select a topic to start chatting",
+      "pickTopic": "Select a channel to start chatting",
       "starter": {
         "research": "Find sources",
         "researchText": "Look up the material for me, cite your sources, and write it up as a document. What I want to understand is: ",
@@ -1033,14 +1031,13 @@
       "older": "Older messages",
       "newMessagesBelow": "New messages below",
       "reactionFailed": "Couldn't update the reaction",
-      "undoFailed": "Couldn't undo",
       "downloadFailed": "Couldn't download",
       "sending": "Sending…",
       "typing": "Typing…",
       "waitingConnection": "Waiting for connection",
       "today": "Today",
       "yesterday": "Yesterday",
-      "topicFallback": "Topic",
+      "topicFallback": "Channel",
       "timelineLabel": "Conversation",
       "liveNew": "{name}: {text}"
     },
@@ -1052,26 +1049,16 @@
       "loadFailed": "Couldn't load members",
       "count": "No members | 1 member | {count} members",
       "agentBadge": "AI teammate",
-      "role": {
-        "owner": "Owner",
-        "admin": "Admin",
-        "member": "Member"
-      },
-      "roleHint": {
-        "owner": "Manage the room and its members",
-        "admin": "Manage members and their roles",
-        "member": "Take part in the room"
-      },
       "failed": "Something went wrong",
-      "title": "Topic members",
-      "remove": "Remove from topic",
+      "title": "Channel members",
+      "remove": "Remove from channel",
       "addPlaceholder": "Add a member…",
-      "allIn": "Every project member and teammate is already in this topic",
+      "allIn": "Every project member and teammate is already in this channel",
       "add": "Add",
-      "readOnly": "Only owners and admins can change members",
+      "readOnly": "Only the channel's creator and the project's managers can change members",
       "listSeparator": ", ",
       "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
-      "setRole": "Make {role}"
+      "creator": "Creator"
     },
     "mail": {
       "noSubject": "(No subject)",
@@ -1092,16 +1079,11 @@
     },
     "mention": {
       "back": "Back",
-      "notInTopic": "Not in topic",
-      "outsideNotice": "{names} aren't in this topic and won't be notified",
-      "addToTopic": "Add to topic",
-      "dismissOutside": "Dismiss",
-      "nameJoiner": ", ",
       "library": "Library",
       "noFiles": "No matching files",
       "noMatch": "No matches",
       "all": "Everyone",
-      "allSub": "{'@'}all · notifies everyone in the topic",
+      "allSub": "{'@'}all · notifies everyone in the channel",
       "here": "Online members",
       "hereSub": "{'@'}here · notifies online members",
       "fileGroup": "Files",
@@ -1217,6 +1199,28 @@
       "restore": "Restore this",
       "titleOwn": "{n} changes by {agent}",
       "allRestoredOwn": "All changes by {agent} are restored"
+    },
+    "thread": {
+      "title": "Thread",
+      "replies": "no replies | 1 reply | {count} replies",
+      "replying": "{name} is replying",
+      "lastReply": "{name}: {text}",
+      "toTask": "Convert to task",
+      "becameTask": "Became the task “{title}”",
+      "openTask": "Open task",
+      "close": "Close",
+      "placeholder": "Reply in thread",
+      "loadFailed": "Couldn't load. Try again later",
+      "openFailed": "Couldn't open the replies to this message. Try again later",
+      "notFound": "These replies can't be found",
+      "listCaption": "Latest replies first",
+      "empty": "No threads",
+      "unread": "New replies",
+      "people": "{replies} · {names}",
+      "taskStatus": {
+        "open": "Open",
+        "closed": "Closed"
+      }
     }
   },
   "board": {
@@ -1249,7 +1253,7 @@
       "completed": "Completed"
     },
     "loadFailed": "Couldn't load",
-    "unknownRoom": "Unknown room",
+    "unknownRoom": "Unknown channel",
     "noneMine": "No tasks assigned to you",
     "emptyColumn": "No tasks in {column}",
     "mineOnly": "Only mine",
@@ -1278,11 +1282,10 @@
     "stays": "Once published, the site stays online. Later changes need publishing again"
   },
   "topic": {
-    "notFound": "This topic doesn't exist",
+    "notFound": "This channel doesn't exist",
     "notFoundHint": "It may have been deleted, or it isn't part of this project",
     "resize": "Drag to resize, double-click to reset",
     "dmFailed": "Couldn't open the conversation",
-    "untitled": "New topic",
     "untitledTask": "New task",
     "quoted": "“{title}”"
   },
@@ -1291,17 +1294,17 @@
     "signedOutBody": "Once you sign in, you'll see what's here if you're a member of this project",
     "signIn": "Sign in",
     "archivedTitle": "Project archived",
-    "archivedOwnerBody": "Everything is still here. Unarchiving restores the project and the topics archived with it",
+    "archivedOwnerBody": "Everything is still here. Unarchiving restores the project and the channels archived with it",
     "archivedBody": "Everything is still here. It can be used again once the project owner unarchives it",
     "backToProjects": "Back to my projects",
     "forbiddenTitle": "You're not a member of this project",
     "forbiddenBody": "Only project members can see what is here. If you need access, ask someone on the project to add you"
   },
   "topicState": {
-    "accepted": "Accepted",
     "draft": "Draft",
     "done": "Done",
-    "open": "In progress"
+    "open": "In progress",
+    "archived": "Archived"
   },
   "sidebar": {
     "wait": {
@@ -1323,36 +1326,29 @@
       "mention": "Someone mentioned {agent}, {long} with no reply"
     },
     "kind": {
-      "topic": "Topic"
+      "topic": "Channel"
     },
     "archived": "Archived",
-    "archivedUnread": "New messages in archived topics",
     "projectMenu": "Project menu",
-    "others": "Other topics",
     "collapse": "Collapse",
     "expand": "Expand",
     "expandStalled": "Expand: someone in here is stuck",
     "expandAwaits": "Expand: something in here needs you",
     "turnFailed": "{agent}'s last run failed",
     "awaitsTip": "Something needs you",
-    "autoTitle": "Named automatically; the name updates if the topic changes direction",
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
     "moreActions": "More actions",
     "chooseProject": "Choose a project",
     "switchProject": "Switch project",
     "chooseProjectFirst": "Choose a project first",
-    "topics": "Topics",
-    "newTopic": "New topic",
-    "creatingTopic": "Creating topic",
-    "noneMine": "No topics involve you yet",
-    "othersUnread": "New messages in other topics",
-    "empty": "No topics yet",
+    "topics": "Channels",
     "workingTip": "{name} is working here",
     "expandWorking": "Expand: a teammate is working in here",
     "moreMembers": "+{count}",
     "taskNeedsYou": "Needs you",
-    "taskRunning": "Running"
+    "taskRunning": "Running",
+    "allTasks": "All tasks"
   },
   "members": {
     "leave": "Leave project",
@@ -1366,7 +1362,7 @@
     "sectionExternal": "External members",
     "sectionPending": "Waiting to accept",
     "sectionAgents": "AI teammates",
-    "fromTeam": "From team {'@'}{handle}",
+    "fromTeam": "From team {name}",
     "manage": "Manage member",
     "remove": "Remove from project",
     "dm": "Message",
@@ -1513,14 +1509,16 @@
     "defaultModel": "Default model",
     "defaultComputer": "Default work computer",
     "groups": {
+      "collab": "Collaboration",
       "ai": "AI",
       "run": "Running",
       "code": "Code",
       "data": "Data"
     },
     "sections": {
+      "channels": "Channels",
       "agents": "AI teammates",
-      "topic-naming": "Topic names",
+      "task-naming": "Task names",
       "computer": "Work computer",
       "environment": "Environment",
       "merge": "Merge rules",
@@ -1543,7 +1541,7 @@
     },
     "export": {
       "title": "Export project",
-      "hint": "Package the whole project: the code repository, library files, each room's files and artifacts, and every document. Bigger projects take longer",
+      "hint": "Package the whole project: the code repository, library files, each channel's files and artifacts, and every document. Bigger projects take longer",
       "action": "Export project",
       "failed": "Couldn't export the project"
     },
@@ -1598,17 +1596,17 @@
       "exhausted": "Credits are used up. Ask a team admin or whoever issues credits for more",
       "source": "Includes the team's shared credits and credits issued to this project; project credits are used first"
     },
-    "topicNaming": {
-      "intro": "Topics someone has renamed are never renamed automatically",
+    "taskNaming": {
+      "intro": "Tasks someone has renamed are never renamed automatically",
       "autoTitle": "Smart names",
-      "autoDetail": "Named after the first message and checked once after the first run. Later it is renamed only when the topic clearly changes direction, with a record in the topic that can be undone",
+      "autoDetail": "An unnamed task is named after its first message and checked once after the first run. Later it is renamed only when the task clearly changes direction. A task the AI teammate proposed keeps the title it was proposed with and is likewise renamed only when its direction changes",
       "manualTitle": "Manual names",
-      "manualDetail": "No automatic names. New topics stay \"New topic\" until someone renames them",
-      "label": "Topic names",
-      "fallback": "For now the AI teammate names the topic on its first run",
+      "manualDetail": "No automatic names. New tasks stay \"New task\" until someone renames them",
+      "label": "Task names",
+      "fallback": "This deployment can't name tasks automatically, so the AI teammate names a task once it understands it",
       "readOnly": "Only project admins can change this",
-      "loadFailed": "Couldn't load topic name settings",
-      "saveFailed": "Couldn't save topic name settings"
+      "loadFailed": "Couldn't load task name settings",
+      "saveFailed": "Couldn't save task name settings"
     },
     "defaultModelBlock": {
       "save": "Save",
@@ -1625,7 +1623,7 @@
       "deactivateFailed": "Couldn't deactivate",
       "refresh": "Refresh",
       "create": "New teammate",
-      "intro": "Each teammate has its own role, model and thinking effort. New topics go to the one marked Default, and a topic can pick another",
+      "intro": "Each teammate has its own role, model and thinking effort. New channels go to the one marked Default, and a channel can pick another",
       "unsupported": "Managing AI teammates isn't supported yet",
       "empty": "No AI teammates",
       "default": "Default",
@@ -1634,7 +1632,7 @@
       "edit": "Edit",
       "deactivate": "Deactivate",
       "deactivateTitle": "Deactivate \"{name}\"",
-      "deactivateHint": "New topics can't choose it after this. Topics already using it carry on",
+      "deactivateHint": "New channels can't choose it after this. Channels already using it carry on",
       "typeGeneral": "General",
       "editor": {
         "presetCustom": "Write your own",
@@ -1728,21 +1726,21 @@
       "loadFailed": "Couldn't load the environment",
       "statusFailed": "Couldn't load the preparation status",
       "varInvalid": "Variable names can't be empty or repeated",
-      "saved": "Saved. New rooms use this setup; existing rooms keep theirs",
+      "saved": "Saved. New channels use this setup; existing channels keep theirs",
       "saveFailed": "Couldn't save the environment",
-      "applyScheduled": "The environment will be prepared on the next start; files in the room are kept",
+      "applyScheduled": "The environment will be prepared on the next start; files in the channel are kept",
       "applyFailed": "Couldn't apply the setup",
       "title": "Scripts and environment variables",
       "reload": "Reload",
-      "intro": "Installs tools for rooms and project dependencies when task code is prepared. Rooms in the project share this setup; General uses the base environment and helps fix environment problems",
+      "intro": "Installs tools for channels and project dependencies when task code is prepared. Channels in the project share this setup; General uses the base environment and helps fix environment problems",
       "setupLabel": "Install tools (setup script)",
       "setupHint": "Installs tools such as Python and Node. Runs once per project on each machine, and again when a new setup is applied",
       "startupLabel": "Prepare project (startup script)",
       "startupHint": "Runs each time a task's working directory is created or reopened, installing that branch's dependencies",
       "howTitle": "How it runs",
       "how1": "Cloud and your own devices use the same scripts, so the machine must support their commands",
-      "how2": "The setup script runs in the room directory and the startup script in the task's code directory. Both use Bash, each for at most 30 minutes, with the machine's current permissions. Environment variables go to both scripts and the AI teammate; an export in a script doesn't carry to the next step. Tools can be installed to $HOME/.local/bin",
-      "how3": "For the setup script, $HOME is this project's shared tool directory on the machine, so tools are installed once and later rooms use them. The startup script and the AI teammate have each room's own $HOME, so don't write anything room-specific in the setup script",
+      "how2": "The setup script runs in the channel directory and the startup script in the task's code directory. Both use Bash, each for at most 30 minutes, with the machine's current permissions. Environment variables go to both scripts and the AI teammate; an export in a script doesn't carry to the next step. Tools can be installed to $HOME/.local/bin",
+      "how3": "For the setup script, $HOME is this project's shared tool directory on the machine, so tools are installed once and later channels use them. The startup script and the AI teammate have each channel's own $HOME, so don't write anything channel-specific in the setup script",
       "varsTitle": "Environment variables",
       "varsHint": "Project members and AI teammates can see these values. Don't store passwords or API keys here",
       "varName": "Name",
@@ -1750,10 +1748,10 @@
       "removeVar": "Remove variable",
       "addVar": "Add variable",
       "save": "Save setup",
-      "saveNote": "Saving affects only new rooms; existing rooms keep their setup",
+      "saveNote": "Saving affects only new channels; existing channels keep their setup",
       "savedConfig": "Saved setup",
       "revision": "Version: {rev}",
-      "roomSelect": "Room environment",
+      "roomSelect": "Channel environment",
       "stage": {
         "setup": "Installing tools",
         "startup": "Preparing project",
@@ -1764,14 +1762,14 @@
       "unpinned": "Not pinned",
       "started": "Started: {at}",
       "finished": " · Finished: {at}",
-      "logNote": "Only the last 32 KB of log is shown; the full log is in the room's $HOME",
+      "logNote": "Only the last 32 KB of log is shown; the full log is in the channel's $HOME",
       "recoveryRequested": "Handed to the AI teammate in General to check; follow it in General",
       "recoveryRetrying": "The AI teammate in General fixed the setup and is restarting",
       "recoveryNeedsHelp": "Automatic repair couldn't recover the environment; see what help is needed in General",
       "refreshStatus": "Refresh status",
       "applyNext": "Apply on next start",
       "retryNext": "Retry on next start",
-      "roomNote": "Files in the room are kept. A room that is running applies the setup after the current run ends"
+      "roomNote": "Files in the channel are kept. A channel that is running applies the setup after the current run ends"
     },
     "github": {
       "accountFailed": "Couldn't connect the GitHub account: {reason}",
@@ -1819,6 +1817,19 @@
       "repoConnected": "Connected repository {repo}",
       "installPending": "Install request sent, awaiting approval from an organization admin",
       "accountConnected": "GitHub account connected"
+    },
+    "channels": {
+      "intro": "Every channel in the project is here, and every project member can read and join it. Your sidebar lists only the channels you've joined. For a piece of work, create a task rather than a channel.",
+      "nameLabel": "Channel name",
+      "create": "New channel",
+      "activeLabel": "Channels in use",
+      "archivedLabel": "Archived",
+      "rootNote": "Everyone in the project is here; it can't be left or archived",
+      "rename": "Rename",
+      "archive": "Archive",
+      "unarchive": "Unarchive",
+      "descriptionLabel": "Description (optional)",
+      "describe": "Edit description"
     }
   },
   "computeChoice": {
@@ -1847,7 +1858,7 @@
     "lookupTeam": "No one on the team to hand it to? Find a person directly:",
     "lookupOwn": "Enter the new owner's username or email:",
     "lookupLabel": "Full username or email",
-    "movingOut": "The whole project moves to {who}. Afterwards you are no longer a member and can't see any of its topics."
+    "movingOut": "The whole project moves to {who}. Afterwards you are no longer a member and can't see any of its channels."
   },
   "skills": {
     "awaiting": "Waiting for you",
@@ -1858,7 +1869,7 @@
     "crowded": "The more skills there are, the harder it is to pick the right one",
     "delete": "Delete",
     "deleteFailed": "Couldn't delete",
-    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
+    "deleteHint": "Later channels will no longer get it, and its version history is deleted too",
     "deleteTitle": "Delete \"{title}\"",
     "detail": {
       "callName": "Invoked as {name}",
@@ -1957,7 +1968,7 @@
     "dismissFailed": "Couldn't dismiss",
     "feedbackFailed": "Couldn't send feedback",
     "next": "Next",
-    "open": "Open topic",
+    "open": "Open channel",
     "dismiss": "Dismiss",
     "helpful": "Helpful",
     "notHelpful": "Not helpful"
@@ -1994,19 +2005,20 @@
   "task": {
     "agent": "AI teammate",
     "machine": "Work computer",
-    "followsRoom": "Follows the topic",
+    "followsRoom": "Follows the channel",
     "details": "Task details",
-    "noMessages": "No messages yet",
-    "sayPlaceholder": "Message {name}",
-    "send": "Send",
-    "sendFailed": "Message not sent. Try again later",
-    "ownerOnlyNotice": "Only the owner can talk to {name} here",
+    "ownerOnlyNotice": "Only the owner and collaborators can talk to {name} here",
     "closedNotice": "This task is closed",
     "backToRoom": "Back to # {room}",
-    "notFound": "This room has no such task",
+    "notFound": "This channel has no such task",
     "loadFailed": "Couldn't load this task",
-    "retry": "Retry",
     "owner": "Owner",
+    "ownerChip": "Owned by {name}",
+    "collaborators": "Collaborators",
+    "collaboratorsHint": "Can talk to the AI teammate in this task",
+    "addCollaborator": "Add a collaborator",
+    "removeCollaborator": "Remove",
+    "leaveCollaboration": "Leave",
     "start": "Start",
     "startFailed": "Couldn't start. Try again later",
     "reviewer": "Reviewer",
@@ -2017,11 +2029,6 @@
     "compareFailed": "Couldn't read the document as it was at the start",
     "compareSame": "The document hasn't changed since the start",
     "conclusion": "Conclusion",
-    "tabChat": "Conversation",
-    "tabOverview": "Overview",
-    "tabChanges": "Changes",
-    "tabSite": "Activity",
-    "tabPreview": "Preview",
     "proposal": {
       "byline": "{name} proposed a task",
       "accept": "Create task",
@@ -2035,6 +2042,45 @@
     "handOver": "Hand over",
     "handOverTitle": "Hand over to whom?",
     "handOverTo": "Choose the new owner",
+    "rename": "Rename",
+    "renameTitle": "Rename task",
+    "renameLabel": "Task name",
     "actionFailed": "Couldn't do that. Try again later"
+  },
+  "channelTasks": {
+    "whose": "Filter by owner",
+    "all": "All",
+    "mine": "Mine",
+    "helping": "Helping",
+    "others": "Others'",
+    "closed": "Closed",
+    "empty": "No tasks here",
+    "loadFailed": "Could not load the tasks"
+  },
+  "channel": {
+    "notify": {
+      "title": "Notifications",
+      "all": "All new messages",
+      "allHint": "Every new message in the main line counts",
+      "mentions": "Mentions and my threads",
+      "mentionsHint": "Counts when someone mentions me or everyone, or a thread I took part in gets a reply",
+      "mute": "Mute",
+      "muteHint": "Only a direct mention counts and notifies me",
+      "mutedForever": "Muted until you turn it off",
+      "mutedUntil": "Muted until {time}",
+      "forHour": "1 hour",
+      "forEightHours": "8 hours",
+      "untilTomorrow": "Until 9 a.m. tomorrow",
+      "forWeek": "1 week",
+      "untilUnmuted": "Until I turn it off"
+    },
+    "join": "Join channel",
+    "leave": "Leave channel",
+    "joinFailed": "Couldn't join the channel",
+    "leaveFailed": "Couldn't leave the channel",
+    "notJoined": "You haven't joined this channel. Join to post in the main line, or reply in a message's thread.",
+    "archivedNotice": "This channel is archived and read-only",
+    "describeFailed": "Couldn't save the channel description",
+    "browse": "Browse channels"
   }
 }

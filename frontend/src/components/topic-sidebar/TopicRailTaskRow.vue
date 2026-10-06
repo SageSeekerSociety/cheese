@@ -1,17 +1,27 @@
 <script setup lang="ts">
-// 侧栏里挂在房间下面的一个任务。比房间那一行缩进一级、字小一号；需要你处理的亮
+// 侧栏里挂在频道下面的一个任务。比频道的字往里缩一点，左边一条竖线从频道的 # 下面
+// 一直连到「全部任务」，说「这几条是那个频道里的」；字和频道一样大。需要你处理的亮
 // 一颗暖色点，正在运行的一颗绿点，别的不画。
 import type { RoomTask } from '@/cx_types'
 
 import { computed } from 'vue'
 
+import TopicRailBadge from './TopicRailBadge.vue'
+
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
 
-const props = defineProps<{
-  task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>
-  selected: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>
+    selected: boolean
+    /** 任务里别人说了几句我还没读（只对负责人和协作者算，只算人说的）。 */
+    unread?: number
+    // 它的频道在树里的第几层：竖线跟着频道的图标列走。
+    depth?: number
+  }>(),
+  { depth: 0, unread: 0 }
+)
 
 const emit = defineEmits<{
   (e: 'select', task: { roomId: string; taskId: string }): void
@@ -27,12 +37,14 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
 <template>
   <button
     type="button"
-    class="rail-task t-meta"
+    class="rail-task"
     :class="{ 'rail-task--selected': selected }"
+    :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
   >
-    <span class="rail-task__title">{{ taskTitle(task) }}</span>
+    <span class="rail-task__title" :class="{ 'rail-task__title--unread': unread > 0 }">{{ taskTitle(task) }}</span>
+    <TopicRailBadge v-if="unread > 0" :count="unread" />
     <span
       v-if="mark"
       class="rail-task__dot"
@@ -45,27 +57,43 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
 
 <style scoped>
 .rail-task {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  min-height: 28px;
-  padding: 0 12px 0 32px;
+  min-height: 32px;
+  padding-block: 0;
+  padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--muted);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: var(--lh-14);
   text-align: left;
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .rail-task:hover {
   background: var(--fill);
-  color: var(--text);
+  color: var(--ink);
 }
 .rail-task--selected {
   background: var(--fill);
   color: var(--ink);
+}
+/* 竖线落在频道 # 的中线上，一行接一行连成一条（上下各探 3px 盖住行间的空隙）。
+   结构线，不是强调条。 */
+.rail-task::before {
+  content: '';
+  position: absolute;
+  left: var(--guide-x);
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line-2);
 }
 .rail-task__title {
   flex: 1 1 auto;
@@ -73,6 +101,9 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.rail-task__title--unread {
+  font-weight: 650;
 }
 .rail-task__dot {
   flex: none;

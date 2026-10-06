@@ -11,7 +11,7 @@ covers:
   - backend/app/domain/machine/session_work.py
   - backend/app/domain/agent/host_failure.py
   - backend/app/domain/agent/dispatch_log.py
-  - backend/app/domain/topic/naming.py
+  - backend/app/domain/room_task/naming.py
 ---
 
 # 一条消息怎么变成芝士的一轮 {#turn}
@@ -45,8 +45,8 @@ steps:
   - label: 失败、超时与发版
     desc: 机器的错记在设备上、由人决定怎么处理；带幂等 id 的副作用先记一行，重派时分得清做没做过；发版时旧进程把在跑的轮交给新进程。
     link: /dev/turn#failure
-  - label: 话题命名
-    desc: 不在这一轮里做。平台在后台用一个小模型起名、校准、跟进，标题由谁定记在 topics.title_source 上。
+  - label: 任务命名
+    desc: 不在这一轮里做。平台在后台用一个小模型给没名字的任务起名、校准、跟进，标题由谁定记在 tasks.title_source 上。
     link: /dev/turn#naming
 ```
 
@@ -66,7 +66,7 @@ steps:
 
 ## 4. 启动或续跑骨架 {#harness}
 
-骨架是 Claude Code、Codex、Pi 三种之一。会话按「对话 × 队友 × 骨架」记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)），下一轮续跑同一个会话。一段对话是一个房间，或房间里的一条任务：任务的一轮跑在任务自己的会话里（`converse(topic_id=<任务 id>)`），这一轮写下的块 `topic_id` 是房间、`task_id` 是任务。本次跑哪个由部署和项目设置决定，怎么把协议翻译成统一的事件见[骨架](/dev/harness)。会话开场时芝士读到什么、接着跑时怎么补上变化，见[提示词注入与上下文管理](/dev/context)。
+骨架是 Claude Code、Codex、Pi 三种之一。会话按「对话 × 队友 × 骨架」记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)），下一轮续跑同一个会话。一段对话是一个房间，或房间里的一条任务：任务的一轮跑在任务自己的会话里（`converse(topic_id=<任务 id>)`），这一轮写下的块、轮次和用量都记在任务这段对话上（`conversation_id` = 任务 id）。本次跑哪个由部署和项目设置决定，怎么把协议翻译成统一的事件见[骨架](/dev/harness)。会话开场时芝士读到什么、接着跑时怎么补上变化，见[提示词注入与上下文管理](/dev/context)。
 
 ## 5. 芝士怎么说话 {#publish}
 
@@ -162,7 +162,7 @@ AI 发起的点名有熔断：同一话题一小时最多叫起 `AGENT_MENTIONS_
 
 几位队友的工作目录是分开的，同一份文件不会被两位同时改。共用的是这台机器的算力、端口和同一个远端仓库，靠两条约定：
 
-- **改动落在任务卡的分支上。** 每张任务卡有自己的工作树和分支（`cheese worktree <任务 id>`），两位队友并行做的是两张卡、推的是两个分支，不会互相覆盖。
+- **改动落在任务的分支上。** 每个任务有自己的会话、工作树和分支（`cheese worktree <任务 id>`），只由任务自己的会话打开；两个任务并行推的是两个分支，不会互相覆盖。
 - **重活先占锁。** 装依赖、跑大型测试、起服务前用 `cheese_lock` 占房间的重资源锁（30 分钟自动过期），占不到就说谁占着，不排队等。
 
 ### 在界面上分开看 {#seats-ui}
@@ -179,19 +179,19 @@ AI 发起的点名有熔断：同一话题一小时最多叫起 `AGENT_MENTIONS_
 - **侧栏**：`GET /topics` 每一行带 `activity`（和快照同一份条目），侧栏随列表一起刷新，画在干活的队友的小头像。打字不画：列表隔一阵才读一次，打字几秒就过去了。
 - **在等谁**：每一行还带 `waits`，房间在等的那几位成员（`block/waits.py`）：它那一轮报错了（`failed`，立刻算）、有人点了它的名还没回（`mention`）、卡停在要它修的地方（`check` / `conflict` / `rejected` / `gate`，等的是最后在这里干活的那位队友，从它最后一次动手算起），或期间机器出了状况。多久算太久由侧栏按当下的钟判，红点画在那位成员的头像上。此刻正在干活的成员不算在等。
 
-## 7. 话题命名 {#naming}
+## 7. 任务命名 {#naming}
 
-给话题起名不在一轮里做，由平台在后台单独调用一次小模型（`backend/app/domain/topic/naming.py`，网关上的 `topic_naming_model`，用自己的虚拟 key 和预算）。触发点和判断：
+给任务起名不在一轮里做，由平台在后台单独调用一次小模型（`backend/app/domain/room_task/naming.py`，网关上的 `topic_naming_model`，用自己的虚拟 key 和预算）。频道由建它的人起名，平台不碰。触发点和判断：
 
 | 时机 | 触发 | 做什么 |
 |---|---|---|
-| 起名 | 还叫「新话题」的话题收到第一条有内容的人话（`post_user_message`），或第一轮结束 | 起一个名字，不在房间里发提示 |
-| 校准 | 第一轮结束，或人发满 3 条消息；只做一次 | 结合对话、实况文档目标段和任务清单，判断要不要换 |
-| 跟进 | 实况文档改动、拆出任务、递验收卡这类信号，或上次判断后又多了 30 条消息 | 先判断要不要改；同一话题 30 分钟最多一次、每天最多 3 次 |
+| 起名 | 还叫「新任务」的任务收到第一条有内容的人话（`post_user_message`），或第一轮结束 | 起一个名字 |
+| 校准 | 第一轮结束，或人发满 3 条消息；只做一次 | 结合对话和任务文档，判断要不要换 |
+| 跟进 | 任务文档改动、递验收卡这类信号，或上次判断后又多了 30 条消息 | 先判断要不要改；同一任务 30 分钟最多一次、每天最多 3 次 |
 
 - 每次都把当前标题交给模型，默认保留；只改了措辞和标点按不改处理。
-- 标题由谁定记在 `topics.title_source`：`placeholder`、`auto`、`human`。人在侧栏改名、让芝士用 `cheese_title` 改名、撤销一次自动改名，都记为 `human`。此后平台不再自动改，也没有把话题交还给自动命名的入口：要换名字只能由人再改一次。
+- 标题由谁定记在 `tasks.title_source`：`placeholder`、`auto`、`human`。人起的名（建任务时填的、之后改的）记为 `human`，此后平台不再自动改。芝士提议任务时写的标题、任务自己的会话用 `cheese_title` 起的名记为 `auto`，并算作已校准：只在跟进时可能再改。
 - 自动改名按 `title_version` 比较后写入：生成期间有人改了名，这次结果作废。
-- 每次改名记进 `topic_titles`；非首次改名会在房间里发一条带撤销按钮的事件，并推送 `state: topics` 让侧栏刷新。
-- 项目设置 `topic_naming = manual` 时平台不起名，主 agent 也不会被要求起名。
-- 平台起不了名（没配网关）时，退回旧办法：这一轮消息的最前面要求主 agent 先用 `cheese_title` 起名。
+- 每次改名记进 `task_titles`，不在任务里发消息，只推送 `state: topics` 让侧栏刷新。
+- 项目设置 `task_naming = manual` 时平台不起名，芝士也不会被要求起名。
+- 平台起不了名（没配网关）时，没名字的任务每一轮都会提醒它自己的会话：弄清要做什么后用 `cheese_title` 起名。

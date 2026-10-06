@@ -109,7 +109,7 @@ def test_a_card_cannot_be_routed_to_somebody_the_room_refuses(client):
 
     assert r.status_code == 403, r.text
     assert STRANGER in r.json()["message"]
-    assert "不在这个话题里" in r.json()["message"]
+    assert "不在这个频道里" in r.json()["message"]
     # 拒的是这次递卡，不是嘴上说说：卡没落行。
     assert _cards(client, room) == []
 
@@ -159,7 +159,7 @@ def test_a_card_cannot_be_reassigned_to_somebody_the_room_refuses(client):
     r = _reassign(client, card["id"], STRANGER)
 
     assert r.status_code == 403, r.text
-    assert "不在这个话题里" in r.json()["message"]
+    assert "不在这个频道里" in r.json()["message"]
     # 原审阅人还在：一次没生效的改派不该悄悄留下半张卡。
     assert _cards(client, room)[0]["reviewer_handle"] == MEMBER
 
@@ -197,7 +197,7 @@ def test_the_default_ladder_cannot_route_a_card_to_somebody_the_room_refuses(cli
     r = _file(client, pid, room, task["id"], "feat(x): deliver it")
 
     assert r.status_code == 403, r.text
-    assert "不在这个话题里" in r.json()["message"]
+    assert "不在这个频道里" in r.json()["message"]
     assert _cards(client, room) == []
 
 

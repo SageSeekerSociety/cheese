@@ -33,7 +33,6 @@ export default [
       'dist-*/*',
       'asset/*',
       '**/*.d.ts',
-      '**/commitlint.config.ts',
       '**/stylelint.config.cjs',
     ],
   },

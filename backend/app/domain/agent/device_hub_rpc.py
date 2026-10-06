@@ -386,6 +386,18 @@ class RemoteDeviceHub:
     async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
         return await self._call("list_screens", {"device_id": device_id})
 
+    async def push_local_fs_grants(
+        self,
+        device_id: str,
+        grants: list[dict[str, Any]],
+        *,
+        timeout: float = 20,
+    ) -> dict[str, Any]:
+        return await self._call(
+            "push_local_fs_grants",
+            {"device_id": device_id, "grants": grants, "timeout": timeout},
+        )
+
     async def exec(
         self,
         device_id: str,

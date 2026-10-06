@@ -9,6 +9,7 @@ internet needs a veth pair, NAT and filter rules in the machine's own tables,
 and a memory or CPU limit needs a cgroup only root can create.
 
     up NAME PID --memory-mb N --swap-mb N --cpus N --pids N [--forward PORT]...
+             [--site PORT]
     down NAME
 
 `PID` is the sandbox's first process, created by bubblewrap with a network
@@ -19,7 +20,10 @@ resolvers on port 53 and the public internet; nothing in a private range, not
 the machine itself, and not another sandbox. `--forward` lets it reach one TCP
 port of the machine's own loopback as the same port on its own: a machine
 whose backend is a loopback forward (`machine_address.device_api_base`) is
-reached that way.
+reached that way. `--site` lets it reach one more, as port 443 of
+`SITE_ADDRESS` on its own: the machine's forward of the deployment's site
+over TLS, which the sandbox's /etc/hosts gives the site's name
+(`bootstrap.start_sandbox`, `confinement.site_hosts`).
 
 The caller is trusted with nothing but its own processes. Arguments are
 checked to the character, the process must be the caller's, and the only
@@ -75,6 +79,11 @@ CHAINS = {
 NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 CLONE_NEWNET = 0x40000000
 SYSTEM_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+# Where a sandbox dials the site, inside its own loopback range and apart
+# from 127.0.0.1, so a server of the room's own on 127.0.0.1:443 is left
+# alone. A copy is in `confinement.SITE_ADDRESS`, held to this by
+# test_footprint_root.py.
+SITE_ADDRESS = "127.0.0.2"
 
 
 class Refused(Exception):
@@ -202,10 +211,11 @@ def restore(wanted, saved):
     return "\n".join([*text, ""])
 
 
-def inside(index, forward):
+def inside(index, forward, site=None):
     """`ip -batch` input and `iptables-restore` input for the sandbox's own
     namespace: its link and route out, and its loopback port forwards, which
-    send what it dials on 127.0.0.1 to the machine's end of its link."""
+    send what it dials on 127.0.0.1 to the machine's end of its link, and
+    what it dials on `SITE_ADDRESS`:443 to the machine's `site` port."""
     gateway, address = addresses(index)
     _, peer = links(index)
     link = "\n".join(
@@ -217,7 +227,7 @@ def inside(index, forward):
             "",
         ]
     )
-    if not forward:
+    if not forward and not site:
         return link, ""
     nat = ["*nat"]
     nat += [
@@ -225,6 +235,11 @@ def inside(index, forward):
         f" -j DNAT --to-destination {gateway}:{port}"
         for port in forward
     ]
+    if site:
+        nat.append(
+            f"-A OUTPUT -d {SITE_ADDRESS} -p tcp --dport 443"
+            f" -j DNAT --to-destination {gateway}:{site}"
+        )
     nat += [f"-A POSTROUTING -s 127.0.0.0/8 -o {peer} -j SNAT --to-source {address}"]
     return link, "\n".join([*nat, "COMMIT", ""])
 
@@ -322,7 +337,13 @@ def write_rules(records):
             servers = resolvers(Path(path).read_text())
     if not servers:
         raise Refused("no name server a sandbox can reach: " + ", ".join(RESOLV_CONFS))
-    ports = sorted({port for record in records.values() for port in record["forward"]})
+    ports = sorted(
+        {
+            port
+            for record in records.values()
+            for port in [*record["forward"], *filter(None, [record.get("site")])]
+        }
+    )
     saved = run(["iptables-save", "-t", "filter"]) + run(["iptables-save", "-t", "nat"])
     text = restore(rules(servers, ports), saved)
     if text:
@@ -337,9 +358,31 @@ def enable(directory):
         control.write_text(" ".join("+" + name for name in sorted(missing)))
 
 
+def machine_memory():
+    """The machine's memory in bytes: /proc/meminfo's total, which in a
+    MicroCloud LXC is the container's own limit (lxcfs)."""
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        if line.startswith("MemTotal:"):
+            return int(line.split()[1]) * 1024
+    raise RuntimeError("no MemTotal in /proc/meminfo")
+
+
+def sandboxes_memory(total):
+    """What every sandbox on a machine of `total` bytes may hold together:
+    the machine keeps a quarter, at least 1 GiB, for everything outside them.
+
+    Each sandbox's own limit does not add up to this: two 3 GiB sandboxes on a
+    4 GiB machine together drove it to its container limit (a dev pool host,
+    2026-10-05), and the reclaim that followed stalled every process in the
+    container, sshd, PID 1, dbus and logind with them, for five hours. Held
+    here, the kernel reclaims and kills inside the sandboxes instead."""
+    return total - min(max(1 << 30, total // 4), total // 2)
+
+
 def limit(name, pid, limits):
     enable(CGROUP_ROOT)
     CGROUP.mkdir(exist_ok=True)
+    (CGROUP / "memory.max").write_text(str(sandboxes_memory(machine_memory())))
     enable(CGROUP)
     group = CGROUP / name
     group.mkdir()
@@ -353,7 +396,7 @@ def limit(name, pid, limits):
     (group / "cgroup.procs").write_text(str(pid))
 
 
-def connect(index, pid, forward):
+def connect(index, pid, forward, site=None):
     """The sandbox's link: made with its far end already in the sandbox,
     which costs one slow kernel operation where creating it here and moving
     it costs two."""
@@ -364,7 +407,7 @@ def connect(index, pid, forward):
     # Strict reverse-path filtering: a packet from the link must carry the
     # sandbox's own address, so no rule has to name it.
     sysctl(f"net.ipv4.conf.{host}.rp_filter", 1)
-    if forward:
+    if forward or site:
         sysctl(f"net.ipv4.conf.{host}.route_localnet", 1)
     sysctl("net.ipv4.ip_forward", 1)
     run(
@@ -378,7 +421,7 @@ def connect(index, pid, forward):
         # services over the link, which no IPv4 rule would see.
         sysctl("net.ipv6.conf.all.disable_ipv6", 1)
         sysctl("net.ipv6.conf.default.disable_ipv6", 1)
-        link, nat = inside(index, forward)
+        link, nat = inside(index, forward, site)
         run(["ip", "-batch", "-"], link)
         if nat:
             sysctl(f"net.ipv4.conf.{peer}.route_localnet", 1)
@@ -389,7 +432,7 @@ def connect(index, pid, forward):
         os.close(sandbox)
 
 
-def up(name, pid, limits, forward):
+def up(name, pid, limits, forward, site=None):
     uid = caller()
     if owner_of(pid) != uid:
         raise Refused("process is not the caller's")
@@ -414,12 +457,13 @@ def up(name, pid, limits, forward):
             "netns": namespace,
             "uid": uid,
             "forward": forward,
+            "site": site,
         }
         (STATE / f"{name}.json").write_text(json.dumps(record))
         try:
             records[name] = record
             write_rules(records)
-            connect(index, pid, forward)
+            connect(index, pid, forward, site)
             limit(name, pid, limits)
         except BaseException:
             release(name, record)
@@ -464,7 +508,7 @@ def parse(argv):
     if len(argv) < 3 or argv[0] != "up" or not NAME.fullmatch(argv[1]):
         raise Refused("usage: up NAME PID --memory-mb N ... | down NAME")
     pid = number(argv[2], 2, 1 << 22)
-    limits, forward = {}, []
+    limits, forward, site = {}, [], None
     options = argv[3:]
     if len(options) % 2:
         raise Refused("every option takes a value")
@@ -473,6 +517,8 @@ def parse(argv):
             port = number(value, 1, 65535)
             if port not in forward:
                 forward.append(port)
+        elif option == "--site" and site is None:
+            site = number(value, 1, 65535)
         elif option in LIMITS and LIMITS[option][0] not in limits:
             key, low, high = LIMITS[option]
             limits[key] = number(value, low, high)
@@ -480,7 +526,13 @@ def parse(argv):
             raise Refused(f"unexpected option {option}")
     if len(limits) != len(LIMITS):
         raise Refused("every limit is required")
-    return "up", {"name": argv[1], "pid": pid, "limits": limits, "forward": forward}
+    return "up", {
+        "name": argv[1],
+        "pid": pid,
+        "limits": limits,
+        "forward": forward,
+        "site": site,
+    }
 
 
 def main(argv):

@@ -47,7 +47,7 @@ function event(meta: Record<string, unknown>): Block {
   return {
     id: 'b1',
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-t1',

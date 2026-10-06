@@ -580,6 +580,7 @@ def classify_platform_failure(
 # 从已知的开头起头。
 PROVIDER_UNREACHABLE_CODE = "provider_unreachable"
 PROVIDER_OVERLOADED_CODE = "provider_overloaded"
+SUBSCRIPTION_EGRESS_OFFLINE_CODE = "subscription_egress_offline"
 MODEL_LIMIT_REACHED_CODE = "model_limit_reached"
 RESPONSE_TRUNCATED_CODE = "response_truncated"
 TOOL_UNAVAILABLE_CODE = "tool_unavailable"
@@ -589,6 +590,13 @@ TOOL_UNAVAILABLE_CODE = "tool_unavailable"
 _CLI_NOTICE_MAX = 300
 
 _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
+    # The metering proxy's own answer when the machine the subscription must
+    # leave through does not respond (`deploy/metering-proxy`, a 503 Claude
+    # Code does not retry). Before the 503 pattern below, which it also matches.
+    (
+        re.compile(r"^API Error:.*\bsubscription egress is offline\b", re.I),
+        SUBSCRIPTION_EGRESS_OFFLINE_CODE,
+    ),
     (
         re.compile(
             r"^API Error:.*\b(ConnectionRefused|ECONNRESET|Connection refused)\b",

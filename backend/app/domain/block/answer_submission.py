@@ -16,7 +16,7 @@ from app.domain.block.schemas import BlockOut
 @dataclass(frozen=True)
 class AnswerSubmission:
     project_id: uuid.UUID
-    topic_id: uuid.UUID
+    conversation_id: uuid.UUID
     asked_by: str
     entry: dict
     updated: dict
@@ -49,7 +49,7 @@ async def submit_answer(
         block.meta = meta
     return AnswerSubmission(
         block.project_id,
-        block.topic_id,
+        block.conversation_id,
         block.author,
         entry,
         BlockOut.model_validate(block).model_dump(mode="json"),
@@ -57,7 +57,9 @@ async def submit_answer(
     )
 
 
-async def add_answer_wake(session, *, project_id, topic_id, author, content, meta):
+async def add_answer_wake(
+    session, *, project_id, conversation_id, author, content, meta
+):
     """Flush one participant answer wake, returning BlockOut JSON; never commit.
 
     The authenticated answer route owns authorization and the surrounding answer
@@ -65,7 +67,7 @@ async def add_answer_wake(session, *, project_id, topic_id, author, content, met
     """
     wake = await BlockRepository(session).add(
         project_id=project_id,
-        topic_id=topic_id,
+        conversation_id=conversation_id,
         author=author,
         author_type=AuthorType.participant,
         content=content,

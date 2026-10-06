@@ -125,8 +125,7 @@ class AccessRecord:
     grant_id: uuid.UUID | None = None
     actor_handle: str | None = None
     project_id: uuid.UUID | None = None
-    topic_id: uuid.UUID | None = None
-    task_id: uuid.UUID | None = None
+    conversation_id: uuid.UUID | None = None
     detail: str | None = None
 
 

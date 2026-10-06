@@ -1,4 +1,4 @@
-"""Topic membership (话题成员名册) CRUD + permissions over HTTP."""
+"""Who is in a channel, and its managers adding and removing people, over HTTP."""
 
 from tests.integration.conftest import (
     join_project_team,
@@ -57,7 +57,7 @@ def test_owner_can_add_member(client):
     tid = _topic(client, created_by="alice")
     r = client.post(
         f"/topics/{tid}/members",
-        json={"handle": "bob", "role": "member", "actor": "alice"},
+        json={"handle": "bob", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
@@ -72,7 +72,7 @@ def test_a_person_outside_the_project_is_not_seated(client):
     tid = _topic(client, created_by="alice")
     r = client.post(
         f"/topics/{tid}/members",
-        json={"handle": "stranger", "role": "member", "actor": "alice"},
+        json={"handle": "stranger", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
@@ -83,37 +83,14 @@ def test_non_manager_cannot_add_member(client):
     tid = _topic(client, created_by="alice")
     client.post(
         f"/topics/{tid}/members",
-        json={"handle": "bob", "role": "member", "actor": "alice"},
+        json={"handle": "bob", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
     # bob is a plain member → may not add anyone.
     r = client.post(
         f"/topics/{tid}/members",
-        json={"handle": "carol", "role": "member", "actor": "bob"},
+        json={"handle": "carol", "actor": "bob"},
         headers=session_auth_headers("bob"),
-    )
-    assert r.status_code == 403
-
-
-def test_admin_can_manage_but_stranger_cannot(client):
-    tid = _topic(client, created_by="alice")
-    client.post(
-        f"/topics/{tid}/members",
-        json={"handle": "bob", "role": "admin", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    # admin bob adds carol
-    r = client.post(
-        f"/topics/{tid}/members",
-        json={"handle": "carol", "role": "member", "actor": "bob"},
-        headers=session_auth_headers("bob"),
-    )
-    assert r.status_code == 200
-    # a non-member stranger cannot
-    r = client.post(
-        f"/topics/{tid}/members",
-        json={"handle": "dave", "role": "member", "actor": "stranger"},
-        headers=session_auth_headers("stranger"),
     )
     assert r.status_code == 403
 
@@ -133,56 +110,6 @@ def test_duplicate_member_rejected(client):
     assert r.status_code == 422
 
 
-def test_update_role(client):
-    tid = _topic(client, created_by="alice")
-    client.post(
-        f"/topics/{tid}/members",
-        json={"handle": "bob", "role": "member", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    r = client.put(
-        f"/topics/{tid}/members/bob",
-        json={"role": "admin", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["role"] == "admin"
-
-
-def test_non_manager_cannot_update_role(client):
-    tid = _topic(client, created_by="alice")
-    client.post(
-        f"/topics/{tid}/members",
-        json={"handle": "bob", "role": "member", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    r = client.put(
-        f"/topics/{tid}/members/cheese",
-        json={"role": "admin", "actor": "bob"},
-        headers=session_auth_headers("bob"),
-    )
-    assert r.status_code == 403
-
-
-def test_cannot_remove_last_owner(client):
-    tid = _topic(client, created_by="alice")
-    r = client.delete(
-        f"/topics/{tid}/members/alice",
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 422
-
-
-def test_cannot_demote_last_owner(client):
-    tid = _topic(client, created_by="alice")
-    r = client.put(
-        f"/topics/{tid}/members/alice",
-        json={"role": "member", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 422
-
-
 def test_remove_member(client):
     tid = _topic(client, created_by="alice")
     client.post(
@@ -197,21 +124,6 @@ def test_remove_member(client):
     assert r.json()["data"]["deleted"] is True
     handles = {m["member_handle"] for m in _roster(client, tid)}
     assert "bob" not in handles
-
-
-def test_second_owner_lets_first_be_removed(client):
-    """The last-owner guard is about the COUNT — promote a second owner and the
-    first can leave."""
-    tid = _topic(client, created_by="alice")
-    client.post(
-        f"/topics/{tid}/members",
-        json={"handle": "bob", "role": "owner", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    r = client.delete(
-        f"/topics/{tid}/members/alice", headers=session_auth_headers("bob")
-    )
-    assert r.status_code == 200
 
 
 def test_endpoints_require_existing_topic(client):
@@ -248,7 +160,7 @@ def test_each_agent_row_is_named_after_the_agent_seated_there(client):
     ).json()["data"]
     r = client.post(
         f"/topics/{tid}/members",
-        json={"handle": reviewer["seat_handle"], "role": "member", "actor": "alice"},
+        json={"handle": reviewer["seat_handle"], "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
@@ -317,7 +229,7 @@ def test_roster_reports_the_global_default_avatar_as_no_avatar(client):
         assert (
             client.post(
                 f"/topics/{tid}/members",
-                json={"handle": handle, "role": "member", "actor": "dan"},
+                json={"handle": handle, "actor": "dan"},
                 headers=session_auth_headers("dan"),
             ).status_code
             == 200

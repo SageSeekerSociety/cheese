@@ -27,7 +27,7 @@ window.WebSocket = class {
   removeEventListener() {}
 };
 const message = (id, content, created_at) => ({
-  id, project_id: 'p1', topic_id: 't1', kind: 'message',
+  id, project_id: 'p1', conversation_id: 't1', kind: 'message',
   author_type: 'participant', author: 'me', content,
   reply_to: null, refs: [], created_at, task_id: null,
 });
@@ -164,7 +164,7 @@ test("first-row actions stay in the scroll viewport and remain clickable on poin
 
   // Approach through the toolbar's actual hit area, so moving onto its buttons
   // must preserve the same row instead of hiding or retargeting the actions.
-  const reply = bar.getByRole("button", { name: "回复", exact: true });
+  const reply = bar.getByRole("button", { name: "引用回复", exact: true });
   const bounds = await reply.boundingBox();
   if (!bounds) throw new Error("reply action has no visible box");
   const center = {
@@ -444,7 +444,7 @@ test("180px desktop pane preserves author clicks and keeps actions above the mes
   await expect(
     page
       .locator(".hover-bar")
-      .getByRole("button", { name: "回复", exact: true }),
+      .getByRole("button", { name: "引用回复", exact: true }),
   ).toBeVisible();
 });
 
@@ -507,7 +507,7 @@ test("compact desktop menu keeps all actions on its captured message after hover
   };
   await open("before");
   await expect(menu.locator(".hover-menu__emojis button")).toHaveCount(8);
-  for (const label of ["回复", "复制", "转为任务"]) {
+  for (const label of ["引用回复", "复制", "转为任务"]) {
     await expect(menu.getByText(label, { exact: true })).toBeVisible();
   }
   await expect(menu.getByText("编辑", { exact: true })).toHaveCount(0);
@@ -539,7 +539,7 @@ test("compact desktop menu keeps all actions on its captured message after hover
     body: JSON.stringify(hoverTarget, null, 2),
     contentType: "application/json",
   });
-  await menu.getByText("回复", { exact: true }).click();
+  await menu.getByText("引用回复", { exact: true }).click();
   await expect(page.locator(".reply-chip")).toContainText("前一条消息。");
   await expect(page.locator(".reply-chip")).not.toContainText("自己的消息。");
   // The label appears before its row finishes growing. Finish that real layout
@@ -613,7 +613,7 @@ test("compact menu returns visible focus and preserves it when the pane grows", 
   await expect(more).toBeVisible();
   await expect(more).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(menu.getByText("回复", { exact: true })).toBeVisible();
+  await expect(menu.getByText("引用回复", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(more).toBeFocused();
   await page.keyboard.press("Tab");
@@ -676,7 +676,7 @@ test("focused message actions survive both directions of desktop pane resize", a
   await page.locator(".hover-bar__wide .rx-toggle").focus();
   await page.keyboard.press("Tab");
   await expect(
-    page.locator('.hover-bar__wide button[title="回复"]'),
+    page.locator('.hover-bar__wide button[title="引用回复"]'),
   ).toBeFocused();
   await page.mouse.move(800, 700);
   await dragPane(180);
@@ -749,7 +749,7 @@ test("focused message actions survive both directions of desktop pane resize", a
   await expect(more).toBeVisible();
   await expect(more).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(menu.getByText("回复", { exact: true })).toBeVisible();
+  await expect(menu.getByText("引用回复", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.keyboard.press("Tab");
   await expect(more).not.toBeFocused();

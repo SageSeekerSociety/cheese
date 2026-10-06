@@ -349,7 +349,7 @@ def test_a_session_whose_hosts_keep_failing_is_told_retries_were_made(
     assert "preparing" not in data
     assert data["unavailable"].startswith("沙箱准备失败")
     assert f"连续 {MAX_PROVIDER_ERRORS} 次" in data["unavailable"]
-    assert "重试" in data["unavailable"]
+    assert "每 5 分钟再试一次" in data["unavailable"]
     assert len(case.cloud.created) == MAX_PROVIDER_ERRORS
     assert len(case.cloud.deleted) == MAX_PROVIDER_ERRORS
     case.hub.exec.assert_not_awaited()

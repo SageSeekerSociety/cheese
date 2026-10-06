@@ -40,7 +40,7 @@ presenting that credential, since the session holds the same scoped token. Fail-
 control plane falls back to the subscription — the destination this proxy has
 always had — never to a gateway whose per-project key it would not hold.
 
-## Who reaches which listener (and the MicroCloud gap this closed)
+## Who reaches which listener
 
 Two listeners, because a client's *shape* decides how it can be steered here at
 all:
@@ -48,24 +48,17 @@ all:
 | Listener | Steered by | Who |
 |---|---|---|
 | `:443` reverse | DNS (`--add-host`) | containers on this box — needs root to write hosts |
-| `:8444` CONNECT | `HTTPS_PROXY` | every bare process: local device screens, **and MicroCloud machines** |
+| `:8444` CONNECT | `HTTPS_PROXY` → the machine's tunnel helper → `/llm/tunnel` | every bare device screen, on this box or any other machine |
 
-A remote machine has no root, no docker and no `/etc/hosts` to rewrite, so
+A bare process has no root, no docker and no `/etc/hosts` to rewrite, so
 CONNECT is its only route. It also cannot set `ANTHROPIC_BASE_URL` instead:
 that flips Claude Code into API-key mode, where it ignores the OAuth token
 entirely — so a subscription turn *must* be steered at the transport layer.
 
-`:8444` used to be pinned to the docker bridge, which is what actually blocked
-remote subscription turns. It was never a routing problem: measured 2026-08-14
-from machine `192.168.31.2`, the box answers on `192.168.16.5:22` while
-`172.17.0.1:8444` does not — the machine shares the box's `/20`, but nothing
-routes to a bridge address. Hence `CONNECT_BIND_HOST` (see `compose.yml`);
-`0.0.0.0` on a box that serves machines, since local screens still use the
-bridge address.
-
-Both halves are needed: this publishes the listener, and the backend's
-`subscription_device_proxy_host` is the address a machine is *told* to use.
-Set one without the other and every launch logs an error naming the missing one.
+No machine dials `:8444` itself. Its `claude` points HTTPS_PROXY at a helper on
+its own loopback, the helper carries the CONNECT stream over the model tunnel on
+the same base the machine reaches the backend at, and the tunnel connects to
+`:8444` on the bridge address. So the listener is bridge-only, like `:443`.
 
 ## Why the constraints are what they are
 
@@ -192,7 +185,12 @@ The credential can have an egress: an HTTP proxy that every request carrying
 it, token refreshes included, leaves through. Nothing else changes route — the
 gateway, the answers given here and everything tunnelled raw keep their own.
 An egress that is down or refuses the proxy fails the request; it is never sent
-direct instead.
+direct instead. Before a request goes out through it, the proxy checks that the
+egress accepts a connection, with three short attempts so that a blip of a few
+seconds does not fail the turn. An egress that does not answer gets a 503 with
+`x-should-retry: false`, which Claude Code does not retry, and the room shows a
+notice that the subscription's egress machine is offline. That verdict lasts
+five seconds, so the machine is used again as soon as it is back.
 
 - `claude-login.sh egress set http://[user:pass@]host:port` sets it, from the
   next request.

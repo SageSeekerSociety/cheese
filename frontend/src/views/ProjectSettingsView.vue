@@ -15,7 +15,7 @@ import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
 import ProjectMcpSettings from '@/components/ProjectMcpSettings.vue'
-import ProjectTopicNamingSettings from '@/components/ProjectTopicNamingSettings.vue'
+import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vue'
 import AgentTeamSettings from '@/components/settings/AgentTeamSettings.vue'
 import ArchiveProjectSection from '@/components/settings/ArchiveProjectSection.vue'
 import AttributionSettings from '@/components/settings/AttributionSettings.vue'
@@ -24,6 +24,7 @@ import CreditsPanel from '@/components/settings/CreditsPanel.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubAccountSettings from '@/components/settings/GithubAccountSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
+import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
@@ -126,10 +127,11 @@ watch(
 const { mdAndUp } = useDisplay()
 const router = useRouter()
 
-/** 九栏；归档只有所有者看得到。 */
+/** 十栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
+  { group: 'collab', key: 'channels', icon: 'mdi-pound' },
   { group: 'ai', key: 'agents', icon: 'mdi-robot-outline' },
-  { group: 'ai', key: 'topic-naming', icon: 'mdi-format-title' },
+  { group: 'ai', key: 'task-naming', icon: 'mdi-format-title' },
   { group: 'run', key: 'computer', icon: 'mdi-server-outline' },
   { group: 'run', key: 'environment', icon: 'mdi-console' },
   { group: 'code', key: 'merge', icon: 'mdi-source-merge' },
@@ -140,7 +142,7 @@ const SECTIONS = computed(() => [
 ])
 
 const groups = computed(() =>
-  ['ai', 'run', 'code', 'data', 'danger']
+  ['collab', 'ai', 'run', 'code', 'data', 'danger']
     .map((group) => ({
       key: group,
       title: group === 'danger' ? undefined : t(`work.projectSettings.groups.${group}`),
@@ -242,8 +244,13 @@ function close() {
           </section>
         </template>
 
-        <section v-else-if="section === 'topic-naming'" class="page-section">
-          <ProjectTopicNamingSettings :project-id="projectId" />
+        <ProjectChannelSettings
+          v-else-if="section === 'channels'"
+          :project-id="projectId"
+          @open-channel="(topic) => router.push({ name: 'workspace-topic', params: { projectId, topicId: topic.id } })"
+        />
+        <section v-else-if="section === 'task-naming'" class="page-section">
+          <ProjectTaskNamingSettings :project-id="projectId" />
         </section>
 
         <template v-else-if="section === 'computer'">

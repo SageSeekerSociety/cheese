@@ -179,7 +179,6 @@ describe('壳决定露出哪几格、什么顺序', () => {
       tabs: ['workspace', 'home', 'inbox'],
       project: [],
     },
-    hidden: [],
     terms: { project: '工作', topic: '议题' },
   }
 
@@ -265,7 +264,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
 
   it('default 壳把所有格子都列了出来', () => {
     // rail 和底栏没有「更多」——一格从清单里去掉就是真的到不了。壳在这里只能
-    // 重排，不能删；要收起某个平台概念，走 hidden + 「更多」（项目侧栏那条路）。
+    // 重排，不能删；项目里的页收进项目名菜单（项目侧栏那条路）。
     expect(DEFAULT_SHELL.nav.rail).toEqual(['home', 'projects', 'add'])
     expect(DEFAULT_SHELL.nav.tabs).toEqual(['home', 'workspace', 'inbox'])
   })

@@ -22,16 +22,15 @@ import { setLocale } from '@/i18n'
 
 const writeText = vi.fn().mockResolvedValue(undefined)
 
-function block(id: string, taskId: string | null = null): Block {
+function block(id: string): Block {
   return {
     id,
-    topic_id: 'tp1',
+    conversation_id: 'tp1',
     kind: 'message',
     author_type: 'participant',
     author: '张衡',
     content: '这一条',
     created_at: '2026-09-20T00:00:00Z',
-    task_id: taskId,
   }
 }
 
@@ -97,19 +96,6 @@ describe('消息的悬停条：复制链接', () => {
     expect(url.searchParams.get('block')).toBe('b1')
   })
 
-  it('活卡里的对话多带 tab 和 card', async () => {
-    const router = await routerStoppedOnTopic()
-    const { container } = renderBar(block('b2', 'task9'), router)
-
-    await fireEvent.click(linkButton(container)!)
-    await flush()
-
-    const url = new URL(writeText.mock.calls[0][0] as string)
-    expect(url.searchParams.get('block')).toBe('b2')
-    expect(url.searchParams.get('tab')).toBe('overview')
-    expect(url.searchParams.get('card')).toBe('task9')
-  })
-
   it('复制完原地说一声「已复制链接」', async () => {
     const router = await routerStoppedOnTopic()
     const { container } = renderBar(block('b1'), router)
@@ -151,11 +137,26 @@ describe('右键一条消息', () => {
     const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) =>
       el.textContent?.trim()
     )
-    expect(items).toContain('回复')
+    expect(items).toContain('引用回复')
     expect(items).toContain('复制')
     unmount()
     await flush()
     document.elementFromPoint = elementFromPoint
     vi.unstubAllGlobals()
+  })
+})
+
+describe('在支线中回复', () => {
+  it('频道主线上的消息有这一颗，点它就是要这一条的支线', async () => {
+    const { container, emitted } = renderBar(block('b1'), undefined, { threadable: true })
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="reply-in-thread"]')
+    expect(button).not.toBeNull()
+    await fireEvent.click(button!)
+    expect((emitted().thread as Block[][])[0][0].id).toBe('b1')
+  })
+
+  it('私聊、任务和支线里的消息没有支线，不给这一颗', () => {
+    const { container } = renderBar(block('b1'))
+    expect(container.querySelector('[data-testid="reply-in-thread"]')).toBeNull()
   })
 })

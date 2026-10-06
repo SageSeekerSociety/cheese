@@ -146,4 +146,4 @@ resident:
 
 ## 日志 {#logs}
 
-所有容器的日志写到主机的 journald，而不是容器目录。发版删掉旧容器后，旧容器的日志仍能用 `journalctl CONTAINER_NAME=cheese-backend-1` 读到。
+所有容器的日志写到主机的 journald，而不是容器目录。发版删掉旧容器后，旧容器的日志仍能用 `journalctl CONTAINER_NAME=cheese-backend-1` 读到。有 app-router 的盒子（dev）上主 API 在两个槽位之间轮换，容器名每次发版在 `cheese-backend-1` 和 `cheese-backend-b-1` 之间换，两个都要查；当前在跑的是哪个，问 `deploy/app-container.sh backend`。

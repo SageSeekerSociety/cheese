@@ -31,11 +31,11 @@ AFTER = "f7985445d2bf"
 BACKEND = Path(__file__).resolve().parents[2]
 
 
-def _alembic(url: str, target: str) -> None:
+def _alembic(url: str, target: str, env: dict[str, str] | None = None) -> None:
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", target],
         cwd=BACKEND,
-        env={**os.environ, "DATABASE_URL": url},
+        env={**os.environ, "DATABASE_URL": url, **(env or {})},
         capture_output=True,
         text=True,
     )

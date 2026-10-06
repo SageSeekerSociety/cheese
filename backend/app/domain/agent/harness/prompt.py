@@ -193,8 +193,8 @@ ALWAYS_PUSH = (
 #: 时关掉（见各 harness 的 ``behaviour.py``），所以什么时候用它要在这里说一次。
 TODO_WRITE = (
     "## 步骤清单（todo_write）\n"
-    "多步的活（大约三步以上）开工时先用 `todo_write` 写下计划，它在房间里发成你的一条"
-    "清单消息；之后每次写都是改这同一条。同一时刻只让一项 in_progress；做完一项就再写"
+    "多步的活（大约三步以上）开工时先用 `todo_write` 写下计划，它显示成你在这段对话里"
+    "的进度清单；之后每次写都是改这同一份。同一时刻只让一项 in_progress；做完一项就再写"
     "一次，把它标成 completed、把下一项标成 in_progress。每次都传完整的清单。做完时"
     "再写一次，所有项标 completed，用 result 写一句落下了什么。有人提了新的请求，就带"
     " new=true 另起一条。简单的问答不用写。"
@@ -205,12 +205,12 @@ TODO_WRITE = (
 #: 提问也是平台工具：`cheese_ask` 的问题带按钮出现在对话里，答案下一轮带回。各
 #: harness 自带的提问工具大多已关掉，关不掉的只剩 Codex 的
 #: `request_user_input_async`（issue #1880：由模型目录决定，没有配置开关）。它
-#: 不卡住这一轮，但问出去的话是普通输出，只进现场、不进对话，房间里没人看得到，
+#: 不卡住这一轮，但问出去的话是普通输出，只进现场、不进对话，谁都看不到，
 #: 所以只能在这里说清楚。
 ASK_ONLY_CHEESE_ASK = (
     "## 向人提问\n"
     "要人回答或拍板时只用 `cheese_ask`。你自带的其他提问工具（例如 "
-    "`request_user_input_async`）不要用：它问出去的话只落在现场，房间里没人看得到，"
+    "`request_user_input_async`）不要用：它问出去的话只落在现场，对话里没人看得到，"
     "也不会有人回答。"
 )
 
@@ -245,7 +245,7 @@ WRITING = (
 )
 
 
-#: 实况文档怎么写、怎么改：每个房间都有一份，几乎每轮都可能动它，所以每轮都在。
+#: 实况文档怎么写、怎么改：每个任务都有一份，几乎每轮都可能动它，所以每轮都在。
 #: 它只写在 `doc_form.md`，有文档时和文档还空着时说的是同一份。
 DOC_FORM = load_skills(["doc-form"])
 
@@ -256,10 +256,29 @@ DOC_FORM = load_skills(["doc-form"])
 #: 子线程继承主线程的 developer instructions。pi 的分身没有带说明字段的工具。
 STEP_TITLES = (
     "每调一次工具，界面上的「施工现场」就多一行，显示你填的说明字段（Bash 和 "
-    "Agent 的 description）。这些字段用房间里的人说的语言写这一步在做什么，不复述"
-    "命令本身；看不出是哪种语言时用中文。派分身时，房间说的不是中文，就在 prompt "
+    "Agent 的 description）。这些字段用和你说话的人用的语言写这一步在做什么，不复述"
+    "命令本身；看不出是哪种语言时用中文。派分身时，对话用的不是中文，就在 prompt "
     "里写明用哪种语言。"
 )
+
+#: 改仓库、跑检查的每个 agent 动手前都要知道的几条：同一个仓库、同一台机器上同时
+#: 有别的任务在干活。主会话在 `PLATFORM_RULES` 里读到；Claude Code 起的 agent 由
+#: SubagentStart hook 补在开头（大活是分身在做，提交、拉取、起服务的多半是它们）；
+#: Codex 的子线程继承主线程的 developer instructions。pi 的分身没有核实过。
+SHARED_CHECKOUT = (
+    "- 同一台机器上可能有这个仓库的别的任务在干活，stash 栈是整个仓库共用的：不用 "
+    "`git stash`，要把改动放一边就提交；发起 `git pull`、`git merge`、`git rebase` "
+    "时加 `--no-autostash`，git 配置可能让它们自动 stash。hook 和 git 配置也是所有工作"
+    "目录共用的：不装 hook、不改配置，仓库要求装 hook 的，提交前自己跑它要的检查。\n"
+    "- `git add` 只点名该进仓库的文件，不用 `-A`、`.` 或整个目录：工作目录里还有中间"
+    "文件、比对用的旧版本、交付用的成品和 core dump。\n"
+    "- 测试库名能用环境变量或参数换的，换成带你工作目录路径特征的名字，端口挑一个空着"
+    "的；换不了就用默认值，不为这个改仓库配置。别人起的服务不停、不重启，别人建的测试"
+    "库不用。"
+)
+
+#: Claude Code 起的每个 agent 开头补的那一段（SubagentStart hook）。
+SUBAGENT_RULES = f"- {STEP_TITLES}\n{SHARED_CHECKOUT}"
 
 #: 每个托管仓库、每一轮都成立的平台规矩。按需的流程（交付、产物、邮件、定时）在
 #: cheese 技能里；这里只放芝士在任何一轮都可能撞上、撞上之前就得知道的几条。
@@ -267,7 +286,7 @@ STEP_TITLES = (
 #: 列表里给出文件位置，所以「怎么加载」在这里说一次，别处只说加载哪个。
 PLATFORM_RULES = (
     "## 平台规矩\n"
-    "- 房间里的人是产品用户，不是平台运维。诊断和恢复是你的事：不要让他去看日志、"
+    "- 和你说话的人是产品用户，不是平台运维。诊断和恢复是你的事：不要让他去看日志、"
     "跑命令、修鉴权或机器，也不要让他替你决定一次失败之后怎么重试。只有要他做产品"
     "决定，或者要只有他能给的东西（凭据、批准、付款、要人动手的操作）时才找他，"
     "而且只说那一件事。\n"
@@ -278,9 +297,8 @@ PLATFORM_RULES = (
     "- 平台数据用平台工具、`cheese` 命令行或 `platform_request` 取，不确定接口时先"
     "只传 `find`。不要自己提取凭据拼 curl 或裸 HTTP 请求，不翻 home、会话文件、"
     "`.git` 内部和系统目录。参数拿不准就看工具的定义或 `--help`，不要瞎试。\n"
-    "- 不用 `git stash`：整个仓库共用一个 stash 栈，你 pop 出来的可能是别的任务的"
-    "改动。要把改动放一边就提交。也不写 `.git/hooks`、不改共享的 git 配置。\n"
-    "- 改项目仓库里的文件、交出东西，在任务里做。任务由人创建：你在房间里时，"
+    f"{SHARED_CHECKOUT}\n"
+    "- 改项目仓库里的文件、交出东西，在任务里做。任务由人创建：你在支线里时，"
     "用 `cheese_task` 提议一个，等人创建。怎么提议、怎么交，在 `cheese` 技能里，"
     "先加载它。\n"
     "- 用户问这个平台怎么用，先用 `cheese_docs_search` 查官方说明书再答，不凭印象。\n"
@@ -300,22 +318,20 @@ DOC_SKILL = (
 )
 
 
-#: 话题还没名字、平台自己又起不了名时，这一轮的第一件事。它跟着这一轮的消息走，
-#: 不进系统提示词：起完名下一轮就不该再说，而系统提示词在会话里是不变的。
-UNTITLED_FIRST = (
-    "本话题还叫「新话题」（未命名）。本轮的第一个动作，在说开场白、回复任何内容、"
-    "调用任何其他工具之前，先根据用户的需求执行 `cheese_title` 起个不超过 12 字的"
-    "简短标题，然后再照常回应、干活。起标题只是一次工具调用，几乎不花时间。只起一次，"
-    "定了别反复改。"
+#: 任务还没名字、平台自己又起不了名时，跟着这一轮的消息提醒一句。不进系统
+#: 提示词：起完名就不该再说，而系统提示词在会话里是不变的。
+UNTITLED_TASK = (
+    "这个任务还叫「新任务」（未命名）。等你弄清楚要做的是什么，用 `cheese_title` "
+    "给它起一个不超过 12 字的简短标题。只起一次，定了别反复改。"
 )
 
 #: 实况文档那一节里，和文档现在写了什么无关的那几句。文档的内容在会话的开场快照里。
 DOC_SECTION = (
-    "## 当前话题的实况文档\n"
+    "## 实况文档\n"
     + DOC_FORM
-    + "\n\n文档现在的内容在会话开头「本话题现在的情况」里；之后被人改过时平台会"
-    "提醒你，改之前先用 `cheese_doc_get` 读最新一版。还没有文档时，由在这个话题里"
-    "干活的 AI 队友来建，不论你是哪个队友：等话题的目标或第一条结论清楚了（通常就在"
+    + "\n\n文档现在的内容在会话开头「现在的情况」里；之后被人改过时平台会"
+    "提醒你，改之前先用 `cheese_doc_get` 读最新一版。还没有文档时，由在这里"
+    "干活的 AI 队友来建，不论你是哪个队友：等目标或第一条结论清楚了（通常就在"
     "当轮），先 `cheese_doc_get`，再用 `cheese_doc_set` 建第一版。只是寒暄或一句话"
     "就答完的问题不用建。有人要一份单独的文档（调研、方案、清单）时，用 "
     "`cheese_doc_new` 建在项目资料库里，别写进实况文档。"
@@ -332,7 +348,7 @@ PROJECT_SKILLS = (
     "又做完了、用户接受了结果，就用 `cheese_skill_draft` 提议把这一整套存成项目技能，"
     "把那几条记忆写进 `absorbs`。用户明说「存下来」「以后都这样」时，直接起草。用户"
     "说的「技能」就是它。\n"
-    "一个会话最多提一次，在一件事做完时提，不在中途打断。房间里会出一张卡，用户点"
+    "一个会话最多提一次，在一件事做完时提，不在中途打断。对话里会出一张卡，用户点"
     "「保存」才生效，所以起草后用一两句话告诉他为什么值得存，别说成已经存好了。照一项"
     "项目技能做时被纠正了，用 `cheese_skill_update` 提议修改那一项。"
 )
@@ -400,8 +416,8 @@ class SessionOpening:
         if not self.sections:
             return ""
         return platform_prompt(
-            "## 本话题现在的情况\n"
-            "下面是这个会话开始时本话题和项目的情况，是平台给的，不是谁说的话。"
+            "## 现在的情况\n"
+            "下面是这个会话开始时你所在的地方和项目的情况，是平台给的，不是谁说的话。"
             "之后变了的部分，平台会在后面的消息里再告诉你。\n\n"
             + "\n\n".join(self.sections.values())
         )
@@ -438,6 +454,7 @@ def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str
 
 def build_session_opening(
     *,
+    thread: str | None = None,
     doc: str | None = None,
     memory: MemoryIndex | None = None,
     roster: list[dict] | None = None,
@@ -448,24 +465,27 @@ def build_session_opening(
     teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
 ) -> SessionOpening:
-    """新会话第一条消息前面的那份现状：话题、产物、成员、总览、文档、记忆索引。"""
+    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。"""
     sections: dict[str, str] = {}
+    if thread:
+        sections["thread"] = "## 这条支线\n" + thread
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         sections["topics"] = (
-            "## 项目话题（交叉引用某个话题/它的文档时，在标题前加 @，如 "
-            "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n"
-            "下面**只列当前活跃的话题**。项目里还有已归档的话题，它们照常存在、"
-            "内容也照常可读，只是不在这里列出来；**没列出来 ≠ 不存在**。需要找"
-            "它们时自己查（返回全部话题，含 archived 的标题和 id）：\n"
+            "## 项目的频道（引用某个频道时在名字前加 @，如 `@前端`——会渲染成"
+            "可点的「#名字」链接）\n"
+            "下面**只列没归档的频道**。已归档的频道照常存在、内容照常可读，只是"
+            "不在这里列出来；**没列出来 ≠ 不存在**。需要找它们时自己查（返回全部"
+            "频道，含 archived 的名字和 id）：\n"
             '`platform_request(method="GET", '
-            'path="/topics?project_id=<本项目 id>&topic=<本话题 id>")`\n'
-            "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。"
+            'path="/topics?project_id=<本项目 id>&topic=<CHEESE_TOPIC>")`\n'
+            "拿到 id 后用 `<#id>` 就能精确引用任何一个频道（包括没列在下面的）。"
             "读项目级的清单（`/topics`、`/projects/<id>/tasks`、"
             "`weeklies`、`library`、`artifacts`）都要带 "
-            "`topic=<本话题 id>` 点名你所在的位置，不带会 403——那不是没权限。\n" + lines
+            "`topic=<CHEESE_TOPIC>`（环境变量里你所在对话的 id）点名你所在的位置，"
+            "不带会 403——那不是没权限。\n" + lines
         )
     if artifacts is not None:
         # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，
@@ -505,7 +525,7 @@ def build_session_opening(
         )
     if overview_doc:
         # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
-        # 有一份总览文档，每间房间都读到同一份，谁改了都留痕。
+        # 有一份总览文档，每段对话都读到同一份，谁改了都留痕。
         #
         # 这一份**分三块，只有第一块是写的**（#1889 第 1 条）。②③ 由平台从结构
         # 化数据现拼，进不了文档正文：手抄一份进去，读的人读到的不是它，而抄的人
@@ -513,23 +533,23 @@ def build_session_opening(
         # 手抄的结论贴回来。
         #
         # 传进来的那一段已经按这个结构拼好了（`chat._project_overview`）：① 从总览
-        # 文档里取，②③ 只在总览房间拼。帽子仍然戴在整段上，防的是一份还没按新
+        # 文档里取，②③ 只在「综合」拼。帽子仍然戴在整段上，防的是一份还没按新
         # 结构写过的老总览——那时 ① 取不到，注入的就是全文。
         sections["overview"] = (
-            "## 项目总览（全项目共看的那一份，不是本话题的）\n"
+            "## 项目总览（全项目共看的那一份）\n"
             "项目所有人和所有芝士共同看的就是它：项目是什么、现在在做什么、定了"
             "什么、谁在负责。它分三块，**只有第一块是写的**：\n"
-            "- **① 项目是什么** —— 你和人写，正文只有这一块（到总览房间用 "
-            "`cheese_doc_edit` 改根话题的实况文档）：目标、范围（做 / 不做）、"
+            "- **① 项目是什么** —— 你和人写，正文只有这一块（用 `cheese_doc_edit` 改"
+            "「综合」频道的实况文档）：目标、范围（做 / 不做）、"
             "对外口径，≤1500 字。它很少变，变了才改。\n"
-            "- **② 现在在做什么 / ③ 已结束的话题** —— "
-            "**平台从结构化数据现拼，不在文档正文里**。要改就改源头：话题本身、"
+            "- **② 现在在做什么 / ③ 已结束的任务** —— "
+            "**平台从结构化数据现拼，不在文档正文里**。要改就改源头：任务本身、"
             "结掉的那张卡。往正文里抄一份，"
-            "谁都不会读到它（本话题里没拼给你的那几块，自己查：`/topics`）。\n"
+            "谁都不会读到它（没拼给你的那几块，自己查：`/topics`）。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
-                full_read_hint="在项目根话题里调 `cheese_doc_get` 读全文",
+                full_read_hint="对「综合」频道调 `cheese_doc_get` 读全文",
             )
         )
     if doc:
@@ -539,7 +559,7 @@ def build_session_opening(
             full_read_hint="用 `cheese_doc_get` 读全文",
         )
     elif doc is not None:
-        sections["doc"] = "## 实况文档现在的内容\n\n本话题还没有实况文档。"
+        sections["doc"] = "## 实况文档现在的内容\n\n这里还没有实况文档。"
     if keeps_memory and memory is not None and not memory.is_empty():
         index_text = "\n\n".join(
             f"### {section.label}（`{section.prefix}/`）\n{section.text}"
@@ -560,11 +580,11 @@ def task_opening_prompt(*, title: str, owner: str | None, source: str) -> str:
     draft the task's document from it before anything else."""
     who = f"负责人是 @{owner}。" if owner else ""
     return (
-        f"这里是任务「{title}」，{who}它从房间里的讨论中创建：\n\n"
+        f"这里是任务「{title}」，{who}它从频道里的讨论中创建：\n\n"
         f"---\n{source}\n---\n\n"
         "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入：目标、现状、"
         "需要谁做什么、已确定、待决；讨论里否掉的做法写进已确定，标明不采用及原因。"
-        "任务还没有名字的话，用 cheese_title 起一个。然后用 chat_send 在任务里和负责人"
+        "然后用 chat_send 在任务里和负责人"
         "确认还没定的细节。负责人点「开始」之前，你只讨论、写文档，不改动项目。"
     )
 

@@ -11,7 +11,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { searchProject, searchProjectCounted } from '@/api'
+import { searchProject, searchProjectCounted } from '@/api/projectSearch'
 import { firstWord } from '@/commands/palette/results'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'

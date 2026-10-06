@@ -4,7 +4,7 @@
     "appUnavailable": "预览连接正常，但应用没有响应。请让芝士检查应用是否正常运行。",
     "connectionUnavailable": "预览连接尚未建立或已断开，不代表芝士已停止工作。请在现场查看运行状态；连接恢复后，此处会自动更新。",
     "roomOutputs": {
-      "title": "这个房间里的东西",
+      "title": "这个频道里的东西",
       "expand": "展开",
       "collapse": "收起",
       "openFile": "打开 {path}",
@@ -296,6 +296,7 @@
     "search": "搜索名字",
     "loading": "加载中",
     "denied": "只有这道题的出题人和空间管理员能看领取者",
+    "loadFailed": "领取者名单没读出来",
     "noMatch": "暂无符合条件的领取者",
     "empty": "暂无领取者",
     "col": {
@@ -467,6 +468,7 @@
       "inProgress": "进行中",
       "rejected": "未通过"
     },
+    "loadFailed": "这道题的数据没读出来",
     "team": "小队",
     "solo": "单人",
     "claims": "领取人数",

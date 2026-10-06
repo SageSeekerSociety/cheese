@@ -50,6 +50,14 @@ OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
 # 里找 bug。数字和响应体进的是进程日志 —— agent 读不到它们，平台读得到。
 EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
 
+# 这次会话的凭证只读工作机器（还没开始的任务、支线），而这一次要的是读以外的事
+# （`routes/execution.py` 的 `_reads`）。说成「可以重试」，agent 会照着去重试、
+# 约时间再试，并告诉人机器坏了；可机器好好的，重试只会再被拒一次。
+READ_ONLY_REFUSED = (
+    "这个会话对工作机器只读：可以看文件和 git 记录，不能执行命令、不能改文件。"
+    "这不是故障，重试结果一样；还没开始的任务要等负责人开始之后才能动手。"
+)
+
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
 # 够不着；可这一次做没做过不知道，所以也不能说「可以重试」—— 照做一遍，改动就可能
 # 做两次。
@@ -75,6 +83,18 @@ def _device_is_offline(response) -> bool:
     a retryable one-call failure while chat and platform tools kept working.
     """
     return response.status == 409 and response.getheader("X-Device-Id") is not None
+
+
+def _reads_only(token: str) -> bool:
+    """Whether this execution credential was issued to only read the machine
+    (``sandbox_auth.bind_resource_token``'s ``ro`` claim). Read off the token's
+    own claims: the refusal's body is the backend's wording, not a contract."""
+    body = token.rpartition(".")[0].removeprefix("cxss_")
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except ValueError:
+        return False
+    return isinstance(claims, dict) and claims.get("ro") is True
 
 
 def _link_interrupted(response) -> bool:
@@ -226,9 +246,9 @@ class PlatformHost:
     when the session is not on the machine (结论 63).
 
     The backend is reached from here, directly — that is why the table is whole
-    while the machine is gone. The two things a tool can need from the machine
-    (a file's bytes, a task's commits pushed) go through ``invoke`` and so share
-    its breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
+    while the machine is gone. The one thing a tool can need from the machine
+    (a task's commits pushed) goes through ``invoke`` and so shares its
+    breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
     """
 
     def __init__(self, client, invoke, call_id, doc_versions):
@@ -241,15 +261,6 @@ class PlatformHost:
     def request(self, plan):
         stdout = self.client.platform_request(plan)["value"]["stdout"]
         return json.loads(stdout) if stdout else {}
-
-    def read_file(self, path):
-        # The agent spells paths as it was shown them: the workspace's own path,
-        # or relative to it.
-        workspace = session_path(self.client.config.get("workspace") or "")
-        machine = path
-        if workspace and not machine.startswith("/"):
-            machine = f"{workspace.rstrip('/')}/{machine}"
-        return read_file_on_the_machine(self.invoke, machine, f"{self.call_id}-read")
 
     def wait_machine(self):
         # A command that does nothing, so the wait is the one every tool call
@@ -976,6 +987,10 @@ class RemoteClient:
                             or _device_is_offline(response)
                         ):
                             raise MachineOutOfReach
+                        if response.status == 403 and _reads_only(
+                            self.execution_token()
+                        ):
+                            raise RuntimeError(READ_ONLY_REFUSED)
                         raise RuntimeError(EXECUTOR_CALL_FAILED)
                     return json.loads(data)
                 except ConnectionRefusedError as exc:

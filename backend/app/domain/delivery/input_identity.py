@@ -3,13 +3,13 @@
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 
 @dataclass(frozen=True)
 class InputIdentity:
     project_id: uuid.UUID
-    topic_id: uuid.UUID
+    conversation_id: uuid.UUID
     recipient_handle: str
     harness: str
     native_session_id: str
@@ -27,7 +27,7 @@ class InputReceipt:
 @dataclass(frozen=True)
 class WorkCompletion:
     project_id: uuid.UUID
-    topic_id: uuid.UUID
+    conversation_id: uuid.UUID
     recipient_handle: str
     harness: str
     native_session_id: str
@@ -46,7 +46,7 @@ class WorkTermination:
     """
 
     project_id: uuid.UUID
-    topic_id: uuid.UUID
+    conversation_id: uuid.UUID
     recipient_handle: str
     harness: str
     native_session_id: str
@@ -83,7 +83,28 @@ class InputOutcomeUnconfirmed(Exception):
         )
 
 
-InputRegistrar = Callable[[InputIdentity], Awaitable[None]]
+class InputNotSent(Exception):
+    """Sending stopped before anything reached the transport.
+
+    The session could not be asked at all (not started by this process, or
+    could not be started again), so the input certainly is not in it. Unlike
+    :class:`InputOutcomeUnconfirmed` there is nothing to reconcile: the
+    registration is withdrawn and the input may be sent again."""
+
+    def __init__(self, identity: InputIdentity, reason: str):
+        self.identity = identity
+        super().__init__(reason)
+
+
+class InputRegistrar(Protocol):
+    """Commits an input's identity before it is sent; withdraws it when the
+    send stopped before anything left (:class:`InputNotSent`)."""
+
+    async def __call__(self, identity: InputIdentity) -> None: ...
+
+    async def withdraw(self, identity: InputIdentity) -> None: ...
+
+
 ReceiptConsumer = Callable[[InputReceipt], Awaitable[None]]
 CompletionConsumer = Callable[[WorkCompletion], Awaitable[None]]
 TerminationConsumer = Callable[[WorkTermination], Awaitable[None]]

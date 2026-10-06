@@ -12,7 +12,11 @@ from app.domain.living_doc.services import Documents
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.repositories import TopicRepository
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    registered,
+    session_auth_headers,
+)
 from tests.support.living_doc import document_of
 
 OWNER = "user-1"
@@ -45,15 +49,15 @@ def _seed(client, fn):
     client.portal.call(go)
 
 
-def _say(project: str, room: str, text: str, kind=BlockKind.message):
+def _say(project: str, room: str, text: str, kind=BlockKind.message, author=OWNER):
     async def go(db):
         db.add(
             Block(
                 project_id=uuid.UUID(project),
-                topic_id=uuid.UUID(room),
+                conversation_id=uuid.UUID(room),
                 kind=kind,
                 author_type=AuthorType.participant,
-                author=OWNER,
+                author=author,
                 content=text,
             )
         )
@@ -139,7 +143,7 @@ def test_a_private_room_and_another_project_stay_out(client):
         db.add(
             Block(
                 project_id=uuid.UUID(project),
-                topic_id=room.id,
+                conversation_id=room.id,
                 kind=BlockKind.message,
                 author_type=AuthorType.participant,
                 author=OWNER,
@@ -391,7 +395,7 @@ def test_counts_leave_out_rooms_the_caller_cannot_read(client):
         db.add(
             Block(
                 project_id=uuid.UUID(project),
-                topic_id=room.id,
+                conversation_id=room.id,
                 kind=BlockKind.message,
                 author_type=AuthorType.participant,
                 author=OWNER,
@@ -458,3 +462,104 @@ def _cost_of_one_search(client, rooms: int) -> int:
 
 def test_checking_which_rooms_to_search_does_not_grow_with_the_rooms(client):
     assert _cost_of_one_search(client, 30) == _cost_of_one_search(client, 5)
+
+
+# A hit names who wrote it the way the rest of the product does: by the name
+# they go by when the search is made, not by the handle stored on the record.
+
+
+def _nickname(handle: str, nickname: str):
+    """``handle`` goes by ``nickname`` from now on."""
+
+    async def go(db):
+        from sqlalchemy import select
+
+        from app.domain.user.models import UserProfile
+
+        user_id = await registered(db, handle)
+        profile = await db.scalar(
+            select(UserProfile).where(
+                UserProfile.user_id == user_id, UserProfile.deleted_at.is_(None)
+            )
+        )
+        if profile is None:
+            now = datetime.now(UTC)
+            db.add(
+                UserProfile(
+                    user_id=user_id,
+                    nickname=nickname,
+                    intro="",
+                    avatar_id=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            profile.nickname = nickname
+
+    return go
+
+
+def _authors(client, project, q, **params) -> dict[str, tuple]:
+    r = client.get(
+        f"/projects/{project}/context/search",
+        params={"q": q, **params},
+        headers=session_auth_headers(OWNER),
+    )
+    assert r.status_code == 200, r.text
+    return {
+        h["snippet"]: (h["author"], h["author_name"], h["author_name_source"])
+        for h in r.json()["data"]["hits"]["records"]
+    }
+
+
+def test_a_hit_names_a_person_by_the_nickname_they_have_now(client):
+    project = _project(client)
+    room = _room(client, project, "限流")
+    _seed(client, _nickname(OWNER, "Ada"))
+    _seed(client, _say(project, room, "限流阈值定为每秒五十"))
+    _seed(client, _paragraph(project, room, "限流阈值写进文档"))
+    _seed(client, _say(project, room, "限流先观察一周", author="no-such-person"))
+
+    everything = _authors(client, project, "限流阈值")
+    assert everything == {
+        "限流阈值定为每秒五十": (OWNER, "Ada", None),
+        "限流阈值写进文档": (OWNER, "Ada", None),
+    }
+
+    _seed(client, _nickname(OWNER, "Ada Lovelace"))
+    one_kind = _authors(client, project, "限流", only=["message"])
+    assert one_kind == {
+        "限流阈值定为每秒五十": (OWNER, "Ada Lovelace", None),
+        # No one on the platform has that handle: no name to show.
+        "限流先观察一周": ("no-such-person", None, None),
+    }
+
+
+def test_a_hit_names_a_teammate_by_its_name_in_the_project_now(client):
+    project = _project(client)
+    room = _room(client, project, "压测")
+    made = client.post(
+        f"/projects/{project}/agents",
+        json={"handle": "cheese-kimi", "display_name": "Kimi"},
+    )
+    assert made.status_code == 200, made.text
+    kimi = made.json()["data"]
+    # A teammate writes under its seat; its own handle names it as well.
+    _seed(client, _say(project, room, "压测结果已出", author=kimi["seat_handle"]))
+    _seed(client, _say(project, room, "压测还要再跑", author="cheese-kimi"))
+
+    assert _authors(client, project, "压测") == {
+        "压测结果已出": (kimi["seat_handle"], "Kimi", "human"),
+        "压测还要再跑": ("cheese-kimi", "Kimi", "human"),
+    }
+
+    renamed = client.put(
+        f"/projects/{project}/agents/{kimi['id']}", json={"display_name": "Kimi K3"}
+    )
+    assert renamed.status_code == 200, renamed.text
+    names = {
+        name
+        for _, name, _ in _authors(client, project, "压测", only=["message"]).values()
+    }
+    assert names == {"Kimi K3"}

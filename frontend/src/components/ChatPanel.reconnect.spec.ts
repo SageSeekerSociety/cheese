@@ -81,7 +81,7 @@ function stored(body: ChatMessageBody, topicId = vi.mocked(postChatMessage).mock
   return {
     id: crypto.randomUUID(),
     project_id: 'p',
-    topic_id: topicId,
+    conversation_id: topicId,
     kind: 'message',
     author_type: 'participant',
     author: 'u',
@@ -416,7 +416,7 @@ it('keeps a reaction received before its message arrives in history', async () =
     data: [
       {
         id: 'old',
-        topic_id: 'room',
+        conversation_id: 'room',
         kind: 'message',
         author: 'alice',
         author_type: 'participant',

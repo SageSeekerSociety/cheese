@@ -67,7 +67,7 @@ async def ask_for_a_delivery(
         when=when,
         event=body.get("content") or "",
         recipient=recipient,
-        topic_id=topic_id,
+        conversation_id=place.conversation_id,
         project_id=place.project_id,
     )
     return ok({"id": str(row.id), "at": when.isoformat(), "to": recipient})

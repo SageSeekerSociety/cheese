@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import LandingUseCaseScene, { type UseCaseRole } from './LandingUseCaseScene.vue'
 
 import { t } from '@/i18n'
+import { docsUrl } from '@/lib/docsSite'
 
 // What each kind of visitor does in the product, one tab per role: four concrete
 // things they do, the page of the manual that walks them through it, and a sample
@@ -21,7 +22,7 @@ const roles = computed(() => [
       { title: t('publicSite.useCases.teachers.item3Title'), body: t('publicSite.useCases.teachers.item3Body') },
       { title: t('publicSite.useCases.teachers.item4Title'), body: t('publicSite.useCases.teachers.item4Body') },
     ],
-    docs: { label: t('publicSite.useCases.teachers.docs'), href: '/docs/challenges' },
+    docs: { label: t('publicSite.useCases.teachers.docs'), href: docsUrl('/challenges') },
   },
   {
     id: 'students' as UseCaseRole,
@@ -33,7 +34,7 @@ const roles = computed(() => [
       { title: t('publicSite.useCases.students.item3Title'), body: t('publicSite.useCases.students.item3Body') },
       { title: t('publicSite.useCases.students.item4Title'), body: t('publicSite.useCases.students.item4Body') },
     ],
-    docs: { label: t('publicSite.useCases.students.docs'), href: '/docs/student-tutorial' },
+    docs: { label: t('publicSite.useCases.students.docs'), href: docsUrl('/solve-a-challenge') },
   },
   {
     id: 'office' as UseCaseRole,
@@ -45,7 +46,7 @@ const roles = computed(() => [
       { title: t('publicSite.useCases.office.item3Title'), body: t('publicSite.useCases.office.item3Body') },
       { title: t('publicSite.useCases.office.item4Title'), body: t('publicSite.useCases.office.item4Body') },
     ],
-    docs: { label: t('publicSite.useCases.office.docs'), href: '/docs/office-tutorial' },
+    docs: { label: t('publicSite.useCases.office.docs'), href: docsUrl('/working-with-cheese') },
   },
   {
     id: 'developers' as UseCaseRole,
@@ -57,7 +58,7 @@ const roles = computed(() => [
       { title: t('publicSite.useCases.developers.item3Title'), body: t('publicSite.useCases.developers.item3Body') },
       { title: t('publicSite.useCases.developers.item4Title'), body: t('publicSite.useCases.developers.item4Body') },
     ],
-    docs: { label: t('publicSite.useCases.developers.docs'), href: '/docs/accept' },
+    docs: { label: t('publicSite.useCases.developers.docs'), href: docsUrl('/accept') },
   },
 ])
 

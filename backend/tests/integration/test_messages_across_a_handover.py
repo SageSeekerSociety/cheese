@@ -14,14 +14,17 @@ import uuid
 from sqlalchemy import select
 
 from app.api.deps import get_chat_service, get_work_runner
+from app.core import background
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -39,7 +42,8 @@ def _room(client) -> tuple[str, StubChannel, ChatService]:
         compute=stub_compute(channel),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    return room, channel, service
+    # 芝士 answers in a 支线: that is where these messages are said.
+    return in_thread(client, room, "alice"), channel, service
 
 
 def _blocks(client, room: str) -> list[Block]:
@@ -48,7 +52,7 @@ def _blocks(client, room: str) -> list[Block]:
             return list(
                 await session.scalars(
                     select(Block)
-                    .where(Block.topic_id == uuid.UUID(room))
+                    .where(Block.conversation_id == uuid.UUID(room))
                     .order_by(Block.created_at)
                 )
             )
@@ -119,7 +123,7 @@ def test_a_message_the_next_backend_already_holds_starts_one_turn(client):
                 list(
                     await session.scalars(
                         select(AgentTurn.id).where(
-                            AgentTurn.topic_id == uuid.UUID(room)
+                            AgentTurn.conversation_id == uuid.UUID(room)
                         )
                     )
                 )
@@ -203,6 +207,11 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
         compute=stub_compute(channel),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
+    # 芝士 answers in a 支线 of each channel; the machine is the channel's.
+    busy, waiting = (
+        in_thread(client, busy, "alice"),
+        in_thread(client, waiting, "alice"),
+    )
 
     _say(client, busy, "@芝士 跑个长任务")
     _say(client, waiting, "@芝士 修一下登录页")
@@ -220,3 +229,94 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
         assert time.monotonic() < deadline, "the queued message was never started"
         time.sleep(0.05)
     client.portal.call(settle_turn, service, uuid.UUID(waiting))
+
+
+def test_a_message_whose_wake_up_was_missed_starts_on_the_next_sweep(
+    client, monkeypatch
+):
+    """Nothing nudges the room again after the message's wait was dropped: the
+    periodic sweep is what starts it, within one interval."""
+    room, channel, service = _room(client)
+    runner = get_work_runner()
+    runner.hold_turns()
+    _say(client, room, "@芝士 修一下登录页")
+    client.portal.call(runner.let_go)
+    runner.start_turns()
+    assert _sent_to_the_session(channel, room) == []
+
+    class Unused:
+        """The other jobs in the list are built, never run here."""
+
+        def __getattr__(self, name):
+            return None
+
+    monkeypatch.setattr(settings, "queued_message_sweep_interval_s", 1)
+    [sweep] = [
+        job
+        for job in background.periodic_jobs(
+            chat=service,
+            machines=Unused(),
+            sandboxes=Unused(),
+            compute=Unused(),
+            sessions=client.test_request_factory,
+        )
+        if job.name == "queued message sweep"
+    ]
+
+    class Runs:
+        async def record(self, name, at):
+            pass
+
+    begun = time.monotonic()
+    client.portal.call(sweep.start, Runs())
+    try:
+        _until_answered(client, service, channel, room)
+    finally:
+        client.portal.call(sweep.stop)
+    assert time.monotonic() - begun < 1 + 5
+
+
+def test_a_message_held_by_an_open_turn_starts_when_its_stop_closes_it(client):
+    """The turn ahead's completion and idle frame can both arrive before its
+    Stop. Their scans find its interval still open and pass the message over;
+    the Stop closing that interval is the last thing that can start it."""
+    from datetime import UTC, datetime
+
+    room, channel, service = _room(client)
+    runner = get_work_runner()
+    runner.hold_turns()
+    _say(client, room, "@芝士 修一下登录页")
+    client.portal.call(runner.let_go)
+    runner.start_turns()
+    ahead = uuid.uuid4()
+
+    async def open_turn_ahead() -> None:
+        async with client.test_factory() as session:
+            now = datetime.now(UTC)
+            await AgentTurnRepository(session).open(
+                turn_id=ahead,
+                conversation_id=uuid.UUID(room),
+                continuation_id=ahead,
+                author="alice",
+                content="跑个长任务",
+                is_resume=False,
+                resendable=False,
+                started_at=now,
+                delivered_at=now,
+                agent_handle="cheese",
+            )
+            await session.commit()
+
+    asyncio.run(open_turn_ahead())
+    # The scans the completion and the idle frame ran: the seat is still busy.
+    assert client.portal.call(runner.resume_lost_messages, service) == 0
+    assert _sent_to_the_session(channel, room) == []
+
+    async def stop() -> None:
+        from app.domain.agent import hook_stream
+
+        await hook_stream.close_on_stop(service, uuid.UUID(room), ahead)
+
+    client.portal.call(stop)
+
+    _until_answered(client, service, channel, room)

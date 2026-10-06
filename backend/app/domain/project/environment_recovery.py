@@ -25,7 +25,7 @@ async def latest_recovery(db, topic_id):
     return await db.scalar(
         select(Block)
         .where(
-            Block.topic_id == topic_id,
+            Block.conversation_id == topic_id,
             Block.meta["event_type"].as_string() == "environment_recovery",
         )
         .order_by(Block.created_at.desc())
@@ -57,8 +57,7 @@ async def report_failure(
         landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
         event = await BlockRepository(db).add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,

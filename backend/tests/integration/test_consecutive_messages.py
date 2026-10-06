@@ -27,6 +27,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import registered
+from tests.support.threads import thread_in
 
 
 class WorkingScreen(StubChannel):
@@ -87,10 +88,11 @@ async def _a_topic(factory) -> uuid.UUID:
     async with factory() as session:
         await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
-        topic = await TopicService(session).create(
+        room = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="u"
         )
-        topic_id: uuid.UUID = topic.id
+        # 芝士 answers in a 支线 of the channel.
+        topic_id = await thread_in(session, room, "u")
         await session.commit()
     return topic_id
 
@@ -264,7 +266,8 @@ async def test_a_reply_sent_mid_turn_carries_the_message_it_answers(
     async with factory() as session:
         parent_id = await session.scalar(
             select(Block.id).where(
-                Block.topic_id == topic_id, Block.content.startswith("B 组第 7 行")
+                Block.conversation_id == topic_id,
+                Block.content.startswith("B 组第 7 行"),
             )
         )
 

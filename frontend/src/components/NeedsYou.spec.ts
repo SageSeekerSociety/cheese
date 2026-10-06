@@ -329,7 +329,7 @@ describe('变更提醒', () => {
     const { container, router } = mount()
     await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
 
-    await fireEvent.click(button(container, '去话题')!)
+    await fireEvent.click(button(container, '去频道')!)
 
     await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-topic'))
     expect(router.currentRoute.value.params).toMatchObject({
@@ -343,7 +343,7 @@ describe('变更提醒', () => {
     const { container } = mount()
 
     await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
-    expect(button(container, '去话题')).toBeUndefined()
+    expect(button(container, '去频道')).toBeUndefined()
 
     await fireEvent.click(button(container, '收起')!)
     await waitFor(() => expect(markRead).toHaveBeenCalledWith(1))
@@ -354,7 +354,7 @@ describe('变更提醒', () => {
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
 
-    expect(button(container, '去话题')).toBeUndefined()
+    expect(button(container, '去频道')).toBeUndefined()
     expect(button(container, '先做导出')).toBeTruthy()
   })
 

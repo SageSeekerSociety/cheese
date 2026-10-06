@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ask_receipt_wait import (
     ASK_RECEIPT_WAIT,
     AskReceiptPending,
@@ -34,7 +35,18 @@ from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
 LEASE_SECONDS = 120
+# An attempt that was not admitted waits before the next one, twice as long each
+# time, up to the cap. A fixed short wait turned every permanent refusal into a
+# loop: each retry is a whole turn that takes the seat and starts the session,
+# so a room with a dozen refused deliveries ran a turn every two seconds and
+# the people in it queued behind those (2026-10-06, 1278 in an hour).
 RETRY_SECONDS = 30
+RETRY_CAP_SECONDS = 300
+
+
+def retry_after(attempts: int) -> float:
+    """How long a delivery waits after its ``attempts``-th unadmitted attempt."""
+    return min(RETRY_SECONDS * 2 ** max(0, attempts - 1), RETRY_CAP_SECONDS)
 
 
 class DeliveryTargetChanged(ValidationError):
@@ -49,7 +61,7 @@ def work_interval_is_over():
     """Whether this input's own work interval is one the platform ended.
 
     A correlated EXISTS over the turn intervals, anchored on the input row that
-    names its work (``work_id``/``topic_id``). The fact belongs to the agent
+    names its work (``work_id``/``conversation_id``). The fact belongs to the agent
     domain's turn intervals, and that domain already imports this one (it reads
     answer ownership), so the question goes out through this seam — importing
     the turn models on the delivery side would close a domain cycle (C3 in
@@ -58,7 +70,7 @@ def work_interval_is_over():
     from app.domain.agent.runtime import AgentTurnRepository
 
     return AgentTurnRepository.interval_is_over(
-        turn_id=NativeInput.work_id, topic_id=NativeInput.topic_id
+        turn_id=NativeInput.work_id, topic_id=NativeInput.conversation_id
     )
 
 
@@ -72,7 +84,7 @@ async def instance_for_seat(session, project_id, seat):
 
 
 async def record_agent(
-    session, event: DeliveryEvent, *, topic_id, instance_id, content
+    session, event: DeliveryEvent, *, conversation_id, instance_id, content
 ):
     """Record one event/recipient in the producer's transaction, without I/O."""
     seat = agent_instance_handle(instance_id)
@@ -85,7 +97,7 @@ async def record_agent(
             recipient_handle=seat,
             receiver_id=None,
             agent_instance_id=instance_id,
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             dedup_key=dedup_key(event.id, seat),
             type=event.type.value,
             payload=payload,
@@ -102,8 +114,8 @@ async def record_task_instruction(
 ):
     """Keep an instruction for a task's own session until it is delivered.
 
-    Addressed to the conversation, not the room: ``topic_id`` is the task's id,
-    which is what the runner runs a turn in, and the agent is the one working
+    Addressed to the conversation, not the room: ``conversation_id`` is the task's
+    id, which is what the runner runs a turn in, and the agent is the one working
     the task (its own pick, else the project's).
     """
     from app.domain.agent_instance.services import AgentInstanceService
@@ -123,8 +135,7 @@ async def record_task_instruction(
             recipient_handle=agent_instance_handle(instance.id),
             receiver_id=None,
             agent_instance_id=instance.id,
-            topic_id=task.id,
-            task_id=task.id,
+            conversation_id=task.id,
             dedup_key=f"{event.id}:task",
             type=event.type.value,
             payload={**event.payload, "content": content},
@@ -145,10 +156,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
             await session.scalars(
                 select(Delivery)
                 .where(
-                    or_(
-                        Delivery.agent_instance_id.is_not(None),
-                        Delivery.task_id.is_not(None),
-                    ),
+                    Delivery.agent_instance_id.is_not(None),
                     Delivery.id.in_(delivery_ids)
                     if delivery_ids is not None
                     else true(),
@@ -168,10 +176,10 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 row.last_error = "Sender stopped before recording the receiver result"
                 continue
             agent = await session.get(AgentInstance, row.agent_instance_id)
-            if row.task_id is not None:
+            task = await session.get(Task, row.conversation_id)
+            if task is not None:
                 # A task's own session: the task must still be open, and the
                 # agent still the project's. It sits on no room's roster.
-                task = await session.get(Task, row.task_id)
                 topic = task and await session.get(Topic, task.room_id)
                 if (
                     task is None
@@ -186,7 +194,10 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                     row.last_error = "The task is no longer open"
                     continue
             else:
-                topic = await session.get(Topic, row.topic_id)
+                # A room's own line, or one of its 支线: the roster is the room's.
+                topic = await session.get(
+                    Topic, await room_of(session, row.conversation_id)
+                )
                 if (
                     topic is None
                     or topic.status == TopicStatus.archived
@@ -216,7 +227,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 (
                     row.id,
                     row.attempt_id,
-                    row.topic_id,
+                    row.conversation_id,
                     row.agent_instance_id,
                     row.recipient_handle,
                     content,
@@ -287,7 +298,7 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
                         seconds=(
                             ASK_SESSION_RETRY_SECONDS
                             if waiting_for_session
-                            else RETRY_SECONDS
+                            else retry_after(row.attempts)
                         )
                     )
                     row.last_error = (
@@ -300,7 +311,7 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
                         waiting is not None
                         and waiting.delivery_id == row.id
                         and waiting.attempt_id == row.attempt_id
-                        and waiting.identity.topic_id == row.topic_id
+                        and waiting.identity.conversation_id == row.conversation_id
                         and waiting.identity.recipient_handle == row.recipient_handle
                         and waiting.group_id == row.payload.get("ask_group")
                         and all(
@@ -360,24 +371,31 @@ async def fence_send(session, delivery_id, attempt_id):
     )
     if row is None:
         raise ValidationError("Delivery attempt no longer owns this input")
-    if row.task_id is not None:
-        task = await session.get(Task, row.task_id)
-        if task is None or task.status != TaskStatus.open:
-            message = "The task closed before delivery"
-            result = await session.execute(
-                update(Delivery)
-                .where(
-                    Delivery.id == delivery_id,
-                    Delivery.attempt_id == attempt_id,
-                    Delivery.state == "claimed",
-                    Delivery.lease_until > now(),
-                )
-                .values(state="failed", last_error=message, lease_until=None)
-                .returning(Delivery.id)
+    # The conversation it was addressed to must still be there, and a task's
+    # must still be open.
+    task = await session.get(Task, row.conversation_id)
+    message = (
+        "The task closed before delivery"
+        if task is not None and task.status != TaskStatus.open
+        else "The conversation is gone"
+        if task is None and await project_of(session, row.conversation_id) is None
+        else None
+    )
+    if message is not None:
+        result = await session.execute(
+            update(Delivery)
+            .where(
+                Delivery.id == delivery_id,
+                Delivery.attempt_id == attempt_id,
+                Delivery.state == "claimed",
+                Delivery.lease_until > now(),
             )
-            if result.scalar_one_or_none() is None:
-                raise ValidationError("Delivery attempt no longer owns this input")
-            raise DeliveryTargetChanged(message)
+            .values(state="failed", last_error=message, lease_until=None)
+            .returning(Delivery.id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValidationError("Delivery attempt no longer owns this input")
+        raise DeliveryTargetChanged(message)
     result = await session.execute(
         update(Delivery)
         .where(

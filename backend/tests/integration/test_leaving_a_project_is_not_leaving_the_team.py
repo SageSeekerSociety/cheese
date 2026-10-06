@@ -117,10 +117,10 @@ def new_room(client, pid: str, *, created_by: str, title: str) -> str:
     return r.json()["data"]["id"]
 
 
-def seat(client, tid: str, handle: str, *, by: str, role: str = "member") -> None:
+def seat(client, tid: str, handle: str, *, by: str) -> None:
     r = client.post(
         f"/topics/{tid}/members",
-        json={"handle": handle, "role": role},
+        json={"handle": handle},
         headers=auth(seed_user(client, by)),
     )
     assert r.status_code == 200, r.text
@@ -214,17 +214,16 @@ def still_on_the_team(client, pid: str, handle: str) -> bool:
 
 
 def test_a_teammate_leaves_the_project_and_loses_it_room_by_room(client, bearer):
-    """一个队友退出项目：名册上少一个人、三道门全关上、席位全撤（总览那一间也在内）。
+    """一个队友退出项目：名册上少一个人、三道门全关上、席位全撤，综合里也没有他了。
 
     「拒绝」的每一条前面都先断言他能进 —— 不然那几条 403 可能只是他本来就进不去。"""
     tid = team_of(client, owner="cap", members=("mate",))
     pid = project_in(client, tid, owner="cap")
     root = root_topic(client, pid, who="cap")
     room = new_room(client, pid, created_by="cap", title="设计讨论")
-    # 总览那一间不用给他座位：建项目时 ``seed_root`` 把当时名册上的人都放进去了
-    # （总览 = 项目本体），所以他有的是**一条真的席位行**，退出时得撤掉。
+    # 综合不用给他座位：项目里的人都在综合里。
     assert "mate" in room_handles(client, root, who="cap")
-    # 普通房间的座位是另发的。
+    # 别的频道的座位是另发的。
     seat(client, room, "mate", by="cap")
 
     # 之前：他进得来，名册上按小队读出来，两间房都坐着他。
@@ -244,7 +243,7 @@ def test_a_teammate_leaves_the_project_and_loses_it_room_by_room(client, bearer)
     assert status_of(client, f"/topics?project_id={pid}", "mate") == 403
     assert status_of(client, f"/topics/{root}", "mate") == 403
     assert status_of(client, f"/topics/{room}", "mate") == 403
-    # 席位撤干净了，项目总览那一间也在内。
+    # 席位撤干净了；综合里也没有他了，因为他不在项目里了。
     assert "mate" not in room_handles(client, root, who="cap")
     assert "mate" not in room_handles(client, room, who="cap")
     # 别人原封不动。
@@ -352,44 +351,21 @@ def test_the_owner_still_cannot_leave_the_project(client, bearer):
     assert reads(client, pid, root, "cap")
 
 
-def test_the_last_owner_of_a_room_still_cannot_leave_and_nothing_is_written(
-    client, bearer
-):
-    """某间房唯一的 owner、房里还有别人时仍然退不掉，理由点名那间房，而且一个字节
-    都不写。
-
-    这是既有行为（``revoke_project_seats`` 那条例外），退项目这条路现在也要过它：
-    席位先撤，那位唯一的 owner 撤不得，于是这条事实、名册行、席位三类写一个都不该发
-    生 —— **包括不记 ``ProjectMemberExclusion``**，否则人还在名册上、却已经进不去任
-    何房间了。这一条靠「他之后还读得到」来钉：记下这条事实的话，那道门当场就关了。"""
+def test_a_channels_creator_leaves_and_its_people_stay(client, bearer):
+    """一个频道的创建者退出项目：他走得掉，他的席位跟着撤掉，频道里别的人留着，
+    他也读不到这个项目了。"""
     tid = team_of(client, owner="cap", members=("mate",))
     pid = project_in(client, tid, owner="cap")
     root = root_topic(client, pid, who="cap")
-    mine = new_room(client, pid, created_by="mate", title="他管的房")
+    mine = new_room(client, pid, created_by="mate", title="他建的频道")
     seat(client, mine, "cap", by="mate")
     assert room_handles(client, mine, who="cap") == {"mate", "cap"}
-    assert reads(client, pid, root, "mate")
 
     r = leave(client, pid, "mate")
-    assert r.status_code == 422, r.text
-    # ``ValidationError`` 属于 cheesex 那一族（``app/core/errors.py``），响应是
-    # ``{"code", "message", "data"}``，没有 BaseError 那层的 ``error``。
-    assert "他管的房" in r.json()["message"]
-
-    # 一个字节都没动：名册上还有他（source 照旧是小队），席位还在，他也读得到。
-    assert roster(client, pid, who="cap")["mate"]["source"] == "team"
-    assert room_handles(client, mine, who="cap") == {"mate", "cap"}
-    assert reads(client, pid, root, "mate")
-
-    # 而且这不是死结：把房间交给那位室友之后，他就走得掉了。
-    handed_over = client.put(
-        f"/topics/{mine}/members/cap",
-        json={"role": "owner"},
-        headers=auth(seed_user(client, "mate")),
-    )
-    assert handed_over.status_code == 200, handed_over.text
-    assert leave(client, pid, "mate").status_code == 200
+    assert r.status_code == 200, r.text
     assert "mate" not in roster(client, pid, who="cap")
+    assert room_handles(client, mine, who="cap") == {"cap"}
+    assert not reads(client, pid, root, "mate")
 
 
 def test_someone_who_was_an_external_member_and_is_now_on_the_team_leaves_for_real(

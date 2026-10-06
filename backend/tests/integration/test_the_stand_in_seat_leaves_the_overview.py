@@ -12,194 +12,87 @@
 只从 agent 自己来），所以房间在 agent 开口前自己迁移共享席位那一步
 （`migrate_shared_agent_seat`）撞见总览上遗留的裸 `cheese` 行时只是把它删掉，
 补席位补的是这个项目自己那位芝士。替身只作为库里的存量出现在这里。
+
+前两个用例在迁移前一版的库上播种存量（没有默认 agent 的项目，总览坐着替身），
+升到这条迁移，再读名册和署名；后两个用例走的是今天的服务，不重放迁移。
 """
 
-import importlib.util
 import uuid
-from pathlib import Path
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 
-from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
-from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.integration.conftest import registered
+from tests.integration.migration_replay import (
+    block_author,
+    database_at,
+    roster,
+    seat_agent,
+    seat_handle,
+    seed_agent,
+    seed_agent_project,
+    seed_block,
+    stand_in_handle,
+)
+
+BEFORE = "c1a7e05d4b83"
+AFTER = "b4d1a70c9e52"
 
 
-def _migration():
-    path = (
-        Path(__file__).parents[2]
-        / "alembic/versions/b4d1a70c9e52_a_project_has_its_cheese_and_its_seat.py"
-    )
-    spec = importlib.util.spec_from_file_location("project_cheese_seat", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _stand_in(topic_id: uuid.UUID) -> str:
+def _stand_in(topic_id) -> str:
     """旧代码从**房间**派生出来的那个 handle。
 
     铸它的函数已经删了（一间房可以坐好几个 agent，从房间派生会给它们同一个名字），
     所以这里逐字写出库里存着的那个字符串：这些用例面对的就是存量行。
     """
-    return f"cheese-{topic_id.hex[:12]}"
+    return stand_in_handle(topic_id)
 
 
-async def _seat_a_stand_in(session, topic_id: uuid.UUID) -> str:
-    """把一条替身席位放回库里——用户行、execution binding、名册行，旧代码留下的
-    就是这三样，缺了 binding 名册就不认它是 agent。"""
-    handle = _stand_in(topic_id)
-    await IdentityService(session).ensure_agent_user(handle=handle)
-    await TopicMemberService(session).ensure_agent_seat(topic_id, handle)
-    return handle
-
-
-def _unseed(conn, *, project_id: uuid.UUID, root_id: uuid.UUID, seat: str) -> None:
-    """把项目退回这条迁移之前的样子：没有实例行，总览里没有实例席位。"""
-    conn.execute(
-        sa.text("UPDATE projects SET default_agent_instance_id=NULL WHERE id=:p"),
-        {"p": project_id},
-    )
-    conn.execute(
-        sa.text("DELETE FROM topic_memberships WHERE topic_id=:t AND member_handle=:h"),
-        {"t": root_id, "h": seat},
-    )
-
-
-def _say(conn, *, project_id: uuid.UUID, root_id: uuid.UUID, author: str) -> uuid.UUID:
-    block_id = uuid.uuid4()
-    conn.execute(
-        sa.text(
-            "INSERT INTO blocks (id, project_id, topic_id, kind, author_type,"
-            " author, content, refs, created_at, updated_at)"
-            " VALUES (:id, :p, :t, 'message', 'participant', :a, '这句是替身说的',"
-            " CAST('[]' AS json), now(), now())"
-        ),
-        {"id": block_id, "p": project_id, "t": root_id, "a": author},
-    )
-    return block_id
-
-
-def test_the_overview_ends_up_with_one_cheese_and_its_lines(db_session, _portal):
+def test_the_overview_ends_up_with_one_cheese_and_its_lines():
     """替身的席位没了，它说过的话记在芝士自己的席位下。"""
-    migration = _migration()
-
-    async def run():
-        await registered(db_session, "owner")
-        project = await ProjectService(db_session).create(
-            owner_handle="owner", name="Legacy", forge_kind="github_app"
+    with database_at(BEFORE) as db:
+        # 一个从没选过 agent 的项目：没有实例行，没有指针，总览坐着替身。
+        project, root, _ = seed_agent_project(db, default_agent=False)
+        stand_in = _stand_in(root)
+        seat_agent(db, root, stand_in)
+        said = seed_block(
+            db, project, root, turn=None, at=datetime.now(UTC), author=stand_in
         )
-        root = project.root_topic_id
-        seeded_seat = agent_instance_handle(project.default_agent_instance_id)
-        # 替身席位是旧代码的 seed_root 留下的：有自己的用户行和 binding。
-        stand_in = await _seat_a_stand_in(db_session, root)
-        await db_session.flush()
-        connection = await db_session.connection()
 
-        def check(conn):
-            migration.op = Operations(MigrationContext.configure(conn))
-            _unseed(conn, project_id=project.id, root_id=root, seat=seeded_seat)
-            conn.execute(
-                sa.text("DELETE FROM agent_instances WHERE project_id=:p"),
-                {"p": project.id},
+        db.upgrade(AFTER)
+
+        own = seat_handle(
+            db.fetchval(
+                "SELECT default_agent_instance_id FROM projects WHERE id = $1",
+                project,
             )
-            said = _say(conn, project_id=project.id, root_id=root, author=stand_in)
-
-            migration.upgrade()
-
-            own = agent_instance_handle(
-                conn.execute(
-                    sa.text(
-                        "SELECT default_agent_instance_id FROM projects WHERE id=:p"
-                    ),
-                    {"p": project.id},
-                ).scalar_one()
-            )
-            roster = set(
-                conn.execute(
-                    sa.text(
-                        "SELECT member_handle FROM topic_memberships WHERE topic_id=:t"
-                    ),
-                    {"t": root},
-                ).scalars()
-            )
-            assert own in roster
-            assert stand_in not in roster
-            assert (
-                conn.execute(
-                    sa.text("SELECT author FROM blocks WHERE id=:id"), {"id": said}
-                ).scalar_one()
-                == own
-            )
-
-        await connection.run_sync(check)
-
-    _portal.call(run)
+        )
+        seated = roster(db, root)
+        assert own in seated
+        assert stand_in not in seated
+        assert block_author(db, said) == own
 
 
-def test_a_room_seating_another_agent_keeps_its_stand_in(db_session, _portal):
+def test_a_room_seating_another_agent_keeps_its_stand_in():
     """总览里还坐着别的 agent：说不出替身站的是谁，所以一行都不动。"""
-    migration = _migration()
-
-    async def run():
-        agents = AgentInstanceService(db_session)
-        await registered(db_session, "owner")
-        project = await ProjectService(db_session).create(
-            owner_handle="owner", name="Crowded", forge_kind="github_app"
+    with database_at(BEFORE) as db:
+        project, root, _ = seed_agent_project(db, default_agent=False)
+        reviewer = seed_agent(db, project, "reviewer")
+        seat_agent(db, root, seat_handle(reviewer))
+        stand_in = _stand_in(root)
+        seat_agent(db, root, stand_in)
+        said = seed_block(
+            db, project, root, turn=None, at=datetime.now(UTC), author=stand_in
         )
-        root = project.root_topic_id
-        seeded_seat = agent_instance_handle(project.default_agent_instance_id)
-        other = await agents.create(
-            project_id=project.id,
-            handle="reviewer",
-            type_name=None,
-            display_name="评审",
-        )
-        members = TopicMemberService(db_session)
-        await members.ensure_agent_seat(root, agent_instance_handle(other.id))
-        stand_in = await _seat_a_stand_in(db_session, root)
-        await db_session.flush()
-        connection = await db_session.connection()
 
-        def check(conn):
-            migration.op = Operations(MigrationContext.configure(conn))
-            _unseed(conn, project_id=project.id, root_id=root, seat=seeded_seat)
-            conn.execute(
-                sa.text(
-                    "DELETE FROM agent_instances"
-                    " WHERE project_id=:p AND handle='cheese'"
-                ),
-                {"p": project.id},
-            )
-            said = _say(conn, project_id=project.id, root_id=root, author=stand_in)
+        db.upgrade(AFTER)
 
-            migration.upgrade()
-
-            roster = set(
-                conn.execute(
-                    sa.text(
-                        "SELECT member_handle FROM topic_memberships WHERE topic_id=:t"
-                    ),
-                    {"t": root},
-                ).scalars()
-            )
-            assert stand_in in roster
-            assert (
-                conn.execute(
-                    sa.text("SELECT author FROM blocks WHERE id=:id"), {"id": said}
-                ).scalar_one()
-                == stand_in
-            )
-
-        await connection.run_sync(check)
-
-    _portal.call(run)
+        assert stand_in in roster(db, root)
+        assert block_author(db, said) == stand_in
 
 
 async def _drop_seat(session, topic_id: uuid.UUID, handle: str) -> None:

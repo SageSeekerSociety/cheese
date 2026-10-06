@@ -38,10 +38,10 @@ from tests.integration.conftest import a_team
 
 INDEXES = {
     "ix_blocks_cloud_provisioning",
-    "ix_blocks_task_questions",
-    "ix_blocks_room_questions",
+    "ix_blocks_questions",
     "ix_blocks_machine_events",
     "ix_blocks_failed_turns",
+    "ix_blocks_queued_messages",
 }
 
 
@@ -102,8 +102,7 @@ async def _seed(session) -> dict[str, object]:
         platform = by == "platform"
         return Block(
             project_id=project.id,
-            topic_id=rooms[room].id,
-            task_id=tasks[task].id if task else None,
+            conversation_id=tasks[task].id if task else rooms[room].id,
             kind=kind,
             author_type=AuthorType.platform if platform else AuthorType.participant,
             author=by,
@@ -165,10 +164,10 @@ async def _seed(session) -> dict[str, object]:
     await session.flush()
     await session.execute(
         text(
-            "INSERT INTO blocks (project_id,topic_id,task_id,kind,author_type,author,"
+            "INSERT INTO blocks (project_id,conversation_id,kind,author_type,author,"
             "content,refs,meta,id,created_at,updated_at) "
-            "SELECT :pid, (ARRAY[CAST(:a AS uuid),CAST(:b AS uuid),CAST(:c AS uuid)])"
-            "[g%3+1], CASE WHEN g%4=0 THEN CAST(:t AS uuid) END,"
+            "SELECT :pid, CASE WHEN g%4=0 THEN CAST(:t AS uuid) ELSE "
+            "(ARRAY[CAST(:a AS uuid),CAST(:b AS uuid),CAST(:c AS uuid)])[g%3+1] END,"
             "CASE WHEN g%2=0 THEN 'message' ELSE 'event' END,'participant','cheese',"
             "'x','[]',json_build_object('tool','Bash'),gen_random_uuid(),"
             "now()-interval '30 days'-(g||' minutes')::interval,now() "
@@ -236,17 +235,13 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
         # index was usable at all rather than whether it was cheapest today.
         await session.execute(text("SET LOCAL enable_seqscan = off"))
         with statements(session) as seen:
-            asked_rooms = await BlockRepository(session).rooms_awaiting_an_answer(
-                room_ids
-            )
-            asked_tasks = await BlockRepository(session).tasks_awaiting_an_answer(
-                [task.id for task in tasks.values()]
+            asked = await BlockRepository(session).awaiting_an_answer(
+                [*room_ids, *(task.id for task in tasks.values())]
             )
             waits = await MemberWaits(session).for_rooms(room_ids, now=seeded["now"])
             history = await BlockRepository(session).turn_history(rooms["quiet"].id)
 
-        assert asked_rooms == {rooms["asks"].id: "u1"}
-        assert asked_tasks == {tasks["asks"].id: "u1"}
+        assert asked == {rooms["asks"].id: "u1", tasks["asks"].id: "u1"}
         assert {room: [w.reason for w in ws] for room, ws in waits.items()} == {
             rooms["failed"].id: ["failed"],
             rooms["machine"].id: ["device_waiting"],
@@ -254,11 +249,8 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
         assert "cloud_provisioning" in [b.meta.get("event_type") for b in history]
 
         expected = {
-            "ix_blocks_room_questions": lambda sql: (
-                "options" in sql and "DISTINCT ON (blocks.topic_id)" in sql
-            ),
-            "ix_blocks_task_questions": lambda sql: (
-                "options" in sql and "DISTINCT ON (blocks.task_id)" in sql
+            "ix_blocks_questions": lambda sql: (
+                "options" in sql and "DISTINCT ON (blocks.conversation_id)" in sql
             ),
             "ix_blocks_machine_events": lambda sql: "'device_waiting'" in sql,
             "ix_blocks_failed_turns": lambda sql: "'severity') = 'error'" in sql,
@@ -286,5 +278,53 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
         # every entry forwards, so the direction is what tells them apart.
         [(sql, params)] = seen
         plan = await _generic_plan(conn, "probe_beats", sql, params)
-        assert "Backward using ix_blocks_task_id_created_at" in plan, plan
+        assert "Backward using ix_blocks_conversation_created_at" in plan, plan
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_the_waiting_messages_come_back_and_are_read_by_their_index(db_factory):
+    """The pending-message scan runs on a clock, so it must read its few rows
+    from `ix_blocks_queued_messages`, not the table of everything ever said."""
+    from app.domain.agent.pending_messages import queued_messages
+
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        now, room = seeded["now"], seeded["rooms"]["quiet"]
+        waiting = {"agent_recipient": {"mentioned": True}, "consumed_turn": None}
+        rows = {
+            "waiting": waiting,
+            "taken": {**waiting, "consumed_turn": "t1"},
+            "tried": {**waiting, "prompt_attempts": 1},
+            "answered": {**waiting, "answer_to": "q1"},
+            "unnamed": {"agent_recipient": {"mentioned": False}, "consumed_turn": None},
+        }
+        blocks = {
+            name: Block(
+                project_id=room.project_id,
+                conversation_id=room.id,
+                kind=BlockKind.message,
+                author_type=AuthorType.participant,
+                author="u1",
+                content=name,
+                meta=meta,
+                created_at=now - timedelta(minutes=1),
+            )
+            for name, meta in rows.items()
+        }
+        session.add_all(blocks.values())
+        await session.flush()
+        await session.execute(text("ANALYZE blocks"))
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+
+        with statements(session) as seen:
+            found = list(
+                await session.scalars(queued_messages(now - timedelta(hours=2)))
+            )
+        assert [block.content for block in found] == ["waiting"]
+
+        [(sql, params)] = seen
+        conn = await session.connection()
+        plan = await _generic_plan(conn, "probe_queued", sql, params)
+        assert "ix_blocks_queued_messages" in plan, f"{sql}\n{plan}"
         await session.rollback()

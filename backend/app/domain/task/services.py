@@ -16,6 +16,8 @@ from app.core.domain_errors import (
     TeamSizeTooLargeError,
 )
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.domain.attachment.models import Attachment
+from app.domain.attachment.services import AttachmentService
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
@@ -37,6 +39,7 @@ from app.domain.task.repositories import (
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
     TaskSubmissionReviewRepository,
+    TaskSubmissionSchemaRepository,
 )
 from app.domain.task.submission_state import (
     COMPLETION_STATUS_NOT_SUBMITTED,
@@ -715,6 +718,28 @@ class TaskMembershipService:
         }
 
 
+def _submitted_file_to_api(attachment: Attachment) -> dict:
+    """A handed-in file as the submission view reads it: the ``Attachment``
+    contract, ``meta`` in its ``FileMeta`` shape (``name / size / mime``).
+
+    The row's own ``meta`` stores ``filename / contentType``, so it is mapped
+    rather than passed through. ``url`` is the storage link itself: no gated
+    download route lets the teacher read a file someone else uploaded, so the
+    link is how the reviewer opens it — and only the people allowed to read the
+    submission are sent this DTO.
+    """
+    return {
+        "id": attachment.id,
+        "type": attachment.type,
+        "url": attachment.url,
+        "meta": {
+            "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
+            "size": attachment.meta.get("size", 0),
+            "mime": attachment.meta.get("contentType", "application/octet-stream"),
+        },
+    }
+
+
 class TaskSubmissionService:
     """Simplified Python port of TaskSubmissionService.
 
@@ -730,12 +755,16 @@ class TaskSubmissionService:
         entry_repo: TaskSubmissionEntryRepository,
         review_repo: TaskSubmissionReviewRepository,
         membership_repo: TaskMembershipRepository,
+        schema_repo: TaskSubmissionSchemaRepository,
+        attachments: AttachmentService,
         session: AsyncSession | None = None,
     ) -> None:
         self._submission_repo = submission_repo
+        self._schema_repo = schema_repo
         self._entry_repo = entry_repo
         self._review_repo = review_repo
         self._membership_repo = membership_repo
+        self._attachments = attachments
         # 推进完成状态要在同一个事务里读提交表、写领取行 —— 仓库共用这一个 session，
         # 路由的工厂（``get_task_submission_service``）永远把它传进来。为 None 只有
         # 单元测试那种「四个仓库全是 AsyncMock」的构造：那里没有库可写，也就不推。
@@ -789,20 +818,32 @@ class TaskSubmissionService:
         member_summary = await self._build_member_summary(membership)
         submitter_summary = await self._build_submitter_summary(submission.submitter_id)
 
+        attachment_ids = [
+            e.content_attachment_id for e in entries if e.content_attachment_id
+        ]
+        attachments = {
+            a.id: a for a in await self._attachments.get_many(attachment_ids)
+        }
+        # An entry is titled by the task's form, the item at the same index.
+        names = {
+            item.index: item.description
+            for item in await self._schema_repo.list_by_task_id(membership.task_id)
+        }
+
         def _entry_to_dto(idx: int, entry: TaskSubmissionEntry) -> dict:
             if entry.content_attachment_id is not None:
                 entry_type = "FILE"
             else:
                 entry_type = "TEXT"
             content_attachment = None
-            if entry.content_attachment_id is not None:
-                content_attachment = {
-                    "id": entry.content_attachment_id,
-                    "type": "",
-                    "url": "",
-                }
+            attachment = attachments.get(entry.content_attachment_id or 0)
+            if attachment is not None:
+                content_attachment = _submitted_file_to_api(attachment)
             return {
-                "title": f"Entry {idx + 1}",
+                # The form can be replaced after this was handed in, and lose
+                # the item, and an item's name may be blank; the entry is then
+                # numbered instead.
+                "title": names.get(entry.index) or f"Entry {idx + 1}",
                 "type": entry_type,
                 "contentText": entry.content_text,
                 "contentAttachment": content_attachment,
@@ -829,6 +870,39 @@ class TaskSubmissionService:
             "review": review_dto if review_dto is not None else None,
         }
 
+    async def _entries_from(
+        self, contents: list[dict], *, submitter_id: int
+    ) -> list[tuple[int, str | None, int | None]]:
+        """Turn the request's entries into ``(index, text, attachment_id)`` rows.
+
+        A file entry may only name a file the submitter uploaded. The submission
+        view hands out the file's storage link and name, so accepting any id here
+        would let a participant read someone else's upload by guessing its id.
+        Checked before anything is written, so a refused request changes nothing.
+        """
+        rows: list[tuple[int, str | None, int | None]] = []
+        for idx, item in enumerate(contents):
+            attachment_id_raw = item.get("attachmentId")
+            attachment_id: int | None = None
+            if attachment_id_raw is not None:
+                try:
+                    attachment_id = int(attachment_id_raw)
+                except (TypeError, ValueError):
+                    attachment_id = None
+            rows.append((idx, item.get("text"), attachment_id))
+
+        wanted = {a for _, _, a in rows if a is not None}
+        found = {a.id: a for a in await self._attachments.get_many(list(wanted))}
+        for attachment_id in sorted(wanted):
+            attachment = found.get(attachment_id)
+            if attachment is None:
+                raise NotFoundError.for_resource("attachment", attachment_id)
+            if not self._attachments.is_uploader(attachment, submitter_id):
+                raise ForbiddenError(
+                    "A submission can only include files its submitter uploaded"
+                )
+        return rows
+
     async def submit_task(
         self,
         *,
@@ -852,24 +926,13 @@ class TaskSubmissionService:
         )
         new_version = latest_version + 1
 
+        entry_tuples = await self._entries_from(contents, submitter_id=submitter_id)
+
         submission = await self._submission_repo.create_submission(
             membership_id=participant_id,
             submitter_id=submitter_id,
             version=new_version,
         )
-
-        # Convert incoming DTOs into internal entries.
-        entry_tuples: list[tuple[int, str | None, int | None]] = []
-        for idx, item in enumerate(contents):
-            text = item.get("text")
-            attachment_id_raw = item.get("attachmentId")
-            attachment_id: int | None = None
-            if attachment_id_raw is not None:
-                try:
-                    attachment_id = int(attachment_id_raw)
-                except (TypeError, ValueError):
-                    attachment_id = None
-            entry_tuples.append((idx, text, attachment_id))
 
         await self._entry_repo.create_entries(
             submission_id=submission.id,
@@ -920,6 +983,8 @@ class TaskSubmissionService:
         if submission is None:
             raise NotFoundError.for_resource("submission", version)
 
+        entry_tuples = await self._entries_from(contents, submitter_id=submitter_id)
+
         # Soft-delete existing entries for this submission.
         await self._entry_repo.soft_delete_by_membership_and_version(
             membership_id=participant_id,
@@ -929,18 +994,6 @@ class TaskSubmissionService:
         # Update submission timestamp
         submission.updated_at = datetime.now(UTC)
         submission = await self._submission_repo.save(submission)
-
-        entry_tuples: list[tuple[int, str | None, int | None]] = []
-        for idx, item in enumerate(contents):
-            text = item.get("text")
-            attachment_id_raw = item.get("attachmentId")
-            attachment_id: int | None = None
-            if attachment_id_raw is not None:
-                try:
-                    attachment_id = int(attachment_id_raw)
-                except (TypeError, ValueError):
-                    attachment_id = None
-            entry_tuples.append((idx, text, attachment_id))
 
         await self._entry_repo.create_entries(
             submission_id=submission.id,

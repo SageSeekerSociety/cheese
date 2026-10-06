@@ -50,6 +50,7 @@ from app.core.sandbox_auth import (
 )
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
+from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 
@@ -219,7 +220,9 @@ async def lifespan(_: FastAPI):
             get_logger("cheesex.runtime").exception("orphan sweep failed")
 
         try:
-            n = await get_work_runner().resume_lost_messages(get_chat_service())
+            n = await get_work_runner().resume_lost_messages(
+                get_chat_service(), source="startup"
+            )
             if n:
                 get_logger("cheesex.runtime").info("lost_messages_resumed", turns=n)
         except Exception:  # noqa: BLE001 — never block startup
@@ -320,6 +323,9 @@ async def lifespan(_: FastAPI):
         # here before anyone else reads them; only then is the lock let go.
         get_work_runner().hold_turns()
         get_work_runner().own_sessions(False)
+        # Browsers watching rooms through this process go to the next one now,
+        # rather than when app-router lets them go (`core/ws_handover.py`).
+        await business_sockets.end_all()
         taking_over.cancel()
         await asyncio.gather(taking_over, return_exceptions=True)
         for watch in held_the_work:
@@ -496,6 +502,7 @@ app = FastAPI(
 )
 
 app.add_middleware(LogRefusedWebSockets)
+app.add_middleware(EndBusinessSocketsAtHandover)
 
 # Inside CORS, so a refusal still carries the headers a cross-origin page needs
 # to read it; inside `request_context`, so a 429 is in the access log like any

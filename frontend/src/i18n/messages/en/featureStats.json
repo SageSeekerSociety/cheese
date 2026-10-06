@@ -21,9 +21,9 @@
       "title": "Ask Cheese",
       "summary": "The docs site's question-answering assistant: how many people read the docs, how many asked it something, and how well it answered"
     },
-    "topicNaming": {
+    "taskNaming": {
       "title": "Smart naming",
-      "summary": "Naming topic titles automatically: what it spends, which stages it runs at, and how often people rename what it wrote"
+      "summary": "Naming task titles automatically: what it spends, which stages it runs at, and how often people rename what it wrote"
     }
   },
   "unit": {
@@ -120,8 +120,8 @@
       "renamesNote": "A row is written only when the title actually changes, so this counts renames, not looks.",
       "stages": "first {name} · calibrate {calibrate} · follow {follow}",
       "overridden": "Renamed by people",
-      "overriddenNote": "The denominator is topics automatically renamed within the window. The numerator is those later renamed or undone by a person within the same window. Automatic titles from before the window are excluded; this is not a lifetime retention rate.",
-      "overriddenOf": "{value} / {named} rooms"
+      "overriddenNote": "The denominator is tasks automatically named within the window, including titles the AI teammate proposed. The numerator is those later renamed by a person within the same window. Automatic titles from before the window are excluded; this is not a lifetime retention rate.",
+      "overriddenOf": "{value} / {named} tasks"
     },
     "trend": {
       "title": "Titles written per day",
@@ -131,7 +131,7 @@
     },
     "stages": {
       "title": "Which stage naming ran at",
-      "note": "After the first name comes calibration, a second look at the room's first real message, and follow, which only fires when the room changes direction. The split says when the model usually steps in.",
+      "note": "After the first name comes calibration, a second look at the task's first real message, and follow, which only fires when the task changes direction. The split says when the model usually steps in.",
       "caption": "{n} automatic renames",
       "name": "First name",
       "calibrate": "Calibrate",
@@ -139,10 +139,9 @@
     },
     "person": {
       "title": "What people changed",
-      "note": "Renaming is a person choosing the title (including asking Cheese for one); undo puts back the title an automatic rename replaced. Both stop the platform from touching that name again.",
-      "caption": "{n} renames or undos by people",
-      "rename": "Renamed",
-      "undo": "Undone"
+      "note": "Titles people gave tasks themselves. Once a person renames a task, the platform leaves that name alone.",
+      "caption": "{n} renames by people",
+      "rename": "Renamed"
     }
   }
 }

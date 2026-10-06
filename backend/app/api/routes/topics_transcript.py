@@ -94,7 +94,6 @@ async def topic_transcript(
     into the room's would bury what the room did."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    task = place.task_id
     repo = BlockRepository(db)
     # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
     # to the conversation pane — mirroring them here just duplicates the chat.
@@ -106,19 +105,18 @@ async def topic_transcript(
         # degrade into "newest N", which the caller cannot tell from a real page.
         # A cursor from another conversation in this room is as wrong as one
         # from another room.
-        if cursor is None or cursor.topic_id != place.room_id or cursor.task_id != task:
+        if cursor is None or cursor.conversation_id != place.conversation_id:
             raise NotFoundError(say("cursorEventNotFound"))
     if limit is None:
         site = [
             b
-            for b in await repo.list_for_topic(place.room_id, task_id=task)
+            for b in await repo.list_for_topic(place.conversation_id)
             if b.kind in kinds and (author is None or b.author == author)
         ]
         has_more = False
     else:
         result = await repo.page_for_topic(
-            place.room_id,
-            task_id=task,
+            place.conversation_id,
             limit=limit,
             before=cursor,
             kinds=kinds,
@@ -133,7 +131,7 @@ async def topic_transcript(
     ]
     # A turn's first step comes after its preparation and the model's first
     # answer; the 现场 counts the turn from when it started.
-    starts = await turn_starts(db, task or place.room_id, (b.turn_id for b in site))
+    starts = await turn_starts(db, place.conversation_id, (b.turn_id for b in site))
     return ok(
         {
             **page(items, len(items)),
@@ -156,13 +154,11 @@ async def step_output(
     """The tail of what one 现场 step printed, as kept (``step_output``)."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    task = place.task_id
     block = await BlockRepository(db).get(block_id)
     # Same door as the transcript: the one conversation it was asked about.
     if (
         block is None
-        or block.topic_id != place.room_id
-        or block.task_id != task
+        or block.conversation_id != place.conversation_id
         or block.kind != BlockKind.event
     ):
         raise NotFoundError(say("stepNotFound"))

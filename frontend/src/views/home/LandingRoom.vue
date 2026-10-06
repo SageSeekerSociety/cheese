@@ -68,7 +68,7 @@ const shown = computed(() => lines.value.filter((line) => line.at <= props.step)
 function block(line: Extract<Line, { kind: 'message' }>): Block {
   return {
     id: line.id,
-    topic_id: 'demo',
+    conversation_id: 'demo',
     kind: line.artifact ? 'artifact' : 'message',
     author_type: 'participant',
     author: line.author,

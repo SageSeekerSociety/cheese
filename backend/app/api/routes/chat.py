@@ -138,11 +138,7 @@ async def chat(
                     # then the recreated one), so a turn started before it, or
                     # on the other container while both ran, is missing from it
                     # though its agent is still at work.
-                    open_turns = await open_turns_on(
-                        auth_session,
-                        room_id,
-                        task_id=card.id if card is not None else None,
-                    )
+                    open_turns = await open_turns_on(auth_session, topic_id)
         if refusal is not None:
             code, message = refusal
             _log.info("chat_ws_refused", code=code, topic=str(topic_id))

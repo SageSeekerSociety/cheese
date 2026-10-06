@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT_PATH="${CHEESEX_DISK_GUARD_ROOT_PATH:-/}"
 THRESHOLD_PERCENT="${CHEESEX_DISK_GUARD_THRESHOLD_PERCENT:-85}"
 HEALTH_URL="${CHEESEX_DISK_GUARD_HEALTH_URL:-http://127.0.0.1:8081/health}"
-BACKEND_CONTAINER="${CHEESEX_DISK_GUARD_BACKEND_CONTAINER:-cheese-backend-1}"
+# Both slots a box that releases without downtime runs the backend in
+# (deploy/deploy-docker.sh); whichever exists is cleaned.
+BACKEND_CONTAINERS="${CHEESEX_DISK_GUARD_BACKEND_CONTAINER:-cheese-backend-1 cheese-backend-b-1}"
 SETTLE_SECONDS="${CHEESEX_DISK_GUARD_SETTLE_SECONDS:-2}"
 
 # Early-warning tiers, strictly below THRESHOLD_PERCENT: visibility only, never
@@ -141,12 +143,13 @@ if test -n "$sandbox_ids"; then
   docker rm -f $sandbox_ids
 fi
 
-if docker inspect "$BACKEND_CONTAINER" >/dev/null 2>&1; then
-  docker exec "$BACKEND_CONTAINER" sh -c \
+for backend_container in $BACKEND_CONTAINERS; do
+  docker inspect "$backend_container" >/dev/null 2>&1 || continue
+  docker exec "$backend_container" sh -c \
     "find /tmp -mindepth 1 -maxdepth 1 -type d \\
       \( -name 'tmp.*' -o -name 'pytest-of-*' \) -mmin +360 \\
       -exec rm -rf -- {} +"
-fi
+done
 
 after="$(root_usage)"
 log "disk-pressure cleanup complete: root ${usage}% -> ${after}%"

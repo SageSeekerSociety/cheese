@@ -30,7 +30,7 @@ const pageCount = computed(() => (props.page ? Math.max(1, Math.ceil(props.page.
 
 function teamMeta(row: CreditTeamRow): string {
   if (row.personal_owner) {
-    return `${t('credits.teams.kindPersonal')} · @${row.personal_owner}`
+    return `${t('credits.teams.kindPersonal')} · ${row.personal_owner}`
   }
   return row.member_count === null
     ? t('credits.teams.kindTeam')

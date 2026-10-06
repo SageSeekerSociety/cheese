@@ -197,6 +197,7 @@ class ProjectRepository:
         ).all()
         team = await self._session.get(Team, project.team_id)
         team_handle = team.handle if team is not None else None
+        team_name = team.name if team is not None else None
         for handle, name, avatar_id, avatar_type, created_at in team_rows:
             if handle in seen:
                 continue
@@ -208,6 +209,7 @@ class ProjectRepository:
                     "source": "team",
                     "team_id": project.team_id,
                     "team_handle": team_handle,
+                    "team_name": team_name,
                     "created_at": created_at.isoformat(),
                 }
             )
@@ -391,6 +393,7 @@ class ProjectGitInstallationRepository:
         project_id: uuid.UUID,
         installation_id: int,
         repo: str,
+        repository_id: int | None,
         account: str,
     ) -> ProjectGitInstallation:
         """Bind `repo` (through `installation_id`) to `project_id`, replacing
@@ -422,6 +425,7 @@ class ProjectGitInstallationRepository:
         if existing is not None:
             existing.installation_id = installation_id
             existing.repo = repo
+            existing.repository_id = repository_id
             existing.account = account
             await self._session.flush()
             return existing
@@ -430,6 +434,7 @@ class ProjectGitInstallationRepository:
             project_id=project_id,
             installation_id=installation_id,
             repo=repo,
+            repository_id=repository_id,
             account=account,
         )
         self._session.add(row)

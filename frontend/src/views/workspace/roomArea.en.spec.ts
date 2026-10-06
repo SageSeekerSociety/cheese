@@ -21,7 +21,6 @@ import ProjectAccessNotice from './ProjectAccessNotice.vue'
 
 import AcceptGateFace from '@/components/accept/AcceptGateFace.vue'
 import MailDraftCard from '@/components/room/MailDraftCard.vue'
-import TopicRailArchivedGroup from '@/components/topic-sidebar/TopicRailArchivedGroup.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 import i18n, { setLocale } from '@/i18n'
 import { stallReasonText, waitText } from '@/lib/replyWait'
@@ -72,7 +71,7 @@ describe('topic and room surfaces in English', () => {
     const now = Date.parse('2026-09-28T04:00:00Z')
     const wait = { member: 'cheese-a1', reason: 'mention', since: '2026-09-28T00:00:00Z' }
     const row = {
-      topic: topic({ status: 'draft', title_source: 'auto', waits: [wait] }),
+      topic: topic({ status: 'draft', waits: [wait] }),
       depth: 1,
       hasChildren: true,
       collapsed: true,
@@ -96,17 +95,6 @@ describe('topic and room surfaces in English', () => {
       ],
       toggleTitle: 'Expand',
       actions: () => [],
-    })
-    expectNoChinese()
-  })
-
-  it('archived topics group', () => {
-    mount(TopicRailArchivedGroup, {
-      rows: [topic({ status: 'archived', can_archive: true })],
-      selectedTopicId: null,
-      page: false,
-      unread: true,
-      unreadOf: () => 1,
     })
     expectNoChinese()
   })

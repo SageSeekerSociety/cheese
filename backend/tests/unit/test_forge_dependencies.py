@@ -405,7 +405,7 @@ def _other_input(registered: InputIdentity) -> InputIdentity:
     """A well-formed identity nobody registered — not this input, not any input."""
     return InputIdentity(
         registered.project_id,
-        registered.topic_id,
+        registered.conversation_id,
         registered.recipient_handle,
         registered.harness,
         registered.native_session_id,

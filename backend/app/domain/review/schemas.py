@@ -16,7 +16,7 @@ class AcceptCardCreate(BaseModel):
     # `Field required`.
     reviewer_handle: str | None = Field(default=None, max_length=64)
     routing_reason: str = ""
-    # What the change IS, in Conventional Commits form — becomes the PR title
+    # What the change IS, as one commit title line — becomes the PR title
     # and the squash commit subject. REQUIRED since 2026-08-17, but enforced in
     # review/services.py rather than here: a Pydantic-required field answers
     # 422 with pydantic's own wording, and the thing that has to reach the

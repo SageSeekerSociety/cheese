@@ -36,6 +36,9 @@ from app.domain.machine import models as machine  # noqa: F401
 from app.domain.materials import models as materials  # noqa: F401
 from app.domain.memory import models as memory  # noqa: F401
 from app.domain.notification import models as notification  # noqa: F401
+from app.domain.notification import (
+    preferences_models as notification_prefs,  # noqa: F401
+)
 from app.domain.notification import push_models as notification_push  # noqa: F401
 from app.domain.oauth import models as oauth  # noqa: F401
 from app.domain.passkey import models as passkey  # noqa: F401
@@ -52,6 +55,7 @@ from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
 from app.domain.task import models as task  # noqa: F401
 from app.domain.team import models as team  # noqa: F401
+from app.domain.thread import models as thread  # noqa: F401
 from app.domain.topic import models as topic  # noqa: F401
 from app.domain.usage import models as usage  # noqa: F401
 from app.domain.user import models as user  # noqa: F401

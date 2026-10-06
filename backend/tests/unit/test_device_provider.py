@@ -71,7 +71,7 @@ class FakeHub:
         self.asked: list[tuple[str, dict]] = []  # (method, params) to the runner
         self.ping: dict | BaseException = {"alive": True, "working": False}
         self.tunnel = ("up", 0)
-        self.probed_homes: list[str] = []
+        self.probed_dirs: list[str] = []
         self.release = {"stage": {"changed": True}, "acknowledge": {}}
         # The release the machine's helpers are on, as its marker names it.
         self.marker = ""
@@ -138,8 +138,8 @@ class FakeHub:
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:
         self.execs.append((argv, stdin))
-        if env and "CHEESE_TUNNEL_PROBE_HOME" in env:
-            self.probed_homes.append(env["CHEESE_TUNNEL_PROBE_HOME"])
+        if env and "CHEESE_TUNNEL_PROBE_DIR" in env:
+            self.probed_dirs.append(env["CHEESE_TUNNEL_PROBE_DIR"])
             verdict, code = self.tunnel
             return {"stdout": verdict, "stderr": "", "exit": code}
         if argv[:2] == ["sh", "-c"] and "release-ready" in argv[2]:
@@ -191,7 +191,7 @@ class ShellHub(FakeHub):
         self.home = home
 
     async def exec(self, device_id, argv, *, env=None, stdin=None, **kwargs):
-        if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_HOME"):
+        if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_DIR"):
             return await super().exec(device_id, argv, env=env, stdin=stdin, **kwargs)
         self.execs.append((argv, stdin))
         result = subprocess.run(
@@ -630,9 +630,6 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(
     reused screen is reasserted rather than relaunched — so when the helper dies
     under a still-running `claude`, nothing on either side restores it. The reuse
     gate retires such a screen so a FRESH launch runs the prefix again."""
-    monkeypatch.setattr(
-        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
-    )
     hub = FakeHub()
     hub.tunnel = ("down", 0)
     room = _room(hub)
@@ -646,10 +643,14 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(
     assert [s.sid for s in hub.opened] == [second.sid]  # … and relaunched fresh
     (line,) = _retired(caplog)
     assert "reason=tunnel_helper_down" in line
-    # The probe reads the port from the room's own home, so concurrent rooms on
-    # one machine are judged independently rather than sharing one verdict.
-    assert hub.probed_homes == [
-        device_home_dir(room.arguments["project_id"], room.arguments["topic_id"])
+    # The probe reads the port from THIS SEAT's own directory, so concurrent
+    # seats (and rooms) on one machine are judged independently rather than
+    # sharing one verdict.
+    assert hub.probed_dirs == [
+        seat_dir(
+            device_home_dir(room.arguments["project_id"], room.arguments["topic_id"]),
+            room.arguments["agent_handle"],
+        )
     ]
 
 
@@ -662,9 +663,6 @@ async def test_only_an_explicit_down_retires_a_screen(monkeypatch, verdict, exit
     fires only on proof. A helper that is up, a box with no /proc or no awk
     (`unknown`), a probe that failed to run (non-zero exit), and an empty answer
     must all leave the screen alone."""
-    monkeypatch.setattr(
-        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
-    )
     hub = FakeHub()
     hub.tunnel = (verdict, exit_code)
     room = _room(hub)
@@ -675,29 +673,14 @@ async def test_only_an_explicit_down_retires_a_screen(monkeypatch, verdict, exit
     assert hub.reasserted == [first.sid]
 
 
-async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
-    """Where no tunnel is configured the device dials the meter directly and there
-    is no helper to lose, so the gate must not cost an extra round trip to every
-    box on every turn."""
-    monkeypatch.setattr(settings, "subscription_tunnel_url", "")
-    hub = FakeHub()
-    hub.tunnel = ("down", 0)
-    room = _room(hub)
-    await room.ensure()
-    await room.ensure()
-
-    assert hub.probed_homes == []  # never asked
-    assert hub.closed == []  # and nothing retired on a verdict it never got
-
-
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
 def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     """The probe is a shell script parsing /proc/net/tcp, which is exactly the kind
     of thing that passes review and is wrong on the box. Run it for real: against
-    the port a room's port file records, it must say `up` while the recorded
+    the port a seat's port file records, it must say `up` while the recorded
     helper pid (this test) is listening there, `down` once nothing holds it, and
     `down` when the port is held by a process other than the recorded helper —
-    the listener another room's helper becomes once the kernel hands it a dead
+    the listener another seat's helper becomes once the kernel hands it a dead
     helper's port."""
     import socket
 
@@ -706,7 +689,7 @@ def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     if host == "::1" and not socket.has_ipv6:
         pytest.skip("IPv6 is unavailable on this platform")
     family = socket.AF_INET6 if host == "::1" else socket.AF_INET
-    port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
     pid_file = port_file.with_name("cheese-tunnel.pid")
     port_file.parent.mkdir(parents=True)
 
@@ -733,9 +716,21 @@ def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     assert verdict(free, os.getpid()) == "down"
 
 
-def _tunnel_probe(machine_home: Path) -> str:
-    """The probe as the backend runs it: the room's home named with the literal
-    `$HOME` placeholder, resolved against the machine's own HOME."""
+# The seat name the launcher derives from the handle under test — the sha256
+# prefix `place.seat_name` gives a `cheese-…` handle, spelled opaquely here.
+_TUNNEL_PROBE_SEAT = "46dd0e26bf01"
+
+
+def _seat_dir(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> Path:
+    """Where a launch leaves one seat's helper files."""
+    return machine_home / "room" / ".cheese" / "seats" / seat
+
+
+def _tunnel_probe(machine_home: Path, seat: str = _TUNNEL_PROBE_SEAT) -> str:
+    """The probe as the backend runs it: the seat's directory named with the
+    literal `$HOME` placeholder the backend leaves in it, resolved against the
+    machine's own HOME. Per seat, because a room may seat several agents and
+    each has a helper of its own."""
     return subprocess.run(
         ["sh", "-c", DEVICE_TUNNEL_PROBE],
         capture_output=True,
@@ -743,7 +738,7 @@ def _tunnel_probe(machine_home: Path) -> str:
         env={
             **os.environ,
             "HOME": str(machine_home),
-            "CHEESE_TUNNEL_PROBE_HOME": "$HOME/room",
+            "CHEESE_TUNNEL_PROBE_DIR": f"$HOME/room/.cheese/seats/{seat}",
         },
         timeout=30,
     ).stdout.strip()
@@ -756,7 +751,7 @@ def test_a_room_without_a_readable_port_file_is_unknown_not_down(tmp_path, conte
     file that is not a number is no evidence the helper died — `down` here would
     throw away a working screen on a probe that never looked at a port."""
     if content is not None:
-        port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+        port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
         port_file.parent.mkdir(parents=True)
         port_file.write_text(content)
 
@@ -766,7 +761,7 @@ def test_a_room_without_a_readable_port_file_is_unknown_not_down(tmp_path, conte
 def test_a_room_without_a_recorded_helper_pid_is_unknown_not_down(tmp_path):
     """Whose socket the port is can only be told from the pid the helper was
     started as. Without that record the probe has no evidence either way."""
-    port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    port_file = _seat_dir(tmp_path) / "cheese-tunnel.port"
     port_file.parent.mkdir(parents=True)
     port_file.write_text("40000\n")
 
@@ -1199,32 +1194,6 @@ async def test_every_device_gets_the_context_for_task_repository_lookup():
     assert env["CHEESE_TOPIC"] == str(room.arguments["topic_id"])
 
 
-def test_a_device_is_warned_about_a_box_local_model_endpoint(caplog):
-    """Routing the box's turns through the local gateway is what makes spend
-    visible — but the same URL means nothing on a machine elsewhere, and the
-    failure there is a connection error with no hint why."""
-    import logging
-
-    from app.domain.agent.device_provider import (
-        _warn_if_model_endpoint_is_box_local,
-    )
-
-    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
-        _warn_if_model_endpoint_is_box_local(
-            {"HTTPS_PROXY": "http://cheese:tok@172.17.0.1:8444"}, "machine-1"
-        )
-    assert any("only resolves on the backend" in r.getMessage() for r in caplog.records)
-    assert any("HTTPS_PROXY" in r.getMessage() for r in caplog.records)
-
-    caplog.clear()
-    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
-        _warn_if_model_endpoint_is_box_local(
-            {"HTTPS_PROXY": "http://cheese:tok@meter.example:8444"},
-            "machine-1",
-        )
-    assert not caplog.records, "a reachable endpoint must not be flagged"
-
-
 # --- subscription parity (#325 G2): device turns ride the metering proxy --------
 # A device screen gets the one supply there is: fake credential + proxy CA +
 # scoped session token, no ANTHROPIC_BASE_URL, no gateway model pin. The
@@ -1240,7 +1209,6 @@ def _subscription_settings(monkeypatch, tmp_path) -> str:
     ca_path.write_text(ca)
     monkeypatch.setattr(settings, "subscription_ca_backend_path", str(ca_path))
     monkeypatch.setattr(settings, "subscription_proxy_host", "172.17.0.1")
-    monkeypatch.setattr(settings, "subscription_device_proxy_host", "")
     monkeypatch.setattr(settings, "subscription_proxy_connect_port", 8444)
     return ca
 
@@ -1281,7 +1249,7 @@ async def test_the_launch_environment_is_the_same_whatever_model_is_bound(
         assert [k for k in env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
         assert "CLAUDE_MODEL" not in env
         assert "ANTHROPIC_BASE_URL" not in env
-        assert env["HTTPS_PROXY"]
+        assert env["CHEESE_TUNNEL_URL"]
 
 
 def test_a_machine_launch_script_never_names_a_model():
@@ -1330,17 +1298,18 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     assert env["CHEESE_CONNECT_TOKEN"] != env["CHEESE_TOKEN"]
 
 
-async def test_subscription_screen_reaches_the_meter_by_connect_proxy(
+async def test_subscription_screen_reaches_the_meter_through_its_tunnel(
     monkeypatch, tmp_path
 ):
     """A bare device process has no --add-host, so the capture is HTTPS_PROXY at
-    the meter's CONNECT listener, with the scoped token as the proxy password —
-    and NO_PROXY keeps the platform's own wiring (git, CLI) out of it."""
+    the machine's own tunnel helper, which the launch script starts and exports —
+    the backend names no proxy address for it — and NO_PROXY keeps the
+    platform's own wiring (git, CLI) out of it."""
     _subscription_settings(monkeypatch, tmp_path)
     _hub, env, _project, _topic = await _subscription_screen()
 
-    token = env["CHEESE_CONNECT_TOKEN"]
-    assert env["HTTPS_PROXY"] == f"http://cheese:{token}@172.17.0.1:8444"
+    assert env["CHEESE_TUNNEL_URL"] == "ws://cheese.test/llm/tunnel"
+    assert "HTTPS_PROXY" not in env
     for key in ("NO_PROXY", "no_proxy"):
         assert "cheese.test" in env[key]
         assert "localhost" in env[key]
@@ -1363,11 +1332,10 @@ async def test_subscription_ca_travels_in_the_launcher_not_as_a_host_path(
 async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     monkeypatch, tmp_path
 ):
-    """The proxy token is baked into the bare process's env (the HTTPS_PROXY
-    CONNECT password), read ONCE at launch and never hot-refreshed while the
-    screen is reused across turns. A 1h token
-    therefore expires under a still-running agent and the metering proxy 407s
-    every later turn. Its exp must span the session."""
+    """The tunnel's CONNECT credential is minted once at launch and only
+    replaced at the next launch, while the screen is reused across turns. A 1h
+    token therefore expires under a still-running agent and the metering proxy
+    407s every later turn. Its exp must span the session."""
     from app.core.sandbox_auth import scoped_token_claims
 
     _subscription_settings(monkeypatch, tmp_path)
@@ -1375,7 +1343,6 @@ async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
 
     # The CONNECT credential …
     token = env["CHEESE_CONNECT_TOKEN"]
-    assert f"cheese:{token}@" in env["HTTPS_PROXY"]
     claims = scoped_token_claims(token)
     assert claims is not None
     remaining = claims["exp"] - int(time.time())
@@ -1437,40 +1404,41 @@ async def test_a_tunnel_screen_is_handed_no_loopback_port(monkeypatch, tmp_path)
     one helper, where the second room's `claude` spent the first room's
     credential."""
     _subscription_settings(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
-    )
 
     _hub, env, _project, _topic = await _subscription_screen()
 
-    assert env["CHEESE_TUNNEL_URL"] == "wss://gateway.example/llm/tunnel"
+    assert env["CHEESE_TUNNEL_URL"]
     assert "HTTPS_PROXY" not in env
     assert not any("//127.0.0.1:" in value for value in env.values())
     # The meter's allowlist still applies to the tunnelled route.
     assert env["CHEESE_MODEL_PROXY"] == "1"
 
 
-@pytest.mark.parametrize("cloud", [True, False])
-async def test_a_cloud_machine_tunnels_through_its_loopback_forward(
-    monkeypatch, tmp_path, cloud
+@pytest.mark.parametrize("kind", ["session_host", "private_cloud", "elsewhere"])
+async def test_every_machine_finds_the_tunnel_on_the_backend_it_already_dials(
+    monkeypatch, tmp_path, kind
 ):
-    """A MicroCloud guest is isolated from private networks, so a cloud machine
-    whose backend is the loopback forward must find the model tunnel there too,
-    not at the deployment's private gateway. A device someone enrolled keeps
-    the configured URL."""
-    import ipaddress
+    """A machine reaches the model tunnel the way it reaches the backend: the
+    session host over its own base, a private-control cloud machine (isolated
+    from private networks) over its loopback forward, any other machine over the
+    public base. A second address for the tunnel is one that can point
+    somewhere the machine never reaches — an intranet gateway an enrolled
+    laptop cannot see, or a certificate nobody renews."""
     from urllib.parse import urlsplit
 
     from app.domain.agent import machine_address
     from app.domain.device.supply import Supply
 
     _subscription_settings(monkeypatch, tmp_path)
-    configured = "wss://gateway.internal.example/api/llm/tunnel"
-    monkeypatch.setattr(settings, "subscription_tunnel_url", configured)
-    monkeypatch.setattr(settings, "agent_session_device_id", None)
+    monkeypatch.setattr(
+        settings,
+        "agent_session_device_id",
+        "dev1" if kind == "session_host" else None,
+    )
+    monkeypatch.setattr(settings, "agent_session_api_base", "http://172.17.0.1:8081")
     machine = SimpleNamespace(
-        supply=Supply.cloud if cloud else Supply.self_hosted,
-        cloud_control_private=cloud,
+        supply=Supply.cloud if kind == "private_cloud" else Supply.self_hosted,
+        cloud_control_private=kind == "private_cloud",
     )
 
     class Session:
@@ -1486,13 +1454,16 @@ async def test_a_cloud_machine_tunnels_through_its_loopback_forward(
     _hub, env, _project, _topic = await _subscription_screen()
 
     tunnel = urlsplit(env["CHEESE_TUNNEL_URL"])
-    if cloud:
-        api = urlsplit(env["CHEESE_API"])
-        assert ipaddress.ip_address(tunnel.hostname).is_loopback
-        assert (tunnel.hostname, tunnel.port) == (api.hostname, api.port)
-        assert (tunnel.scheme, tunnel.path) == ("ws", "/llm/tunnel")
-    else:
-        assert env["CHEESE_TUNNEL_URL"] == configured
+    api = urlsplit(env["CHEESE_API"])
+    assert (tunnel.hostname, tunnel.port) == (api.hostname, api.port)
+    assert tunnel.scheme == {"http": "ws", "https": "wss"}[api.scheme]
+    assert tunnel.path == api.path.rstrip("/") + "/llm/tunnel"
+    expected_host = {
+        "session_host": "172.17.0.1",
+        "private_cloud": "127.0.0.1",
+        "elsewhere": "cheese.test",
+    }[kind]
+    assert tunnel.hostname == expected_host
     assert "HTTPS_PROXY" not in env
 
 

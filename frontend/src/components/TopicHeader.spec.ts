@@ -39,7 +39,7 @@ const topic = {
   project_id: 'p1',
   parent_id: null,
   title: '登录页改成深色',
-  kind: 'topic',
+  kind: 'channel',
   status: 'active',
   created_by: 'u',
   created_at: '2026-09-01T00:00:00Z',
@@ -119,7 +119,7 @@ describe('话题头', () => {
     mountHeader()
 
     await waitFor(() => expect(bar().textContent).toContain('能访问整台机器'))
-    expect(bar().querySelector('[title="让它看到整台机器（能操作这台机器上的服务和其他房间）"]')).toBeTruthy()
+    expect(bar().querySelector('[title="让它看到整台机器（能操作这台机器上的服务和其他频道）"]')).toBeTruthy()
   })
 
   it('看不到能访问整台机器时这一行不提它', async () => {
@@ -185,11 +185,11 @@ describe('手机上话题头的 ⋯', () => {
   }
 
   it('改名：填上新名字保存，改的就是这个话题', async () => {
-    const { emitted } = mountHeader(false, { can_archive: true })
+    const { emitted } = mountHeader(false, { can_manage: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
-    const field = await screen.findByLabelText('话题名称')
+    const field = await screen.findByLabelText('频道名称')
     await fireEvent.update(field, '登录页改成浅色')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -197,18 +197,18 @@ describe('手机上话题头的 ⋯', () => {
   })
 
   it('名字没改就保存，不算改名', async () => {
-    const { emitted } = mountHeader(false, { can_archive: true })
+    const { emitted } = mountHeader(false, { can_manage: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
-    await screen.findByLabelText('话题名称')
+    await screen.findByLabelText('频道名称')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     expect(emitted().rename).toBeUndefined()
   })
 
   it('能归档的人可以从这里归档', async () => {
-    mountHeader(false, { can_archive: true })
+    mountHeader(false, { can_manage: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }))
@@ -216,16 +216,17 @@ describe('手机上话题头的 ⋯', () => {
     expect(archiveTopic).toHaveBeenCalledWith('topic-1')
   })
 
-  it('不能归档的人看不到归档', async () => {
-    mountHeader(false, { can_archive: false })
+  it('不管这个频道的人既不能改名也不能归档', async () => {
+    mountHeader(false, { can_manage: false })
 
     await openMore()
-    await screen.findByRole('menuitem', { name: '重命名' })
+    await screen.findByRole('menuitem', { name: '复制链接' })
+    expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
   })
 
   it('已归档的话题只能取消归档', async () => {
-    mountHeader(false, { status: 'archived', can_archive: true })
+    mountHeader(false, { status: 'archived', can_manage: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '取消归档' }))

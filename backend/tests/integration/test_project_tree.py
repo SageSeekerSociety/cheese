@@ -34,7 +34,7 @@ def _insert_block(client, project_id, topic_id, content) -> str:
         async with client.test_factory() as session:
             block = Block(
                 project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(topic_id),
+                conversation_id=uuid.UUID(topic_id),
                 kind=BlockKind.message,
                 author_type=AuthorType.participant,
                 author="user-1",
@@ -105,7 +105,7 @@ def test_a_task_is_named_by_its_own_session_or_its_owner(client):
         f"/blocks/{block_id}/upgrade", headers=session_auth_headers("owner")
     ).json()["data"]
     _wait_work_idle()
-    assert task["title"] == "新话题"
+    assert task["title"] == "新任务"
     title = f"/topics/{task['id']}/title"
 
     # 房间自己的会话不替任务起名 —— 那是任务自己会话的事。
@@ -208,9 +208,8 @@ def test_upgrade_on_archived_topic_rejected(client):
     assert r.status_code == 422
 
 
-def test_upgrade_from_private_chat_lands_under_root(client):
-    # 私聊不是话题树父节点 (spec §1): upgrading a private-chat block makes a topic
-    # under the project root, not an invisible orphan under the chat.
+def test_a_private_message_does_not_leave_the_chat(client):
+    # 私聊里的消息不转成任务，也不转成频道：它留在私聊里。
     p = _project(client, owner="user-1")
     priv = client.get(
         f"/projects/{p['id']}/private-chat", params={"user_handle": "user-1"}
@@ -218,17 +217,14 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     block_id = _insert_block(
         client, p["id"], priv["id"], "我们其实该单独做个数据清洗模块"
     )
-    topic = client.post(
+    before = client.get(f"/topics?project_id={p['id']}").json()["data"]["data"]
+    r = client.post(
         f"/blocks/{block_id}/upgrade", headers=session_auth_headers("user-1")
-    ).json()["data"]
-    _wait_work_idle()
-    assert topic["parent_id"] == p["root_topic_id"]
-    assert topic["kind"] == "topic"
-    # The new room starts from the message it came from, and nothing else of the
-    # private chat.
-    doc = client.get(f"/documents/{document_of(client, topic['id'])}").json()["data"]
-    assert doc is not None
-    assert "我们其实该单独做个数据清洗模块" in doc["content"]
+    )
+    assert r.status_code == 422, r.text
+    after = client.get(f"/topics?project_id={p['id']}").json()["data"]["data"]
+    assert len(after) == len(before)
+    assert client.get(f"/projects/{p['id']}/tasks").json()["data"]["data"] == []
 
 
 def test_open_and_conclude_a_task(client):

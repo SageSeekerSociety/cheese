@@ -101,10 +101,10 @@ async def require_writable(db: AsyncSession, reached: Reached) -> None:
         if reached.task.status != TaskStatus.open:
             raise ValidationError(say("taskClosedNoTurn"))
         if (
-            reached.actor.handle != reached.task.owner_handle
+            not TaskService.takes_part(reached.task, reached.actor.handle)
             and reached.scope != reached.task.id
         ):
-            raise ForbiddenError(say("taskDocOwnerOnly"))
+            raise ForbiddenError(say("taskDocParticipantsOnly"))
     await refuse_writes_if_archived(db, reached.doc.project_id)
 
 

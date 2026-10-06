@@ -1572,3 +1572,102 @@ class TestTaskSubmissionIntegration:
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 1
         assert submissions[0]["member"]["id"] == participant.user_id
+
+    def test_teacher_sees_the_file_a_participant_handed_in(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
+        """A file handed in is shown to the teacher by its name and size, and
+        its link opens the bytes that were uploaded."""
+        data = setup_task_for_submission
+        creator = data["creator"]
+        participant = data["participant"]
+
+        task_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+        membership_id = self._add_participant(
+            api_client, task_id, participant.token, participant.user_id, creator.token
+        )
+
+        body = b"%PDF-1.4 the report I am handing in"
+        upload = api_client.post(
+            "/attachments",
+            data={"type": "file"},
+            files={"file": ("实验报告.pdf", body, "application/pdf")},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert upload.status_code == 201, upload.text
+        attachment_id = upload.json()["data"]["id"]
+
+        submit = api_client.post(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            json=[{"attachmentId": attachment_id}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert submit.status_code == 200, submit.text
+
+        resp = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        [entry] = resp.json()["data"]["submissions"][0]["content"]
+        assert entry["type"] == "FILE"
+        handed_in = entry["contentAttachment"]
+        assert handed_in["id"] == attachment_id
+        assert handed_in["meta"]["name"] == "实验报告.pdf"
+        assert handed_in["meta"]["size"] == len(body)
+        assert handed_in["meta"]["mime"] == "application/pdf"
+
+        opened = api_client.get(handed_in["url"])
+        assert opened.status_code == 200, opened.text
+        assert opened.content == body
+
+    def test_a_participant_cannot_hand_in_someone_elses_upload(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
+        """The submission view hands out a file's link, so naming another
+        person's upload in a submission must not be a way to read it."""
+        data = setup_task_for_submission
+        creator = data["creator"]
+        participant = data["participant"]
+        other = data["participant2"]
+
+        task_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+        membership_id = self._add_participant(
+            api_client, task_id, participant.token, participant.user_id, creator.token
+        )
+
+        upload = api_client.post(
+            "/attachments",
+            data={"type": "file"},
+            files={"file": ("their-homework.pdf", b"not yours", "application/pdf")},
+            headers={"Authorization": f"Bearer {other.token}"},
+        )
+        assert upload.status_code == 201, upload.text
+        their_file = upload.json()["data"]["id"]
+
+        submit = api_client.post(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            json=[{"attachmentId": their_file}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert submit.status_code == 403, submit.text
+        assert "their-homework.pdf" not in submit.text
+
+        listed = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["data"]["submissions"] == []

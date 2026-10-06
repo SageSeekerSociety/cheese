@@ -153,7 +153,7 @@ function askRow(answered: { option: string; by: string } | null): RoomRow {
   }
   const block: Block = {
     id: answered ? 'ask-demo-answered' : 'ask-demo-open',
-    topic_id: 'demo',
+    conversation_id: 'demo',
     kind: 'message',
     author_type: 'participant',
     author: 'cheese',
@@ -346,7 +346,7 @@ const LONG_TEXT = `我把这周的进度理了一遍，发在这里，谁有空�
 
 const LONG_BLOCK: Block = {
   id: 'catalog-long',
-  topic_id: 'demo',
+  conversation_id: 'demo',
   kind: 'message',
   author_type: 'participant',
   author: 'wang',
@@ -591,7 +591,7 @@ export const RAIL_ROWS = {
     activity: [{ member: 'cheese-a1', kind: 'working', since: 1790845200 }],
   }),
   /** 有事等你拍板：琥珀点（未读的 @ 不点这颗灯，所以未读和它是两回事）。 */
-  awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, i_participate: true }),
+  awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, joined: true }),
   /** 收起来的父话题：开关自己带聚合色（里面有话题在等人），右边是聚上来的未读。 */
   collapsed: railRow(
     { id: 't-3', title: '期末复习' },
@@ -605,8 +605,6 @@ export const RAIL_ROWS = {
     title: '把成绩单导出成 CSV',
     waits: [{ member: 'cheese-a1', reason: 'failed', since: '2026-09-29T08:41:00Z' }],
   }),
-  /** 归档行：标题压暗一档，行尾是「取消归档」（`TopicRailArchivedGroup` 那一组）。 */
-  archived: { id: 't-7', title: '第 1 题：写一段自我介绍', kind: 'topic' } as Topic,
 }
 
 /** 侧栏一行右边那几位成员（`useTopicRail.memberMarks` 在真环境里给的就是这个形状）。 */
@@ -637,11 +635,10 @@ export const RAIL_ROOT_TOPIC: Topic = {
   created_at: '2026-09-20T08:00:00Z',
 }
 
-/** 这个项目的壳摆出来的那几页（顺序就是壳说的顺序，见 `lib/shell.ts`）。 */
+/** 项目名下那两行（看板、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
 export const RAIL_PAGES = [
+  { key: 'workspace-running', label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
   { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
-  { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
-  { key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
 ]
 
 /** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */

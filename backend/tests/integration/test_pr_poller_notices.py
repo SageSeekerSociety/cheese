@@ -42,12 +42,15 @@ def _events(client, topic_id: str, event_type: str) -> list[dict]:
     from sqlalchemy import select
 
     from app.domain.block.models import Block
+    from app.domain.conversation.services import of_room
 
     async def task_events():
         async with client.test_factory() as session:
             rows = list(
                 await session.scalars(
-                    select(Block).where(Block.topic_id == uuid.UUID(topic_id))
+                    select(Block).where(
+                        of_room(Block.conversation_id, uuid.UUID(topic_id))
+                    )
                 )
             )
             return [
@@ -56,7 +59,7 @@ def _events(client, topic_id: str, event_type: str) -> list[dict]:
                     "kind": row.kind.value,
                     "content": row.content,
                     "meta": row.meta,
-                    "task_id": row.task_id,
+                    "conversation_id": row.conversation_id,
                 }
                 for row in rows
             ]

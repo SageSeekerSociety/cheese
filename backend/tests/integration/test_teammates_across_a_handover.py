@@ -22,7 +22,12 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic_membership.services import TopicMemberService
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    in_thread,
+    post_message,
+    post_project,
+)
 
 
 class StillWorking(StubChannel):
@@ -47,7 +52,8 @@ def _service(client, channel: StubChannel) -> ChatService:
 
 
 def _room_with_a_teammate(client) -> str:
-    """A room holding the project's own agent and a second one, "Second"."""
+    """A 支线 in a channel holding the project's own agent and a second one,
+    "Second"."""
     project = post_project(client, {"name": "Handover"}, owner="alice")
     data = project.json()["data"]
 
@@ -65,7 +71,8 @@ def _room_with_a_teammate(client) -> str:
             await session.commit()
 
     asyncio.run(seat())
-    return data["root_topic_id"]
+    # The teammates answer in a 支线 of the channel they are seated in.
+    return in_thread(client, data["root_topic_id"], "alice")
 
 
 def _say(client, room: str, content: str) -> None:
@@ -105,7 +112,9 @@ def _turns(client, room: str) -> list[AgentTurn]:
         async with client.test_factory() as session:
             return list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == uuid.UUID(room))
+                    select(AgentTurn).where(
+                        AgentTurn.conversation_id == uuid.UUID(room)
+                    )
                 )
             )
 
@@ -312,7 +321,7 @@ def _room_with_two_teammates(client) -> str:
     room = data["root_topic_id"]
     _seat_teammate(client, data, room, "second", "Second")
     _seat_teammate(client, data, room, "third", "Third")
-    return room
+    return in_thread(client, room, "alice")
 
 
 def test_an_unanswered_conversation_is_unknown_not_dead(client):

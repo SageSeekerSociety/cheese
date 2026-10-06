@@ -23,6 +23,12 @@ def command(argv, **kwargs):
                           timeout=kwargs.pop("timeout", 60), **kwargs).stdout
 
 
+def backend_container():
+    # cheese-backend-1 or cheese-backend-b-1, whichever slot the last release
+    # moved the backend to.
+    return command(["bash", str(Path(__file__).with_name("app-container.sh")), "backend"]).strip()
+
+
 def verify_route():
     for _ in range(30):
         pid = command(["systemctl", "--user", "show", "cheese.service",
@@ -106,7 +112,7 @@ print(json.dumps({item['device_id']: {'online': item['online'],
 
 
 def snapshot():
-    return json.loads(command(["docker", "exec", "-i", "cheese-backend-1", "python", "-"],
+    return json.loads(command(["docker", "exec", "-i", backend_container(), "python", "-"],
                               input=SNAPSHOT))
 
 
@@ -141,7 +147,7 @@ asyncio.run(main())
 
 
 def register_legacy(key, operation):
-    return json.loads(command(["docker", "exec", "-i", "cheese-backend-1", "python", "-",
+    return json.loads(command(["docker", "exec", "-i", backend_container(), "python", "-",
                                *map(str, key), operation], input=REGISTER))
 
 
@@ -221,7 +227,7 @@ def migrate(log_dir, limit, *, legacy=False):
         rows = json.loads(os.environ["LEGACY_DEVICE_MANIFEST"])
         inventory = {cloud["identity"](row): row for row in rows}
     else:
-        inventory = asyncio.run(cloud["inventory"]("cheese-backend-1"))
+        inventory = asyncio.run(cloud["inventory"](backend_container()))
     log_dir.mkdir(parents=True, exist_ok=True)
     started = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     manifest = log_dir / f"{started}-inventory.json"

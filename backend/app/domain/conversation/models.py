@@ -1,13 +1,14 @@
 """Conversations: the register of every place a conversation happens.
 
-A room and a task are each a conversation, and the things that belong to one —
-an agent's session in it, so far — point here rather than at whichever table
-the conversation lives in. A row holds only who the conversation is: its id
-(the room's or the task's own), its project and its kind. Everything a room or
-a task says about itself stays in ``topics`` or ``tasks``.
+A room, a task and a 支线 are each a conversation, and the things that belong to one —
+what is said in it, an agent's session, its turns and spend, its progress —
+point here (``conversation_id``) rather than at whichever table the
+conversation lives in. A row holds only who the conversation is: its id
+(the room's, the task's or the 支线's own), its project and its kind. Everything
+each says about itself stays in ``topics``, ``tasks`` or ``threads``.
 
-The database keeps the register, not the application: inserting a room or a
-task registers it and deleting one removes it (migration ``f7985445d2bf``), so
+The database keeps the register, not the application: inserting a room, a
+task or a 支线 registers it and deleting one removes it (migration ``f7985445d2bf``), so
 no code path creates or deletes these rows.
 """
 
@@ -24,6 +25,7 @@ from app.core.db import Base
 class ConversationKind(enum.StrEnum):
     room = "room"
     task = "task"
+    thread = "thread"
 
 
 class Conversation(Base):

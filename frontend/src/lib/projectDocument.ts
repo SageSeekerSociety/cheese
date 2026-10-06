@@ -18,7 +18,6 @@ export interface ProjectDocument {
 export interface DocumentHit extends ProjectDocument {
   snippet: string
   room_title?: string
-  room_title_source?: string
 }
 
 export interface DocumentSearch {

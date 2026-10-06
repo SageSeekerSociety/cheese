@@ -24,6 +24,7 @@ from tests.ask_fixtures import agent_credential
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     room_agent_seat,
@@ -65,7 +66,9 @@ def _turns(client, room: str) -> list[AgentTurn]:
         async with client.test_factory() as session:
             return list(
                 await session.scalars(
-                    select(AgentTurn).where(AgentTurn.topic_id == uuid.UUID(room))
+                    select(AgentTurn).where(
+                        AgentTurn.conversation_id == uuid.UUID(room)
+                    )
                 )
             )
 
@@ -76,7 +79,7 @@ def _questions(client, room: str) -> list[str]:
     async def read() -> list[str]:
         async with client.test_factory() as session:
             blocks = await session.scalars(
-                select(Block).where(Block.topic_id == uuid.UUID(room))
+                select(Block).where(Block.conversation_id == uuid.UUID(room))
             )
             return [b.content for b in blocks if (b.meta or {}).get("ask_group")]
 
@@ -92,7 +95,8 @@ def _until(predicate, what: str) -> None:
 
 def test_a_question_asked_before_the_takeover_is_asked_once_it_lands(client):
     data = post_project(client, {"name": "Handover ask"}, owner="alice").json()["data"]
-    room = data["root_topic_id"]
+    # 芝士 answers in a 支线 of the channel.
+    room = in_thread(client, data["root_topic_id"], "alice")
     before = StillWorking()
     _service(client, before)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
@@ -146,7 +150,8 @@ def test_a_question_with_no_turn_is_still_refused_after_the_takeover(client):
     """Waiting for the takeover is not a way around the rule: a seat that has
     no running turn once the work is here is refused, as before."""
     data = post_project(client, {"name": "Handover idle"}, owner="alice").json()["data"]
-    room = data["root_topic_id"]
+    # 芝士 answers in a 支线 of the channel.
+    room = in_thread(client, data["root_topic_id"], "alice")
     _service(client, StubChannel())
     runner = get_work_runner()
     runner.hold_turns()

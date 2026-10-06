@@ -83,8 +83,14 @@ def _key() -> bytes:
     )
 
 
+#: What "now" is for the docs' own tokens: when one is minted and when it has
+#: run out. One clock for both, so a test can let a sign-in's time run out
+#: instead of sleeping past it.
+_clock: Callable[[], float] = time.time
+
+
 def _mint(user_id: int, sid: uuid.UUID, kind: str, ttl: int) -> str:
-    now = int(time.time())
+    now = int(_clock())
     return jwt.encode(
         {
             "sub": str(user_id),
@@ -113,6 +119,10 @@ def _claims(token: str | None, kind: str) -> tuple[int, uuid.UUID, str] | None:
             options={"require": ["sub", "sid", "aud", "type", "jti", "iat", "exp"]},
         )
         if claims["type"] != kind or not str(claims["sub"]).isdigit():
+            return None
+        # PyJWT judges `exp` by the wall clock; judge it again by ours, which
+        # is the clock the token was minted by.
+        if claims["exp"] <= _clock():
             return None
         return int(claims["sub"]), uuid.UUID(str(claims["sid"])), str(claims["jti"])
     except (jwt.PyJWTError, ValueError, TypeError):

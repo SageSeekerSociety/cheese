@@ -30,7 +30,12 @@ const more = computed(() => people.value.length - shown.value.length)
 <template>
   <div class="doc-presence">
     <div v-if="shown.length" class="doc-presence__faces">
-      <span v-for="peer in shown" :key="peer.handle" class="doc-presence__face" :title="`${peer.name} @${peer.handle}`">
+      <span
+        v-for="peer in shown"
+        :key="peer.handle"
+        class="doc-presence__face"
+        :title="`${peer.name} · ${peer.handle}`"
+      >
         <CheeseAvatar v-if="peer.agent" :size="22" :name="peer.name" :handle="peer.handle" />
         <UserAvatar v-else :size="22" :name="peer.name" :avatar="peer.avatar" :alt="peer.name" />
       </span>

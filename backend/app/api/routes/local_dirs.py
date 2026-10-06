@@ -134,8 +134,9 @@ def _access_view(record: AccessRecord) -> dict[str, Any]:
         "detail": record.detail,
         "actor_handle": record.actor_handle,
         "project_id": str(record.project_id) if record.project_id else None,
-        "topic_id": str(record.topic_id) if record.topic_id else None,
-        "task_id": str(record.task_id) if record.task_id else None,
+        "conversation_id": str(record.conversation_id)
+        if record.conversation_id
+        else None,
         "created_at": record.created_at.isoformat(),
     }
 
@@ -185,7 +186,7 @@ async def grant_directory(
     # After the commit, not before: the grant is now the authoritative record, and
     # a machine that is offline has not made it any less real. A failure here is
     # reported, never raised — see the module docstring.
-    outcome = await push_grants(service, device_hub, device_id)
+    outcome = await push_grants(service, device_hub, device_id, end_read=db.commit)
     return {**_grant_view(grant), "delivery": _delivery_view(outcome)}
 
 
@@ -207,7 +208,7 @@ async def revoke_directory(
     # Pushed immediately, and that is the point of a revocation: the device holds
     # its own copy and would otherwise keep honoring a grant its owner has just
     # taken away until something else happened to re-send the set.
-    outcome = await push_grants(service, device_hub, device_id)
+    outcome = await push_grants(service, device_hub, device_id, end_read=db.commit)
     return {"revoked": True, "id": str(grant.id), "delivery": _delivery_view(outcome)}
 
 

@@ -441,13 +441,17 @@ def _notices(client, room: str) -> list[str]:
 def test_an_unconnected_server_is_a_capability_line_and_one_room_notice(
     client, upstream, stub_hooks
 ):
+    from tests.integration.conftest import in_thread
+
     pid = _project(client, upstream)
     tid = _topic(client, pid)
+    # 芝士 answers in a 支线; the notice is the channel's, said there once.
+    thread = in_thread(client, tid, "alice")
 
-    _turn(client, tid, "@芝士 看一下任务")
+    _turn(client, thread, "@芝士 看一下任务")
     prompt = stub_hooks.told
     assert "tracker、search 需要项目成员在项目设置里连接" in prompt
-    _turn(client, tid, "@芝士 再看一下")
+    _turn(client, thread, "@芝士 再看一下")
     assert sorted(_notices(client, tid)) == [
         "search 需要在项目设置里连接",
         "tracker 需要在项目设置里连接",
@@ -455,8 +459,8 @@ def test_an_unconnected_server_is_a_capability_line_and_one_room_notice(
 
     _connect(client, pid)
     # 没连上的服务器是会话开场时说的事：下一条新开的会话听到的是现在还没连的那些。
-    _new_conversation(client, tid)
-    _turn(client, tid, "@芝士 现在呢")
+    _new_conversation(client, thread)
+    _turn(client, thread, "@芝士 现在呢")
     lines = [line for line in stub_hooks.told.splitlines() if "远程 MCP 服务器" in line]
     assert lines == [
         "- 项目的远程 MCP 服务器 search 需要项目成员在项目设置里连接，"

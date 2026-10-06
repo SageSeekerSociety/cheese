@@ -59,8 +59,8 @@ def test_a_tasks_id_addresses_its_conversation(client):
     assert client.get(f"/topics/{card['id']}", headers=alice).status_code == 404
 
 
-def test_a_task_reads_with_its_board_line_and_conversation(client):
-    """卡本身、它的看板那一格、它的对话，一条请求全给。"""
+def test_a_task_reads_with_its_board_line(client):
+    """卡本身、它的看板那一格，一条请求全给。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
     card = _card(client, room_id, title="接口分页")
@@ -72,7 +72,6 @@ def test_a_task_reads_with_its_board_line_and_conversation(client):
     assert got["title"] == "接口分页"
     # 状态词是后端算的那一句，和它在看板上显示的是同一句。
     assert got["presentation"]["phrase"]
-    assert got["blocks"] == []
 
 
 def test_saying_something_on_a_card_lands_on_the_card(client):
@@ -90,7 +89,7 @@ def test_saying_something_on_a_card_lands_on_the_card(client):
     assert r.status_code == 200, r.text
     wait_work_idle()
 
-    said = client.get(f"/topics/{card['id']}/task").json()["data"]["blocks"]
+    said = client.get(f"/topics/{card['id']}/blocks").json()["data"]["data"]
     assert "这条先别动 routes" in [b["content"] for b in said]
     # 房间主线上没有这句话。
     room_line = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]

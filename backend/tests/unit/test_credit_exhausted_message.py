@@ -125,7 +125,7 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
     async with db_factory() as session:
         await AgentTurnRepository(session).open(
             turn_id=turn_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             continuation_id=turn_id,
             author="u",
             content="做事",
@@ -203,7 +203,7 @@ async def test_a_refused_turn_ending_says_when_the_credits_come_back(
         )
         await AgentTurnRepository(session).open(
             turn_id=turn_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             continuation_id=turn_id,
             author="u",
             content="做事",

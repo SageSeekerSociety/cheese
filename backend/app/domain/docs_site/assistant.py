@@ -419,7 +419,7 @@ async def _tool_round(
         "max_tokens": MAX_ANSWER_TOKENS,
         "temperature": 0.2,
         # deepseek-flash thinks itself past the answer cap when it is allowed
-        # to; the same measurement is behind topic/naming.py's. Dropped and
+        # to; the same measurement is behind room_task/naming.py's. Dropped and
         # retried once if the gateway refuses the parameter.
         "thinking": {"type": "disabled"},
     }

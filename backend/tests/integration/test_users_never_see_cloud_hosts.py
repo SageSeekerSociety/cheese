@@ -27,7 +27,7 @@ def test_a_cloud_sessions_sandbox_is_shown_without_its_host(client, monkeypatch)
             generation = str(uuid.uuid4())
             db.add(
                 AgentSession(
-                    topic_id=uuid.UUID(room),
+                    conversation_id=uuid.UUID(room),
                     agent_handle="agent",
                     harness="claude-code",
                     execution_request={

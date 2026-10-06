@@ -160,8 +160,12 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "taskDispatched",
         "blockUpgradedToTask",
         "blockUpgradedTaskId",
+        "blockUpgradedToRoom",
+        "blockUpgradedRoomId",
+        "labelUpgradedTo",
         "subagentStart",
         "subagentStopEmpty",
+        "titleAutoRenamed",
     }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()

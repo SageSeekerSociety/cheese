@@ -25,7 +25,7 @@ import { currentUserId, currentUserName } from '../services/account'
 function fixture(): Block {
   return {
     id: 'q1',
-    topic_id: 'room',
+    conversation_id: 'room',
     kind: 'message',
     author_type: 'participant',
     author: 'agent',

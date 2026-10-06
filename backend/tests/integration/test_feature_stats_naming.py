@@ -1,7 +1,7 @@
-"""功能数据页：智能命名那一页（`/admin/feature-stats/topic-naming`）。
+"""功能数据页：智能命名那一页（`/admin/feature-stats/task-naming`）。
 
 这一页不新增任何埋点：钱来自网关那把专用 key（`KeySpec.alias == "topic-naming"`），
-动作来自 `topic_titles` 这张本来就在的表。所以这里钉的是**读法**——每一件事都是
+动作来自 `task_titles` 这张本来就在的表。所以这里钉的是**读法**——每一件事都是
 「算错了页面上看不出来」的那一类：
 
 * **只算命名那把 key 的账**。网关的 `by_key` 里是全平台每一把 key，把别人的流量算
@@ -13,12 +13,12 @@
 * **答了、上面却没有那把 key** 也是「没有数」，不是 0。没有这把密钥，它花了多少
   就无从谈起；0 说的是「有这把密钥、这一窗口没花钱」。这两句在页面上读起来必须
   不一样。
-* **分母**。「人后来改掉了多少」的分母是**有自动标题的房间**；人自己起名的房间不算
-  平台被改掉，没被自动命名过的房间也不该出现在分母里。
+* **分母**。「人后来改掉了多少」的分母是**有自动标题的任务**；人自己起名的任务不算
+  平台被改掉，没被自动命名过的任务也不该出现在分母里。
 * **窗口**。折线恒有 `days` 个点、缺的那天补 0；7 天看不见 40 天前那一行。
 
 网关一律打桩（`httpx.MockTransport` 装进 `httpx.AsyncClient`，同
-`test_topic_naming.py` 的做法）——测试不该打到真网关上。写数据走
+`test_task_naming.py` 的做法）——测试不该打到真网关上。写数据走
 `client.test_factory` 那个库。
 """
 
@@ -30,9 +30,9 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.domain.feature_stats.features import topic_naming
-from app.domain.topic import naming
-from app.domain.topic.models import TitleSource, TopicTitle
+from app.domain.feature_stats.features import task_naming
+from app.domain.room_task import naming
+from app.domain.room_task.models import TaskTitle, TaskTitleSource
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, session_auth_headers
 
@@ -53,12 +53,12 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
 
 @pytest.fixture(autouse=True)
 def _quiet(monkeypatch: pytest.MonkeyPatch):
-    """两个模块级的缓存跨用例活着，不清就是上一条用例的数；房间是经 HTTP 建的，
+    """两个模块级的缓存跨用例活着，不清就是上一条用例的数；任务是经 HTTP 建的，
     顺手把命名那条后台任务摘掉——它不该在别的用例背后往库里写标题。"""
-    topic_naming.forget()
+    task_naming.forget()
     monkeypatch.setattr(naming, "nudge", lambda *args, **kwargs: None)
     yield
-    topic_naming.forget()
+    task_naming.forget()
 
 
 def _today() -> datetime:
@@ -106,7 +106,7 @@ def _other_day(spend: float = 500.0, requests: int = 100_000) -> dict:
 
 def _key_row(
     *,
-    alias: str = topic_naming.KEY_ALIAS,
+    alias: str = task_naming.KEY_ALIAS,
     token: str = NAMING_HASH,
     spend: float = 1.25,
     max_budget: float | None = 10.0,
@@ -202,26 +202,24 @@ def _login(client) -> dict[str, str]:
     return {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
 
 
-def _rooms(client, count: int) -> list[uuid.UUID]:
-    """``count`` rooms of one project, each with a name a person gave it.
+def _tasks(client, count: int) -> list[uuid.UUID]:
+    """``count`` tasks of one project, each with a name a person gave it.
 
-    The title text does not matter — the ``topic_titles`` rows below carry the
-    source and the moment this page reads. The rooms are real because
-    ``topic_titles.topic_id`` is a foreign key.
+    The title text does not matter — the ``task_titles`` rows below carry the
+    source and the moment this page reads. The tasks are real because
+    ``task_titles.task_id`` is a foreign key.
     """
     headers = _login(client)
     created = post_project(client, json={"name": "P"}, headers=headers, owner="alice")
     assert created.status_code == 200, created.text
-    project_id = created.json()["data"]["id"]
+    room = created.json()["data"]["root_topic_id"]
     out = []
     for index in range(count):
-        room = client.post(
-            "/topics",
-            json={"project_id": project_id, "title": f"房间 {index}"},
-            headers=headers,
+        task = client.post(
+            f"/topics/{room}/tasks", json={"title": f"任务 {index}"}, headers=headers
         )
-        assert room.status_code == 200, room.text
-        out.append(uuid.UUID(room.json()["data"]["id"]))
+        assert task.status_code == 200, task.text
+        out.append(uuid.UUID(task.json()["data"]["id"]))
     return out
 
 
@@ -229,27 +227,27 @@ def _seed_titles(client, *rows: dict) -> None:
     async def _seed() -> None:
         async with client.test_factory() as s:
             for spec in rows:
-                s.add(TopicTitle(**spec))
+                s.add(TaskTitle(**spec))
             await s.commit()
 
     asyncio.run(_seed())
 
 
-def _auto(room: uuid.UUID, *, stage: str = "name", days: int = 1) -> dict:
+def _auto(task: uuid.UUID, *, stage: str = "name", days: int = 1) -> dict:
     return {
-        "topic_id": room,
+        "task_id": task,
         "title": f"自动 {stage}",
-        "source": TitleSource.auto,
+        "source": TaskTitleSource.auto,
         "reason": stage,
         "created_at": _days_ago(days),
     }
 
 
-def _human(room: uuid.UUID, *, reason: str = "rename", days: int = 1) -> dict:
+def _human(task: uuid.UUID, *, reason: str = "rename", days: int = 1) -> dict:
     return {
-        "topic_id": room,
+        "task_id": task,
         "title": f"人写的 {reason}",
-        "source": TitleSource.human,
+        "source": TaskTitleSource.human,
         "reason": reason,
         "by": "alice",
         "created_at": _days_ago(days),
@@ -258,7 +256,7 @@ def _human(room: uuid.UUID, *, reason: str = "rename", days: int = 1) -> dict:
 
 def _report(client, admin: str, **params) -> dict:
     r = client.get(
-        "/admin/feature-stats/topic-naming",
+        "/admin/feature-stats/task-naming",
         params=params,
         headers=session_auth_headers(admin),
     )
@@ -275,13 +273,13 @@ def test_the_catalogue_offers_the_naming_page(client, as_admin):
     ).json()["data"]
 
     ids = [feature["id"] for feature in body["features"]]
-    assert "topic-naming" in ids
+    assert "task-naming" in ids
 
 
 def test_a_stranger_cannot_read_the_report(client, as_admin):
     headers = session_auth_headers(STRANGER)
     assert (
-        client.get("/admin/feature-stats/topic-naming", headers=headers).status_code
+        client.get("/admin/feature-stats/task-naming", headers=headers).status_code
         == 403
     )
 
@@ -291,7 +289,7 @@ def test_days_is_bounded(client, as_admin):
     for days in (0, 91):
         assert (
             client.get(
-                "/admin/feature-stats/topic-naming",
+                "/admin/feature-stats/task-naming",
                 params={"days": days},
                 headers=headers,
             ).status_code
@@ -358,8 +356,8 @@ def test_the_key_budget_rides_next_to_the_spend(client, as_admin, monkeypatch):
 def test_a_gateway_we_cannot_ask_is_null_not_zero(client, as_admin, monkeypatch):
     """网关没配：数字是「没读到」，不是「零」。动作那一半照常。"""
     _no_gateway(monkeypatch)
-    (room,) = _rooms(client, 1)
-    _seed_titles(client, _auto(room))
+    (task,) = _tasks(client, 1)
+    _seed_titles(client, _auto(task))
 
     numbers = _report(client, as_admin, days=30)["numbers"]
 
@@ -380,8 +378,8 @@ def test_a_gateway_we_cannot_ask_is_null_not_zero(client, as_admin, monkeypatch)
 def test_a_gateway_that_errors_is_also_unknown_not_zero(client, as_admin, gateway):
     """连不上：同一个 `None` 集合，不是一排 0（一排 0 读作「这个月没花钱」）。"""
     gateway.unreachable = True
-    (room,) = _rooms(client, 1)
-    _seed_titles(client, _auto(room))
+    (task,) = _tasks(client, 1)
+    _seed_titles(client, _auto(task))
 
     numbers = _report(client, as_admin, days=30)["numbers"]
 
@@ -428,8 +426,8 @@ def test_a_gateway_without_the_naming_key_is_unknown_not_zero(
     switch = _install_gateway(
         monkeypatch, [_key_row(alias="project-x", token=OTHER_HASH)], []
     )
-    (room,) = _rooms(client, 1)
-    _seed_titles(client, _auto(room))
+    (task,) = _tasks(client, 1)
+    _seed_titles(client, _auto(task))
 
     numbers = _report(client, as_admin, days=30)["numbers"]
 
@@ -448,12 +446,13 @@ def test_a_gateway_without_the_naming_key_is_unknown_not_zero(
 
 
 def _stage_fixture(client) -> None:
-    """Four rooms covering every bucket the page counts.
+    """Four tasks covering every bucket the page counts.
 
     ``one`` 自动命名、校准、跟随，然后被一个人改掉；``two`` 只被自动命名过；
-    ``three`` 是人自己起的名字，平台从没命名过；``four`` 自动命名后被撤销了。
+    ``three`` 是人自己起的名字，平台从没命名过；``four`` 是芝士提议的标题，后来
+    被人改掉了。
     """
-    one, two, three, four = _rooms(client, 4)
+    one, two, three, four = _tasks(client, 4)
     _seed_titles(
         client,
         _auto(one, stage="name", days=4),
@@ -462,8 +461,8 @@ def _stage_fixture(client) -> None:
         _human(one, reason="rename", days=0),
         _auto(two, stage="name", days=3),
         _human(three, reason="rename", days=3),
-        _auto(four, stage="name", days=3),
-        _human(four, reason="undo", days=1),
+        _auto(four, stage="proposal", days=3),
+        _human(four, reason="rename", days=1),
     )
 
 
@@ -475,71 +474,15 @@ def test_titles_are_counted_by_stage_and_by_who_wrote_them(
 
     numbers = _report(client, as_admin, days=30)["numbers"]
 
-    assert numbers["renames"] == {"value": 5, "name": 3, "calibrate": 1, "follow": 1}
-    assert numbers["person_edits"] == {"value": 3, "rename": 2, "undo": 1}
-    # 明细的和就是总数：两个格子要么各装一半，要么有一个空着，不该有第三种。
-    assert (
-        numbers["person_edits"]["rename"] + numbers["person_edits"]["undo"]
-        == numbers["person_edits"]["value"]
-    )
+    # 提议时的标题算平台的，但不属于三个阶段里的任何一个。
+    assert numbers["renames"] == {"value": 5, "name": 2, "calibrate": 1, "follow": 1}
+    assert numbers["person_edits"] == {"value": 3}
 
 
-def test_a_row_with_the_old_word_for_undo_still_lands_in_a_cell(
+def test_the_override_share_counts_tasks_a_person_touched_after_the_platform(
     client, as_admin, monkeypatch
 ):
-    """旧的 `restore` 行也算撤销，明细的和必须等于总数。
-
-    「退回」这件事换过一次写法：`restore`（3ce29a4d，2026-09-27）后来改叫
-    `undo`（ce08b7ca，09-28），库里两种行都在。只认新写法的后果是可数的：2026-10-01
-    在 dev 上，两个格子加起来 18，总数写 23 —— 那 5 次改动在页面上没有任何一处能
-    对上，而看的人只会以为自己看漏了。
-    """
-    _no_gateway(monkeypatch)
-    one, two = _rooms(client, 2)
-    _seed_titles(
-        client,
-        _human(one, reason="rename", days=2),
-        _human(one, reason="rename", days=1),
-        _human(two, reason="restore", days=1),
-        _human(two, reason="undo", days=0),
-    )
-
-    edits = _report(client, as_admin, days=30)["numbers"]["person_edits"]
-
-    assert edits == {"value": 4, "rename": 2, "undo": 2}
-    assert edits["rename"] + edits["undo"] == edits["value"]
-
-
-def test_a_row_whose_reason_we_do_not_know_is_in_no_cell(client, as_admin, monkeypatch):
-    """总数只含改名和撤销；未知原因不能计作撤销，日趋势采用同一范围。"""
-    _no_gateway(monkeypatch)
-    one, two = _rooms(client, 2)
-    _seed_titles(
-        client,
-        _auto(one, stage="name", days=2),
-        _human(one, reason="rename", days=1),
-        _auto(two, stage="name", days=2),
-        _human(two, reason="banana", days=0),
-    )
-
-    report = _report(client, as_admin, days=30)
-
-    assert report["numbers"]["person_edits"] == {"value": 1, "rename": 1, "undo": 0}
-    assert (
-        report["numbers"]["person_edits"]["rename"]
-        + report["numbers"]["person_edits"]["undo"]
-        == report["numbers"]["person_edits"]["value"]
-    )
-    # 折线的人那条也同一条判据：认不出就不画。
-    assert sum(point["person"] for point in report["trend"]) == 1
-    # 自动命名那一半照常：两行都数得到，认不出的那行不影响它。
-    assert report["numbers"]["renames"]["value"] == 2
-
-
-def test_the_override_share_counts_rooms_a_person_touched_after_the_platform(
-    client, as_admin, monkeypatch
-):
-    """分母是**有自动标题的房间**：人自己起名的房间不进分母，没被改的不进分子。"""
+    """分母是**有自动标题的任务**：人自己起名的任务不进分母，没被改的不进分子。"""
     _no_gateway(monkeypatch)
     _stage_fixture(client)
 
@@ -552,8 +495,8 @@ def test_the_override_share_counts_rooms_a_person_touched_after_the_platform(
 def test_a_share_with_no_denominator_is_null(client, as_admin, monkeypatch):
     """一个自动标题都没有：比例是「没有值」，不是 0%。"""
     _no_gateway(monkeypatch)
-    (room,) = _rooms(client, 1)
-    _seed_titles(client, _human(room, reason="rename", days=1))
+    (task,) = _tasks(client, 1)
+    _seed_titles(client, _human(task, reason="rename", days=1))
 
     overridden = _report(client, as_admin, days=30)["numbers"]["overridden"]
 
@@ -566,7 +509,7 @@ def test_a_share_with_no_denominator_is_null(client, as_admin, monkeypatch):
 def test_the_trend_is_dense_over_the_window(client, as_admin, monkeypatch):
     """折线恒有 days 个点、最早在前、缺的那天是 0（判据是窗口，不是有数据的天）。"""
     _no_gateway(monkeypatch)
-    one, two = _rooms(client, 2)
+    one, two = _tasks(client, 2)
     _seed_titles(
         client,
         _auto(one, stage="name", days=2),
@@ -601,11 +544,11 @@ def test_the_trend_is_dense_over_the_window(client, as_admin, monkeypatch):
 def test_the_window_bounds_what_is_counted(client, as_admin, monkeypatch):
     """7 天看不见 40 天前的行，90 天看得见。"""
     _no_gateway(monkeypatch)
-    (room,) = _rooms(client, 1)
+    (task,) = _tasks(client, 1)
     _seed_titles(
         client,
-        _auto(room, stage="name", days=40),
-        _human(room, reason="rename", days=1),
+        _auto(task, stage="name", days=40),
+        _human(task, reason="rename", days=1),
     )
 
     assert _report(client, as_admin, days=7)["numbers"]["renames"]["value"] == 0

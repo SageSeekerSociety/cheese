@@ -593,10 +593,13 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
       const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)
+      // 平台替一轮写的通知署名都是 system：是哪位队友的那一轮在 `seat` 上，两位的
+      // 并成一行，后一位的就署成了前一位。
       const sameAuthor =
         prevBlock.author === block.author &&
         prevBlock.author_type === block.author_type &&
-        str(meta(prevBlock)?.agent_id) === str(meta(block)?.agent_id)
+        str(meta(prevBlock)?.agent_id) === str(meta(block)?.agent_id) &&
+        str(meta(prevBlock)?.seat) === str(meta(block)?.seat)
       if (sameAuthor && (sameType || (bothPlain && prevBlock.content === block.content))) {
         prev.run.push(block)
         continue

@@ -20,7 +20,7 @@
     "projects": {
       "shared": "Projects in common",
       "mine": "My projects",
-      "stats": "{topics} topics started · {count} contributions",
+      "stats": "{topics} channels started · {count} contributions",
       "active": "active {when}",
       "trend": "Contributions per week, last 12 weeks: {counts}",
       "emptyShared": "No projects in common",
@@ -31,13 +31,13 @@
       "team": "Team member"
     },
     "topics": {
-      "recent": "Recent topics",
+      "recent": "Recent channels",
       "range": "{from} – {to}",
       "backToRecent": "Back to recent",
       "count": "{count}",
-      "empty": "No topics yet",
-      "emptyWeek": "No topics that week",
-      "loadFailed": "Could not load topics"
+      "empty": "No channels yet",
+      "emptyWeek": "No channels that week",
+      "loadFailed": "Could not load channels"
     },
     "notes": {
       "title": "What your AI teammates noted about you",
@@ -51,8 +51,8 @@
       "weekly": "{count} contributions this week",
       "waiting": "Waiting on you",
       "waitingEmpty": "Nothing waiting",
-      "active": "Active topics",
-      "activeEmpty": "No active topics"
+      "active": "Active channels",
+      "activeEmpty": "No active channels"
     }
   }
 }

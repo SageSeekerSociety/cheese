@@ -36,8 +36,15 @@ BASELINE = {
     # 管理员看板「学习」那一格：私聊不进这张列表，`WHERE is_private IS FALSE` 一类
     # 的过滤，和轮次组装不是一回事（见上面「登记，不是认可」）。
     "app/domain/space/learning_service.py": 1,
+    # 私聊没有支线，只有频道主线上的消息能挂：`WHERE is_private IS FALSE` 一类过滤。
+    "app/domain/thread/services.py": 1,
     "app/domain/topic/models.py": 1,
-    "app/domain/topic/repositories.py": 7,
+    # 8：未读数里私聊默认每条都算（`unread_counts`），和「私聊不进这张列表」一类
+    # 过滤同属登记。
+    "app/domain/topic/repositories.py": 8,
+    # 频道能加入、退出、要加入才能在主线说话，私聊是两席、不走这些：`_public`
+    # 是这个文件唯一读那个布尔的地方。
+    "app/domain/topic_membership/services.py": 1,
     "app/domain/topic/services.py": 1,
 }
 

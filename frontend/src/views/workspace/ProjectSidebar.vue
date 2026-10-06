@@ -11,7 +11,9 @@ import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { readProjectTasks } from '@/lib/projectTasks'
+import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import BoardSummary from '@/views/workspace/BoardSummary.vue'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
@@ -44,8 +46,9 @@ const column = computed(
 // Active state is read off the URL, never off a local flag.
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? String(route.params.topicId) : null))
 const activeTaskId = computed(() => (route.name === 'workspace-task' ? String(route.params.taskId) : null))
+const activeAllTasks = computed(() => (route.name === 'workspace-channel-tasks' ? String(route.params.topicId) : null))
 
-// 每个房间里还开着的任务，挂在房间那一行下面。和看板读同一份（`readProjectTasks`），
+// 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和看板读同一份（`readProjectTasks`），
 // 看板刚读过就拿它那一份；换了地方（新建、开始、关闭任务之后）也重读一次。
 const TASKS_REFRESH_MS = 30_000
 const tasks = ref<RoomTask[]>([])
@@ -58,14 +61,13 @@ async function loadTasks(maxAgeMs?: number) {
     // 留着上一次的那份。
   }
 }
-const roomTasks = computed(() => {
-  const byRoom: Record<string, RoomTask[]> = {}
-  for (const task of tasks.value) {
-    if (task.presentation.column === 'done' || task.status !== 'open') continue
-    ;(byRoom[task.room_id] ??= []).push(task)
-  }
-  return byRoom
-})
+const railTasks = computed(() => railTasksByChannel(tasks.value, myHandle()))
+const roomTasks = computed(() =>
+  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.shown]))
+)
+const roomTaskTotals = computed(() =>
+  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.total]))
+)
 let tasksTimer: number | undefined
 onMounted(() => {
   void loadTasks()
@@ -76,6 +78,18 @@ watch(
   () => [props.projectId, route.fullPath],
   () => void loadTasks(2_000)
 )
+watch(
+  () => store.tasksChanged,
+  () => void loadTasks()
+)
+function openAllTasks(channelId: string) {
+  void router.push({ name: 'workspace-channel-tasks', params: { projectId: props.projectId, topicId: channelId } })
+}
+// 「浏览频道」就是项目设置的「频道」一栏：全部频道都在那里，加入、退出也在那里。
+function browseChannels() {
+  void router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'channels' } })
+}
+const browsingChannels = computed(() => route.name === 'project-settings' && route.params.section === 'channels')
 function openTask(task: { roomId: string; taskId: string }) {
   void router.push({
     name: 'workspace-task',
@@ -111,29 +125,14 @@ function onPressTopic(topicId: string) {
   })
 }
 
-const creatingTopic = ref(false)
-async function onCreateTopic(title: string) {
-  if (creatingTopic.value) return
-  creatingTopic.value = true
-  // Fetch the room view while the server creates the room.
-  void import('./TopicView.vue').catch(() => {})
-  try {
-    const topic = await store.create(title)
-    if (topic)
-      await router.push({ name: 'workspace-topic', params: { projectId: topic.project_id, topicId: topic.id } })
-  } finally {
-    creatingTopic.value = false
-  }
-}
-
-// 新建话题和侧栏上那颗 ＋ 是同一件事。
+// 新建频道在项目设置的「频道」一栏（先起名再建），命令面板里这一条去那里。
 useCommands(() => [
   {
     id: 'topic.new',
     title: t('navigation.palette.newTopic'),
     icon: 'mdi-plus',
-    disabled: creatingTopic.value,
-    run: () => void onCreateTopic(''),
+    run: () =>
+      void router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'channels' } }),
   },
   // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
   // 别人（比如关掉一个浮层）。
@@ -168,24 +167,26 @@ useCommands(() => [
       :topics="store.topics"
       :selected-topic-id="activeTopicId"
       :room-tasks="roomTasks"
+      :room-task-totals="roomTaskTotals"
+      :all-tasks-channel-id="activeAllTasks"
       :selected-task-id="activeTaskId"
+      :browsing-channels="browsingChannels"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
-      :creating-topic="creatingTopic"
       :active-docs="activeDocs"
-      :unread-map="store.badgeUnreadMap"
+      :unread-map="store.unreadMap"
       :muted-of="store.isMuted"
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @select-task="openTask"
+      @all-tasks="openAllTasks"
+      @browse-channels="browseChannels"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @leave-topic="cancelPrefetch"
       @select-docs="openDocs"
       @retry="store.reloadTopics()"
-      @unarchive-topic="store.unarchive"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
-      @create-topic="onCreateTopic"
     >
       <!-- 手机上进项目落在话题列表上而不是看板上，所以看板的一句话摘要放在列表最顶上，
            点下去是看板。桌面上项目名那一行就是看板的入口。 -->

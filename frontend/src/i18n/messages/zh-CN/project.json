@@ -81,7 +81,7 @@
       "memory": "记忆"
     },
     "loadFailed": "加载失败",
-    "askInRoom": "去项目房间请它写",
+    "askInRoom": "去「综合」请它写",
     "charterHint": "改了就等于给芝士下指令",
     "memoryEmpty": "暂无记忆",
     "memoryHint": "对话里说「记住……」，或它自己判断重要时，会写进这里",
@@ -91,10 +91,10 @@
     "memoryDeleteTitle": "删除这条记忆？",
     "memoryDeleteBody": "删除后找不回来，芝士也不再记得它。",
     "noCharter": "这个项目还没有可编辑的章程文档",
-    "fromTopic": "来自话题",
+    "fromTopic": "来自频道",
     "weekliesEmpty": "暂无周报",
-    "weekliesHint": "在项目房间里 {'@'} 芝士，说「写一份这周的项目周报」，它写完会记到这里",
-    "goToRoom": "去项目房间",
+    "weekliesHint": "在「综合」里 {'@'} 芝士，说「写一份这周的项目周报」，它写完会记到这里",
+    "goToRoom": "去「综合」",
     "recordedOn": "{date} 记录"
   }
 }

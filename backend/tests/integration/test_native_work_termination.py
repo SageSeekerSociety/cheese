@@ -37,7 +37,7 @@ from tests.integration.test_same_handle_note_and_timed_delivery import _project,
 def _identity(**over) -> InputIdentity:
     values = {
         "project_id": uuid.uuid4(),
-        "topic_id": uuid.uuid4(),
+        "conversation_id": uuid.uuid4(),
         "recipient_handle": "cheese-test",
         "harness": "claude_code",
         "native_session_id": str(uuid.uuid4()),
@@ -56,7 +56,7 @@ async def _blocks(factory, project_id, topic_id, count=2):
                 Block(
                     id=block_id,
                     project_id=project_id,
-                    topic_id=topic_id,
+                    conversation_id=topic_id,
                     kind=BlockKind.message,
                     author_type=AuthorType.participant,
                     author="user-1",
@@ -95,7 +95,7 @@ async def _terminate(factory, identity, *, reason, input_ids=None):
         touched = await terminate_work_inputs(
             session,
             project_id=identity.project_id,
-            topic_id=identity.topic_id,
+            conversation_id=identity.conversation_id,
             recipient_handle=identity.recipient_handle,
             harness=identity.harness,
             native_session_id=identity.native_session_id,
@@ -115,15 +115,15 @@ async def test_a_confirmed_termination_frees_the_seat_but_keeps_the_answer_unkno
 
     async def run():
         factory = client.test_request_factory
-        identity = _identity(project_id=project, topic_id=topic)
-        held = await _blocks(factory, identity.project_id, identity.topic_id)
+        identity = _identity(project_id=project, conversation_id=topic)
+        held = await _blocks(factory, identity.project_id, identity.conversation_id)
         async with factory() as session:
             await register_input(session, identity, InputEffects(held_block_ids=held))
             await session.commit()
         await _echo(factory, identity)
         async with factory() as session:
             assert await seat_has_unfinished_input(
-                session, identity.topic_id, identity.recipient_handle
+                session, identity.conversation_id, identity.recipient_handle
             )
 
         assert await _terminate(factory, identity, reason="is_error") == {
@@ -144,18 +144,18 @@ async def test_a_confirmed_termination_frees_the_seat_but_keeps_the_answer_unkno
             assert await held_blocks(
                 session,
                 project_id=identity.project_id,
-                topic_id=identity.topic_id,
+                topic_id=identity.conversation_id,
                 recipient_handle=identity.recipient_handle,
             ) == set(held)
 
         # The seat is free again: a NEW input has an identity of its own.
         async with factory() as session:
             assert not await seat_has_unfinished_input(
-                session, identity.topic_id, identity.recipient_handle
+                session, identity.conversation_id, identity.recipient_handle
             )
         later = _identity(
             project_id=identity.project_id,
-            topic_id=identity.topic_id,
+            conversation_id=identity.conversation_id,
             recipient_handle=identity.recipient_handle,
         )
         async with factory() as session:
@@ -178,7 +178,7 @@ async def test_an_outcome_nobody_confirmed_still_blocks_the_seat(client):
         await _echo(factory, echoed)
         async with factory() as session:
             assert await seat_has_unfinished_input(
-                session, echoed.topic_id, echoed.recipient_handle
+                session, echoed.conversation_id, echoed.recipient_handle
             )
 
         # Nor does an input nobody has taken yet.
@@ -188,7 +188,7 @@ async def test_an_outcome_nobody_confirmed_still_blocks_the_seat(client):
             await session.commit()
         async with factory() as session:
             assert await seat_has_unfinished_input(
-                session, untouched.topic_id, untouched.recipient_handle
+                session, untouched.conversation_id, untouched.recipient_handle
             )
 
     client.portal.call(run)
@@ -198,11 +198,13 @@ async def test_a_termination_touches_only_its_own_interval_and_seat(client):
     async def run():
         factory = client.test_request_factory
         topic_id = uuid.uuid4()
-        mine = _identity(topic_id=topic_id, recipient_handle="cheese-test")
-        other_seat = _identity(topic_id=topic_id, recipient_handle="cheese-other")
+        mine = _identity(conversation_id=topic_id, recipient_handle="cheese-test")
+        other_seat = _identity(
+            conversation_id=topic_id, recipient_handle="cheese-other"
+        )
         later_interval = _identity(
             project_id=mine.project_id,
-            topic_id=topic_id,
+            conversation_id=topic_id,
             recipient_handle="cheese-test",
         )
         for identity in (mine, other_seat, later_interval):
@@ -225,10 +227,10 @@ async def test_a_termination_touches_only_its_own_interval_and_seat(client):
         # this call's business at all.
         async with factory() as session:
             assert await seat_has_unfinished_input(
-                session, mine.topic_id, mine.recipient_handle
+                session, mine.conversation_id, mine.recipient_handle
             )
             assert await seat_has_unfinished_input(
-                session, other_seat.topic_id, other_seat.recipient_handle
+                session, other_seat.conversation_id, other_seat.recipient_handle
             )
 
     client.portal.call(run)
@@ -246,7 +248,7 @@ async def test_a_clean_completion_is_not_rewritten_by_a_termination(client):
             await complete_work_inputs(
                 session,
                 project_id=identity.project_id,
-                topic_id=identity.topic_id,
+                conversation_id=identity.conversation_id,
                 recipient_handle=identity.recipient_handle,
                 harness=identity.harness,
                 native_session_id=identity.native_session_id,
@@ -270,7 +272,7 @@ async def test_a_termination_that_covers_half_an_interval_writes_nothing(client)
         identity = _identity()
         second = _identity(
             project_id=identity.project_id,
-            topic_id=identity.topic_id,
+            conversation_id=identity.conversation_id,
             recipient_handle=identity.recipient_handle,
             native_session_id=identity.native_session_id,
             work_id=identity.work_id,

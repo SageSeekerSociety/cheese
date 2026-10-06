@@ -52,8 +52,9 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.main import app as fastapi_app
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.integration.test_archive_retires_storage import _seed_device
 from tests.pinned_claude import claude_binary
 from tests.support import wire
@@ -433,6 +434,40 @@ async def test_a_room_stays_writable_while_its_agent_is_starting(
             setup.cancel()
 
     client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_task_s_session_is_handed_a_machine_path_its_credential_opens(
+    client, room, monkeypatch
+):
+    """A task's session takes its machine through the path its target names,
+    with the credential it was started with. That credential works the task's
+    conversation and no other, so a path naming the room was refused and the
+    task's session never reached a machine (dev, 2026-10-05)."""
+    project, topic = room
+    task = uuid.UUID(open_task(client, str(topic))["id"])
+    central = channel(client, monkeypatch)
+    session = SessionRef(project, topic, AGENT, harness="claude-code", inner_id=task)
+
+    async def opened():
+        await sessions(central).ensure(session, system_prompt="System")
+        opening = central._ensure_screen.await_args.kwargs
+        async with client.test_factory() as db:
+            await TopicMemberService(db).ensure_agent_seat(
+                topic, opening["agent_handle"]
+            )
+            await db.commit()
+        return opening
+
+    opening = client.portal.call(opened)
+    target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
+    answer = client.post(
+        target["lease_path"],
+        headers={"X-Cheese-Token": opening["token"]},
+        json={"env": {}, "timeout": 1},
+    )
+
+    assert answer.status_code == 200, answer.text
 
 
 @pytest.mark.anyio

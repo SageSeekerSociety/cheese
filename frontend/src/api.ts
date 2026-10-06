@@ -451,76 +451,11 @@ export function listTopics(
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
-export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'title_source' | 'kind' | 'status'>
+export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'kind' | 'status'>
 
 /** 我能看到的所有项目里的话题名，最近有动静的在前。私聊不在里面。 */
 export async function listTopicNames(): Promise<TopicName[]> {
   return (await request<{ topics: TopicName[] }>('/topics/names')).topics
-}
-
-/** 项目里一次搜索的结果：只搜这个人能看的房间，每组最相关的在前。 */
-export interface ProjectSearchHits {
-  records: {
-    id: string
-    room_id: string
-    room_title: string
-    room_title_source?: string
-    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'weekly'
-    author: string
-    created_at: string
-    /** 说在某件活的卡片里，而不是房间自己的对话里。 */
-    task_id: string | null
-    snippet: string
-  }[]
-  tasks: (Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'status'> & {
-    room_title: string
-    room_title_source?: string
-    snippet: string
-  })[]
-  library: { path: string; bytes: number; modified: string }[]
-}
-
-/**
- * `only` 只搜这几类（`message`、`doc_node`…、`tasks`、`library`），并且可以用 `offset`
- * 往后翻；不给 `only` 就是每类各取前 `limit` 条。
- */
-export async function searchProject(
-  projectId: string,
-  q: string,
-  limit = 10,
-  page?: { only: string[]; offset: number }
-): Promise<ProjectSearchHits> {
-  return (await askProjectSearch(projectId, q, limit, page, false)).hits
-}
-
-/**
- * 同一次搜索，再带上每一类各能搜到多少（`message`、`doc`、`doc_node`、`comment`、
- * `weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
- */
-export async function searchProjectCounted(
-  projectId: string,
-  q: string,
-  limit: number,
-  page?: { only: string[]; offset: number }
-): Promise<{ hits: ProjectSearchHits; counts: Record<string, number> }> {
-  const body = await askProjectSearch(projectId, q, limit, page, true)
-  return { hits: body.hits, counts: body.counts ?? {} }
-}
-
-function askProjectSearch(
-  projectId: string,
-  q: string,
-  limit: number,
-  page: { only: string[]; offset: number } | undefined,
-  withCounts: boolean
-): Promise<{ hits: ProjectSearchHits; counts?: Record<string, number> }> {
-  const params = new URLSearchParams({ q, limit: String(limit) })
-  if (page) {
-    for (const kind of page.only) params.append('only', kind)
-    params.set('offset', String(page.offset))
-  }
-  if (withCounts) params.set('with_counts', 'true')
-  return request(`/projects/${encodeURIComponent(projectId)}/context/search?${params}`)
 }
 
 // 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
@@ -542,9 +477,9 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title?: string, parentId?: string): Promise<Topic> {
-  const body: Record<string, string> = { project_id: projectId, ...(title ? { title } : {}) }
-  if (parentId) body.parent_id = parentId
+export function createTopic(projectId: string, title: string, description?: string): Promise<Topic> {
+  const body: Record<string, string> = { project_id: projectId, title }
+  if (description) body.description = description
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -562,28 +497,20 @@ export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
   })
 }
 
-/** Undo the automatic rename announced by `eventId`; the old title comes back and stays. */
-export function undoTopicTitle(topicId: string, eventId: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title/undo`, {
-    method: 'POST',
-    body: JSON.stringify({ event_id: eventId }),
-  })
-}
-
-export type TopicNamingMode = 'auto' | 'manual'
-export interface TopicNaming {
-  mode: TopicNamingMode
-  /** Whether the deployment can name rooms at all (a model gateway is configured). */
+export type TaskNamingMode = 'auto' | 'manual'
+export interface TaskNaming {
+  mode: TaskNamingMode
+  /** Whether the deployment can name tasks at all (a model gateway is configured). */
   available: boolean
   can_manage: boolean
 }
 
-export function getTopicNaming(projectId: string): Promise<TopicNaming> {
-  return request<TopicNaming>(`/projects/${encodeURIComponent(projectId)}/topic-naming`)
+export function getTaskNaming(projectId: string): Promise<TaskNaming> {
+  return request<TaskNaming>(`/projects/${encodeURIComponent(projectId)}/task-naming`)
 }
 
-export function setTopicNaming(projectId: string, mode: TopicNamingMode): Promise<TopicNaming> {
-  return request<TopicNaming>(`/projects/${encodeURIComponent(projectId)}/topic-naming`, {
+export function setTaskNaming(projectId: string, mode: TaskNamingMode): Promise<TaskNaming> {
+  return request<TaskNaming>(`/projects/${encodeURIComponent(projectId)}/task-naming`, {
     method: 'PUT',
     body: JSON.stringify({ mode }),
   })
@@ -603,11 +530,10 @@ export function unarchiveTopic(topicId: string): Promise<Topic> {
   })
 }
 
-/** 把一条消息转为任务。房间里的消息变成这个房间的一个任务（回来的是 RoomTask，
- *  点的人是负责人）；私聊里的变成一个新房间（回来的是 Topic）——私聊不在话题树
- *  里，任务挂在那儿没人打得开。升级的人由会话认，不由请求体说。 */
-export function upgradeBlock(blockId: string): Promise<Topic | RoomTask> {
-  return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
+/** 把频道里的一条消息转为这个频道的一个任务，点的人是负责人（由会话认，不由
+ *  请求体说）。私聊里的消息不能转。 */
+export function upgradeBlock(blockId: string): Promise<RoomTask> {
+  return request<RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
     body: JSON.stringify({}),
   })
@@ -1092,7 +1018,7 @@ export type DeliverableKind = 'file' | 'link' | 'merge'
 export interface ArtifactVersion {
   number: number
   card_id: string
-  /** 这次交付改了什么（卡上那句 Conventional Commit 标题）。 */
+  /** 这次交付改了什么（卡上那句提交标题）。 */
   subject: string | null
   delivered_at: string | null
   decided_by: string | null
@@ -1100,7 +1026,7 @@ export interface ArtifactVersion {
   filename: string | null
   url: string | null
   bytes: number | null
-  room: { id: string; title: string; title_source?: string } | null
+  room: { id: string; title: string } | null
 }
 
 export interface ProjectArtifactDetail extends ProjectArtifact {
@@ -1788,7 +1714,7 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
 }
 
 // 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
-export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
+export { addTopicMember, joinChannel, leaveChannel, removeTopicMember, setChannelDescription } from './api/topicMembers'
 
 // 一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`
 // 的 `getTask`（`/topics/{task}/task`）。

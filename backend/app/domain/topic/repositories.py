@@ -1,10 +1,25 @@
 """Topic data access."""
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import (
+    JSON,
+    Select,
+    String,
+    Uuid,
+    and_,
+    case,
+    cast,
+    column,
+    func,
+    or_,
+    select,
+    table,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -15,18 +30,18 @@ from sqlalchemy.sql.elements import (
 )
 
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     agent_dm_key,
+    agent_handle_column,
     agent_instance_handle,
     looks_like_agent_handle,
 )
 from app.domain.project.environment import project_environment
 from app.domain.project.models import Project
 from app.domain.topic.models import (
-    PLACEHOLDER_TITLE,
-    TitleSource,
+    NotifyLevel,
     Topic,
     TopicKind,
     TopicMembership,
@@ -35,7 +50,65 @@ from app.domain.topic.models import (
 )
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
+
+
+@dataclass(frozen=True)
+class Unread:
+    """What one conversation has waiting for one person: the number on it,
+    whether its name is bold, and how many messages came since they last read
+    it (where the 「新消息」 line goes when they open it)."""
+
+    count: int
+    new: bool
+    messages: int
+
+
 SortOrder = Literal["asc", "desc"]
+
+
+# Which room a task is in, and who takes part in it. A bare table: `room_task`
+# depends on this domain.
+_tasks = table(
+    "tasks",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("project_id", Uuid),
+    column("status", String),
+    column("owner_handle", String),
+    column("contributor_handles", JSON),
+)
+
+
+# 支线 under a channel. A bare table: `thread` resolves places through
+# `room_task`, which depends on this domain.
+_threads = table(
+    "threads",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("root_block_id", Uuid),
+)
+
+
+def _muted_now() -> ColumnElement[bool]:
+    """The read-state row says 静音 and the mute has not run out."""
+    return and_(
+        TopicReadState.notify_level == NotifyLevel.mute,
+        or_(
+            TopicReadState.muted_until.is_(None),
+            TopicReadState.muted_until > func.now(),
+        ),
+    )
+
+
+def _mentions(handle: str) -> ColumnElement[bool]:
+    return cast(Block.refs, JSONB).contains([f"user:{handle}"])
+
+
+def _mentions_everyone() -> ColumnElement[bool]:
+    return or_(
+        cast(Block.refs, JSONB).contains(["user:all"]),
+        cast(Block.refs, JSONB).contains(["user:here"]),
+    )
 
 
 def _last_activity() -> ColumnElement[datetime]:
@@ -52,19 +125,30 @@ def _last_activity() -> ColumnElement[datetime]:
     happened since it was made" is the truth for a room nobody has spoken in,
     and it keeps the value non-null so sorting and filtering stay total.
 
-    Threads COUNT here, and that is deliberate: a room whose work is running is
+    Tasks COUNT here, and that is deliberate: a room whose work is running is
     alive, and the normal state of such a room is that its own line is quiet.
     Note this is the opposite call from `unread_counts` below — same join, same
     two tables, opposite answer, because "is this place alive" and "is there
     something here for me to read" are different questions.
     """
-    newest_block = (
+    # Two maxima rather than one over "the room or any of its tasks": each is an
+    # equality on `conversation_id`, which `ix_blocks_conversation_created_at`
+    # answers from its last entry; an OR across the two would read every block
+    # of the room. GREATEST skips a NULL.
+    own = (
         select(func.max(Block.created_at))
-        .where(Block.topic_id == Topic.id)
+        .where(Block.conversation_id == Topic.id)
         .correlate(Topic)
         .scalar_subquery()
     )
-    return func.coalesce(newest_block, Topic.created_at)
+    in_tasks = (
+        select(func.max(Block.created_at))
+        .join(_tasks, _tasks.c.id == Block.conversation_id)
+        .where(_tasks.c.room_id == Topic.id)
+        .correlate(Topic)
+        .scalar_subquery()
+    )
+    return func.coalesce(func.greatest(own, in_tasks), Topic.created_at)
 
 
 def _order_by(sort: TopicSortField | None, order: SortOrder) -> UnaryExpression:
@@ -102,25 +186,17 @@ class TopicRepository:
         self,
         *,
         project_id: uuid.UUID,
-        title: str | None,
+        title: str,
         parent_id: uuid.UUID | None = None,
         kind: TopicKind = TopicKind.topic,
         created_by: str | None = None,
         upgraded_from_block_id: uuid.UUID | None = None,
     ) -> Topic:
-        """``title=None`` is a room nobody has named: it is stored under the
-        placeholder, and ``title_source`` — not the text — is what says so.
-        A room created with a name was named by whoever created it, even when
-        that name happens to read like the placeholder."""
         project = await self._session.get(Project, project_id)
-        title = (title or "").strip() or None
         topic = Topic(
             project_id=project_id,
             environment=project_environment(project.settings if project else None),
-            title=title or PLACEHOLDER_TITLE,
-            title_source=(
-                TitleSource.placeholder if title is None else TitleSource.human
-            ),
+            title=title,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
@@ -327,7 +403,6 @@ class TopicRepository:
             environment=project_environment(project.settings if project else None),
             title=title,
             kind=TopicKind.topic,
-            title_source=TitleSource.human,
             created_by=owner,
             is_private=True,
         )
@@ -363,46 +438,200 @@ class TopicRepository:
 
     async def unread_counts(
         self, project_id: uuid.UUID, user_handle: str
-    ) -> dict[uuid.UUID, int]:
-        """Unread message count per topic for one user, in one query.
+    ) -> dict[uuid.UUID, Unread]:
+        """What each conversation of the project has waiting for one person:
+        the channels they are in, and the tasks they take part in. One that has
+        nothing is left out.
 
-        Unread = message blocks authored by OTHERS on the room's OWN line,
-        created after the user's read cursor (no cursor = all of them). Only
+        A message counts once it is after the person's read cursor on its
+        conversation (no cursor = all of it) and someone else said it. Only
         kind=message counts — doc edits / events / weeklies have their own
-        surfaces. Other people's private chats are excluded.
+        surfaces.
 
-        Threads are excluded (`task_id IS NULL`), and that is the opposite call
-        from `last_activity_at` one screen over, which DOES count them. The two
-        answer different questions: a room with work running in it is alive and
-        should sort up, but a badge that lights every time any 分身 says anything
-        is a badge people learn to ignore. Reading the room does not mean you
-        read every thread in it either — the cursor is the room's.
+        A channel's number follows the level the person chose for it
+        (`NotifyLevel`), and its main line is bold whenever something new was
+        said there, unless it is muted:
+
+        - ``all``: every new message in the main line, and every new reply in
+          a 支线 they took part in or were @-ed in.
+        - ``mentions`` (default): the main-line messages that @ them or
+          @所有人, and the same 支线 replies.
+        - ``mute``: only what @s them by name.
+
+        Only people's replies in a 支线 count, the rule its own mark follows
+        (`thread.reads`). A private room counts every message.
+
+        A task counts only for the people who take part in it (its owner and
+        collaborators), and only what PEOPLE said there: the AI teammate talks
+        on every step, and a badge that lights each time is a badge nobody
+        reads. When it needs the person, the task's own mark says so. Everyone
+        else follows a task they do not take part in from the channel.
         """
-        stmt = (
-            select(Block.topic_id, func.count())
-            .join(Topic, Topic.id == Block.topic_id)
-            .outerjoin(
-                TopicReadState,
-                and_(
-                    TopicReadState.topic_id == Block.topic_id,
-                    TopicReadState.user_handle == user_handle,
-                ),
+        # A private room seats both of its people, so a seat answers for it too.
+        joined = or_(
+            Topic.kind == TopicKind.root,
+            Topic.id.in_(
+                select(TopicMembership.topic_id).where(
+                    TopicMembership.member_handle == user_handle
+                )
+            ),
+        )
+        unseen = or_(
+            TopicReadState.last_read_at.is_(None),
+            Block.created_at > TopicReadState.last_read_at,
+        )
+
+        def read_state(conversation_id):
+            return and_(
+                TopicReadState.topic_id == conversation_id,
+                TopicReadState.user_handle == user_handle,
             )
+
+        main = (
+            select(
+                Block.conversation_id,
+                # A private room is two people talking: every message counts.
+                func.bool_or(Topic.is_private),
+                func.count(),
+                func.count().filter(_mentions(user_handle)),
+                func.count().filter(_mentions_everyone()),
+            )
+            .join(Topic, Topic.id == Block.conversation_id)
+            .outerjoin(TopicReadState, read_state(Block.conversation_id))
             .where(
                 Topic.project_id == project_id,
                 _readable_by(user_handle),
+                joined,
                 Block.kind == BlockKind.message,
-                Block.task_id.is_(None),
                 Block.author != user_handle,
-                or_(
-                    TopicReadState.last_read_at.is_(None),
-                    Block.created_at > TopicReadState.last_read_at,
-                ),
+                unseen,
             )
-            .group_by(Block.topic_id)
+            .group_by(Block.conversation_id)
         )
-        rows = (await self._session.execute(stmt)).all()
-        return {topic_id: int(count) for topic_id, count in rows}
+        root = aliased(Block)
+        mine = aliased(Block)
+        took_part = or_(
+            select(root.id)
+            .where(root.id == _threads.c.root_block_id, root.author == user_handle)
+            .exists(),
+            select(mine.id)
+            .where(mine.conversation_id == _threads.c.id, mine.author == user_handle)
+            .exists(),
+        )
+        replies = (
+            select(
+                _threads.c.room_id,
+                func.count().filter(
+                    or_(
+                        and_(
+                            took_part,
+                            Block.author_type == AuthorType.participant,
+                            ~agent_handle_column(Block.author),
+                        ),
+                        _mentions(user_handle),
+                    )
+                ),
+                func.count().filter(_mentions(user_handle)),
+            )
+            .join(_threads, _threads.c.id == Block.conversation_id)
+            .join(Topic, Topic.id == _threads.c.room_id)
+            .outerjoin(TopicReadState, read_state(Block.conversation_id))
+            .where(
+                Topic.project_id == project_id,
+                _readable_by(user_handle),
+                joined,
+                Block.kind == BlockKind.message,
+                Block.author != user_handle,
+                unseen,
+            )
+            .group_by(_threads.c.room_id)
+        )
+        tasks = (
+            select(Block.conversation_id, func.count())
+            .join(_tasks, _tasks.c.id == Block.conversation_id)
+            .outerjoin(TopicReadState, read_state(Block.conversation_id))
+            .where(
+                _tasks.c.project_id == project_id,
+                _tasks.c.status == "open",
+                or_(
+                    _tasks.c.owner_handle == user_handle,
+                    cast(_tasks.c.contributor_handles, JSONB).contains([user_handle]),
+                ),
+                Block.kind == BlockKind.message,
+                Block.author != user_handle,
+                Block.author_type == AuthorType.participant,
+                ~agent_handle_column(Block.author),
+                unseen,
+            )
+            .group_by(Block.conversation_id)
+        )
+        said: dict[uuid.UUID, tuple[int, int, int]] = {}
+        private: set[uuid.UUID] = set()
+        for room, two, n, me, everyone in (await self._session.execute(main)).all():
+            said[room] = (int(n), int(me), int(everyone))
+            if two:
+                private.add(room)
+        answered = {
+            room: (int(n), int(me))
+            for room, n, me in (await self._session.execute(replies)).all()
+        }
+        rooms = set(said) | set(answered)
+        levels = await self._levels(list(rooms), user_handle)
+        out: dict[uuid.UUID, Unread] = {}
+        for room in rooms:
+            n, me, everyone = said.get(room, (0, 0, 0))
+            in_threads, me_in_threads = answered.get(room, (0, 0))
+            level = levels[room]
+            if room in private and level == NotifyLevel.mentions:
+                level = NotifyLevel.all
+            if level == NotifyLevel.mute:
+                unread = Unread(count=me + me_in_threads, new=False, messages=n)
+            elif level == NotifyLevel.all:
+                unread = Unread(count=n + in_threads, new=n > 0, messages=n)
+            else:
+                unread = Unread(count=me + everyone + in_threads, new=n > 0, messages=n)
+            if unread.count or unread.messages:
+                out[room] = unread
+        for task, n in (await self._session.execute(tasks)).all():
+            out[task] = Unread(count=int(n), new=True, messages=int(n))
+        return out
+
+    async def _levels(
+        self, topic_ids: list[uuid.UUID], user_handle: str
+    ) -> dict[uuid.UUID, NotifyLevel]:
+        """The level each of these channels is at for this person right now: a
+        mute that ran out reads as the default."""
+        levels = {topic_id: NotifyLevel.mentions for topic_id in topic_ids}
+        if not topic_ids:
+            return levels
+        rows = await self._session.execute(
+            select(
+                TopicReadState.topic_id, TopicReadState.notify_level, _muted_now()
+            ).where(
+                TopicReadState.topic_id.in_(topic_ids),
+                TopicReadState.user_handle == user_handle,
+            )
+        )
+        for topic_id, level, muted in rows.all():
+            if level == NotifyLevel.mute:
+                levels[topic_id] = NotifyLevel.mute if muted else NotifyLevel.mentions
+            elif level in NotifyLevel.__members__:
+                levels[topic_id] = NotifyLevel(level)
+        return levels
+
+    async def muted_among(self, topic_id: uuid.UUID, handles: list[str]) -> set[str]:
+        """Which of these people have this channel muted right now."""
+        if not handles:
+            return set()
+        return set(
+            await self._session.scalars(
+                select(TopicReadState.user_handle).where(
+                    TopicReadState.topic_id == topic_id,
+                    TopicReadState.user_handle.in_(handles),
+                    _muted_now(),
+                )
+            )
+        )
 
     async def private_unread_counts(
         self, project_id: uuid.UUID, user_handle: str
@@ -465,7 +694,7 @@ class TopicRepository:
                     theirs.member_handle != user_handle,
                 ),
             )
-            .join(Block, Block.topic_id == Topic.id)
+            .join(Block, Block.conversation_id == Topic.id)
             .outerjoin(
                 TopicReadState,
                 and_(
@@ -482,10 +711,10 @@ class TopicRepository:
                 .scalar_subquery()
                 == 2,
                 Block.kind == BlockKind.message,
-                # A private room has threads too — resolving an upstream
+                # A private room has tasks too — resolving an upstream
                 # conflict opens one there — and the same rule applies: the
-                # badge is about the room's own line.
-                Block.task_id.is_(None),
+                # badge is about the room's own conversation, which the join
+                # on `conversation_id` already picks.
                 Block.author != user_handle,
                 or_(
                     TopicReadState.last_read_at.is_(None),
@@ -506,11 +735,16 @@ class TopicRepository:
 
     async def notify_levels(
         self, project_id: uuid.UUID, user_handle: str
-    ) -> dict[uuid.UUID, str]:
-        """The user's non-default notification levels in a project:
-        {topic_id: level}. Rooms at the default (`all`) are omitted."""
+    ) -> dict[uuid.UUID, tuple[NotifyLevel, datetime | None]]:
+        """The user's channels that are not at the default level right now:
+        {topic_id: (level, muted until)}. A mute that ran out is the default
+        again and is left out."""
         stmt = (
-            select(TopicReadState.topic_id, TopicReadState.notify_level)
+            select(
+                TopicReadState.topic_id,
+                TopicReadState.notify_level,
+                TopicReadState.muted_until,
+            )
             .join(Topic, Topic.id == TopicReadState.topic_id)
             .where(
                 Topic.project_id == project_id,
@@ -518,22 +752,29 @@ class TopicRepository:
                 # 还在，但它的 id 不能再告诉我。
                 _readable_by(user_handle),
                 TopicReadState.user_handle == user_handle,
-                TopicReadState.notify_level != "all",
+                or_(TopicReadState.notify_level == NotifyLevel.all, _muted_now()),
             )
         )
         rows = (await self._session.execute(stmt)).all()
-        return {topic_id: level for topic_id, level in rows}
+        return {
+            topic_id: (NotifyLevel(level), until) for topic_id, level, until in rows
+        }
 
     async def set_notify_level(
-        self, topic_id: uuid.UUID, user_handle: str, level: str
+        self,
+        topic_id: uuid.UUID,
+        user_handle: str,
+        level: NotifyLevel,
+        muted_until: datetime | None = None,
     ) -> None:
-        """Set the user's notification level on a topic (upsert). A room the
-        user never opened gets a cursor at the epoch — the same as no cursor,
-        so muting a room does not mark it read."""
+        """Set the user's notification level on a channel (upsert). A channel
+        the user never opened gets a cursor at the epoch — the same as no
+        cursor, so muting a channel does not mark it read."""
         stmt = select(TopicReadState).where(
             TopicReadState.topic_id == topic_id,
             TopicReadState.user_handle == user_handle,
         )
+        until = muted_until if level == NotifyLevel.mute else None
         state = (await self._session.scalars(stmt)).first()
         if state is None:
             self._session.add(
@@ -541,11 +782,13 @@ class TopicRepository:
                     topic_id=topic_id,
                     user_handle=user_handle,
                     last_read_at=datetime(1970, 1, 1, tzinfo=UTC),
-                    notify_level=level,
+                    notify_level=level.value,
+                    muted_until=until,
                 )
             )
         else:
-            state.notify_level = level
+            state.notify_level = level.value
+            state.muted_until = until
         await self._session.flush()
 
     async def mark_read_many(
@@ -597,46 +840,34 @@ class TopicRepository:
 
 
 class TopicProgressRepository:
-    """进度层 storage: one checklist per place — a room's main line, or a
-    thread in it (#187)."""
+    """进度层 storage: one checklist per conversation — a room or a task (#187)."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> TopicProgress | None:
+    async def get(self, conversation_id: uuid.UUID) -> TopicProgress | None:
         stmt = select(TopicProgress).where(
-            TopicProgress.topic_id == topic_id,
-            TopicProgress.task_id.is_(None)
-            if task_id is None
-            else TopicProgress.task_id == task_id,
+            TopicProgress.conversation_id == conversation_id
         )
         return (await self._session.scalars(stmt)).first()
 
     async def save(
         self,
-        topic_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         items: list[dict],
         *,
-        task_id: uuid.UUID | None = None,
         turn_id: uuid.UUID | None = None,
     ) -> TopicProgress:
-        """Overwrite this place's checklist (upsert).
+        """Overwrite this conversation's checklist (upsert).
 
         Current state, not history — the conversation timeline is where history
         lives. Callers hand over a fresh list each time; the row is rewritten so
         a reader never sees a half-applied checklist.
-
-        Looked up by (room, thread) rather than by primary key: `topic_id` used
-        to BE the key and cannot be any more, because a thread's row is
-        identified by the pair and a primary key cannot hold the NULL that means
-        "the room's own main line".
         """
-        row = await self.get(topic_id, task_id=task_id)
+        row = await self.get(conversation_id)
         if row is None:
             row = TopicProgress(
-                topic_id=topic_id, task_id=task_id, items=[], turn_id=turn_id
+                conversation_id=conversation_id, items=[], turn_id=turn_id
             )
             self._session.add(row)
         # Rebind rather than mutate: SQLAlchemy does not track in-place edits of

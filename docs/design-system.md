@@ -512,6 +512,7 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 
 - 写法照 `views/spaces/detail/analytics/*`：`load` 开头清掉 `failed` 与 `errorDetail`，`catch` 里 `failed = true`、`errorDetail = error instanceof Error ? error.message : null`，**不再** `toast.error`——同一件事不说两遍。
 - **401/403 是「不给你看」，不是「这次没读到」**：传 `:forbidden="isForbidden(error)"`（`src/lib/loadFailure.ts`）。块换成「你没有权限查看」这句标题，并且**不给重试**——再试一次还是同一个 401/403，摆一颗按了没用的按钮只会让人以为是自己点得不对。服务端那句原话照旧显示在标题下面。这一条同样不许退回「暂无」：那是「本来就没有」，和「不给你看」是两回事。
+- **判断留在取数的那一层**：`isForbidden` 与 `loadFailureReason` 在容器里算，画面只收 `failed`、`failureReason`、`forbidden` 这样的布尔值和那句话。画面（`views/**/XxxView.vue`）**不要** import `src/lib/loadFailure.ts`——它被判据算在 API 层里，A 级画面会因此掉到 C（场景分级见 `docs/manual/dev/scenes.md`）。写法照 `views/tasks/detail/Roster.vue` → `RosterView.vue`。
 - 列表用的是 `usePaging` 时，它已经把 `error` 交出来了（失败时 `data` 为空，`is-empty` 就成了 `true`）：把 `error` 接进模板，失败时用它替换列表区，别让 `is-empty` 一个人说话。
 - 只有「一整块内容没读到」才替换内容。列表里某一行、某一次操作（保存、删除）失败仍用 toast：那一行的内容没有消失，也没有整块可替。
 
@@ -741,10 +742,12 @@ bash .claude/scripts/check-repo-rules.sh --self-test                # 证明闸�
 
 | 概念 | 用这个词 | 不用 |
 |---|---|---|
-| 话题旁边单独做的一件事，有负责人和自己的对话 | 任务 | 活、支线、线程 |
-| 做任务的那个 AI | 项目里给它起的名字，和话题里是同一位 AI 队友 | 分身、子 Agent、线程 |
+| 人说话的地方，按人群或领域分，数量少、长期存在；项目默认那一个叫「综合」 | 频道 | 话题、房间、全局、项目总览 |
+| 频道里单独做的一件事，有一位负责人和自己的对话 | 任务 | 活、支线、线程 |
+| 负责人拉进任务、也能在任务里和 AI 队友对话的人 | 协作者 | 参与者、成员 |
+| 做任务的那个 AI | 项目里给它起的名字，和频道里是同一位 AI 队友 | 分身、子 Agent、线程 |
 | AI 队友自己派出去帮忙的那个 AI | 分身 | 子 Agent、子代理 |
-| 房间里的 AI 队友 | 项目里给它起的名字（默认「芝士」） | 在代码里写死「芝士」 |
+| 频道里的 AI 队友 | 项目里给它起的名字（默认「芝士」） | 在代码里写死「芝士」 |
 | 芝士把做好的东西交给人看 | 提交审阅 | 递卡、提交验收 |
 | 等人看、等人决定 | 待审阅 / 待你审阅 / 待 alice 审阅 | 待验收、待采纳、请你审阅 |
 | 看过之后收下 / 打回 | 采纳 / 退回 | 通过、驳回、验收通过 |

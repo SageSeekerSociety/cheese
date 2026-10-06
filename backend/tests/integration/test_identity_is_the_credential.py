@@ -13,7 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
-from app.domain.topic.models import TopicTitle
+from app.domain.room_task.models import TaskTitle
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
@@ -166,8 +166,8 @@ def test_a_task_and_a_message_in_it_belong_to_the_caller(client):
         headers=_as(A),
     )
     assert said.status_code == 200, said.text
-    blocks = client.get(f"/topics/{task['id']}/task", headers=_as(A)).json()["data"][
-        "blocks"
+    blocks = client.get(f"/topics/{task['id']}/blocks", headers=_as(A)).json()["data"][
+        "data"
     ]
     mine = [b for b in blocks if b.get("content") == "先跑小样本"]
     assert [b["author"] for b in mine] == [A]
@@ -179,17 +179,20 @@ def test_a_task_and_a_message_in_it_belong_to_the_caller(client):
 def test_a_rename_is_recorded_as_the_renamer(client):
     project = _project(client, A)
     room = project["root_topic_id"]
+    made = client.post(f"/topics/{room}/tasks", json={}, headers=_as(A))
+    assert made.status_code == 200, made.text
+    task = made.json()["data"]["id"]
 
     r = client.post(
-        f"/topics/{room}/title", json={"title": "新名字", "by": B}, headers=_as(A)
+        f"/topics/{task}/title", json={"title": "新名字", "by": B}, headers=_as(A)
     )
     assert r.status_code == 200, r.text
 
     async def renamers() -> list[str | None]:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
             rows = await session.execute(
-                select(TopicTitle.by).where(
-                    TopicTitle.topic_id == uuid.UUID(room), TopicTitle.title == "新名字"
+                select(TaskTitle.by).where(
+                    TaskTitle.task_id == uuid.UUID(task), TaskTitle.title == "新名字"
                 )
             )
             return list(rows.scalars())

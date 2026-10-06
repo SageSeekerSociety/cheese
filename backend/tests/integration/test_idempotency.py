@@ -136,7 +136,7 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
             select(func.count())
             .select_from(Block)
             .where(
-                Block.topic_id == uuid.UUID(tid),
+                Block.conversation_id == uuid.UUID(tid),
                 Block.kind == BlockKind.event,
                 Block.meta["progress"].as_boolean().is_(True),
                 Block.content == text,
@@ -184,7 +184,7 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
             select(func.count())
             .select_from(Block)
             .where(
-                Block.topic_id == uuid.UUID(tid),
+                Block.conversation_id == uuid.UUID(tid),
                 Block.kind == BlockKind.event,
                 Block.meta["progress"].as_boolean().is_(True),
                 Block.content == text,
@@ -211,7 +211,7 @@ def test_weekly_is_recorded_once(client, in_a_turn):
             select(func.count())
             .select_from(Block)
             .where(
-                Block.topic_id == uuid.UUID(tid),
+                Block.conversation_id == uuid.UUID(tid),
                 Block.kind == BlockKind.weekly,
             ),
         )
@@ -280,7 +280,9 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
             client.test_request_factory,
             select(func.count())
             .select_from(Block)
-            .where(Block.topic_id == uuid.UUID(tid), Block.kind == BlockKind.weekly),
+            .where(
+                Block.conversation_id == uuid.UUID(tid), Block.kind == BlockKind.weekly
+            ),
         )
     )
     assert weeklies == 2

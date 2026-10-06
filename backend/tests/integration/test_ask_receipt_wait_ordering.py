@@ -58,7 +58,7 @@ class _NativeBoundary:
 
     def submit(self, chat, topic_id, **kwargs):
         self.submitted.append(kwargs["delivery_id"])
-        assert topic_id == self.identity.topic_id
+        assert topic_id == self.identity.conversation_id
         assert kwargs["delivery_id"] == self.delivery_id
         assert [recipient.handle for recipient in kwargs["addressed"].recipients] == [
             self.identity.recipient_handle
@@ -127,7 +127,7 @@ async def _sentinels(factory, project, topic, seat, other_seat):
             await record_agent(
                 session,
                 event,
-                topic_id=topic,
+                conversation_id=topic,
                 instance_id=agent.id,
                 content=f"Unrelated {state} input",
             )
@@ -200,13 +200,12 @@ def test_ask_correction_retries_once_after_its_group_echo(client, monkeypatch, o
             "recipient_handle": seat,
             "asked_by": seat,
             "asked": "user-1",
-            "task_id": None,
         }
         group_id = str(uuid.uuid4())
         async with factory() as session:
             await AskGroups(session).create(
                 project_id=project,
-                topic_id=topic,
+                conversation_id=topic,
                 asked_by=seat,
                 group_id=group_id,
                 questions=parse_questions(
@@ -225,7 +224,7 @@ def test_ask_correction_retries_once_after_its_group_echo(client, monkeypatch, o
             await complete_work_inputs(
                 session,
                 project_id=project,
-                topic_id=topic,
+                conversation_id=topic,
                 recipient_handle=seat,
                 harness=initial.harness,
                 native_session_id=initial.native_session_id,
@@ -412,7 +411,7 @@ def test_ask_correction_retries_once_after_its_group_echo(client, monkeypatch, o
             assert row.retry_at is None
             inputs = list(
                 await session.scalars(
-                    select(NativeInput).where(NativeInput.topic_id == topic)
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
                 )
             )
             assert {row.input_id for row in inputs} == {

@@ -13,7 +13,7 @@ function evt(id: string, content: string, meta: Record<string, unknown>, turn: s
   return {
     id,
     project_id: 'p',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'cheese',
@@ -30,7 +30,7 @@ function message(id: string, turn: string | null): Block {
   return {
     id,
     project_id: 'p',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'message',
     author_type: 'participant',
     author: 'cheese',

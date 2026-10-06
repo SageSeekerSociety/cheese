@@ -1,7 +1,8 @@
 """A rollout tells the backend traffic has just left to hand its running work
 over (SIGUSR1), and that backend keeps answering what it still has while its
 requests drain. Moved only when the old backend stopped, the work reached the
-new one a drain later, and every new turn waited that long to start.
+new one a drain later, and every new turn waited that long to start. A browser
+watching a room through it is sent on with 1012.
 """
 
 import asyncio
@@ -16,6 +17,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.core.ownership import OWNER_LOCK, Ownership
+from app.core.ws_handover import EndBusinessSocketsAtHandover
 from app.main import app
 
 
@@ -55,6 +57,28 @@ async def test_a_backend_told_to_hand_over_lets_the_next_take_the_work_and_serve
             ) as client:
                 before = (await client.get("/healthz")).status_code
 
+                # A browser's room socket, held open through this process.
+                sent: list[dict] = []
+                accepted = asyncio.Event()
+
+                async def room(scope, receive, send):
+                    await send({"type": "websocket.accept"})
+                    accepted.set()
+                    while (await receive())["type"] != "websocket.disconnect":
+                        pass
+
+                async def browser_send(message):
+                    sent.append(message)
+
+                browser = asyncio.create_task(
+                    EndBusinessSocketsAtHandover(room)(
+                        {"type": "websocket", "path": "/topics/abc/chat"},
+                        asyncio.Event().wait,
+                        browser_send,
+                    )
+                )
+                await asyncio.wait_for(accepted.wait(), timeout=5)
+
                 # Its default action ends the process, so a backend that did not
                 # catch it would not be handing anything over.
                 assert signal.getsignal(signal.SIGUSR1) not in (signal.SIG_DFL, None)
@@ -62,6 +86,8 @@ async def test_a_backend_told_to_hand_over_lets_the_next_take_the_work_and_serve
 
                 await asyncio.wait_for(incoming.acquire(), timeout=30)
                 assert incoming.held
+                await asyncio.wait_for(browser, timeout=5)
+                assert sent[-1] == {"type": "websocket.close", "code": 1012}
                 assert (await client.get("/healthz")).status_code == before
     finally:
         await incoming.release()

@@ -13,6 +13,7 @@ from app.domain.agent.session_host.driver import startup_refused
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
 )
@@ -26,7 +27,7 @@ Traceback (most recent call last):
   File "/h/.cheese/remote-execution/executor_transport.py", line 515, in acquire
     raise PlatformHTTPError(response.status, body)
 executor_transport.PlatformHTTPError: Platform HTTP 504: {"code":504}"""
-SENTENCE = "Claude Code 启动失败：这个房间的工作电脑还在准备"
+SENTENCE = "Claude Code 启动失败：这个频道的工作电脑还在准备"
 
 
 class DiesOnItsWayUp(StubChannel):
@@ -47,6 +48,8 @@ def _turn(client) -> tuple[str, list[dict]]:
         "/topics",
         json={"project_id": project["id"], "title": "话题"},
     ).json()["data"]["id"]
+    # 芝士 answers in a 支线 of the channel: that is where it fails to start.
+    room = in_thread(client, room, "user-1")
     frames = []
     with client.websocket_connect(chat_ws_url(room, "user-1")) as ws:
         post_message(client, room, "user-1", {"content": "@芝士 hi"})

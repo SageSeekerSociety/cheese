@@ -44,7 +44,7 @@ function step(id: string, arg: string, meta: Record<string, unknown> = {}): Bloc
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-t1',

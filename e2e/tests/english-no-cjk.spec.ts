@@ -348,7 +348,7 @@ test("workspace: inbox, board, room, accept card, library, project settings", as
     { name: "member profile", path: `${project}/members/alice` },
     ...[
       "agents",
-      "topic-naming",
+      "task-naming",
       "computer",
       "environment",
       "merge",

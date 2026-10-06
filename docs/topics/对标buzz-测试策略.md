@@ -43,7 +43,7 @@ buzz 值得抄的是**三样具体东西**（`--only-changed` 预推送、失败
 对比对象是 `scripts/start-isolated-test-relay.sh`（235 行）和我们的 <&.claude/scripts/dev-db.sh>（187 行）。两者解决的是**不同的问题**：
 
 - buzz：机器上已经有别的 relay 和 dev 栈在跑，要**在冲突中挖出一块隔离区**。手法是命名 compose project（`buzz-harness`）+ 整块端口位移（PG 5471 / Redis 6471 / relay 3030）+ 每次启动 `DROP SCHEMA public CASCADE` 重置 + 单一写入者 seed 脚本。
-- 我们：沙箱里**什么都没有**（无 docker、无 PG），要凭空造出服务。手法是 `uv` 拉 `pgserver` + `redislite` 两个预编译 wheel，跑在一个一次性的 3.12 解释器上。
+- 我们：沙箱里**什么都没有**（无 docker、无 PG），要凭空造出服务。手法是 `dev-db.sh` 装钉住版本的 PostgreSQL 发行包、从源码编译 Valkey，装进缓存以外的固定目录。
 
 各自的约束不同，架构没得比。有三点细节值得讲：
 

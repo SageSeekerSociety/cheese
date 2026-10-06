@@ -19,6 +19,7 @@ from app.domain.delivery.models import Delivery
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     post_message,
     post_project,
@@ -35,8 +36,9 @@ def test_quoted_mentions_and_paths_never_name_an_ai_or_notify_a_person(
 ):
     project_id, room_id, cheese, reviewer = _room_with_two_agents(client)
     join_project_team(client, project_id, "bob")
+    channel = client.get(f"/topics/{room_id}/thread").json()["data"]["room_id"]
     added = client.post(
-        f"/topics/{room_id}/members",
+        f"/topics/{channel}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -139,7 +141,9 @@ def _room_with_two_agents(client):
     members = client.get(f"/topics/{room['id']}/members").json()["data"]["data"]
     seats = [m["member_handle"] for m in members if m["agent"]]
     other = next(s for s in seats if s != reviewer["seat_handle"])
-    return project["id"], room["id"], other, reviewer["seat_handle"]
+    # Both sit on the channel's roster; they talk in a 支线 of it.
+    thread = in_thread(client, room["id"], "alice")
+    return project["id"], thread, other, reviewer["seat_handle"]
 
 
 def _as(project_id, room_id, seat):
@@ -164,7 +168,9 @@ def _deliveries(client, room_id):
         async with client.test_factory() as session:
             return list(
                 await session.scalars(
-                    select(Delivery).where(Delivery.topic_id == uuid.UUID(room_id))
+                    select(Delivery).where(
+                        Delivery.conversation_id == uuid.UUID(room_id)
+                    )
                 )
             )
 

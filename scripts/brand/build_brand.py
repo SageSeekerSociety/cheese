@@ -1,6 +1,6 @@
 """Generate every 知是 brand asset: the mark, the 知是 / cheese wordmarks, the
-lockups, the web app icons, the tile the desktop app opens on and the parts
-the docs site animates.
+lockups, the web app icons, the tile the desktop app opens on and the mark
+the notification email shows.
 
 Everything comes from one hand-drawn source (mouse.svg, the mouse from the
 original logo) and two open fonts, plus the measured edits docs/brand.md
@@ -164,7 +164,6 @@ def rec_circle(cx, cy, r):
 
 U = lambda a, b: pathops.op(a, b, pathops.PathOp.UNION)
 D = lambda a, b: pathops.op(a, b, pathops.PathOp.DIFFERENCE)
-I = lambda a, b: pathops.op(a, b, pathops.PathOp.INTERSECTION)
 
 
 def union(*ps):
@@ -295,17 +294,6 @@ def tile_svg(indent):
     lines += ['    </g>', '  </mask>', '  <g fill="#23242a">',
               f'    <circle {c(*moon)} mask="url(#boot-holes)" />', f'    <circle {c(*eye)} />', '  </g>', '</svg>']
     return ('\n' + ' ' * indent).join(lines)
-
-
-def motion_parts():
-    """What the docs site's logo animation moves, in the mark's 1000 units."""
-    import json
-    moon, mouse, eye, holes = source()
-    m = from_d(mouse)
-    x1 = m.bounds[2]
-    tip = I(m, rect(x1 - 6, 0, x1 + 1, 1000)).bounds       # the snout: the mouse's rightmost point
-    return json.dumps(dict(colour=BRAND, moon=moon, mouse=mouse, eye=eye, nose=(x1, (tip[1] + tip[3]) / 2),
-                           holes=[tuple(round(v, 2) for v in h) for h in holes]), ensure_ascii=False) + '\n'
 
 
 FIRST_PAGES = (os.path.join(ROOT, 'frontend', 'index.html'), os.path.join(ROOT, 'desktop', 'shell', 'index.html'))
@@ -535,9 +523,6 @@ def build():
     for path, text in out.items():
         open(path, 'w').write(text)
         print(os.path.relpath(path, ROOT))
-    parts = os.path.join(ROOT, 'docs', 'site', 'logo', 'parts.json')
-    open(parts, 'w').write(motion_parts())
-    print(os.path.relpath(parts, ROOT))
     for path in FIRST_PAGES:
         page = open(path).read()
         m = re.search(r'( *)<svg viewBox="[^"]*" aria-hidden="true">.*?</svg>', page, re.S)

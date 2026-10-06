@@ -95,6 +95,7 @@ ignore_imports =
     app.core.background -> app.domain.delivery.timer
     app.core.background -> app.domain.docs_site.assistant
     app.core.background -> app.domain.machine.warm
+    app.core.background -> app.domain.notification.digest
     app.core.background -> app.domain.notification.maintenance
     app.core.background -> app.domain.notification.push_delivery
     app.core.background -> app.domain.project.forge
@@ -111,7 +112,6 @@ ignore_imports =
     app.domain.project.environment_recovery -> app.api.deps
     app.domain.project.export -> app.api.auth
     app.domain.review.pr_poll -> app.api.deps
-    app.domain.topic.doc_nudge -> app.api.deps
 
 [importlinter:contract:routes-touch-no-models]
 # C2 — a route handler must not read another domain's model modules directly.
@@ -306,6 +306,7 @@ ignore_imports =
     app.domain.mentions -> app.domain.membership.roster
     app.domain.mentions -> app.domain.topic.models
     app.domain.mentions -> app.domain.topic.repositories
+    app.domain.notification.digest -> app.domain.delivery.models
     app.domain.notification.legacy_queue -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.notification.maintenance
@@ -373,6 +374,7 @@ ignore_imports =
     app.domain.room_task.binding -> app.domain.agent.supply
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
     app.domain.room_task.checkouts -> app.domain.agent.resource_cleanup
+    app.domain.room_task.naming -> app.domain.agent.runtime
     app.domain.room_task.checkouts -> app.domain.topic.models
     app.domain.room_task.place -> app.domain.topic.models
     app.domain.room_task.presentation -> app.domain.review.models
@@ -392,10 +394,6 @@ ignore_imports =
     app.domain.team.membership_services -> app.domain.delivery.ledger
     app.domain.team.membership_services -> app.domain.notification.models
     app.domain.team.services -> app.domain.task.repositories
-    app.domain.topic.doc_nudge -> app.domain.agent.platform_notices
-    app.domain.topic.doc_nudge -> app.domain.agent.runtime
-    app.domain.topic.naming -> app.domain.agent.announce
-    app.domain.topic.naming -> app.domain.agent.runtime
     app.domain.topic.retire -> app.domain.agent.device_hub
     app.domain.topic.retire -> app.domain.agent.device_provider
     app.domain.topic.retire -> app.domain.agent.models

@@ -60,7 +60,7 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
         async with client.test_factory() as session:
             await BlockRepository(session).add(
                 project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(topic_id),
+                conversation_id=uuid.UUID(topic_id),
                 author=author,
                 author_type=AuthorType.participant,
                 content="msg",
@@ -104,7 +104,7 @@ def test_an_outsider_cannot_read_the_topic_badges_of_a_project(client):
     # 对照：成员读得到自己的角标。
     own = _topic_unread(client, project_id, handle="user-1")
     assert own.status_code == 200, own.text
-    assert own.json()["data"] == {topic_id: 1}
+    assert own.json()["data"][topic_id]["messages"] == 1
 
     r = _topic_unread(client, project_id, handle="outsider-1")
     assert r.status_code == 403, r.text

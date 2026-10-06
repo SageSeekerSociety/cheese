@@ -18,7 +18,7 @@ const vuetify = createVuetify({ components, directives })
 function changes(paths: string[], omitted = 0): Block {
   return {
     id: 'c1',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'system',
@@ -89,7 +89,7 @@ describe('本轮改动的文件', () => {
 describe('平台自动改了标题', () => {
   const renamed = {
     id: 'rename-1',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'system',
@@ -99,7 +99,7 @@ describe('平台自动改了标题', () => {
     meta: { action: 'title', who: 'platform', from: 'dev 外网访问慢', to: 'Valkey 连接池耗尽' },
   } as unknown as Block
 
-  it('行尾是撤销，按下去带着这一行自己的 id', async () => {
+  it('旧的改名记录照常显示，不再带撤销', () => {
     const [row] = collapseNotices([renamed])
     const view = render(RoomNotice as Component, {
       props: {
@@ -114,9 +114,7 @@ describe('平台自动改了标题', () => {
       global: { plugins: [vuetify] },
     })
     expect(view.container.textContent).toContain('标题自动更新为「Valkey 连接池耗尽」')
-    await fireEvent.click(view.getByRole('button', { name: '撤销' }))
-    expect(view.emitted('undo-title')).toEqual([['rename-1']])
-    expect(view.emitted('open-resource')).toBeUndefined()
+    expect(view.queryByRole('button', { name: '撤销' })).toBeNull()
   })
 })
 
@@ -124,7 +122,7 @@ describe('芝士起草、等人确认的那一行', () => {
   function proposed(meta: Record<string, unknown>): Block {
     return {
       id: 'p1',
-      topic_id: 't',
+      conversation_id: 't',
       kind: 'event',
       author_type: 'platform',
       author: 'system',

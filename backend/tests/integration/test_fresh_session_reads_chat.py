@@ -16,12 +16,13 @@ from pathlib import Path
 from app.domain.agent_session.services import AgentSessionService
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
 )
 
-_LINE = re.compile(r"这个房间里已经有 (\d+) 条聊天消息")
+_LINE = re.compile(r"这里已经有 (\d+) 条聊天消息")
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 
 
@@ -35,12 +36,14 @@ def _platform_tool_names() -> tuple[str, ...]:
 
 
 def _room(client) -> str:
+    """A 支线 of a channel: where 芝士 answers, in a session of its own."""
     p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
-    return client.post(
+    room = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题"},
         headers=session_auth_headers("user-1"),
     ).json()["data"]["id"]
+    return in_thread(client, room, "user-1")
 
 
 def _session_lost(client, room: str) -> None:

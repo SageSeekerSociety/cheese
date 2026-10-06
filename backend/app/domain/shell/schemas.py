@@ -24,7 +24,6 @@ class ShellOut(BaseModel):
     name: str
     home: str | None
     nav: ShellNavOut
-    hidden: list[str]
     terms: dict[str, str]
 
     @classmethod
@@ -36,6 +35,5 @@ class ShellOut(BaseModel):
             nav=ShellNavOut(
                 rail=list(nav.rail), tabs=list(nav.tabs), project=list(nav.project)
             ),
-            hidden=list(shell.hidden),
             terms=dict(shell.terms),
         )

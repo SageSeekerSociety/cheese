@@ -122,7 +122,6 @@ _TOOL_ARG = {
     # 搜记录时说的是在找什么。翻最近一页、按 id 读一条或它的回复，参数不是没有
     # 就是一个 UUID，跟在动词后面等于什么都没说 —— 只留动词。
     "cheese_chat_search": "query",
-    "cheese_doc_set": "path",
     # 改文档时说的是为什么改；那几处原文要读全文才看得懂。
     "cheese_doc_edit": "reason",
     "cheese_doc_new": "title",
@@ -189,7 +188,6 @@ _PATH_TOOLS = frozenset(
         "edit",
         "write",
         "ls",
-        "cheese_doc_set",
         "cheese_show",
     }
 )

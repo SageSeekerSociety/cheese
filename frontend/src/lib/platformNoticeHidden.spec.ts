@@ -13,7 +13,7 @@ import { collapseNotices, rendersInRoom } from './platformNotice'
 function msg(id: string, content: string, meta: Record<string, unknown> | null = null): Block {
   return {
     id,
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'message',
     author_type: 'participant',
     author: 'cheese',

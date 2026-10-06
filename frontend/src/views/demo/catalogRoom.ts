@@ -25,7 +25,6 @@ import { AGENT_NAME } from './catalogFixtures'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
-import OutsideMentionNotice from '@/components/room/OutsideMentionNotice.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
@@ -48,7 +47,7 @@ const PEOPLE: MentionItem[] = [
   { label: '波比', kind: 'member', insert: '波比', sub: '@bobby', agent: false, external: true, handle: 'bobby' },
 ]
 
-/** 项目里的人，但不在这个话题里：@ 得到，候选上说一句他不在。 */
+/** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面。 */
 const OUTSIDER: MentionItem = {
   label: '陈卡',
   kind: 'member',
@@ -61,7 +60,7 @@ const OUTSIDER: MentionItem = {
 
 /** 群播：两个 fixed-literal token，`expandMentions` 把它们变成 `<@all>` / `<@here>`。 */
 const BROADCAST: MentionItem[] = [
-  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
+  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知频道全体成员', agent: false },
   { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
 ]
 
@@ -126,8 +125,8 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         expect: '资料库',
       },
       {
-        name: '有人不在这个话题里',
-        note: '项目里的人都 @ 得到，但话题里的人排在前面；不在话题里的跟在后面，右边挂「不在话题中」——他读不到这段对话。',
+        name: '有人没加入这个频道',
+        note: '项目里的人都 @ 得到，但频道里的人排在前面；没加入的跟在后面。',
         props: {
           open: true,
           matches: [PEOPLE[0], ...BROADCAST, PEOPLE[1], OUTSIDER],
@@ -135,7 +134,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
           level: 'root',
           enterSends: true,
         },
-        expect: '不在话题中',
+        expect: '陈卡',
       },
       {
         name: '高亮移到别人身上',
@@ -172,28 +171,6 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '菜单不消失，说的是文件那一件事：「暂无匹配的文件」。空态和一级上那个同一副骨架。',
         props: { open: true, matches: [], activeIndex: 0, level: 'library', enterSends: false },
         expect: '暂无匹配的文件',
-      },
-    ],
-  },
-  {
-    id: 'room-outside-mention-notice',
-    title: 'OutsideMentionNotice',
-    about: '刚发出去的那条 @ 了不在话题里的人：说一句他们收不到通知，能管名册的人顺手拉进来。',
-    file: 'src/components/room/OutsideMentionNotice.vue',
-    component: OutsideMentionNotice,
-    needs: UI_T,
-    states: [
-      {
-        name: '能管名册的人',
-        note: '话题的 owner / admin 看到「拉进话题」：走的是名册抽屉「添加成员」那一条接口，加完 @ 候选立刻跟上。',
-        props: { names: '陈卡、波比', canAdd: true, busy: false, error: '' },
-        expect: '拉进话题',
-      },
-      {
-        name: '普通成员',
-        note: '只有那句话，没有按钮——按下去后端也会拒。',
-        props: { names: '陈卡', canAdd: false, busy: false, error: '' },
-        expect: '不在话题中',
       },
     ],
   },

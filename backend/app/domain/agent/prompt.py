@@ -53,8 +53,6 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
 from app.domain.project.models import Project
 from app.domain.topic.models import (
-    PLACEHOLDER_TITLE,  # noqa: F401 — re-exported through `agent.chat`
-    TitleSource,
     Topic,
     TopicKind,
     TopicStatus,
@@ -170,7 +168,7 @@ def _session_opening_lines(
     # checklist reach it as conclusions; what was said is only in the chat.
     if earlier_messages:
         lines.append(
-            f"- 这个房间里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
+            f"- 这里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
             "动手之前先用 `cheese_chat_list` 读最近的记录；"
             "要找某句原话或某个决定，用 `cheese_chat_search`。"
         )
@@ -224,21 +222,15 @@ def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
     所以过滤掉的话题（含已归档的）用 `@标题` 照样解析得出 <#id> 链接——少注入是
     纯赚的，不损失任何引用能力。
 
-    剔除三类：
+    剔除两类：
     - 已归档：本项目实测占注入量的 74%，而引用一个几周前归档的话题几乎没有价值；
       需要时 agent 自己查（prompt 那段里给了查法）。
-    - 未命名（标题就是占位符）：按标题根本引用不了。
     - 同名：`expand_mention_names` 对同名标题只解析第一个（mentions.py 的 `seen`
       去重），其余会**静默指向错的那一个**。所以同名的**全部剔除**而不是留一个
       ——留一个等于在 prompt 里推荐一个会指错的引用；全部不列，它们仍可通过查询
       拿到 id 后用 <#id> 精确引用。
     """
-    live = [
-        t
-        for t in topics
-        if t.status != TopicStatus.archived
-        and t.title_source != TitleSource.placeholder
-    ]
+    live = [t for t in topics if t.status != TopicStatus.archived]
     titles = Counter(t.title for t in live)
     return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
 
@@ -403,7 +395,7 @@ async def project_overview(
     session: AsyncSession,
     *,
     project: Project,
-    room_id: uuid.UUID,
+    conversation_id: uuid.UUID,
     room_doc: str | None,
     overview_doc: str | None,
     all_topics: list[Topic],
@@ -411,11 +403,12 @@ async def project_overview(
 ) -> str:
     """注入用的项目总览：① 从总览文档来，②③ 从结构化数据现拼（#1889）。
 
-    在总览房间（项目根话题）里，总览就是本房间的实况文档，三块都拼给它；别的
-    房间只注入 ① —— 它们读到「这个项目是什么」就够了，其余两块要哪一块就自己
-    去查哪一块，不必每轮往每间房塞一份项目快照。
+    在「综合」的主线上（项目根频道），总览就是那里的实况文档，三块都拼给它；
+    别的对话——别的频道、任务、支线，包括综合里的——只注入 ① —— 它们读到「这个
+    项目是什么」就够了，其余两块要哪一块就自己去查哪一块，不必每轮往每段对话塞
+    一份项目快照。
     """
-    in_overview_room = project.root_topic_id == room_id
+    in_overview_room = project.root_topic_id == conversation_id
     source = room_doc if in_overview_room else overview_doc
     auto = ""
     if in_overview_room:

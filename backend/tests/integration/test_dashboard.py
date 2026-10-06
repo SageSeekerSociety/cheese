@@ -14,7 +14,7 @@ def _seed_block(client, project_id, topic_id, author, author_type, kind):
             s.add(
                 Block(
                     project_id=uuid.UUID(project_id),
-                    topic_id=uuid.UUID(topic_id),
+                    conversation_id=uuid.UUID(topic_id),
                     kind=kind,
                     author_type=author_type,
                     author=author,

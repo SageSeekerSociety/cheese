@@ -11,6 +11,7 @@ import pytest
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
 )
@@ -61,6 +62,8 @@ def test_event_blocks_persist_structured_meta(client):
         "/topics",
         json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]
+    # 芝士 answers in a 支线: that is the conversation its turn runs in.
+    t = {"id": in_thread(client, t["id"], "user-1")}
     _chat(client, t["id"])
 
     tr = client.get(f"/topics/{t['id']}/transcript").json()["data"]["data"]
@@ -113,6 +116,7 @@ def test_transcript_pages_back_instead_of_serving_everything(client):
         "/topics",
         json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]
+    t = {"id": in_thread(client, t["id"], "user-1")}
     for _ in range(3):
         _chat(client, t["id"])
 
@@ -147,6 +151,8 @@ def test_transcript_rejects_a_cursor_from_another_topic(client):
         "/topics",
         json={"project_id": p["id"], "title": "B"},
     ).json()["data"]
+    a = {"id": in_thread(client, a["id"], "user-1")}
+    b = {"id": in_thread(client, b["id"], "user-1")}
     _chat(client, a["id"])
     other = client.get(f"/topics/{a['id']}/transcript").json()["data"]["data"][0]["id"]
 
@@ -164,6 +170,7 @@ def test_transcript_says_when_each_turn_started(client):
         "/topics",
         json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]
+    t = {"id": in_thread(client, t["id"], "user-1")}
     asked = datetime.now(UTC)
     _chat(client, t["id"])
 

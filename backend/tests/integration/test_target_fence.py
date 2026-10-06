@@ -60,8 +60,7 @@ def test_a_missing_target_ends_only_a_current_attempt(
                     id=delivery_id,
                     event_id=uuid.uuid4(),
                     recipient_handle=identity.recipient_handle,
-                    topic_id=identity.topic_id,
-                    task_id=uuid.uuid4(),  # The addressed task was deleted.
+                    conversation_id=uuid.uuid4(),  # The addressed task was deleted.
                     agent_instance_id=uuid.uuid4(),
                     state=state,
                     attempt_id=recorded_attempt,

@@ -29,6 +29,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import addressed_to_agent
+from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import CloudHostRepository
@@ -42,6 +43,7 @@ from app.domain.project.environment_recovery import (
 )
 from app.domain.project.models import Project
 from app.domain.project.services import refuse_writes_if_archived
+from app.domain.thread.services import waiting_in_room
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
@@ -102,7 +104,10 @@ async def require_idle(db: AsyncSession, topic: Topic) -> None:
         raise ValidationError(say("unarchiveBeforeEnvironmentChange"))
     active = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic.id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, topic.id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     if active is not None:
@@ -189,7 +194,10 @@ async def get_room_environment(
     recovery = await reconcile_recovery(db, topic_id)
     busy = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, topic_id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     return ok(
@@ -374,31 +382,36 @@ async def repair_environment(
         await require_idle(db, topic)
         incident = await repairable_incident(db, topic, body)
         topic.environment = body.config.snapshot()
+        # 环境修好了，下一步回到等着回答的那几处 —— 消息在哪条支线、哪个任务里，
+        # 就交给那里的芝士，那些一直没送达的消息随待读窗口一起被它读到（I12）。
+        waiting = await waiting_in_room(db, topic_id)
         turn_id = uuid.uuid4()
         incident.meta = {
             **incident.meta,
-            "state": "retrying",
+            "state": "retrying" if waiting else "closed",
             "dispatch_turn": str(turn_id),
             "dispatched_at": datetime.now(UTC).isoformat(),
         }
         await db.commit()
-        # 环境修好了，下一步回到这个房间的芝士手上 —— 平台把这条事件送过去，那些
-        # 一直没送达的用户消息随待读窗口一起被它读到（I12）。
         seat = await TopicMemberService(db).addressable_agent_handle(topic_id)
-        get_work_runner().submit(
-            chat,
-            topic_id,
-            author="system",
-            content="环境配置已修复，请继续处理此前尚未送达的用户消息。",
-            addressed=addressed_to_agent(seat),
-            # 房间里看见的是一条系统事件，不是一句署名 system 的聊天消息：上面那
-            # 段是提示词，只给 agent 看（平台提示统一契约，见 platform_notices）。
-            nudge_event=say("environmentRepaired"),
-            nudge_meta=notice(
-                EVENT_ENVIRONMENT_REPAIRED,
-                severity=SEVERITY_INFO,
-                who=WHO_CHEESE,
-            ),
-            turn_id=turn_id,
-        )
+        for index, conversation in enumerate(waiting):
+            get_work_runner().submit(
+                chat,
+                conversation,
+                author="system",
+                content="环境配置已修复，请继续处理此前尚未送达的用户消息。",
+                addressed=addressed_to_agent(seat),
+                # 看见的是一条系统事件，不是一句署名 system 的聊天消息：上面那段
+                # 是提示词，只给 agent 看（平台提示统一契约，见 platform_notices）。
+                nudge_event=say("environmentRepaired"),
+                nudge_meta=notice(
+                    EVENT_ENVIRONMENT_REPAIRED,
+                    severity=SEVERITY_INFO,
+                    who=WHO_CHEESE,
+                ),
+                # The incident follows the first of them.
+                turn_id=turn_id if index == 0 else uuid.uuid4(),
+            )
+        if not waiting:
+            return ok({"state": "closed"})
     return ok({"state": "retrying", "turn_id": str(turn_id)})

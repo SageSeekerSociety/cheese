@@ -59,6 +59,10 @@ class User(Base):
     # their push and desktop notifications are written in. NULL until they pick
     # one or first sign in from a page that tells us; NULL is said in Chinese.
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # The IANA time zone of the browser they last used (`Asia/Shanghai`), which is
+    # whose clock their quiet hours are read on. NULL until a page reports one;
+    # NULL is read as Beijing time (`notification.preferences.DEFAULT_TIMEZONE`).
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
