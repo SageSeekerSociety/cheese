@@ -1254,6 +1254,20 @@ def test_store_is_false_whatever_the_body_said():
     }
 
 
+def test_a_temperature_the_caller_set_does_not_reach_codex():
+    # Codex answers {"detail":"Unsupported parameter: temperature"} to any
+    # body that carries one; on dev 1,122 requests failed that way in 3 days.
+    sent = json.loads(
+        _codex(b'{"model":"gpt-6-astra","temperature":0.2,"input":[],"stream":true}')
+    )
+    assert sent == {
+        "store": False,
+        "model": "gpt-6-astra",
+        "input": [],
+        "stream": True,
+    }
+
+
 def test_a_dropped_member_may_be_the_only_one():
     assert json.loads(_codex(b'{ "max_output_tokens": 5 }')) == {"store": False}
     assert json.loads(_codex(b"{ }")) == {"store": False}
