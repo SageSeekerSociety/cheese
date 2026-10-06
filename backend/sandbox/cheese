@@ -213,6 +213,14 @@ FEEDBACK_GET_DESCRIPTION = (
 
 _FEEDBACK_REF = _text("反馈编号，如 FB-12（详情页上印的那个），或者它的 id")
 
+RUN_RECORDS_DESCRIPTION = (
+    "读平台的运行记录：各个项目里出过的报错（后端、前端、没跑完的轮次）和平台自己"
+    "处理掉的事（排队、重试、环境启停），和管理后台「运行记录」是同一份。一种事一行："
+    "次数、涉及几个项目、首次和最近一次的时间。给 `key` 和 `kind`（列表每行末尾那一对）"
+    "就读那一种的详情：最近一次的全文、调用栈、出现在哪些项目和对话里。只读。"
+    "只有做这个平台本身的项目读得到，别的项目会被拒。"
+)
+
 #: How the platform names each status to a person; the agent repeats it to one.
 _FEEDBACK_STATUS = {
     "received": "已收录",
@@ -718,6 +726,25 @@ PLATFORM_TOOLS = ToolTable(
             "状态不退回。",
             {"feedback": _FEEDBACK_REF},
             ["feedback"],
+        ),
+        _tool(
+            "cheese_run_records",
+            RUN_RECORDS_DESCRIPTION,
+            {
+                "window": {
+                    "type": "string",
+                    "enum": ["24h", "7d", "30d"],
+                    "description": "看多久以内的，默认 24h",
+                },
+                "group": {
+                    "type": "string",
+                    "enum": ["all", "errors", "recovered"],
+                    "description": "all 全部、errors 只看报错、recovered 只看平台自己处理掉的",
+                },
+                "query": _text("搜正文和详情里的文字，比如接口路径、异常名"),
+                "key": _text("要读详情的那一种：列表里那一行的 key"),
+                "kind": _text("要读详情的那一种：列表里那一行的 kind"),
+            },
         ),
         _tool(
             "cheese_machine",
@@ -1363,6 +1390,18 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             ),
         }
         return {"method": "GET", "path": "/feedback?" + urllib.parse.urlencode(params)}
+    if tool == "cheese_run_records":
+        params = {"topic": topic, **_given(args, "window")}
+        if args.get("key") and args.get("kind"):
+            params.update(key=args["key"], kind=args["kind"])
+            return {
+                "method": "GET",
+                "path": "/run-records/detail?" + urllib.parse.urlencode(params),
+            }
+        params.update(_given(args, "group"))
+        if args.get("query"):
+            params["q"] = args["query"]
+        return {"method": "GET", "path": "/run-records?" + urllib.parse.urlencode(params)}
     if tool == "cheese_feedback_get":
         ref = urllib.parse.quote(str(args["feedback"]).strip(), safe="")
         return {"method": "GET", "path": f"/feedback/{ref}?topic={topic}"}
@@ -2067,6 +2106,53 @@ def _feedback_read(tool: str, args: dict, host) -> dict:
         raise
 
 
+def _run_records(args: dict, host) -> str:
+    """The admin page's run records, as lines an agent reads."""
+    try:
+        data = host.request(request_plan("cheese_run_records", args, host.environ))
+    except Exception as exc:
+        status = getattr(exc, "status", None)
+        why = _feedback_refusal(exc)
+        if status == 404:
+            raise PlatformToolError(
+                "这段时间里没有这一种。核对 key 和 kind，或者把 window 放宽。"
+            ) from exc
+        if status in (400, 403) and why:
+            raise PlatformToolError(f"没读到：{why.rstrip('。')}。") from exc
+        raise
+    body = data.get("data") or {}
+    if args.get("key") and args.get("kind"):
+        meta = body.get("meta") or {}
+        lines = [f"[{body.get('kind')}] {body.get('content')}", f"最近一次：{body.get('at')}"]
+        if meta.get("stack"):
+            lines += ["调用栈：", str(meta["stack"])[:_FEEDBACK_LOG_BUDGET]]
+        lines.append("出现在：")
+        for place in body.get("places") or []:
+            lines.append(
+                f"  {place.get('project') or place.get('project_id') or '（没有项目）'}"
+                f" 对话 {place.get('conversation_id') or '—'}，最近 {place.get('at')}"
+            )
+        if body.get("more_places"):
+            lines.append(f"  还有 {body['more_places']} 处")
+        return "\n".join(lines)
+    totals = body.get("totals") or {}
+    groups = body.get("groups") or []
+    if not groups:
+        return "这段时间里没有运行记录。"
+    lines = [
+        f"{body.get('window')} 内：报错 {totals.get('error_kinds', 0)} 种、"
+        f"{totals.get('errors', 0)} 次；平台自己处理 {totals.get('recovered', 0)} 次。"
+    ]
+    for g in groups:
+        lines.append(
+            f"[{g.get('kind')}] {g.get('title')} — {g.get('count')} 次，"
+            f"{g.get('projects')} 个项目，最近 {g.get('last_at')}"
+            f"（key={g.get('key')!r}）"
+        )
+    lines.append("读某一种的详情：给 cheese_run_records 传那一行的 key 和 kind。")
+    return "\n".join(lines)
+
+
 def _feedback_card_line(item: dict) -> str:
     status = _FEEDBACK_STATUS.get(item.get("status"), item.get("status"))
     line = (
@@ -2246,6 +2332,7 @@ _STEPS = {
     "cheese_feedback_get": _feedback_get,
     "cheese_feedback_claim": _feedback_claim,
     "cheese_feedback_release": _feedback_release,
+    "cheese_run_records": _run_records,
     "cheese_wait_machine": _wait_machine,
 }
 

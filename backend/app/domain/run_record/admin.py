@@ -14,8 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.conversation.models import Conversation
 from app.domain.run_record.models import RunRecord
 
-#: 平台的报错：给管理员的，不属于任何对话。
-ERRORS = ("backend_error", "frontend_error")
+#: 报错：平台自己的（不属于任何对话），和对话里没跑完的那几轮（搬出对话的历史）。
+ERRORS = (
+    "backend_error",
+    "frontend_error",
+    "turn_failed",
+    "platform_error",
+    "turn_timeout",
+)
 #: 小柱图分几段。
 BUCKETS = 24
 WINDOWS = {

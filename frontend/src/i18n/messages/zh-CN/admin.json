@@ -86,6 +86,7 @@
     "kind": {
       "backend": "后端报错",
       "frontend": "前端报错",
+      "turn": "轮次失败",
       "recovered": "平台处理"
     },
     "detail": "详情",

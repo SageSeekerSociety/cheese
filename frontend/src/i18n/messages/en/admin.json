@@ -86,6 +86,7 @@
     "kind": {
       "backend": "Backend error",
       "frontend": "Frontend error",
+      "turn": "Failed turn",
       "recovered": "Platform"
     },
     "detail": "Details",

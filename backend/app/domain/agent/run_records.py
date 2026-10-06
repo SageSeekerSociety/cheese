@@ -11,24 +11,34 @@ import logging
 import uuid
 from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.run_record.models import RunRecord
 from app.domain.run_record.service import (
     FRAME,
+    THREAD_FRAME,
     as_payload,
     of_conversation,
     record,
     restate,
 )
+from app.domain.thread.models import Thread
 
 logger = logging.getLogger(__name__)
 
 
-async def publish(kept: RunRecord | dict | None, channel: str | None = None) -> None:
+async def publish(
+    kept: RunRecord | dict | None,
+    channel: str | None = None,
+    room: uuid.UUID | None = None,
+) -> None:
     """Tell whoever has the conversation open — on `channel` when the caller
-    names the socket its turn talks on, else on the conversation's own. Never
-    raises: a status line is not worth the work it describes."""
+    names the socket its turn talks on, else on the conversation's own. When
+    the conversation is a 支线, its channel's main line hears it too
+    (`THREAD_FRAME`): the line under the message says what the teammate
+    answering there is waiting for. Never raises: a status line is not worth
+    the work it describes."""
     if kept is None:
         return
     payload = kept if isinstance(kept, dict) else as_payload(kept)
@@ -39,8 +49,24 @@ async def publish(kept: RunRecord | dict | None, channel: str | None = None) -> 
 
     try:
         await get_broker().publish(channel, {"type": FRAME, "record": payload})
+        if room is not None:
+            await get_broker().publish(
+                str(room),
+                {
+                    "type": THREAD_FRAME,
+                    "thread_id": payload.get("conversation_id"),
+                    "record": payload,
+                },
+            )
     except Exception:  # noqa: BLE001 — see above
         logger.exception("could not publish run record %s", payload.get("id"))
+
+
+async def _thread_room(session: AsyncSession, conversation_id) -> uuid.UUID | None:
+    """The channel whose 支线 this conversation is; None when it is not one."""
+    return await session.scalar(
+        select(Thread.room_id).where(Thread.id == conversation_id)
+    )
 
 
 async def record_now(
@@ -69,11 +95,12 @@ async def record_now(
             if kept is None:
                 return None
             payload = as_payload(kept)
+            room = await _thread_room(session, conversation_id)
             await session.commit()
     except Exception:  # noqa: BLE001 — see `publish`
         logger.exception("could not keep run record %s", content)
         return None
-    await publish(payload, channel)
+    await publish(payload, channel, room)
     return payload
 
 
@@ -92,11 +119,12 @@ async def restate_now(
             if kept is None:
                 return None
             payload = as_payload(kept)
+            room = await _thread_room(session, kept.conversation_id)
             await session.commit()
     except Exception:  # noqa: BLE001 — see `publish`
         logger.exception("could not restate run record %s", record_id)
         return None
-    await publish(payload, channel)
+    await publish(payload, channel, room)
     return payload
 
 

@@ -302,6 +302,14 @@
       "steps": "{count} 步",
       "collapse": "收起",
       "expandAll": "展开全部（{count} 行）",
+      "phase": {
+        "queue": "排队",
+        "environment": "等环境",
+        "retry": "重试",
+        "work": "工作",
+        "span": "{phase} {span}",
+        "sep": " · "
+      },
       "record": {
         "queue": "排队",
         "delivery": "投递",
@@ -403,6 +411,15 @@
       "failed": "重试失败"
     },
     "notice": {
+      "repeats": {
+        "line": "{actor} {parts}",
+        "sep": "，",
+        "archived": "归档了 {n} 个频道",
+        "unarchived": "取消归档了 {n} 个频道",
+        "docEdited": "编辑了 {n} 次文档",
+        "others": "另有 {n} 项操作",
+        "only": "{line} 等 {n} 项操作"
+      },
       "platform": "平台",
       "changedFiles": "改动的文件",
       "moreFiles": "另 {n} 个文件",
@@ -454,6 +471,7 @@
       "saveFailed": "保存失败",
       "reply": "引用回复",
       "replyInThread": "在支线中回复",
+      "process": "查看过程",
       "react": "添加表情",
       "upgrade": "转为任务",
       "downloadFile": "下载 {name}",
@@ -1178,8 +1196,11 @@
       "title": "支线",
       "replies": "{count} 条回复",
       "replying": "{name} 正在回复",
+      "replyingStatus": "{name} {status}",
       "lastReply": "{name}：{text}",
       "toTask": "转为任务",
+      "backToThread": "返回支线",
+      "process": "这一轮的过程",
       "becameTask": "已转为任务「{title}」",
       "openTask": "打开任务",
       "close": "关闭",
