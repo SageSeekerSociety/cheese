@@ -21,11 +21,9 @@ trail keeps the distinct handles.
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.avatars.models import Avatar
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -56,33 +54,6 @@ class IdentityService:
         self._users = UserRepository(session)
         self._bindings = AgentBindingRepository(session)
         self._profiles = UserProfileRepository(session)
-
-    async def _default_avatar_id(self) -> int:
-        """取「全站默认那张脸」的 id，不写死 ``1``。
-
-        ``avatar_id`` 是 NOT NULL，给代理用户建档案时必须挂一行真头像；挂的那一行
-        就是头像域里 ``avatar_type == "default"`` 的那张。按 id 猜（原先的 ``1``）
-        会在重灌演示数据、行号变了之后指到别人脸上。这里只 import 头像域的 models
-        ——架构守卫只拦跨域 repository，models 不受限——现查一次，顺序与
-        ``AvatarRepository.get_default`` 一致（default 优先，退而取第一张 predef）。
-        """
-        avatar_id = await self._first_avatar_id("default")
-        if avatar_id is None:
-            avatar_id = await self._first_avatar_id("predefined")
-        if avatar_id is None:
-            # 头像表空 = 部署没灌种子数据，连默认脸都没有：这是不变量破了，直接炸，
-            # 别退回写死一个可能指向别人脸上的 id。
-            raise RuntimeError("no avatar row to use as the default face")
-        return avatar_id
-
-    async def _first_avatar_id(self, avatar_type: str) -> int | None:
-        stmt = (
-            select(Avatar.id)
-            .where(Avatar.avatar_type == avatar_type)
-            .order_by(Avatar.id.asc())
-            .limit(1)
-        )
-        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def _create_agent_user(self, *, handle: str) -> User:
         """Create an agent as a real (main-repo) User row: username == handle,
@@ -115,12 +86,9 @@ class IdentityService:
         # handle). Without it every agent would render as its raw
         # ``cheese-<hex>`` handle instead of 芝士 — identity forks, display does not.
         if await self._profiles.get_profile_by_user_id(user.id) is None:
-            # 代理用户也得挂一行真头像（avatar_id NOT NULL），但挂的是「没挑过」的
-            # 默认那张脸，由头像域说了算 —— 不写死 id，免得重灌数据后指错人。
-            avatar_id = await self._default_avatar_id()
             try:
                 await self._profiles.create_profile(
-                    user_id=user.id, nickname=name, intro="", avatar_id=avatar_id
+                    user_id=user.id, nickname=name, intro="", avatar_id=1
                 )
             except IntegrityError:
                 if await self._profiles.get_profile_by_user_id(user.id) is None:
