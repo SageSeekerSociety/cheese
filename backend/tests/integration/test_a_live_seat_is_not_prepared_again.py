@@ -1,4 +1,5 @@
-"""A send to a seat whose runner is known to be alive asks the host nothing more.
+"""A send to a seat whose runner is known to be alive asks the host nothing more
+than whether its tunnel helper still listens.
 
 A room's sessions as its sends start them, against a session host that counts
 what it is asked. A session the core vouches for (started by this process, its
@@ -62,7 +63,7 @@ def _asked(hub: CenterHub) -> tuple[int, ...]:
 
 
 @pytest.mark.anyio
-async def test_a_live_claude_seat_that_has_not_changed_asks_its_host_nothing(
+async def test_a_live_claude_seat_that_has_not_changed_asks_only_about_its_tunnel(
     client, room, monkeypatch
 ):
     project, topic = room
@@ -72,9 +73,14 @@ async def test_a_live_claude_seat_that_has_not_changed_asks_its_host_nothing(
         session = ref(project, topic)
         first = await claude.ensure(session, system_prompt="System", resume_token="s")
         before = _asked(hub)
+        probes = len(hub.probed_dirs)
         again = await claude.ensure(session, system_prompt="Another prompt")
         assert again == first
-        assert _asked(hub) == before
+        # `claude` reads its HTTPS_PROXY once, so a helper that died under it
+        # cannot be repaired in place: that one probe is all the reuse costs.
+        assert len(hub.probed_dirs) == probes + 1
+        execs, *rest = _asked(hub)
+        assert (execs - 1, *rest) == before
 
     client.portal.call(exercise)
 
