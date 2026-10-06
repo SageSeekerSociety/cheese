@@ -323,9 +323,9 @@
       "mute": "静音",
       "unmute": "取消静音",
       "muted": "已静音",
-      "muteFailed": "静音设置没保存",
       "markAllRead": "全部标为已读",
-      "markAllReadFailed": "全部标为已读没成功"
+      "markAllReadFailed": "全部标为已读没成功",
+      "notifyFailed": "通知设置没保存"
     },
     "archiveNotice": {
       "done": "已归档",
@@ -1048,26 +1048,16 @@
       "loadFailed": "加载成员失败",
       "count": "{count} 位",
       "agentBadge": "AI 队友",
-      "role": {
-        "owner": "拥有者",
-        "admin": "管理员",
-        "member": "成员"
-      },
-      "roleHint": {
-        "owner": "管理频道与成员",
-        "admin": "管理成员与角色",
-        "member": "参与频道讨论"
-      },
       "failed": "操作失败",
       "title": "频道成员",
       "remove": "移出频道",
       "addPlaceholder": "添加成员…",
       "allIn": "项目成员和队友都已在频道中",
       "add": "加入",
-      "readOnly": "只有拥有者和管理员能修改成员",
+      "readOnly": "只有频道创建者和项目管理员能修改成员",
       "listSeparator": "、",
       "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
-      "setRole": "设为{role}"
+      "creator": "创建者"
     },
     "mail": {
       "noSubject": "（无主题）",
@@ -1088,11 +1078,6 @@
     },
     "mention": {
       "back": "返回上一级",
-      "notInTopic": "不在频道中",
-      "outsideNotice": "{names} 不在频道中，他们不会收到通知",
-      "addToTopic": "拉进频道",
-      "dismissOutside": "知道了",
-      "nameJoiner": "、",
       "library": "资料库",
       "noFiles": "暂无匹配的文件",
       "noMatch": "暂无匹配",
@@ -1315,10 +1300,10 @@
     "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单"
   },
   "topicState": {
-    "accepted": "已采纳",
     "draft": "草稿",
     "done": "已完成",
-    "open": "进行中"
+    "open": "进行中",
+    "archived": "已归档"
   },
   "sidebar": {
     "wait": {
@@ -1343,9 +1328,7 @@
       "topic": "频道"
     },
     "archived": "已归档",
-    "archivedUnread": "归档频道里有新消息",
     "projectMenu": "项目菜单",
-    "others": "其他频道",
     "collapse": "收起",
     "expand": "展开",
     "expandStalled": "展开：里面有成员卡住了",
@@ -1359,9 +1342,6 @@
     "switchProject": "切换项目",
     "chooseProjectFirst": "先选择一个项目",
     "topics": "频道",
-    "noneMine": "暂无与你相关的频道",
-    "othersUnread": "其他频道里有新消息",
-    "empty": "暂无频道",
     "workingTip": "{name}正在这里工作",
     "expandWorking": "展开：里面有队友在工作",
     "moreMembers": "+{count}",
@@ -1838,15 +1818,17 @@
       "accountConnected": "已连接 GitHub 账号"
     },
     "channels": {
-      "intro": "频道用来按人群或领域分开讨论。一件要做成的事建成任务，不用为它新建频道。",
+      "intro": "项目里的每个频道都在这里，项目成员都能看、能加入。侧栏只列你加入的频道。一件要做成的事建成任务，不用为它新建频道。",
       "nameLabel": "频道名称",
       "create": "新建频道",
       "activeLabel": "在用的频道",
       "archivedLabel": "已归档",
-      "rootNote": "项目自带，不能归档",
+      "rootNote": "项目里的所有人都在，不能退出或归档",
       "rename": "重命名",
       "archive": "归档",
-      "unarchive": "取消归档"
+      "unarchive": "取消归档",
+      "descriptionLabel": "频道说明（选填）",
+      "describe": "编辑说明"
     }
   },
   "computeChoice": {
@@ -2073,5 +2055,31 @@
     "closed": "已关闭",
     "empty": "暂无任务",
     "loadFailed": "无法加载任务"
+  },
+  "channel": {
+    "notify": {
+      "title": "通知",
+      "all": "所有新消息",
+      "allHint": "主线的每条新消息都计数",
+      "mentions": "{'@'}我和我参与的支线",
+      "mentionsHint": "有人 {'@'}我或 {'@'}所有人，或我参与的支线有新回复时计数",
+      "mute": "静音",
+      "muteHint": "只有直接 {'@'}我时计数和通知",
+      "mutedForever": "静音中，直到你取消",
+      "mutedUntil": "静音到 {time}",
+      "forHour": "1 小时",
+      "forEightHours": "8 小时",
+      "untilTomorrow": "到明天上午 9 点",
+      "forWeek": "1 周",
+      "untilUnmuted": "直到我取消"
+    },
+    "join": "加入频道",
+    "leave": "退出频道",
+    "joinFailed": "未能加入频道",
+    "leaveFailed": "未能退出频道",
+    "notJoined": "你还没有加入这个频道。加入后可以在主线发言，也可以直接在消息的支线里回复。",
+    "archivedNotice": "这个频道已归档，只能查看",
+    "describeFailed": "频道说明没保存",
+    "browse": "浏览频道"
   }
 }

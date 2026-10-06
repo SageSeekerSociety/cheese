@@ -90,7 +90,7 @@ def _shared_team_project(client, *, owner: str = "alice", name: str = "P") -> di
 
 
 def _root_topic(client, project_id: str, *, actor: str = "alice") -> dict:
-    """The project's 项目总览 room — the one the owner is seeded into."""
+    """The project's 综合 channel — everyone in the project is in it."""
     r = client.get(
         f"/topics?project_id={project_id}", headers=session_auth_headers(actor)
     )
@@ -108,24 +108,13 @@ def _room_roster(client, topic_id: str, *, actor: str) -> list[dict]:
     return r.json()["data"]["data"]
 
 
-def _seat(client, topic_id: str, handle: str, *, role: str, actor: str) -> None:
-    """Put ``handle`` in the room at ``role`` — invited if new, promoted if not."""
-    seated = any(
-        row["member_handle"] == handle
-        for row in _room_roster(client, topic_id, actor=actor)
+def _seat(client, topic_id: str, handle: str, *, actor: str) -> None:
+    """Put ``handle`` in the channel, as someone who manages it."""
+    r = client.post(
+        f"/topics/{topic_id}/members",
+        json={"handle": handle},
+        headers=session_auth_headers(actor),
     )
-    if seated:
-        r = client.put(
-            f"/topics/{topic_id}/members/{handle}",
-            json={"role": role},
-            headers=session_auth_headers(actor),
-        )
-    else:
-        r = client.post(
-            f"/topics/{topic_id}/members",
-            json={"handle": handle, "role": role},
-            headers=session_auth_headers(actor),
-        )
     assert r.status_code == 200, r.text
 
 
@@ -215,16 +204,25 @@ def test_the_transferor_is_out_for_good(client):
     assert listed.status_code in (403, 404), listed.text
 
 
+def _channel(client, project_id: str, *, by: str = "alice") -> str:
+    r = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "她建的频道"},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["id"]
+
+
 def test_the_transferor_loses_the_projects_rooms_too(client):
     """项目那一层的门关上不算数。
 
-    A project's membership admits you to every one of its topics, but a ROOM
-    keeps its own roster and `authorize_topic_access` reads the roster before it
-    ever asks about the project. Creating the project seeded the owner as the
-    root topic's own `owner` row, so a transfer that only swaps
-    `owner_handle` leaves the giver in every room: still delivered 项目总览's
-    messages, still speaking in it, still managing its roster. That is the
-    difference between 转让 and 借, so the transfer hands the seats over.
+    A seat in a channel admits its holder to that channel by itself
+    (`authorize_topic_access` reads it before it asks about the project), so a
+    transfer that only swaps `owner_handle` would leave the giver in every
+    channel they had joined: still speaking there, still managing the ones they
+    created. That is the difference between 转让 and 借, so the transfer takes
+    the seats away.
 
     Both directions are asserted — the same calls must have worked BEFORE the
     transfer, or the 403 afterwards proves only that the room was shut to
@@ -233,132 +231,93 @@ def test_the_transferor_loses_the_projects_rooms_too(client):
     p = _project(client, owner="alice")
     _register(client, "carol")
     root = _root_topic(client, p["id"])
-    before = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
-    assert before.status_code == 200, before.text
-    assert _room_roster(client, root["id"], actor="alice")
+    mine = _channel(client, p["id"])
+    for room in (root["id"], mine):
+        before = client.get(f"/topics/{room}", headers=session_auth_headers("alice"))
+        assert before.status_code == 200, before.text
 
     assert _set_owner(client, p["id"], "carol", actor="alice").status_code == 200
 
-    after = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
-    assert after.status_code in (403, 404), after.text
-    people = client.get(
-        f"/topics/{root['id']}/members", headers=session_auth_headers("alice")
+    for room in (root["id"], mine):
+        after = client.get(f"/topics/{room}", headers=session_auth_headers("alice"))
+        assert after.status_code in (403, 404), after.text
+        people = client.get(
+            f"/topics/{room}/members", headers=session_auth_headers("alice")
+        )
+        assert people.status_code in (403, 404), people.text
+    assert all(
+        row["member_handle"] != "alice"
+        for row in _room_roster(client, mine, actor="carol")
     )
-    assert people.status_code in (403, 404), people.text
 
 
-def test_the_recipient_takes_the_rooms_over(client):
-    """接手人接手的是同一把椅子，不是被塞进来当个普通成员。
-
-    So they end up the root topic's OWNER, which is the only role that manages
-    it — the roster read alone would not show that, so the room is also managed
-    from their account afterwards (seat someone into 项目总览).
-    """
+def test_the_recipient_manages_the_projects_channels(client):
+    """接手人管得了这个项目的每一个频道，包括原所有者建的那些——管项目的人就管
+    它的频道，不用一把一把地接椅子。"""
     p = _project(client, owner="alice")
     _register(client, "carol")
-    root = _root_topic(client, p["id"])
-    # Before the transfer she cannot even reach the room, let alone manage it.
+    mine = _channel(client, p["id"])
+    # Before the transfer she cannot even reach the channel, let alone manage it.
     early = client.post(
-        f"/topics/{root['id']}/members",
-        json={"handle": "carol", "role": "member"},
+        f"/topics/{mine}/members",
+        json={"handle": "carol"},
         headers=session_auth_headers("carol"),
     )
     assert early.status_code == 403, early.text
 
     assert _set_owner(client, p["id"], "carol", actor="alice").status_code == 200
 
-    rows = _room_roster(client, root["id"], actor="carol")
-    carol = next(row for row in rows if row["member_handle"] == "carol")
-    assert carol["role"] == "owner"
-    # Managing the room: only its owner/admin may seat anyone, and only
-    # someone the project has may be seated — so the person comes into the
-    # project first, through the new owner.
     add_external_member(client, p["id"], "dana", by="carol")
     seated = client.post(
-        f"/topics/{root['id']}/members",
-        json={"handle": "dana", "role": "member"},
+        f"/topics/{mine}/members",
+        json={"handle": "dana"},
         headers=session_auth_headers("carol"),
     )
     assert seated.status_code == 200, seated.text
+    root = _root_topic(client, p["id"], actor="carol")
+    assert "carol" in {
+        row["member_handle"] for row in _room_roster(client, root["id"], actor="carol")
+    }
 
 
 def test_a_team_member_keeps_the_projects_rooms(client):
     """The other branch must not be swept up by this.
 
     When the recipient is already on the project's team the giver stays in the
-    project — by way of that team — so their room seats are not leftovers to be
-    cleaned up. Revoking them there would evict someone who is still a member,
-    which is why the handover is called on the personal-project branch only.
+    project — by way of that team — so their channel seats are not leftovers to
+    be cleaned up. Revoking them there would evict someone who is still a
+    member, which is why the seats go on the personal-project branch only.
     """
     p = _shared_team_project(client)
     _add_member(client, p["id"], "bob")
-    root = _root_topic(client, p["id"])
-    held = next(
-        row
-        for row in _room_roster(client, root["id"], actor="alice")
-        if row["member_handle"] == "alice"
-    )
-    assert held["role"] == "owner"
+    mine = _channel(client, p["id"])
 
     r = _set_owner(client, p["id"], "bob", actor="alice")
 
     assert r.status_code == 200, r.text
-    still = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    still = client.get(f"/topics/{mine}", headers=session_auth_headers("alice"))
     assert still.status_code == 200, still.text
-    rows = _room_roster(client, root["id"], actor="alice")
+    rows = _room_roster(client, mine, actor="alice")
     alice = next(row for row in rows if row["member_handle"] == "alice")
     assert alice["role"] == "owner"
 
 
-def test_the_recipient_may_already_be_seated_in_the_room(client):
-    """The natural way a personal project changes hands.
-
-    Invite someone into the project (they are seated `member` in 项目总览 by the
-    ordinary invite path) and then hand the project to them. Succession has to
-    move them UP into the chair the giver held: mirroring the roster as-is would
-    leave them a plain member, the giver still the room's last owner, and the
-    transfer refused with 「你是话题…唯一的 owner，先把话题交给别人」 — advice
-    that is nonsense here, since handing the room over is exactly what is being
-    done. So this asserts the transfer SUCCEEDS, that the recipient ends up the
-    room's owner, and that the giver holds no seat there.
-    """
+def test_the_recipients_own_seats_are_left_alone(client):
+    """The natural way a personal project changes hands: invite someone in, put
+    them in a channel, then hand the project to them. Their seat stays as it
+    was; only the giver's go."""
     p = _project(client, owner="alice")
-    root = _root_topic(client, p["id"])
+    mine = _channel(client, p["id"])
     add_external_member(client, p["id"], "dana", by="alice")
-    _seat(client, root["id"], "dana", role="member", actor="alice")
+    _seat(client, mine, "dana", actor="alice")
 
     r = _set_owner(client, p["id"], "dana", actor="alice")
 
     assert r.status_code == 200, r.text
-    rows = _room_roster(client, root["id"], actor="dana")
-    dana = next(row for row in rows if row["member_handle"] == "dana")
-    assert dana["role"] == "owner"
+    rows = _room_roster(client, mine, actor="dana")
+    assert any(row["member_handle"] == "dana" for row in rows)
     assert all(row["member_handle"] != "alice" for row in rows)
-    gone = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
-    assert gone.status_code in (403, 404), gone.text
-
-
-def test_succession_never_demotes_a_higher_seat(client):
-    """Succession only ever moves a seat UP.
-
-    Here the giver is a plain member of the room and the recipient already owns
-    it, which is the arrangement the handover must leave alone: what changes
-    hands is the chair, not the roster. An implementation that "just sets the
-    recipient to the giver's role" fails this.
-    """
-    p = _project(client, owner="alice")
-    root = _root_topic(client, p["id"])
-    add_external_member(client, p["id"], "dana", by="alice")
-    _seat(client, root["id"], "dana", role="owner", actor="alice")
-    _seat(client, root["id"], "alice", role="member", actor="alice")
-
-    assert _set_owner(client, p["id"], "dana", actor="alice").status_code == 200
-
-    rows = _room_roster(client, root["id"], actor="dana")
-    dana = next(row for row in rows if row["member_handle"] == "dana")
-    assert dana["role"] == "owner"
-    assert all(row["member_handle"] != "alice" for row in rows)
-    gone = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    gone = client.get(f"/topics/{mine}", headers=session_auth_headers("alice"))
     assert gone.status_code in (403, 404), gone.text
 
 

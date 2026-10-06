@@ -8,6 +8,7 @@
 // 分这两半是为了让组件不认识 `vue-router`（.claude/rules/architecture.md），也让
 // 折叠记不记得住、红灯会不会自己亮这些事能离开「画」单独测。
 import type { Project, RoomTask, Topic } from '../cx_types'
+import type { TopicUnread } from '../types/channels'
 import type { MenuAction } from './common/menuAction'
 import type { VirtualListHandle } from './common/VirtualList.vue'
 
@@ -29,8 +30,7 @@ import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import VirtualList from './common/VirtualList.vue'
 import TopicRailAllTasksRow from './topic-sidebar/TopicRailAllTasksRow.vue'
-import TopicRailArchivedGroup from './topic-sidebar/TopicRailArchivedGroup.vue'
-import TopicRailGroupToggle from './topic-sidebar/TopicRailGroupToggle.vue'
+import TopicRailBrowseRow from './topic-sidebar/TopicRailBrowseRow.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
 import TopicRailPinnedRows from './topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRootRow from './topic-sidebar/TopicRailRootRow.vue'
@@ -56,9 +56,8 @@ const props = defineProps<{
   // or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
   activeDocs?: string | null
-  // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
-  // 静音的房间已经被调用处去掉了（store.badgeUnreadMap）。
-  unreadMap?: Record<string, number>
+  // 频道和任务在等我的东西（数字已按我的通知档位算过）；缺键 = 没有。
+  unreadMap?: Record<string, TopicUnread>
   /** 这间房我静音了没有：行上画一个静音标记。 */
   mutedOf?: (topicId: string) => boolean
   // 私聊未读: {peerHandle: count}, `cheese` = 和芝士那一间。侧栏只用它的**总数**，
@@ -78,12 +77,16 @@ const props = defineProps<{
   allTasksChannelId?: string | null
   /** 正打开的任务。 */
   selectedTaskId?: string | null
+  /** 「浏览频道」那一页正开着。 */
+  browsingChannels?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
   (e: 'select-task', task: { roomId: string; taskId: string }): void
   (e: 'all-tasks', channelId: string): void
+  // 「浏览频道」：去看这个项目的全部频道（侧栏只列加入了的）。
+  (e: 'browse-channels'): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
@@ -91,8 +94,6 @@ const emit = defineEmits<{
   (e: 'leave-topic'): void
   // 话题清单读失败后那颗「重试」：让拥有这份数据的父级再读一次。
   (e: 'retry'): void
-  // 已归档那一组里行尾的「取消归档」。
-  (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
   // final: the platform stops renaming that room from then on.
   (e: 'rename-topic', payload: { id: string; title: string }): void
@@ -119,14 +120,10 @@ function setRailList(key: string, handle: unknown) {
 const {
   rootTopic,
   activeTree,
-  archivedRows,
-  mineTree,
-  othersCount,
   railSections,
   toggleCollapse,
-  toggleOthers,
   unreadOf,
-  archivedUnread,
+  freshOf,
   privateUnreadTotal,
   stalledOf,
   memberMarks,
@@ -451,6 +448,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :selected-topic-id="selectedTopicId"
             :page="page === true"
             :unread-of="unreadOf"
+            :fresh-of="freshOf"
             :muted-of="mutedOf"
             :root-actions="rootTopic ? actionsFor(rootTopic).map(menuActionOf) : []"
             @select-topic="emit('select-topic', $event)"
@@ -493,36 +491,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <LoadingSkeleton v-else-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
-            <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
-                 说清楚「空的是这一组，不是这个项目」，否则下面那个折叠组会像个谜。 -->
-            <v-list
-              v-if="!rootTopic && mineTree.length === 0 && othersCount > 0"
-              density="compact"
-              nav
-              class="py-0"
-              tabindex="-1"
-            >
-              <v-list-item class="c-faint t-body">{{ t('work.sidebar.noneMine') }}</v-list-item>
-            </v-list>
-
-            <!-- 分组 (C2): 两组走同一段模板。上组直接平铺；下组「其他话题」多一个
-                 组头、默认收起。行的形态两组完全一致——见 .group-toggle 的注释。
-
-                 组头长在 <v-list> **外面**，一组一个 <v-list>：`.v-list--nav` 自带
-                 8px 的 padding-inline，组头搁在列表里就会比列表外的「已归档」组头
-                 右移 8px——两个同款组头一上一下差着一级缩进，「其他话题」读起来像
-                 上一条话题的子项。 -->
             <template v-for="section in railSections" :key="section.key">
-              <TopicRailGroupToggle
-                v-if="section.head"
-                :label="section.label"
-                :count="section.count"
-                :open="section.open"
-                :unread="section.unread > 0"
-                :unread-title="t('work.sidebar.othersUnread')"
-                @toggle="toggleOthers"
-              />
-
               <v-list v-if="section.rows.length" density="compact" nav class="py-0" tabindex="-1">
                 <!-- Rows are ordered by most recent activity, so a new message pushes a room
                      to the top. Below the threshold the whole column is in the DOM and
@@ -563,6 +532,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :menu-open="actionsMenuFor === item.topic.id"
                         :stalled="stalledOf(item.topic.id)"
                         :muted="mutedOf?.(item.topic.id) ?? false"
+                        :fresh="freshOf(item.topic.id)"
                         :marks="memberMarks(item.topic)"
                         :toggle-title="toggleTitle(item)"
                         :actions="actionsFor"
@@ -599,28 +569,12 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
               </v-list>
             </template>
 
-            <v-list v-if="activeTree.length === 0" density="compact" nav class="py-0" tabindex="-1">
-              <v-list-item class="c-faint t-body">{{ t('work.sidebar.empty') }}</v-list-item>
-            </v-list>
+            <TopicRailBrowseRow
+              :label="t('work.channel.browse')"
+              :selected="browsingChannels === true"
+              @select="emit('browse-channels')"
+            />
           </template>
-
-          <!-- 归档去向: collapsed 已归档 group at the bottom of the topic list.
-               Archived topics leave the active tree and land here (newest
-               first), so done work stops crowding the rail. -->
-          <TopicRailArchivedGroup
-            :rows="archivedRows"
-            :selected-topic-id="selectedTopicId"
-            :scroll-parent="railScroll"
-            :page="page === true"
-            :unread="archivedUnread > 0"
-            :unread-of="unreadOf"
-            :muted-of="mutedOf"
-            @select-topic="emit('select-topic', $event)"
-            @hover-topic="emit('hover-topic', $event)"
-            @press-topic="emit('press-topic', $event)"
-            @leave-topic="emit('leave-topic')"
-            @unarchive-topic="emit('unarchive-topic', $event)"
-          />
         </template>
       </div>
 

@@ -1,4 +1,7 @@
-"""Archival uses the authenticated room manager, never the submitted author."""
+"""Archival uses the authenticated channel manager, never the submitted author.
+
+A channel is managed by its creator and by whoever manages the project; a
+plain member of it does not archive it."""
 
 from tests.integration.conftest import (
     join_project_team,
@@ -15,14 +18,14 @@ def test_archive_requires_manager_and_records_actual_actor(client):
         headers=session_auth_headers("owner"),
     ).json()["data"]
     topic = room["id"]
-    for handle, role in (("admin", "admin"), ("member", "member")):
-        join_project_team(client, project["id"], handle)
-        result = client.post(
-            f"/topics/{topic}/members",
-            json={"handle": handle, "role": role},
-            headers=session_auth_headers("owner"),
-        )
-        assert result.status_code == 200, result.text
+    join_project_team(client, project["id"], "admin", admin=True)
+    join_project_team(client, project["id"], "member")
+    result = client.post(
+        f"/topics/{topic}/members",
+        json={"handle": "member"},
+        headers=session_auth_headers("owner"),
+    )
+    assert result.status_code == 200, result.text
     for headers in (
         {},
         session_auth_headers("member"),

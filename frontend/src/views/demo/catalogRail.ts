@@ -14,9 +14,7 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import { RAIL_ACTIONS, RAIL_MARKS, RAIL_PAGES, RAIL_ROOT_TOPIC, RAIL_ROWS, RAIL_TERMS } from './catalogFixtures'
 
-import TopicRailArchivedGroup from '@/components/topic-sidebar/TopicRailArchivedGroup.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
-import TopicRailGroupToggle from '@/components/topic-sidebar/TopicRailGroupToggle.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
@@ -271,79 +269,6 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           canLeave: true,
         },
         expect: '课程项目',
-      },
-    ],
-  },
-  {
-    id: 'topic-rail-group-toggle',
-    title: 'TopicRailGroupToggle',
-    about: '一组被收起来的话题的组头：一个 chevron + 组名 + 条数。',
-    file: 'src/components/topic-sidebar/TopicRailGroupToggle.vue',
-    component: TopicRailGroupToggle,
-    // 「其他话题」和「已归档」两处共用它——同一条侧栏里「一组被收起来的话题」
-    // 只能有一种读法。
-    needs: UI,
-    states: [
-      {
-        name: '收着，里面还有新消息',
-        note: '收起来时未读聚成一个点（不是数字）：别人话题里有几条与我无关，但那边有动静值得知道。',
-        props: { label: '其他频道', count: 12, open: false, unread: true, unreadTitle: '其他话题里有新消息' },
-        expect: '其他频道',
-      },
-      {
-        name: '展开着',
-        note: '展开着就没有那颗点：里面的事本来就在眼前。',
-        props: { label: '其他频道', count: 12, open: true, unread: false, unreadTitle: '其他话题里有新消息' },
-        expect: '12',
-      },
-      {
-        name: '已归档那一组',
-        note: '同一个组头，只多一个 archived 类（测试和样式凭它区分两个组头）。',
-        props: {
-          label: '已归档',
-          count: 3,
-          open: false,
-          unread: false,
-          unreadTitle: '归档话题里有新消息',
-          archived: true,
-        },
-        expect: '已归档',
-      },
-    ],
-  },
-  {
-    id: 'topic-rail-archived',
-    title: 'TopicRailArchivedGroup',
-    about: '列表最底下那组「已归档」：组头 + 收着的那批话题（新的在前）。',
-    file: 'src/components/topic-sidebar/TopicRailArchivedGroup.vue',
-    component: TopicRailArchivedGroup,
-    // 收着的开关是这一件自己的状态，所以这里看到的是组头那一行；行本身（归档图标、
-    // 种类词、行尾那颗「取消归档」）点开才有——那不在这份 props 能表达的范围内。
-    needs: UI,
-    states: [
-      {
-        name: '有一批归档话题',
-        note: '没有归档话题时整件什么都不画（条件留在组件里，免得「最后一条也被取消归档」把开关复位）。',
-        props: {
-          rows: [RAIL_ROWS.archived],
-          selectedTopicId: null,
-          page: false,
-          unread: true,
-          unreadOf: () => 2,
-        },
-        expect: '已归档',
-      },
-      {
-        name: '整页形态（手机）',
-        note: '行更高，行尾那颗「取消归档」也撑到手指点得中。',
-        props: {
-          rows: [RAIL_ROWS.archived],
-          selectedTopicId: RAIL_ROWS.archived.id,
-          page: true,
-          unread: false,
-          unreadOf: () => 0,
-        },
-        expect: '已归档',
       },
     ],
   },

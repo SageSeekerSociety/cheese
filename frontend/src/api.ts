@@ -477,9 +477,9 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
+export function createTopic(projectId: string, title: string, description?: string): Promise<Topic> {
   const body: Record<string, string> = { project_id: projectId, title }
-  if (parentId) body.parent_id = parentId
+  if (description) body.description = description
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -1714,7 +1714,7 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
 }
 
 // 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
-export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
+export { addTopicMember, joinChannel, leaveChannel, removeTopicMember, setChannelDescription } from './api/topicMembers'
 
 // 一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`
 // 的 `getTask`（`/topics/{task}/task`）。

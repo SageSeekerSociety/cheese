@@ -375,11 +375,13 @@ async def update_task(
         await db.commit()
         await announce_stale(place.room_id, "topics")
         return ok(out)
+    members = TopicMemberService(db)
     if "owner_handle" in body.model_fields_set and body.owner_handle:
-        if body.owner_handle not in await TopicMemberService(db).people_handles(
-            place.room_id
-        ):
-            raise ValidationError(say("taskOwnerNotInRoom"))
+        # Work is handed to anyone in the project, and whoever takes it is in
+        # its channel from then on.
+        if body.owner_handle not in await members.project_people(place.project_id):
+            raise ValidationError(say("taskOwnerNotInProject"))
+        await members.take_in(place.room_id, body.owner_handle)
         await _move_off_former_owners_computer(
             db, actor, place, task, body.owner_handle
         )
@@ -387,10 +389,12 @@ async def update_task(
     if "agent_handle" in body.model_fields_set:
         await tasks.give_agent(task, agent_handle=body.agent_handle)
     if body.contributor_handles is not None:
-        people = await TopicMemberService(db).people_handles(place.room_id)
+        people = await members.project_people(place.project_id)
         wanted = list(dict.fromkeys(body.contributor_handles))
         if any(h not in people for h in wanted):
-            raise ValidationError(say("contributorNotInRoom"))
+            raise ValidationError(say("contributorNotInProject"))
+        for handle in wanted:
+            await members.take_in(place.room_id, handle)
         await tasks.set_contributors(
             task, [h for h in wanted if h != task.owner_handle]
         )

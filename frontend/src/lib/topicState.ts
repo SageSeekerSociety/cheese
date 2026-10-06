@@ -16,7 +16,7 @@ export interface TopicStateBadge {
 }
 
 export function topicStateBadge(status?: string | null): TopicStateBadge {
-  if (status === 'archived') return { label: t('work.topicState.accepted'), cls: 'pr-state--merged' }
+  if (status === 'archived') return { label: t('work.topicState.archived'), cls: 'pr-state--merged' }
   if (status === 'draft') return { label: t('work.topicState.draft'), cls: 'pr-state--draft' }
   // 支线只有 open / closed 两个状态，和房间那三个不是一套词。closed 是「这件活
   // 做完了」——不是归档（支线不归档），所以既不能落到 archived，也不能不管它掉进

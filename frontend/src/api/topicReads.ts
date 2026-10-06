@@ -1,10 +1,14 @@
 // 我在房间里的「读」状态：未读角标、已读位、通知级别（静音）、全部标为已读。都按人记，
 // 人是谁由凭据说。从 `api.ts` 拆出来（它早就过了行数上限），`api.ts` 原样重新导出。
+import type { TopicNotifyLevel, TopicNotifySetting, TopicUnread } from '../types/channels'
+
 import { request } from '../api'
 
-// {topic_id: unread_count} for one user; topics with zero unread are omitted.
-export function getTopicUnread(projectId: string, handle: string): Promise<Record<string, number>> {
-  return request<Record<string, number>>(
+export type { TopicNotifyLevel, TopicNotifySetting, TopicUnread }
+
+// {conversation_id: TopicUnread} for one user; ones with nothing waiting are omitted.
+export function getTopicUnread(projectId: string, handle: string): Promise<Record<string, TopicUnread>> {
+  return request<Record<string, TopicUnread>>(
     `/projects/${encodeURIComponent(projectId)}/topic-unread?handle=${encodeURIComponent(handle)}`
   )
 }
@@ -26,18 +30,19 @@ export function markTopicRead(topicId: string, handle: string): Promise<Record<s
   })
 }
 
-/** 我对一间房的通知级别：`all`（默认）或 `mute`（静音：未读不计入任何总数）。 */
-export type TopicNotifyLevel = 'all' | 'mute'
-
-/** 我在这个项目里改过通知级别的房间；默认的不列。 */
-export function getTopicNotifyLevels(projectId: string): Promise<Record<string, TopicNotifyLevel>> {
-  return request<Record<string, TopicNotifyLevel>>(`/projects/${encodeURIComponent(projectId)}/topic-notify-levels`)
+/** 我在这个项目里不在默认档位的频道；过了期的静音算回默认，不列。 */
+export function getTopicNotifyLevels(projectId: string): Promise<Record<string, TopicNotifySetting>> {
+  return request<Record<string, TopicNotifySetting>>(`/projects/${encodeURIComponent(projectId)}/topic-notify-levels`)
 }
 
-export function setTopicNotifyLevel(topicId: string, level: TopicNotifyLevel): Promise<unknown> {
+export function setTopicNotifyLevel(
+  topicId: string,
+  level: TopicNotifyLevel,
+  mutedUntil: string | null = null
+): Promise<unknown> {
   return request(`/topics/${encodeURIComponent(topicId)}/notify-level`, {
     method: 'PUT',
-    body: JSON.stringify({ level }),
+    body: JSON.stringify({ level, muted_until: mutedUntil }),
   })
 }
 

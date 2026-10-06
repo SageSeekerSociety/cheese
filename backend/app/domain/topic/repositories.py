@@ -1,6 +1,7 @@
 """Topic data access."""
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -40,6 +41,7 @@ from app.domain.identity.handles import (
 from app.domain.project.environment import project_environment
 from app.domain.project.models import Project
 from app.domain.topic.models import (
+    NotifyLevel,
     Topic,
     TopicKind,
     TopicMembership,
@@ -48,6 +50,19 @@ from app.domain.topic.models import (
 )
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
+
+
+@dataclass(frozen=True)
+class Unread:
+    """What one conversation has waiting for one person: the number on it,
+    whether its name is bold, and how many messages came since they last read
+    it (where the 「新消息」 line goes when they open it)."""
+
+    count: int
+    new: bool
+    messages: int
+
+
 SortOrder = Literal["asc", "desc"]
 
 
@@ -62,6 +77,38 @@ _tasks = table(
     column("owner_handle", String),
     column("contributor_handles", JSON),
 )
+
+
+# 支线 under a channel. A bare table: `thread` resolves places through
+# `room_task`, which depends on this domain.
+_threads = table(
+    "threads",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("root_block_id", Uuid),
+)
+
+
+def _muted_now() -> ColumnElement[bool]:
+    """The read-state row says 静音 and the mute has not run out."""
+    return and_(
+        TopicReadState.notify_level == NotifyLevel.mute,
+        or_(
+            TopicReadState.muted_until.is_(None),
+            TopicReadState.muted_until > func.now(),
+        ),
+    )
+
+
+def _mentions(handle: str) -> ColumnElement[bool]:
+    return cast(Block.refs, JSONB).contains([f"user:{handle}"])
+
+
+def _mentions_everyone() -> ColumnElement[bool]:
+    return or_(
+        cast(Block.refs, JSONB).contains(["user:all"]),
+        cast(Block.refs, JSONB).contains(["user:here"]),
+    )
 
 
 def _last_activity() -> ColumnElement[datetime]:
@@ -391,13 +438,28 @@ class TopicRepository:
 
     async def unread_counts(
         self, project_id: uuid.UUID, user_handle: str
-    ) -> dict[uuid.UUID, int]:
-        """Unread message count per conversation for one user: rooms and tasks.
+    ) -> dict[uuid.UUID, Unread]:
+        """What each conversation of the project has waiting for one person:
+        the channels they are in, and the tasks they take part in. One that has
+        nothing is left out.
 
-        Unread = message blocks authored by OTHERS in that conversation, created
-        after the user's read cursor on it (no cursor = all of them). Only
+        A message counts once it is after the person's read cursor on its
+        conversation (no cursor = all of it) and someone else said it. Only
         kind=message counts — doc edits / events / weeklies have their own
-        surfaces. Other people's private chats are excluded.
+        surfaces.
+
+        A channel's number follows the level the person chose for it
+        (`NotifyLevel`), and its main line is bold whenever something new was
+        said there, unless it is muted:
+
+        - ``all``: every new message in the main line, and every new reply in
+          a 支线 they took part in or were @-ed in.
+        - ``mentions`` (default): the main-line messages that @ them or
+          @所有人, and the same 支线 replies.
+        - ``mute``: only what @s them by name.
+
+        Only people's replies in a 支线 count, the rule its own mark follows
+        (`thread.reads`). A private room counts every message.
 
         A task counts only for the people who take part in it (its owner and
         collaborators), and only what PEOPLE said there: the AI teammate talks
@@ -405,38 +467,89 @@ class TopicRepository:
         reads. When it needs the person, the task's own mark says so. Everyone
         else follows a task they do not take part in from the channel.
         """
-        rooms = (
-            select(Block.conversation_id, func.count())
-            .join(Topic, Topic.id == Block.conversation_id)
-            .outerjoin(
-                TopicReadState,
-                and_(
-                    TopicReadState.topic_id == Block.conversation_id,
-                    TopicReadState.user_handle == user_handle,
-                ),
+        # A private room seats both of its people, so a seat answers for it too.
+        joined = or_(
+            Topic.kind == TopicKind.root,
+            Topic.id.in_(
+                select(TopicMembership.topic_id).where(
+                    TopicMembership.member_handle == user_handle
+                )
+            ),
+        )
+        unseen = or_(
+            TopicReadState.last_read_at.is_(None),
+            Block.created_at > TopicReadState.last_read_at,
+        )
+
+        def read_state(conversation_id):
+            return and_(
+                TopicReadState.topic_id == conversation_id,
+                TopicReadState.user_handle == user_handle,
             )
+
+        main = (
+            select(
+                Block.conversation_id,
+                # A private room is two people talking: every message counts.
+                func.bool_or(Topic.is_private),
+                func.count(),
+                func.count().filter(_mentions(user_handle)),
+                func.count().filter(_mentions_everyone()),
+            )
+            .join(Topic, Topic.id == Block.conversation_id)
+            .outerjoin(TopicReadState, read_state(Block.conversation_id))
             .where(
                 Topic.project_id == project_id,
                 _readable_by(user_handle),
+                joined,
                 Block.kind == BlockKind.message,
                 Block.author != user_handle,
-                or_(
-                    TopicReadState.last_read_at.is_(None),
-                    Block.created_at > TopicReadState.last_read_at,
-                ),
+                unseen,
             )
             .group_by(Block.conversation_id)
+        )
+        root = aliased(Block)
+        mine = aliased(Block)
+        took_part = or_(
+            select(root.id)
+            .where(root.id == _threads.c.root_block_id, root.author == user_handle)
+            .exists(),
+            select(mine.id)
+            .where(mine.conversation_id == _threads.c.id, mine.author == user_handle)
+            .exists(),
+        )
+        replies = (
+            select(
+                _threads.c.room_id,
+                func.count().filter(
+                    or_(
+                        and_(
+                            took_part,
+                            Block.author_type == AuthorType.participant,
+                            ~agent_handle_column(Block.author),
+                        ),
+                        _mentions(user_handle),
+                    )
+                ),
+                func.count().filter(_mentions(user_handle)),
+            )
+            .join(_threads, _threads.c.id == Block.conversation_id)
+            .join(Topic, Topic.id == _threads.c.room_id)
+            .outerjoin(TopicReadState, read_state(Block.conversation_id))
+            .where(
+                Topic.project_id == project_id,
+                _readable_by(user_handle),
+                joined,
+                Block.kind == BlockKind.message,
+                Block.author != user_handle,
+                unseen,
+            )
+            .group_by(_threads.c.room_id)
         )
         tasks = (
             select(Block.conversation_id, func.count())
             .join(_tasks, _tasks.c.id == Block.conversation_id)
-            .outerjoin(
-                TopicReadState,
-                and_(
-                    TopicReadState.topic_id == Block.conversation_id,
-                    TopicReadState.user_handle == user_handle,
-                ),
-            )
+            .outerjoin(TopicReadState, read_state(Block.conversation_id))
             .where(
                 _tasks.c.project_id == project_id,
                 _tasks.c.status == "open",
@@ -448,18 +561,77 @@ class TopicRepository:
                 Block.author != user_handle,
                 Block.author_type == AuthorType.participant,
                 ~agent_handle_column(Block.author),
-                or_(
-                    TopicReadState.last_read_at.is_(None),
-                    Block.created_at > TopicReadState.last_read_at,
-                ),
+                unseen,
             )
             .group_by(Block.conversation_id)
         )
-        counts: dict[uuid.UUID, int] = {}
-        for stmt in (rooms, tasks):
-            for conversation_id, count in (await self._session.execute(stmt)).all():
-                counts[conversation_id] = int(count)
-        return counts
+        said: dict[uuid.UUID, tuple[int, int, int]] = {}
+        private: set[uuid.UUID] = set()
+        for room, two, n, me, everyone in (await self._session.execute(main)).all():
+            said[room] = (int(n), int(me), int(everyone))
+            if two:
+                private.add(room)
+        answered = {
+            room: (int(n), int(me))
+            for room, n, me in (await self._session.execute(replies)).all()
+        }
+        rooms = set(said) | set(answered)
+        levels = await self._levels(list(rooms), user_handle)
+        out: dict[uuid.UUID, Unread] = {}
+        for room in rooms:
+            n, me, everyone = said.get(room, (0, 0, 0))
+            in_threads, me_in_threads = answered.get(room, (0, 0))
+            level = levels[room]
+            if room in private and level == NotifyLevel.mentions:
+                level = NotifyLevel.all
+            if level == NotifyLevel.mute:
+                unread = Unread(count=me + me_in_threads, new=False, messages=n)
+            elif level == NotifyLevel.all:
+                unread = Unread(count=n + in_threads, new=n > 0, messages=n)
+            else:
+                unread = Unread(count=me + everyone + in_threads, new=n > 0, messages=n)
+            if unread.count or unread.messages:
+                out[room] = unread
+        for task, n in (await self._session.execute(tasks)).all():
+            out[task] = Unread(count=int(n), new=True, messages=int(n))
+        return out
+
+    async def _levels(
+        self, topic_ids: list[uuid.UUID], user_handle: str
+    ) -> dict[uuid.UUID, NotifyLevel]:
+        """The level each of these channels is at for this person right now: a
+        mute that ran out reads as the default."""
+        levels = {topic_id: NotifyLevel.mentions for topic_id in topic_ids}
+        if not topic_ids:
+            return levels
+        rows = await self._session.execute(
+            select(
+                TopicReadState.topic_id, TopicReadState.notify_level, _muted_now()
+            ).where(
+                TopicReadState.topic_id.in_(topic_ids),
+                TopicReadState.user_handle == user_handle,
+            )
+        )
+        for topic_id, level, muted in rows.all():
+            if level == NotifyLevel.mute:
+                levels[topic_id] = NotifyLevel.mute if muted else NotifyLevel.mentions
+            elif level in NotifyLevel.__members__:
+                levels[topic_id] = NotifyLevel(level)
+        return levels
+
+    async def muted_among(self, topic_id: uuid.UUID, handles: list[str]) -> set[str]:
+        """Which of these people have this channel muted right now."""
+        if not handles:
+            return set()
+        return set(
+            await self._session.scalars(
+                select(TopicReadState.user_handle).where(
+                    TopicReadState.topic_id == topic_id,
+                    TopicReadState.user_handle.in_(handles),
+                    _muted_now(),
+                )
+            )
+        )
 
     async def private_unread_counts(
         self, project_id: uuid.UUID, user_handle: str
@@ -563,11 +735,16 @@ class TopicRepository:
 
     async def notify_levels(
         self, project_id: uuid.UUID, user_handle: str
-    ) -> dict[uuid.UUID, str]:
-        """The user's non-default notification levels in a project:
-        {topic_id: level}. Rooms at the default (`all`) are omitted."""
+    ) -> dict[uuid.UUID, tuple[NotifyLevel, datetime | None]]:
+        """The user's channels that are not at the default level right now:
+        {topic_id: (level, muted until)}. A mute that ran out is the default
+        again and is left out."""
         stmt = (
-            select(TopicReadState.topic_id, TopicReadState.notify_level)
+            select(
+                TopicReadState.topic_id,
+                TopicReadState.notify_level,
+                TopicReadState.muted_until,
+            )
             .join(Topic, Topic.id == TopicReadState.topic_id)
             .where(
                 Topic.project_id == project_id,
@@ -575,22 +752,29 @@ class TopicRepository:
                 # 还在，但它的 id 不能再告诉我。
                 _readable_by(user_handle),
                 TopicReadState.user_handle == user_handle,
-                TopicReadState.notify_level != "all",
+                or_(TopicReadState.notify_level == NotifyLevel.all, _muted_now()),
             )
         )
         rows = (await self._session.execute(stmt)).all()
-        return {topic_id: level for topic_id, level in rows}
+        return {
+            topic_id: (NotifyLevel(level), until) for topic_id, level, until in rows
+        }
 
     async def set_notify_level(
-        self, topic_id: uuid.UUID, user_handle: str, level: str
+        self,
+        topic_id: uuid.UUID,
+        user_handle: str,
+        level: NotifyLevel,
+        muted_until: datetime | None = None,
     ) -> None:
-        """Set the user's notification level on a topic (upsert). A room the
-        user never opened gets a cursor at the epoch — the same as no cursor,
-        so muting a room does not mark it read."""
+        """Set the user's notification level on a channel (upsert). A channel
+        the user never opened gets a cursor at the epoch — the same as no
+        cursor, so muting a channel does not mark it read."""
         stmt = select(TopicReadState).where(
             TopicReadState.topic_id == topic_id,
             TopicReadState.user_handle == user_handle,
         )
+        until = muted_until if level == NotifyLevel.mute else None
         state = (await self._session.scalars(stmt)).first()
         if state is None:
             self._session.add(
@@ -598,11 +782,13 @@ class TopicRepository:
                     topic_id=topic_id,
                     user_handle=user_handle,
                     last_read_at=datetime(1970, 1, 1, tzinfo=UTC),
-                    notify_level=level,
+                    notify_level=level.value,
+                    muted_until=until,
                 )
             )
         else:
-            state.notify_level = level
+            state.notify_level = level.value
+            state.muted_until = until
         await self._session.flush()
 
     async def mark_read_many(

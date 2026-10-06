@@ -16,6 +16,7 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
+    open_task,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -216,7 +217,6 @@ def test_a_task_is_proposed_and_a_person_creates_it(client, room):
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
-        ("cheese_title", {"text": "推荐原型"}),
         ("cheese_members", {}),
         ("cheese_status", {}),
         ("cheese_library_ls", {}),
@@ -225,6 +225,16 @@ def test_a_task_is_proposed_and_a_person_creates_it(client, room):
 def test_each_room_tool_is_accepted_by_the_backend(client, room, tool, arguments):
     """每一样的请求形状都是后端认的那一种：一个列在表上、后端却拒的工具，比没有更糟。"""
     assert cheese.run_platform_tool(tool, arguments, BackendHost(client, *room))
+
+
+def test_a_task_session_names_its_task(client, room):
+    """`cheese_title` names the task its session works in; a channel is named
+    by whoever manages it, not by its AI teammate."""
+    project, channel = room
+    task = open_task(client, channel, "", owner="alice", start=False)["id"]
+    host = BackendHost(client, project, task)
+    assert cheese.run_platform_tool("cheese_title", {"text": "推荐原型"}, host)
+    assert client.get(f"/topics/{task}/task").json()["data"]["title"] == "推荐原型"
 
 
 def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room):

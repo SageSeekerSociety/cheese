@@ -44,25 +44,51 @@ def _topic(client, topic_id: str) -> dict:
     return client.get(f"/topics/{topic_id}").json()["data"]
 
 
+def _manage(client, project_id: str, handle: str) -> None:
+    """Make ``handle`` an admin of the project's team: someone who manages the
+    project, and so archives its channels."""
+    from sqlalchemy import update
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    join_project_team(client, project_id, handle)
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            project = await session.get(Project, uuid.UUID(project_id))
+            user = await UserRepository(session).get_by_username(handle)
+            assert project is not None and user is not None
+            await session.execute(
+                update(TeamUserRelation)
+                .where(
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.user_id == user.id,
+                )
+                .values(role=TeamMemberRole.ADMIN)
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
 def _archive(client, topic_id: str, by: str = "bob") -> dict:
-    roster = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
-    owner = next(
-        member["member_handle"] for member in roster if member["role"] == "owner"
+    """Put the channel away together with the work still open in it. A person
+    cannot archive a channel that holds open tasks, so the way a channel goes
+    with its work is its project being archived, by the project's owner."""
+    project_id = _topic(client, topic_id)["project_id"]
+    owner = (
+        client.get(f"/projects/{project_id}", headers=session_auth_headers(by))
+        .json()["data"]
+        .get("owner_handle")
+        or by
     )
-    if owner != by:
-        project_id = _topic(client, topic_id)["project_id"]
-        join_project_team(client, project_id, by)
-        response = client.post(
-            f"/topics/{topic_id}/members",
-            json={"handle": by, "role": "admin"},
-            headers=session_auth_headers(owner),
-        )
-        assert response.status_code in {200, 409}, response.text
     r = client.post(
-        f"/topics/{topic_id}/archive", json={"by": by}, headers=session_auth_headers(by)
+        f"/projects/{project_id}/archive", headers=session_auth_headers(owner)
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    return _topic(client, topic_id)
 
 
 def _make_project(client) -> str:

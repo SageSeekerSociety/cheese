@@ -134,7 +134,7 @@ def test_a_teammate_seats_only_in_the_project_that_built_it(client):
 def test_a_seat_in_the_root_room_is_not_a_seat_in_every_room(client):
     """根房间的席位只管根房间，不是全项目通行证。
 
-    总览的花名册照着整个项目（`seed_root` 把每一位成员都播进去），所以拿「根房间
+    综合里坐着项目里的每一个人，所以拿「根房间
     的花名册认不认它」当兜底，等于把判据从「这个房间认不认它」放回「这个项目认不
     认它」——一个被从房间 X 撤掉席位的队友照样发得出来，而撤席位就是撤授权正是这
     整件事存在的理由。

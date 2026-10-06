@@ -81,6 +81,10 @@ class NotificationType(str, Enum):
     TEAM_INVITATION_CANCELED = "TEAM_INVITATION_CANCELED"
     TEAM_REQUEST_CANCELED = "TEAM_REQUEST_CANCELED"
 
+    #: 我参与过的支线里有人回复了（`agent.mentions._tell_thread`）。`payload`
+    #: 带 ``thread_id``；`topic_id` 是支线所在的频道。
+    THREAD_REPLY = "THREAD_REPLY"
+
     #: 平台在房间里说的、要人动手的那一句（`app.domain.agent.announce`）。所有
     #: 平台提示共用这一个码：要显示的文字是后端给的 `payload.content`，前端不按
     #: 类别拼模板，具体是哪件事看 `payload.eventType`。

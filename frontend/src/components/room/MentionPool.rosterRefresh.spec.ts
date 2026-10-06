@@ -91,7 +91,7 @@ describe('名册改了，@ 候选立刻跟上', () => {
     await settle()
     expect(roster.mentionPool.value.map((p) => p.handle)).not.toContain('cheese-reviewer')
 
-    await addTopicMember('t1', 'cheese-reviewer', 'member')
+    await addTopicMember('t1', 'cheese-reviewer')
     await settle()
 
     expect(roster.mentionPool.value.map((p) => p.handle)).toContain('cheese-reviewer')
@@ -104,7 +104,7 @@ describe('名册改了，@ 候选立刻跟上', () => {
     const outside = () => roster.mentionPool.value.filter((p) => p.outsideTopic).map((p) => p.handle)
     expect(outside()).toEqual(['bob'])
 
-    await addTopicMember('t1', 'bob', 'member')
+    await addTopicMember('t1', 'bob')
     await settle()
     expect(outside()).toEqual([])
 
@@ -119,7 +119,7 @@ describe('名册改了，@ 候选立刻跟上', () => {
     await settle()
     const before = roster.mentionPool.value.map((p) => [p.handle, !!p.outsideTopic])
 
-    await addTopicMember('t1', 'bob', 'member')
+    await addTopicMember('t1', 'bob')
     await settle()
 
     expect(roster.mentionPool.value.map((p) => [p.handle, !!p.outsideTopic])).toEqual(before)

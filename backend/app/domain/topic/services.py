@@ -59,6 +59,7 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
+    NotifyLevel,
     RoomCleanup,
     Topic,
     TopicKind,
@@ -79,6 +80,7 @@ from app.domain.topic.repositories import (
     TopicProgressRepository,
     TopicRepository,
     TopicSortField,
+    Unread,
 )
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -153,15 +155,10 @@ def _stall_block_summary(block: Block | None) -> dict | None:
 
 @dataclass(frozen=True)
 class TopicRelevance:
-    """What a topic is to one particular person (与我的相关性, C2).
+    """What a channel is to one particular person. See ``TopicOut.joined`` /
+    ``awaits_me`` for the field-level contract."""
 
-    See ``TopicOut.i_participate``/``awaits_me`` for the field-level contract.
-    Two booleans instead of one enum so that "am I involved" and "is it on my
-    desk" stay separable: the sidebar folds on the first and overrides that
-    fold on the second.
-    """
-
-    i_participate: bool = False
+    joined: bool = False
     awaits_me: bool = False
 
 
@@ -229,6 +226,7 @@ class TopicService:
         *,
         project_id: uuid.UUID,
         title: str,
+        description: str | None = None,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
     ) -> Topic:
@@ -262,6 +260,7 @@ class TopicService:
             kind=kind,
             created_by=created_by,
         )
+        topic.description = (description or "").strip() or None
         # No branch parent: this path only ever makes ROOMS now, and a room forks
         # the base branch. Binding one to its parent would have made the project
         # root a fork point, which nothing has ever wanted.
@@ -432,54 +431,32 @@ class TopicService:
     async def relevance_for_topics(
         self, topics: list[Topic], viewer_handle: str | None
     ) -> dict[uuid.UUID, TopicRelevance]:
-        """{topic_id: 与我的相关性} for a batch of topics (C2).
-
-        FOUR queries, whatever the batch size — one per way of being involved
-        that lives in another table (roster, accept cards, @-notifications,
-        decision requests).
-        Creation is the fourth way and costs nothing: ``created_by`` is already
-        on the rows the caller handed in. The list endpoint returns a whole
-        project at once, so a per-topic probe here would be a hundred round
-        trips to render a sidebar.
+        """{topic_id: what it is to me} for a batch of channels, in a fixed
+        number of queries whatever the batch size: the list endpoint returns a
+        whole project at once, and a per-channel probe here would be a hundred
+        round trips to render a sidebar.
 
         ``viewer_handle`` is passed IN rather than read from an auth context:
-        the caller resolved the actor at the trust boundary, and a service that
-        went looking for the request's identity would be unusable from anywhere
-        that has no request (the digest builders, tests, 分身 turns).
-        Anonymous/unknown callers relate to nothing — every topic comes back
-        with both booleans false, which is also the pre-C2 behaviour.
+        the caller resolved the actor at the trust boundary. Anonymous/unknown
+        callers relate to nothing.
         """
         if viewer_handle is None or not topics:
             return {}
         topic_ids = [t.id for t in topics]
-        roster = await self._members.topic_ids_for_member(topic_ids, viewer_handle)
+        joined = await self._members.joined_topic_ids(topics, viewer_handle)
         cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
-        mentions = await self._notifications.mention_topic_ids(topic_ids, viewer_handle)
         decisions = await self._notifications.decision_topic_ids(
             topic_ids, viewer_handle
         )
-        relevance: dict[uuid.UUID, TopicRelevance] = {}
-        for topic in topics:
-            # 「在等我」只数要我**动手拍板**的：一张点名我还没结的验收卡，或一条
-            # 还没答的决策请求。未读的 @ 不算——芝士汇报、递卡都会 @人，把它算进
-            # 来侧栏几乎每一行都亮橙灯，灯就没有意义了；未读有右边的数字管。
-            awaits = cards.get(topic.id, False) or decisions.get(topic.id, False)
-            participates = (
-                topic.id in roster
-                or topic.created_by == viewer_handle
-                or topic.id in cards
-                or topic.id in mentions
-                or topic.id in decisions
+        return {
+            topic.id: TopicRelevance(
+                joined=topic.id in joined,
+                # 「在等我」只数要我**动手拍板**的：一张点名我还没结的验收卡，或一条
+                # 还没答的决策请求。
+                awaits_me=cards.get(topic.id, False) or decisions.get(topic.id, False),
             )
-            relevance[topic.id] = TopicRelevance(
-                # Being awaited is a way of being involved, so it implies
-                # participation: a card can be routed to someone who never
-                # opened the topic, and the whole point of `awaits_me` is that
-                # it must not end up folded away under 「其他话题」.
-                i_participate=participates or awaits,
-                awaits_me=awaits,
-            )
-        return relevance
+            for topic in topics
+        }
 
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
@@ -560,7 +537,7 @@ class TopicService:
 
     async def unread_counts(
         self, project_id: uuid.UUID, user_handle: str
-    ) -> dict[uuid.UUID, int]:
+    ) -> dict[uuid.UUID, Unread]:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         return await self._repo.unread_counts(project_id, user_handle)
@@ -587,29 +564,39 @@ class TopicService:
         await self._repo.mark_read_many(list(counts), user_handle)
         return list(counts)
 
-    NOTIFY_LEVELS = ("all", "mute")
-
     async def notify_levels(
         self, project_id: uuid.UUID, user_handle: str
-    ) -> dict[uuid.UUID, str]:
+    ) -> dict[uuid.UUID, tuple[NotifyLevel, datetime | None]]:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         return await self._repo.notify_levels(project_id, user_handle)
 
     async def set_notify_level(
-        self, topic_id: uuid.UUID, user_handle: str, level: str
+        self,
+        topic_id: uuid.UUID,
+        user_handle: str,
+        level: str,
+        muted_until: datetime | None = None,
     ) -> None:
-        if level not in self.NOTIFY_LEVELS:
+        """Set how much of a channel reaches this person. A mute may end at a
+        time, which has to be still to come."""
+        if level not in NotifyLevel.__members__:
             raise ValidationError(say("topicNotifyLevelInvalid"))
+        if muted_until is not None and muted_until <= datetime.now(UTC):
+            raise ValidationError(say("topicMuteUntilPast"))
         await self.get_or_404(topic_id)
-        await self._repo.set_notify_level(topic_id, user_handle, level)
+        await self._repo.set_notify_level(
+            topic_id, user_handle, NotifyLevel(level), muted_until
+        )
 
     # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
 
     async def archive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
-        """Manually archive a topic (idempotent) — CASCADING: a topic's active
-        subtopics go with it (归档整件事，分身是这件事的一部分；漏下的孤儿分身
-        没有父上下文，毫无意义). The root topic (项目本体) can't be archived."""
+        """A person archives a channel (idempotent): it leaves everyone's
+        sidebar and is read, not spoken in, until someone unarchives it. A
+        channel still holding open tasks is refused: archiving it would close
+        work its owners are still doing, and that is theirs to close or move.
+        综合 is never archived."""
         topic = await self._repo.lock(topic_id)
         if topic is None:
             raise NotFoundError("Topic not found")
@@ -617,6 +604,11 @@ class TopicService:
             raise ValidationError(say("projectRootCannotArchive"))
         if topic.status == TopicStatus.archived:
             return topic
+        if any(
+            task.status == TaskStatus.open
+            for task in await TaskService(self._session).list_in_room(topic.id)
+        ):
+            raise ValidationError(say("channelArchiveOpenTasks"))
         await self._archive_one(topic, by=by)
         await self._archive_children(topic, by=by)
         await self._session.flush()
@@ -946,6 +938,9 @@ class TopicService:
             task.title_calibrated = True
             tasks.record_title(task, reason="proposal", by=proposed_by)
         await tasks.ensure_document(task)
+        if owner:
+            # Whoever the work is handed to is in its channel from then on.
+            await self._members.take_in(room.id, owner)
         await self._card_block(room, task, actor=created_by or "system")
         return task
 

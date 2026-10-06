@@ -14,6 +14,7 @@ class TopicCreate(BaseModel):
     project_id: uuid.UUID
     # A channel is named by whoever creates it.
     title: str = Field(min_length=1, max_length=300)
+    description: str | None = Field(default=None, max_length=500)
     parent_id: uuid.UUID | None = None
 
 
@@ -41,6 +42,7 @@ class TopicOut(BaseModel):
     project_id: uuid.UUID
     parent_id: uuid.UUID | None
     title: str
+    description: str | None = None
     kind: TopicKind
     status: TopicStatus
     created_at: datetime
@@ -66,29 +68,24 @@ class TopicOut(BaseModel):
     accepted_at: datetime | None = None
     archived_at: datetime | None = None
     cleanup_due_at: datetime | None = None
-    can_archive: bool = False
+    # Whether the caller manages this channel: its creator, or someone who
+    # manages the project. They rename it, describe it, archive it and choose
+    # who is in it. 综合 is renamed and described like any other; it is never
+    # archived.
+    can_manage: bool = False
     upgraded_from_block_id: uuid.UUID | None = None
-    # 与我的相关性 (C2): what this topic is to the CALLER, so the sidebar can
-    # show "我参与的" flat and fold everyone else's away. Two orthogonal
-    # booleans rather than one relevance enum — an enum has to grow a new value
-    # (and a new frontend branch) every time a way of being involved is added,
-    # while these two each answer one question and compose.
+    # What this channel is to the CALLER. Derived per caller, so — like
+    # `last_activity_at` and `activity` — only list_topics/get_topic fill them;
+    # elsewhere both stay False, meaning "nobody computed this", not "no".
     #
-    # `i_participate`: I'm in the topic's roster, OR I created it, OR a card
-    # here is routed to me, OR I've been @'d in it.
+    # `joined`: I am in it — 综合 always, any other channel once I joined it or
+    # was handed work in it. The sidebar lists these and no others, and only a
+    # member speaks in its main line.
     # `awaits_me`: it is waiting on ME to decide right now — a card routed to
     # me is still pending, a decision request to me is unanswered, or 芝士 is
     # stopped on a question only I can answer (I started the turn). An unread @
-    # is deliberately NOT here: it only makes me a participant — counting it
-    # lit almost every row, and unread already has its own badge. This is the
-    # "永远不折叠" signal, and it implies `i_participate` (every way of being
-    # awaited is also a way of participating), so the folding rule only ever
-    # reads one of the two.
-    #
-    # Derived per caller, so — like `last_activity_at` and `activity` — only the
-    # endpoints that ask for them fill them in (list_topics/get_topic);
-    # elsewhere both stay False, meaning "nobody computed this", not "no".
-    i_participate: bool = False
+    # is deliberately NOT here: unread already has its own badge.
+    joined: bool = False
     awaits_me: bool = False
     # 看板上这一格 —— 同一个 `presentation` 结构，一条活和一个房间用同一套词，因为
     # 侧栏把它们画在一起。和上面几个派生字段同一条规矩：只有 list_topics/get_topic

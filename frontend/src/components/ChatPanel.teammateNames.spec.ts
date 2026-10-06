@@ -51,15 +51,13 @@ const TEAM = [
 const [, KIMI, OPUS] = TEAM
 
 const roster: TopicMemberRow[] = [
-  { id: '0', topic_id: 'room', member_handle: 'me', name: '我', role: 'owner', agent: false, created_at: '' },
-  ...TEAM.map((a, i) => ({
-    id: String(i + 1),
+  { topic_id: 'room', member_handle: 'me', name: '我', role: 'owner', agent: false },
+  ...TEAM.map((a) => ({
     topic_id: 'room',
     member_handle: a.seat,
     name: a.name,
     role: 'member' as const,
     agent: true,
-    created_at: '',
   })),
 ]
 const members: ProjectMemberRow[] = [

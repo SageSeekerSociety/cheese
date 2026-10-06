@@ -186,6 +186,16 @@ async def _participants(
     return said
 
 
+async def people_in(session: AsyncSession, thread_id: uuid.UUID) -> list[str]:
+    """The people who took part in a 支线: who wrote the message it hangs under
+    and who said something in it. Empty when ``thread_id`` is no 支线."""
+    thread = await session.get(Thread, thread_id)
+    if thread is None:
+        return []
+    said = (await _participants(session, [thread])).get(thread.id, [])
+    return [h for h in said if names_a_person(h)]
+
+
 async def _unread(
     session: AsyncSession, threads: list[Thread], viewer: str
 ) -> set[uuid.UUID]:

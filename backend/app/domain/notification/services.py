@@ -20,7 +20,6 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.membership.services import MemberService
 from app.domain.notification.dto import NotificationDTO, ResolvedEntityInfoDTO
 from app.domain.notification.entity_resolvers import EntityInfoResolver
 from app.domain.notification.models import (
@@ -298,21 +297,16 @@ class ProjectNotificationService:
     async def _broadcast_roster(
         self, project_id: uuid.UUID, topic_id: uuid.UUID | None
     ) -> list[str]:
-        """一条广播到得了谁手上 —— 当时房间里的人，没说房间就是整个项目的名册。
+        """一条广播到得了谁手上 —— 这个频道里的人，没说频道就是整个项目的人。
 
         agent 不在里面：它在自己房间的时间线上读到这件事，往它的收件箱里塞一行写
         的是一条谁都不会打开的记录（`identity/arrival.py`）。
         """
+        service = TopicMemberService(self._session)
         if topic_id is not None:
-            service = TopicMemberService(self._session)
-            members, _ = await service.list_for_topic(topic_id)
-            handles = [m.member_handle for m in members]
+            handles = await service.people_of(topic_id)
         else:
-            members, _ = await MemberService(self._session).list_for_project(project_id)
-            handles = [m.user_handle for m in members]
-            project = await self._projects.get(project_id)
-            if project is not None and project.owner_handle:
-                handles.append(project.owner_handle)
+            handles = await service.project_people(project_id)
         return [
             handle
             for handle in dict.fromkeys(handles)
@@ -344,16 +338,6 @@ class ProjectNotificationService:
         return await self._repo.unread_count_in_project(
             project_id, recipient_handle=target_handle
         )
-
-    async def mention_topic_ids(
-        self, topic_ids: list[uuid.UUID], target_handle: str
-    ) -> dict[uuid.UUID, bool]:
-        """{topic_id: 这里还有没有 @ 他的未读}。
-
-        话题列表要的「被 @ 过」和「@我的未读」是同一条索引查询顺带得出的 —— 一个
-        @ 落地时就在收件箱里写了一行，不必翻消息正文。
-        """
-        return await self._repo.mention_topic_ids(topic_ids, target_handle)
 
     async def decision_topic_ids(
         self, topic_ids: list[uuid.UUID], target_handle: str
