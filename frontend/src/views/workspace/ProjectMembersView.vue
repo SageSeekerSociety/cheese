@@ -380,6 +380,7 @@ useCommands(() => [
                 v-if="s.key === 'team' && m.team_handle"
                 :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
                 class="t-meta-read member-team-link"
+                :data-user-content="m.team_name || undefined"
                 @click.stop
                 >{{ t('work.members.fromTeam', { name: m.team_name || m.team_handle }) }}</router-link
               >
@@ -605,8 +606,8 @@ useCommands(() => [
   font-variant-numeric: tabular-nums;
 }
 
-/* 「来自团队 @x」是一行 14px 高的链接，触屏上够不到 44。撑开能点的那块（设计系统
-   §10.1），画出来的样子不变——它上面那行 @handle 是文字不是控件，压上去没有歧义。 */
+/* 「来自团队 X」是一行 14px 高的链接，触屏上够不到 44。撑开能点的那块（设计系统
+   §10.1），画出来的样子不变——它上面那行 handle 是文字不是控件，压上去没有歧义。 */
 @media (pointer: coarse) {
   .member-team-link {
     position: relative;

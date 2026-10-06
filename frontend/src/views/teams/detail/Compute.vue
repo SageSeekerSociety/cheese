@@ -191,6 +191,7 @@ watch(teamId, load)
                     size="x-small"
                     variant="tonal"
                     color="primary"
+                    :data-user-content="screen.agent_name || undefined"
                   >
                     <v-icon start size="12">mdi-monitor-eye</v-icon>
                     {{ t('teams.compute.screenRunning', { name: screenAgentName(screen) }) }}

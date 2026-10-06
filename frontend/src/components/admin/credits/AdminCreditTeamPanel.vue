@@ -192,7 +192,7 @@ function historyLine(entry: CreditAudit): string {
             <ul v-else-if="history && history.length" class="actp__log">
               <li v-for="(entry, i) in history" :key="`${entry.created_at}-${i}`" class="actp__logitem">
                 <span class="actp__logwhat t-body">{{ historyLine(entry) }}</span>
-                <span class="t-meta-read actp__logmeta">
+                <span class="t-meta-read actp__logmeta" :data-user-content="entry.actor_name || undefined">
                   {{
                     t('credits.panel.by', {
                       name: entry.actor_name || entry.actor_handle,

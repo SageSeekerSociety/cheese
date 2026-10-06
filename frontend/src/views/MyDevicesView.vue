@@ -370,7 +370,14 @@ useCommands(() =>
           <div v-if="d.screens.length" class="device__block">
             <div class="device__label">{{ t('account.devices.screens') }}</div>
             <div class="device__chips">
-              <v-chip v-for="s in d.screens" :key="s.sid" variant="outlined" size="small" @click="liveScreen = s">
+              <v-chip
+                v-for="s in d.screens"
+                :key="s.sid"
+                variant="outlined"
+                size="small"
+                :data-user-content="s.agent_name || undefined"
+                @click="liveScreen = s"
+              >
                 <v-icon start size="14">mdi-monitor-eye</v-icon>
                 {{ t('account.devices.watch', { name: screenAgentName(s) }) }}
               </v-chip>
@@ -452,7 +459,9 @@ useCommands(() =>
     <v-dialog :model-value="liveScreen !== null" max-width="900" @update:model-value="liveScreen = null">
       <v-card v-if="liveScreen" class="pa-3">
         <div class="d-flex align-center mb-2">
-          <span class="t-title">{{ t('account.devices.liveTitle', { name: screenAgentName(liveScreen) }) }}</span>
+          <span class="t-title" :data-user-content="liveScreen.agent_name || undefined">{{
+            t('account.devices.liveTitle', { name: screenAgentName(liveScreen) })
+          }}</span>
           <v-spacer />
           <BaseButton icon="mdi-close" :aria-label="t('account.devices.close')" @click="liveScreen = null" />
         </div>
