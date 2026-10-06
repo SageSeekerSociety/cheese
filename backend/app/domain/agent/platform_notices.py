@@ -355,7 +355,9 @@ def memory_changed_notice(
     **被盖回去这件事必须进 `agent_notice`**（`AGENT_NOTICE_META_KEY`）。那条灰字
     事件是给人看的，agent 一个字的 prompt 都读不到它：写记忆的 agent 在会话机上，
     它看到的世界就是那棵树，而它刚才写的那一版已经不在了。不说，它会以为写成功
-    了、下一轮再写一遍同一版，而每一轮都会被盖回去。
+    了、下一轮再写一遍同一版，而每一轮都会被盖回去。这一句落在哪间房由调用方
+    定（`queries._say_memory_change`）：写它的 agent 所在的那一间，不一定是这
+    棵树的房间。
     """
     rejected = rejected or {}
     line = (
