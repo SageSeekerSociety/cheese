@@ -414,10 +414,10 @@
       "repeats": {
         "line": "{actor} {parts}",
         "sep": ", ",
-        "archived": "archived {n} channels",
-        "unarchived": "unarchived {n} channels",
-        "docEdited": "edited documents {n} times",
-        "others": "and {n} other actions",
+        "archived": "archived 1 channel | archived {n} channels",
+        "unarchived": "unarchived 1 channel | unarchived {n} channels",
+        "docEdited": "edited documents once | edited documents {n} times",
+        "others": "and 1 other action | and {n} other actions",
         "only": "{line} and {n} actions in all"
       },
       "platform": "Platform",
