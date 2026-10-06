@@ -96,6 +96,9 @@ class Runner(runner.Runner[Journal]):
         # marker platform instructions carry in this room (`start`).
         self.continuing: asyncio.Task | asyncio.Future | None = None
         self.notice = ""
+        # What every subagent the session starts reads as its system prompt's
+        # tail (`subagents.py`); the platform's words, handed over (`start`).
+        self.subagent_rules = ""
         # The project's MCP servers (`mcp.py`), opened with the session.
         self.servers: ProjectServers | None = None
         self.mcp_tools: list[dict] = []
@@ -689,6 +692,7 @@ class Runner(runner.Runner[Journal]):
         extension: dict[str, str] | None = None,
         notice: str = "",
         tools: dict | None = None,
+        subagent_rules: str = "",
     ) -> str:
         """Start pi in `cwd`, a directory of this host's that holds nothing of
         the project: everything the session does in the project is on the room's
@@ -780,6 +784,7 @@ class Runner(runner.Runner[Journal]):
             # platform tool in the room.
             env = {**env, "CHEESE_PI_EXTENSION": str(home)}
         self.notice = notice
+        self.subagent_rules = subagent_rules
         return await self._run(binary, session_id, [*appended, *args], cwd, env)
 
     def _session_id(self, opening: SessionStart) -> str:

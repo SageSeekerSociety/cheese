@@ -808,7 +808,8 @@ file at the `layer4` global option whatever else is in it.
 Each tunnel travels inside TLS on :443, not as SSH on :22:
 
     dev box: ssh -R 127.0.0.1:18443:127.0.0.1:18443 -R 127.0.0.1:18453:127.0.0.1:18080
-             (tunnel B: 18444 and 18454)
+                 -R 127.0.0.1:18455:127.0.0.1:8081
+             (tunnel B: 18444, 18454 and 18456)
       -> tls-proxy.py (TLS, SNI relay.okcheese.com, pinned certificate)
       -> etrip :443, Caddy layer4 route for SNI relay.okcheese.com
       -> socat on 127.0.0.1:2222 (terminates that TLS)
@@ -841,8 +842,8 @@ Unicom line up rather than replacing it.
 
 | Box | Path | What it is |
 |---|---|---|
-| dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | tunnel A, 18443 and 18453 (enabled) |
-| dev | `/etc/systemd/system/cheese-hk-relay-tls443-b.service` | tunnel B, 18444 and 18454, out the campus line (enabled) |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | tunnel A, 18443, 18453 and 18455 (enabled) |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443-b.service` | tunnel B, 18444, 18454 and 18456, out the campus line (enabled) |
 | 119pve | `/etc/network/interfaces`, `vmbr0` post-up | raw-table conntrack zone rules for source ports 41000-41099 |
 | dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnels' `ProxyCommand`; binds a source port from `TLS_PROXY_SOURCE_PORTS` when set |
 | dev | `/usr/local/libexec/cheese-hk-relay/route-b.sh` | policy route for tunnel B: table 18443, rule priority 18443 |
@@ -853,7 +854,7 @@ Unicom line up rather than replacing it.
 | etrip | `/etc/systemd/system/cheese-relay-watchdog.service`, `/usr/local/libexec/cheese-hk-relay/relay-watchdog.sh` | frees a port held by a dead tunnel session; pages when both are down |
 | etrip | `/etc/cheese-hk-relay/alert.env` | `FEISHU_ALERT_WEBHOOK`, the same webhook the backend alerts use |
 | etrip | `/etc/ssl/relay/relay.pem` | certificate and key for `relay.okcheese.com` |
-| etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080`, `:18443`, `:18444`, `:18453` and `:18454` |
+| etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080`, `:18443`, `:18444`, `:18453`, `:18454`, `:18455` and `:18456` |
 | etrip | `/etc/ssh/sshd_config`, last block | `Match User hkrelay`: forwarding only, 10 s × 2 keepalive |
 
 The TLS client is `tls-proxy.py` rather than `openssl s_client`. Used as a
@@ -954,6 +955,57 @@ it, a reload of this Caddy closes every WebSocket it proxies at once (room
 sockets, device connectors, preview tunnels); with it, sockets open at the
 reload stay up for up to ten minutes, and clients reconnect on their own
 schedule.
+
+### The preview content domain goes through Hong Kong
+
+`*.cheeseusercontent.com`, the content domain previews and Sites load from
+([`sites.md`](sites.md)), is a DNS-only A record to the etrip box, TTL 60. The
+same Caddy ends TLS for it and sends plain HTTP through the same two tunnels:
+tunnel A also forwards etrip `127.0.0.1:18455` and tunnel B `127.0.0.1:18456`,
+both to the dev box's content server `127.0.0.1:8081`, the api-front server
+that `configure-sites.sh` writes for this domain. Caddy keeps the visitor's `Host`,
+which that server needs: on `:8081` every other name reaches the platform API.
+Balancing, health checks and the watchdog work as for `okcheese.com`. The
+health check sends `Host: cheeseusercontent.com`, and the content server
+answers `/_internal/` with 404 itself. The status page
+(`SageSeekerSociety/status`) requests a preview host every five minutes and
+counts 401 as up, which also catches the content server failing while
+`okcheese.com` stays up.
+
+The edge adds nothing to preview auth. The 401 for a request without a preview
+session, the grant exchange at `/_cheese/session` and the CSP sandbox and
+other headers all come from the backend (`app/api/preview_host.py`), and the
+domain shares no cookies with the platform's.
+
+Every preview host is one label under the domain
+(`preview-<topic>[-<resource>]`), so one wildcard certificate covers them;
+certificates per host would run into Let's Encrypt's rate limits. Caddy obtains
+it over DNS-01, which is why the etrip binary is built with the
+`caddy-dns/cloudflare` module besides `caddy-l4`
+(`xcaddy build v2.11.4 --with github.com/mholt/caddy-l4@v0.1.2 --with github.com/caddy-dns/cloudflare`,
+cross-compiled for linux/amd64). The Cloudflare token it uses can edit DNS in
+the `cheeseusercontent.com` zone only and only from etrip's address. It lives
+in `/etc/caddy/secrets/` (root:caddy, 0640) and the Caddyfile reads it with a
+`{file.…}` placeholder rather than an environment variable, because the unit
+runs `caddy run --environ`, which writes the environment to the journal. Plain
+http for the domain is redirected to https by its own `http://` site block:
+the preview session cookie is `Secure`, and without that block the request
+would fall to the `:80` catch-all and reach the etrip deployment.
+
+| Box | Path | What it is |
+|---|---|---|
+| etrip | `/usr/local/lib/caddy-l4/caddy` | Caddy with `caddy-l4` and `caddy-dns/cloudflare` |
+| etrip | `/etc/caddy/secrets/cf-cheeseusercontent-dns01.token` | the DNS-01 token |
+| etrip | `/root/cheese-edge/cf_content_dns.py` | shows, switches and restores the wildcard record with that token |
+| dev | `/etc/cloudflared/config.yml`, `cloudflared.service` | Cloudflare tunnel; its ingress maps the wildcard to `:8081`. The rollback target |
+
+To roll back, first make sure `cloudflared` runs on the dev box
+(`sudo systemctl enable --now cloudflared`). Then, on etrip,
+`sudo python3 -I /root/cheese-edge/cf_content_dns.py rollback /root/cheese-edge/dns-wildcard-cheeseusercontent-<date>.json`
+restores the proxied CNAME to the tunnel from the saved copy. After that the
+`*.cheeseusercontent.com` site blocks can come out of the Caddyfile; they have
+to before going back to a Caddy binary without the DNS module, which rejects
+their `tls` block.
 
 ## Beijing edge (pre-filing): the mainland entry for okcheese, hand-managed
 
