@@ -75,3 +75,7 @@ A bug — the product failing to do what it already sets out to do, including a 
 ## Legal texts are not the work
 
 The work here is code. Do not read or edit the terms or the privacy policy (`backend/app/domain/legal/texts/`). Only a task that names one of these texts makes it yours, and "Fix bugs freely" does not reach them.
+
+## Follow a pull request you enqueue until it is deployed
+
+Whoever puts a pull request into the merge queue watches it until the dev deploy that contains it has finished: `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>`, run from the session that owns the work rather than inside a subagent that may end first. A background loop that dies with the agent that started it leaves a green PR unenqueued for hours, and a PR the queue removed looks the same as one still waiting.
