@@ -135,7 +135,7 @@ async def legacy_execution(session: AsyncSession, conversation_id: uuid.UUID):
                 AgentSession.id, AgentSession.runtime_location, AgentSession.work_lease
             )
             .where(AgentSession.conversation_id == conversation_id)
-            .with_for_update()
+            .with_for_update(read=True)
         )
     ).all()
     legacy = [
@@ -160,6 +160,11 @@ async def session_execution(session: AsyncSession, session_id: uuid.UUID):
                 AgentSession.conversation_id,
             )
             .where(AgentSession.id == session_id)
-            .with_for_update()
+            # FOR SHARE, not FOR UPDATE: a lease change still waits for every
+            # call that checked the old lease to commit its dispatch, but the
+            # calls of one session no longer queue on its row. A walk sends a
+            # burst of them, and each queued call held a connection while it
+            # waited, which filled the connection owner's pool.
+            .with_for_update(read=True)
         )
     ).one_or_none()
