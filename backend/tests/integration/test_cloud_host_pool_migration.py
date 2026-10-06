@@ -24,7 +24,6 @@ from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.project.models import Project
 from app.domain.team.models import Team
-from app.domain.topic.models import Topic
 from tests.conftest import _PG_BASE, _admin_recreate_db
 
 _REVISION = "c4e7a2d91f30"
@@ -123,10 +122,28 @@ async def _seed(db_name: str) -> dict:
         )
         db.add(project)
         await db.flush()
-        room = Topic(project_id=project.id, title="Room", compute_config=cloud_choice)
-        old_room = Topic(project_id=project.id, title="Old room")
-        db.add_all([room, old_room])
-        await db.flush()
+        # Rooms as rows too, for the same reason as the sessions below: the
+        # topics table is at the revision before the pool.
+        room_id, old_room_id = uuid.uuid4(), uuid.uuid4()
+        for topic_id, title, compute in (
+            (room_id, "Room", json.dumps(cloud_choice)),
+            (old_room_id, "Old room", None),
+        ):
+            await db.execute(
+                text(
+                    "INSERT INTO topics (id, project_id, title, kind, status,"
+                    " compute_config, created_at, updated_at)"
+                    " VALUES (:id, :project, :title, 'topic', 'active',"
+                    " CAST(:compute AS json), :now, :now)"
+                ),
+                {
+                    "id": topic_id,
+                    "project": project.id,
+                    "title": title,
+                    "compute": compute,
+                    "now": now,
+                },
+            )
         for device_id, supply in (
             ("dev-shared", Supply.cloud),
             ("dev-left", Supply.cloud),
@@ -145,7 +162,7 @@ async def _seed(db_name: str) -> dict:
             )
             await db.flush()
             db.add(DeviceTeamRow(device_id=device_id, team_id=team.id))
-        resource = str(room.resource_id or room.id)
+        resource = str(room_id)
         # Written as rows, not through today's model: the table is at the
         # revision before the pool, and the model has moved on since.
         sessions = {
@@ -190,7 +207,7 @@ async def _seed(db_name: str) -> dict:
                 ),
                 {
                     "id": session_ids[handle],
-                    "topic": room.id,
+                    "topic": room_id,
                     "handle": handle,
                     "request": json.dumps(request),
                     "lease": None if lease is None else json.dumps(lease),
@@ -200,8 +217,8 @@ async def _seed(db_name: str) -> dict:
         await db.commit()
         ids.update(
             project=project.id,
-            room=room.id,
-            old_room=old_room.id,
+            room=room_id,
+            old_room=old_room_id,
             room_resource=resource,
             working=session_ids["working"],
             pending=session_ids["pending"],

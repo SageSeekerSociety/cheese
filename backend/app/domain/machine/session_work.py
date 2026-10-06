@@ -288,7 +288,7 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
         return
-    if owner.username in await TopicMemberService(db).people(topic):
+    if owner.username in await TopicMemberService(db).people_in(topic):
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)

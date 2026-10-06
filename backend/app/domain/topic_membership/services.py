@@ -170,7 +170,7 @@ class TopicMemberService:
             [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
         )
 
-    async def people(self, topic: Topic) -> list[str]:
+    async def people_in(self, topic: Topic) -> list[str]:
         """The people in this channel, in the order they came in. 综合's are
         everyone in the project; any other channel's are the people seated on
         it."""
@@ -191,15 +191,15 @@ class TopicMemberService:
                 TopicMemberOut(
                     topic_id=topic.id, member_handle=h, role=TopicRole.member
                 )
-                for h in await self.people(topic)
+                for h in await self.people_in(topic)
                 if h not in seated
             ]
         return seats
 
     async def people_of(self, topic_id: uuid.UUID) -> list[str]:
-        """:meth:`people` for a caller holding the channel's id."""
+        """:meth:`people_in` for a caller holding the channel's id."""
         topic = await self._topics.get(topic_id)
-        return await self.people(topic) if topic is not None else []
+        return await self.people_in(topic) if topic is not None else []
 
     async def project_people(self, project_id: uuid.UUID) -> list[str]:
         """Everyone in the project who is a person: whom a channel's work may be

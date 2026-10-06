@@ -306,7 +306,7 @@ async def announce_mentions(
         # <@handle> is different and is NOT filtered here — that is how one
         # agent addresses another, which a room hosting several 芝士 depends
         # on.
-        people = await TopicMemberService(session).people(topic)
+        people = await TopicMemberService(session).people_in(topic)
         muted = await topics.muted_among(topic.id, people)
         concrete += [h for h in people if h not in muted]
     # Nobody needs a notification for their own message.
