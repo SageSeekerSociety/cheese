@@ -507,6 +507,11 @@ describe('发题页：手写一道', () => {
     // 服务端给了 id 的那一份才有那一行 —— 另一份点了也带不走，不画。
     await waitFor(() => expect(view.getAllByTestId('attached-file')).toHaveLength(1))
     expect(view.getByTestId('attached-file').textContent).toContain('能传上去的.pdf')
+    await waitFor(() => expect(uploadAttachment).toHaveBeenCalledTimes(2))
+    expect(uploadAttachment.mock.calls[0][0]).toMatchObject({ type: 'file' })
+    expect(uploadAttachment.mock.calls[0][0].file).toBe(good)
+    expect(uploadAttachment.mock.calls[1][0]).toMatchObject({ type: 'file' })
+    expect(uploadAttachment.mock.calls[1][0].file).toBe(bad)
 
     // 发题请求带的是那串真回来的 id。
     await fillRequired(view)

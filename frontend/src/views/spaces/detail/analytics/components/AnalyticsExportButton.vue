@@ -1,61 +1,19 @@
 <template>
-  <BaseButton kind="secondary" prepend-icon="mdi-download" :loading="loading" @click="download">
+  <BaseButton kind="secondary" prepend-icon="mdi-download" :loading="loading" @click="emit('export')">
     {{ label }}
   </BaseButton>
 </template>
 
 <script setup lang="ts">
-import type { AnalyticsExportSection, SpaceAnalyticsQueryState } from '../utils'
-
-import { ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
-
-import { buildAnalyticsExportUrl } from '../utils'
-
+// 导出按钮只发一件事：有人按了「导出」。打开下载、带 token、拼地址这些取数的事
+// 归页面（场景规则见 docs/manual/dev/scenes.md）；从前它自己 fetch，才被算成取数的
+// 那一档。
 import BaseButton from '@/components/base/BaseButton.vue'
-import accountService from '@/services/account'
 
-const props = defineProps<{
-  section: AnalyticsExportSection
-  spaceId: number
-  filters: SpaceAnalyticsQueryState
-  label?: string
+defineProps<{
+  loading: boolean
+  label: string
 }>()
 
-const { t } = useI18n()
-const loading = ref(false)
-
-const download = async () => {
-  loading.value = true
-  try {
-    const resp = await fetch(
-      buildAnalyticsExportUrl(import.meta.env.VITE_NEW_API_BASE_URL, props.spaceId, props.section, props.filters),
-      {
-        headers: accountService.accessToken ? { Authorization: `Bearer ${accountService.accessToken}` } : {},
-      }
-    )
-
-    if (!resp.ok) {
-      throw new Error(`Export failed: ${resp.status}`)
-    }
-
-    const blob = await resp.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `space-${props.spaceId}-${props.section}.csv`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  } catch (error) {
-    console.error(error)
-    toast.error(t('spaces.analytics.export.failed'))
-  } finally {
-    loading.value = false
-  }
-}
+const emit = defineEmits<{ export: [] }>()
 </script>
-
-<style scoped></style>

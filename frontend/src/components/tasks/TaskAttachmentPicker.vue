@@ -66,7 +66,16 @@ import { toast } from 'vuetify-sonner'
 import { formatFileSize } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import { AttachmentsApi } from '@/network/api/attachments'
+
+/**
+ * 这一件只画、不取数：那两道接口由容器（发题页）从上面递进来 —— 见下面 `defineProps`。
+ */
+const props = defineProps<{
+  /** 问一次单份文件的上限（`GET /attachments/limits`）。拿不到给 `null`，别抛。 */
+  loadLimit: () => Promise<number | null>
+  /** 传一份文件（`POST /attachments`），回来的是它在服务端那行的 id。失败就抛。 */
+  upload: (file: File) => Promise<{ id: number }>
+}>()
 
 const { t } = useI18n()
 
@@ -102,8 +111,7 @@ const maxFileBytes = ref<number | null>(null)
 // 用户到这一步并没有要求做任何事，凭空一条报错只会让人以为出了问题。
 onMounted(async () => {
   try {
-    const { data } = await AttachmentsApi.limits()
-    maxFileBytes.value = data.maxFileBytes
+    maxFileBytes.value = await props.loadLimit()
   } catch {
     maxFileBytes.value = null
   }
@@ -134,8 +142,8 @@ const onPicked = async (value: File[] | File | null) => {
   try {
     for (const file of files) {
       try {
-        const { data } = await AttachmentsApi.upload({ type: 'file', file })
-        uploaded.value.push({ id: data.id, name: file.name, size: file.size })
+        const { id } = await props.upload(file)
+        uploaded.value.push({ id, name: file.name, size: file.size })
         emit(
           'update:attachmentIds',
           uploaded.value.map((item) => item.id)

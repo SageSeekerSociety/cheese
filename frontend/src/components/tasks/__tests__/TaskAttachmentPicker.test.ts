@@ -16,7 +16,20 @@ import i18n, { setLocale } from '@/i18n'
 
 const pdf = (name = '讲义.pdf', bytes = 2048) => new File([new Uint8Array(bytes)], name, { type: 'application/pdf' })
 
-const mount = () => render(TaskAttachmentPicker, { global: { plugins: [createVuetify(), i18n] } })
+/** 这一件自己不取数了：上传与上限两道接口由容器递进来（发题页给的就是这两只回调）。
+ *  这里照那条口径接上同一批 mock，量的仍旧是「拿到回调之后它怎么用」。 */
+const pickerProps = () => ({
+  loadLimit: async () => {
+    const { data } = await mocks.limits()
+    return data.maxFileBytes
+  },
+  upload: async (file: File) => {
+    const { data } = await mocks.upload({ type: 'file', file })
+    return { id: data.id }
+  },
+})
+
+const mount = () => render(TaskAttachmentPicker, { props: pickerProps(), global: { plugins: [createVuetify(), i18n] } })
 
 const fileInputOf = (view: ReturnType<typeof render>) =>
   view.container.querySelector('input[type="file"]') as HTMLInputElement
@@ -57,11 +70,11 @@ describe('发题时带的材料', () => {
     mocks.upload.mockResolvedValue({ data: { id: 7 } })
     const view = mount()
 
-    await fireEvent.change(fileInputOf(view), { target: { files: [pdf()] } })
+    const file = pdf()
+    await fireEvent.change(fileInputOf(view), { target: { files: [file] } })
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1))
-    expect(mocks.upload.mock.calls[0][0].type).toBe('file')
-    expect(mocks.upload.mock.calls[0][0].file.name).toBe('讲义.pdf')
+    expect(mocks.upload.mock.calls[0][0].file).toBe(file)
     await waitFor(() => expect(view.emitted()['update:attachmentIds']?.at(-1)).toEqual([[7]]))
     // 传完就看得见：名字与大小都在那张列表上。
     expect(view.getByTestId('attached-file').textContent).toContain('讲义.pdf')
