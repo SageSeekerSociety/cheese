@@ -25,7 +25,6 @@ from app.domain.device.supply import Supply
 from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.topic.models import Topic
-from app.domain.user.repositories import UserRepository
 from tests.conftest import _PG_BASE, _admin_recreate_db
 
 _REVISION = "c4e7a2d91f30"
@@ -95,8 +94,14 @@ async def _seed(db_name: str) -> dict:
     ids: dict = {}
     async with factory() as db:
         handle = f"pool-{uuid.uuid4().hex[:8]}"
-        user = await UserRepository(db).create_user(
-            username=handle, email=f"{handle}@example.com"
+        # A row, not today's model: `user` is at the revision before the pool too,
+        # and the model has columns that revision does not.
+        user_id = await db.scalar(
+            text(
+                'INSERT INTO "user" (username, email, created_at, updated_at) '
+                "VALUES (:handle, :email, :now, :now) RETURNING id"
+            ),
+            {"handle": handle, "email": f"{handle}@example.com", "now": now},
         )
         team = Team(
             name="Team",
@@ -133,7 +138,7 @@ async def _seed(db_name: str) -> dict:
                     device_id=device_id,
                     name=device_id,
                     token=f"token-{device_id}",
-                    owner_user_id=user.id,
+                    owner_user_id=user_id,
                     supply=supply,
                     created_at=now,
                 )
