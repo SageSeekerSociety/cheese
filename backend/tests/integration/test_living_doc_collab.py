@@ -264,7 +264,7 @@ def test_a_project_document_in_no_room_is_its_members_and_nobody_elses(client):
 
     async def make() -> uuid.UUID:
         async with client.test_factory() as session:
-            doc = Document(project_id=project_id, room_id=None)
+            doc = Document(project_id=project_id)
             session.add(doc)
             await session.commit()
             return doc.id

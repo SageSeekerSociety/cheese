@@ -2,10 +2,10 @@
 comment thread, or per selection box.
 
 Its tools read and edit the document and look things up in the project as the
-person asking. For a room's document whose machine is there, the session reads
-the room's work on it besides (`document/machine.py`): pi's own read, ls, find and
-grep, with their hands on the room's checkout, and nothing that writes or runs
-a command. It never takes a machine of its own.
+person asking. For a task's document whose machine is there, the session reads
+the task's work on it besides (`document/machine.py`): pi's own read, ls, find
+and grep, with their hands on the task's checkout, and nothing that writes or
+runs a command. It never takes a machine of its own.
 
 One conversation is one session, at a home under its project's, so a
 project's sessions are counted together: starting one more than
@@ -14,7 +14,7 @@ session sits idle for ``IDLE_EXIT_S`` and exits; the conversation's next
 question starts it again on the same conversation.
 
 It runs on the agent's model, called with a credential naming the document's
-room (its project, for a document in none), the agent and the conversation, so
+task (its project, for a document of no task), the agent and the conversation, so
 what it spends is the project's like any call of that agent (`llm_proxy`).
 """
 
@@ -78,8 +78,8 @@ def session_for(
         "CHEESE_PROJECT": str(asked.project_id),
         "CHEESE_DOCUMENT": str(asked.document_id),
     }
-    if asked.room_id is not None:
-        env["CHEESE_TOPIC"] = str(asked.room_id)
+    if asked.task_id is not None:
+        env["CHEESE_TOPIC"] = str(asked.task_id)
     spec = SessionSpec(
         system_prompt=system_prompt(
             bound.agent_name,
@@ -100,7 +100,7 @@ def session_for(
     access = Access(
         mint_scoped_token(
             project_id=str(asked.project_id),
-            topic_id=str(asked.room_id) if asked.room_id is not None else None,
+            topic_id=str(asked.task_id) if asked.task_id is not None else None,
             agent_handle=bound.agent_handle,
             resource_id=str(key),
             document_id=str(asked.document_id),

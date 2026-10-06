@@ -843,3 +843,91 @@ async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_only_once_pushed
         )
         assert kept.archive_key == "sandbox-archives/home.tar.gz"
     assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
+
+
+@pytest.mark.parametrize("pushed", [True, False])
+async def test_a_room_that_became_a_task_is_still_cleaned_up(
+    client, monkeypatch, pushed
+):
+    """A room archived before its cleanup finished became a closed task: its
+    row is gone, its conversation stays. Its cleanup is not called off for
+    that: the old generation's home goes once it is found pushed, and an
+    unpushed one still holds the cleanup, as it would for a room."""
+    from sqlalchemy import text
+
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.machine import lifecycle
+
+    class Bucket:
+        def __init__(self):
+            self.objects = {"sandbox-archives/home.tar.gz": b"archived home"}
+
+        async def delete(self, key):
+            return self.objects.pop(key, None) is not None
+
+    bucket = Bucket()
+    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket)
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        conversation = await AgentSessionService(session).ensure(
+            room_id, "worker", harness="claude-code"
+        )
+        resource = str(uuid.uuid4())
+        conversation.work_lease = {
+            "device_id": "released-host",
+            "resource_id": resource,
+            "kind": "device",
+        }
+        session.add(
+            CloudHostHome(
+                host_id=None,
+                project_id=operation.project_id,
+                topic_id=room_id,
+                room_resource_id=str(operation.resource_id),
+                resource_id=resource,
+                session_id=conversation.id,
+                stopped_at=datetime.now(UTC),
+                archive_key="sandbox-archives/home.tar.gz",
+                archive_size=13,
+                archive_md5="0" * 32,
+                archive_published=pushed,
+            )
+        )
+        await session.commit()
+    # What the conversion does to the room: its row goes, its conversation
+    # becomes the task's.
+    async with client.test_factory() as session:
+        await session.execute(
+            text("ALTER TABLE topics DISABLE TRIGGER topics_conversation_unregistered")
+        )
+        await session.execute(
+            text("DELETE FROM topics WHERE id = :id"), {"id": room_id}
+        )
+        await session.execute(
+            text("ALTER TABLE topics ENABLE TRIGGER topics_conversation_unregistered")
+        )
+        await session.execute(
+            text("UPDATE conversations SET kind = 'task' WHERE id = :id"),
+            {"id": room_id},
+        )
+        await session.commit()
+
+    if pushed:
+        assert _sweep(client) == {"completed": 1, "pending": 0}
+        assert bucket.objects == {}
+        async with client.test_factory() as session:
+            assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
+            assert (
+                await session.scalar(
+                    select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
+                )
+            ) is None
+        return
+
+    assert _sweep(client) == {"completed": 0, "pending": 1}
+    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        assert operation.state == "pending"
+        assert "not pushed" in operation.last_error

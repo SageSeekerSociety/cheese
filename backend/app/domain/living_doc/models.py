@@ -1,9 +1,10 @@
 """Documents: what they say now, their collaborative state, their history,
 their write receipts and the comments written on them.
 
-A document belongs to a project. A room's living document is one with
-``room_id`` set: each room has at most one, and it goes when the room goes.
-Every other table here hangs off ``documents.id``.
+A document belongs to a project. A task's living document and the project's
+overview are documents of the project that the task (``tasks.document_id``)
+and the project (``projects.overview_document_id``) point at. Every other
+table here hangs off ``documents.id``.
 """
 
 import uuid
@@ -33,14 +34,9 @@ class Document(UuidPk, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    #: The room this is the living document of; None for one of the project's
-    #: own documents.
-    room_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), unique=True, nullable=True
-    )
     #: What kind of document: only "doc" (Markdown and blocks) so far.
     kind: Mapped[str] = mapped_column(String(16), default="doc", server_default="doc")
-    #: None for a room's document, which goes by the room's title.
+    #: None for a task's document, which goes by the task's title.
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     #: The Markdown exported from the collaborative state at its last store.
     content: Mapped[str] = mapped_column(Text, default="", server_default="")

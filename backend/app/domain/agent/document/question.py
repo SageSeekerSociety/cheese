@@ -1,9 +1,9 @@
 """What every question to an agent in a document is asked with, the comment
 thread's (``thread``) and the selection box's (``box``) alike.
 
-A room's living document is answered by the agents seated in the room, with the
-room's recent messages and its machine. A document of the project's own, in no
-room, is answered by the project's own agent, with neither.
+A task's living document is answered by the task's agent, with the task's
+recent messages and its machine. Any other document of the project is answered
+by the project's own agent, with neither.
 
 * **Its turn.** One question of a conversation is answered at a time, and at
   most ``ANSWERING_PER_PROJECT`` of a project's conversations are being answered
@@ -12,10 +12,11 @@ room, is answered by the project's own agent, with neither.
   would be admitted (``admit``).
 * **What the session is told.** What does not change while the session lives —
   the rules, the project's charter, the index of its memory — is its system
-  prompt; the document, the room's recent messages and the room's machine are
-  read for each question (``surroundings``). The machine, when the room holds
-  one that is there, is lent to the session to read the room's work
-  (`document/machine.py`); it looks up the rest of the project with its tools.
+  prompt; the document, the task's recent messages and the task's machine are
+  read for each question (``surroundings``). The machine, when the task's
+  sessions hold one that is there, is lent to the session to read the task's
+  work (`document/machine.py`); it looks up the rest of the project with its
+  tools.
 * **What its tools act with**: a credential minted for this question
   (``credential``): what the asker may read, and changes to the document
   authored by the agent at the asker's request, through the platform's own
@@ -50,8 +51,7 @@ from app.domain.memory.files_store import memory_index
 from app.domain.policy import gate
 from app.domain.project.services import ProjectService
 from app.domain.room_task import binding
-from app.domain.topic.services import TopicService
-from app.domain.topic_membership.services import TopicMemberService
+from app.domain.room_task.models import Task
 from app.domain.usage.services import UsageService
 from app.domain.user.services import user_by_handle
 
@@ -71,7 +71,7 @@ CREDENTIAL_MARGIN_S = 60
 #: How long the credentials a session starts with last. A session lives while
 #: its conversation is asked things, and exits a minute after; a day covers it.
 TOKEN_TTL_S = 24 * 3600
-#: How many of the room's latest messages come with a question.
+#: How many of the task's latest messages come with a question.
 RECENT_MESSAGES = 20
 
 # --- whose turn --------------------------------------------------------------
@@ -149,28 +149,28 @@ async def take_turn(
 
 @dataclass(frozen=True)
 class Asked:
-    """The document a question is about, and the room it is the living
-    document of (None for a document of the project's own)."""
+    """The document a question is about, and the task it is the living
+    document of (None for any other document of the project)."""
 
     project_id: uuid.UUID
     document_id: uuid.UUID
-    room_id: uuid.UUID | None
+    task_id: uuid.UUID | None
 
     def data(self) -> dict:
         """What a question read to its end keeps of it (``Consumption.data``)."""
         return {
             "project": str(self.project_id),
             "document": str(self.document_id),
-            "room": str(self.room_id) if self.room_id is not None else None,
+            "task": str(self.task_id) if self.task_id is not None else None,
         }
 
     @classmethod
     def of(cls, data: dict) -> "Asked":
-        room = data.get("room")
+        task = data.get("task")
         return cls(
             project_id=uuid.UUID(data["project"]),
             document_id=uuid.UUID(data["document"]),
-            room_id=uuid.UUID(room) if room else None,
+            task_id=uuid.UUID(task) if task else None,
         )
 
 
@@ -184,8 +184,8 @@ async def credential(
     may_edit: bool,
 ) -> str:
     """What the session's tools act with while answering ``asker``'s question:
-    that person's permissions, in the document's room (in its project, for a
-    document in none), for no longer than the answer may take; edits authored
+    that person's permissions, in the document's task (in its project, for a
+    document of no task), for no longer than the answer may take; edits authored
     by ``agent`` at the asker's request, and only when the question may change
     the document."""
     person = await user_by_handle(db, asker)
@@ -194,7 +194,7 @@ async def credential(
         handle=asker,
         agent=agent,
         project_id=str(asked.project_id),
-        topic_id=str(asked.room_id) if asked.room_id is not None else None,
+        topic_id=str(asked.task_id) if asked.task_id is not None else None,
         work=str(work),
         read_only=not may_edit,
         ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
@@ -232,34 +232,28 @@ class Bound:
 
 
 async def seats(session: AsyncSession, asked: Asked) -> set[str]:
-    """The agents a question in this document can be put to: the room's
-    seated agents, or the project's own agent for a document in no room."""
-    if asked.room_id is not None:
-        return set(await TopicMemberService(session).agent_handles(asked.room_id))
+    """The agents a question in this document can be put to: the task's
+    agent, or the project's own agent for a document of no task."""
+    task = await session.get(Task, asked.task_id) if asked.task_id else None
+    if task is not None and task.agent_handle:
+        return {task.agent_handle}
     project = await ProjectService(session).get_or_404(asked.project_id)
     agent = await AgentInstanceService(session).for_project(project)
     return {agent_instance_handle(agent.instance_id)}
 
 
 async def bind(session: AsyncSession, asked: Asked, seat: str | None = None) -> Bound:
-    """The agent seated as ``seat`` (the room's own seat, or the project's own
+    """The agent seated as ``seat`` (the task's agent, or the project's own
     agent, when None) and the model its turns use — the same binding, never a
     substitute."""
     project = await ProjectService(session).get_or_404(asked.project_id)
     agents = AgentInstanceService(session)
-    if asked.room_id is not None:
-        topic = await TopicService(session).get_or_404(asked.room_id)
-        seat = seat or await TopicMemberService(session).addressable_agent_handle(
-            asked.room_id
-        )
-        agent = await agents.for_seat_handle(project, seat) or await agents.for_topic(
-            topic, project
-        )
-    else:
-        agent = (
-            await agents.for_seat_handle(project, seat) if seat else None
-        ) or await agents.for_project(project)
-        seat = seat or agent_instance_handle(agent.instance_id)
+    task = await session.get(Task, asked.task_id) if asked.task_id else None
+    seat = seat or (task.agent_handle if task is not None else None)
+    agent = (
+        await agents.for_seat_handle(project, seat) if seat else None
+    ) or await agents.for_project(project)
+    seat = seat or agent_instance_handle(agent.instance_id)
     bound = binding.resolve(
         None,
         binding.catalog(project.settings),
@@ -334,14 +328,14 @@ _RULES = (
 )
 
 
-#: What the session can see of the room's work, with the room's machine and
+#: What the session can see of the task's work, with the task's machine and
 #: without it (`document/machine.py`).
 _MACHINE = (
-    "你能用 read、ls、find、grep 读房间工作电脑上的代码（{workspace}），用 git 看提交"
-    "记录、某次提交、每行是谁改的，以及这个分支相对主干改了什么。那是房间里队友正在"
-    "用的工作目录，包括还没提交的改动，可能有改到一半的地方；引用代码时说明是房间当前"
-    "的代码。你不能运行命令，也不能改代码，要做这些时在回复里说明，请人在频道里交给"
-    "房间里的队友。"
+    "你能用 read、ls、find、grep 读这个任务工作电脑上的代码（{workspace}），用 git 看"
+    "提交记录、某次提交、每行是谁改的，以及这个分支相对主干改了什么。那是任务里队友正"
+    "在用的工作目录，包括还没提交的改动，可能有改到一半的地方；引用代码时说明是任务当"
+    "前的代码。你不能运行命令，也不能改代码，要做这些时在回复里说明，请人在任务里交给"
+    "任务里的队友。"
 )
 _NO_MACHINE = (
     "这次没有可读的工作电脑，你读不到代码，也不能运行命令。问题要看代码时，"
@@ -360,7 +354,7 @@ def system_prompt(
     """The rules, the project's charter and the index of its memory: what stays
     the same for the session's life, so every question shares the cached
     prefix. ``where`` is where the answer is read (``_WHERE``); ``workspace``
-    the room's checkout, when the session reads the room's machine."""
+    the task's checkout, when the session reads the task's machine."""
     place, answer = _WHERE[where]
     machine = _MACHINE.format(workspace=workspace) if workspace else _NO_MACHINE
     parts = [
@@ -420,7 +414,7 @@ class Surroundings:
     messages: str
     charter: str | None
     memory: str | None
-    #: The room's machine to read (`document/machine.py`), when it is there.
+    #: The task's machine to read (`document/machine.py`), when it is there.
     machine: dict | None = None
 
     def document(self) -> str:
@@ -429,7 +423,7 @@ class Surroundings:
     def conversation(self) -> list[str]:
         if not self.messages:
             return []
-        return [f"<话题里最近的对话>\n{self.messages}\n</话题里最近的对话>"]
+        return [f"<任务里最近的对话>\n{self.messages}\n</任务里最近的对话>"]
 
     def around(self, passage: str, label: str) -> list[str]:
         """``passage`` under ``label``, and the section of the document it is in."""
@@ -445,9 +439,9 @@ class Surroundings:
 async def surroundings(db: AsyncSession, asked: Asked, *, seat: str) -> Surroundings:
     doc = await Documents(db).get(asked.document_id)
     messages, machine = "", None
-    if asked.room_id is not None:
+    if asked.task_id is not None:
         recent = await BlockRepository(db).page_for_topic(
-            asked.room_id, limit=RECENT_MESSAGES, kinds=[BlockKind.message]
+            asked.task_id, limit=RECENT_MESSAGES, kinds=[BlockKind.message]
         )
         messages = "\n".join(
             f"<@{block.author}>：{block.content}" for block in recent.items
@@ -455,7 +449,7 @@ async def surroundings(db: AsyncSession, asked: Asked, *, seat: str) -> Surround
         machine = await machine_to_read(
             db,
             project_id=asked.project_id,
-            room_id=asked.room_id,
+            conversation_id=asked.task_id,
             seat=seat,
             ttl_s=TOKEN_TTL_S,
         )

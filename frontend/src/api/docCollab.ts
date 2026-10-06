@@ -1,10 +1,10 @@
-// A document's way in: which document a room's is, a ticket for the
+// A document's way in: which document a task's is, a ticket for the
 // collaboration service, and where the browser reaches it.
 
 import { request } from '../api'
 import { DOC_SCHEMA_PARAM, DOC_SCHEMA_VERSION } from '../lib/docSchema/version'
 
-/** The room's living document: made, empty, the first time anyone asks. */
+/** The task's living document: made, empty, the first time anyone asks. */
 export function getRoomDocument(topicId: string): Promise<{ id: string }> {
   return request<{ id: string }>(`/topics/${encodeURIComponent(topicId)}/document`)
 }

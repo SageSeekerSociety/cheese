@@ -30,14 +30,18 @@ The operation then waits in the `retained` state. Thirty days after the home was
 removed (`TRANSCRIPT_RETENTION` in `backend/app/domain/topic/retire.py`), the same
 timer deletes the archive and the operation becomes `complete`. The copy exists for
 debugging what an agent did after the fact; nothing reads it. Handing the work on
-does not need it: the room's chat, its living doc and its action timeline stay
-with the room.
+does not need it: the room's chat and its action timeline stay with the room.
 
 Unarchiving a room while its transcripts are retained restores nothing. The room
 gets a new resource generation and its agents start new sessions, as after any
 completed cleanup; the retained archive still expires on schedule. Archiving the
 room again retains the new generation's transcripts in a second archive beside
 the first.
+
+A room whose row is gone while its cleanup is unfinished, such as an archived
+room that became a closed task, is cleaned up all the same: the operation holds
+its project, generation and resources, and its machine homes stay recorded under
+the room's id, which is the task's conversation.
 
 ## Independent trigger
 

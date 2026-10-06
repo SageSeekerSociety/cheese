@@ -105,12 +105,10 @@ class AgentAskIn(BaseModel):
 
 
 def document_snapshot(doc: Document) -> dict:
-    """What a reader of a document gets: its text and which version that is.
-    ``topic_id`` is the room it belongs to, if any."""
+    """What a reader of a document gets: its text and which version that is."""
     return {
         "id": str(doc.id),
         "project_id": str(doc.project_id),
-        "topic_id": str(doc.room_id) if doc.room_id else None,
         "kind": doc.kind,
         "title": doc.title,
         "content": doc.content,
@@ -127,7 +125,6 @@ def document_row(doc: Document) -> dict:
     return {
         "id": str(doc.id),
         "project_id": str(doc.project_id),
-        "topic_id": str(doc.room_id) if doc.room_id else None,
         "kind": doc.kind,
         "title": doc.title,
         "doc_version": doc.version,
@@ -144,7 +141,6 @@ def node_out(node: DocumentNode, doc: Document) -> dict:
         "id": str(node.id),
         "kind": "doc_node",
         "project_id": str(doc.project_id),
-        "topic_id": str(doc.room_id) if doc.room_id else None,
         "struct_parent": str(doc.id),
         "struct_order": node.position,
         "node_type": node.node_type,
