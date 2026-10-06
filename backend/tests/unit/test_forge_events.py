@@ -742,3 +742,62 @@ def test_deployment_key_cannot_forge_shared_app_events(client, monkeypatch):
         ).status_code
         == 202
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("code", "level"), [(1012, "INFO"), (1011, "WARNING")])
+async def test_a_relay_restart_reconnects_without_a_warning(
+    monkeypatch, caplog, code, level
+):
+    """forge-events closes with 1012 on every deploy of itself; the backend
+    reconnects. Any other close is still a warning someone should read."""
+    from websockets.exceptions import ConnectionClosedError
+    from websockets.frames import Close
+
+    from app.domain.review import events, pr_poll
+
+    for name in ("open_draft_prs", "poll_open_prs", "forge_repository_changed"):
+        monkeypatch.setattr(pr_poll, name, AsyncMock())
+    attempts = []
+
+    class Socket:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if len(attempts) == 1:
+                close = Close(code, "closing")
+                raise ConnectionClosedError(close, close, True)
+            raise asyncio.CancelledError
+
+    class Connect:
+        async def __aenter__(self):
+            return Socket()
+
+        async def __aexit__(self, *args):
+            pass
+
+    def connect(url, **kwargs):
+        attempts.append(url)
+        return Connect()
+
+    async def no_subscriptions(*args):
+        await asyncio.Future()
+
+    monkeypatch.setattr(events, "connect", connect)
+    monkeypatch.setattr(events, "register_subscriptions", no_subscriptions)
+    monkeypatch.setattr(events, "RECONNECT_DELAY_S", 0)
+    monkeypatch.setattr(
+        events.settings, "forge_event_relay_url", "wss://relay.invalid/connect"
+    )
+    caplog.set_level("INFO", logger=events.logger.name)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(events.listen(object(), None), 2)
+    assert len(attempts) == 2
+    closes = [
+        r
+        for r in caplog.records
+        if r.name == events.logger.name
+        and r.getMessage() != "Forge event relay connected"
+    ]
+    assert [r.levelname for r in closes] == [level]

@@ -1,5 +1,5 @@
-"""A document comment that names the room's agent is answered in its thread by
-the thread's own session, not by a turn of the room.
+"""A comment on a task's document that names its agent is answered in its
+thread by the thread's own session, not by a turn of the task.
 
 - The agent's answer is its reply in the thread, under the agent's name.
 - One thread is one session: a later question in the thread goes to the same one.
@@ -149,13 +149,21 @@ async def _tool(
         )
 
 
-def _comments(client, room: str) -> str:
-    return f"/documents/{document_of(client, room)}/comments"
+def _place(client, task: str) -> tuple[str, str]:
+    """The task's project and the room it is in."""
+    data = client.get(
+        f"/topics/{task}/task", headers=session_auth_headers("alice")
+    ).json()["data"]
+    return data["project_id"], data["room_id"]
 
 
-def _comment(client, room: str, content: str, *, by: str = "alice") -> str:
+def _comments(client, task: str) -> str:
+    return f"/documents/{document_of(client, task)}/comments"
+
+
+def _comment(client, task: str, content: str, *, by: str = "alice") -> str:
     response = client.post(
-        _comments(client, room),
+        _comments(client, task),
         json={"content": content, "quote": "范围"},
         headers=session_auth_headers(by),
     )
@@ -163,19 +171,19 @@ def _comment(client, room: str, content: str, *, by: str = "alice") -> str:
     return response.json()["data"]["id"]
 
 
-def _thread(client, room: str, root: str) -> dict:
+def _thread(client, task: str, root: str) -> dict:
     return client.get(
-        f"{_comments(client, room)}/{root}/thread",
+        f"{_comments(client, task)}/{root}/thread",
         headers=session_auth_headers("alice"),
     ).json()["data"]
 
 
-def _reply(client, room: str, root: str, content: str, *, by: str = "alice"):
+def _reply(client, task: str, root: str, content: str, *, by: str = "alice"):
     response = client.post(
-        f"{_comments(client, room)}/{root}/replies",
+        f"{_comments(client, task)}/{root}/replies",
         json={
             "operation_id": str(uuid.uuid4()),
-            "expected_revision": _thread(client, room, root)["revision"],
+            "expected_revision": _thread(client, task, root)["revision"],
             "content": content,
         },
         headers=session_auth_headers(by),
@@ -183,13 +191,13 @@ def _reply(client, room: str, root: str, content: str, *, by: str = "alice"):
     assert response.status_code == 200, response.text
 
 
-def _answers(client, room: str, root: str, seat: str, count: int = 1) -> list[str]:
+def _answers(client, task: str, root: str, seat: str, count: int = 1) -> list[str]:
     """The agent's replies in the thread, once there are ``count`` of them."""
     deadline = time.monotonic() + 20
     while True:
         replies = [
             r["comment"]["content"]
-            for r in _thread(client, room, root)["replies"]
+            for r in _thread(client, task, root)["replies"]
             if r["comment"]["author"] == seat
         ]
         if len(replies) >= count or time.monotonic() > deadline:
@@ -198,11 +206,11 @@ def _answers(client, room: str, root: str, seat: str, count: int = 1) -> list[st
 
 
 def test_a_comment_naming_the_agent_is_answered_in_its_thread(client, sessions):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
 
-    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    root = _comment(client, task, f"<@{seat}> 这里的范围指什么？")
 
-    assert _answers(client, room, root, seat) == ["好的。"]
+    assert _answers(client, task, root, seat) == ["好的。"]
     [(session, question)] = sessions.asked
     assert root in session.home
     assert "这里的范围指什么？" in question
@@ -210,9 +218,9 @@ def test_a_comment_naming_the_agent_is_answered_in_its_thread(client, sessions):
 
 
 def test_the_thread_list_says_while_the_agent_is_answering(client, sessions):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
     seen: list = []
-    threads = f"{_comments(client, room)}/threads"
+    threads = f"{_comments(client, task)}/threads"
 
     async def look(credential, question):
         async with httpx.AsyncClient(
@@ -223,9 +231,9 @@ def test_the_thread_list_says_while_the_agent_is_answering(client, sessions):
         return "好的。", None
 
     sessions.script = look
-    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    root = _comment(client, task, f"<@{seat}> 这里的范围指什么？")
 
-    assert _answers(client, room, root, seat) == ["好的。"]
+    assert _answers(client, task, root, seat) == ["好的。"]
     assert seen == ["working"]
     listed = client.get(threads, headers=session_auth_headers("alice")).json()["data"][
         "data"
@@ -234,25 +242,25 @@ def test_the_thread_list_says_while_the_agent_is_answering(client, sessions):
 
 
 def test_a_comment_naming_nobody_or_a_person_asks_nothing(client, sessions):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
 
-    root = _comment(client, room, "<@bob> 回头自己再看")
-    _comment(client, room, "范围要再定一下")
+    root = _comment(client, task, "<@bob> 回头自己再看")
+    _comment(client, task, "范围要再定一下")
     time.sleep(1)
 
     assert sessions.asked == []
-    assert _thread(client, room, root)["replies"] == []
+    assert _thread(client, task, root)["replies"] == []
 
 
 def test_a_later_question_in_the_thread_goes_to_the_same_session(client, sessions):
-    room, seat = _document(client)
-    root = _comment(client, room, "这里要不要展开")
+    task, seat, _ = _document(client)
+    root = _comment(client, task, "这里要不要展开")
 
-    _reply(client, room, root, f"<@{seat}> 你来看看", by="bob")
+    _reply(client, task, root, f"<@{seat}> 你来看看", by="bob")
 
-    assert _answers(client, room, root, seat) == ["好的。"]
-    _reply(client, room, root, f"<@{seat}> 再短一点")
-    assert len(_answers(client, room, root, seat, count=2)) == 2
+    assert _answers(client, task, root, seat) == ["好的。"]
+    _reply(client, task, root, f"<@{seat}> 再短一点")
+    assert len(_answers(client, task, root, seat, count=2)) == 2
     first, second = sessions.asked
     assert first[0] == second[0] and root in first[0].home
     assert "这里要不要展开" in first[1] and "你来看看" in first[1]
@@ -261,7 +269,7 @@ def test_a_later_question_in_the_thread_goes_to_the_same_session(client, session
 def test_what_the_session_changes_is_recorded_as_asked_by_the_commenter(
     client, sessions
 ):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
 
     async def edit(credential, question):
         response = await _tool(
@@ -273,19 +281,19 @@ def test_what_the_session_changes_is_recorded_as_asked_by_the_commenter(
         return "改好了。", None
 
     sessions.script = edit
-    root = _comment(client, room, f"<@{seat}> 把范围改成边界", by="bob")
+    root = _comment(client, task, f"<@{seat}> 把范围改成边界", by="bob")
 
-    assert _answers(client, room, root, seat) == ["改好了。"]
-    assert "李老师写的第二段，讲边界。" in _doc(client, room)["content"]
+    assert _answers(client, task, root, seat) == ["改好了。"]
+    assert "李老师写的第二段，讲边界。" in _doc(client, task)["content"]
     latest = client.get(
-        f"/documents/{document_of(client, room)}/history",
+        f"/documents/{document_of(client, task)}/history",
         headers=session_auth_headers("alice"),
     ).json()["data"]["versions"][-1]
     assert latest["actor"] == seat and latest["requested_by"] == "bob"
 
 
 def test_the_tools_stop_working_once_the_answer_is_over(client, sessions, monkeypatch):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
     # An answer may take a second, and its credential lasts no longer.
     monkeypatch.setattr(doc_question, "ANSWER_S", 1.0)
     monkeypatch.setattr(doc_question, "CREDENTIAL_MARGIN_S", 0)
@@ -299,8 +307,8 @@ def test_the_tools_stop_working_once_the_answer_is_over(client, sessions, monkey
         return "看过了。", None
 
     sessions.script = keep
-    root = _comment(client, room, f"<@{seat}> 看一下")
-    assert _answers(client, room, root, seat) == ["看过了。"]
+    root = _comment(client, task, f"<@{seat}> 看一下")
+    assert _answers(client, task, root, seat) == ["看过了。"]
     time.sleep(1.5)
 
     edit = client.portal.call(
@@ -311,25 +319,25 @@ def test_the_tools_stop_working_once_the_answer_is_over(client, sessions, monkey
         held_env,
     )
     assert edit.status_code == 401
-    assert ALICE_PARAGRAPH in _doc(client, room)["content"]
+    assert ALICE_PARAGRAPH in _doc(client, task)["content"]
 
 
 def test_a_session_that_fails_still_answers_the_thread(client, sessions):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
 
     async def fail(credential, question):
         return "", "the model call failed"
 
     sessions.script = fail
-    root = _comment(client, room, f"<@{seat}> 这段对吗")
+    root = _comment(client, task, f"<@{seat}> 这段对吗")
 
-    [answer] = _answers(client, room, root, seat)
+    [answer] = _answers(client, task, root, seat)
     assert answer
 
 
 def test_a_search_reaches_only_the_rooms_the_asker_may_read(client, sessions):
-    room, seat = _document(client)
-    project = client.get(f"/topics/{room}").json()["data"]["project_id"]
+    task, seat, _ = _document(client)
+    project, room = _place(client, task)
     alone = client.get(
         f"/projects/{project}/private-chat",
         params={"user_handle": "alice"},
@@ -347,16 +355,16 @@ def test_a_search_reaches_only_the_rooms_the_asker_may_read(client, sessions):
         return "找到了。", None
 
     sessions.script = search
-    root = _comment(client, room, f"<@{seat}> 里程碑定了几号？", by="bob")
+    root = _comment(client, task, f"<@{seat}> 里程碑定了几号？", by="bob")
 
-    assert _answers(client, room, root, seat) == ["找到了。"]
+    assert _answers(client, task, root, seat) == ["找到了。"]
     assert "三号" in found["text"]
     assert "七号" not in found["text"]
 
 
 def test_the_team_memory_is_read_in_full(client, sessions):
-    room, seat = _document(client)
-    project = uuid.UUID(client.get(f"/topics/{room}").json()["data"]["project_id"])
+    task, seat, _ = _document(client)
+    project = uuid.UUID(_place(client, task)[0])
 
     async def remember():
         async with client.test_factory() as db:
@@ -385,64 +393,64 @@ def test_the_team_memory_is_read_in_full(client, sessions):
         return "记得。", None
 
     sessions.script = recall
-    root = _comment(client, room, f"<@{seat}> 什么时候能发版？", by="bob")
+    root = _comment(client, task, f"<@{seat}> 什么时候能发版？", by="bob")
 
-    assert _answers(client, room, root, seat) == ["记得。"]
+    assert _answers(client, task, root, seat) == ["记得。"]
     assert read["text"] == "部署走 CI，周五不发版。"
 
 
-def _stop(client, room: str, root: str, *, by: str = "alice"):
+def _stop(client, task: str, root: str, *, by: str = "alice"):
     return client.post(
-        f"{_comments(client, room)}/{root}/agent/stop",
+        f"{_comments(client, task)}/{root}/agent/stop",
         headers=session_auth_headers(by),
     )
 
 
 def test_a_stopped_answer_keeps_what_was_written_and_says_it_stopped(client, sessions):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
     sessions.held = "范围指第二节列出的三个模块。"
-    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    root = _comment(client, task, f"<@{seat}> 这里的范围指什么？")
     assert sessions.waiting.wait(20)
 
-    stopped = _stop(client, room, root)
+    stopped = _stop(client, task, root)
 
     assert stopped.status_code == 200, stopped.text
-    assert _answers(client, room, root, seat) == [
+    assert _answers(client, task, root, seat) == [
         "范围指第二节列出的三个模块。\n\n已停止"
     ]
 
 
 def test_a_question_waiting_for_a_full_host_can_be_stopped(client, sessions):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
     sessions.room.clear()
-    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    root = _comment(client, task, f"<@{seat}> 这里的范围指什么？")
     assert sessions.waiting.wait(20)
 
-    assert _stop(client, room, root).status_code == 200
+    assert _stop(client, task, root).status_code == 200
 
-    assert _answers(client, room, root, seat) == ["已停止"]
+    assert _answers(client, task, root, seat) == ["已停止"]
     assert sessions.asked == []
 
 
 def test_a_question_waits_for_a_full_host_and_is_then_answered(client, sessions):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
     sessions.room.clear()
-    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    root = _comment(client, task, f"<@{seat}> 这里的范围指什么？")
     assert sessions.waiting.wait(20)
     assert sessions.asked == []
 
     sessions.room.set()
 
-    assert _answers(client, room, root, seat) == ["好的。"]
+    assert _answers(client, task, root, seat) == ["好的。"]
 
 
 def test_only_someone_in_the_room_can_stop_its_answer(client, sessions):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
     sessions.held = "范围指"
-    root = _comment(client, room, f"<@{seat}> 这里的范围指什么？")
+    root = _comment(client, task, f"<@{seat}> 这里的范围指什么？")
     assert sessions.waiting.wait(20)
 
-    refused = _stop(client, room, root, by="mallory")
+    refused = _stop(client, task, root, by="mallory")
 
     assert refused.status_code in (403, 404)
     sessions.stopped.set()
@@ -451,8 +459,8 @@ def test_only_someone_in_the_room_can_stop_its_answer(client, sessions):
 def test_a_document_in_no_room_is_answered_by_the_projects_own_agent(client, sessions):
     from app.domain.living_doc.models import Document
 
-    room, seat = _document(client)
-    project = uuid.UUID(client.get(f"/topics/{room}").json()["data"]["project_id"])
+    task, seat, _ = _document(client)
+    project = uuid.UUID(_place(client, task)[0])
 
     async def a_project_document() -> str:
         async with client.test_factory() as db:
@@ -484,6 +492,6 @@ def test_a_document_in_no_room_is_answered_by_the_projects_own_agent(client, ses
     ]
     [(session, question)] = sessions.asked
     assert "项目自己的文档：讲范围。" in question
-    # It answers on the document, not in some room.
+    # It answers on the document, not in some task.
     assert sessions.envs[session]["CHEESE_DOCUMENT"] == doc
     assert "CHEESE_TOPIC" not in sessions.envs[session]

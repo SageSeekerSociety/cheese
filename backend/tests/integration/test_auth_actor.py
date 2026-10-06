@@ -9,6 +9,7 @@ import pytest
 from app.common.auth import verify_access_token
 from tests.integration.conftest import (
     join_project_team,
+    open_task,
     post_project,
     session_auth_headers,
     session_token,
@@ -38,9 +39,15 @@ def _project_topic(client, owner: str) -> tuple[str, str]:
     return p["id"], t["id"]
 
 
+def _task(client, tid: str, owner: str = "alice") -> str:
+    """A task in the room, owned by ``owner``: the conversation with a document."""
+    return open_task(client, tid, owner=owner, start=False)["id"]
+
+
 def _doc(client, tid: str, owner: str = "alice") -> str:
-    """The room's document, found out by a member."""
-    return document_of(client, tid, headers=session_auth_headers(owner))
+    """The document of a new task in the room, found out by its owner."""
+    task = _task(client, tid, owner)
+    return document_of(client, task, headers=session_auth_headers(owner))
 
 
 def test_login_returns_verifiable_token(client):
@@ -158,18 +165,14 @@ def test_project_member_allowed_even_if_not_in_roster(client):
     token = _login(client, "bob")
     join_project_team(client, pid, "bob")
 
-    r = client.put(
-        f"/documents/{_doc(client, tid)}",
-        json={"content": "# member", "expected_version": 0},
-        headers=_bearer(token),
-    )
-    assert r.status_code == 200
+    r = client.get(f"/topics/{tid}/blocks", headers=_bearer(token))
+    assert r.status_code == 200, r.text
 
 
 @pytest.mark.parametrize(
     "path",
     [
-        "/topics/{tid}/document",
+        "/topics/{task}/document",
         "/documents/{doc}",
         "/documents/{doc}/nodes",
         "/documents/{doc}/comments/threads",
@@ -185,9 +188,10 @@ def test_read_surfaces_deny_the_outsider(client, path):
     rendered a whole foreign project around one 403. Every read surface must
     answer 403 to the outsider, exactly like /blocks."""
     _, tid = _project_topic(client, owner="alice")
-    doc = _doc(client, tid)
+    task = _task(client, tid)
+    doc = document_of(client, task, headers=session_auth_headers("alice"))
     outsider = _login(client, "mallory")
-    r = client.get(path.format(tid=tid, doc=doc), headers=_bearer(outsider))
+    r = client.get(path.format(tid=tid, task=task, doc=doc), headers=_bearer(outsider))
     assert r.status_code == 403, f"{path}: {r.status_code} {r.text[:120]}"
 
 
@@ -213,9 +217,10 @@ def test_member_still_reads_everything(client):
     """The guard must not lock the door on the people who belong inside."""
     token = _login(client, "alice")
     pid, tid = _project_topic(client, owner="alice")
-    doc = _doc(client, tid)
+    task = _task(client, tid)
+    doc = document_of(client, task, headers=session_auth_headers("alice"))
     for path in (
-        f"/topics/{tid}/document",
+        f"/topics/{task}/document",
         f"/documents/{doc}",
         f"/documents/{doc}/comments/threads",
         f"/topics?project_id={pid}",

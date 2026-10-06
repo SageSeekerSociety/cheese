@@ -4,24 +4,29 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import ColumnElement, Uuid, and_, column, delete, select, table, update
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.living_doc.models import Document, DocumentNode
 
-# Which documents a task points at. A bare table: ``room_task`` depends on this
-# domain, and importing back would make the two a cycle.
+# Which documents a task or a project points at. Bare tables: ``room_task`` and
+# ``project`` depend on this domain, and importing back would make a cycle.
 _tasks = table("tasks", column("document_id", Uuid))
+_projects = table("projects", column("overview_document_id", Uuid))
 
 
 def project_own(project_id: uuid.UUID) -> ColumnElement[bool]:
-    """The project's own documents: in no room, and no task's living document.
-    The library lists and searches these."""
+    """The project's own documents: in no room, no task's living document and
+    not the project's overview. The library lists and searches these."""
     return and_(
         Document.project_id == project_id,
         Document.room_id.is_(None),
         Document.id.not_in(
             select(_tasks.c.document_id).where(_tasks.c.document_id.is_not(None))
+        ),
+        Document.id.not_in(
+            select(_projects.c.overview_document_id).where(
+                _projects.c.overview_document_id.is_not(None)
+            )
         ),
     )
 
@@ -33,14 +38,9 @@ class DocumentRepository:
     async def get(self, document_id: uuid.UUID) -> Document | None:
         return await self._session.get(Document, document_id)
 
-    async def of_room(self, room_id: uuid.UUID) -> Document | None:
-        """The room's living document, if it has one yet."""
-        return await self._session.scalar(
-            select(Document).where(Document.room_id == room_id)
-        )
-
     async def of_rooms(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, Document]:
-        """Several rooms' living documents at once, keyed by room id."""
+        """The documents still kept by old rooms, keyed by room id: an archived
+        room waiting to become a task keeps the one it had."""
         if not room_ids:
             return {}
         rows = await self._session.scalars(
@@ -66,20 +66,6 @@ class DocumentRepository:
         doc = Document(project_id=project_id, title=title, author=author)
         self._session.add(doc)
         await self._session.flush()
-        return doc
-
-    async def ensure_for_room(
-        self, *, room_id: uuid.UUID, project_id: uuid.UUID
-    ) -> Document:
-        """The room's living document, created empty (version 0) the first
-        time anyone needs to address it."""
-        await self._session.execute(
-            insert(Document)
-            .values(id=uuid.uuid4(), project_id=project_id, room_id=room_id)
-            .on_conflict_do_nothing(index_elements=[Document.room_id])
-        )
-        doc = await self.of_room(room_id)
-        assert doc is not None
         return doc
 
     async def set_content(

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 改动 tab: 这个话题干出来的东西，一个面看完。
+// 改动 tab: 这件任务干出来的东西，一个面看完。
 //
 // 它以前是两个半成品并排放着，中间一个分段开关：Git 那半是一坨没有语法着色、不能
 // 按文件跳的裸 diff，文件那半是一棵不知道哪些文件被改过的树。想验收的人得先在
@@ -22,7 +22,6 @@ import type { MenuAction } from '../common/menuAction'
 import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import { phraseLabel } from '../../lib/board'
 import { buildFileRows, fmtBytes } from '../../lib/changesTree'
 import CodeEditor from '../CodeEditor.vue'
 import MobileActionSheet from '../common/MobileActionSheet.vue'
@@ -35,27 +34,17 @@ import ChangesFileTree from './ChangesFileTree.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { taskTitle } from '@/lib/topicState'
 
 const props = defineProps<{
   topicId: string | null
   readOnly: boolean
   active?: boolean
-  /** 房间改动那一页上摆着的那几件活。 */
-  overview: boolean
-  taskOptions: RoomTask[]
   taskLoadError: string | null
-  tasksLoaded: boolean
   selectedTask: string | null
   currentTask: RoomTask | undefined
-  sourceTitle: string
+  /** 这件任务的状态；结束了的任务还要说一句只读。 */
   sourceStatus: string
   sourceUnavailable: boolean
-  /** 地址里那枚 chip 指着的文件：挑来源时把它写在提示里。 */
-  requestedPath: string | null
-  overviewDiffs: Record<string, FileDiff[]>
-  overviewErrors: Record<string, string>
-  expandedTasks: Set<string>
   /** 树的范围：只看这一支改过的，还是整个工作区。 */
   showAll: boolean
   fileSource: FileSource
@@ -102,12 +91,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'open-task', taskId: string | null, path?: string): void
-  (e: 'open-overview'): void
-  (e: 'open-file-in-task', path: string, taskId: string): void
   (e: 'select-file', path: string): void
   (e: 'select-version', source: FileSource): void
-  (e: 'toggle-task-files', taskId: string): void
   (e: 'toggle-dir', path: string): void
   (e: 'refresh'): void
   (e: 'download'): void
@@ -124,8 +109,6 @@ const { mdAndUp } = useDisplay()
 // 手机上 ⋯ 是底部面板（同一组选项，桌面上仍是那个分了组的下拉菜单）。范围、版本
 // 各是二选一，选中的那一项画成实心的圆。
 const moreOpen = ref(false)
-// 来源那个下拉菜单的开关：纯本地状态，和取数无关（上面那枚按钮换了来源，事件发上去）。
-const sourceMenu = ref(false)
 const moreActions = computed<MenuAction[]>(() => {
   const pick = (on: boolean) => (on ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank')
   const item = (key: string, label: string, icon: string, onSelect: () => void): MenuAction => ({
@@ -140,7 +123,7 @@ const moreActions = computed<MenuAction[]>(() => {
     ),
     item('scope-all', t('work.room.changes.scopeAll'), pick(props.showAll), () => emit('scope-changed', true)),
   ]
-  if (props.selectedTask && props.currentTask?.status === 'open') {
+  if (props.currentTask?.status === 'open') {
     const live = props.fileSource === 'live'
     list.push(
       item('source-live', t('work.room.changes.liveFile'), pick(live), () => emit('select-version', 'live')),
@@ -180,53 +163,10 @@ const fileRows = computed(() =>
 
 <template>
   <div class="panel-changes">
-    <!-- 看某一个来源时，这一条就是这一格全部的横条：左边是你在看什么（来源 → 文件），
-         右边是对这份文件做的事。偶尔才换的（范围、版本、下载、刷新）在 ⋯ 里。
-         总览不要这一条：页签已经写着「改动」，再写一遍「房间改动」只是重复。 -->
-    <div v-if="!props.overview" class="changes-bar" :class="{ 'changes-bar--phone': !mdAndUp }">
-      <div class="source-heading">
-        <BaseButton
-          kind="ghost"
-          icon="mdi-arrow-left"
-          size="sm"
-          :class="{ 'tap-target': !mdAndUp }"
-          :title="t('work.room.changes.roomChanges')"
-          :aria-label="t('work.room.changes.roomChanges')"
-          @click="emit('open-overview')"
-        />
-        <v-menu v-model="sourceMenu">
-          <template #activator="{ props: menuProps }">
-            <button
-              v-bind="menuProps"
-              type="button"
-              class="source-pick"
-              :title="t('work.room.changes.switchSource')"
-              :aria-label="t('work.room.changes.switchSourceTo', { source: props.sourceTitle })"
-            >
-              <span class="source-pick__name" :title="props.sourceTitle">{{ props.sourceTitle }}</span>
-              <v-icon size="16">mdi-chevron-down</v-icon>
-            </button>
-          </template>
-          <v-list density="compact" :aria-label="t('work.room.changes.fileSource')">
-            <v-list-item
-              v-for="task in props.taskOptions"
-              :key="task.id"
-              :active="props.selectedTask === task.id"
-              :title="taskTitle(task)"
-              :subtitle="phraseLabel(task.presentation.phrase)"
-              @click="emit('open-task', task.id)"
-            />
-            <v-divider />
-            <v-list-item
-              :title="t('work.room.changes.projectCode')"
-              :subtitle="t('work.room.changes.readOnly')"
-              :active="props.selectedTask === null"
-              @click="emit('open-task', null)"
-            />
-          </v-list>
-        </v-menu>
-        <span v-if="mdAndUp" class="source-status">{{ props.sourceStatus }}</span>
-      </div>
+    <!-- 这一条就是这一格全部的横条：左边是这件任务的状态和打开的文件，右边是对这份
+         文件做的事。偶尔才换的（范围、版本、下载、刷新）在 ⋯ 里。 -->
+    <div class="changes-bar" :class="{ 'changes-bar--phone': !mdAndUp }">
+      <span v-if="mdAndUp && props.sourceStatus" class="source-status">{{ props.sourceStatus }}</span>
       <template v-if="props.fileToolReady">
         <span v-if="mdAndUp" class="changes-bar__sep" aria-hidden="true" />
         <BaseButton
@@ -325,7 +265,7 @@ const fileRows = computed(() =>
             :active="props.showAll"
             @click="emit('scope-changed', true)"
           />
-          <template v-if="props.selectedTask && props.currentTask?.status === 'open'">
+          <template v-if="props.currentTask?.status === 'open'">
             <v-list-subheader>{{ t('work.room.changes.version') }}</v-list-subheader>
             <v-list-item
               :title="t('work.room.changes.liveFile')"
@@ -352,82 +292,6 @@ const fileRows = computed(() =>
       </v-menu>
     </div>
     <v-alert v-if="props.taskLoadError" type="error" density="compact" class="ma-4">{{ props.taskLoadError }}</v-alert>
-    <div v-if="props.overview" class="room-changes">
-      <p v-if="props.requestedPath" class="source-note">
-        {{ t('work.room.changes.pickTaskToView', { path: props.requestedPath }) }}
-      </p>
-      <p v-if="!props.tasksLoaded && !props.taskLoadError" class="source-note">{{ t('work.room.changes.loading') }}</p>
-      <p v-else-if="props.tasksLoaded && !props.taskOptions.length" class="source-note">
-        {{ t('work.room.changes.noTaskChanges') }}
-      </p>
-      <article v-for="task in props.taskOptions" :key="task.id" class="task-change-group" :aria-label="taskTitle(task)">
-        <!-- 进任务和铺开文件是两件事，所以是两个按钮：点整行进这条任务，点最右边
-             那个箭头才在当前页展开它自己的改动清单。 -->
-        <div class="task-change-head">
-          <button
-            type="button"
-            class="task-change-heading"
-            @click="emit('open-task', task.id, props.requestedPath ?? undefined)"
-          >
-            <span class="t-title">{{ taskTitle(task) }}</span>
-            <span class="source-status">{{ phraseLabel(task.presentation.phrase) }}</span>
-            <span v-if="props.overviewDiffs[task.id]" class="task-file-count">{{
-              t('work.room.changes.fileCount', { count: props.overviewDiffs[task.id].length })
-            }}</span>
-          </button>
-          <button
-            type="button"
-            class="task-change-toggle"
-            :aria-expanded="props.expandedTasks.has(task.id)"
-            :aria-controls="`task-files-${task.id}`"
-            :title="
-              props.expandedTasks.has(task.id)
-                ? t('work.room.changes.collapseFiles')
-                : t('work.room.changes.expandFiles')
-            "
-            :aria-label="
-              props.expandedTasks.has(task.id)
-                ? t('work.room.changes.collapseFilesOf', { title: taskTitle(task) })
-                : t('work.room.changes.expandFilesOf', { title: taskTitle(task) })
-            "
-            @click="emit('toggle-task-files', task.id)"
-          >
-            <v-icon size="18">{{ props.expandedTasks.has(task.id) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
-          </button>
-        </div>
-        <!-- 改动没加载出来是这一行自己的错，折叠着也得看得见——否则这一行静默地少了
-             一句话，读者只会以为它没有改动。 -->
-        <p v-if="props.overviewErrors[task.id]" class="source-note" role="alert">
-          {{ props.overviewErrors[task.id] }}
-        </p>
-        <div v-if="props.expandedTasks.has(task.id)" :id="`task-files-${task.id}`">
-          <p v-if="!props.overviewDiffs[task.id] && !props.overviewErrors[task.id]" class="source-note">
-            {{ t('work.room.changes.loading') }}
-          </p>
-          <p v-else-if="props.overviewDiffs[task.id]?.length === 0" class="source-note">
-            {{ t('work.room.changes.noChanges') }}
-          </p>
-          <button
-            v-for="file in props.overviewDiffs[task.id] ?? []"
-            :key="file.path"
-            type="button"
-            class="task-change-file"
-            @click="emit('open-file-in-task', file.path, task.id)"
-          >
-            <v-icon size="18">mdi-file-document-outline</v-icon>
-            <span class="task-file-path">{{ file.path }}</span>
-            <span v-if="file.added" class="file-mark file-mark--add">+{{ file.added }}</span>
-            <span v-if="file.removed" class="file-mark file-mark--del">−{{ file.removed }}</span>
-            <v-icon size="18">mdi-chevron-right</v-icon>
-          </button>
-        </div>
-      </article>
-      <button type="button" class="task-change-heading project-code" @click="emit('open-task', null)">
-        <span class="t-title">{{ t('work.room.changes.projectCode') }}</span>
-        <span class="source-status">{{ t('work.room.changes.readOnly') }}</span>
-        <v-icon size="18" class="ms-auto">mdi-chevron-right</v-icon>
-      </button>
-    </div>
     <v-alert v-else-if="props.sourceUnavailable" type="warning" density="compact" class="ma-4">{{
       t('work.room.changes.sourceUnavailable')
     }}</v-alert>
@@ -451,8 +315,7 @@ const fileRows = computed(() =>
       </v-alert>
 
       <div v-else class="file-tool">
-        <!-- chip 指来的文件不在这个来源里。列表照常显示：读者本来就可以换一个
-             来源，或者在树上挑别的文件。 -->
+        <!-- chip 指来的文件不在这件任务里。列表照常显示：读者可以在树上挑别的文件。 -->
         <v-alert
           v-if="props.missing"
           type="info"
@@ -461,11 +324,7 @@ const fileRows = computed(() =>
           class="ma-2"
           data-testid="missing-file"
         >
-          {{
-            t(props.selectedTask ? 'work.room.changes.missingInTask' : 'work.room.changes.missingInProject', {
-              path: props.missing,
-            })
-          }}
+          {{ t('work.room.changes.missingInTask', { path: props.missing }) }}
         </v-alert>
         <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
            human choose — a silent winner is how edits vanished. -->
@@ -589,44 +448,6 @@ const fileRows = computed(() =>
 </template>
 
 <style scoped>
-.source-heading,
-.task-change-heading,
-.task-change-file {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.source-heading {
-  flex: 0 1 auto;
-  gap: 4px;
-}
-/* 来源名本身就是切换来源的按钮：名字长的任务在窄栏里截断，不把右边的保存挤走。 */
-.source-pick {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  max-width: 220px;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.source-pick:hover {
-  background: var(--fill);
-}
-.source-pick__name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .source-status {
   flex: 0 0 auto;
   white-space: nowrap;
@@ -645,72 +466,6 @@ const fileRows = computed(() =>
 }
 .source-drafts {
   border-top: 1px solid var(--line);
-}
-.room-changes {
-  overflow-y: auto;
-  padding: 16px;
-}
-.task-change-group {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  margin-bottom: 16px;
-  overflow: hidden;
-}
-.task-change-heading,
-.task-change-file {
-  width: 100%;
-  text-align: left;
-  padding: 12px 16px;
-  color: var(--text);
-  font-size: 13px;
-}
-.task-change-head {
-  display: flex;
-  align-items: stretch;
-  min-width: 0;
-}
-.task-change-heading {
-  flex: 1 1 auto;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-/* 箭头是这一行上唯一「就地展开」的控件，所以它得看得出是自己的一个按钮：和标题
-   之间一条竖线，悬停也只罩住自己那一格。 */
-.task-change-toggle {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  padding: 0 10px;
-  border: 0;
-  border-left: 1px solid var(--line);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.task-change-toggle:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-.task-change-file {
-  border-top: 1px solid var(--line);
-}
-/* 项目当前代码：和任务并排的另一个来源，排在最后。 */
-.project-code {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-.task-change-heading:hover,
-.task-change-file:hover {
-  background: var(--fill);
-}
-.task-file-count {
-  margin-left: auto;
-  color: var(--muted);
-}
-.task-file-path {
-  flex: 1;
-  overflow-wrap: anywhere;
-  min-width: 0;
 }
 
 .panel-changes {
@@ -885,12 +640,6 @@ const fileRows = computed(() =>
 /* 手机上 360px 宽也要放下：← 来源 ☰ 路径 差异|全文 ⋯。让位的只有路径，其余不缩。 */
 .changes-bar--phone {
   gap: 4px;
-}
-.changes-bar--phone .source-heading {
-  flex: none;
-}
-.changes-bar--phone .source-pick {
-  max-width: 26vw;
 }
 .changes-bar--phone .changes-bar__path {
   flex: 1 1 0;

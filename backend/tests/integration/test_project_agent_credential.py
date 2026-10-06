@@ -22,7 +22,6 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
-from tests.support.living_doc import document_of
 
 # --- helpers ------------------------------------------------------------------
 
@@ -92,36 +91,20 @@ def _cred(token: str) -> dict[str, str]:
     return {"X-Cheese-Token": token}
 
 
-def _write_doc(client, topic_id: str, token: str, content: str = "# 芝士写的"):
-    """Set the living doc, based on whatever version it is at right now — these
-    tests are about who the write is attributed to, not about the doc moving
-    under anyone."""
-    path = f"/documents/{document_of(client, topic_id)}"
-    current = client.get(path).json()["data"]
-    return client.put(
-        path,
-        json={
-            "content": content,
-            "expected_version": current["doc_version"] if current else 0,
-        },
-        headers=_cred(token),
+def _write(client, topic_id: str, token: str, content: str = "芝士写的"):
+    """Write in the topic: a weekly note, which the response says the author
+    of — these tests are about who a write is attributed to and where it is
+    let through, not about what is written."""
+    return client.post(
+        f"/topics/{topic_id}/weekly", json={"body": content}, headers=_cred(token)
     )
 
 
-def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-
-
 def _acts_as_cheese(client, project_id: str, token: str) -> bool:
-    """Whether ``token`` still authenticates, probed by the author it writes.
-
-    Always into a FRESH topic: editing a doc that already exists only replaces
-    its content (``BlockRepository.update_content``), so the block keeps whoever
-    authored it first — a probe on a reused topic would report the credential
-    working long after it stopped.
-    """
+    """Whether ``token`` still authenticates, probed by the author it writes,
+    always into a fresh topic."""
     tid = _topic(client, project_id, title="probe", by="alice")
-    response = _write_doc(client, tid, token)
+    response = _write(client, tid, token)
     return response.status_code == 200 and response.json()["data"][
         "author"
     ] == _project_agent(client, project_id)
@@ -192,7 +175,7 @@ def test_one_credential_works_in_every_topic_of_its_project(client):
     second = _topic(client, pid, title="T2", by="alice")
 
     for tid in (first, second):
-        r = _write_doc(client, tid, token, content=f"# doc {tid}")
+        r = _write(client, tid, token, content=f"doc {tid}")
         assert r.status_code == 200, r.text
         assert r.json()["data"]["author"] == _project_agent(client, pid)
 
@@ -208,7 +191,7 @@ def test_a_credential_is_refused_in_another_project(client):
     token = _issued_token(client, mine)
     their_topic = _topic(client, theirs, title="T", by="bob")
 
-    r = _write_doc(client, their_topic, token)
+    r = _write(client, their_topic, token)
     assert r.status_code == 403, r.text
 
 
@@ -218,11 +201,7 @@ def test_a_forged_credential_is_not_a_credential(client):
     tid = _topic(client, pid, title="T", by="alice")
     forged = f"cxpa_{uuid.uuid4().hex}.{uuid.uuid4().hex}"
 
-    assert _write_doc(client, tid, forged).status_code == 401
-    gated = client.post(
-        f"/topics/{tid}/weekly", json={"body": "x"}, headers=_cred(forged)
-    )
-    assert gated.status_code == 401
+    assert _write(client, tid, forged).status_code == 401
 
 
 # --- 失效: 撤销 / 过期 -----------------------------------------------------------
@@ -370,28 +349,26 @@ def test_it_is_a_member_not_a_lead(client):
 
 
 def test_what_it_writes_is_filed_under_the_fixed_project_agent(client):
-    """Writes use the credential-bound agent; edit notices retain its AI identity."""
+    """Writes use the credential-bound agent: a document of the project's, and
+    a note in a topic."""
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
     tid = _topic(client, pid, title="T", by="alice")
     room_agent = _project_agent(client, pid)
 
-    doc = _write_doc(client, tid, token)
-    assert doc.status_code == 200, doc.text
-    assert doc.json()["data"]["author"] == room_agent
-
-    events = [b for b in _blocks(client, tid) if b["kind"] == "event"]
-    edit_events = [b for b in events if "编辑了文档" in b["content"]]
-    assert edit_events, _blocks(client, tid)
-    assert edit_events[-1]["author"] == room_agent
-    assert edit_events[-1]["content"] == "芝士 编辑了文档"
-    assert edit_events[-1]["author_type"] == "platform"
-
-    weekly = client.post(
-        f"/topics/{tid}/weekly",
-        json={"body": "记一笔"},
+    doc = client.post(
+        f"/projects/{pid}/documents",
+        json={"title": "芝士写的", "content": "# 芝士写的"},
         headers=_cred(token),
     )
+    assert doc.status_code == 200, doc.text
+    history = client.get(
+        f"/documents/{doc.json()['data']['id']}/history",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["versions"]
+    assert [row["actor"] for row in history] == [room_agent]
+
+    weekly = _write(client, tid, token, content="记一笔")
     assert weekly.json()["data"]["author"] == room_agent
 
 
@@ -406,8 +383,8 @@ def test_a_per_turn_scoped_token_is_still_bound_to_its_own_topic(client):
     other = _topic(client, pid, title="T2", by="alice")
     per_turn = mint_scoped_token(project_id=pid, topic_id=mine)
 
-    assert _write_doc(client, mine, per_turn).status_code == 200
-    assert _write_doc(client, other, per_turn).status_code == 403
+    assert _write(client, mine, per_turn).status_code == 200
+    assert _write(client, other, per_turn).status_code == 403
 
 
 def test_a_project_wide_per_turn_token_still_does_not_author_in_a_topic(client):

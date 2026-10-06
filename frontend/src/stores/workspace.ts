@@ -43,6 +43,8 @@ const LAYOUT_KEY = 'cheesex.layout'
 
 interface StoredLayout {
   chatPct?: number
+  /** 右侧面板开着还是收着，这个人自己选过一次之后就照它来；没选过按宽度定。 */
+  panelOpen?: boolean
   lastProjectId?: string
   /** 每个项目上次打开的话题 id：回到那个项目时，rail 那一格直接落回这个房间。 */
   lastTopicByProject?: Record<string, string>
@@ -173,6 +175,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   const stored = loadLayout()
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
+  const panelPref = ref<boolean | null>(typeof stored.panelOpen === 'boolean' ? stored.panelOpen : null)
   // 每个项目上次打开的话题。rail 的项目格子用它落回那个房间，而不是每次都落在
   // 项目首页（每天都走的主路径不该多加一跳）。
   const lastTopicByProject = ref<Record<string, string>>(validTopicMap(stored.lastTopicByProject))
@@ -181,6 +184,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       LAYOUT_KEY,
       JSON.stringify({
         chatPct: chatPct.value,
+        panelOpen: panelPref.value ?? undefined,
         lastProjectId: projectId.value ?? undefined,
         lastTopicByProject: lastTopicByProject.value,
       })
@@ -188,6 +192,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
   function setChatPct(pct: number) {
     chatPct.value = clampNum(pct, 25, 80)
+    persistLayout()
+  }
+  function setPanelPref(open: boolean) {
+    panelPref.value = open
     persistLayout()
   }
 
@@ -760,11 +768,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     activeTopicId,
     activeDmPeer,
     chatPct,
+    panelPref,
     error,
     topicsError,
     rootTopic,
     projectName,
     setChatPct,
+    setPanelPref,
     reportError,
     refreshProjects,
     refreshMembers,

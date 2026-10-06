@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import { useCachedResource } from '@/composables/useCachedResource'
 
 import { deleteMemory, getProject, getProjectWeeklies, getTopic, listMemory } from '../api'
+import { getProjectOverview } from '../api/projectDocuments'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
@@ -53,8 +54,9 @@ function openKind(next: unknown) {
 
 interface DocsPayload {
   rootTopicId: string | null
-  /** 章程就是这个房间的文档，编辑器要的是整个房间。 */
+  /** 章程就是项目总览那一份文档；编辑器还要知道它在哪个项目、话题怎么读名字。 */
   rootTopic: Topic | null
+  overviewId: string | null
   weeklies: Block[]
   memoryEntries: MemoryEntryOut[]
 }
@@ -67,11 +69,13 @@ const { data, loading, error } = useCachedResource(
     const payload: DocsPayload = {
       rootTopicId: project.root_topic_id ?? null,
       rootTopic: null,
+      overviewId: null,
       weeklies: [],
       memoryEntries: [],
     }
-    if (kind.value === 'charter' && project.root_topic_id) {
-      payload.rootTopic = await getTopic(project.root_topic_id)
+    if (kind.value === 'charter') {
+      payload.overviewId = (await getProjectOverview(props.projectId)).id
+      if (project.root_topic_id) payload.rootTopic = await getTopic(project.root_topic_id)
     } else if (kind.value === 'memory') {
       payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
     } else if (kind.value === 'weeklies') {
@@ -89,11 +93,14 @@ const errorMessage = computed<string | null>(() =>
   error.value ? error.value.message || t('project.docs.loadFailed') : null
 )
 
-// ---- 章程: the root topic's living doc (改了就等于给芝士下指令). It is that
-// room's own doc panel, drawn on a page: the same live document, toolbar,
+// ---- 章程: the project's overview (改了就等于给每个芝士下指令). The same doc
+// panel the 综合 overview draws, on a page: one live document, toolbar,
 // selection bubble, `/` menu and comments, so the two never drift apart. ----
 const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
 const rootTopic = computed<Topic | null>(() => data.value?.rootTopic ?? null)
+const overviewDoc = computed(() =>
+  data.value?.overviewId ? { id: data.value.overviewId, projectId: props.projectId, title: '' } : null
+)
 
 function fmtDate(d: string | null): string {
   if (!d) return ''
@@ -235,11 +242,12 @@ useCommands(() => {
       <!-- ===== 章程: the project room's own doc panel, on a page ===== -->
       <template v-else-if="kind === 'charter'">
         <PanelDocHost
-          v-if="rootTopic"
+          v-if="overviewDoc"
           bare
           bar-to="#charter-doc-bar"
           class="charter-doc"
           :topic="rootTopic"
+          :document="overviewDoc"
           :activity-tick="0"
           :agent-name="workspace?.agentName"
           :agent-handle="workspace?.agentHandle"

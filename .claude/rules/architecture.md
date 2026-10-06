@@ -98,7 +98,7 @@ Four principles, in the order they matter:
    decide which side of that line a file is on.
 
 The rule is ratcheted because the tree started dirty — 127 violations in 82
-components when it landed, 66 in 54 today (`frontend/import-boundary-baseline.json`);
+components when it landed, 59 in 47 today (`frontend/import-boundary-baseline.json`);
 a gate that reddened the whole tree on day one would be switched off within a week. It is a separate ESLint config
 (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs` for the
 same reason. Only *new* violations fail; `pnpm run lint:boundary:update` writes
@@ -107,8 +107,10 @@ seeing the 44 relative-path imports the glob-based one could not, not new debt.
 `lint:boundary:update` only ever lowers a frozen count, so a rule change that
 *adds* violations rebuilds the baseline from zero — see the commit that fixed
 it. The 95 → 74 drop is the API-layer half ceasing to count type-only imports:
-a type binding is erased before anything runs, so it cannot fetch. The 74 → 66
-drop is eight components reading the route through `useNavigation` — the
+a type binding is erased before anything runs, so it cannot fetch. The 74 → 59
+drop is fifteen components leaving the baseline: eight taking their route
+through `useNavigation`, seven panel components that came out of making the
+work panels standalone. The
 vue-router half keeps counting type-only imports on purpose, because there the
 alternative (`NavTarget` from `lib/navTarget.ts`) is what the rule points you at.)
 

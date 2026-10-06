@@ -490,7 +490,7 @@
       "mention": "有人 {'@'} 我",
       "reply": "我的消息被回复",
       "reaction": "有人回应了我的消息",
-      "waitsOnMe": "等你处理的验收卡 / 决策请求",
+      "waitsOnMe": "等你审阅的改动 / 决策请求",
       "deviceInUse": "我的设备有人在用",
       "invitation": "团队 / 项目邀请",
       "announcement": "空间公告",

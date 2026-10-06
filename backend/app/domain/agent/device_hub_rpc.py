@@ -21,6 +21,16 @@ from app.domain.agent.device_hub import (
 
 logger = logging.getLogger(__name__)
 
+# Set by the owner on a call it refused because it is being released
+# (``device_connection_app.DRAINING_HEADER``); the owner process is not
+# imported here.
+OWNER_DRAINING_HEADER = "X-Device-Connection-Draining"
+
+
+class OwnerDraining(Exception):
+    """The owner refused a call before dispatching it: it is being released."""
+
+
 # How long a call into the owner waits out an owner that is not listening.
 # Releasing the owner force-recreates its container
 # (deploy/release-device-connection.sh), and for those seconds every call into it
@@ -28,14 +38,16 @@ logger = logging.getLogger(__name__)
 # 500s on the page (20:01:24 to 20:01:38Z, the owner back at 20:01:34Z). Waiting
 # is the honest answer — a refused connect means the request never left this
 # process, so nothing can have happened twice, and the window closes by itself:
-# the release gives the new container these same 60 seconds to become healthy and
-# fails if it does not.
+# the release gives the old owner up to 45 seconds to finish the calls in flight
+# and the new container 60 seconds to become healthy, and fails if either runs
+# out. A refusal that carries the owner's draining header is the same case:
+# the old owner turned the call away before dispatching it.
 #
 # ONLY calls wait. The snapshot read does not, because `start()` awaits one in
 # the lifespan: a backend booting while the owner is down would hold its own
 # startup here, fail the deploy's health check, and be rolled back over a
 # condition that resolves on the next poll a second later.
-OWNER_CONNECT_RETRY_WINDOW_S = 60
+OWNER_CONNECT_RETRY_WINDOW_S = 120
 OWNER_CONNECT_RETRY_MAX_DELAY_S = 5
 
 # How long this side waits for the owner to answer a call that declares no
@@ -244,6 +256,8 @@ class RemoteDeviceHub:
             failure = _device_call_failure(response)
             if failure is not None:
                 raise failure
+        if response.status_code == 503 and response.headers.get(OWNER_DRAINING_HEADER):
+            raise OwnerDraining(response.text)
         if response.status_code == 504:
             # Preserve the in-process hub's timeout type across the owner boundary.
             raise TimeoutError(f"Device connection owner timed out: {response.text}")
@@ -257,7 +271,8 @@ class RemoteDeviceHub:
         reset, a lost response — can follow work the owner already did, and
         repeating that is not ours to decide. A connect that times out is the
         same situation as a refused one and is retried for the same reason:
-        nothing was sent, so nothing can have happened twice.
+        nothing was sent, so nothing can have happened twice. So is a refusal
+        the owner marks as draining: it turned the call away undispatched.
 
         The wait for the answer is the deadline the call declares to the owner
         plus `OWNER_CALL_TIMEOUT_SLACK_S`, so the owner's own timer fires first
@@ -297,7 +312,7 @@ class RemoteDeviceHub:
                     json=payload,
                     timeout=answer_timeout,
                 )
-            except (httpx.ConnectError, httpx.ConnectTimeout):
+            except (httpx.ConnectError, httpx.ConnectTimeout, OwnerDraining):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise

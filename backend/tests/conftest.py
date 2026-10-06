@@ -531,6 +531,9 @@ class StubChannel(SeatChannel):
         """Retract a declaration: the conversation is here again."""
         self.gone.discard((topic_id, agent_handle, session_id))
 
+    async def let_go(self, sessions, *, placed_before) -> None:
+        """What a real channel records on the placement; nothing here."""
+
     async def placed(self, harness: str, device_id: str | None = None) -> list[Placed]:
         """Every seat whose runner is here — what a restarted backend reads
         again. A conversation the test declared gone (``report_gone``) is placed

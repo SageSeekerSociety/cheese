@@ -62,15 +62,15 @@ if [ "${DEPLOY_APP_IMAGE_SOURCE:-registry}" = registry ]; then
 else
   docker image inspect "$DEVICE_CONNECTION_IMAGE" >/dev/null
 fi
-drain_attempts=240
+drain_attempts=180
 drain_interval=0.25
-# An idle owner is what the drain waits for, and on a platform anybody is using
-# it may not arrive: every `call_executor` is held open under a shield until the
-# machine answers. (The reads a runner holds until it has news do not count; one
-# cut short is read again.) A fix
-# that lives in this process then cannot ship at all; #1114 sat merged and
-# unreleased while the alerts it fixes kept arriving. So the wait can be waived
-# deliberately, and only deliberately: the default is unchanged.
+# The first drain request stops the owner taking new calls; each one it turns
+# away carries the draining header and its caller sends it again once the new
+# container answers (`device_hub_rpc`, `executor_transport`). The drain then
+# waits up to 45 s for the calls already in flight to finish — the reads a
+# runner holds until it has news do not count; one cut short is read again.
+# A call still running after that (a long command) fails the release, which
+# resumes the owner, unless interrupting was asked for.
 #
 # What interrupting costs is the in-flight executor call, and no more. Device
 # links dial out and reconnect on their own, the tmux sessions on the device
@@ -82,8 +82,11 @@ for attempt in $(seq 1 "$drain_attempts"); do
     echo "device connection owner drain request failed" >&2
     exit 1
   }
+  # The owner stops taking new calls on the first drain request, busy or not;
+  # from here on an exit before the recreate has to resume it.
+  case "$status" in 200|409) drained=true ;; esac
   case "$status" in
-    200) drained=true; break ;;
+    200) break ;;
     409)
       if [ "$interrupt" = 1 ]; then
         echo "device connection owner is busy; interrupting its in-flight calls as asked" >&2

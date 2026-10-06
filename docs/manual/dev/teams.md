@@ -42,7 +42,7 @@ covers:
 
 `Project.team_id` 是外键、`ondelete="RESTRICT"`：**每个项目都属于一个团队**，而一个还有项目的团队删不掉。建项目时（`ProjectService.create`）没给 `team_id` 就用所有者的个人团队（`_resolve_personal_team_id`）；两者都没有就拒——「项目没有地方可以属于」不是一个可接受的状态。
 
-建项目不是只写一行：同一个事务里造出它的**根话题**（`<名字> · 项目总览`，`TopicKind.root`）并回填 `root_topic_id`（`projects` 与 `topics` 互相外键，所以这一个用 `use_alter` 事后 `ALTER` 加），芝士和它在总览里的席位也在同一个事务里出生。`intent` 是人填表时说的「想做什么」，原样存下，非空就抄进新生房间的文档里。
+建项目不是只写一行：同一个事务里造出它的**根话题**（频道「综合」，`TopicKind.root`）并回填 `root_topic_id`（`projects` 与 `topics` 互相外键，所以这一个用 `use_alter` 事后 `ALTER` 加），芝士和它在「综合」里的席位也在同一个事务里出生。`intent` 是人填表时说的「想做什么」，原样存下，非空就写进项目总览（`projects.overview_document_id`，`ProjectService.seed_overview`，署名 `system`）。从赛题建的项目，项目总览里写的是「赛题要求」。
 
 ## 名册：一个答案 {#roster}
 

@@ -461,8 +461,8 @@ async def surroundings(db: AsyncSession, asked: Asked, *, seat: str) -> Surround
         )
     project = await ProjectService(db).get_or_404(asked.project_id)
     charter = None
-    if project.root_topic_id is not None:
-        overview = await TopicService(db).doc_of_room(project.root_topic_id)
+    if project.overview_document_id is not None:
+        overview = await Documents(db).get(project.overview_document_id)
         if overview is not None and overview.id != asked.document_id:
             charter = overview.content
     index = await memory_index(db, asked.project_id, speaker_handles=[])

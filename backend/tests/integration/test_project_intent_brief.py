@@ -1,11 +1,11 @@
 """建项目时写的那一句「你打算做什么」去了哪里（#946 片 C）。
 
-有值：新生的 root 房间里多一份 doc —— 署名 system，内容是那句话加一句下一步。
-没值（或只有空白）：什么都不写，房间照旧是空的，由它自己的起手区块顶上。
+有值：新项目的总览写上第一版 —— 署名 system，内容是那句话加一句下一步。
+没值（或只有空白）：什么都不写，总览照旧是空的。
 
-判据取「房间里有没有那份 doc」，而不是「服务被调过」：这份简报以 system 的身份
-落在块上，而块才是人打开房间时真正读到的东西。署名也要一起断言 —— 它由平台拼
-出来，不是芝士说的话（``seed_brief_doc`` 的约定），署错了就等于凭空替芝士开口。
+判据取「总览里写了什么」，而不是「服务被调过」：总览是每段对话的 AI 队友都读的
+那一份，也是人打开项目时读到的东西。署名也要一起断言 —— 它由平台拼出来，不是芝
+士说的话，署错了就等于凭空替芝士开口。
 """
 
 from anyio.from_thread import BlockingPortal
@@ -25,22 +25,21 @@ async def _owner(session) -> str:
 # Forgejo，报的是「此部署尚未配置项目代码托管服务」，和这一问毫无关系。
 
 
-def test_intent_becomes_the_newborn_rooms_brief(
+def test_intent_becomes_the_new_projects_overview(
     db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
     async def _run() -> None:
         from app.domain.project.services import ProjectService
-        from app.domain.topic.services import TopicService
 
         said = "帮我把这学期的课程材料整理成一份大纲"
-        project = await ProjectService(db_session).create(
+        projects = ProjectService(db_session)
+        project = await projects.create(
             name="这学期的课", intent=said, owner_handle=await _owner(db_session)
         )
 
         assert project.intent == said, "原话要存下来，下次打开项目还看得到"
-        assert project.root_topic_id is not None
-        doc = await TopicService(db_session).get_doc(project.root_topic_id)
-        assert doc is not None, "说了要做什么的项目，房间该带着这句话开门"
+        doc = await projects.overview_document(project)
+        assert doc.version > 0, "说了要做什么的项目，总览该带着这句话开门"
         # 署名是「system」：平台产的，不是芝士，也不是某个人。
         assert doc.author == "system"
         assert said in doc.content
@@ -49,22 +48,21 @@ def test_intent_becomes_the_newborn_rooms_brief(
     _portal.call(_run)
 
 
-def test_no_intent_leaves_the_room_without_a_document(
+def test_no_intent_leaves_the_overview_unwritten(
     db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
-    """不答这一问是允许的：空房间照常，没有半份空简报。"""
+    """不答这一问是允许的：总览照常空着，没有半份空简报。"""
 
     async def _run() -> None:
         from app.domain.project.services import ProjectService
-        from app.domain.topic.services import TopicService
 
-        project = await ProjectService(db_session).create(
+        projects = ProjectService(db_session)
+        project = await projects.create(
             name="没说要做什么", owner_handle=await _owner(db_session)
         )
 
         assert project.intent == ""
-        assert project.root_topic_id is not None
-        assert await TopicService(db_session).get_doc(project.root_topic_id) is None
+        assert (await projects.overview_document(project)).version == 0
 
     _portal.call(_run)
 
@@ -72,7 +70,7 @@ def test_no_intent_leaves_the_room_without_a_document(
 def test_whitespace_only_intent_is_not_an_intent(
     db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
-    """空格不是答案。滑过输入框敲了个空格的人，不该得到一个空白的房间。
+    """空格不是答案。滑过输入框敲了个空格的人，不该得到一份空白的总览。
 
     ``_intent_brief`` 自己 strip 一次，不指望调用方去猜 —— 前端也 trim 了，但两边
     各修各的，删掉任意一边都不该改变结果。
@@ -80,14 +78,13 @@ def test_whitespace_only_intent_is_not_an_intent(
 
     async def _run() -> None:
         from app.domain.project.services import ProjectService
-        from app.domain.topic.services import TopicService
 
-        project = await ProjectService(db_session).create(
+        projects = ProjectService(db_session)
+        project = await projects.create(
             name="空白", intent="   \n\t ", owner_handle=await _owner(db_session)
         )
 
-        assert project.root_topic_id is not None
-        assert await TopicService(db_session).get_doc(project.root_topic_id) is None
+        assert (await projects.overview_document(project)).version == 0
 
     _portal.call(_run)
 
@@ -107,7 +104,7 @@ def test_the_answer_survives_the_http_round_trip(client):
 
 
 def test_a_request_that_never_says_still_creates_the_project(client):
-    """不答这一问是允许的——请求里根本没有这个键，项目照建，房间照旧。"""
+    """不答这一问是允许的——请求里根本没有这个键，项目照建。"""
 
     created = post_project(client, json={"name": "没答这一问的项目"})
 

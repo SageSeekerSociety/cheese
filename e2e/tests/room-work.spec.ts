@@ -1,5 +1,5 @@
 /** Create tasks through the API, then verify that people can find and open each
- * task in the room overview and project board. */
+ * task in the channel overview and project board. */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { closeSync, openSync } from "node:fs";
@@ -46,20 +46,14 @@ test.describe("房间里的任务", () => {
     await dispatch(page, roomId, `第二件事 ${stamp}`);
 
     await page.goto(`/projects/${projectId}/topics/${roomId}?tab=overview`);
-    const progress = page.locator(".task-progress");
+    const progress = page.getByTestId("channel-overview");
     await expect(progress).toBeVisible();
 
-    // 两条都在，而且总数说得出来 —— 折起来的时候这一行是唯一的线索。
-    await expect(progress.locator(".task-progress__tally")).toContainText(
-      "2 件",
-    );
-    // 默认折着，清单要点开才有。
-    await progress.locator(".task-progress__head").click();
+    // 两条都在「进行中」里，每条带一个状态圆点。不断言是哪个状态：这一条钉的是
+    // 「有没有」，具体哪个状态由 lib/board.spec.ts 逐条钉。
+    await expect(progress.getByTestId("channel-task")).toHaveCount(2);
     await expect(progress.getByText(`第一件事 ${stamp}`)).toBeVisible();
     await expect(progress.getByText(`第二件事 ${stamp}`)).toBeVisible();
-    // 每条活带一个状态圆点。不断言是哪个状态：这一条钉的是「有没有」，
-    // 具体哪个状态由 lib/board.spec.ts 逐条钉。
-    await expect(progress.locator(".task-row .board-dot")).toHaveCount(2);
 
     // 点条目就去这个任务的页面 —— 总览里的一行必须是个入口，不然它只是一张表。
     await progress.getByText(`第一件事 ${stamp}`).click();
@@ -139,7 +133,9 @@ test.describe("房间里的任务", () => {
   });
 });
 
-test("同名文件按任务打开，切换来源后草稿仍在", async ({ page }, testInfo) => {
+test("同名文件按任务打开，换到另一件任务再回来草稿仍在", async ({
+  page,
+}, testInfo) => {
   // This case also clones and pushes two worktrees before exercising the UI.
   test.setTimeout(120_000);
   await apiLogin(page);
@@ -186,29 +182,18 @@ test("同名文件按任务打开，切换来源后草稿仍在", async ({ page 
     );
     await ready;
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto(`/projects/${project}/topics/${room}?tab=changes`);
+    const taskPage = (task: { id: string }) =>
+      `/projects/${project}/topics/${room}/tasks/${task.id}?tab=changes`;
+    await page.goto(taskPage(first));
     const panel = page.locator(".panel-changes");
-    const firstGroup = panel.getByRole("article", { name: "调整登录样式" });
-    const secondGroup = panel.getByRole("article", { name: "修复登录校验" });
-    // 每个任务自带的改动清单默认收起：这一行先只有标题、状态和文件数。
-    await expect(
-      firstGroup.getByRole("button", { name: /src\/login.txt/ }),
-    ).toHaveCount(0);
-    await firstGroup.getByRole("button", { name: /展开/ }).click();
-    await secondGroup.getByRole("button", { name: /展开/ }).click();
-    await expect(
-      firstGroup.getByRole("button", { name: /src\/login.txt/ }),
-    ).toBeVisible();
-    await expect(
-      secondGroup.getByRole("button", { name: /src\/login.txt/ }),
-    ).toBeVisible();
-    await page.screenshot({
-      path: testInfo.outputPath("task-files-overview.png"),
-      fullPage: true,
-    });
-    await firstGroup.getByRole("button", { name: /src\/login.txt/ }).click();
-    await expect(panel.locator(".source-heading")).toContainText(
-      "调整登录样式",
+    // 草稿记在这一次打开的页面里：换任务走侧栏，不重新载入页面。
+    const switchTo = async (title: string) => {
+      await page.locator(".rail-task", { hasText: title }).click();
+      await page.getByRole("tab", { name: /改动/ }).click();
+    };
+    // 「改动」只看这一件任务：清单里是它改过的文件，开着的是第一份。
+    await expect(panel.locator(".changes-bar__path")).toHaveText(
+      "src/login.txt",
     );
     await panel.getByRole("button", { name: "编辑", exact: true }).click();
     await panel.locator(".monaco-editor .view-lines").click();
@@ -217,20 +202,9 @@ test("同名文件按任务打开，切换来源后草稿仍在", async ({ page 
     await expect(
       panel.getByRole("button", { name: "保存", exact: true }),
     ).toBeEnabled();
-    await panel.getByRole("button", { name: "切换来源" }).click();
-    await page
-      .getByRole("listbox", { name: "文件来源" })
-      .getByText("修复登录校验", { exact: true })
-      .click();
-    await expect(panel.locator(".source-heading")).toContainText(
-      "修复登录校验",
-    );
+    await switchTo("修复登录校验");
     await expect(panel).toContainText("second task");
-    await panel.getByRole("button", { name: "切换来源" }).click();
-    await page
-      .getByRole("listbox", { name: "文件来源" })
-      .getByText("调整登录样式", { exact: true })
-      .click();
+    await switchTo("调整登录样式");
     await expect(panel.locator(".monaco-editor")).toContainText(
       "my unsaved draft",
     );
@@ -258,18 +232,6 @@ test("同名文件按任务打开，切换来源后草稿仍在", async ({ page 
       `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${second.id}`,
     );
     expect(untouched.content).toBe("second task\n");
-    await panel.getByRole("button", { name: "切换来源" }).click();
-    await page
-      .getByRole("listbox", { name: "文件来源" })
-      .getByText("项目当前代码", { exact: true })
-      .click();
-    await expect(panel.locator(".source-heading")).toContainText(
-      "项目当前代码",
-    );
-    await expect(panel.locator(".source-status")).toHaveText("只读");
-    await expect(
-      panel.getByRole("button", { name: "保存", exact: true }),
-    ).toHaveCount(0);
   } finally {
     if (machine.exitCode === null) machine.kill();
     await exited;

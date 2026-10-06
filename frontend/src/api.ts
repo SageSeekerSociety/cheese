@@ -39,7 +39,6 @@ import type {
   MarketPools,
   MemberSummary,
   OAuthConnectionInfo,
-  OverviewAuto,
   PrChecks,
   PreviewInfo,
   ProfileTopic,
@@ -1290,14 +1289,6 @@ export async function downloadFile(rawUrl: string, filename: string): Promise<vo
   link.click()
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
-// 项目总览的自动区 (#1889): the overview room's ②③, structured so the doc
-// panel can render them below the body and make each line clickable. Only the
-// project's root topic has one — any other room answers 404 — and the caller
-// must be able to read the room, same as the doc itself.
-export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
-  return request<OverviewAuto>(`/topics/${encodeURIComponent(topicId)}/overview`)
 }
 
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.

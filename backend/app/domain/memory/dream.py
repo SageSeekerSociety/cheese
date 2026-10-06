@@ -81,7 +81,6 @@ PROMPT_SCOPE_MAX = 20_000
 
 #: 一次整理最多带几个房间、每个房间各留多少字。
 ROOMS_LIMIT = 5
-ROOM_DOC_MAX = 2000
 ROOM_LOG_MAX = 1200
 ROOM_LOG_LINES = 30
 ROOM_LINE_MAX = 200
@@ -351,7 +350,6 @@ __all__ = [
     "EPOCH",
     "PROMPT_SCOPE_MAX",
     "ROOMS_LIMIT",
-    "ROOM_DOC_MAX",
     "ROOM_LINE_MAX",
     "ROOM_LOG_LINES",
     "ROOM_LOG_MAX",

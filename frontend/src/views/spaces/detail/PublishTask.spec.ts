@@ -1,25 +1,15 @@
-// 发题页 —— **这一页自己画的那一版**（第十批），挂的是真页面、真表单、真附件卡片。
+// 发题页：挂的是真页面、真表单、真附件那一格，接口在 `@/network/api/*` 那一层答着
+// （真 axios 会被 `src/test/setup-network.ts` 逮住，未预期的请求直接判失败）。量的是人
+// 在这一页上做一件事之后真的发出去了什么：
 //
-// 第五批到第九批里这一页是「新外壳那一层裹着老发题页」，所以那时候的这一份量的是
-// 那一层（接缝另有 `wrappers.spec.ts`，PDF 那一半替掉表单）。这一批底下不再有老页，
-// 那份接缝连同 `wrappers.spec.ts` 一起没了，玩法也跟着换：**一个替身都不留**，
-// 量的是真跑起来会发生什么 ——
+// 1. **必填空着点发布**：一个请求都不发，页头说还有几项；填好了才 `POST /tasks`，带的
+//    是这一页装配的那份参数（空间、提交表、附件 id），发完落到「我发布的」。
+// 2. **AI 指导**：沿用空间默认时不带它；为本题单独设置才带上整份。
+// 3. **从文件导入**：读出一道就填进这张表；读出几道就逐道列出来，勾上的、改过的那几道
+//    原样走批量发布，共用设置和原文件一起带上。不是 PDF、太大的，一个请求都不发。
+// 4. **模板**：选一份，表单按它填好。
 //
-// 1. **三栏必填空着**：清单列的就是真表单现在拦的那几条（不是这一页另写一份规则），
-//    两颗提交按钮都按不动，点真表单那颗「提交」一个请求都不发。
-// 2. **选满之后**：清单空了、按钮能点，点下去真的 `POST /tasks`，带的是**这一页自己
-//    装配**的那份参数（空间、提交表、附件 id），发完落到新外壳自己的「我的」。
-// 3. **PDF 那条路**：`preview` → `confirm` 都是真接口，确认之后**就地给回执**、
-//    不跳走；附件那两颗勾只画接口真落了文件行的那几个。
-// 4. **材料**：附件卡片也只画接口真给了 id 的那几个 —— 传失败的那份不画、也不跟着发。
-//
-// 接口在 `@/network/api/*` 那一层换掉：真 axios 会被 `src/test/setup-network.ts` 逮住
-// （未预期的 fetch 直接判失败），所以这一页会碰的每一个接口这里都答着。
-//
-// i18n 装**真的那一份**并锁到 zh-CN：这一页与它底下那张表单的标签都是中文文案，
-// 契约点（`题目名称`、`提交`）量的就是那几句话本身。tiptap 那一整块换成壳 —— 与
-// `components/tasks/__tests__/TaskFormPublishChecks.test.ts` 同一个理由：它跟这一页
-// 要量的事无关，真挂起来只是把 happy-dom 拖垮。
+// i18n 装真的那一份并锁到 zh-CN；tiptap 换成壳 —— 它跟这一页要量的事无关。
 import type { Component } from 'vue'
 
 import { nextTick } from 'vue'
@@ -45,6 +35,7 @@ const listMaterials = vi.fn()
 
 const uploadAttachment = vi.fn()
 const attachmentLimits = vi.fn()
+const toastError = vi.fn()
 
 vi.mock('@/network/api/tasks', () => ({
   TasksApi: {
@@ -74,7 +65,7 @@ vi.mock('@/network/api/attachments', () => ({
   },
 }))
 
-vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: (...a: unknown[]) => toastError(...a) } }))
 
 // 富文本编辑器：跟这一页要量的四件事都无关，留一个能 `getText` 的壳。
 vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
@@ -164,63 +155,43 @@ async function mount() {
   return { ...view, router }
 }
 
-/** 从挂载结果里读一个 testid 的文字 —— 断言走这只小手，免得满篇 querySelector。 */
-function textOf(container: Element, testId: string): string | null {
-  return container.querySelector(`[data-testid="${testId}"]`)?.textContent?.replace(/\s+/g, ' ').trim() ?? null
-}
-
-/** 「提交前」那颗按钮。灰不灰看它原生的 `disabled`，不猜 class 也不猜颜色。 */
-function checklistButton(view: ReturnType<typeof render>): HTMLButtonElement {
-  return view.getByRole('button', { name: '提交审核' }) as HTMLButtonElement
-}
-
-/** 表格里的提交。vee-validate 挂在 `<v-form>` 的 `@submit.prevent` 上，所以走
- *  `fireEvent.submit` 与人在页面里敲 Enter 是同一条路（`tasks/detail/Submit.spec.ts`
- *  也是这么按的）。 */
-async function submitForm(view: ReturnType<typeof render>) {
-  await fireEvent.submit(view.container.querySelector('form')!)
-  // `handleSubmit` 是异步的：给它一轮微任务与一次渲染。
+/** 页头那颗发布。 */
+async function publish(view: ReturnType<typeof render>) {
+  await fireEvent.click(view.getByTestId('publish-submit'))
+  // 提交是异步的：给它一轮微任务与一次渲染。
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-/** 点一个单选框。走**原生 click**：`fireEvent.click` 派发的是合成事件，单选框的
- *  `checked` 不会跟着翻，Vuetify 那次 `onInput` 读到的就还是旧值。 */
-async function check(input: Element) {
-  ;(input as HTMLInputElement).click()
-  await nextTick()
-}
-
-/** 选中分类那枚下拉里的一项。下拉是 `v-select`（`role="combobox"`），选项画在浮层里
- *  —— `getByRole('option')` 找得到，因为 testing-library 的查询挂在 `document.body` 上。 */
+/** 选中分类那枚下拉里的一项。选项画在浮层里，查询挂在 `document.body` 上找得到。 */
 async function pickCategory(view: ReturnType<typeof render>, name = '基础题') {
   await fireEvent.mouseDown(view.getAllByRole('combobox')[0])
   await fireEvent.click(await view.findByRole('option', { name }))
   await nextTick()
 }
 
-/** 把三栏必填都填上（名字、参与者类型、题目难度、所属分类）。 */
-async function fillRequired(view: ReturnType<typeof render>, name = '用 gdb 定位一次段错误') {
-  await fireEvent.update(view.getByLabelText('题目名称'), name)
-  await check(view.getByRole('radio', { name: '个人' }))
-  await check(view.getByRole('radio', { name: '初级' }))
+/** 共用的那几项：参与方式、难度、分类。 */
+async function fillSettings(view: ReturnType<typeof render>) {
+  await fireEvent.click(view.getByRole('radio', { name: '个人' }))
+  await fireEvent.click(view.getByRole('radio', { name: '初级' }))
   await pickCategory(view)
 }
 
-/** 展开「给 AI 队友的指导」那一节。它默认收起，里面的格子要点开才在。 */
-async function openTeaching(view: ReturnType<typeof render>) {
-  await fireEvent.click(view.getByTestId('publish-teaching-toggle'))
-  await nextTick()
+/** 必填都填上（名称加上共用的那几项）。 */
+async function fillRequired(view: ReturnType<typeof render>, name = '用 gdb 定位一次段错误') {
+  await fireEvent.update(view.getByLabelText('名称', { exact: false }), name)
+  await fillSettings(view)
 }
 
-/** 摊开指导里的「高级选项」——周次和另外三格清单都折在里面。 */
-async function openTeachingAdvanced(view: ReturnType<typeof render>) {
-  await fireEvent.click(view.getByText('高级选项'))
-  await view.findByLabelText('当前周次')
+/** 点开「更多设置」，选「为本题单独设置」AI 指导。 */
+async function ownTeaching(view: ReturnType<typeof render>) {
+  await fireEvent.click(view.getByTestId('task-form-more'))
+  await check(await view.findByRole('radio', { name: '为本题单独设置' }))
+  await view.findByLabelText('对 AI 的要求')
 }
 
-/** 摊开「参考资料」那一格里的资料库清单。它默认收起，勾选框点开才在。 */
-async function openMaterials(view: ReturnType<typeof render>) {
-  await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
+/** 点一个原生单选框。走原生 click：`fireEvent.click` 派发的合成事件不翻 `checked`。 */
+async function check(input: Element) {
+  ;(input as HTMLInputElement).click()
   await nextTick()
 }
 
@@ -252,21 +223,9 @@ async function boardAs(user: { id: number; username: string; nickname: string })
   AccountService.user = user as never
 }
 
-/** 从写一道那条路切到 PDF 那条路。 */
-async function switchToPdf(view: ReturnType<typeof render>) {
-  await fireEvent.click(view.getByRole('button', { name: '从 PDF 生成' }))
-  await waitFor(() => expect(view.container.querySelector('[data-testid="pdf-file"]')).not.toBeNull())
-}
-
-/** 勾 / 取消勾一条草稿。走**原生 click**：`fireEvent.click` 派发的是合成事件，
- *  勾选框的 `checked` 不会跟着翻，Vuetify 那次 `onInput` 读到的就还是旧值。 */
-async function toggle(input: HTMLElement) {
-  input.click()
-  await nextTick()
-}
-
-/** 选中一份文件 —— Vuetify 的 `v-file-input` 读的是 `e.target.files`。 */
-async function pick(input: HTMLInputElement, file: File) {
+/** 从文件导入：选中就读。 */
+async function importFile(view: ReturnType<typeof render>, file: File) {
+  const input = view.getByTestId('publish-import-input') as HTMLInputElement
   Object.defineProperty(input, 'files', { value: [file], configurable: true })
   await fireEvent.change(input)
 }
@@ -318,15 +277,6 @@ function previewBody() {
   }
 }
 
-/** 走完整条 PDF 前半程：切过去、选文件、解析。 */
-async function parsed(view: Awaited<ReturnType<typeof mount>>) {
-  await switchToPdf(view)
-  await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, pdfFile())
-  await fireEvent.click(view.getByRole('button', { name: '解析成题目草稿' }))
-  await waitFor(() => expect(view.container.querySelector('[data-testid="pdf-meta"]')).not.toBeNull())
-  return view
-}
-
 beforeEach(() => {
   spaceDetail.mockImplementation(async () => spaceBody())
   listCategories.mockImplementation(async () => categoriesBody())
@@ -349,64 +299,31 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe('发题页：手写一道', () => {
-  it('四块都在：材料、发布参数那张表单，以及右栏两张卡（第二句跟着身份变）', async () => {
-    await boardAs(MANAGER)
-    const view = await mount()
-
-    // 契约点（e2e 也认这三条）：PDF 快速发布那张卡、材料那张卡、发布参数那张表单。
-    expect(view.getByText('PDF 快速发布')).toBeTruthy()
-    expect(view.getByText('附件（可选）')).toBeTruthy()
-    expect(view.getByLabelText('题目名称')).toBeTruthy()
-
-    // 右栏第一张：四站，一站一句；第二句是**按登录的人算出来的** —— 这块板的管理员
-    // 名单里有 alice（`spaceBody`），所以她看到的是「自己发的题自己审」。
-    expect(view.getByRole('heading', { name: '发出去之后' })).toBeTruthy()
-    expect(textOf(view.container, 'publish-audience')).toContain('你可以直接通过（自己发的题自己审）。')
-    await waitFor(() =>
-      expect(textOf(view.container, 'publish-lifecycle')).toContain('「我的 → 我发布的」里有这道题的领取走势')
-    )
-    expect(view.getByText('被驳回会带原因退回，改完可以重新提交，不用重写一遍。')).toBeTruthy()
-  })
-
-  it('三栏必填空着：清单列的是真表单拦的那几条，按钮灰着，点提交一个请求都不发', async () => {
+describe('发题页：发一道', () => {
+  it('必填空着：点发布一个请求都不发，页头说还有几项', async () => {
     await boardAs(MEMBER)
     const view = await mount()
+    expect(view.queryByTestId('publish-blocking')).toBeNull()
 
-    // 清单里每一条都由底下那张真表单报上来（`lib/taskPublishChecks.ts` 那份规则表
-    // 对着 `TaskForm` 的 zod schema）—— 这一页不加戏，也不漏。
-    const listed = Array.from(view.container.querySelectorAll('[data-testid="publish-checks"] li')).map((li) =>
-      li.textContent?.trim()
-    )
-    expect(listed).toEqual([
-      '标题：必填，最多 100 个字',
-      '参与者类型：必选一个（个人 / 团队）',
-      '题目难度：必选一个（初级 / 中级 / 高级）',
-      '所属分类：必选一个（这块板的分类）',
-    ])
-    expect(view.queryByTestId('publish-ok')).toBeNull()
-    expect(checklistButton(view).disabled).toBe(true)
+    await publish(view)
 
-    // 点真表单那颗「提交」：校验不过，一个请求都不发，地址栏也不动。
-    await submitForm(view)
+    await waitFor(() => expect(view.getByTestId('publish-blocking').textContent).toMatch(/\d+ 项未填写或填写有误/))
     expect(createTask).not.toHaveBeenCalled()
     expect(view.router.currentRoute.value.name).toBe('SpacesDetailPublishTask')
   })
 
-  it('选满三栏：清单空了、按钮能点，点下去真的 POST /tasks，发完落到「我的」', async () => {
+  it('填好点发布：POST /tasks 带着空间、提交表和附件，发完落到「我发布的」', async () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view, '用 gdb 定位一次段错误（E2E 发的）')
+    const input = view.getByTestId('attachment-input') as HTMLInputElement
+    Object.defineProperty(input, 'files', { value: [pdfFile('讲义.pdf')], configurable: true })
+    await fireEvent.change(input)
+    await waitFor(() => expect(view.getAllByTestId('attached-file')).toHaveLength(1))
 
-    // 三栏都选上之后，清单空了：一句「看起来没问题。」+ 两颗按钮都能点。
-    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
-    expect(view.container.querySelector('[data-testid="publish-checks"]')).toBeNull()
-    expect(checklistButton(view).disabled).toBe(false)
-
-    await submitForm(view)
+    await publish(view)
     await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
 
-    // 发出去的那一份：空间、字段、提交表 —— 还有「附件一个没传，就不带这一项」。
     const sent = createTask.mock.calls[0][0] as Record<string, unknown>
     expect(sent.space).toBe(SPACE_ID)
     expect(sent.name).toBe('用 gdb 定位一次段错误（E2E 发的）')
@@ -414,452 +331,161 @@ describe('发题页：手写一道', () => {
     expect(sent.rank).toBe(1)
     expect(sent.categoryId).toBe(3)
     expect(sent.submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE' }])
-    // 「附件一个没传，就不带这一项」：老页那一版传的是 `undefined`（键在、值是空），
-    // 后端读到的与「没有这一项」是同一个意思，这一页照旧。
-    expect(sent.attachmentIds).toBeUndefined()
+    expect(sent.attachmentIds).toEqual([41])
+    // 沿用空间的默认指导：不带这一项，让空间那一层生效。
+    expect(sent.teaching).toBeUndefined()
 
-    // 发完落到题目列表的「我发布的」：还没过审的题只在那里看得到。
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('SpacesDetailTasksList'))
     expect(view.router.currentRoute.value.query.filter).toBe('publishing')
   })
 
-  it('「提交审核」那颗按钮走的是真表单的提交：拦着的时候点不动，放行了才发出去', async () => {
+  it('为本题单独写了 AI 指导：整份带上', async () => {
     await boardAs(MEMBER)
     const view = await mount()
-
     await fillRequired(view)
-    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
+    await ownTeaching(view)
+    await fireEvent.update(view.getByLabelText('对 AI 的要求'), '不要直接给出答案。')
 
-    await fireEvent.click(checklistButton(view))
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
-    expect((createTask.mock.calls[0][0] as Record<string, unknown>).space).toBe(SPACE_ID)
-  })
-
-  it('「PDF 快速发布」：解析走真接口，草稿逐条摆出来，清空预览把表单还回原样', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-
-    await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, pdfFile())
-    await fireEvent.click(view.getByRole('button', { name: '解析预览' }))
-    await waitFor(() => expect(textOf(view.container, 'quick-drafts')).not.toBeNull())
-
-    // 发出去的那条请求：这份文件、这块板、后端写死的上限 20、地址栏没模板就是 -1。
-    const sent = previewFromPdf.mock.calls[0][0] as {
-      spaceId: number
-      file: File
-      maxTasks: number
-      templateIndex: number
-    }
-    expect(sent.spaceId).toBe(SPACE_ID)
-    expect(sent.file.name).toBe('计算机系统基础-第五次作业.pdf')
-    expect(sent.maxTasks).toBe(20)
-    expect(sent.templateIndex).toBe(-1)
-
-    // 草稿逐条摆出来，名字就是接口回来的那两条。
-    expect(textOf(view.container, 'quick-drafts')).toContain('用 gdb 定位一次段错误')
-    expect(textOf(view.container, 'quick-drafts')).toContain('手写一个最简内存分配器')
-    // 这条路上**只给看不给改**（参数在下面那张表单里填），所以一条 `.pdf__row` 都没有。
-    expect(view.container.querySelectorAll('.pdf__row')).toHaveLength(0)
-
-    await fireEvent.click(view.getByRole('button', { name: '清空预览' }))
-    await waitFor(() => expect(textOf(view.container, 'quick-drafts')).toBeNull())
-  })
-
-  it('附件卡上的上限是接口报的那个数；问不到就不写这句话', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-
-    // 这句话只有一种来源：`GET /attachments/limits`（与上传那条路拦下超限文件读的是
-    // **同一个上限**）。接口这里答的是一个别处没出现过的数，写死的字面量对不上。
-    await waitFor(() => expect(textOf(view.container, 'attachment-limit')).toBe('单个文件不超过 11.77 MB'))
-    expect(attachmentLimits).toHaveBeenCalledTimes(1)
-    // 卡片本身照旧：这句话是建议，不是闸门。
-    expect(view.getByLabelText('选择要随题一起发出的材料')).toBeTruthy()
-    view.unmount()
-
-    // 问不到（这里是 503）：少说一句就是，不猜一个数出来，也不弹错 —— 用户到这一步还
-    // 什么都没要求做。
-    attachmentLimits.mockImplementation(async () => {
-      throw new Error('503 Service Unavailable')
-    })
-    const offline = await mount()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(offline.container.querySelector('[data-testid="attachment-limit"]')).toBeNull()
-    expect(offline.getByLabelText('选择要随题一起发出的材料')).toBeTruthy()
-  })
-
-  it('材料：只画接口真给了 id 的那几个，传失败的那份不画也不跟着发', async () => {
-    await boardAs(MEMBER)
-    uploadAttachment.mockImplementation(async ({ file }: { file: File }) => {
-      if (file.name === '能传上去的.pdf') return { data: { id: 41 } }
-      throw new Error('503 Service Unavailable')
-    })
-    const view = await mount()
-
-    const input = view.getByLabelText('选择要随题一起发出的材料') as HTMLInputElement
-    const good = new File([new Uint8Array(8)], '能传上去的.pdf', { type: 'application/pdf' })
-    const bad = new File([new Uint8Array(8)], '传不上去的.docx', {
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    })
-    Object.defineProperty(input, 'files', { value: [good, bad], configurable: true })
-    await fireEvent.change(input)
-
-    // 服务端给了 id 的那一份才有那一行 —— 另一份点了也带不走，不画。
-    await waitFor(() => expect(view.getAllByTestId('attached-file')).toHaveLength(1))
-    expect(view.getByTestId('attached-file').textContent).toContain('能传上去的.pdf')
-
-    // 发题请求带的是那串真回来的 id。
-    await fillRequired(view)
-    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
-    await submitForm(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
-    expect((createTask.mock.calls[0][0] as { attachmentIds?: number[] }).attachmentIds).toEqual([41])
-  })
-})
-
-// ============ 给 AI 队友的指导（#944）============
-//
-// 这道题自己的那一层覆盖：六格全空 = 不设，仍旧听空间（与项目集）的默认；写了一格
-// 就整份带上。两条发题路都要带它 —— 手写一道走 `POST /tasks`，PDF 批量走
-// `taskOptions`。
-
-describe('发题页：给 AI 队友的指导', () => {
-  it('默认收起：那一栏在，里面的格子不在，点一下才出来', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-
-    expect(view.getByTestId('publish-teaching')).toBeTruthy()
-    expect(view.queryByTestId('teaching-system-prompt')).toBeNull()
-
-    await openTeaching(view)
-    expect(view.getByTestId('teaching-system-prompt')).toBeTruthy()
-  })
-
-  it('这一栏在页面上；六格全空就不带它 —— 让空间的默认生效', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-
-    expect(view.getByTestId('publish-teaching')).toBeTruthy()
-
-    await fillRequired(view)
-    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
-    await submitForm(view)
+    await publish(view)
     await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
 
-    // 键在、值是 `undefined`（与 `attachmentIds` 同一个写法）：后端读到的与「没有
-    // 这一项」一样，所以这道题没有覆盖，仍旧用空间的默认。
+    expect((createTask.mock.calls[0][0] as { teaching?: { systemPrompt?: string } }).teaching?.systemPrompt).toBe(
+      '不要直接给出答案。'
+    )
+  })
+
+  it('选了「为本题单独设置」却一格没填：当作沿用默认，不带这一项', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    await ownTeaching(view)
+
+    await publish(view)
+    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+
     expect((createTask.mock.calls[0][0] as { teaching?: unknown }).teaching).toBeUndefined()
   })
 
-  it('参考资料列的是这块板资料库里的文件：勾一份，「仅管理员」那一档不列出来', async () => {
-    listMaterials.mockImplementation(async () => ({
-      data: {
-        materials: [
-          {
-            id: 161,
-            name: '第03讲-红黑树.pdf',
-            visibility: 'members',
-            type: 'file',
-            size: null,
-            mime: null,
-            uploaderId: null,
-            createdAt: 0,
-            downloadCount: 0,
-          },
-          {
-            id: 162,
-            name: '参考答案-红黑树.pdf',
-            visibility: 'admins',
-            type: 'file',
-            size: null,
-            mime: null,
-            uploaderId: null,
-            createdAt: 0,
-            downloadCount: 0,
-          },
-        ],
-        canManage: false,
-      },
-    }))
+  it('选一份模板：表单按它填好', async () => {
     await boardAs(MEMBER)
-    const view = await mount()
-    await fillRequired(view)
-    await openTeaching(view)
-    await openMaterials(view)
-
-    expect(await view.findByLabelText('第03讲-红黑树.pdf')).toBeTruthy()
-    expect(view.queryByLabelText('参考答案-红黑树.pdf')).toBeNull()
-
-    // Vuetify 的勾选框绑的是 input 的 `input` 事件（`e.target.checked`），点它没用。
-    await fireEvent.input(view.getByLabelText('第03讲-红黑树.pdf'), { target: { checked: true } })
-
-    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
-    await submitForm(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
-
-    expect((createTask.mock.calls[0][0] as { teaching: { materialIds: number[] } }).teaching.materialIds).toEqual([161])
-  })
-
-  it('写了对 AI 的要求与周次：整份 POST 出去，空格子落成空数组', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-    await fillRequired(view)
-    await openTeaching(view)
-
-    await fireEvent.update(view.getByLabelText('对 AI 的要求'), '第 {current_week} 周：讲完链表了。')
-    await openTeachingAdvanced(view)
-    await fireEvent.update(view.getByLabelText('当前周次'), '3')
-
-    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
-    await submitForm(view)
-    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
-
-    expect((createTask.mock.calls[0][0] as { teaching?: unknown }).teaching).toEqual({
-      systemPrompt: '第 {current_week} 周：讲完链表了。',
-      currentWeek: 3,
-      allowedTopics: [],
-      avoidInCode: [],
-      materialIds: [],
-      knowledgeIds: [],
+    spaceDetail.mockImplementation(async () => {
+      const body = spaceBody()
+      ;(body.data.space as Record<string, unknown>).taskTemplates = JSON.stringify([
+        { name: '实验题', description: '每周实验', title: '实验 N：', content: '', submitterType: 'USER', rank: 2 },
+      ])
+      return body
     })
-  })
-
-  it('高级选项里的清单也一起走：逗号分隔、中英文都认', async () => {
-    await boardAs(MEMBER)
     const view = await mount()
-    await fillRequired(view)
-    await openTeaching(view)
 
-    await fireEvent.click(view.getByText('高级选项'))
-    const topics = await view.findByLabelText('目前的内容范围')
-    await fireEvent.update(topics, '链表，栈, 队列')
-
-    await waitFor(() => expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。'))
-    await submitForm(view)
+    await fireEvent.click(view.getByRole('button', { name: '使用模板' }))
+    await fireEvent.click(await view.findByText('实验题'))
+    await pickCategory(view)
+    await publish(view)
     await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
 
-    expect((createTask.mock.calls[0][0] as { teaching: { allowedTopics: string[] } }).teaching.allowedTopics).toEqual([
-      '链表',
-      '栈',
-      '队列',
-    ])
-  })
-
-  it('PDF 批量那条路带着同一份指导（taskOptions 里）', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-
-    // 写在切换之前：PDF 那一态里没有这张卡（它属于「手写一道」那一半），但这一页的
-    // 状态活着，切过去照样带得走。
-    await openTeaching(view)
-    await openTeachingAdvanced(view)
-    await fireEvent.update(view.getByLabelText('当前周次'), '5')
-    await switchToPdf(view)
-    await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, pdfFile())
-    await fireEvent.click(view.getByRole('button', { name: '解析成题目草稿' }))
-    await waitFor(() => expect(view.container.querySelector('[data-testid="pdf-meta"]')).not.toBeNull())
-
-    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
-    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
-
-    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: { teaching?: { currentWeek?: number } } }
-    expect(sent.taskOptions.teaching?.currentWeek).toBe(5)
+    const sent = createTask.mock.calls[0][0] as Record<string, unknown>
+    expect(sent.name).toBe('实验 N：')
+    expect(sent.rank).toBe(2)
   })
 })
 
-// ============ 从 PDF 生成 ============
-//
-// 这一条路是原型那一版：解析、逐条改、勾着发、就地给回执。断言量与第五批同一套
-// （那时它在裹着老页的那一层上跑），量的是「浏览器实际收到什么」与「用户看到什么」，
-// 不量实现长什么样。
-
-describe('发题页：从 PDF 生成', () => {
-  it('切过去之后手写那道那一半整个让位', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-
-    await switchToPdf(view)
-
-    // 这一页自己那几块：PDF 快速发布、发布参数那张表单、右栏两张卡 —— 一块都不在。
-    expect(view.queryByText('PDF 快速发布')).toBeNull()
-    expect(view.queryByLabelText('题目名称')).toBeNull()
-    expect(view.queryByTestId('publish-lifecycle')).toBeNull()
-    expect(view.queryByRole('button', { name: '提交审核' })).toBeNull()
-  })
-
-  it('解析：浏览器真的把这份 PDF 发出去了，结果区摆的是接口回来的那三件事', async () => {
-    await boardAs(MEMBER)
-    const view = await parsed(await mount())
-
-    // 发出去的那条请求 —— 文件、空间、上限，一样不少。
-    expect(previewFromPdf).toHaveBeenCalledTimes(1)
-    const sent = previewFromPdf.mock.calls[0][0] as { spaceId: number; file: File; maxTasks: number }
-    expect(sent.spaceId).toBe(SPACE_ID)
-    expect(sent.file.name).toBe('计算机系统基础-第五次作业.pdf')
-    expect(sent.maxTasks).toBe(20)
-
-    // 结果区：模板、插图数（正文里那张图，1 张）、token —— 都是接口回来的那几个值。
-    expect(textOf(view.container, 'pdf-template')).toBe('模板：计算机系统基础 · 标准题模板')
-    expect(textOf(view.container, 'pdf-images')).toBe('抽出插图 1 张')
-    expect(textOf(view.container, 'pdf-tokens')).toBe('消耗 18,742 tokens')
-    // 并且说清楚：草稿还不是题目。
-    expect(textOf(view.container, 'pdf-meta') ?? '').toContain('还没有成为题目')
-
-    // 两条草稿都在屏幕上，标题与题干就是接口给的那份。
-    const titles = view.getAllByLabelText('标题') as HTMLInputElement[]
-    expect(titles.map((i) => i.value)).toEqual(['用 gdb 定位一次段错误', '手写一个最简内存分配器'])
-    const bodies = view.getAllByLabelText('题干') as HTMLTextAreaElement[]
-    expect(bodies[0].value).toContain('给定一段会崩的程序')
-    // 出处页摆在每一条上。
-    expect(view.getAllByTestId('draft-origin').map((e) => e.textContent?.trim())).toEqual([
-      'PDF · 第 1 页',
-      'PDF · 第 2 页',
-    ])
-  })
-
-  it('勾掉一条、改两处：确认发走的就是屏幕上那几条，而且不跳走', async () => {
-    await boardAs(MEMBER)
-    const view = await parsed(await mount())
-
-    // 两条都勾着 —— 按钮跟着数字走。
-    expect(view.getByRole('button', { name: '确认发布 2 道' })).toBeTruthy()
-    await toggle(view.getByLabelText('勾选「手写一个最简内存分配器」'))
-    await waitFor(() => expect(view.getByRole('button', { name: '确认发布 1 道' })).toBeTruthy())
-
-    // 就地改标题与题干。
-    await fireEvent.update(view.getAllByLabelText('标题')[0], '用 gdb 定位一次段错误（改过）')
-    await fireEvent.update(view.getAllByLabelText('题干')[0], '改过的题干：找出崩在哪一行，并把寄存器状态截图交上来。')
-
-    const before = view.router.currentRoute.value.fullPath
-    await fireEvent.click(view.getByRole('button', { name: '确认发布 1 道' }))
-    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
-
-    // 发出去的草稿：只有勾中的那一条，文字是改过的那份，出处标记加上去了。
-    const sent = confirmFromPdf.mock.calls[0][0] as {
-      drafts: { name: string; intro: string; description: string; space: number; categoryId?: number }[]
-      taskOptions: { space: number; attachmentIds?: number[] }
-    }
-    expect(sent.drafts).toHaveLength(1)
-    expect(sent.drafts[0].name).toBe('用 gdb 定位一次段错误（改过）')
-    expect(sent.drafts[0].description).toBe('改过的题干：找出崩在哪一行，并把寄存器状态截图交上来。')
-    expect(sent.drafts[0].space).toBe(SPACE_ID)
-    expect(sent.drafts[0].categoryId).toBe(3)
-    // 出处标记在简介里（题目模型没有来源这一列）—— 队列那一行显示的就是简介。
-    expect(sent.drafts[0].intro).toBe('【PDF · 第 1 页】用 gdb 找出崩在哪一行。')
-    // 两颗勾默认都勾着，所以这条请求里带着两份文件的行号：原 PDF 在前、插图在后。
-    expect(sent.taskOptions.attachmentIds).toEqual([911, 912])
-
-    // 不跳走：地址栏还是发题这一页。
-    expect(view.router.currentRoute.value.fullPath).toBe(before)
-
-    // 就地给回执，回执里两个去处都指向新外壳那棵树。
-    expect(textOf(view.container, 'pdf-receipt') ?? '').toContain('刚发的 1 道题已经进了待审核队列')
-    const hrefs = Array.from(view.container.querySelectorAll('a')).map((a) => a.getAttribute('href'))
-    expect(hrefs).toContain(`/spaces/${SPACE_ID}/manage/audit`)
-    expect(hrefs).toContain(`/spaces/${SPACE_ID}/tasks?filter=publishing`)
-  })
-
-  it('附件：两颗勾默认都勾着，标签写的是哪一份、几张，取消勾的那一份就不跟着走', async () => {
-    await boardAs(MEMBER)
-    const view = await parsed(await mount())
-
-    // 拉起来就是原型那两颗勾，默认都勾着。
-    const pdfBox = view.getByLabelText('原 PDF') as HTMLInputElement
-    const imgBox = view.getByLabelText('抽出的插图（1 张）') as HTMLInputElement
-    expect(pdfBox.checked).toBe(true)
-    expect(imgBox.checked).toBe(true)
-    // 勾的是什么摆出来给人看：文件名字是接口回来的那一份。
-    expect(textOf(view.container, 'pdf-attach-pdf-file')).toBe('原 PDF：计算机系统基础-第五次作业.pdf')
-    expect(textOf(view.container, 'pdf-attach-image-files')).toBe('插图：input.pdf-0001-01.png')
-    expect(textOf(view.container, 'pdf-attach-count')).toBe('这 2 个文件会附在每一道生成出来的题上')
-
-    // 取消勾插图：跟着走的只剩原 PDF 那一份，数字也跟着掉。
-    await toggle(imgBox)
-    await waitFor(() =>
-      expect(textOf(view.container, 'pdf-attach-count')).toBe('这 1 个文件会附在每一道生成出来的题上')
-    )
-
-    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
-    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
-    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: { attachmentIds?: number[] } }
-    // 发出去的就是屏幕上勾着的那一份，行号原样 —— 原 PDF 在前。
-    expect(sent.taskOptions.attachmentIds).toEqual([911])
-  })
-
-  it('附件：一样都不勾的时候，请求里没有 attachmentIds 这一项（与从前一致）', async () => {
-    await boardAs(MEMBER)
-    const view = await parsed(await mount())
-
-    await toggle(view.getByLabelText('原 PDF') as HTMLInputElement)
-    await toggle(view.getByLabelText('抽出的插图（1 张）') as HTMLInputElement)
-    await waitFor(() =>
-      expect(textOf(view.container, 'pdf-attach-count')).toBe('这 0 个文件会附在每一道生成出来的题上')
-    )
-
-    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
-    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
-    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: Record<string, unknown> }
-    expect('attachmentIds' in sent.taskOptions).toBe(false)
-  })
-
-  it('附件：接口没落成文件行的那一样不画勾，页面上说清为什么', async () => {
-    await boardAs(MEMBER)
-    previewFromPdf.mockImplementation(async () => ({
-      data: { ...previewBody(), attachments: { pdf: null, images: [] } },
-    }))
-    const view = await parsed(await mount())
-
-    // 一颗勾都不画 —— 点了也带不走的东西，不画成勾。
-    expect(view.container.querySelector('[data-testid="pdf-attach-pdf"]')).toBeNull()
-    expect(view.container.querySelector('[data-testid="pdf-attach-images"]')).toBeNull()
-    expect(view.queryByLabelText('原 PDF')).toBeNull()
-    // 但要说清是哪一样、为什么。
-    expect(textOf(view.container, 'pdf-attach-pdf-why') ?? '').toContain('没画')
-    expect(textOf(view.container, 'pdf-attach-images-why') ?? '').toContain('没画')
-
-    // 确认发布照样走得通，请求形状与从前一样。
-    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
-    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
-    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: Record<string, unknown> }
-    expect('attachmentIds' in sent.taskOptions).toBe(false)
-  })
-
-  it('超限与错类型：一个请求都不发出去，屏幕上说清为什么', async () => {
-    await boardAs(MEMBER)
-    const view = await mount()
-    await switchToPdf(view)
-
-    const oversized = pdfFile('太大了.pdf', 15 * 1024 * 1024 + 1)
-    await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, oversized)
-    await fireEvent.click(view.getByRole('button', { name: '解析成题目草稿' }))
-    await waitFor(() => expect(textOf(view.container, 'pdf-error') ?? '').toContain('不能超过 15MB'))
-    expect(previewFromPdf).not.toHaveBeenCalled()
-
-    // 换一份不是 PDF 的：同样是本地就拦下来。
-    const wrong = new File([new Uint8Array(10)], '题目.docx', {
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    })
-    await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, wrong)
-    await fireEvent.click(view.getByRole('button', { name: '解析成题目草稿' }))
-    await waitFor(() => expect(textOf(view.container, 'pdf-error') ?? '').toContain('只收 PDF'))
-    expect(previewFromPdf).not.toHaveBeenCalled()
-  })
-
-  it('后端拒绝的时候，屏幕上就是它那句话，而且不会凭空画出草稿', async () => {
+describe('发题页：从文件导入', () => {
+  it('读出一道：就是这一道题的内容，接着在同一张表上发', async () => {
     await boardAs(MEMBER)
     previewFromPdf.mockImplementation(async () => {
-      throw { response: { data: { message: 'LLM is not configured' } }, message: 'Request failed with status code 400' }
+      const body = previewBody()
+      body.drafts = body.drafts.slice(0, 1)
+      return { data: body }
     })
-
     const view = await mount()
-    await switchToPdf(view)
-    await pick(view.getByLabelText('上传题目 PDF') as HTMLInputElement, pdfFile())
-    await fireEvent.click(view.getByRole('button', { name: '解析成题目草稿' }))
 
-    await waitFor(() => expect(textOf(view.container, 'pdf-error')).toBe('解析失败：LLM is not configured'))
-    // 没有解析结果、没有草稿、没有确认按钮 —— 一个都没画。
-    expect(view.container.querySelector('[data-testid="pdf-meta"]')).toBeNull()
-    expect(view.container.querySelector('[data-testid="pdf-drafts"]')).toBeNull()
-    expect(view.queryByRole('button', { name: /确认发布/ })).toBeNull()
+    await importFile(view, pdfFile())
+    await waitFor(() => expect(previewFromPdf).toHaveBeenCalledTimes(1))
+    expect((previewFromPdf.mock.calls[0][0] as { file: File }).file.name).toBe('计算机系统基础-第五次作业.pdf')
+    await waitFor(() =>
+      expect((view.getByLabelText('名称', { exact: false }) as HTMLInputElement).value).toBe('用 gdb 定位一次段错误')
+    )
+    expect(view.queryByTestId('publish-drafts')).toBeNull()
+
+    await fillSettings(view)
+    await publish(view)
+    await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1))
+    const sent = createTask.mock.calls[0][0] as Record<string, unknown>
+    expect(sent.name).toBe('用 gdb 定位一次段错误')
+    // 描述带着从 PDF 里抽出的那张插图。
+    const description = JSON.parse(sent.description as string)
+    expect(JSON.stringify(description)).toContain('"type":"image"')
+    expect(JSON.stringify(description)).toContain('https://storage.test/task-images/a.png')
+    // 原 PDF 与插图放进了附件。
+    expect(sent.attachmentIds).toEqual([911, 912])
+  })
+
+  it('读出几道：勾掉的不发，改过的按改过的发，共用设置和原文件一起带上', async () => {
+    await boardAs(MEMBER)
+    previewFromPdf.mockImplementation(async () => {
+      const body = previewBody()
+      body.drafts.push({ ...body.drafts[1], name: '附录：评分细则', intro: '评分细则。' })
+      return { data: body }
+    })
+    const view = await mount()
+
+    await importFile(view, pdfFile())
+    await waitFor(() => expect(view.getByTestId('publish-drafts')).toBeTruthy())
+    expect(view.getByTestId('publish-drafts').textContent).toContain('识别出 3 道题，已选 3 道')
+
+    // 第三道不要。
+    await check(view.getByRole('checkbox', { name: '选中 附录：评分细则' }))
+    // 改第二道的名称。
+    await fireEvent.click(view.getByText('手写一个最简内存分配器'))
+    await fireEvent.update(view.getByLabelText('名称', { exact: false }), '手写一个内存分配器')
+
+    await fillSettings(view)
+    expect(view.getByTestId('publish-submit').textContent).toContain('发布 2 道题')
+    await publish(view)
+    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
+
+    const sent = confirmFromPdf.mock.calls[0][0] as {
+      drafts: { name: string; intro: string }[]
+      taskOptions: Record<string, unknown>
+    }
+    expect(sent.drafts.map((draft) => draft.name)).toEqual(['用 gdb 定位一次段错误', '手写一个内存分配器'])
+    // 出处还写在简介里（审核队列与题目页认它）。
+    expect(sent.drafts[0].intro.startsWith('【PDF · 第 1 页】')).toBe(true)
+    expect(sent.taskOptions.space).toBe(SPACE_ID)
+    expect(sent.taskOptions.rank).toBe(1)
+    expect(sent.taskOptions.categoryId).toBe(3)
+    expect(sent.taskOptions.attachmentIds).toEqual([911, 912])
+    expect(createTask).not.toHaveBeenCalled()
+    await waitFor(() => expect(view.router.currentRoute.value.query.filter).toBe('publishing'))
+  })
+
+  it('勾上的那几道里有一道没有名称：一个请求都不发，那一道标出来', async () => {
+    await boardAs(MEMBER)
+    previewFromPdf.mockImplementation(async () => {
+      const body = previewBody()
+      body.drafts[1].name = ''
+      return { data: body }
+    })
+    const view = await mount()
+    await importFile(view, pdfFile())
+    await waitFor(() => expect(view.getByTestId('publish-drafts')).toBeTruthy())
+    await fillSettings(view)
+
+    await publish(view)
+
+    await waitFor(() => expect(view.getByTestId('publish-blocking')).toBeTruthy())
+    expect(view.getByTestId('publish-drafts').textContent).toContain('缺少名称')
+    expect(confirmFromPdf).not.toHaveBeenCalled()
+  })
+
+  it('不是 PDF、或者太大：一个请求都不发，说清为什么', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    await importFile(view, new File(['x'], '作业.docx', { type: 'application/msword' }))
+    await importFile(view, pdfFile('太大.pdf', 16 * 1024 * 1024))
+
+    expect(previewFromPdf).not.toHaveBeenCalled()
+    expect(toastError.mock.calls.map(([message]) => message)).toEqual(['只能导入 PDF 文件', '文件超过 15 MB'])
   })
 })

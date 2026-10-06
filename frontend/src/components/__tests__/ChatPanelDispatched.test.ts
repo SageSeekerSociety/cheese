@@ -186,11 +186,31 @@ describe('房间时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const done = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', { status: 'closed' })
+    const done = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', {
+      status: 'closed',
+      presentation: { column: 'done', phrase: 'completed' },
+    })
     const { container } = mountPanel(room(id), [done])
     await flush()
 
     expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('已完成')
+  })
+
+  // 主线上只分四档：讨论中、进行中、待审阅、已完成。等人看的那件要说出来。
+  it('派出去的活等人审阅时，标记说「待审阅」', async () => {
+    const id = freshRoom()
+    listBlocks.mockResolvedValue({
+      data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工')],
+      has_more: false,
+    })
+
+    const waiting = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', {
+      presentation: { column: 'needs_you', phrase: 'awaiting_review' },
+    })
+    const { container } = mountPanel(room(id), [waiting])
+    await flush()
+
+    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('待审阅')
   })
 
   it('房间里没派出去任何活时，时间线一如既往', async () => {

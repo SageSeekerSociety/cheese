@@ -82,10 +82,11 @@ function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
 }
 
+// 预览只长在任务上：面板画的是房间 topic-A 里的任务 task-1，预览问的也是它。
 function mountPanel() {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
-    props: { topic: topic('topic-A'), activityTick: 0, working: false },
+    props: { topic: topic('topic-A'), taskId: 'task-1', activityTick: 0, working: false },
     global: { plugins: [vuetify, i18n] },
   })
 }

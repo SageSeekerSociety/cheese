@@ -21,6 +21,7 @@ import { parseDiffLines } from '../../lib/diff'
 import { noticeText } from '../../lib/noticeText'
 import { confirmTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
+import { progressLabel, type ProgressLevel } from '../../lib/taskProgress'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import CloudStartupStatus from '../CloudStartupStatus.vue'
 import NavLink from '../common/NavLink.vue'
@@ -58,12 +59,16 @@ const props = defineProps<{
   retrying?: boolean
   /** 房间所在的项目：「去确认」要带人去项目级的页面。 */
   projectId?: string | null
+  /** 这个频道里一件任务此刻到哪一档（「创建了任务」那一行写在后面）；不认得就是 null。 */
+  taskLevel?: (taskId: string) => ProgressLevel | null
 }>()
 
 const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'open-card', taskId: string): void
   (e: 'retry'): void
+  /** 「置顶了一条消息」那一行的「查看」：去被置顶的那一条。 */
+  (e: 'jump', blockId: string): void
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
 }>()
 
@@ -124,6 +129,15 @@ const splitTask = computed(() => {
   return typeof id === 'string' && id ? id : null
 })
 
+// 「创建了任务」那一行后面写那件任务此刻到了哪一档：讨论中、进行中、待审阅、已完成。
+const splitLevel = computed(() => (splitTask.value ? props.taskLevel?.(splitTask.value) ?? null : null))
+
+// 「置顶了一条消息」那一行：被置顶的是哪一条，行尾一颗「查看」去它那里。
+const pinnedBlock = computed(() => {
+  const id = (props.block.meta as Record<string, unknown> | null | undefined)?.pinned_block_id
+  return typeof id === 'string' && id ? id : null
+})
+
 // 有人让 AI 队友改的文档：行尾是「改了 N 处 · 查看改动」，打开文档一处处看、可以还原。
 // 名字按房间里的叫法（昵称），找不到就用 handle。
 const docRequest = computed(() => (props.notice.mode === 'action' ? props.notice.docRequest ?? null : null))
@@ -170,6 +184,12 @@ const ACTION_META: Record<string, { btn: string }> = {
        (归档/加入…): render it through the SAME token→chip path as messages. -->
   <div v-if="happening" class="room-happening im-event">
     <span v-html="renderPlain(noticeText(block))" /><span class="room-happening__time"> · {{ time }}</span>
+    <template v-if="pinnedBlock">
+      <span class="room-happening__time"> · </span>
+      <button type="button" class="room-happening__go" @click="emit('jump', pinnedBlock)">
+        {{ t('work.room.pin.view') }}
+      </button>
+    </template>
   </div>
   <AgentNoticeFrame
     v-else
@@ -279,6 +299,10 @@ const ACTION_META: Record<string, { btn: string }> = {
          through the shared token→chip path so the actor is clickable. -->
         <span class="sys-text">
           <span v-html="renderPlain(notice.text)" />
+          <template v-if="splitLevel">
+            <span class="sys-sep"> · </span>
+            <span class="task-level" :data-level="splitLevel">{{ progressLabel(splitLevel) }}</span>
+          </template>
           <template v-if="docRequest">
             <span class="sys-sep"> · </span>
             <span>{{ t('work.room.notice.docEditCount', { n: docRequest.edits.length }) }}</span>
@@ -717,5 +741,20 @@ details[open]::details-content {
 }
 .room-happening :deep(.mention:hover) {
   text-decoration: underline;
+}
+.room-happening__go {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.room-happening__go:hover {
+  text-decoration: underline;
+}
+/* 任务到了哪一档：等人看的那一档（待审阅）用琥珀色点出来，其余照这一行的颜色。 */
+.task-level[data-level='review'] {
+  color: var(--accent-ink);
 }
 </style>

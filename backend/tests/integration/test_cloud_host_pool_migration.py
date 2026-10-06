@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
-from app.domain.project.models import Project
 from app.domain.team.models import Team
 from tests.conftest import _PG_BASE, _admin_recreate_db
 
@@ -114,14 +113,25 @@ async def _seed(db_name: str) -> dict:
         db.add(team)
         await db.flush()
         cloud_choice = {"name": None, "profile": "cloud", "device_id": None, **_SPEC}
-        project = Project(
-            name="P",
-            owner_handle=handle,
-            team_id=team.id,
-            settings={"compute_configs": {"default": cloud_choice}, "x": 1},
+        # A row as well: the projects table is at the revision before the pool.
+        project_id = uuid.uuid4()
+        await db.execute(
+            text(
+                "INSERT INTO projects (id, name, owner_handle, team_id, ai_mode,"
+                " settings, created_at, updated_at)"
+                " VALUES (:id, 'P', :owner, :team, 'collaborative',"
+                " CAST(:settings AS json), :now, :now)"
+            ),
+            {
+                "id": project_id,
+                "owner": handle,
+                "team": team.id,
+                "settings": json.dumps(
+                    {"compute_configs": {"default": cloud_choice}, "x": 1}
+                ),
+                "now": now,
+            },
         )
-        db.add(project)
-        await db.flush()
         # Rooms as rows too, for the same reason as the sessions below: the
         # topics table is at the revision before the pool.
         room_id, old_room_id = uuid.uuid4(), uuid.uuid4()
@@ -138,7 +148,7 @@ async def _seed(db_name: str) -> dict:
                 ),
                 {
                     "id": topic_id,
-                    "project": project.id,
+                    "project": project_id,
                     "title": title,
                     "compute": compute,
                     "now": now,
@@ -216,7 +226,7 @@ async def _seed(db_name: str) -> dict:
             )
         await db.commit()
         ids.update(
-            project=project.id,
+            project=project_id,
             room=room_id,
             old_room=old_room_id,
             room_resource=resource,

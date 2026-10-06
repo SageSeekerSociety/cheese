@@ -60,7 +60,7 @@ CALLS = {
         "GET",
         f"/topics/{TOPIC}/history",
     ),
-    # The room's document: the fixture platform names every id "fixture-id".
+    # The task's document: the fixture platform names every id "fixture-id".
     "cheese_doc_get": ({}, "GET", "/documents/fixture-id"),
     # 不碰机器：任务开始前机器只读，起草实况文档正是那时要做的事。
     "cheese_doc_set": ({"content": "# 实况\n"}, "PUT", "/documents/fixture-id"),

@@ -200,6 +200,10 @@ EOF
   fi
   ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
     || { rm -rf "$run_dir"; fail "busy owner was recreated"; }
+  # The first drain request already stopped the owner taking calls, so a
+  # release that gives up must hand it back.
+  grep -F 'release-resume' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner left draining after a release that gave up"; }
 
   : > "$docker_log"
   PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \

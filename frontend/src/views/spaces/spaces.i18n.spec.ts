@@ -1,4 +1,4 @@
-// 英文界面下，空间这几页不该再冒出中文：发题页（手写与 PDF 两条路）、PDF 解析后的草稿区，
+// 英文界面下，空间这几页不该再冒出中文：发题页（连同从文件读出的那几道草稿），
 // 以及数据看板里学习那一格的几张卡。挂的是真的 i18n，锁到 en。
 //
 // 发题页底下那张表单和附件卡片（`components/tasks/`）换成壳：它们的文案不归这一页管，
@@ -44,6 +44,10 @@ vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }
 vi.mock('@/components/tasks/TaskForm.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { __esModule: true, default: defineComponent({ name: 'TaskFormStub', setup: () => () => h('form') }) }
+})
+vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return { __esModule: true, default: defineComponent({ name: 'TipTapEditorStub', setup: () => () => h('div') }) }
 })
 vi.mock('@/components/tasks/TaskAttachmentPicker.vue', async () => {
   const { defineComponent, h } = await import('vue')
@@ -112,6 +116,7 @@ beforeEach(() => {
           description: 'A crash. ![fig](https://x.test/a.png)',
           space: SPACE_ID,
         },
+        { name: '', intro: 'Allocator.', description: '', space: SPACE_ID },
       ],
       templateUsed: {},
       tokenUsed: 1200,
@@ -139,22 +144,17 @@ async function mountPublish() {
 }
 
 describe('spaces in English', () => {
-  it('the publish page has no Chinese on either path, including parsed drafts', async () => {
+  it('the publish page has no Chinese, including the drafts read from a file', async () => {
     const view = await mountPublish()
     expect(view.container.textContent).not.toMatch(CJK)
 
-    await fireEvent.click(view.getByRole('button', { name: 'Generate from PDF' }))
-    await waitFor(() => expect(view.container.querySelector('[data-testid="pdf-file"]')).not.toBeNull())
-    expect(view.container.textContent).not.toMatch(CJK)
-
-    const input = view.getByLabelText('Upload a challenge PDF') as HTMLInputElement
+    const input = view.getByTestId('publish-import-input') as HTMLInputElement
     Object.defineProperty(input, 'files', {
       value: [new File([new Uint8Array(10)], 'hw.pdf', { type: 'application/pdf' })],
       configurable: true,
     })
     await fireEvent.change(input)
-    await fireEvent.click(view.getByRole('button', { name: 'Parse into challenge drafts' }))
-    await waitFor(() => expect(view.container.querySelector('[data-testid="pdf-meta"]')).not.toBeNull())
+    await waitFor(() => expect(view.container.querySelector('[data-testid="publish-drafts"]')).not.toBeNull())
 
     expect(view.container.textContent).not.toMatch(CJK)
     const labels = Array.from(view.container.querySelectorAll('[aria-label],[title],[placeholder]')).map((el) =>

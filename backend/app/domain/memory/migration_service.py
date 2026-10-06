@@ -45,6 +45,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.living_doc.services import Documents
 from app.domain.membership.roster import roster
 from app.domain.memory.files import MemoryFileScope, prefix_of
 from app.domain.memory.files_store import (
@@ -74,7 +75,6 @@ from app.domain.memory.models import (
 from app.domain.memory.store import live_entries
 from app.domain.project.services import ProjectService
 from app.domain.service_keys import KeySpec, service_key
-from app.domain.topic.services import TopicService
 from app.domain.usage.ledger import Ledger
 
 logger = logging.getLogger(__name__)
@@ -183,8 +183,8 @@ class MemoryMigrationService:
                     content=row.content,
                 )
             )
-        if project.root_topic_id is not None:
-            doc = await TopicService(self._session).get_doc(project.root_topic_id)
+        if project.overview_document_id is not None:
+            doc = await Documents(self._session).get(project.overview_document_id)
             for entry in overview_entries(doc.content if doc else ""):
                 if entry.source_id not in moved:
                     entries.append(entry)

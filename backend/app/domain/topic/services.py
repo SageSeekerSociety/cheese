@@ -28,7 +28,6 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.about import EventAbout, landing
-from app.domain.block.documents import DocumentWriter
 from app.domain.block.models import (
     AuthorType,
     Block,
@@ -43,8 +42,7 @@ from app.domain.identity.handles import (
     names_a_person,
 )
 from app.domain.living_doc.models import Document, DocumentNode
-from app.domain.living_doc.services import DocumentJournal, Documents
-from app.domain.membership.roster import roster_rows
+from app.domain.living_doc.services import Documents
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
@@ -57,7 +55,6 @@ from app.domain.room_task.models import (
 )
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService, said_title
-from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
     NotifyLevel,
     RoomCleanup,
@@ -65,15 +62,6 @@ from app.domain.topic.models import (
     TopicKind,
     TopicRole,
     TopicStatus,
-)
-from app.domain.topic.overview import (
-    ACTIVE_TOPICS_KEY,
-    ACTIVE_TOPICS_LIMIT,
-    CLOSED_TOPICS_KEY,
-    CLOSED_TOPICS_LIMIT,
-    first_sentence,
-    overview_auto_blocks,
-    topic_status,
 )
 from app.domain.topic.repositories import (
     SortOrder,
@@ -832,26 +820,11 @@ class TopicService:
         # 归档后工作面冻结 (spec §6.3) — consistent with dispatch/edit_doc.
         if parent.status == TopicStatus.archived:
             raise ValidationError(say("topicArchivedFrozen"))
-
-        if parent.is_private:
-            raise ValidationError(say("privateMessageStaysPrivate"))
         # Opened unnamed: the platform names it (`room_task/naming.py`).
         task = await self.create_task(room_id=parent.id, created_by=created_by)
         task.upgraded_from_block_id = block.id
         await self._blocks.set_upgraded_to_place(block, task_id=task.id)
         return parent, task, True
-
-    async def seed_brief_doc(self, topic: Topic, content: str) -> None:
-        """Preset a newborn ROOM's living doc with its task brief. Author is
-        `system`: the platform assembled it from existing text — nothing here
-        speaks as 芝士 (the room's kickoff turn writes the real opening).
-
-        A room only: a task's document is its own (`TaskService.ensure_document`),
-        written by the task's session.
-        """
-        doc = await self.room_doc(topic.id, topic.project_id)
-        await DocumentJournal(self._session).lock(doc.id)
-        await DocumentWriter(self._session, summarize_doc_change).seed(doc, content)
 
     async def _card_block(self, room: Topic, task: Task, *, actor: str) -> Block:
         """The room's timeline says a task was created here, and whose it is.
@@ -877,6 +850,13 @@ class TopicService:
             kind=BlockKind.event,
             meta={"platform": True, "action": "task_created", "task_id": str(task.id)},
         )
+
+    @staticmethod
+    def refuse_tasks_in_private(room: Topic) -> None:
+        """A task is the project's: everyone in it can see it. A private chat is
+        two people's, so nothing said there becomes one, nor is proposed to."""
+        if room.is_private:
+            raise ValidationError(say("privateChatHasNoTasks"))
 
     async def create_task(
         self,
@@ -907,6 +887,7 @@ class TopicService:
         # 归档后工作面冻结 (spec §6.3): no new work in a frozen room.
         if room.status == TopicStatus.archived:
             raise ValidationError(say("topicArchivedFrozen"))
+        self.refuse_tasks_in_private(room)
         project = await self._projects.get(room.project_id)
         owner = (
             owner_handle
@@ -1013,131 +994,9 @@ class TopicService:
             raise NotFoundError("Topic not found")
         return place
 
-    async def doc_of_room(self, room_id: uuid.UUID) -> Document | None:
-        """这间房自己那份实况文档；还没有人打开或写过它时没有。
-
-        和 `get_doc` 读的是同一处，差别只在手上是什么：路由手上是个可能不存在的
-        place，所以先 404；手上已经是房间 id 的地方不必再绕一圈。
-        """
-        return await Documents(self._session).of_room(room_id)
-
-    async def get_doc(self, topic_id: uuid.UUID) -> Document | None:
-        place = await self.place_or_404(topic_id)
-        return await self.doc_of_room(place.room_id)
-
     async def doc_nodes(self, doc: Document) -> list[DocumentNode]:
         """文档的顶层块（标题、段落、列表……），按顺序。"""
         return await Documents(self._session).nodes(doc)
-
-    async def room_doc(self, room_id: uuid.UUID, project_id: uuid.UUID) -> Document:
-        """这间房的实况文档，没有就建一份空的（第 0 版）：要给它签票、写它、在它
-        上面评论的人，手上得先有它的编号。"""
-        return await Documents(self._session).ensure_for_room(
-            room_id=room_id, project_id=project_id
-        )
-
-    async def overview_auto(self, topic_id: uuid.UUID) -> list[dict]:
-        """总览房间（项目根话题）的 ②③，结构化（#1889）。
-
-        总览只属于根话题：别的房间读得到的是它们自己的实况文档，没有人从那里看
-        项目全局。非根话题给的是一句 404 —— 它名下确实没有这么一件东西，这和
-        「有这个地方但你看不到」是两回事。
-        """
-        place = await self.place_or_404(topic_id)
-        project = await self._projects.get(place.project_id)
-        if project is None or project.root_topic_id != place.room_id:
-            raise NotFoundError("Topic not found")
-        data = await self.overview_auto_data(place.project_id)
-        return overview_auto_blocks(**data)
-
-    async def overview_auto_data(
-        self,
-        project_id: uuid.UUID,
-        *,
-        all_topics: list[Topic] | None = None,
-        roster: list[dict] | None = None,
-    ) -> dict[str, list[dict]]:
-        """②③ 的每一行：活跃话题、已结束话题的结论。
-
-        全部来自结构化数据，所以**没有一句是手抄的**——谁改了源头，下一次就是
-        新的。负责人取该话题最新那张任务卡的 owner：一个房间可以有好几张卡，最新
-        的那张才说得出现在谁在做。
-
-        总览房间的提示词注入（`agent/chat.py`）和前端那一栏
-        （`GET /topics/{id}/overview`）读的是**同一次取数**：两个读者，一份来源。
-        手上已经有话题表和名册的调用方传进来，省掉把同一张名册再读一遍。
-        """
-        if all_topics is None:
-            all_topics = await self._repo.list_for_project(project_id)
-        if roster is None:
-            roster = await roster_rows(self._session, project_id)
-
-        name_of = {m["handle"]: m["name"] for m in roster}
-
-        def person(handle: str | None) -> str | None:
-            # 名册上的名字才是 @ 得到的名字；查不到就照 handle 写，那是真的。
-            return f"@{name_of.get(handle, handle)}" if handle else None
-
-        latest_card: dict[uuid.UUID, Task] = {}
-        for card in await TaskService(self._session).list_in_project(project_id):
-            # Oldest first: the newest card in each room wins.
-            latest_card[card.room_id] = card
-
-        def card_state(topic_id: uuid.UUID) -> str:
-            card = latest_card.get(topic_id)
-            if card is None:
-                return "还没开活"
-            return "在做" if card.status == TaskStatus.open else "已收工"
-
-        live = [
-            t
-            for t in all_topics
-            if t.kind != TopicKind.root and t.status != TopicStatus.archived
-        ][:ACTIVE_TOPICS_LIMIT]
-        closed = sorted(
-            (
-                t
-                for t in all_topics
-                if t.kind != TopicKind.root and t.status == TopicStatus.archived
-            ),
-            key=lambda t: t.archived_at or t.updated_at,
-            reverse=True,
-        )[:CLOSED_TOPICS_LIMIT]
-        # 只取要渲染的那几间房的文档：一屏之外的结论没人读，问了也是白问。
-        docs = await Documents(self._session).of_rooms([t.id for t in (*live, *closed)])
-
-        def conclusion(topic: Topic, *, prefer_card: bool) -> str | None:
-            """话题现在的一句话结论：卡上那句优先，没有就看它自己的实况文档。"""
-            card = latest_card.get(topic.id)
-            if prefer_card and card is not None and card.conclusion:
-                return first_sentence(card.conclusion)
-            doc = docs.get(topic.id)
-            return topic_status(doc.content) if doc is not None else None
-
-        return {
-            ACTIVE_TOPICS_KEY: [
-                {
-                    "id": str(t.id),
-                    "title": t.title,
-                    "owner": person(
-                        card.owner_handle
-                        if (card := latest_card.get(t.id)) is not None
-                        else None
-                    ),
-                    "status": card_state(t.id),
-                    "conclusion": conclusion(t, prefer_card=False),
-                }
-                for t in live
-            ],
-            CLOSED_TOPICS_KEY: [
-                {
-                    "id": str(t.id),
-                    "title": t.title,
-                    "conclusion": conclusion(t, prefer_card=True),
-                }
-                for t in closed
-            ],
-        }
 
     async def get_progress(
         self, conversation_id: uuid.UUID

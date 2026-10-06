@@ -7,6 +7,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 
 from app.core.config import settings
 from app.core.db import async_session_factory
@@ -60,6 +61,9 @@ class Placed:
     #: The conversation the row resumes: what a terminal answer has to name
     #: before it may close anything (FB-56).
     resume_token: str | None
+    #: Its runner was found gone after an earlier restart: nothing on the
+    #: machine to ask until the next message starts it again.
+    let_go: bool = False
 
 
 class CentralChannel(DeviceChannel):
@@ -134,6 +138,7 @@ class CentralChannel(DeviceChannel):
                 # own seat.
                 place.runtime.get("agent_handle") or handle,
                 resume_token,
+                let_go,
             )
             for (
                 project_id,
@@ -143,12 +148,30 @@ class CentralChannel(DeviceChannel):
                 row_harness,
                 resume_token,
                 place,
+                let_go,
             ) in sessions
             if row_harness == harness
             and place.channel == self.name
             and "state" in (place.runtime or {})
             and (device_id is None or place.machine == device_id)
         ]
+
+    async def let_go(
+        self, sessions: list[SessionRef], *, placed_before: datetime
+    ) -> None:
+        """Record that these sessions' runners are gone, so the next restart
+        does not ask their machine again (``RoomSessions.recover``)."""
+        factory = self._session_factory or async_session_factory
+        async with factory() as db:
+            service = AgentSessionService(db)
+            for session in sessions:
+                await service.let_go(
+                    conversation_id=session.conversation_id,
+                    agent_handle=session.agent_handle,
+                    harness=session.harness,
+                    placed_before=placed_before,
+                )
+            await db.commit()
 
     @asynccontextmanager
     async def prepare_session(

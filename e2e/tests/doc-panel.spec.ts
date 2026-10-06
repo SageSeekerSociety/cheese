@@ -37,13 +37,15 @@ test('文档里的宽表格在自己那格里横向滚动，不把整栏顶出�
     project_id: projectId,
     title: `宽表格 ${Date.now()}`,
   })) as { id: string };
-  const roomDoc = (await api(page, 'get', `/topics/${room.id}/document`)) as { id: string };
+  // 频道没有自己的文档：实况文档是任务的。
+  const task = (await api(page, 'post', `/topics/${room.id}/tasks`, { title: '文档' })) as { id: string };
+  const roomDoc = (await api(page, 'get', `/topics/${task.id}/document`)) as { id: string };
   await api(page, 'put', `/documents/${roomDoc.id}`, {
     content: WIDE_TABLE_DOC,
     expected_version: 0,
   });
 
-  await page.goto(`/projects/${projectId}/topics/${room.id}`);
+  await page.goto(`/projects/${projectId}/topics/${room.id}/tasks/${task.id}?tab=overview`);
   const wrapper = page.locator('.tableWrapper');
   await expect(wrapper).toBeVisible({ timeout: 30_000 });
 
@@ -83,13 +85,15 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
     project_id: projectId,
     title: `焦点环 ${Date.now()}`,
   })) as { id: string };
-  const roomDoc = (await api(page, 'get', `/topics/${room.id}/document`)) as { id: string };
+  // 频道没有自己的文档：实况文档是任务的。
+  const task = (await api(page, 'post', `/topics/${room.id}/tasks`, { title: '文档' })) as { id: string };
+  const roomDoc = (await api(page, 'get', `/topics/${task.id}/document`)) as { id: string };
   await api(page, 'put', `/documents/${roomDoc.id}`, {
     content: '# 焦点环\n\n正文。',
     expected_version: 0,
   });
 
-  await page.goto(`/projects/${projectId}/topics/${room.id}`);
+  await page.goto(`/projects/${projectId}/topics/${room.id}/tasks/${task.id}?tab=overview`);
   const prose = page.locator('.work-panel .doc-editor .doc-prose');
   await expect(prose).toBeVisible({ timeout: 30_000 });
   // 编辑区（所有者打开，可编辑）才接得住键盘焦点；等它挂上再进。

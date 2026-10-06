@@ -3024,7 +3024,7 @@ def test_a_correction_is_refused_once_the_card_has_been_accepted(client, sweepin
     r = _describe(client, tid, change_subject="fix(x): too late")
 
     assert r.status_code == 422, r.text
-    assert "没有待处理的验收卡" in r.json()["message"]
+    assert r.json()["error"]["i18n"]["key"] == "reviewNoPendingCard"
 
 
 def test_a_correction_is_validated_like_the_original_subject(client, sweeping):

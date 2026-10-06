@@ -4,9 +4,11 @@ import type { Block } from '../cx_types'
 import { ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/api/threads', () => ({ listThreads: vi.fn() }))
+vi.mock('@/api/threads', () => ({ listThreads: vi.fn(), getThread: vi.fn() }))
 
 import { summonPrefill, useThreadLines } from './useThreadLines'
+
+import { listThreads } from '@/api/threads'
 
 const ME = 'alice'
 
@@ -49,29 +51,78 @@ describe('主线上「正在回复」', () => {
       agentNameOf: () => '芝士',
     })
   }
-
-  it('主线上叫了队友、还没有回复的那一条', () => {
-    expect(lines(true).replyingFor(message(ME, true))).toBe('芝士')
-  })
-
-  it('支线已经有回复了，就写回复，不再写正在回复', () => {
-    const asked = {
-      ...message(ME, true),
+  function underThread(replying: string[], replies = 0, at?: string): Block {
+    return {
+      ...message(ME, true, at),
       thread: {
-        id: 't',
+        id: 't1',
         room_id: 'room1',
         root_block_id: 'x',
-        reply_count: 1,
+        reply_count: replies,
         last_reply_at: null,
         last_reply: null,
+        participants: [ME],
+        task: null,
+        replying,
       },
     }
-    expect(lines(true).replyingFor(asked)).toBeNull()
+  }
+
+  it('队友此刻在支线里答，就写它正在回复，支线里已经有回复也写', () => {
+    expect(lines(true).replyingFor(underThread(['cheese'], 3))).toBe('芝士')
   })
 
-  it('没叫队友的消息、早就过去的那一条、不是主线的地方，都不写', () => {
-    expect(lines(true).replyingFor(message(ME, false))).toBeNull()
-    expect(lines(true).replyingFor(message(ME, true, '2026-01-01T00:00:00Z'))).toBeNull()
-    expect(lines(false).replyingFor(message(ME, true))).toBeNull()
+  it('叫过它不算：它此刻没在答就不写，不管叫了多久', () => {
+    expect(lines(true).replyingFor(underThread([], 0))).toBeNull()
+    expect(lines(true).replyingFor(message(ME, true))).toBeNull()
+  })
+
+  it('它开始、停下回答时，那一行跟着变', async () => {
+    const l = lines(true)
+    const asked = underThread([], 1)
+    await l.onActivity('t1', 'cheese', true)
+    expect(l.replyingFor(asked)).toBe('芝士')
+    await l.onActivity('t1', 'cheese', false)
+    expect(l.replyingFor(asked)).toBeNull()
+  })
+
+  it('不是频道主线的地方不写', () => {
+    expect(lines(false).replyingFor(underThread(['cheese']))).toBeNull()
+  })
+})
+
+describe('一轮出错、还没有回复的支线', () => {
+  it('队友停下时支线里还没有回复：再读一次，那条消息下面那一行就说回复失败', async () => {
+    const asked: Block = {
+      ...message(ME, true),
+      id: 'root',
+      thread: {
+        id: 't1',
+        room_id: 'room1',
+        root_block_id: 'root',
+        reply_count: 0,
+        last_reply_at: null,
+        last_reply: null,
+        participants: [ME],
+        task: null,
+      },
+    }
+    const messages = ref<Block[]>([asked])
+    vi.mocked(listThreads).mockResolvedValue([{ ...asked.thread!, failed: true, root: null, unread: false }])
+    const l = useThreadLines({
+      mainLine: () => true,
+      roomId: () => 'room1',
+      timeline: {
+        messages,
+        find: (id) => messages.value.find((m) => m.id === id),
+        replace: (b) => (messages.value = messages.value.map((m) => (m.id === b.id ? b : m))),
+      },
+      agentNameOf: () => '芝士',
+    })
+
+    await l.onActivity('t1', 'cheese', true)
+    await l.onActivity('t1', 'cheese', false)
+    await vi.waitFor(() => expect(messages.value[0].thread?.failed).toBe(true))
+    expect(l.replyingFor(messages.value[0])).toBeNull()
   })
 })

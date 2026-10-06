@@ -31,6 +31,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.library.service import artifact_snapshot_path
 from app.domain.living_doc.services import Documents
 from app.domain.project import artifacts, forge
+from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
 
@@ -211,12 +212,21 @@ async def create_archive(
             .order_by(Block.created_at)
         )
     )
-    # The rooms' living documents and their node trees, in the shape the
-    # archive has always listed them in: a document is `doc`, its blocks are
-    # `doc_node` under it.
+    # The project's overview and the documents old rooms still keep, with their
+    # node trees: a document is `doc`, its blocks are `doc_node` under it.
     living = Documents(db)
+    project = await db.get(Project, project_id)
+    overview = (
+        await living.get(project.overview_document_id)
+        if project is not None and project.overview_document_id is not None
+        else None
+    )
+    kept = [
+        *([overview] if overview else []),
+        *(await living.of_rooms(visible)).values(),
+    ]
     docs: list[dict] = []
-    for doc in (await living.of_rooms(visible)).values():
+    for doc in kept:
         docs.append(
             {
                 "id": doc.id,

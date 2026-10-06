@@ -164,7 +164,6 @@ class CreateTaskRequest(BaseModel):
     rank: int | None = None
     category_id: int | None = Field(default=None, alias="categoryId")
     team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
-    video_url: str | None = Field(default=None, alias="videoUrl")
     topics: list[int] = Field(default_factory=list)
     submission_schema: list[dict] = Field(
         default_factory=list, alias="submissionSchema"
@@ -224,7 +223,6 @@ class PatchTaskRequest(BaseModel):
     name: str | None = None
     intro: str | None = None
     description: str | None = None
-    video_url: str | None = Field(default=None, alias="videoUrl")
     resubmittable: bool | None = None
     editable: bool | None = None
     require_real_name: bool | None = Field(default=None, alias="requireRealName")
@@ -304,7 +302,6 @@ async def _create_task_entity(
         rank = payload.rank
         category_id = payload.category_id
         team_locking_policy = payload.team_locking_policy
-        video_url = payload.video_url or None
         topics = payload.topics
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
@@ -372,7 +369,6 @@ async def _create_task_entity(
         category_id = int(category_id_raw) if category_id_raw is not None else None
 
         team_locking_policy = payload.get("teamLockingPolicy") or "NO_LOCK"
-        video_url = payload.get("videoUrl") or None
 
         access_control_enabled = bool(payload.get("accessControlEnabled", False))
         access_domain_group_ids_raw = payload.get("accessDomainGroupIds") or []
@@ -479,7 +475,6 @@ async def _create_task_entity(
         max_team_size=max_team_size,
         team_locking_policy=team_locking_policy,
         access_control_enabled=access_control_enabled,
-        video_url=video_url,
     )
 
     # 题目级「给 AI 队友的指导」(#944)：整份替换，见 apply_task_teaching。

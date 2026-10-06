@@ -76,7 +76,6 @@ class Task(Base):
     reject_reason: Mapped[str] = mapped_column(
         "reject_reason", String, nullable=False, default=""
     )
-    video_url: Mapped[str | None] = mapped_column("video_url", String, nullable=True)
     team_locking_policy: Mapped[str] = mapped_column(
         "team_locking_policy", String(50), nullable=False, default="NO_LOCK"
     )

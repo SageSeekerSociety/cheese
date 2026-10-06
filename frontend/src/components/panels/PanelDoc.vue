@@ -12,9 +12,8 @@
 //     → `components/panels/PanelDocView.vue`，只凭 props 渲染
 //   - 编辑器本身（tiptap 实例、几种装饰、别人的光标、段落闪一下）
 //     → `components/panels/doc/DocSurface.vue`，画不动的一层放在那儿
-// 取数的那几个组合式函数由上一层的接线外壳调用（`components/work/PanelDocHost.vue`，
-// 房间总览那一格是 `components/work/PanelOverviewHost.vue`）：场景棘轮里面板自己必须只吃
-// props，取数一滴都不能漏进 `components/panels/**`。这一只因此只做两件事——把外壳递来的
+// 取数的那几个组合式函数由上一层的接线外壳调用（`components/work/PanelDocHost.vue`）：
+// 场景棘轮里面板自己必须只吃 props，取数一滴都不能漏进 `components/panels/**`。这一只因此只做两件事——把外壳递来的
 // 三包状态摊给展示组件，把事件接回来。props 一次摊开而不是 v-bind 一整包：这二十来样东
 // 西就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
 import type { DocPeopleBundle } from '../../composables/useDocPeople'
@@ -49,6 +48,8 @@ const props = withDefaults(
     bare?: boolean
     /** 顶栏画到页面上的哪个位置，见 PanelDocView。 */
     barTo?: string
+    /** 跟着外面那一列一起滚，见 PanelDocView。 */
+    flow?: boolean
     /** 这一格的取数（`composables/usePanelDoc.ts` 那一包）。 */
     docPanel: PanelDocBundle
     /** 评论串那一包（`composables/useDocThreads.ts`）。 */
@@ -64,6 +65,7 @@ const props = withDefaults(
     agentHandle: null,
     bare: false,
     barTo: undefined,
+    flow: false,
   }
 )
 
@@ -170,6 +172,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :bare="props.bare"
     :untitled="!!props.taskId"
     :bar-to="props.barTo"
+    :flow="props.flow"
     :session="doc.session.value"
     :editable="doc.editable.value"
     :read-only="doc.readOnly.value"
@@ -185,9 +188,6 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :thread-actions="threads.actions"
     :suggestion-reasons="doc.suggestionReasons.value"
     :fetch-suggestion-reasons="doc.fetchSuggestionReasons"
-    :overview-blocks="doc.overviewBlocks.value"
-    :overview-failed="doc.overviewFailed.value"
-    :reload-overview="doc.loadOverview"
     :fetch-doc-nodes="doc.fetchDocNodes"
     :image-src="doc.imageSrc"
     :toggle-editable="doc.toggleEditable"
@@ -205,5 +205,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     @open-file="emit('open-file', $event)"
     @rename="rename"
     @delete="emit('delete')"
-  />
+  >
+    <template #lead><slot name="lead" /></template>
+  </PanelDocView>
 </template>

@@ -1,7 +1,5 @@
-"""Comments on the living document: a thread on quoted words, passive unless
-it names the agent."""
-
-import uuid
+"""Comments on a task's living document: a thread on quoted words, passive
+unless it names the agent."""
 
 import pytest
 
@@ -12,10 +10,10 @@ from app.api.deps import (
     get_session_host,
 )
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.topic.models import Topic, TopicStatus
 from app.main import app
 from tests.conftest import seed_user
 from tests.integration.conftest import (
+    open_task,
     post_project,
     room_agent_seat,
 )
@@ -40,22 +38,24 @@ def sessions():
     app.dependency_overrides.pop(get_consumptions, None)
 
 
-def _topic(client) -> str:
+def _topic(client) -> tuple[str, dict]:
+    """A room, and a task in it: the room's agent works the task."""
     p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
-    return t["id"]
+    return t["id"], open_task(client, t["id"], owner="owner", start=False)
 
 
 def _member_topic(client) -> str:
-    """A room whose owner is signed in: reading threads takes a real member."""
+    """A task whose owner is signed in: reading threads takes a real member."""
     token = seed_user(client, "commenter")
     client.headers.update({"Authorization": f"Bearer {token}"})
     project = post_project(client, {"name": "P"}, owner="commenter").json()["data"]
-    return client.post(
+    room = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}
     ).json()["data"]["id"]
+    return open_task(client, room, owner="commenter", start=False)["id"]
 
 
 def _threads(client, doc: str, **kw) -> list[dict]:
@@ -81,22 +81,16 @@ def test_comment_starts_a_thread_on_its_quote_and_is_not_in_timeline(client):
     assert thread["comment"]["content"] == "这个范围要再收窄"
     assert thread["state"] == "open"
     assert thread["replies"] == []
-    # A comment is on the document, not a message in the room's conversation.
+    # A comment is on the document, not a message in the task's conversation.
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     assert not any("这个范围要再收窄" in b["content"] for b in blocks)
 
 
-def test_archived_room_takes_no_comments(client):
+def test_a_closed_task_takes_no_comments(client):
     tid = _member_topic(client)
     doc = document_of(client, tid)
 
-    async def archive():
-        async with client.test_factory() as db:
-            topic = await db.get(Topic, uuid.UUID(tid))
-            topic.status = TopicStatus.archived
-            await db.commit()
-
-    client.portal.call(archive)
+    assert client.post(f"/topics/{tid}/close", json={}).status_code == 200
     r = client.post(f"/documents/{doc}/comments", json={"content": "还能写吗"})
 
     assert r.status_code == 422
@@ -113,9 +107,10 @@ def test_human_comment_does_not_wake_ai_or_change_document(client, sessions):
     token = seed_user(client, "commenter")
     project = post_project(client, {"name": "P"}, owner="commenter").json()["data"]
     headers = {"Authorization": f"Bearer {token}"}
-    tid = client.post(
+    room = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}, headers=headers
     ).json()["data"]["id"]
+    tid = open_task(client, room, owner="commenter", start=False)["id"]
     doc = document_of(client, tid, headers=headers)
     saved = client.put(
         f"/documents/{doc}",
@@ -141,10 +136,9 @@ def test_human_comment_does_not_wake_ai_or_change_document(client, sessions):
 
 
 def test_agent_comment_is_attributed_but_does_not_wake_itself(client, sessions):
-    tid = _topic(client)
-    topic = client.get(f"/topics/{tid}").json()["data"]
-    token = mint_scoped_token(project_id=topic["project_id"], topic_id=tid)
-    doc = document_of(client, tid)
+    room, task = _topic(client)
+    token = mint_scoped_token(project_id=task["project_id"], topic_id=task["id"])
+    doc = document_of(client, task["id"])
 
     r = client.post(
         f"/documents/{doc}/comments",
@@ -154,5 +148,5 @@ def test_agent_comment_is_attributed_but_does_not_wake_itself(client, sessions):
 
     assert r.status_code == 200
     comment = r.json()["data"]
-    assert comment["author"] == room_agent_seat(client, tid)
+    assert comment["author"] == room_agent_seat(client, room)
     assert sessions.asked == []

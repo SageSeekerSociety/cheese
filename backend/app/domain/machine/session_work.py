@@ -52,6 +52,7 @@ from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxL
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
+    EXECUTOR_SETUP_FAILED,
     SANDBOX_PREPARING,
     SANDBOX_RESTORE_FAILED,
     SANDBOX_WAKING,
@@ -547,8 +548,18 @@ async def _start_executor(
     if (refusal := launch.refused(installed)) is not None:
         raise refusal
     if installed.get("exit") != 0 or installed.get("truncated"):
-        raise RuntimeError(installed.get("stderr") or "Executor setup failed")
+        raise ExecutorSetupFailed(installed.get("stderr") or "")
     return json.loads(installed["stdout"])
+
+
+class ExecutorSetupFailed(RuntimeError):
+    """The install exited non-zero on the machine. Its stderr is the machine's
+    own account of why; the agent is told its last line instead of a bare
+    server error, so the reason reaches the room."""
+
+    def reason(self) -> str:
+        lines = [line.strip() for line in str(self).splitlines() if line.strip()]
+        return lines[-1] if lines else "Executor setup failed"
 
 
 async def _sandboxed(db, topic_id, device_id: str) -> bool:
@@ -1331,6 +1342,11 @@ async def _install(
                 return {"unavailable": SANDBOX_RESTORE_FAILED}
             if isinstance(exc, SandboxBusy):
                 return _SANDBOX_BUSY
+            if isinstance(exc, ExecutorSetupFailed):
+                logger.warning("executor installation failed: %s", exc)
+                return {
+                    "unavailable": EXECUTOR_SETUP_FAILED.format(reason=exc.reason())
+                }
             if isinstance(exc, DeviceOffline):
                 # The machine went away while its executor was being set up: the
                 # same answer as when it is away before setup starts (above).

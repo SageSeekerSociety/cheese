@@ -38,7 +38,7 @@ vi.mock('@/composables/useCachedResource', () => ({
   }),
 }))
 vi.mock('../me', () => ({ myHandle: () => 'writer', myId: () => 'writer' }))
-// 章程是项目房间的文档面板：评论和节点照旧从接口读，这里给空的。
+// 章程是项目概览那一篇文档的面板：评论和节点照旧从接口读，这里给空的。
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
@@ -47,6 +47,11 @@ vi.mock('../api', async () => {
     deleteMemory: vi.fn(),
   }
 })
+// 章程开的是项目概览那一份文档，面板会读它叫什么。
+vi.mock('../api/projectDocuments', async () => ({
+  ...(await vi.importActual<typeof import('../api/projectDocuments')>('../api/projectDocuments')),
+  getDocumentAbout: async (id: string) => ({ id, title: '项目概览' }),
+}))
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
 vi.mock('../api/docCollab', async () => ({
   ...(await vi.importActual<typeof import('../api/docCollab')>('../api/docCollab')),
@@ -136,16 +141,19 @@ describe('in English', () => {
 })
 
 describe('章程', () => {
-  it('打开的是项目房间那一篇协同文档，谁在房间里改的都在这儿', async () => {
-    seedRoom('root', '我们给高中生做算法课。')
-    state.payload = { rootTopic: { id: 'root', kind: 'root', title: '项目', project_id: 'p' } }
+  it('打开的是项目概览那一篇协同文档，谁在别处改的都在这儿', async () => {
+    seedRoom('overview', '我们给高中生做算法课。')
+    state.payload = {
+      rootTopic: { id: 'root', kind: 'root', title: '项目', project_id: 'p' },
+      overviewId: 'overview',
+    }
     const view = render(ProjectDocsView, {
       props: { projectId: 'p', kind: 'charter' },
       global: { plugins: [createVuetify()] },
     })
     await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('算法课'))
 
-    remoteEdit('root', '我们给高中生做算法课。\n\n每周二上课。')
+    remoteEdit('overview', '我们给高中生做算法课。\n\n每周二上课。')
 
     await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('每周二上课'))
     view.unmount()

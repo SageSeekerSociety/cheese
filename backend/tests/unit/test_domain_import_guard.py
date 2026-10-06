@@ -161,6 +161,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.notification.services", "app.domain.block.repositories"),
         ("app.domain.notification.services", "app.domain.project.repositories"),
         ("app.domain.oauth.services", "app.domain.user.repositories"),
+        # --- pin --- 置顶要确认那一块在这个频道主线上，再在主线写一行「置顶了…」：
+        # 读一块、写一块，block 领域没有 service 层，和 announce 同一个理由入账。
+        ("app.domain.pin.services", "app.domain.block.repositories"),
         # --- project ---
         # environment_recovery 走的一直是 block 领域的 service，而那个 service
         # （`record_system_event`）的全部内容就是替调用点挑一个 `topic_id`——
@@ -205,6 +208,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.task.visibility_service", "app.domain.user.repositories"),
         # --- team ---
         ("app.domain.team.services", "app.domain.task.repositories"),
+        # --- thread --- 支线摘要要每条支线最后说的那一句：一次查询读一批块，
+        # block 领域没有 service 层。
+        ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
         ("app.domain.topic.services", "app.domain.project.repositories"),

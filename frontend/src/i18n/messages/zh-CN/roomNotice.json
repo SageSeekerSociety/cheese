@@ -253,6 +253,8 @@
   "resendInterrupted": "上一次重发被平台重启打断，消息未送达",
   "resendInterruptedDetail": "重发只进行一次，不会连续自动重试。已完成的改动都在工作区里，需要继续的话可以重试，会从中断处继续。",
   "roomArchived": "{actor} 归档了频道「{room}」",
+  "pinnedMessage": "{actor} 置顶了一条消息",
+  "pinnedFile": "{actor} 置顶了「{name}」",
   "roomArchivedWithParent": "频道「{room}」随上级频道「{parent}」一同归档",
   "roomUnarchived": "{actor} 取消归档，频道「{room}」恢复活跃",
   "routineFailed": "失败",

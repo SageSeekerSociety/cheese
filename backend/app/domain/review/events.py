@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
+from websockets.frames import CloseCode
 
 from app.core.config import settings
 from app.core.db import SessionFactory
@@ -125,6 +127,18 @@ async def listen(chat, sessions: SessionFactory):
         worker.cancel()
 
 
+def _relay_restarted(exc: BaseException) -> bool:
+    """Did the relay close the socket because it is restarting (1012)? It does
+    on every deploy of forge-events; that is a reconnect, not a fault."""
+    if isinstance(exc, BaseExceptionGroup):
+        return any(_relay_restarted(inner) for inner in exc.exceptions)
+    return (
+        isinstance(exc, ConnectionClosed)
+        and exc.rcvd is not None
+        and exc.rcvd.code == CloseCode.SERVICE_RESTART
+    )
+
+
 async def _listen(refreshes: _Refreshes, sessions: SessionFactory):
     while True:
         try:
@@ -150,6 +164,11 @@ async def _listen(refreshes: _Refreshes, sessions: SessionFactory):
                     # A clean socket close must also stop the subscription renewer.
                     subscription.cancel()
                 raise ConnectionError("Forge event connection closed")
-        except Exception:  # noqa: BLE001 — reconnect; periodic reconciliation remains live
-            logger.warning("Forge event relay disconnected; retrying", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 — reconnect; periodic reconciliation remains live
+            if _relay_restarted(exc):
+                logger.info("Forge event relay restarted; reconnecting")
+            else:
+                logger.warning(
+                    "Forge event relay disconnected; retrying", exc_info=True
+                )
             await asyncio.sleep(RECONNECT_DELAY_S)

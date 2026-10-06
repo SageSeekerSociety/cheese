@@ -60,6 +60,8 @@ function blockText(node: PMNode): string {
       return ''
     case 'image':
       return `[${t('work.room.doc.blocks.plain.image')}]`
+    case 'video':
+      return `[${t('work.room.doc.blocks.plain.video')}]`
   }
   const parts: string[] = []
   node.forEach((child) => parts.push(blockText(child)))

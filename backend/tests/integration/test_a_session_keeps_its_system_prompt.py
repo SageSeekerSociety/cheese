@@ -15,7 +15,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import registered
-from tests.support.living_doc import write_doc
+from tests.support.living_doc import write_overview
 
 pytestmark = pytest.mark.anyio
 
@@ -29,7 +29,7 @@ class Screen(StubChannel):
 
 async def _three_turns(factory, tmp_path) -> list[tuple[str, str]]:
     """跑三轮，交回每一轮的（系统提示词，发出去的消息）。第一轮之后项目里多了一个
-    话题、实况文档也改了；第二轮之后什么都没变。"""
+    话题、项目总览也改了；第二轮之后什么都没变。"""
     screen = Screen()
     svc = ChatService(
         session_factory=factory,
@@ -61,7 +61,7 @@ async def _three_turns(factory, tmp_path) -> list[tuple[str, str]]:
         await TopicService(session).create(
             project_id=project_id, title="新开的话题", created_by="u"
         )
-        await write_doc(session, topic_id, "## 目标\n\n改过的文档", "u", quiet=True)
+        await write_overview(session, project_id, "## 目标\n\n改过的文档", "u")
         await session.commit()
     await turn("接着做")
     await turn("再接着做")

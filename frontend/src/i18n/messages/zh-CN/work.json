@@ -332,14 +332,6 @@
       "done": "已归档",
       "undo": "撤销"
     },
-    "progress": {
-      "title": "进度",
-      "tally": "完成 {done}/{total}"
-    },
-    "overviewAuto": {
-      "badge": "平台自动生成，不可编辑",
-      "failed": "无法加载这部分内容"
-    },
     "accept": {
       "change": "改动",
       "artifact": "《{name}》第 {version} 版",
@@ -532,11 +524,6 @@
       "committedVersion": "已提交版本",
       "download": "下载",
       "refresh": "刷新",
-      "roomChanges": "频道改动",
-      "switchSource": "切换来源",
-      "switchSourceTo": "切换来源：{source}",
-      "fileSource": "文件来源",
-      "projectCode": "项目当前代码",
       "readOnly": "只读",
       "fileList": "文件列表",
       "noFileOpen": "未打开文件",
@@ -552,20 +539,11 @@
       "version": "版本",
       "liveNote": "包含尚未提交的修改",
       "committedNote": "只读，不包含尚未提交的修改",
-      "pickTaskToView": "选择一个任务，查看 {path}",
-      "loading": "加载中…",
-      "noTaskChanges": "暂无任务改动",
-      "fileCount": "{count} 个文件",
-      "collapseFiles": "收起改动文件",
-      "expandFiles": "展开改动文件",
-      "collapseFilesOf": "收起「{title}」的改动文件",
-      "expandFilesOf": "展开「{title}」的改动文件",
       "noChanges": "暂无改动",
       "sourceUnavailable": "无法打开这个任务，换一个来源查看",
       "noRepo": "暂无代码仓库",
       "switchToCommitted": "切换到已提交版本",
       "missingInTask": "{path} 不在这个任务里",
-      "missingInProject": "{path} 不在项目当前代码里",
       "conflict": "你编辑期间，这个文件已被修改，直接保存会覆盖这些修改",
       "reloadLatest": "载入最新版本",
       "saveAnyway": "仍要保存",
@@ -580,9 +558,7 @@
       "draftsKept": "未保存的修改已暂存，回到对应文件可以继续编辑",
       "fileAdded": "新增",
       "fileRemoved": "删除",
-      "taskUnavailable": "任务不可用",
       "statusReadOnly": "{status} · 只读",
-      "loadChangesFailed": "改动加载失败",
       "loadTasksFailed": "任务加载失败",
       "downloadFailed": "下载失败",
       "loadFailed": "加载失败",
@@ -593,7 +569,7 @@
       "pinHint": "{path}（双击固定这个页签）",
       "close": "关闭 {name}",
       "chat": "对话",
-      "overview": "总览",
+      "overview": "概览",
       "site": "现场",
       "changes": "改动",
       "preview": "预览",
@@ -770,18 +746,10 @@
       "fileCount": "{count} 个文件",
       "newChanges": "有新改动",
       "pickTopic": "选择一个频道查看文档",
-      "open": "展开工作面板",
-      "close": "收起工作面板"
+      "label": "概览",
+      "open": "打开概览",
+      "close": "收起概览"
     },
-    "taskProgress": {
-      "loadFailed": "任务列表加载失败",
-      "title": "看板",
-      "count": "{count} 件",
-      "sep": "，",
-      "needsYou": "{count} 件待处理",
-      "row": "第 {n} 件：{title}"
-    },
-    "card": {},
     "doc": {
       "delete": "删除文档",
       "deleted": "这份文档已被删除",
@@ -957,7 +925,8 @@
         "plain": {
           "chart": "图表",
           "diagram": "流程图",
-          "image": "图片"
+          "image": "图片",
+          "video": "视频"
         }
       },
       "historyView": "右边显示",
@@ -1220,7 +1189,27 @@
       "taskStatus": {
         "open": "进行中",
         "closed": "已关闭"
-      }
+      },
+      "failed": "回复失败"
+    },
+    "pin": {
+      "pin": "置顶到频道",
+      "unpin": "取消置顶",
+      "pinned": "已置顶",
+      "view": "查看",
+      "failed": "置顶没有成功，请稍后再试"
+    },
+    "file": {
+      "open": "打开",
+      "download": "下载",
+      "keep": "保存到资料库",
+      "keepFailed": "没能保存到资料库，请稍后再试",
+      "more": "「{name}」的更多操作"
+    },
+    "projectFile": {
+      "current": "项目当前版本 · 只读",
+      "missing": "项目当前版本里没有这个文件",
+      "inTask": "在任务「{title}」里看"
     }
   },
   "board": {
@@ -2029,6 +2018,26 @@
     "compareFailed": "无法读取开始时的文档",
     "compareSame": "开始后文档没有改动",
     "conclusion": "结论",
+    "outputs": "产出",
+    "noOutputs": "暂无产出",
+    "checklist": "{name}这一轮的清单",
+    "opening": {
+      "drafting": "{name}正在整理…",
+      "draftingWhat": "把原讨论整理成这件任务的文档：目标、现状、已确定、待决",
+      "waiting": "还没能开始，工作电脑连上后会继续",
+      "failed": "{name}没能整理出文档",
+      "failedWhy": "这一轮没有完成",
+      "retry": "重试",
+      "writeMyself": "自己写"
+    },
+    "related": {
+      "title": "相关",
+      "fromThread": "原讨论 · 支线 {count} 条回复",
+      "fromChannel": "原讨论 · 频道主线",
+      "quote": "{name}：{text}",
+      "untitled": "未命名文档",
+      "by": "{name}"
+    },
     "proposal": {
       "byline": "{name} 提议了一个任务",
       "accept": "创建任务",
@@ -2058,6 +2067,30 @@
     "loadFailed": "无法加载任务"
   },
   "channel": {
+    "overview": {
+      "project": "项目总览",
+      "projectNote": "{name}在每段对话里都会读这一份",
+      "description": "频道说明",
+      "edit": "编辑",
+      "save": "保存",
+      "cancel": "取消",
+      "noDescription": "暂无频道说明",
+      "running": "进行中 · {count}",
+      "noRunning": "暂无进行中的任务",
+      "latest": "{name}：{text}",
+      "owner": "{name} 负责 · {when}",
+      "recentDone": "最近完成",
+      "allTasks": "全部任务"
+    },
+    "pins": {
+      "title": "置顶 · {count}",
+      "jump": "跳到原消息",
+      "unpin": "取消置顶",
+      "pinnedBy": "{name} 置顶 · {when}",
+      "said": "{name} · {when}",
+      "menu": "置顶的操作",
+      "unpinFailed": "取消置顶失败"
+    },
     "notify": {
       "title": "通知",
       "all": "所有新消息",

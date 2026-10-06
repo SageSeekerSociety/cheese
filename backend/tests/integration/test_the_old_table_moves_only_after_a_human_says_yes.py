@@ -30,7 +30,7 @@ from app.domain.memory.models import (
 )
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import registered
-from tests.support.living_doc import write_doc
+from tests.support.living_doc import write_overview
 
 pytestmark = pytest.mark.anyio
 
@@ -320,7 +320,7 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
 ):
     async with business_db_factory() as session:
         project = await _project(session)
-        await write_doc(session, project.root_topic_id, _DOC, "alice")
+        await write_overview(session, project.id, _DOC, "alice")
         store = MemoryFileStore(session)
         await store.write(
             project_id=project.id,

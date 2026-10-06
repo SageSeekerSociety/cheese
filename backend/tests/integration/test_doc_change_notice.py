@@ -34,6 +34,7 @@ from app.domain.delivery.input_identity import (
 from app.main import app
 from tests.conftest import stub_compute
 from tests.integration.conftest import (
+    open_task,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -41,9 +42,9 @@ from tests.integration.conftest import (
 from tests.support.living_doc import document_of
 
 
-def _doc(client, room) -> str:
-    """The room's document, as its routes address it."""
-    return f"/documents/{document_of(client, room)}"
+def _doc(client, task) -> str:
+    """The task's document, as its routes address it."""
+    return f"/documents/{document_of(client, task)}"
 
 
 def _sandbox(project_id: str, topic_id: str) -> dict[str, str]:
@@ -68,13 +69,21 @@ async def _waiting_notices(client, topic_id: str) -> list[Block]:
 
 
 def _project_topic(client) -> tuple[str, str]:
+    """A project and a task of alice's in it: the conversation whose living
+    document a turn is working from."""
     p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "推荐系统"},
         headers=session_auth_headers("alice"),
     ).json()["data"]
-    return p["id"], t["id"]
+    task = open_task(client, t["id"], start=False)["id"]
+    _WORKED_BY[task] = (p["id"], room_agent_seat(client, t["id"]))
+    return p["id"], task
+
+
+#: Each task's project, and the agent seated in its room, which works it.
+_WORKED_BY: dict[str, tuple[str, str]] = {}
 
 
 class _Screen:
@@ -134,12 +143,9 @@ def _running_turn(client, topic_id: str) -> _Screen:
         workspace_root="/tmp/doc-notice-ws",
         compute=stub_compute(),
     )
-    topic = client.get(f"/topics/{topic_id}").json()["data"]
+    project_id, seat = _WORKED_BY[topic_id]
     session = SessionRef(
-        uuid.UUID(topic["project_id"]),
-        uuid.UUID(topic_id),
-        room_agent_seat(client, topic_id),
-        harness=CLAUDE_CODE,
+        uuid.UUID(project_id), uuid.UUID(topic_id), seat, harness=CLAUDE_CODE
     )
     work_id = uuid.uuid4()
     screen = _Screen(session, work_id, service.confirm_prompt_receipt)
