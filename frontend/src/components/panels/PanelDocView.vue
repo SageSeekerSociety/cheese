@@ -9,7 +9,7 @@ import type { DocConnection, DocPeer, DocSession } from '../../composables/useDo
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
-import type { Block, OverviewAutoBlock, Topic } from '../../cx_types'
+import type { Block, Topic } from '../../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
 import type { CommentSpot } from '../../lib/docCommentSpots'
 import type { DocEdit } from '../../lib/docEdits'
@@ -38,7 +38,6 @@ import DocReviewStrip from './doc/DocReviewStrip.vue'
 import DocSuggestionStrip from './doc/DocSuggestionStrip.vue'
 import DocSurface from './doc/DocSurface.vue'
 import DocTopBar from './doc/DocTopBar.vue'
-import OverviewAuto from './doc/OverviewAuto.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -68,6 +67,8 @@ const props = withDefaults(
     untitled?: boolean
     /** 顶栏画到页面上的这个位置（CSS 选择器），和页面自己的那一行并成一行。 */
     barTo?: string
+    /** 跟着外面那一列一起滚：正文有多长就多高，顶栏吸在这一篇的顶上。 */
+    flow?: boolean
     // ---- 这一篇现在是什么状态 ----
     /** 这一篇的协同文档；还没打开时是 null。 */
     session: DocSession | null
@@ -96,13 +97,6 @@ const props = withDefaults(
     suggestionReasons?: Record<string, string>
     /** 文档里有了新的修改建议时调一下：读它们的理由。 */
     fetchSuggestionReasons?: () => void
-    // ---- 总览房间的其余两块（#1889 ②③，正文下面那一栏） ----
-    /** 平台现拼的那两块。 */
-    overviewBlocks?: OverviewAutoBlock[]
-    /** 那一次没读回来。 */
-    overviewFailed?: boolean
-    /** 重读那两块。 */
-    reloadOverview?: () => void
     /** 取一份最新的节点树（闪某一段要它）。 */
     fetchDocNodes: () => Promise<Block[]>
     /** 图片 src 的显示期解析。 */
@@ -137,6 +131,7 @@ const props = withDefaults(
     bare: false,
     untitled: false,
     barTo: undefined,
+    flow: false,
     outdated: false,
     commentAuthor: '',
     sendComment: undefined,
@@ -146,9 +141,6 @@ const props = withDefaults(
     answerToComment: undefined,
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
-    overviewBlocks: () => [],
-    overviewFailed: false,
-    reloadOverview: undefined,
     applyDocEdits: undefined,
     lastEdit: null,
     nameOf: (handle: string) => handle,
@@ -201,7 +193,8 @@ let pulseTimer: ReturnType<typeof setTimeout> | undefined
 const pulsing = ref(false)
 
 async function pulse() {
-  bodyRef.value?.scrollTo({ top: 0, behavior: scrollBehavior() })
+  if (props.flow) bodyRef.value?.scrollIntoView({ block: 'start', behavior: scrollBehavior() })
+  else bodyRef.value?.scrollTo({ top: 0, behavior: scrollBehavior() })
   if (pulseTimer) clearTimeout(pulseTimer)
   pulsing.value = false
   await nextTick()
@@ -224,6 +217,25 @@ function reload() {
 function onBodyScroll() {
   scrollTick.value++
 }
+// 跟着外面一起滚时，滚的是外面那一列：听它。
+let flowScroller: HTMLElement | null = null
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let at = el?.parentElement ?? null; at; at = at.parentElement) {
+    const y = getComputedStyle(at).overflowY
+    if (y === 'auto' || y === 'scroll') return at
+  }
+  return null
+}
+watch(
+  () => [props.flow, bodyRef.value] as const,
+  ([flow, body]) => {
+    flowScroller?.removeEventListener('scroll', onBodyScroll)
+    flowScroller = flow ? scrollParent(body) : null
+    flowScroller?.addEventListener('scroll', onBodyScroll, { passive: true })
+  },
+  { flush: 'post' }
+)
+onBeforeUnmount(() => flowScroller?.removeEventListener('scroll', onBodyScroll))
 
 const surfaceRef = ref<InstanceType<typeof DocSurface> | null>(null)
 function highlightTurn(turnId: string) {
@@ -353,7 +365,7 @@ defineExpose({
   <!-- 根元素上不要放 Vuetify 的 display 工具类：WorkPanel 用 v-show 切 tab，而
        `.d-flex` 是 display: flex !important，会盖掉 v-show 写进去的 inline
        display: none（见 src/vShowDisplayUtilities.spec.ts）。 -->
-  <div class="doc">
+  <div class="doc" :class="{ 'doc--flow': flow }">
     <div v-if="!topic && !document" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-file-document-outline</v-icon>
@@ -441,6 +453,8 @@ defineExpose({
           />
         </Transition>
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
+        <!-- 顶栏下面、正文上面的那一格：任务把芝士这一轮的清单放在这里。 -->
+        <slot name="lead" />
         <DocCommentPanel
           ref="commentsRef"
           v-model:open-id="openId"
@@ -458,8 +472,8 @@ defineExpose({
         >
           <div
             ref="bodyRef"
-            class="doc-body overflow-y-auto"
-            :class="{ readonly: !editable }"
+            class="doc-body"
+            :class="{ 'overflow-y-auto': !flow, readonly: !editable }"
             @scroll.passive="onBodyScroll"
           >
             <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
@@ -518,17 +532,6 @@ defineExpose({
                 :suggestion-reasons="suggestionReasons"
                 :mention-names="mentionNames"
                 @open-thread="locateComment"
-              />
-
-              <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题
-                 自己的文档有——别的房间、根话题里的任务，文档就是它自己那一份，没有人
-                 从那里看项目全局（任务的文档不带标题，`untitled` 说的就是它）。 -->
-              <OverviewAuto
-                v-if="topic?.kind === 'root' && !bare && !untitled"
-                :blocks="overviewBlocks"
-                :failed="overviewFailed"
-                :reload="reloadOverview"
-                @open-topic="emit('open-topic', $event)"
               />
             </div>
           </div>
@@ -664,6 +667,22 @@ defineExpose({
   }
 }
 /* Stage holds the editor and, when pinned, the docked tool panel beside it. */
+/* 跟着外面那一列一起滚：没有自己的高度和滚动条，顶栏吸在这一篇的顶上，滚过这一篇
+   就跟着走。 */
+.doc--flow {
+  height: auto;
+}
+.doc--flow .doc-stage {
+  overflow: visible;
+}
+.doc--flow .doc-top {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-raised);
+}
+.doc--flow .doc-body {
+  padding-bottom: 16px;
+}
 .doc-stage {
   position: relative;
   display: flex;

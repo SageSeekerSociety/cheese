@@ -274,6 +274,10 @@ export interface RoomTask {
   // 只在后端算一次，前端没有一条退回本地推导的路——留一条兜底路，两个算法就会同时
   // 存在，而且谁也说不清屏幕上那个词是哪一个算出来的。
   presentation: Presentation
+  /** 从讨论转出来的任务，第一轮整理文档到哪了；文档有内容后是 null。只在单个任务上。 */
+  opening?: 'drafting' | 'waiting' | 'failed' | null
+  /** 这件任务里最后说的一句：频道概览上的「最新进展」。只在频道的任务列表里。 */
+  last_message?: Block | null
 }
 
 /** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
@@ -344,11 +348,11 @@ export type WsServerFrame =
   // An existing block's data changed in place (an option question got answered): replace it in the timeline.
   | { type: 'block_updated'; block: Block }
   | { type: 'pong' } // answer to the client's liveness ping; carries nothing
-  // The room's session state moved: a task started or finished (the harness's
-  // own, or a command the executor runs), or the session reported its model.
-  // The same shape `GET /topics/{id}/agent/control` answers.
+  // The room's session state moved (a task started or finished, or the session
+  // reported its model); the same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
   | import('./types/live').LiveFrame
+  | import('./types/threads').ThreadActivityFrame
 
 // An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
@@ -809,41 +813,6 @@ export interface Notification {
   read_at: string | null
   feedback: 'up' | 'down' | null
   created_at: string
-}
-
-// ---- 项目总览的自动区 (GET /topics/{root_topic_id}/overview, #1889) ----
-
-// 总览是三块：①「项目是什么」写在文档正文里，②③ 由平台现拼。这一份是 ②③
-// 的结构化形态，给总览房间文档正文下面那一栏 —— 每条带着自己去的地方，人点得动。
-// 注入 AI 队友提示词的那一份 markdown 读的是同一次取数（backend
-// `domain/topic/overview.py`），所以两边不会各说各的。
-//
-// 空块整块不出现（没有「暂无」占位）：`blocks` 里少一块就是那一块现在没内容。
-export interface OverviewTopicItem {
-  kind: 'topic'
-  /** 去处：这个话题的房间。 */
-  topic_id: string
-  title: string
-  /** 最新那张任务卡的负责人，`@名字`。 */
-  owner: string | null
-  /** 它现在在做什么（「还没开活」/「在做」/「已收工」）。 */
-  status: string | null
-  /** 一句话结论，没有就是没写。 */
-  conclusion: string | null
-}
-
-export type OverviewAutoItem = OverviewTopicItem
-
-export interface OverviewAutoBlock {
-  /** `active_topics` / `closed_topics`。 */
-  key: string
-  title: string
-  items: OverviewAutoItem[]
-}
-
-export interface OverviewAuto {
-  root_topic_id: string
-  blocks: OverviewAutoBlock[]
 }
 
 // ---- 资源池市场 (design v3: AI 池 + 算力池) ----

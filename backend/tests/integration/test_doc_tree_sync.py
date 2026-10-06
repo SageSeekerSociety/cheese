@@ -1,20 +1,21 @@
 """B1 Phase 1: editing the living doc keeps a structured node tree in sync."""
 
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.support.living_doc import document_of
 
 
-def _doc(client, room) -> str:
-    """The room's document, as its routes address it."""
-    return f"/documents/{document_of(client, room)}"
+def _doc(client, task) -> str:
+    """The task's document, as its routes address it."""
+    return f"/documents/{document_of(client, task)}"
 
 
 def _project_and_topic(client) -> str:
+    """A task of alice's, whose document the test edits."""
     pid = post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
     tid = client.post("/topics", json={"project_id": pid, "title": "T"}).json()["data"][
         "id"
     ]
-    return tid
+    return open_task(client, tid, start=False)["id"]
 
 
 DOC_V1 = "# 目标\n\n搭建原型。\n\n## 约束\n\n- 数据脱敏\n- Recall@10"
@@ -24,7 +25,9 @@ def test_document_edits_keep_each_sections_author_and_change_record(client):
     from app.core.sandbox_auth import mint_scoped_token
 
     tid = _project_and_topic(client)
-    pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
+    pid = client.get(
+        f"/topics/{tid}/task", headers=session_auth_headers("alice")
+    ).json()["data"]["project_id"]
     response = client.put(
         _doc(client, tid),
         json={"content": DOC_V1, "expected_version": 0},
@@ -46,7 +49,7 @@ def test_document_edits_keep_each_sections_author_and_change_record(client):
     edits = [
         block for block in blocks if (block.get("meta") or {}).get("action") == "doc"
     ]
-    # The two writes came in a row, so the room reads one line for both.
+    # The two writes came in a row, so the task reads one line for both.
     change = next(block for block in edits if block["meta"]["doc_version"] == 2)
     assert change["author"] == changed_author
     assert "<@alice>" in change["content"] and "芝士" in change["content"]
@@ -63,6 +66,7 @@ def test_doc_edit_builds_node_tree(client):
     r = client.put(
         _doc(client, tid),
         json={"content": DOC_V1, "expected_version": 0},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
 
@@ -89,12 +93,14 @@ def test_resetting_same_doc_keeps_node_ids_stable(client):
     client.put(
         _doc(client, tid),
         json={"content": DOC_V1, "expected_version": 0},
+        headers=session_auth_headers("alice"),
     )
     ids1 = [n["id"] for n in _nodes(client, tid)]
     # Re-set identical markdown — should be a no-op for the tree.
     client.put(
         _doc(client, tid),
         json={"content": DOC_V1, "expected_version": 1},
+        headers=session_auth_headers("alice"),
     )
     ids2 = [n["id"] for n in _nodes(client, tid)]
     assert ids1 == ids2
@@ -105,6 +111,7 @@ def test_editing_one_block_preserves_other_node_ids(client):
     client.put(
         _doc(client, tid),
         json={"content": DOC_V1, "expected_version": 0},
+        headers=session_auth_headers("alice"),
     )
     before = {n["content"]: n["id"] for n in _nodes(client, tid)}
 
@@ -113,6 +120,7 @@ def test_editing_one_block_preserves_other_node_ids(client):
     client.put(
         _doc(client, tid),
         json={"content": v2, "expected_version": 1},
+        headers=session_auth_headers("alice"),
     )
     after = {n["content"]: n["id"] for n in _nodes(client, tid)}
 
@@ -127,6 +135,7 @@ def test_doc_nodes_excluded_from_conversation_timeline(client):
     client.put(
         _doc(client, tid),
         json={"content": DOC_V1, "expected_version": 0},
+        headers=session_auth_headers("alice"),
     )
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     assert not any(b["kind"] == "doc_node" for b in blocks)

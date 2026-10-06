@@ -2143,3 +2143,25 @@ async def test_reconnected_tools_re_deliver_the_message_once(db_factory):
     assert resent["is_resume"] is True
     assert resent["resume_reason"] == AgentWorkRunner.TOOLS_REASON
     assert chat.tool_checks == 1, "the re-delivery must not ask again"
+
+
+@pytest.mark.anyio
+async def test_the_main_line_hears_who_is_answering_in_a_thread():
+    """An AI teammate answering in a 支线 is shown under the message the 支线
+    hangs under, so the channel's main line is told when it starts and stops —
+    and not of anything else said in the 支线."""
+    broker = InProcessBroker()
+    room, thread, turn = uuid.uuid4(), uuid.uuid4(), "t1"
+    broker.activity.note_thread(thread, room)
+    async with broker.subscribe(str(room)) as q:
+        await broker.publish(
+            str(thread), {"type": "turn_started", "turn_id": turn, "agent": "cheese"}
+        )
+        await broker.publish(str(thread), {"type": "delta", "text": "a"})
+        await broker.publish(str(thread), {"type": "turn_finished", "turn_id": turn})
+        heard = [q.get_nowait() for _ in range(q.qsize())]
+    assert [(f["type"], f["member"], f["active"]) for f in heard] == [
+        ("thread_activity", "cheese", True),
+        ("thread_activity", "cheese", False),
+    ]
+    assert {f["thread_id"] for f in heard} == {str(thread)}

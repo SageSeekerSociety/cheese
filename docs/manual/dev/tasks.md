@@ -66,6 +66,12 @@ covers:
 
 AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`，`{title, summary}`）：房间里落一张卡，带「创建任务」和「不用」两个按钮，点「创建任务」的人成为负责人。
 
+私聊里没有任务：新建、转为任务、提议这三条在同一处拒绝（`privateChatHasNoTasks`）。
+
+后两种入口给任务会话的开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本和它起的那一轮现读，不另存。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务的原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
+
+交给 AI 队友的指令在投递账本里过了 30 分钟还没开始（`delivery/agent.py` 的 `GIVE_UP_AFTER`），记为失败，不再每五分钟重试；有意在等的（等发问的会话、等回执）不算。
+
 **实况文档**写这件事要做什么、做到哪、定了什么（`GET /topics/{task}/document` 第一次要时建）。看得见任务的人都能读，只有负责人和这条任务自己的会话能写。
 
 **开始**（`POST /topics/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的凭证对工作机器只读：能讨论、写文档，不能改项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。

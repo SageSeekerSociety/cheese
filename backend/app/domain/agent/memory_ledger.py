@@ -54,7 +54,6 @@ from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_room, room_column
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
-from app.domain.living_doc.services import Documents
 from app.domain.memory import dream
 from app.domain.memory.dream_prompt import dream_prompt
 from app.domain.memory.files import MemoryFileScope
@@ -577,9 +576,6 @@ async def _dream_rooms(
         if topic is None:
             continue
         lines = [f"### <#{topic_id}> {topic.title}"]
-        doc = await Documents(session).of_room(topic_id)
-        if doc is not None and doc.content.strip():
-            lines.append("实况文档：\n" + dream.clip(doc.content, dream.ROOM_DOC_MAX))
         spoken = list(
             await session.scalars(
                 select(Block)

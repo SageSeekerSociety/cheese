@@ -12,11 +12,21 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.living_doc.models import DocumentComment, DocumentOperation
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project, room_agent_seat
+from tests.integration.conftest import (
+    join_project_team,
+    open_task,
+    post_project,
+    room_agent_seat,
+)
 from tests.support.living_doc import document_of
+
+#: Each task's project and room, by task id.
+_PLACES: dict[str, tuple[str, str]] = {}
 
 
 def setup(client):
+    """A task of thread-owner's whose document has a comment thread on it;
+    returns (task, document, the thread's root comment, the raw text)."""
     token = seed_user(client, "thread-owner")
     client.headers.update({"Authorization": f"Bearer {token}"})
     project = post_project(client, {"name": "Threads"}, owner="thread-owner").json()[
@@ -25,7 +35,9 @@ def setup(client):
     room = client.post(
         "/topics", json={"project_id": project["id"], "title": "Doc"}
     ).json()["data"]["id"]
-    doc = document_of(client, room)
+    task = open_task(client, room, owner="thread-owner", start=False)["id"]
+    _PLACES[task] = (project["id"], room)
+    doc = document_of(client, task)
     raw = "# 标题\r\n\r\n😀同句\r\n\r\n😀同句\r\n"
     saved = client.put(
         f"/documents/{doc}", json={"content": raw, "expected_version": 0}
@@ -35,7 +47,7 @@ def setup(client):
         f"/documents/{doc}/comments", json={"quote": "同句", "content": "原评论"}
     )
     assert root.status_code == 200, root.text
-    return room, doc, root.json()["data"], raw
+    return task, doc, root.json()["data"], raw
 
 
 def read(client, doc, root):
@@ -49,10 +61,10 @@ def mutation(revision, **payload):
 
 
 def test_reply_resolve_reopen_replay_and_leave_the_document_alone(client):
-    room, doc, root, raw = setup(client)
+    task, doc, root, raw = setup(client)
     prefix = f"/documents/{doc}/comments/{root['id']}"
     before_doc = client.get(f"/documents/{doc}").json()
-    before_timeline = client.get(f"/topics/{room}/blocks").json()
+    before_timeline = client.get(f"/topics/{task}/blocks").json()
     thread = read(client, doc, root)
     assert (
         thread["revision"] == 1
@@ -107,7 +119,7 @@ def test_reply_resolve_reopen_replay_and_leave_the_document_alone(client):
     assert client.post(prefix + "/replies", json=body).json() == reply.json()
     assert read(client, doc, root)["revision"] == 5
     assert client.get(f"/documents/{doc}").json() == before_doc
-    assert client.get(f"/topics/{room}/blocks").json() == before_timeline
+    assert client.get(f"/topics/{task}/blocks").json() == before_timeline
     changed = client.put(
         f"/documents/{doc}", json={"content": "另一原文", "expected_version": 1}
     )
@@ -127,7 +139,7 @@ def test_reply_resolve_reopen_replay_and_leave_the_document_alone(client):
 
 @pytest.mark.parametrize("mode", ["same", "different-payload", "different-operation"])
 def test_concurrent_http_claim_and_revision_have_one_reply(client, mode):
-    room, doc, root, _ = setup(client)
+    task, doc, root, _ = setup(client)
     prefix = f"/documents/{doc}/comments/{root['id']}"
     body = mutation(1, content="reply")
     other = dict(body)
@@ -177,13 +189,12 @@ def test_concurrent_http_claim_and_revision_have_one_reply(client, mode):
 
 
 @pytest.mark.parametrize("action", ["thread", "replies", "resolve", "reopen"])
-def test_cross_room_comment_and_non_comment_are_not_thread_parents(client, action):
-    room, doc, root, _ = setup(client)
-    project = client.get(f"/topics/{room}").json()["data"]["project_id"]
-    other = client.post(
-        "/topics", json={"project_id": project, "title": "Other"}
-    ).json()["data"]["id"]
-    other_doc = document_of(client, other)
+def test_cross_document_comment_and_non_comment_are_not_thread_parents(client, action):
+    task, doc, root, _ = setup(client)
+    other = open_task(
+        client, _PLACES[task][1], "另一个任务", owner="thread-owner", start=False
+    )
+    other_doc = document_of(client, other["id"])
     # Another document's thread, and the document itself (not a comment).
     for target, parent in [(other_doc, root["id"]), (doc, doc)]:
         path = f"/documents/{target}/comments/{parent}/{action}"
@@ -200,7 +211,7 @@ def test_cross_room_comment_and_non_comment_are_not_thread_parents(client, actio
 
 
 def test_spoofed_author_extra_fields_and_unverified_actor_cannot_reply(client):
-    room, doc, root, _ = setup(client)
+    task, doc, root, _ = setup(client)
     path = f"/documents/{doc}/comments/{root['id']}/replies"
     for extra in [
         {"author": "someone"},
@@ -219,7 +230,7 @@ def test_spoofed_author_extra_fields_and_unverified_actor_cannot_reply(client):
 def test_real_member_authorization_and_agent_participation_even_permissive_dev(
     client, monkeypatch
 ):
-    room, doc, root, _ = setup(client)
+    task, doc, root, _ = setup(client)
     monkeypatch.setattr(settings, "authz_enforce_topic_access", False)
     owner_headers = dict(client.headers)
     outsider = seed_user(client, "thread-outsider")
@@ -233,11 +244,12 @@ def test_real_member_authorization_and_agent_participation_even_permissive_dev(
     )
     client.headers.pop("Authorization")
     client.headers.update(owner_headers)
-    project = client.get(f"/topics/{room}").json()["data"]["project_id"]
+    project, room = _PLACES[task]
     agent = room_agent_seat(client, room)
     client.headers.pop("Authorization")
+    # The task's own session: its credential is minted in the task.
     client.headers["X-Cheese-Token"] = mint_scoped_token(
-        project_id=project, topic_id=room
+        project_id=project, topic_id=task
     )
     response = client.post(prefix + "/replies", json=mutation(1, content="agent reply"))
     assert response.status_code == 200, response.text
@@ -249,7 +261,7 @@ def test_real_member_authorization_and_agent_participation_even_permissive_dev(
 
 @pytest.mark.parametrize("pair", [("reply", "resolve"), ("resolve", "resolve")])
 def test_competing_reply_and_resolution_never_claim_both_succeeded(client, pair):
-    room, doc, root, _ = setup(client)
+    task, doc, root, _ = setup(client)
     prefix = f"/documents/{doc}/comments/{root['id']}"
     barrier = threading.Barrier(2)
 
@@ -277,28 +289,21 @@ def test_same_operation_cannot_move_to_another_root_and_replay_requires_membersh
 ):
     from sqlalchemy import delete
 
-    from app.domain.topic.models import Topic, TopicMembership, TopicRole
+    from app.domain.project.models import Project
+    from app.domain.team.models import TeamUserRelation
+    from app.domain.topic.models import TopicMembership
+    from app.domain.user.repositories import UserRepository
 
-    room, doc, root, _ = setup(client)
+    task, doc, root, _ = setup(client)
+    project, room = _PLACES[task]
     prefix = f"/documents/{doc}/comments/{root['id']}"
     owner_headers = dict(client.headers)
     participant_token = seed_user(client, "thread-member")
-
-    async def join():
-        async with client.test_factory() as session:
-            topic = await session.get(Topic, uuid.UUID(room))
-            assert topic is not None
-            topic.is_private = True
-            session.add(
-                TopicMembership(
-                    topic_id=uuid.UUID(room),
-                    member_handle="thread-member",
-                    role=TopicRole.member,
-                )
-            )
-            await session.commit()
-
-    asyncio.run(join())
+    join_project_team(client, project, "thread-member")
+    brought_in = client.patch(
+        f"/topics/{task}/task", json={"contributor_handles": ["thread-member"]}
+    )
+    assert brought_in.status_code == 200, brought_in.text
     other = client.post(
         f"/documents/{doc}/comments", json={"content": "another root"}
     ).json()["data"]
@@ -315,6 +320,14 @@ def test_same_operation_cannot_move_to_another_root_and_replay_requires_membersh
 
     async def leave():
         async with client.test_factory() as session:
+            team_id = (await session.get(Project, uuid.UUID(project))).team_id
+            user = await UserRepository(session).get_by_username("thread-member")
+            await session.execute(
+                delete(TeamUserRelation).where(
+                    TeamUserRelation.team_id == team_id,
+                    TeamUserRelation.user_id == user.id,
+                )
+            )
             await session.execute(
                 delete(TopicMembership).where(
                     TopicMembership.topic_id == uuid.UUID(room),

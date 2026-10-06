@@ -31,16 +31,24 @@ from app.api.routes.topics import (
     UsageRepository,
 )
 from app.api.task_instructions import dispatch, proposal_source_text, tell_task
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.api.task_origin import discussion, materials, materials_text
+from app.core.errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.liveness import running_tasks
+from app.domain.agent.opening import opening_content, opening_state
 from app.domain.agent.runtime import announce_stale
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.living_doc.services import Documents
 from app.domain.mentions import canonicalize_refs
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.proposals import ProposalState, TaskProposals
@@ -104,6 +112,8 @@ async def list_room_tasks(
     project = await ProjectRepository(db).get(topic.project_id)
     choices = binding.catalog(project.settings if project else None)
     running = await running_tasks(chat, db, [t for t, _ in threads])
+    # 每件任务最后说的一句：频道概览上的「最新进展」。
+    said = await BlockRepository(db).last_messages(thread_ids)
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
@@ -128,6 +138,11 @@ async def list_room_tasks(
                 "blocks": [
                     BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
                 ],
+                "last_message": BlockOut.model_validate(said[task.id]).model_dump(
+                    mode="json"
+                )
+                if task.id in said
+                else None,
                 "card": None
                 if card is None
                 else {
@@ -173,7 +188,51 @@ async def get_task(
             "pr_url": card.pr_url,
         }
     )
+    out["opening"] = await _opening(db, task)
     return ok(out)
+
+
+async def _opening(db, task) -> str | None:
+    """Where the task's first turn is, while its document is still empty
+    (`agent/opening.py`); None once the document says something."""
+    if task.document_id is not None:
+        doc = await Documents(db).get(task.document_id)
+        if doc is not None and doc.content.strip():
+            return None
+    return await opening_state(db, task.id)
+
+
+@router.get("/{topic_id}/related")
+async def task_related(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Where the task came from and what was put on the table there
+    (`task_origin.py`): what its page shows as 相关."""
+    _place, _actor, task = await task_conversation(db, resolver, topic_id)
+    origin, blocks = await discussion(db, task)
+    return ok({"origin": origin, "materials": materials(blocks)})
+
+
+@router.post("/{topic_id}/opening")
+async def retry_opening(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
+) -> dict:
+    """Give a task's first instruction again, after it failed: someone working
+    the task asks its AI teammate to draft the document once more."""
+    _place, actor, task = await task_conversation(db, resolver, topic_id)
+    if not actor.authenticated or not TaskService.takes_part(task, actor.handle):
+        raise ForbiddenError(say("taskParticipantsOnly"))
+    TaskService.require_open(task)
+    content = await opening_content(db, task.id)
+    if content is None or await _opening(db, task) != "failed":
+        raise ConflictError(say("taskOpeningNotFailed"))
+    await tell_task(db, task, content, opening=True)
+    await db.commit()
+    await dispatch(chat)
+    return ok({"opening": "drafting"})
 
 
 async def _task_out(db, chat: ChatService, task, card=None) -> dict:
@@ -461,6 +520,7 @@ async def propose_task(
     """An AI teammate proposes a task (`cheese_task`): a card in the room that a
     person creates or puts aside. A teammate never creates one itself."""
     place, actor = await _room_actor(db, resolver, topic_id)
+    TopicService.refuse_tasks_in_private(place.room)
     # A turn sent again proposes the same task again: one card, not two.
     continuation = get_work_runner().continuation_for(topic_id)
     key = (
@@ -537,7 +597,9 @@ async def accept_task_proposal(
             title=task.title,
             owner=task.owner_handle,
             source=await proposal_source_text(db, proposal),
+            materials=materials_text(materials((await discussion(db, task))[1])),
         ),
+        opening=True,
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()

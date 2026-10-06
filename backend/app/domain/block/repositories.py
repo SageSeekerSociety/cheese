@@ -757,6 +757,53 @@ class BlockRepository:
         )
         return list(reversed(list((await self._session.scalars(stmt)).all())))
 
+    async def last_messages(
+        self, conversation_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, Block]:
+        """The last message said in each of these conversations, keyed by it;
+        a conversation nothing was said in is missing."""
+        if not conversation_ids:
+            return {}
+        ranked = (
+            select(
+                Block.id,
+                func.row_number()
+                .over(
+                    partition_by=Block.conversation_id,
+                    order_by=(Block.created_at.desc(), Block.id.desc()),
+                )
+                .label("rank"),
+            )
+            .where(
+                Block.conversation_id.in_(conversation_ids),
+                Block.kind == BlockKind.message,
+            )
+            .subquery()
+        )
+        rows = await self._session.scalars(
+            select(Block)
+            .join(ranked, ranked.c.id == Block.id)
+            .where(ranked.c.rank == 1)
+        )
+        return {block.conversation_id: block for block in rows}
+
+    async def between(
+        self, conversation_id: uuid.UUID, since: datetime, until: datetime
+    ) -> list[Block]:
+        """Everything in the conversation from ``since`` to ``until``, both
+        included, oldest first: messages, the files sent with them and the lines
+        the platform wrote among them."""
+        stmt = (
+            select(Block)
+            .where(
+                Block.conversation_id == conversation_id,
+                Block.created_at >= since,
+                Block.created_at <= until,
+            )
+            .order_by(Block.created_at, Block.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def page_for_topic(
         self,
         conversation_id: uuid.UUID,

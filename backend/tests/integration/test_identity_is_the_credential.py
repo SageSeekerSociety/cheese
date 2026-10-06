@@ -20,7 +20,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
-from tests.support.living_doc import document_of
+from tests.support.living_doc import overview_of
 
 A = "alice"
 B = "bob"
@@ -102,9 +102,7 @@ def test_a_room_is_owned_by_its_creator_not_by_the_body(client):
 
 def test_a_doc_edit_is_signed_by_the_editor(client):
     project = _project(client, A)
-    room = project["root_topic_id"]
-
-    doc = document_of(client, room, headers=_as(A))
+    doc = overview_of(client, project["id"], headers=_as(A))
     r = client.put(
         f"/documents/{doc}",
         json={"content": "# 计划\n\n先做数据", "expected_version": 0, "author": B},
@@ -120,9 +118,7 @@ def test_a_doc_edit_is_signed_by_the_editor(client):
 
 def test_a_comment_is_signed_by_its_writer(client):
     project = _project(client, A)
-    room = project["root_topic_id"]
-
-    doc = document_of(client, room, headers=_as(A))
+    doc = overview_of(client, project["id"], headers=_as(A))
     r = client.post(
         f"/documents/{doc}/comments",
         json={"content": "这里要再想想", "author": B},
@@ -135,9 +131,7 @@ def test_a_comment_is_signed_by_its_writer(client):
 
 def test_the_dev_credential_alone_cannot_sign_a_comment_as_someone(client):
     project = _project(client, A)
-    room = project["root_topic_id"]
-
-    doc = document_of(client, room, headers=_as(A))
+    doc = overview_of(client, project["id"], headers=_as(A))
     r = client.post(f"/documents/{doc}/comments", json={"content": "冒名", "author": B})
 
     assert r.status_code == 200, r.text
@@ -237,8 +231,7 @@ def test_an_outsider_cannot_clone_a_room_by_naming_its_member(client):
 def test_a_passage_edit_cannot_carry_another_author(client):
     """This body is strict, so a name in it is refused outright."""
     project = _project(client, A)
-    room = project["root_topic_id"]
-    doc = document_of(client, room, headers=_as(A))
+    doc = overview_of(client, project["id"], headers=_as(A))
     client.put(
         f"/documents/{doc}",
         json={"content": "# 计划\n\n先做数据", "expected_version": 0},

@@ -76,6 +76,13 @@ def room(client):
     return project["id"], topic["id"]
 
 
+@pytest.fixture
+def task(client, room):
+    """A task in that channel, where a living document is."""
+    project, channel = room
+    return project, open_task(client, channel, "", owner="alice", start=False)["id"]
+
+
 def test_a_message_is_published_as_written(client, room):
     host = BackendHost(client, *room)
     content = "检查通过了。\n`$HOME` 和 $(echo hi) 是原文。"
@@ -116,10 +123,10 @@ def test_an_explicit_chat_retry_keeps_the_message_after_a_lost_response(client, 
     assert messages[0]["id"] == retried["id"] == first_id
 
 
-def test_a_stale_write_to_the_living_doc_is_refused_with_the_way_out(client, room):
+def test_a_stale_write_to_the_living_doc_is_refused_with_the_way_out(client, task):
     """两条会话都读过第 N 版；先写的赢，后写的被拒并被告知怎么办。"""
-    first = BackendHost(client, *room)
-    second = BackendHost(client, *room)
+    first = BackendHost(client, *task)
+    second = BackendHost(client, *task)
     assert "还是空的" in cheese.run_platform_tool("cheese_doc_get", {}, first)
     cheese.run_platform_tool("cheese_doc_get", {}, second)
 
@@ -139,9 +146,9 @@ def test_a_stale_write_to_the_living_doc_is_refused_with_the_way_out(client, roo
 
 
 def test_an_edit_changes_only_its_passage_and_a_suggestion_is_listed_apart(
-    client, room
+    client, task
 ):
-    host = BackendHost(client, *room)
+    host = BackendHost(client, *task)
     cheese.run_platform_tool("cheese_doc_get", {}, host)
     cheese.run_platform_tool(
         "cheese_doc_set",
@@ -172,8 +179,8 @@ def test_an_edit_changes_only_its_passage_and_a_suggestion_is_listed_apart(
     assert "前端和接口。" in pending and "接口也在范围内" in pending
 
 
-def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, room):
-    host = BackendHost(client, *room)
+def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, task):
+    host = BackendHost(client, *task)
     cheese.run_platform_tool("cheese_doc_get", {}, host)
     cheese.run_platform_tool("cheese_doc_set", {"content": "本周交初稿。\n"}, host)
 
@@ -238,8 +245,8 @@ def test_a_task_session_names_its_task(client, room):
 
 
 def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room):
-    """芝士在话题里建一份资料库文档、列出来、点名改它：建的和改的都是那一份，
-    话题里出现的是这份文档，话题自己的实况文档一字没动。"""
+    """芝士在频道里建一份资料库文档、列出来、点名改它：建的和改的都是那一份，
+    频道里出现的是这份文档。"""
     project, topic = room
     host = BackendHost(client, project, topic)
     host.headers = {
@@ -266,7 +273,9 @@ def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room)
         cheese.run_platform_tool("cheese_doc_get", {"document": document}, host)
         == "三家都有年付折扣"
     )
-    assert "还是空的" in cheese.run_platform_tool("cheese_doc_get", {}, host)
+    # A channel has no living document of its own to have changed instead.
+    with pytest.raises(cheese.PlatformHTTPError, match="channelHasNoDocument"):
+        cheese.run_platform_tool("cheese_doc_get", {}, host)
     lines = client.get(
         f"/topics/{topic}/blocks", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
@@ -275,3 +284,40 @@ def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room)
         for b in lines
         if (b.get("meta") or {}).get("document")
     ] == [document]
+
+
+def test_a_document_made_in_a_thread_is_shown_in_that_thread(client, room):
+    """芝士 answering in a 支线 makes a library document: the line with the
+    document on it is in the 支线 it was made in, not in the channel's main
+    line."""
+    project, topic = room
+    said = client.post(
+        f"/topics/{topic}/messages",
+        json={"request_id": str(uuid.uuid4()), "content": "查一下竞品定价"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    thread = client.post(
+        f"/blocks/{said['id']}/thread", headers=session_auth_headers("alice")
+    ).json()["data"]["id"]
+    host = BackendHost(client, project, thread)
+    host.headers = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project,
+            topic_id=thread,
+            agent_handle=room_agent_seat(client, topic),
+            access_scope="project",
+        )
+    }
+
+    cheese.run_platform_tool(
+        "cheese_doc_new", {"title": "竞品定价对比", "content": "三家都有年付"}, host
+    )
+
+    def lines(conversation):
+        blocks = client.get(
+            f"/topics/{conversation}/blocks", headers=session_auth_headers("alice")
+        ).json()["data"]["data"]
+        return [b for b in blocks if (b.get("meta") or {}).get("document")]
+
+    assert len(lines(thread)) == 1
+    assert lines(topic) == []

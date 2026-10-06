@@ -1,8 +1,9 @@
 """私聊是名册两席的房间，所以它听到的和普通房间听到的是同一套（结论 19）。
 
 判据②（ARCH §9.1「私聊」行）：``is_private`` 只剩「名册两席」和「草稿区」两类读
-点。实况文档最容易被各自再问一遍那个布尔：它从前问过 ``topic.is_private``，私聊于是
-拿不到实况文档。这里逐字对过：同一份文档，私聊和普通两席房间开场时听到的一模一样。
+点。每段对话都读的项目总览最容易被各自再问一遍那个布尔：实况文档从前问过
+``topic.is_private``，私聊于是拿不到它。这里逐字对过：同一份总览，私聊和普通两席房间
+开场时听到的一模一样。
 """
 
 import uuid
@@ -16,11 +17,11 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import registered
-from tests.support.living_doc import write_doc
+from tests.support.living_doc import write_overview
 
 pytestmark = pytest.mark.anyio
 
-DOC = "## 实况\n这间房正在做的事：把两席收进名册。"
+DOC = "## 实况\n这个项目要做的事：把两席收进名册。"
 
 
 class Screen(StubChannel):
@@ -51,7 +52,7 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
                 project_id=project.id, title="Work", created_by="u"
             )
         topic_id = topic.id
-        await write_doc(session, topic_id, DOC, "u", quiet=True)
+        await write_overview(session, project.id, DOC, "u")
         await session.commit()
     async with factory() as session:
         _, seats = await TopicMemberService(session).list_for_topic(topic_id)
@@ -64,8 +65,8 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
     return f"{screen.last_system_prompt}\n\n{screen.last_prompt}", seats
 
 
-async def test_a_dm_is_told_the_living_doc_a_room_is_told(client, tmp_path):
-    """合同：实况文档，两席的私聊和两席的普通房间一模一样。"""
+async def test_a_dm_is_told_the_overview_a_room_is_told(client, tmp_path):
+    """合同：项目总览，两席的私聊和两席的普通房间一模一样。"""
     private_prompt, private_seats = client.portal.call(
         lambda: _prompt_of(client.test_request_factory, tmp_path, private=True)
     )
@@ -78,5 +79,5 @@ async def test_a_dm_is_told_the_living_doc_a_room_is_told(client, tmp_path):
     assert room_seats == 2
 
     for prompt in (private_prompt, room_prompt):
-        assert "## 实况文档" in prompt
+        assert "## 项目是什么" in prompt
         assert DOC in prompt

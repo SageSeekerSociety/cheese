@@ -71,3 +71,28 @@ export function useCompactDesktop(): ComputedRef<boolean> {
   const display = useDisplay()
   return computed(() => compactDesktop(display.width?.value ?? 0, display.mdAndUp.value))
 }
+
+/**
+ * 话题页右侧面板按**主区**宽度（窗口减去侧栏，`.panes` 那一块）分三档：
+ *
+ * - 至少 `PANEL_OPEN_MIN`：和对话并排，默认开着；
+ * - `PANEL_DOCK_MIN` 到它之间：并排，默认收着，点「概览」在右边打开、对话变窄；
+ * - 更窄：放不下两栏，面板浮在对话上方，默认收着。
+ *
+ * 并排时对话至少留 480、面板至少 360，两档的分界就是这么来的。前两档里这个人自己
+ * 开或关过一次，以后照他的来；浮层不记，因为开着就挡住对话。
+ */
+export const PANEL_DOCK_MIN = 840
+export const PANEL_OPEN_MIN = 1000
+
+export type PanelMode = 'docked' | 'float'
+
+export function panelMode(mainWidth: number): PanelMode {
+  // 还没量出来（第一帧）按并排算：比浮层闪一下再收回去好。
+  return mainWidth > 0 && mainWidth < PANEL_DOCK_MIN ? 'float' : 'docked'
+}
+
+/** 并排时没人选过，面板开不开。 */
+export function panelOpenByDefault(mainWidth: number): boolean {
+  return mainWidth === 0 || mainWidth >= PANEL_OPEN_MIN
+}

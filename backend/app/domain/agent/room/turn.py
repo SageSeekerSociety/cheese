@@ -69,13 +69,14 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputOutcomeUnconfirmed
 from app.domain.delivery.receipts import held_blocks
 from app.domain.identity.actor import Actor
-from app.domain.living_doc.services import Documents
 from app.domain.membership.roster import roster_rows
 from app.domain.memory.files_store import MemoryIndex, memory_index
 from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
+from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus, TaskTitleSource
 from app.domain.room_task.place import Place, PlaceResolver, doc_text_of
@@ -199,12 +200,9 @@ class _TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
-    # 注入用的项目总览：① 从总览文档里取，②③ 从结构化数据现拼（#1889 第 1 条），
-    # 不是文档原文。每个房间都有 ①；②③ 只在总览房间拼，别处按需自己查。
-    #
-    # 总览房间自己那一轮没有 `doc_text` —— 这一份就是它的实况文档，同一份东西说
-    # 两遍只会让模型以为是两份。
+    # 注入用的项目总览（`project/overview.py`），和芝士读写它时要用的编号。
     overview_doc_text: str | None
+    overview_doc_id: uuid.UUID | None
     # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
     # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
     # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
@@ -379,18 +377,6 @@ class RoomTurns:
             text: str,
         ) -> dict: ...
 
-        async def _project_overview(
-            self,
-            session: AsyncSession,
-            *,
-            project: Project,
-            conversation_id: uuid.UUID,
-            room_doc: str | None,
-            overview_doc: str | None,
-            all_topics: list[Topic],
-            roster: list[dict],
-        ) -> str: ...
-
     async def dismiss(self, topic_id: uuid.UUID, seat: str) -> None:
         """Stop the work the teammate on rosters as ``seat`` still has running
         in this room: one taken off the room, whose every call there is now
@@ -458,10 +444,6 @@ class RoomTurns:
             agent = await self._session_agent(agents, topic, project, agent_handle)
             needs_place = not _is_dm(topic)
             doc_text = await doc_text_of(session, place, needs_place=needs_place)
-            if project.root_topic_id == place.room_id:
-                # The overview room's document is the project overview it is
-                # handed instead (`_assemble_turn`).
-                doc_text = None
             role = await agents.system_prompt(agent)
             harness, provider = self._compute.choose(
                 project.settings, resolve_compute_id(project.settings, topic)
@@ -655,19 +637,20 @@ class RoomTurns:
             teaching = await teaching_context.for_project(
                 session=session, project=project
             )
-            # 人和 agent 共同看的那一份（结论 7）：项目总览房间的实况文档。它不是
-            # 记忆，所以不走召回那条路——写它的人（或 agent）留了痕，读它的每一间
-            # 房间读到的是同一份，而这正是共享记忆池做不到的两件事。
-            # 总览房间自己那一轮不读第二遍：`doc_text` 已经是它（下面注入那一步会
-            # 把两者合起来，那里才是「注入什么」的决定）。
-            overview_root = (
-                await Documents(session).of_room(project.root_topic_id)
+            # 人和 agent 共同看的那一份（结论 7）：项目总览。它不是记忆，所以不走
+            # 召回那条路——写它的人（或 agent）留了痕，每段对话读到的是同一份，而
+            # 这正是共享记忆池做不到的两件事。
+            overview_doc = (
+                await ProjectService(session).overview_document(project)
                 if project is not None
-                and project.root_topic_id is not None
-                and project.root_topic_id != place.conversation_id
                 else None
             )
-            overview_doc_text = overview_root.content if overview_root else None
+            overview_doc_id = overview_doc.id if overview_doc is not None else None
+            overview_doc_text = (
+                render_overview(brief=project_brief(overview_doc.content))
+                if overview_doc is not None
+                else None
+            )
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
             # 骨架是这个项目在这台机器上跑的那一个（结论 28），不是这个参与者的属
@@ -695,26 +678,6 @@ class RoomTurns:
             topic_refs, topic_refs_for_prompt = _topic_ref_lists(
                 all_topics, exclude_id=topic.id
             )
-            if project is not None and project.root_topic_id is not None:
-                # 项目总览（#1889 第 1 条）：注入的不是文档原文，而是「① 从文档
-                # 来 + ②③ 从结构化数据现拼」的那一份。手抄进正文的旧内容因此读
-                # 不到——写在那儿的副本没人读，也就没人再写。
-                #
-                # 在「综合」的主线上它同时就是那里的实况文档：同一份东西说两遍，
-                # 模型会以为是两份，所以那里把 `doc_text` 交出去（它只喂提示词）。
-                # 问的是这段对话，不是它所在的频道：综合里的任务和支线读到的是
-                # 项目总览，任务自己的文档照旧是任务的。
-                overview_doc_text = await self._project_overview(
-                    session,
-                    project=project,
-                    conversation_id=place.conversation_id,
-                    room_doc=doc_text,
-                    overview_doc=overview_doc_text,
-                    all_topics=all_topics,
-                    roster=roster,
-                )
-                if project.root_topic_id == place.conversation_id:
-                    doc_text = None
             # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。不租地点的一轮里
             # 没有交付，那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，
             # 前者要说话（第一次交付只能新建），后者一个字都不说，所以给的是 None。
@@ -772,6 +735,12 @@ class RoomTurns:
                 if root is not None
                 else None
             )
+            if place.thread is not None:
+                # So the main line hears when an AI teammate starts and stops
+                # answering in this 支线 (`InProcessBroker.publish`).
+                from app.domain.agent.runtime import get_broker
+
+                get_broker().activity.note_thread(place.thread.id, place.room_id)
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
             # 先问这台机器上有没有可用的骨架，再过档位策略：策略那一步要解析模型，
@@ -997,6 +966,7 @@ class RoomTurns:
             agent_pool=agent_pool,
             doc_text=doc_text,
             overview_doc_text=overview_doc_text,
+            overview_doc_id=overview_doc_id,
             memory=memory,
             pending_ids=pending_ids,
             notice_ids=[b.id for b in notices],
@@ -1115,6 +1085,7 @@ class RoomTurns:
             topics=topic_refs_for_prompt,
             artifacts=artifact_refs,
             overview_doc=overview_doc_text,
+            overview_doc_id=prepared.overview_doc_id,
             teaching=teaching,
             environment=_session_opening_lines(
                 unconnected_mcp=(

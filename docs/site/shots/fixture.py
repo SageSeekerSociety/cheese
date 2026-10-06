@@ -5,10 +5,11 @@ backend on BACKEND, default http://127.0.0.1:8081), from backend/:
 
     .venv/bin/python ../docs/site/shots/fixture.py
 
-It builds one project through the API the way a person would — rooms, living
-docs, split-out tasks — and fills in what only a running agent could produce
-(芝士's replies, an accept card) straight in the database, so the pictures show
-a room mid-work without a model. Every name in it is made up.
+It builds one project through the API the way a person would — channels, the
+project overview, tasks and their documents, a 支线, a pin — and fills in what
+only a running agent could produce (芝士's replies, an accept card) straight in
+the database, so the pictures show a channel mid-work without a model. Every
+name in it is made up.
 
 Re-running replaces the project.
 """
@@ -71,27 +72,32 @@ async def names() -> None:
         await s.commit()
 
 
-async def say(conversation: str, lines: list[tuple[str, str, int]]) -> None:
-    """(author, text, minutes ago) — people and 芝士 alike, in a room or a task."""
+async def say(conversation: str, lines: list[tuple[str, str, int]]) -> list[str]:
+    """(author, text, minutes ago) — people and 芝士 alike, in a channel, a 支线
+    or a task. Returns the messages' ids."""
     async with async_session_factory() as s:
         from app.domain.conversation.models import Conversation
 
         place = await s.get(Conversation, uuid.UUID(conversation))
         now = datetime.now(UTC)
+        said = []
         for author, text, ago in lines:
-            s.add(
-                Block(
-                    project_id=place.project_id,
-                    conversation_id=place.id,
-                    kind=BlockKind.message,
-                    author_type=AuthorType.participant,
-                    author=author,
-                    content=text,
-                    created_at=now - timedelta(minutes=ago),
-                    meta={"consumed_turn": None} if not author.startswith("cheese") else {},
-                )
+            block = Block(
+                project_id=place.project_id,
+                conversation_id=place.id,
+                kind=BlockKind.message,
+                author_type=AuthorType.participant,
+                author=author,
+                content=text,
+                created_at=now - timedelta(minutes=ago),
+                meta={"consumed_turn": None} if not author.startswith("cheese") else {},
             )
+            s.add(block)
+            said.append(block)
+        await s.flush()
+        ids = [str(block.id) for block in said]
         await s.commit()
+        return ids
 
 
 async def card(room: str, task: str, reviewer: str) -> None:
@@ -109,6 +115,24 @@ async def card(room: str, task: str, reviewer: str) -> None:
                     "院系和年级由学号自动带出。手机 375 宽一屏填完。"
                 ),
                 status=AcceptStatus.pending,
+            )
+        )
+        await s.commit()
+
+
+async def quiet(conversations: list[str]) -> None:
+    """No machine runs here, so every turn the API started fails. Drop those
+    deliveries and the failure lines they left: a picture of a task mid-work
+    does not show a broken computer."""
+    from app.domain.delivery.models import Delivery
+
+    ids = [uuid.UUID(c) for c in conversations]
+    async with async_session_factory() as s:
+        await s.execute(delete(Delivery).where(Delivery.conversation_id.in_(ids)))
+        await s.execute(
+            delete(Block).where(
+                Block.conversation_id.in_(ids),
+                Block.meta["event_type"].as_string() == "turn_failed",
             )
         )
         await s.commit()
@@ -163,36 +187,48 @@ async def main() -> None:
         json={"name": PROJECT, "owner_handle": "alice", "team_id": 1},
     )
     pid = project["id"]
-    rooms = {}
-    for title in ("报名表单改版", "迎新海报设计", "周会纪要 9/22"):
-        rooms[title] = api(
-            "POST", "/topics", alice, json={"project_id": pid, "title": title}
+    channels = {}
+    for title, about in (
+        ("报名表单改版", "报名表单的字段、校验和提交流程都在这里讨论；要改的东西转成任务。"),
+        ("迎新海报设计", "海报、横幅和公众号头图。定稿放资料库。"),
+        ("周会纪要 9/22", "每周一的周会纪要。"),
+    ):
+        channels[title] = api(
+            "POST",
+            "/topics",
+            alice,
+            json={"project_id": pid, "title": title, "description": about},
         )["id"]
-    form = rooms["报名表单改版"]
+    form = channels["报名表单改版"]
+    for handle in ("bobby", "carol"):
+        for channel in channels.values():
+            api("POST", f"/topics/{channel}/join", login(handle))
     agent = next(
         m["member_handle"]
         for m in api("GET", f"/topics/{form}/members", alice)["data"]
         if m["agent"]
     )
 
-    form_doc = api("GET", f"/topics/{form}/document", alice)["id"]
-    doc = api("GET", f"/documents/{form_doc}", alice) or {}
+    overview = api("GET", f"/projects/{pid}/overview", alice)["id"]
+    doc = api("GET", f"/documents/{overview}", alice) or {}
     api(
         "PUT",
-        f"/documents/{form_doc}",
+        f"/documents/{overview}",
         alice,
         json={
             "content": (
-                "## 目标\n\n把报名表单的必填项压到 4 项以内，手机上一屏能填完。\n\n"
-                "## 已定\n\n- 必填：姓名、学号、手机号、场次\n"
-                "- 院系、年级由学号自动带出\n- 场次默认选报名还开放的最近一场\n\n"
-                "## 进展\n\n- 表单字段精简：已完成，等林晓验收\n"
-                "- 提交校验与错误提示：进行中\n"
+                "## 目标\n\n迎新周（9 月 28 日—10 月 3 日）前上线活动报名小程序，"
+                "同学在手机上一分钟内报完名。\n\n"
+                "## 分工\n\n- 林晓：报名表单和验收\n- 陈默：报名数据导出\n"
+                "- 王珊：迎新海报\n\n"
+                "## 约定\n\n- 要改代码的事开成任务，在任务里做\n"
+                "- 定稿的文件放资料库\n"
             ),
             "expected_version": doc.get("doc_version", 0),
         },
     )
-    def task(title: str, goal: str) -> str:
+
+    def task(title: str, document: str) -> str:
         """A task the way a person makes one: created, its document written,
         started."""
         made = api("POST", f"/topics/{form}/tasks", alice, json={"title": title})
@@ -202,48 +238,48 @@ async def main() -> None:
             "PUT",
             f"/documents/{doc}",
             alice,
-            json={"content": f"## 目标\n\n{goal}\n", "expected_version": 0},
+            json={"content": document, "expected_version": 0},
         )
         api("POST", f"{path}/start", alice, json={"reviewer_handle": "alice"})
         return made["id"]
 
     tasks = [
-        task("表单字段精简", "必填项减到 4 项，院系年级由学号带出。"),
-        task("提交校验与错误提示", "手机号、学号格式校验，错误提示写在输入框下方。"),
+        task(
+            "表单字段精简",
+            "## 目标\n\n把报名表单的必填项压到 4 项以内，手机上一屏能填完。\n\n"
+            "## 已定\n\n- 必填：姓名、学号、手机号、场次\n"
+            "- 院系、年级由学号自动带出；推不出的保留一个选填下拉\n"
+            "- 场次默认选报名还开放的最近一场\n\n"
+            "## 进展\n\n- 字段精简与自动带出：已完成，等林晓验收\n",
+        ),
+        task(
+            "提交校验与错误提示",
+            "## 目标\n\n手机号、学号格式校验，错误提示写在输入框下方。\n\n"
+            "## 进展\n\n- 学号校验：进行中\n",
+        ),
     ]
-    await (
-        say(
-            form,
-            [
-                (
-                    "alice",
-                    f"<@{agent}> 报名表单现在要填 9 项，很多同学填到一半就走了。帮我把必填项"
-                    "压到 4 项以内，手机上一屏能填完，改完开 PR 给我看。",
-                    95,
-                ),
-                (
-                    agent,
-                    "明白：把报名表单的必填项压到 4 项以内、手机一屏填完，改完开 PR 请你验收。"
-                    "我先看现在的表单和提交记录，确认哪些字段能改成选填或自动带出，"
-                    "然后拆成两条活并行：表单字段精简、提交校验与错误提示。",
-                    94,
-                ),
-                ("bobby", "场次能不能默认选最近的那一场？现在每次都要点开下拉。", 60),
-                (
-                    agent,
-                    "可以。场次默认选报名还开放的最近一场，已经加进「表单字段精简」这条活里。",
-                    59,
-                ),
-                (
-                    agent,
-                    "「表单字段精简」做完了：必填项从 9 项减到 4 项（姓名、学号、手机号、场次），"
-                    "院系和年级由学号自动带出，手机 375 宽一屏填完。验收卡已经递给 "
-                    "<@alice>，改动和截图都在卡上。",
-                    12,
-                ),
-            ],
-        )
+    asked, *_ = await say(
+        form,
+        [
+            (
+                "alice",
+                "报名表单现在要填 9 项，很多同学填到一半就走了。目标是必填项压到 4 项以内，"
+                "手机上一屏能填完。",
+                95,
+            ),
+            ("carol", "海报上的二维码直接指到报名页，表单短一点扫码的人也不容易跑。", 70),
+        ],
     )
+    thread = api("POST", f"/blocks/{asked}/thread", login("bobby"))["id"]
+    await say(
+        thread,
+        [
+            ("bobby", "场次能不能默认选最近的那一场？现在每次都要点开下拉。", 90),
+            (agent, "可以。场次默认选报名还开放的最近一场，已经写进「表单字段精简」的任务文档。", 89),
+            ("alice", "好，就这样。", 88),
+        ],
+    )
+    api("PUT", f"/topics/{form}/pins/{asked}", alice)
     await card(form, tasks[0], "alice")
     await say(
         tasks[0],
@@ -263,19 +299,25 @@ async def main() -> None:
             ),
         ],
     )
-    await (
-        say(
-            rooms["周会纪要 9/22"],
-            [
-                ("alice", "本周目标：迎新周报名上线；海报周三前定稿。", 2000),
-                ("carol", "海报我来跟，周二给两版。", 1990),
-                ("bobby", "报名数据导出我已经放到资料库了。", 1980),
-            ],
-        )
+    await say(
+        tasks[1],
+        [
+            ("alice", f"<@{agent}> 学号不对时，提示写清楚应该是几位。", 40),
+            (agent, "好。学号是 10 位数字，错了就在输入框下方写「学号是 10 位数字」。", 38),
+        ],
     )
+    await say(
+        channels["周会纪要 9/22"],
+        [
+            ("alice", "本周目标：迎新周报名上线；海报周三前定稿。", 2000),
+            ("carol", "海报我来跟，周二给两版。", 1990),
+            ("bobby", "报名数据导出我已经放到资料库了。", 1980),
+        ],
+    )
+    await quiet([*channels.values(), thread, *tasks])
     library(pid)
     feedback(alice)
-    print(f"project {pid}\nrooms {rooms}\ntasks {tasks}\nagent {agent}")
+    print(f"project {pid}\nchannels {channels}\ntasks {tasks}\nagent {agent}")
 
 
 if __name__ == "__main__":

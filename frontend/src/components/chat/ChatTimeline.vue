@@ -16,6 +16,7 @@ import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
+import type { ProgressLevel } from '../../lib/taskProgress'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -100,6 +101,12 @@ const props = defineProps<{
   viewer: string
   /** 在干活（或刚干完）的队友此刻的表情，按 handle（lib/agentFace）。 */
   agentFaces?: Record<string, AgentFace>
+  /** 频道主线、我能在这里说话：消息和文件能置顶到频道。 */
+  pinnable?: boolean
+  /** 已经置顶的那几条（block id）。 */
+  pinnedIds?: ReadonlySet<string>
+  /** 这个频道里一件任务此刻到哪一档；不认得就是 null。 */
+  taskLevel?: (taskId: string) => ProgressLevel | null
 }>()
 
 const emit = defineEmits<{
@@ -122,6 +129,9 @@ const emit = defineEmits<{
   (e: 'save-edit', block: Block, text: string): void
   (e: 'cancel-edit'): void
   (e: 'retry'): void
+  (e: 'pin', block: Block): void
+  (e: 'unpin', block: Block): void
+  (e: 'keep', block: Block): void
   (e: 'retry-send', clientId: string): void
   (e: 'starter', text: string): void
   (e: 'settle-arrival', event: AnimationEvent, id: string): void
@@ -294,12 +304,16 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :editable="barEditable"
         :no-upgrade="noUpgrade"
         :threadable="threadable"
+        :pinnable="pinnable"
+        :pinned-ids="pinnedIds"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"
         @thread="emit('open-thread', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="emit('edit', $event)"
+        @pin="emit('pin', $event)"
+        @unpin="emit('unpin', $event)"
       />
       <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
       <Transition name="tl-skel">
@@ -374,11 +388,13 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :can-retry="i === retryIndex"
             :retrying="retryBusy"
             :project-id="topic?.project_id ?? null"
+            :task-level="taskLevel"
             :data-row-id="m.id"
             @animationend="settleRow"
             @open-resource="emitOpenResource"
             @open-card="emit('open-card', $event)"
             @retry="emit('retry')"
+            @jump="emit('jump', $event)"
           />
           <!-- message row -->
           <RoomMessage
@@ -411,6 +427,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :editing="editingId === m.id"
             :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
             :saving="editSaving"
+            :pinnable="pinnable"
+            :pinned="!!pinnedIds?.has(m.id)"
             :data-row-id="m.id"
             @animationend="settleRow"
             @open-file="emitOpenFile"
@@ -424,16 +442,21 @@ function emitOutboxLeave(el: Element, done: () => void) {
             @avatar-error="emit('avatar-error', $event)"
             @save-edit="emitSaveEdit"
             @cancel-edit="emit('cancel-edit')"
+            @keep="emit('keep', $event)"
+            @pin="emit('pin', $event)"
+            @unpin="emit('unpin', $event)"
           />
           <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
                带插槽的行每次重画都会跟着重画。 -->
           <ThreadLine
-            v-if="!notice && threadable && (m.thread || replyingFor?.(m))"
+            v-if="!notice && threadable && m.thread"
             class="tl-thread"
             :summary="m.thread ?? null"
             :replying="replyingFor?.(m) ?? null"
             :refs="refs"
             :name-of="nameOf ?? String"
+            :avatar-of="avatarSrc"
+            :task-level="taskLevel"
             :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
             @open="emit('open-thread', m)"
           />

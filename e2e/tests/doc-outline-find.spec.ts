@@ -42,13 +42,15 @@ async function openDoc(page: Page, content: string) {
     project_id: projectId,
     title: `大纲查找 ${Date.now()}`,
   })) as { id: string };
-  const roomDoc = (await api(page, 'get', `/topics/${room.id}/document`)) as { id: string };
+  // 频道没有自己的文档：实况文档是任务的。
+  const task = (await api(page, 'post', `/topics/${room.id}/tasks`, { title: '文档' })) as { id: string };
+  const roomDoc = (await api(page, 'get', `/topics/${task.id}/document`)) as { id: string };
   await api(page, 'put', `/documents/${roomDoc.id}`, {
     content,
     expected_version: 0,
   });
 
-  await page.goto(`/projects/${projectId}/topics/${room.id}`);
+  await page.goto(`/projects/${projectId}/topics/${room.id}/tasks/${task.id}?tab=overview`);
   const prose = page.locator('.work-panel .doc-editor .doc-prose');
   await expect(prose).toBeVisible({ timeout: 30_000 });
   // 顶栏那两颗按钮在文档加载完（loading 落下去）之后才出现，等大纲那颗就够。

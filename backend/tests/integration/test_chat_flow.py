@@ -18,9 +18,9 @@ from tests.integration.conftest import (
 from tests.support.living_doc import document_of
 
 
-def _doc(client, room) -> str:
-    """The room's document, as its routes address it."""
-    return f"/documents/{document_of(client, room)}"
+def _doc(client, task) -> str:
+    """The task's document, as its routes address it."""
+    return f"/documents/{document_of(client, task)}"
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:

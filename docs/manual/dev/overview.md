@@ -35,7 +35,7 @@ covers:
 - **计量代理**（mitmproxy，`deploy/metering-proxy/`）：所有模型流量的出口，见[模型调用流程](/dev/llm)。
 - **模型网关**（LiteLLM，`deploy/compose/docker-compose.gateway.yml`）：项目虚拟 key 与预算刹车。独立一套 compose，发版不碰它。
 - **网页渲染**（`browser-render`，一个共享的无头 Chromium）、**Office 渲染**（`office-render`，LibreOffice）和**在线编辑器**（`office-editor`，OnlyOffice，可缺省）：给芝士读网页、给房间里显示和编辑 Word 和 PPT，见[房间文件与 Office](/dev/documents)。
-- **文档协同**（`collab`，Hocuspocus，`frontend/collab/`）：房间实况文档和项目章程的实时多人编辑。浏览器经前端 nginx 的 `/collab` 连上来，凭主 API 签的短时票据；它从主 API 读文档、停手几秒后存回去，存回才记一版。芝士和其他写入也经它改文档。随发版一起替换，健康检查和回滚都算它一份。
+- **文档协同**（`collab`，Hocuspocus，`frontend/collab/`）：任务文档、项目总览和资料库文档的实时多人编辑。浏览器经前端 nginx 的 `/collab` 连上来，凭主 API 签的短时票据；它从主 API 读文档、停手几秒后存回去，存回才记一版。芝士和其他写入也经它改文档。随发版一起替换，健康检查和回滚都算它一份。
 - **Forgejo**：平台自带的代码托管，账号由平台创建。
 
 数据库是 Postgres，缓存是 Valkey。正式环境用主机外部的数据库，etrip 环境由 `docker-compose.etrip.yml` 在容器里起。

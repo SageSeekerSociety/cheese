@@ -16,7 +16,6 @@
 
 import ast
 import pathlib
-import uuid
 from types import SimpleNamespace
 
 from app.domain.agent import chat, prompt
@@ -269,26 +268,3 @@ def test_a_compaction_that_came_back_says_it_carries_on():
     assert meta["state"] == "over"
     assert meta["severity"] == SEVERITY_INFO
     assert meta["detail"] is None and meta["detail_label"] is None
-
-
-# ---- 总览：它现在收参数，不碰服务实例 ----
-
-
-async def test_the_overview_outside_the_overview_room_is_the_standalone_doc():
-    """别的房间只注入 ① —— 房间自己的实况文档不进总览。
-
-    传 ``session=None`` 是故意的：非总览房间那条路根本走不到取 ②~④ 的那一步，所以
-    这也顺手钉住了「它只在那一个分支里碰会话」。取数那条路（总览房间）由集成测试
-    覆盖，那里才有真的 Project 与 topic 行。
-    """
-    text = await prompt.project_overview(
-        None,
-        project=SimpleNamespace(root_topic_id=uuid.uuid4(), id=uuid.uuid4()),
-        conversation_id=uuid.uuid4(),
-        room_doc="# 房间的实况文档\n\n这一间房在讨论什么（不该进总览）",
-        overview_doc="# 项目是什么\n\n目标：把后端拆开",
-        all_topics=[],
-        roster=[],
-    )
-    assert "把后端拆开" in text
-    assert "不该进总览" not in text

@@ -84,16 +84,11 @@ class PlaceResolver:
 
 
 async def living_doc_of(session: AsyncSession, place: Place):
-    """The conversation's living document: a task's own, or its room's. None
-    for a task whose document was never asked for, and for a 支线, which has
-    none."""
+    """The conversation's living document. Only a task has one, and not until
+    it is asked for; a channel, a private chat and a 支线 have none."""
     from app.domain.living_doc.services import Documents
 
-    if place.thread is not None:
-        return None
-    if place.task is None:
-        return await Documents(session).of_room(place.room_id)
-    if place.task.document_id is None:
+    if place.task is None or place.task.document_id is None:
         return None
     return await Documents(session).get(place.task.document_id)
 
@@ -105,10 +100,9 @@ async def doc_text_of(
 
     A conversation that works on a machine and whose document is still empty
     answers `""`, not None: the prompt then tells the teammate to write the
-    first version (`build_system_prompt`). A private chat and a 支线 have no
-    such document.
+    first version (`build_system_prompt`). Only a task has such a document.
     """
-    if place.thread is not None:
+    if place.task is None:
         return None
     doc = await living_doc_of(session, place)
     text = doc.content if doc else None

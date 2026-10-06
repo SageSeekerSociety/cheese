@@ -42,6 +42,7 @@ from app.domain.notification import (
 from app.domain.notification import push_models as notification_push  # noqa: F401
 from app.domain.oauth import models as oauth  # noqa: F401
 from app.domain.passkey import models as passkey  # noqa: F401
+from app.domain.pin import models as pin  # noqa: F401
 from app.domain.project import models as project  # noqa: F401
 from app.domain.project_skill import models as project_skill  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401

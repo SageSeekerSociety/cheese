@@ -125,13 +125,9 @@ describe('who is busy in the room, under the composer', () => {
     expect(announced).toBe('Cedar is working… · Thinking')
   })
 
-  it('nobody busy: nothing is said, unless the line keeps its place', () => {
+  it('nobody busy: nothing is said and no room is kept for it', () => {
     const empty = render(MemberActivity, { props: { lines: [] } })
     expect(empty.container.querySelector('[data-testid="member-activity"]')).toBeNull()
-    const kept = render(MemberActivity, { props: { lines: [], reserve: true } })
-    const line = kept.container.querySelector('[data-testid="member-activity"]')
-    expect(line).not.toBeNull()
-    expect(line?.textContent?.trim()).toBe('')
   })
 
   it('says it in the reader’s language', () => {

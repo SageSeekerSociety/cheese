@@ -490,7 +490,7 @@
       "mention": "Someone {'@'}-mentions me",
       "reply": "My message gets a reply",
       "reaction": "Someone reacts to my message",
-      "waitsOnMe": "An accept card or decision request waits on me",
+      "waitsOnMe": "A change or decision request waits on my review",
       "deviceInUse": "Someone is using my device",
       "invitation": "Team / project invitation",
       "announcement": "Space announcement",

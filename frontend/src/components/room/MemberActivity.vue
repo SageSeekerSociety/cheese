@@ -2,8 +2,8 @@
 // 「Cedar 正在工作… / Alice 正在输入…」那一行。房间自己没有状态，有的是成员在做
 // 什么，所以这里说的永远是某一位成员：在打字的人、有一轮在跑的 AI 队友。
 //
-// 和 Slack 一样贴在输入框正下方，小字一行；打字的人合成一句（一位 / 两位 / 好几
-// 位），在干活的队友各占一句，带上它此刻在做的那一步和干了多久。只凭 props 画。
+// 浮在输入框正上方，小字一行，没人在忙时不占地方；打字的人合成一句（一位 / 两位 /
+// 好几位），在干活的队友各占一句，带上它此刻在做的那一步和干了多久。只凭 props 画。
 //
 // 读屏那一句和眼睛看的那一句分开：眼睛看的那截带着「执行命令 pnpm test」这样从
 // live 帧来的当前一步、还有每秒往前走的用时 —— 帧一来就变、秒一秒地变，全塞进
@@ -16,14 +16,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { t } from '@/i18n'
 import { formatSpan } from '@/lib/siteLog'
 
-const props = withDefaults(
-  defineProps<{
-    lines: MemberActivityLine[]
-    /** 没人在忙时也占住一行的高度：输入框下面这一行出现、消失时，输入框不跟着跳。 */
-    reserve?: boolean
-  }>(),
-  { reserve: false }
-)
+const props = defineProps<{ lines: MemberActivityLine[] }>()
 
 /** 多久没有新输出就算卡住，另说一句「已 N 无新输出」。纯提示，不做任何事。 */
 const STALL_MS = 60_000
@@ -93,13 +86,7 @@ const workingAria = computed(() =>
 </script>
 
 <template>
-  <div
-    v-if="reserve || lines.length > 0"
-    class="member-activity"
-    :class="{ 'member-activity--reserve': reserve }"
-    data-testid="member-activity"
-    aria-live="polite"
-  >
+  <div v-if="lines.length > 0" class="member-activity" data-testid="member-activity" aria-live="polite">
     <div v-for="line in working" :key="line.handle" class="member-activity__line" data-kind="working">
       <span class="status-dot status-dot--ok member-activity__dot" aria-hidden="true" />
       <!-- The step and the elapsed seconds churn on their own; keep both out of the live region. -->
@@ -113,16 +100,16 @@ const workingAria = computed(() =>
     </div>
     <!-- What a screen reader hears: who and which phase only, so it changes on the phase, not per frame. -->
     <p v-if="workingAria" class="visually-hidden">{{ workingAria }}</p>
-    <div v-if="typingText" class="member-activity__line" data-kind="typing">{{ typingText }}</div>
+    <div v-if="typingText" class="member-activity__line" data-kind="typing">
+      <span class="member-activity__dots" aria-hidden="true"><span /><span /><span /></span>{{ typingText }}
+    </div>
   </div>
 </template>
 
 <style scoped>
-/* 一行小字，不是一块面板：没有底色、没有边框，和输入框下沿之间只隔一点点。 */
-/* flex: none 和下面每一行的 flex: none 都不能省。放它的那一列（ChatPanel）是 flex 列，
-   时间线 flex-grow-1 但不禁收缩，内容一长，列里每一块按自己的高度比例往回收；
-   这里的 min-height（reserve）又顶掉了 min-height: auto，于是整块被压到一行高，
-   而每一行 overflow: hidden，最小高度是 0，两三位队友的行就挤成一行叠在一起。 */
+/* 一行小字，不是一块面板：没有底色、没有边框。flex: none 和每一行的 flex: none 都
+   不能省：放进 flex 列时，每一行 overflow: hidden、最小高度是 0，两三位队友的行会被
+   挤成一行叠在一起。 */
 .member-activity {
   flex: none;
   display: flex;
@@ -132,9 +119,6 @@ const workingAria = computed(() =>
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
-}
-.member-activity--reserve {
-  min-height: calc(var(--lh-13) + 6px);
 }
 .member-activity__line {
   flex: none;
@@ -160,6 +144,38 @@ const workingAria = computed(() =>
 .member-activity__meta,
 .member-activity__stall {
   flex: none;
+}
+.member-activity__dots {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+}
+.member-activity__dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--faint);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .member-activity__dots span {
+    animation: activity-dot 1.2s var(--ease-standard) infinite;
+  }
+  .member-activity__dots span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .member-activity__dots span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+}
+@keyframes activity-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
 }
 /* 比这一行的其余部分再淡一档：它是元信息（多久没有新输出），不是又一件在做的事。 */
 .member-activity__stall {

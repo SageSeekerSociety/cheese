@@ -14,11 +14,12 @@ import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
-import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
+import { useTopicPanel } from '@/composables/useTopicPanel'
 
 import { getTask } from '@/api/tasks'
 import { openThread } from '@/api/threads'
 import { useCommands } from '@/commands'
+import ChannelOverview from '@/components/channel/ChannelOverview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
@@ -36,11 +37,13 @@ import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
+import { useChannelOverview } from '@/views/workspace/useChannelOverview'
+import { useTaskOverview } from '@/views/workspace/useTaskOverview'
 import { useTaskPage } from '@/views/workspace/useTaskPage'
 
 // 话题视图: ONE topic header, then the chat | 工作面板 split. A task in the room
 // is drawn by the same view with the task's header, its own conversation in the
-// chat column and its own 总览 / 现场 / 改动 / 预览 in the panel. The input bar is
+// chat column and its own 概览 / 现场 / 改动 / 预览 in the panel. The input bar is
 // the chat column's own — it used to span both columns from here, which read as
 // addressing the whole topic while 99% of what it sent was a chat message only
 // the left column shows. Which topic is open is a route param, and ProjectShell
@@ -55,8 +58,6 @@ const ThreadPane = defineAsyncComponent(() => import('@/views/workspace/ThreadPa
 // 支线时，桌面上支线占右边那一半，手机上是一整页。
 const props = defineProps<{ projectId: string; topicId: string; taskId?: string; threadId?: string }>()
 const { mdAndUp } = useDisplay()
-// 平板横放那一档（960–1180）：对话占满整宽，工作面板是从右边拉进来的浮层。
-const compact = useCompactDesktop()
 const router = useRouter()
 const route = useRoute()
 const store = useWorkspaceStore()
@@ -81,7 +82,7 @@ useTopBarBack(() =>
 void tabHistory.ensureChatBehind()
 
 // 「去验收」：决策在聊天，审查在面板 —— 它不把人带去任何地方，只把右栏切到
-// 「改动」那一格。对话栏末尾那张验收卡和总览里那张卡上的按钮是同一个动作，所以
+// 「改动」那一格。对话栏末尾那张验收卡和概览里那张卡上的按钮是同一个动作，所以
 // 只有这一处定义（`chatEvents.review` 和 `<WorkPanel @review>` 都指过来）。
 function onReview() {
   onPanelTab('changes')
@@ -113,6 +114,21 @@ function backToRoom() {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: props.topicId } })
 }
 
+// 频道概览：置顶、任务、综合的项目总览。
+const channelOverview = useChannelOverview({
+  channelId: () => (props.taskId ? null : props.topicId),
+  projectId: () => props.projectId,
+  general: () => store.placeById(props.topicId)?.kind === 'root',
+  reportError: (e) => store.reportError(e, t('work.channel.pins.unpinFailed')),
+})
+const canPin = computed(() => {
+  const topic = selectedTopic.value
+  return !!topic && topic.status !== 'archived' && (topic.kind === 'root' || !!topic.joined)
+})
+function jumpTo(blockId: string) {
+  void router.replace({ query: { ...route.query, block: blockId } })
+}
+
 // ---- 支线 ----
 // 主线上一条消息的支线：有就打开，没有就先开一条。概览里「支线」那一格读同一份清单。
 const channelThreads = useChannelThreads(() => (props.taskId ? null : props.topicId))
@@ -133,37 +149,32 @@ async function onOpenThread(block: Block) {
   }
 }
 
-// ---- 平板横放：工作面板的收 / 开 ----
-// 这一档里对话占满整宽，面板是一只从右边拉进来的浮层，默认收起。「面板开着」这件事
-// 就写在地址里——`?tab=` 就是「有人打开了这一格」，于是对话里点「查看改动」、别人发
-// 来的链接，全走同一条路（`onPanelTab` 本来就在改地址）。宽档里面板一直开着（就在对话旁边），手机上是 tab 栏的第一格，两处都不
-// 经过这里。
-const panelOpen = computed(() => !compact.value || !!panelTab.value || !!props.threadId)
-// 收起之后从页头那颗开关再打开时回到哪一格：面板此刻在画哪一格。这一格未必来自地址
-// ——平板横放里进房间时自动选中的那一格（芝士在干活就是「现场」、卡等你验收就是「改
-// 动」）只留在面板里、没写进地址，收起再打开要回到它。量不到就落在总览。
-function openPanel() {
-  const want = panelRef.value?.activeTab() ?? panelTab.value ?? 'overview'
-  void router.replace({ query: { ...route.query, tab: want } })
-}
+// ---- 右侧面板的收 / 开（三档见 useTopicPanel）----
+const panesRef = ref<HTMLElement | null>(null)
+const panel = useTopicPanel({
+  panes: panesRef,
+  tab: panelTab,
+  desktop: mdAndUp,
+  thread: computed(() => !!props.threadId),
+  setTab: (tab) => void router.replace({ query: { ...route.query, tab } }),
+  showing: () => panelRef.value?.activeTab(),
+})
+const panelOpen = panel.open
+const panelFloat = panel.float
 function closePanel() {
   if (props.threadId) return backToRoom()
-  if (!compact.value) return
-  // 清掉地址里的 tab：面板收起了，地址就不该再写着一格开着——不然下一次点
-  // 「查看改动」时 goTab 会因为「已经在 changes」而什么都不做，面板打不开。
-  void router.replace({ query: { ...route.query, tab: undefined } })
+  panel.hide()
   // Esc 关掉浮层，焦点回到打开它那颗开关（键盘和读屏用户必须回得去）。
   void nextTick(() => document.querySelector<HTMLElement>('[data-panel-toggle]')?.focus())
 }
 function togglePanel() {
   if (panelOpen.value) closePanel()
-  else openPanel()
+  else panel.show()
 }
-// 平板横放：面板浮层按 Esc 收起，焦点回到页头那颗开关。这一档里二级侧栏浮层也可能
-// 同时开着，两层共用一个 Esc 栈：一下 Esc 只关最上面那层（后打开的那层），第二下才
-// 轮到另一层。见 useEscapeStack。
+// 浮层按 Esc 收起，焦点回到页头那颗开关。窄档里二级侧栏浮层也可能同时开着，两层
+// 共用一个 Esc 栈：一下 Esc 只关最上面那层（后打开的那层）。见 useEscapeStack。
 useEscapeLayer(
-  computed(() => compact.value && panelOpen.value),
+  computed(() => panelFloat.value && panelOpen.value),
   closePanel
 )
 
@@ -173,7 +184,7 @@ const AUTHOR = myHandle()
 const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId))
 
 // ---- 任务页 ----
-// 页头、总览、能不能说话都读这一份；对话和面板的其余几格按任务的 id 自己读。
+// 页头、概览、能不能说话都读这一份；对话和面板的其余几格按任务的 id 自己读。
 // 任务交给谁、请谁协作，从项目里的人挑：被选中的人随之加入这个频道（后端）。
 const projectPeople = computed<TopicMemberRow[]>(() =>
   store.members
@@ -285,18 +296,19 @@ function openTopic(topicId: string) {
 // one of its own (`cheesex.toolWidth`), plus a 钉住 toggle that decided whether
 // the doc made room for it at all.
 const { focusMode } = useTopicMemory() // 专注模式 (spec §7.1): session-only, a transient mode
-// 平板横放那一档里对话永远占满整宽，没有「让开一半」这回事，专注模式在这一档里不
-// 成立：一进来就把它关掉，免得从宽档带来的那个开关和这里的布局打架。
+// 专注模式是「对话让开、面板占满」：面板没并排开着时它不成立，一进这种状态就关掉，
+// 免得从宽档带来的那个开关和这里的布局打架。
+const docked = computed(() => !panelFloat.value && panelOpen.value)
 watch(
-  compact,
+  docked,
   (on) => {
-    if (on) focusMode.value = false
+    if (!on) focusMode.value = false
   },
   { immediate: true }
 )
-// 专注模式只在宽档的桌面上有：手机上一栏，平板横放里对话本来就是整宽。
+// 专注模式只在面板并排开着时有。
 useCommands(() =>
-  mdAndUp.value && !compact.value
+  mdAndUp.value && docked.value
     ? [
         {
           id: 'room.focus',
@@ -307,9 +319,9 @@ useCommands(() =>
       ]
     : []
 )
-// 对话那一栏的宽度：宽档是 `0 0 N%`（可拖的分隔），平板横放里它吃掉整宽——面板浮在
-// 上面，不再分地方。
-const chatStyle = computed(() => (compact.value ? { flex: '1 1 0', minWidth: 0 } : { flex: `0 0 ${store.chatPct}%` }))
+// 对话那一栏的宽度：面板并排开着时是 `0 0 N%`（可拖的分隔），否则它吃掉整宽——面板
+// 收着，或浮在上面。
+const chatStyle = computed(() => (docked.value ? { flex: `0 0 ${store.chatPct}%` } : { flex: '1 1 0', minWidth: 0 }))
 // 收起 / 拉开的那一下里，栏在变窄变宽，里面的东西不跟着变：几百条消息每一帧按新
 // 宽度重新折行，既费又难看。把里面钉在这一栏落定时的宽度上，栏只是把它裁开、露出。
 function freezeChatWidth(el: Element) {
@@ -318,11 +330,9 @@ function freezeChatWidth(el: Element) {
   ;(el as HTMLElement).style.setProperty('--chat-frozen-w', `${(panes.clientWidth * store.chatPct) / 100}px`)
 }
 const panelRef = ref<{
-  pulse: () => void
-  highlightTurn: (turnId: string) => void
+  showOverview: () => Promise<void>
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
-  reviewDoc?: (request: DocReviewRequest) => void
   openDocument?: (document: OpenedDocument, review?: DocReviewRequest) => Promise<void>
   previewShown?: () => void
   // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
@@ -399,6 +409,18 @@ const chatEvents = {
 // 有没有队友正在这个话题里跑一轮 —— 工作面板的「现场」那一格和推送提示读它。
 const working = ref(false)
 
+// 任务概览那一列要的：相关、这一轮的清单、第一轮失败后的重试。
+const taskOverview = useTaskOverview({
+  taskId: () => props.taskId,
+  working: () => working.value,
+  reloadTask: () => taskPage.load(true),
+})
+const taskOverviewRef = ref<InstanceType<typeof TaskOverview> | null>(null)
+function openDiscussion(conversationId: string) {
+  if (conversationId === props.topicId) backToRoom()
+  else showThread(conversationId)
+}
+
 // 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
 // `composerReady` 是 socket 的那一帧，而 socket 会在连接打嗝时闪断：那一瞬它说
 // 未连接，可这一轮还在跑（工作条写着「正在工作 · 重试中」，因为重试就是靠它自己
@@ -449,7 +471,8 @@ function handleStateChanged(resource: string) {
     void store.refreshTopics()
     store.noteTasksChanged()
     if (props.taskId) void taskPage.load(true)
-  }
+    else void channelOverview.loadTasks()
+  } else if (resource === 'pins') void channelOverview.loadPins()
   // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
@@ -493,12 +516,15 @@ async function handleOpenResource(
     // a whole-doc pulse when the turn's blocks aren't tagged). Leaving focus mode
     // re-renders the editor, which recreates its DOM — wait for that render to
     // settle before highlightTurn tags + flashes, or the flash is wiped instantly.
+    // 只有任务有自己的文档；频道里说的是资料库里的那份，上面那条已经接住了。
+    if (!props.taskId) return
     focusMode.value = false
-    await nextTick()
+    panel.show()
+    await panelRef.value?.showOverview()
     // 「查看改动」：在正文里一处处标出这个人让 AI 队友改的那几处。
-    if (review) panelRef.value?.reviewDoc?.(review)
-    else if (turnId) panelRef.value?.highlightTurn(turnId)
-    else panelRef.value?.pulse()
+    if (review) taskOverviewRef.value?.reviewEdits(review)
+    else if (turnId) taskOverviewRef.value?.highlightTurn(turnId)
+    else taskOverviewRef.value?.pulse()
   }
   // topics: the topic panel is already in view next to the chat.
 }
@@ -616,7 +642,9 @@ void openPlace()
         :rename="taskPage.rename"
         :set-collaborators="taskPage.setCollaborators"
         :load-machine="taskPage.loadMachine"
+        :panel-open="panelOpen"
         @open-room="backToRoom"
+        @toggle-panel="togglePanel"
       />
       <TopicHeader
         v-else
@@ -625,6 +653,7 @@ void openPlace()
         :me="AUTHOR"
         :connected="roomConnected"
         :focus="focusMode"
+        :can-focus="docked"
         :panel-open="panelOpen"
         @toggle-focus="focusMode = !focusMode"
         @toggle-panel="togglePanel"
@@ -660,14 +689,13 @@ void openPlace()
       />
       <div
         v-else
+        ref="panesRef"
         :key="taskId ?? 'room'"
         class="panes d-flex flex-grow-1"
         style="min-width: 0; min-height: 0; position: relative"
       >
-        <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。
-           专注模式开关时这一栏像抽屉一样收起 / 拉开，而不是一下消失、面板一下跳宽：
-           人要看得出面板是从哪儿长过来的。平板横放那一档里这一栏占满整宽，面板是浮在
-           它上面的浮层（见下面的 panel-host--sheet），不再分地方。 -->
+        <!-- 桌面：对话是左边那一栏。面板并排开着时两者之间有一条可拖的分隔，专注模式里
+             这一栏像抽屉一样收起；面板收着或浮在上面时这一栏占满整宽。 -->
         <Transition name="focus-chat" @before-enter="freezeChatWidth" @before-leave="freezeChatWidth">
           <TopicChatColumn
             v-if="mdAndUp"
@@ -687,27 +715,26 @@ void openPlace()
           />
         </Transition>
         <div
-          v-if="mdAndUp && !focusMode && !compact"
+          v-if="mdAndUp && !focusMode && docked"
           class="pane-resizer"
           :title="t('work.topic.resize')"
           @mousedown.prevent="startPaneDrag"
           @dblclick="store.setChatPct(50)"
         />
 
-        <!-- 平板横放：面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
+        <!-- 面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
         <Transition name="panel-scrim">
-          <div v-if="compact && panelOpen" class="panel-scrim" @click="closePanel" />
+          <div v-if="panelFloat && panelOpen" class="panel-scrim" @click="closePanel" />
         </Transition>
 
-        <!-- 工作面板。宽档里它是对分里右边那一栏（今天的样子，行内排布）；
-             平板横放里它是一只从右边拉进来的浮层：对话占满整宽，面板默认收起，
-             打开它的是页头那颗开关（或地址里的 ?tab=）。收起时 visibility
-             一并藏掉，浮层里的东西不进 tab 序、也不进读屏的树。 -->
+        <!-- 工作面板：并排时是右边那一栏，窄档里是从右边拉进来的浮层（三档见
+             useTopicPanel）。浮层收起时 visibility 一并藏掉，不进 tab 序和读屏的树。 -->
         <div
-          :id="compact ? 'topic-panel' : undefined"
+          v-show="!mdAndUp || panelFloat || panelOpen"
+          id="topic-panel"
           class="col col-doc panel-host"
-          :class="{ 'panel-host--sheet': compact, 'panel-host--open': compact && panelOpen }"
-          :style="compact ? undefined : { flex: '1 1 0', minWidth: 0 }"
+          :class="{ 'panel-host--sheet': panelFloat, 'panel-host--open': panelFloat && panelOpen }"
+          :style="panelFloat ? undefined : { flex: '1 1 0', minWidth: 0 }"
         >
           <!-- 桌面：支线占右边这一半。工作面板只是藏起来，关掉支线回来时还停在原来那一格。 -->
           <ThreadPane
@@ -743,7 +770,7 @@ void openPlace()
             :tab="panelTab"
             :card-phase="cardPhase"
             :with-chat="!mdAndUp"
-            :compact="compact"
+            :compact="panelFloat || !panelOpen"
             :member-names="memberNames"
             :threads-new="channelThreads.hasNew.value"
             @open-topic="openTopic"
@@ -752,8 +779,10 @@ void openPlace()
             @update:tab="onPanelTab"
             @locate="onLocate"
           >
-            <template v-if="taskId && currentTask" #overview>
+            <template #overview>
               <TaskOverview
+                v-if="taskId && currentTask"
+                ref="taskOverviewRef"
                 :room="selectedTopic"
                 :task="currentTask"
                 :member-names="memberNames"
@@ -765,7 +794,39 @@ void openPlace()
                 :comparing="taskComparing"
                 :comparison="taskComparison"
                 :compare-error="taskCompareError"
+                :checklist="taskOverview.checklist.value"
+                :related="taskOverview.related.value"
+                :can-retry="taskPage.takesPart.value"
+                :retrying="taskOverview.retrying.value"
+                :retry-error="taskOverview.retryError.value"
                 @toggle-compare="taskPage.toggleCompare"
+                @open-topic="openTopic"
+                @mention-click="handleMentionClick"
+                @retry-opening="taskOverview.retryOpening"
+                @open-output="(path: string) => panelRef?.openFile?.(path)"
+                @open-file="(path: string) => panelRef?.openFile?.(path)"
+                @open-document="(id: string, title: string) => panelRef?.openDocument?.({ id, title })"
+                @open-discussion="openDiscussion"
+              />
+              <ChannelOverview
+                v-else-if="!taskId"
+                :topic="selectedTopic"
+                :general="selectedTopic.kind === 'root'"
+                :overview="channelOverview.overview.value"
+                :pins="channelOverview.pins.value"
+                :tasks="channelOverview.tasks.value"
+                :can-pin="canPin"
+                :member-names="memberNames"
+                :agent-name="store.agentName"
+                :agent-handle="store.agentHandle"
+                :members="store.members"
+                :topic-list="store.topics"
+                :activity-tick="activityTick"
+                :save-description="(text: string) => store.describe(topicId, text)"
+                @unpin="channelOverview.unpin"
+                @jump="jumpTo"
+                @open-task="onOpenCard"
+                @open-all="router.push({ name: 'workspace-channel-tasks', params: { projectId, topicId } })"
                 @open-topic="openTopic"
                 @mention-click="handleMentionClick"
               />
@@ -873,8 +934,8 @@ void openPlace()
   background: var(--faint);
 }
 
-/* 工作面板的外壳（里面就是 WorkPanel 本身）。宽档里它是一个普通的 flex 子项——
-   今天的样子；平板横放里它被下面的 --sheet 改成一只浮层。 */
+/* 工作面板的外壳（里面就是 WorkPanel 本身）：并排时是普通的 flex 子项，窄档里被
+   下面的 --sheet 改成一只浮层。 */
 .panel-host {
   display: flex;
   flex-direction: column;
@@ -883,10 +944,8 @@ void openPlace()
   min-height: 0;
 }
 
-/* 平板横放的面板浮层：从对话右边拉进来的一张纸。收起时同时走进屏幕右侧、并把
-   visibility 藏掉——藏掉的浮层不占 tab 序，也不进读屏的树，这比只 translate 出去
-   干净。visibility 的过渡带一个等于位移时长的延迟：拉开时立刻可见，收起时等位移
-   走完才藏。 */
+/* 面板浮层：从对话右边拉进来的一张纸。收起时走进屏幕右侧并藏掉 visibility（不占
+   tab 序、不进读屏的树）；visibility 的过渡延迟等于位移时长，收起时等位移走完才藏。 */
 .panel-host--sheet {
   position: absolute;
   top: 0;

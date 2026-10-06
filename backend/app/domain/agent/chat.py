@@ -140,7 +140,6 @@ from app.domain.agent.prompt import (
     _pending_input_blocks,
     _progress_lines,  # noqa: F401
     _prompt_topic_refs,  # noqa: F401
-    project_overview,
 )
 
 # 兼容门面：不碰实例状态的问答（这一轮谁答、项目 key 带多少额度、这条记忆改动
@@ -2742,32 +2741,6 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id=turn_id,
             session=session,
             text=text,
-        )
-
-    async def _project_overview(
-        self,
-        session: AsyncSession,
-        *,
-        project: Project,
-        conversation_id: uuid.UUID,
-        room_doc: str | None,
-        overview_doc: str | None,
-        all_topics: list[Topic],
-        roster: list[dict],
-    ) -> str:
-        """一行委托：拼总览的那段是纯的，住在 `agent/prompt.py` 的 project_overview。
-
-        留这个方法当接缝：它唯一的调用点（`_assemble_turn`）和驱动这个服务的测试
-        都照原来的样子读，搬动只换了实现住在哪个文件。
-        """
-        return await project_overview(
-            session,
-            project=project,
-            conversation_id=conversation_id,
-            room_doc=room_doc,
-            overview_doc=overview_doc,
-            all_topics=all_topics,
-            roster=roster,
         )
 
 

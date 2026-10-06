@@ -12,6 +12,7 @@
  */
 import type { Component } from 'vue'
 
+import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -126,14 +127,14 @@ beforeEach(() => {
   getGitLog.mockReset().mockResolvedValue({ data: [], total: 0 })
   getGitDiff.mockReset().mockResolvedValue({ diff: DIFF })
   listFiles.mockReset().mockResolvedValue({ data: FILES, total: FILES.length, source: 'live' })
-  listRoomTasks.mockReset().mockResolvedValue({ data: [], total: 0 })
+  listRoomTasks.mockReset().mockResolvedValue({ data: [openTask()], total: 1 })
   readFile.mockReset().mockImplementation((_pid: string, path: string) => Promise.resolve(fileContent(path)))
   writeFile.mockReset().mockResolvedValue({ path: 'src/app.ts', version: 'v2' })
 })
 
 function mount(props: Record<string, unknown> = {}) {
   return render(PanelChangesHost as unknown as Component, {
-    props: { topicId: 'room-1', projectId: 'p1', active: true, ...props },
+    props: { topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true, ...props },
     global: { plugins: [vuetify] },
   })
 }
@@ -157,7 +158,7 @@ describe('树上有什么，点开的是什么', () => {
     expect(screen.getByText('新增')).toBeTruthy()
 
     // 没打开过任何文件时的第一份，是清单里的第一份改过的文件。
-    await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', null, 'committed'))
+    await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', 't-1', 'live'))
     expect(screen.getByText('src/app.ts')).toBeTruthy()
     // 逐文件 diff：增删各自一行，hunk 头也在。
     expect(screen.getByText('-const b = 2')).toBeTruthy()
@@ -170,7 +171,7 @@ describe('树上有什么，点开的是什么', () => {
     await screen.findByText('app.ts')
     await fireEvent.click(fileRow('README.md'))
     expect(await screen.findByText('+# hi')).toBeTruthy()
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'README.md', 'room-1', null, 'committed')
+    expect(readFile).toHaveBeenLastCalledWith('p1', 'README.md', 'room-1', 't-1', 'live')
     // 上一份的差异不该还留在屏幕上。
     expect(screen.queryByText('-const b = 2')).toBeNull()
   })
@@ -181,24 +182,31 @@ describe('树上有什么，点开的是什么', () => {
       total: 3,
       source: 'live',
     })
-    mount()
+    // 对话里一枚 chip 指着一份这件任务没改过的文件。
+    const panel = ref<{ openFile: (path: string) => Promise<void> } | null>(null)
+    const Host = defineComponent({
+      setup: () => () =>
+        h(PanelChangesHost as unknown as Component, {
+          ref: panel,
+          topicId: 'room-1',
+          taskId: 't-1',
+          projectId: 'p1',
+          active: true,
+        }),
+    })
+    render(Host, { global: { plugins: [vuetify] } })
     await screen.findByText('app.ts')
     expect(screen.getByText('差异')).toBeTruthy()
-    await fireEvent.click(fileRow('notes.txt'))
-    await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('p1', 'notes.txt', 'room-1', null, 'committed'))
+    await panel.value?.openFile('notes.txt')
+    await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('p1', 'notes.txt', 'room-1', 't-1', 'live'))
     expect(screen.queryByText('差异')).toBeNull()
     expect(document.querySelector('.editor-stub__path')?.textContent).toBe('notes.txt')
   })
 })
 
 describe('这一支的活', () => {
-  beforeEach(() => {
-    listRoomTasks.mockResolvedValue({ data: [openTask()], total: 1 })
-  })
-
-  it('活还在跑时，打开的是它的工作树，来源写在横条上', async () => {
+  it('活还在跑时，打开的是它的工作树', async () => {
     mount()
-    expect(await screen.findByText('把登录页的报错说清楚')).toBeTruthy()
     await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', 't-1', 'live'))
     expect(listFiles).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live')
     expect(getGitDiff).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live')
@@ -255,42 +263,8 @@ describe('这一支的活', () => {
     const { rerender } = mount()
     await waitFor(() => expect(readFile).toHaveBeenCalled())
     const before = getGitDiff.mock.calls.length
-    await rerender({ topicId: 'room-1', projectId: 'p1', active: true, refreshTick: 1 })
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true, refreshTick: 1 })
     await waitFor(() => expect(getGitDiff.mock.calls.length).toBeGreaterThan(before))
     expect(getGitDiff).toHaveBeenLastCalledWith('p1', 'room-1', 't-1', 'live')
-  })
-})
-
-describe('房间改动这一页', () => {
-  it('每个任务一行，铺开看它改了哪些文件，点一份进那件活', async () => {
-    listRoomTasks.mockResolvedValue({
-      data: [openTask('t-1', '把登录页的报错说清楚'), openTask('t-2', '补上导出按钮')],
-      total: 2,
-    })
-    mount({ taskId: undefined, active: true })
-    expect(await screen.findByText('把登录页的报错说清楚')).toBeTruthy()
-    expect(screen.getByText('补上导出按钮')).toBeTruthy()
-    // 每件活各标着自己改了几个文件；改了哪些是展开了才知道的（三十件活各铺一屏
-    // 就没法找了）。
-    expect(screen.getAllByText('2 个文件')).toHaveLength(2)
-    expect(screen.queryByText('src/app.ts')).toBeNull()
-
-    const toggle = document.querySelector('.task-change-toggle') as HTMLElement
-    await fireEvent.click(toggle)
-    expect(await screen.findByText('src/app.ts')).toBeTruthy()
-
-    await fireEvent.click(screen.getByText('src/app.ts'))
-    await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', 't-1', 'live'))
-  })
-
-  it('「项目当前代码」是另一条来源，点它回到只读的项目代码', async () => {
-    listRoomTasks.mockResolvedValue({
-      data: [openTask('t-1', '把登录页的报错说清楚'), openTask('t-2', '补上导出按钮')],
-      total: 2,
-    })
-    mount()
-    await screen.findByText('把登录页的报错说清楚')
-    await fireEvent.click(screen.getByText('项目当前代码'))
-    await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', null, 'committed'))
   })
 })

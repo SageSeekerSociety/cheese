@@ -37,9 +37,10 @@ async def _model_call(credential: str) -> int:
 def test_a_room_with_no_agent_still_gets_its_selection_question_answered(
     client, sessions, model_pool
 ):
-    room, seat = _document(client)
-    project = client.get(f"/topics/{room}", headers=session_auth_headers("alice"))
-    project_id = project.json()["data"]["project_id"]
+    task, seat, _ = _document(client)
+    of_task = client.get(f"/topics/{task}/task", headers=session_auth_headers("alice"))
+    project_id = of_task.json()["data"]["project_id"]
+    room = of_task.json()["data"]["room_id"]
     removed = client.delete(
         f"/topics/{room}/members/{seat}", headers=session_auth_headers("alice")
     )
@@ -59,7 +60,7 @@ def test_a_room_with_no_agent_still_gets_its_selection_question_answered(
 
     sessions.script = ask_the_model
 
-    status, events = _ask(client, room, preset="check", selection=_selection("范围"))
+    status, events = _ask(client, task, preset="check", selection=_selection("范围"))
 
     assert status == 200
     assert _done(events)["answer"] == "model 200"

@@ -12,7 +12,7 @@ export type Focus = 'machine' | 'seats' | 'chat' | 'site' | 'tabs' | 'title' | '
 // 剧本说「这一步切到 changes」，画面上就是产品里的「改动」那一格。
 export type PanelKey = 'overview' | 'site' | 'changes' | 'preview'
 
-// 总览那一格里的东西：实况文档、上一轮的进度清单、房间里的活（看板）。
+// 概览那一格里的东西：实况文档、上一轮的进度清单、房间里的活（看板）。
 export interface OverviewScene {
   // 实况文档正文（markdown），和芝士写进房间的是同一份东西。
   doc?: string
@@ -206,7 +206,8 @@ export interface Seat {
 export interface SplitLine {
   taskId: string
   title: string
-  status: 'open' | 'closed'
+  /** 演示里的任务只有在做和做完两档。 */
+  level: 'running' | 'done'
   createdAt: string
 }
 
@@ -438,7 +439,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
           const split: SplitLine = {
             taskId: e.id,
             title: e.title,
-            status: e.status,
+            level: e.status === 'closed' ? 'done' : 'running',
             createdAt: existing?.split?.createdAt ?? created_at,
           }
           if (existing) existing.split = split

@@ -38,3 +38,8 @@ export function renameDocument(documentId: string, title: string): Promise<Proje
 export function deleteDocument(documentId: string): Promise<unknown> {
   return request(one(documentId), { method: 'DELETE' })
 }
+
+/** 项目总览是哪一份文档（第一次问时建出空的一份）。综合的概览和项目文档页都显示它。 */
+export function getProjectOverview(projectId: string): Promise<{ id: string }> {
+  return request<{ id: string }>(`/projects/${encodeURIComponent(projectId)}/overview`)
+}

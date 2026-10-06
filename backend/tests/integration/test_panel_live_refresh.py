@@ -36,9 +36,9 @@ from tests.integration.test_accept_pr import app_world as app_world
 from tests.support.living_doc import document_of
 
 
-def _doc(client, room) -> str:
-    """The room's document, as its routes address it."""
-    return f"/documents/{document_of(client, room)}"
+def _doc(client, task) -> str:
+    """The task's document, as its routes address it."""
+    return f"/documents/{document_of(client, task)}"
 
 
 @pytest.fixture
@@ -81,13 +81,15 @@ def _stale(frames: list[tuple[str, dict]], room: str) -> list[str]:
 
 def test_writing_the_doc_refreshes_the_doc_panel(client, frames):
     pid, rid = _room(client)
+    task = open_task(client, rid, start=False)["id"]
+    frames.clear()
     r = client.put(
-        _doc(client, rid),
+        _doc(client, task),
         json={"content": "调查安排", "expected_version": 0},
-        headers=_agent(pid, rid),
+        headers=_agent(pid, task),
     )
     assert r.status_code == 200, r.text
-    assert _stale(frames, rid) == ["doc"]
+    assert _stale(frames, task) == ["doc"]
 
 
 def test_opening_a_piece_of_work_refreshes_the_rooms_work_list(client, frames):

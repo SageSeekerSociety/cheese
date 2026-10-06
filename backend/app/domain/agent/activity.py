@@ -47,11 +47,42 @@ class RoomActivity:
         self._turn_agents: dict[tuple[str, str], str] = {}
         # channel → member → (typing since, expires at on the monotonic clock)
         self._typing: dict[str, dict[str, tuple[float, float]]] = {}
+        # 支线 → its channel, learnt when a turn is assembled in the 支线.
+        self._thread_rooms: dict[str, str] = {}
 
     def reset(self) -> None:
         """Between tests; the turn starts are the broker's to clear."""
         self._turn_agents.clear()
         self._typing.clear()
+        self._thread_rooms.clear()
+
+    def note_thread(self, thread_id, room_id) -> None:
+        """This channel is a 支线 of that channel."""
+        self._thread_rooms[str(thread_id)] = str(room_id)
+
+    def told(self, channel: str, frame: dict | None) -> list[tuple[str, dict]]:
+        """Where an activity change on ``channel`` is told: the channel itself,
+        and when an AI teammate started or stopped working in a 支线, its
+        channel's main line too. The line under the message the 支线 hangs
+        under says who is answering; the main line does not hear the 支线's own
+        frames."""
+        if frame is None:
+            return []
+        room = self._thread_rooms.get(channel)
+        if room is None or frame.get("kind") != WORKING:
+            return [(channel, frame)]
+        return [
+            (channel, frame),
+            (
+                room,
+                {
+                    "type": "thread_activity",
+                    "thread_id": channel,
+                    "member": frame["member"],
+                    "active": frame["active"],
+                },
+            ),
+        ]
 
     def _working_since(self, channel: str, agent: str) -> float | None:
         starts = [
