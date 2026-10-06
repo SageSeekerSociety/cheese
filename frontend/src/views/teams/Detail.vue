@@ -1,45 +1,34 @@
 <template>
-  <!-- 没加入的人看到小队的对外一面，不进成员工作区，也不去拉只有成员读得到的东西。 -->
-  <v-container v-if="teamData && !isMember" class="fill-height justify-center pa-4" fluid>
-    <TeamProfile :team="teamData" :join="join" />
-  </v-container>
-  <v-container v-else-if="notFound" class="fill-height justify-center pa-4" fluid>
-    <p class="t-body c-muted">{{ t('work.teamProfile.notFound') }}</p>
-  </v-container>
-  <!-- 读失败原来直接抛出去，这一页就什么都不画 —— 整页空白，看不出是没有这个团队还是没读到。 -->
-  <v-container v-else-if="loadError" class="fill-height justify-center pa-4" fluid>
-    <BaseLoadError
-      :title="t('work.teamProfile.loadFailed')"
-      :error="loadFailureReason(loadError)"
-      :forbidden="isForbidden(loadError)"
-      @retry="retryLoad"
-    />
-  </v-container>
-  <AppPage
-    v-else-if="teamData"
-    :title="pageTitle"
-    :parent="{ label: teamData.name, to: { name: 'TeamsDetailDefault', params: { handle: teamData.handle } } }"
-    :width="pageWidth"
-  >
-    <template v-if="teamIntro" #meta>
-      <span class="team-intro" data-user-content>{{ teamIntro }}</span>
-    </template>
-    <router-view />
-  </AppPage>
+  <DetailView
+    :team="teamData"
+    :is-member="isMember"
+    :not-found="notFound"
+    :failed="loadFailed"
+    :failure-reason="failureReason"
+    :forbidden="forbidden"
+    :page-title="pageTitle"
+    :page-width="pageWidth"
+    :team-intro="teamIntro"
+    :join="join"
+    :resolve-user="resolveUser"
+    @retry="retryLoad"
+    @navigate="navigate"
+  />
 </template>
 
 <script setup lang="ts">
-// 团队详情外框：页头（团队名 / 这一页）+ 当前这一页。团队的几样东西（项目、成员、
-// 知识库、工作电脑、额度）列在首页侧栏里这个团队的下面，这里不再自己画一条侧栏。
+// 团队详情外框的**容器**：取数、读地址、读标题 store、人名与去处都在这儿；画的那一半
+// 在 `DetailView.vue`。页头（团队名 / 这一页）+ 当前这一页。团队的几样东西（项目、
+// 成员、知识库、工作电脑、额度）列在首页侧栏里这个团队的下面，这里不再自己画一条侧栏。
 import type { Team } from '@/types'
 
 import { computed, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import TeamProfile from './TeamProfile.vue'
+import { useUserRefResolver } from '@/composables/useUserRefResolver'
 
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import AppPage from '@/components/common/AppPage.vue'
+import DetailView from './DetailView.vue'
+
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
@@ -49,6 +38,7 @@ import { usePageTitleStore } from '@/stores/title'
 
 const route = useRoute()
 const titles = usePageTitleStore()
+const { resolve: resolveUser, navigate } = useUserRefResolver()
 const teamData = ref<Team>()
 provide(teamDataInjectionKey, teamData)
 
@@ -56,6 +46,10 @@ const notFound = ref(false)
 /** 这一次没读到的那个错。404 是「没有这个团队」，另走一条；其余是非空就画失败。 */
 const loadError = ref<unknown>(null)
 const isMember = computed(() => teamData.value?.joinStatus === 'member')
+const loadFailed = computed(() => loadError.value !== null)
+// 是「不给你看」还是「这次没读到」，在这里判：画面只拿布尔值、那句话说，不认状态码。
+const failureReason = computed(() => loadFailureReason(loadError.value))
+const forbidden = computed(() => isForbidden(loadError.value))
 
 const PAGE_TITLES: Record<string, string> = {
   TeamsDetailDefault: 'home.nav.teamProjects',
@@ -68,7 +62,7 @@ const pageTitle = computed(() => t(PAGE_TITLES[String(route.name)] ?? 'home.nav.
 
 // 成员和额度是读的一栏，页头跟着正文封顶居中；其余几页铺满内容区。
 const READ_PAGES = new Set(['TeamsDetailMembers', 'TeamsDetailCredits'])
-const pageWidth = computed(() => (READ_PAGES.has(String(route.name)) ? 'read' : 'full'))
+const pageWidth = computed<'read' | 'full'>(() => (READ_PAGES.has(String(route.name)) ? 'read' : 'full'))
 
 const teamIntro = computed(() => teamData.value?.intro ?? '')
 
@@ -113,13 +107,3 @@ watch(
   { immediate: true }
 )
 </script>
-
-<style scoped>
-.team-intro {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-</style>
