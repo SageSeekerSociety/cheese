@@ -3,11 +3,14 @@
 import json
 import logging
 import os
+import sys
+import sysconfig
 import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
+import greenlet
 from sqlalchemy import event, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
@@ -87,39 +90,96 @@ def pool_status(target: AsyncEngine | None = None) -> dict[str, int] | None:
     }
 
 
-def warn_when_pool_saturates(target: AsyncEngine, *, every_seconds: float = 60) -> None:
-    """Log once per interval when a checkout takes the pool's last slot.
+#: A connection held longer than this is named, with where it was taken: the
+#: saturation line alone says the pool ran dry, never who was holding it.
+LONG_HOLD_S = 0.5
+_STDLIB = sysconfig.get_paths()["stdlib"]
 
-    That checkout is the moment the next request starts waiting on
-    db_pool_timeout_s, and the log line is the only sign of it short of the
-    TimeoutError the waiter gets. Rate-limited so a saturated pool does not
-    also flood the log.
+
+def _taken_at(limit: int = 4) -> tuple[str, ...]:
+    """The innermost non-library frames of the code taking a connection.
+
+    An async checkout runs in a greenlet SQLAlchemy spawned, whose own stack
+    stops at SQLAlchemy; the caller is the parent greenlet's suspended stack.
+    Only code locations are kept, so a checkout costs a short walk and no
+    formatting; they are formatted only for a hold worth reporting.
+    """
+    frame = sys._getframe(1)
+    parent = greenlet.getcurrent().parent
+    if parent is not None and parent.gr_frame is not None:
+        frame = parent.gr_frame
+    found: list[str] = []
+    while frame is not None and len(found) < limit:
+        path = frame.f_code.co_filename
+        if "site-packages" not in path and not path.startswith(_STDLIB):
+            found.append(
+                f"{path.rsplit('/app/', 1)[-1]}:{frame.f_lineno} {frame.f_code.co_name}"
+            )
+        frame = frame.f_back
+    return tuple(found)
+
+
+def watch_pool(
+    target: AsyncEngine,
+    *,
+    every_seconds: float = 60,
+    long_hold_s: float = LONG_HOLD_S,
+) -> None:
+    """Say when the pool runs dry, and who held a connection too long.
+
+    A checkout that takes the pool's last slot is the moment the next request
+    starts waiting on db_pool_timeout_s; it is logged once per interval with
+    the connections held longest and where each was taken. A connection held
+    longer than ``long_hold_s`` is logged when it comes back, with where it was
+    taken, so a saturation can be traced to the code that caused it.
     """
     logged_at = 0.0
+    holders: dict[int, tuple[float, tuple[str, ...]]] = {}
 
     @event.listens_for(target.sync_engine, "checkout")
     def _on_checkout(dbapi_connection, connection_record, connection_proxy):
         nonlocal logged_at
+        now = time.monotonic()
+        holders[id(connection_record)] = (now, _taken_at())
         status = pool_status(target)
         if status is None:
             return
         ceiling = status["size"] + status["max_overflow"]
         if status["checked_out"] < ceiling:
             return
-        now = time.monotonic()
         if now - logged_at < every_seconds:
             return
         logged_at = now
+        longest = sorted(holders.values())[:3]
         logger.warning(
             "database pool saturated: %d/%d connections checked out; the next "
-            "request waits up to %.0fs (raise db_pool_size or find what holds them)",
+            "request waits up to %.0fs (raise db_pool_size or find what holds "
+            "them); held longest: %s",
             status["checked_out"],
             ceiling,
             settings.db_pool_timeout_s,
+            "; ".join(
+                f"{(now - since) * 1000:.0f} ms by {' < '.join(at) or '?'}"
+                for since, at in longest
+            ),
         )
 
+    @event.listens_for(target.sync_engine, "checkin")
+    def _on_checkin(dbapi_connection, connection_record):
+        taken = holders.pop(id(connection_record), None)
+        if taken is None:
+            return
+        since, at = taken
+        held = time.monotonic() - since
+        if held > long_hold_s:
+            logger.warning(
+                "database connection held %.0f ms by %s",
+                held * 1000,
+                " < ".join(at) or "?",
+            )
 
-warn_when_pool_saturates(engine)
+
+watch_pool(engine)
 
 
 # What every caller actually does with one: `async with sessions() as session`.
