@@ -6,8 +6,6 @@
 FROM node:22-slim AS build
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-# `postinstall` runs husky, which has nothing to do outside a git checkout.
-ENV HUSKY=0
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml ./

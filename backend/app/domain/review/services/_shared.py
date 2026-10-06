@@ -235,21 +235,6 @@ _BLOCKED_BY_CARD_MESSAGES = {
 }
 
 #: Refusal when the branch genuinely holds nothing the base does not. This is
-#: the empty-PR failure stated as what it is — a fact about the branch RIGHT
-#: NOW, checked at 递卡 time, not inferred from "a card was accepted once".
-#:
-#: The inference was the bug (2026-08-18): a room outlives the work done in it,
-#: so it delivers, then keeps working, and the next task's commits sit on the
-#: same branch waiting for the next card. Blocking on history froze every room
-#: after its first delivery — 一个 task 完成了可以再新开 task became 一个房间只
-#: 能交付一次, which is the opposite of what 采纳后不再归档话题 (#536) was for.
-_NOTHING_TO_DELIVER = (
-    "这条分支相对 main 没有新提交，没有东西可以交付。"
-    "这样开出来的 PR 是空的，GitHub 会拒绝，平台会降级成本地合并——"
-    "卡看起来采纳了，实际什么都没交付。\n"
-    "先把改动提交到工作区再递卡。"
-)
-
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 
 #: Refusal for a card filed with no commit subject at all. The reader is an
