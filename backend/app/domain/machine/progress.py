@@ -25,13 +25,26 @@ from app.domain.run_record.service import as_payload as run_record_payload
 from app.domain.run_record.service import record as keep_record
 
 
+async def _conversation(session: AsyncSession, home: CloudHostHome) -> uuid.UUID:
+    """The conversation the sandbox is for: its session's. A task's session
+    works in the task's own conversation, while ``home.topic_id`` names the
+    room its machine belongs to."""
+    if home.session_id is not None:
+        from app.domain.agent_session.models import AgentSession
+
+        owner = await session.get(AgentSession, home.session_id)
+        if owner is not None:
+            return owner.conversation_id
+    return home.topic_id
+
+
 async def _line(
     session: AsyncSession, home: CloudHostHome, content: str, meta: dict
 ) -> dict | None:
     """Say it in the conversation: a person has something to do."""
     block = await announce(
         session,
-        place_id=home.topic_id,
+        place_id=await _conversation(session, home),
         content=content,
         meta={"who": "platform", "home": str(home.id), **meta},
     )
@@ -46,7 +59,7 @@ async def _record(
     """Keep it as a run record of the conversation the sandbox is for."""
     kept = await keep_record(
         session,
-        conversation_id=home.topic_id,
+        conversation_id=await _conversation(session, home),
         content=content,
         meta={"who": "platform", "home": str(home.id), **meta},
     )
@@ -155,4 +168,7 @@ async def publish_line(topic_id: uuid.UUID, payload: dict | None) -> None:
             {"type": RUN_RECORD_FRAME, "record": payload},
         )
         return
-    await get_broker().publish(str(topic_id), {"type": "event_block", "block": payload})
+    await get_broker().publish(
+        payload.get("conversation_id") or str(topic_id),
+        {"type": "event_block", "block": payload},
+    )

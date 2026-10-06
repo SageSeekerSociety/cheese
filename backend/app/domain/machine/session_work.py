@@ -624,7 +624,9 @@ async def restart_executor(db, row, lease):
             api=api,
             token=token,
             project_id=project.id,
-            topic_id=topic.id,
+            # The conversation the session works in, as at its install: a
+            # task's session is told the task, not its channel.
+            topic_id=row.conversation_id,
             author=author,
             work_resource=work_resource,
         ),

@@ -46,9 +46,10 @@ pytestmark = pytest.mark.anyio
 PUSHED = {"value": {"stdout": "", "stderr": "", "interrupted": False}}
 
 
-async def _room(client, *, on_cloud=False):
+async def _room(client, *, on_cloud=False, in_task=False):
     """A room whose one agent session works on a ready machine, and a second
-    self-hosted device the project may switch it to."""
+    self-hosted device the project may switch it to. ``in_task``: the session
+    is the one working a task of the room, in the task's own conversation."""
     project = post_project(
         client, json={"name": "Switch pushes"}, owner="alice"
     ).json()["data"]
@@ -58,6 +59,15 @@ async def _room(client, *, on_cloud=False):
         headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    conversation_id = topic_id
+    if in_task:
+        conversation_id = uuid.UUID(
+            client.post(
+                f"/topics/{topic_id}/tasks",
+                json={"title": "Task"},
+                headers=session_auth_headers("alice"),
+            ).json()["data"]["id"]
+        )
     async with client.test_factory() as db:
         owner = await db.scalar(select(User).where(User.username == "alice"))
         devices = sql_device_service(db)
@@ -77,7 +87,7 @@ async def _room(client, *, on_cloud=False):
         topic = await db.get(Topic, topic_id)
         resource = str(topic.resource_id or topic_id)
         session = await AgentSessionService(db).ensure(
-            topic_id, agent.username, harness="claude-code"
+            conversation_id, agent.username, harness="claude-code"
         )
         generation = str(uuid.uuid4())
         if on_cloud:
@@ -125,6 +135,7 @@ async def _room(client, *, on_cloud=False):
         return SimpleNamespace(
             project_id=project_id,
             topic_id=topic_id,
+            conversation_id=conversation_id,
             session_id=session.id,
             old_device=old_device,
             new_device=new_device,
@@ -464,6 +475,24 @@ async def test_an_idle_sessions_executor_is_started_to_push_before_a_switch(
     assert claims["t"] == str(room.topic_id)
     session = await _session(client, room)
     assert session.execution_request["choice"]["device_id"] == room.new_device
+
+
+async def test_a_tasks_executor_started_to_push_is_told_it_works_the_task(
+    client, monkeypatch
+):
+    """The session working a task is told the task as its conversation at its
+    install; started again only to push before a switch, it is the same
+    session and is told the same, so what it reports lands in the task."""
+    room = await _room(client, in_task=True)
+    machine = _IdleMachine()
+    monkeypatch.setattr(work_lease, "device_hub", machine)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    [(_, script)] = machine.installs
+    [told] = re.findall(r'"CHEESE_TOPIC": "([^"]+)"', script)
+    assert told == str(room.conversation_id)
 
 
 async def test_a_machine_that_cannot_start_the_executor_is_unreachable(
