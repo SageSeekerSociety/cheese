@@ -64,6 +64,8 @@ covers:
 
 2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。
 
+2026-10-06，其余线（后台 9、反馈 5、首页 5、问答 4、作业 4、团队 9，共 36 页）拆完：同样是每页当容器、画面进同目录的 `<页面名>View.vue`。`--update` 之后基线是 **120 个 ready、62 个 debt**（此前 101 / 81）。「页面」一表里对应的行已改成「容器」并写出画面在哪。还欠一条：`views/feedback/FeedbackSubmitPage.vue`——它的表单组件（`SubmitFeedbackForm`）自己读 feedback store，没先拆那个组件就交不出去画面。
+
 ## 从今天起它是一条闸门 {#ratchet}
 
 2026-09-30 起，「能单独跑」不只是一张表上的状态：`pnpm run lint:scenes` 会逐场景重新判一遍，该红的红、该退 2 的退 2，commit 和 CI 都跑（`--self-test` 在 `repo-guards.yml` 里）。产品定的规则是**只拦新增**：今天能单独跑的冻结下来只许多，今天跑不起来的允许继续躺着，**从今往后新加的每一个场景必须第一天就能单独跑**。
@@ -162,29 +164,29 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/account/recover/password/Verify.vue` | 容器 | 画面在 `VerifyView.vue`（A 级）；取数、路由留在本页 |
 | `views/account/signup/Start.vue` | 容器 | 画面在 `StartView.vue`（A 级）；取数、路由、signup store 留在本页 |
 | `views/account/signup/VerifyEmail.vue` | 容器 | 画面在 `VerifyEmailView.vue`（A 级）；取数、路由、signup store 留在本页 |
-| `views/admin/AdminDashboardPage.vue` | D | 读路由；读 store（feedback） |
-| `views/admin/AdminFeaturePage.vue` | D | 读路由；经 `views/admin/features/registry.ts` 取数 |
-| `views/admin/AdminFeatureStatsPage.vue` | D | 读路由；经 `views/admin/features/featureApi.ts` 取数；经 `views/admin/features/registry.ts` 取数 |
-| `views/admin/AdminIntegrationsPage.vue` | C | 经 `api/feishu.ts` 取数 |
-| `views/admin/AdminLayout.vue` | D | 读路由；读 store（feedback） |
-| `views/admin/AdminMembersPage.vue` | C | 直接取数（`api.ts`） |
-| `views/admin/AdminModelsPage.vue` | C | 直接取数（`api.ts`） |
-| `views/admin/AdminQueuePage.vue` | D | 读路由；读 store（feedback） |
-| `views/admin/AdminSpacesPage.vue` | C | 直接取数（`network/api/spaces`） |
-| `views/feedback/AdminFeedbackPage.vue` | A | 只吃 props 和事件 |
-| `views/feedback/FeedbackCenterPage.vue` | C | 读 store（feedback） |
-| `views/feedback/FeedbackDetailPage.vue` | D | 读路由；直接取数（`api.ts`）；读 store（feedback） |
-| `views/feedback/FeedbackMinePage.vue` | D | 读路由；读 store（feedback） |
+| `views/admin/AdminDashboardPage.vue` | 容器 | 画面在 `AdminDashboardPageView.vue`（A 级）；路由、读 store 留在本页 |
+| `views/admin/AdminFeaturePage.vue` | 容器 | 画面在 `AdminFeaturePageView.vue`（A 级）；取数、路由留在本页 |
+| `views/admin/AdminFeatureStatsPage.vue` | 容器 | 画面在 `AdminFeatureStatsPageView.vue`（A 级）；取数、路由留在本页 |
+| `views/admin/AdminIntegrationsPage.vue` | 容器 | 画面在 `AdminIntegrationsPageView.vue`（A 级）；取数留在本页 |
+| `views/admin/AdminLayout.vue` | 容器 | 画面在 `AdminLayoutView.vue`（A 级）；路由、读 store 留在本页 |
+| `views/admin/AdminMembersPage.vue` | 容器 | 画面在 `AdminMembersPageView.vue`（A 级）；取数留在本页 |
+| `views/admin/AdminModelsPage.vue` | 容器 | 画面在 `AdminModelsPageView.vue`（A 级）；取数留在本页 |
+| `views/admin/AdminQueuePage.vue` | 容器 | 画面在 `AdminQueuePageView.vue`（A 级）；路由、读 store 留在本页 |
+| `views/admin/AdminSpacesPage.vue` | 容器 | 画面在 `AdminSpacesPageView.vue`（A 级）；取数留在本页 |
+| `views/feedback/AdminFeedbackPage.vue` | 容器 | 画面在 `AdminFeedbackPageView.vue`（A 级）；取数、读 store 留在本页 |
+| `views/feedback/FeedbackCenterPage.vue` | 容器 | 画面在 `FeedbackCenterPageView.vue`（A 级）；读 store 留在本页 |
+| `views/feedback/FeedbackDetailPage.vue` | 容器 | 画面在 `FeedbackDetailPageView.vue`（A 级）；取数、路由、读 store 留在本页 |
+| `views/feedback/FeedbackMinePage.vue` | 容器 | 画面在 `FeedbackMinePageView.vue`（A 级）；路由、读 store 留在本页 |
 | `views/feedback/FeedbackSubmitPage.vue` | D | 读路由；读 store（feedback） |
-| `views/home/Download.vue` | C | 经 `lib/desktop.ts` 取数；经 `lib/desktopChangelog.ts` 取数 |
-| `views/home/Landing.vue` | A | 只吃 props 和事件 |
+| `views/home/Download.vue` | 容器 | 画面在 `DownloadView.vue`（A 级）；取数留在本页 |
+| `views/home/Landing.vue` | 容器 | 画面在 `LandingView.vue`（A 级）；取数留在本页 |
 | `views/home/MyWork.vue` | D | 读路由；直接取数（`api.ts`）；直接取数（`network/api/spaces`）；直接取数（`network/api/tasks`）；读 store（workspace） |
-| `views/home/Solutions.vue` | A | 只吃 props 和事件 |
+| `views/home/Solutions.vue` | 容器 | 画面在 `SolutionsView.vue`（A 级）；取数留在本页 |
 | `views/legal/LegalDocument.vue` | 容器 | 画面在 `LegalDocumentView.vue`（A 级）；取数留在本页（路由指向本页） |
-| `views/question/Ask.vue` | D | 读路由；直接取数（`network/api/questions`） |
-| `views/question/Detail.vue` | D | 读路由；直接取数（`network/api/answers`）；直接取数（`network/api/questions`）；`provide()` / `inject()` |
-| `views/question/DetailAnswer.vue` | D | 读路由；直接取数（`network/api/answers`） |
-| `views/question/DetailAnswerList.vue` | A | 只吃 props 和事件 |
+| `views/question/Ask.vue` | 容器 | 画面在 `AskView.vue`（A 级）；取数、路由留在本页 |
+| `views/question/Detail.vue` | 容器 | 画面在 `DetailView.vue`（A 级）；取数、路由、provide/inject 留在本页 |
+| `views/question/DetailAnswer.vue` | 容器 | 画面在 `DetailAnswerView.vue`（A 级）；取数、路由留在本页 |
+| `views/question/DetailAnswerList.vue` | 容器 | 画面在 `DetailAnswerListView.vue`（A 级）；取数、provide/inject 留在本页 |
 | `views/spaces/Detail.vue` | D | 读路由；直接取数（`network/api/avatars`）；直接取数（`network/api/spaces`）；直接取数（`services/account.ts`）；读 store（space） |
 | `views/spaces/Index.vue` | D | 读路由；直接取数（`api.ts`）；直接取数（`network/api/avatars`）；直接取数（`network/api/spaces`）；直接取数（`services/account.ts`）；读 store（workspace） |
 | `views/spaces/JoinCourse.vue` | D | 读路由；直接取数（`network/api/spaces`）；直接取数（`network/api/users`） |
@@ -228,20 +230,20 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/spaces/detail/analytics/Tasks.vue` | C | 直接取数（`network/api/spaces`） |
 | `views/spaces/detail/member-tasks/MyParticipating.vue` | D | 读路由；直接取数（`network/api/spaces`） |
 | `views/spaces/detail/member-tasks/MyPublishing.vue` | D | 读路由；直接取数（`network/api/spaces`）；读 store（space） |
-| `views/tasks/Detail.vue` | D | 读路由 |
-| `views/tasks/Edit.vue` | D | 读路由；直接取数（`network/api/tasks`）；读 store（space） |
+| `views/tasks/Detail.vue` | 容器 | 画面在 `DetailView.vue`（A 级）；路由留在本页 |
+| `views/tasks/Edit.vue` | 容器 | 画面在 `EditView.vue`（A 级）；取数、路由、读 store 留在本页 |
 | `views/tasks/detail/Overview.vue` | D | 读路由；直接取数（`api.ts`）；直接取数（`network/api/tasks/types.ts`）；直接取数（`services/account.ts`） |
-| `views/tasks/detail/Submissions.vue` | C | 直接取数（`network/api/tasks`）；直接取数（`services/account.ts`） |
-| `views/tasks/detail/Submit.vue` | D | 读路由；直接取数（`network/api/attachments`）；直接取数（`network/api/tasks`） |
-| `views/teams/Detail.vue` | D | 读路由；直接取数（`network/api/teams`）；`provide()` / `inject()` |
-| `views/teams/Explore.vue` | C | 直接取数（`network/api/teams`） |
-| `views/teams/Index.vue` | D | 读路由；直接取数（`network/api/avatars`）；直接取数（`network/api/teams`） |
-| `views/teams/Mine.vue` | C | 直接取数（`network/api/teams`） |
-| `views/teams/Pending.vue` | C | 直接取数（`api.ts`）；直接取数（`network/api/teams`） |
-| `views/teams/detail/Compute.vue` | D | 直接取数（`api.ts`）；`provide()` / `inject()` |
-| `views/teams/detail/Knowledge.vue` | D | 直接取数（`network/api/knowledges`）；直接取数（`network/api/materials`）；直接取数（`services/account.ts`）；`provide()` / `inject()` |
-| `views/teams/detail/Members.vue` | D | 读路由；直接取数（`network/api/teams`）；直接取数（`services/account.ts`）；直接取数（`services/ErrorHandler.ts`）；`provide()` / `inject()` |
-| `views/teams/detail/TeamProjects.vue` | D | 读路由；直接取数（`api.ts`）；`provide()` / `inject()` |
+| `views/tasks/detail/Submissions.vue` | 容器 | 画面在 `SubmissionsView.vue`（A 级）；取数留在本页 |
+| `views/tasks/detail/Submit.vue` | 容器 | 画面在 `SubmitView.vue`（A 级）；取数、路由留在本页 |
+| `views/teams/Detail.vue` | 容器 | 画面在 `DetailView.vue`（A 级）；取数、路由、provide/inject 留在本页 |
+| `views/teams/Explore.vue` | 容器 | 画面在 `ExploreView.vue`（A 级）；取数留在本页 |
+| `views/teams/Index.vue` | 容器 | 画面在 `IndexView.vue`（A 级）；取数、路由留在本页 |
+| `views/teams/Mine.vue` | 容器 | 画面在 `MineView.vue`（A 级）；取数留在本页 |
+| `views/teams/Pending.vue` | 容器 | 画面在 `PendingView.vue`（A 级）；取数留在本页 |
+| `views/teams/detail/Compute.vue` | 容器 | 画面在 `ComputeView.vue`（A 级）；取数、provide/inject 留在本页 |
+| `views/teams/detail/Knowledge.vue` | 容器 | 画面在 `KnowledgeView.vue`（A 级）；取数、provide/inject 留在本页 |
+| `views/teams/detail/Members.vue` | 容器 | 画面在 `MembersView.vue`（A 级）；取数、路由、provide/inject 留在本页 |
+| `views/teams/detail/TeamProjects.vue` | 容器 | 画面在 `TeamProjectsView.vue`（A 级）；取数、路由、provide/inject 留在本页 |
 | `views/user/settings/General.vue` | A | 只吃 props 和事件 |
 | `views/user/settings/Profile.vue` | 容器 | 画面在 `ProfileView.vue`（A 级）；取数、头像上传留在本页 |
 | `views/user/settings/RealName.vue` | 容器 | 画面在 `RealNameView.vue`（A 级）；取数、sudo、日志分页留在本页 |
