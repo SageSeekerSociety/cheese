@@ -147,6 +147,14 @@ async def open_task_workspace(
     if task.status == "closed":
         raise ValidationError(say("taskEndedCreateNew"))
     await TaskService(db).record_author(task, acting)
+    if task.branch_name is None:
+        from app.domain.project.forge import binding_for_project
+
+        # A room turned into a task carries no branch; its own session opening
+        # it is the moment it needs one. Without it the opening was a 404 that
+        # said the task was not in the project (dev, 2026-10-06).
+        if await binding_for_project(project_id, db) is not None:
+            await TaskService(db).give_branch(task)
     result = await task_workspace(project_id, task_id, db, x_cheese_token)
     await db.commit()
     return result

@@ -47,6 +47,7 @@ from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.api.routes.topics import BlockRepository, DbSession
 from app.api.task_instructions import dispatch, source_text, tell_task
+from app.api.task_origin import discussion, materials, materials_text
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
@@ -218,7 +219,9 @@ async def upgrade_block(
                 title=thread.title,
                 owner=thread.owner_handle,
                 source=await source_text(db, block),
+                materials=materials_text(materials((await discussion(db, thread))[1])),
             ),
+            opening=True,
         )
         await db.commit()
         await dispatch(chat)

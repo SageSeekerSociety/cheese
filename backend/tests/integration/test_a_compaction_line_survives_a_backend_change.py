@@ -1,4 +1,4 @@
-"""A compaction is one line in the room, whichever backend hears it end.
+"""A compaction is one record in the 现场, whichever backend hears it end.
 
 dev replaces its backend on every merge, and a session compacting its context
 runs straight through that: the compaction starts while one backend is
@@ -17,6 +17,7 @@ from sqlalchemy import select
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block
+from app.domain.run_record.models import RunRecord
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
@@ -25,6 +26,7 @@ from tests.integration.conftest import (
     post_message,
     post_project,
 )
+from tests.support.run_records import records_of
 
 
 class Compacts(StubChannel):
@@ -37,24 +39,23 @@ class Compacts(StubChannel):
         self.record(topic_id, type="system", subtype="status", status="compacting")
 
 
-def _compaction_lines(client, topic: uuid.UUID) -> list[Block]:
-    async def read() -> list[Block]:
+def _compaction_lines(client, topic: uuid.UUID) -> list[RunRecord]:
+    """The compaction's records in the 现场; it is never said in the room."""
+
+    async def read() -> list[RunRecord]:
         async with client.test_factory() as session:
-            blocks = await session.scalars(
-                select(Block)
-                .where(Block.conversation_id == topic)
-                .order_by(Block.created_at)
+            said = await session.scalars(
+                select(Block).where(Block.conversation_id == topic)
             )
-            return [
-                b
-                for b in blocks
-                if (b.meta or {}).get("event_type") == "context_compact"
+            assert not [
+                b for b in said if (b.meta or {}).get("event_type") == "context_compact"
             ]
+            return await records_of(session, topic, "context_compact")
 
     return asyncio.run(read())
 
 
-def _state(line: Block) -> str | None:
+def _state(line: RunRecord) -> str | None:
     return (line.meta or {}).get("state")
 
 
@@ -117,8 +118,8 @@ def _start_compacting(client, room: str, service) -> StubChannel:
         _until(
             ws,
             lambda f: (
-                f["type"] == "event_block"
-                and (f["block"]["meta"] or {}).get("event_type") == "context_compact"
+                f["type"] == "run_record"
+                and (f["record"]["meta"] or {}).get("event_type") == "context_compact"
             ),
         )
     return before

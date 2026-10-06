@@ -13,16 +13,16 @@ import type { SplitMarker } from '../lib/splitMarkers'
 
 import { computed } from 'vue'
 
+import { progressLabel } from '../lib/taskProgress'
+
 import { t } from '@/i18n'
 
 const props = defineProps<{ marker: SplitMarker }>()
 const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
 
-// closed = 那件事做完了。同一行改口而不是换一种标记：读的人关心的是「这段归谁」，
+// 那件事到了哪一档。同一行改口而不是换一种标记：读的人关心的是「这段归谁、到哪了」，
 // 而不是这条支线的生命周期。
-const note = computed(() =>
-  props.marker.status === 'closed' ? t('work.room.dispatched.done') : t('work.room.dispatched.running')
-)
+const note = computed(() => progressLabel(props.marker.level))
 const title = computed(() => t('work.room.dispatched.title', { title: props.marker.title }))
 
 function open() {

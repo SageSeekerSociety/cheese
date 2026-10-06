@@ -104,7 +104,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。
         # 拆模块没有新增跨包的边，只是发起方从 chat.py 换成了 hook_stream.py，
         # 所以按同一笔债入账。
-        ("app.domain.agent.hook_stream", "app.domain.block.repositories"),
         # agent.gateway_usage 是从 agent.chat 里拆出来的那一块（这一轮的模型与
         # 它的用量账：准入前解析模型、环境与项目的网关 key，轮次结束后把网关的
         # 用量落成行、扣掉额度）。它摸的三个 repository 正是原先 chat.py 那一组
@@ -161,6 +160,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.notification.services", "app.domain.block.repositories"),
         ("app.domain.notification.services", "app.domain.project.repositories"),
         ("app.domain.oauth.services", "app.domain.user.repositories"),
+        # --- pin --- 置顶要确认那一块在这个频道主线上，再在主线写一行「置顶了…」：
+        # 读一块、写一块，block 领域没有 service 层，和 announce 同一个理由入账。
+        ("app.domain.pin.services", "app.domain.block.repositories"),
         # --- project ---
         # environment_recovery 走的一直是 block 领域的 service，而那个 service
         # （`record_system_event`）的全部内容就是替调用点挑一个 `topic_id`——
@@ -205,6 +207,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.task.visibility_service", "app.domain.user.repositories"),
         # --- team ---
         ("app.domain.team.services", "app.domain.task.repositories"),
+        # --- thread --- 支线摘要要每条支线最后说的那一句：一次查询读一批块，
+        # block 领域没有 service 层。
+        ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
         ("app.domain.topic.services", "app.domain.project.repositories"),
@@ -238,9 +243,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.dashboard", "app.domain.project.repositories"),
         ("app.api.routes.dashboard", "app.domain.usage.repositories"),
         ("app.api.routes.feedback_proposals", "app.domain.block.repositories"),
-        ("app.api.routes.frontend_log", "app.domain.block.repositories"),
-        ("app.api.routes.frontend_log", "app.domain.project.repositories"),
-        ("app.api.routes.frontend_log", "app.domain.topic.repositories"),
         ("app.api.routes.github_account_link", "app.domain.oauth.repositories"),
         ("app.api.routes.github_install", "app.domain.oauth.repositories"),
         ("app.api.routes.github_install", "app.domain.project.repositories"),

@@ -1,3 +1,5 @@
+import type { Block } from '../cx_types'
+
 // 我和一个频道之间按人记的那几样：在等我的东西，和我设的通知档位。
 
 /**
@@ -21,4 +23,12 @@ export type TopicNotifyLevel = 'all' | 'mentions' | 'mute'
 export interface TopicNotifySetting {
   level: TopicNotifyLevel
   muted_until: string | null
+}
+
+/** 频道的一条置顶（`GET /topics/{id}/pins`）：钉住的那一条，和谁、什么时候钉的。 */
+export interface ChannelPin {
+  pinned_by: string
+  pinned_at: string
+  /** 钉住的那一条：消息，或一个文件（附件、AI 队友摆出来的东西）。 */
+  block: Block
 }

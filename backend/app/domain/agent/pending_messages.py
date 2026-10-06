@@ -14,6 +14,7 @@ from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
+from app.domain.run_record.models import RunRecord
 
 DEFERRED_INPUT = "deferred_native_input"
 _runner = None
@@ -70,8 +71,14 @@ async def defer_message(session, block_id):
         block.meta = {**(block.meta or {}), DEFERRED_INPUT: True}
 
 
-def nudge_messages(chat, topic_id):
-    runner = _runner
+def nudge_messages(chat, topic_id, runner=None):
+    """Look for messages left waiting in ``topic_id``, in the background.
+
+    ``runner`` is the runner the scan belongs to: it is tracked in that runner's
+    tasks, so draining or handing over that runner waits for it. A runner ending
+    one of its own turns passes itself; everything else uses the runner bound
+    for incoming messages."""
+    runner = runner or _runner
     caller = asyncio.current_task()
     if (
         runner is None
@@ -155,6 +162,8 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             )
         ):
             busy.setdefault(conversation, set()).add(handle)
+        # Anything the turn left behind says it began, in the conversation or
+        # in its run records, but a queue it is waiting in.
         answered = {
             block.turn_id
             for block in await session.scalars(
@@ -162,7 +171,14 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             )
             if (block.meta or {}).get("event_type")
             not in {EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK}
-        }
+        } | set(
+            await session.scalars(
+                select(RunRecord.turn_id).where(
+                    RunRecord.turn_id.in_(ids),
+                    RunRecord.kind.not_in((EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK)),
+                )
+            )
+        )
         seats = {}
         for block in mentioned:
             if (

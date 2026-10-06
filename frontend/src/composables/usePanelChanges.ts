@@ -1,4 +1,5 @@
-// 「改动」那一格的取数：它调的那些接口、轮询、来源切换、读到写、草稿与冲突。
+// 任务「改动」那一格的取数：它调的那些接口、轮询、读到写、草稿与冲突。只看这一件
+// 任务：别的任务在它们自己的页面上，项目的全部文件在「范围 → 全部文件」里。
 //
 // 和画的那一半（`components/panels/PanelChangesView.vue`）分家的理由，和 UserRef
 // 那次一样：这一格原先自己 import 十个接口函数、自己按 20 秒轮询、自己读
@@ -39,7 +40,8 @@ import { t } from '@/i18n'
 export interface PanelChangesProps {
   topicId: string | null
   projectId: string | null
-  taskId?: string | null
+  /** 这一格看的那件任务。 */
+  taskId: string | null
   readOnly?: boolean
   /** This tab is the one on screen. Loads happen on the rising edge, exactly
    *  like opening the old drawer did. */
@@ -51,70 +53,27 @@ export interface PanelChangesProps {
 
 /** 「改动」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelChanges(props: PanelChangesProps) {
-  const selectedTask = ref<string | null>(props.taskId ?? null)
-  const taskOptions = ref<RoomTask[]>([])
+  const selectedTask = computed(() => props.taskId)
+  const taskRow = ref<RoomTask | undefined>(undefined)
   const taskLoadError = ref<string | null>(null)
   const tasksLoaded = ref(false)
-  const overview = ref(!props.taskId)
-  const overviewDiffs = ref<Record<string, FileDiff[]>>({})
-  const overviewErrors = ref<Record<string, string>>({})
-  const requestedPath = ref<string | null>(null)
-  // 房间改动这一页上，哪些任务的文件清单铺开了。装的是「铺开的」，所以默认空集合
-  // 就是默认全收起——三十个任务各铺一屏文件，验收的人要找的那个任务反而找不着。
-  const expandedTasks = ref(new Set<string>())
-  function toggleTaskFiles(taskId: string) {
-    const next = new Set(expandedTasks.value)
-    if (next.has(taskId)) next.delete(taskId)
-    else next.add(taskId)
-    expandedTasks.value = next
-  }
   let sourceEpoch = 0
   let fileRequest = 0
   let taskRequest = 0
-  const currentTask = computed(() => taskOptions.value.find((task) => task.id === selectedTask.value))
-  const sourceTitle = computed(() =>
-    selectedTask.value
-      ? currentTask.value?.title ?? t('work.room.changes.taskUnavailable')
-      : t('work.room.changes.projectCode')
-  )
-  // 任务结束了，它的文件就只读——这件事以前是横条下面单独一行字，现在跟在状态后面。
+  const currentTask = computed(() => (taskRow.value?.id === selectedTask.value ? taskRow.value : undefined))
+  // 任务结束了，它的文件就只读——跟在状态后面说。
   const sourceStatus = computed(() => {
-    if (!selectedTask.value) return t('work.room.changes.readOnly')
     const phrase = currentTask.value?.presentation.phrase
     const status = phrase ? phraseLabel(phrase) : ''
     return currentTask.value && currentTask.value.status !== 'open'
       ? t('work.room.changes.statusReadOnly', { status })
       : status
   })
-  const sourceUnavailable = computed(() => tasksLoaded.value && !!selectedTask.value && !currentTask.value)
+  const sourceUnavailable = computed(() => tasksLoaded.value && !currentTask.value)
   const requestedSource = ref<FileSource>('live')
   const fileSource = computed<FileSource>(() =>
-    selectedTask.value && currentTask.value?.status === 'open' ? requestedSource.value : 'committed'
+    currentTask.value?.status === 'open' ? requestedSource.value : 'committed'
   )
-
-  async function loadOverview(openOnly = false) {
-    const room = props.topicId
-    const project = props.projectId
-    const epoch = sourceEpoch
-    if (!room || !project || !overview.value) return
-    await Promise.all(
-      taskOptions.value
-        .filter((task) => !openOnly || task.status === 'open')
-        .map(async (task) => {
-          try {
-            const result = await getGitDiff(project, room, task.id)
-            if (sourceEpoch !== epoch) return
-            overviewDiffs.value[task.id] = splitDiffByFile(result.diff)
-            delete overviewErrors.value[task.id]
-          } catch (error) {
-            if (sourceEpoch !== epoch) return
-            overviewErrors.value[task.id] =
-              error instanceof Error ? error.message : t('work.room.changes.loadChangesFailed')
-            delete overviewDiffs.value[task.id]
-          }
-        })
-    )
-  }
 
   async function loadTasks(opts: { fresh?: boolean } = {}) {
     const room = props.topicId
@@ -124,16 +83,8 @@ export function usePanelChanges(props: PanelChangesProps) {
     try {
       const tasks = await fetchRoomTasks(room, opts)
       if (request !== taskRequest) return
-      taskOptions.value = tasks.data.filter((task) => !!task.branch_name)
-      if (!tasksLoaded.value) {
-        tasksLoaded.value = true
-        if (!props.taskId && taskOptions.value.length <= 1) {
-          selectedTask.value = taskOptions.value[0]?.id ?? null
-          overview.value = false
-          showAll.value = selectedTask.value === null
-        }
-      }
-      if (overview.value) await loadOverview()
+      taskRow.value = tasks.data.find((row) => row.id === selectedTask.value && !!row.branch_name)
+      tasksLoaded.value = true
     } catch (error) {
       if (request === taskRequest) {
         taskLoadError.value = error instanceof Error ? error.message : t('work.room.changes.loadTasksFailed')
@@ -175,16 +126,13 @@ export function usePanelChanges(props: PanelChangesProps) {
     const task = selectedTask.value
     const pid = props.projectId
     const epoch = sourceEpoch
-    if (!tid || !pid || overview.value || sourceUnavailable.value || noRepo.value) return
+    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value) return
     if (opts.silent) refreshing.value = true
     else loading.value = true
     errorMsg.value = null
     try {
       // A fresh repo with no commits makes git log fail (422); tolerate it so the
-      // diff still renders instead of the whole panel showing an error. Always
-      // topic-scoped: the project-level answer is OTHER topics' commits (before
-      // 采纳 this topic's commits live only on its branch; after, the base is
-      // everyone's).
+      // diff still renders instead of the whole panel showing an error.
       const [log, diff] = await Promise.all([
         getGitLog(pid, tid, task).catch(() => ({ data: [] as GitCommit[], total: 0 })),
         getGitDiff(pid, tid, task, fileSource.value),
@@ -243,7 +191,7 @@ export function usePanelChanges(props: PanelChangesProps) {
   // one topic's file is still there when the reader comes back to it.
   const { drafts, lastFiles } = useTopicMemory()
   function sourceKey() {
-    return `${selectedTask.value ?? `project:${props.projectId}`}:${fileSource.value}`
+    return `${selectedTask.value}:${fileSource.value}`
   }
   function draftKey(path: string) {
     return `${sourceKey()}:${path}`
@@ -435,7 +383,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     const task = selectedTask.value
     const pid = props.projectId
     const epoch = sourceEpoch
-    if (!tid || !pid || overview.value || sourceUnavailable.value || noRepo.value) return
+    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value) return
     loading.value = true
     errorMsg.value = null
     try {
@@ -604,7 +552,7 @@ export function usePanelChanges(props: PanelChangesProps) {
   // load together — the tree cannot mark what the diff has not told it yet. ----
   async function loadAll(opts: { silent?: boolean; fresh?: boolean } = {}) {
     await loadTasks({ fresh: opts.fresh })
-    if (overview.value || taskLoadError.value) return
+    if (taskLoadError.value) return
     void checkRepo()
     if (noRepo.value) return
     void loadGit(opts)
@@ -666,10 +614,7 @@ export function usePanelChanges(props: PanelChangesProps) {
         // Commits and the diff only. The listing changes when a turn writes
         // files, which the turn-boundary tick already covers — putting it on the
         // timer would be a third request every 20 seconds buying nothing.
-        // Closed tasks remain visible from the full load; polling their PR diffs
-        // every 20 seconds spends the forge quota on completed work.
-        if (overview.value) void loadOverview(true)
-        else void loadGit({ silent: true })
+        void loadGit({ silent: true })
       }, REFRESH_MS)
     },
     { immediate: true }
@@ -690,17 +635,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     resetFilePanel()
   }
 
-  async function navigateSource(task: string | null, path?: string) {
-    keepDraft()
-    clearSource()
-    selectedTask.value = task
-    overview.value = false
-    showAll.value = task === null || !!path
-    pendingOpen = path ?? lastFiles.get(sourceKey()) ?? null
-    requestedPath.value = null
-    await Promise.all([loadGit(), loadFiles()])
-  }
-
   async function selectVersion(source: FileSource) {
     if (fileSource.value === source) return
     const path = openPath.value
@@ -712,19 +646,16 @@ export function usePanelChanges(props: PanelChangesProps) {
     await Promise.all([loadGit(), loadFiles()])
   }
 
-  function openOverview() {
-    keepDraft()
-    clearSource()
-    overview.value = true
-    requestedPath.value = null
-    void loadOverview()
-  }
-
   watch(
     () => props.taskId,
-    (task) => {
-      // Closing a card does not change a file the user is already reading.
-      if (task && task !== selectedTask.value) void navigateSource(task)
+    (next, was) => {
+      if (next === was) return
+      keepDraft()
+      clearSource()
+      taskRow.value = undefined
+      tasksLoaded.value = false
+      showAll.value = false
+      if (props.active) void loadAll()
     }
   )
 
@@ -741,7 +672,7 @@ export function usePanelChanges(props: PanelChangesProps) {
   // specific file, and selecting here would steal the one that was asked for —
   // the same race the in-flight guard on the listing exists for.
   watch(treeFiles, (rows) => {
-    if (overview.value || errorMsg.value || openPath.value || pendingOpen || !rows.length) return
+    if (errorMsg.value || openPath.value || pendingOpen || !rows.length) return
     // 读者点的是某一份文件，而它不在这个来源里。这时打开别的文件，等于把「你要的
     // 那份不在这儿」换成「这是另一份文件」，两句话里只有前一句是他问的。
     if (missing.value) return
@@ -749,38 +680,23 @@ export function usePanelChanges(props: PanelChangesProps) {
   })
 
   // A <&path> chip (chat or doc) opens that file here. WorkPanel switches to this
-  // tab first, then calls in.
-  async function openFile(path: string, taskId?: string | null) {
+  // tab first, then calls in. The file may be one this task never touched, so the
+  // tree widens to every file.
+  async function openFile(path: string) {
     if (!tasksLoaded.value) await loadTasks()
-    if (taskId !== undefined) {
-      await navigateSource(taskId, path)
-    } else if (taskOptions.value.length === 1) {
-      await navigateSource(taskOptions.value[0].id, path)
-    } else if (taskOptions.value.length === 0 && !taskLoadError.value) {
-      await navigateSource(null, path)
-    } else {
-      openOverview()
-      requestedPath.value = path
-    }
+    keepDraft()
+    clearSource()
+    showAll.value = true
+    pendingOpen = path
+    await Promise.all([loadGit(), loadFiles()])
   }
 
   return {
-    // 房间改动那一页
-    overview,
-    taskOptions,
     taskLoadError,
-    tasksLoaded,
     selectedTask,
     currentTask,
-    sourceTitle,
     sourceStatus,
     sourceUnavailable,
-    requestedPath,
-    overviewDiffs,
-    overviewErrors,
-    expandedTasks,
-    toggleTaskFiles,
-    // 看某个来源时的那一格
     showAll,
     fileSource,
     fileToolReady,
@@ -825,9 +741,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     // 动作
     loadAll,
     selectFile,
-    navigateSource,
     selectVersion,
-    openOverview,
     openFile,
     toggleDir,
     downloadOpenFile,

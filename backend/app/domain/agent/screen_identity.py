@@ -119,6 +119,8 @@ class ScreenLedger:
     ) -> None:
         """A turn here brought the screen up to date, or put its relaunch off."""
         if not settled:
+            # Whatever an earlier turn settled it with, it is behind now.
+            self._settled.pop(sid, None)
             self._owed.add(seat)
             return
         claims = scoped_token_claims(token) or {}

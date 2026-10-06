@@ -59,6 +59,7 @@ from app.domain.agent.platform_notices import (
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
+    delivery_checking_notice,
     delivery_fallback_notice,
     notice,
 )
@@ -366,8 +367,8 @@ class InProcessBroker:
                     self._last_activity_at.pop(channel, None)
 
         self._fan_out(channel, frame)
-        if followed is not None:
-            self._fan_out(channel, followed)
+        for to, extra in self.activity.told(channel, followed):
+            self._fan_out(to, extra)
 
     def _fan_out(self, channel: str, frame: Frame) -> None:
         for q in list(self._subs.get(channel, ())):
@@ -603,8 +604,8 @@ class AgentWorkRunner:
         return max(len(self._tasks), self._broker.active_count())
 
     async def drain(self, timeout_s: float = 5.0) -> None:
-        """Wait for every task this runner still has in flight — a turn, a
-        follow-up wake — instead of a caller guessing how long the tail takes.
+        """Wait for every task this runner still has in flight — a turn, the
+        tasks it starts as it ends — instead of guessing how long the tail takes.
 
         A turn's own coroutine keeps running after it has published its last
         frame (settling conclusion cards, closing the interval; see the tail of
@@ -617,10 +618,10 @@ class AgentWorkRunner:
         it is on the caller to decide what that means (a test's own teardown
         check is what turns a task still pending here into a named failure).
         """
-        pending = {t for t in self._tasks if not t.done()}
-        if not pending:
-            return
-        await asyncio.wait(pending, timeout=timeout_s)
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(timeout_s):
+                while pending := {t for t in self._tasks if not t.done()}:
+                    await asyncio.wait(pending)
 
     def topic_work(self, topic_id: uuid.UUID) -> dict | None:
         """Latest lifecycle record for this topic. `ceiling_s` is this turn's
@@ -1977,11 +1978,9 @@ class AgentWorkRunner:
                 ),
             )
             if isinstance(delivered, InputReconciliationPending):
+                checking, checking_meta = delivery_checking_notice()
                 await self._post_event(
-                    chat_service,
-                    topic_id,
-                    turn_id,
-                    "输入已登记，发送结果正在核对；不会重复发送",
+                    chat_service, topic_id, turn_id, checking, meta=checking_meta
                 )
                 return True
             if delivered is True:
@@ -2169,7 +2168,7 @@ class AgentWorkRunner:
                 await gate.release()
             from app.domain.agent.pending_messages import nudge_messages
 
-            nudge_messages(chat_service, topic_id)
+            nudge_messages(chat_service, topic_id, runner=self)
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?

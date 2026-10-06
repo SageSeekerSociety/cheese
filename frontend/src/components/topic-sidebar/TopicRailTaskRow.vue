@@ -43,7 +43,13 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
     :aria-current="selected ? 'page' : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
   >
-    <span class="rail-task__title" :class="{ 'rail-task__title--unread': unread > 0 }">{{ taskTitle(task) }}</span>
+    <!-- 任务名是人起的（占位名除外，那是界面上的字）。 -->
+    <span
+      class="rail-task__title"
+      :class="{ 'rail-task__title--unread': unread > 0 }"
+      :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
+      >{{ taskTitle(task) }}</span
+    >
     <TopicRailBadge v-if="unread > 0" :count="unread" />
     <span
       v-if="mark"

@@ -17,6 +17,8 @@ export interface OpenFileTab {
   pinned: boolean
   /** 项目资料库里的一份文档（`path` 是 `doc:<编号>`），不是一份文件。 */
   document?: { id: string; title: string }
+  /** 频道里点开的项目文件（项目当前版本、只读）；带行号时是 chip 指着的那几行。 */
+  project?: { lines: { start: number; end: number } | null }
 }
 
 export interface FileDraft {

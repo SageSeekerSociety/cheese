@@ -13,6 +13,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import PanelToggle from '@/components/room/PanelToggle.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import { t } from '@/i18n'
 import { phraseLabel } from '@/lib/board'
@@ -38,10 +39,13 @@ const props = defineProps<{
   rename: (title: string) => Promise<boolean>
   setCollaborators: (handles: string[]) => Promise<boolean>
   loadMachine: () => Promise<void>
+  /** 右侧面板是不是开着——「概览」那颗开关读它。 */
+  panelOpen?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'open-room'): void
+  (e: 'toggle-panel'): void
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -241,6 +245,7 @@ async function confirmHandOver() {
         @click="start(reviewer || null)"
         >{{ t('work.task.start') }}</BaseButton
       >
+      <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
       <v-menu v-if="task && takesPart" location="bottom end">
         <template #activator="{ props: menuProps }">
           <BaseButton

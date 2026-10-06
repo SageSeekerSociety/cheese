@@ -17,7 +17,7 @@ import i18n, { setLocale } from '@/i18n'
 beforeEach(() => setLocale('zh-CN'))
 
 const TABS: PanelTab[] = [
-  { key: 'overview', label: '总览', icon: 'mdi-view-dashboard-outline' },
+  { key: 'overview', label: '概览', icon: 'mdi-view-dashboard-outline' },
   { key: 'site', label: '现场', icon: 'mdi-progress-clock' },
   { key: 'changes', label: '改动', icon: 'mdi-file-diff' },
   { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },

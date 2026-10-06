@@ -68,7 +68,7 @@ describe('DemoView', () => {
     await waitFor(() => expect(view.getByText('收到补充：登录按钮改成主色实心。')).toBeTruthy())
     const tabs = view.getAllByRole('tab').map((t) => t.textContent?.trim())
     // 右边那条是产品的工作面板页签（`panelTabs`，和桌面上的工作面板同一张表）。
-    expect(tabs.slice(0, 4)).toEqual(['总览', '现场', '改动', '预览'])
+    expect(tabs.slice(0, 4)).toEqual(['概览', '现场', '改动', '预览'])
     // 后面那一组是座位切换栏（演示自己画的），和页签条混在一个无障碍树里。
     expect(tabs.slice(4)).toEqual(['全部', '芝士', '芝士K'])
     expect(fetchSpy).not.toHaveBeenCalled()

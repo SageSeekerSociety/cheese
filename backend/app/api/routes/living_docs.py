@@ -32,6 +32,7 @@ from app.core.errors import (
 from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
+from app.domain.block.documents import whose_document
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab, work_edits
 from app.domain.living_doc.schemas import (
@@ -44,7 +45,7 @@ from app.domain.living_doc.schemas import (
 )
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.mentions import canonicalize_refs
-from app.domain.project.services import refuse_writes_if_archived
+from app.domain.project.services import ProjectService, refuse_writes_if_archived
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
 from app.domain.topic.services import TopicService
@@ -58,17 +59,30 @@ projects = APIRouter(prefix="/projects", tags=["documents"])
 async def conversation_document(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Which document is this conversation's living document — a room's, or a
-    task's. It is made, empty, the first time anyone asks."""
+    """Which document is this task's living document. It is made, empty, the
+    first time anyone asks. Only a task has one."""
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    if place.task is not None:
-        document_id = await TaskService(db).ensure_document(place.task)
-    else:
-        document_id = (await topics.room_doc(place.room_id, place.project_id)).id
+    if place.task is None:
+        raise NotFoundError(say("channelHasNoDocument"))
+    document_id = await TaskService(db).ensure_document(place.task)
     await db.commit()
     return ok({"id": str(document_id)})
+
+
+@projects.get("/{project_id}/overview")
+async def project_overview_document(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Which document is the project's overview. It is made, empty, the first
+    time anyone asks."""
+    actor = await resolver.resolve(project_id=project_id, read_only=True)
+    await authorize_in_project(resolver, actor, project_id)
+    projects_ = ProjectService(db)
+    doc = await projects_.overview_document(await projects_.get_or_404(project_id))
+    await db.commit()
+    return ok({"id": str(doc.id)})
 
 
 def _origin(resolver: ActorResolver, reached_actor) -> uuid.UUID | None:
@@ -155,13 +169,16 @@ async def document_about(
 
 
 async def _own(db, resolver, document_id: uuid.UUID):
-    """A document of the project's own that the caller may change. A room's
-    document is the room's: it is named after the room and goes with it."""
+    """A document of the project's own that the caller may change. A task's
+    living document is the task's: it goes by the task's name and goes with
+    it."""
     reached = await reach(db, resolver, document_id, enforce=True)
     if not reached.actor.authenticated:
         raise AuthenticationRequiredError(say("docEditNeedsWriter"))
-    if reached.doc.room_id is not None:
+    if await whose_document(db, reached.doc) != (None, None):
         raise ForbiddenError(say("docBelongsToRoom"))
+    if await ProjectService(db).is_overview(reached.doc.id):
+        raise ForbiddenError(say("docIsProjectOverview"))
     await require_writable(db, reached)
     return reached
 
@@ -273,6 +290,9 @@ async def replace_document(
     reached = await reach(
         db, resolver, document_id, enforce=body.operation_id is not None
     )
+    if body.operation_id is not None and not reached.actor.authenticated:
+        # Not signed in says so before who may write this document does.
+        raise AuthenticationRequiredError(say("docReceiptNeedsWriter"))
     await require_writable(db, reached)
     doc, actor = reached.doc, reached.actor
     operation = None
@@ -329,7 +349,7 @@ async def edit_doc_passages(
     await require_writable(db, reached)
     doc, actor = reached.doc, reached.actor
     if doc.version == 0:
-        raise NotFoundError(say("topicHasNoLivingDoc"))
+        raise NotFoundError(say("docIsEmpty"))
     edits = [edit.model_dump() for edit in body.edits]
     # A 芝士 answering someone's question edits as itself, for that person,
     # directly: the person asked for exactly this change.

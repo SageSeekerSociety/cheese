@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
-from app.domain.block.indexed_rows import CLOUD_PROVISIONING_ROWS, QUESTION_ROWS
+from app.domain.block.indexed_rows import QUESTION_ROWS
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
@@ -659,7 +659,7 @@ class BlockRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def turn_history(self, conversation_id: uuid.UUID) -> list[Block]:
-        """Inputs awaiting consumption and the two turn-preparation boundaries.
+        """Inputs awaiting consumption and the latest AI message, their watermark.
 
         Inputs, not the timeline: a room's events are mostly for people to read,
         and only the ones whose author wrote a sentence for 芝士 are addressed to
@@ -679,16 +679,6 @@ class BlockRepository:
             .limit(1)
             .scalar_subquery()
         )
-        latest_cloud = (
-            select(Block.id)
-            .where(
-                *place,
-                CLOUD_PROVISIONING_ROWS,
-            )
-            .order_by(Block.created_at.desc(), Block.id.desc())
-            .limit(1)
-            .scalar_subquery()
-        )
         # The latest AI message remains the watermark for untracked legacy
         # inputs. Explicitly pending inputs can precede it and must survive.
         stmt = (
@@ -697,7 +687,6 @@ class BlockRepository:
                 *place,
                 or_(
                     Block.id == latest_ai,
-                    Block.id == latest_cloud,
                     and_(
                         participant_blocks(),
                         Block.kind.in_((BlockKind.message, BlockKind.attachment)),
@@ -756,6 +745,53 @@ class BlockRepository:
             .limit(limit)
         )
         return list(reversed(list((await self._session.scalars(stmt)).all())))
+
+    async def last_messages(
+        self, conversation_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, Block]:
+        """The last message said in each of these conversations, keyed by it;
+        a conversation nothing was said in is missing."""
+        if not conversation_ids:
+            return {}
+        ranked = (
+            select(
+                Block.id,
+                func.row_number()
+                .over(
+                    partition_by=Block.conversation_id,
+                    order_by=(Block.created_at.desc(), Block.id.desc()),
+                )
+                .label("rank"),
+            )
+            .where(
+                Block.conversation_id.in_(conversation_ids),
+                Block.kind == BlockKind.message,
+            )
+            .subquery()
+        )
+        rows = await self._session.scalars(
+            select(Block)
+            .join(ranked, ranked.c.id == Block.id)
+            .where(ranked.c.rank == 1)
+        )
+        return {block.conversation_id: block for block in rows}
+
+    async def between(
+        self, conversation_id: uuid.UUID, since: datetime, until: datetime
+    ) -> list[Block]:
+        """Everything in the conversation from ``since`` to ``until``, both
+        included, oldest first: messages, the files sent with them and the lines
+        the platform wrote among them."""
+        stmt = (
+            select(Block)
+            .where(
+                Block.conversation_id == conversation_id,
+                Block.created_at >= since,
+                Block.created_at <= until,
+            )
+            .order_by(Block.created_at, Block.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
 
     async def page_for_topic(
         self,

@@ -38,6 +38,8 @@ BASELINE = {
     "app/domain/space/learning_service.py": 1,
     # 私聊没有支线，只有频道主线上的消息能挂：`WHERE is_private IS FALSE` 一类过滤。
     "app/domain/thread/services.py": 1,
+    # 置顶只在频道里有：私聊是两个人的，没有概览，也就没有置顶。
+    "app/domain/pin/services.py": 1,
     "app/domain/topic/models.py": 1,
     # 8：未读数里私聊默认每条都算（`unread_counts`），和「私聊不进这张列表」一类
     # 过滤同属登记。

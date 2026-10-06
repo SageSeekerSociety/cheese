@@ -24,7 +24,6 @@ from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import Block, BlockKind
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
@@ -41,6 +40,7 @@ from app.domain.machine.models import (
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import ComputeMeterSweeper
 from app.domain.machine.services import HostPool
+from app.domain.run_record.models import RunRecord
 from app.domain.topic.models import Topic
 from app.domain.usage.models import ComputeRun, ResourceUsage
 from tests.executor_release import running
@@ -217,15 +217,12 @@ def _room_lines(case, seat) -> list[str]:
     async def read():
         async with case.client.test_request_factory() as db:
             rows = await db.scalars(
-                select(Block.content)
+                select(RunRecord.content)
                 .where(
-                    Block.conversation_id == seat.room,
-                    Block.kind == BlockKind.event,
-                    Block.meta["event_type"]
-                    .as_string()
-                    .in_(["cloud_startup", "cloud_provisioning"]),
+                    RunRecord.conversation_id == seat.room,
+                    RunRecord.kind.in_(["cloud_startup", "cloud_provisioning"]),
                 )
-                .order_by(Block.created_at)
+                .order_by(RunRecord.created_at)
             )
             return list(rows)
 
@@ -392,7 +389,7 @@ def test_each_session_on_a_whole_vm_gets_a_machine_of_its_own(cloud):
     assert _host(case, first).whole_machine and not _host(case, sandboxed).whole_machine
     assert _host(case, first).project_id == case.project_id
     assert _room_lines(case, first) == ["正在准备云虚拟机"]
-    assert _room_lines(case, sandboxed) == ["正在准备沙箱"]
+    assert _room_lines(case, sandboxed) == ["正在准备环境"]
 
 
 def test_a_sandbox_is_never_placed_on_a_vm_and_a_vm_never_on_a_host(cloud):

@@ -60,7 +60,6 @@ vi.mock('./preview/PreviewPages.vue', () => ({
   }),
 }))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
 
 const docBytes = new ArrayBuffer(8)
 const context = {

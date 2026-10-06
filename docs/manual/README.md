@@ -20,7 +20,7 @@
 │   ├── 做题目：solve-a-challenge / ask-about-a-challenge / team-challenge / resubmit
 │   ├── 出题目：publish-a-challenge / guide-the-teammate
 │   ├── 成果：review-changes / publish-a-site
-│   └── 工作电脑：use-your-computer
+│   └── 环境：use-your-computer
 ├── 使用 Cheese
 │   ├── 赛题 challenges.md
 │   ├── 团队 teams.md
@@ -31,7 +31,7 @@
 │   ├── 文件与成果 files.md
 │   ├── 提交 submissions.md
 │   ├── 验收与采纳 accept.md
-│   ├── 设备与工作电脑 devices.md
+│   ├── 设备与环境 devices.md
 │   ├── 额度 quota.md
 │   ├── 反馈中心 feedback.md
 │   └── 发布成果 sites.md
@@ -85,7 +85,7 @@
 | `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `challenges.md` |
 | `review-changes.md` | 找到待审阅的改动，审阅、追问、采纳或退回 | 按钮的完整说明见 `accept.md` |
 | `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
-| `use-your-computer.md` | 可选：接入自己的电脑或服务器，给频道或任务换工作电脑 | 接入与隔离的完整说明见 `devices.md` |
+| `use-your-computer.md` | 可选：接入自己的电脑或服务器，给频道或任务换环境 | 接入与隔离的完整说明见 `devices.md` |
 
 ### 使用 Cheese {#feature-pages}
 
@@ -96,13 +96,13 @@
 | `challenges.md` | 赛题分类与全部赛题、详情、参与 / 领取、从赛题创建项目、材料呈现、参与状态与权限、发布与审核 | 项目设置见 `projects.md`；提交见 `submissions.md` |
 | `teams.md` | 创建团队、邀请成员、加入申请、已发送邀请、团队成员管理、招募广场当前边界 | 项目成员归 `projects.md`；AI 队友归 `agents.md` |
 | `projects.md` | 创建项目、与赛题的关系、所属团队、项目成员与邀请、主要入口、上游仓库、项目与成果的关系 | 文件操作归 `files.md`；队友配置归 `agents.md`；赛题提交归 `submissions.md` |
-| `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道成员、重命名与归档、消息与执行的关系、工作电脑入口、右侧文档 | 队友配置与触发规则归 `agents.md`；设备和环境规则归 `devices.md`；看板归 `tasks.md` |
+| `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道总览、支线、置顶、频道成员、重命名与归档、消息与执行的关系、环境入口、项目总览和频道说明 | 队友配置与触发规则归 `agents.md`；设备和环境规则归 `devices.md`；看板归 `tasks.md` |
 | `agents.md` | 创建与配置 AI 队友、真实表单字段、设置默认队友、在频道成员中调整队友、触发处理消息、运行方式、模型、已验证限制 | 不承担完整入门流程、设备连接或进度管理；不承诺未验证的记忆机制 |
 | `tasks.md` | 看板入口、当前列名与状态、任务名称、任务详情、与频道执行过程的关系 | 不重复项目介绍、队友配置或最终提交 |
 | `files.md` | 上传及限制、文件进入时间线、查找生成文件、查看与编辑成果、单文件下载、成果相关的「改动 / 现场 / 预览」入口 | Site 发布归 `sites.md`；赛题提交归 `submissions.md`；不编造整个项目打包下载 |
 | `submissions.md` | 学生提交条件、入口、表单与文件要求、已验证的提交限制；发布者查看提交与提交记录 | 与 Agent 交付的验收与采纳分开；不把单一赛题的限制推断成所有赛题通用规则 |
 | `accept.md` | Agent 交付后的验收、采纳、实际入口与操作结果 | 不负责赛题提交或普通文件下载；未验证的验收与合并关系不能写成正式规则 |
-| `devices.md` | 设置 → 设备、添加与安装、登录、网页批准、在线 / 离线状态、AI 队友的工作电脑及更换 | 不解释 tokens；不能把选择设备写成选择本地目录 |
+| `devices.md` | 设置 → 设备、添加与安装、登录、网页批准、在线 / 离线状态、AI 队友的环境及更换 | 不解释 tokens；不能把选择设备写成选择本地目录 |
 | `quota.md` | 团队「额度」页、个人「芝士额度」、耗尽提示和当前可操作范围 | 设备连接归 `devices.md`；不编造自行调整或发放额度入口 |
 | `sites.md` | 导出与发布中的 Site 发布、发布结果与管理入口、当前能力和限制 | 普通文件下载归 `files.md`；不承诺整个项目导出 |
 

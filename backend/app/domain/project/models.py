@@ -64,6 +64,18 @@ class Project(UuidPk, Timestamps, Base):
         ),
         nullable=True,
     )
+    # The project's overview: what the project is, read by every conversation's
+    # AI teammate and shown at the top of 综合's overview. A document of the
+    # project's own that the library does not list.
+    overview_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_projects_overview_document_id",
+        ),
+        nullable=True,
+    )
     # The 赛题 this project was created from (main's int `task` table). The 1.0
     # team-project already carries this idea as `external_task_id`; a 2.0 project
     # needs it too, or "create a project from this 赛题" produces something with

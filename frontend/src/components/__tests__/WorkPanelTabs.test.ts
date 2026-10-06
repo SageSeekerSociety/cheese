@@ -3,15 +3,17 @@
  * 这个文件是切分那一刀的安全网。它钉的不是某个功能，而是「搬完之后每一片还在原
  * 处，片与片之间那几根线也还接着」：
  *
- *   1. 四个 tab 都切得过去、都渲染得出来（不是空壳）。
- *   2. 文档里的 <&path> chip 落到 改动 tab 并打开那个文件 —— 这是原来五个抽屉之间
- *      唯一做对了的联动（旧代码里那句 `openTool.value = 'files'`），也是切分之后
- *      唯一一根跨 tab 的线。它现在走 PanelDoc 的 open-file → 容器 → PanelChanges。
+ *   1. 每个 tab 都切得过去、都渲染得出来（不是空壳）。
+ *   2. 任务总览里实况文档的 <&path> chip 落到 改动 tab 并打开那个文件。它走 PanelDoc
+ *      的 open-file → 任务页 → 面板暴露的 openFile → PanelChanges；这里的宿主照任务页
+ *      那样接这根线。
  *   3. ChatPanel 里的 <&path> chip 走同一根线（TopicView 调容器暴露的 openFile）。
- *   4. 换话题回到 文档 —— 旧行为是抽屉在切话题时关掉。
+ *
+ * 现场、改动、预览只长在任务上，所以除了说频道有哪几格的那一条，都挂一个任务。
  */
 import type { Topic } from '../../cx_types'
 
+import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -67,7 +69,24 @@ vi.mock('../../api', async () => {
     ...actual,
     // 总览里「进度」那一段会读它；这里不关心它，给一份空的。
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
-    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    // 面板画的是房间 topic-A 里的任务 task-1。
+    listRoomTasks: vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: 'task-1',
+          project_id: 'p1',
+          room_id: 'topic-A',
+          title: '写代码',
+          status: 'open',
+          branch_name: 'task/code',
+          presentation: { column: 'building', phrase: 'running' },
+          blocks: [],
+          created_at: '2026-09-09T00:00:00Z',
+          updated_at: '2026-09-09T00:00:00Z',
+        },
+      ],
+      total: 1,
+    }),
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
     getTranscript: (...a: unknown[]) => getTranscript(...a),
@@ -88,16 +107,73 @@ vi.mock('../../api', async () => {
 })
 
 import { seedRoom } from '../../test/fakeDocCollab'
+import PanelDocHost from '../work/PanelDocHost.vue'
 import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
 }
 
+const TASK = 'task-1'
+
+/** 任务页上的面板：总览里是任务的实况文档（`.test-overview`），文档里点的 chip 交给
+ *  面板去开——和任务页接的是同一根线。`rerender` 换的是面板收到的那几样。 */
 function mountPanel(id = 'topic-A', props: Record<string, unknown> = {}) {
   const vuetify = createVuetify({ components, directives })
+  let panel: { openFile: (path: string) => Promise<void> } | null = null
+  const tabs: string[][] = []
+  const Host = defineComponent({
+    props: { p: { type: Object, required: true } },
+    setup(host: { p: Record<string, unknown> }) {
+      return () => {
+        const room = host.p.topic as Topic
+        return h(
+          WorkPanel,
+          {
+            ref: (instance: unknown) => {
+              panel = instance as typeof panel
+            },
+            topic: room,
+            activityTick: 0,
+            taskId: TASK,
+            ...host.p,
+            'onUpdate:tab': (key: string) => {
+              tabs.push([key])
+            },
+          },
+          {
+            overview: () =>
+              h('div', { class: 'test-overview' }, [
+                h(PanelDocHost, {
+                  flow: true,
+                  topic: room,
+                  taskId: TASK,
+                  activityTick: 0,
+                  onOpenFile: (path: string) => void panel?.openFile(path),
+                }),
+              ]),
+          }
+        )
+      }
+    },
+  })
+  const ui = render(Host, {
+    props: { p: { topic: topic(id), activityTick: 0, ...props } },
+    global: { plugins: [vuetify, i18n] },
+  })
+  return {
+    container: ui.container,
+    rerender: (next: Record<string, unknown>) => ui.rerender({ p: next }),
+    emitted: () => ({ 'update:tab': tabs }),
+  }
+}
+
+/** 频道上的面板：没有任务，总览里是什么这里不关心。 */
+function mountChannel() {
+  const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
-    props: { topic: topic(id), activityTick: 0, ...props },
+    props: { topic: topic('topic-A'), activityTick: 0 },
+    slots: { overview: '<div class="test-overview" />' },
     global: { plugins: [vuetify, i18n] },
   })
 }
@@ -124,14 +200,15 @@ async function openTab(container: Element, label: string) {
   await fireEvent.click(tabButton(container, label))
   await flush()
 }
-/** A tab pane is on screen when it is not the one v-show hid.
- *
- *  文档 那一格现在是 总览 的下半边（上半边是 Task Progress），所以「文档在不在
- *  屏幕上」问的是 `.panel-overview` —— v-show 挂在它身上，里面的 `.doc` 从头到
- *  尾都在。 */
+/** A tab pane is on screen when neither it nor a pane around it is the one v-show hid. */
 function visible(container: Element, selector: string): boolean {
-  const el = container.querySelector<HTMLElement>(selector)
-  return !!el && el.style.display !== 'none'
+  let el = container.querySelector<HTMLElement>(selector)
+  if (!el) return false
+  while (el && el !== container) {
+    if (el.style.display === 'none') return false
+    el = el.parentElement
+  }
+  return true
 }
 
 // 这个文件每条用例都 mount 一整个工作面板（里面还有异步加载的文档编辑器），CI
@@ -185,7 +262,7 @@ describe('工作面板 · Tab 容器', () => {
   it('默认停在总览', async () => {
     const { container } = mountPanel()
     await flush()
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
   })
 
   it('每个 tab 都切得过去，而且真的渲染出了自己那一片', async () => {
@@ -194,7 +271,7 @@ describe('工作面板 · Tab 容器', () => {
 
     await openTab(container, '现场')
     expect(visible(container, '.panel-site')).toBe(true)
-    expect(visible(container, '.panel-overview')).toBe(false)
+    expect(visible(container, '.test-overview')).toBe(false)
     expect(getTranscript).toHaveBeenCalled()
     expect(container.textContent).toContain('暂无现场记录')
 
@@ -204,8 +281,8 @@ describe('工作面板 · Tab 容器', () => {
     expect(container.querySelector('.file-list'), '改动 tab 没渲染出文件树').toBeTruthy()
 
     // 回到文档：编辑器还在（它从头到尾没被卸载过，切走一趟不会重建 tiptap）。
-    await openTab(container, '总览')
-    expect(visible(container, '.panel-overview')).toBe(true)
+    await openTab(container, '概览')
+    expect(visible(container, '.test-overview')).toBe(true)
     // 文档那一格是异步组件（编辑器不挡房间首屏），等它自己到。
     await vi.waitFor(() => expect(container.querySelector('.doc-editor')).toBeTruthy(), {
       timeout: WAIT_TIMEOUT,
@@ -216,7 +293,7 @@ describe('工作面板 · Tab 容器', () => {
   // (PanelDoc 的 open-file → 容器的 openFile → PanelChanges.openFile)，所以这条
   // 用例点的是文档里真实渲染出来的那颗 chip，走完整条线。
   it('文档里的 <&path> chip → 落到改动 tab 的文件半边，并打开那个文件', async () => {
-    seedRoom('topic-A', '详见 <&src/b.ts> 这个文件\n')
+    seedRoom(TASK, '详见 <&src/b.ts> 这个文件\n')
     readFile.mockResolvedValue({
       path: 'src/b.ts',
       content: 'export const b = 1\n',
@@ -244,26 +321,34 @@ describe('工作面板 · Tab 容器', () => {
 
     // 落在改动 tab 上……
     expect(visible(container, '.panel-changes')).toBe(true)
-    expect(visible(container, '.panel-overview')).toBe(false)
+    expect(visible(container, '.test-overview')).toBe(false)
     // ……而且是它的文件半边，开着的正是被点的那个文件。
-    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null, 'committed')
+    // 任务页上，文件就是这件任务工作树上的那一份。
+    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', TASK, 'live')
     expect(container.querySelector('.changes-bar__path')?.textContent?.trim()).toBe('src/b.ts')
   })
 
-  // 规则 1: 四格永远都在、位置不变，这一格此刻有没有东西只决定它的字深浅。判定
-  // 读的是「这个话题手上有什么」，不是它的 kind —— 后端给每个话题都建了 worktree
-  // 和分支，按 kind 分只是猜。
+  // 规则 1: 几格永远都在、位置不变，这一格此刻有没有东西只决定它的字深浅。判定
+  // 读的是「这件任务手上有什么」。
   const isEmpty = (tab: Element | undefined) => !!tab?.classList.contains('tabbar__tab--empty')
 
-  it('谁也没在里面干过活的话题：这几格都在，改动、现场、预览是浅的', async () => {
+  it('频道是人说话的地方：只有总览、支线、定时与触发', async () => {
+    const { container } = mountChannel()
+    await flush()
+
+    // 总览上挂着这个频道有几件任务；这里只看有哪几格。
+    expect(tabLabels(container).map((label) => label.replace(/\s*\d+$/, ''))).toEqual(['概览', '支线', '定时与触发'])
+  })
+
+  it('谁也没在里面干过活的任务：这几格都在，改动、现场、预览是浅的', async () => {
     getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: false })
     const { container } = mountPanel()
     await flush()
 
-    expect(tabLabels(container)).toEqual(['总览', '支线', '现场', '改动', '预览', '定时与触发'])
-    expect(isEmpty(findTab(container, '总览'))).toBe(false)
+    expect(tabLabels(container)).toEqual(['概览', '现场', '改动', '预览'])
+    expect(isEmpty(findTab(container, '概览'))).toBe(false)
     expect(['现场', '改动', '预览'].every((label) => isEmpty(findTab(container, label)))).toBe(true)
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
   })
 
   it('跑过活但没产生改动：现场有东西，改动是浅的', async () => {
@@ -290,7 +375,7 @@ describe('工作面板 · Tab 容器', () => {
     expect(isEmpty(findTab(container, '预览'))).toBe(true)
 
     getPreview.mockResolvedValue({ kind: 'file', path: 'r.html', mime: 'text/html', artifact_id: 'a1' })
-    const { container: c2 } = mountPanel('topic-B')
+    const { container: c2 } = mountPanel('topic-B', { taskId: 'task-2' })
     await flush()
     expect(isEmpty(findTab(c2, '预览'))).toBe(false)
   })
@@ -318,13 +403,13 @@ describe('工作面板 · Tab 容器', () => {
     await flush()
 
     expect(visible(container, '.panel-changes')).toBe(true)
-    expect(visible(container, '.panel-overview')).toBe(false)
+    expect(visible(container, '.test-overview')).toBe(false)
   })
 
   it('地址给的 tab 不认识就退回总览，不是空面板', async () => {
     const { container } = mountPanel('topic-A', { tab: '资源' })
     await flush()
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
   })
 
   it('切 tab 会把新的 tab 报出去，地址才跟得上', async () => {
@@ -336,7 +421,7 @@ describe('工作面板 · Tab 容器', () => {
   })
 
   it('从别处打开一个文件也算换 tab，一样报出去', async () => {
-    seedRoom('topic-A', '详见 <&a.py> 这个文件\n')
+    seedRoom(TASK, '详见 <&a.py> 这个文件\n')
     const { container, emitted } = mountPanel()
     await flush()
 
@@ -364,7 +449,7 @@ describe('工作面板 · Tab 容器', () => {
     await flush()
 
     expect(container.querySelector('.tabbar__pulse')).toBeTruthy()
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
   })
 
   it('改动 tab 上是文件数；进话题时已有的改动不算「新」', async () => {
@@ -387,7 +472,7 @@ describe('工作面板 · Tab 容器', () => {
     await flush()
 
     expect(container.querySelector('.tabbar__count')?.classList.contains('tabbar__count--new')).toBe(true)
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
 
     // 看过就不再是新的。
     await openTab(container, '改动')
@@ -400,7 +485,7 @@ describe('工作面板 · Tab 容器', () => {
   it('待验收的话题开在改动上', async () => {
     const { container, rerender } = mountPanel()
     await flush()
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
 
     await rerender({ topic: topic('topic-A'), activityTick: 0, cardPhase: 'pending' })
     await flush()
@@ -423,7 +508,7 @@ describe('工作面板 · Tab 容器', () => {
     await rerender({ topic: topic('topic-A'), activityTick: 0, cardPhase: null })
     await flush()
 
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
   })
 
   it('地址点名了 tab 就以地址为准，阶段不许改它', async () => {
@@ -432,7 +517,7 @@ describe('工作面板 · Tab 容器', () => {
     await rerender({ topic: topic('topic-A'), activityTick: 0, tab: 'doc', cardPhase: 'pending' })
     await flush()
 
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
   })
 
   it('人已经自己选过了，晚到的阶段不许把他挪走', async () => {
@@ -455,7 +540,7 @@ describe('工作面板 · Tab 容器', () => {
     await rerender({ topic: topic('topic-A'), activityTick: 0, cardPhase: 'pending' })
     await flush()
 
-    expect(visible(container, '.panel-overview')).toBe(true)
+    expect(visible(container, '.test-overview')).toBe(true)
   })
 
   // 规则 5: 批注归批注，聊天归聊天。写评论的输入框长在评论区里，不再劫持底部那
@@ -477,7 +562,8 @@ describe('工作面板 · Tab 容器', () => {
     await fireEvent.keyDown(box!, { key: 'Enter' })
     await flush()
 
-    expect(addComment).toHaveBeenCalledWith('topic-A', '这段读不通', '')
+    // 评论落在这件任务的实况文档上。
+    expect(addComment).toHaveBeenCalledWith(TASK, '这段读不通', '')
     // 发完收起来，评论区回到只读的样子。
     expect(container.querySelector('.doc-comments__draft')).toBeNull()
   })
@@ -498,7 +584,7 @@ describe('工作面板 · Tab 容器', () => {
 
 describe('资料库文档在自由区', () => {
   it('地址点名的资料库文档开成一格：页签写它的标题，打开的是那一份', async () => {
-    seedRoom('topic-A', '对话自己的文档\n')
+    seedRoom(TASK, '任务自己的文档\n')
     seedRoom('lib-doc', '三家都有年付\n')
     const { container } = mountPanel('topic-A', { tab: 'file:doc:lib-doc' })
     await flush()

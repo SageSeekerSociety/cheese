@@ -98,6 +98,12 @@ class TaskProposals:
         )
         return list(rows)
 
+    async def of_task(self, task_id: uuid.UUID) -> TaskProposal | None:
+        """The proposal a task was created from, if it was."""
+        return await self._session.scalar(
+            select(TaskProposal).where(TaskProposal.task_id == task_id)
+        )
+
     async def lock(self, room_id: uuid.UUID, proposal_id: uuid.UUID):
         """The proposal, locked for deciding; None when the room has no such
         proposal."""

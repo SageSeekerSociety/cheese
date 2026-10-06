@@ -1,7 +1,7 @@
 """A stand-in for the collaboration service, for tests that write the living
 document through the backend.
 
-The real service (frontend/collab) holds every room's document live and is the
+The real service (frontend/collab) holds every task's document live and is the
 only thing that stores it. This one holds no document of its own: with no
 editor connected, the live document is exactly what the backend stored last.
 It answers ``replace`` the way the service does — refuse a writer whose base is
@@ -142,31 +142,30 @@ class FakeCollab:
             return httpx.Response(502, json={"message": stored.text})
         return httpx.Response(200, json={"stored": stored.json(), "edits": applied})
 
-    async def type_in(self, room_id: uuid.UUID, content: str, *actors: str) -> dict:
-        name = await self._room_document(room_id)
+    async def type_in(self, task_id: uuid.UUID, content: str, *actors: str) -> dict:
+        name = await self._task_document(task_id)
         async with self._client() as backend:
             return await self._store(backend, name, content, *actors)
 
-    async def type_unsaved(self, room_id: uuid.UUID, content: str, actor: str) -> None:
-        self._unsaved[await self._room_document(room_id)] = (content, actor)
+    async def type_unsaved(self, task_id: uuid.UUID, content: str, actor: str) -> None:
+        self._unsaved[await self._task_document(task_id)] = (content, actor)
 
-    async def _room_document(self, room_id: uuid.UUID) -> str:
-        """The service name of the room's document. An editor holds a ticket
+    async def _task_document(self, task_id: uuid.UUID) -> str:
+        """The service name of the task's document. An editor holds a ticket
         before it types, and signing one is what makes the document exist."""
         from app.core.db import get_db
-        from app.domain.living_doc.services import Documents
-        from app.domain.topic.models import Topic
+        from app.domain.room_task.models import Task
+        from app.domain.room_task.services import TaskService
 
         # The database the app is answering from, which a test may override.
         sessions = self._app.dependency_overrides.get(get_db, get_db)()
         session = await anext(sessions)
         try:
-            room = await session.get(Topic, room_id)
-            assert room is not None
-            doc = await Documents(session).ensure_for_room(
-                room_id=room_id, project_id=room.project_id
+            task = await session.get(Task, task_id)
+            assert task is not None, "only a task has a living document"
+            name = collab.document_name(
+                await TaskService(session).ensure_document(task)
             )
-            name = collab.document_name(doc.id)
             await session.commit()
         finally:
             await sessions.aclose()

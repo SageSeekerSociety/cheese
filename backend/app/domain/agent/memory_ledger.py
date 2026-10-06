@@ -54,7 +54,6 @@ from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_room, room_column
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
-from app.domain.living_doc.services import Documents
 from app.domain.memory import dream
 from app.domain.memory.dream_prompt import dream_prompt
 from app.domain.memory.files import MemoryFileScope
@@ -63,6 +62,7 @@ from app.domain.memory.models import MemoryDreamRunStatus
 from app.domain.memory.session import apply_tree, read_tree
 from app.domain.project.forge import binding_for_project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.run_record.service import record as keep_record
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.models import ResourceUsage
 
@@ -473,7 +473,7 @@ class MemoryLedger:
         }
 
     async def _say_dream(self, project_id: uuid.UUID, changed: list[str]) -> None:
-        """整理跑完了：在项目总览里说一句 team 改了哪几条。
+        """整理跑完了：在项目总览的现场里记一条 team 改了哪几条（运行记录）。
 
         谁的名都不点：一条记忆是 agent 写下的一份观察，没有人在等它（`who`
         是 platform，投递那一层因此发不出收件人）。改动的 diff 由对账那条路自己说
@@ -488,9 +488,9 @@ class MemoryLedger:
             project = await ProjectRepository(session).get(project_id)
             if project is None or project.root_topic_id is None:
                 return
-            await announce(
+            await keep_record(
                 session,
-                place_id=project.root_topic_id,
+                conversation_id=project.root_topic_id,
                 content=say("memoryDreamChanged", count=len(changed)),
                 meta=notice(
                     EVENT_MEMORY_CHANGED,
@@ -577,9 +577,6 @@ async def _dream_rooms(
         if topic is None:
             continue
         lines = [f"### <#{topic_id}> {topic.title}"]
-        doc = await Documents(session).of_room(topic_id)
-        if doc is not None and doc.content.strip():
-            lines.append("实况文档：\n" + dream.clip(doc.content, dream.ROOM_DOC_MAX))
         spoken = list(
             await session.scalars(
                 select(Block)

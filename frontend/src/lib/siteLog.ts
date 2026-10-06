@@ -114,6 +114,8 @@ export function isNarration(meta?: NarrationMeta | null): boolean {
 export interface SiteTurn<T> {
   /** 分组键：轮次 id，没有 id 的那些用它们头一条的 id。 */
   key: string
+  /** 不属于任何一轮的一条平台记录（环境休眠了、某人改了文档）：只占一行，不成组。 */
+  loose: boolean
   entries: T[]
   /** 这一组头一条的时间，组头显示它。 */
   startedAt: string
@@ -145,7 +147,10 @@ export function groupByTurn<T extends TurnLike>(blocks: T[], starts: Record<stri
     if (sameTurn) {
       last.entries.push(block)
     } else {
-      turns.push({ key: id ?? block.id, entries: [block], startedAt: block.created_at, steps: 0, seconds: 0 })
+      // 平台提示、平台动作（某人改了文档）、运行记录：不是哪一轮的步骤。
+      const meta = block.meta ?? {}
+      const loose = id === null && (meta.who !== undefined || meta.platform === true || meta.action !== undefined)
+      turns.push({ key: id ?? block.id, loose, entries: [block], startedAt: block.created_at, steps: 0, seconds: 0 })
     }
   }
   for (const turn of turns) {
@@ -177,15 +182,37 @@ export function formatSpan(seconds: number): string {
 // translated at DISPLAY time via the full toolLabels table — so a verb missing
 // from the table at write time is never frozen untranslated. Rows without meta
 // (pre-meta data) fall back to the baked content text.
-// 前端报错不是一次工具调用：正文是一整句「前端报错（页面地址）」，没有「动词\n参数」
-// 那道换行。原样当动词，整句就被塞进定宽、不折行的动词列，圆点单独占一行、字从右边
-// 溢出去。动词就是「前端报错」，参数是报错本身，和别的步骤同一个形状。
-function frontendError(b: Block): boolean {
-  return b.meta?.event_type === 'frontend_error'
+// 运行记录（平台运行中记下的事，只在现场）的动词列写它是哪一类事，正文是那一句话。
+// 键名写全，不拼：拼出来的键谁也搜不到。
+const RECORD_VERB: Record<string, string> = {
+  turn_queued: 'work.room.site.record.queue',
+  delivery_checking: 'work.room.site.record.delivery',
+  delivery_fallback: 'work.room.site.record.delivery',
+  tools_recovered: 'work.room.site.record.delivery',
+  prompt_replayed: 'work.room.site.record.delivery',
+  timed_delivery: 'work.room.site.record.delivery',
+  api_retry: 'work.room.site.record.retry',
+  context_compact: 'work.room.site.record.compact',
+  device_waiting: 'work.room.site.record.environment',
+  cloud_startup: 'work.room.site.record.environment',
+  cloud_provisioning: 'work.room.site.record.environment',
+  sandbox_asleep: 'work.room.site.record.environment',
+  memory_changed: 'work.room.site.record.memory',
+}
+
+/** 这一行是运行记录：平台在运行中记下的事，不是芝士做的一步。 */
+export function isRunRecord(b: Block): boolean {
+  return String(b.meta?.event_type ?? '') in RECORD_VERB
+}
+
+function recordVerb(b: Block): string | null {
+  const key = RECORD_VERB[String(b.meta?.event_type ?? '')]
+  return key ? t(key) : null
 }
 
 export function eventVerb(b: Block): string {
-  if (frontendError(b)) return t('work.room.site.frontendError')
+  const recorded = recordVerb(b)
+  if (recorded) return recorded
   // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
   // tool 仍然如实记着真正跑的是哪个工具。
   if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
@@ -194,11 +221,7 @@ export function eventVerb(b: Block): string {
 }
 
 export function eventArg(b: Block): string {
-  if (frontendError(b)) {
-    const stack = typeof b.meta?.stack === 'string' ? b.meta.stack : ''
-    const page = typeof b.meta?.page === 'string' ? b.meta.page : ''
-    return stack.split('\n')[0].trim() || page
-  }
+  if (recordVerb(b)) return noticeText(b).split('\n')[0]
   if (b.meta?.tool) return b.meta.arg ?? ''
   const text = noticeText(b)
   const nl = text.indexOf('\n')

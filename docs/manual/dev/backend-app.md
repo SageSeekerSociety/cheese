@@ -148,7 +148,8 @@ covers:
 | gate sweep | `gate_sweep_interval_s` | 收超龄的闸门孤儿卡 |
 | cloud host pool sweep / cloud warm pool | `machine_enroll_interval_seconds` | 云主机池：同步宿主机状态、入网、按需扩容和释放空闲宿主机；维护预热池 |
 | subscription usage ingest | `subscription_ingest_interval_s`，未设 `SUBSCRIPTION_USAGE_LOG` 时为 0 | 把计量代理的账本吃进 `resource_usage` |
-| backend error flush | `backend_error_flush_interval_s` | 把后端报错按窗口收口后发回房间 |
+| backend error flush | `backend_error_flush_interval_s` | 把后端报错按窗口收口后记成运行记录 |
+| run record expiry | `run_record_expiry_interval_s` | 删掉超过 30 天的运行记录 |
 | notification email drain / push drain | `notification_email_drain_interval_s` / `notification_push_drain_interval_s` | 那两条 Redis 队列的唯一消费者，不跑就一封邮件、一条推送都不发 |
 | delivery resend | `delivery_resend_interval_s` | 投递账本上「记下了没发出去」的行 |
 | docs question retention | 固定 86400s | 清过期的问芝士记录 |

@@ -3,7 +3,7 @@
   "loadFailed": "加载市场失败",
   "tabs": {
     "tasks": "题目匹配",
-    "pools": "模型与工作电脑"
+    "pools": "模型与环境"
   },
   "tasksIntro": "机构把 {challenges} 发布到市场；团队用自己的项目 {apply}。应征被接受后，项目自动链接到题目，资源包与条件即刻生效。",
   "tasksIntroChallenges": "题目",
@@ -11,8 +11,8 @@
   "poolsIntro": "这里列出项目可用的 {models} 和 {computers}。默认项由平台补贴，开箱即用；接入你自己的设备后，它也会列在这里。",
   "aiModels": "AI 模型",
   "aiModelsHint": "每次对话使用的模型",
-  "workComputers": "工作电脑",
-  "workComputersHint": "运行任务的机器",
+  "workComputers": "环境",
+  "workComputersHint": "运行任务的地方",
   "default": "默认",
   "available": "可在项目里选用",
   "unavailable": "暂未开通",

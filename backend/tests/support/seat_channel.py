@@ -206,6 +206,9 @@ class SeatChannel:
             },
         )
 
+    async def let_go(self, sessions, *, placed_before) -> None:
+        """What a real channel records on the placement; nothing here."""
+
     async def placed(self, harness: str, device_id: str | None = None) -> list[Placed]:
         if harness != self.runtime.harness:
             return []

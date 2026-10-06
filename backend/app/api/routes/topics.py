@@ -459,6 +459,11 @@ async def get_topic(
     )
 
 
+def _answering_in(thread_id: uuid.UUID) -> list[str]:
+    """The AI teammates with a turn running in a 支线 right now."""
+    return sorted(set(get_broker().activity.turn_agents(str(thread_id)).values()))
+
+
 @router.get("/{topic_id}/blocks")
 async def list_topic_blocks(
     topic_id: uuid.UUID,
@@ -551,7 +556,9 @@ async def list_topic_blocks(
     reactions = await repo.reactions_for_blocks([b.id for b in blocks])
     # The line under each main-line message that has a 支线: same batch shape.
     threads = (
-        await thread_reads.under_messages(db, [b.id for b in blocks])
+        await thread_reads.under_messages(
+            db, [b.id for b in blocks], replying=_answering_in
+        )
         if place.inner_id is None
         else {}
     )
@@ -963,28 +970,6 @@ async def write_topic_progress(
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     return ok({"items": items, "message_id": message["id"], "posted": True})
-
-
-@router.get("/{topic_id}/overview")
-async def get_topic_overview(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """总览房间的自动区（#1889）：②③，结构化，给文档面板正文下方那一栏。
-
-    总览文档是三块：① 写在文档正文里，②③ 由平台现拼。注入 agent 提示词的
-    那一份是同一批数据的 markdown 排版（`topic/overview.py`），这里给的是能
-    逐个点击的结构化条目。
-
-    授权和读文档那一份完全一样：先认出「谁在这儿」，再看他在不在这个房间的
-    名册上。只有根话题有总览，别处 404（见 `TopicService.overview_auto`）。
-    """
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    blocks = await topics.overview_auto(place.room_id)
-    return ok({"root_topic_id": str(place.room_id), "blocks": blocks})
 
 
 @router.post("/{topic_id}/summon")

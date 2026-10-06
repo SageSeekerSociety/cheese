@@ -33,6 +33,12 @@ LEASE_SECONDS = 120
 # the people in it queued behind those (2026-10-06, 1278 in an hour).
 RETRY_SECONDS = 30
 RETRY_CAP_SECONDS = 300
+# An instruction that has not started anywhere half an hour after it was given
+# is not going to: its computer is gone, or the agent cannot be seated. It
+# fails, so whoever is waiting sees why and can try again, instead of watching
+# it retry every five minutes for ever.
+GIVE_UP_AFTER = timedelta(minutes=30)
+GAVE_UP = "Not started within 30 minutes of being given"
 
 
 def retry_after(attempts: int) -> float:
@@ -165,6 +171,10 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
             if row.state == "sending":
                 row.state = "uncertain"
                 row.last_error = "Sender stopped before recording the receiver result"
+                continue
+            if row.attempts > 0 and stamp - row.recorded_at > GIVE_UP_AFTER:
+                row.state = "failed"
+                row.last_error = GAVE_UP
                 continue
             agent = await session.get(AgentInstance, row.agent_instance_id)
             task = await session.get(Task, row.conversation_id)

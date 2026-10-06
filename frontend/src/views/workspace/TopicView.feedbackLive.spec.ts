@@ -51,6 +51,8 @@ vi.mock('@/api', async (importOriginal) => ({
   getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
   listTopicMembers: vi.fn(() => Promise.resolve({ data: [], total: 0 })),
   listFeedbackProposals: vi.fn(() => Promise.resolve([...server.live])),
+  // 频道概览里的任务：这里没有。
+  listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
 }))
 
 const store = vi.hoisted(() => ({ value: null as unknown }))
@@ -58,6 +60,8 @@ vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store.value }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 // 频道的支线清单：这几条测试不看它。
 vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
+// 频道概览的置顶：这几条测试不看它。
+vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
 
 // The real panel turns a `{type: 'state', resource}` socket message into this
 // event; the button stands in for that message arriving.

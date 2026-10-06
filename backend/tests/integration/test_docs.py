@@ -1,20 +1,21 @@
 """Living doc: docs-out display + docs-in edit (evals B1/B2)."""
 
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.support.living_doc import document_of
 
 
-def _doc(client, room) -> str:
-    """The room's document, as its routes address it."""
-    return f"/documents/{document_of(client, room)}"
+def _doc(client, task) -> str:
+    """The task's document, as its routes address it."""
+    return f"/documents/{document_of(client, task)}"
 
 
-def _topic(client) -> str:
-    p = post_project(client, json={"name": "P"}).json()["data"]
+def _topic(client, owner: str = "owner") -> str:
+    """A task, whose living document the test writes."""
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "话题"}).json()[
         "data"
     ]
-    return t["id"]
+    return open_task(client, t["id"], owner=owner, start=False)["id"]
 
 
 def test_doc_absent_then_created_and_updated(client):
@@ -148,15 +149,17 @@ def test_doc_canonicalizes_friendly_mentions(client, bearer):
     other = client.post(
         "/topics", json={"project_id": p["id"], "title": "分页调研"}
     ).json()["data"]
+    task = open_task(client, t["id"], owner="user-1", start=False)["id"]
 
     client.put(
-        _doc(client, t["id"]),
+        _doc(client, task),
         json={
             "content": "待办：@user-1 跟进，结论同步到 @分页调研。裸名 user-1 不动",
             "expected_version": 0,
         },
+        headers=bearer("user-1"),
     )
-    doc = client.get(_doc(client, t["id"])).json()["data"]
+    doc = client.get(_doc(client, task)).json()["data"]
     assert "<@user-1>" in doc["content"]
     assert f"<#{other['id']}>" in doc["content"]
     assert "裸名 user-1 不动" in doc["content"]
@@ -173,6 +176,7 @@ def test_a_write_based_on_an_old_version_is_refused(client):
     client.put(
         _doc(client, tid),
         json={"content": "# 目标\n做推荐", "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
     stale = client.get(_doc(client, tid)).json()["data"]["doc_version"]
     client.put(
@@ -190,6 +194,7 @@ def test_a_write_based_on_an_old_version_is_refused(client):
             "content": "# 目标\n做问答",
             "expected_version": stale,
         },
+        headers=session_auth_headers("owner"),
     )
     assert r.status_code == 409, r.text
     # The current version rides along, so a client can rebase without a re-read.
@@ -215,6 +220,7 @@ def test_a_refused_write_announces_nothing(client):
     r = client.put(
         _doc(client, tid),
         json={"content": "# 乙", "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
     assert r.status_code == 409
 
@@ -240,6 +246,7 @@ def test_creating_the_first_doc_expects_no_doc(client):
     second = client.put(
         _doc(client, tid),
         json={"content": "# 乙", "expected_version": 0},
+        headers=session_auth_headers("owner"),
     )
     assert second.status_code == 409
     assert client.get(_doc(client, tid)).json()["data"]["content"] == "# 甲"

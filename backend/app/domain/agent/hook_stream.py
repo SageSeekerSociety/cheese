@@ -33,7 +33,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.sentences import NoticeText, error_frame, say
 from app.domain.agent import attachments, turn_inputs
-from app.domain.agent.announce import announce
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
 from app.domain.agent.nonce import nonce_in
 from app.domain.agent.platform_failures import (
@@ -54,7 +53,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.prompt import _compaction_notice
-from app.domain.agent.queries import _block_payload
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room_events import (
     _mark_step_failed,
@@ -63,6 +61,7 @@ from app.domain.agent.room_events import (
     _record_step_output,
     post_system_event,
 )
+from app.domain.agent.run_records import record_now, restate_now
 from app.domain.agent.service import (
     AgentCompacting,
     AgentEvent,
@@ -79,11 +78,10 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.memory.models import MemoryScope
 from app.domain.room_task.place import PlaceResolver
+from app.domain.run_record import service as run_records
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +224,8 @@ class _HookStream(Protocol):
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None: ...
 
+    async def thread_replied(self, conversation_id: uuid.UUID) -> None: ...
+
     async def _close_open_turns(
         self, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> None: ...
@@ -289,10 +289,14 @@ def _turn_failure_notice(
     only a classified failure used to get meta at all, so the three most common
     ones (座位限流 / 余额用尽 / HTTP 错误) carried no structure whatsoever.
 
-    An unclassified failure shows the SERVICE'S OWN first line rather than a
-    generic label: 「AI 服务返回错误」 with the reason buried sent a whole room
-    hunting a mystery bug twice in one night (2026-08-16, topic ee17b136 — the
-    real text was the delivery timeout all along).
+    An unclassified failure says only that the turn did not finish, with a
+    retry: the service's own words are often English and say nothing to the
+    people in the room. They are kept whole, one click away, under a label that
+    says they are the service's words — not dropped: the reason buried behind
+    a misleading label sent a whole room hunting a mystery bug twice in one
+    night (2026-08-16, topic ee17b136 — the real text was the delivery timeout
+    all along). The platform's own one-line sentences (a runner that stopped
+    answering) are already written for people and stay on the line.
     """
     failure = classify_platform_failure(text, code=code)
     if failure is not None:
@@ -311,14 +315,12 @@ def _turn_failure_notice(
         retryable = False
     else:
         first = detail.splitlines()[0].strip() if detail else ""
-        if len(first) > 160:
-            first = first[:160] + "…"
-        if isinstance(text, NoticeText) and first == text:
-            # The platform's own one-line sentence (a runner that stopped
-            # answering): nested whole, so it keeps its key.
-            first = text
         line = (
-            say("turnFailedWith", reason=first) if first else say("turnFailedService")
+            # The platform's own one-line sentence: nested whole, so it keeps
+            # its key.
+            say("turnFailedWith", reason=text)
+            if isinstance(text, NoticeText) and first == text
+            else say("turnFailedService")
         )
         hint = say("turnFailedRetryLater")
         retryable = True
@@ -751,6 +753,11 @@ async def _consume_hook_event(
             )
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
+                # In a 支线 nobody has replied to yet, this line is the only
+                # thing in it: the main line reads its 支线 again, so the
+                # message it hangs under says the reply failed.
+                if inner_id is not None:
+                    await service.thread_replied(inner_id)
         elif event.text.strip():
             # Terminal output, the final response included, stays in
             # activity: a reply reaches the room only through chat_send,
@@ -1021,14 +1028,12 @@ async def _note_compaction(
 async def _running_compactions(
     sessions: async_sessionmaker, turn_id: uuid.UUID
 ) -> list[uuid.UUID]:
-    """The turn's compaction lines that still say it is compacting."""
+    """The turn's compaction records that still say it is compacting."""
     try:
         async with sessions() as session:
-            return await BlockRepository(session).running_notices(
-                turn_id, EVENT_CONTEXT_COMPACT
-            )
+            return await run_records.running(session, turn_id, EVENT_CONTEXT_COMPACT)
     except Exception:  # noqa: BLE001 — a status line is not worth a turn
-        logger.exception("could not read compaction lines of turn %s", turn_id)
+        logger.exception("could not read compaction records of turn %s", turn_id)
         return []
 
 
@@ -1098,56 +1103,35 @@ async def _keep_note(
     inner_id: uuid.UUID | None,
     channel: str,
 ) -> None:
-    """Land the turn's notice of this kind, or restate the one it has."""
-    from app.domain.agent.runtime import get_broker
-
-    block_id = notes.get(turn_id)
-    if block_id is not None:
-        await _restate_note(sessions, block_id, content, meta, channel)
+    """Keep the turn's record of this kind, or restate the one it has. A run
+    record, not a line in the conversation: the 现场 and the status above the
+    composer read it."""
+    record_id = notes.get(turn_id)
+    if record_id is not None:
+        await _restate_note(sessions, record_id, content, meta, channel)
         return
-    try:
-        async with sessions() as session:
-            block = await announce(
-                session,
-                place_id=topic_id,
-                content=content,
-                meta=meta,
-                # The agent whose turn this is: the notice is about its
-                # work, and 现场 files it under whoever did the work.
-                author=author or "system",
-                turn_id=turn_id,
-                task_id=inner_id,
-            )
-            if block is None:
-                return
-            payload = _block_payload(BlockOut.model_validate(block))
-            await session.commit()
-    except Exception:  # noqa: BLE001 — a status line is not worth a turn
-        logger.exception("could not note %s for turn %s", content, turn_id)
-        return
-    notes[turn_id] = uuid.UUID(payload["id"])
-    await get_broker().publish(channel, {"type": "event_block", "block": payload})
+    payload = await record_now(
+        sessions,
+        conversation_id=inner_id or topic_id,
+        content=content,
+        meta=meta,
+        turn_id=turn_id,
+        # The agent whose turn this is: the record is about its work, and the
+        # 现场 files it under whoever did the work.
+        seat=author,
+        channel=channel,
+    )
+    if payload is not None:
+        notes[turn_id] = uuid.UUID(payload["id"])
 
 
 async def _restate_note(
     sessions: async_sessionmaker,
-    block_id: uuid.UUID,
+    record_id: uuid.UUID,
     content: str,
     meta: dict,
     channel: str,
 ) -> None:
-    from app.domain.agent.runtime import get_broker
-
-    try:
-        async with sessions() as session:
-            block = await BlockRepository(session).restate(
-                block_id, content=content, meta=meta
-            )
-            if block is None:
-                return
-            payload = _block_payload(BlockOut.model_validate(block))
-            await session.commit()
-    except Exception:  # noqa: BLE001 — a status line is not worth a turn
-        logger.exception("could not restate notice %s", block_id)
-        return
-    await get_broker().publish(channel, {"type": "block_updated", "block": payload})
+    await restate_now(
+        sessions, record_id, content=content, meta=meta, channel=channel or None
+    )

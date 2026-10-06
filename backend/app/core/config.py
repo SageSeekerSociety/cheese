@@ -968,6 +968,9 @@ class Settings(BaseSettings):
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
+    # Run records (the 现场's platform lines, the admin page's errors) older
+    # than `run_record.models.RETENTION` are deleted this often. 0 disables.
+    run_record_expiry_interval_s: int = 3600
     # --- notifications and deadlines ---
     # Two jobs nothing in a request path can do. An undrained email queue is an
     # inbox that never receives; an unswept deadline is a promise the platform

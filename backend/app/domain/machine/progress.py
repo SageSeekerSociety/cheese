@@ -1,5 +1,10 @@
 """What a room is told about its sessions' sandboxes on cloud.
 
+Getting ready, waking, sleeping: those are the platform's own running, kept
+as run records (`run_record`) for the 现场, not said in the conversation.
+Only what a person has to act on is said there: a sandbox stopped for want of
+credits, an archive that could not be restored.
+
 A room hears about the sandbox (or the session's whole cloud VM), never the
 host under it: which machine a session landed on, and how that machine was
 opened, is the platform's own scheduling. Each line is written in the
@@ -15,11 +20,15 @@ from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.block.schemas import BlockOut
 from app.domain.machine.models import CloudHostHome
+from app.domain.run_record.service import FRAME as RUN_RECORD_FRAME
+from app.domain.run_record.service import as_payload as run_record_payload
+from app.domain.run_record.service import record as keep_record
 
 
 async def _line(
     session: AsyncSession, home: CloudHostHome, content: str, meta: dict
 ) -> dict | None:
+    """Say it in the conversation: a person has something to do."""
     block = await announce(
         session,
         place_id=home.topic_id,
@@ -29,6 +38,19 @@ async def _line(
     if block is None:
         return None
     return BlockOut.model_validate(block).model_dump(mode="json")
+
+
+async def _record(
+    session: AsyncSession, home: CloudHostHome, content: str, meta: dict
+) -> dict | None:
+    """Keep it as a run record of the conversation the sandbox is for."""
+    kept = await keep_record(
+        session,
+        conversation_id=home.topic_id,
+        content=content,
+        meta={"who": "platform", "home": str(home.id), **meta},
+    )
+    return run_record_payload(kept) if kept is not None else None
 
 
 async def tell_preparing(
@@ -41,7 +63,7 @@ async def tell_preparing(
     """The first line of a sandbox getting ready: being prepared, woken
     (``sandboxWaking``) or restored from its archive (``sandboxRestoring``).
     A session's whole cloud VM is only ever prepared."""
-    return await _line(
+    return await _record(
         session,
         home,
         say("cloudVmPreparing" if whole_machine else sentence),
@@ -52,7 +74,7 @@ async def tell_preparing(
 async def tell_ready(
     session: AsyncSession, home: CloudHostHome, whole_machine: bool = False
 ) -> dict | None:
-    return await _line(
+    return await _record(
         session,
         home,
         say("cloudVmReady" if whole_machine else "sandboxReady"),
@@ -68,7 +90,7 @@ async def tell_ready(
 async def tell_replaced(
     session: AsyncSession, home: CloudHostHome, whole_machine: bool = False
 ) -> dict | None:
-    return await _line(
+    return await _record(
         session,
         home,
         say("cloudVmReplaced" if whole_machine else "sandboxReplaced"),
@@ -79,7 +101,7 @@ async def tell_replaced(
 async def tell_asleep(
     session: AsyncSession, home: CloudHostHome, minutes: int
 ) -> dict | None:
-    return await _line(
+    return await _record(
         session,
         home,
         say("sandboxAsleep", minutes=minutes),
@@ -108,7 +130,7 @@ async def tell_archive_lost(session: AsyncSession, home: CloudHostHome) -> dict 
 async def tell_vm_released(
     session: AsyncSession, home: CloudHostHome, minutes: int
 ) -> dict | None:
-    return await _line(
+    return await _record(
         session,
         home,
         say("cloudVmReleasedIdle", minutes=minutes),
@@ -125,7 +147,12 @@ def _vm(whole_machine: bool) -> dict:
 async def publish_line(topic_id: uuid.UUID, payload: dict | None) -> None:
     from app.domain.agent.runtime import get_broker
 
-    if payload is not None:
+    if payload is None:
+        return
+    if payload.get("run_record"):
         await get_broker().publish(
-            str(topic_id), {"type": "event_block", "block": payload}
+            payload.get("conversation_id") or str(topic_id),
+            {"type": RUN_RECORD_FRAME, "record": payload},
         )
+        return
+    await get_broker().publish(str(topic_id), {"type": "event_block", "block": payload})

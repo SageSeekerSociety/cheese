@@ -26,6 +26,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
@@ -1331,12 +1332,24 @@ class RoomSessions:
         process is gone counts as the conversation's death only when it names
         the stored resume token (FB-56 legacy③); a runner that could not be
         asked is unknown, never dead.
+
+        A runner the machine says is gone is recorded on its placement, and no
+        later restart asks again: its death is the stored answer, until the
+        next message starts the session and places it afresh. Every deploy
+        restarts the backend, and asked each time, the same few hundred gone
+        runners made a burst of failed calls on every one.
         """
         # These answer for THIS round only — a conversation the last round
         # reached says nothing about this one. (The cumulative witness is
         # `dead`: a death once seen stays seen.)
         self.found_conversations.clear()
         self.terminal_conversations.clear()
+        asked_at = datetime.now(UTC)
+        placements = await self.channel.placed(self.harness, device_id)
+        for placed in placements:
+            if placed.let_go and placed.resume_token:
+                seat = self._seat_of(placed.session)
+                self.terminal_conversations.add((seat, placed.resume_token))
         found: list[tuple[SessionRef, CoreRef, Access, str | None, str]] = [
             (
                 placed.session,
@@ -1357,10 +1370,12 @@ class RoomSessions:
                 placed.resume_token,
                 placed.agent_handle,
             )
-            for placed in await self.channel.placed(self.harness, device_id)
+            for placed in placements
+            if not placed.let_go
         ]
         await self.host.adopt([(ref, access) for _, ref, access, _, _ in found])
         recovered: list[SessionRef] = []
+        gone: list[SessionRef] = []
         for session, ref, access, resume_token, acting in found:
             seat = self._seat_of(session)
             room_id = session.topic_id
@@ -1374,6 +1389,8 @@ class RoomSessions:
             if status is None:
                 continue
             if not status.alive:
+                if status.runner_gone:
+                    gone.append(session)
                 # A runner that is gone ran the placement's stored
                 # conversation; one that answered names its own.
                 if resume_token and (
@@ -1400,6 +1417,8 @@ class RoomSessions:
                 self.clocks[seat] = Clock(opened=now, progressed=now)
             self.unchecked.add(seat)
             recovered.append(session)
+        if gone:
+            await self.channel.let_go(gone, placed_before=asked_at)
         # Chat restores room bookkeeping before replay starts reading.
         return recovered
 

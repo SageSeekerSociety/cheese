@@ -87,7 +87,7 @@
     "scope": "Scope",
     "scopeRoom": "This channel only",
     "scopeProject": "Whole project",
-    "machineNote": "The AI teammate's work computer must be online to start. Projects on the cloud can start any time; for projects on your own device, a run waits while the device is offline and is marked failed, with a notification, if it hasn't started within two hours"
+    "machineNote": "The AI teammate's environment must be online to start. Projects on the cloud can start any time; for projects on your own device, a run waits while the device is offline and is marked failed, with a notification, if it hasn't started within two hours"
   },
   "deleteTitle": "Delete “{title}”",
   "deleteBody": "It stops running and its run history is deleted too; result files already in the channel are kept",

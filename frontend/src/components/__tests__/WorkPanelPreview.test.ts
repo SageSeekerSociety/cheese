@@ -85,10 +85,11 @@ function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
 }
 
+// 预览只长在任务上：面板画的是房间 topic-A 里的任务 task-1，预览问的也是它。
 function mountPanel(working = false) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
-    props: { topic: topic('topic-A'), activityTick: 0, working },
+    props: { topic: topic('topic-A'), taskId: 'task-1', activityTick: 0, working },
     global: { plugins: [vuetify, i18n] },
   })
 }
@@ -203,7 +204,7 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     expect(frame?.getAttribute('name')).toBeTruthy()
     expect(HTMLFormElement.prototype.submit).toHaveBeenCalledOnce()
     // 授权先落地，否则 iframe 的第一个请求就 404 —— 白框。
-    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A', undefined)
+    expect(requestPreviewSession).toHaveBeenCalledWith('task-1', undefined)
     // The named form targets an isolated content origin, so storage can work.
     expect(frame?.getAttribute('sandbox')).toContain('allow-same-origin')
   })
@@ -226,7 +227,7 @@ describe('预览面板：文件读回来了但没有内容', () => {
 
     expect(container.textContent).not.toContain('太大')
     expect(container.querySelector('iframe.preview-frame')).toBeTruthy()
-    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A', {
+    expect(requestPreviewSession).toHaveBeenCalledWith('task-1', {
       artifact_id: 'a1',
       path: 'report.html',
       version: undefined,
@@ -269,7 +270,7 @@ describe('预览面板：刷新', () => {
     const callsBefore = getPreview.mock.calls.length
 
     // 一轮结束 → 面板重新拉一次。
-    await rerender({ topic: topic('topic-A'), activityTick: 0, working: false })
+    await rerender({ topic: topic('topic-A'), taskId: 'task-1', activityTick: 0, working: false })
     await flush()
 
     expect(getPreview.mock.calls.length).toBeGreaterThan(callsBefore)
@@ -284,7 +285,7 @@ describe('预览面板：刷新', () => {
     await flush()
     await openPreview(container)
     const frame = container.querySelector('iframe.preview-frame')
-    await rerender({ topic: topic('topic-A'), activityTick: 0, working: false })
+    await rerender({ topic: topic('topic-A'), taskId: 'task-1', activityTick: 0, working: false })
     await flush()
     expect(container.querySelector('iframe.preview-frame')).not.toBe(frame)
     expect(HTMLFormElement.prototype.submit).toHaveBeenCalledTimes(2)
@@ -308,7 +309,7 @@ describe('预览面板：有新内容', () => {
       mime: 'text/html',
       artifact_id: 'a2',
     })
-    await rerender({ topic: topic('topic-A'), activityTick: 0, working: false })
+    await rerender({ topic: topic('topic-A'), taskId: 'task-1', activityTick: 0, working: false })
     await flush()
 
     expect(previewButton(container).getAttribute('title')).toContain('有新内容')
@@ -331,7 +332,7 @@ describe('预览面板：芝士摆出来时立刻跟上', () => {
 
   it('路由守卫已经问过的那一份，挂上来时先读它——不再多发一条请求', async () => {
     // 守卫先起头的效果：面板挂上来时，答案已经在缓存里。
-    setPreviewPointer('topic-A', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    setPreviewPointer('task-1', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
     const { container } = mountPanel()
     await flush()
     // 面板读到了缓存里那一份：没有为它再问一次。
@@ -342,7 +343,7 @@ describe('预览面板：芝士摆出来时立刻跟上', () => {
 
   it('守卫先问过的那一份，开预览时直接拿来渲染——不再等一轮网络', async () => {
     // 路由守卫已经替这个房间把指针取回来了（lib/previewPointer.ts）：答案在手边。
-    setPreviewPointer('topic-A', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    setPreviewPointer('task-1', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
     readFile.mockResolvedValue({ path: 'report.html', content: '<p>cached</p>' })
     const { container } = mountPanel()
     await flush()
@@ -352,7 +353,7 @@ describe('预览面板：芝士摆出来时立刻跟上', () => {
     // 之后，守卫先起头就白起了）。
     expect(getPreview).not.toHaveBeenCalled()
     // 而且它真按缓存里那份指针去读了内容，不是空态。
-    expect(readFile).toHaveBeenCalledWith('topic-A')
+    expect(readFile).toHaveBeenCalledWith('task-1')
   })
 
   it('同一份东西被重复摆一次：指针没换就不多取一次预览、不惊动别的格', async () => {

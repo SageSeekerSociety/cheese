@@ -87,12 +87,12 @@ describe('project work computer settings', () => {
     const row = await mount()
 
     expect(row.textContent).toContain('新 AI 队友默认使用')
-    expect(row.textContent).toContain('云端沙箱')
-    expect(screen.getByText('只影响尚未开始运行的 AI 队友，已在运行的继续用原来的工作电脑')).toBeTruthy()
+    expect(row.textContent).toContain('云端环境')
+    expect(screen.getByText('只影响尚未开始运行的 AI 队友，已在运行的继续用原来的环境')).toBeTruthy()
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('当前分布')).toBeTruthy()
-    expect(distribution.getByText(/云端沙箱 · 3 个 AI 队友/)).toBeTruthy()
-    expect(distribution.getByText(/实验室工作站 · 2 个 AI 队友 · 能访问整台机器/)).toBeTruthy()
+    expect(distribution.getByText(/云端环境 · 3 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/实验室工作站 · 2 个 AI 队友 · 能访问整台电脑/)).toBeTruthy()
     expect(screen.queryByText(/常用/)).toBeNull()
   })
 
@@ -101,7 +101,7 @@ describe('project work computer settings', () => {
     await mount()
 
     const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText(/云端沙箱 · 1 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/云端环境 · 1 个 AI 队友/)).toBeTruthy()
     expect(distribution.getByText(/整台云虚拟机 · 2 个 AI 队友/)).toBeTruthy()
   })
 
@@ -122,7 +122,7 @@ describe('project work computer settings', () => {
     await mount()
 
     const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('Cloud sandbox · 1 agent')).toBeTruthy()
+    expect(distribution.getByText('Cloud environment · 1 agent')).toBeTruthy()
     expect(distribution.getByText('Lab · 1 agent')).toBeTruthy()
     expect(distribution.getByText('Rig · 2 agents')).toBeTruthy()
   })
@@ -145,7 +145,7 @@ describe('project work computer settings', () => {
     )
     const row = await mount()
 
-    expect(row.textContent).toContain('Cloud sandbox')
+    expect(row.textContent).toContain('Cloud environment')
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('实验室工作站 · 2 agents')).toBeTruthy()
     expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
@@ -165,7 +165,7 @@ describe('project work computer settings', () => {
     )
     const row = await mount()
 
-    expect(row.textContent).toContain('Cloud sandbox')
+    expect(row.textContent).toContain('Cloud environment')
     expect(row.textContent).not.toContain('云端')
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
@@ -179,7 +179,7 @@ describe('project work computer settings', () => {
     await mount()
 
     await fireEvent.click(screen.getByRole('button', { name: '更换' }))
-    await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
+    await fireEvent.mouseDown(screen.getByLabelText('自有设备'))
     await fireEvent.click(await screen.findByRole('option', { name: /^云端/ }))
     await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
 
@@ -204,7 +204,7 @@ describe('project work computer settings', () => {
     await mount()
 
     await fireEvent.click(screen.getByRole('button', { name: '更换' }))
-    await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
+    await fireEvent.mouseDown(screen.getByLabelText('自有设备'))
     await fireEvent.click(await screen.findByRole('option', { name: /实验室工作站/ }))
     await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
 
@@ -220,7 +220,7 @@ describe('project work computer settings', () => {
     await mount()
 
     expect(screen.queryByRole('button', { name: '更换' })).toBeNull()
-    expect(screen.getByText('仅项目负责人可更换默认工作电脑')).toBeTruthy()
+    expect(screen.getByText('仅项目负责人可更换默认环境')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '查看并更换…' })).toBeNull()
   })
 

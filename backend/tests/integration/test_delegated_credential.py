@@ -32,7 +32,7 @@ from tests.support.living_doc import document_of
 
 def _credential(
     client,
-    room: str,
+    task: str,
     *,
     asker: str = "bob",
     agent: str | None = None,
@@ -41,23 +41,23 @@ def _credential(
     work: str | None = None,
 ) -> str:
     project = client.get(
-        f"/topics/{room}", headers=session_auth_headers("alice")
+        f"/topics/{task}/task", headers=session_auth_headers("alice")
     ).json()["data"]["project_id"]
     return mint_delegated_credential(
         user_id=None,
         handle=asker,
         agent=agent,
         project_id=project,
-        topic_id=room,
+        topic_id=task,
         work=work or str(uuid.uuid4()),
         read_only=read_only,
         ttl_s=ttl_s,
     )
 
 
-def _path(client, room: str) -> str:
-    """The room's document, as its routes address it."""
-    return f"/documents/{document_of(client, room)}"
+def _path(client, task: str) -> str:
+    """The task's document, as its routes address it."""
+    return f"/documents/{document_of(client, task)}"
 
 
 def _as(token: str) -> dict:
@@ -66,21 +66,21 @@ def _as(token: str) -> dict:
     return {"X-Cheese-Token": token}
 
 
-def _edit(client, room: str, token: str):
+def _edit(client, task: str, token: str):
     return client.post(
-        f"{_path(client, room)}/edits",
+        f"{_path(client, task)}/edits",
         json={"edits": [{"old": "讲范围", "new": "讲边界"}]},
         headers=_as(token),
     )
 
 
 def test_it_reads_what_the_asker_may_read(client):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
 
-    own = client.get(_path(client, room), headers=_as(_credential(client, room)))
+    own = client.get(_path(client, task), headers=_as(_credential(client, task)))
     stranger = client.get(
-        _path(client, room),
-        headers=_as(_credential(client, room, asker="mallory")),
+        _path(client, task),
+        headers=_as(_credential(client, task, asker="mallory")),
     )
 
     assert own.status_code == 200, own.text
@@ -124,32 +124,32 @@ def test_it_lists_only_the_askers_own_tasks(client):
 
 
 def test_it_opens_only_the_routes_that_accept_it(client):
-    room, _ = _document(client)
-    token = _credential(client, room, read_only=False)
+    task, _, _ = _document(client)
+    token = _credential(client, task, read_only=False)
 
     message = client.post(
-        f"/topics/{room}/messages",
+        f"/topics/{task}/messages",
         json={"content": "我替 bob 说一句", "request_id": str(uuid.uuid4())},
         headers=_as(token),
     )
-    members = client.get(f"/topics/{room}/members", headers=_as(token))
+    members = client.get(f"/topics/{task}/members", headers=_as(token))
 
     assert message.status_code == 403
     assert members.status_code == 403
 
 
 def test_it_acts_only_where_it_was_minted(client):
-    room, _ = _document(client)
-    elsewhere, _ = _document(client)
+    task, _, _ = _document(client)
+    elsewhere, _, _ = _document(client)
     nowhere = mint_delegated_credential(
         user_id=None, handle="bob", work=str(uuid.uuid4()), ttl_s=300
     )
 
     other_room = client.get(
-        _path(client, elsewhere), headers=_as(_credential(client, room))
+        _path(client, elsewhere), headers=_as(_credential(client, task))
     )
-    no_room = client.get(_path(client, room), headers=_as(nowhere))
-    unbound = client.get("/tasks/joined", headers=_as(_credential(client, room)))
+    no_room = client.get(_path(client, task), headers=_as(nowhere))
+    unbound = client.get("/tasks/joined", headers=_as(_credential(client, task)))
 
     assert other_room.status_code == 403
     assert no_room.status_code == 403
@@ -159,28 +159,28 @@ def test_it_acts_only_where_it_was_minted(client):
 def test_a_question_that_may_only_be_answered_changes_nothing(
     client,
 ):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
 
-    r = _edit(client, room, _credential(client, room, agent=seat, read_only=True))
+    r = _edit(client, task, _credential(client, task, agent=seat, read_only=True))
 
     assert r.status_code == 403
-    assert ALICE_PARAGRAPH in _doc(client, room)["content"]
+    assert ALICE_PARAGRAPH in _doc(client, task)["content"]
 
 
 def test_an_edit_is_the_agents_at_the_askers_request_and_noted_under_the_answer(
     client,
 ):
-    room, seat = _document(client)
+    task, seat, _ = _document(client)
     work = str(uuid.uuid4())
 
     r = _edit(
-        client, room, _credential(client, room, agent=seat, read_only=False, work=work)
+        client, task, _credential(client, task, agent=seat, read_only=False, work=work)
     )
 
     assert r.status_code == 200, r.text
-    assert "李老师写的第二段，讲边界。" in _doc(client, room)["content"]
+    assert "李老师写的第二段，讲边界。" in _doc(client, task)["content"]
     latest = client.get(
-        f"{_path(client, room)}/history", headers=session_auth_headers("alice")
+        f"{_path(client, task)}/history", headers=session_auth_headers("alice")
     ).json()["data"]["versions"][-1]
     assert latest["actor"] == seat and latest["requested_by"] == "bob"
 
@@ -195,14 +195,14 @@ def test_an_edit_is_the_agents_at_the_askers_request_and_noted_under_the_answer(
 
 
 def test_an_expired_or_forged_credential_is_none(client):
-    room, seat = _document(client)
-    expired = _credential(client, room, ttl_s=-1)
-    live = _credential(client, room)
+    task, seat, _ = _document(client)
+    expired = _credential(client, task, ttl_s=-1)
+    live = _credential(client, task)
     body, signature = live.split(".", 1)
     forged = f"{body}.{signature[::-1]}"
 
     for token in (expired, forged):
-        r = client.get(_path(client, room), headers=_as(token))
+        r = client.get(_path(client, task), headers=_as(token))
         assert r.status_code == 401, token
     model = client.post(
         "/llm/v1/chat/completions",

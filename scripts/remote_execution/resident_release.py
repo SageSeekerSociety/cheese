@@ -108,7 +108,8 @@ def main():
             )
             assert released
             count = hub.calls
-            assert not await channel._refresh_resident(
+            # Already on this release: settled, and nothing asked of the session.
+            assert await channel._refresh_resident(
                 screen,
                 str(home),
                 state,

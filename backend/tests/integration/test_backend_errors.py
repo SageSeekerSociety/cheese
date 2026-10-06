@@ -4,7 +4,9 @@ Two ways in, one intake:
 - ``POST /api/backend-errors`` — a process that crashed pushes its own failure.
 - the ``report_unhandled_to_room`` middleware — this app pushing ITSELF.
 
-Both must land as event blocks a human reads as one line and 芝士 reads whole.
+Both are kept as run records for the admin page — a line a person reads at a
+glance and the whole stack behind it — and never said in the room they
+happened in: the people there are not who reads the platform's own errors.
 """
 
 import time
@@ -12,9 +14,11 @@ import uuid
 
 import pytest
 from fastapi import APIRouter
+from sqlalchemy import select
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain import backend_log
+from app.domain.run_record.models import RunRecord
 from app.main import app
 from tests.integration.conftest import post_project
 
@@ -64,13 +68,29 @@ def _make_topic(client, project_id: str) -> str:
 
 
 def _backend_events(client, topic_id: str) -> list[dict]:
+    """The errors kept for `topic_id`, after checking the room says none."""
     r = client.get(f"/topics/{topic_id}/blocks")
     assert r.status_code == 200
-    return [
+    assert not [
         b
         for b in r.json()["data"]["data"]
         if (b.get("meta") or {}).get("event_type") == "backend_error"
     ]
+
+    async def read() -> list[dict]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(RunRecord)
+                .where(RunRecord.kind == "backend_error")
+                .order_by(RunRecord.created_at)
+            )
+            return [
+                {"content": r.content, "meta": r.meta, "project": r.project_id}
+                for r in rows
+                if (r.meta or {}).get("conversation") == topic_id
+            ]
+
+    return client.portal.call(read)
 
 
 def _post(client, errors, *, token=None, **body):
@@ -83,7 +103,7 @@ def _post(client, errors, *, token=None, **body):
 # --- the push intake -------------------------------------------------------
 
 
-def test_reported_error_lands_in_the_topic_timeline(client):
+def test_a_reported_error_is_kept_with_its_room_and_not_said_there(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
 
@@ -123,9 +143,9 @@ def test_report_without_a_topic_falls_back_to_the_project_root(client):
     assert r.json()["data"]["accepted"] == 1
 
 
-def test_a_flood_through_the_endpoint_produces_one_block(client):
+def test_a_flood_through_the_endpoint_produces_one_record(client):
     """The acceptance criterion, end to end: 800 identical failures pushed in,
-    a room that stays readable."""
+    one record kept."""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     token = mint_scoped_token(project_id=pid, topic_id=tid)
@@ -147,7 +167,7 @@ def test_a_flood_through_the_endpoint_produces_one_block(client):
 
 def test_distinct_errors_are_capped_per_project(client):
     """Even a project inventing a brand-new error every time cannot flood the
-    room past the hourly ceiling."""
+    records past the hourly ceiling."""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     token = mint_scoped_token(project_id=pid, topic_id=tid)
@@ -199,19 +219,28 @@ def test_unauthenticated_report_is_rejected(client):
     assert _backend_events(client, tid) == []
 
 
-def test_unknown_room_is_404(client):
-    r = _post(
-        client,
-        [{"message": "x"}],
-        token=mint_scoped_token(project_id=str(uuid.uuid4())),
-    )
-    assert r.status_code == 404
+def test_a_report_naming_no_real_project_is_kept_without_one(client):
+    unknown = str(uuid.uuid4())
+    r = _post(client, [{"message": "x"}], token=mint_scoped_token(project_id=unknown))
+    assert r.status_code == 200
+
+    async def read():
+        async with client.test_factory() as session:
+            return list(
+                await session.scalars(
+                    select(RunRecord.project_id).where(
+                        RunRecord.kind == "backend_error"
+                    )
+                )
+            )
+
+    assert client.portal.call(read) == [None]
 
 
 # --- the app reporting itself ---------------------------------------------
 
 
-def test_unhandled_route_exception_becomes_a_block_in_that_topic(
+def test_an_unhandled_route_exception_is_kept_with_its_room(
     in_process_db, crashing_route
 ):
     client = in_process_db
@@ -235,7 +264,7 @@ def test_unhandled_route_exception_becomes_a_block_in_that_topic(
     assert stack.endswith("RuntimeError: kaboom in a route\n")
 
 
-def test_repeated_crashes_of_one_route_still_produce_one_block(
+def test_repeated_crashes_of_one_route_still_produce_one_record(
     in_process_db, crashing_route
 ):
     client = in_process_db
@@ -253,8 +282,8 @@ def test_a_flood_that_stopped_gets_its_count_when_the_window_closes(
     in_process_db,
 ):
     """End to end for the case a recurrence-driven summary could never reach:
-    800 failures, then silence because it was fixed. The room must still learn
-    the number — that is what says how bad it was."""
+    800 failures, then silence because it was fixed. The records must still
+    hold the number — that is what says how bad it was."""
     client = in_process_db
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -263,7 +292,7 @@ def test_a_flood_that_stopped_gets_its_count_when_the_window_closes(
 
     for _ in range(80):
         _post(client, [err] * 10, token=token)
-    assert len(_backend_events(client, tid)) == 1  # the flood itself stays one line
+    assert len(_backend_events(client, tid)) == 1  # the flood itself stays one
 
     # …and then nothing else ever fails. The clock is what closes the window.
     written = client.portal.call(
@@ -296,8 +325,8 @@ def test_flushing_with_nothing_expired_writes_nothing(in_process_db):
 
 
 def test_expected_4xx_is_not_an_incident(in_process_db):
-    """Business-expected errors are normal flow. A 404 from a real route must
-    leave the room untouched."""
+    """Business-expected errors are normal flow. A 404 from a real route is
+    not kept."""
     client = in_process_db
     pid = _make_project(client)
     tid = _make_topic(client, pid)

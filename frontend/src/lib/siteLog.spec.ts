@@ -12,6 +12,7 @@ import {
   countLines,
   eventArg,
   eventVerb,
+  groupByTurn,
   isLongSiteEntry,
   middleTruncate,
   overflowsClamp,
@@ -109,32 +110,6 @@ describe('打开现场要真的落到底，不是「试过一次」', () => {
   })
 })
 
-describe('前端报错那一行', () => {
-  const block = {
-    id: 'e1',
-    conversation_id: 't1',
-    kind: 'event',
-    author_type: 'platform',
-    author: 'frontend',
-    content: '前端报错（/projects/p1/topics/t1）',
-    meta: {
-      event_type: 'frontend_error',
-      page: '/projects/p1/topics/t1',
-      stack: 'TypeError: Failed to fetch dynamically imported module\n    at load (x.js:1:1)',
-    },
-  } as unknown as Block
-
-  it('动词是一个短词，报错本身落在参数那一列', () => {
-    expect(eventVerb(block)).toBe('前端报错')
-    expect(eventArg(block)).toBe('TypeError: Failed to fetch dynamically imported module')
-  })
-
-  it('没有堆栈时参数是出错的页面', () => {
-    const bare = { ...block, meta: { event_type: 'frontend_error', page: '/projects/p1' } } as unknown as Block
-    expect(eventArg(bare)).toBe('/projects/p1')
-  })
-})
-
 describe('折叠到底剪的是什么', () => {
   // 折叠用 max-height 的量法：正文比 12 行高就算被剪了。这一条正是 #2604 的病根
   // —— 正文里有块级 <pre> 时 -webkit-line-clamp 整个失效，量出来的高度就是全文
@@ -178,5 +153,35 @@ describe('参数那一列的中间省略', () => {
     expect(Array.from(out).join('')).toBe(out)
     // 没有落单的代理码元。
     expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out)).toBe(false)
+  })
+})
+
+describe('现场里平台记下的事', () => {
+  const record = {
+    id: 'r1',
+    conversation_id: 't1',
+    kind: 'event',
+    author_type: 'platform',
+    author: 'system',
+    content: '沙箱 10 分钟没有活动，已休眠',
+    meta: { event_type: 'sandbox_asleep', who: 'platform' },
+    created_at: '2026-10-06T10:00:00Z',
+  } as unknown as Block
+
+  it('动词写它是哪一类事，正文是那一句话', () => {
+    expect(eventVerb(record)).toBe('环境')
+    expect(eventArg(record)).toBe('沙箱 10 分钟没有活动，已休眠')
+  })
+
+  it('不属于哪一轮的那一条只占一行，不和前后的轮次混成一组', () => {
+    const step = {
+      ...record,
+      id: 's1',
+      turn_id: 'turn-1',
+      run_record: false,
+      meta: { tool: 'Bash' },
+    } as unknown as Block
+    const turns = groupByTurn([step, record])
+    expect(turns.map((turn) => turn.loose)).toEqual([false, true])
   })
 })

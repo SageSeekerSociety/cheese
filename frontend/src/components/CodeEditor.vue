@@ -127,10 +127,16 @@ function defineCheesexTheme(monaco: typeof Monaco, dark: boolean) {
 
 const { isDark } = useAppTheme()
 
-const props = withDefaults(defineProps<{ modelValue: string; filename?: string; readonly?: boolean }>(), {
-  filename: '',
-  readonly: false,
-})
+const props = withDefaults(
+  defineProps<{
+    modelValue: string
+    filename?: string
+    readonly?: boolean
+    /** 一枚带行号的 chip 指着的那几行：滚到中间并选中，选区的底色就是标记。 */
+    lines?: { start: number; end: number } | null
+  }>(),
+  { filename: '', readonly: false, lines: null }
+)
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void
   (e: 'save'): void
@@ -206,7 +212,16 @@ onMounted(async () => {
   })
   // ⌘/Ctrl-S saves without the browser's save dialog.
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => emit('save'))
+  showLines()
 })
+
+function showLines() {
+  const lines = props.lines
+  if (!editor || !lines) return
+  editor.setSelection({ startLineNumber: lines.start, startColumn: 1, endLineNumber: lines.end + 1, endColumn: 1 })
+  editor.revealLinesInCenter(lines.start, lines.end)
+}
+watch(() => props.lines, showLines)
 
 // Follow the app theme. The CSS variables have already changed by the time this
 // fires (they hang off <html data-theme>), so re-resolving them here is enough —
@@ -228,6 +243,7 @@ watch(
     const model = editor.getModel()
     if (model) monaco.editor.setModelLanguage(model, langFor(props.filename))
     applying = false
+    showLines()
   }
 )
 // External content change that didn't come from typing (e.g. reload).

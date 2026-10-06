@@ -121,6 +121,7 @@ from app.domain.agent.platform_notices import (
     EVENT_MCP_NOT_CONNECTED,
     SEVERITY_WARN,
     WHO_HUMAN,
+    delivery_checking_notice,
     delivery_fallback_notice,
     notice,
 )
@@ -140,7 +141,6 @@ from app.domain.agent.prompt import (
     _pending_input_blocks,
     _progress_lines,  # noqa: F401
     _prompt_topic_refs,  # noqa: F401
-    project_overview,
 )
 
 # 兼容门面：不碰实例状态的问答（这一轮谁答、项目 key 带多少额度、这条记忆改动
@@ -661,13 +661,10 @@ class ChatService(SessionRecovery, RoomTurns):
                 attachments,
             )
             if isinstance(delivered, InputReconciliationPending):
-                payload = await self.post_system_event(
-                    topic_id,
-                    "输入已登记，发送结果正在核对；不会重复发送",
-                    turn_id,
+                checking, checking_meta = delivery_checking_notice()
+                await self.post_system_event(
+                    topic_id, checking, turn_id, meta=checking_meta
                 )
-                if payload is not None:
-                    yield {"type": "event_block", "block": payload}
                 return
             if delivered is True:
                 # The answer streams out of the turn already in flight, which
@@ -682,11 +679,9 @@ class ChatService(SessionRecovery, RoomTurns):
                 delivered,
             )
             fallback_text, fallback_meta = delivery_fallback_notice()
-            fallback = await self.post_system_event(
+            await self.post_system_event(
                 topic_id, fallback_text, turn_id, meta=fallback_meta
             )
-            if fallback is not None:
-                yield {"type": "event_block", "block": fallback}
 
         recipient_handle = None
         if recipient_instance_id is not None:
@@ -2742,32 +2737,6 @@ class ChatService(SessionRecovery, RoomTurns):
             turn_id=turn_id,
             session=session,
             text=text,
-        )
-
-    async def _project_overview(
-        self,
-        session: AsyncSession,
-        *,
-        project: Project,
-        conversation_id: uuid.UUID,
-        room_doc: str | None,
-        overview_doc: str | None,
-        all_topics: list[Topic],
-        roster: list[dict],
-    ) -> str:
-        """一行委托：拼总览的那段是纯的，住在 `agent/prompt.py` 的 project_overview。
-
-        留这个方法当接缝：它唯一的调用点（`_assemble_turn`）和驱动这个服务的测试
-        都照原来的样子读，搬动只换了实现住在哪个文件。
-        """
-        return await project_overview(
-            session,
-            project=project,
-            conversation_id=conversation_id,
-            room_doc=room_doc,
-            overview_doc=overview_doc,
-            all_topics=all_topics,
-            roster=roster,
         )
 
 

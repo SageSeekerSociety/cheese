@@ -42,24 +42,26 @@ async function openDoc(page: Page, content: string) {
     project_id: projectId,
     title: `大纲查找 ${Date.now()}`,
   })) as { id: string };
-  const roomDoc = (await api(page, 'get', `/topics/${room.id}/document`)) as { id: string };
+  // 频道没有自己的文档：实况文档是任务的。
+  const task = (await api(page, 'post', `/topics/${room.id}/tasks`, { title: '文档' })) as { id: string };
+  const roomDoc = (await api(page, 'get', `/topics/${task.id}/document`)) as { id: string };
   await api(page, 'put', `/documents/${roomDoc.id}`, {
     content,
     expected_version: 0,
   });
 
-  await page.goto(`/projects/${projectId}/topics/${room.id}`);
+  await page.goto(`/projects/${projectId}/topics/${room.id}/tasks/${task.id}?tab=overview`);
   const prose = page.locator('.work-panel .doc-editor .doc-prose');
   await expect(prose).toBeVisible({ timeout: 30_000 });
   // 顶栏那两颗按钮在文档加载完（loading 落下去）之后才出现，等大纲那颗就够。
-  await expect(page.getByRole('button', { name: '大纲' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: '大纲', exact: true })).toBeVisible({ timeout: 30_000 });
   return prose;
 }
 
 test('顶栏的大纲列出正文标题，点一条带进视野后菜单收起', async ({ page }) => {
   await openDoc(page, HEADED_DOC);
 
-  await page.getByRole('button', { name: '大纲' }).click();
+  await page.getByRole('button', { name: '大纲', exact: true }).click();
   const outline = page.locator('.doc-outline');
   await expect(outline).toBeVisible();
   // 三条标题（h1–h3）都在，且按出现顺序。
@@ -75,7 +77,7 @@ test('顶栏的大纲列出正文标题，点一条带进视野后菜单收起',
 
 test('没有标题的文档，大纲给一句空态', async ({ page }) => {
   await openDoc(page, PLAIN_DOC);
-  await page.getByRole('button', { name: '大纲' }).click();
+  await page.getByRole('button', { name: '大纲', exact: true }).click();
   await expect(page.locator('.doc-outline')).toBeVisible();
   await expect(page.getByText('这篇文档还没有标题')).toBeVisible();
 });

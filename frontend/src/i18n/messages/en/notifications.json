@@ -137,7 +137,7 @@
   "DEVICE_IN_USE": {
     "title": "{agent} started working on {device}",
     "body": "{project} · {room}",
-    "wholeMachine": "Can access the whole machine"
+    "wholeMachine": "Can access the whole computer"
   },
   "SPACE_ANNOUNCEMENT": {
     "tag": "Announcement",
