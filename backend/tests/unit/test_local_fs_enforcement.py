@@ -13,6 +13,9 @@ thing that looks right and behaves wrong:
 import uuid
 from datetime import UTC, datetime
 
+import httpx
+import pytest
+
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.local_fs.enforcement import (
     PushOutcome,
@@ -137,6 +140,41 @@ async def test_a_machine_that_answers_badly_is_reported_not_raised():
     assert outcome.delivered is False
     assert outcome.reason == "device_error"
     assert outcome.needs_retry is True
+
+
+async def test_a_machine_that_does_not_answer_is_reported_not_raised():
+    service = service_with(InMemoryLocalFsRepository())
+    link = FakeLink(raises=TimeoutError())
+    outcome = await push_grants(service, link, DEVICE)
+
+    assert outcome.delivered is False
+    assert outcome.reason == "device_error"
+
+
+async def test_an_unreachable_connection_owner_is_reported_not_raised():
+    service = service_with(InMemoryLocalFsRepository())
+    link = FakeLink(
+        raises=httpx.ConnectError("refused: http://owner:8082/internal/call")
+    )
+    outcome = await push_grants(service, link, DEVICE)
+
+    assert outcome.delivered is False
+    assert outcome.reason == "platform_error"
+    # The owner's address is the platform's own; the person reads this.
+    assert "owner:8082" not in outcome.detail
+
+
+async def test_a_fault_in_this_code_is_raised_not_blamed_on_the_machine():
+    """A bug on this side is not something the machine said.
+
+    Reported as one, it read to the owner of the directory as 「下发给这台电脑时
+    出错」 on every grant, and to nobody else at all.
+    """
+    service = service_with(InMemoryLocalFsRepository())
+    link = FakeLink(raises=AttributeError("push_local_fs_grants"))
+
+    with pytest.raises(AttributeError):
+        await push_grants(service, link, DEVICE)
 
 
 async def test_a_delivered_set_is_not_retried():
