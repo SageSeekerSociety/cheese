@@ -715,7 +715,7 @@ class TestTaskSubmissionEntryRepository:
 
         await repo.create_entries(
             submission_id=1,
-            entries=[(0, "text content", None), (1, None, 100)],
+            entries=[(0, "text content", None, "Essay"), (1, None, 100, None)],
         )
         assert session.add.call_count == 2
         session.flush.assert_awaited_once()

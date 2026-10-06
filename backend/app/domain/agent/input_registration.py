@@ -85,8 +85,6 @@ async def confirm_receipt(chat, receipt) -> None:
         await session.commit()
     if receipt.evidence != "native_echo":
         return
-    # Echo commits before a waiting correction re-enters normal admission.
-    chat.nudge_ask_receipts(receipt.identity)
     pending = chat._unread_inputs.get(receipt.identity.conversation_id)
     if pending is not None:
         pending.pop(receipt.identity.input_id, None)

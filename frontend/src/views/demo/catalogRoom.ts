@@ -19,7 +19,8 @@
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import AskTakeoverDemo from './AskTakeoverDemo.vue'
+import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
+
 import { AGENT_NAME } from './catalogFixtures'
 
 import ComposerActions from '@/components/room/ComposerActions.vue'
@@ -101,6 +102,27 @@ const ACTIONS_BASE = {
   summonOn: false,
   summonReady: true,
   agentName: AGENT_NAME,
+}
+
+/** 芝士问的一道题，`answer_log` 由各格给。 */
+function askBlock(answerLog: Record<string, unknown>[]) {
+  return {
+    id: 'demo-question',
+    topic_id: 'demo-room',
+    kind: 'message',
+    author: 'cheese',
+    author_type: 'participant',
+    content: '预算按哪个口径统计？',
+    created_at: '2026-10-05T09:00:00Z',
+    meta: {
+      options: [
+        { text: '按部门 (Recommended)', explain: '和去年的报表对得上' },
+        { text: '按项目', explain: '每个项目一张表' },
+      ],
+      asked: 'alice',
+      answer_log: answerLog,
+    },
+  }
 }
 
 export const ROOM_ENTRIES: CatalogEntry[] = [
@@ -249,27 +271,32 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
   },
 
   {
-    id: 'ask-takeover',
-    title: 'AskTakeoverDemo',
-    about: '提问接管输入框：有题要答时输入框那一格画的是提问面板，答完它自己回来；Esc 收起后靠一条提示收回。',
-    file: 'src/views/demo/AskTakeoverDemo.vue',
-    component: AskTakeoverDemo,
+    id: 'ask-quick-replies',
+    title: 'AskQuickReplies',
+    about:
+      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」。输入框始终在，不被它占用。',
+    file: 'src/components/ask/AskQuickReplies.vue',
+    component: AskQuickReplies,
     needs: UI_T,
     states: [
       {
-        name: '一组两题，正在接管',
-        note: '按真实聊天栏的尺寸摆：上面是对话区、下面是输入那一格。这一格里的「输入框」其实是提问面板。',
-        props: { questions: 2 },
+        name: '刚问出来',
+        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。',
+        props: {
+          block: askBlock([]),
+          names: {},
+        },
       },
       {
-        name: '只剩一题',
-        note: '一题时不画 i of N 的前后按钮。',
-        props: { questions: 1 },
-      },
-      {
-        name: '收起之后',
-        note: 'Esc 只收起当前这一组，输入框上方出现「有 N 个问题待回答」，点它把面板叫回来。',
-        props: { questions: 2, dismissed: true },
+        name: '有人答过了',
+        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。',
+        props: {
+          block: askBlock([
+            { kind: 'option', option: '按部门', note: null, by: 'alice', at: null },
+            { kind: 'note', option: null, note: '外包单列一栏', by: 'bob', at: null },
+          ]),
+          names: { alice: 'Alice', bob: 'Bob' },
+        },
       },
     ],
   },

@@ -141,10 +141,6 @@ class _FakeBackend:
         # 这个 double 的会话不存记忆文件：「这里没有」而不是「失败了」。
         return None
 
-    async def ask_origin(self, project_id, topic_id, agent_handle):
-        # Routing doubles have no native conversation to authenticate.
-        return None
-
     def holds(self, topic_id: uuid.UUID, agent_handle=None) -> bool:
         return False
 

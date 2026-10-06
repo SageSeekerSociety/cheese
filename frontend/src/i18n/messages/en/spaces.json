@@ -589,6 +589,7 @@
     "publish": "Post announcement",
     "editTitle": "Edit announcement",
     "empty": "No announcements",
+    "loadFailed": "Couldn't load announcements",
     "pinnedTag": "Pinned",
     "pin": "Pin",
     "unpin": "Unpin",

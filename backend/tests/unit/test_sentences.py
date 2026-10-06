@@ -152,6 +152,8 @@ def test_an_unknown_orphan_is_not_exempted(monkeypatch):
 
 def test_only_retired_notices_stored_on_old_rooms_are_historical():
     assert HISTORICAL_NOTICE_KEYS == {
+        "askAnswerUndelivered",
+        "askAnswerUndeliveredDetail",
         "docCommented",
         "docCommentedHandedTo",
         "docCommentMentioned",

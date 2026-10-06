@@ -149,9 +149,15 @@ class ClaudeCodeDriver:
         while True:
             try:
                 status = await wire.call(host, ref, "ping", {})
-                if status.get("alive"):
+                if status.get("alive") and not status.get("starting"):
                     return status
-                failure: Exception = RuntimeError("Claude Code exited")
+                # A launch still inside its first moments may yet end on its
+                # own (`Runner.starting`); asked again, it answers either way.
+                failure: Exception = RuntimeError(
+                    "Claude Code is starting"
+                    if status.get("starting")
+                    else "Claude Code exited"
+                )
             except DeviceOffline:
                 raise
             except Exception as exc:  # noqa: BLE001 — a ping that does not come back

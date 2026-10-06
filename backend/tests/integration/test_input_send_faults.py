@@ -62,6 +62,10 @@ class Runtime(RoomSessions):
         # No reader/model is started by this fault-classification test.
         pass
 
+    async def ensure(self, session, **_):
+        # The seat's session is already live (`_seated`): nothing is started.
+        return self.live[self._seat_of(session)]
+
 
 def _seated(ref: SessionRef, host: Host) -> Runtime:
     """A room whose seat ``ref`` has a live session, working on the host's work."""
@@ -149,9 +153,8 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
                 if mode == "initial":
                     await runtime.send(
                         ref,
-                        "answer the grouped question",
+                        "the first input",
                         system_prompt="",
-                        expected_native_session="conversation",
                         work_id=work,
                         on_mark=lambda _: None,
                         register_input=register,
@@ -159,7 +162,7 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
                 else:
                     await runtime.steer(
                         ref.topic_id,
-                        "correct the prior answer",
+                        "an input added mid-work",
                         expected_work_id=work,
                         register_input=register,
                     )

@@ -245,6 +245,62 @@ describe('the boundary rule', () => {
     assert.deepEqual(hit, [])
   })
 
+  // A type binding from the API layer is erased before anything runs, so it
+  // cannot fetch — the thing this half of the rule is about. Leaving it counted
+  // made the shape the rule asks for unrepresentable: a component that draws
+  // from props alone names its props' types, and a server record's type lives
+  // in the API layer with no house re-export to reach it through
+  // (architecture.md, principle 1: "the shape of the props is on you").
+  // 21 of the 95 frozen violations were this and nothing else.
+  it('leaves a type-only import of the API layer alone', async () => {
+    const inComponent = [
+      `import type { User } from '@/network/api/users/types'\nexport type P = { u: User }\n`,
+      `import { type User } from '@/network/api/users/types'\nexport type P = { u: User }\n`,
+    ]
+    for (const code of inComponent) {
+      const hit = await violations(eslint, `<script setup lang="ts">\n${code}</script>\n`, COMPONENT)
+      assert.deepEqual(hit, [], `expected no violation for: ${code}`)
+    }
+
+    const asHelper = [
+      `export type { User } from '@/network/api/users/types'\n`,
+      `import type { User } from '../api'\nexport type P = { u: User }\n`,
+    ]
+    for (const code of asHelper) {
+      const hit = await violations(eslint, code, 'src/components/helpers/probe.ts')
+      assert.deepEqual(hit, [], `expected no violation for: ${code}`)
+    }
+  })
+
+  // The other half keeps counting it, on purpose: AGENTS.md tells a component to
+  // type a `to` prop as NavTarget rather than RouteLocationRaw, and NavTarget is
+  // what lets the same component render with no router at all. The exemption
+  // above is for the boundary that has no such alternative.
+  it('still fires on a type-only import of vue-router', async () => {
+    const hit = await violations(
+      eslint,
+      `<script setup lang="ts">\nimport type { RouteLocationRaw } from 'vue-router'\nexport type P = { to: RouteLocationRaw }\n</script>\n`,
+      COMPONENT
+    )
+    assert.equal(hit.length, 1)
+    assert.match(hit[0].message, /must not navigate/)
+  })
+
+  it('still fires when one binding of the declaration is a value', async () => {
+    const asComponent = [
+      `<script setup lang="ts">\nimport { type User, fetchUsers } from '@/network/api/users'\nvoid fetchUsers\n</script>\n`,
+      `<script setup lang="ts">\nimport * as api from '@/api'\nvoid api\n</script>\n`,
+      `<script setup lang="ts">\nconst load = () => import('@/api')\nvoid load\n</script>\n`,
+    ]
+    for (const code of asComponent) {
+      const hit = await violations(eslint, code, COMPONENT)
+      assert.equal(hit.length, 1, `expected a violation for: ${code}`)
+    }
+
+    const reExport = await violations(eslint, `export * from '@/api'\n`, 'src/components/helpers/probe.ts')
+    assert.equal(reExport.length, 1)
+  })
+
   it('leaves src/views alone — that is where fetching and routing belong', async () => {
     const hit = await violations(
       eslint,

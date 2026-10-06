@@ -97,6 +97,7 @@ def _make_entry(**overrides):
         "index": 0,
         "content_text": "Answer text",
         "content_attachment_id": None,
+        "prompt": None,
         "created_at": _NOW,
         "updated_at": _NOW,
         "deleted_at": None,

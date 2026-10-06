@@ -18,15 +18,6 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.conversation.services import project_of, room_of
-from app.domain.delivery.ask_receipt_wait import (
-    ASK_RECEIPT_WAIT,
-    AskReceiptPending,
-)
-from app.domain.delivery.ask_session_wait import (
-    ASK_SESSION_RETRY_SECONDS,
-    ASK_SESSION_WAIT,
-    ASK_SESSION_WAIT_REASON,
-)
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
@@ -63,7 +54,7 @@ def work_interval_is_over():
     A correlated EXISTS over the turn intervals, anchored on the input row that
     names its work (``work_id``/``conversation_id``). The fact belongs to the agent
     domain's turn intervals, and that domain already imports this one (it reads
-    answer ownership), so the question goes out through this seam — importing
+    input holds), so the question goes out through this seam — importing
     the turn models on the delivery side would close a domain cycle (C3 in
     backend/.importlinter).
     """
@@ -212,12 +203,6 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                         "Recipient no longer has an active seat in this room"
                     )
                     continue
-            # A new attempt must not reuse an earlier receipt-wait marker.
-            row.payload = {
-                key: value
-                for key, value in row.payload.items()
-                if key != ASK_RECEIPT_WAIT
-            }
             row.state = "claimed"
             row.attempt_id = uuid.uuid4()
             row.lease_until = stamp + timedelta(seconds=LEASE_SECONDS)
@@ -250,7 +235,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
     return len(claimed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
+async def run_attempt(sessions, delivery_id, attempt_id, work):
     """Renew admission ownership while queued; settle only this claimed attempt."""
 
     async def renew():
@@ -269,11 +254,8 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
                 await session.commit()
 
     heartbeat = asyncio.create_task(renew())
-    waiting = None
     try:
         await work
-    except AskReceiptPending as exc:
-        waiting = exc
     finally:
         heartbeat.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -290,45 +272,11 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
             if row is not None:
                 if row.state == "claimed":
                     row.state = "pending"
-                    # An answer waiting for the conversation that asked is not a
-                    # failed admission: it is admissible nowhere yet, and asking
-                    # again in 30 s only spends attempts (``ask_session_wait``).
-                    waiting_for_session = ASK_SESSION_WAIT in (row.payload or {})
-                    row.retry_at = now() + timedelta(
-                        seconds=(
-                            ASK_SESSION_RETRY_SECONDS
-                            if waiting_for_session
-                            else retry_after(row.attempts)
-                        )
-                    )
+                    row.retry_at = now() + timedelta(seconds=retry_after(row.attempts))
                     row.last_error = (
-                        ASK_SESSION_WAIT_REASON
-                        if waiting_for_session
-                        else "Input was not dispatched; "
+                        "Input was not dispatched; "
                         "admission or preparation did not complete"
                     )
-                    if (
-                        waiting is not None
-                        and waiting.delivery_id == row.id
-                        and waiting.attempt_id == row.attempt_id
-                        and waiting.identity.conversation_id == row.conversation_id
-                        and waiting.identity.recipient_handle == row.recipient_handle
-                        and waiting.group_id == row.payload.get("ask_group")
-                        and all(
-                            (row.payload.get("ask_origin") or {}).get(field)
-                            == getattr(waiting.identity, field)
-                            for field in (
-                                "recipient_handle",
-                                "harness",
-                                "native_session_id",
-                            )
-                        )
-                    ):
-                        row.payload = {
-                            **row.payload,
-                            ASK_RECEIPT_WAIT: waiting.marker(),
-                        }
-                        row.last_error = "Waiting for this group's native receipt"
                 elif row.state == "sending":
                     row.state = "uncertain"
                     row.last_error = (
@@ -337,10 +285,6 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
                     )
                 row.lease_until = None
             await session.commit()
-
-    if waiting is not None and chat is not None:
-        # Covers the receipt that committed before the wait marker was stored.
-        chat.nudge_ask_receipts(waiting.identity)
 
 
 async def begin_send(sessions, delivery_id, attempt_id):
