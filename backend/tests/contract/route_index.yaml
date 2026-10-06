@@ -894,6 +894,9 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/routines/{routine_id}", auth: "routines.manage", owner: "routine"}
   - {protocol: "http", method: "GET", path: "/routines/{routine_id}/runs", auth: "routines.room", owner: "routine"}
   - {protocol: "http", method: "POST", path: "/routine-runs/{run_id}/report", auth: "routines.room", owner: "routine"}
+  # app.api.routes.run_records
+  - {protocol: "http", method: "GET", path: "/run-records", auth: "actor.topic", owner: "run_record"}
+  - {protocol: "http", method: "GET", path: "/run-records/detail", auth: "actor.topic", owner: "run_record"}
   # app.api.routes.sandbox
   - {protocol: "http", method: "POST", path: "/sandbox/storage-sweep", auth: "sandbox.global", owner: "sandbox.maintenance"}
   - {protocol: "http", method: "GET", path: "/sandbox/cli/cheese", auth: "capability.cli", owner: "installer"}
