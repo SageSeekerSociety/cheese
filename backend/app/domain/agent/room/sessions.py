@@ -69,14 +69,17 @@ from app.domain.agent.session_host.contract import (
     Access,
     Image,
     InputProtocolUnavailable,
+    InputUnconfirmed,
     Owner,
     Prompt,
+    SessionError,
     SessionSpec,
 )
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.agent.session_host.host import RunnerUnsupported, SessionHost
 from app.domain.delivery.input_identity import (
     InputIdentity,
+    InputNotSent,
     InputOutcomeUnconfirmed,
     InputReceipt,
     InputRegistrar,
@@ -999,6 +1002,7 @@ class RoomSessions:
                     identity,
                     Prompt(work_id, message, images=pictures, owes_reply=owes_reply),
                     steer=False,
+                    register_input=register_input,
                 )
                 mark("submit")
             finally:
@@ -1083,11 +1087,18 @@ class RoomSessions:
             identity,
             Prompt(identity.input_id, text, images=pictures, owes_reply=owes_reply),
             steer=True,
+            register_input=register_input,
         )
         return True
 
     async def _submit(
-        self, live: Live, identity: InputIdentity, prompt: Prompt, *, steer: bool
+        self,
+        live: Live,
+        identity: InputIdentity,
+        prompt: Prompt,
+        *,
+        steer: bool,
+        register_input: InputRegistrar,
     ) -> None:
         accepted = False
         try:
@@ -1100,6 +1111,15 @@ class RoomSessions:
             # must never gate the send that admits it.
             if self.host.reads_on_accept(live.ref):
                 await self._hear_receipt(InputReceipt(identity, "accepted"))
+        except SessionError as exc:
+            if accepted or isinstance(exc, InputUnconfirmed):
+                raise InputOutcomeUnconfirmed(identity, accepted=accepted) from exc
+            # The host raises InputUnconfirmed for anything after the write was
+            # attempted; any other SessionError means it never got that far (the
+            # session is not this process's, or could not be started again), so
+            # the input is certainly not in the session: nothing to reconcile.
+            await register_input.withdraw(identity)
+            raise InputNotSent(identity, str(exc)) from exc
         except Exception as exc:
             # Even a transport error can follow admission at the remote end.
             # Keep the committed identity; the caller must not queue a new UUID.

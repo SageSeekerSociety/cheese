@@ -11,7 +11,11 @@ from app.domain.delivery.input_identity import (
     InputIdentity,
     InputRegistrar,
 )
-from app.domain.delivery.receipts import record_receipt, register_input
+from app.domain.delivery.receipts import (
+    record_receipt,
+    register_input,
+    withdraw_input,
+)
 
 
 def input_registrar(
@@ -22,10 +26,26 @@ def input_registrar(
     probe_unread: bool = False,
     fence_delivery: bool = False,
 ) -> InputRegistrar:
-    async def persist(identity: InputIdentity) -> None:
+    return _Registration(
+        session_factory, effects, unread_inputs, probe_unread, fence_delivery
+    )
+
+
+class _Registration:
+    def __init__(
+        self, session_factory, effects, unread_inputs, probe_unread, fence_delivery
+    ):
+        self.session_factory = session_factory
+        self.effects = effects
+        self.unread_inputs = unread_inputs
+        self.probe_unread = probe_unread
+        self.fence_delivery = fence_delivery
+
+    async def __call__(self, identity: InputIdentity) -> None:
+        effects = self.effects
         rejected: DeliveryTargetChanged | None = None
-        async with session_factory() as session:
-            if fence_delivery and effects.delivery_id is not None:
+        async with self.session_factory() as session:
+            if self.fence_delivery and effects.delivery_id is not None:
                 try:
                     await fence_send(session, effects.delivery_id, effects.attempt_id)
                 except DeliveryTargetChanged as exc:
@@ -35,12 +55,18 @@ def input_registrar(
             await session.commit()
         if rejected is not None:
             raise rejected
-        if probe_unread:
-            unread_inputs.setdefault(identity.conversation_id, {}).setdefault(
+        if self.probe_unread:
+            self.unread_inputs.setdefault(identity.conversation_id, {}).setdefault(
                 identity.input_id, time.monotonic()
             )
 
-    return persist
+    async def withdraw(self, identity: InputIdentity) -> None:
+        async with self.session_factory() as session:
+            await withdraw_input(session, identity, self.effects)
+            await session.commit()
+        pending = self.unread_inputs.get(identity.conversation_id)
+        if pending is not None:
+            pending.pop(identity.input_id, None)
 
 
 async def confirm_receipt(chat, receipt) -> None:
