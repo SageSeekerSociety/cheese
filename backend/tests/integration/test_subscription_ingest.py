@@ -8,11 +8,14 @@ rows are skipped without wedging the pass."""
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.domain.block.models import AuthorType
+from app.domain.block.repositories import BlockRepository
 from app.domain.feature_stats import pricing
 from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
@@ -78,6 +81,7 @@ def _row(
     cache_write=0,
     model=None,
     split: tuple[int, int] | None = None,
+    ts: float = 1786000000.0,
 ):
     """One proxy log line; ``split`` is its (5-minute, 1-hour) cache writes,
     absent on lines the proxy wrote before it logged the split."""
@@ -92,7 +96,7 @@ def _row(
         json.dumps(
             extra
             | {
-                "ts": 1786000000.0,
+                "ts": ts,
                 "project_id": str(pid),
                 "topic_id": str(tid),
                 "model": model or "claude-opus-5",
@@ -377,3 +381,43 @@ async def test_a_task_conversation_keeps_its_usage(business_db_factory, tmp_path
         (r.conversation_id, r.total_tokens)
         for r in await _rows(business_db_factory, pid)
     ] == [(task_id, 15)]
+
+
+@pytest.mark.anyio
+async def test_a_call_made_during_a_tasks_turn_records_that_turn(
+    business_db_factory, tmp_path
+):
+    """Two turns run one after the other in a task; each model call the seat
+    made is booked to the task's conversation and to the turn it was made in."""
+    pid, tid = await _seed(business_db_factory)
+    first_at = datetime(2026, 10, 6, 7, 0, tzinfo=UTC)
+    second_at = first_at + timedelta(minutes=10)
+    first, second = uuid.uuid4(), uuid.uuid4()
+    async with business_db_factory() as session:
+        task = await TaskService(session).open_thread(
+            project_id=pid, room_id=tid, title="t", owner_handle="u", created_by="u"
+        )
+        for turn, at in ((first, first_at), (second, second_at)):
+            await BlockRepository(session).add(
+                project_id=pid,
+                conversation_id=task.id,
+                author="u",
+                author_type=AuthorType.participant,
+                content="go",
+                turn_id=turn,
+                created_at=at,
+            )
+        await session.commit()
+        task_id = task.id
+    during_first = (first_at + timedelta(minutes=2)).timestamp()
+    during_second = (second_at + timedelta(minutes=3)).timestamp()
+    log = tmp_path / "usage.jsonl"
+    log.write_text(
+        _row(pid, task_id, inp=11, out=4, ts=during_first)
+        + _row(pid, task_id, inp=21, out=4, ts=during_second)
+    )
+    assert await ingest_once(business_db_factory, log) == {"landed": 2, "skipped": 0}
+    assert [
+        (r.conversation_id, r.turn_id, r.total_tokens)
+        for r in await _rows(business_db_factory, pid)
+    ] == [(task_id, first, 15), (task_id, second, 25)]
