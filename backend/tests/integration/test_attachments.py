@@ -324,7 +324,11 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
 
     main = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["kind"] for b in main] == ["message", "attachment"]
-    answer = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+    # The prompt reaches the harness before the turn writes its event into the
+    # 支线, so on a slow machine the 支线 can still be empty here.
+    while not (answer := client.get(f"/topics/{thread}/blocks").json()["data"]["data"]):
+        assert time.monotonic() < deadline, "the 支线 never got its event"
+        time.sleep(0.2)
     assert [b["kind"] for b in answer] == ["event"]
     assert answer[0]["meta"]["in_room"] is False
 
