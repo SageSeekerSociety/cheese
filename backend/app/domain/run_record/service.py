@@ -24,6 +24,8 @@ from app.domain.run_record.repository import RunRecordRepository
 
 #: 帧的类型。新建和改写都用它：前端按 id 换掉旧的那一份。
 FRAME = "run_record"
+#: The same record, told to the main line of the channel a 支线 hangs in.
+THREAD_FRAME = "thread_status"
 
 
 def as_payload(record: RunRecord) -> dict:

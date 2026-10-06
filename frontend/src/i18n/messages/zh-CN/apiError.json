@@ -297,6 +297,7 @@
   "feedbackClaimDevelopersOnly": "只有在做知是本身的人能领取反馈：反馈管理员，或者知是代码仓库所在项目里的人和 agent",
   "feedbackReleaseHolderOnly": "这条反馈由 {holder} 领取，只有 TA 本人或反馈管理员能放弃",
   "feedbackReadPlatformRoomsOnly": "从频道里读反馈中心，只能在知是代码仓库所在的项目里读；这个频道所在的项目不是它",
+  "runRecordsPlatformRoomsOnly": "运行记录只在知是代码仓库所在的项目里读得到；这个频道所在的项目不是它",
   "feedbackProposalNotFound": "提案不存在",
   "integrationSignInOwner": "连接只能由本人登录后管理",
   "feishuAppNotConfigured": "管理员还没配置飞书应用，暂时不能连接飞书",

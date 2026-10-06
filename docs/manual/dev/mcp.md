@@ -36,6 +36,7 @@ covers:
 | 定时与触发 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |
 | 项目技能 | `cheese_skill_draft`、`cheese_skill_update` |
 | 反馈 | `cheese_feedback_propose`、`cheese_feedback_list`、`cheese_feedback_get`、`cheese_feedback_claim`、`cheese_feedback_release` |
+| 运行记录 | `cheese_run_records`（只在平台自己的项目里读得到，见[运行记录](/dev/run-records#retention)） |
 | 其余的平台接口 | `platform_request` |
 
 这张表以前是**问出来的**：会话侧的 MCP 服务器收到 `tools/list` 就去执行器要一份，执行器再把机器上那棵 argparse 树翻成工具。于是一台执行机够不着，整个 `cheese_*` 家族就从清单里消失，agent 被告知「没有这个工具」——而它这一刻最需要的恰恰是跟房间说一句这里出事了。表变成常量之后它不再问任何人：这些要的是平台，不是那台机器，所以从会话直接打后端，机器离线时一样不少。

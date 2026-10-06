@@ -24,6 +24,8 @@ const props = defineProps<{
   summary: ThreadSummary | null
   /** 正在回复的队友叫什么；没有人在回复时为 null。 */
   replying: string | null
+  /** 正在回复的那位此刻在等什么（排队、重试……）；没有就是 null。 */
+  status?: string | null
   refs: RefNames
   nameOf: (handle: string) => string
   /** 最后一条回复的时间，已经按房间的写法格式化好。 */
@@ -101,7 +103,11 @@ const last = computed(() => {
       <span v-if="replies > 0 && time" class="thread-line__time t-meta">{{ time }}</span>
       <span v-if="failed" class="thread-line__failed">{{ t('work.room.thread.failed') }}</span>
       <template v-if="replying">
-        <span class="thread-line__replying">{{ t('work.room.thread.replying', { name: replying }) }}</span>
+        <span class="thread-line__replying">{{
+          status
+            ? t('work.room.thread.replyingStatus', { name: replying, status })
+            : t('work.room.thread.replying', { name: replying })
+        }}</span>
         <span class="thread-line__dots" aria-hidden="true"><span /><span /><span /></span>
       </template>
     </span>

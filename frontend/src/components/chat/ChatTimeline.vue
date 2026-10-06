@@ -45,6 +45,10 @@ const props = defineProps<{
   threadable?: boolean
   /** 这条消息的支线里谁正在回复（还没有回复时）；没有人时为 null。 */
   replyingFor?: (m: Block) => string | null
+  /** 那位队友此刻在等什么（排队、重试……）；没有就是 null。 */
+  threadStatusFor?: (m: Block) => string | null
+  /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
+  processable?: boolean
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
@@ -113,6 +117,7 @@ const emit = defineEmits<{
   (e: 'react', block: Block, emoji: string): void
   (e: 'reply', block: Block): void
   (e: 'open-thread', block: Block): void
+  (e: 'open-process', turnId: string): void
   (e: 'upgrade-message', messageId: string): void
   (e: 'edit', block: Block): void
   (e: 'edit-send', item: Outgoing): void
@@ -311,12 +316,14 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :editable="barEditable"
         :no-upgrade="noUpgrade"
         :threadable="threadable"
+        :processable="processable"
         :pinnable="pinnable"
         :pinned-ids="pinnedIds"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"
         @thread="emit('open-thread', $event)"
+        @process="emit('open-process', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="emit('edit', $event)"
         @pin="emit('pin', $event)"
@@ -461,6 +468,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
             class="tl-thread"
             :summary="m.thread ?? null"
             :replying="replyingFor?.(m) ?? null"
+            :status="threadStatusFor?.(m) ?? null"
             :refs="refs"
             :name-of="nameOf ?? String"
             :avatar-of="avatarSrc"
