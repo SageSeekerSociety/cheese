@@ -796,10 +796,10 @@ class RoomSessions:
         agent = acting or precheck.agent_handle
         placed: dict = {}
 
-        # A task's session is a conversation of its own beside the room's, for
-        # the same agent: its state and every file it starts from live apart
-        # from the room seat's.
-        state_key = seat_key(agent, session.task_id)
+        # A task's or a 支线's session is a conversation of its own beside the
+        # room's, for the same agent: its state and every file it starts from
+        # live apart from the room seat's.
+        state_key = seat_key(agent, session.inner_id)
 
         def place(resource) -> dict:
             placed.update(
@@ -837,7 +837,7 @@ class RoomSessions:
                     # an idle session with a credential that may write.
                     **(
                         {"CHEESE_TASK_READS_ONLY": "1" if reads_only else "0"}
-                        if session.task_id is not None
+                        if session.inner_id is not None
                         else {}
                     ),
                 },

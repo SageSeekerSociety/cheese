@@ -105,15 +105,11 @@ async def announce(
     if place is None:
         return None
     if task_id is not None:
+        # A task's conversation, or a 支线's: either way one inside this room.
         from app.core.errors import ValidationError
-        from app.domain.room_task.models import Task
 
-        task = await session.get(Task, task_id)
-        if (
-            task is None
-            or task.room_id != place.room_id
-            or task.project_id != place.project_id
-        ):
+        inner = await PlaceResolver(session).conversation(task_id)
+        if inner is None or inner.inner_id is None or inner.room_id != place.room_id:
             raise ValidationError("Event task does not belong to this room")
     landed = landing(
         EventAbout.task if task_id is not None else EventAbout.room,

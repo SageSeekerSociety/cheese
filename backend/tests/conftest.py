@@ -937,16 +937,6 @@ def _session_tmp_per_test(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_background_doc_nudge(monkeypatch) -> None:
-    """轮末的文档提醒（`topic/doc_nudge.py`）在后台睡几秒再起一轮：测试里它要么
-    赶上一个已经关掉的事件循环，要么真的替某个测试房间起一轮没人要的 agent 轮次。
-    默认关掉；`test_doc_nudge.py` 直接驱动 `check`。"""
-    from app.domain.topic import doc_nudge
-
-    monkeypatch.setattr(doc_nudge, "nudge", lambda *a, **k: None)
-
-
-@pytest.fixture(autouse=True)
 def _forge_memory_per_test(monkeypatch) -> None:
     """What GitHub said about an installation's quota, and the answers kept for
     conditional reads, are process-wide memory (`core/forge_quota.py`,

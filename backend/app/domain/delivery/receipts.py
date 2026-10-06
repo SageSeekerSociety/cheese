@@ -20,6 +20,7 @@ from app.domain.delivery.ask_inputs import guard_ask_inputs
 from app.domain.delivery.ask_receipt_wait import AskReceiptPending
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
+from app.domain.thread.models import Thread
 
 
 def _same_receiver(row: NativeInput, identity: InputIdentity) -> bool:
@@ -400,9 +401,14 @@ async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
             .execution_options(populate_existing=True)
         )
     )
+    # A 支线's first input is the message it hangs under, which stays in the
+    # channel's main line: that one block is the 支线's too.
+    root = await session.scalar(
+        select(Thread.root_block_id).where(Thread.id == identity.conversation_id)
+    )
     if len(rows) != len(ids) or any(
         block.project_id != identity.project_id
-        or block.conversation_id != identity.conversation_id
+        or (block.conversation_id != identity.conversation_id and block.id != root)
         for block in rows
     ):
         raise ValidationError("Input blocks do not belong to the addressed room")

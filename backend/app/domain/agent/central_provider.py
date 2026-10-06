@@ -125,7 +125,7 @@ class CentralChannel(DeviceChannel):
         return [
             Placed(
                 SessionRef(
-                    project_id, room_id, handle, harness=row_harness, task_id=task_id
+                    project_id, room_id, handle, harness=row_harness, inner_id=inner_id
                 ),
                 place.machine,
                 place.runtime["state"],
@@ -138,7 +138,7 @@ class CentralChannel(DeviceChannel):
             for (
                 project_id,
                 room_id,
-                task_id,
+                inner_id,
                 handle,
                 row_harness,
                 resume_token,

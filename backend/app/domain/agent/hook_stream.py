@@ -209,7 +209,7 @@ class _HookStream(Protocol):
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
-        task_id: uuid.UUID | None = None,
+        inner_id: uuid.UUID | None = None,
         publish: bool = False,
         author: str | None = None,
         publication_id: str | None = None,
@@ -532,7 +532,7 @@ async def _consume_hook_event(
     # What it says lands in the room's table, beside its task, and goes out on
     # the conversation's channel — the one its view subscribes to.
     conversation_id = topic_id
-    room_id, task_id = await service._room_of_conversation(conversation_id)
+    room_id, inner_id = await service._room_of_conversation(conversation_id)
     channel = str(conversation_id)
     if not isinstance(event, AgentRetrying):
         # Anything else the turn does ends a streak of retries: the request
@@ -599,7 +599,7 @@ async def _consume_hook_event(
             at=event.at,
             author=event.agent_handle
             or (state.acting_agent if state is not None else None),
-            task_id=task_id,
+            inner_id=inner_id,
         )
         if payload is not None:
             frame = {"type": "event_block", "block": payload}
@@ -617,7 +617,7 @@ async def _consume_hook_event(
             turn_id=turn_id,
             eid=eid or event.eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
             author=event.agent_handle,
             at=event.at,
         )
@@ -661,7 +661,7 @@ async def _consume_hook_event(
                 content,
                 meta,
                 author=state.acting_agent if state is not None else None,
-                task_id=task_id,
+                inner_id=inner_id,
                 channel=channel,
             )
     elif isinstance(event, AgentRetrying):
@@ -672,7 +672,7 @@ async def _consume_hook_event(
             turn_id,
             event,
             author=state.acting_agent if state is not None else None,
-            task_id=task_id,
+            inner_id=inner_id,
             channel=channel,
         )
     elif isinstance(event, AgentToolResult):
@@ -685,7 +685,7 @@ async def _consume_hook_event(
             turn_id=turn_id,
             eid=eid,
             platform_unsolicited=platform_unsolicited,
-            task_id=task_id,
+            inner_id=inner_id,
         )
         if payload is not None:
             frame = {"type": "event_block", "block": payload}
@@ -738,7 +738,7 @@ async def _consume_hook_event(
                 )
             error_line, error_code = line, meta.get("code")
             payload = await post_system_event(
-                sessions, room_id, line, turn_id, meta=meta, task_id=task_id
+                sessions, room_id, line, turn_id, meta=meta, inner_id=inner_id
             )
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
@@ -760,7 +760,7 @@ async def _consume_hook_event(
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
                 closing=result_text_seen,
-                task_id=task_id,
+                inner_id=inner_id,
             )
             if payload is not None:
                 if state is not None:
@@ -925,7 +925,7 @@ async def _note_retry(
     event: AgentRetrying,
     *,
     author: str | None,
-    task_id: uuid.UUID | None,
+    inner_id: uuid.UUID | None,
     channel: str,
 ) -> None:
     """Say the turn is retrying a failed request, on one line per streak.
@@ -982,7 +982,7 @@ async def _note_retry(
         content,
         meta,
         author=author,
-        task_id=task_id,
+        inner_id=inner_id,
         channel=channel,
     )
 
@@ -1048,7 +1048,7 @@ async def _note_reachability(
         say("deviceWaiting"),
         meta,
         author=state.acting_agent if state is not None else None,
-        task_id=None,
+        inner_id=None,
         channel=str(topic_id),
     )
 
@@ -1062,7 +1062,7 @@ async def _keep_note(
     meta: dict,
     *,
     author: str | None,
-    task_id: uuid.UUID | None,
+    inner_id: uuid.UUID | None,
     channel: str,
 ) -> None:
     """Land the turn's notice of this kind, or restate the one it has."""
@@ -1083,7 +1083,7 @@ async def _keep_note(
                 # work, and 现场 files it under whoever did the work.
                 author=author or "system",
                 turn_id=turn_id,
-                task_id=task_id,
+                task_id=inner_id,
             )
             if block is None:
                 return

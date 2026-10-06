@@ -57,6 +57,7 @@ from app.domain.room_task.services import (
     RoomLockService,
     TaskService,
 )
+from app.domain.thread import reads as thread_reads
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.repositories import (
     SortOrder,
@@ -536,11 +537,19 @@ async def list_topic_blocks(
     # Scoped to THIS page's ids, so paging saves the database work too, not just
     # the bytes on the wire.
     reactions = await repo.reactions_for_blocks([b.id for b in blocks])
+    # The line under each main-line message that has a 支线: same batch shape.
+    threads = (
+        await thread_reads.under_messages(db, [b.id for b in blocks])
+        if place.inner_id is None
+        else {}
+    )
     items = []
     for b in blocks:
         item = BlockOut.model_validate(b).model_dump(mode="json")
         if b.id in reactions:
             item["reactions"] = reactions[b.id]
+        if b.id in threads:
+            item["thread"] = threads[b.id]
         items.append(item)
     return ok(
         {
@@ -564,6 +573,15 @@ async def _history_block(
     return block
 
 
+async def _channel_block(
+    db: AsyncSession, repo: BlockRepository, room_id: uuid.UUID, block_id: uuid.UUID
+) -> Block:
+    block = await repo.get(block_id)
+    if block is None or await room_of(db, block.conversation_id) != room_id:
+        raise NotFoundError("Message not found in this channel")
+    return block
+
+
 @router.get("/{topic_id}/history")
 async def read_chat_history(
     topic_id: uuid.UUID,
@@ -576,13 +594,16 @@ async def read_chat_history(
     q: Annotated[str | None, Query(min_length=1, max_length=1000)] = None,
     kind: BlockKind | None = None,
     author: str | None = None,
+    channel: bool = False,
 ) -> dict:
     """Read stored chat, including structured events and reactions.
 
-    One conversation's: a room's own line, or a task's. Replies are direct
-    children; follow their IDs for nested replies. Search is literal,
-    case-insensitive substring matching over content, metadata and quoted
-    document text.
+    One conversation's: a room's own line, a task's or a 支线's. With
+    ``channel`` it is every conversation of the channel at once — its main
+    line, its 支线 and its tasks — which is what a search for something settled
+    elsewhere in the channel needs. Replies are direct children; follow their
+    IDs for nested replies. Search is literal, case-insensitive substring
+    matching over content, metadata and quoted document text.
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
@@ -594,9 +615,14 @@ async def read_chat_history(
         parent = await _history_block(repo, place.conversation_id, reply_to)
     cursor = None
     if cursor_id := before or after:
-        cursor = await _history_block(repo, place.conversation_id, cursor_id)
+        cursor = (
+            await _channel_block(db, repo, place.room_id, cursor_id)
+            if channel
+            else await _history_block(repo, place.conversation_id, cursor_id)
+        )
     result = await repo.page_for_topic(
         place.conversation_id,
+        whole_room=place.room_id if channel else None,
         limit=limit,
         before=cursor if before else None,
         after=cursor if after else None,
@@ -850,20 +876,20 @@ async def write_topic_progress(
         # The global development token opens the room but is nobody, and a
         # message needs an author.
         raise ForbiddenError("Sign in to write a checklist")
-    # A task's checklist is written by the task's own session; a room's by an
-    # agent seated in it.
-    task_id = place.task_id
+    # A task's or a 支线's checklist is written by its own session, and shown
+    # as its progress; a room's by an agent seated in it, as a message.
+    inner_id = place.inner_id
     plans_the_turn = (
-        resolver.credential_conversation() == task_id
-        if task_id is not None
+        resolver.credential_conversation() == inner_id
+        if inner_id is not None
         else await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle)
     )
-    if task_id is not None and not plans_the_turn:
+    if inner_id is not None and not plans_the_turn:
         raise ForbiddenError("A task's checklist is written by its session")
     if body.new and body.message is not None:
         raise ValidationError("message and new cannot both be given")
     current = None
-    if task_id is None and not body.new:
+    if inner_id is None and not body.new:
         current = await BlockRepository(db).current_checklist(
             place.room_id, actor.handle, message=body.message
         )
@@ -884,8 +910,8 @@ async def write_topic_progress(
             place.conversation_id, items, turn_id=turn_id
         )
         await db.commit()
-    if task_id is not None:
-        await get_broker().publish(str(task_id), {"type": "todo", "items": items})
+    if inner_id is not None:
+        await get_broker().publish(str(inner_id), {"type": "todo", "items": items})
         return ok({"items": items})
     text = checklist_text(items, body.result)
     checklist = {"items": items, "result": body.result}

@@ -164,15 +164,16 @@ class SessionRef:
     topic_id: uuid.UUID
     agent_handle: str = ""
     harness: str = field(kw_only=True)
-    #: The task this session works, when it is a task's own conversation rather
-    #: than the room's. ``topic_id`` is still the room: the task works there.
-    task_id: uuid.UUID | None = field(default=None, kw_only=True)
+    #: The conversation this session is in when it is one inside the room — a
+    #: task's or a 支线's own — rather than the room's line. ``topic_id`` is
+    #: still the room: they work there.
+    inner_id: uuid.UUID | None = field(default=None, kw_only=True)
 
     @property
     def conversation_id(self) -> uuid.UUID:
         """The conversation this session is in — the key ``agent_sessions`` is
         written under, and the seat a runtime keeps it on."""
-        return self.task_id or self.topic_id
+        return self.inner_id or self.topic_id
 
 
 @dataclass(frozen=True, slots=True)

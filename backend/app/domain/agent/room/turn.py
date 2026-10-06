@@ -141,6 +141,54 @@ def _is_dm(topic: Topic) -> bool:
     return topic.is_private
 
 
+#: How many of the main line's messages before a 支线's message its session
+#: opens with: what was being talked about when it was said.
+THREAD_CONTEXT_MESSAGES = 10
+
+
+async def _thread_context(session: "AsyncSession", room: Topic, root) -> str:
+    """What a 支线's session is told about where it is: the channel, the
+    message the 支线 hangs under and what the main line said just before it,
+    and the channel's tasks still open — so a piece of work that already has a
+    task is pointed to rather than proposed again."""
+    from app.domain.room_task.services import TaskService
+
+    def line(block) -> str:
+        return f"[{block.author}] {block.content}"
+
+    earlier = await BlockRepository(session).messages_before(
+        room.id, root.created_at, limit=THREAD_CONTEXT_MESSAGES
+    )
+    parts = [
+        f"你在频道「#{room.title}」的一条支线里。这里的人 @ 你，你才回答。"
+        "你只读：可以看代码、跑只读的命令、查资料，不改项目，不交付，不摆预览；"
+        "要改的事用 `cheese_task` 提议成任务。别处定过的事不记得时，用 "
+        "`cheese_chat_search` 加 `channel` 搜整个频道。",
+        "",
+        "支线挂在主线的这条消息下面：",
+        line(root),
+    ]
+    if earlier:
+        parts += ["", "这条消息之前，主线上说的是：", *map(line, earlier)]
+    open_tasks = [
+        task
+        for task in await TaskService(session).list_in_room(room.id)
+        if task.status == TaskStatus.open
+    ]
+    if open_tasks:
+        parts += [
+            "",
+            "这个频道里还在进行的任务（要做的事已经有任务了，就告诉人去那个任务，"
+            "不再提议）：",
+            *(
+                f"- {task.title}"
+                + (f"（负责人 @{task.owner_handle}）" if task.owner_handle else "")
+                for task in open_tasks
+            ),
+        ]
+    return "\n".join(parts)
+
+
 @dataclass(frozen=True, slots=True)
 class _Launch:
     """What a seat's session is started with, read without opening a turn
@@ -169,9 +217,10 @@ class _TurnContext:
 
     # Who is here and what they are working under.
     project_id: uuid.UUID
-    # Where: the room, and the task when the conversation is a task's own.
+    # Where: the room, and the task or 支线 when the conversation is one of
+    # theirs.
     room_id: uuid.UUID
-    task_id: uuid.UUID | None
+    inner_id: uuid.UUID | None
     acting_agent: str
     agent: ResolvedAgent
     agent_pool: tuple[MemoryScope, str] | None
@@ -211,6 +260,9 @@ class _TurnContext:
     prior_progress: list[dict]
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
+    # For a 支线: the message it hangs under, what the main line said just
+    # before it, and the channel's tasks still open. None elsewhere.
+    thread_context: str | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
     # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
@@ -227,7 +279,8 @@ class _TurnContext:
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
     # A task's session only reads until its owner starts it: it discusses and
-    # writes the task's document, and changes nothing in the project.
+    # writes the task's document, and changes nothing in the project. A 支线's
+    # always only reads: what changes the project is done in a task.
     reads_only: bool
 
 
@@ -379,7 +432,7 @@ class RoomTurns:
             session: AsyncSession,
             *,
             project: Project,
-            room_id: uuid.UUID,
+            conversation_id: uuid.UUID,
             room_doc: str | None,
             overview_doc: str | None,
             all_topics: list[Topic],
@@ -523,6 +576,15 @@ class RoomTurns:
             # This conversation's OWN line: a room's history leaves out its
             # tasks' conversations, and a task's is only its own.
             history = await blocks.turn_history(place.conversation_id)
+            # A 支线's first input is the message it hangs under, which stays in
+            # the channel's main line: read it in while no turn has read it.
+            thread_root = (
+                await blocks.get(place.thread.root_block_id)
+                if place.thread is not None
+                else None
+            )
+            if thread_root is not None:
+                history = [thread_root, *history]
             phases_ms["history"] = (time.monotonic() - started) * 1000
             pending = _pending_input_blocks(history)
             # Kept apart from `pending` on purpose: that list answers
@@ -658,7 +720,7 @@ class RoomTurns:
                 await Documents(session).of_room(project.root_topic_id)
                 if project is not None
                 and project.root_topic_id is not None
-                and project.root_topic_id != place.room_id
+                and project.root_topic_id != place.conversation_id
                 else None
             )
             overview_doc_text = overview_root.content if overview_root else None
@@ -694,18 +756,20 @@ class RoomTurns:
                 # 来 + ②③ 从结构化数据现拼」的那一份。手抄进正文的旧内容因此读
                 # 不到——写在那儿的副本没人读，也就没人再写。
                 #
-                # 在总览房间它同时就是本房间的实况文档：同一份东西说两遍，模型会
-                # 以为是两份，所以那里把 `doc_text` 交出去（它只喂提示词）。
+                # 在「综合」的主线上它同时就是那里的实况文档：同一份东西说两遍，
+                # 模型会以为是两份，所以那里把 `doc_text` 交出去（它只喂提示词）。
+                # 问的是这段对话，不是它所在的频道：综合里的任务和支线读到的是
+                # 项目总览，任务自己的文档照旧是任务的。
                 overview_doc_text = await self._project_overview(
                     session,
                     project=project,
-                    room_id=place.room_id,
+                    conversation_id=place.conversation_id,
                     room_doc=doc_text,
                     overview_doc=overview_doc_text,
                     all_topics=all_topics,
                     roster=roster,
                 )
-                if project.root_topic_id == place.room_id:
+                if project.root_topic_id == place.conversation_id:
                     doc_text = None
             # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。不租地点的一轮里
             # 没有交付，那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，
@@ -758,6 +822,11 @@ class RoomTurns:
             ]
             earlier_messages = await blocks.count_messages(
                 place.conversation_id, excluding=prompt_pending_ids
+            )
+            thread_context = (
+                await _thread_context(session, topic, thread_root)
+                if thread_root is not None
+                else None
             )
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
@@ -976,8 +1045,9 @@ class RoomTurns:
         )
         return _TurnContext(
             room_id=place.room_id,
-            task_id=place.task_id,
-            reads_only=task is not None and task.started_at is None,
+            inner_id=place.inner_id,
+            reads_only=place.thread is not None
+            or (task is not None and task.started_at is None),
             acting_agent=acting_agent,
             agent=agent,
             agent_pool=agent_pool,
@@ -988,6 +1058,7 @@ class RoomTurns:
             notice_ids=[b.id for b in notices],
             prior_progress=prior_progress,
             earlier_messages=earlier_messages,
+            thread_context=thread_context,
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
@@ -1090,6 +1161,7 @@ class RoomTurns:
             harness=runtime.harness,
         )
         opening = build_session_opening(
+            thread=prepared.thread_context,
             doc=doc_text,
             memory=memory,
             # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前
@@ -1306,7 +1378,7 @@ class RoomTurns:
                 prepared.room_id,
                 prepared.agent.handle,
                 harness=prepared.harness,
-                task_id=prepared.task_id,
+                inner_id=prepared.inner_id,
             )
             await self._compute.activate(session_ref, runtime)
             _delivery_step("activate")

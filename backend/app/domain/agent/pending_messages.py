@@ -125,14 +125,15 @@ def queued_messages(since, topic_id=None):
 
 
 async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
-    """``topic_id`` is a conversation: a room, or a task, whose messages are
-    the blocks carrying its id.
+    """``topic_id`` is a conversation: a room, a task or a 支线, whose
+    messages are the blocks carrying its id.
 
     ``source`` says who asked: a ``nudge`` after something in the room changed,
     the periodic ``sweep``, or ``startup``. A nudge logs every waiting message it
     passes over and why; the sweep logs every message it starts, since one it
     finds is one the nudges missed."""
     from app.domain.agent.queries import conversation_seat
+    from app.domain.thread.services import answered_in
 
     if not runner.owns_sessions or not runner.accepting_turns:
         return 0
@@ -172,7 +173,8 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
                 continue
             recipient = (block.meta or {}).get("agent_recipient") or {}
             handle = recipient.get("handle")
-            conversation = block.conversation_id
+            # A channel's main line is answered in the message's 支线.
+            conversation = await answered_in(session, block)
             key = (conversation, handle)
             if key in seats:
                 continue
@@ -201,6 +203,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
                 skipped.append((block, "unfinished_input"))
                 continue
             seats[key] = block
+        await session.commit()
     if source != "sweep":
         for block, reason in skipped:
             logger.info(
