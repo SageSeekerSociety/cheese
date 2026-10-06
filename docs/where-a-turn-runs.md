@@ -173,9 +173,9 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 沙箱出现之前就在自托管设备上跑过的房间保持整台机器：点名过机器的房间当时就绑成了 `host`；「系统挑一台」的房间没有绑定，由迁移 `d72d0f566149` 绑成 `host`，绑在它最近一条会话租着的那台自托管设备上（下一条会话回到的就是那台）。用过几台的房间只绑那一台，回到别的那几台算一次新的选择，从 `isolated` 开始；最近一次落在云机器上、或者房间选的已经是云的，不绑。从没在自托管设备上跑过的房间，按默认进沙箱。
 
-macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`）：规则跟着命令行传进去，不落在房间能改的文件里。它没有 pid 命名空间，所以信号只能发给同一个沙箱里的进程，Unix socket 只能连房间自己的目录，LaunchServices 和剪贴板也不给用，这几样都会替沙箱在外面办事。Windows 没有沙箱（`device/supply.py` 的 `sandbox_unavailable`，按连接器 `hello` 报的 `<系统>-<架构>`）：那里 `isolated` 的房间开工时拿到一句话，说清楚可以怎么办（装 WSL，把 WSL 接成一台设备，或者请机主给整台机器），**不会退成整机去跑**。Linux 上缺 bubblewrap 或不许建用户命名空间时，安装程序在动房间之前就拒绝，同样带一句话。沙箱怎么搭见 `docs/remote-execution.md`。
+macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`）：规则跟着命令行传进去，不落在房间能改的文件里。它没有 pid 命名空间，所以信号只能发给同一个沙箱里的进程，Unix socket 只能连房间自己的目录，LaunchServices 和剪贴板也不给用，这几样都会替沙箱在外面办事。停房间时，房间的进程一起结束，用 `setsid` 脱离、被 launchd 收养的也在内：认它们靠的是每个进程甩不掉的 Seatbelt 规则——在沙箱里、能写这个房间的目录、不能写装着各房间目录的那一层（`environment_runner.end_seatbelt`，系统的 `sandbox_check`）。Windows 没有沙箱（`device/supply.py` 的 `sandbox_unavailable`，按连接器 `hello` 报的 `<系统>-<架构>`）：那里 `isolated` 的房间开工时拿到一句话，说清楚可以怎么办（装 WSL，把 WSL 接成一台设备，或者请机主给整台机器），**不会退成整机去跑**。Linux 上缺 bubblewrap 或不许建用户命名空间时，安装程序在动房间之前就拒绝，同样带一句话。沙箱怎么搭见 `docs/remote-execution.md`。
 
-整台云虚拟机上的会话看得见整台机器（`host`）：虚拟机就是这条会话自己的，执行器不进沙箱，有 sudo 和 Docker（`session_work._sandboxed`），那台机器上没有别的会话、别的房间。沙箱的网络规则不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以虚拟机连得到哪里由云平台那一侧限制。MicroCloud 把新开的虚拟机和它所在的私网隔开：MicroCloud 的接口和控制台、私网里部署的服务器、Proxmox 的内网地址和别的虚拟机都连不上，公网、DNS、apt 照常，平台经 SSH 反向转发连接器的那条路也照常。Proxmox 的公网地址（8006 和 22 端口）从虚拟机里还连得上。这一档默认不开（`MICROCLOUD_VM_OFFERING_ID` 为 0），由部署配置打开。
+整台云虚拟机上的会话看得见整台机器（`host`）：虚拟机就是这条会话自己的，执行器不进沙箱，有 sudo 和 Docker（`session_work._sandboxed`），那台机器上没有别的会话、别的房间。沙箱的网络规则不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以虚拟机连得到哪里由云平台那一侧限制。MicroCloud 把新开的虚拟机和它所在的私网隔开：MicroCloud 的接口和控制台、私网里部署的服务器、Proxmox 的内网地址和别的虚拟机都连不上，公网、DNS、apt 照常，平台经 SSH 反向转发连接器的那条路也照常。Proxmox 的公网地址也连不上它的 8006 和 22 端口：直连由虚拟机的防火墙挡住，按域名经实验室路由器的那条路由路由器的规则挡住。这一档默认不开（`MICROCLOUD_VM_OFFERING_ID` 为 0），由部署配置打开。
 
 ## 五、能从这些机器上拿回来什么
 

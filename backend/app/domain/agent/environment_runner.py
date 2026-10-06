@@ -170,6 +170,9 @@ def end_sandbox(home):
     started. The sandbox's first process is their pid namespace's init, so
     killing it takes all the others with it, wherever they have forked to.
     Nothing to do for a room whose sandbox is not running."""
+    if sys.platform == "darwin":
+        end_seatbelt(Path(home))
+        return
     sandbox = sandbox_process(home)
     if sandbox is None:
         return
@@ -182,6 +185,60 @@ def end_sandbox(home):
             return
         time.sleep(0.05)
     raise RuntimeError("sandbox has not stopped")
+
+
+def sandbox_check(pid, path=None):
+    """macOS's `sandbox_check`: with no `path`, 1 when `pid` runs in a sandbox;
+    with one, 0 when the process may write `path`. -1 when it cannot say."""
+    import ctypes
+    import platform
+
+    check = ctypes.CDLL("/usr/lib/libSystem.dylib").sandbox_check
+    check.restype = ctypes.c_int
+    if path is None:
+        return check(pid, None, 0)
+    # The path is a variadic argument, which arm64 passes on the stack: called
+    # as a fixed-argument function, five zeros fill the argument registers
+    # left so that the path lands there. Measured on macOS 26 (arm64).
+    pad = [ctypes.c_long(0)] * 5 if platform.machine() == "arm64" else []
+    flags = ctypes.c_int(1 | 0x40000000)  # a path filter, and nothing logged
+    return check(pid, b"file-write-data", flags, *pad, str(path).encode())
+
+
+def end_seatbelt(home):
+    """End the processes of a room sandboxed by Seatbelt (macOS). There is no
+    namespace to end them with: one the room detached (`setsid`) is adopted by
+    launchd and leaves every process tree. What no process of the room can
+    shed is its profile, inherited and irrevocable, so the room's processes are
+    the person's sandboxed ones that may write in its home and not in the
+    directory holding it and its siblings. Many of the person's own apps are
+    sandboxed too; none of them is held to one room's directory. Both are
+    directories that exist: `sandbox_check` answers a path that does not with
+    a refusal, whatever the profile says."""
+    home = home.resolve()  # the profile names directories as they resolve
+    for _ in range(20):
+        listing = subprocess.run(
+            ["ps", "-U", str(os.getuid()), "-o", "pid="],
+            capture_output=True,
+            text=True,
+        )
+        room = [
+            pid
+            for pid in map(int, listing.stdout.split())
+            if pid != os.getpid()
+            and sandbox_check(pid) == 1
+            and sandbox_check(pid, home) == 0
+            and sandbox_check(pid, home.parent) == 1
+        ]
+        if not room:
+            return
+        for pid in room:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        time.sleep(0.05)
+    raise RuntimeError("the room's processes did not stop")
 
 
 def process_identity(pid, *, reference=None):
