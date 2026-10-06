@@ -601,7 +601,17 @@ if __name__ == "__main__":
                     kept = (following,)
             except OSError:
                 raise SystemExit("executor state is not a directory") from None
-            state = Path(f"/proc/self/fd/{kept[0]}")
+            if sys.platform == "darwin":
+                # No /proc on macOS: the directory the descriptor holds, by the
+                # path the kernel resolved when it was opened, as the install
+                # named it. A `/proc/self/fd` name derives a socket that never
+                # exists here, and the executor would never be stopped.
+                import fcntl
+
+                named = fcntl.fcntl(kept[0], fcntl.F_GETPATH, bytes(1024))
+                state = Path(named.split(b"\0", 1)[0].decode())
+            else:
+                state = Path(f"/proc/self/fd/{kept[0]}")
         if kept or executor.exists():
             if not kept and (
                 json.loads(executor.read_text())["resource"] != Path.home().name

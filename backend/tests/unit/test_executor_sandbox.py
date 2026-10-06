@@ -189,6 +189,7 @@ def test_a_stop_signals_no_process_but_the_rooms_own_service(tmp_path):
             child.kill()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="/proc/self/fd is Linux's")
 def test_a_stop_reaches_a_service_named_through_a_state_descriptor(tmp_path):
     """A sandboxed room reaches its executor's state through an open directory
     descriptor (`bootstrap.executor_state`), so `stop` is told `/proc/self/fd/N`
@@ -216,6 +217,31 @@ def test_a_stop_reaches_a_service_named_through_a_state_descriptor(tmp_path):
         assert process.wait(timeout=10) == 0
     finally:
         os.close(descriptor)
+        process.kill()
+
+
+def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path):
+    """A sandboxed room's reset reaches its executor through the directory it
+    opened without following a link: on Linux by `/proc/self/fd`, on a Mac,
+    which has no /proc, by the path that directory resolves to. Either way the
+    executor stops, or the room keeps running the one it was meant to replace."""
+    home = tmp_path / "home"
+    (home / ".cheese").mkdir(parents=True)
+    _, process = _previous_executor(home / ".cheese")
+    release = tmp_path / "release"
+    shutil.copytree(RUNTIME.parent, release / "remote-execution")
+    shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
+    try:
+        reset = subprocess.run(
+            [sys.executable, str(release / "cheese-environment.py"), "reset"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, "HOME": str(home), "CHEESE_SANDBOXED": "1"},
+        )
+        assert reset.returncode == 0, reset.stderr
+        assert process.wait(timeout=10) == 0
+    finally:
         process.kill()
 
 
