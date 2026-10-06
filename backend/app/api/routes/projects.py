@@ -803,6 +803,9 @@ async def get_branch_protection(
     if project is None:
         raise NotFoundError("Project not found")
     bp = branch_protection_of(project)
+    from app.domain.project.forge import follow_github_rename
+
+    await follow_github_rename(project_id, db)
     installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
     if installation is None:
         merge_method, gh = "squash", GITHUB_UNBOUND
