@@ -45,6 +45,10 @@ MACHINE_OUT_OF_REACH = (
 # 台机器上的执行器比后端旧 —— 手好好的，下一次工具调用照样通。把它们也说成够不着，
 # agent 会照着这句话放弃这一轮全部文件与命令操作、并向人报告机器掉线，而那是假话。
 OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
+# The connection owner's mark on a call it turned away because it is being
+# released (`device_connection_app.DRAINING_HEADER`): like a refused connect,
+# nothing was dispatched, so the same call is sent again.
+OWNER_DRAINING_HEADER = "X-Device-Connection-Draining"
 
 # 够不着以外的那些。同样不给裸状态码（结论 23）：数字会把 agent 送回自己的工具调用
 # 里找 bug。数字和响应体进的是进程日志 —— agent 读不到它们，平台读得到。
@@ -974,6 +978,15 @@ class RemoteClient:
                     )
                     response = connection.getresponse()
                     data = response.read()
+                    if response.status == 503 and response.getheader(
+                        OWNER_DRAINING_HEADER
+                    ):
+                        connection.close()
+                        self.transport.connection = None
+                        if not _retry_connect(attempt, deadline):
+                            raise MachineOutOfReach
+                        attempt += 1
+                        continue
                     if response.status != 200:
                         # agent 读到的那句话里没有状态码，平台这边一个都不少：
                         # 少了这一行，后端事后连「当时是哪个码」都查不出来。

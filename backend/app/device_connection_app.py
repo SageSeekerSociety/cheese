@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 _executor_calls: dict[str, asyncio.Task[dict]] = {}
 _release_draining = False
+#: Marks a refusal that only says "this owner is being released": nothing was
+#: dispatched, so the caller may send the same call again once the replacement
+#: answers (``device_hub_rpc``, ``executor_transport``).
+DRAINING_HEADER = "X-Device-Connection-Draining"
+_DRAINING = {DRAINING_HEADER: "1"}
 _active_rpc_calls = 0
 # Reads a runner holds until it has news (``harness/driven/runner.py``), by
 # trace. A backend keeps one in flight on every seat it reads, so they never
@@ -73,7 +78,9 @@ async def admit_execution_request() -> AsyncIterator[None]:
     global _active_rpc_calls
     if _release_draining:
         raise HTTPException(
-            status_code=503, detail="device connection owner is draining"
+            status_code=503,
+            detail="device connection owner is draining",
+            headers=_DRAINING,
         )
     _active_rpc_calls += 1
     try:
@@ -94,8 +101,20 @@ async def healthz() -> dict[str, bool]:
 async def release_drain(
     x_device_connection_secret: str | None = Header(default=None),
 ) -> dict[str, bool]:
+    """Stop taking new calls, then say whether the ones in flight are done.
+
+    The owner starts draining on the first request and stays draining until
+    ``release-resume``: a new call meanwhile is refused with the draining
+    header and sent again by its caller, so the calls in flight can finish.
+    Waiting for a moment when nothing was in flight — the earlier rule, which
+    kept admitting new calls — never came on a platform in use: on 2026-10-06
+    seven releases in a row gave up on it.
+
+    200 once nothing that does work is in flight; 409 while something still is.
+    """
     _authorize(x_device_connection_secret)
     global _release_draining
+    _release_draining = True
     pending = any(
         device.exec_pending
         or device.session_pending
@@ -110,8 +129,9 @@ async def release_drain(
             for trace, task in _executor_calls.items()
         )
     ):
-        raise HTTPException(status_code=409, detail="device calls are active")
-    _release_draining = True
+        raise HTTPException(
+            status_code=409, detail="draining; device calls are still active"
+        )
     return {"draining": True}
 
 
@@ -174,7 +194,9 @@ async def call(
     global _active_rpc_calls
     if _release_draining and not _is_completed_executor_trace(name, body):
         raise HTTPException(
-            status_code=503, detail="device connection owner is draining"
+            status_code=503,
+            detail="device connection owner is draining",
+            headers=_DRAINING,
         )
     held = _held_read(name, body)
     if not held:

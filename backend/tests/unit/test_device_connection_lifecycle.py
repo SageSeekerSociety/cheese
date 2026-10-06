@@ -519,6 +519,18 @@ async def test_release_drain_waits_for_exec_and_blocks_new_screen_call(
         assert status["active_rpc_calls"] == 1
         assert status["device_pending"]["machine"]["exec"] == 1
 
+        # Draining starts with the first drain request, busy or not: a new call
+        # is turned away with the mark that tells its caller to send it again,
+        # so the one in flight can finish instead of new ones keeping the
+        # owner busy for ever.
+        turned_away = await client.post(
+            "/internal/device-connection/call/list_screens",
+            json={"device_id": "machine"},
+        )
+        assert turned_away.status_code == 503
+        assert turned_away.headers.get(device_connection_app.DRAINING_HEADER) == "1"
+        assert connector.sent.empty()
+
         await device_hub.on_device_message(
             "machine",
             {
