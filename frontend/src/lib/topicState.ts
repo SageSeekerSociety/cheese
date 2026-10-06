@@ -42,6 +42,11 @@ export function topicTitle(topic: { kind?: string | null; title: string }): stri
   return topic.title
 }
 
+/** 频道名前面那个符号：私密频道是一把锁，其余是 #。各处画频道的地方都问它。 */
+export function channelGlyph(topic: { members_only?: boolean | null }): string {
+  return topic.members_only ? 'mdi-lock-outline' : 'mdi-pound'
+}
+
 /**
  * 一条任务在屏幕上叫什么。还没起名的（`title_source = placeholder`）按读者的语言
  * 叫「新任务」：库里那份占位标题是给 agent 读的中文。

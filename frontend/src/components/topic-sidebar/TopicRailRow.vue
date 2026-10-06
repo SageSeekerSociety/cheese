@@ -27,7 +27,7 @@ import TopicRailMembers from './TopicRailMembers.vue'
 import { menuActionOf } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
-import { topicTitle } from '@/lib/topicState'
+import { channelGlyph, topicTitle } from '@/lib/topicState'
 import { TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { countLabel } from '@/lib/topicTree'
 
@@ -169,7 +169,8 @@ function onMenuToggle(open: boolean) {
           size="16"
           class="row-glyph"
           :class="{ 'row-glyph--unread': row.unreadTotal > 0 || fresh }"
-          icon="mdi-pound"
+          :icon="channelGlyph(row.topic)"
+          :title="row.topic.members_only ? t('work.channel.privateTip') : undefined"
         />
       </span>
     </template>

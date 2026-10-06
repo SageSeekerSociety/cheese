@@ -36,12 +36,12 @@ def _adapters(*, role=None, project_member=False):
     )
 
 
-async def _access(actor, *, is_private=False, **adapters):
+async def _access(actor, *, seats_only=False, **adapters):
     return await authorize_topic_access(
         actor,
         project_id=PID,
         topic_id=TID,
-        is_private=is_private,
+        seats_only=seats_only,
         **_adapters(**adapters),
     )
 
@@ -83,7 +83,7 @@ async def test_private_topic_allows_only_authenticated_roster_members():
     assert (
         await _access(
             _actor("token"),
-            is_private=True,
+            seats_only=True,
             role=TopicRole.member,
             project_member=False,
         )
@@ -92,7 +92,7 @@ async def test_private_topic_allows_only_authenticated_roster_members():
     assert (
         await _access(
             _actor("token"),
-            is_private=True,
+            seats_only=True,
             role=None,
             project_member=True,
         )
@@ -101,7 +101,7 @@ async def test_private_topic_allows_only_authenticated_roster_members():
     assert (
         await _access(
             _actor("handle"),
-            is_private=True,
+            seats_only=True,
             role=TopicRole.member,
             project_member=True,
         )
@@ -110,7 +110,7 @@ async def test_private_topic_allows_only_authenticated_roster_members():
     assert (
         await _access(
             _actor("cheese"),
-            is_private=True,
+            seats_only=True,
             role=None,
         )
         is False
@@ -118,7 +118,7 @@ async def test_private_topic_allows_only_authenticated_roster_members():
     assert (
         await _access(
             _actor("cheese"),
-            is_private=True,
+            seats_only=True,
             role=TopicRole.member,
         )
         is True

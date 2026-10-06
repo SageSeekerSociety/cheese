@@ -65,8 +65,9 @@ export interface Topic {
   project_id: string
   parent_id: string | null
   title: string
-  // 频道是做什么的，管理者写的一句话。没写是 null。
+  // 频道是做什么的（管理者写，没写是 null）；members_only 是私密频道，只有频道里的人看得到。
   description?: string | null
+  members_only?: boolean
   kind: string
   status: string
   created_at: string
@@ -92,8 +93,7 @@ export interface Topic {
   // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
   joined?: boolean
   // 这个话题在等我拍板：有点名给我的待办验收卡、没答的决策请求，或芝士停在
-  // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。
-  // 只有 list/get 话题时才带。
+  // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。只有 list/get 话题时才带。
   awaits_me?: boolean
   // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
   // 当下的钟判（`lib/replyWait.ts`）。只有 list/get 话题时才带。

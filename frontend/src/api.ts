@@ -451,7 +451,7 @@ export function listTopics(
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
-export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'kind' | 'status'>
+export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'kind' | 'status' | 'members_only'>
 
 /** 我能看到的所有项目里的话题名，最近有动静的在前。私聊不在里面。 */
 export async function listTopicNames(): Promise<TopicName[]> {
@@ -477,8 +477,8 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title: string, description?: string): Promise<Topic> {
-  const body: Record<string, string> = { project_id: projectId, title }
+export function createTopic(pid: string, title: string, description?: string, membersOnly = false): Promise<Topic> {
+  const body: Record<string, string | boolean> = { project_id: pid, title, members_only: membersOnly }
   if (description) body.description = description
   return request<Topic>('/topics', {
     method: 'POST',

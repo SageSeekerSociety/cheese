@@ -162,7 +162,16 @@ useCommands(roomCommands)
     <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
       <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
       <div class="topic-header__text">
-        <span class="topic-header__title t-title" :title="title">{{ title }}</span>
+        <span class="topic-header__title t-title" :title="title"
+          ><v-icon
+            v-if="topic.members_only"
+            size="14"
+            class="topic-header__lock"
+            icon="mdi-lock-outline"
+            :title="t('work.channel.privateTip')"
+            :aria-label="t('work.channel.privateTip')"
+          />{{ title }}</span
+        >
         <span v-if="mdAndUp && topic.description" class="topic-header__description" :title="topic.description">{{
           topic.description
         }}</span>
@@ -183,6 +192,7 @@ useCommands(roomCommands)
       <TopicMembers
         :topic-id="topic.id"
         :can-manage="topic.can_manage === true"
+        :can-invite="topic.members_only === true && topic.joined === true"
         :general="!isWorkTopic"
         :project-id="topic.project_id"
         :project-members="members"
@@ -360,6 +370,12 @@ useCommands(roomCommands)
 }
 .topic-header--bar .topic-header__title {
   max-width: 100%;
+}
+/* 私密频道：标题前一把锁，和侧栏那一行同一个记号。 */
+.topic-header__lock {
+  margin-right: 4px;
+  color: var(--muted);
+  vertical-align: -1px;
 }
 .topic-header__disconnected {
   color: var(--warn-ink);

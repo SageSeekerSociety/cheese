@@ -11,6 +11,11 @@ their grant to act there.
 A channel is managed — renamed, described, archived, its AI teammates and its
 members changed — by the person who created it (the ``owner`` row) and by
 whoever manages the project.
+
+A private channel (``Topic.members_only``) is seen only by the people in it, so
+nobody joins one: anyone in it brings in someone from the project, and whoever
+manages the project manages it only from inside. Its managers turn a public
+channel private; only someone who manages the project turns one back.
 """
 
 import uuid
@@ -67,13 +72,20 @@ class TopicMemberService:
         from app.domain.membership.services import MemberService
 
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
+        if topic.members_only and member is None:
+            # Nobody manages a private channel they cannot see.
+            return False
         if member is not None and member.role == TopicRole.owner:
             return True
         return await MemberService(self._session).manages(topic.project_id, actor)
 
     async def require_manager(self, topic_id: uuid.UUID, actor: str) -> Topic:
         topic = await self._topics.get(topic_id)
-        if topic is None:
+        if topic is None or (
+            topic.members_only
+            and await self._repo.get(topic_id=topic_id, member_handle=actor) is None
+        ):
+            # Someone outside a private channel is not told it exists.
             raise NotFoundError("Topic not found")
         if not await self.manages(topic, actor):
             raise ForbiddenError(say("channelManagerOnly"))
@@ -195,6 +207,15 @@ class TopicMemberService:
                 if h not in seated
             ]
         return seats
+
+    async def reached(self, topic: Topic, handles: list[str]) -> list[str]:
+        """Which of these a notice from this channel may reach: anyone it names,
+        except that a private channel's reach only the people and AI teammates
+        in it — someone outside is not told its name or what was said."""
+        if not topic.members_only:
+            return handles
+        seated = {m.member_handle for m in await self._repo.list_for_topic(topic.id)}
+        return [h for h in handles if h in seated]
 
     async def people_of(self, topic_id: uuid.UUID) -> list[str]:
         """:meth:`people_in` for a caller holding the channel's id."""
@@ -499,7 +520,7 @@ class TopicMemberService:
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, actor: str
     ) -> TopicMembership:
-        topic = await self.require_manager(topic_id, actor)
+        topic = await self._brought_in_by(topic_id, actor)
         # Who is an agent is the binding's answer, not the handle's shape (I9):
         # a connector's bound account can be named anything.
         is_agent = handle.startswith(AGENT_HANDLE_PREFIX) or await IdentityService(
@@ -530,6 +551,53 @@ class TopicMemberService:
         return await self._repo.add(
             topic_id=topic_id, member_handle=handle, role=TopicRole.member
         )
+
+    async def _brought_in_by(self, topic_id: uuid.UUID, actor: str) -> Topic:
+        """The channel ``actor`` may add someone to: one they manage, or a
+        private one they are in — its people bring the others in. Someone
+        outside a private channel is told it does not exist."""
+        topic = await self._topics.get(topic_id)
+        if topic is None:
+            raise NotFoundError("Topic not found")
+        if await self._repo.get(topic_id=topic_id, member_handle=actor) is None:
+            if topic.members_only:
+                raise NotFoundError("Topic not found")
+            return await self.require_manager(topic_id, actor)
+        if not topic.members_only or await IdentityService(self._session).is_agent(
+            actor
+        ):
+            # An AI teammate's seat lets it act in the channel, not invite.
+            return await self.require_manager(topic_id, actor)
+        return topic
+
+    async def set_members_only(
+        self, topic_id: uuid.UUID, members_only: bool, *, actor: str
+    ) -> Topic:
+        """Make a channel private or public again.
+
+        Making it private is its managers' call, and whoever made it keeps
+        seeing it: they are seated if they were not. Making it public shows its
+        whole history to everyone in the project, so it is left to whoever
+        manages the project, as Slack leaves it to a workspace's owners and
+        admins. 综合 is everyone in the project and is never private.
+        """
+        from app.domain.membership.services import MemberService
+
+        topic = await self._channel(topic_id)
+        if topic.kind == TopicKind.root:
+            raise ValidationError(say("channelGeneralNotPrivate"))
+        if topic.members_only == members_only:
+            return topic
+        if members_only:
+            await self.require_manager(topic_id, actor)
+            await self._ensure_member(topic_id, actor, role=TopicRole.member)
+        elif not await self.manages(topic, actor) or not await MemberService(
+            self._session
+        ).manages(topic.project_id, actor):
+            raise ForbiddenError(say("channelPublicProjectManagerOnly"))
+        topic.members_only = members_only
+        await self._session.flush()
+        return topic
 
     async def _on_project(self, project_id: uuid.UUID, handle: str) -> bool:
         from app.domain.membership.roster import roster

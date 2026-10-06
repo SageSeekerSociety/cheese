@@ -218,7 +218,8 @@ async def person_mentions(
                 for t in await TopicRepository(session).list_for_project(
                     topic.project_id
                 )
-                if t.kind != TopicKind.root and t.id != topic.id
+                # A private channel's name is not turned into a link for anyone else.
+                if t.kind != TopicKind.root and t.id != topic.id and not t.members_only
             ]
             content = expand_mention_names(content, roster, topic_refs)
     return PersonMentions(content, roster, agent_handles, by_seat)
@@ -245,11 +246,14 @@ async def _tell_thread(
     支线's own mark follows (`thread.reads`)."""
     if looks_like_agent_handle(author) or block.conversation_id == topic.id:
         return
-    people = [
-        h
-        for h in await thread_reads.people_in(session, block.conversation_id)
-        if h != author and h not in told
-    ]
+    people = await TopicMemberService(session).reached(
+        topic,
+        [
+            h
+            for h in await thread_reads.people_in(session, block.conversation_id)
+            if h != author and h not in told
+        ],
+    )
     if not people:
         return
     muted = await TopicRepository(session).muted_among(topic.id, people)
@@ -310,7 +314,9 @@ async def announce_mentions(
         muted = await topics.muted_among(topic.id, people)
         concrete += [h for h in people if h not in muted]
     # Nobody needs a notification for their own message.
-    targets = [h for h in dict.fromkeys(concrete) if h != author]
+    targets = await TopicMemberService(session).reached(
+        topic, [h for h in dict.fromkeys(concrete) if h != author]
+    )
     if targets:
         notifs = ProjectNotificationService(session)
         preview = markdown_preview(text, 200)

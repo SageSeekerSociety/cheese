@@ -164,17 +164,33 @@ def _order_by(sort: TopicSortField | None, order: SortOrder) -> UnaryExpression:
     return column.desc() if order == "desc" else column.asc()
 
 
+def _seated(handle: str):
+    return Topic.id.in_(
+        select(TopicMembership.topic_id).where(TopicMembership.member_handle == handle)
+    )
+
+
+def seen_by(handle: str | None) -> ColumnElement[bool]:
+    """Channels a person sees: every public one, and the private channels they
+    sit in. ``None`` is nobody in particular, who sees the public ones.
+
+    Private chats are not decided here: the listings that use this already
+    leave them out, and the badge maps (``_readable_by``) admit them by seat.
+    """
+    public = Topic.members_only.is_(False)
+    if handle is None:
+        return public
+    return or_(public, _seated(handle))
+
+
 def _readable_by(user_handle: str):
-    """Rooms a person's badge maps may name: every non-private room, and the
-    private rooms they still hold a seat in. One clause for both the unread map
-    and the notify-level map, so the two can never disagree about a room."""
+    """Rooms a person's badge maps may name: every public channel, and the
+    private chats and private channels they still hold a seat in. One clause
+    for both the unread map and the notify-level map, so the two can never
+    disagree about a room."""
     return or_(
-        Topic.is_private.is_(False),
-        Topic.id.in_(
-            select(TopicMembership.topic_id).where(
-                TopicMembership.member_handle == user_handle
-            )
-        ),
+        and_(Topic.is_private.is_(False), Topic.members_only.is_(False)),
+        _seated(user_handle),
     )
 
 
@@ -244,8 +260,10 @@ class TopicRepository:
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
         active_since: datetime | None = None,
+        only_seen_by: str | None = None,
     ) -> list[Topic]:
-        """The project's topic tree, flat.
+        """The project's topic tree, flat: all of it, or what ``only_seen_by``
+        sees when one is named (``seen_by``).
 
         ``active_since`` keeps only topics whose last activity (see
         ``_last_activity``) is at or after that instant — "最近活跃的话题". It
@@ -253,12 +271,19 @@ class TopicRepository:
         callers that rebuild the tree should not combine it with the filter.
         """
         stmt = self._project_topics_stmt(
-            [project_id], sort=sort, order=order, active_since=active_since
+            [project_id],
+            sort=sort,
+            order=order,
+            active_since=active_since,
+            seen=None if only_seen_by is None else seen_by(only_seen_by),
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_for_projects(self, project_ids: list[uuid.UUID]) -> list[Topic]:
-        """同一棵树，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目。
+    async def list_for_projects(
+        self, project_ids: list[uuid.UUID], *, viewer: str
+    ) -> list[Topic]:
+        """同一棵树，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目，和
+        其中 ``viewer`` 看得见的频道（私密频道只有在里面的人看得见）。
 
         私聊照样不在里面（见 `_project_topics_stmt`）：它不是话题树的一部分，也从
         来不会有验收卡或者待确认问题挂在上面。
@@ -266,7 +291,9 @@ class TopicRepository:
         if not project_ids:
             return []
         stmt = select(Topic).where(
-            Topic.project_id.in_(project_ids), Topic.is_private.is_(False)
+            Topic.project_id.in_(project_ids),
+            Topic.is_private.is_(False),
+            seen_by(viewer),
         )
         return list((await self._session.scalars(stmt)).all())
 
@@ -277,28 +304,40 @@ class TopicRepository:
         sort: TopicSortField | None,
         order: SortOrder,
         active_since: datetime | None,
+        seen: ColumnElement[bool] | None = None,
     ) -> Select[tuple[Topic]]:
         """The one definition of "these projects' topic trees, flat, in order".
 
         Shared so ``list_for_project``, ``list_for_project_with_activity`` and
         ``names_in_projects`` cannot drift into filtering or ordering the same
-        list differently.
+        list differently. ``seen`` narrows it to what one person sees
+        (``seen_by``); without it every channel is listed, for the platform's
+        own use.
         """
         # Private chats are not part of the topic tree.
         stmt = select(Topic).where(
             Topic.project_id.in_(project_ids), Topic.is_private.is_(False)
         )
+        if seen is not None:
+            stmt = stmt.where(seen)
         if active_since is not None:
             stmt = stmt.where(_last_activity() >= active_since)
         return stmt.order_by(_order_by(sort, order))
 
-    async def names_in_projects(self, project_ids: list[uuid.UUID]) -> list[Topic]:
-        """Every topic of these projects, private chats left out, newest activity
-        first — the rows the sidebar would list, for a name search across them."""
+    async def names_in_projects(
+        self, project_ids: list[uuid.UUID], *, viewer: str
+    ) -> list[Topic]:
+        """Every topic of these projects ``viewer`` sees, private chats left
+        out, newest activity first — the rows the sidebar would list, for a name
+        search across them."""
         if not project_ids:
             return []
         stmt = self._project_topics_stmt(
-            project_ids, sort="last_activity_at", order="desc", active_since=None
+            project_ids,
+            sort="last_activity_at",
+            order="desc",
+            active_since=None,
+            seen=seen_by(viewer),
         )
         return list(await self._session.scalars(stmt))
 
@@ -306,6 +345,7 @@ class TopicRepository:
         self,
         project_id: uuid.UUID,
         *,
+        viewer: str | None,
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
         active_since: datetime | None = None,
@@ -323,7 +363,11 @@ class TopicRepository:
         dashboard want, and none of them look at last activity.
         """
         stmt = self._project_topics_stmt(
-            [project_id], sort=sort, order=order, active_since=active_since
+            [project_id],
+            sort=sort,
+            order=order,
+            active_since=active_since,
+            seen=seen_by(viewer),
         ).add_columns(_last_activity())
         rows = (await self._session.execute(stmt)).all()
         return [(topic, last) for topic, last in rows]
@@ -426,11 +470,17 @@ class TopicRepository:
         stmt = select(Topic.id, Topic.archived_at).where(Topic.project_id == project_id)
         return dict((await self._session.execute(stmt)).tuples().all())
 
-    async def count_for_project(self, project_id: uuid.UUID) -> int:
+    async def count_for_project(
+        self, project_id: uuid.UUID, *, viewer: str | None
+    ) -> int:
         stmt = (
             select(func.count())
             .select_from(Topic)
-            .where(Topic.project_id == project_id, Topic.is_private.is_(False))
+            .where(
+                Topic.project_id == project_id,
+                Topic.is_private.is_(False),
+                seen_by(viewer),
+            )
         )
         return int((await self._session.scalar(stmt)) or 0)
 

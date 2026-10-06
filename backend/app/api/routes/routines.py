@@ -32,6 +32,7 @@ from app.domain.membership.services import MemberService
 from app.domain.routine import service as routines
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import RoutineService, describe_trigger
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -272,7 +273,18 @@ async def _readable_rules(
         return rows, False
     admin = await _manages_project(db, actor, project_id)
     if admin:
-        return rows, True
+        # Every channel's rules, except a private channel's they are not in.
+        rooms = [
+            room
+            for room in [
+                await TopicRepository(db).get(i) for i in {r.topic_id for r in rows}
+            ]
+            if room is not None
+        ]
+        seen = await resolver.readable_topic_ids(
+            actor, project_id=project_id, topics=rooms
+        )
+        return [r for r in rows if r.topic_id in seen], True
     mine = await TopicMemberService(db).joined_ids(
         list({r.topic_id for r in rows}), actor.handle
     )

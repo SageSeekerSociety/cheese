@@ -17,7 +17,7 @@
  * 链子和 `ProjectSettingsView.test.ts` 同一条：mock 掉 `../api`，不 mock store。
  * 绿在拆之前的旧文件上；拆完必须原样绿。
  */
-import type { BranchProtection } from '../cx_types'
+import type { BranchProtection, Project } from '../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -81,6 +81,7 @@ beforeEach(() => {
   route.query = {}
   goAuthorize.mockReturnValue(true)
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
+  vi.mocked(api.getProject).mockResolvedValue({ id: 'p1', name: 'P', can_manage_members: false } as Project)
   vi.mocked(api.setUpstream).mockResolvedValue({ url: null })
   vi.mocked(api.getForgeConnection).mockResolvedValue({
     kind: 'github_app',

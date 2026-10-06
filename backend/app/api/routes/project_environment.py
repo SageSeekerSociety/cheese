@@ -45,6 +45,7 @@ from app.domain.project.models import Project
 from app.domain.project.services import refuse_writes_if_archived
 from app.domain.thread.services import waiting_in_room
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.repositories import seen_by
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
@@ -80,13 +81,22 @@ async def access(
 
 
 async def room(
-    db: AsyncSession, project_id: uuid.UUID, topic_id: uuid.UUID, *, lock: bool = False
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    lock: bool = False,
+    viewer: AuthUserInfo | None = None,
 ) -> Topic:
+    """A channel of the project. Asked for a person (``viewer``), a private
+    channel they are not in is not found, as it is everywhere else."""
     statement = select(Topic).where(
         Topic.id == topic_id,
         Topic.project_id == project_id,
         Topic.is_private.is_(False),
     )
+    if viewer is not None:
+        statement = statement.where(seen_by(await _handle(db, viewer)))
     if lock:
         # The session keeps objects across commit, so a locked re-read must
         # load the row again rather than hand back the unlocked read's copy.
@@ -97,6 +107,11 @@ async def room(
     if topic is None:
         raise NotFoundError("Room not found")
     return topic
+
+
+async def _handle(db: AsyncSession, auth_user: AuthUserInfo) -> str:
+    user = await UserRepository(db).get_by_id(auth_user.user_id)
+    return user.username if user else ""
 
 
 async def require_idle(db: AsyncSession, topic: Topic) -> None:
@@ -125,6 +140,7 @@ async def get_environment(project_id: uuid.UUID, db: Db, user: User) -> dict:
                 Topic.is_private.is_(False),
                 Topic.kind != TopicKind.root,
                 Topic.status != TopicStatus.archived,
+                seen_by(await _handle(db, user)),
             )
             .order_by(Topic.created_at)
         )
@@ -166,7 +182,7 @@ async def get_room_environment(
     project_id: uuid.UUID, topic_id: uuid.UUID, db: Db, user: User
 ) -> dict:
     await access(db, project_id, user)
-    topic = await room(db, project_id, topic_id)
+    topic = await room(db, project_id, topic_id, viewer=user)
     binding = await sql_device_service(db).topic_binding(topic_id)
     if binding is None:
         hosts = [
@@ -256,7 +272,7 @@ async def apply_environment(
 ) -> dict:
     project, _ = await access(db, project_id, user, write=True)
     async with chat.edit_environment(topic_id):
-        topic = await room(db, project_id, topic_id)
+        topic = await room(db, project_id, topic_id, viewer=user)
         if topic.kind == TopicKind.root:
             raise ValidationError(say("overviewUsesBaseEnvironment"))
         await reset_idle_room(db, topic_id, project_id)

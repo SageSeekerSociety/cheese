@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
@@ -27,7 +27,7 @@ from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_win
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
 from app.domain.topic.models import Topic, TopicStatus, room_ref
-from app.domain.topic.repositories import TopicRepository
+from app.domain.topic.repositories import TopicRepository, seen_by
 
 if TYPE_CHECKING:
     from app.domain.project.models import Project
@@ -40,10 +40,11 @@ _ACTIVITY_DAYS = 365
 _SPARKLINE_WEEKS = 12
 
 
-def _listed_topic() -> ColumnElement[bool]:
-    """A topic a personal page may name: not a private 1:1 chat, which is not
-    part of any topic listing — on the person's own page either."""
-    return Topic.is_private.is_(False)
+def _listed_topic(viewer: str) -> ColumnElement[bool]:
+    """A topic a personal page may name to ``viewer``: not a private 1:1 chat,
+    which is not part of any topic listing — on the person's own page either —
+    and not a private channel ``viewer`` is not in."""
+    return and_(Topic.is_private.is_(False), seen_by(viewer))
 
 
 class DashboardService:
@@ -109,7 +110,13 @@ class DashboardService:
             (m for m in await roster(self._s, project_id) if m.handle == user_handle),
             None,
         )
-        topics = await self._topics.list_for_project(project_id)
+        topics = list(
+            await self._s.scalars(
+                select(Topic)
+                .where(Topic.project_id == project_id, _listed_topic(viewer))
+                .order_by(Topic.created_at)
+            )
+        )
         started = [
             {**room_ref(t), "status": t.status.value}
             for t in topics
@@ -242,7 +249,7 @@ class DashboardService:
                     .where(
                         Topic.project_id.in_(ids),
                         Topic.created_by == handle,
-                        _listed_topic(),
+                        _listed_topic(viewer),
                     )
                     .group_by(Topic.project_id)
                 )
@@ -428,7 +435,7 @@ class DashboardService:
                 Block.author == handle,
                 participant_blocks(),
                 Topic.project_id.in_(list(names)),
-                _listed_topic(),
+                _listed_topic(viewer),
             )
             .group_by(room)
             .order_by(last.desc(), room)

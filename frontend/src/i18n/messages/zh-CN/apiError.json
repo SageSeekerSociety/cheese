@@ -956,6 +956,8 @@
   "channelManagerOnly": "只有频道创建者和项目管理员能管理这个频道",
   "channelArchivedNoJoin": "这个频道已归档，不能加入",
   "channelGeneralNoLeave": "「综合」包括项目里的所有人，不能退出",
+  "channelGeneralNotPrivate": "「综合」包括项目里的所有人，不能设为私密",
+  "channelPublicProjectManagerOnly": "只有项目管理员能把私密频道设为公开",
   "channelJoinToPost": "加入这个频道后才能在主线发言",
   "taskOwnerNotInProject": "只能转交给项目成员",
   "contributorNotInProject": "只能把项目成员加为协作者",

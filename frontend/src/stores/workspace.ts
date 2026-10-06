@@ -27,6 +27,7 @@ import {
   upgradeBlock,
 } from '@/api'
 import { ApiError, isProjectArchivedError } from '@/api'
+import { setChannelMembersOnly } from '@/api/topicMembers'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
@@ -558,6 +559,22 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
+  /** 设为私密 / 重新公开（管理者；公开只有项目管理员）。成功之后这一行跟着变。 */
+  async function setMembersOnly(topicId: string, membersOnly: boolean): Promise<boolean> {
+    try {
+      const saved = await setChannelMembersOnly(topicId, membersOnly)
+      topicRevision += 1
+      topics.value = topics.value.map((topic) =>
+        topic.id === topicId ? { ...topic, members_only: saved.members_only === true } : topic
+      )
+      void refreshTopics()
+      return true
+    } catch (e) {
+      reportError(e, t('work.channel.visibilityFailed'))
+      return false
+    }
+  }
+
   /** 加入 / 退出一个频道。成功之后这一行的 `joined` 跟着变，侧栏随之出现或消失。 */
   async function setJoined(topicId: string, joined: boolean): Promise<boolean> {
     try {
@@ -711,13 +728,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // navigate to it — creating a topic without opening it is never what was meant.
   // 房间是个群聊，建出来时坐着项目的默认队友；要请别的队友进来，和请人一样走
   // 成员名册。
-  async function create(title: string, description = ''): Promise<Topic | null> {
+  async function create(title: string, description = '', membersOnly = false): Promise<Topic | null> {
     const pid = projectId.value
     const name = title.trim()
     if (!pid || !name) return null
     const epoch = projectEpoch
     try {
-      const topic = await createTopic(pid, name, description.trim() || undefined)
+      const topic = await createTopic(pid, name, description.trim() || undefined, membersOnly)
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
       topics.value.unshift(topic)
@@ -763,6 +780,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     setNotifyLevel,
     setJoined,
     describe,
+    setMembersOnly,
     markAllRead,
     privateUnreadMap,
     activeTopicId,

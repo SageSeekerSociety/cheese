@@ -692,7 +692,12 @@ class RoomTurns:
             # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
             # ——用户自己打 @某个归档话题也必须还能变成链接）；
             # `topic_refs_for_prompt` 只是**渲染**进 system prompt 的子集。
-            all_topics = await topics.list_for_project(topic.project_id)
+            # 私密频道不进别的房间的提示词：它的名字只给在里面的人看。
+            all_topics = [
+                t
+                for t in await topics.list_for_project(topic.project_id)
+                if not t.members_only
+            ]
             topic_refs, topic_refs_for_prompt = _topic_ref_lists(
                 all_topics, exclude_id=topic.id
             )

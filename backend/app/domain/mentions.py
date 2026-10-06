@@ -88,6 +88,7 @@ async def canonicalize_refs(
     topics = [
         {"id": str(t.id), "title": t.title}
         for t in await TopicRepository(session).list_for_project(project_id)
-        if t.kind != TopicKind.root and t.id != exclude_topic_id
+        # A private channel's name is not turned into a link for anyone else.
+        if t.kind != TopicKind.root and t.id != exclude_topic_id and not t.members_only
     ]
     return expand_mention_names(text, roster, topics)

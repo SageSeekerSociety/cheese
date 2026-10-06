@@ -43,11 +43,12 @@ export function peopleItems(pool: MentionPoolEntry[], query: string): RefItem[] 
   }))
 }
 
-/** 打 # 时的候选：项目里的话题（项目本身那间不算），按标题搜。 */
+/** 打 # 时的候选：项目里的话题（项目本身那间不算），按标题搜。私密频道不在里面：
+ *  文档人人能读，引用里不该带出只有频道里的人看得到的名字。 */
 export function topicItems(topics: Topic[], query: string): RefItem[] {
   const q = query.toLowerCase()
   return topics
-    .filter((tp) => tp.kind !== 'root' && tp.title.toLowerCase().includes(q))
+    .filter((tp) => tp.kind !== 'root' && !tp.members_only && tp.title.toLowerCase().includes(q))
     .slice(0, LIMIT)
     .map((tp) => ({
       label: tp.title,

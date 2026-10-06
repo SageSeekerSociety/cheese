@@ -13,7 +13,7 @@ from app.api.deps import (
     get_chat_service,
     get_profile_registry,
 )
-from app.api.place import project_reader
+from app.api.place import project_reader, rooms_seen
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -33,6 +33,7 @@ from app.domain.agent.github_app import (
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.block.queries import awaiting_an_answer, weeklies_for_project
+from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
@@ -334,10 +335,14 @@ async def list_weeklies(
     caller that writes a weekly (``POST /topics/{id}/weekly``) can read the set
     back: a per-turn credential is minted for one turn in one room, and a bare
     ``authorize_project`` refuses it."""
-    await project_reader(db, resolver, project_id, topic)
+    actor = await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await weeklies_for_project(db, project_id)
-    items = [b.model_dump(mode="json") for b in blocks]
+    # Only from the channels the caller reads: a private one's stay in it.
+    seen = await rooms_of_inner(
+        db, list(await rooms_seen(db, resolver, actor, project_id))
+    )
+    items = [b.model_dump(mode="json") for b in blocks if b.conversation_id in seen]
     return ok(page(items, len(items)))
 
 
@@ -366,14 +371,20 @@ async def list_project_tasks(
     so every client gives the same answer (`room_task/presentation.py`). Two
     round trips still: it is computed from the two batches already fetched.
     """
-    await project_reader(db, resolver, project_id, topic)
+    actor = await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     # 四次批查询，各问一个领域。这条路由是拼装的人，所以它把三次窄读和一次服务
     # 调用按固定顺序摆在一起；每一次都走对方领域自己的公开读出口，不去碰别人的
     # repository —— `block` 那边问的是「这个项目的决策/周报」和「哪几条停在提问
     # 上」，`review` 那边问的是「这些活的卡」，`room_task` 那边问的是「这些活」和
     # 「它们各自最后一次说话」。
-    tasks = await TaskService(db).list_in_project(project_id)
+    # A task is seen where its channel is: a private channel's by its people.
+    seen = await rooms_seen(db, resolver, actor, project_id)
+    tasks = [
+        t
+        for t in await TaskService(db).list_in_project(project_id)
+        if t.room_id in seen
+    ]
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
