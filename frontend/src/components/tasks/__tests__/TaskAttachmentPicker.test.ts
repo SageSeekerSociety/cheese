@@ -70,11 +70,11 @@ describe('发题时带的材料', () => {
     mocks.upload.mockResolvedValue({ data: { id: 7 } })
     const view = mount()
 
-    await fireEvent.change(fileInputOf(view), { target: { files: [pdf()] } })
+    const file = pdf()
+    await fireEvent.change(fileInputOf(view), { target: { files: [file] } })
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1))
-    expect(mocks.upload.mock.calls[0][0].type).toBe('file')
-    expect(mocks.upload.mock.calls[0][0].file.name).toBe('讲义.pdf')
+    expect(mocks.upload.mock.calls[0][0].file).toBe(file)
     await waitFor(() => expect(view.emitted()['update:attachmentIds']?.at(-1)).toEqual([[7]]))
     // 传完就看得见：名字与大小都在那张列表上。
     expect(view.getByTestId('attached-file').textContent).toContain('讲义.pdf')

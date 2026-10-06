@@ -73,21 +73,6 @@
             <BaseButton v-if="loggedIn" kind="primary" prepend-icon="mdi-plus" @click="emit('openCreateSpace')">{{
               t('spaces.create.open')
             }}</BaseButton>
-            <!-- <v-btn-toggle v-model="selectedSort" class="sort-toggle" rounded="lg" color="primary" density="comfortable">
-              <v-btn
-                v-for="(item, index) in sortOptions"
-                :key="index"
-                :value="item.value"
-                @click="sortSpaces(item.value)"
-              >
-                <v-icon
-                  :icon="item.value === 'newest' ? 'mdi-clock-outline' : 'mdi-fire'"
-                  size="small"
-                  class="mr-1"
-                ></v-icon>
-                {{ item.text }}
-              </v-btn>
-            </v-btn-toggle> -->
           </v-card-title>
           <v-card-text class="px-4 py-4">
             <!-- A failed read leaves `spaces` empty, so the scroll area would say "no spaces yet" — the same shape as a space list that really is empty. Replace the area instead of falling into it. -->
@@ -330,16 +315,6 @@ const { mdAndUp } = useDisplay()
 
 .search-field:hover:deep(.v-field__outline) {
   opacity: 1;
-}
-
-.sort-toggle {
-  border: 1px solid rgba(var(--v-theme-primary), 0.12);
-  background-color: rgba(var(--v-theme-primary), 0.04);
-}
-
-.sort-toggle:deep(.v-btn) {
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 .space-card {
