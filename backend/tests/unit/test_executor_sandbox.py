@@ -254,6 +254,26 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
     assert ran.exists() is not sandbox
 
 
+def test_the_teardown_ends_a_sandbox_started_before_its_process_was_recorded(
+    tmp_path, monkeypatch
+):
+    """A sandbox started from a release that recorded no first process, and so
+    has no way to end one, is torn down all the same."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home = tmp_path / ".cheese/home" / project / resource
+    (home / ".cheese/executor").mkdir(parents=True)
+    release = tmp_path / ".cheese/executor-releases" / ("1" * 64)
+    (release / "remote-execution").mkdir(parents=True)
+    shutil.copy(RUNTIME, release / "remote-execution/runtime.py")
+    (release / "cheese-environment.py").write_text("def reset(home):\n    pass\n")
+    marker = tmp_path / ".cheese/sandboxes" / project / resource
+    marker.parent.mkdir(parents=True)
+    marker.write_text(str(release))
+
+    cleanup.stop_executor(home, resource)
+
+
 def test_the_install_writes_through_no_link_a_room_left_in_its_home(
     tmp_path, monkeypatch
 ):

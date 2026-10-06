@@ -847,8 +847,14 @@ def stop_executor(home: Path, resource: str) -> None:
             result = run_command(["sudo", "-n", SANDBOX_HOST, "down", home.name])
             if result.returncode:
                 raise RuntimeError("sandbox has not stopped: " + result.stderr)
-        runner = runpy.run_path(str(platform_program(home, "cheese-environment.py")))
-        runner["end_sandbox"](home)
+        # Only a sandbox whose first process the install recorded has one to
+        # end. Releases that recorded none also have no `end_sandbox`, and
+        # their sandboxes end with their executor, stopped above.
+        if sandbox_marker(home).with_name(home.name + ".process").exists():
+            runner = runpy.run_path(
+                str(platform_program(home, "cheese-environment.py"))
+            )
+            runner["end_sandbox"](home)
         return
     # Both helpers can outlive the agent, including launches without an executor.
     for name in ("cheese-preview", "cheese-tunnel"):
