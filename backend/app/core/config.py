@@ -716,7 +716,9 @@ class Settings(BaseSettings):
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
     # Sandbox slots per host core: how many sessions' sandboxes one host runs at
-    # once. A sandbox holds its slot while it runs; one asleep holds only disk.
+    # once, unless its memory holds fewer at `cloud_sandbox_memory_mb` each
+    # (`models.capacity`). A sandbox holds its slot while it runs; one asleep
+    # holds only disk.
     cloud_host_slots_per_core: int = Field(default=2, ge=1, le=16)
     # The disk a session's home is budgeted on its host. A host keeps at most
     # `disk_gb // this` homes, running or asleep (never fewer than its slots).

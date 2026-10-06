@@ -322,12 +322,26 @@ class CloudHostHome(UuidPk, Timestamps, Base):
     archive_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+def sandboxes_memory_mb(total_mb: int) -> int:
+    """What every sandbox on a host of ``total_mb`` may hold together. A copy of
+    ``sandbox_host.sandboxes_memory``, which sets it as the sandboxes' shared
+    cgroup limit on the host; test_footprint_root.py holds the two together."""
+    return total_mb - min(max(1024, total_mb // 4), total_mb // 2)
+
+
 def capacity(host: CloudHost) -> int:
     """The sandboxes a host runs at once: per core, by the deployment's
-    setting. A whole cloud VM has none to give: it is its one session's."""
+    setting, and no more than fit in the memory the host gives its sandboxes,
+    each at its full limit. Counted by cores alone, a 4 GiB host took four 3 GiB
+    sandboxes; two of them were enough to stall it for five hours (dev,
+    2026-10-05). A whole cloud VM has none to give: it is its one session's."""
     if host.whole_machine:
         return 0
-    return max(1, int(host.cores)) * settings.cloud_host_slots_per_core
+    by_cores = max(1, int(host.cores)) * settings.cloud_host_slots_per_core
+    by_memory = (
+        sandboxes_memory_mb(int(host.memory_mb)) // settings.cloud_sandbox_memory_mb
+    )
+    return min(by_cores, by_memory)
 
 
 def disk_capacity(host: CloudHost) -> int:

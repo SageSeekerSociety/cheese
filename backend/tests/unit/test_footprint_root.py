@@ -20,6 +20,8 @@ import re
 import uuid
 from pathlib import Path
 
+import pytest
+
 from app.domain.agent import (
     device_provider,
     environment_runner,
@@ -82,6 +84,17 @@ def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
     assert environment_runner.SANDBOX_CGROUP == sandbox_host.CGROUP.name
     assert bootstrap.RESOLV_CONFS == sandbox_host.RESOLV_CONFS
     assert confinement.SITE_ADDRESS == sandbox_host.SITE_ADDRESS
+
+
+@pytest.mark.parametrize("total_mb", [2048, 4096, 8192, 16384, 65536])
+def test_the_pool_counts_the_sandbox_memory_the_helper_allows(total_mb):
+    """The pool places sandboxes by the memory the host's helper lets them hold
+    together; the two must agree, or the pool fills a host past that cap."""
+    from app.domain.machine.models import sandboxes_memory_mb
+
+    assert sandboxes_memory_mb(total_mb) << 20 == sandbox_host.sandboxes_memory(
+        total_mb << 20
+    )
 
 
 def test_the_shipped_programs_carry_the_checkout_name_that_place_chose():
