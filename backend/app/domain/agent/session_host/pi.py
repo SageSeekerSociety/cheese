@@ -23,6 +23,7 @@ from app.domain.agent.harness.pi.launch import (
     provider,
 )
 from app.domain.agent.harness.pi.subscription import Subscription
+from app.domain.agent.harness.prompt import SUBAGENT_TODO_WRITE
 from app.domain.agent.session_host.contract import (
     Access,
     Image,
@@ -71,6 +72,9 @@ def launch(ref: SessionRef, spec: SessionSpec, access: Access, api: str) -> Host
         "skills": dict(spec.skills),
         "extension": extension(),
         "notice": spec.notice,
+        # What every subagent the session starts is told (`pi/subagents.py`):
+        # it reads none of the session's system prompt.
+        "subagent_rules": SUBAGENT_TODO_WRITE,
     }
     if spec.idle_exit_s is not None:
         config["idle_exit_s"] = spec.idle_exit_s
