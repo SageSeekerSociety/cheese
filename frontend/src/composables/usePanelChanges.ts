@@ -31,6 +31,7 @@ import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
 import { fetchRoomTasks } from '../lib/topicPanelCache'
 
+import { useDocumentRevisions } from './useDocumentRevisions'
 import { useTopicMemory } from './useTopicMemory'
 
 import { t } from '@/i18n'
@@ -364,6 +365,20 @@ export function usePanelChanges(props: PanelChangesProps) {
     if (path) await selectFile(path)
     void loadGit({ silent: true })
   }
+
+  // 这一份 .docx 的修订：清单、只读怎么判、处理完干什么，都在那一份里。处理完这条活
+  // 的文件就变了（`onRevisionDecided`）—— 这一格除了那一处，还要把树上的数字重读。
+  const revs = useDocumentRevisions(
+    {
+      topicId: () => props.topicId,
+      path: () => revisionPath.value,
+      version: () => fileVersion.value,
+      task: () => selectedTask.value,
+      source: () => fileSource.value,
+      readOnly: () => props.readOnly === true || currentTask.value?.status !== 'open',
+    },
+    { onDecided: () => void onRevisionDecided() }
+  )
 
   // Raw bytes of the open file: what <img> renders for an image, and what the
   // download button hands over for anything else that can't be shown as text.
@@ -805,6 +820,8 @@ export function usePanelChanges(props: PanelChangesProps) {
     docLoading,
     docError,
     docRendererMissing,
+    // 这一份 .docx 的修订（`useDocumentRevisions.ts`）
+    revs,
     // 动作
     loadAll,
     selectFile,
@@ -820,3 +837,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     onRevisionDecided,
   }
 }
+
+/** 「改动」这一格的取数原样递给面板（props）：面板自己不认识接口。 */
+export type PanelChangesBundle = ReturnType<typeof usePanelChanges>

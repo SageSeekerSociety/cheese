@@ -8,6 +8,9 @@ import { computed } from 'vue'
 import { memberName } from '../lib/agentNames'
 import { isExternalMember } from '../lib/externalMembers'
 
+/** 这一包递给画的那一层（props）：名册是调用方给的，面板不再自己去取。 */
+export type DocPeopleBundle = ReturnType<typeof useDocPeople>
+
 export function useDocPeople(source: {
   members: () => ProjectMemberRow[]
   agentHandle: () => string | null | undefined

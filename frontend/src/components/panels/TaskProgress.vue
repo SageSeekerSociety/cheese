@@ -11,89 +11,43 @@
 //
 // 每行一条活：色点 +「第 N 件：做什么」+ 小字写状态短语和负责人。屏幕上每一个状态
 // 词都是后端算好的 `presentation.phrase`，这一段一个都不推。
-import type { Block, BoardColumn, RoomTask, Topic } from '../../cx_types'
+import type { Block, BoardColumn, RoomTask } from '../../cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, phraseLabel } from '../../lib/board'
 import { relTime } from '../../lib/relTime'
-import { cachedTopicPanel, fetchRoomTasks } from '../../lib/topicPanelCache'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
 
+// **只吃 props**：这一段的数在 `components/work/PanelOverviewHost.vue` 里取——先画缓存里
+// 上次那份、背后再重取（lib/topicPanelCache.ts）。这一格只决定画成什么样：
+// `components/panels/**` 下每个 SFC 都是「场景」，场景不取数。
 const props = withDefaults(
   defineProps<{
-    /** 当前打开的房间。 */
-    topic: Topic | null
-    /** 这一段在屏幕上。折叠起来的时候不去拉。 */
-    active?: boolean
-    /** 每有一轮动静就加一。 */
-    refreshTick?: number
+    /** 这个房间的活，每条带上它最新的一块（用来算「最后活动」）。 */
+    rows?: ThreadRow[]
+    /** 还在拉。只影响第一次：手上有数的时候不遮。 */
+    loading?: boolean
+    /** 拉不到时的原话。空着就是没出事。 */
+    errorMsg?: string | null
   }>(),
-  { active: false, refreshTick: 0 }
+  { rows: () => [], loading: false, errorMsg: null }
 )
 
 const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
-  (e: 'count', n: number): void
 }>()
 
 type ThreadRow = RoomTask & { blocks?: Block[] }
 
-const rows = ref<ThreadRow[]>([])
-const loading = ref(false)
-const errorMsg = ref<string | null>(null)
 // 默认折起来，只剩一行摘要（几件、几件等你）：那一行已经答了「现在有什么在动」，
 // 而展开的清单会把下面的文档挤到只剩半截——总览这一格的主体是文档。
 const open = ref(false)
 // 已完成默认折起来。件数写在按钮上，所以折起来不等于藏起来。
 const showDone = ref(false)
-
-// 手上这份 rows 是哪个房间的：切到另一个房间时，缓存里那份才该顶上来。
-let rowsFor: string | null = null
-
-async function load(opts: { fresh?: boolean } = {}) {
-  const place = props.topic
-  if (!place) {
-    rows.value = []
-    return
-  }
-  const roomId = place.id
-  // 切回来过的房间先画上次那一份，背后再重取：不转圈、不闪空。
-  const cached = cachedTopicPanel('roomTasks', roomId)
-  if (cached && rowsFor !== roomId) {
-    rows.value = cached.data
-    rowsFor = roomId
-    emit('count', cached.data.length)
-  }
-  loading.value = true
-  errorMsg.value = null
-  try {
-    // limit: 1 是必须的，不是优化。不传的话后端会把房间里**每一条**支线的完整
-    // 历史都吐回来，而一个跑久了的房间有近两百条活。这里只要每条最新的那一块，
-    // 用来说「最后活动」。
-    const payload = await fetchRoomTasks(roomId, opts)
-    if (props.topic?.id !== roomId) return
-    rows.value = payload.data
-    rowsFor = roomId
-    emit('count', payload.data.length)
-  } catch {
-    if (props.topic?.id === roomId) errorMsg.value = t('work.room.taskProgress.loadFailed')
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(
-  () => [props.active, props.refreshTick] as const,
-  ([isActive, tick], before) => {
-    // 一轮刚结束（tick 变了）：不跟着那之前发出去的请求走。
-    if (isActive) void load({ fresh: !!before && tick !== before[1] })
-  },
-  { immediate: true }
-)
 
 /** 最后活动 = 这条支线最新那一块的时间；一句话都还没说过的就用它建出来的时间。 */
 function lastActivity(row: ThreadRow): string | null {
@@ -105,7 +59,7 @@ function lastActivity(row: ThreadRow): string | null {
  *  编号必须稳定：它是人在对话里指代一条活的方式（「第 3 件卡住了」），跟着排序
  *  变的编号说的是别的活。 */
 const numberOf = computed(() => {
-  const byBirth = [...rows.value].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+  const byBirth = [...props.rows].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
   return new Map(byBirth.map((r, i) => [r.id, i + 1]))
 })
 
@@ -120,7 +74,7 @@ function sortRows(list: ThreadRow[]): ThreadRow[] {
 
 const byColumn = computed(() => {
   const buckets = new Map<BoardColumn, ThreadRow[]>()
-  for (const row of rows.value) {
+  for (const row of props.rows) {
     const key = row.presentation.column
     const list = buckets.get(key)
     if (list) list.push(row)

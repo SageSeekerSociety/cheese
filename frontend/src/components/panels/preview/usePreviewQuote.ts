@@ -1,5 +1,5 @@
 import type { FramePick } from '@/composables/usePreviewFrames'
-import type { DocumentIdentity } from '@/lib/documentBytes'
+import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
 import type {
   SheetCellQuote,

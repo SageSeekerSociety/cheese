@@ -6,11 +6,13 @@
 // 的那一轮的清单仍然在对话里，跟着芝士那一行——那一刻它是「它在干什么」。
 //
 // 和看板一样折成一行摘要（「完成 4/6」），点开是整张清单。一项都没有就整段不画。
-import type { TodoItem, Topic } from '../../cx_types'
+//
+// **只吃 props**：清单在 `components/work/PanelOverviewHost.vue` 里取——先画缓存里上次
+// 那份、背后再重取（lib/topicPanelCache.ts），那一层再把结果传下来。这一格只决定画成
+// 什么样：`components/panels/**` 下每个 SFC 都是「场景」，场景不取数。
+import type { TodoItem } from '../../cx_types'
 
-import { computed, ref, watch } from 'vue'
-
-import { cachedTopicPanel, fetchTopicProgress } from '../../lib/topicPanelCache'
+import { computed, ref } from 'vue'
 
 import TodoChecklist from './TodoChecklist.vue'
 
@@ -18,38 +20,15 @@ import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
-    topic: Topic | null
-    /** 每有一轮动静就加一：一轮结束时清单可能变了。 */
-    refreshTick?: number
+    /** 清单：最新的那一条在最前面。空数组 = 这个房间还没留下过进度，整段不画。 */
+    items?: TodoItem[]
   }>(),
-  { refreshTick: 0 }
+  { items: () => [] }
 )
 
-// 切回来过的房间先画上次那份清单，背后再重取（lib/topicPanelCache.ts）。
-const items = ref<TodoItem[]>((props.topic?.id && cachedTopicPanel('progress', props.topic.id)?.items) || [])
 const open = ref(false)
 
-async function load(opts: { fresh?: boolean } = {}) {
-  const tid = props.topic?.id
-  if (!tid) {
-    items.value = []
-    return
-  }
-  try {
-    const progress = await fetchTopicProgress(tid, opts)
-    if (props.topic?.id === tid) items.value = progress.items ?? []
-  } catch {
-    // 进度是背景信息，拿不到就不画，不为它报错。
-  }
-}
-
-void load()
-watch(
-  () => props.refreshTick,
-  () => void load({ fresh: true })
-)
-
-const done = computed(() => items.value.filter((i) => i.status === 'completed').length)
+const done = computed(() => props.items.filter((i) => i.status === 'completed').length)
 </script>
 
 <template>

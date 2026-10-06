@@ -20,7 +20,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import PanelSite from './PanelSite.vue'
+import PanelSite from '../work/PanelSiteHost.vue'
 
 import { setLocale } from '@/i18n'
 
@@ -122,7 +122,8 @@ describe('现场按轮组织', () => {
       event('2', 'turn-a', '2026-09-15T20:29:00Z', { progress: true }, '文档已生成并展示。'),
     ])
 
-    expect(container.querySelector('.site-msg')?.textContent).toContain('文档已生成并展示。')
+    // 正文是懒加载的阅读器画的（common/MarkdownView）：等这一句真的落进 DOM。
+    await waitFor(() => expect(container.querySelector('.site-msg__body')?.textContent).toContain('文档已生成并展示。'))
     expect(container.querySelectorAll('.site-act')).toHaveLength(1)
     expect(container.querySelector('.turn__head')?.textContent).toContain('1 步')
   })

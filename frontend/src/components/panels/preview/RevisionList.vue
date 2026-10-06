@@ -11,149 +11,78 @@
 //
 // 预览和改动两格用的是同一个组件：一处修订算一条这件事只能有一个答案，两份实现走散
 // 的表现是读者点了第 2 条、生效的是第 3 条。
-import type { DocumentRevision, FileSource } from '../../../cx_types'
+//
+// 清单从哪来、接受/拒绝发给谁，都在 `composables/useDocumentRevisions.ts` 里：两格各
+// 调一次，包成 `revs` 递进来。这一只只画，处理哪一条按 `decide` 事件发上去。
+import type { DocumentRevisionsBundle } from '../../../composables/useDocumentRevisions'
+import type { DocumentRevision } from '../../../cx_types'
 
-import { computed, ref, watch } from 'vue'
-
-import { decideDocumentRevisions, documentRevisions } from '../../../api'
 import { isLibraryPath } from '../../../lib/library'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-const props = withDefaults(
-  defineProps<{
-    topicId: string | null
-    path: string | null
-    /** 这个文件现在是哪一版，用来判断要不要重读清单。 */
-    version?: string | null
-    /** 从哪个库读：某个任务的工作树，还是房间自己的文件（null）。 */
-    task?: string | null
-    source?: FileSource
-    readOnly?: boolean
-  }>(),
-  { version: null, task: null, source: 'live', readOnly: false }
-)
-
-// 处理完一条，文件就变了：宿主要重画那一页，而它是按文件版本缓存的——版本这时还没
-// 变（是这里改的，不是芝士改的），所以要明说一句。
-const emit = defineEmits<{ (e: 'decided'): void }>()
-
-// 资料库里的那一份是用户给进来的原件，只读——修订照样列出来（它们是这份文档的一部
-// 分，读者有权看见），但处理不了：接受一处修订会改写所有房间都在引用的那一份。
-const readOnly = computed(() => props.readOnly || props.source === 'committed' || isLibraryPath(props.path ?? ''))
-
-const revisions = ref<DocumentRevision[]>([])
-const error = ref('')
-const deciding = ref(0)
-let listedKey = ''
-// 读这份清单时文件是哪一版：处理时带回去，芝士在这中间重新交付过就不会被盖掉。
-let listedVersion = ''
-
-async function load() {
-  const tid = props.topicId
-  const path = props.path
-  if (!tid || !path) {
-    revisions.value = []
-    listedKey = ''
-    return
-  }
-  const key = `${tid}:${props.task ?? ''}:${props.source}:${path}:${props.version ?? ''}`
-  if (key === listedKey) return
-  listedKey = key
-  revisions.value = []
-  error.value = ''
-  try {
-    const read = await documentRevisions(tid, path, props.task, props.source)
-    if (listedKey !== key) return
-    revisions.value = read.revisions
-    listedVersion = read.version
-  } catch (e) {
-    if (listedKey !== key) return
-    // 读不到修订不该把文档也弄没：文档本身还好好地显示着。
-    revisions.value = []
-    listedVersion = ''
-    error.value = e instanceof Error ? e.message : t('work.room.revisions.loadFailed')
-  }
-}
-
-async function decide(decision: { accept?: number[]; reject?: number[] }) {
-  const tid = props.topicId
-  const path = props.path
-  if (!tid || !path || readOnly.value) return
-  deciding.value += 1
-  error.value = ''
-  try {
-    const done = await decideDocumentRevisions(tid, path, listedVersion, decision, props.task)
-    revisions.value = done.revisions
-    listedVersion = done.version
-    // 文件改了，重新数的序号也变了：清单和那一页都要刷新，别让读者对着旧清单点第二下。
-    listedKey = ''
-    emit('decided')
-    await load()
-  } catch (e) {
-    const said = e instanceof Error ? e.message : t('work.room.revisions.decideFailed')
-    // 写不进去多半是文件已经变了：先把清单换成现在这份，再说刚才那下没生效。
-    listedKey = ''
-    await load()
-    error.value = said
-  } finally {
-    deciding.value -= 1
-  }
-}
+// **只吃 props**：清单、只读、读失败的原话都在 `composables/useDocumentRevisions.ts` 里
+// 取（改动那一格和预览那一格各调一次，落在 `components/work/PanelChangesHost.vue` /
+// `PanelPreviewHost.vue`），这一只只决定画成什么样。`components/panels/**` 下每个 SFC
+// 都是「场景」，场景不取数。
+const props = defineProps<{
+  /** 这一份修订的取数（`composables/useDocumentRevisions.ts` 那一包）。 */
+  revs: DocumentRevisionsBundle
+  /** 在读哪一份：只用来选那句「不能改」的说法（资料库里的原件，还是别的只读）。 */
+  path?: string | null
+}>()
 
 function reads(row: DocumentRevision): string {
   if (row.kind === 'replace') return t('work.room.revisions.replaced', { removed: row.removed, added: row.added })
   if (row.kind === 'insert') return t('work.room.revisions.inserted', { added: row.added })
   return t('work.room.revisions.deleted', { removed: row.removed })
 }
-
-watch(
-  [() => props.topicId, () => props.path, () => props.version, () => props.task, () => props.source],
-  () => void load(),
-  {
-    immediate: true,
-  }
-)
-
-defineExpose({ reload: load })
 </script>
 
 <template>
   <!-- 一根柱子，两种内容：清单，或者一句「没读出来」。读不出清单时文档照旧显示——
        丢掉的是清单，而那份文档仍然是这个文件现在的样子。 -->
-  <aside v-if="error || revisions.length" class="revs" data-testid="revisions">
-    <v-alert v-if="error" type="warning" density="compact" class="mb-2">{{ error }}</v-alert>
+  <aside v-if="props.revs.error.value || props.revs.revisions.value.length" class="revs" data-testid="revisions">
+    <v-alert v-if="props.revs.error.value" type="warning" density="compact" class="mb-2">
+      {{ props.revs.error.value }}
+    </v-alert>
 
-    <div v-if="revisions.length" class="revs__bar">
-      <span class="revs__count t-eyebrow">{{ t('work.room.revisions.count', { count: revisions.length }) }}</span>
+    <div v-if="props.revs.revisions.value.length" class="revs__bar">
+      <span class="revs__count t-eyebrow">
+        {{ t('work.room.revisions.count', { count: props.revs.revisions.value.length }) }}
+      </span>
       <v-spacer />
       <BaseButton
-        v-if="!readOnly"
+        v-if="!props.revs.readOnly.value"
         kind="ghost"
         size="sm"
-        :disabled="deciding > 0"
-        @click="decide({ accept: revisions.map((r) => r.number) })"
+        :disabled="props.revs.deciding.value > 0"
+        @click="props.revs.decide({ accept: props.revs.revisions.value.map((r) => r.number) })"
       >
         {{ t('work.room.revisions.acceptAll') }}
       </BaseButton>
       <BaseButton
-        v-if="!readOnly"
+        v-if="!props.revs.readOnly.value"
         kind="ghost"
         size="sm"
-        :disabled="deciding > 0"
-        @click="decide({ reject: revisions.map((r) => r.number) })"
+        :disabled="props.revs.deciding.value > 0"
+        @click="props.revs.decide({ reject: props.revs.revisions.value.map((r) => r.number) })"
       >
         {{ t('work.room.revisions.rejectAll') }}
       </BaseButton>
     </div>
 
-    <p v-if="readOnly && revisions.length" class="revs__note t-meta">
-      {{ isLibraryPath(path ?? '') ? t('work.room.revisions.libraryReadOnly') : t('work.room.revisions.readOnlyNote') }}
+    <p v-if="props.revs.readOnly.value && props.revs.revisions.value.length" class="revs__note t-meta">
+      {{
+        isLibraryPath(props.path ?? '')
+          ? t('work.room.revisions.libraryReadOnly')
+          : t('work.room.revisions.readOnlyNote')
+      }}
     </p>
 
-    <ul v-if="revisions.length" class="revs__list">
-      <li v-for="row in revisions" :key="row.number" class="revs__item">
+    <ul v-if="props.revs.revisions.value.length" class="revs__list">
+      <li v-for="row in props.revs.revisions.value" :key="row.number" class="revs__item">
         <div class="revs__what">{{ reads(row) }}</div>
         <div class="revs__who t-meta">
           {{
@@ -163,11 +92,21 @@ defineExpose({ reload: load })
             })
           }}
         </div>
-        <div v-if="!readOnly" class="revs__acts">
-          <BaseButton kind="ghost" size="sm" :disabled="deciding > 0" @click="decide({ accept: [row.number] })">
+        <div v-if="!props.revs.readOnly.value" class="revs__acts">
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            :disabled="props.revs.deciding.value > 0"
+            @click="props.revs.decide({ accept: [row.number] })"
+          >
             {{ t('work.room.revisions.accept') }}
           </BaseButton>
-          <BaseButton kind="ghost" size="sm" :disabled="deciding > 0" @click="decide({ reject: [row.number] })">
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            :disabled="props.revs.deciding.value > 0"
+            @click="props.revs.decide({ reject: [row.number] })"
+          >
             {{ t('work.room.revisions.reject') }}
           </BaseButton>
         </div>

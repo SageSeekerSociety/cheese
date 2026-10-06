@@ -52,6 +52,7 @@ import { localDocSession } from '@/lib/docLocalSession'
 import { DOCUMENT_TYPES } from '@/lib/fileKind'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
+import { previewBundles, revisionsBundle } from '@/test/panelBundles'
 
 const SCENE = SCENES.quickstart
 
@@ -691,6 +692,8 @@ const CHANGES_COMMITS: GitCommit[] = [
 ]
 
 const CHANGES_BASE = {
+  // 修订清单那一包：这一格只画，清单本身另有它自己的用例（`RevisionList.library.spec.ts`）。
+  revs: revisionsBundle(),
   topicId: DEMO_TOPIC,
   readOnly: false,
   overview: false,
@@ -775,6 +778,8 @@ const PREVIEW_FILE: FileContent = {
 }
 
 const PREVIEW_BASE = {
+  // 修订清单、那一栏历史、编辑器那一份会话：预览站里它们只画，取数在 `usePanelPreview`。
+  ...previewBundles(),
   topicId: DEMO_TOPIC,
   projectId: DEMO_PROJECT,
   frameName: 'cheese-preview-demo',

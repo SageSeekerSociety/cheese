@@ -73,7 +73,7 @@ const overview = { pulse: vi.fn(), highlightTurn: vi.fn(), reviewEdits: vi.fn() 
 const changes = { openFile: vi.fn() }
 
 const PanelOverviewStub = defineComponent({
-  name: 'PanelOverview',
+  name: 'PanelOverviewHost',
   setup(_, { expose }) {
     expose({
       pulse: () => overview.pulse(),
@@ -118,9 +118,9 @@ function harness() {
     global: {
       plugins: [vuetify, i18n],
       stubs: {
-        PanelOverview: PanelOverviewStub,
+        PanelOverviewHost: PanelOverviewStub,
         PanelChanges: PanelChangesStub,
-        PanelSite: true,
+        PanelSiteHost: true,
         PanelPreview: true,
         RoutinePanelHost: true,
       },

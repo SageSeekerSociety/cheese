@@ -13,21 +13,23 @@
 //
 // 空块不画，也不补「（暂无）」：后端就不下发空块。整段拿不到也不补报错以外的东西
 // ——它是正文之外的一栏，正文还在。
-import type { OverviewAutoBlock, OverviewAutoItem, Topic } from '../../../cx_types'
-
-import { ref, watch } from 'vue'
-
-import { getOverviewAuto } from '../../../api'
+//
+// 这一段也不自己取数：两块的内容由文档那一格的取数带着来（`composables/usePanelDoc.ts`
+// 读，`components/work/PanelDocHost.vue` / `PanelOverviewHost.vue` 接线），这里只画。
+import type { OverviewAutoBlock, OverviewAutoItem } from '../../../cx_types'
 
 import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
-    topic: Topic | null
-    /** 每有一轮动静就加一：话题状态可能变了。 */
-    activityTick?: number
+    /** 平台现拼的那两块；空数组就是没有这两块。 */
+    blocks?: OverviewAutoBlock[]
+    /** 那一次没读回来：照实说，并给一个重试。 */
+    failed?: boolean
+    /** 重读一次。 */
+    reload?: () => void
   }>(),
-  { activityTick: 0 }
+  { blocks: () => [], failed: false, reload: undefined }
 )
 
 const emit = defineEmits<{
@@ -35,30 +37,9 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
 }>()
 
-const blocks = ref<OverviewAutoBlock[]>([])
-const failed = ref(false)
-
-async function load() {
-  const tid = props.topic?.id
-  if (!tid) {
-    blocks.value = []
-    failed.value = false
-    return
-  }
-  try {
-    blocks.value = (await getOverviewAuto(tid)).blocks ?? []
-    failed.value = false
-  } catch {
-    blocks.value = []
-    failed.value = true
-  }
+function retry() {
+  props.reload?.()
 }
-
-void load()
-watch(
-  () => [props.topic?.id, props.activityTick],
-  () => void load()
-)
 
 // 逐条渲染成同一行形状：主要那句话 + 一行元信息（谁在做、做到哪了）。
 // 两个话题条目可能同名，所以 key 用 id。
@@ -82,7 +63,7 @@ function open(item: OverviewAutoItem) {
          落点，静默消失的后果和人从没读到它一样。 -->
     <div v-if="failed" class="overview-auto__failed">
       <span class="t-body c-muted">{{ t('work.room.overviewAuto.failed') }}</span>
-      <button type="button" class="overview-auto__retry t-body" @click="load">
+      <button type="button" class="overview-auto__retry t-body" @click="retry">
         {{ t('work.room.retry.action') }}
       </button>
     </div>

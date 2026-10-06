@@ -3,8 +3,8 @@
 // 改了什么；关闭时写下的结论排在文档前面。
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 
-import PanelDoc from '@/components/panels/PanelDoc.vue'
 import TaskDocCompare from '@/components/task/TaskDocCompare.vue'
+import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
@@ -56,7 +56,7 @@ const emit = defineEmits<{
         <v-progress-circular indeterminate color="primary" size="20" />
       </div>
     </template>
-    <PanelDoc
+    <PanelDocHost
       v-else
       class="task-overview__doc"
       :topic="room"

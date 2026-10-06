@@ -495,6 +495,24 @@ def test_resource_helpers_stop_even_without_an_executor(tmp_path, name, has_exec
             child.wait(timeout=5)
 
 
+def test_a_home_restored_onto_a_fresh_host_stops_with_nothing_running(tmp_path):
+    """A sandbox's home comes back from its archive with its links into the
+    release it last ran from, but the fresh host never staged that release and
+    the room has not been prepared there yet. Putting it to sleep must succeed:
+    no executor of it can be running on this host."""
+    resource = str(uuid.uuid4())
+    home = tmp_path / resource
+    directory = home / ".cheese"
+    (directory / "remote-execution").mkdir(parents=True)
+    (directory / "execution-owner.json").write_text(json.dumps({"resource": resource}))
+    gone = tmp_path / ".cheese/executor-releases" / ("0" * 64)
+    (directory / "remote-execution/runtime.py").symlink_to(
+        gone / "remote-execution/runtime.py"
+    )
+
+    cleanup.stop_executor(home, resource)
+
+
 def test_each_seats_tunnel_helper_stops_with_its_room(tmp_path):
     """A room seats several agents, each with its own tunnel helper whose pid
     file is in that seat's directory. Closing the room stops every one."""

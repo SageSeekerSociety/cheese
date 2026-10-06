@@ -1,13 +1,17 @@
 <script setup lang="ts">
 // 现场 tab: 芝士 干活的实况 —— 会话的控制条，加上重建出来的 transcript 时间线。
-import type { AgentControlState, Block, Topic } from '../../cx_types'
+//
+// 这一只只画。这一窗怎么来（读最近一页、往上翻、socket 上来的行落到哪儿）、顶上那条
+// 会话栏的轮询、摊开一步之后去取哪一段输出，都在 `composables/usePanelSite.ts` 里由
+// `components/work/PanelSiteHost.vue` 调一次，整包从 `site` 递进来。和别处同一个理由：
+// 场景棘轮认的「场景」是 `components/panels/**` 下每个 SFC，A 档的意思是「给一组
+// props 就能单独出画面」，取数一滴都不能漏进来。
+import type { PanelSiteBundle } from '../../composables/usePanelSite'
+import type { AgentControlState, Block } from '../../cx_types'
 import type { MemberActivityLine } from '../../lib/memberActivity'
 
-import { computed, onUpdated, ref, useId, watch } from 'vue'
+import { computed, onUpdated, ref, useId } from 'vue'
 
-import { useSiteClamp } from '../../composables/useSiteClamp'
-import { useSiteTranscript } from '../../composables/useSiteTranscript'
-import { useStickToBottom } from '../../composables/useStickToBottom'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import {
   argDisplay,
@@ -38,6 +42,8 @@ const props = withDefaults(
   defineProps<{
     // 这段对话的 id：房间的，或者任务的。
     topicId: string | null
+    /** 会话栏里「由 X 授权」那颗 chip 去哪：项目 ID 换来项目里的成员页。 */
+    projectId?: string | null
     // This tab is the one on screen. Load happens on the rising edge, exactly
     // like opening the old drawer did.
     active?: boolean
@@ -57,8 +63,11 @@ const props = withDefaults(
     agentName?: string
     /** 此刻谁在这个房间里忙（`MemberActivity` 那一份）。 */
     activity?: MemberActivityLine[]
+    /** 这一格的取数（`composables/usePanelSite.ts` 那一包）。 */
+    site: PanelSiteBundle
   }>(),
   {
+    projectId: null,
     active: false,
     memberNames: () => ({}),
     working: false,
@@ -77,21 +86,27 @@ const emit = defineEmits<{
   (e: 'mention-click', handle: string): void
 }>()
 
-// 每一轮从什么时候开始（毫秒），读到的每一页都带着它那几轮的。组头的用时从这里算起。
-const turnStarts = ref<Record<string, number>>({})
+// 摊开而不是留着那一包：这一格的接口就是这十来样东西，谁传谁看得见。摊开之后模板里
+// 那些名字还是老样子（`transcript`、`agents`、`loading`……），因为它们现在都是顶层的 ref。
+const {
+  turnStarts,
+  scrollRef,
+  overflowing,
+  measured,
+  measureClamp,
+  agents,
+  viewing,
+  transcript,
+  hasOlder,
+  loading,
+  loadingOlder,
+  errorMsg,
+  onSiteScroll,
+  selectAgent,
+  inspector,
+  loadStepOutput,
+} = props.site
 
-function noteStarts(starts: Record<string, string> | undefined): void {
-  const parsed = Object.entries(starts ?? {}).map(([id, at]) => [id, Date.parse(at)] as const)
-  const fresh = parsed.filter(([id, at]) => Number.isFinite(at) && turnStarts.value[id] !== at)
-  if (fresh.length) turnStarts.value = { ...turnStarts.value, ...Object.fromEntries(fresh) }
-}
-
-// The scroll container, so the timeline can open on its newest entry the way a
-// chat log does. Measured before this existed: opening 现场 left scrollTop at 0
-// with a scrollHeight of 1818 and a viewport of 500 — the reader landed 1300px
-// above the thing they came to see.
-const scrollRef = ref<HTMLElement | null>(null)
-useStickToBottom(scrollRef, 48)
 // Entries the reader has expanded. Keyed by block id, and deliberately NOT
 // reset when the transcript refreshes: a silent refresh re-collapsing what
 // someone just opened is the same bug as scrolling them away from it.
@@ -104,10 +119,10 @@ function toggleSiteEntry(id: string): void {
   expandedSite.value = next
 }
 
-// Which entries are long enough to clamp. The measurement — together with the
-// ResizeObserver that re-reads it when the panel's own width changes — lives in
-// useSiteClamp. A fresh read follows every render, coalesced to one per frame.
-const { overflowing, measured, schedule: measureClamp } = useSiteClamp(scrollRef)
+// A fresh read of "which entries are long enough to clamp" follows every render,
+// coalesced to one per frame. The measurement itself — together with the
+// ResizeObserver that re-reads it when the panel's own width changes — is in
+// useSiteClamp; 读的时机在这一只，因为「渲染完了」只有它知道。
 onUpdated(measureClamp)
 
 // Long enough to be clamped: the measured answer once we have it, the content
@@ -115,59 +130,6 @@ onUpdated(measureClamp)
 // the clamp never disagree about which entries are long.
 function isLong(b: Block): boolean {
   return measured.value ? overflowing.value.has(b.id) : isLongSiteEntry(b.content)
-}
-
-// ---- 按队友看 ----
-// 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
-// 是其中一个在干什么。作者就是做这一步的那个队友：做过一步、说过一句的参与者。
-// 平台自己的话（署名 system）和人的动作只在「全部」里。
-//
-// 这一排 tab 是**攒出来**的，不是每次从手上那一窗里现算的：只看一个队友时手上只有
-// 那个人的行，现算的话这一排会当场塌成一个 tab，人就切不回去了。每读一页都往里
-// 记新露面的（从新到旧地翻，一个都不会漏），socket 上来的一行也记。
-const agents = ref<string[]>([])
-
-function noteAgents(blocks: Block[]): void {
-  const seen = new Set(agents.value)
-  let grew = false
-  const next = agents.value.slice()
-  for (const b of blocks) {
-    if (b.author_type !== 'participant' || seen.has(b.author)) continue
-    if (!b.meta?.tool && !isNarration(b.meta)) continue
-    seen.add(b.author)
-    next.push(b.author)
-    grew = true
-  }
-  if (grew) agents.value = next
-}
-
-// null = 全部。
-const selectedAgent = ref<string | null>(null)
-const viewing = computed(() =>
-  selectedAgent.value !== null && agents.value.includes(selectedAgent.value) ? selectedAgent.value : null
-)
-
-// 手上这一窗 transcript（读最近一页 / 往上翻 / 过 MAX_WINDOW 封顶 / socket 上来的行
-// 落到哪儿）都在 useSiteTranscript 里，和这一格抽开——那一格贴着 1000 行的上限
-// （.claude/rules/architecture.md）。递进去的是「现在读的是谁」和这一窗自己的滚动
-// 容器；读回来的人由 noteAgents / noteStarts 记到这一栏自己的名册和轮次上。
-const { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive } = useSiteTranscript({
-  topicId: () => props.topicId,
-  viewing: () => viewing.value,
-  scrollRef,
-  noteAgents,
-  noteStarts,
-})
-
-defineExpose({ receive })
-
-// 换一个视角 = 换一条时间线：重读这个人的最近一页，停在最新的那一条。不是把手上
-// 这一窗（可能是「全部」，也可能是上一位）就地滤一遍 —— 那既是「一次加载全部」，
-// 也停在原地，而人是来看这个人刚刚在干什么的。
-function selectAgent(next: string | null): void {
-  if (next === selectedAgent.value) return
-  selectedAgent.value = next
-  void load()
 }
 
 const visible = computed(() =>
@@ -189,24 +151,6 @@ function agentLabel(handle: string): string {
 // 一个队友时只说它。
 const workingLines = computed(() =>
   props.activity.filter((l) => l.kind === 'working' && (viewing.value === null || l.handle === viewing.value))
-)
-
-// Opening the tab loads it, exactly like opening the drawer used to. 它读的是
-// 「现在看的是谁」，所以要等在 `viewing` 之后 —— immediate 的那一次是当场跑的。
-watch(
-  () => props.active,
-  (on) => {
-    if (on) void load()
-  },
-  { immediate: true }
-)
-
-// 一轮刚结束：开着的这一栏安静地重读一遍。
-watch(
-  () => props.refreshTick,
-  () => {
-    if (props.active) void load()
-  }
 )
 
 function authorLabel(b: Block): string {
@@ -265,16 +209,7 @@ function onSayClick(event: MouseEvent): void {
   else if (chip.dataset.file) emit('open-file', chip.dataset.file)
 }
 
-// 在跑的那一轮，这一页读回来时可能还没登记：对话栏从 socket 上知道它从什么时候开始。
-// 记下来，这一轮停了、重读还没回来的那一会儿，用时也不缩回去。
-watch(
-  () => props.runningTurns,
-  (running) => {
-    const unseen = Object.entries(running ?? {}).filter(([id]) => !(id in turnStarts.value))
-    if (unseen.length) turnStarts.value = { ...Object.fromEntries(unseen), ...turnStarts.value }
-  },
-  { immediate: true }
-)
+// 在跑的那一轮的起始时间由取数那一层从对话栏记下（`usePanelSite`），这里只管分组。
 const turns = computed(() => groupByTurn(visible.value, turnStarts.value))
 
 // 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
@@ -293,7 +228,12 @@ function isLive(index: number): boolean {
 
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
-      <SessionInspector v-if="topicId" :topic-id="topicId" :active="active" :pushed="agentControl" />
+      <SessionInspector
+        v-if="topicId"
+        :session="inspector"
+        :project-id="projectId"
+        @mention-click="emit('mention-click', $event)"
+      />
       <div
         v-if="agents.length > 1"
         v-roving-tabs
@@ -404,9 +344,9 @@ function isLive(index: number): boolean {
               <!-- 摊开的这一步打印了什么：收着，点了才取。 -->
               <SiteStepOutput
                 v-if="topicId && expandedSite.has(b.id) && b.meta?.output_bytes"
-                :topic-id="topicId"
                 :block-id="b.id"
                 :bytes="b.meta.output_bytes"
+                :load="loadStepOutput"
               />
             </div>
             <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->

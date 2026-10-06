@@ -59,7 +59,7 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
   },
 }))
 
-import PanelPreview from './PanelPreview.vue'
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -87,7 +87,7 @@ function revision(over: Partial<DocumentRevision> = {}): DocumentRevision {
 }
 
 function mount() {
-  return render(PanelPreview, {
+  return render(PanelPreviewHost, {
     props: { topicId: 'topic-a', projectId: 'project-a', active: true },
     global: { plugins: [createVuetify({ components, directives })] },
   })

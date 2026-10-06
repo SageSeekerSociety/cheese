@@ -22,6 +22,10 @@ import { listenToComments } from '../lib/docCommentSignals'
 import { myId } from '../me'
 
 type Operation = { id: string; action: 'replies' | 'resolve' | 'reopen'; body: DocThreadWrite }
+
+/** 这一包递给画的那一层（props）：取数在这一层，面板不再自己去取。 */
+export type DocThreadsBundle = ReturnType<typeof useDocThreads>
+
 export function useDocThreads(document: () => string | null) {
   const state = reactive<DocThreadState>({ threads: [], activity: {}, errors: {}, busy: false, unknown: null })
   let doc = document()

@@ -16,6 +16,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
+import { previewBundles } from '@/test/panelBundles'
 
 const page = vi.hoisted(() => ({
   blob: null as Blob | null,
@@ -70,6 +71,7 @@ const context = {
   version: 'v7',
 }
 const props = {
+  ...previewBundles(),
   topicId: 'room',
   projectId: 'project',
   path: 'deck.pdf',

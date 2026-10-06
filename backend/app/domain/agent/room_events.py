@@ -416,16 +416,21 @@ async def _known_commits(
     _HookWorkState.known_commits)."""
     try:
         from app.domain.repository.forge_files import ProjectFiles
+        from app.domain.room_task.models import TaskStatus
         from app.domain.room_task.services import TaskService
 
         async with sessions() as session:
             tasks = await TaskService(session).list_in_room(topic_id)
             commits = set()
             for task in tasks:
-                if task.branch_name:
+                # A closed task takes no more commits, and its branch is often
+                # deleted; a channel holds every task its project ever ran.
+                if task.branch_name and task.status == TaskStatus.open:
                     history = await ProjectFiles(session, project_id, task.id).history()
                     commits.update(row["sha"] for row in history[-_CHANGE_COMMIT_WALK:])
             return commits
     except Exception:  # noqa: BLE001 — no baseline just means no summary
-        logger.warning("commit baseline unreadable for topic %s", topic_id)
+        logger.warning(
+            "commit baseline unreadable for topic %s", topic_id, exc_info=True
+        )
         return None

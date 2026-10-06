@@ -10,8 +10,8 @@ import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useSkillProposals } from './useSkillProposals'
+import { useTaskProposals } from './useTaskProposals'
 
-import { acceptTaskProposal, dismissTaskProposal, listTaskProposals, type TaskProposal } from '@/api/tasks'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
@@ -107,8 +107,6 @@ function openSkill(skill: { id: string }) {
   })
 }
 
-// AI 队友提议的任务：列的是这段对话里还在等人决定的那些，接在对话后面。点「创建
-// 任务」的人就是负责人，创建好就去任务页。
 const store = useWorkspaceStore()
 
 // 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。
@@ -121,39 +119,15 @@ async function join() {
     joining.value = false
   }
 }
-const proposals = ref<TaskProposal[]>([])
-const deciding = ref<string | null>(null)
-async function loadProposals() {
-  const conversation = conversationId.value
-  try {
-    const rows = await listTaskProposals(conversation)
-    if (conversationId.value === conversation) proposals.value = Array.isArray(rows) ? rows : []
-  } catch {
-    // 拉不到就先不画，下一次房间有动静时再读。
-  }
-}
-onMounted(loadProposals)
-watch(conversationId, loadProposals)
+// AI 队友提议的任务（`useTaskProposals`）：创建好就去任务页。
+const {
+  proposals,
+  deciding,
+  load: loadProposals,
+  decide: decideProposal,
+} = useTaskProposals(conversationId, (id) => emit('open-card', id))
 function proposerName(handle: string): string {
   return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
-}
-async function decideProposal(proposal: TaskProposal, decision: 'accept' | 'dismiss') {
-  if (deciding.value) return
-  deciding.value = proposal.id
-  try {
-    if (decision === 'accept') {
-      const task = await acceptTaskProposal(conversationId.value, proposal.id)
-      emit('open-card', task.id)
-    } else {
-      await dismissTaskProposal(conversationId.value, proposal.id)
-    }
-    proposals.value = proposals.value.filter((p) => p.id !== proposal.id)
-  } catch (e) {
-    store.reportError(e, t('work.task.proposal.failed'))
-    void loadProposals()
-  } finally {
-    deciding.value = null
-  }
 }
 
 const connected = computed(() => !!chatRef.value?.connected)

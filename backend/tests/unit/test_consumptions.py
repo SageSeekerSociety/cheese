@@ -13,7 +13,9 @@ Rules held here:
 * a question taken over is still stopped by its asker;
 * the slot a question holds is still held after the takeover, and let go at
   its end;
-* a viewer reconnecting from where it was gets the rest, and only the rest.
+* a viewer reconnecting from where it was gets the rest, and only the rest;
+* a question whose runner the machine says is gone ends at once, instead of
+  being taken up again on every sweep.
 """
 
 import asyncio
@@ -25,6 +27,7 @@ from redis.asyncio import from_url
 
 from app.core.config import settings
 from app.domain.agent import admission
+from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.session_host import consumptions as consumptions_module
 from app.domain.agent.session_host.answer import Words
 from app.domain.agent.session_host.consumptions import Consumptions
@@ -371,3 +374,55 @@ async def test_a_question_ends_once_even_when_its_reader_died_tidying_up(
 
 async def _gone(redis, work: str) -> bool:
     return not await redis.sismember("consumptions", work)
+
+
+class Gone:
+    """The session host as the connector answers once the runner is gone: the
+    machine is online, and what the call needs is not there."""
+
+    def __init__(self, hub, why) -> None:
+        self._hub = hub
+        self._why = why
+
+    async def call_executor(self, device_id, state, method, params, **kwargs):
+        raise DeviceCallError(self._why(state))
+
+    def __getattr__(self, name):
+        return getattr(self._hub, name)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "why",
+    [
+        lambda state: (
+            "dial unix /tmp/cheese-execution-1000-0c5e4b916d2a.sock: "
+            "connect: no such file or directory"
+        ),
+        lambda state: f"lstat {state}: no such file or directory",
+    ],
+    ids=["socket", "state-directory"],
+)
+async def test_a_question_whose_runner_is_gone_ends_instead_of_being_taken_up_again(
+    backends, platform, hub, tmp_path, valkey, why
+):
+    kind, ((old, before), _) = backends
+    release = threading.Event()
+    platform([{"text": ANSWER}], rest_held_until=release)
+    work = await _begin(old, kind)
+    gone = Consumptions(
+        SessionHost(Gone(hub, why), mirrors=tmp_path / "mirrors"), valkey, me="gone"
+    )
+    after = Recorder()
+    gone.serve(kind, after)
+    # Let go at once rather than after the first words: what the session does
+    # next is the runner's load, and an answer that finishes on its own would
+    # leave no question for the sweep to take up.
+    await old.let_go()
+
+    assert await gone.sweep() == 1
+    await _until(lambda: _ended(after))
+    await _until(lambda: _gone(valkey(), work))
+    assert len(after.ends) == 1 and after.ends[0]["failure"] is not None
+    assert await gone.sweep() == 0
+    release.set()

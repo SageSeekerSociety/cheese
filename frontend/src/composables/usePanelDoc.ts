@@ -9,13 +9,13 @@
 // 正文不在这一层来回搬：编辑器直接绑在协同文档上（useDocCollab），谁打的字都实时合进
 // 同一份，协同服务在停手几秒后把它存回去。存回之后协同连接上会收到一帧（useDocCollab
 // 的 stores），这一层据此重读最近一次编辑和修改建议的理由。
-import type { Block, Topic } from '../cx_types'
+import type { Block, OverviewAutoBlock, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
 import type { DocEdit } from '../lib/docEdits'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { addComment, getDocNodes, workspaceFileRawUrl } from '../api'
+import { addComment, getDocNodes, getOverviewAuto, workspaceFileRawUrl } from '../api'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
@@ -51,7 +51,12 @@ export interface PanelDocProps {
   agentName?: string
   /** 项目 AI 队友的 handle。 */
   agentHandle?: string | null
+  /** 画在一整页里（资料库的那份章程）：总览的其余两块不在那儿画，也就不去取。 */
+  bare?: boolean
 }
+
+/** 「文档」这一格的取数原样递给面板（props）：面板自己不认识接口。 */
+export type PanelDocBundle = ReturnType<typeof usePanelDoc>
 
 /** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
 export function usePanelDoc(props: PanelDocProps) {
@@ -247,6 +252,39 @@ export function usePanelDoc(props: PanelDocProps) {
     if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
   })
 
+  // ---- 总览的其余两块（#1889 ②③） ----
+  // 平台从话题和结论现拼的那两块，跟在正文下面。只有根话题的文档是「整个项目」那一份，
+  // 别的房间的文档写的是它自己，所以只有它去取；整页画的那一份（资料库的章程）不画这两
+  // 块，也不去取。
+  const overviewBlocks = ref<OverviewAutoBlock[]>([])
+  const overviewFailed = ref(false)
+  let overviewSequence = 0
+
+  async function loadOverview(): Promise<void> {
+    const tid = props.topic?.kind === 'root' && !props.bare ? props.topic.id : null
+    const sequence = ++overviewSequence
+    if (!tid) {
+      overviewBlocks.value = []
+      overviewFailed.value = false
+      return
+    }
+    try {
+      const page = await getOverviewAuto(tid)
+      if (disposed || sequence !== overviewSequence) return
+      overviewBlocks.value = page.blocks ?? []
+      overviewFailed.value = false
+    } catch {
+      if (disposed || sequence !== overviewSequence) return
+      overviewBlocks.value = []
+      overviewFailed.value = true
+    }
+  }
+  watch(
+    () => [props.topic?.kind === 'root' && !props.bare ? props.topic?.id ?? null : null, props.activityTick] as const,
+    () => void loadOverview(),
+    { immediate: true }
+  )
+
   onBeforeUnmount(() => {
     disposed = true
   })
@@ -268,6 +306,10 @@ export function usePanelDoc(props: PanelDocProps) {
     documentId,
     suggestionReasons,
     fetchSuggestionReasons,
+    // 总览的其余两块
+    overviewBlocks,
+    overviewFailed,
+    loadOverview,
     // 动作
     commentAuthor: AUTHOR,
     sendComment: (content: string, quote: string) => {

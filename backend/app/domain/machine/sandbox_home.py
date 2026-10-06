@@ -130,9 +130,21 @@ def archive(cleanup, project, resource, url):
     part = _scratch(cleanup) / f"{resource}.tar.gz"
     interpreters = _interpreters(project)
 
+    roots = {"home": home, "work": work, "uv-python": interpreters}
+
     def keep(info):
         # The sandbox's own /tmp lives in its home and is not kept.
-        return None if info.name == "home/.cheese/tmp" else info
+        if info.name == "home/.cheese/tmp":
+            return None
+        # A crashed process's core dump is written under the crashing uid,
+        # often unreadable here, and is nobody's work; reading it would fail
+        # the whole archive on every try. Any other unreadable file still
+        # fails it, so no work is left behind unnoticed.
+        if info.isfile() and _crash_dump(info.name):
+            top, _, rest = info.name.partition("/")
+            if not os.access(roots[top] / rest, os.R_OK):
+                return None
+        return info
 
     try:
         with part.open("wb") as raw:
@@ -168,6 +180,13 @@ def archive(cleanup, project, resource, url):
         }
     finally:
         part.unlink(missing_ok=True)
+
+
+def _crash_dump(name):
+    """Whether ``name`` is what the kernel calls a core dump: ``core`` or
+    ``core.<pid>``."""
+    base = name.rsplit("/", 1)[-1]
+    return base == "core" or (base.startswith("core.") and base[5:].isdigit())
 
 
 def _published(cleanup, home, work, resource):

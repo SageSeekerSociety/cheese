@@ -661,6 +661,33 @@ def test_a_home_that_cannot_be_archived_is_not_tried_on_every_sweep(cloud):
     assert cloud.bucket.objects == {}
 
 
+def test_an_unreadable_core_dump_does_not_stop_a_home_being_archived(cloud):
+    """A process that crashed in the sandbox left a core dump the host cannot
+    read. On dev one such file failed a home's archive every six hours
+    (2026-10-05). The dump is left out; the work around it is archived."""
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-a")
+    dump = home / "room" / "frontend" / "core.1"
+    dump.parent.mkdir(parents=True, exist_ok=True)
+    dump.write_bytes(b"\x7fELF")
+    dump.chmod(0)
+    try:
+        asleep(cloud, seat)
+        time_passes(cloud, seat, timedelta(days=8))
+        assert sweep(cloud)["archived"] == 1
+    finally:
+        if dump.exists():
+            dump.chmod(0o600)
+
+    maintain(cloud)
+    assert tool_call(cloud, seat).get("preparing")
+    host_comes_up(cloud, seat, "host-b")
+    assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"
+    restored = sandbox_dir(cloud, seat, "host-b")
+    assert (restored / "room" / "notes.md").read_text() == "not committed anywhere\n"
+    assert not (restored / "room" / "frontend" / "core.1").exists()
+
+
 def test_a_sleeping_home_no_longer_on_its_host_lets_the_host_go(cloud):
     """Its directory was removed from the host, so there is nothing to archive
     and nothing for the host to keep: the host is released, and the session's

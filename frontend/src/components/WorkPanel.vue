@@ -41,17 +41,17 @@ import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
-import PanelChanges from './panels/PanelChanges.vue'
-import PanelDoc from './panels/PanelDoc.vue'
-import PanelOverview from './panels/PanelOverview.vue'
-import PanelPreview from './panels/PanelPreview.vue'
-import PanelSite from './panels/PanelSite.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的「定时与触发」）。这个文件里 `panelTabs` 已经
 // 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
 import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
+import PanelChangesHost from './work/PanelChangesHost.vue'
+import PanelDocHost from './work/PanelDocHost.vue'
+import PanelOverviewHost from './work/PanelOverviewHost.vue'
+import PanelPreviewHost from './work/PanelPreviewHost.vue'
+import PanelSiteHost from './work/PanelSiteHost.vue'
 
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
@@ -276,8 +276,8 @@ function enterClass(key: string) {
   return e?.key === key ? `tabpane-in tabpane-in--${e.from}` : undefined
 }
 
-const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
-const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
+const overviewRef = ref<InstanceType<typeof PanelOverviewHost> | null>(null)
+const changesRef = ref<InstanceType<typeof PanelChangesHost> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
 // 这一面板读的那段对话：任务页上是任务，否则是房间自己。
@@ -705,7 +705,7 @@ function placeFile(path: string, document?: { id: string; title: string }) {
 }
 
 // 聊天里那张文档卡：资料库里的这份文档在自由区开一格，改过的一处处标出来。
-const docRefs = new Map<string, InstanceType<typeof PanelDoc>>()
+const docRefs = new Map<string, InstanceType<typeof PanelDocHost>>()
 async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
   const path = DOC_TAB + document.id
   placeFile(path, { ...document })
@@ -716,7 +716,7 @@ async function openDocument(document: OpenedDocument, review?: DocReviewRequest)
   docRefs.get(document.id)?.reviewEdits(review)
 }
 function keepDocRef(id: string, el: unknown) {
-  if (el) docRefs.set(id, el as InstanceType<typeof PanelDoc>)
+  if (el) docRefs.set(id, el as InstanceType<typeof PanelDocHost>)
   else docRefs.delete(id)
 }
 function retitle(id: string, title: string) {
@@ -760,7 +760,7 @@ function setFiles(next: OpenFileTab[]) {
 
 // 对话栏的 socket 上来了现场的一行：交给现场那格。那格还没打开过就不用管，它第一次
 // 打开时会整段读一遍。
-const siteRef = ref<InstanceType<typeof PanelSite> | null>(null)
+const siteRef = ref<InstanceType<typeof PanelSiteHost> | null>(null)
 function siteBlock(block: Block) {
   siteRef.value?.receive(block)
 }
@@ -826,7 +826,7 @@ defineExpose({
           <div v-if="!taskId" v-show="active === 'threads'" class="tabpane-slot" :class="enterClass('threads')">
             <slot name="threads" />
           </div>
-          <PanelOverview
+          <PanelOverviewHost
             v-if="!taskId"
             v-show="active === 'overview'"
             ref="overviewRef"
@@ -845,13 +845,14 @@ defineExpose({
             @open-file="openFile"
             @open-output="openFileTab"
           />
-          <PanelSite
+          <PanelSiteHost
             v-if="mounted.has('site')"
             v-show="active === 'site'"
             ref="siteRef"
             :class="enterClass('site')"
             :agent-name="agentName"
             :topic-id="conversationId"
+            :project-id="projectId"
             :active="active === 'site'"
             :running-turns="siteTurns"
             :refresh-tick="refreshTick"
@@ -863,7 +864,7 @@ defineExpose({
             @open-topic="emit('open-topic', $event)"
             @mention-click="emit('mention-click', $event)"
           />
-          <PanelChanges
+          <PanelChangesHost
             v-if="mounted.has('changes')"
             v-show="active === 'changes'"
             ref="changesRef"
@@ -875,7 +876,7 @@ defineExpose({
             :active="active === 'changes'"
             :refresh-tick="refreshTick"
           />
-          <PanelPreview
+          <PanelPreviewHost
             v-if="mounted.has('preview')"
             v-show="active === 'preview'"
             :submit-question="submitQuestion"
@@ -887,6 +888,7 @@ defineExpose({
             @loaded="markPreviewSeen"
             @locate="emit('locate', $event)"
             @open-file="openFileTab"
+            @mention-click="emit('mention-click', $event)"
           />
           <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
              （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
@@ -899,7 +901,7 @@ defineExpose({
             :refresh-tick="refreshTick"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
-            <PanelDoc
+            <PanelDocHost
               v-if="f.document && mounted.has(fileKey(f.path))"
               v-show="active === fileKey(f.path)"
               :ref="(el: unknown) => keepDocRef(f.document!.id, el)"
@@ -915,7 +917,7 @@ defineExpose({
               @open-topic="emit('open-topic', $event)"
               @mention-click="emit('mention-click', $event)"
             />
-            <PanelPreview
+            <PanelPreviewHost
               v-else-if="mounted.has(fileKey(f.path))"
               v-show="active === fileKey(f.path)"
               :submit-question="submitQuestion"
@@ -926,6 +928,7 @@ defineExpose({
               :active="active === fileKey(f.path)"
               :refresh-tick="refreshTick"
               @locate="emit('locate', $event)"
+              @mention-click="emit('mention-click', $event)"
             />
           </template>
         </div>
