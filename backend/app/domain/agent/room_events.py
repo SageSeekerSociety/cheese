@@ -41,6 +41,7 @@ from app.domain.agent.event_lines import (
     _tool_event_meta,
 )
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.platform_notices import RUN_RECORD_EVENTS
 from app.domain.agent.queries import _agent_handle, _block_payload
 from app.domain.agent.service import (
     AgentToolResult,
@@ -107,6 +108,10 @@ async def post_system_event(
     which is the whole point of this call: the platform says it out loud.
     Returns the block payload, or None if the topic died.
 
+    The platform's own running (`RUN_RECORD_EVENTS`: a turn queued, a message
+    sent back to the queue) is not said: it is kept as a run record for the
+    现场, published there, and nothing is returned.
+
     Room-only: every caller here reports something about the room itself
     (a turn that failed, an environment that was rebuilt), which nobody was
     named for. A notice that knows whom it points at passes `points_at`
@@ -116,6 +121,11 @@ async def post_system_event(
     reads as that teammate's judgement. It records in ``meta.seat`` whose turn
     it is about (`_turn_seat`), and the room shows it beside that teammate. A
     room may seat several, so nothing else can say which one it was."""
+    if (meta or {}).get("event_type") in RUN_RECORD_EVENTS:
+        await _keep_run_record(
+            sessions, inner_id or topic_id, content, turn_id, meta=meta or {}
+        )
+        return None
     async with sessions() as session:
         seat = await _turn_seat(session, turn_id) if turn_id is not None else None
         block = await announce(
@@ -131,6 +141,33 @@ async def post_system_event(
         payload = _block_payload(BlockOut.model_validate(block))
         await session.commit()
     return payload
+
+
+async def _keep_run_record(
+    sessions: async_sessionmaker,
+    conversation_id: uuid.UUID,
+    content: str,
+    turn_id: uuid.UUID | None,
+    *,
+    meta: dict,
+) -> None:
+    from app.domain.agent.run_records import record_now
+
+    seat = None
+    if turn_id is not None:
+        try:
+            async with sessions() as session:
+                seat = await _turn_seat(session, turn_id)
+        except Exception:  # noqa: BLE001 — the record matters more than its seat
+            logger.exception("could not read whose turn %s is", turn_id)
+    await record_now(
+        sessions,
+        conversation_id=conversation_id,
+        content=content,
+        meta=meta,
+        turn_id=turn_id,
+        seat=seat,
+    )
 
 
 async def _persist_room_event(

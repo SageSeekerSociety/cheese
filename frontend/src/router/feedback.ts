@@ -132,6 +132,14 @@ export default [
         meta: { titleKey: 'navigation.admin.dashboard', isFullPage: true },
       },
       {
+        // 运行记录（`/admin/run-records`）：平台的报错，和它在各个项目里自己处理掉的事。
+        // 这些不进任何对话，在这里看。
+        path: 'run-records',
+        name: 'AdminRunRecords',
+        component: () => import('@/views/admin/AdminRunRecordsPage.vue'),
+        meta: { titleKey: 'navigation.admin.runRecords', isFullPage: true },
+      },
+      {
         // 「功能数据」的目录页（`/admin/feature-stats`）：有哪些功能的数据页。
         // 它自己一个数字都不放，理由写在 `AdminFeatureStatsPage.vue` 的文件头。
         path: 'feature-stats',

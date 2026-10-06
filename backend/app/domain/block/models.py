@@ -25,7 +25,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.block.indexed_rows import (
-    CLOUD_PROVISIONING_ROWS,
     FAILED_TURN_ROWS,
     MACHINE_EVENT_ROWS,
     QUESTION_ROWS,
@@ -188,18 +187,6 @@ class Block(UuidPk, Timestamps, Base):
             "kind",
             "created_at",
             postgresql_include=["author"],
-        ),
-        # 「这个房间最近一次开机事件是哪条」—— asked once at the top of every
-        # turn (`turn_history`), and answerable only by a predicate no other
-        # index leads with. Partial on the predicate itself: these events are a
-        # handful per room against a table of every message, so the index stays
-        # tiny and the write path barely notices it.
-        Index(
-            "ix_blocks_cloud_provisioning",
-            "conversation_id",
-            "created_at",
-            "id",
-            postgresql_where=CLOUD_PROVISIONING_ROWS,
         ),
         # The three below serve reads the sidebar and the board poll for every
         # conversation of a project at once — which questions are still open,

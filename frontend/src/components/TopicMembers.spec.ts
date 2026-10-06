@@ -279,7 +279,7 @@ describe('名册上这个话题的工作电脑', () => {
     )
     await openRoster()
     expect(document.querySelectorAll('[data-testid="agent-machine"]')).toHaveLength(0)
-    expect(agentRow().textContent).not.toContain('工作电脑')
+    expect(agentRow().textContent).not.toContain('环境')
     const rooms = document.querySelectorAll('[data-testid="future-machine"]')
     expect(rooms).toHaveLength(1)
     expect(rooms[0].textContent).toContain('本频道运行在：实验室工作站')
@@ -289,11 +289,11 @@ describe('名册上这个话题的工作电脑', () => {
   it('房间那一行跟着项目默认时标出来', async () => {
     await openRoster()
     const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('本频道运行在：云端沙箱')
+    expect(room.textContent).toContain('本频道运行在：云端环境')
     expect(room.textContent).toContain('项目默认')
   })
 
-  it('房间那台能访问整台机器时，提醒挂在房间那一行上', async () => {
+  it('房间那台能访问整台电脑时，提醒挂在房间那一行上', async () => {
     machines.get.mockResolvedValue(
       roomMachines({
         choice: { ...LAB, name: '实验室工作站', device_id: 'lab' },
@@ -306,11 +306,11 @@ describe('名册上这个话题的工作电脑', () => {
     )
     await openRoster()
     const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('能访问整台机器')
+    expect(room.textContent).toContain('能访问整台电脑')
     expect(room.textContent).not.toContain('项目默认')
   })
 
-  it('有队友能访问整台机器时告诉页头，名册合着也看得见', async () => {
+  it('有队友能访问整台电脑时告诉页头，名册合着也看得见', async () => {
     machines.get.mockResolvedValue(
       roomMachines({
         visibility: {
@@ -326,6 +326,6 @@ describe('名册上这个话题的工作电脑', () => {
     })
     await settle()
     const notices = emitted()['machine-access'] as [string | null][]
-    expect(notices.at(-1)).toEqual(['让它看到整台机器（能操作这台机器上的服务和其他频道）'])
+    expect(notices.at(-1)).toEqual(['让它看到整台电脑（能操作这台电脑上的服务和其他频道）'])
   })
 })

@@ -274,7 +274,7 @@ def test_spent_credits_start_no_sandbox_and_stop_a_running_one_after_its_turn(cl
     assert sweep(cloud)["asleep"] == 1
     assert home_of(cloud, working).stopped_at is not None
     assert (
-        "额度已用完，沙箱已停止。文件都留着，有了额度后下一条消息会唤醒它。"
+        "额度已用完，环境已停止。文件都留着，有了额度后下一条消息会唤醒它。"
         in room_says(cloud, working)
     )
     meter(cloud)
@@ -293,7 +293,7 @@ def test_with_no_price_set_no_cloud_sandbox_starts(cloud, monkeypatch, caplog):
         answer = tool_call(cloud, seat)
 
     assert answer["unavailable"] == (
-        "云端沙箱暂时无法启动：平台还没有设定云端算力的价格。对话和平台工具仍可用。"
+        "云端环境暂时无法启动：平台还没有设定云端算力的价格。对话和平台工具仍可用。"
     )
     assert home_of(cloud, seat) is None
     assert cloud.provider.created == []

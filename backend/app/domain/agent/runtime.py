@@ -59,6 +59,7 @@ from app.domain.agent.platform_notices import (
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
+    delivery_checking_notice,
     delivery_fallback_notice,
     notice,
 )
@@ -1977,11 +1978,9 @@ class AgentWorkRunner:
                 ),
             )
             if isinstance(delivered, InputReconciliationPending):
+                checking, checking_meta = delivery_checking_notice()
                 await self._post_event(
-                    chat_service,
-                    topic_id,
-                    turn_id,
-                    "输入已登记，发送结果正在核对；不会重复发送",
+                    chat_service, topic_id, turn_id, checking, meta=checking_meta
                 )
                 return True
             if delivered is True:

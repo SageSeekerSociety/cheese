@@ -2,8 +2,7 @@
 
 `GET /topics` and the board ask, for every room or task of a project at once,
 which stop on an open question, which wait on a failed turn, which on a
-machine; every turn starts by finding its room's newest cloud-provisioning
-event. Each looks for a few rows in a table of every block on the platform, so
+machine. Each looks for a few rows in a table of every block on the platform, so
 each has a partial index on its own predicate — and a partial index is only
 used when the query's WHERE reads exactly like the index's. The answers come
 out the same either way, so the only place a broken match shows is the plan.
@@ -33,11 +32,11 @@ from app.domain.block.waits import MemberWaits
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.room_task.repositories import TaskRepository
+from app.domain.run_record.models import RunRecord
 from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import a_team
 
 INDEXES = {
-    "ix_blocks_cloud_provisioning",
     "ix_blocks_questions",
     "ix_blocks_machine_events",
     "ix_blocks_failed_turns",
@@ -145,19 +144,14 @@ async def _seed(session) -> dict[str, object]:
                 meta={"agent_recipient": {"mentioned": True, "handle": "cheese"}},
                 ago=2 * hour,
             ),
-            block(
-                "machine",
-                kind=BlockKind.event,
-                by="platform",
-                meta={"event_type": "device_waiting"},
-                ago=hour,
-            ),
-            block(
-                "quiet",
-                kind=BlockKind.event,
-                by="platform",
-                meta={"event_type": "cloud_provisioning"},
-                ago=hour,
+            # The machine side, recorded rather than said.
+            RunRecord(
+                project_id=project.id,
+                conversation_id=rooms["machine"].id,
+                kind="device_waiting",
+                severity="warn",
+                content="x",
+                created_at=now - hour,
             ),
         ]
     )
@@ -239,22 +233,19 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
                 [*room_ids, *(task.id for task in tasks.values())]
             )
             waits = await MemberWaits(session).for_rooms(room_ids, now=seeded["now"])
-            history = await BlockRepository(session).turn_history(rooms["quiet"].id)
 
         assert asked == {rooms["asks"].id: "u1", tasks["asks"].id: "u1"}
         assert {room: [w.reason for w in ws] for room, ws in waits.items()} == {
             rooms["failed"].id: ["failed"],
             rooms["machine"].id: ["device_waiting"],
         }
-        assert "cloud_provisioning" in [b.meta.get("event_type") for b in history]
 
         expected = {
             "ix_blocks_questions": lambda sql: (
                 "options" in sql and "DISTINCT ON (blocks.conversation_id)" in sql
             ),
-            "ix_blocks_machine_events": lambda sql: "'device_waiting'" in sql,
+            "ix_blocks_machine_events": lambda sql: "'environment_repaired'" in sql,
             "ix_blocks_failed_turns": lambda sql: "'severity') = 'error'" in sql,
-            "ix_blocks_cloud_provisioning": lambda sql: "cloud_provisioning" in sql,
         }
         conn = await session.connection()
         for index, picks in expected.items():

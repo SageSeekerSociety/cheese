@@ -26,17 +26,17 @@ from app.domain.backend_log import (
 
 
 @pytest.mark.parametrize("kind", ["GatewayHTTPError", "GatewayStreamError"])
-async def test_gateway_failure_lands_in_room_and_alerts_once(monkeypatch, kind):
+async def test_gateway_failure_is_kept_and_alerts_once(monkeypatch, kind):
     from app.core import alerting
     from app.domain import backend_log
 
     topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
-    monkeypatch.setattr(backend_log, "_target_topic", AsyncMock(return_value=topic))
+    monkeypatch.setattr(
+        backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
+    )
     monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
     added = AsyncMock()
-    monkeypatch.setattr(
-        backend_log, "BlockRepository", lambda _: SimpleNamespace(add=added)
-    )
+    monkeypatch.setattr(backend_log, "keep_record", added)
     alerts = []
     monkeypatch.setattr(alerting, "send", lambda *args, **kw: alerts.append((args, kw)))
     error = BackendErrorIn(

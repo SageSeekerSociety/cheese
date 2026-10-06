@@ -2,19 +2,11 @@
   "choice": {
     "device": "自有设备",
     "deviceOnFirstRun": "首次运行时选择在线设备",
-    "sandbox": "每个会话一个独立沙箱 · 首次运行时自动准备",
+    "sandbox": "每个会话一个独立环境 · 首次运行时自动准备",
     "vm": "每个会话一台独立的云虚拟机，可用 Docker 和 sudo · 首次运行时自动准备",
-    "cloud": "云端沙箱",
+    "cloud": "云端环境",
     "cloudVm": "整台云虚拟机",
     "anyDevice": "自有设备 · 自动选择"
-  },
-  "startup": {
-    "elapsed": "共用时",
-    "waited": "已等待",
-    "seconds": "{s}秒",
-    "minutes": "{m}分{s}秒",
-    "quiet": "已 {duration} 没有新的启动进度，最近一条进度记录：{time}。",
-    "log": "启动日志"
   },
   "usage": {
     "unknown": "未知",

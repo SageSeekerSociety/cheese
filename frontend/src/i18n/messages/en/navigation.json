@@ -37,7 +37,8 @@
     "integrations": "Feishu app",
     "featureStats": "Feature data",
     "ratchet": "Ratchet",
-    "credits": "Plans & credits"
+    "credits": "Plans & credits",
+    "runRecords": "Run records"
   },
   "userMenu": {
     "profile": "Profile",

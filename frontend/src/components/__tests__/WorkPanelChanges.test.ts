@@ -448,7 +448,7 @@ describe('文件面板', () => {
     expect(editor(container)?.readOnly).toBe(true)
     expect(buttonByText(container, '保存')).toBeUndefined()
     expect(listFiles).toHaveBeenLastCalledWith('p1', 'topic-A', 'task-topic-A', 'committed')
-    await fromMenu(container, '机器实时文件')
+    await fromMenu(container, '环境里的实时文件')
     await flush()
     expect(editor(container)?.value).toBe('Unsaved human draft')
     await fireEvent.click(buttonByText(container, '保存')!)

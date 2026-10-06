@@ -19,7 +19,6 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
-from app.domain.block.models import Block, BlockKind
 from app.domain.device.models import DeviceProjectRow, DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
@@ -39,6 +38,7 @@ from app.domain.machine.services import (
     CloudPoolFull,
     HostPool,
 )
+from app.domain.run_record.models import RunRecord
 from app.domain.user.repositories import UserRepository
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
@@ -145,15 +145,12 @@ class Case:
         async def go():
             async with self.client.test_request_factory() as db:
                 rows = await db.scalars(
-                    select(Block.content)
+                    select(RunRecord.content)
                     .where(
-                        Block.conversation_id == self.projects[owner]["room"],
-                        Block.kind == BlockKind.event,
-                        Block.meta["event_type"]
-                        .as_string()
-                        .in_(["cloud_startup", "cloud_provisioning"]),
+                        RunRecord.conversation_id == self.projects[owner]["room"],
+                        RunRecord.kind.in_(["cloud_startup", "cloud_provisioning"]),
                     )
-                    .order_by(Block.created_at)
+                    .order_by(RunRecord.created_at)
                 )
                 return list(rows)
 
@@ -469,7 +466,7 @@ def test_a_host_the_provider_failed_is_let_go_and_its_session_placed_again(pool)
     assert pool.cloud.deleted == [host.machine_id]
     assert len(pool.cloud.created) == 2
     lines = pool.room_lines("alice")
-    assert lines == ["正在准备沙箱", "沙箱准备失败，正在重新准备"]
+    assert lines == ["正在准备环境", "环境准备失败，正在重新准备"]
 
 
 def test_a_provider_that_keeps_failing_stops_the_pool_creating_hosts(pool):
@@ -553,7 +550,7 @@ def test_the_room_hears_about_the_sandbox_not_the_host(pool):
     pool.pool("maintain")
 
     lines = pool.room_lines("alice")
-    assert lines == ["正在准备沙箱", "沙箱已就绪"]
+    assert lines == ["正在准备环境", "环境已就绪"]
     hostname = pool.host(host_id).hostname
     assert not any(hostname in line for line in lines)
 

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
-from app.domain.block.indexed_rows import CLOUD_PROVISIONING_ROWS, QUESTION_ROWS
+from app.domain.block.indexed_rows import QUESTION_ROWS
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
@@ -659,7 +659,7 @@ class BlockRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def turn_history(self, conversation_id: uuid.UUID) -> list[Block]:
-        """Inputs awaiting consumption and the two turn-preparation boundaries.
+        """Inputs awaiting consumption and the latest AI message, their watermark.
 
         Inputs, not the timeline: a room's events are mostly for people to read,
         and only the ones whose author wrote a sentence for 芝士 are addressed to
@@ -679,16 +679,6 @@ class BlockRepository:
             .limit(1)
             .scalar_subquery()
         )
-        latest_cloud = (
-            select(Block.id)
-            .where(
-                *place,
-                CLOUD_PROVISIONING_ROWS,
-            )
-            .order_by(Block.created_at.desc(), Block.id.desc())
-            .limit(1)
-            .scalar_subquery()
-        )
         # The latest AI message remains the watermark for untracked legacy
         # inputs. Explicitly pending inputs can precede it and must survive.
         stmt = (
@@ -697,7 +687,6 @@ class BlockRepository:
                 *place,
                 or_(
                     Block.id == latest_ai,
-                    Block.id == latest_cloud,
                     and_(
                         participant_blocks(),
                         Block.kind.in_((BlockKind.message, BlockKind.attachment)),

@@ -24,7 +24,8 @@ vi.mock('../utils/sudo', () => ({
   withSudo: vi.fn(),
 }))
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
-  default: { template: '<section>运行环境</section>' },
+  // i18n-data: a stand-in for the real block, titled as it is
+  default: { template: '<section><span class="page-section-title">脚本与环境变量</span></section>' },
 }))
 vi.mock('../me', () => ({ myHandle: () => 'alice', myId: () => me.id }))
 vi.mock('vue-router', () => ({
@@ -213,7 +214,7 @@ describe('project settings', () => {
 
   it('does not offer project-wide model or role controls', async () => {
     const wrapper = await openSettings()
-    expect(wrapper.element.textContent).toContain('工作电脑')
+    expect(wrapper.element.textContent).toContain('环境')
     expect(wrapper.element.textContent).not.toContain('项目默认模型')
     expect(wrapper.element.textContent).not.toContain('AI 模型池')
     expect(wrapper.element.textContent).not.toContain('专家角色')
@@ -242,8 +243,7 @@ describe('project settings', () => {
         '频道',
         'AI 队友',
         '任务命名',
-        '工作电脑',
-        '运行环境',
+        '环境',
         '合并规则',
         '仓库与署名',
         'MCP 服务器',
@@ -257,8 +257,8 @@ describe('project settings', () => {
 
   it.each([
     ['agents', ['AI 队友', '默认模型']],
-    // 额度跟着工作电脑走：它答的是「还能跑多久」。
-    ['computer', ['默认工作电脑', '额度']],
+    // 在哪运行、怎么准备、还能跑多久：环境一页说完。
+    ['environment', ['默认环境', '脚本与环境变量', '额度']],
     // 分支保护是合并规则，不是仓库连接。
     ['merge', ['分支保护']],
     ['repository', ['GitHub 仓库地址', '连接 GitHub 仓库', '提交署名', '连接 GitHub 账号']],

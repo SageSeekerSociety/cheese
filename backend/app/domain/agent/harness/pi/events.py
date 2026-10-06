@@ -43,7 +43,6 @@ from app.domain.agent.harness.pi.journal import (
     THREAD,
 )
 from app.domain.agent.service import (
-    STEP_ERROR_MAX,
     AgentCompacting,
     AgentEvent,
     AgentMessage,
@@ -55,6 +54,7 @@ from app.domain.agent.service import (
     AgentToolUse,
     AgentUsage,
     AgentUserEntry,
+    step_error,
 )
 
 # pi stops for a tool call and keeps going; every other reason ends the turn,
@@ -232,8 +232,7 @@ class Assembler:
             returned = _said(message.get("content"))
             steps: list[AgentEvent] = []
             if message.get("isError"):
-                text = " ".join(returned.split())
-                steps.append(AgentStepFailed(call_id=call, text=text[-STEP_ERROR_MAX:]))
+                steps.append(AgentStepFailed(call_id=call, text=step_error(returned)))
             if returned.strip():
                 steps.append(AgentStepOutput(call_id=call, text=returned))
             return steps
@@ -294,8 +293,7 @@ class Assembler:
             returned = _said(message.get("content"))
             steps: list[AgentEvent] = []
             if message.get("isError"):
-                text = " ".join(returned.split())
-                steps.append(AgentStepFailed(call_id=call, text=text[-STEP_ERROR_MAX:]))
+                steps.append(AgentStepFailed(call_id=call, text=step_error(returned)))
             if returned.strip():
                 steps.append(AgentStepOutput(call_id=call, text=returned))
             return steps

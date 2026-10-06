@@ -271,9 +271,9 @@ class PipelineRepository:
         """轮次失败按码分开。**来源是 `blocks.meta`，不是 `agent_turns`**。
 
         `agent_turns` 没有失败列（见模型 docstring），失败身份只活在房间事件块的
-        `meta.code` 上。按 meta 过滤是**全表过滤扫**（只有
-        `event_type='cloud_provisioning'` 有偏索引），当前规模可以接受，但读的人该
-        知道这一点 —— 所以它和「有索引的列」不是一类查询。
+        `meta.code` 上。按 meta 过滤是**全表过滤扫**（失败行的偏索引
+        `ix_blocks_failed_turns` 还要求 `severity='error'`，这里不要求），当前规模可以
+        接受，但读的人该知道这一点 —— 所以它和「有索引的列」不是一类查询。
         """
         from app.domain.block.models import Block
 

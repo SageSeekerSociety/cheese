@@ -85,7 +85,7 @@ async def test_a_dead_cloud_host_is_reported_as_the_sandbox_and_never_replaced()
     release.assert_not_awaited()
     bind.assert_not_awaited()
     # The room hears about its sandbox; the host is the platform's.
-    assert verdict.message is not None and "沙箱" in verdict.message
+    assert verdict.message is not None and "环境" in verdict.message
     assert "老机器" not in verdict.message
     assert verdict.event_meta is not None
     assert verdict.event_meta["event_type"] == "host_failure"

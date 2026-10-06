@@ -62,7 +62,7 @@ it('shows only self-hosted devices: no cloud machines, no machine quota, no live
       provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
     },
   })
-  expect(await view.findByText('1 台机器 · 1 台在线')).toBeTruthy()
+  expect(await view.findByText('1 台设备 · 1 台在线')).toBeTruthy()
   expect(view.queryByText(/云端|额度|名额/)).toBeNull()
   expect(opened).not.toHaveBeenCalled()
   vi.unstubAllGlobals()
@@ -144,7 +144,7 @@ it("lists a device attached only to a project, with the project and its owner's 
   })
 
   expect(await view.findByText('仅供 Orchard、Atlas 使用')).toBeTruthy()
-  expect(view.getByText('1 台机器 · 1 台在线')).toBeTruthy()
+  expect(view.getByText('1 台设备 · 1 台在线')).toBeTruthy()
   expect(view.container.textContent).toMatch(/正在用：Orchard · Pricing · \s*@Cedar/)
   // It was never added to the team, so there is nothing to take it out of.
   expect(view.queryByRole('button', { name: '移出团队' })).toBeNull()
@@ -160,14 +160,14 @@ it('读失败时说没读出来，不画「还没有自有设备」；重试能�
   })
 
   // 原来这里是一条可关的红条，关掉之后屏幕上只剩空态 —— 两种都读成「这台小队没有机器」。
-  expect(await view.findByText('加载工作电脑失败')).toBeTruthy()
+  expect(await view.findByText('加载设备失败')).toBeTruthy()
   expect(view.getByText('服务端打盹了')).toBeTruthy()
   expect(view.queryByText('还没有自有设备')).toBeNull()
 
   vi.mocked(listTeamDevices).mockResolvedValueOnce({ devices: [] })
   await fireEvent.click(view.getByText('重试'))
   expect(await view.findByText('还没有自有设备')).toBeTruthy()
-  expect(view.queryByText('加载工作电脑失败')).toBeNull()
+  expect(view.queryByText('加载设备失败')).toBeNull()
 })
 
 it('403 说没权限，不摆重试', async () => {

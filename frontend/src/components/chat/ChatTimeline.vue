@@ -382,7 +382,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :face="faceRows.get(m.id)?.state ?? null"
             :face-label="faceLabel(faceRows.get(m.id))"
             :face-status="faceStatus(faceRows.get(m.id))"
-            :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
+            :time="fmtTime(m.created_at)"
             :agent-name="agentName"
             :refs="refs"
             :can-retry="i === retryIndex"

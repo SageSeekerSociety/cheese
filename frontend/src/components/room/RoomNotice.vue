@@ -23,7 +23,6 @@ import { confirmTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { progressLabel, type ProgressLevel } from '../../lib/taskProgress'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
-import CloudStartupStatus from '../CloudStartupStatus.vue'
 import NavLink from '../common/NavLink.vue'
 
 import MailDraftCard from './MailDraftCard.vue'
@@ -87,13 +86,7 @@ const shownFiles = computed(
 const hiddenFiles = computed(() => (changes.value ? changes.value.filesTotal - shownFiles.value.length : 0))
 
 // 同类事件又来了一次：不加新行，这一行的计数滚一格、整行亮一下，说「又一次」。
-const repeats = computed(() =>
-  props.notice.mode === 'fold'
-    ? props.notice.count
-    : props.notice.mode === 'backend-error'
-      ? props.notice.error.count ?? 0
-      : 0
-)
+const repeats = computed(() => (props.notice.mode === 'fold' ? props.notice.count : 0))
 const bumped = ref(false)
 watch(repeats, async (next, prev) => {
   if (next <= prev) return
@@ -362,29 +355,6 @@ const ACTION_META: Record<string, { btn: string }> = {
         <pre v-else class="sys-detail">{{ notice.detail }}</pre>
       </details>
     </div>
-    <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
-     person needs to know it happened. So the line shows by default
-     and the stack is one click away — a room is a conversation, not
-     a monitoring dashboard. -->
-    <details
-      v-else-if="notice.mode === 'backend-error'"
-      class="sys-row sys-row--warn backend-error"
-      data-testid="backend-error-event"
-    >
-      <summary class="sys-line">
-        <span class="sys-text sys-lead">{{ notice.error.line }}</span>
-        <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
-        <span v-if="notice.error.count" class="sys-num">×<RollingNumber :value="notice.error.count" /></span>
-      </summary>
-      <div class="sys-fold">
-        <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
-          <span v-if="notice.error.where">{{ notice.error.where }}</span>
-          <span v-if="notice.error.requestId"> req {{ notice.error.requestId }} </span>
-        </div>
-        <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
-      </div>
-    </details>
-    <CloudStartupStatus v-else-if="notice.mode === 'agent-status'" :events="run" />
     <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
      什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
      条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->

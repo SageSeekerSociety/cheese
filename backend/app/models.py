@@ -51,6 +51,7 @@ from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401
 from app.domain.room_task import proposals as task_proposals  # noqa: F401
 from app.domain.routine import models as routine  # noqa: F401
+from app.domain.run_record import models as run_record  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401

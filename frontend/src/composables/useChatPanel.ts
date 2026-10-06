@@ -37,6 +37,7 @@ import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useRowBatch } from '../components/room/composables/useRowBatch'
+import { runRecordOf, useRunRecords } from '../components/room/composables/useRunRecords'
 import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
@@ -143,7 +144,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
   // 往上报（working / site-turns）是这里的事。
-  const turns = useRoomTurns({ messages })
+  const runRecords = useRunRecords()
+  const turns = useRoomTurns({ messages, records: runRecords.records })
   const { awaitingReply, turnAgentHandle } = turns
   watch(awaitingReply, (v) => emit('working', v))
   watch(turns.turnStarts, (v) => emit('site-turns', v))
@@ -241,7 +243,14 @@ export function useChatPanel(opts: ChatPanelOptions) {
       (isAgentHandle(handle) ? agentDisplayName(handle) : memberByHandle.value.get(handle)?.name || handle),
     (handle) => turns.faces.value[handle]?.status
   )
-  watch(activityLines, (v) => emit('activity', v))
+  watch(
+    () => {
+      const busy = new Set(activityLines.value.map((l) => l.handle))
+      const queued = runRecords.waitingLines((h) => agentNameOf(h) ?? agentDisplayName(h))
+      return [...activityLines.value, ...queued.filter((l) => !busy.has(l.handle))]
+    },
+    (v) => emit('activity', v)
+  )
 
   // 每次连上，broker 都会把一轮进行中的帧一次性重放出来——先进追赶模式，这一阵里
   // 不逐帧滚动。
@@ -289,6 +298,12 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const unseen = ref<string[]>([])
 
   function handleFrame(frame: WsServerFrame) {
+    // 平台运行中记下的一件事：不进对话，现场和状态行读它。
+    const recorded = runRecordOf(frame)
+    if (recorded) {
+      runRecords.receive(recorded)
+      toSite(recorded)
+    }
     switch (frame.type) {
       case 'user_block':
         if (settleOutbox(frame.block)) delivered.add(frame.block.id)
@@ -367,9 +382,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
         break
       case 'turn_started':
         turns.started(frame.turn_id, frame.agent)
+        runRecords.turnBegan(frame.turn_id)
         break
       case 'turn_finished': {
         turns.finished(frame.turn_id)
+        runRecords.turnBegan(frame.turn_id)
         emit('turn-done')
         autoScroll()
         break
@@ -397,6 +414,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     typing.clear()
     activity.reset()
     liveSteps.reset()
+    runRecords.reset()
     reactionPickerFor.value = null
     rowActions.resetBar()
     unreadAnchorId.value = null
@@ -766,7 +784,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
-    if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
     // This event contains the worker's actual result, rather than a status notice.
     if (block.meta?.event_type === 'subagent_stop') return null
     if (isPersonBlock(block)) return null
