@@ -267,7 +267,7 @@ async def test_a_resend_does_not_duplicate_external_channel_intents(
             session=session,
             channel_handlers=[
                 InAppNotificationHandler(session=session),
-                ChannelIntentHandler(session, push_enabled=True),
+                ChannelIntentHandler(session, push_enabled=True, now=clock),
                 RefusingChannel(),
             ],
         )

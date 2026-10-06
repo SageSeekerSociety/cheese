@@ -1137,6 +1137,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/users", auth: "legacy.users.register_user", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me", auth: "legacy.answers.list_answers", owner: "user"}
   - {protocol: "http", method: "PUT", path: "/users/me/language", auth: "user.session", owner: "user"}
+  - {protocol: "http", method: "PUT", path: "/users/me/timezone", auth: "user.session", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email/code", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me/auth-methods", auth: "legacy.answers.list_answers", owner: "user"}

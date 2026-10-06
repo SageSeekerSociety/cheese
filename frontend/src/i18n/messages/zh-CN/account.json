@@ -471,7 +471,7 @@
     "quiet": {
       "title": "免打扰",
       "window": "安静时段",
-      "windowHint": "此时段内不发推送与即时邮件，摘要照常",
+      "windowHint": "按你所在时区（{zone}）的钟点，此时段内不发推送与即时邮件，摘要照常",
       "windowOn": "{start} – {end}",
       "windowOff": "不设",
       "digest": "摘要频率",

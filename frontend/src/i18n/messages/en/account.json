@@ -471,7 +471,7 @@
     "quiet": {
       "title": "Quiet hours",
       "window": "Quiet hours",
-      "windowHint": "No push or instant email in this window; the digest still comes",
+      "windowHint": "In your time zone ({zone}): no push or instant email in this window; the digest still comes",
       "windowOn": "{start} – {end}",
       "windowOff": "None",
       "digest": "Digest frequency",

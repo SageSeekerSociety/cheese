@@ -4,6 +4,8 @@
 `delivery_channels` 时裁。这里两条路都过一遍真实的人与真实的行。
 """
 
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 
 from app.domain.delivery.models import ChannelDelivery
@@ -21,6 +23,11 @@ from app.domain.notification.preferences import (
 )
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.user.repositories import UserRepository
+from app.domain.user.services import set_timezone
+
+#: 记意图的那一刻：北京时间正午，不在默认的安静时段（22:00–08:00）里。这些用例试
+#: 的是渠道本身，不该因为跑在夜里就看不到推送和立即邮件。
+NOON = datetime(2026, 9, 20, 4, 0, tzinfo=UTC)
 
 
 async def _make_user(db_factory, handle: str) -> int:
@@ -109,7 +116,9 @@ async def test_a_muted_category_writes_no_external_channel(db_factory):
     """「有人回应了我」默认只有站内：不推送、也不进邮件（更不折进摘要）。"""
     user_id = await _make_user(db_factory, "pref-muted")
     async with db_factory() as session:
-        await ChannelIntentHandler(session, push_enabled=True).send_batch(
+        await ChannelIntentHandler(
+            session, push_enabled=True, now=lambda: NOON
+        ).send_batch(
             [
                 NotificationDelivery(
                     recipient_id=user_id,
@@ -126,7 +135,9 @@ async def test_a_muted_category_writes_no_external_channel(db_factory):
 async def test_a_pushable_type_also_pushes_when_push_is_on(db_factory):
     user_id = await _make_user(db_factory, "pref-push")
     async with db_factory() as session:
-        await ChannelIntentHandler(session, push_enabled=True).send_batch(
+        await ChannelIntentHandler(
+            session, push_enabled=True, now=lambda: NOON
+        ).send_batch(
             [
                 NotificationDelivery(
                     recipient_id=user_id,
@@ -146,7 +157,9 @@ async def test_a_pushable_type_also_pushes_when_push_is_on(db_factory):
 async def test_master_push_off_leaves_only_the_digest(db_factory):
     user_id = await _make_user(db_factory, "pref-push-off")
     async with db_factory() as session:
-        await ChannelIntentHandler(session, push_enabled=False).send_batch(
+        await ChannelIntentHandler(
+            session, push_enabled=False, now=lambda: NOON
+        ).send_batch(
             [
                 NotificationDelivery(
                     recipient_id=user_id,
@@ -158,3 +171,47 @@ async def test_master_push_off_leaves_only_the_digest(db_factory):
         )
         await session.commit()
     assert await _channels(db_factory, "mention-4:bob") == {"digest"}
+
+
+async def _mentioned_at(db_factory, user_id: int, key: str, moment: datetime) -> None:
+    async with db_factory() as session:
+        await ChannelIntentHandler(
+            session, push_enabled=True, now=lambda: moment
+        ).send_batch(
+            [
+                NotificationDelivery(
+                    recipient_id=user_id,
+                    type=NotificationType.MENTION,
+                    payload={"content": "look here"},
+                    delivery_key=key,
+                )
+            ]
+        )
+        await session.commit()
+
+
+#: UTC 15:00：北京时间 23:00（安静时段里），伦敦 16:00（不在）。
+AFTERNOON_IN_LONDON = datetime(2026, 9, 20, 15, 0, tzinfo=UTC)
+
+
+async def test_quiet_hours_run_on_the_recipients_own_clock(db_factory):
+    """同一刻，北京的人在夜里、伦敦的人在下午：只有伦敦那个人收到推送。"""
+    beijing = await _make_user(db_factory, "tz-beijing")
+    london = await _make_user(db_factory, "tz-london")
+    async with db_factory() as session:
+        await set_timezone(session, beijing, "Asia/Shanghai")
+        await set_timezone(session, london, "Europe/London")
+        await session.commit()
+
+    await _mentioned_at(db_factory, beijing, "tz-1:beijing", AFTERNOON_IN_LONDON)
+    await _mentioned_at(db_factory, london, "tz-1:london", AFTERNOON_IN_LONDON)
+
+    assert await _channels(db_factory, "tz-1:beijing") == {"digest"}
+    assert await _channels(db_factory, "tz-1:london") == {"digest", "push"}
+
+
+async def test_without_a_time_zone_quiet_hours_run_on_beijing_time(db_factory):
+    """没报过时区的人按北京时间算，不按 UTC：UTC 15:00 对他是夜里 23:00。"""
+    user_id = await _make_user(db_factory, "tz-unknown")
+    await _mentioned_at(db_factory, user_id, "tz-2:unknown", AFTERNOON_IN_LONDON)
+    assert await _channels(db_factory, "tz-2:unknown") == {"digest"}

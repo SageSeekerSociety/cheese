@@ -29,6 +29,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, time
 from enum import Enum
 from typing import Final
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push import PUSHABLE
@@ -43,6 +44,23 @@ MAILBOX_ONLY: Final[frozenset[NotificationType]] = frozenset(
 #: 默认安静时段：22:00 到次日 08:00（设计稿）。跨零点，`in_quiet_hours` 认得。
 DEFAULT_QUIET_START: Final = time(22, 0)
 DEFAULT_QUIET_END: Final = time(8, 0)
+
+#: 没报过时区的人按北京时间算安静时段。用平台的人绝大多数在国内；按 UTC 算，
+#: 22:00–08:00 就落在北京时间早六点到下午四点，正好把白天的通知全压掉。
+DEFAULT_TIMEZONE: Final = "Asia/Shanghai"
+
+
+def local_time(now: datetime, timezone: str | None) -> datetime:
+    """`now` 在这个人墙上的钟点：他浏览器报上来的时区，没报过或认不出就是北京时间。
+
+    认不出不报错：时区是页面报的，这里只是读它，一个读不懂的值不该让一条通知发
+    不出去。写入那一头（`PUT /users/me/timezone`）已经校验过。
+    """
+    try:
+        zone = ZoneInfo(timezone or DEFAULT_TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo(DEFAULT_TIMEZONE)
+    return now.astimezone(zone)
 
 
 class PreferenceCategory(str, Enum):
@@ -171,9 +189,9 @@ class ChannelIntent:
 def in_quiet_hours(pref: Preferences, now: datetime) -> bool:
     """`now` 在不在这个人的安静时段里。
 
-    时段是墙上钟点（`22:00`–`08:00`），按 `now` 自己的时区算 —— 调用方传进来的通
-    常是 UTC，所以这是「按 UTC 的安静时段」。跨零点（start > end）是常态，默认那
-    一对就是；start == end 当没设。
+    时段是墙上钟点（`22:00`–`08:00`），按 `now` 自己的时区算，所以调用方要先用
+    `local_time` 把它换到这个人的钟点上。跨零点（start > end）是常态，默认那一对
+    就是；start == end 当没设。
     """
     if not pref.quiet_hours_enabled:
         return False

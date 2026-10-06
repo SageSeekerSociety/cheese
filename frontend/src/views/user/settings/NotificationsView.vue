@@ -32,6 +32,9 @@ import {
   NOTIFICATION_EVENT_CHANNELS,
 } from '@/lib/notificationPreferences'
 
+// 安静时段按这个浏览器的时区算：页面打开时就把它报到账号上（services/account.ts）。
+const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+
 const props = defineProps<{
   prefs: NotificationPreferences | null
   loading: boolean
@@ -165,7 +168,7 @@ function cellLabel(category: NotificationEventCategory, channel: NotificationEve
 
           <div class="srow">
             <span class="srow__k">{{ t('account.notifications.quiet.window') }}</span>
-            <span class="srow__v">{{ t('account.notifications.quiet.windowHint') }}</span>
+            <span class="srow__v">{{ t('account.notifications.quiet.windowHint', { zone }) }}</span>
             <SegmentedControl
               :model-value="quietValue"
               :options="quietOptions"

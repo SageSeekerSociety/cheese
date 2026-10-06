@@ -26,6 +26,10 @@ from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
 
+#: 记意图的那一刻：北京时间正午，不在默认的安静时段（22:00–08:00）里。这些用例试
+#: 的是渠道本身，不该因为跑在夜里就看不到推送和立即邮件。
+NOON = datetime(2026, 9, 20, 4, 0, tzinfo=UTC)
+
 
 @pytest.fixture(autouse=True)
 def isolated_legacy_queues(monkeypatch):
@@ -57,7 +61,7 @@ async def _enqueue(db_factory, *, push=False, rollback=False):
             {"content": "Ready for your review", "topicTitle": "Room"},
             "event-1:outbox-user",
         )
-        handler = ChannelIntentHandler(session, push_enabled=push)
+        handler = ChannelIntentHandler(session, push_enabled=push, now=lambda: NOON)
         await handler.send_batch([item, item])
         async with db_factory() as observer:
             assert list(await observer.scalars(select(ChannelDelivery))) == []
@@ -213,7 +217,7 @@ async def test_push_intent_follows_the_pushable_rules(db_factory):
     DEADLINE_REMIND 两边都不在，就不该有。
     """
     async with db_factory() as session:
-        handler = ChannelIntentHandler(session, push_enabled=True)
+        handler = ChannelIntentHandler(session, push_enabled=True, now=lambda: NOON)
         await handler.send_batch(
             [
                 NotificationDelivery(

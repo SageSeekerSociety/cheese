@@ -133,6 +133,14 @@ export namespace UserApi {
       data: { language },
     })
 
+  /** The time zone of the signed-in person's browser; their quiet hours run on it. */
+  export const setTimezone = (timezone: string) =>
+    ApiInstance.request<{ timezone: string }>({
+      url: '/users/me/timezone',
+      method: 'PUT',
+      data: { timezone },
+    })
+
   export const getUserInfo = (userid: number) =>
     ApiInstance.request<GetUserInfoResponse>({
       // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}`,

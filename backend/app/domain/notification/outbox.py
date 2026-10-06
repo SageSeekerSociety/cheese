@@ -7,40 +7,53 @@ retried at least once with a stable correlation key; duplicates remain possible.
 import asyncio
 import contextlib
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.domain.delivery.models import ChannelDelivery
-from app.domain.notification.preferences import default_preferences, resolve
+from app.domain.notification.preferences import (
+    default_preferences,
+    local_time,
+    resolve,
+)
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.push import push_text
-from app.domain.user.services import languages_by_ids
+from app.domain.user.services import languages_by_ids, timezones_by_ids
 
 LEASE_SECONDS = 120
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
 
 
 class ChannelIntentHandler:
     name = "external-channel-intent"
 
-    def __init__(self, session, *, push_enabled):
+    def __init__(self, session, *, push_enabled, now: Callable[[], datetime] = _utcnow):
         self.session = session
         self.push_enabled = push_enabled
+        # 这一刻在不在谁的安静时段里，决定了推送和立即邮件发不发；和账本一样把钟
+        # 交给调用方，测试才能站在一个确定的时刻上（`delivery.ledger.Ledger`）。
+        self._now = now
 
     async def send_batch(self, deliveries):
-        stamp = datetime.now(UTC)
+        stamp = self._now()
         # 渠道由收件人自己的偏好裁（`preferences.resolve`）：矩阵那一层给每一类事件
         # 单独挑渠道，总开关盖在上面，安静时段再压掉推送与立即邮件。以前这里是写死
         # 的：除了 `MAILBOX_ONLY` 都发邮件、只有 `PUSHABLE` 才推。
-        prefs = await PreferencesRepository(self.session).for_users(
-            d.recipient_id for d in deliveries
-        )
+        recipients = [d.recipient_id for d in deliveries]
+        prefs = await PreferencesRepository(self.session).for_users(recipients)
+        # 安静时段是每个人自己墙上的钟点，不是服务器的。
+        zones = await timezones_by_ids(self.session, recipients)
         intents = {
             d.delivery_key: resolve(
                 prefs.get(d.recipient_id) or default_preferences(),
                 d.type,
-                now=stamp,
+                now=local_time(stamp, zones.get(d.recipient_id)),
             )
             for d in deliveries
         }
