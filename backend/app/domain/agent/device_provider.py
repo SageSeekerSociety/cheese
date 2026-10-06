@@ -1605,26 +1605,21 @@ class DeviceChannel(Channel):
         stopped listening — the second half of the reuse gate, alongside
         `_credential_is_stale`.
 
-        Both answer the same question about different dependencies: `claude` reads
-        its HTTPS_PROXY exactly once at startup, and a reused screen is reasserted
-        rather than relaunched, so a dependency that dies under the running process
-        can never be repaired in place. For the credential that meant a permanent
-        407; for the tunnel helper it means a permanent ConnectionRefused, with the
-        runner reporting the process alive throughout.
+        `claude` reads HTTPS_PROXY once at startup and a reused screen is
+        reasserted rather than relaunched, so a dependency that dies under the
+        running process cannot be repaired in place: a permanent 407 for the
+        credential, a permanent ConnectionRefused for the helper, the runner
+        reporting the process alive throughout. A deployment with no tunnel skips
+        this — it has no helper to lose.
 
-        Skipped entirely on a deployment with no tunnel (the device dials the meter
-        directly, so there is no helper to lose) — that keeps the per-turn cost at
-        zero everywhere the failure cannot happen.
+        The port is the machine's answer: the probe reads it from the SEAT's own
+        directory, where that seat's helper recorded it — per seat, because a room
+        may seat several agents and one helper carries one credential.
 
-        Which port to ask about is the machine's answer, not ours: the helper
-        bound whatever the kernel gave it and recorded it in the room's home, so
-        the probe reads it from there.
-
-        Conservative in the same direction as the runner check: only an explicit
-        `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
-        (no /proc, no awk, no readable port file) is read as "still up", so a
-        probe hiccup never throws away a healthy screen and its in-progress
-        work."""
+        Conservative like the runner check: only an explicit `down` retires a
+        screen. A failed exec, a non-zero exit, or an `unknown` (unreadable port
+        file, no /proc) reads as "still up", so a probe hiccup never throws away
+        a healthy screen."""
         topic_id = screen.topic_id
         if topic_id is None:
             return False
@@ -1635,7 +1630,11 @@ class DeviceChannel(Channel):
             result = await self._hub.exec(
                 screen.device_id,
                 ["sh", "-c", DEVICE_TUNNEL_PROBE],
-                env={"CHEESE_TUNNEL_PROBE_HOME": home_dir},
+                env={
+                    "CHEESE_TUNNEL_PROBE_DIR": seat_dir(
+                        home_dir, screen.agent_handle or ""
+                    )
+                },
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death
