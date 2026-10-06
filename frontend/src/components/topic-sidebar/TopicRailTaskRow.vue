@@ -77,12 +77,18 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .rail-task:hover {
-  background: var(--fill);
+  background: var(--fill-2);
   color: var(--ink);
 }
-.rail-task--selected {
-  background: var(--fill);
+/* 选中沿用频道行那一档：底色 --line-2，标题再重一层。这条 rail 的底是 --canvas，
+   --fill 在它上面只有 1.027:1，拿它当选中等于没画（同 TopicRailRow.vue 那段注释）。
+   字重落在行上、由标题继承：未读那颗 650 比它重，选中一行未读的任务仍是未读的样子。
+   选中的行不复用 hover 档——否则鼠标一扫过，选中态反而变浅。 */
+.rail-task--selected,
+.rail-task--selected:hover {
+  background: var(--line-2);
   color: var(--ink);
+  font-weight: 600;
 }
 /* 竖线落在频道 # 的中线上，一行接一行连成一条（上下各探 3px 盖住行间的空隙）。
    结构线，不是强调条。 */
