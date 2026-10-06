@@ -384,7 +384,7 @@ class SessionHost:
                 host,
                 exc,
             )
-            if missing and _no_runner(exc):
+            if missing and _no_runner(exc, ref.state):
                 # FB-56 forbids reading a question nobody answered as death:
                 # an offline machine, a timeout, a connector not ready yet. This
                 # is not that. The machine is online and answered that the
@@ -865,11 +865,17 @@ class SessionHost:
             await asyncio.gather(*stuck, return_exceptions=True)
 
 
-def _no_runner(exc: Exception) -> bool:
-    """The connector's own answer that the runner's socket is not there
-    (``cli/internal/host/executor_unix.go`` dials it by name)."""
+def _no_runner(exc: Exception, state) -> bool:
+    """The connector's own answer that the runner is not there: its socket
+    does not exist (``cli/internal/host/executor_unix.go`` dials it by name),
+    or the session's state directory itself does not (``executor.go`` resolves
+    it with ``EvalSymlinks`` first, and reports its ``lstat``)."""
     text = str(exc)
-    return "cheese-execution-" in text and "no such file or directory" in text
+    if "no such file or directory" not in text:
+        return False
+    return "cheese-execution-" in text or (
+        "lstat " in text and Path(str(state)).name in text
+    )
 
 
 def _waiting_for(exc: Exception) -> str:
