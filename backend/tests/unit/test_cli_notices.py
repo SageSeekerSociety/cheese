@@ -8,12 +8,13 @@
 该找谁。
 """
 
-from app.domain.agent.chat import _cli_notice
+from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
     PROVIDER_UNREACHABLE_CODE,
     RESPONSE_TRUNCATED_CODE,
+    SUBSCRIPTION_EGRESS_OFFLINE_CODE,
     classify_cli_notice,
 )
 
@@ -56,6 +57,23 @@ def test_the_rest_of_the_real_ones():
     )
 
 
+def test_the_metering_proxys_offline_egress_is_its_own_notice():
+    """The proxy's 503 for an egress that does not answer is not an overloaded
+    provider: waiting on the provider will not help, the machine has to come
+    back."""
+    line = (
+        'API Error: 503 {"type":"error","error":{"type":"api_error","message":'
+        '"cheese: the subscription egress is offline, so no model call was made. '
+        'It works again once that machine is back online."}}'
+    )
+    assert classify_cli_notice(line) == SUBSCRIPTION_EGRESS_OFFLINE_CODE
+    overloaded = cli_notice("API Error: 502 Bad Gateway.")
+    notice = cli_notice(line)
+    assert notice is not None and overloaded is not None
+    assert notice[0] != overloaded[0]
+    assert line in str(notice[1])
+
+
 # ---- 不能误伤芝士自己的话 ----
 
 
@@ -67,7 +85,7 @@ def test_a_chinese_message_quoting_the_error_is_still_a_message():
         "在本平台有两个完全不同的根因，别混为一谈。"
     )
     assert classify_cli_notice(text) is None
-    assert _cli_notice(text) is None
+    assert cli_notice(text) is None
 
 
 def test_a_long_english_message_is_content_not_a_notice():
@@ -92,7 +110,7 @@ def test_it_must_start_with_the_known_opening():
 
 def test_the_card_says_it_in_chinese_and_keeps_the_original():
     original = "API Error: Unable to connect to API (ConnectionRefused)"
-    result = _cli_notice(original)
+    result = cli_notice(original)
     assert result is not None
     line, meta = result
     # 卡面那一行是平台自己的话，不是 CLI 的英文原话。
@@ -104,7 +122,7 @@ def test_the_card_says_it_in_chinese_and_keeps_the_original():
 
 def test_a_limit_says_it_needs_a_person_not_a_retry():
     # 「稍后重试」对额度用完是错的建议，会把人送进一个不可能成功的循环。
-    result = _cli_notice("You've reached your Fable limit. /model to switch models.")
+    result = cli_notice("You've reached your Fable limit. /model to switch models.")
     assert result is not None
     line, meta = result
     assert meta["who"] == "human"
@@ -113,7 +131,7 @@ def test_a_limit_says_it_needs_a_person_not_a_retry():
 
 
 def test_an_overload_says_it_is_worth_retrying():
-    result = _cli_notice("API Error: 529 Overloaded. This is a server-side issue.")
+    result = cli_notice("API Error: 529 Overloaded. This is a server-side issue.")
     assert result is not None
     _, meta = result
     assert meta["severity"] == "warn"

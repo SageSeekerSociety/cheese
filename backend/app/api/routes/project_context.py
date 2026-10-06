@@ -27,16 +27,19 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.living_doc import search as doc_search
 from app.domain.living_doc.schemas import document_row
+from app.domain.membership.roster import roster
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task
 from app.domain.search import bm25
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import faces_by_handle
 
 router = APIRouter(prefix="", tags=["project-context"])
 
@@ -92,14 +95,9 @@ def _blocks_matching(
 async def _conversation_rooms(
     db: AsyncSession, rooms: list[uuid.UUID]
 ) -> dict[uuid.UUID, uuid.UUID]:
-    """Each conversation of these rooms, the rooms' own and their tasks', mapped
-    to its room."""
-    found = {room: room for room in rooms}
-    for task_id, room_id in await db.execute(
-        select(Task.id, Task.room_id).where(Task.room_id.in_(rooms))
-    ):
-        found[task_id] = room_id
-    return found
+    """Each conversation of these rooms — the rooms' own, their tasks' and their
+    支线' — mapped to its room."""
+    return await rooms_of_inner(db, rooms)
 
 
 def _tasks_matching(
@@ -246,6 +244,7 @@ async def _page(
             ranked += [(h.score, _doc_record(h, readable, terms)) for h in found]
         ranked.sort(key=lambda pair: -pair[0])
         hits["records"] = [record for _, record in ranked[offset : offset + limit]]
+        await _name_authors(db, project_id, hits["records"])
     if "tasks" in groups and in_readable:
         tasks = await db.scalars(
             select(Task)
@@ -334,6 +333,36 @@ def _doc_record(
     }
 
 
+async def _name_authors(
+    db: AsyncSession, project_id: uuid.UUID, records: list[dict]
+) -> None:
+    """Give each record the name its author goes by now, beside the handle it
+    stores: a teammate of this project by the name the roster gives it, with
+    ``author_name_source`` (``default`` while it keeps the name it was born
+    with, which a screen shows in its reader's language), anyone else by their
+    nickname. ``author_name`` is None when there is none; the page then shows
+    the handle."""
+    authors = {r["author"] for r in records}
+    if not authors:
+        return
+    # A teammate's account keeps the nickname it was created with, so its
+    # current name comes from the roster, under either of its handles.
+    teammates: dict[str, tuple[str, str | None]] = {}
+    for member in await roster(db, project_id):
+        if member.instance_handle is not None:
+            named = (member.name, member.name_source)
+            teammates[member.handle] = named
+            teammates[member.instance_handle] = named
+    faces = await faces_by_handle(db, authors - teammates.keys())
+    for record in records:
+        name, source = teammates.get(record["author"]) or (
+            faces.get(record["author"], (None, None))[0],
+            None,
+        )
+        record["author_name"] = name
+        record["author_name_source"] = source
+
+
 def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
     room = readable[t.room_id]
     return {
@@ -405,6 +434,7 @@ async def search_everything(
                     .limit(limit)
                 )
             ]
+        await _name_authors(db, project_id, records)
         hits["records"] = records
         tasks = await db.scalars(
             select(Task)

@@ -214,7 +214,9 @@ class SeatChannel:
                 session,
                 self.device,
                 state,
-                str(topic),
+                # What the room's machine is kept under: the room's, also for a
+                # task's or a 支线's session (`CHEESE_RESOURCE_ID` above).
+                str(session.topic_id),
                 agent,
                 self.resume_token((topic, agent)),
             )

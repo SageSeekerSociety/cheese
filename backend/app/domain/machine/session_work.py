@@ -33,7 +33,7 @@ from app.domain.agent.device_provider import (
 )
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
-from app.domain.agent.machine_address import device_api_base, ws_url
+from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
@@ -207,6 +207,22 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
         "agent_name": agent.display_name,
         "agent_name_source": agent.name_source.value,
     }
+
+
+async def screen_agent_name(
+    db, project_id: uuid.UUID | None, topic_id: uuid.UUID | None, handle: str
+) -> dict:
+    """The name a screen's agent goes by, the way a room names it (see
+    ``_agent_name``). Empty when the screen names no room that still exists;
+    the page then shows the handle."""
+    from app.domain.project.models import Project
+    from app.domain.topic.models import Topic
+
+    project = await db.get(Project, project_id) if project_id else None
+    topic = await db.get(Topic, topic_id) if topic_id else None
+    if project is None or topic is None:
+        return {"agent_name": None, "agent_name_source": None}
+    return await _agent_name(db, project, topic, handle)
 
 
 async def _session_author(db, project, handle: str) -> str:
@@ -446,6 +462,7 @@ def _failed_tasks(printed: str) -> list[tuple[bool, str]]:
 def _executor_env(env, *, api, token, project_id, topic_id, author, work_resource):
     """What a session's executor runs with: the caller's ``CHEESE_*``/``GIT_*``
     values, then the platform's own for this session."""
+    site = site_forward(api)
     return {
         **{
             key: value
@@ -461,6 +478,7 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         "CHEESE_RESOURCE_ID": work_resource,
         "GIT_AUTHOR_NAME": author,
         "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",
+        **({"CHEESE_SITE_FORWARD": site} if site else {}),
     }
 
 

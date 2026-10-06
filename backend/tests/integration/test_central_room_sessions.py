@@ -447,7 +447,7 @@ async def test_a_task_s_session_is_handed_a_machine_path_its_credential_opens(
     project, topic = room
     task = uuid.UUID(open_task(client, str(topic))["id"])
     central = channel(client, monkeypatch)
-    session = SessionRef(project, topic, AGENT, harness="claude-code", task_id=task)
+    session = SessionRef(project, topic, AGENT, harness="claude-code", inner_id=task)
 
     async def opened():
         await sessions(central).ensure(session, system_prompt="System")

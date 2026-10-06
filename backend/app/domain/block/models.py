@@ -29,6 +29,7 @@ from app.domain.block.indexed_rows import (
     FAILED_TURN_ROWS,
     MACHINE_EVENT_ROWS,
     QUESTION_ROWS,
+    QUEUED_MESSAGE_ROWS,
 )
 from app.domain.common import Timestamps, UuidPk
 
@@ -222,6 +223,14 @@ class Block(UuidPk, Timestamps, Base):
             "conversation_id",
             "created_at",
             postgresql_where=FAILED_TURN_ROWS,
+        ),
+        # The messages still waiting for their turn, read by a sweep every few
+        # seconds (`pending_messages`): tens of rows out of every block there is.
+        Index(
+            "ix_blocks_queued_messages",
+            "created_at",
+            "id",
+            postgresql_where=QUEUED_MESSAGE_ROWS,
         ),
     )
 

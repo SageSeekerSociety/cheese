@@ -20,6 +20,7 @@ from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -501,19 +502,21 @@ def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_hooks):
     room = _topic(client, pid, "two threads")
     reviewer = _add_agent(client, pid, handle="reviewer")
     seat = _seat(client, room, reviewer)
+    # Both answer in one 支线 of the room.
+    thread = in_thread(client, room, "u")
 
-    _turn(client, room, "你好")
+    _turn(client, thread, "你好")
     first_session = stub_hooks.last_resume_session_id
-    _turn(client, room, "再说一句")
+    _turn(client, thread, "再说一句")
     # 芝士 is resuming its own thread by now.
     assert stub_hooks.last_resume_session_id is not None
     cheese_session = stub_hooks.last_resume_session_id
     assert first_session is None
 
     # The reviewer starts a fresh conversation rather than inheriting 芝士's.
-    _turn(client, room, f"<@{seat}> 还在吗")
+    _turn(client, thread, f"<@{seat}> 还在吗")
     assert stub_hooks.last_resume_session_id is None
 
     # ...and 芝士's thread is still there when it is next up.
-    _turn(client, room, "我回来了")
+    _turn(client, thread, "我回来了")
     assert stub_hooks.last_resume_session_id == cheese_session

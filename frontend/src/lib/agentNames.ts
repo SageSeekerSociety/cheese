@@ -1,4 +1,4 @@
-import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+import type { DeviceScreen, ProjectMemberRow, TopicMemberRow } from '../cx_types'
 
 import { t } from '../i18n'
 
@@ -9,6 +9,11 @@ import { t } from '../i18n'
  */
 export function teammateName(name: string | null | undefined, source: string | null | undefined): string {
   return source === 'default' ? t('work.room.defaultAgentName') : name || ''
+}
+
+/** 设备上一块屏幕背后的队友叫什么；屏幕不属于任何房间、没有名字时退回它的 handle。 */
+export function screenAgentName(screen: DeviceScreen): string {
+  return teammateName(screen.agent_name, screen.agent_name_source) || screen.agent_handle
 }
 
 /** 名册上一行的名字：人照原样，队友见 `teammateName`。 */

@@ -220,7 +220,9 @@ async def lifespan(_: FastAPI):
             get_logger("cheesex.runtime").exception("orphan sweep failed")
 
         try:
-            n = await get_work_runner().resume_lost_messages(get_chat_service())
+            n = await get_work_runner().resume_lost_messages(
+                get_chat_service(), source="startup"
+            )
             if n:
                 get_logger("cheesex.runtime").info("lost_messages_resumed", turns=n)
         except Exception:  # noqa: BLE001 — never block startup

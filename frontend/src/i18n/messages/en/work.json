@@ -454,7 +454,8 @@
       "save": "Save",
       "cancel": "Cancel",
       "saveFailed": "Could not save the edit",
-      "reply": "Reply",
+      "reply": "Quote reply",
+      "replyInThread": "Reply in thread",
       "react": "Add reaction",
       "upgrade": "Turn into a task",
       "downloadFile": "Download {name}",
@@ -597,7 +598,8 @@
       "preview": "Preview",
       "routines": "Routines",
       "scrollLeft": "Scroll tabs left",
-      "scrollRight": "Scroll tabs right"
+      "scrollRight": "Scroll tabs right",
+      "threads": "Threads"
     },
     "preview": {
       "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
@@ -1211,6 +1213,28 @@
       "restore": "Restore this",
       "titleOwn": "{n} changes by {agent}",
       "allRestoredOwn": "All changes by {agent} are restored"
+    },
+    "thread": {
+      "title": "Thread",
+      "replies": "no replies | 1 reply | {count} replies",
+      "replying": "{name} is replying",
+      "lastReply": "{name}: {text}",
+      "toTask": "Convert to task",
+      "becameTask": "Became the task “{title}”",
+      "openTask": "Open task",
+      "close": "Close",
+      "placeholder": "Reply in thread",
+      "loadFailed": "Couldn't load. Try again later",
+      "openFailed": "Couldn't open the replies to this message. Try again later",
+      "notFound": "These replies can't be found",
+      "listCaption": "Latest replies first",
+      "empty": "No threads",
+      "unread": "New replies",
+      "people": "{replies} · {names}",
+      "taskStatus": {
+        "open": "Open",
+        "closed": "Closed"
+      }
     }
   },
   "board": {
@@ -1357,7 +1381,7 @@
     "sectionExternal": "External members",
     "sectionPending": "Waiting to accept",
     "sectionAgents": "AI teammates",
-    "fromTeam": "From team {'@'}{handle}",
+    "fromTeam": "From team {name}",
     "manage": "Manage member",
     "remove": "Remove from project",
     "dm": "Message",

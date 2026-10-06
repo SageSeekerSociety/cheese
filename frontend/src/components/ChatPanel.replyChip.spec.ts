@@ -92,7 +92,7 @@ async function replyThenSend(text: string, cancel: boolean) {
   await settle()
   await fireEvent.mouseOver(view.container.querySelector('[data-mid="m1"] .im-text')!)
   const bar = view.container.querySelector('.hover-bar') as HTMLElement
-  await fireEvent.click(within(bar).getByTitle('回复'))
+  await fireEvent.click(within(bar).getByTitle('引用回复'))
   if (cancel) await fireEvent.click(view.getByRole('button', { name: t('work.room.composer.cancelReply') }))
   const box = view.container.querySelector('textarea') as HTMLTextAreaElement
   box.focus()

@@ -848,7 +848,13 @@ def stop_executor(home: Path, resource: str) -> None:
             if result.returncode:
                 raise RuntimeError("sandbox has not stopped: " + result.stderr)
         runner = runpy.run_path(str(platform_program(home, "cheese-environment.py")))
-        runner["end_sandbox"](home)
+        # Not a compatibility path: rooms keep running from the release they
+        # started with. A release without `end_sandbox` predates sandboxes on
+        # enrolled machines and only ever started one on a cloud host, inside
+        # the helper's cgroup that `down` just took down.
+        end_sandbox = runner.get("end_sandbox")
+        if end_sandbox is not None:
+            end_sandbox(home)
         return
     # Both helpers can outlive the agent, including launches without an executor.
     # The tunnel helper's files are per SEAT — a room may seat several agents and

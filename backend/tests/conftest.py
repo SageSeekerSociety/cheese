@@ -144,6 +144,9 @@ settings.notification_email_drain_interval_s = 0
 # 摘要 job 同理：它会在测试背后按周期给攒够的人发信。测试自己调入口去发。
 settings.notification_digest_interval_s = 0
 settings.task_deadline_sweep_interval_s = 0
+# The queued-message sweep starts turns for messages a test may be holding
+# back on purpose; tests that want it run it themselves.
+settings.queued_message_sweep_interval_s = 0
 # Request limits stay on, set far above anything a test does. Their rate state
 # lives in Redis, which no test resets, and across a suite the same handles
 # ("alice") and the same test client address are reused far faster than any
@@ -544,7 +547,9 @@ class StubChannel(SeatChannel):
                     session,
                     self.device,
                     state,
-                    str(topic_id),
+                    # Where it was placed: its room's machine, which a 支线's
+                    # session shares (`SeatChannel.prepare_session`).
+                    str(session.topic_id),
                     runner.actor,
                     runner.session_id if key in self.gone else None,
                 )
@@ -933,16 +938,6 @@ def _session_tmp_per_test(monkeypatch, tmp_path_factory) -> None:
     monkeypatch.setattr(
         machine_launcher, "SESSION_TMP", str(tmp_path_factory.mktemp("var-tmp"))
     )
-
-
-@pytest.fixture(autouse=True)
-def _no_background_doc_nudge(monkeypatch) -> None:
-    """轮末的文档提醒（`topic/doc_nudge.py`）在后台睡几秒再起一轮：测试里它要么
-    赶上一个已经关掉的事件循环，要么真的替某个测试房间起一轮没人要的 agent 轮次。
-    默认关掉；`test_doc_nudge.py` 直接驱动 `check`。"""
-    from app.domain.topic import doc_nudge
-
-    monkeypatch.setattr(doc_nudge, "nudge", lambda *a, **k: None)
 
 
 @pytest.fixture(autouse=True)

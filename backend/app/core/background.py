@@ -428,6 +428,15 @@ def periodic_jobs(
             settings.orphan_sweep_interval_s,
             lambda: sweep_orphan_turns(chat),
         ),
+        # A message queued behind a turn starts when that turn's end nudges the
+        # scan. A nudge that finds the seat still busy is not repeated, so one
+        # missed wake-up left a message waiting until something unrelated woke
+        # the room (10.5 and 5.7 minutes on dev, 2026-10-05). This bounds that.
+        PeriodicRunner(
+            "queued message sweep",
+            settings.queued_message_sweep_interval_s,
+            lambda: get_work_runner().resume_lost_messages(chat, source="sweep"),
+        ),
         PeriodicRunner(
             "chat progress reminder",
             settings.chat_progress_check_interval_s,

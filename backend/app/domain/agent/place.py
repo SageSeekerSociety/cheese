@@ -87,19 +87,19 @@ def session_platform_dirs() -> tuple[str, ...]:
 SEATS_DIR = "seats"
 
 
-def seat_key(agent_handle: str, task_id: object = None) -> str:
+def seat_key(agent_handle: str, inner_id: object = None) -> str:
     """Which seat a session takes: the agent's in its room, or that agent's
-    in one task of the room.
+    in one task or 支线 of the room.
 
-    A task's session is a conversation of its own beside the room's, for the
-    same agent on the same machine, and it writes everything a seat writes —
-    its launcher, its state, its credential, its prompt. Keyed by the handle
-    alone, a task starting wrote the room session's credential with its own,
-    and the room's agent was refused everywhere as working another
+    A task's or a 支线's session is a conversation of its own beside the
+    room's, for the same agent on the same machine, and it writes everything a
+    seat writes — its launcher, its state, its credential, its prompt. Keyed by
+    the handle alone, a task starting wrote the room session's credential with
+    its own, and the room's agent was refused everywhere as working another
     conversation, while the task's launcher came up on the room's state and
     never answered.
     """
-    return agent_handle if task_id is None else f"{agent_handle}@{task_id}"
+    return agent_handle if inner_id is None else f"{agent_handle}@{inner_id}"
 
 
 def seat_name(seat: str) -> str:

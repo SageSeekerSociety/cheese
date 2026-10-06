@@ -392,6 +392,7 @@ async def test_inventory_retains_every_session_work_allocation(client, monkeypat
     current, retained = str(uuid.uuid4()), str(uuid.uuid4())
     monkeypatch.setattr(retire.device_hub, "is_online", lambda _: True)
     async with client.test_factory() as session:
+        await enrolled(session, "new-hands", "old-hands")
         conversation = await AgentSessionService(session).ensure(
             room_id, "worker", harness="claude-code"
         )
@@ -416,6 +417,91 @@ async def test_inventory_retains_every_session_work_allocation(client, monkeypat
         }
         with pytest.raises(RuntimeError, match="inventory failed"):
             await retire._inventory(session, operation, {"new-hands": []})
+
+
+async def enrolled(session, *device_ids: str) -> None:
+    """Give each machine a device record, as enrolling one does."""
+    from app.domain.device.models import DeviceRow
+    from app.domain.device.supply import Supply
+
+    owner = await registered(session, "owner")
+    for device_id in device_ids:
+        session.add(
+            DeviceRow(
+                device_id=device_id,
+                name=device_id,
+                token=f"{device_id}-token",
+                owner_user_id=owner,
+                supply=Supply.cloud,
+                created_at=datetime.now(UTC),
+            )
+        )
+    await session.flush()
+
+
+async def _room_with_lease(client, monkeypatch, lease: dict):
+    from app.domain.agent_session.services import AgentSessionService
+
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    async with client.test_factory() as session:
+        conversation = await AgentSessionService(session).ensure(
+            room_id, "worker", harness="claude-code"
+        )
+        conversation.work_lease = lease
+        await session.commit()
+    return cleanup_id
+
+
+async def test_a_lease_on_a_removed_machine_does_not_hold_the_cleanup(
+    client, monkeypatch
+):
+    resource = str(uuid.uuid4())
+    cleanup_id = await _room_with_lease(
+        client,
+        monkeypatch,
+        {"device_id": "removed", "resource_id": resource, "kind": "device"},
+    )
+    monkeypatch.setattr(retire.device_hub, "is_online", lambda device: False)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        entries = await retire._inventory(session, operation, {})
+        assert all(entry["device_id"] != "removed" for entry in entries)
+
+
+async def test_a_lease_on_an_offline_machine_still_waits_for_it(client, monkeypatch):
+    cleanup_id = await _room_with_lease(
+        client,
+        monkeypatch,
+        {"device_id": "away", "resource_id": str(uuid.uuid4()), "kind": "device"},
+    )
+    monkeypatch.setattr(retire.device_hub, "is_online", lambda device: False)
+    async with client.test_factory() as session:
+        await enrolled(session, "away")
+        operation = await session.get(RoomCleanup, cleanup_id)
+        with pytest.raises(RuntimeError, match="offline"):
+            await retire._inventory(session, operation, {})
+
+
+async def test_a_lease_without_its_home_is_cleaned_by_the_rooms_inventory(
+    client, monkeypatch
+):
+    cleanup_id = await _room_with_lease(
+        client,
+        monkeypatch,
+        {"device_id": "center", "state": "/work/.runtime", "kind": "device"},
+    )
+    monkeypatch.setattr(retire.device_hub, "is_online", lambda device: True)
+    async with client.test_factory() as session:
+        await enrolled(session, "center")
+        operation = await session.get(RoomCleanup, cleanup_id)
+        home = str(operation.resource_id)
+        inventory = {"center": [("home", str(operation.project_id), home)]}
+        entries = await retire._inventory(session, operation, inventory)
+        assert {(entry["device_id"], entry["resource_id"]) for entry in entries} == {
+            ("center", home)
+        }
+        with pytest.raises(RuntimeError, match="inventory failed"):
+            await retire._inventory(session, operation, {})
 
 
 class LocalDevice:

@@ -55,6 +55,7 @@ from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
 from app.domain.task import models as task  # noqa: F401
 from app.domain.team import models as team  # noqa: F401
+from app.domain.thread import models as thread  # noqa: F401
 from app.domain.topic import models as topic  # noqa: F401
 from app.domain.usage import models as usage  # noqa: F401
 from app.domain.user import models as user  # noqa: F401

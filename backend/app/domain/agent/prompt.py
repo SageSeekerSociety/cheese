@@ -168,7 +168,7 @@ def _session_opening_lines(
     # checklist reach it as conclusions; what was said is only in the chat.
     if earlier_messages:
         lines.append(
-            f"- 这个房间里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
+            f"- 这里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
             "动手之前先用 `cheese_chat_list` 读最近的记录；"
             "要找某句原话或某个决定，用 `cheese_chat_search`。"
         )
@@ -395,7 +395,7 @@ async def project_overview(
     session: AsyncSession,
     *,
     project: Project,
-    room_id: uuid.UUID,
+    conversation_id: uuid.UUID,
     room_doc: str | None,
     overview_doc: str | None,
     all_topics: list[Topic],
@@ -403,11 +403,12 @@ async def project_overview(
 ) -> str:
     """注入用的项目总览：① 从总览文档来，②③ 从结构化数据现拼（#1889）。
 
-    在总览房间（项目根话题）里，总览就是本房间的实况文档，三块都拼给它；别的
-    房间只注入 ① —— 它们读到「这个项目是什么」就够了，其余两块要哪一块就自己
-    去查哪一块，不必每轮往每间房塞一份项目快照。
+    在「综合」的主线上（项目根频道），总览就是那里的实况文档，三块都拼给它；
+    别的对话——别的频道、任务、支线，包括综合里的——只注入 ① —— 它们读到「这个
+    项目是什么」就够了，其余两块要哪一块就自己去查哪一块，不必每轮往每段对话塞
+    一份项目快照。
     """
-    in_overview_room = project.root_topic_id == room_id
+    in_overview_room = project.root_topic_id == conversation_id
     source = room_doc if in_overview_room else overview_doc
     auto = ""
     if in_overview_room:

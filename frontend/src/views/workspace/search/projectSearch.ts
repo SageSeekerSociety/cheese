@@ -1,10 +1,11 @@
 // 命令面板里的内容搜索：消息、任务、文档、项目文档、资料库五个数据源，问的是同一个
 // 后端接口。同一次输入只问一次，五个数据源各取自己那一份。
 import type { Router } from 'vue-router'
-import type { ProjectSearchHits } from '@/api'
+import type { ProjectSearchHits } from '@/api/projectSearch'
 import type { PaletteItem, PaletteSource } from '@/commands/palette/sources'
 
-import { searchProject } from '@/api'
+import { searchProject } from '@/api/projectSearch'
+import { teammateName } from '@/lib/agentNames'
 import { topicTitle } from '@/lib/topicState'
 
 // 只为让五个数据源合用一次请求，不是缓存：过一会儿再搜同样的字要看到新内容。
@@ -28,6 +29,12 @@ export function hitsFor(projectId: string, query: string): Promise<ProjectSearch
 /** 结果在哪个房间：还没起名的房间按读者的语言叫「新话题」。 */
 export function searchRoomTitle(hit: { room_title: string }): string {
   return topicTitle({ title: hit.room_title })
+}
+
+/** 结果是谁写的：`@` 加他现在的名字；没有名字时写他的 handle，不带 `@`。 */
+export function searchAuthor(hit: ProjectSearchHits['records'][number]): string {
+  const name = teammateName(hit.author_name, hit.author_name_source)
+  return name ? `@${name}` : hit.author
 }
 
 /** 结果下面那一行：在哪个房间、谁、什么时候。 */

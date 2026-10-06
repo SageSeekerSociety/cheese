@@ -986,5 +986,7 @@
   "personalTeamCannotTransfer": "Your personal team belongs to your account and can't be transferred",
   "teamTransferToSelf": "You already own this team",
   "teamHasProjects": "This team still has projects that aren't archived. Archive them all before disbanding it",
-  "privateMessageStaysPrivate": "A message in a direct chat cannot become a task"
+  "privateMessageStaysPrivate": "A message in a direct chat cannot become a task",
+  "threadOnlyUnderChannelMessage": "Replies in a thread can only go under a message in a channel",
+  "threadOpenedByPerson": "Only a person can start a thread"
 }

@@ -454,7 +454,8 @@
       "save": "保存",
       "cancel": "取消",
       "saveFailed": "保存失败",
-      "reply": "回复",
+      "reply": "引用回复",
+      "replyInThread": "在支线中回复",
       "react": "添加表情",
       "upgrade": "转为任务",
       "downloadFile": "下载 {name}",
@@ -597,7 +598,8 @@
       "preview": "预览",
       "routines": "定时与触发",
       "scrollLeft": "向左滚动页签",
-      "scrollRight": "向右滚动页签"
+      "scrollRight": "向右滚动页签",
+      "threads": "支线"
     },
     "preview": {
       "fullscreenFailed": "无法进入全屏，请在新标签页打开",
@@ -1211,6 +1213,28 @@
       "restore": "还原这处",
       "titleOwn": "{agent}改的 {n} 处",
       "allRestoredOwn": "{agent}改的几处都已还原"
+    },
+    "thread": {
+      "title": "支线",
+      "replies": "{count} 条回复",
+      "replying": "{name} 正在回复",
+      "lastReply": "{name}：{text}",
+      "toTask": "转为任务",
+      "becameTask": "已转为任务「{title}」",
+      "openTask": "打开任务",
+      "close": "关闭",
+      "placeholder": "在支线中回复",
+      "loadFailed": "加载失败，稍后重试",
+      "openFailed": "无法打开这条消息下的回复，稍后重试",
+      "notFound": "找不到这些回复",
+      "listCaption": "最近有新回复的在前",
+      "empty": "暂无支线",
+      "unread": "有新回复",
+      "people": "{replies} · {names}",
+      "taskStatus": {
+        "open": "进行中",
+        "closed": "已关闭"
+      }
     }
   },
   "board": {
@@ -1357,7 +1381,7 @@
     "sectionExternal": "外部成员",
     "sectionPending": "等待接受",
     "sectionAgents": "AI 队友",
-    "fromTeam": "来自团队 {'@'}{handle}",
+    "fromTeam": "来自团队 {name}",
     "manage": "管理成员",
     "remove": "移出项目",
     "dm": "私聊",

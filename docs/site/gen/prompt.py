@@ -263,6 +263,18 @@ ENVIRONMENT = [
 #: blocks at ``## `` and an injected document has headings of its own.
 DOC = "目标：本周内跑通推荐流程。当前：数据已就位，模型还在调。"
 OVERVIEW_DOC = "项目目标：把推荐算法做成一个能演示的原型。当前：三个人在做，接口这周联调。"
+THREAD = (
+    "你在频道「#前端」的一条支线里。这里的人 @ 你，你才回答。"
+    "你只读：可以看代码、跑只读的命令、查资料，不改项目，不交付，不摆预览；"
+    "要改的事用 `cheese_task` 提议成任务。别处定过的事不记得时，用 "
+    "`cheese_chat_search` 加 `channel` 搜整个频道。\n\n"
+    "支线挂在主线的这条消息下面：\n"
+    "[wangchangxin] @芝士 登录页的错误提示改成红色，手机上也看一下\n\n"
+    "这条消息之前，主线上说的是：\n"
+    "[lisi] 下午三点评审登录页\n\n"
+    "这个频道里还在进行的任务（要做的事已经有任务了，就告诉人去那个任务，不再提议）：\n"
+    "- 接口联调（负责人 @lisi）"
+)
 
 #: Long enough to blow both 6000-character budgets, so the compressed form and
 #: its note are on the page too.
@@ -296,7 +308,7 @@ TOGGLES = [
     {
         "id": "topics",
         "kwargs": {"topics": TOPICS},
-        "label": "`topics` 非空：项目里有活跃话题",
+        "label": "`topics` 非空：项目里有没归档的频道",
         "params": ["topics=…"],
     },
     {
@@ -318,15 +330,21 @@ TOGGLES = [
         "params": ["overview_doc=…"],
     },
     {
+        "id": "thread",
+        "kwargs": {"thread": THREAD},
+        "label": "`thread` 非空：会话在频道的一条支线里",
+        "params": ["thread=…"],
+    },
+    {
         "id": "has_doc",
         "kwargs": {"has_doc": True},
-        "label": "`has_doc=True`：这是一间有实况文档位的房间（私聊没有）",
+        "label": "`has_doc=True`：这是一个任务，有实况文档",
         "params": ["has_doc=True"],
     },
     {
         "id": "topic_doc",
         "kwargs": {"doc": DOC},
-        "label": "`doc` 非空：本话题的实况文档有正文（`doc=\"\"` 是还没有）",
+        "label": "`doc` 非空：这个任务的实况文档有正文（`doc=\"\"` 是还没有）",
         "params": ["doc=…"],
     },
     {

@@ -1022,8 +1022,7 @@ class TopicService:
         """这间房自己那份实况文档；还没有人打开或写过它时没有。
 
         和 `get_doc` 读的是同一处，差别只在手上是什么：路由手上是个可能不存在的
-        place，所以先 404；轮末那种「房间行已经读出来了」的地方手上就是房间 id，
-        不必再绕一圈（`topic/doc_nudge.py`）。
+        place，所以先 404；手上已经是房间 id 的地方不必再绕一圈。
         """
         return await Documents(self._session).of_room(room_id)
 

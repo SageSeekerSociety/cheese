@@ -85,14 +85,14 @@ class Room:
     """One sandboxed session's executor on this machine, started by the
     install the backend sends."""
 
-    def __init__(self, owner: Path, api: str, capsys):
+    def __init__(self, owner: Path, api: str, capsys, env: dict | None = None):
         self.project, self.resource = uuid.uuid4(), uuid.uuid4()
         self.home = owner / ".cheese/home" / str(self.project) / str(self.resource)
         self.state = self.home / ".cheese/executor"
         payload = payload_for(
             self.project,
             self.resource,
-            {"CHEESE_API": api, "CHEESE_TOKEN": "test"},
+            {"CHEESE_API": api, "CHEESE_TOKEN": "test", **(env or {})},
             sandbox=True,
             platform_machine=True,
         )
@@ -132,8 +132,8 @@ def rooms(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     started: list[Room] = []
 
-    def start(api: str) -> Room:
-        room = Room(owner, api, capsys)
+    def start(api: str, env: dict | None = None) -> Room:
+        room = Room(owner, api, capsys, env)
         started.append(room)
         return room
 
@@ -182,6 +182,32 @@ def test_a_sandbox_reaches_the_backend_on_loopback_and_nothing_else_here(
 
     assert answers == ["backend", "unreachable", "unreachable", "unreachable"]
     assert room.bash("cat /proc/net/if_inet6 | wc -l")["stdout"].strip() == "0"
+
+
+@with_sandbox_host
+def test_a_sandbox_reaches_the_site_by_its_name_on_the_machines_forward(
+    rooms, machine_service
+):
+    """A machine that answers the deployment's site on a loopback forward
+    has its sandboxes resolve the site's name there, on the site's own port,
+    so a browser in the room keeps the public origin and never leaves the
+    machine for it. Other names still resolve as the machine resolves them."""
+    api = machine_service(b"backend")
+    site = machine_service(b"site")
+    room = rooms(
+        f"http://127.0.0.1:{api}", {"CHEESE_SITE_FORWARD": f"site.invalid:{site}"}
+    )
+
+    answers = json.loads(
+        room.python(
+            DIAL
+            + "import json; print(json.dumps(["
+            + f"dial('site.invalid', 443), dial('127.0.0.1', {site}),"
+            + "dial('127.0.0.1', 443), socket.gethostbyname('localhost')]))"
+        )
+    )
+
+    assert answers == ["site", "unreachable", "unreachable", "127.0.0.1"]
 
 
 @with_sandbox_host
@@ -510,6 +536,7 @@ def test_a_sandboxed_rooms_terminal_marker_ends_no_terminal(tmp_path, monkeypatc
         ["up", str(uuid.uuid4()), "1;id"],
         ["down", "*"],
         ["exec", str(uuid.uuid4())],
+        ["up", str(uuid.uuid4()), "100", "--site", "70000"],
     ],
 )
 def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):

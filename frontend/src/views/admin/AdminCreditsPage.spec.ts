@@ -161,7 +161,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 async function openTeam(page: ReturnType<typeof mountPage>) {
-  await fireEvent.click(await page.findByRole('button', { name: /@linzy/ }))
+  await fireEvent.click(await page.findByRole('button', { name: /linzy/ }))
   await waitFor(() => expect(getCreditTeam).toHaveBeenCalledWith(7))
   await page.findByRole('button', { name: 'credits.panel.grant' })
 }
@@ -315,7 +315,7 @@ describe('plans and credits', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       const page = mountPage()
-      await page.findByRole('button', { name: /@linzy/ })
+      await page.findByRole('button', { name: /linzy/ })
       await fireEvent.update(page.getByLabelText('credits.teams.search'), 'lin')
       await vi.advanceTimersByTimeAsync(400)
       await waitFor(() => expect(listCreditTeams).toHaveBeenLastCalledWith({ q: 'lin', page: 1, pageSize: 20 }))
@@ -326,7 +326,7 @@ describe('plans and credits', () => {
 
   it('filtering by plan asks the server for the first page of teams on that plan', async () => {
     const page = mountPage()
-    await page.findByRole('button', { name: /@linzy/ })
+    await page.findByRole('button', { name: /linzy/ })
 
     const body = within(document.body)
     const [planFilter] = body.getAllByRole('combobox')
@@ -347,12 +347,10 @@ describe('plans and credits', () => {
       page_size: 20,
     })
     const page = mountPage()
-    await page.findByRole('button', { name: /@linzy/ })
+    await page.findByRole('button', { name: /linzy/ })
 
     const teams = page.getByRole('table', { name: 'credits.teams.label' })
-    const row = within(teams)
-      .getByRole('button', { name: /@linzy/ })
-      .closest('tr') as HTMLElement
+    const row = within(teams).getByRole('button', { name: /linzy/ }).closest('tr') as HTMLElement
     expect(within(row).getByText('125')).toBeTruthy()
   })
 
@@ -369,12 +367,10 @@ describe('plans and credits', () => {
       page_size: 20,
     })
     const page = mountPage()
-    await page.findByRole('button', { name: /@linzy/ })
+    await page.findByRole('button', { name: /linzy/ })
 
     const teams = page.getByRole('table', { name: 'credits.teams.label' })
-    const row = within(teams)
-      .getByRole('button', { name: /@linzy/ })
-      .closest('tr') as HTMLElement
+    const row = within(teams).getByRole('button', { name: /linzy/ }).closest('tr') as HTMLElement
     expect(within(row).getByText('40')).toBeTruthy()
     expect(within(row).queryByText('credits.teams.notIssued')).toBeNull()
   })

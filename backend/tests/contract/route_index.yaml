@@ -266,6 +266,7 @@ owners:
   room_task.awaiting: "Cross-room work waiting for caller action; awaiting route composes room_task, review, block and delivery reads; the route is the assembly owner."
   block: "Room blocks and reactions; domain/block editing/documents. Routes own broadcasting."
   topic: "Canonical rooms and room hierarchy/read markers/title/archive; domain/topic/TopicService and related naming/retire queries."
+  thread: "支线: the replies under a channel message as a conversation of their own; domain/thread services and reads."
   topic.membership: "Room participant roster and roles; domain/topic_membership/TopicMemberService."
   topic.chat: "Room messaging/live chat relay; domain/agent/ChatService and topic/member identity, with route owning delivery/broadcast ordering."
   delivery: "Room delivery timer requests and same-handle note dispatch; domain/delivery timer/addressing, composed by room route."
@@ -1119,6 +1120,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/accept", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss", auth: "actor.topic", owner: "room_task"}
+  # app.api.routes.topics_threads
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/threads", auth: "actor.topic", owner: "thread"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/thread", auth: "actor.topic", owner: "thread"}
+  - {protocol: "http", method: "POST", path: "/blocks/{block_id}/thread", auth: "actor.topic", owner: "thread"}
   # app.api.routes.topics_title
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title", auth: "actor.topic", owner: "topic"}
   # app.api.routes.topics_transcript

@@ -11,10 +11,12 @@ admin may manage the roster, plain members may not.
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import listing, say
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -23,6 +25,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -434,7 +437,9 @@ class TopicMemberService:
         the same 芝士, because an agent's name comes from the agent and not from
         where it happens to be standing.
         """
-        room = room_id or topic_id
+        # A task is a conversation of its own with no roster: its room's
+        # answers for it, whichever caller forgot to say so.
+        room = room_id or await room_of(self._session, topic_id)
         handles = await self.agent_handles(room)
         if len(handles) == 1:
             return handles[0]
@@ -457,6 +462,11 @@ class TopicMemberService:
         着有一个收件人，落到正文里的 @ 却谁也对不上，于是事件送出去了、却什么也不会
         发生。没人可点就是没人可点，如实答 None。
         """
+        if room_id is None:
+            # A 支线 seats nobody of its own: its channel's roster answers.
+            room_id = await self._session.scalar(
+                select(Thread.room_id).where(Thread.id == topic_id)
+            )
         if not await self.agent_handles(room_id or topic_id):
             return None
         return await self.resolve_agent_handle(topic_id, room_id=room_id)

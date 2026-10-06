@@ -9,7 +9,7 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from sqlalchemy import select, true
+from sqlalchemy import or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -20,6 +20,7 @@ from app.domain.delivery.ask_inputs import guard_ask_inputs
 from app.domain.delivery.ask_receipt_wait import AskReceiptPending
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
+from app.domain.thread.services import thread_opening
 
 
 def _same_receiver(row: NativeInput, identity: InputIdentity) -> bool:
@@ -400,9 +401,17 @@ async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
             .execution_options(populate_existing=True)
         )
     )
+    # A 支线's first input is the message it hangs under and its files, which
+    # stay in the channel's main line: those blocks are the 支线's too.
+    opening = {
+        block.id for block in await thread_opening(session, identity.conversation_id)
+    }
     if len(rows) != len(ids) or any(
         block.project_id != identity.project_id
-        or block.conversation_id != identity.conversation_id
+        or (
+            block.conversation_id != identity.conversation_id
+            and block.id not in opening
+        )
         for block in rows
     ):
         raise ValidationError("Input blocks do not belong to the addressed room")
@@ -596,6 +605,36 @@ async def terminate_work_inputs(
         row.termination = reason
         touched.add(row.input_id)
     return touched
+
+
+async def terminate_inputs_of_dead_works(session, work_ids, *, reason) -> int:
+    """Record a terminal outcome for every unfinished input of these works.
+
+    For works the platform has established are dead, by the orphan sweep: the
+    session behind them is gone, so no result and no terminal will ever come
+    from it, and without this its inputs would refuse the seat every later
+    message. An input belongs to a work if it was sent into it or taken in it.
+
+    As with :func:`terminate_work_inputs`, only ``terminated_at`` /
+    ``termination`` are written: holds stay held and nothing is consumed, so
+    nothing inside these inputs is sent again.
+    """
+    ids = list(work_ids)
+    if not ids:
+        return 0
+    result = await session.execute(
+        update(NativeInput)
+        .where(
+            or_(
+                NativeInput.work_id.in_(ids),
+                NativeInput.execution_work_id.in_(ids),
+            ),
+            NativeInput.completed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+        )
+        .values(terminated_at=datetime.now(UTC), termination=reason)
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
 
 
 async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:

@@ -112,7 +112,6 @@ ignore_imports =
     app.domain.project.environment_recovery -> app.api.deps
     app.domain.project.export -> app.api.auth
     app.domain.review.pr_poll -> app.api.deps
-    app.domain.topic.doc_nudge -> app.api.deps
 
 [importlinter:contract:routes-touch-no-models]
 # C2 — a route handler must not read another domain's model modules directly.
@@ -395,8 +394,6 @@ ignore_imports =
     app.domain.team.membership_services -> app.domain.delivery.ledger
     app.domain.team.membership_services -> app.domain.notification.models
     app.domain.team.services -> app.domain.task.repositories
-    app.domain.topic.doc_nudge -> app.domain.agent.platform_notices
-    app.domain.topic.doc_nudge -> app.domain.agent.runtime
     app.domain.topic.retire -> app.domain.agent.device_hub
     app.domain.topic.retire -> app.domain.agent.device_provider
     app.domain.topic.retire -> app.domain.agent.models

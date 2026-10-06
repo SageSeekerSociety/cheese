@@ -2,8 +2,10 @@
 
 import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
+import type { DeviceScreen } from './types/deviceSessions'
 export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
+export type { DeviceScreen } from './types/deviceSessions'
 export type { WaitingItem } from './types/waiting'
 
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
@@ -183,7 +185,7 @@ export interface Block {
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
-  // 这一块被派成了哪条支线（房间里的「讨论升级」走这条）。两者只会有一个非空。
+  // 这一块转成了哪个任务（频道里的「转为任务」走这条）。两者只会有一个非空。
   upgraded_to_task_id?: string | null
   created_at: string
 }
@@ -399,6 +401,8 @@ export interface ProjectMemberRow {
   team_id?: number
   // source 为 team 时，带他进来的那个团队的 handle（团队页 `/teams/<handle>`）。
   team_handle?: string
+  // That team's name, which the 「来自团队」 link reads.
+  team_name?: string
   name?: string
   name_source?: 'default' | 'human'
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
@@ -1005,16 +1009,6 @@ export interface OAuthConnectionInfo {
 }
 
 // ---- self-hosted 设备连接器 (P3 Phase B) ----
-
-// One agent (a screen) currently running on an enrolled device — a live 现场 the
-// browser can watch read-only via `screenWsUrl(sid)`.
-export interface DeviceScreen {
-  sid: string
-  agent_handle: string
-  agent_user_id: string
-  project_id: string | null
-  topic_id: string | null
-}
 
 // A compute machine (算力节点) the signed-in human enrolled. A device is pure compute
 // — it has NO agent identity; the agents running on it are `screens` (each carries its

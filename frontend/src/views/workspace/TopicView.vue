@@ -5,10 +5,11 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { useChannelThreads } from '@/composables/useChannelThreads'
 import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
@@ -16,8 +17,10 @@ import { useTopicMemory } from '@/composables/useTopicMemory'
 import { useCompactDesktop } from '@/composables/useWorkspaceLayout'
 
 import { getTask } from '@/api/tasks'
+import { openThread } from '@/api/threads'
 import { useCommands } from '@/commands'
 import { useTopBarBack } from '@/components/common/topBarBack'
+import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskOverview from '@/components/task/TaskOverview.vue'
@@ -45,8 +48,12 @@ import { useTaskPage } from '@/views/workspace/useTaskPage'
 // any child — can carry one topic's state into the next.
 defineOptions({ name: 'TopicView' })
 
-// `taskId`：地址指着这个房间里的一个任务时，画的是任务页。
-const props = defineProps<{ projectId: string; topicId: string; taskId?: string }>()
+// 支线那一半只在打开一条支线时才要，用到时再取。
+const ThreadPane = defineAsyncComponent(() => import('@/views/workspace/ThreadPane.vue'))
+
+// `taskId`：地址指着这个房间里的一个任务时，画的是任务页。`threadId`：指着频道里的一条
+// 支线时，桌面上支线占右边那一半，手机上是一整页。
+const props = defineProps<{ projectId: string; topicId: string; taskId?: string; threadId?: string }>()
 const { mdAndUp } = useDisplay()
 // 平板横放那一档（960–1180）：对话占满整宽，工作面板是从右边拉进来的浮层。
 const compact = useCompactDesktop()
@@ -106,12 +113,32 @@ function backToRoom() {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: props.topicId } })
 }
 
+// ---- 支线 ----
+// 主线上一条消息的支线：有就打开，没有就先开一条。概览里「支线」那一格读同一份清单。
+const channelThreads = useChannelThreads(() => (props.taskId ? null : props.topicId))
+void channelThreads.load()
+function showThread(threadId: string) {
+  channelThreads.markSeen(threadId)
+  void router.push({
+    name: 'workspace-thread',
+    params: { projectId: props.projectId, topicId: props.topicId, threadId },
+  })
+}
+async function onOpenThread(block: Block) {
+  if (block.thread?.id) return showThread(block.thread.id)
+  try {
+    showThread((await openThread(block.id)).id)
+  } catch (e) {
+    store.reportError(e, t('work.room.thread.openFailed'))
+  }
+}
+
 // ---- 平板横放：工作面板的收 / 开 ----
 // 这一档里对话占满整宽，面板是一只从右边拉进来的浮层，默认收起。「面板开着」这件事
 // 就写在地址里——`?tab=` 就是「有人打开了这一格」，于是对话里点「查看改动」、别人发
 // 来的链接，全走同一条路（`onPanelTab` 本来就在改地址）。宽档里面板一直开着（就在对话旁边），手机上是 tab 栏的第一格，两处都不
 // 经过这里。
-const panelOpen = computed(() => !compact.value || !!panelTab.value)
+const panelOpen = computed(() => !compact.value || !!panelTab.value || !!props.threadId)
 // 收起之后从页头那颗开关再打开时回到哪一格：面板此刻在画哪一格。这一格未必来自地址
 // ——平板横放里进房间时自动选中的那一格（芝士在干活就是「现场」、卡等你验收就是「改
 // 动」）只留在面板里、没写进地址，收起再打开要回到它。量不到就落在总览。
@@ -120,6 +147,7 @@ function openPanel() {
   void router.replace({ query: { ...route.query, tab: want } })
 }
 function closePanel() {
+  if (props.threadId) return backToRoom()
   if (!compact.value) return
   // 清掉地址里的 tab：面板收起了，地址就不该再写着一格开着——不然下一次点
   // 「查看改动」时 goTab 会因为「已经在 changes」而什么都不做，面板打不开。
@@ -191,6 +219,7 @@ const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
 watch(
   () => [selectedTopic.value, taskPage.task.value] as const,
   ([topic, task]) => {
+    if (props.threadId) setDynamicTitle(t('work.room.thread.title'), 'workspace-thread')
     if (props.taskId && task) setDynamicTitle(taskTitle(task), 'workspace-topic')
     else if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
     else clearDynamicTitle('workspace-topic')
@@ -198,6 +227,14 @@ watch(
   { immediate: true }
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
+onUnmounted(() => clearDynamicTitle('workspace-thread'))
+/** 支线清单里最后一条回复的时间：今天的写钟点，更早的写日期。 */
+function threadTime(iso: string): string {
+  const at = new Date(iso)
+  return at.toDateString() === new Date().toDateString()
+    ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : at.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
+}
 
 // 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：看板、资料库、
 // 项目文档、搜索。点过去时就只剩取数据那一段等待（lib/routePrefetch.ts）。
@@ -334,6 +371,7 @@ const chatEvents = {
   'open-file': (path: string) => panelRef.value?.openFile?.(path),
   'open-resource': handleOpenResource,
   'upgrade-message': handleUpgradeMessage,
+  'open-thread': onOpenThread,
   'open-topic': openTopic,
   'open-card': onOpenCard,
   phase: (p: CardPhase) => (cardPhase.value = p),
@@ -403,6 +441,8 @@ function handleStateChanged(resource: string) {
   // AI 队友提议了任务，或者有人创建、不用了一条：提议卡跟着变。
   else if (resource === 'task-proposals') chatColumn.value?.reloadProposals()
   else if (resource === 'tasks' && props.taskId) void taskPage.load(true)
+  // 频道里有支线长了一条：概览里「支线」那一格跟着变（主线上那一行对话栏自己换）。
+  else if (resource === 'threads') void channelThreads.load()
   else activityTick.value += 1 // doc / notify → reload
 }
 
@@ -583,6 +623,23 @@ void openPlace()
         <v-progress-circular v-if="taskLoading" indeterminate color="primary" size="24" />
         <span v-else class="t-body c-muted">{{ taskLoadError ?? t('work.task.notFound') }}</span>
       </div>
+      <!-- 手机：支线是一整页，← 回到频道。 -->
+      <ThreadPane
+        v-else-if="threadId && !mdAndUp"
+        class="flex-grow-1"
+        page
+        :room="selectedTopic"
+        :thread-id="threadId"
+        :members="store.members"
+        :topic-list="store.topics"
+        :member-names="memberNames"
+        @close="backToRoom"
+        @open-task="onOpenCard"
+        @to-task="handleUpgradeMessage"
+        @open-file="(path: string) => panelRef?.openFile?.(path)"
+        @open-topic="openTopic"
+        @mention-click="handleMentionClick"
+      />
       <div
         v-else
         :key="taskId ?? 'room'"
@@ -634,7 +691,23 @@ void openPlace()
           :class="{ 'panel-host--sheet': compact, 'panel-host--open': compact && panelOpen }"
           :style="compact ? undefined : { flex: '1 1 0', minWidth: 0 }"
         >
+          <!-- 桌面：支线占右边这一半。工作面板只是藏起来，关掉支线回来时还停在原来那一格。 -->
+          <ThreadPane
+            v-if="threadId && mdAndUp"
+            :room="selectedTopic"
+            :thread-id="threadId"
+            :members="store.members"
+            :topic-list="store.topics"
+            :member-names="memberNames"
+            @close="backToRoom"
+            @open-task="onOpenCard"
+            @to-task="handleUpgradeMessage"
+            @open-file="(path: string) => panelRef?.openFile?.(path)"
+            @open-topic="openTopic"
+            @mention-click="handleMentionClick"
+          />
           <WorkPanel
+            v-show="!(threadId && mdAndUp)"
             ref="panelRef"
             :submit-question="submitQuestion"
             :agent-name="store.agentName"
@@ -654,6 +727,7 @@ void openPlace()
             :with-chat="!mdAndUp"
             :compact="compact"
             :member-names="memberNames"
+            :threads-new="channelThreads.hasNew.value"
             @open-topic="openTopic"
             @open-card="onOpenCard"
             @mention-click="handleMentionClick"
@@ -676,6 +750,18 @@ void openPlace()
                 @toggle-compare="taskPage.toggleCompare"
                 @open-topic="openTopic"
                 @mention-click="handleMentionClick"
+              />
+            </template>
+            <template v-if="!taskId" #threads>
+              <PanelThreads
+                :rows="channelThreads.rows.value"
+                :loading="channelThreads.loading.value"
+                :error="channelThreads.error.value"
+                :refs="{ mentionNames: memberNames, topicTitles: {} }"
+                :name-of="(handle: string) => memberNames[handle] || handle"
+                :fmt-time="threadTime"
+                @open="showThread"
+                @open-task="onOpenCard"
               />
             </template>
             <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->

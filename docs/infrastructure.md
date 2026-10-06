@@ -563,7 +563,10 @@ which reads exactly like "there are no logs".
 
 Retention is set by `deploy/journald-cheese.conf`, which every deploy installs
 as `/etc/systemd/journald.conf.d/cheese.conf`: up to 40 GB and a month, and
-never below 40 GB free on the disk, whichever is tighter. At journald's own
+never below 40 GB free on the disk, whichever is tighter. It also raises
+journald's limit on the number of journal files, which by default stops at
+100 whatever their size: at about 50 MB a file that cap, not the 40 GB, set
+dev's reach at about eight hours (2026-10-05). At journald's own
 default (a tenth of the filesystem, at most 4 GB) dev kept about thirteen hours
 on 2026-09-29, and the evidence for a failure was gone before anyone looked.
 `sudo journalctl --disk-usage` and
@@ -779,7 +782,10 @@ through router-2 to Hong Kong, then back here through a tunnel. So api-front
 serves the same names over TLS on a third listener, `127.0.0.1:18445`, with
 the same certificate and no PROXY protocol, and `deploy/cloud-control.py`
 forwards each machine's `127.0.0.1:18445` to it on the SSH session that
-already carries the machine's backend forward. Measured from a Cloud machine
+already carries the machine's backend forward. A session's sandbox on such a
+machine resolves the site's name to that forward
+([`remote-execution.md`](remote-execution.md)), so a browser there keeps the
+public origin and certificate. Measured from a Cloud machine
 on 2026-10-05, a new connection plus `/api/healthz` took 25-40 ms this way
 against 1.4-3.9 s through Hong Kong.
 

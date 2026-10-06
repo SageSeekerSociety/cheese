@@ -20,6 +20,7 @@ from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -77,22 +78,21 @@ def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
     return project_id, topic_id
 
 
-def _turn(client, topic_id: str, content: str = "hi") -> list[dict]:
-    """Run one addressed turn against the stub agent, return its frames.
+def _turn(client, topic_id: str, content: str = "hi") -> str:
+    """Run one addressed turn against the stub agent, in a 支线 of the room —
+    where 芝士 answers — and return the 支线.
 
     点名由正文说了算（I13），所以每条都得点到人；已经点了名的原样发出去。在一句
     「<@ops> hi」前面再补一个 `@芝士`，点到的就是名册上排在前面的那一个，答话的于
     是不是被叫的那个队友 —— 这个文件恰好就是为分辨这件事写的。
     """
     addressed = content if "<@" in content else f"@芝士 {content}"
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        post_message(client, topic_id, "alice", {"content": addressed})
-        frames = []
+    thread = in_thread(client, topic_id, "alice")
+    with client.websocket_connect(chat_ws_url(thread, "alice")) as ws:
+        post_message(client, thread, "alice", {"content": addressed})
         while True:
-            frame = ws.receive_json()
-            frames.append(frame)
-            if frame["type"] in ("done", "error"):
-                return frames
+            if ws.receive_json()["type"] in ("done", "error"):
+                return thread
 
 
 def _ai_authors(client, topic_id: str) -> set[str]:
@@ -105,8 +105,8 @@ def test_default_room_attributes_ai_blocks_to_the_seated_agent(client):
     and its blocks say so — the point of 分身独立身份: work is told apart by
     its author, and the same agent is the same author in every room."""
     _, topic_id = _project_and_topic(client)
-    _turn(client, topic_id)
-    assert _ai_authors(client, topic_id) == {_own_agent(client, topic_id)}
+    thread = _turn(client, topic_id)
+    assert _ai_authors(client, thread) == {_own_agent(client, topic_id)}
 
 
 def test_ai_blocks_are_authored_by_the_agent_that_was_addressed(client):
@@ -116,8 +116,8 @@ def test_ai_blocks_are_authored_by_the_agent_that_was_addressed(client):
     project_id, topic_id = _project_and_topic(client)
     ops = _seat_second_agent(client, project_id, topic_id, "ops")
 
-    _turn(client, topic_id, f"<@{ops}> hi")
-    assert _ai_authors(client, topic_id) == {ops}
+    thread = _turn(client, topic_id, f"<@{ops}> hi")
+    assert _ai_authors(client, thread) == {ops}
 
 
 def test_site_steps_are_authored_by_the_agent_that_was_addressed(client, stub_hooks):
@@ -137,9 +137,9 @@ def test_site_steps_are_authored_by_the_agent_that_was_addressed(client, stub_ho
         stub_hooks.stops(topic, reply)
 
     stub_hooks.emit_turn = emit_turn
-    _turn(client, topic_id, f"<@{ops}> hi")
+    thread = _turn(client, topic_id, f"<@{ops}> hi")
 
-    tr = client.get(f"/topics/{topic_id}/transcript").json()["data"]["data"]
+    tr = client.get(f"/topics/{thread}/transcript").json()["data"]["data"]
     steps = {b["author"] for b in tr if (b.get("meta") or {}).get("tool")}
     assert steps == {ops}, f"现场的步骤署成了 {steps}（默认队友是 {own}）"
 
@@ -150,13 +150,13 @@ def test_the_summon_receipt_carries_the_same_agent(client):
     project_id, topic_id = _project_and_topic(client)
     ops = _seat_second_agent(client, project_id, topic_id, "ops")
 
-    _turn(client, topic_id, f"<@{ops}> hi")
+    thread = _turn(client, topic_id, f"<@{ops}> hi")
     # Asked of the durable block, not of the turn's frames: the receipt that
     # places the mark is reported on the harness's own task, so it is not
     # ordered against them.
     expected = [{"emoji": "👀", "count": 1, "authors": [ops]}]
     for _ in range(200):
-        blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
         landed = [b["reactions"] for b in blocks if b["reactions"]]
         if landed:
             assert landed == [expected]
@@ -243,12 +243,9 @@ def test_a_memory_without_a_seat_is_the_projects_own_cheese(client):
 
 
 def _post_without_summon(client, topic_id: str, content: str, author: str) -> None:
-    """Post a human message that notifies but starts no turn."""
-    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
-        post_message(client, topic_id, author, {"content": content})
-        while True:
-            if ws.receive_json()["type"] in ("done", "error"):
-                break
+    """Post a human message in the room's main line. Whoever it names is told
+    as the message lands; an AI teammate it calls answers in its 支线."""
+    post_message(client, topic_id, author, {"content": content})
 
 
 def _notifs(client, project_id: str, handle: str) -> list[dict]:
@@ -295,8 +292,8 @@ def test_human_members_are_not_mistaken_for_agents(client):
         json={"handle": "bob", "role": "member", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
-    _turn(client, topic_id)
-    assert _ai_authors(client, topic_id) == {_own_agent(client, topic_id)}
+    thread = _turn(client, topic_id)
+    assert _ai_authors(client, thread) == {_own_agent(client, topic_id)}
 
 
 # --- 记忆可见: the agent's own pool has to be listable, not just searchable ---
