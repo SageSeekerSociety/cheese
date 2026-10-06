@@ -957,7 +957,8 @@
         "plain": {
           "chart": "图表",
           "diagram": "流程图",
-          "image": "图片"
+          "image": "图片",
+          "video": "视频"
         }
       },
       "historyView": "右边显示",

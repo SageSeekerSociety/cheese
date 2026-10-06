@@ -957,7 +957,8 @@
         "plain": {
           "chart": "Chart",
           "diagram": "Diagram",
-          "image": "Image"
+          "image": "Image",
+          "video": "Video"
         }
       },
       "historyView": "Show",

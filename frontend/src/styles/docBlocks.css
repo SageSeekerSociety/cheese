@@ -54,6 +54,22 @@
   content-visibility: visible;
 }
 
+/* ---- Video: a Bilibili player at 16:9, no wider than a reading column ---- */
+
+[data-video] {
+  max-width: 640px;
+  margin: 12px 0;
+}
+
+[data-video] iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+}
+
 /* ---- Callout ------------------------------------------------------------ */
 
 [data-block='callout'] {
