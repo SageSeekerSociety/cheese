@@ -94,6 +94,8 @@ export interface CreditTeamDetail {
 export interface CreditAudit {
   created_at: string
   actor_handle: string
+  /** The administrator's nickname now; null when they have none. */
+  actor_name?: string | null
   action: string
   target: string
   before: Record<string, unknown> | null
@@ -182,7 +184,7 @@ export type TeamKind = 'personal' | 'team'
 /** 列表和面板里怎么称呼一个团队：个人团队用主人的昵称（没有就用 handle）。 */
 export function teamTitle(team: Pick<CreditTeamRow, 'name' | 'personal_owner' | 'personal_owner_nickname'>): string {
   if (!team.personal_owner) return team.name
-  return team.personal_owner_nickname || `@${team.personal_owner}`
+  return team.personal_owner_nickname || team.personal_owner
 }
 
 /** 额度保留到一位小数；整数不带小数点。 */

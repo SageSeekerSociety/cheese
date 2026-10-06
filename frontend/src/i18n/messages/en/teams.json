@@ -11,7 +11,7 @@
     "online": "Online",
     "offline": "Offline",
     "listSeparator": ", ",
-    "screenRunning": "Running · {'@'}{handle}",
+    "screenRunning": "Running · {'@'}{name}",
     "team": {
       "removeDeviceConfirm": "Remove \"{name}\" from this team?",
       "subtitle": "The team's self-hosted devices. A project sets the default work computer for new AI teammates; each AI teammate's can be changed in the room.",

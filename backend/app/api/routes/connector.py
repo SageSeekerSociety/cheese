@@ -495,8 +495,11 @@ async def _require_user(resolver: ActorResolverDep) -> int:
     return actor.user_id
 
 
-def _device_screens(device_id: str) -> list[dict[str, Any]]:
-    """The device's currently-open screens (agents), for the UI to open their 现场."""
+async def _device_screens(db: AsyncSession, device_id: str) -> list[dict[str, Any]]:
+    """The device's currently-open screens (agents), for the UI to open their 现场,
+    each with the name its agent goes by."""
+    from app.domain.machine.session_work import screen_agent_name
+
     out: list[dict[str, Any]] = []
     for screen in device_hub.all_online_screens():
         if screen.device_id != device_id:
@@ -508,12 +511,15 @@ def _device_screens(device_id: str) -> list[dict[str, Any]]:
                 "agent_user_id": str(screen.agent_user_id),
                 "project_id": str(screen.project_id) if screen.project_id else None,
                 "topic_id": str(screen.topic_id) if screen.topic_id else None,
+                **await screen_agent_name(
+                    db, screen.project_id, screen.topic_id, screen.agent_handle
+                ),
             }
         )
     return out
 
 
-def _device_view(device: Device) -> dict[str, Any]:
+async def _device_view(db: AsyncSession, device: Device) -> dict[str, Any]:
     # A device is pure compute — no ``agent_handle`` here. The agents actually running
     # on it are the per-screen entries (each carries its own agent), surfaced below.
     return {
@@ -524,18 +530,18 @@ def _device_view(device: Device) -> dict[str, Any]:
         # Teams this machine is registered for (为团队注册设备): every project of
         # these teams may run on it.
         "team_ids": list(device.team_ids),
-        "screens": _device_screens(device.device_id),
+        "screens": await _device_screens(db, device.device_id),
     }
 
 
 @router.get("/my/devices")
 async def my_devices(
-    resolver: ActorResolverDep, service: DeviceServiceDep
+    resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
 ) -> dict[str, Any]:
     """List the devices the logged-in human owns, with liveness + their open agents."""
     user_id = await _require_user(resolver)
     devices = await service.list_owned(user_id)
-    return {"devices": [_device_view(d) for d in devices]}
+    return {"devices": [await _device_view(db, d) for d in devices]}
 
 
 @router.patch("/my/devices/{device_id}")
@@ -544,11 +550,12 @@ async def rename_my_device(
     body: RenameDeviceRequest,
     resolver: ActorResolverDep,
     service: DeviceServiceDep,
+    db: DbSession,
 ) -> dict[str, Any]:
     """Rename a device the caller owns (the service enforces ownership)."""
     user_id = await _require_user(resolver)
     device = await service.rename_owned(device_id, body.name, actor_user_id=user_id)
-    return _device_view(device)
+    return await _device_view(db, device)
 
 
 @router.delete("/my/devices/{device_id}")
@@ -580,7 +587,7 @@ async def register_device_for_team(
         raise ForbiddenError(say("deviceTeamMemberOnly"))
     await service.assign_to_team(device_id, body.team_id, actor_user_id=user_id)
     device = await service.get_hosted_device(device_id)
-    return _device_view(device)  # type: ignore[arg-type]
+    return await _device_view(db, device)  # type: ignore[arg-type]
 
 
 @router.get("/teams/{team_id}/devices")
@@ -616,7 +623,7 @@ async def team_devices(
     return {
         "devices": [
             {
-                **_device_view(d),
+                **await _device_view(db, d),
                 "attached_projects": [
                     {"id": str(p), "name": names[p]}
                     for p in d.project_ids
@@ -635,6 +642,7 @@ async def unregister_device_from_team(
     team_id: int,
     resolver: ActorResolverDep,
     service: DeviceServiceDep,
+    db: DbSession,
 ) -> dict[str, Any]:
     """Unbind a machine the caller owns from a team (为自己 / 换团队). Owner-only."""
     user_id = await _require_user(resolver)
@@ -642,4 +650,4 @@ async def unregister_device_from_team(
     device = await service.get_hosted_device(device_id)
     if device is None:
         raise NotFoundError(say("deviceNotFound"))
-    return _device_view(device)
+    return await _device_view(db, device)

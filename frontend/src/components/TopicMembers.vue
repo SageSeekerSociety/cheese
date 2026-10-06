@@ -416,7 +416,7 @@ async function onSetRole(handle: string, role: string) {
               </template>
               <span class="roster__who">
                 <span class="roster__name">{{ item.raw.title }}</span>
-                <span class="roster__handle">@{{ item.raw.value }}</span>
+                <span class="roster__handle">{{ item.raw.value }}</span>
               </span>
               <template #append>
                 <span v-if="item.raw.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>

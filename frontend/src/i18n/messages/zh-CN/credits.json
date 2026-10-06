@@ -121,7 +121,7 @@
     "historyFailed": "无法读取操作记录",
     "logPlan": "方案由 {from} 改为 {to}",
     "logGrant": "发放 {credits} 点，{expiry}",
-    "by": "{'@'}{handle} · {time}"
+    "by": "{'@'}{name} · {time}"
   },
   "grantDialog": {
     "title": "给「{team}」发额度",

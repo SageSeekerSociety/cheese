@@ -12,7 +12,7 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
-import { teammateName } from '@/lib/agentNames'
+import { screenAgentName, teammateName } from '@/lib/agentNames'
 import { topicTitle } from '@/lib/topicState'
 import { useDialog } from '@/plugins/dialog'
 
@@ -193,7 +193,7 @@ watch(teamId, load)
                     color="primary"
                   >
                     <v-icon start size="12">mdi-monitor-eye</v-icon>
-                    {{ t('teams.compute.screenRunning', { handle: screen.agent_handle }) }}
+                    {{ t('teams.compute.screenRunning', { name: screenAgentName(screen) }) }}
                   </v-chip>
                 </div>
                 <div

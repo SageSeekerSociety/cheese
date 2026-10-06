@@ -117,7 +117,7 @@ beforeEach(() => {
   projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', can_manage_members: true }]
   members = [
     { user_handle: 'alice', name: '爱丽丝', source: 'owner' },
-    { user_handle: 'ligan', name: '李干', source: 'team', team_handle: 'zhishi' },
+    { user_handle: 'ligan', name: '李干', source: 'team', team_handle: 'zhishi', team_name: '知是小队' },
     { user_handle: 'mentor1', name: '管理员', source: 'external' },
     { user_handle: 'cheese-x', name: '芝士', source: 'agent', agent: true },
   ]
@@ -159,9 +159,10 @@ describe('成员页：按来路分段', () => {
     expect(rowFor(container, 'alice').textContent).not.toContain('外部')
   })
 
-  it('团队成员指回他所在的团队', () => {
+  it('团队成员指回他所在的团队，用团队的名字', () => {
     const { container } = mount()
-    expect(rowFor(container, 'ligan').textContent).toContain('来自团队 @zhishi')
+    const link = rowFor(container, 'ligan').querySelector('.member-team-link')!
+    expect(link.textContent?.trim()).toBe('来自团队 知是小队')
   })
 
   it('点私聊落在侧栏那条私聊行的同一个地址上', async () => {

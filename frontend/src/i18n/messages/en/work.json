@@ -1363,7 +1363,7 @@
     "sectionExternal": "External members",
     "sectionPending": "Waiting to accept",
     "sectionAgents": "AI teammates",
-    "fromTeam": "From team {'@'}{handle}",
+    "fromTeam": "From team {name}",
     "manage": "Manage member",
     "remove": "Remove from project",
     "dm": "Message",

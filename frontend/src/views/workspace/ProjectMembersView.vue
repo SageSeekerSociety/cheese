@@ -381,7 +381,7 @@ useCommands(() => [
                 :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
                 class="t-meta-read member-team-link"
                 @click.stop
-                >{{ t('work.members.fromTeam', { handle: m.team_handle }) }}</router-link
+                >{{ t('work.members.fromTeam', { name: m.team_name || m.team_handle }) }}</router-link
               >
             </div>
             <v-spacer />

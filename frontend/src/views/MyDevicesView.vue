@@ -28,6 +28,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
+import { screenAgentName } from '@/lib/agentNames'
 import accountService from '@/services/account'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
@@ -371,7 +372,7 @@ useCommands(() =>
             <div class="device__chips">
               <v-chip v-for="s in d.screens" :key="s.sid" variant="outlined" size="small" @click="liveScreen = s">
                 <v-icon start size="14">mdi-monitor-eye</v-icon>
-                {{ t('account.devices.watch', { handle: s.agent_handle }) }}
+                {{ t('account.devices.watch', { name: screenAgentName(s) }) }}
               </v-chip>
             </div>
           </div>
@@ -451,7 +452,7 @@ useCommands(() =>
     <v-dialog :model-value="liveScreen !== null" max-width="900" @update:model-value="liveScreen = null">
       <v-card v-if="liveScreen" class="pa-3">
         <div class="d-flex align-center mb-2">
-          <span class="t-title">{{ t('account.devices.liveTitle', { handle: liveScreen.agent_handle }) }}</span>
+          <span class="t-title">{{ t('account.devices.liveTitle', { name: screenAgentName(liveScreen) }) }}</span>
           <v-spacer />
           <BaseButton icon="mdi-close" :aria-label="t('account.devices.close')" @click="liveScreen = null" />
         </div>

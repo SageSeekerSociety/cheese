@@ -11,7 +11,7 @@
     "online": "在线",
     "offline": "离线",
     "listSeparator": "、",
-    "screenRunning": "运行中 · {'@'}{handle}",
+    "screenRunning": "运行中 · {'@'}{name}",
     "team": {
       "removeDeviceConfirm": "确定把「{name}」移出这个团队吗？",
       "subtitle": "团队的自有设备。项目给新 AI 队友设默认工作电脑，房间里可以给每个 AI 队友更换。",
