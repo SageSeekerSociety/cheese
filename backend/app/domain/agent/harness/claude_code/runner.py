@@ -202,6 +202,11 @@ def transcript(config_dir: Path, session_id: str) -> Path | None:
 #: 可以恢复。放在这里，家一没这张表跟着没，下一次对账就是一次全新的铺。
 MEMORY_BASELINE = ".baseline.json"
 
+#: 索引的底稿（路径 → 上一次对账后那一份索引的正文），和基线放在一起、同生同死。
+#: 基线只有指纹，而索引两边都动过时要按行合并（`tree.merge_lines`），合并要的是
+#: 上次那一版的正文。只存索引：别的记忆两边都动过时是平台赢，用不着底稿。
+MEMORY_BASES = ".bases.json"
+
 
 def memory_root() -> Path:
     """会话里那棵记忆树的根。
@@ -237,22 +242,24 @@ def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
     return out
 
 
-def _recall_baseline(root: Path) -> dict[str, str]:
-    """上一次对账留下的指纹表（就在记忆树根上，见 `MEMORY_BASELINE`）。
+def _recall_baseline(root: Path, name: str = MEMORY_BASELINE) -> dict[str, str]:
+    """上一次对账留下的那张表（就在记忆树根上）：指纹表（`MEMORY_BASELINE`），
+    或者索引底稿（`MEMORY_BASES`）。
 
     读不出来当没写过——一次对账从头铺一遍，比拿着一张读不懂的表去判「谁改过」安
-    全。读不到也正是「这棵树是新的」：家被重建过，于是每一条都按平台的版本铺。
+    全。读不到也正是「这棵树是新的」：家被重建过，于是每一条都按平台的版本铺。底
+    稿读不到，索引这一次就照普通文件对账（平台赢）。
     """
     try:
-        baseline = json.loads((root / MEMORY_BASELINE).read_text(encoding="utf-8"))
+        baseline = json.loads((root / name).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     if not isinstance(baseline, dict):
         return {}
     return {
-        str(path): str(fingerprint)
-        for path, fingerprint in baseline.items()
-        if isinstance(path, str) and isinstance(fingerprint, str)
+        str(path): str(value)
+        for path, value in baseline.items()
+        if isinstance(path, str) and isinstance(value, str)
     }
 
 
@@ -889,7 +896,12 @@ class Runner(runner.Runner[Journal]):
         baseline = _recall_baseline(root)
         managed = prefixes_of(scopes, baseline)
         disk, emptied = self.read_memory(managed)
-        outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline)
+        outcome = sync_tree(
+            scopes=scopes,
+            disk=disk,
+            baseline=baseline,
+            bases=_recall_baseline(root, MEMORY_BASES),
+        )
         if outcome.held:
             # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
             # 会被重新铺回去。说出来，因为下一次对账看到的还是同一棵树——同一条会
@@ -917,6 +929,7 @@ class Runner(runner.Runner[Journal]):
             with contextlib.suppress(OSError):
                 (root / path).unlink(missing_ok=True)
         self._keep_refused(root, outcome.refused)
+        _write_memory(root, MEMORY_BASES, json.dumps(outcome.bases))
         _write_memory(root, MEMORY_BASELINE, json.dumps(outcome.baseline))
         # `held` 跟着回去：会话这一侧的兜底挡下的那些删除，平台那一侧看不见
         # （`files` 里它们已经被放回去了）。整理那一轮要知道这件事——「这次删得
