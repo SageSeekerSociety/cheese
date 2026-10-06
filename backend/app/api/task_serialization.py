@@ -86,7 +86,6 @@ def _task_to_api_model(task: Task) -> dict:
         "maxTeamSize": task.max_team_size,
         "teamLockingPolicy": task.team_locking_policy,
         "rejectReason": task.reject_reason,
-        "videoUrl": task.video_url,
         "accessControlEnabled": task.access_control_enabled,
         # 这道题自己的「给 AI 队友的指导」(#944)：报的是**原始覆盖**，不是解析后的
         # 赢家 —— 发题页编的是这道题自己写了什么，空 = 继承，只有对着原始值才讲得通。

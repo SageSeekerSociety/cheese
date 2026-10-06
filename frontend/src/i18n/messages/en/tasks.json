@@ -270,9 +270,6 @@
   "brief": {
     "details": "Details",
     "empty": "No details",
-    "video": "Video",
-    "videoFrame": "Challenge video",
-    "videoExternal": "Only Bilibili videos can be embedded; others open in a new window",
     "materials": "Materials"
   },
   "attachments": {

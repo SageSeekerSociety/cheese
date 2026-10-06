@@ -274,9 +274,6 @@
   "brief": {
     "details": "题目详情",
     "empty": "暂无详情",
-    "video": "视频",
-    "videoFrame": "题目视频",
-    "videoExternal": "只能嵌入 B 站视频，其他视频在新窗口打开",
     "materials": "材料"
   },
   "attachments": {

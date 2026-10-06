@@ -42,7 +42,6 @@ export type PostTaskRequestData = {
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
-  videoUrl?: string | null
   endedAt?: number | null
   hasEndedAt?: boolean
   /** 随题一起发出去的材料。文件先经 `AttachmentsApi`（`POST /attachments`）传上来拿到
@@ -167,7 +166,6 @@ export type PatchTaskRequestData = {
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
-  videoUrl?: string | null
   /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。整份替换；省掉它 = 不动。 */
   teaching?: SpaceTeaching
   endedAt?: number | null
