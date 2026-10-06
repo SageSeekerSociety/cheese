@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.domain.feature_stats import pricing
 from app.domain.project.services import ProjectService
+from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -356,3 +357,23 @@ async def test_invalid_topic_keeps_project_usage_and_advances_once(
             (None, 20),
             (tid, 9),
         }
+
+
+@pytest.mark.anyio
+async def test_a_task_conversation_keeps_its_usage(business_db_factory, tmp_path):
+    """A seat working a task reports the task's conversation; its spend is the
+    task's, not left unattributed on the project."""
+    pid, tid = await _seed(business_db_factory)
+    async with business_db_factory() as session:
+        task = await TaskService(session).open_thread(
+            project_id=pid, room_id=tid, title="t", owner_handle="u", created_by="u"
+        )
+        await session.commit()
+        task_id = task.id
+    log = tmp_path / "usage.jsonl"
+    log.write_text(_row(pid, task_id, inp=11, out=4))
+    assert await ingest_once(business_db_factory, log) == {"landed": 1, "skipped": 0}
+    assert [
+        (r.conversation_id, r.total_tokens)
+        for r in await _rows(business_db_factory, pid)
+    ] == [(task_id, 15)]

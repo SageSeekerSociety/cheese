@@ -48,9 +48,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.block.models import Block
+from app.domain.conversation.models import Conversation
 from app.domain.feature_stats import pricing
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import Topic
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, Rates, payer_for_project
 from app.domain.usage.models import IngestCheckpoint
@@ -213,16 +213,20 @@ async def _land_row(
         return False
     if await ProjectRepository(session).get(project_id) is None:
         return False
+    # The proxy's ``topic_id`` names the conversation the seat runs in: a room,
+    # or a task or thread inside one. The usage row's own reference is to the
+    # conversation, so that is where it is looked up.
     topic_id = _uuid_or_none(row.get("topic_id"))
     if topic_id is not None:
-        topic = await session.scalar(
-            select(Topic.id)
-            .where(Topic.id == topic_id, Topic.project_id == project_id)
+        conversation = await session.scalar(
+            select(Conversation.id)
+            .where(Conversation.id == topic_id, Conversation.project_id == project_id)
             .with_for_update(read=True, key_share=True)
         )
-        if topic is None:
+        if conversation is None:
             logger.warning(
-                "usage topic %s is absent from project %s; retaining project usage",
+                "usage conversation %s is absent from project %s; "
+                "retaining project usage",
                 topic_id,
                 project_id,
             )
