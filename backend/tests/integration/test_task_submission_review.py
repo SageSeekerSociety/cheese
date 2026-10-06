@@ -752,47 +752,98 @@ class TestTaskSubmissionReviewIntegration:
         [submission] = resp.json()["data"]["submissions"]
         assert [c["title"] for c in submission["content"]] == ["Text Entry"]
 
-    def test_a_submission_still_reads_after_its_form_loses_the_entry(
-        self, setup_submission: dict, api_client: TestClient
-    ):
-        creator = setup_submission["creator"]
-        task_id = setup_submission["task_id"]
-        membership_id = setup_submission["membership_id"]
-        replaced = api_client.patch(
-            f"/tasks/{task_id}",
-            json={"submissionSchema": []},
-            headers={"Authorization": f"Bearer {creator.token}"},
+    def _replace_form(
+        self, api_client: TestClient, setup: dict, form: list[dict], **task: object
+    ) -> None:
+        resp = api_client.patch(
+            f"/tasks/{setup['task_id']}",
+            json={"submissionSchema": form, **task},
+            headers={"Authorization": f"Bearer {setup['creator'].token}"},
         )
-        assert replaced.status_code == 200, replaced.text
-
-        resp = api_client.get(
-            f"/tasks/{task_id}/participants/{membership_id}/submissions",
-            headers={"Authorization": f"Bearer {creator.token}"},
-        )
-
         assert resp.status_code == 200, resp.text
-        [submission] = resp.json()["data"]["submissions"]
-        assert [c["contentText"] for c in submission["content"]] == [
-            "This is a test submission."
+
+    def _latest(self, api_client: TestClient, setup: dict) -> dict:
+        resp = api_client.get(
+            f"/tasks/{setup['task_id']}/participants/{setup['membership_id']}"
+            "/submissions",
+            headers={"Authorization": f"Bearer {setup['creator'].token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["data"]["submissions"][0]
+
+    @pytest.mark.parametrize(
+        "form",
+        [
+            pytest.param(
+                [
+                    {"prompt": "Added first", "type": "TEXT"},
+                    {"prompt": "Text Entry", "type": "TEXT"},
+                ],
+                id="reordered",
+            ),
+            pytest.param([{"prompt": "Renamed", "type": "TEXT"}], id="renamed"),
+            pytest.param([], id="removed"),
+        ],
+    )
+    def test_an_entry_keeps_the_name_it_was_answered_under(
+        self, setup_submission: dict, api_client: TestClient, form: list[dict]
+    ):
+        self._replace_form(api_client, setup_submission, form)
+
+        submission = self._latest(api_client, setup_submission)
+
+        assert [(c["title"], c["contentText"]) for c in submission["content"]] == [
+            ("Text Entry", "This is a test submission.")
         ]
 
-    def test_an_entry_whose_form_item_has_no_name_still_has_a_title(
+    def test_an_edited_entry_takes_the_name_the_form_has_when_edited(
         self, setup_submission: dict, api_client: TestClient
     ):
-        creator = setup_submission["creator"]
-        task_id = setup_submission["task_id"]
-        membership_id = setup_submission["membership_id"]
-        replaced = api_client.patch(
-            f"/tasks/{task_id}",
-            json={"submissionSchema": [{"prompt": "", "type": "TEXT"}]},
-            headers={"Authorization": f"Bearer {creator.token}"},
+        self._replace_form(
+            api_client,
+            setup_submission,
+            [{"prompt": "Renamed", "type": "TEXT"}],
+            editable=True,
         )
-        assert replaced.status_code == 200, replaced.text
-
-        resp = api_client.get(
-            f"/tasks/{task_id}/participants/{membership_id}/submissions",
-            headers={"Authorization": f"Bearer {creator.token}"},
+        participant = setup_submission["participant"]
+        edited = api_client.patch(
+            f"/tasks/{setup_submission['task_id']}/participants/"
+            f"{setup_submission['membership_id']}/submissions/1",
+            json=[{"text": "Edited."}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert edited.status_code == 200, edited.text
+        self._replace_form(
+            api_client, setup_submission, [{"prompt": "Later", "type": "TEXT"}]
         )
 
-        [submission] = resp.json()["data"]["submissions"]
-        assert all(c["title"] for c in submission["content"])
+        submission = self._latest(api_client, setup_submission)
+
+        assert [c["title"] for c in submission["content"]] == ["Renamed"]
+
+    def test_an_entry_answered_under_a_blank_name_is_numbered(
+        self, setup_submission: dict, api_client: TestClient
+    ):
+        self._replace_form(
+            api_client,
+            setup_submission,
+            [{"prompt": "", "type": "TEXT"}, {"prompt": "Second", "type": "TEXT"}],
+            resubmittable=True,
+        )
+        participant = setup_submission["participant"]
+        resubmitted = api_client.post(
+            f"/tasks/{setup_submission['task_id']}/participants/"
+            f"{setup_submission['membership_id']}/submissions",
+            json=[{"text": "One."}, {"text": "Two."}, {"text": "Three."}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert resubmitted.status_code == 200, resubmitted.text
+
+        submission = self._latest(api_client, setup_submission)
+
+        assert submission["version"] == 2
+        assert [c["title"] for c in submission["content"]] == [
+            "Entry 1",
+            "Second",
+            "Entry 3",
+        ]
