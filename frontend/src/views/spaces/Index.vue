@@ -464,7 +464,6 @@ onMounted(async () => {
   border: 1px solid transparent;
 }
 
-
 .space-card:hover {
   background-color: rgba(var(--v-theme-primary), 0.04);
   border-color: rgba(var(--v-theme-primary), 0.1);
