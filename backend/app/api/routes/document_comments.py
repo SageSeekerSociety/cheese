@@ -44,7 +44,7 @@ Questions = Annotated[Consumptions, Depends(get_consumptions)]
 
 def asked_of(reached: Reached) -> Asked:
     doc = reached.doc
-    return Asked(project_id=doc.project_id, document_id=doc.id, room_id=doc.room_id)
+    return Asked(project_id=doc.project_id, document_id=doc.id, room_id=None)
 
 
 @router.get("/{document_id}/nodes")

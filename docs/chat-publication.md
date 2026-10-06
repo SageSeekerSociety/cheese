@@ -1,7 +1,7 @@
 # Agent chat publication
 
 Cheese chat is a timeline of collaboration: accepting work, sharing findings,
-asking for decisions, and handing over results. A room's living document is the
+asking for decisions, and handing over results. A task's living document is the
 current overview for someone who has not followed that timeline. It includes
 the goal, necessary background, conclusions and next steps.
 

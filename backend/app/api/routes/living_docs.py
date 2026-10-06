@@ -126,10 +126,9 @@ async def create_document(
             raise NotFoundError(say("docNotFound"))
         content = source.content
         if not title:
-            title = source.title or ""
-            if source.room_id is not None:
-                place = await TopicService(db).place_or_404(source.room_id)
-                title = place.title or ""
+            # A task's document goes by its task's title.
+            task = await TaskService(db).of_document(source.id)
+            title = source.title or (task.title if task is not None else "")
     doc = await Documents(db).create(
         project_id=project_id, title=title, author=actor.handle
     )
@@ -308,9 +307,7 @@ async def replace_document(
         }
         if receipt := await _replayed(db, doc, operation):
             return receipt
-    content = await canonicalize_refs(
-        db, doc.project_id, body.content, exclude_topic_id=doc.room_id
-    )
+    content = await canonicalize_refs(db, doc.project_id, body.content)
     base = await _base(db, doc, body.expected_version)
     # Nothing of this request may stay open across the call: the service's
     # store takes the document's lock in a transaction of its own.

@@ -507,15 +507,25 @@ async def search_documents(
         library_hits.append(
             {**document_row(doc), "snippet": _snippet(doc.content, terms)}
         )
+    # A task's document goes by its task's title, the overview by 综合's.
+    task_titles: dict[uuid.UUID, str] = {
+        task_id: title
+        for task_id, title in await db.execute(
+            select(Task.id, Task.title).where(
+                Task.id.in_([task for _, task in homes.values() if task])
+            )
+        )
+    }
     room_hits = [
         {
             **document_row(h.document),
-            "room_id": str(homes[h.document.id][0]),
-            "task_id": str(task) if (task := homes[h.document.id][1]) else None,
-            "room_title": readable[homes[h.document.id][0]].title,
+            "room_id": str(room),
+            "task_id": str(task) if task else None,
+            "room_title": task_titles.get(task) if task else readable[room].title,
             "snippet": _snippet(h.content, terms),
         }
         for h in found
         if h.document.id in homes
+        for room, task in [homes[h.document.id]]
     ]
     return ok({"query": q, "library": library_hits, "rooms": room_hits})

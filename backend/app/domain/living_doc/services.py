@@ -49,10 +49,6 @@ class Documents:
     async def get(self, document_id: uuid.UUID) -> Document | None:
         return await self._repo.get(document_id)
 
-    async def of_rooms(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, Document]:
-        """The documents still kept by old rooms, keyed by room id."""
-        return await self._repo.of_rooms(room_ids)
-
     async def of_project(self, project_id: uuid.UUID) -> list[Document]:
         """The project's own documents, the latest changed first."""
         return await self._repo.of_project(project_id)

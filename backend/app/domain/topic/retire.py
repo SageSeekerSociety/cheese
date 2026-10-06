@@ -197,7 +197,13 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
         operation.topic_id,
         *(tree.id for tree in trees if tree.room_id == operation.topic_id),
     }
-    other = {tree.id for tree in trees if tree.room_id != operation.topic_id}
+    # A room that became a task is that task, under the same id: not another
+    # owner of its own checkouts.
+    other = {
+        tree.id
+        for tree in trees
+        if tree.room_id != operation.topic_id and tree.id != operation.topic_id
+    }
     other.update(
         await session.scalars(
             select(Topic.id).where(
@@ -397,10 +403,12 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
     retry_claim = operation.state == "claimed"
     room = await TopicRepository(session).lock(operation.topic_id)
     if operation.state == "pending":
-        if (
-            room is None
-            or room.status != TopicStatus.archived
-            or room.cleanup_id != operation.id
+        # Only a room taken out of the archive wants its machine back. A room
+        # whose row is gone (one that became a closed task, which never
+        # reopens) leaves its old generation to be removed all the same: the
+        # cleanup knows its project, generation and resources by itself.
+        if room is not None and (
+            room.status != TopicStatus.archived or room.cleanup_id != operation.id
         ):
             operation.state = "cancelled"
             await session.commit()
