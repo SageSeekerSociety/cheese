@@ -10,8 +10,9 @@
 // `removePlatformAdmin`）全在容器里；这里只吃 props、只往上发事件。人名那一颗用纯展示
 // 的 `UserRef`，名字与去处由容器算好当 `resolveUser` 递进来（见
 // `composables/useUserRefResolver`）。
-import type { AdminCandidate, PlatformAdminRow, PlatformAdminsPayload } from '@/api'
+import type { PlatformAdminRow, PlatformAdminsPayload } from '@/api'
 import type { ResolvedUserRef } from '@/composables/useUserRefResolver'
+import type { AdminCandidate } from '@/types/admin'
 
 import { computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

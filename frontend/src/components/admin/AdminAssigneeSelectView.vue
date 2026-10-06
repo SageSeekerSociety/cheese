@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AdminCandidate } from '@/api'
+import type { AdminCandidate } from '@/types/admin'
 
 import { useI18n } from 'vue-i18n'
 

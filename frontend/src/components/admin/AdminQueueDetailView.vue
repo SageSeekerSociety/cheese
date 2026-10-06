@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { AdminCandidate } from '@/api'
 import type { FeedbackDetail, FeedbackPriority, FeedbackStatus } from '@/cx_types'
+import type { AdminCandidate } from '@/types/admin'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'

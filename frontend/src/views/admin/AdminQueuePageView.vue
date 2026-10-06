@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { AdminCandidate } from '@/api'
 import type { QueueView } from '@/composables/useAdminQueue'
 import type { FeedbackCard, FeedbackDetail, FeedbackPriority, FeedbackStatus } from '@/cx_types'
 import type { AdminTab } from '@/stores/feedback'
+import type { AdminCandidate } from '@/types/admin'
 
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'

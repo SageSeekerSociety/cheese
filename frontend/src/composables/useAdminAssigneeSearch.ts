@@ -5,7 +5,7 @@
 // 只吃 props）和独立可挂的那一份（`AdminAssigneeSelect.vue`）。两边各抄一遍防抖与竞态
 // 处理，迟早会漂成两种手感。用法与 `AdminMembersPage` 那个搜索框同源（同一个接口、
 // 同一个 250ms），那边记着 `no-filter` 那个 bug 的完整来历。
-import type { AdminCandidate } from '@/api'
+import type { AdminCandidate } from '@/types/admin'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 

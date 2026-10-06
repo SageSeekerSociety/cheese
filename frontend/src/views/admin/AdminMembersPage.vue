@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { AdminCandidate, PlatformAdminsPayload } from '@/api'
+import type { PlatformAdminsPayload } from '@/api'
+import type { AdminCandidate } from '@/types/admin'
 
 import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
