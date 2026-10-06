@@ -30,8 +30,7 @@ vi.mock('../../api', async () => {
 
 import { SITE_PAGE_SIZE } from '../../api'
 import { MAX_WINDOW } from '../../lib/blockPaging'
-
-import PanelSite from './PanelSite.vue'
+import PanelSite from '../work/PanelSiteHost.vue'
 
 import { setLocale } from '@/i18n'
 

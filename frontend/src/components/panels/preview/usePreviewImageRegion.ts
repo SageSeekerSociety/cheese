@@ -1,11 +1,11 @@
 import type { FileContent } from '@/cx_types'
-import type { DocumentIdentity, DocumentSnapshot } from '@/lib/documentBytes'
+import type { DocumentIdentity, DocumentSnapshot } from '@/lib/documentIdentity'
 import type { RasterSelection } from './designRegion'
 
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
 import { t } from '@/i18n'
-import { sameDocumentIdentity } from '@/lib/documentBytes'
+import { sameDocumentIdentity } from '@/lib/documentIdentity'
 import { imageMimeOf } from '@/lib/fileKind'
 
 interface ImagePreviewProps {

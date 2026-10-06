@@ -9,7 +9,7 @@
 // 从那里来、到那里去，这一层不装也不存。换一间房就是换一份文档，编辑器跟着重建。
 //
 // 压在正文上的那几块浮层在 doc/DocOverlays.vue；这里只留一个坐标系的壳。
-// 这里没有一处 import 取数层：节点树、话题表、图片地址都由上面递进来，动作往上发。
+// 这里没有一处引到取数层：节点树、话题表、图片地址都由上面递进来，动作往上发。
 import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { DocSession } from '../../../composables/useDocCollab'

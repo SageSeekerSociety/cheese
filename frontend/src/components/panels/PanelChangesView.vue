@@ -13,6 +13,7 @@
 // 递进来的；点一份文件、按保存、切版本发事件出去。取数在
 // `composables/usePanelChanges.ts`，`PanelChanges.vue` 那只薄容器把它接上——
 // 于是这一格在测试和 /demo 里都只需要一串 props。
+import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevisions'
 import type { FileSource, GitCommit, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { DiffLine, FileDiff } from '../../lib/diff'
 import type { FileKind } from '../../lib/fileKind'
@@ -96,6 +97,8 @@ const props = defineProps<{
   docLoading: boolean
   docError: string
   docRendererMissing: boolean
+  /** 这一份 .docx 的修订：清单、只读、处理动作都在里面（`useDocumentRevisions.ts`）。 */
+  revs: DocumentRevisionsBundle
 }>()
 
 const emit = defineEmits<{
@@ -111,7 +114,6 @@ const emit = defineEmits<{
   (e: 'save'): void
   (e: 'overwrite'): void
   (e: 'reload'): void
-  (e: 'revision-decided'): void
   (e: 'scope-changed', showAll: boolean): void
   (e: 'view-changed', view: 'diff' | 'edit'): void
   (e: 'draft-changed', content: string): void
@@ -174,10 +176,6 @@ const fileRows = computed(() =>
     expandedDirs: props.expandedDirs,
   })
 )
-
-function revisionReadOnly(): boolean {
-  return props.readOnly || props.currentTask?.status !== 'open' || props.fileSource === 'committed'
-}
 </script>
 
 <template>
@@ -521,15 +519,7 @@ function revisionReadOnly(): boolean {
               <div v-else class="doc-view__body">
                 <PreviewPages v-if="props.openDocumentType?.view === 'pages'" :data="props.docBytes" />
                 <PreviewSheet v-else :data="props.docBytes" :kind="props.openDocumentType?.sheet ?? 'workbook'" />
-                <RevisionList
-                  :topic-id="props.topicId"
-                  :path="props.revisionPath"
-                  :version="props.fileVersion"
-                  :task="props.selectedTask"
-                  :source="props.fileSource"
-                  :read-only="revisionReadOnly()"
-                  @decided="emit('revision-decided')"
-                />
+                <RevisionList :revs="props.revs" :path="props.revisionPath" />
               </div>
             </div>
             <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法

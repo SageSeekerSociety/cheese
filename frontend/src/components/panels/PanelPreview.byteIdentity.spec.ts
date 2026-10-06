@@ -7,8 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import * as api from '../../api'
 
-import PanelPreview from './PanelPreview.vue'
-
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 import { setLocale } from '@/i18n'
 
 const text = 'Whole page text from displayed PDF '.repeat(30)
@@ -58,7 +57,7 @@ it('wires the real PanelPreview reader to whole-page context only after matching
   vi.mocked(api.readPreviewFile).mockResolvedValue(file(version))
   vi.mocked(api.previewDocumentPdfSnapshot).mockResolvedValue({ bytes: new ArrayBuffer(8), sourceVersion: version })
   const submitQuestion = vi.fn().mockReturnValue(true)
-  const ui = render(PanelPreview, { props: { ...panelProps, submitQuestion }, global })
+  const ui = render(PanelPreviewHost, { props: { ...panelProps, submitQuestion }, global })
   await waitFor(() => expect(ui.getByText('page').hasAttribute('disabled')).toBe(false))
   expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledWith('room', 'deck.pptx', null, 'committed')
   await fireEvent.click(ui.getByText('page'))
@@ -81,7 +80,7 @@ it.each([null, 'bbbbbbbbbbbbbbbb'])(
     vi.mocked(api.readPreviewFile).mockResolvedValue(file('aaaaaaaaaaaaaaaa'))
     vi.mocked(api.previewDocumentPdfSnapshot).mockResolvedValue({ bytes: new ArrayBuffer(8), sourceVersion })
     const submitQuestion = vi.fn().mockReturnValue(true)
-    const ui = render(PanelPreview, { props: { ...panelProps, submitQuestion }, global })
+    const ui = render(PanelPreviewHost, { props: { ...panelProps, submitQuestion }, global })
     await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(ui.getByText('page').hasAttribute('disabled')).toBe(true))
     await fireEvent.click(ui.getByText('page'))
@@ -98,7 +97,7 @@ it('does not bind a late A conversion to B metadata in the real owning container
     .mockResolvedValueOnce(file('bbbbbbbbbbbbbbbb'))
   vi.mocked(api.previewDocumentPdfSnapshot).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
   const submitQuestion = vi.fn().mockReturnValue(true)
-  const ui = render(PanelPreview, { props: { ...panelProps, submitQuestion }, global })
+  const ui = render(PanelPreviewHost, { props: { ...panelProps, submitQuestion }, global })
   await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
   await ui.rerender({ ...panelProps, refreshTick: 1, submitQuestion })
   await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))

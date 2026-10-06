@@ -36,7 +36,7 @@ vi.mock('../../lib/previewSession', () => ({
   postPreviewSession: (...args: unknown[]) => postPreviewSession(...args),
 }))
 
-import PanelPreview from './PanelPreview.vue'
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 
 const PREVIEW = 'https://preview-abc.cheeseusercontent.com/'
 
@@ -53,7 +53,7 @@ function binaryFile(path: string) {
 }
 
 function mount() {
-  return render(PanelPreview, {
+  return render(PanelPreviewHost, {
     props: { topicId: 'topic-a', projectId: 'project-a', active: true },
     global: { plugins: [createVuetify({ components, directives })] },
   })
@@ -76,8 +76,9 @@ it('renders a markdown deliverable as the document it describes, not as its sour
   mount()
 
   const md = await screen.findByTestId('markdown')
+  // 正文的读法第一次用到才加载，画出来要等一下（`MarkdownView`）。
+  await waitFor(() => expect(md.querySelector('h1')?.textContent).toBe('预算方案'))
   // 标题成了标题、列表成了列表——之前这块显示的是 `# 预算方案` 和两行星号。
-  expect(md.querySelector('h1')?.textContent).toBe('预算方案')
   expect(md.querySelectorAll('li')).toHaveLength(2)
   // 解析器是聊天用的那一个，所以中文后面的 `**` 收得住：这一条只有装上了
   // marked-cjk-friendly 才成立。
@@ -111,8 +112,9 @@ it('drops a script a markdown file tried to put on the page', async () => {
   mount()
 
   const md = await screen.findByTestId('markdown')
+  // 先等正文渲出来：在那之前「里面没有 script」是白说的。
+  await waitFor(() => expect(md.textContent).toContain('正文'))
   expect(md.querySelector('script')).toBeNull()
-  expect(md.textContent).toContain('正文')
 })
 
 it('drops the handler on markup a markdown file pasted in', async () => {
@@ -122,6 +124,8 @@ it('drops the handler on markup a markdown file pasted in', async () => {
   mount()
 
   const md = await screen.findByTestId('markdown')
+  // 同上：正文渲出来之后才有那张图可查。
+  await waitFor(() => expect(md.querySelector('img')).toBeTruthy())
   const img = md.querySelector('img')!
   expect(img.getAttribute('onerror')).toBeNull()
   expect(img.getAttribute('src')).toBe('/x')

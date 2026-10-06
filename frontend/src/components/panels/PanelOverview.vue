@@ -7,8 +7,12 @@
 // 还有另一半，于是大多数人只看文档，房间里有几条活在跑就没人知道。
 //
 // 点开看板上的一个任务就去那个任务自己的页面：任务有自己的对话和实况文档。
-import type { ProjectMemberRow, Topic } from '../../cx_types'
+import type { DocPeopleBundle } from '../../composables/useDocPeople'
+import type { DocThreadsBundle } from '../../composables/useDocThreads'
+import type { PanelDocBundle } from '../../composables/usePanelDoc'
+import type { Block, RoomTask, TodoItem, Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
+import type { DocumentTemplate, RoomOutput } from '../../types/roomOutput'
 
 import { defineAsyncComponent, ref, watch } from 'vue'
 
@@ -16,34 +20,48 @@ import RoomOutputs from './preview/RoomOutputs.vue'
 import PanelProgress from './PanelProgress.vue'
 import TaskProgress from './TaskProgress.vue'
 
-import { t } from '@/i18n'
-
 // 文档那一格带着整个编辑器（tiptap + ProseMirror + 代码高亮，约 250 KB gzip），
 // 静态引入的话打开一个房间要先把它下完、解析完，左边的消息才画得出来。它在这一列
 // 的最底下，晚一点到不会把别的东西往下推。
 const PanelDoc = defineAsyncComponent(() => import('./PanelDoc.vue'))
 
+// 这一层只决定「四块从上到下怎么摆」：数由 `components/work/PanelOverviewHost.vue`
+// 取（它渲染这一格），所以下面每一块都只吃 props。
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
     activityTick: number
     topicList?: Topic[]
-    active?: boolean
-    refreshTick?: number
-    /** 项目 AI 队友的名字，传给文档那一格。 */
-    agentName?: string
-    /** 项目 AI 队友的 handle，传给文档那一格。 */
-    agentHandle?: string | null
-    /** 项目名册，传给文档那一格。 */
-    members?: ProjectMemberRow[]
+    /** 文档那一格的取数（`composables/usePanelDoc.ts` 那一包），原样传给文档那一格。 */
+    docPanel: PanelDocBundle
+    /** 评论串那一包。 */
+    docThreads: DocThreadsBundle
+    /** 名册读成名字那一包。 */
+    docPeople: DocPeopleBundle
+    /** 上一轮芝士留下的清单。 */
+    progressItems?: TodoItem[]
+    /** 这个房间派出去的活，每条带最新那一块。 */
+    boardRows?: (RoomTask & { blocks?: Block[] })[]
+    boardLoading?: boolean
+    boardError?: string | null
+    /** 「这个房间里的东西」。 */
+    outputs?: RoomOutput[]
+    outputTemplates?: DocumentTemplate[]
+    loadOutputTemplates?: () => void
+    saveOutputToLibrary?: (path: string) => Promise<string>
+    createOutputFromTemplate?: (templateId: string, path: string) => Promise<void>
   }>(),
   {
     topicList: () => [],
-    active: false,
-    refreshTick: 0,
-    agentName: () => t('work.room.defaultAgentName'),
-    agentHandle: null,
-    members: () => [],
+    progressItems: () => [],
+    boardRows: () => [],
+    boardLoading: false,
+    boardError: null,
+    outputs: () => [],
+    outputTemplates: () => [],
+    loadOutputTemplates: undefined,
+    saveOutputToLibrary: undefined,
+    createOutputFromTemplate: undefined,
   }
 )
 
@@ -55,13 +73,6 @@ const emit = defineEmits<{
   /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
   (e: 'open-output', path: string): void
 }>()
-
-// 一轮结束时房间里可能多摆了一样东西；这一块一直挂着，所以跟着那一下重读。
-const outputsRef = ref<{ reload: () => Promise<void> } | null>(null)
-watch(
-  () => props.refreshTick,
-  () => void outputsRef.value?.reload()
-)
 
 const docRef = ref<{
   pulse: () => void
@@ -94,17 +105,17 @@ defineExpose({
   <div class="panel-overview">
     <div class="panel-overview__board">
       <TaskProgress
-        :topic="props.topic"
-        :active="props.active"
-        :refresh-tick="props.refreshTick"
+        :rows="props.boardRows"
+        :loading="props.boardLoading"
+        :error-msg="props.boardError"
         @open-card="emit('open-card', $event)"
       />
-      <PanelProgress :topic="props.topic" :refresh-tick="props.refreshTick" />
+      <PanelProgress :items="props.progressItems" />
       <PanelDoc
         ref="docRef"
-        :agent-name="props.agentName"
-        :agent-handle="props.agentHandle"
-        :members="props.members"
+        :doc-panel="props.docPanel"
+        :doc-threads="props.docThreads"
+        :doc-people="props.docPeople"
         class="panel-overview__doc"
         :topic="props.topic"
         :activity-tick="props.activityTick"
@@ -113,7 +124,15 @@ defineExpose({
         @mention-click="emit('mention-click', $event)"
         @open-file="emit('open-file', $event)"
       />
-      <RoomOutputs ref="outputsRef" :topic-id="props.topic?.id ?? null" @open="emit('open-output', $event)" />
+      <RoomOutputs
+        :topic-id="props.topic?.id ?? null"
+        :outputs="props.outputs"
+        :templates="props.outputTemplates"
+        :load-templates="props.loadOutputTemplates"
+        :save-to-library="props.saveOutputToLibrary"
+        :create-from-template="props.createOutputFromTemplate"
+        @open="emit('open-output', $event)"
+      />
     </div>
   </div>
 </template>

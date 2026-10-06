@@ -4,6 +4,9 @@
 // 维护文档」——那句话的意思是「这篇文档是空的」。可它在**加载期间**也照样亮着，
 // 于是每一篇有内容的文档，在到达之前都先被说成空的。所以加载期间摆的必须是骨架，
 // 编辑器让位。
+//
+// 挂的是接线外壳（`PanelDocHost`）而不是面板：面板只吃 props，文档从哪来是外壳的事，
+// 这一份钉的正是「打开到到达」这一段。
 import type { Component } from 'vue'
 import type { Topic } from '../../cx_types'
 
@@ -42,14 +45,14 @@ vi.mock('../../api', async () => {
 
 import { arrive, resetRooms, seedRoom } from '../../test/fakeDocCollab'
 
-import PanelDoc from './PanelDoc.vue'
+import PanelDocHost from './PanelDocHost.vue'
 
 import { setLocale } from '@/i18n'
 
 // 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
 beforeEach(() => setLocale('zh-CN'))
 
-const Doc = PanelDoc as unknown as Component
+const Doc = PanelDocHost as unknown as Component
 
 const topic = {
   id: 't1',

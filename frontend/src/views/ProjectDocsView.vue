@@ -8,7 +8,6 @@ import { useRouter } from 'vue-router'
 import { useCachedResource } from '@/composables/useCachedResource'
 
 import { deleteMemory, getProject, getProjectWeeklies, getTopic, listMemory } from '../api'
-import PanelDoc from '../components/panels/PanelDoc.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
@@ -16,6 +15,7 @@ import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import i18n, { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -234,7 +234,7 @@ useCommands(() => {
 
       <!-- ===== 章程: the project room's own doc panel, on a page ===== -->
       <template v-else-if="kind === 'charter'">
-        <PanelDoc
+        <PanelDocHost
           v-if="rootTopic"
           bare
           bar-to="#charter-doc-bar"
