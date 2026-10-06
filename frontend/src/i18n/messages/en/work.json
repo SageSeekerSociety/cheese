@@ -1187,6 +1187,7 @@
       "title": "Thread",
       "replies": "no replies | 1 reply | {count} replies",
       "replying": "{name} is replying",
+      "replyingStatus": "{name}: {status}",
       "lastReply": "{name}: {text}",
       "toTask": "Convert to task",
       "becameTask": "Became the task “{title}”",

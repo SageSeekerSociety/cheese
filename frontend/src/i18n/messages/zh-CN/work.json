@@ -1187,6 +1187,7 @@
       "title": "支线",
       "replies": "{count} 条回复",
       "replying": "{name} 正在回复",
+      "replyingStatus": "{name} {status}",
       "lastReply": "{name}：{text}",
       "toTask": "转为任务",
       "becameTask": "已转为任务「{title}」",

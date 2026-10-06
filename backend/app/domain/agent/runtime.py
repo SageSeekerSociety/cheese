@@ -29,7 +29,7 @@ from app.core.obs import bind_context, clear_context
 from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, listing, say
 from app.domain.agent import death_evidence, dispatch_log, turn_inputs
-from app.domain.agent.activity import RoomActivity
+from app.domain.agent.activity import LIVE_ONLY, RoomActivity
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
@@ -165,7 +165,6 @@ def _utcnow() -> datetime:
 
 # Channel = the topic id (str). Frames are the same dicts converse yields.
 Frame = dict
-_LIVE_ONLY = ("reaction", "agent_control", "live", "activity", "comment_activity")
 
 
 class InProcessBroker:
@@ -326,7 +325,7 @@ class InProcessBroker:
         # from GET /topics/{id}/agent/control, member activity from the snapshot on
         # connect, a comment thread's progress from its thread list); buffering would
         # replay states that have moved on and make an idle channel look in_flight.
-        if kind in _LIVE_ONLY:
+        if kind in LIVE_ONLY:
             self._fan_out(channel, frame)
             return
         # A person's message landing ends their typing in this room.

@@ -113,6 +113,11 @@ const panelEmit = ((event: string, ...args: unknown[]) => {
     void threadLines.onActivity(threadId, member, active)
     return
   }
+  if (event === 'thread-status') {
+    const [threadId, record] = args as [string, Block]
+    threadLines.onStatus(threadId, record)
+    return
+  }
   forward(event, ...args)
 }) as ChatPanelEmit
 
@@ -343,6 +348,7 @@ defineExpose({ send, connected, submitQuestion })
           :no-upgrade="noUpgrade"
           :threadable="threadable"
           :replying-for="threadLines.replyingFor"
+          :thread-status-for="threadLines.statusFor"
           :pinnable="pinnable"
           :pinned-ids="pins.pinnedIds.value"
           :task-level="taskLevel"
