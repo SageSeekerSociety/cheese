@@ -1,5 +1,6 @@
 """The pool gauge says what is in use, and saturation is said out loud once."""
 
+import asyncio
 import logging
 
 import pytest
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool, QueuePool
 
 from app.core.config import settings
-from app.core.db import get_db, pool_status, warn_when_pool_saturates
+from app.core.db import get_db, pool_status, watch_pool
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.user.repositories import UserRepository
 from tests.conftest import TEST_DATABASE_URL
@@ -99,7 +100,7 @@ async def test_gauge_counts_checked_out_connections_and_saturation_is_logged(
     caplog,
 ):
     engine = create_async_engine(TEST_DATABASE_URL, pool_size=1, max_overflow=1)
-    warn_when_pool_saturates(engine, every_seconds=60)
+    watch_pool(engine, every_seconds=60)
     try:
         assert pool_status(engine) == {
             "size": 1,
@@ -125,5 +126,59 @@ async def test_gauge_counts_checked_out_connections_and_saturation_is_logged(
                 await b.execute(text("SELECT 1"))
             assert len([r for r in caplog.records if "saturated" in r.message]) == 1
         assert pool_status(engine)["checked_out"] == 0
+    finally:
+        await engine.dispose()
+
+
+async def test_a_connection_held_too_long_is_named_with_where_it_was_taken(caplog):
+    engine = create_async_engine(TEST_DATABASE_URL, pool_size=1, max_overflow=0)
+    watch_pool(engine, every_seconds=60, long_hold_s=0.05)
+
+    async def hold_across_a_slow_call():
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+            await asyncio.sleep(0.15)
+
+    async def quick_read():
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="app.core.db"):
+            await hold_across_a_slow_call()
+            await quick_read()
+        held = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("database connection held")
+        ]
+        assert len(held) == 1, held
+        assert "hold_across_a_slow_call" in held[0]
+        assert "quick_read" not in held[0]
+    finally:
+        await engine.dispose()
+
+
+async def test_a_saturated_pool_names_who_holds_it(caplog):
+    engine = create_async_engine(TEST_DATABASE_URL, pool_size=1, max_overflow=0)
+    watch_pool(engine, every_seconds=60, long_hold_s=60)
+    released = asyncio.Event()
+
+    async def keeps_the_only_connection():
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+            await released.wait()
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="app.core.db"):
+            holder = asyncio.create_task(keeps_the_only_connection())
+            await asyncio.sleep(0.1)
+            released.set()
+            await holder
+        saturated = [
+            r.getMessage() for r in caplog.records if "saturated" in r.getMessage()
+        ]
+        assert len(saturated) == 1, saturated
+        assert "keeps_the_only_connection" in saturated[0]
     finally:
         await engine.dispose()
