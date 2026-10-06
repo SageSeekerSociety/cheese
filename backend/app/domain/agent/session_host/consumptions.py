@@ -465,7 +465,9 @@ class Consumptions:
                 continue
             if not await redis.set(_lease(work), self._me, nx=True, px=_ms(LEASE_S)):
                 continue
-            logger.info("taking up question %s (%s)", work, consumption.kind)
+            logger.info(
+                "%s taking up question %s (%s)", self._me, work, consumption.kind
+            )
             self._read(consumption, self._resumed(consumption))
             taken += 1
         return taken

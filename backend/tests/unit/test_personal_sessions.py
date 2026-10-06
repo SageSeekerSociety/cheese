@@ -64,6 +64,8 @@ class Platform:
         self.first_token_s = first_token_s
         self.rest_held_until = rest_held_until
         self.requests: list[dict] = []
+        #: When each streamed chunk was written, and whether it carried text.
+        self.written: list[tuple[float, bool]] = []
         self.model_auth: list[str] = []
         #: (method and path, credential) of each request a tool made.
         self.tool_calls: list[tuple[str, str]] = []
@@ -110,6 +112,12 @@ class Platform:
                 for chunk in _chunks(index, step):
                     self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
                     self.wfile.flush()
+                    outer.written.append(
+                        (
+                            time.monotonic(),
+                            bool(chunk["choices"][0]["delta"].get("content")),
+                        )
+                    )
                     if held is not None and chunk["choices"][0]["delta"].get("content"):
                         # The rest of the answer waits for the test to let it
                         # go: a whole answer written faster than one read is

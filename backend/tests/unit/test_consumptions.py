@@ -20,6 +20,7 @@ Rules held here:
 
 import asyncio
 import threading
+import time
 import uuid
 
 import pytest
@@ -122,6 +123,25 @@ async def _until(check, timeout: float = 60.0) -> None:
             await asyncio.sleep(0.1)
 
 
+async def _first_words(recorder: "Recorder", model: Platform) -> None:
+    """Wait for the answer's first words to reach ``recorder``; failing, say
+    what did reach it, so a timeout names the step that never came."""
+
+    async def started() -> bool:
+        return _words(recorder) > 0
+
+    began = time.monotonic()
+    try:
+        await _until(started)
+    except TimeoutError:
+        written = [(round(at - began, 2), text) for at, text in model.written]
+        raise AssertionError(
+            f"no words in 60 s: the reader took {recorder.steps!r}, "
+            f"ended {recorder.ends!r}; the model was asked {len(model.requests)} "
+            f"time(s) and wrote (seconds into the wait, carrying text?) {written}"
+        ) from None
+
+
 async def _begin(reader: Consumptions, kind: str, *, slots=()) -> str:
     launch = Started(7)
     work = uuid.uuid4()
@@ -138,6 +158,19 @@ async def _begin(reader: Consumptions, kind: str, *, slots=()) -> str:
     return str(work)
 
 
+async def _state(reader: Consumptions, work: str) -> str:
+    """What a sweep would find of ``work``, read before it looks."""
+    redis = reader._valkey()
+    lease = await redis.get(consumptions_module._lease(work))
+    ttl = await redis.pttl(consumptions_module._lease(work))
+    record = await reader.get(work)
+    return (
+        f"open={await redis.sismember(consumptions_module._OPEN, work)} "
+        f"lease={lease!r} ttl_ms={ttl} reading={work in reader._reading} "
+        f"ended={record.ended if record else None}"
+    )
+
+
 def _words(recorder: Recorder) -> int:
     return len([step for step in recorder.steps if isinstance(step, Words)])
 
@@ -150,13 +183,10 @@ async def _ended(recorder: Recorder) -> bool:
 async def test_a_backend_leaving_mid_answer_hands_it_over_at_once(backends, platform):
     kind, ((old, before), (new, after)) = backends
     release = threading.Event()
-    platform([{"text": ANSWER}], rest_held_until=release)
+    model = platform([{"text": ANSWER}], rest_held_until=release)
     work = await _begin(old, kind)
 
-    async def started() -> bool:
-        return _words(before) > 0
-
-    await _until(started)
+    await _first_words(before, model)
     await old.let_go()
     assert await new.sweep() == 1
     release.set()
@@ -172,7 +202,8 @@ async def test_a_backend_leaving_mid_answer_hands_it_over_at_once(backends, plat
         if event == "words":
             told = told[: data["at"]] + data["text"]
     assert told == ANSWER
-    assert await new.sweep() == 0
+    before_sweep = await _state(new, work)
+    assert await new.sweep() == 0, before_sweep
 
 
 @pytest.mark.anyio
@@ -183,13 +214,10 @@ async def test_a_backend_dying_mid_answer_hands_it_over_when_its_lease_lapses(
     monkeypatch.setattr(consumptions_module, "RENEW_S", 0.2)
     kind, ((old, before), (new, after)) = backends
     release = threading.Event()
-    platform([{"text": ANSWER}], rest_held_until=release)
+    model = platform([{"text": ANSWER}], rest_held_until=release)
     await _begin(old, kind)
 
-    async def started() -> bool:
-        return _words(before) > 0
-
-    await _until(started)
+    await _first_words(before, model)
     assert await new.sweep() == 0
     # Dies: stops reading and renewing, gives nothing up.
     for task in list(old._reading.values()):
@@ -211,13 +239,10 @@ async def test_a_backend_dying_mid_answer_hands_it_over_when_its_lease_lapses(
 async def test_two_backends_looking_at_once_take_a_question_up_once(backends, platform):
     kind, ((old, before), (new, after)) = backends
     release = threading.Event()
-    platform([{"text": ANSWER}], rest_held_until=release)
+    model = platform([{"text": ANSWER}], rest_held_until=release)
     await _begin(old, kind)
 
-    async def started() -> bool:
-        return _words(before) > 0
-
-    await _until(started)
+    await _first_words(before, model)
     await old.let_go()
     third = Consumptions(new._host, new._redis, me="third")
     third.serve(kind, Recorder())
@@ -230,13 +255,10 @@ async def test_two_backends_looking_at_once_take_a_question_up_once(backends, pl
 async def test_a_question_taken_over_is_still_stopped_by_its_asker(backends, platform):
     kind, ((old, before), (new, after)) = backends
     release = threading.Event()
-    platform([{"text": ANSWER}], rest_held_until=release)
+    model = platform([{"text": ANSWER}], rest_held_until=release)
     await _begin(old, kind)
 
-    async def started() -> bool:
-        return _words(before) > 0
-
-    await _until(started)
+    await _first_words(before, model)
     await old.let_go()
     assert await new.sweep() == 1
     after.stop = True
@@ -259,13 +281,10 @@ async def test_the_slot_a_question_holds_stays_held_and_is_let_go_at_its_end(
     )
     assert slot is not None
     release = threading.Event()
-    platform([{"text": ANSWER}], rest_held_until=release)
+    model = platform([{"text": ANSWER}], rest_held_until=release)
     await _begin(old, kind, slots=[slot])
 
-    async def started() -> bool:
-        return _words(before) > 0
-
-    await _until(started)
+    await _first_words(before, model)
     await old.let_go()
     assert await new.sweep() == 1
     # Nobody else may take the conversation while the answer goes on.
@@ -287,15 +306,12 @@ async def test_a_viewer_reconnecting_from_where_it_was_gets_only_the_rest(
 ):
     kind, ((old, before), _) = backends
     release = threading.Event()
-    platform([{"text": ANSWER}], rest_held_until=release)
+    model = platform([{"text": ANSWER}], rest_held_until=release)
     work = await _begin(old, kind)
-
-    async def started() -> bool:
-        return _words(before) > 0
 
     # The rest is written only once the first words were told, so the answer
     # reaches viewers in more than one piece wherever a slow reader picks it up.
-    await _until(started)
+    await _first_words(before, model)
     release.set()
     await _until(lambda: _ended(before))
     consumption = await old.get(work)
@@ -328,17 +344,14 @@ async def test_only_a_backend_the_session_host_is_connected_to_takes_a_question_
 ):
     kind, ((old, before), (new, after)) = backends
     release = threading.Event()
-    platform([{"text": ANSWER}], rest_held_until=release)
+    model = platform([{"text": ANSWER}], rest_held_until=release)
     await _begin(old, kind)
     away = Consumptions(
         SessionHost(Away(hub), mirrors=tmp_path / "mirrors"), valkey, me="away"
     )
     away.serve(kind, Recorder())
 
-    async def started() -> bool:
-        return _words(before) > 0
-
-    await _until(started)
+    await _first_words(before, model)
     await old.let_go()
 
     assert await away.sweep() == 0

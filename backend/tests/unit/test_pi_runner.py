@@ -292,6 +292,89 @@ _WRITING = {
 
 
 @pytest.mark.anyio
+async def test_what_pi_writes_while_an_earlier_message_lands_stays_shown(tmp_path):
+    """The person's message ending makes the runner pull the journal, and pi can
+    start writing the answer before that page is back. Landing the person's
+    message must not take the answer's first words off the screen with it: they
+    would stay gone until pi wrote more, which may be a long while."""
+    text = f"say it {new_nonce()}"
+    user = {"role": "user", "content": [{"type": "text", "text": text}]}
+    user_entry = {
+        "type": "message",
+        "id": "e-user",
+        "parentId": None,
+        "timestamp": "2026-10-01T00:00:00.000Z",
+        "message": user,
+    }
+    recording = tmp_path / "racing.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "stream": [
+                    {"event": {"type": "agent_start"}},
+                    {"event": {"type": "message_start", "message": user}},
+                    {"entry": user_entry},
+                    {
+                        "before_next_page": [
+                            {
+                                "type": "message_start",
+                                "message": {"role": "assistant", "timestamp": 1},
+                            },
+                            {
+                                "type": "message_update",
+                                "assistantMessageEvent": {
+                                    "type": "text_start",
+                                    "contentIndex": 0,
+                                },
+                            },
+                            {
+                                "type": "message_update",
+                                "assistantMessageEvent": {
+                                    "type": "text_delta",
+                                    "contentIndex": 0,
+                                    "delta": "First words.",
+                                },
+                            },
+                        ]
+                    },
+                    {"event": {"type": "message_end", "message": user}},
+                    {"pause": True},
+                ]
+            }
+        )
+    )
+    binary = tmp_path / "pi"
+    binary.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE} {recording} "$@"\n')
+    binary.chmod(0o700)
+    runner = Runner(tmp_path / "state")
+    await runner.start(
+        SessionStart("system prompt", None, agent_handle="teammate"),
+        binary=str(binary),
+        cwd=str(tmp_path),
+        env={"PATH": "/usr/bin:/bin"},
+        args=[],
+        target=NO_MACHINE,
+    )
+    try:
+        await call(
+            runner.state,
+            "send",
+            {"input_id": str(uuid.uuid4()), "text": text, "work_id": str(uuid.uuid4())},
+        )
+        # The person's message has landed: the page that was on its way is in.
+        deadline = time.monotonic() + 10
+        while not (await call(runner.state, "entries"))["entries"]:
+            assert time.monotonic() < deadline, "the person's message never landed"
+            await asyncio.sleep(0.05)
+
+        live = (await call(runner.state, "entries", {"wait": 0, "live": None}))["live"]
+    finally:
+        await runner.close()
+
+    assert live["blocks"] == [{"type": "text", "text": "First words."}]
+
+
+@pytest.mark.anyio
 async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
     tmp_path,
 ):
