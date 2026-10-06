@@ -64,7 +64,7 @@ covers:
 
 2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。
 
-2026-10-06，其余线（后台 9、反馈 5、首页 5、问答 4、作业 4、团队 9，共 36 页）拆完：同样是每页当容器、画面进同目录的 `<页面名>View.vue`。`--update` 之后基线是 **120 个 ready、62 个 debt**（此前 101 / 81）。「页面」一表里对应的行已改成「容器」并写出画面在哪。还欠一条：`views/feedback/FeedbackSubmitPage.vue`——它的表单组件（`SubmitFeedbackForm`）自己读 feedback store，没先拆那个组件就交不出去画面。
+2026-10-06，其余线（后台 9、反馈 5、首页 5、问答 4、作业 4、团队 9，共 36 页）拆完：同样是每页当容器、画面进同目录的 `<页面名>View.vue`。`--update` 之后基线是 **120 个 ready、62 个 debt**（此前 101 / 81）。「页面」一表里对应的行已改成「容器」并写出画面在哪。当天补完最后一条 `views/feedback/FeedbackSubmitPage.vue`：它当时交不出去，卡在共用的表单组件 `SubmitFeedbackForm` 自己读 feedback store。拆法是把那个组件也拆成「画面（`SubmitFeedbackFormView.vue`，只吃 props 和事件）+ 接线（`useSubmitFeedbackForm.ts`，页面和对话框两份容器共用）」，这一页于是变成容器，这一线 36 页齐（并入主干两次之后重跑 `--update`，基线是 **137 个 ready、45 个 debt**，其中涨的那部分来自主干上别的线）。
 
 ## 从今天起它是一条闸门 {#ratchet}
 
@@ -177,7 +177,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/feedback/FeedbackCenterPage.vue` | 容器 | 画面在 `FeedbackCenterPageView.vue`（A 级）；读 store 留在本页 |
 | `views/feedback/FeedbackDetailPage.vue` | 容器 | 画面在 `FeedbackDetailPageView.vue`（A 级）；取数、路由、读 store 留在本页 |
 | `views/feedback/FeedbackMinePage.vue` | 容器 | 画面在 `FeedbackMinePageView.vue`（A 级）；路由、读 store 留在本页 |
-| `views/feedback/FeedbackSubmitPage.vue` | D | 读路由；读 store（feedback） |
+| `views/feedback/FeedbackSubmitPage.vue` | 容器 | 画面在 `FeedbackSubmitPageView.vue`（A 级）；取数、路由、读 store 留在本页 |
 | `views/home/Download.vue` | 容器 | 画面在 `DownloadView.vue`（A 级）；取数留在本页 |
 | `views/home/Landing.vue` | 容器 | 画面在 `LandingView.vue`（A 级）；取数留在本页 |
 | `views/home/MyWork.vue` | D | 读路由；直接取数（`api.ts`）；直接取数（`network/api/spaces`）；直接取数（`network/api/tasks`）；读 store（workspace） |
