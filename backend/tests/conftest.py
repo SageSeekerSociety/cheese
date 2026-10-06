@@ -1883,6 +1883,7 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
     """
     if _needs_db(request):
         request.getfixturevalue("_pg_schema")
+        drop_connections_left_in_the_app_pool()
         explicit_anyio = request.node.get_closest_marker("anyio") is not None
         if explicit_anyio or inspect.iscoroutinefunction(request.function):
             request.getfixturevalue("_app_engine_on_test_loop")
@@ -2007,6 +2008,24 @@ async def business_db_factory(db_factory, stub_project_forge):
         await IdentityService(session).ensure_agent_user()
         await session.commit()
     return db_factory
+
+
+def drop_connections_left_in_the_app_pool() -> None:
+    """Start with an application pool that holds nothing an earlier test left.
+
+    A test that reaches app code from a loop of its own (``asyncio.run`` in a
+    sync test, a fixture's one-off loop) returns its connection to the pool
+    still bound to that loop, and the loop closes when the test does. The next
+    borrower on another loop (a script's ``main`` on the session portal) is
+    handed that connection: its pre-ping fails with "attached to a different
+    loop" and closing it fails with "Event loop is closed". Which test comes
+    before which is up to the scheduler, so the failure lands on whoever is
+    next. Those connections cannot be closed any more (their loop is gone), so
+    they are dropped, not closed: ``close=False`` swaps in an empty pool and
+    leaves checked-out connections, the session-long ``db_connection`` among
+    them, untouched.
+    """
+    app_engine.sync_engine.dispose(close=False)
 
 
 @pytest.fixture

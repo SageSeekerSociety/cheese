@@ -632,6 +632,13 @@ def db_connection(_pg_schema, _portal: "BlockingPortal") -> Generator[AsyncConne
     async def _open() -> AsyncConnection:
         return await engine.connect()
 
+    from tests.conftest import drop_connections_left_in_the_app_pool
+
+    # Session fixtures are built before the per-test gate runs, so the first
+    # test to need this connection may follow one that left a connection on a
+    # closed loop in the pool.
+    drop_connections_left_in_the_app_pool()
+
     async def _close(conn: AsyncConnection) -> None:
         await conn.close()
 
