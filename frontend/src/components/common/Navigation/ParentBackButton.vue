@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { RouteLocationRaw } from 'vue-router'
+import type { NavTarget } from '@/lib/navTarget'
 
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import { topBarBack } from '../topBarBack'
 
@@ -13,8 +14,7 @@ import { projectFrameOf } from '@/lib/projectFrame'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-const route = useRoute()
-const router = useRouter()
+const nav = useNavigation()
 const { mdAndUp } = useDisplay()
 const workspace = useWorkspaceStore()
 
@@ -27,8 +27,8 @@ const workspace = useWorkspaceStore()
  * 读 route 只为让它随每次跳转重算：history 的 state 不是响应式的。
  */
 const cameFrom = computed(() => {
-  void route.fullPath
-  return typeof router.options.history.state.back === 'string'
+  void nav?.route
+  return typeof nav?.historyState?.back === 'string'
 })
 
 /**
@@ -40,7 +40,8 @@ const cameFrom = computed(() => {
  * 回看板自己——一颗按了没反应的 ←。
  */
 const atProjectRoot = computed(() => {
-  if (projectFrameOf(route) === null) return false
+  const route = nav?.route
+  if (!route || projectFrameOf(route) === null) return false
   return route.name === (mdAndUp.value ? 'workspace-running' : 'workspace-project')
 })
 
@@ -50,7 +51,8 @@ const atProjectRoot = computed(() => {
  * `team_id` 为空的历史项目没有这一层，← 就不显示。
  */
 const owningTeam = computed(() => {
-  const projectId = projectFrameOf(route)
+  const route = nav?.route
+  const projectId = route ? projectFrameOf(route) : null
   if (!projectId || !atProjectRoot.value) return null
   const project = workspace.projects.find((p) => p.id === projectId)
   const handle = project?.team_handle
@@ -65,9 +67,10 @@ const owningTeam = computed(() => {
 
 /** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）。 */
 const declaredParent = computed(() => {
-  if (typeof route.meta.backTo !== 'string') return null
-  if (route.meta.backOnPhoneOnly && mdAndUp.value) return null
-  return { name: route.meta.backTo, params: {}, label: '' }
+  const meta = nav?.route?.meta
+  if (typeof meta?.backTo !== 'string') return null
+  if (meta.backOnPhoneOnly && mdAndUp.value) return null
+  return { name: meta.backTo, params: {}, label: '' }
 })
 
 // 根这一层**不吃** `meta.backTo`：看板在桌面上声明的父级就是它自己会被弹回来的那
@@ -75,11 +78,13 @@ const declaredParent = computed(() => {
 // 层——那就不显示。
 const target = computed(() => (atProjectRoot.value ? owningTeam.value : declaredParent.value))
 
-const to = computed<RouteLocationRaw | null>(() => {
+const to = computed<NavTarget | null>(() => {
   const parent = target.value
   if (!parent) return null
   try {
-    return router.resolve({ name: parent.name, params: parent.params }, route).path
+    // `resolve` 不传第二参时用的就是当前路由，和原来显式传 `route` 是同一份
+    // currentLocation；宿主没装路由就没有地址可画。
+    return nav?.router.resolve({ name: parent.name, params: parent.params }).path ?? null
   } catch {
     return null
   }
@@ -131,6 +136,6 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
     :size="mdAndUp ? 'sm' : 'lg'"
     :aria-label="t('shell.back.previous')"
     :title="t('shell.back.previous')"
-    @click="router.back()"
+    @click="nav?.router.back()"
   />
 </template>

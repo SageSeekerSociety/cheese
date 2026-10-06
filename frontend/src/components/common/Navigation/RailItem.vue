@@ -78,7 +78,6 @@
 import type { DropEdge } from '@/lib/projectOrder'
 
 import { type ComponentPublicInstance, computed, ref, toRefs } from 'vue'
-import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
 import { useNavigation } from '@/composables/useNavigation'
@@ -190,11 +189,12 @@ function onDrop(e: DragEvent) {
 }
 
 // 一级导航的每一格都是整整一个页面。指针停在格子上的那几百毫秒，正好够把那个页面
-// 的代码下下来——按下去的时候就只剩下拉数据那一段了。
-const router = useRouter()
+// 的代码下下来——按下去的时候就只剩下拉数据那一段了。预取要的是整台 router（拿它
+// 解析出要下的 chunk），就从 `nav.router` 上取；宿主没装路由时它整份是 null，没有
+// 要预热的目的地，也就什么都不做。
 function warmDestination() {
   const to = item.value.type === 'item' ? item.value.to : undefined
-  if (to) prefetchOnHover({ router, to })
+  if (to) prefetchOnHover({ router: nav?.router, to })
 }
 </script>
 

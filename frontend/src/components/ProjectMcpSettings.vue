@@ -2,9 +2,9 @@
 import type { McpDeclaringType, McpServer, McpServerList } from '../api'
 
 import { onMounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { useNavigation } from '@/composables/useNavigation'
 import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { clearMcpSecret, connectMcpServer, disconnectMcpServer, getMcpServers, setMcpSecret } from '../api'
@@ -22,8 +22,7 @@ import { relTime } from '@/lib/relTime'
 // 那句话的 key（参数在 mcp_error_params，JSON），这里按读者的语言说出来。
 const props = defineProps<{ projectId: string }>()
 
-const route = useRoute()
-const router = useRouter()
+const nav = useNavigation()
 const list = ref<McpServerList | null>(null)
 const error = ref('')
 const busy = ref('')
@@ -145,12 +144,15 @@ function failureText(name: string, failure: unknown, params: unknown): string {
 }
 
 function takeCallbackResult() {
+  const route = nav?.route
+  if (!route) return
   const { mcp, mcp_result: result, mcp_error: failure, mcp_error_params: failureParams, ...rest } = route.query
   if (!result && !failure) return
   const name = String(mcp ?? '')
   if (failure) toast.error(failureText(name, failure, failureParams))
   else toast.success(t('work.mcp.connectedNotice', { name }))
-  void router.replace({ query: rest, hash: route.hash })
+  // 换掉地址、不在身后留一条一样的：`hash` 原样带着，别把锚点也一起抹掉。
+  void nav?.navigate({ query: rest, hash: route.hash }, { replace: true })
 }
 
 const releaseGate = holdRevealGate()
