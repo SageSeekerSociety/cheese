@@ -407,7 +407,7 @@ class Answers:
             # What it had written when it was stopped stays, marked as stopped.
             text, refused = written.strip(), None
         await self._chat.charge_turn_spend(
-            asked.project_id, asked.room_id, consumption.work
+            asked.project_id, asked.task_id, consumption.work
         )
         if refused is not None and not edits:
             return [("error", error_frame(refused))]
