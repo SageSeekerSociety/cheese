@@ -879,7 +879,11 @@ class TopicService:
             content=say(
                 "taskCreated",
                 actor=f"<@{actor}>",
-                title=task.title,
+                # An unnamed task's stored title is the Chinese placeholder;
+                # the word each reader sees is their own language's.
+                title=say("taskUntitled")
+                if task.title_source == TaskTitleSource.placeholder
+                else task.title,
                 owner=f"<@{task.owner_handle}>" if task.owner_handle else "",
             ),
             kind=BlockKind.event,

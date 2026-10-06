@@ -17,6 +17,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
 
+from app.core.sentences import render
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_project_tree import _insert_block
@@ -81,6 +82,42 @@ def test_a_task_named_by_a_person_who_typed_the_placeholder_is_still_named(clien
 
     assert renamed.json()["data"]["title"] == "新任务"
     assert renamed.json()["data"]["title_source"] == "human"
+
+
+def _created_line(client, room_id: str, task_id: str) -> dict:
+    """The room's line saying the task was created, as stored."""
+    blocks = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
+    return next(
+        b
+        for b in blocks
+        if (b.get("meta") or {}).get("action") == "task_created"
+        and b["meta"].get("task_id") == task_id
+    )
+
+
+def test_the_room_line_names_an_unnamed_task_in_the_readers_language(client):
+    _, room_id = _room(client)
+    task = client.post(
+        f"/topics/{room_id}/tasks", json={}, headers=session_auth_headers("alice")
+    ).json()["data"]
+
+    sentence = _created_line(client, room_id, task["id"])["meta"]["i18n"]["content"]
+
+    assert "“New task”" in render(sentence, "en")
+    assert "「新任务」" in render(sentence, "zh-CN")
+
+
+def test_the_room_line_keeps_a_typed_title_as_typed(client):
+    _, room_id = _room(client)
+    task = client.post(
+        f"/topics/{room_id}/tasks",
+        json={"title": "新任务"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+
+    sentence = _created_line(client, room_id, task["id"])["meta"]["i18n"]["content"]
+
+    assert "“新任务”" in render(sentence, "en")
 
 
 def _upgrade(client) -> None:
