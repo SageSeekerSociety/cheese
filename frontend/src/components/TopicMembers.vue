@@ -19,12 +19,12 @@ import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { whenIdle } from '../lib/idle'
 import { cachedTopicPanel, fetchTopicMembers } from '../lib/topicPanelCache'
-import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
 import AdaptiveMenu from './common/AdaptiveMenu.vue'
 import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import UserAvatar from './common/UserAvatar.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import TopicComputePicker from './TopicComputePicker.vue'
 
@@ -164,28 +164,10 @@ const addable = computed(() => {
         value: m.user_handle,
         agent: !!m.agent,
         external: externals.value.has(m.user_handle),
-        face: m.avatar_id != null && !broken.value.has(m.user_handle) ? getAvatarUrl(m.avatar_id) : null,
+        face: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : '',
       }))
   )
 })
-
-// 头像：本人挑过就画本人的，没挑过画按 handle 哈希出的彩色首字母。种子用
-// handle 而不是昵称 —— 改个昵称不该换一张脸，而重名的两个人得是两种颜色。
-const broken = ref<Set<string>>(new Set())
-function faceSrc(m: TopicMemberRow): string | null {
-  if (m.avatar_id == null || broken.value.has(m.member_handle)) return null
-  return getAvatarUrl(m.avatar_id)
-}
-function onFaceError(handle: string): void {
-  if (broken.value.has(handle)) return
-  broken.value = new Set(broken.value).add(handle)
-}
-function faceColor(m: TopicMemberRow): string {
-  return avatarColor(m.member_handle)
-}
-function initial(name: string): string {
-  return avatarInitial(name)
-}
 
 async function guard<T>(fn: () => Promise<T>): Promise<void> {
   busy.value = true
@@ -232,18 +214,15 @@ async function onRemove(handle: string) {
               :handle="m.member_handle"
               :style="{ zIndex: MAX_FACES - i }"
             />
-            <img
-              v-else-if="faceSrc(m)"
-              decoding="async"
-              class="members-mini__face members-mini__face--photo"
-              :src="faceSrc(m)!"
-              :alt="memberName(m) || m.member_handle"
+            <UserAvatar
+              v-else
+              class="members-mini__face"
+              :size="22"
+              :name="memberName(m) || m.member_handle"
+              :seed="m.member_handle"
+              :avatar="m.avatar_id != null ? getAvatarUrl(m.avatar_id) : ''"
               :style="{ zIndex: MAX_FACES - i }"
-              @error="onFaceError(m.member_handle)"
             />
-            <span v-else class="members-mini__face" :style="{ zIndex: MAX_FACES - i, backgroundColor: faceColor(m) }">{{
-              initial(memberName(m) || m.member_handle)
-            }}</span>
           </template>
           <span v-if="overflow" class="members-mini__face members-mini__face--more" :style="{ zIndex: 0 }"
             >+{{ overflow }}</span
@@ -277,17 +256,14 @@ async function onRemove(handle: string) {
             <template #activator />
           </AdaptiveMenu>
           <CheeseAvatar v-if="m.agent" :size="26" :name="memberName(m) || m.member_handle" :handle="m.member_handle" />
-          <img
-            v-else-if="faceSrc(m)"
-            decoding="async"
-            class="roster__avatar roster__avatar--photo"
-            :src="faceSrc(m)!"
-            :alt="memberName(m) || m.member_handle"
-            @error="onFaceError(m.member_handle)"
+          <UserAvatar
+            v-else
+            class="roster__avatar"
+            :size="26"
+            :name="memberName(m) || m.member_handle"
+            :seed="m.member_handle"
+            :avatar="m.avatar_id != null ? getAvatarUrl(m.avatar_id) : ''"
           />
-          <span v-else class="roster__avatar" :style="{ backgroundColor: faceColor(m) }">{{
-            initial(memberName(m) || m.member_handle)
-          }}</span>
           <span class="roster__who">
             <span class="roster__name">{{ memberName(m) || m.member_handle }}</span>
             <span class="roster__handle">{{ m.member_handle }}</span>
@@ -348,17 +324,14 @@ async function onRemove(handle: string) {
             <v-list-item v-bind="ip" :title="undefined" class="roster__option">
               <template #prepend>
                 <CheeseAvatar v-if="item.raw.agent" :size="26" :name="item.raw.title" :handle="item.raw.value" />
-                <img
-                  v-else-if="item.raw.face"
-                  decoding="async"
-                  class="roster__avatar roster__avatar--photo"
-                  :src="item.raw.face"
-                  :alt="item.raw.title"
-                  @error="onFaceError(item.raw.value)"
+                <UserAvatar
+                  v-else
+                  class="roster__avatar"
+                  :size="26"
+                  :name="item.raw.title"
+                  :seed="item.raw.value"
+                  :avatar="item.raw.face"
                 />
-                <span v-else class="roster__avatar" :style="{ backgroundColor: avatarColor(item.raw.value) }">{{
-                  initial(item.raw.title)
-                }}</span>
               </template>
               <span class="roster__who">
                 <span class="roster__name">{{ item.raw.title }}</span>
@@ -418,20 +391,13 @@ async function onRemove(handle: string) {
   margin-left: -7px;
   font-size: 0.66rem;
   font-weight: 700;
-  /* Theme-invariant pair, kept literal on purpose (same call as the default
-     avatar in LeftAppRail): the disc under it is the #rrggbb avatarColor()
-     computes at a fixed PERCEPTUAL lightness, one value in both themes, so the
-     initial on it must be one value too.
-     The disc itself is set inline per member — a single shared slate made
-     every face in the stack identical, which is the one thing a row of faces
-     exists not to be. */
+  /* 这圈 #fff 是故意写死的：底色由 UserAvatar 按 seed（member_handle）用
+     avatarColor() 算出来，两套主题下是同一个值，压在上面的字也得是同一个值。
+     底色逐人不同 —— 一排脸共用一个颜色就等于没有脸，而这一排存在的意义正是彼此不同。 */
   color: #fff;
   border: 1.5px solid var(--surface);
   box-sizing: border-box;
   overflow: hidden;
-}
-.members-mini__face--photo {
-  object-fit: cover;
 }
 .members-mini__face:first-child {
   margin-left: 0;
@@ -558,9 +524,6 @@ async function onRemove(handle: string) {
   color: #fff; /* theme-invariant ground, see .members-mini__face */
   flex: none;
   overflow: hidden;
-}
-.roster__avatar--photo {
-  object-fit: cover;
 }
 /* 「添加成员」下拉里的一行：头像和名字之间留出和名册一样的间距。 */
 .roster__option :deep(.v-list-item__prepend) {

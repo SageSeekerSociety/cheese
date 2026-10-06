@@ -212,7 +212,7 @@ export function useRoomRoster(options: {
     if (avatarBroken.value.has(handle)) return null
     const id = memberByHandle.value.get(handle)?.avatar_id
     // 名册上没这个人、或这行没有头像时返回 null：宁可留一个按 handle 哈希、认得出
-    // 是谁的色块，也不要 getAvatarUrl(undefined) 给陌生人配一张 /avatars/default。
+    // 是谁的色块，也不要给陌生人随便配一张脸。
     return id == null ? null : getAvatarUrl(id)
   }
   function onAvatarError(handle: string): void {

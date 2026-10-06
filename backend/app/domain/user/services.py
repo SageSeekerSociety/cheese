@@ -257,6 +257,17 @@ class UserService:
     async def get_handles_by_ids(self, ids: Sequence[int]) -> dict[int, str]:
         return await self._repo.usernames_by_user_ids(ids)
 
+    async def chosen_avatar_ids(self, ids: Sequence[int]) -> dict[int, int]:
+        """user_id -> 这个人**自己挑过**的头像，没挑过的整条不在里面。
+
+        A domain that draws a face (notifications, feedback) has to come through
+        here instead of reading the profile's ``avatar_id``: every registration
+        path writes the global default into that column, so using it directly
+        hands everyone who never picked a face the same one. The criterion itself
+        lives in ``UserProfileRepository.chosen_avatar_ids`` and is not repeated.
+        """
+        return await self._repo.chosen_avatar_ids(ids)
+
 
 class AccountService:
     """账号表（`User`）上的读 —— 平台看板问「有多少账号、这七天来了几个」。

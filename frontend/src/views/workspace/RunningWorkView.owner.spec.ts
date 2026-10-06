@@ -148,7 +148,7 @@ describe('卡上的「谁在做」是一个人', () => {
     members = []
     const { findByText, container } = mount()
     await findByText('n1ctheboy')
-    // 查不到就不去取图：getAvatarUrl(undefined) 会给他配一张 /avatars/default。
+    // 查不到就不去取图：名册里没有这个人，也就没有他的脸可画。
     expect(owner(container).querySelector('img')).toBeNull()
   })
 

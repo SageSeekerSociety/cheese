@@ -8,9 +8,9 @@
  *    那一屏看起来只是「大家都用首字母」。
  * 2. `author_avatar_id` 为 null 时必须画彩色首字母，**一张图都不能取**。后端已经把
  *    「注册时人人被写上的那张全局默认头像」判掉了（`chosen_avatar_ids`），所以这个
- *    字段为空就是「这个人没挑过」。退回 `/avatars/default` 会让所有没挑过的人长成
- *    同一张脸；按 handle 派生的首字母至少彼此不同 —— 区分人正是头像唯一的活。
- *    `getAvatarUrl` 对空值返回的正是那张默认图，所以这一条测的是「有没有人绕过判空」。
+ *    字段为空就是「这个人没挑过」。一张所有人共用的默认脸等于分不出谁是谁；按 handle
+ *    派生的首字母至少彼此不同 —— 区分人正是头像唯一的活。
+ *    所以这一条测的是「有没有人绕过判空，把空值喂进取图的那条路」。
  *
  * agent 那一支不看 id：agent 没有自己挑的图，它的标记是 `CheeseAvatar`，上面传什么
  * id 都不该变成一张图片。
@@ -42,10 +42,7 @@ describe('FeedbackAuthorAvatar', () => {
 
   it('没挑过头像就画彩色首字母，一张图都不取', () => {
     const { container, getByText } = mountAvatar({ avatarId: null })
-    expect(
-      container.querySelector('img'),
-      '不该去取 /avatars/default —— 那会让所有没挑过头像的人共用同一张脸'
-    ).toBeNull()
+    expect(container.querySelector('img'), '这一格不该出现图片：没挑过头像的人画的是他自己的首字母').toBeNull()
     expect(getByText('A')).toBeTruthy()
   })
 

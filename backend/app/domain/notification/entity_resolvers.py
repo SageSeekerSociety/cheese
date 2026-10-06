@@ -134,6 +134,12 @@ class UserEntityResolver:
 
         profiles_by_user_id = await self._user_service.get_users_by_ids(numeric_ids)
         handles_by_user_id = await self._user_service.get_handles_by_ids(numeric_ids)
+        # Only a person who picked an avatar has a face to send. The profile's
+        # `avatar_id` is not it: every registration path writes the global default
+        # there, so reading it would put one shared face on everyone who never
+        # picked one — and when it is None it built `/avatars/None`, a URL that
+        # 404s. Absent from this map = no URL, and the client draws the initial.
+        chosen_avatars = await self._user_service.chosen_avatar_ids(numeric_ids)
 
         result: dict[str, ResolvedEntityInfoDTO | None] = {}
         for raw_id in id_strs:
@@ -143,7 +149,12 @@ class UserEntityResolver:
                 result[raw_id] = None
                 continue
 
-            avatar_url = f"{self._avatar_base_url}/avatars/{profile.avatar_id}"
+            chosen_avatar_id = chosen_avatars.get(uid)
+            avatar_url = (
+                f"{self._avatar_base_url}/avatars/{chosen_avatar_id}"
+                if chosen_avatar_id is not None
+                else None
+            )
 
             result[raw_id] = ResolvedEntityInfoDTO(
                 id=str(uid),

@@ -5,6 +5,7 @@
 import type { Topic } from '../cx_types'
 
 import { effectScope, nextTick } from 'vue'
+import { createVuetify } from 'vuetify'
 import { render, screen } from '@testing-library/vue'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -62,6 +63,7 @@ describe('asking the AI teammate in a document comment', () => {
         writable: true,
         draftKey: 'mentions-draft',
       } as never,
+      global: { plugins: [createVuetify()] },
     })
     expect(screen.getByText('@芝士 来自课程要求第 3 页')).toBeTruthy()
   })

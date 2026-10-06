@@ -68,7 +68,13 @@
               :disabled="!row.hasDetails"
               @click="expanded = expanded === row.id ? null : row.id"
             >
-              <span class="rs__avatar" :class="{ 'rs__avatar--team': row.teamSize }">{{ row.name.slice(0, 1) }}</span>
+              <UserAvatar
+                class="rs__avatar"
+                :size="22"
+                :kind="row.teamSize ? 'org' : 'person'"
+                :name="row.name"
+                :avatar="row.m.member?.avatarId != null ? getAvatarUrl(row.m.member.avatarId) : ''"
+              />
               <span class="rs__name">{{ row.name }}</span>
               <small v-if="row.teamSize" class="rs__small">{{ t('tasks.roster.teamSize', { n: row.teamSize }) }}</small>
               <v-icon v-if="row.hasDetails" size="14" class="rs__chev">
@@ -221,6 +227,8 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
+import { getAvatarUrl } from '@/utils/materials'
+
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -230,6 +238,7 @@ import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { vRovingTabs } from '@/lib/rovingTabs'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */
@@ -540,20 +549,11 @@ function saveDeadline() {
   cursor: default;
 }
 
+/* 头像交给 UserAvatar：人画圆、团队画圆角方块（kind='org'），底色也由它按名字算。
+   这里只管它在这一行里别被挤扁。 */
 .rs__avatar {
-  display: grid;
   flex: none;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--fill-2);
-  color: var(--text);
   font-size: 11px;
-}
-/* 团队来领的那一行不是一个人：圆角方块（形状照 GitHub 的规则，人才是圆的）。 */
-.rs__avatar--team {
-  border-radius: var(--radius-sm);
 }
 
 .rs__small,

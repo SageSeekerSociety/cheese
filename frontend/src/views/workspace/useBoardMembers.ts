@@ -29,7 +29,7 @@ export function useBoardMembers() {
     if (!handle || avatarBroken.value.has(handle)) return null
     const id = memberByHandle.value.get(handle)?.avatar_id
     // 名册上没这个人、或这行没有头像时返回 null：宁可留一个按 handle 哈希、认得出
-    // 是谁的色块，也不要 getAvatarUrl(undefined) 给所有没挑过头像的人配同一张脸。
+    // 是谁的色块，也不要给所有人配同一张脸。
     return id == null ? null : getAvatarUrl(id)
   }
 

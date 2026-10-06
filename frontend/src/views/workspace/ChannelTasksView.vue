@@ -18,6 +18,8 @@ const props = defineProps<{
   channelTitle: string | null
   tasks: RoomTask[]
   names: Record<string, string>
+  /** handle → 头像图；没挑过的是空串，退回首字母。和 names 同源。 */
+  avatars: Record<string, string>
   me: string
   loading: boolean
   failed: boolean
@@ -113,7 +115,12 @@ const nameOf = (handle: string) => props.names[handle] || handle
           <span class="channel-tasks__title t-body">{{ taskTitle(task) }}</span>
           <span class="channel-tasks__who t-body">
             <template v-if="task.owner_handle">
-              <UserAvatar :size="20" :name="nameOf(task.owner_handle)" />
+              <UserAvatar
+                :size="20"
+                :name="nameOf(task.owner_handle)"
+                :avatar="avatars[task.owner_handle] || ''"
+                :seed="task.owner_handle"
+              />
               <span>{{ nameOf(task.owner_handle) }}</span>
             </template>
             <span v-if="task.contributor_handles?.length" class="c-faint">+{{ task.contributor_handles.length }}</span>

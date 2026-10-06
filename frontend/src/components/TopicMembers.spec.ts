@@ -227,9 +227,10 @@ describe('名册上的头像', () => {
 
   it('挑过头像的人画他本人那张，不画首字母', async () => {
     await openRoster()
+    // 图现在由 UserAvatar 画：根是那个席位方框，<img> 在它里面。
     const face = faceOf('carol')
-    expect(face.tagName).toBe('IMG')
-    expect(face.getAttribute('src')).toContain('/avatars/77')
+    expect(face.querySelector('img')?.getAttribute('src')).toContain('/avatars/77')
+    expect(face.querySelector('.user-avatar-char')).toBeNull()
   })
 })
 

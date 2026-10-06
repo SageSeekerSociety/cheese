@@ -248,8 +248,8 @@ describe('成员管理', () => {
     expect(pengImg, '挑过头像的人这一行该画 <img>，不是彩色首字母').not.toBeNull()
     expect(pengImg?.getAttribute('src')).toMatch(/\/avatars\/3$/)
 
-    // 没挑过的人（`avatar_id` 为 null）：**必须**走彩色首字母。把 null 交给
-    // `getAvatarUrl` 会回 `/avatars/default`，那是所有没挑过头像的人共用的一张脸。
+    // 没挑过的人（`avatar_id` 为 null）：**必须**走彩色首字母 —— 一张所有人共用的
+    // 默认脸，等于这一列分不出谁是谁。
     const noAvatar = rowOf('wangchangxin')
     expect(noAvatar?.querySelector('img')).toBeNull()
     expect(noAvatar?.querySelector('.user-avatar-char')?.textContent).toBe('W')

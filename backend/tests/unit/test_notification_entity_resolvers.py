@@ -91,10 +91,13 @@ class TestTeamEntityResolver:
 
 
 class TestUserEntityResolver:
-    def _make_resolver(self, users_by_id=None, handles_by_id=None):
+    def _make_resolver(self, users_by_id=None, handles_by_id=None, chosen_avatars=None):
         user_service = AsyncMock()
         user_service.get_users_by_ids.return_value = users_by_id or {}
         user_service.get_handles_by_ids.return_value = handles_by_id or {}
+        # Who actually picked a face. A profile row alone is not enough: every
+        # registration path writes the global default avatar into `avatar_id`.
+        user_service.chosen_avatar_ids.return_value = chosen_avatars or {}
         return UserEntityResolver(
             user_service, avatar_base_url="https://cdn.example.com/"
         )
@@ -119,7 +122,9 @@ class TestUserEntityResolver:
     async def test_resolve_found(self):
         profile = SimpleNamespace(nickname="Alice", avatar_id=10)
         resolver = self._make_resolver(
-            users_by_id={1: profile}, handles_by_id={1: "alice"}
+            users_by_id={1: profile},
+            handles_by_id={1: "alice"},
+            chosen_avatars={1: 10},
         )
 
         result = await resolver.resolve(["1"])
@@ -138,6 +143,38 @@ class TestUserEntityResolver:
 
         result = await resolver.resolve(["99"])
         assert result["99"] is None
+
+    @pytest.mark.anyio
+    async def test_resolve_no_avatar_for_people_who_never_picked_one(self):
+        # Registration hardcodes the global default into `avatar_id`, so a row
+        # that has one still means "never picked". Sending that URL would give
+        # every such person the same face; a row whose id is None used to build
+        # `/avatars/None`. Both must come back as "no face", not as a URL.
+        never_picked = SimpleNamespace(nickname="Alice", avatar_id=1)
+        no_row_at_all = SimpleNamespace(nickname="Bob", avatar_id=None)
+        resolver = self._make_resolver(
+            users_by_id={1: never_picked, 2: no_row_at_all},
+            handles_by_id={1: "alice", 2: "bob"},
+            chosen_avatars={},
+        )
+
+        result = await resolver.resolve(["1", "2"])
+        assert result["1"].avatarUrl is None
+        assert result["2"].avatarUrl is None
+
+    @pytest.mark.anyio
+    async def test_resolve_only_the_people_who_picked_one_get_a_url(self):
+        picked = SimpleNamespace(nickname="Alice", avatar_id=10)
+        never = SimpleNamespace(nickname="Bob", avatar_id=1)
+        resolver = self._make_resolver(
+            users_by_id={1: picked, 2: never},
+            handles_by_id={1: "alice", 2: "bob"},
+            chosen_avatars={1: 10},
+        )
+
+        result = await resolver.resolve(["1", "2"])
+        assert result["1"].avatarUrl == "https://cdn.example.com/avatars/10"
+        assert result["2"].avatarUrl is None
 
 
 # ---------------------------------------------------------------------------

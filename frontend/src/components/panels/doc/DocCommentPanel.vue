@@ -26,6 +26,8 @@ const props = defineProps<{
   agentName: string
   mentionNames: Record<string, string>
   nameOf: (handle: string) => string
+  /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
+  avatarOf?: (handle: string) => string
   writable: boolean
 }>()
 const emit = defineEmits<{
@@ -351,6 +353,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
             :agent-name="agentName"
             :mention-names="mentionNames"
             :name-of="nameOf"
+            :avatar-of="avatarOf"
             :writable="writable"
             :filter="filter"
             @update:open-id="emit('update:openId', $event)"
