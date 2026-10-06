@@ -91,6 +91,19 @@ async def rooms_seen(
     return {room.id for room in rooms}
 
 
+async def channels_unseen(
+    db: AsyncSession, resolver: ActorResolver, actor: Actor, project_id: uuid.UUID
+) -> set[uuid.UUID]:
+    """This project's private channels ``actor`` is not in — the complement of
+    ``rooms_seen`` among channels. What was made in them is not shown to it,
+    even in a project-wide list that does not name the channel."""
+    if resolver.on_the_dev_credential(actor):
+        return set()
+    seen = await rooms_seen(db, resolver, actor, project_id)
+    rooms = await TopicRepository(db).list_for_project(project_id)
+    return {room.id for room in rooms if room.members_only and room.id not in seen}
+
+
 async def task_conversation(
     db: AsyncSession, resolver: ActorResolver, conversation_id: uuid.UUID
 ):

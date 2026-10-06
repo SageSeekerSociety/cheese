@@ -281,10 +281,11 @@ async def create_archive(
     )
     catalog = []
     copies = []
-    for artifact in await artifacts.list_for_project(db, project_id):
+    unseen = {topic.id for topic in topics if topic.members_only} - set(visible)
+    for artifact in await artifacts.list_for_project(db, project_id, hidden=unseen):
         versions = [
             asdict(v)
-            for v in await artifacts.versions(db, artifact.id)
+            for v in await artifacts.versions(db, artifact.id, hidden=unseen)
             if v.card_id in allowed_cards
         ]
         row = asdict(artifact)
