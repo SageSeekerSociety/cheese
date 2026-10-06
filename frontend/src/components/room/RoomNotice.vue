@@ -18,6 +18,7 @@ import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { parseDiffLines } from '../../lib/diff'
+import { repeatsLine } from '../../lib/noticeRepeats'
 import { noticeText } from '../../lib/noticeText'
 import { confirmTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
@@ -60,6 +61,10 @@ const props = defineProps<{
   projectId?: string | null
   /** 这个频道里一件任务此刻到哪一档（「创建了任务」那一行写在后面）；不认得就是 null。 */
   taskLevel?: (taskId: string) => ProgressLevel | null
+  /** 合成一行的那一串里的一条：只画这一条自己的内容，外框（头像、名字）归合起来的那一行。 */
+  inline?: boolean
+  /** 合成一行的那一串，点开后每一条自己的时间。 */
+  timeOf?: (iso: string) => string
 }>()
 
 const emit = defineEmits<{
@@ -71,9 +76,34 @@ const emit = defineEmits<{
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
 }>()
 
-/** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
-const happening = computed(() => props.notice.mode === 'plain' && !props.agent)
 const name = computed(() => props.agent?.name ?? null)
+/** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
+const happening = computed(() => {
+  const own = props.notice.mode === 'repeats' ? props.notice.rows[0].notice : props.notice
+  return own?.mode === 'plain' && !props.agent
+})
+
+// 外框（头像、名字、时间）；合成一行里的一条没有自己的外框。
+const frame = computed(() =>
+  props.inline
+    ? {}
+    : {
+        name: name.value,
+        handle: props.agent?.handle ?? null,
+        cont: props.cont,
+        face: props.face ?? null,
+        faceLabel: props.faceLabel ?? null,
+        faceStatus: props.faceStatus ?? null,
+        time: props.time,
+      }
+)
+
+// 同一个人连着做的几件事合成的那一行：收起时一句概括，点开列出每一条。
+const repeatsOpen = ref(false)
+const repeatsText = computed(() =>
+  // 队友做的，名字照队友的叫法；人做的，正文里那个 <@handle> 渲染成他的名字。
+  props.notice.mode === 'repeats' ? repeatsLine(props.notice.rows, props.agent?.name ?? props.notice.actor) : ''
+)
 
 /** 本轮改动先列三个文件；其余的点一下再展开，不必去别处看。 */
 const FILES_SHOWN = 3
@@ -175,8 +205,40 @@ const ACTION_META: Record<string, { btn: string }> = {
 <template>
   <!-- 房间里发生的事：居中一行淡字。Content may carry a <@handle> actor token
        (归档/加入…): render it through the SAME token→chip path as messages. -->
-  <div v-if="happening" class="room-happening im-event">
-    <span v-html="renderPlain(noticeText(block))" /><span class="room-happening__time"> · {{ time }}</span>
+  <div v-if="happening && notice.mode === 'repeats'" class="room-happening im-event">
+    <button
+      type="button"
+      class="room-happening__repeats"
+      :aria-expanded="repeatsOpen"
+      data-testid="notice-repeats"
+      @click="repeatsOpen = !repeatsOpen"
+    >
+      <span v-html="renderPlain(repeatsText)" />
+      <v-icon size="14" aria-hidden="true">{{ repeatsOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon></button
+    ><span class="room-happening__time"> · {{ time }}</span>
+    <template v-if="repeatsOpen">
+      <RoomNotice
+        v-for="row in notice.rows"
+        :key="row.block.id"
+        class="room-happening__member"
+        :block="row.block"
+        :notice="row.notice!"
+        :run="row.run"
+        :agent="null"
+        :time="timeOf?.(row.block.created_at) ?? ''"
+        :agent-name="agentName"
+        :refs="refs"
+        :project-id="projectId"
+        :task-level="taskLevel"
+        inline
+        @open-resource="(...a) => emit('open-resource', ...a)"
+        @open-card="emit('open-card', $event)"
+        @jump="emit('jump', $event)"
+      />
+    </template>
+  </div>
+  <div v-else-if="happening" class="room-happening im-event">
+    <span v-html="renderPlain(noticeText(block))" /><span v-if="time" class="room-happening__time"> · {{ time }}</span>
     <template v-if="pinnedBlock">
       <span class="room-happening__time"> · </span>
       <button type="button" class="room-happening__go" @click="emit('jump', pinnedBlock)">
@@ -184,16 +246,11 @@ const ACTION_META: Record<string, { btn: string }> = {
       </button>
     </template>
   </div>
-  <AgentNoticeFrame
+  <component
+    :is="inline ? 'div' : AgentNoticeFrame"
     v-else
-    :name="name"
-    :handle="agent?.handle ?? null"
-    :cont="cont"
-    :face="face ?? null"
-    :face-label="faceLabel ?? null"
-    :face-status="faceStatus ?? null"
-    :time="time"
-    :class="{ 'notice-bump': bumped }"
+    v-bind="frame"
+    :class="{ 'notice-bump': bumped, 'notice-inline': inline }"
     @animationend="bumped = false"
   >
     <div
@@ -400,7 +457,38 @@ const ACTION_META: Record<string, { btn: string }> = {
         <span class="sys-text" v-html="renderPlain(noticeText(block))" />
       </div>
     </div>
-  </AgentNoticeFrame>
+    <div v-else-if="notice.mode === 'repeats'" class="sys-row">
+      <button
+        type="button"
+        class="sys-line sys-repeats"
+        :aria-expanded="repeatsOpen"
+        data-testid="notice-repeats"
+        @click="repeatsOpen = !repeatsOpen"
+      >
+        <span class="sys-text" v-html="renderPlain(repeatsText)" />
+        <v-icon class="sys-chev" size="14">{{ repeatsOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+      </button>
+      <div v-if="repeatsOpen" class="sys-repeats__list">
+        <RoomNotice
+          v-for="row in notice.rows"
+          :key="row.block.id"
+          :block="row.block"
+          :notice="row.notice!"
+          :run="row.run"
+          :agent="agent"
+          :time="''"
+          :agent-name="agentName"
+          :refs="refs"
+          :project-id="projectId"
+          :task-level="taskLevel"
+          inline
+          @open-resource="(...a) => emit('open-resource', ...a)"
+          @open-card="emit('open-card', $event)"
+          @jump="emit('jump', $event)"
+        />
+      </div>
+    </div>
+  </component>
 </template>
 
 <style scoped>
@@ -726,5 +814,41 @@ details[open]::details-content {
 /* 任务到了哪一档：等人看的那一档（待审阅）用琥珀色点出来，其余照这一行的颜色。 */
 .task-level[data-level='review'] {
   color: var(--accent-ink);
+}
+/* 连着的同一种操作合成的那一行：点一下在原处列出每一条。 */
+.room-happening__repeats {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.room-happening__repeats:hover {
+  color: var(--muted);
+}
+.room-happening__member {
+  margin: 2px 0;
+}
+.sys-repeats {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sys-repeats__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
 }
 </style>

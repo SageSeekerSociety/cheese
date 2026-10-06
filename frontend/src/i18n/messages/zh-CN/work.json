@@ -403,6 +403,15 @@
       "failed": "重试失败"
     },
     "notice": {
+      "repeats": {
+        "line": "{actor} {parts}",
+        "sep": "，",
+        "archived": "归档了 {n} 个频道",
+        "unarchived": "取消归档了 {n} 个频道",
+        "docEdited": "编辑了 {n} 次文档",
+        "others": "另有 {n} 项操作",
+        "only": "{line} 等 {n} 项操作"
+      },
       "platform": "平台",
       "changedFiles": "改动的文件",
       "moreFiles": "另 {n} 个文件",

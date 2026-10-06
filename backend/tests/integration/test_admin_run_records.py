@@ -87,3 +87,23 @@ def test_one_error_across_projects_is_one_line_that_counts_them(client, admin):
     ).json()["data"]
     assert "ConnectError" in shown["meta"]["stack"]
     assert {p["project_id"] for p in shown["places"]} == {str(a), str(b)}
+
+
+def test_a_turn_that_did_not_finish_counts_as_an_error(client, admin):
+    project = _project(client)
+    _keep(
+        client,
+        [
+            RunRecord(
+                project_id=project,
+                kind="turn_failed",
+                severity="error",
+                content="本轮未完成",
+                created_at=datetime.now(UTC),
+            )
+        ],
+    )
+    errors = client.get("/admin/run-records?group=errors", headers=admin).json()[
+        "data"
+    ]["groups"]
+    assert {g["kind"] for g in errors} == {"turn_failed"}

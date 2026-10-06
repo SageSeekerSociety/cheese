@@ -289,7 +289,7 @@ describe('agent status messages', () => {
   })
 
   // 同一位队友连着的几件事和它连着说的几句话一样：头像和名字只出现一次。
-  it('merges consecutive rows of the same agent under one avatar and name', async () => {
+  it('merges consecutive rows of the same agent into one line under one avatar and name', async () => {
     listTopicMembers.mockResolvedValue({
       data: [
         { member_handle: 'agent-test', name: '测试助手', agent: true },
@@ -302,14 +302,16 @@ describe('agent status messages', () => {
     const c = { ...event('', '测试助手 第三次编辑了文档', { action: 'doc' }), author: 'agent-test' }
     const { container } = mountRoom([a, b, human, c])
     await flush()
+    // a 和 b 连着，合成一行；中间隔了别人，c 另起一行。
     const rows = Array.from(container.querySelectorAll('.agent-status'))
-    expect(rows).toHaveLength(3)
+    expect(rows).toHaveLength(2)
     const avatars = rows.map((row) => row.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null)
-    expect(avatars).toEqual(['测试助手', null, '测试助手'])
+    expect(avatars).toEqual(['测试助手', '测试助手'])
+    expect(rows[0].textContent).toContain('2')
   })
 
   // 同一位队友连着的几件事和它连着说的几句话一样：头像和名字只出现一次。
-  it('merges consecutive rows of the same agent under one avatar and name', async () => {
+  it('merges consecutive rows of the same agent into one line under one avatar and name', async () => {
     listTopicMembers.mockResolvedValue({
       data: [
         { member_handle: 'agent-test', name: '测试助手', agent: true },
@@ -322,10 +324,12 @@ describe('agent status messages', () => {
     const c = { ...event('', '测试助手 第三次编辑了文档', { action: 'doc' }), author: 'agent-test' }
     const { container } = mountRoom([a, b, human, c])
     await flush()
+    // a 和 b 连着，合成一行；中间隔了别人，c 另起一行。
     const rows = Array.from(container.querySelectorAll('.agent-status'))
-    expect(rows).toHaveLength(3)
+    expect(rows).toHaveLength(2)
     const avatars = rows.map((row) => row.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null)
-    expect(avatars).toEqual(['测试助手', null, '测试助手'])
+    expect(avatars).toEqual(['测试助手', '测试助手'])
+    expect(rows[0].textContent).toContain('2')
   })
 
   it('does not give member events or backend logs an agent avatar', async () => {
@@ -562,7 +566,7 @@ describe('平台提示：会话没起来', () => {
 })
 
 describe('向后兼容：库里存量的老事件一个都不能变样', () => {
-  it('shows the document edit diff even beside another action in the same AI turn', async () => {
+  it('shows the document edit diff even folded with another action in the same AI turn', async () => {
     const doc = event('', '芝士 编辑了文档', {
       action: 'doc',
       detail_label: '查看本次修改',
@@ -572,6 +576,9 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
     doc.turn_id = 'same-turn'
     task.turn_id = 'same-turn'
     const { container } = mountRoom([doc, task])
+    await flush()
+    // 同一轮的两件事合成一行，点开以后改了什么照样看得到。
+    ;(container.querySelector('[data-testid="notice-repeats"]') as HTMLElement).click()
     await flush()
     const details = container.querySelector('.action-card details')!
     expect(details.querySelector('summary')!.textContent).toBe('查看本次修改')
