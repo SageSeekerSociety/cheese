@@ -64,8 +64,7 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 		os.Setenv("PATH", strings.Join(append(path, current), ";"))
 	}
 	os.Setenv("CLAUDE_CODE_GIT_BASH_PATH", filepath.Join(git, "bin", "bash.exe"))
-	isolatePython()
-	return nil
+	return pinPythonPath(filepath.Join(root, "python"))
 }
 
 // ensureTool fetches t when the server's digest differs from the one recorded
@@ -138,25 +137,14 @@ func suffix(name string) string {
 	return ".zip"
 }
 
-// extractPython unpacks the embeddable distribution with Windows' own tar,
-// names it the way the server's commands call it, and drops its ._pth: that
-// file pins sys.path and silently ignores site-packages, which would make it
-// behave unlike the python3 every other device has. The owner's PYTHONPATH is
-// kept away from it by isolatePython, not by the ._pth.
+// extractPython unpacks the embeddable distribution with Windows' own tar and
+// names it the way the server's commands call it. Its ._pth is replaced on
+// every start by pinPythonPath.
 func extractPython(archive, dir string) error {
 	if out, err := hidden("tar.exe", "-xf", archive, "-C", dir).CombinedOutput(); err != nil {
 		return fmt.Errorf("unpack: %v: %s", err, out)
 	}
-	if err := copyFile(filepath.Join(dir, "python.exe"), filepath.Join(dir, "python3.exe")); err != nil {
-		return err
-	}
-	pth, _ := filepath.Glob(filepath.Join(dir, "python*._pth"))
-	for _, p := range pth {
-		if err := os.Remove(p); err != nil {
-			return err
-		}
-	}
-	return nil
+	return copyFile(filepath.Join(dir, "python.exe"), filepath.Join(dir, "python3.exe"))
 }
 
 // extractGit runs PortableGit's self-extractor into dir.
