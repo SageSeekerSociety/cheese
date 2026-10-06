@@ -446,7 +446,9 @@ async def update_task(
         )
         await tasks.hand_over(task, owner_handle=body.owner_handle)
     if "agent_handle" in body.model_fields_set:
-        await tasks.give_agent(task, agent_handle=body.agent_handle)
+        await TopicService(db).give_task_teammate(
+            task, (body.agent_handle or "").strip() or None
+        )
     if body.contributor_handles is not None:
         people = await members.project_people(place.project_id)
         wanted = list(dict.fromkeys(body.contributor_handles))
@@ -586,6 +588,7 @@ async def accept_task_proposal(
         created_by=actor.handle,
         title=proposal.title,
         proposed_by=proposal.proposed_by,
+        teammate=proposal.proposed_by,
     )
     TaskProposals.decide(
         proposal, ProposalState.accepted, by=actor.handle, task_id=task.id

@@ -193,6 +193,16 @@ class AgentInstanceService:
                 return self.resolved(instance)
         return None
 
+    async def for_task(
+        self, project: Project, room: Topic, agent_handle: str | None
+    ) -> ResolvedAgent:
+        """The teammate working a task: the one it was given (``Task.agent_handle``,
+        a seat), else its room's — the project's unless the room has its own. A
+        seat no longer in the project falls back the same way: the task is
+        still worked, by the one its room would give it."""
+        given = await self.for_seat_handle(project, agent_handle)
+        return given or await self.for_topic(room, project)
+
     async def project_of_seat(self, handle: str) -> uuid.UUID | None:
         """Which project's teammate sits on rosters as ``handle``, or None when
         the handle is not a saved teammate's seat at all (a person, the shared

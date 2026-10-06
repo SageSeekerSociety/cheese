@@ -113,25 +113,27 @@ async def record_task_instruction(
 
     Addressed to the conversation, not the room: ``conversation_id`` is the task's
     id, which is what the runner runs a turn in, and the agent is the one working
-    the task (its own pick, else the project's).
+    the task (its own pick, else its room's) — the one that answers there.
     """
     from app.domain.agent_instance.services import AgentInstanceService
     from app.domain.project.models import Project
+    from app.domain.topic.models import Topic
 
     project = await session.get(Project, task.project_id)
-    if project is None:
+    room = await session.get(Topic, task.room_id)
+    if project is None or room is None:
         return
-    instance = await AgentInstanceService(session).for_handle(
-        project, task.agent_handle
+    agent = await AgentInstanceService(session).for_task(
+        project, room, task.agent_handle
     )
     await session.execute(
         insert(Delivery)
         .values(
             id=uuid.uuid4(),
             event_id=event.id,
-            recipient_handle=agent_instance_handle(instance.id),
+            recipient_handle=agent_instance_handle(agent.instance_id),
             receiver_id=None,
-            agent_instance_id=instance.id,
+            agent_instance_id=agent.instance_id,
             conversation_id=task.id,
             dedup_key=f"{event.id}:task",
             type=event.type.value,
