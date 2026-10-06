@@ -59,3 +59,18 @@ FAILED_TURN_ROWS = text(
     f"(meta ->> 'event_type') IN ({_one_of(FAILED_TURN_EVENTS)})"
     " AND (meta ->> 'severity') = 'error'"
 )
+
+#: A message that named an agent and has not had its turn: never read into a
+#: prompt, never answered or refused another way. The rows the pending-message
+#: scan starts turns from (`pending_messages.queued_messages`), kept in a partial
+#: index because that scan runs on a clock and the rest of the table is
+#: everything ever said.
+QUEUED_MESSAGE_ROWS = text(
+    "kind = 'message'"
+    " AND ((meta -> 'agent_recipient') ->> 'mentioned') = 'true'"
+    " AND (meta -> 'consumed_turn') IS NOT NULL"
+    " AND (meta ->> 'consumed_turn') IS NULL"
+    " AND COALESCE(meta ->> 'prompt_attempts', '0') = '0'"
+    " AND (meta -> 'delivery_event_id') IS NULL"
+    " AND (meta -> 'answer_to') IS NULL"
+)
