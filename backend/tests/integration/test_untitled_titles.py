@@ -1,10 +1,8 @@
-"""An unnamed task or room is flagged, so each screen names it in its reader's
-language instead of showing the stored placeholder 「新话题」.
+"""An unnamed task is flagged, so each screen names it in its reader's
+language instead of showing the stored placeholder.
 
 A message upgraded into a task opens it unnamed; a title given later, by
-anyone, ends that. Listings that name a room or a task outside its own
-endpoint (the cross-project topic names, the profile's topics) carry the
-same flag beside the title.
+anyone, ends that.
 
 The migration that adds the flag to tasks is run as ``alembic upgrade`` runs
 it, on rows written before it: a never-renamed upgraded task becomes
@@ -77,29 +75,12 @@ def test_a_task_named_by_a_person_who_typed_the_placeholder_is_still_named(clien
 
     renamed = client.post(
         f"/topics/{task['id']}/title",
-        json={"title": "新话题"},
+        json={"title": "新任务"},
         headers=session_auth_headers("alice"),
     )
 
-    assert renamed.json()["data"]["title"] == "新话题"
+    assert renamed.json()["data"]["title"] == "新任务"
     assert renamed.json()["data"]["title_source"] == "human"
-
-
-def test_topic_names_carry_the_flag(client):
-    project = post_project(
-        client, json={"name": "P"}, headers=session_auth_headers("user-1")
-    ).json()["data"]
-    unnamed = client.post("/topics", json={"project_id": project["id"]}).json()["data"]
-    named = client.post(
-        "/topics", json={"project_id": project["id"], "title": "周报"}
-    ).json()["data"]
-
-    names = client.get("/topics/names", headers=session_auth_headers("user-1"))
-
-    assert names.status_code == 200, names.text
-    sources = {t["id"]: t["title_source"] for t in names.json()["data"]["topics"]}
-    assert sources[unnamed["id"]] == "placeholder"
-    assert sources[named["id"]] == "human"
 
 
 def _upgrade(client) -> None:
@@ -114,6 +95,13 @@ def _upgrade(client) -> None:
 
     async def _run() -> None:
         async with client.test_factory() as s:
+            # Before it, an unnamed task was stored under the room placeholder.
+            await s.execute(
+                text(
+                    "UPDATE tasks SET title = '新话题'"
+                    " WHERE title_source = 'placeholder'"
+                )
+            )
             await s.execute(text("ALTER TABLE tasks DROP COLUMN title_source"))
             await (await s.connection()).run_sync(_apply)
             await s.commit()

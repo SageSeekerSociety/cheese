@@ -207,7 +207,7 @@ watch(teamId, load)
                     >
                     <template #room
                       ><span :data-user-content="use.topic_title || undefined">{{
-                        topicTitle({ title: use.topic_title, title_source: use.topic_title_source })
+                        topicTitle({ title: use.topic_title })
                       }}</span></template
                     >
                     <template #agent>

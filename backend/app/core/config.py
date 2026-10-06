@@ -399,20 +399,20 @@ class Settings(BaseSettings):
     # platform again. It also ends with the platform sign-in it came from.
     docs_session_seconds: int = 8 * 3600
 
-    # --- Topic naming (app/domain/topic/naming.py) ---
-    # The platform names rooms itself, off the main agent's turn: a small model
+    # --- Task naming (app/domain/room_task/naming.py) ---
+    # The platform names tasks itself, off the agent's turn: a small model
     # through the gateway, on a virtual key of its own capped at this budget
-    # per 30 days. Unset gateway admin credentials = the main agent names the
-    # room with `cheese_title`, as before.
+    # per 30 days. Unset gateway admin credentials = an unnamed task's own
+    # session is reminded to name it with `cheese_title`.
     topic_naming_model: str = "deepseek-flash"
     topic_naming_budget_usd: float = 10.0
     topic_naming_timeout_seconds: float = 15.0
-    # A renamed room is re-judged no sooner than this, and at most this often a
-    # day: a title is how people find a room again, so it moves rarely.
+    # A named task is re-judged no sooner than this, and at most this often a
+    # day: a title is how people find a task again, so it moves rarely.
     topic_naming_follow_interval_seconds: int = 1800
     topic_naming_follow_daily_limit: int = 3
-    # Messages since the last judgement that make a room worth looking at again
-    # even without a signal (a task, an accept card, a changed goal).
+    # Messages since the last judgement that make a task worth looking at again
+    # even without a signal (an accept card, a changed document).
     topic_naming_follow_messages: int = 30
 
     # ExecutionProfile "claude-opus" (tier=testing): native Claude for the team's

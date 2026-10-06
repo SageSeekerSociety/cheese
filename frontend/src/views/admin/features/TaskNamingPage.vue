@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChartSeries } from '@/components/admin/AdminLineChart.vue'
-import type { FeatureDays, TopicNamingReport } from '@/views/admin/features/featureApi'
+import type { FeatureDays, TaskNamingReport } from '@/views/admin/features/featureApi'
 
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -12,9 +12,9 @@ import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
-import { getTopicNamingReport } from '@/views/admin/features/featureApi'
+import { getTaskNamingReport } from '@/views/admin/features/featureApi'
 
-// 功能数据的第二页：**智能命名**（`/admin/feature-stats/topic-naming`）。话题在后台被
+// 功能数据的第二页：**智能命名**（`/admin/feature-stats/task-naming`）。任务在后台被
 // 自动取标题，这一页回答的是**「这件事值不值得继续开着」**：花了多少（调用、token、
 // 花费）、这些调用成不成（网关的成功率）、它写了多少个名字、人后来改掉了多少。
 //
@@ -23,18 +23,18 @@ import { getTopicNamingReport } from '@/views/admin/features/featureApi'
 // 1. **「调用成功率」不是「命名成功率」。** 网关眼里的成功是「请求打到了模型并回来了」；
 //    模型回一段截断的、或者包坏了的答案，在网关那里同样是 200。后者只写在日志里，没有
 //    进任何表 —— 所以这一页没有「命名成功率」这个数，标签就写成网关那个口径（见后端
-//    `feature_stats/features/topic_naming.py` 的文件头）。编一个更动听的名字，读的人就
+//    `feature_stats/features/task_naming.py` 的文件头）。编一个更动听的名字，读的人就
 //    会拿它当模型质量。
 // 2. **读不到网关时是破折号，不是 0。** 网关那一半数全是 `null`，标签换成「读不到」，
 //    配一句为什么 —— 画 0 读起来是「这个月没花钱」。
-// 3. **「被人改掉」带着分母。** 这个比例的分母是**被自动命名过的房间**，不是全部房间：
+// 3. **「被人改掉」带着分母。** 这个比例的分母是**被自动命名过的任务**，不是全部任务：
 //    人自己起的名字不算平台被改掉。分母和分子都画出来。
-defineOptions({ name: 'TopicNamingPage' })
+defineOptions({ name: 'TaskNamingPage' })
 
 const { t } = useI18n()
 
 const days = ref<FeatureDays>(30)
-const report = ref<TopicNamingReport | null>(null)
+const report = ref<TaskNamingReport | null>(null)
 const loading = ref(true)
 const failed = ref(false)
 
@@ -63,7 +63,7 @@ async function load() {
   loading.value = true
   failed.value = false
   try {
-    const next = await getTopicNamingReport(days.value)
+    const next = await getTaskNamingReport(days.value)
     if (current === requestId) report.value = next
   } catch {
     if (current === requestId) {
@@ -199,18 +199,12 @@ const stageRows = computed(() => {
 
 const personRows = computed(() => {
   const edits = report.value?.numbers.person_edits
-  return [
-    { label: t('featureStats.naming.person.rename'), value: count(edits?.rename) },
-    { label: t('featureStats.naming.person.undo'), value: count(edits?.undo) },
-  ]
+  return [{ label: t('featureStats.naming.person.rename'), value: count(edits?.value) }]
 })
 </script>
 
 <template>
-  <AdminPage
-    :title="t('featureStats.features.topicNaming.title')"
-    :sub="t('featureStats.features.topicNaming.summary')"
-  >
+  <AdminPage :title="t('featureStats.features.taskNaming.title')" :sub="t('featureStats.features.taskNaming.summary')">
     <template #tools>
       <AdminTabs
         size="sm"

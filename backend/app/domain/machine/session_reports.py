@@ -175,7 +175,6 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
                     "task_id": str(task.id) if task is not None else None,
                     "task_title": task.title if task is not None else None,
                     "topic_title": topic.title,
-                    "topic_title_source": str(topic.title_source),
                     "agent_handle": row.agent_handle,
                     **await _agent_name(db, project, topic, row.agent_handle),
                     "choice": (row.execution_request or {}).get("choice"),

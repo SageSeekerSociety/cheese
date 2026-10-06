@@ -16,6 +16,7 @@ from app.domain.room_task.models import (
     RoomLock,
     Task,
     TaskStatus,
+    TaskTitle,
     TaskTitleSource,
 )
 from app.domain.room_task.repositories import TaskRepository
@@ -27,10 +28,36 @@ class TaskService:
         self._session = session
         self._repo = TaskRepository(session)
 
-    @staticmethod
-    def rename(task: Task, title: str) -> None:
-        """Give ``task`` a title; from then on it is named, whatever the words."""
-        task.title, task.title_source = title, TaskTitleSource.human
+    def rename(
+        self,
+        task: Task,
+        title: str,
+        *,
+        by: str | None,
+        by_person: bool = True,
+    ) -> None:
+        """Give ``task`` a title. A person's is final; one its AI teammate gave
+        it the platform may still change when the task changes direction.
+        Either way the version moves, so a platform rename computed against the
+        old title is not written over this one."""
+        task.title = title
+        task.title_source = TaskTitleSource.human if by_person else TaskTitleSource.auto
+        task.title_version = task.title_version + 1
+        if not by_person:
+            task.title_calibrated = True
+        self.record_title(task, reason="rename", by=by)
+
+    def record_title(self, task: Task, *, reason: str, by: str | None) -> None:
+        """Keep ``task``'s current title in its history."""
+        self._session.add(
+            TaskTitle(
+                task_id=task.id,
+                title=task.title,
+                source=task.title_source,
+                reason=reason,
+                by=by,
+            )
+        )
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)

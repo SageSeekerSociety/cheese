@@ -660,11 +660,7 @@ def test_each_version_names_its_room_only_to_readers_of_that_room(client):
         return r.json()["data"]["versions"][0]
 
     version = as_bob()
-    assert version["room"] == {
-        "id": room_id,
-        "title": "结题报告修订",
-        "title_source": "human",
-    }
+    assert version["room"] == {"id": room_id, "title": "结题报告修订"}
     assert version["bytes"] == len("第一版\n".encode())
 
     async def make_private():

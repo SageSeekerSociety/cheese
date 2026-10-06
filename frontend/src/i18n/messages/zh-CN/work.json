@@ -425,7 +425,6 @@
       "action": {
         "doc": "查看文档",
         "split": "查看任务",
-        "undo": "撤销",
         "accept": "审阅"
       },
       "filesChanged": "改动了 {n} 个文件",
@@ -1029,7 +1028,6 @@
       "older": "更早的消息",
       "newMessagesBelow": "以下是新消息",
       "reactionFailed": "表情更新失败",
-      "undoFailed": "撤销失败",
       "downloadFailed": "下载失败",
       "sending": "发送中…",
       "typing": "正在输入…",
@@ -1278,7 +1276,6 @@
     "notFoundHint": "它可能已被删除，或不属于这个项目",
     "resize": "拖动调整宽度，双击复位",
     "dmFailed": "打开私聊失败",
-    "untitled": "新频道",
     "untitledTask": "新任务",
     "quoted": "《{title}》"
   },
@@ -1331,7 +1328,6 @@
     "expandAwaits": "展开：里面有待处理的事项",
     "turnFailed": "{agent}最近一轮报错了",
     "awaitsTip": "有待处理的事项",
-    "autoTitle": "标题由平台自动命名，讨论方向变了会更新",
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子频道 {count} 条新消息",
     "moreActions": "更多操作",
@@ -1517,7 +1513,7 @@
     "sections": {
       "channels": "频道",
       "agents": "AI 队友",
-      "topic-naming": "频道命名",
+      "task-naming": "任务命名",
       "computer": "工作电脑",
       "environment": "运行环境",
       "merge": "合并规则",
@@ -1595,17 +1591,17 @@
       "exhausted": "额度已用完，联系团队管理员或额度发放方补充",
       "source": "包含团队共享额度和本项目的定向额度，优先使用定向额度"
     },
-    "topicNaming": {
-      "intro": "手动改过名的频道不会再被自动改名",
+    "taskNaming": {
+      "intro": "手动改过名的任务不会再被自动改名",
       "autoTitle": "智能命名",
-      "autoDetail": "第一条消息后自动起名，首次运行结束后再校准一次。之后只在讨论方向明显变化时改名，并在频道里留下可撤销的记录",
+      "autoDetail": "没起名的任务在第一条消息后自动起名，首次运行结束后再校准一次。之后只在任务方向明显变化时改名。芝士提议的任务沿用提议时的标题，同样只在方向变化时改名",
       "manualTitle": "手动命名",
-      "manualDetail": "不自动起名，新频道保持「新频道」，直到有人改名",
-      "label": "频道命名",
-      "fallback": "暂时由 AI 队友在首次运行时起名",
+      "manualDetail": "不自动起名，新任务保持「新任务」，直到有人改名",
+      "label": "任务命名",
+      "fallback": "当前部署无法自动起名，由 AI 队友在弄清任务后起名",
       "readOnly": "仅项目管理员可修改",
-      "loadFailed": "加载频道命名设置失败",
-      "saveFailed": "保存频道命名设置失败"
+      "loadFailed": "加载任务命名设置失败",
+      "saveFailed": "保存任务命名设置失败"
     },
     "defaultModelBlock": {
       "save": "保存",
@@ -2039,6 +2035,9 @@
     "handOver": "转交",
     "handOverTitle": "转交给谁？",
     "handOverTo": "选择新的负责人",
+    "rename": "重命名",
+    "renameTitle": "重命名任务",
+    "renameLabel": "任务名称",
     "actionFailed": "操作失败，稍后重试"
   },
   "channelTasks": {

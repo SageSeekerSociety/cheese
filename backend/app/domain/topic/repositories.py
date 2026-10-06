@@ -40,8 +40,6 @@ from app.domain.identity.handles import (
 from app.domain.project.environment import project_environment
 from app.domain.project.models import Project
 from app.domain.topic.models import (
-    PLACEHOLDER_TITLE,
-    TitleSource,
     Topic,
     TopicKind,
     TopicMembership,
@@ -141,25 +139,17 @@ class TopicRepository:
         self,
         *,
         project_id: uuid.UUID,
-        title: str | None,
+        title: str,
         parent_id: uuid.UUID | None = None,
         kind: TopicKind = TopicKind.topic,
         created_by: str | None = None,
         upgraded_from_block_id: uuid.UUID | None = None,
     ) -> Topic:
-        """``title=None`` is a room nobody has named: it is stored under the
-        placeholder, and ``title_source`` — not the text — is what says so.
-        A room created with a name was named by whoever created it, even when
-        that name happens to read like the placeholder."""
         project = await self._session.get(Project, project_id)
-        title = (title or "").strip() or None
         topic = Topic(
             project_id=project_id,
             environment=project_environment(project.settings if project else None),
-            title=title or PLACEHOLDER_TITLE,
-            title_source=(
-                TitleSource.placeholder if title is None else TitleSource.human
-            ),
+            title=title,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
@@ -366,7 +356,6 @@ class TopicRepository:
             environment=project_environment(project.settings if project else None),
             title=title,
             kind=TopicKind.topic,
-            title_source=TitleSource.human,
             created_by=owner,
             is_private=True,
         )

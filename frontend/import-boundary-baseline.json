@@ -43,7 +43,7 @@
     "src/components/ProjectDefaultModelSettings.vue": 2,
     "src/components/ProjectEnvironmentSettings.vue": 1,
     "src/components/ProjectMcpSettings.vue": 3,
-    "src/components/ProjectTopicNamingSettings.vue": 2,
+    "src/components/ProjectTaskNamingSettings.vue": 2,
     "src/components/PublishedSite.vue": 1,
     "src/components/PushPermissionPrompt.vue": 1,
     "src/components/questions/AnswerList.vue": 1,

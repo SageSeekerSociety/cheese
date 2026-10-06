@@ -55,7 +55,7 @@ from app.domain.project.schemas import (
 )
 from app.domain.project.services import ProjectService
 from app.domain.review.queries import latest_cards_by_task
-from app.domain.room_task import presentation
+from app.domain.room_task import naming, presentation
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.shell.catalog import Shell
@@ -63,7 +63,6 @@ from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
 from app.domain.task.services import claim_backs_project
 from app.domain.team.services import team_service
-from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -536,13 +535,13 @@ async def save_forge_attribution(
     return await get_forge_attribution(project_id, db, resolver)
 
 
-@router.get("/{project_id}/topic-naming")
-async def get_topic_naming(
+@router.get("/{project_id}/task-naming")
+async def get_task_naming(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """话题命名: ``auto`` (the platform names rooms and renames them when their
-    direction changes; the default) or ``manual`` (rooms are named by people).
-    See ``topic/naming.py``."""
+    """任务命名: ``auto`` (the platform names tasks opened without a title and
+    renames them when their direction changes; the default) or ``manual``
+    (tasks are named by people). See ``room_task/naming.py``."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
@@ -560,11 +559,11 @@ async def get_topic_naming(
     )
 
 
-@router.put("/{project_id}/topic-naming")
-async def set_topic_naming(
+@router.put("/{project_id}/task-naming")
+async def set_task_naming(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Switch the project's rooms between automatic and manual naming. Rooms a
+    """Switch the project's tasks between automatic and manual naming. Tasks a
     person named keep their names either way."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -575,7 +574,7 @@ async def set_topic_naming(
     project = await ProjectService(db).get_or_404(project_id)
     project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
     await db.flush()
-    return await get_topic_naming(project_id, db, resolver)
+    return await get_task_naming(project_id, db, resolver)
 
 
 # --- Project stewardship: who answers for a project ---------------------------

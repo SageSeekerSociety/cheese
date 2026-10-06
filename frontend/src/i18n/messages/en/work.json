@@ -425,7 +425,6 @@
       "action": {
         "doc": "View doc",
         "split": "View task",
-        "undo": "Undo",
         "accept": "Review"
       },
       "filesChanged": "Changed files: {n}",
@@ -1029,7 +1028,6 @@
       "older": "Older messages",
       "newMessagesBelow": "New messages below",
       "reactionFailed": "Couldn't update the reaction",
-      "undoFailed": "Couldn't undo",
       "downloadFailed": "Couldn't download",
       "sending": "Sending…",
       "typing": "Typing…",
@@ -1278,7 +1276,6 @@
     "notFoundHint": "It may have been deleted, or it isn't part of this project",
     "resize": "Drag to resize, double-click to reset",
     "dmFailed": "Couldn't open the conversation",
-    "untitled": "New channel",
     "untitledTask": "New task",
     "quoted": "“{title}”"
   },
@@ -1331,7 +1328,6 @@
     "expandAwaits": "Expand: something in here needs you",
     "turnFailed": "{agent}'s last run failed",
     "awaitsTip": "Something needs you",
-    "autoTitle": "Named automatically; the name updates if the channel changes direction",
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
     "moreActions": "More actions",
@@ -1517,7 +1513,7 @@
     "sections": {
       "channels": "Channels",
       "agents": "AI teammates",
-      "topic-naming": "Channel names",
+      "task-naming": "Task names",
       "computer": "Work computer",
       "environment": "Environment",
       "merge": "Merge rules",
@@ -1595,17 +1591,17 @@
       "exhausted": "Credits are used up. Ask a team admin or whoever issues credits for more",
       "source": "Includes the team's shared credits and credits issued to this project; project credits are used first"
     },
-    "topicNaming": {
-      "intro": "Channels someone has renamed are never renamed automatically",
+    "taskNaming": {
+      "intro": "Tasks someone has renamed are never renamed automatically",
       "autoTitle": "Smart names",
-      "autoDetail": "Named after the first message and checked once after the first run. Later it is renamed only when the discussion clearly changes direction, with a record in the channel that can be undone",
+      "autoDetail": "An unnamed task is named after its first message and checked once after the first run. Later it is renamed only when the task clearly changes direction. A task the AI teammate proposed keeps the title it was proposed with and is likewise renamed only when its direction changes",
       "manualTitle": "Manual names",
-      "manualDetail": "No automatic names. New channels stay \"New channel\" until someone renames them",
-      "label": "Channel names",
-      "fallback": "For now the AI teammate names the topic on its first run",
+      "manualDetail": "No automatic names. New tasks stay \"New task\" until someone renames them",
+      "label": "Task names",
+      "fallback": "This deployment can't name tasks automatically, so the AI teammate names a task once it understands it",
       "readOnly": "Only project admins can change this",
-      "loadFailed": "Couldn't load channel name settings",
-      "saveFailed": "Couldn't save channel name settings"
+      "loadFailed": "Couldn't load task name settings",
+      "saveFailed": "Couldn't save task name settings"
     },
     "defaultModelBlock": {
       "save": "Save",
@@ -2039,6 +2035,9 @@
     "handOver": "Hand over",
     "handOverTitle": "Hand over to whom?",
     "handOverTo": "Choose the new owner",
+    "rename": "Rename",
+    "renameTitle": "Rename task",
+    "renameLabel": "Task name",
     "actionFailed": "Couldn't do that. Try again later"
   },
   "channelTasks": {

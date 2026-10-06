@@ -215,7 +215,6 @@ const {
   changeChecklist,
   onReact,
   setReply,
-  undoTitle,
   downloadAttachment,
   onAvatarError,
   isAgentBlock,
@@ -373,7 +372,6 @@ defineExpose({ send, connected, submitQuestion })
           @cancel-edit="editingId = null"
           @retry="retryNow"
           @retry-send="retrySend"
-          @undo-title="undoTitle"
           @starter="startDraft"
           @settle-arrival="settleArrival"
           @settle-sent="settleSent"

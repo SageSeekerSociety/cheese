@@ -60,7 +60,6 @@ import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
-import { useTopicTitleUndo } from './useTopicTitleUndo'
 
 import { t } from '@/i18n'
 
@@ -396,9 +395,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
   let disposed = false
-
-  // 撤销一次自动改名（RoomNotice 那一行的按钮）—— 见 composables/useTopicTitleUndo。
-  const { undoTitle } = useTopicTitleUndo({ topic, emit, errorMsg })
 
   async function loadTopic(room: Topic, entering = false) {
     const generation = ++historyGeneration
@@ -983,7 +979,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     postChecklist,
     changeChecklist,
     onReact,
-    undoTitle,
     downloadAttachment,
     onAvatarError,
     roomTasks,

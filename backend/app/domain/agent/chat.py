@@ -143,7 +143,6 @@ from app.domain.agent.prompt import (
     _PROGRESS_MARK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _REPLAY_NOTICE_AT,  # noqa: F401
     _REPLAY_NOTICE_EVERY,  # noqa: F401
-    PLACEHOLDER_TITLE,  # noqa: F401
     _addressed_to,
     _compaction_notice,  # noqa: F401 — 测试仍从 chat.py 导它
     _is_pending_input,  # noqa: F401
@@ -239,9 +238,10 @@ from app.domain.membership.roster import roster_rows
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.topic import doc_nudge, naming
+from app.domain.topic import doc_nudge
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -1514,7 +1514,7 @@ class ChatService(SessionRecovery, RoomTurns):
         await get_broker().publish(str(topic_id), frame)
         if not active:
             # The agent has said what it understood: the moment to check the
-            # name the room got from its opening line (topic/naming.py).
+            # name a task got from its opening line (room_task/naming.py).
             naming.nudge(topic_id, "turn")
             # 同一个时刻也看一眼文档：干过活的房间文档还空着，就请这个队友补上
             # （topic/doc_nudge.py）。
@@ -2206,9 +2206,9 @@ class ChatService(SessionRecovery, RoomTurns):
                     },
                 )
             await session.commit()
-        # A person's words are what a room gets named by (topic/naming.py).
-        if names_a_person(author) and place.task is None:
-            naming.nudge(place.room_id, "message")
+        # A person's words are what a task gets named by (room_task/naming.py).
+        if names_a_person(author) and place.task is not None:
+            naming.nudge(place.task.id, "message")
         return payloads, anchor_id, block_ids, False
 
     async def ack_summon(

@@ -65,7 +65,6 @@
     "loadProject": "加载项目失败",
     "loadTopics": "加载频道失败",
     "rename": "重命名失败",
-    "undo": "撤销失败",
     "archive": "归档失败",
     "unarchive": "取消归档失败",
     "createTopic": "创建频道失败",

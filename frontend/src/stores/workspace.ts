@@ -21,7 +21,6 @@ import {
   setTopicTitle,
   unarchiveProject,
   unarchiveTopic,
-  undoTopicTitle,
   upgradeBlock,
 } from '@/api'
 import { ApiError, isProjectArchivedError } from '@/api'
@@ -79,6 +78,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projects = ref<Project[]>([])
   const projectsSettled = ref(false)
   const topics = ref<Topic[]>([])
+  // 项目的任务清单变了（新建、改名、关闭）。任务清单不在这个 store 里，读它的地方
+  // （侧栏）看着这个数，一变就重读。
+  const tasksChanged = ref(0)
+  function noteTasksChanged() {
+    tasksChanged.value += 1
+  }
   const members = ref<ProjectMemberRow[]>([])
   // 名册上的外部成员（团队以外、被邀请进这个项目的人）。聊天署名、@ 候选、房间名册
   // 都拿它来挂「外部」那个标，所以放在 store 里算一次，谁问都是同一份。
@@ -595,11 +600,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (t) {
       topicRevision += 1
       t.title = updated.title
-      t.title_source = updated.title_source
     }
   }
 
-  // 人起的名字：平台之后不会再自动改它（见后端 topic/naming.py）。
   async function renameTopic(topicId: string, title: string) {
     try {
       applyTopic(await setTopicTitle(topicId, title))
@@ -609,14 +612,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   /** 撤销房间里那条「标题自动更新为…」：原来的名字回来，并且算人定的。 */
-  async function undoAutoTitle(topicId: string, eventId: string) {
-    try {
-      applyTopic(await undoTopicTitle(topicId, eventId))
-    } catch (e) {
-      reportError(e, t('shell.workspaceErrors.undo'))
-    }
-  }
-
   async function archive(topicId: string) {
     const topic = topics.value.find((row) => row.id === topicId)
     const prevStatus = topic?.status
@@ -673,12 +668,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 成员名册。
   async function create(title: string): Promise<Topic | null> {
     const pid = projectId.value
-    if (!pid) return null
+    const name = title.trim()
+    if (!pid || !name) return null
     const epoch = projectEpoch
     try {
-      // Untitled when nothing was typed: the backend stores its placeholder and
-      // flags it (`title_source`), and every screen names it in its own language.
-      const topic = await createTopic(pid, title.trim() || undefined)
+      const topic = await createTopic(pid, name)
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
       topics.value.unshift(topic)
@@ -709,6 +703,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     accessDenied,
     openedProject,
     topics,
+    tasksChanged,
+    noteTasksChanged,
     members,
     agentName,
     agentHandle,
@@ -745,7 +741,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     markRead,
     markDmRead,
     renameTopic,
-    undoAutoTitle,
     archive,
     unarchive,
     rememberTopic,

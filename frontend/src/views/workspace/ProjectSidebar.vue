@@ -78,6 +78,10 @@ watch(
   () => [props.projectId, route.fullPath],
   () => void loadTasks(2_000)
 )
+watch(
+  () => store.tasksChanged,
+  () => void loadTasks()
+)
 function openAllTasks(channelId: string) {
   void router.push({ name: 'workspace-channel-tasks', params: { projectId: props.projectId, topicId: channelId } })
 }

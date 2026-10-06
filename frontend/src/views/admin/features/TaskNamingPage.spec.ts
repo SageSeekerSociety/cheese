@@ -1,5 +1,5 @@
 /**
- * 智能命名的功能数据页（`/admin/feature-stats/topic-naming`）。
+ * 智能命名的功能数据页（`/admin/feature-stats/task-naming`）。
  *
  * 这一页每一处要断言的都是「数字会说谎」的那一种读法：
  *
@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const report = vi.fn()
 vi.mock('@/views/admin/features/featureApi', () => ({
-  getTopicNamingReport: (...args: unknown[]) => report(...args),
+  getTaskNamingReport: (...args: unknown[]) => report(...args),
 }))
 
 // 键名透传 + 参数照抄：句子里那些数（分母、拆分）才是要断言的东西。
@@ -36,12 +36,12 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
-import TopicNamingPage from './TopicNamingPage.vue'
+import TaskNamingPage from './TaskNamingPage.vue'
 
 /** 一份「像真的」的报告：每个数都挑成一眼能认出来的那种（1,234 / 25% / $1.23）。 */
 function fixture(over: Record<string, unknown> = {}) {
   return {
-    id: 'topic-naming',
+    id: 'task-naming',
     title: '智能命名',
     summary: '话题标题的自动命名',
     days: 30,
@@ -58,7 +58,7 @@ function fixture(over: Record<string, unknown> = {}) {
         key_spend_usd: 1.25,
       },
       renames: { value: 96, name: 60, calibrate: 30, follow: 6 },
-      person_edits: { value: 12, rename: 10, undo: 2 },
+      person_edits: { value: 12 },
       overridden: { value: 12, named: 48, share: 0.25 },
     },
     trend: [
@@ -70,7 +70,7 @@ function fixture(over: Record<string, unknown> = {}) {
 }
 
 function mountPage() {
-  return render(TopicNamingPage, {
+  return render(TaskNamingPage, {
     global: {
       plugins: [createVuetify({ components, directives })],
       // 口径注平时收在 tooltip 里，而 happy-dom 打开 tooltip 会炸在 `visualViewport`
@@ -131,7 +131,6 @@ describe('智能命名的功能数据页', () => {
     expect(text).toContain('featureStats.naming.stages.follow')
     expect(text).toContain('featureStats.naming.person.caption {"n":"12"}')
     expect(text).toContain('featureStats.naming.person.rename')
-    expect(text).toContain('featureStats.naming.person.undo')
     // 折线两条：平台写的、人改的。
     expect(text).toContain('featureStats.naming.trend.auto')
     expect(text).toContain('featureStats.naming.trend.person')

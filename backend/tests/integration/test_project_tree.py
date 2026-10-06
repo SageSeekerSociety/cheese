@@ -105,7 +105,7 @@ def test_a_task_is_named_by_its_own_session_or_its_owner(client):
         f"/blocks/{block_id}/upgrade", headers=session_auth_headers("owner")
     ).json()["data"]
     _wait_work_idle()
-    assert task["title"] == "新话题"
+    assert task["title"] == "新任务"
     title = f"/topics/{task['id']}/title"
 
     # 房间自己的会话不替任务起名 —— 那是任务自己会话的事。

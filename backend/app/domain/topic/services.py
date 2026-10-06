@@ -49,12 +49,16 @@ from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
 from app.domain.review.services import AcceptService
-from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
+from app.domain.room_task.models import (
+    PLACEHOLDER_TITLE,
+    Task,
+    TaskStatus,
+    TaskTitleSource,
+)
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
-    PLACEHOLDER_TITLE,
     RoomCleanup,
     Topic,
     TopicKind,
@@ -224,11 +228,14 @@ class TopicService:
         self,
         *,
         project_id: uuid.UUID,
-        title: str | None,
+        title: str,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
     ) -> Topic:
-        """``title=None`` opens an unnamed room (see `TopicRepository.add`)."""
+        """Open a channel, under the name whoever creates it gave it."""
+        title = title.strip()
+        if not title:
+            raise ValidationError(say("titleRequired"))
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
@@ -836,7 +843,7 @@ class TopicService:
 
         if parent.is_private:
             raise ValidationError(say("privateMessageStaysPrivate"))
-        # Opened unnamed: its agent names it (`cheese_title`).
+        # Opened unnamed: the platform names it (`room_task/naming.py`).
         task = await self.create_task(room_id=parent.id, created_by=created_by)
         task.upgraded_from_block_id = block.id
         await self._blocks.set_upgraded_to_place(block, task_id=task.id)
@@ -886,9 +893,15 @@ class TopicService:
         created_by: str | None,
         title: str | None = None,
         owner_handle: str | None = None,
+        proposed_by: str | None = None,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
+
+        A title typed by a person is final. A task opened unnamed is named by
+        the platform (`room_task/naming.py`). A title the AI teammate
+        ``proposed_by`` wrote with its proposal is the platform's too: kept
+        unless the task changes direction.
 
         The owner is the person named, else the person creating it, else — when
         no person is identifiable — the room's owner, then the project's. A task
@@ -916,17 +929,22 @@ class TopicService:
             )
         )
         tasks = TaskService(self._session)
-        named = (title or "").strip()
+        named = (title or "").strip()[:300]
         task = await tasks.open_thread(
             project_id=room.project_id,
             room_id=room.id,
-            title=named[:300] or PLACEHOLDER_TITLE,
-            title_source=TaskTitleSource.human
-            if named
-            else TaskTitleSource.placeholder,
+            title=named or PLACEHOLDER_TITLE,
+            title_source=TaskTitleSource.placeholder
+            if not named
+            else TaskTitleSource.auto
+            if proposed_by
+            else TaskTitleSource.human,
             owner_handle=owner,
             created_by=created_by,
         )
+        if named and proposed_by:
+            task.title_calibrated = True
+            tasks.record_title(task, reason="proposal", by=proposed_by)
         await tasks.ensure_document(task)
         await self._card_block(room, task, actor=created_by or "system")
         return task

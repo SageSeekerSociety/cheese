@@ -53,7 +53,6 @@ MOVED = (
     "_sandbox_limits",
     "_session_opening_lines",
     "_topic_ref_lists",
-    "PLACEHOLDER_TITLE",
     "project_overview",
 )
 

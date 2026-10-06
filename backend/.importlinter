@@ -373,6 +373,7 @@ ignore_imports =
     app.domain.room_task.binding -> app.domain.agent.supply
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
     app.domain.room_task.checkouts -> app.domain.agent.resource_cleanup
+    app.domain.room_task.naming -> app.domain.agent.runtime
     app.domain.room_task.checkouts -> app.domain.topic.models
     app.domain.room_task.place -> app.domain.topic.models
     app.domain.room_task.presentation -> app.domain.review.models
@@ -394,8 +395,6 @@ ignore_imports =
     app.domain.team.services -> app.domain.task.repositories
     app.domain.topic.doc_nudge -> app.domain.agent.platform_notices
     app.domain.topic.doc_nudge -> app.domain.agent.runtime
-    app.domain.topic.naming -> app.domain.agent.announce
-    app.domain.topic.naming -> app.domain.agent.runtime
     app.domain.topic.retire -> app.domain.agent.device_hub
     app.domain.topic.retire -> app.domain.agent.device_provider
     app.domain.topic.retire -> app.domain.agent.models

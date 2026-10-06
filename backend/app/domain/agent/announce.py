@@ -176,7 +176,6 @@ async def notify_question(
                 "projectId": str(place.project_id),
                 "topicId": str(place.room_id),
                 "topicTitle": place.title,
-                "topicTitleSource": str(place.room.title_source),
                 "question": question,
                 "asker": asker,
                 # 提问固定在对话末尾（本轮停在它这里），所以进入房间即可看到 ——
@@ -239,7 +238,6 @@ async def _notify(
                 "projectId": str(place.project_id),
                 "topicId": str(place.room_id),
                 "topicTitle": place.title,
-                "topicTitleSource": str(place.room.title_source),
                 "content": content,
                 **notice_message(block.meta),
                 "eventType": str(meta.get("event_type") or ""),

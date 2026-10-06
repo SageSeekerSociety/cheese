@@ -41,9 +41,9 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import AcceptService, ReviewerAdmission
+from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
-from app.domain.topic import naming
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
@@ -140,8 +140,8 @@ async def create_accept_card(
     # any more — see AcceptService.create_card).
     await db.commit()
     await announce_stale(topic_id, "accept")
-    # Work handed in for acceptance: a moment the room's direction may show.
-    naming.nudge(topic_id, "signal")
+    # Work handed in for acceptance: a moment the task's direction may show.
+    naming.nudge(task_id, "signal")
     if pr_publish.enabled():
         project_id = await svc.project_id_for_topic(topic_id)
         pr_publish.dispatch(

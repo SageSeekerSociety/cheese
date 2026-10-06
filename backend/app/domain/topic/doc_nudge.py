@@ -23,7 +23,7 @@
 那个布尔，就是同一件事多一份会漂移的声明（结论 19、ARCH §9.1 判据②），所以答案
 经 ``chat_service`` 带进来（`ChatService.room_is_a_work_room`，`nudge` 经它取）。
 
-和 :mod:`app.domain.topic.naming` 一样全程安静失败：它是锦上添花，不能让结束的那
+和 :mod:`app.domain.room_task.naming` 一样全程安静失败：它是锦上添花，不能让结束的那
 一轮因为它出错。
 """
 
