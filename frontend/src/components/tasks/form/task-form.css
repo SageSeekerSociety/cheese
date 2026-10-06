@@ -1,60 +1,62 @@
-/* 发题表单那几张卡共用的一层皮（#2143）。
+/* 发题表单那几节共用的排法（每一节都 `scoped src` 引这一份）。
  *
- * 每一张卡都 `scoped src` 引这一份（和 `components/accept/accept-card.css` 是同一个
- * 办法）：一份规矩，谁画都不走样。写在某一个组件里、靠宿主的 scoped 属性落到别人
- * 身上，那是一条看不见的边 —— 哪天那张卡挪个地方，样式就静悄悄地没了。
- *
- * `v-card-text` 那条也在这里：垫在卡里的那一栏是每张卡自己写的，scoped 属性跟着写
- * 它的那个组件走，所以这条规矩必须跟着卡一起走。
+ * 写在某一个组件里、靠宿主的 scoped 属性落到别人身上，那是一条看不见的边 —— 哪天那
+ * 一节挪个地方，样式就静悄悄地没了。所以规矩跟着每一节一起走。
  */
 
-/* 一张卡：白底、一圈细边，指上去抬一点点（不是换色）。 */
-.form-card {
-  border: 1px solid rgba(var(--v-border-color), 0.12);
-  background-color: rgb(var(--v-theme-surface));
-  transition:
-    border-color 0.2s ease,
-    transform 0.2s ease,
-    box-shadow 0.2s ease;
+/* 一行两栏；手机上摞成一栏。 */
+.tf-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
 }
 
-.form-card:hover {
-  border-color: rgba(var(--v-theme-primary), 0.15);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.05);
+@media (max-width: 599px) {
+  .tf-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-/* 卡与卡之间收窄到 12px（Vuetify 自己的 mb-4 是 16px）。 */
-.mb-4 {
-  margin-bottom: 12px !important;
+/* 字和小输入框排成一句话：「领取后 [30] 天内完成」「[2] – [4] 人」。 */
+.tf-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--text);
+  font-size: 14px;
+  line-height: var(--lh-14);
 }
 
-/* 卡里的一段到下一段之间同样是 12px。 */
-.mt-4 {
-  margin-top: 12px !important;
+.tf-num {
+  flex: none;
+  width: 96px;
 }
 
-.v-card-text {
-  padding-top: 12px;
-  padding-bottom: 16px;
+/* 单选、勾选旁边的字和表单里别的字同一号。 */
+.tf-inline :deep(.v-label),
+.tf-choices :deep(.v-label) {
+  color: var(--text);
+  font-size: 14px;
+  line-height: var(--lh-14);
+  opacity: 1;
 }
 
-/* 浅琥珀底的圆（实名那一块里的那几个图标）。 */
+/* 一组单选，每一项下面跟一行说明。 */
+.tf-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tf-choice-hint {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+
+/* 实名提示框里那几个浅琥珀底的圆。 */
 .primary-soft {
   background-color: rgba(var(--v-theme-primary), 0.08);
-}
-
-/* 必填栏标签后面那颗星。和 BaseField 同一个色：--danger-ink 写字（--danger 只配当
-   标记色，浅色下写这个字对比度不够）。
- *
- * 星号由 ::after 画出来，标签里那个 span 是空的：标签的可读文字一个字母都不多，
- * 读屏听到的就是字段名本身（必填这件事由控件自己的 aria-required 说）。真在标签里
- * 写一颗 `*`，标签文字就变了，外面那些「按标签文字找控件」的代码会一起失准 ——
- * 这不是理论，发题表单那几条测试就是那样找控件的。 */
-.tf-req {
-  color: var(--danger-ink);
-}
-
-.tf-req::after {
-  content: ' *';
 }

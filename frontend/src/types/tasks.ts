@@ -106,7 +106,6 @@ export interface Task {
   topics?: Topic[]
   userDeadline?: number
   participationEligibility?: ParticipationEligibility
-  videoUrl?: string
   /** 这道题挂着几份材料。列表接口一并给（只增不改的那个数，不带文件本体）。 */
   attachmentCount?: number
   /** 我这条领取的档位。`null`/缺省 = 我没领这道题。随 `queryJoined` 一族回来。 */

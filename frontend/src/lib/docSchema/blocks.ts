@@ -1,6 +1,6 @@
 // The blocks a document has beyond plain Markdown: callouts, status tags,
-// timelines, stat cards, columns, charts, folded sections, formulas and
-// footnotes.
+// timelines, stat cards, columns, charts, folded sections, formulas,
+// footnotes and videos (./video.ts).
 //
 // Each one is written in a syntax a reader can follow when the Markdown is
 // opened anywhere else (GitHub alerts, `:::` containers, `<details>`, `$…$`,
@@ -18,6 +18,8 @@ import type { JSONContent, MarkdownToken } from '@tiptap/core'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
 
 import { Mark, mergeAttributes, Node } from '@tiptap/core'
+
+import { Video } from './video'
 
 // ---------------------------------------------------------------------------
 // Containers: `:::name` … `:::`
@@ -778,4 +780,5 @@ export const docBlocks = [
   MathBlock,
   FootnoteRef,
   FootnoteDef,
+  Video,
 ]

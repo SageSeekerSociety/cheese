@@ -215,8 +215,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/spaces/detail/ManageInviteCodes.vue` | D | 读路由；直接取数（`network/api/spaces`） |
 | `views/spaces/detail/ManageTemplates.vue` | D | 读路由；读 store（space） |
 | `views/spaces/detail/ManageTopics.vue` | C | 读 store（space） |
-| `views/spaces/detail/PublishTask.vue` | D | 读路由；直接取数（`network/api/tasks`）；直接取数（`services/ErrorHandler.ts`）；读 store（space） |
-| `views/spaces/detail/SelectTemplate.vue` | D | 读路由；读 store（space） |
+| `views/spaces/detail/PublishTask.vue` | 容器 | 画面在 `PublishTaskView.vue`（A 级）；取数、路由留在本页 |
 | `views/spaces/detail/Tasks.vue` | D | 读路由；直接取数（`network/api/spaces`）；直接取数（`network/api/tasks`）；读 store（space） |
 | `views/spaces/detail/TemplateForm.vue` | D | 读路由；读 store（space） |
 | `views/spaces/detail/analytics/Alerts.vue` | C | 直接取数（`network/api/spaces`） |

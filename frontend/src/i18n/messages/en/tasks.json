@@ -84,40 +84,14 @@
     }
   },
   "form": {
-    "taskName": "Challenge name",
     "participantType": "Participant type",
     "individual": "Individual",
     "taskLevel": "Challenge difficulty",
     "beginner": "Beginner",
     "intermediate": "Intermediate",
     "advanced": "Advanced",
-    "registrationStartAt": "Registration start date",
-    "registrationStartAtHint": "Leave empty to open registration right away",
-    "deadline": "Registration deadline",
     "defaultDeadline": "Default completion deadline",
     "taskDescription": "Challenge description",
-    "participantLimitHint": "Leave empty for no limit on participants",
-    "accessControl": {
-      "title": "Permissions",
-      "enableAccessRestriction": "Restrict access",
-      "enableAccessRestrictionHint": "When on, only users with an email from the selected domains can view and join this challenge",
-      "domainGroups": "Domain groups",
-      "domainGroupsHint": "Choose which domain groups can access this challenge. With none selected, everyone can.",
-      "noDomainGroups": "No domain groups available"
-    },
-    "requireRealName": "Require participants to provide their real name",
-    "requireRealNameHint": "Real-name details include a member's real name, student ID, year and more",
-    "realNameChosen": {
-      "title": "You are requiring real-name details",
-      "line1": "Participants must verify their real name before joining this challenge",
-      "line2": "Everything is stored encrypted and access is tightly controlled",
-      "line3": "Every access to real-name details is logged"
-    },
-    "realNameNotRequired": "Real-name verification is off, so participants can join this challenge anonymously",
-    "submit": "Submit",
-    "realNameTitle": "Real-name requirement",
-    "markdownDescription": "Challenge details (Markdown)",
-    "classification": "Classification",
     "privacy": {
       "title": "How we protect real-name details",
       "intro": "To protect participants, challenges that ask for real-name details come with several safeguards:",
@@ -140,48 +114,70 @@
       "verificationTitle": "Identity verification",
       "understood": "Understand and accept"
     },
-    "basicInfo": "Basic info",
     "teamLimit": "Team limit",
     "participantLimit": "Participant limit",
     "unlimited": "No limit",
-    "minTeamSize": "Minimum team size",
-    "maxTeamSize": "Maximum team size",
-    "teamNote": {
-      "recorded": "When an application is approved, the platform {roster}",
-      "roster": "records the team's current roster",
-      "basis": "Whichever policy you choose, the final participation record is based only on the roster at approval",
-      "noLock": ": the team can still add or remove members, but the changes do not affect the recorded participation",
-      "lockOnApproval": ": team members are locked and cannot change"
-    },
-    "schedule": "Schedule",
-    "deadlineHint": "Leave empty for no registration deadline",
-    "defaultDeadlinePrefix": "Within",
-    "defaultDeadlineSuffix": "days of claiming",
-    "videoTitle": "Video link",
-    "video": {
-      "label": "Video link (optional)",
-      "hint": "Bilibili video links are supported",
-      "dialogTitle": "About this video link",
-      "dialogBody": "We couldn't read this video link, so it may be wrong. Only Bilibili videos can be embedded right now. Save anyway?",
-      "dialogContinue": "Save anyway"
-    },
+    "minTeamSize": "Minimum",
+    "maxTeamSize": "Maximum",
     "team": "Team",
-    "teamLockingPolicy": "Team member lock policy",
-    "teamLockingPolicyNoLock": "Allow changes",
-    "teamLockingPolicyNoLockDesc": "After approval, the team can still add or remove members (changes do not affect the recorded participation)",
-    "teamLockingPolicyLockOnApproval": "Lock on approval",
-    "teamLockingPolicyLockOnApprovalDesc": "After approval, the team roster is fully locked and no member changes are allowed",
-    "teamMemberManagement": "About team membership",
+    "teamLockingPolicyLockOnApproval": "Locked on approval",
     "validation": {
-      "categoryRequired": "Select a category",
-      "httpsRequired": "Enter a valid HTTPS link",
-      "teamSizeOrder": "The maximum can't be smaller than the minimum"
+      "categoryRequired": "Choose a category",
+      "teamSizeOrder": "The maximum cannot be below the minimum",
+      "nameRequired": "Name is missing",
+      "submitterTypeRequired": "Choose who takes it",
+      "completionRequired": "Time to complete is missing",
+      "rankRequired": "Choose a difficulty"
     },
-    "pdfParametersName": "PDF batch publish parameters"
+    "content": "Content",
+    "name": "Name",
+    "namePlaceholder": "e.g. Reproduce an image classification baseline",
+    "description": "Description",
+    "descriptionPlaceholder": "Requirements, deliverables and grading",
+    "participation": "Participation",
+    "submitterType": "Taken by",
+    "submitterTypeFixed": "Cannot be changed after publishing",
+    "rank": "Difficulty",
+    "teamLocking": {
+      "label": "Team changes",
+      "free": "Allowed",
+      "freeHint": "Members can still be added or removed after approval",
+      "locked": "Locked on approval",
+      "lockedHint": "The roster at approval is final"
+    },
+    "teamSize": "Team size",
+    "teamSizeUnit": "people",
+    "time": "Schedule",
+    "registration": "Registration",
+    "registrationStart": "Start date",
+    "registrationEnd": "End date",
+    "completion": "Time to complete",
+    "completionPrefix": "Within",
+    "completionSuffix": "days of taking it",
+    "classify": "Category and topics",
+    "category": "Category",
+    "topics": "Topics",
+    "topicsPlaceholder": "Choose topics",
+    "noCategories": "No categories",
+    "noTopics": "No topics",
+    "more": {
+      "title": "More settings",
+      "summaryAll": "Open to all members",
+      "summaryDomains": "Only {names}",
+      "summaryRealName": "Real name required",
+      "summaryNoRealName": "No real name",
+      "summaryTeachingOwn": "Own AI guidance",
+      "summaryTeachingDefault": "Space AI guidance",
+      "access": "Who can take it",
+      "accessAll": "All members of the space",
+      "accessDomains": "Chosen email domain groups",
+      "noDomainGroups": "No email domain groups",
+      "realName": "Require real names",
+      "realNameHint": "Name, student ID and year"
+    }
   },
   "publish": {
-    "title": "Publish challenge",
-    "submit": "Submit"
+    "title": "Publish challenge"
   },
   "eligibility": {
     "TASK_NOT_APPROVED": "This challenge has not been approved yet; it can be claimed once approved",
@@ -270,9 +266,6 @@
   "brief": {
     "details": "Details",
     "empty": "No details",
-    "video": "Video",
-    "videoFrame": "Challenge video",
-    "videoExternal": "Only Bilibili videos can be embedded; others open in a new window",
     "materials": "Materials"
   },
   "attachments": {
@@ -345,7 +338,8 @@
   "edit": {
     "saveChanges": "Save changes",
     "saveAndResubmit": "Save and resubmit for review",
-    "resubmitted": "Resubmitted — waiting for an admin to review it"
+    "resubmitted": "Resubmitted — waiting for an admin to review it",
+    "crumb": "Edit"
   },
   "loadError": {
     "title": "Couldn't load"
@@ -564,12 +558,13 @@
     "comment": "Comment: {comment}"
   },
   "attachmentPicker": {
-    "title": "Attachments (optional)",
-    "subtitle": "People who claim or review this challenge can download them",
-    "label": "Choose materials to publish with the challenge",
+    "title": "Attachments",
     "limit": "Up to {size} per file",
     "remove": "Remove {name}",
-    "uploadFailed": "Couldn't upload \"{name}\": {error}"
+    "uploadFailed": "Couldn't upload \"{name}\": {error}",
+    "add": "Add files",
+    "uploading": "Uploading…",
+    "removeFailed": "Could not remove “{name}”: {error}"
   },
   "verifyForm": {
     "savedFound": "Found contact details you saved before. Fill them in?",
@@ -592,18 +587,7 @@
     "reasonTooLong": "The reason can be at most 500 characters"
   },
   "detail": {
-    "editTask": "Edit challenge",
     "updateSuccess": "Challenge updated"
-  },
-  "publishChecks": {
-    "name": "Title: required, up to 100 characters",
-    "submitterType": "Participant type: choose one (individual / team)",
-    "rank": "Difficulty: choose one (beginner / intermediate / advanced)",
-    "categoryId": "Category: choose one of this space's categories",
-    "defaultDeadline": "Days after claiming: enter a whole number",
-    "teamSize": "Team size: at least 1, and the maximum no smaller than the minimum (sent only for team challenges)",
-    "participantLimit": "Participant limit: leave empty for no limit; otherwise a whole number ≥ 1 (clearing the box counts as invalid)",
-    "videoUrl": "Video link: leave empty or use an address starting with https"
   },
   "assistant": {
     "label": "Ask Cheese",

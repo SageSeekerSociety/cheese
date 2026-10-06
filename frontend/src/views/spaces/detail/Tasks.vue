@@ -135,7 +135,7 @@ const { t } = useI18n()
 
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
-const { currentSpace, categories } = storeToRefs(spaceStore)
+const { categories } = storeToRefs(spaceStore)
 
 const hotTopics = ref<Topic[]>([])
 
@@ -287,35 +287,11 @@ const visiblePublishedTasks = computed(() => {
   })
 })
 
-const navigateToPublishTask = async () => {
-  try {
-    if (currentSpace.value) {
-      const taskTemplates = JSON.parse(currentSpace.value.taskTemplates || '[]')
-      // 如果当前有选中的分类，将它作为查询参数传递（用于预选分类）
-      const query: Record<string, string> = {}
-      if (selectedCategoryId.value) {
-        query.categoryId = String(selectedCategoryId.value)
-      }
-
-      if (taskTemplates.length > 0) {
-        router.push({
-          name: 'SpacesDetailSelectTemplate',
-          params: { spaceId: route.params.spaceId },
-          query,
-        })
-      } else {
-        router.push({
-          name: 'SpacesDetailPublishTask',
-          params: { spaceId: route.params.spaceId },
-          query,
-        })
-      }
-    }
-  } catch (error) {
-    console.error('获取题目板详情失败:', error)
-    // 如果出错，直接跳转到发布赛题页面
-    router.push({ name: 'SpacesDetailPublishTask', params: { spaceId: route.params.spaceId } })
-  }
+// 从某个分类的列表过来时，把它带过去预选。
+const navigateToPublishTask = () => {
+  const query: Record<string, string> = {}
+  if (selectedCategoryId.value) query.categoryId = String(selectedCategoryId.value)
+  router.push({ name: 'SpacesDetailPublishTask', params: { spaceId: route.params.spaceId }, query })
 }
 
 // 「发布题目」是这一页的主操作：桌面上在页头右边，手机上是顶栏右边那一颗。

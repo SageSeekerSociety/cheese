@@ -84,7 +84,6 @@
     }
   },
   "form": {
-    "taskName": "题目名称",
     "participantType": "参与者类型",
     "individual": "个人",
     "team": "团队",
@@ -92,39 +91,9 @@
     "beginner": "初级",
     "intermediate": "中级",
     "advanced": "高级",
-    "registrationStartAt": "报名开始日期",
-    "registrationStartAtHint": "留空表示不限制报名开始时间",
-    "deadline": "报名截止日期",
     "defaultDeadline": "默认完成期限",
     "taskDescription": "题目描述",
-    "participantLimitHint": "留空表示不限制参与人数",
-    "teamLockingPolicy": "队伍成员锁定策略",
-    "teamLockingPolicyNoLock": "允许自由调整",
-    "teamLockingPolicyNoLockDesc": "参与申请通过后，队伍仍可自由添加或移除成员（变更不影响已记录的参与情况）",
-    "teamLockingPolicyLockOnApproval": "审核通过后锁定",
-    "teamLockingPolicyLockOnApprovalDesc": "参与申请通过后，队伍成员名单将被完全锁定，无法进行任何成员变更",
-    "teamMemberManagement": "队伍成员管理说明",
-    "accessControl": {
-      "title": "权限设置",
-      "enableAccessRestriction": "启用访问限制",
-      "enableAccessRestrictionHint": "开启后，只有指定域名邮箱的用户才能查看和参与此题目",
-      "domainGroups": "域名组",
-      "domainGroupsHint": "选择允许访问的域名组，未选择任何域名组时所有用户均可访问",
-      "noDomainGroups": "暂无可用域名组"
-    },
-    "requireRealName": "要求参与者提供实名信息",
-    "requireRealNameHint": "实名信息包括成员的真实姓名、学号、年级等信息",
-    "realNameChosen": {
-      "title": "你已选择要求实名信息",
-      "line1": "参与者需完成实名认证方可参与此题目",
-      "line2": "所有信息经过加密存储，访问受到严格控制",
-      "line3": "系统会记录所有对实名信息的访问行为"
-    },
-    "realNameNotRequired": "未启用实名认证要求，参与者可匿名参与此题目",
-    "submit": "提交",
-    "realNameTitle": "实名信息要求",
-    "markdownDescription": "题目详情（Markdown 格式）",
-    "classification": "分类标签",
+    "teamLockingPolicyLockOnApproval": "报名通过后锁定",
     "privacy": {
       "title": "实名信息隐私保护",
       "intro": "为保护参与者隐私，我们对需要实名信息的题目采取了多重保护措施：",
@@ -147,45 +116,71 @@
       "verificationTitle": "身份验证",
       "understood": "了解并接受"
     },
-    "basicInfo": "基本信息",
-    "teamLimit": "队伍数量限制",
-    "participantLimit": "参与者人数限制",
+    "teamLimit": "队伍数上限",
+    "participantLimit": "人数上限",
     "unlimited": "不限",
-    "minTeamSize": "最小队伍人数",
-    "maxTeamSize": "最大队伍人数",
-    "teamNote": {
-      "recorded": "系统会在参与申请被审核通过时{roster}",
-      "roster": "记录当前的队伍成员名单",
-      "basis": "无论选择哪种策略，最终的参与记录都只会基于审核通过时的成员名单",
-      "noLock": "：队伍可以继续添加/移除成员，但这些变动不会影响已记录的参与情况",
-      "lockOnApproval": "：队伍成员将被锁定，无法再进行任何成员变更"
-    },
-    "schedule": "时间设置",
-    "deadlineHint": "留空表示不设置报名截止时间",
-    "defaultDeadlinePrefix": "领取题目后",
-    "defaultDeadlineSuffix": "天",
-    "videoTitle": "视频链接",
-    "video": {
-      "label": "视频链接（选填）",
-      "hint": "支持 Bilibili 视频链接",
-      "dialogTitle": "视频链接提示",
-      "dialogBody": "无法解析该视频链接，视频链接可能有误。当前仅支持 Bilibili 视频嵌入播放，是否继续保存？",
-      "dialogContinue": "继续保存"
-    },
+    "minTeamSize": "最少人数",
+    "maxTeamSize": "最多人数",
     "validation": {
-      "categoryRequired": "选择所属分类",
-      "httpsRequired": "请输入有效的 HTTPS 链接",
-      "teamSizeOrder": "最大人数不能小于最小人数"
+      "categoryRequired": "未选择分类",
+      "teamSizeOrder": "最多人数不能少于最少人数",
+      "nameRequired": "未填写名称",
+      "submitterTypeRequired": "未选择参与方式",
+      "completionRequired": "未填写完成期限",
+      "rankRequired": "未选择难度"
     },
-    "pdfParametersName": "PDF 批量发布参数"
+    "content": "题目内容",
+    "name": "名称",
+    "namePlaceholder": "例如：图像分类基线复现",
+    "description": "描述",
+    "descriptionPlaceholder": "题目要求、交付内容、评分方式",
+    "participation": "参与",
+    "submitterType": "参与方式",
+    "submitterTypeFixed": "发布后不可修改",
+    "rank": "难度",
+    "teamLocking": {
+      "label": "队伍成员变更",
+      "free": "允许变更",
+      "freeHint": "报名通过后仍可增减成员",
+      "locked": "报名通过后锁定",
+      "lockedHint": "以报名通过时的名单为准"
+    },
+    "teamSize": "每队人数",
+    "teamSizeUnit": "人",
+    "time": "时间",
+    "registration": "报名时间",
+    "registrationStart": "开始日期",
+    "registrationEnd": "截止日期",
+    "completion": "完成期限",
+    "completionPrefix": "领取后",
+    "completionSuffix": "天内完成",
+    "classify": "分类与话题",
+    "category": "分类",
+    "topics": "话题",
+    "topicsPlaceholder": "选择话题",
+    "noCategories": "暂无分类",
+    "noTopics": "暂无话题",
+    "more": {
+      "title": "更多设置",
+      "summaryAll": "全部成员可领取",
+      "summaryDomains": "仅限 {names}",
+      "summaryRealName": "需实名",
+      "summaryNoRealName": "无需实名",
+      "summaryTeachingOwn": "本题单独指导",
+      "summaryTeachingDefault": "空间默认指导",
+      "access": "可领取范围",
+      "accessAll": "空间全部成员",
+      "accessDomains": "指定邮箱域名组",
+      "noDomainGroups": "暂无邮箱域名组",
+      "realName": "要求实名信息",
+      "realNameHint": "包括姓名、学号、年级"
+    }
   },
   "detail": {
-    "editTask": "编辑题目",
     "updateSuccess": "题目更新成功"
   },
   "publish": {
-    "title": "发布题目",
-    "submit": "提交"
+    "title": "发布题目"
   },
   "eligibility": {
     "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能领取",
@@ -274,9 +269,6 @@
   "brief": {
     "details": "题目详情",
     "empty": "暂无详情",
-    "video": "视频",
-    "videoFrame": "题目视频",
-    "videoExternal": "只能嵌入 B 站视频，其他视频在新窗口打开",
     "materials": "材料"
   },
   "attachments": {
@@ -349,7 +341,8 @@
   "edit": {
     "saveChanges": "保存更改",
     "saveAndResubmit": "保存并提交审核",
-    "resubmitted": "重新提交审核成功，等待管理员审核"
+    "resubmitted": "重新提交审核成功，等待管理员审核",
+    "crumb": "编辑"
   },
   "loadError": {
     "title": "加载失败"
@@ -568,12 +561,13 @@
     "comment": "评语: {comment}"
   },
   "attachmentPicker": {
-    "title": "附件（可选）",
-    "subtitle": "领取这道题的人和审核它的人可以下载",
-    "label": "选择要随题一起发出的材料",
+    "title": "附件",
     "limit": "单个文件不超过 {size}",
     "remove": "移除 {name}",
-    "uploadFailed": "「{name}」上传失败：{error}"
+    "uploadFailed": "「{name}」上传失败：{error}",
+    "add": "添加文件",
+    "uploading": "上传中…",
+    "removeFailed": "「{name}」移除失败：{error}"
   },
   "verifyForm": {
     "savedFound": "检测到你之前保存的联系方式，是否填入？",
@@ -594,16 +588,6 @@
     "phoneInvalid": "请输入正确的手机号",
     "emailInvalid": "请输入正确的邮箱地址",
     "reasonTooLong": "理由最多500个字符"
-  },
-  "publishChecks": {
-    "name": "标题：必填，最多 100 个字",
-    "submitterType": "参与者类型：必选一个（个人 / 团队）",
-    "rank": "题目难度：必选一个（初级 / 中级 / 高级）",
-    "categoryId": "所属分类：必选一个（这块板的分类）",
-    "defaultDeadline": "领取后默认天数：要填一个整数",
-    "teamSize": "队伍人数：最小 1 人，且上限不能小于下限（选「团队」时这两项才发出去）",
-    "participantLimit": "参与人数上限：不填 = 不限；填了就得是 ≥ 1 的整数（删空会被当成填错）",
-    "videoUrl": "讲解视频链接：要么不填，要么是一个 https 开头的地址"
   },
   "assistant": {
     "label": "问芝士",

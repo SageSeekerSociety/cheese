@@ -53,52 +53,6 @@ export function useTaskData() {
     return null
   })
 
-  /** 判断是否为 TipTap JSON 格式 */
-  const isTipTapJson = (raw: string): boolean => {
-    if (!raw) return false
-    try {
-      const parsed = JSON.parse(raw)
-      return typeof parsed === 'object' && parsed !== null && parsed.type === 'doc'
-    } catch {
-      return false
-    }
-  }
-
-  /** 解析描述内容，支持 TipTap JSON 和 Markdown 格式 */
-  const parseDescription = (raw: string): any => {
-    if (!raw) return { type: 'doc', content: [] }
-    if (isTipTapJson(raw)) {
-      try {
-        return JSON.parse(raw)
-      } catch {
-        return { type: 'doc', content: [] }
-      }
-    }
-    // 如果是 markdown 格式，返回包含 markdown 内容的文档结构
-    return {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [
-            {
-              type: 'text',
-              text: raw,
-            },
-          ],
-        },
-      ],
-    }
-  }
-
-  /** 判断描述内容的原始格式 */
-  const getDescriptionFormat = (raw: string): 'markdown' | 'tiptap' => {
-    if (isTipTapJson(raw)) {
-      return 'tiptap'
-    }
-    return 'markdown'
-  }
-
   const editTaskData = computed(() => {
     if (!taskData.value) return {}
     return {
@@ -112,9 +66,8 @@ export function useTaskData() {
       deadline: taskData.value.deadline,
       resubmittable: taskData.value.resubmittable,
       editable: taskData.value.editable,
-      description: parseDescription(taskData.value.description),
-      descriptionFormat: getDescriptionFormat(taskData.value.description),
-      originalDescription: taskData.value.description,
+      // 编辑器的 JSON，或者从 PDF 导入时存下的 Markdown：表单两种都认（`descriptionDoc`）。
+      description: taskData.value.description,
       requireRealName: taskData.value.requireRealName,
       minTeamSize: taskData.value.minTeamSize,
       maxTeamSize: taskData.value.maxTeamSize,
@@ -123,7 +76,6 @@ export function useTaskData() {
       categoryId: taskData.value.category?.id,
       accessControlEnabled: taskData.value.accessControlEnabled,
       accessDomainGroupIds: taskData.value.accessDomainGroupIds ?? [],
-      videoUrl: taskData.value.videoUrl || '',
     }
   })
 
