@@ -87,12 +87,10 @@ so the fork is caught before push"，<&backend/pyproject.toml> 里 ruff 的 `ign
 （类型检查焊死在构建里），CI 的 `Desktop Core` job 另外单独跑 `desktop-check` /
 `desktop-test` / `desktop-build` / `desktop-tauri-clippy`。
 
-附带两个坑：
+附带一个坑：
 
 - <&frontend/package.json> 的 `lint` 是 `eslint . --fix`——**会改文件**。<&frontend/Taskfile.yml>
   的 `fe:check` 调的就是它，所以 `task check` 会以"检查"的名义改你的工作区。这个脚本原样搬进 CI 是错的。
-- <&frontend/.husky/> 里躺着一套 husky（`pre-commit` → `pnpx lint-staged`，`commit-msg` → commitlint），
-  由 `package.json` 的 `postinstall: husky install` 装。它跟 <&.claude/scripts/pre-commit> 是两套互不知道对方存在的东西。
 
 ### 4. 我们的本地闸门，仓库里没有安装入口
 

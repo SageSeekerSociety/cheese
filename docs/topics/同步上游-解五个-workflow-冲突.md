@@ -32,7 +32,7 @@
 所以以上游为底。但**上游那份漏掉了本地建这个文件的初衷**：它的 `Ratchet unit tests` 跑的是 `node --test scripts/*.test.mjs`，测的是 ratchet 脚本自己，**应用自己的 27 个 vitest 文件 / 289 条断言一条都没跑**。已挑进来的四样：
 
 1. `Unit tests: pnpm exec vitest run`（补回上面这个缺口；`pnpm run test` 是 watch 模式，CI 不能用）
-2. `persist-credentials: false`（package.json 有 `postinstall: husky install`，第三方脚本跑的时候没理由把 token 留在 `.git/config` 里）
+2. `persist-credentials: false`（依赖的安装脚本跑的时候没理由把 token 留在 `.git/config` 里）
 3. 类型检查的 `NODE_OPTIONS=--max-old-space-size=4096`（2 核 7G 的 hosted runner 上 Node 默认堆约 2G，vue-tsc 实测峰值 1.7G）
 4. 本地的实测耗时注释，以及"`vite build` 是**故意**没放进来的"那段说明——免得有人把绿勾读成它也覆盖了构建
 

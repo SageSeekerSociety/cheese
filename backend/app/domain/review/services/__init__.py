@@ -96,9 +96,6 @@ from app.domain.review.services._shared import (
     _NOT_THIS_ROOMS_WORK as _NOT_THIS_ROOMS_WORK,
 )
 from app.domain.review.services._shared import (
-    _NOTHING_TO_DELIVER as _NOTHING_TO_DELIVER,
-)
-from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES as _REQUIRED_CHECK_GRACE_MINUTES,
 )
 from app.domain.review.services._shared import (
