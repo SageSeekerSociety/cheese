@@ -21,6 +21,7 @@
 set -uo pipefail
 
 REPO=SageSeekerSociety/cheese
+DEV_VERSION_URL=https://okcheese.com/api/version
 INTERVAL=${PR_WATCH_INTERVAL:-60}
 enqueue=0 deploy=0 prs=()
 for a in "$@"; do
@@ -80,7 +81,16 @@ while :; do
         last[$p]=$key
       fi
       case "$d" in
-        "completed success "*) ended[$p]=1 ok[$p]=1 ;;
+        "completed success "*)
+          # A run can succeed while shipping an older commit whose images were
+          # the newest built, so deployed means the live version contains it.
+          live=$(curl -fsS "$DEV_VERSION_URL" 2>/dev/null | jq -r '.data.sha // empty')
+          if [ -n "$live" ] && gh api "repos/$REPO/compare/$merge...$live" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'; then
+            say "$p" "live on dev at ${live:0:9}"; ended[$p]=1 ok[$p]=1
+          elif [ "${last[$p]:-}" != "$key live" ]; then
+            say "$p" "deploy run ${d##* } succeeded but dev runs ${live:0:9}, which lacks it; waiting"
+            last[$p]="$key live"
+          fi ;;
         completed\ *) ended[$p]=1 ;;
       esac
       continue
