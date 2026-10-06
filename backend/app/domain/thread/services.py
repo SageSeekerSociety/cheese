@@ -36,16 +36,14 @@ async def _main_line_room(session: AsyncSession, block: Block):
     )
     if kind != ConversationKind.room:
         return None
-    room = (
+    # A private chat has no 支线: only a channel's main line does.
+    return (
         await session.execute(
-            select(_rooms.c.id, _rooms.c.is_private, _rooms.c.status).where(
-                _rooms.c.id == block.conversation_id
+            select(_rooms.c.id, _rooms.c.status).where(
+                _rooms.c.id == block.conversation_id, _rooms.c.is_private.is_(False)
             )
         )
     ).first()
-    if room is None or room.is_private:
-        return None
-    return room
 
 
 async def open_thread(session: AsyncSession, block_id: uuid.UUID, *, by: str) -> Thread:
@@ -162,9 +160,11 @@ async def conversation_inputs(
 ) -> list[Block]:
     """Everything said in a conversation, oldest first, with a 支线's message
     and its files in front: what its unread inputs are read from."""
-    from app.domain.block.repositories import BlockRepository
-
-    blocks = await BlockRepository(session).list_for_topic(conversation_id)
+    blocks = await session.scalars(
+        select(Block)
+        .where(Block.conversation_id == conversation_id)
+        .order_by(Block.created_at, Block.id)
+    )
     return [*await thread_opening(session, conversation_id), *blocks]
 
 

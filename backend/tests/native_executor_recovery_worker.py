@@ -38,11 +38,12 @@ class SocketChannel(SeatChannel):
         self.root = Path(descriptor["root"])
         session = SessionRef(
             uuid.UUID(descriptor["project"]),
-            uuid.UUID(descriptor["topic"]),
+            uuid.UUID(descriptor["room"]),
             descriptor["session_agent"],
             harness=CLAUDE_CODE,
+            inner_id=uuid.UUID(descriptor["topic"]),
         )
-        self.seats[(session.topic_id, descriptor["agent"])] = (
+        self.seats[(session.conversation_id, descriptor["agent"])] = (
             session,
             descriptor["placed_state"],
         )

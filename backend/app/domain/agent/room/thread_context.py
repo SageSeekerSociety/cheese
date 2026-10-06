@@ -2,8 +2,8 @@
 
 from typing import TYPE_CHECKING
 
-from app.domain.block.repositories import BlockRepository
 from app.domain.room_task.models import TaskStatus
+from app.domain.thread.reads import said_before
 from app.domain.topic.models import Topic
 
 if TYPE_CHECKING:
@@ -24,9 +24,7 @@ async def thread_context(session: "AsyncSession", room: Topic, root) -> str:
     def line(block) -> str:
         return f"[{block.author}] {block.content}"
 
-    earlier = await BlockRepository(session).messages_before(
-        room.id, root.created_at, limit=THREAD_CONTEXT_MESSAGES
-    )
+    earlier = await said_before(session, root, limit=THREAD_CONTEXT_MESSAGES)
     parts = [
         f"你在频道「#{room.title}」的一条支线里。这里的人 @ 你，你才回答。"
         "你只读：可以看代码、跑只读的命令、查资料，不改项目，不交付，不摆预览；"

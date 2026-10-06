@@ -10,7 +10,20 @@ reads.
 
 import uuid
 
-from sqlalchemy import DateTime, String, Uuid, and_, column, func, or_, select, table
+from sqlalchemy import (
+    DateTime,
+    String,
+    Uuid,
+    and_,
+    any_,
+    bindparam,
+    column,
+    func,
+    or_,
+    select,
+    table,
+)
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import AuthorType, Block, BlockKind
@@ -33,8 +46,45 @@ _tasks = table(
     column("upgraded_from_block_id", Uuid),
 )
 
+
+def _among(ids):
+    """One array parameter, not an IN list: a busy channel's whole timeline is
+    tens of thousands of ids, and asyncpg refuses more than 32767 bound values
+    in one statement."""
+    return any_(bindparam(None, list(ids), type_=ARRAY(Uuid)))
+
+
 #: How much of the last reply the main line shows: two lines of it.
 LAST_REPLY_CHARS = 200
+
+
+async def said_in(session: AsyncSession, block_id: uuid.UUID) -> uuid.UUID | None:
+    """The conversation a message was said in, or None when there is no such
+    message."""
+    return await session.scalar(
+        select(Block.conversation_id).where(Block.id == block_id)
+    )
+
+
+async def root_of(session: AsyncSession, thread: Thread) -> Block | None:
+    """The message a 支线 hangs under."""
+    return await session.get(Block, thread.root_block_id)
+
+
+async def said_before(session: AsyncSession, root: Block, *, limit: int) -> list[Block]:
+    """The ``limit`` messages said in the main line just before the one a 支线
+    hangs under, oldest first: what was being talked about when it was said."""
+    rows = await session.scalars(
+        select(Block)
+        .where(
+            Block.conversation_id == root.conversation_id,
+            Block.kind == BlockKind.message,
+            Block.created_at < root.created_at,
+        )
+        .order_by(Block.created_at.desc(), Block.id.desc())
+        .limit(limit)
+    )
+    return list(reversed(list(rows)))
 
 
 async def _last_replies(
@@ -53,7 +103,7 @@ async def _last_replies(
             .label("rank"),
         )
         .where(
-            Block.conversation_id.in_(thread_ids),
+            Block.conversation_id == _among(thread_ids),
             Block.kind == BlockKind.message,
         )
         .subquery()
@@ -97,7 +147,7 @@ async def under_messages(
     threads = list(
         await session.scalars(
             select(Thread).where(
-                Thread.root_block_id.in_(block_ids), Thread.reply_count > 0
+                Thread.root_block_id == _among(block_ids), Thread.reply_count > 0
             )
         )
     )
@@ -114,7 +164,7 @@ async def _participants(
     roots = {
         block.id: block.author
         for block in await session.scalars(
-            select(Block).where(Block.id.in_([t.root_block_id for t in threads]))
+            select(Block).where(Block.id == _among([t.root_block_id for t in threads]))
         )
     }
     said: dict[uuid.UUID, list[str]] = {
@@ -124,7 +174,7 @@ async def _participants(
     rows = await session.execute(
         select(Block.conversation_id, Block.author, func.min(Block.created_at))
         .where(
-            Block.conversation_id.in_(list(said)),
+            Block.conversation_id == _among(said),
             Block.kind == BlockKind.message,
         )
         .group_by(Block.conversation_id, Block.author)
@@ -153,7 +203,7 @@ async def _unread(
             ),
         )
         .where(
-            Block.conversation_id.in_([t.id for t in threads]),
+            Block.conversation_id == _among([t.id for t in threads]),
             Block.kind == BlockKind.message,
             Block.author != viewer,
             Block.author_type == AuthorType.participant,
@@ -188,7 +238,7 @@ async def in_room(
     roots = {
         block.id: block
         for block in await session.scalars(
-            select(Block).where(Block.id.in_([t.root_block_id for t in threads]))
+            select(Block).where(Block.id == _among([t.root_block_id for t in threads]))
         )
     }
     tasks = {
@@ -200,7 +250,8 @@ async def in_room(
                 _tasks.c.status,
                 _tasks.c.upgraded_from_block_id,
             ).where(
-                _tasks.c.upgraded_from_block_id.in_([t.root_block_id for t in threads])
+                _tasks.c.upgraded_from_block_id
+                == _among([t.root_block_id for t in threads])
             )
         )
     }

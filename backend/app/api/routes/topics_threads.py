@@ -21,7 +21,6 @@ from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.runtime import announce_stale
-from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.thread import reads
 from app.domain.thread.services import open_thread
@@ -52,10 +51,10 @@ async def open_block_thread(
     """The 支线 under a message in a channel's main line, opened if it has
     none. A person opens it by replying there; 芝士's is opened for it when
     someone calls it in the main line."""
-    block = await BlockRepository(db).get(block_id)
-    if block is None:
+    conversation_id = await reads.said_in(db, block_id)
+    if conversation_id is None:
         raise NotFoundError("Block not found")
-    place = await TopicService(db).place_or_404(block.conversation_id)
+    place = await TopicService(db).place_or_404(conversation_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("threadOpenedByPerson"))
@@ -94,7 +93,7 @@ async def get_thread(
     await _actor_in_place(resolver, place)
     if place.thread is None:
         raise NotFoundError("Thread not found")
-    root = await BlockRepository(db).get(place.thread.root_block_id)
+    root = await reads.root_of(db, place.thread)
     return ok(
         {
             **_thread_out(place.thread),

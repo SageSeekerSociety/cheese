@@ -56,7 +56,8 @@ async def group_data(db, rows, *, operation=None):
             db,
             event_id=settlement["delivery_event_id"],
             project_id=first.project_id,
-            topic_id=await room_of(db, first.conversation_id),
+            # The answer is delivered in the conversation it was asked in.
+            topic_id=first.conversation_id,
             recipient=first.meta["ask_origin"]["recipient_handle"],
         )
     return {
