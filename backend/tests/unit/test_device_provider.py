@@ -890,18 +890,60 @@ async def test_a_release_refused_by_a_busy_conversation_waits_for_a_later_turn(
     assert hub.commands() == ["/reload-plugins"]
 
 
-@pytest.mark.parametrize("busy", [{"working": True}, {"tasks": {"id": "running"}}])
-async def test_a_busy_seat_never_stages_its_release_even_if_another_transcript_is_idle(
-    busy,
-):
+async def test_a_seat_in_a_turn_never_stages_its_release():
     hub = FakeHub()
     room = _executor_room(hub)
     first = await room.ensure()
-    hub.ping = {"alive": True, **busy}
+    hub.ping = {"alive": True, "working": True}
 
     assert await room.ensure() is first
     assert not [stdin for argv, stdin in hub.execs if argv == ["python3", "-"]]
     assert hub.commands() == []
+
+
+async def test_a_seat_with_a_background_command_still_asks_for_its_release():
+    """The release leaves the command running; whether it must wait for it is
+    the machine's to say, where the forwarded view is."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    hub.ping = {"alive": True, "working": False, "tasks": {"id": "running"}}
+
+    assert await room.ensure() is first
+    steps = [
+        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+    ]
+    assert steps == ["stage", "acknowledge"]
+
+
+async def test_a_release_put_off_is_asked_again_while_the_runner_answers():
+    """A screen whose release was put off is not on this release, so a turn
+    that finds its runner answering still asks again instead of reusing it as
+    settled."""
+    from app.core.sandbox_auth import mint_scoped_token
+
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    # From here on a credential the screen ledger can date, as a turn's is.
+    room.arguments["token"] = mint_scoped_token(
+        project_id=str(room.arguments["project_id"]),
+        topic_id=str(room.arguments["topic_id"]),
+        agent_handle="cheese",
+    )
+    hub.release["stage"] = {"changed": False, "busy": True}
+    await room.ensure(runner_alive=True)
+    assert [
+        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+    ][-1:] == ["stage"]
+    hub.release["stage"] = {"changed": True}
+    hub.execs.clear()
+
+    assert await room.ensure(runner_alive=True) is first
+    steps = [
+        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+    ]
+    assert steps == ["stage", "acknowledge"]
 
 
 async def test_a_deferred_room_is_released_without_a_context_tree():
@@ -1765,6 +1807,25 @@ async def test_a_helper_the_release_reloads_is_released_in_place(monkeypatch):
         monkeypatch,
         **{"proxy.js": resident_release.sources()["proxy.js"] + "\n// next\n"},
     )
+
+    assert await room.ensure() is first
+    assert hub.closed == []
+    assert hub.commands() == ["/reload-plugins"]
+
+
+async def test_a_background_command_does_not_hold_off_a_resident_release(
+    monkeypatch,
+):
+    """The CLI the session calls platform tools through reaches a session that
+    has a command running in the background, without ending it."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    _deploy_helpers(
+        monkeypatch,
+        **{"cheese.py": resident_release.sources()["cheese.py"] + "\n# next\n"},
+    )
+    hub.ping = {"alive": True, "working": False, "tasks": {"bash-1": "local_bash"}}
 
     assert await room.ensure() is first
     assert hub.closed == []

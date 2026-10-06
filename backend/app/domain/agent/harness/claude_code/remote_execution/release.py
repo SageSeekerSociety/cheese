@@ -163,7 +163,7 @@ def replace(path, content):
     temporary.replace(path)
 
 
-def stage(home, sources, seat="", session_id=""):
+def stage(home, sources, seat="", session_id="", background=False):
     """Install a release into the session that asked for it.
 
     ``seat`` is that session's own directory inside the room's home
@@ -173,6 +173,10 @@ def stage(home, sources, seat="", session_id=""):
     The transcript config dir is the room's. A named seat owns its helpers and
     hook settings, so releasing it cannot replace another seat's tool code or
     redirect its hooks. The busy check still reads room transcripts.
+    ``background``: the session has a command running in the background. The
+    release leaves the process and its commands running, so that only matters
+    where the release would unmount the forwarded view the command may be
+    reading.
     """
     config = Path(os.path.expandvars(home)) / ".claude"
     platform_dir = Path(os.path.expandvars(home)) / ".cheese"
@@ -221,7 +225,10 @@ def stage(home, sources, seat="", session_id=""):
             # which the caller decides, not a failed release.
             return {"changed": False, "busy": True, "version": version}
     forwarded = directory / "forwarded-project"
-    if Path(target.get("central_workspace", "")) != forwarded:
+    unmounts = Path(target.get("central_workspace", "")) != forwarded
+    if background and unmounts and mount_state(forwarded) != MOUNT_NONE:
+        return {"changed": False, "busy": True, "version": version}
+    if unmounts:
         # `release_mount`, not a bare fusermount: it also takes down a mount whose
         # server has died, which is the one that would otherwise stay here forever.
         # Still loud on failure — replacing the helpers under a view that is still
