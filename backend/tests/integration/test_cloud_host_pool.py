@@ -305,6 +305,48 @@ def test_sessions_of_two_projects_share_a_host_with_room(pool):
     assert len(pool.cloud.created) == 1
 
 
+def _enrolled_long_ago_and_offline(pool, host_id, device, *, offline_for=None):
+    async def go():
+        async with pool.client.test_request_factory() as db:
+            host = await db.get(CloudHost, host_id)
+            host.enrolled_at = datetime.now(UTC) - timedelta(hours=1)
+            if offline_for is not None:
+                host.offline_since = datetime.now(UTC) - offline_for
+            await db.commit()
+
+    pool.run(go)
+    pool.online.discard(device)
+
+
+def test_an_idle_host_not_yet_dialled_back_after_a_restart_is_kept(pool):
+    """Right after the backend restarts, no host's connector has dialled back
+    yet. An idle host the sweep finds offline then is not one that never
+    connected, and is kept."""
+    [alice] = pool.room("alice", 1)
+    first = pool.place("alice", alice)
+    device = pool.up(first)
+    _enrolled_long_ago_and_offline(pool, first, device)
+
+    pool.pool("maintain")
+
+    assert pool.host(first).released_at is None
+
+
+def test_an_idle_host_whose_connector_stays_away_is_replaced(pool):
+    """A host whose connector has stayed away past the time one takes to dial
+    in, with nobody working on it, holds nothing anyone needs: it goes."""
+    [alice] = pool.room("alice", 1)
+    first = pool.place("alice", alice)
+    device = pool.up(first)
+    _enrolled_long_ago_and_offline(
+        pool, first, device, offline_for=timedelta(minutes=6)
+    )
+
+    pool.pool("maintain")
+
+    assert pool.host(first).released_at is not None
+
+
 def test_a_host_whose_connector_went_away_takes_no_new_session(pool):
     """A host whose connector was up and has been gone past the time a
     connector takes to dial in cannot run a sandbox now, and may not for

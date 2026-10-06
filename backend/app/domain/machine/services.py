@@ -838,8 +838,12 @@ class HostPool:
         logger.info("cloud pool added host %s ahead of demand", host.hostname)
 
     async def _silent(self, host: CloudHost, now: datetime) -> bool:
-        """An enrolled host whose connector never reached the platform, with no
-        session working on it yet: nothing there is anyone's, so it is replaced."""
+        """An enrolled host whose connector has not reached the platform for
+        ``CONNECT_GRACE``, with no session working on it yet: nothing there is
+        anyone's, so it is replaced. Offline that long, not merely offline now:
+        right after this backend restarts no connector has dialled back yet, and
+        an idle host found offline then is a healthy one (a dev pool host was
+        deleted that way a minute after a deploy, 2026-10-06 22:10)."""
         from app.domain.agent_session.models import AgentSession
 
         if (
@@ -848,6 +852,8 @@ class HostPool:
             or host.enrolled_at is None
             or now - host.enrolled_at < CONNECT_GRACE
             or self._hub.is_online(host.device_id)
+            or host.offline_since is None
+            or now - host.offline_since < CONNECT_GRACE
         ):
             return False
         working = await self._session.scalar(
