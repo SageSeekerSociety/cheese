@@ -31,6 +31,9 @@ const { t } = useI18n()
 const { mdAndUp } = useDisplay()
 const routeNames = TASK_ROUTE_NAMES
 
+/** 审阅提交时带上去的那几个值：`defineEmits` 和模板里的处理函数共用一份。 */
+type SubmitReviewValues = { accepted?: boolean; score?: number; comment?: string }
+
 const props = defineProps<{
   loading: boolean
   error: string | null
@@ -97,7 +100,7 @@ const emit = defineEmits<{
   'reload-projects': []
   'close-review': []
   'load-more-review': []
-  'submit-review': [values: { accepted?: boolean; score?: number; comment?: string }]
+  'submit-review': [values: SubmitReviewValues]
   'cancel-review': []
 }>()
 
@@ -173,6 +176,11 @@ const claim = computed(() => {
 function onClaim() {
   if (claim.value?.disabled) return
   emit('claim')
+}
+
+/** 审阅那一步把评分和评语往上发，接口由容器接着调。 */
+function onSubmitReview(values: SubmitReviewValues) {
+  emit('submit-review', values)
 }
 
 // ── 我自己的那一份进度 ──────────────────────────────────────────────────────────
@@ -433,9 +441,7 @@ function isActive(tab: { to: { name: string }; also?: string[] }): boolean {
       :highlight-latest="true"
       :title="t('tasks.page.reviewTitle', { name: reviewing.name })"
       @load-more="emit('load-more-review')"
-      @submit-review="
-        (values: { accepted?: boolean; score?: number; comment?: string }) => emit('submit-review', values)
-      "
+      @submit-review="onSubmitReview"
       @cancel-review="emit('cancel-review')"
     />
   </v-dialog>
