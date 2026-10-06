@@ -137,7 +137,7 @@ class _FakeBackend:
     def report_to(self, reader, *, unread, memory) -> None:
         self.unread_probe = unread
 
-    async def memory(self, topic_id, request):
+    async def memory(self, session, request):
         # 这个 double 的会话不存记忆文件：「这里没有」而不是「失败了」。
         return None
 

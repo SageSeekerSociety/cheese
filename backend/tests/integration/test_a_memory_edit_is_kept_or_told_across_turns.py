@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.runner import Runner, memory_root
 from app.domain.agent.memory_ledger import MemoryLedger
 from app.domain.block.models import agent_notice
@@ -54,9 +55,14 @@ class _Session:
         os.environ["HOME"] = str(self.home / str(topic_id))
         return memory_root()
 
-    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict:
-        self.tree(topic_id)
+    async def memory(self, session: SessionRef, request: dict) -> dict:
+        self.tree(session.topic_id)
         return self.runner.sync_memory(request)
+
+
+def _seat(project_id: uuid.UUID, room: uuid.UUID) -> SessionRef:
+    """房间里那位 agent 的会话：对账按座位来。"""
+    return SessionRef(project_id, room, "cheese", harness=CLAUDE_CODE)
 
 
 async def _setup(factory) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
@@ -127,10 +133,10 @@ async def test_an_edit_to_an_existing_memory_reaches_the_platform(
     ledger = _ledger(factory, sessions)
     index = sessions.tree(room) / "team" / INDEX_NAME
 
-    await ledger.sync(room)  # 回合开场：铺下去
+    await ledger.sync(_seat(project_id, room))  # 回合开场：铺下去
     index.write_text(_INDEX + _ADDED, encoding="utf-8")
-    await ledger.sync(room)  # 回合结束：收回来
-    await ledger.sync(room)  # 下一回合开场
+    await ledger.sync(_seat(project_id, room))  # 回合结束：收回来
+    await ledger.sync(_seat(project_id, room))  # 下一回合开场
 
     assert await _index(factory, project_id) == (_INDEX + _ADDED, 2)
     assert index.read_text(encoding="utf-8") == _INDEX + _ADDED
@@ -147,17 +153,19 @@ async def test_two_rooms_each_adding_an_index_line_both_keep_theirs(
     ledger = _ledger(factory, sessions)
 
     # 两间房同一份索引开场，各自记下一条新记忆、各在索引末尾加一行。
-    await ledger.sync(room)
-    await ledger.sync(other)
+    await ledger.sync(_seat(project_id, room))
+    await ledger.sync(_seat(project_id, other))
     (sessions.tree(room) / "team" / INDEX_NAME).write_text(
         _INDEX + _ADDED, encoding="utf-8"
     )
     (sessions.tree(other) / "team" / INDEX_NAME).write_text(
         _INDEX + _ELSEWHERE, encoding="utf-8"
     )
-    await ledger.sync(other)  # 另一间房先收
-    await ledger.sync(room)  # 这一间后收：平台那一份已经不是它开场时的那一份
-    await ledger.sync(other)  # 另一间房的下一回合开场
+    await ledger.sync(_seat(project_id, other))  # 另一间房先收
+    await ledger.sync(
+        _seat(project_id, room)
+    )  # 这一间后收：平台那一份已经不是它开场时的那一份
+    await ledger.sync(_seat(project_id, other))  # 另一间房的下一回合开场
 
     content, _ = await _index(factory, project_id)
     assert content == _INDEX + _ADDED + _ELSEWHERE
@@ -179,10 +187,10 @@ async def test_an_index_line_over_the_limit_is_told_to_the_agent_that_wrote_it(
     ledger = _ledger(factory, sessions)
     index = sessions.tree(room) / "team" / INDEX_NAME
 
-    await ledger.sync(room)
+    await ledger.sync(_seat(project_id, room))
     index.write_text(_INDEX + _ADDED + _TOO_LONG, encoding="utf-8")
-    await ledger.sync(room)
-    await ledger.sync(room)
+    await ledger.sync(_seat(project_id, room))
+    await ledger.sync(_seat(project_id, room))
 
     # 不收是规矩：这一版有一行超了上限。
     assert await _index(factory, project_id) == (_INDEX, 1)
@@ -206,10 +214,10 @@ async def test_a_line_over_the_limit_is_refused_even_when_merged(
     ledger = _ledger(factory, sessions)
     index = sessions.tree(room) / "team" / INDEX_NAME
 
-    await ledger.sync(room)
+    await ledger.sync(_seat(project_id, room))
     await _written_elsewhere(factory, project_id, _INDEX + _ELSEWHERE)
     index.write_text(_INDEX + _TOO_LONG, encoding="utf-8")
-    await ledger.sync(room)
+    await ledger.sync(_seat(project_id, room))
 
     assert await _index(factory, project_id) == (_INDEX + _ELSEWHERE, 2)
     assert "~/.cheese/memory/team/MEMORY.rejected.md" in await _told(factory, room)
@@ -225,12 +233,12 @@ async def test_an_edit_the_platform_overwrote_is_told_to_the_agent_that_wrote_it
     ledger = _ledger(factory, sessions)
     index = sessions.tree(room) / "team" / INDEX_NAME
 
-    await ledger.sync(room)
+    await ledger.sync(_seat(project_id, room))
     # 这一轮里，别的房间先把索引里那一行改了一个说法；这间房的 agent 在它手里那
     # 一份上把同一行改成了另一个说法——同一处两种改法，合不了。
     await _written_elsewhere(factory, project_id, _REWORDED_ELSEWHERE)
     index.write_text(_REWORDED, encoding="utf-8")
-    await ledger.sync(room)
+    await ledger.sync(_seat(project_id, room))
 
     assert await _index(factory, project_id) == (_REWORDED_ELSEWHERE, 2)
     told = await _told(factory, room)
