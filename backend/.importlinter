@@ -63,15 +63,15 @@ include_external_packages = False
 # import domain, domain may import core) and never upward. This is the one
 # direction every other rule here assumes.
 #
-# Each of the 27 edges frozen below reaches up into a higher layer — a FastAPI
+# Each of the 28 edges frozen below reaches up into a higher layer — a FastAPI
 # dependency, a route, a model, a domain service — from a place that is not
-# supposed to. 26 of them do it from inside a function body, which is how they
+# supposed to. 27 of them do it from inside a function body, which is how they
 # evade the layer without breaking the import at start-up; the exception is
 # `app/domain/project/export.py`, which imports `app.api.auth` at module level.
 # 6 are `app.domain.* -> app.api.*`, 2 are `app.core.* -> app.api.*`, and the
-# remaining 20 are `app.core.* -> app.domain.*`: 19 of those are
+# remaining 21 are `app.core.* -> app.domain.*`: 20 of those are
 # `core/background.py`'s periodic-job registry naming the jobs it schedules, the
-# twentieth is `core/errors.py -> agent.device_hub`.
+# twenty-first is `core/errors.py -> agent.device_hub`.
 name = C1 layers: api -> domain -> core, no imports upward
 type = layers
 layers =
@@ -92,6 +92,7 @@ ignore_imports =
     app.core.background -> app.domain.backend_log
     app.core.background -> app.domain.block.models
     app.core.background -> app.domain.delivery.ledger
+    app.core.background -> app.domain.delivery.overdue
     app.core.background -> app.domain.delivery.timer
     app.core.background -> app.domain.docs_site.assistant
     app.core.background -> app.domain.machine.warm

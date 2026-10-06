@@ -981,6 +981,9 @@ class Settings(BaseSettings):
     #: 投递账本的补发。「写入之后、发出之前崩掉」那一档没有别的出路：那一行已经和
     #: 事件一起提交了，发送这一半没人再碰它。不跑就是一份丢失记录，不是一次补救。
     delivery_resend_interval_s: int = 60
+    #: 还欠着、迟迟送不出去的 AI 投递多久查一次（`delivery/overdue.py`）。每次查都可能
+    #: 报警，但同一个问题一小时只报一条。
+    delivery_overdue_check_interval_s: int = 600
     task_deadline_sweep_interval_s: int = 900
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
