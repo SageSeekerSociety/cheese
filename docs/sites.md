@@ -80,10 +80,9 @@ will display that hosting is unavailable. Activation requires:
 The domain check conservatively rejects domains sharing their final two labels.
 For multi-label public suffixes, use a content domain with a different suffix.
 
-Cloudflare Universal SSL covers the root domain and first-level subdomains on a
-full DNS setup. A nested choice such as `SITES_DOMAIN=sites.example.net` requires
-additional certificate coverage for `<uuid>.sites.example.net`.
-See [Cloudflare's certificate coverage documentation](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/).
+A wildcard certificate covers one label, `<uuid>.example.net`. A nested choice
+such as `SITES_DOMAIN=sites.example.net` needs a certificate for
+`*.sites.example.net` instead.
 
 ### Existing api-front deployments
 
@@ -111,9 +110,11 @@ with the original `Host`. The platform server retains its existing route to the
 tunnel terminator. Use `configure-sites.sh --disable /path/to/active` to prepare
 removal, then validate and reload again.
 
-Point the content wildcard's Cloudflare Tunnel ingress at `http://localhost:8081`
-on the existing application host. Keep its `Host` header and full request path.
-Route this hostname through the content server instead of the frontend container.
+Route the content wildcard to `127.0.0.1:8081` on the application host, keeping
+its `Host` header and full request path, so it reaches the content server instead
+of the frontend container. On dev that route is the Hong Kong edge
+([infrastructure.md](infrastructure.md), "The preview content domain goes
+through Hong Kong").
 
 ### Local verification
 
