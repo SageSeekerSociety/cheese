@@ -1,4 +1,10 @@
-/** 协议实质变更后的重新同意（#1486）：有待同意的就拦住；同意后放行；不同意就退出登录。 */
+/** 协议实质变更后的重新同意（#1486）：有待同意的就拦住；同意后放行；不同意就退出登录。
+ *
+ *  取数在 `usePendingConsent`，组件只画 props——所以这里装的是一个和 App.vue 一样的
+ *  宿主：调那个 composable，把结果接到弹窗上。最后一条用例反过来钉住这条界线：光给
+ *  props，组件自己就能画、就会把选择 emit 出去。 */
+import type { LegalDocumentSummary } from '@/network/api/legal/types'
+
 import { defineComponent, h, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -22,20 +28,43 @@ vi.mock('@/services/account', async () => {
 vi.mock('@/network/api/legal', () => ({ LegalApi: { getPendingConsents, acceptDocuments } }))
 vi.mock('@/network/api/users', () => ({ UserApi: { logout: apiLogout } }))
 
+import { usePendingConsent } from '@/composables/usePendingConsent'
+
 import ConsentGate from './ConsentGate.vue'
 
 import { setLocale } from '@/i18n'
 import { currentUserId } from '@/services/account'
 
-const TERMS = { document: 'terms', title: '用户协议', version: '2.0', effectiveDate: '2026-10-01' }
+// 标上类型：不标的话 `document` 推成 `string`，当 props 传时对不上 `LegalDocumentKey`。
+const TERMS: LegalDocumentSummary = {
+  document: 'terms',
+  title: '用户协议',
+  version: '2.0',
+  effectiveDate: '2026-10-01',
+}
 
 const blank = defineComponent({ setup: () => () => h('div') })
 
+/** 应用外壳接这颗弹窗的那几行（App.vue）：取数走 composable，画交给组件。 */
+const Host = defineComponent({
+  setup() {
+    const { pending, accepting, error, accept, decline } = usePendingConsent()
+    return () =>
+      h(ConsentGate, {
+        pending: pending.value,
+        accepting: accepting.value,
+        error: error.value,
+        onAccept: accept,
+        onDecline: decline,
+      })
+  },
+})
+
 /** 协议那两条公开页（`router/legal.ts`）：弹窗里点协议名要真的去得了那一页。
- *  登录页是不同意那条路的去处 —— 组件跳转走 `composables/useNavigation`，路由从
+ *  登录页是不同意那条路的去处 —— 跳转走 `composables/useNavigation`，路由从
  *  应用上拿，所以装的必须是真路由（它读的就是这一个）。 */
-function mount() {
-  const router = createRouter({
+function makeRouter() {
+  return createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/legal/terms', name: 'LegalTerms', component: blank },
@@ -44,12 +73,15 @@ function mount() {
       { path: '/:any(.*)*', component: blank },
     ],
   })
-  return {
-    router,
-    ...render(ConsentGate, {
-      global: { plugins: [createVuetify({ components, directives }), router] },
-    }),
-  }
+}
+
+function pluginsFor(router: ReturnType<typeof makeRouter>) {
+  return [createVuetify({ components, directives }), router]
+}
+
+function mount() {
+  const router = makeRouter()
+  return { router, ...render(Host, { global: { plugins: pluginsFor(router) } }) }
 }
 
 beforeEach(() => {
@@ -129,5 +161,27 @@ describe('ConsentGate', () => {
     expect(apiLogout).toHaveBeenCalled()
     expect(accountLogout).toHaveBeenCalled()
     expect(acceptDocuments).not.toHaveBeenCalled()
+  })
+
+  it('draws and answers from props alone — no session, no server', async () => {
+    const accepted = vi.fn()
+    const { rerender } = render(ConsentGate, {
+      props: { pending: [TERMS], accepting: false, error: '' },
+      attrs: { onAccept: accepted },
+      global: { plugins: pluginsFor(makeRouter()) },
+    })
+
+    expect(await screen.findByText('协议已更新')).toBeTruthy()
+    expect(screen.getByText('用户协议')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '同意并继续' }))
+    expect(accepted).toHaveBeenCalled()
+    // 这一条不接宿主：没有人替它问服务端。
+    expect(getPendingConsents).not.toHaveBeenCalled()
+    expect(acceptDocuments).not.toHaveBeenCalled()
+
+    // 收摊前把弹窗关掉（清空的 props 就是宿主同意之后会做的事）：VOverlay 卸载时
+    // 还要再读一次 visualViewport —— 那时 `afterEach` 已经把它撤了。
+    await rerender({ pending: [], accepting: false, error: '' })
+    await waitFor(() => expect(document.querySelector('.v-overlay--active')).toBeNull())
   })
 })
