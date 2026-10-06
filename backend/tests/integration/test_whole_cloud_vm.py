@@ -11,6 +11,7 @@ environment, never the machine.
 
 import ast
 import json
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -229,6 +230,23 @@ def _room_lines(case, seat) -> list[str]:
     return case.client.portal.call(read)
 
 
+def _leaked(text: str, secret: str) -> bool:
+    """Whether ``secret`` shows up in ``text`` as a token of its own.
+
+    Plain containment also matches digits inside a longer token, and the
+    machine's number is three digits: the session uuid ``b101e7f6-…`` carries
+    ``101``, as does any number that happens to end that way, often enough to
+    fail a run that disclosed nothing. Both a uuid's characters and a number's
+    are hex digits, so requiring that both neighbours be something else keeps
+    a real disclosure — the number as a value — failing, and drops these
+    coincidences.
+    """
+    return (
+        re.search(rf"(?<![0-9a-fA-F]){re.escape(secret)}(?![0-9a-fA-F])", text)
+        is not None
+    )
+
+
 def _sweep(case):
     async def go():
         async with case.client.test_request_factory() as db:
@@ -445,7 +463,7 @@ def test_users_see_the_environment_and_never_the_vm(cloud):
     # The whole machine is the session's: what it sees is all of it.
     assert session["machine_access"] is True
     for secret in (device_id, host.hostname, str(host.machine_id), target["home"]):
-        assert secret not in answer.text
+        assert not _leaked(answer.text, secret)
     distribution = case.client.get(
         f"/projects/{case.project_id}/compute-configs",
         headers=session_auth_headers("alice"),

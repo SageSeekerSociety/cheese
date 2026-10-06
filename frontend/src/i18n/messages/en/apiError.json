@@ -743,6 +743,7 @@
   "deliverableBoth": "Give only one of deliver and deliver_url: what this delivery hands over is either a file or an address.",
   "pdfDraftNotOpen": "Drafting from a PDF isn't available yet. Try again later.",
   "switchOldComputerUnreachableBecause": "Can't reach the previous environment, so its changes couldn't be pushed and nothing was switched: {error}",
+  "switchOldComputerUnreachableAskPerson": "{refusal}. Only a person can switch without pushing: ask someone in the room to choose \"switch without pushing\" in the environment menu. Unpushed changes stay on the old computer.",
   "sandboxTokenRequired": "Sign in, or use a valid sandbox token",
   "tokenOtherProject": "This token belongs to another project and can't be used here",
   "tokenOtherTopic": "This token belongs to another channel and can't be used here",

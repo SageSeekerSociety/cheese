@@ -132,6 +132,9 @@ function weeklyWindow(w: Block): string {
 }
 
 // ---- 记忆 (spec §8.4 记忆可见): entries 芝士 remembered, human-prunable ----
+// 一份是项目共享的（`team`），一份是这个人自己的（`private`）；两个作用域怎么分、
+// 各自叫什么，见 `docs/manual/dev/memory.md`。标签按 `private` 分叉：这一份是
+// 「关于我」，另一份是「项目」。
 const dialog = useDialog()
 
 // 删一条要写回缓存里的那份，不然离开这一页再回来它又出现了。
@@ -218,12 +221,12 @@ useCommands(() => {
         <v-card v-for="e in memoryEntries" :key="e.id" class="memory-card mb-2" variant="flat">
           <div class="d-flex align-start ga-3 pa-3">
             <v-icon size="16" class="c-muted mt-1">
-              {{ e.scope === 'user' ? 'mdi-account-outline' : 'mdi-source-repository' }}
+              {{ e.scope === 'private' ? 'mdi-account-outline' : 'mdi-source-repository' }}
             </v-icon>
             <div class="flex-grow-1">
               <div class="memory-card__content">{{ e.content }}</div>
               <div class="t-meta c-muted mt-1">
-                {{ e.scope === 'user' ? t('project.docs.memoryUser') : t('project.docs.memoryProject') }} ·
+                {{ e.scope === 'private' ? t('project.docs.memoryUser') : t('project.docs.memoryProject') }} ·
                 {{ relTime(e.created_at) }}
               </div>
             </div>
