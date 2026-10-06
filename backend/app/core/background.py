@@ -364,6 +364,7 @@ def periodic_jobs(
     from app.domain import backend_log
     from app.domain.agent.forgejo_tokens import purge_expired_tokens
     from app.domain.delivery.ledger import resend_unsent_deliveries
+    from app.domain.delivery.overdue import report_overdue
     from app.domain.delivery.timer import deliver_due
     from app.domain.docs_site.assistant import purge_old_questions
     from app.domain.machine.warm import sweep_warm_pool
@@ -544,6 +545,13 @@ def periodic_jobs(
             "timed deliveries",
             30,
             lambda: deliver_due(sessions, chat=chat, runner=get_work_runner()),
+        ),
+        # 一条投递被拒了就回到待发、过一会儿再试，单看哪一次都不算出错，所以从来没人
+        # 说过一句。积压到超过半小时还没送出去，就告诉人。
+        PeriodicRunner(
+            "overdue deliveries",
+            settings.delivery_overdue_check_interval_s,
+            lambda: report_overdue(sessions),
         ),
         # 周期任务与事件触发：到点的计划、新发生的项目事件在这里变成一次执行，跑完的
         # 执行在这里结账并通知设置它的人。

@@ -506,8 +506,12 @@ class FeedbackProposalDismissal(UuidPk, Base):
     「发生了什么 + 怎么复现」归一化之后的哈希（`services.proposal_fingerprint`），
     只在新提案进来时查一次。
 
-    `topic_id` 带 CASCADE：这是话题里的一个判断，话题没了它就没有意义。范围是话题
-    而不是全平台 —— 同一个问题在另一个话题里遇到，那里的人还没被问过。
+    `topic_id` 指向 **`conversations`**，不是 `topics`：房间和任务都是对话，而这张
+    卡两种里都会开（列名照旧，和 `topic_read_states.topic_id` 同一个办法）。指向
+    `topics` 时，任务里的「不用」根本写不进去 —— 任务的号在 `topics` 里不存在，
+    INSERT 被外键拒绝、路由回 500，同一个问题于是在任务里每轮都会再问一遍。带
+    CASCADE：这是对话里的一个判断，对话没了它就没有意义。范围是对话而不是全平台
+    —— 同一个问题在另一个对话里遇到，那里的人还没被问过。
     """
 
     __tablename__ = "feedback_proposal_dismissals"
@@ -518,7 +522,7 @@ class FeedbackProposalDismissal(UuidPk, Base):
     )
 
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE")
+        ForeignKey("conversations.id", ondelete="CASCADE")
     )
     fingerprint: Mapped[str] = mapped_column(String(64))
     dismissed_by_handle: Mapped[str] = mapped_column(String(64))

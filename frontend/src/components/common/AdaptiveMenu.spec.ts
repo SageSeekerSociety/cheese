@@ -8,6 +8,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import AdaptiveMenu from './AdaptiveMenu.vue'
 
 beforeAll(() => {
@@ -29,6 +31,9 @@ beforeAll(() => {
   })
   // 桌面菜单的定位要读它。
   vi.stubGlobal('devicePixelRatio', 1)
+  // happy-dom 没有它，而弹在鼠标那一点上的菜单定位时要读（缺了会在浮层自己的 effect 里
+  // 抛出来，把那一拍的更新队列打断）。
+  if (!document.elementFromPoint) document.elementFromPoint = () => null
 })
 afterAll(() => vi.unstubAllGlobals())
 
@@ -81,5 +86,43 @@ describe('AdaptiveMenu', () => {
     await fireEvent.click(screen.getByText('更多'))
     await fireEvent.click(await screen.findByText('重命名'))
     expect(rename).toHaveBeenCalledTimes(1)
+  })
+
+  it('桌面上：在第二处右键，第一处的菜单收起来', async () => {
+    ;(window as unknown as { innerWidth: number }).innerWidth = 1280
+    const vuetify = createVuetify({ components, directives })
+    // 两处各有一份右键菜单，像消息、日程、通知那样：每处自己记着自己那份开没开。
+    const Host = {
+      components: { AdaptiveMenu },
+      setup() {
+        const first = useRowMenu<string>()
+        const second = useRowMenu<string>()
+        const actions = (label: string): MenuAction[] => [{ key: 'open', label, icon: 'mdi-open-in-new' }]
+        return { first, second, actions }
+      },
+      template: `
+        <v-app>
+          <span @contextmenu="first.open('a', $event)">第一处</span>
+          <span @contextmenu="second.open('b', $event)">第二处</span>
+          <AdaptiveMenu v-bind="first.bind('a')" :actions="actions('第一处的操作')">
+            <template #activator />
+          </AdaptiveMenu>
+          <AdaptiveMenu v-bind="second.bind('b')" :actions="actions('第二处的操作')">
+            <template #activator />
+          </AdaptiveMenu>
+        </v-app>`,
+    }
+    render(Host, { global: { plugins: [vuetify] } })
+
+    // 露在外面的菜单就是「还开着」的那些：关掉的那一份 transition 过后才离开 DOM（测试
+    // 环境里 transition 是桩，走不掉），所以照用户看得到的问，而不是照 DOM 里有没有问。
+    const showing = () =>
+      Array.from(document.querySelectorAll('.v-overlay--active .v-list-item-title')).map((el) => el.textContent?.trim())
+
+    await fireEvent.contextMenu(screen.getByText('第一处'), { clientX: 40, clientY: 40 })
+    await waitFor(() => expect(showing()).toEqual(['第一处的操作']))
+
+    await fireEvent.contextMenu(screen.getByText('第二处'), { clientX: 40, clientY: 120 })
+    await waitFor(() => expect(showing()).toEqual(['第二处的操作']))
   })
 })

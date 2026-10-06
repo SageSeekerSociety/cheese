@@ -1027,3 +1027,37 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
     expect(after!.y + after!.height, '关闭按钮滚出了视口').toBeLessThanOrEqual(480);
   });
 });
+
+// 工作面板的每一格都住在 `tabbody` 里，而 `tabbody` 是一条 flex 行（`WorkPanel.vue`）：
+// 没写 `flex` 的那一格会按内容收缩——内容多宽它就多宽，右边空着。规则那一格就是这样：
+// 空状态那两行字多宽，面板就多宽，「新建」右侧的刷新键停在半路。判据因此不是「内容有多
+// 宽」而是**它住的那条 flex 行有多宽**。vitest 量不到坐标，typecheck / stylelint 也不
+// 看这个，只有屏幕上量得出来。
+test('房间面板的「定时与触发」那一格铺满整条面板', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await apiLogin(page);
+  const rows = await openFirstProject(page);
+  await rows.first().click();
+  await page.waitForURL(/\/topics\//);
+  // 地址直接点名这一格（`?tab=routines`），不点页签：任务那一档的页签比这里多，面板窄了
+  // 它们会收进溢出菜单——点不到不代表这一格不存在。
+  await page.goto(`${new URL(page.url()).pathname}?tab=routines`);
+
+  const pane = page.locator('.tabbody .routine-panel');
+  await expect(pane).toBeVisible();
+  const widths = await pane.evaluate((el) => {
+    const body = el.closest('.tabbody');
+    return {
+      pane: el.getBoundingClientRect().width,
+      body: body ? body.getBoundingClientRect().width : 0,
+    };
+  });
+  // 量不到那条行就是范围选错了：空范围永远返回「没有缺陷」，所以这里炸掉而不是放过。
+  expect(widths.body, '这一格没住在 .tabbody 里，这条断言等于没做').toBeGreaterThan(0);
+  expect(widths.pane, '这一格没画出来').toBeGreaterThan(0);
+  // 1px 容差：亚像素与取整。
+  expect(
+    widths.body - widths.pane,
+    `面板 ${Math.round(widths.body)}px，这一格只有 ${Math.round(widths.pane)}px`
+  ).toBeLessThanOrEqual(1);
+});

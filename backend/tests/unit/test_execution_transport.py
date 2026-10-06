@@ -6,6 +6,8 @@ import json
 import os
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -1971,3 +1973,36 @@ def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
             server.shutdown()
             server.server_close()
             thread.join()
+
+
+def test_a_burst_of_calls_reaches_an_executor_that_is_slow_to_accept(executor):
+    """A room's tools call its executor several at once. While the executor
+    has not yet accepted, those connections wait in the socket's listen
+    queue; one that finds the queue full is refused at once (EAGAIN on a Unix
+    socket) and the call fails. On dev a burst of 8 parallel calls to one
+    executor failed this way within four seconds (2026-10-06 16:18 UTC)."""
+    _target, _work, state = executor
+    path = runtime.socket_path(state)
+    with socket.socket(socket.AF_UNIX) as probe:
+        probe.connect(path)
+        probe.sendall(json.dumps({"method": "ping", "params": {}}).encode() + b"\n")
+        pid = json.loads(probe.makefile().readline())["result"]["pid"]
+    callers = []
+    refused = []
+    os.kill(pid, signal.SIGSTOP)
+    try:
+        for _ in range(32):
+            caller = socket.socket(socket.AF_UNIX)
+            caller.setblocking(False)
+            try:
+                # A Unix socket connect completes at once or is refused at
+                # once: EAGAIN (BlockingIOError) is the queue being full.
+                caller.connect(path)
+            except OSError as exc:
+                refused.append(exc.errno)
+            callers.append(caller)
+    finally:
+        os.kill(pid, signal.SIGCONT)
+        for caller in callers:
+            caller.close()
+    assert refused == []

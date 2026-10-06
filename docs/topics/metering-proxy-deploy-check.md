@@ -189,7 +189,6 @@ POST https://api.anthropic.com/v1/messages?beta=true  << 200 OK
 |---|---|---|
 | 后端闸门：复用屏幕前探一次隧道端口，死了就退屏重开 | `_tunnel_helper_is_down`（PR #578） | 在，已部署 |
 | 探针脚本：查 `/proc/net/tcp` 判端口是否 LISTEN | `DEVICE_TUNNEL_PROBE` | 在，实测判定准确 |
-| 启动器收养分支：复用屏幕时重跑 `cheese-tunnel-up` | `device_launch.py` | 在 |
 
 逐一验过：探针脚本本地跑，死端口报 `down`、活端口报 `up`，**完全正确**；端口推导 `tunnel_port_for_topic` 与卡死进程实际拨的端口**逐个吻合**；线上镜像（37d9b516a）里闸门代码**确实存在**。
 
@@ -208,31 +207,22 @@ POST https://api.anthropic.com/v1/messages?beta=true  << 200 OK
 
 这也解释了为什么**只有复用屏幕的话题会中招**：全新启动那条路里，`cheese-tunnel-up` 是在将来要变成 `claude` 的那个进程里调用的，那个进程不会退出，助手自然活着。
 
-## 顺带发现的第二个缺口
-
-`cheese-tunnel-up` 的收养判断是 **pid 还活着**，不是**端口在监听**。而 `DEVICE_TUNNEL_PROBE` 自己的注释就写明「LISTEN 才是该问的问题」。实测对照：
-
-- 造一个活着但与隧道无关的进程占住 pid 文件、stamp 也对上 → **旧逻辑：收养并退出，端口永远是死的**；新逻辑：识破并重起。
-
 ## 改了什么
 
 `backend/app/domain/agent/harness/claude_code/device_launch.py`：
 
-1. 助手改用 **`nohup`** 启动，让它活过启动它的窗口。（没用 `setsid`：`setsid` 会 fork，`$!` 就不再是助手的真实 pid，而收养判断正靠这个 pid。）
-2. 收养条件从「pid 活着 + 代码版本一致」改成「pid 活着 + 版本一致 + **端口真的在听**」。
-3. 删掉 `CHEESE_TUNNEL_TETHER`——它只被写、全仓库没有一处读它（对照排水器的 `CHEESE_DRAIN_TETHER` 是真在用的）。助手现在 `nohup` 之后不再需要拴绳。
+1. 助手改用 **`nohup`** 启动，让它活过启动它的窗口。（没用 `setsid`：`setsid` 会 fork，`$!` 就不再是助手的真实 pid。）
+2. 删掉 `CHEESE_TUNNEL_TETHER`——它只被写、全仓库没有一处读它（对照排水器的 `CHEESE_DRAIN_TETHER` 是真在用的）。助手现在 `nohup` 之后不再需要拴绳。
 
 ## 测试
 
-`backend/tests/unit/test_device_launch.py` 新增 3 条功能测试（真跑 shell、真起 tmux，沿用该文件已有写法）：
+`backend/tests/unit/test_device_launch.py` 新增的功能测试（真跑 shell、真起 tmux，沿用该文件已有写法）：
 
 | 测试 | 断言 |
 |---|---|
 | `test_the_tunnel_helper_outlives_the_window_that_started_it` | 经 tmux 窗口起完、窗口命令返回后，端口仍在监听 |
-| `test_a_recorded_pid_that_is_alive_but_serves_no_port_is_replaced` | 冒名 pid + 匹配 stamp + 死端口 → 助手被重起 |
-| `test_a_helper_it_already_started_is_adopted_rather_than_churned` | 健康助手不被反复重启（防止每轮重置在途连接） |
 
-**前两条在旧代码上是红的、在新代码上是绿的**（把 `nohup` 和端口判断退回旧行为实测确认）。第三条两边都绿——它防的是新逻辑引入的过度重启，不是回归。
+**这条在旧代码上是红的、在新代码上是绿的**（把 `nohup` 退回旧行为实测确认）。
 
 检查结果：`ruff check` 全过、`ruff format` 已格式化、`pyright` **0 errors**（项目配置只检 `app`）。
 

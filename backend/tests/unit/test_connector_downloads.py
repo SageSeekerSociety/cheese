@@ -58,3 +58,46 @@ def test_the_published_digest_names_the_bytes_a_machine_downloads(
     assert asked.headers["X-Checksum-SHA256"] == (
         hashlib.sha256(downloaded.content).hexdigest()
     )
+
+
+def test_a_client_that_accepts_gzip_downloads_the_connector_compressed(
+    tmp_path, monkeypatch
+):
+    """A machine on a slow link has a time limit to download its update in;
+    the gzip copy fits where the raw one did not. Its checksum still names
+    the bytes the machine ends up running."""
+    import gzip
+    import hashlib
+
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    monkeypatch.setattr(installer, "_dist_dir", lambda: tmp_path)
+    payload = b"windows connector " * 4096
+    _publish(tmp_path, "windows-amd64", "cheesehost.exe", payload)
+    client = TestClient(app)
+    url = "/connector/latest/windows-amd64/cheesehost.exe"
+
+    packed = client.get(url, headers={"Accept-Encoding": "gzip"})
+    with client.stream("GET", url, headers={"Accept-Encoding": "gzip"}) as raw:
+        wire = b"".join(raw.iter_raw())
+    plain = client.get(url, headers={"Accept-Encoding": "identity"})
+
+    assert packed.status_code == 200
+    assert packed.headers["Content-Encoding"] == "gzip"
+    assert len(wire) < len(payload) and gzip.decompress(wire) == payload
+    assert packed.content == payload
+    assert packed.headers["X-Checksum-SHA256"] == hashlib.sha256(payload).hexdigest()
+    assert "Content-Encoding" not in plain.headers
+    assert plain.content == payload
+
+
+def test_a_new_build_is_never_served_from_an_old_gzip_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(connector_build, "dist_dir", lambda: tmp_path)
+    monkeypatch.setattr(installer, "_dist_dir", lambda: tmp_path)
+    client = TestClient(app)
+    url = "/connector/latest/linux-amd64/cheesehost"
+    headers = {"Accept-Encoding": "gzip"}
+
+    _publish(tmp_path, "linux-amd64", "cheesehost", b"first build " * 512)
+    assert client.get(url, headers=headers).content == b"first build " * 512
+    _publish(tmp_path, "linux-amd64", "cheesehost", b"second build " * 512)
+    assert client.get(url, headers=headers).content == b"second build " * 512

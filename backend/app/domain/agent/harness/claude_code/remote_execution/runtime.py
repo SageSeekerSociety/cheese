@@ -1923,16 +1923,10 @@ def serve(state):
                 self.wfile.write(json.dumps(response).encode() + b"\n")
 
     if sys.platform == "win32":
-
-        class Server(socketserver.ThreadingTCPServer):
-            daemon_threads = False
-
+        base = socketserver.ThreadingTCPServer
         address = ("127.0.0.1", 0)
     else:
-
-        class Server(socketserver.ThreadingUnixStreamServer):
-            daemon_threads = False
-
+        base = socketserver.ThreadingUnixStreamServer
         directory = Path(socket_directory(state))
         directory.mkdir(mode=0o700, exist_ok=True)
         # A fixed name in a shared /tmp: one somebody else made, or a link to
@@ -1943,6 +1937,12 @@ def serve(state):
         directory.chmod(0o700)
         address = str(directory / "executor.sock")
         Path(address).unlink(missing_ok=True)
+
+    class Server(base):
+        daemon_threads = False
+        # A room's tools call at once; socketserver's queue of 5 refused the
+        # rest before the loop accepted them (EAGAIN on dev, 2026-10-06).
+        request_queue_size = socket.SOMAXCONN
 
     path = Path(socket_path(state))
     path.unlink(missing_ok=True)

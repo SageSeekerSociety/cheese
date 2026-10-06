@@ -29,12 +29,14 @@ from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner
 from app.domain.agent.harness.pi.subscription import Subscription
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.agent.harness.prompt import PLATFORM_NOTICE, SUBAGENT_TODO_WRITE
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentToolResult,
 )
+from app.domain.agent.session_host import pi as pi_host
+from app.domain.agent.session_host.contract import Access, SessionRef, SessionSpec
 from tests.pinned_claude import pi_binary
 from tests.support.completions_fixture import Completions
 from tests.support.room_machine import room_machine
@@ -181,6 +183,14 @@ async def pi(tmp_path: Path, route, *, default: str = "child-default"):
         "CHEESE_API": admission.url,
         "CHEESE_TOKEN": "session-token",
     }
+    # The runner's configuration as the platform launches it (`entry.py` reads
+    # this file's `config`).
+    config = pi_host.launch(
+        SessionRef("pi", "fixture"),
+        SessionSpec(system_prompt="FIXTURE", model=PARENT),
+        Access(credential="session-token"),
+        admission.url,
+    ).payload["config"]
     runner = Runner(tmp_path / "state")
     with room_machine(tmp_path / "machine") as target:
         try:
@@ -195,6 +205,7 @@ async def pi(tmp_path: Path, route, *, default: str = "child-default"):
                 target=target,
                 extension=extension(),
                 notice=PLATFORM_NOTICE,
+                subagent_rules=config.get("subagent_rules", ""),
             )
             yield Session(runner, model, admission)
         finally:
@@ -282,6 +293,29 @@ async def test_a_subagent_given_no_model_runs_the_project_subagent_default(tmp_p
         assert [a["model"] for a in session.admission.asked] == [None]
         assert session.requests("child-default")
         assert [s["text"] for s in session.stops()] == ["用的默认"]
+
+
+async def test_a_subagent_is_told_to_keep_the_step_checklist(tmp_path):
+    """The session's system prompt says when to write the step checklist; a
+    subagent reads none of it, and its work would never move the list (FB-74)."""
+
+    def route(body):
+        if body["model"] != PARENT:
+            return child_says(body) or {"text": "?"}
+        if "tool_call_id" not in said(body):
+            return {
+                "tool": "Task",
+                "arguments": {"description": "干活", "prompt": "SAY:做完了"},
+            }
+        return {"text": "好"}
+
+    async with pi(tmp_path, route) as session:
+        await session.send("派一个")
+        await session.until(lambda: len(session.results()) == 1)
+
+        (first, *_) = session.requests("child-default")
+        rule = json.dumps(SUBAGENT_TODO_WRITE, ensure_ascii=False)[1:-1]
+        assert rule in json.dumps(first, ensure_ascii=False)
 
 
 async def test_a_model_the_platform_refuses_starts_nothing(tmp_path):

@@ -200,6 +200,19 @@ TODO_WRITE = (
     "再写一次，所有项标 completed，用 result 写一句落下了什么。有人提了新的请求，就带"
     " new=true 另起一条。简单的问答不用写。"
     "清单只说做到哪了，要说的话照样用 `chat_send` 发。"
+    "派分身去做时，分身也照这样改这同一份清单。同时派出几个分身时，它们会互相覆盖："
+    "在每个分身的 prompt 里写明不要写清单，由你在它们各自交回时更新。"
+)
+
+#: 分身读不到上面那一段：Claude Code 起的 agent 不带系统提示词，pi 的分身是另起
+#: 的一个 pi。清单是这段对话的一份、整份替换，分身不写，人就只看到开工时那一版，
+#: 直到主会话收回结果（FB-74）。Codex 的子线程继承主线程的 developer
+#: instructions，读到的是上面那一段。
+SUBAGENT_TODO_WRITE = (
+    "- 步骤清单：多步的活（大约三步以上）开工时用 `todo_write` 写下计划；做完一项就再"
+    "写一次，把它标成 completed、把下一项标成 in_progress，每次都传完整的清单；做完时"
+    "所有项标 completed。这份清单是派你的那段对话的进度清单，每次写都整份替换它。派你"
+    "的 prompt 说不要写清单（几个分身同时在干活时会这样说），就不写。"
 )
 
 
@@ -280,7 +293,7 @@ SHARED_CHECKOUT = (
 )
 
 #: Claude Code 起的每个 agent 开头补的那一段（SubagentStart hook）。
-SUBAGENT_RULES = f"- {STEP_TITLES}\n{SHARED_CHECKOUT}"
+SUBAGENT_RULES = f"- {STEP_TITLES}\n{SHARED_CHECKOUT}\n{SUBAGENT_TODO_WRITE}"
 
 #: 每个托管仓库、每一轮都成立的平台规矩。按需的流程（交付、产物、邮件、定时）在
 #: cheese 技能里；这里只放芝士在任何一轮都可能撞上、撞上之前就得知道的几条。

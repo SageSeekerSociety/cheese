@@ -565,7 +565,11 @@ class ResponseIntegrityAudit:
                 )
             raise
 
-        if declared is not None and sent != declared:
+        # A HEAD, a 204 and a 304 declare the length of a body they never
+        # carry; counting their zero bytes as missing ones was a false alarm
+        # every time the connection owner asked which connector is published.
+        bodiless = scope.get("method") == "HEAD" or status in (204, 304)
+        if declared is not None and sent != declared and not bodiless:
             log.warning(
                 "response truncated",
                 path=path,

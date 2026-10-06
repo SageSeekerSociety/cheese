@@ -40,6 +40,11 @@ def serve(target, synchronize):
     import socketserver
     import threading
 
+    class Server(socketserver.UnixStreamServer):
+        # socketserver's default queue of 5 refuses a burst of prompts that
+        # arrive while a slow one is being answered.
+        request_queue_size = socket.SOMAXCONN
+
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
             self.connection.settimeout(60)
@@ -64,7 +69,7 @@ def serve(target, synchronize):
         staged = f"{path}.{os.getpid()}"
         if os.path.exists(staged):
             os.unlink(staged)
-        server = socketserver.UnixStreamServer(staged, Handler)
+        server = Server(staged, Handler)
         os.chmod(staged, 0o600)
         os.replace(staged, path)
         identity = os.stat(path).st_ino

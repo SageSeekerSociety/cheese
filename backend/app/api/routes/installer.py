@@ -306,10 +306,21 @@ async def download_toolchain(tool: str, platform: str) -> Response:
     )
 
 
+def _accepts_gzip(request: Request) -> bool:
+    for part in request.headers.get("accept-encoding", "").split(","):
+        coding, _, params = part.strip().partition(";")
+        if coding.strip().lower() == "gzip":
+            return params.replace(" ", "").lower() not in ("q=0", "q=0.0", "q=0.00")
+    return False
+
+
 @router.api_route("/latest/{target}/{name}", methods=["GET", "HEAD"])
-async def download_binary(target: str, name: str) -> Response:
+async def download_binary(target: str, name: str, request: Request) -> Response:
     """The connector for ``target``. ``X-Checksum-SHA256`` names its bytes, so
-    the connection owner can ask which build is published with a HEAD."""
+    the connection owner can ask which build is published with a HEAD.
+
+    A GET that accepts gzip gets the gzip copy (`connector_build.gzipped`); the
+    checksum still names the decoded bytes, which is what the machine runs."""
     if not _TARGET_RE.match(target) or target not in _TARGETS:
         return PlainTextResponse("unknown target", status_code=404)
     if name != connector_build.binary_name(target):
@@ -321,9 +332,21 @@ async def download_binary(target: str, name: str) -> Response:
             status_code=404,
         )
     digest = await asyncio.to_thread(connector_build.served_digest, target)
+    headers = {"Vary": "Accept-Encoding"}
+    if digest:
+        headers["X-Checksum-SHA256"] = digest
+    if request.method == "GET" and _accepts_gzip(request):
+        compressed = await asyncio.to_thread(connector_build.gzipped, target)
+        if compressed is not None:
+            return FileResponse(
+                compressed,
+                media_type="application/octet-stream",
+                filename="cheesehost",
+                headers={**headers, "Content-Encoding": "gzip"},
+            )
     return FileResponse(
         binary,
         media_type="application/octet-stream",
         filename="cheesehost",
-        headers={"X-Checksum-SHA256": digest} if digest else None,
+        headers=headers,
     )

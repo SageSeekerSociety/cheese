@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestPlatformDir(t *testing.T) {
@@ -149,6 +151,55 @@ func TestFetchOfTheRunningBuildIsNotAnUpdate(t *testing.T) {
 	served = append([]byte("not this build"), running[:64]...)
 	if _, err := Fetch(context.Background(), origin.URL); err == nil || errors.Is(err, ErrCurrent) {
 		t.Fatalf("Fetch of different bytes = %v, want a verification failure", err)
+	}
+	if found := leftovers(); len(found) != 0 {
+		t.Errorf("Fetch left downloads behind: %v", found)
+	}
+}
+
+// A download that stops arriving is given up soon; one that keeps arriving,
+// however slowly, is not cut off by a fixed total.
+func TestFetchGivesUpOnAStalledDownloadButNotASlowOne(t *testing.T) {
+	saved := stallAfter
+	stallAfter = 300 * time.Millisecond
+	defer func() { stallAfter = saved }()
+	self, err := SelfPath()
+	if err != nil {
+		t.Fatalf("SelfPath error: %v", err)
+	}
+	leftovers := func() []string {
+		found, _ := filepath.Glob(filepath.Join(filepath.Dir(self), ".cheese-update-*"))
+		return found
+	}
+
+	release := make(chan struct{})
+	stalls := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("first part of a binary"))
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	defer stalls.Close()
+	defer close(release)
+	began := time.Now()
+	_, err = Fetch(context.Background(), stalls.URL)
+	if err == nil || !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("Fetch of a stalled download = %v, want a stall", err)
+	}
+	if took := time.Since(began); took > 5*time.Second {
+		t.Errorf("a stalled download took %s to be given up", took)
+	}
+
+	trickles := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		for i := 0; i < 12; i++ {
+			_, _ = w.Write([]byte("chunk "))
+			w.(http.Flusher).Flush()
+			time.Sleep(100 * time.Millisecond)
+		}
+	}))
+	defer trickles.Close()
+	_, err = Fetch(context.Background(), trickles.URL)
+	if err == nil || strings.Contains(err.Error(), "stalled") || errors.Is(err, ErrCurrent) {
+		t.Fatalf("Fetch of a slow download = %v, want it downloaded and then refused as not runnable", err)
 	}
 	if found := leftovers(); len(found) != 0 {
 		t.Errorf("Fetch left downloads behind: %v", found)

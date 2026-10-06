@@ -165,6 +165,15 @@ class Subagent:
             runner.extension_files, runner.notice, home=self.home / "extension"
         )
         args[args.index("--model") + 1] = f"{provider}/{self.model}"
+        # The session's system prompt is not passed on: a subagent is not the
+        # room's agent. What it does get is the few rules every agent working
+        # for the session needs (`prompt.SUBAGENT_TODO_WRITE`), as a file for
+        # the same reasons the session's prompt is one (`runner.start`).
+        rules = []
+        if runner.subagent_rules:
+            prompt = self.home / "system-prompt.md"
+            prompt.write_text(runner.subagent_rules, encoding="utf-8")
+            rules = ["--append-system-prompt", str(prompt)]
         argv = [
             "--mode",
             "rpc",
@@ -173,6 +182,7 @@ class Subagent:
             "--session-dir",
             str(self.home / "sessions"),
             *runner.skill_args,
+            *rules,
             "--extension",
             str(extension / "index.ts"),
             *args,

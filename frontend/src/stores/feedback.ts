@@ -1660,13 +1660,10 @@ export const useFeedbackStore = defineStore('feedback', {
       }
     },
 
-    /** 「不用」。落一行，之后同指纹的卡不会再出现。 */
+    /** 记下一次「不用」。服务端没记下就抛出去 —— 不在这里咽下：卡要把这一下放回
+     *  屏幕上（人上次那一下没算数，他还得知道），咽下它等于装作成功。 */
     async dismissProposal(topicId: string, blockId: string): Promise<void> {
-      try {
-        await dismissFeedbackProposal(topicId, blockId)
-      } catch (error) {
-        this.error = message(error, t('feedback.errors.actionFailed'))
-      }
+      await dismissFeedbackProposal(topicId, blockId)
     },
 
     /* ---- 内部小工具（下划线开头：不是给页面用的 API） ---- */
