@@ -4,12 +4,18 @@ import { useRouter } from 'vue-router'
 
 import FeedbackMinePageView from './FeedbackMinePageView.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import { t } from '@/i18n'
 import { useFeedbackStore } from '@/stores/feedback'
 
-// 我的反馈 (/feedback/mine) 的**容器那一半**：取数、跳转、已读游标都留在这里，画面在
+// 我的反馈 (/feedback/mine) 的**容器那一半**：取数、跳转、已读游标都留在这里，正文在
 // 同目录的 `FeedbackMinePageView.vue`（只吃 props、只发事件）。这样这一页单独渲染时
 // 不需要后端、路由或 store —— 场景棘轮要的就是那件事。
+//
+// 页头那副壳（`FeedbackPageShell` + 标题 + 动作 + 说明）留在这一半，不在视图里：
+// `scroll.spec.ts` 钉着这一页的根节点就是那个壳（全站约定「滚动由每一页自己领」，壳
+// 是领它的那一层）—— 壳在容器里，那条不变量照旧成立。
 //
 // 清单的边界由服务端定：我提的 + 我替谁提的（agent 报的、提交人是我）+ 指派给我的。
 // 这里不按来源分栏：那需要每条带一个「为什么它在我的清单里」，服务端还没有这个字段，
@@ -66,17 +72,49 @@ function onEmptyAction() {
 </script>
 
 <template>
-  <FeedbackMinePageView
-    :loading="store.mineLoading"
-    :error="store.error"
-    :items="store.mineItems"
-    :has-more="store.mineHasMore"
-    :loading-more="store.mineLoadingMore"
-    :total="store.mineTotal"
-    :empty="emptyState"
-    @more="store.loadMoreMine()"
-    @empty-action="onEmptyAction"
-    @dismiss="store.clearError()"
-    @support="store.toggleSupport($event)"
-  />
+  <FeedbackPageShell :title="t('feedback.mine.title')">
+    <template #actions>
+      <BaseButton size="sm" to="/feedback">
+        {{ t('feedback.mine.back') }}
+      </BaseButton>
+      <BaseButton kind="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">
+        {{ t('feedback.mine.submit') }}
+      </BaseButton>
+    </template>
+
+    <!-- 这一页的说明。**总数只在拉到之后才说**：加载中写「共 0 条」是在报一个还不知道
+         的数。 -->
+    <template #sub>
+      <p class="t-meta-read t-num fb-lede">
+        {{ t('feedback.mine.lede') }}
+        <span v-if="!store.mineLoading && !store.error">
+          {{ t('feedback.mine.total', { n: store.mineTotal }) }}
+        </span>
+        {{ t('feedback.mine.ledeRest') }}
+      </p>
+    </template>
+
+    <FeedbackMinePageView
+      :loading="store.mineLoading"
+      :error="store.error"
+      :items="store.mineItems"
+      :has-more="store.mineHasMore"
+      :loading-more="store.mineLoadingMore"
+      :total="store.mineTotal"
+      :empty="emptyState"
+      @more="store.loadMoreMine()"
+      @empty-action="onEmptyAction"
+      @dismiss="store.clearError()"
+      @support="store.toggleSupport($event)"
+    />
+  </FeedbackPageShell>
 </template>
+
+<style scoped>
+/* 这一页的说明。行距用 token 而不是 1.7：这一档的领值只有 --lh-* 这一份来源，手写的
+   倍数在两个主题、两种语言里都不会跟着别处一起调。 */
+.fb-lede {
+  margin: 0 0 16px;
+  line-height: var(--lh-14-loose);
+}
+</style>
