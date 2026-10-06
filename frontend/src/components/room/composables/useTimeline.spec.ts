@@ -210,3 +210,36 @@ describe('不露面的块不占窗口', () => {
     expect(timeline.prepend([b('j1')], true), '已经有的不算多出来').toBe(0)
   })
 })
+
+// 一块变了多半是改了字、加了表情：它待在原地。只有时间也变了的（例行任务跑完，
+// 那条消息挪到跑完的那一刻）才按新时间重新落位。
+describe('一块变了', () => {
+  it('改了字的待在原地', () => {
+    const timeline = useTimeline()
+    timeline.show({ blocks: timedRun(3), hasMore: false })
+    timeline.replace({ ...timed('m0', 0), content: 'edited' } as Block)
+    expect(ids(timeline.messages.value)).toEqual(['m0', 'm1', 'm2'])
+    expect(timeline.messages.value[0].content).toBe('edited')
+  })
+
+  it('时间挪到后面的，落到它新的位置', () => {
+    const timeline = useTimeline()
+    timeline.show({ blocks: timedRun(3), hasMore: false })
+    timeline.replace(timed('m0', 5000))
+    expect(ids(timeline.messages.value)).toEqual(['m1', 'm2', 'm0'])
+  })
+
+  it('不在这一段里、又比这一段都新的，当新来的一条接上', () => {
+    const timeline = useTimeline()
+    timeline.show({ blocks: timedRun(3), hasMore: true })
+    timeline.replace(timed('old', 9000))
+    expect(ids(timeline.messages.value)).toEqual(['m0', 'm1', 'm2', 'old'])
+  })
+
+  it('不在这一段里、时间也更早的，不凭空冒出来', () => {
+    const timeline = useTimeline()
+    timeline.show({ blocks: timedRun(3, 'n').map((x, i) => timed(x.id, 10_000 + i)), hasMore: true })
+    timeline.replace(timed('older', 1))
+    expect(ids(timeline.messages.value)).toEqual(['n0', 'n1', 'n2'])
+  })
+})

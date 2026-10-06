@@ -104,12 +104,27 @@ export function useTimeline(options: TimelineOptions = {}) {
     return 'shown'
   }
 
-  /** 一块变了：两段里有它的地方都原地换掉。 */
-  function replace(block: Block) {
+  /** 一块变了：两段里有它的地方都原地换掉。只有它的时间也变了（例行任务跑完，
+   *  那条消息挪到跑完的那一刻）才按新时间重新落位，落法和新来的一块一样；
+   *  不在窗口里、又比窗口里最新的还新的，就当新来的一块接上。 */
+  function replace(block: Block): Landing | null {
+    const shown = messages.value.find((m) => m.id === block.id)
+    const heldBlock = newestHeld?.blocks.find((m) => m.id === block.id)
+    const before = shown ?? heldBlock
+    if (before && before.created_at !== block.created_at) {
+      remove(block.id)
+      return append(block)
+    }
+    if (!before) {
+      const newest = newestHeld?.blocks.at(-1) ?? messages.value.at(-1)
+      if (newest && Date.parse(block.created_at) > Date.parse(newest.created_at)) return append(block)
+      return null
+    }
     const at = messages.value.findIndex((m) => m.id === block.id)
     if (at >= 0) messages.value.splice(at, 1, block)
     const held = newestHeld?.blocks.findIndex((m) => m.id === block.id) ?? -1
     if (newestHeld && held >= 0) newestHeld.blocks.splice(held, 1, block)
+    return null
   }
 
   function remove(id: string) {

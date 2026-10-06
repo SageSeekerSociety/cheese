@@ -35,6 +35,7 @@ import TimelineMark from '../TimelineMark.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import RoutineRunLine from '@/components/routine/RoutineRunLine.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -462,6 +463,14 @@ function emitOutboxLeave(el: Element, done: () => void) {
             @keep="emit('keep', $event)"
             @pin="emit('pin', $event)"
             @unpin="emit('unpin', $event)"
+          />
+          <!-- 例行任务的一次执行：哪条规则、跑得怎么样，去看这次执行的支线。 -->
+          <RoutineRunLine
+            v-if="!notice && m.routine_run"
+            class="tl-thread"
+            :run="m.routine_run"
+            :threaded="!!threadable && !!m.thread"
+            @open="emit('open-thread', m)"
           />
           <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
                带插槽的行每次重画都会跟着重画。 -->

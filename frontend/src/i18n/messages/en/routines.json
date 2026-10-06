@@ -30,6 +30,14 @@
     "active": "Active",
     "paused": "Paused"
   },
+  "line": {
+    "chip": "Routine · {title}",
+    "going": "Running",
+    "missed": "Didn't run",
+    "missedBecause": "Didn't run: {reason}",
+    "took": "Took {minutes} min",
+    "open": "View this run"
+  },
   "run": {
     "queued": "Queued",
     "running": "Running",

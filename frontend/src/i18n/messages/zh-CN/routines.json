@@ -30,6 +30,14 @@
     "active": "执行中",
     "paused": "已暂停"
   },
+  "line": {
+    "chip": "例行 · {title}",
+    "going": "运行中",
+    "missed": "未能执行",
+    "missedBecause": "未能执行：{reason}",
+    "took": "运行用时 {minutes} 分钟",
+    "open": "查看这次运行"
+  },
   "run": {
     "queued": "排队中",
     "running": "执行中",
