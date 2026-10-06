@@ -2,6 +2,9 @@
 // 一份操作清单，桌面上是一个下拉菜单（v-menu），手机上（< 960px）是底部动作面板
 // （MobileActionSheet）。页面只写一次清单，不自己分两支。
 //
+// 全应用同一时间只留一份菜单：谁开谁登记，右键那一份（弹在鼠标那一点上）开的时候把
+// 当时开着的那一份收掉（见 openMenus）。
+//
 //   <AdaptiveMenu :actions="actions" title="话题">
 //     <template #activator="{ props }">
 //       <v-btn v-bind="props" icon="mdi-dots-horizontal" :aria-label="…" />
@@ -12,9 +15,11 @@
 // onClick。#header 只在手机面板上画；#desktopHeader 可在桌面菜单项前放一排表情等内容。
 import type { MenuAction } from './menuAction'
 
+import { onScopeDispose, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import MobileActionSheet from './MobileActionSheet.vue'
+import { menuClosed, menuOpened } from './openMenus'
 
 const open = defineModel<boolean>({ default: false })
 
@@ -38,6 +43,22 @@ defineSlots<{
 }>()
 
 const { mdAndUp } = useDisplay()
+
+// 开着的时候把自己登记成「此刻开着的那一份」；右键那一份顺带把上一个收掉（见 openMenus）。
+// 落在 post 里判：有的调用方同一拍里既开菜单又给 point，早一拍读会把右键那一份读成点开的。
+const closeSelf = () => {
+  open.value = false
+}
+watch(
+  open,
+  (isOpen) => {
+    if (isOpen) menuOpened(closeSelf, props.point !== null)
+    else menuClosed(closeSelf)
+  },
+  { flush: 'post' }
+)
+// 列表重排把这一份拆掉时 open 不会走 false，别把登记留在那里。
+onScopeDispose(() => menuClosed(closeSelf))
 
 // 桌面菜单里带 `to` 的那一行自己就是链接（v-list-item :to），这里只跑 onSelect。
 function chooseOnDesktop(action: MenuAction) {
