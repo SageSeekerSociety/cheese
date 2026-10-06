@@ -723,26 +723,6 @@ property of the box, not of the
 code, so it can only be caught by asserting on the real box — or by never
 creating a database without naming the encoding, which is the rule above.
 
-## Intranet gateway: dev-gateway.okcheese.com
-
-Machines inside ghg reach dev's model tunnel through the intranet gateway
-(APISIX on 192.168.16.11), at `SUBSCRIPTION_TUNNEL_URL` in the dev box's
-`backend/.env`: `wss://dev-gateway.okcheese.com/api/llm/tunnel`. The name is a
-DNS-only Cloudflare record pointing at the gateway's private address, so it
-resolves everywhere and connects only inside ghg.
-
-Its certificate is Let's Encrypt, issued on the dev box through Cloudflare DNS
-with the same `~/ops/tls/cloudflare.ini` as the public names, and installed in
-APISIX as SSL object `dev-gateway-okcheese` by
-`deploy/llm-tunnel/gateway-tls-renew.sh`. The systemd timer
-`cheese-gateway-tls-renew.timer` runs it daily. The unit fails when the
-certificate the gateway serves has 14 days or less left, so a stalled renewal
-shows in `systemctl --failed` while seats still connect.
-
-A seat's tunnel helper dials the URL its launch was given, and every launch
-retires a helper dialling a different one, so a changed URL reaches a seat at
-its next launch after the backend is recreated.
-
 ## Public edge: okcheese.com through Hong Kong, hand-managed
 
 `okcheese.com`, `www.okcheese.com`, `hk.okcheese.com` and `docs.okcheese.com`

@@ -455,9 +455,9 @@ def _make_connect_flow(proxy_auth: str | None = None, *, conn: str = "client-1")
 def test_connect_without_a_configured_secret_refuses_rather_than_relaying(
     monkeypatch, tmp_path
 ):
-    """The failure this guards is silent: a box that widens CONNECT_BIND_HOST but
-    forgets CHEESE_SCOPED_SECRET has no error to notice, so an unset secret must
-    refuse every tunnel instead of falling back to trusting the network."""
+    """The failure this guards is silent: a box that forgets CHEESE_SCOPED_SECRET
+    has no error to notice, so an unset secret must refuse every tunnel instead
+    of falling back to trusting the network."""
     mod = _load_addon(monkeypatch, tmp_path, scoped_secret="")
     flow = _make_connect_flow(_basic("anything"))
 
@@ -502,12 +502,12 @@ def test_connect_legacy_bridge_only_posture_stays_explicit(monkeypatch, tmp_path
     assert flow.response is None
 
 
-def test_compose_lets_a_box_publish_connect_where_machines_can_reach_it():
-    """A remote machine can route to the box but not to the docker bridge, so a
-    hardcoded bridge bind is what kept remote subscription turns from working.
-    The reverse listener stays bridge-only — only sandboxes on this box use it."""
+def test_compose_publishes_both_session_listeners_on_the_bridge_only():
+    """Machines reach the CONNECT listener through the model tunnel, which the
+    backend connects on the bridge; sandboxes on this box use the reverse one.
+    Neither has a caller on the LAN."""
     text = COMPOSE.read_text()
-    assert '"${CONNECT_BIND_HOST:-172.17.0.1}:8444:8444"' in text
+    assert '"172.17.0.1:8444:8444"' in text
     assert '"172.17.0.1:443:8443"' in text
 
 

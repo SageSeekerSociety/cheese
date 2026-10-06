@@ -458,11 +458,11 @@ def main() -> int:
         action="store_true",
         help="ssh the checkpointed machine and report what it can reach",
     )
-    # The gateway origin, NOT the box IP: a provisioned machine reaches the
+    # The public origin, NOT the box IP: a provisioned machine reaches the
     # former and not the latter, which once read as "machines can't reach cheese".
     parser.add_argument(
         "--cheese-base",
-        default="https://cheese-dev-env1-gateway.119net.ghg.org.cn",
+        default="https://okcheese.com",
         help="the cheese origin the machine must reach to enroll",
     )
     args = parser.parse_args()

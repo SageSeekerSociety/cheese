@@ -158,7 +158,7 @@ blocks: sandbox/binding, bare/binding
 
 ## Codex、Pi 和远端机器 {#others}
 
-Codex 和 Pi 不能用 `HTTPS_PROXY` 引流，它们被指向 `{平台地址}/llm/v1`。主 API 的这条路由校验调用方的短期令牌，换上项目的虚拟网关 key，再把上游响应原样流回去。云机器的 Claude Code 则通过模型隧道把 CONNECT 流量带回主机上的计量代理（`backend/app/domain/agent/machine_tunnel.py`）。隧道助手跑在机器上、沙箱之外，拨的是这台机器到后端的那条路：平台的云机器拨自己回环上的 `127.0.0.1:18080`，那是 `deploy/cloud-control.py` 从后端主机反向转发过来的口，落在 api-front 上，由它把 `/llm/tunnel` 交给隧道进程，所以云机器不需要能到后端所在私网的任何地址；其余机器拨配置里的 `subscription_tunnel_url`（`machine_address.tunnel_url`）。
+Codex 和 Pi 不能用 `HTTPS_PROXY` 引流，它们被指向 `{平台地址}/llm/v1`。主 API 的这条路由校验调用方的短期令牌，换上项目的虚拟网关 key，再把上游响应原样流回去。云机器的 Claude Code 则通过模型隧道把 CONNECT 流量带回主机上的计量代理（`backend/app/domain/agent/machine_tunnel.py`）。隧道助手跑在机器上、沙箱之外，拨的是这台机器到后端的那条路（`machine_address.tunnel_url`，在机器的后端地址上接 `/llm/tunnel`）：会话主机拨它自己配置的后端地址；平台的云机器拨自己回环上的 `127.0.0.1:18080`，那是 `deploy/cloud-control.py` 从后端主机反向转发过来的口，落在 api-front 上，由它把 `/llm/tunnel` 交给隧道进程，所以云机器不需要能到后端所在私网的任何地址；其余机器拨公网地址。
 
 无论哪种，上游 key 都不出平台主机：机器上只有它自己的短期令牌。
 
