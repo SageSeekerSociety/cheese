@@ -340,7 +340,7 @@ class Settings(BaseSettings):
     office_editor_backend_url: str = "http://backend:8081"
     office_editor_jwt_secret: str | None = None
 
-    # The collaboration service that holds every room's living document live
+    # The collaboration service that holds every document live
     # (collab/ in the frontend package). The browser reaches it through the
     # frontend's /collab location with a ticket this backend signs; this
     # backend reaches it at `collab_internal_url` for writes that do not come

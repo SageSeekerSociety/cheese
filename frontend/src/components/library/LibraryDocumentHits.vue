@@ -16,7 +16,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'open', id: string): void
-  (e: 'open-room', topicId: string): void
+  (e: 'open-room', topicId: string, taskId: string | null): void
   (e: 'keep', id: string): void
 }>()
 
@@ -39,7 +39,11 @@ function roomName(hit: DocumentHit): string {
   <section v-if="rooms.length" :aria-label="t('work.library.hits.rooms')" class="doc-hits">
     <h2 class="t-meta c-faint doc-hits__head">{{ t('work.library.hits.roomsCount', { n: rooms.length }) }}</h2>
     <div v-for="hit in rooms" :key="hit.id" class="doc-hit doc-hit--room">
-      <button type="button" class="doc-hit__open" @click="hit.topic_id && emit('open-room', hit.topic_id)">
+      <button
+        type="button"
+        class="doc-hit__open"
+        @click="hit.room_id && emit('open-room', hit.room_id, hit.task_id ?? null)"
+      >
         <v-icon icon="mdi-message-text-outline" size="20" class="doc-hit__icon" />
         <span class="doc-hit__id">
           <span class="t-body doc-hit__name">{{ t('work.library.hits.roomDoc', { room: roomName(hit) }) }}</span>

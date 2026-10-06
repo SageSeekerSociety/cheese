@@ -329,7 +329,7 @@ services:
       options:
         tag: "{{.Name}}"
 
-  # Every room's living document, live: people edit it together here over a
+  # Every document, live: people edit it together here over a
   # WebSocket (the frontend's /collab location), and it loads documents from
   # and stores them to the backend. Part of the app tier — deployed, health
   # checked and rolled back with the backend and frontend — because a document

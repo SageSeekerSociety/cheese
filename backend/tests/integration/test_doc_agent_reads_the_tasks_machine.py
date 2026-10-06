@@ -1,7 +1,7 @@
-"""A document's 芝士 reads the room's work on the machine the room already
-holds, and only reads it.
+"""A task document's 芝士 reads the task's work on the machine the task's
+sessions already hold, and only reads it.
 
-It never takes a machine for a question: a room whose machine is not in hand
+It never takes a machine for a question: a task whose machine is not in hand
 (none chosen, a device offline) lends none. What it lends reads files and
 nothing else: no file written, no command started.
 """
@@ -20,6 +20,7 @@ from app.domain.agent.document.machine import machine_to_read
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import (
@@ -31,8 +32,8 @@ from tests.integration.conftest import (
 pytestmark = pytest.mark.anyio
 
 
-async def _room(client, *, lease: bool) -> tuple[uuid.UUID, uuid.UUID, str]:
-    """A room whose agent session holds a machine (``lease``) or none yet."""
+async def _task(client, *, lease: bool) -> tuple[uuid.UUID, uuid.UUID, str]:
+    """A task whose agent session holds a machine (``lease``) or none yet."""
     project = post_project(client, json={"name": "Reads"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
@@ -40,6 +41,7 @@ async def _room(client, *, lease: bool) -> tuple[uuid.UUID, uuid.UUID, str]:
         headers=session_auth_headers("alice"),
     ).json()["data"]
     project_id, room_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    seat = room_agent_seat(client, room_id)
     async with client.test_factory() as db:
         owner = await db.scalar(select(User).where(User.username == "alice"))
         if owner is None:
@@ -63,8 +65,18 @@ async def _room(client, *, lease: bool) -> tuple[uuid.UUID, uuid.UUID, str]:
         topic = await db.get(Topic, room_id)
         assert topic is not None
         resource = str(topic.resource_id or room_id)
+        task = Task(
+            project_id=project_id,
+            room_id=room_id,
+            title="Task",
+            owner_handle="alice",
+            agent_handle=seat,
+        )
+        db.add(task)
+        await db.flush()
+        task_id = task.id
         session = await AgentSessionService(db).ensure(
-            room_id, "cheese", harness="claude-code"
+            task_id, seat, harness="claude-code"
         )
         session.runtime_location = {
             "device_id": "center",
@@ -82,38 +94,38 @@ async def _room(client, *, lease: bool) -> tuple[uuid.UUID, uuid.UUID, str]:
                 "resource_id": resource,
                 "room_resource_id": resource,
                 "device_id": device.device_id,
-                "workspace": "/work/room",
+                "workspace": "/work/task",
                 "mcp_servers": [],
-                "url": f"http://api/topics/{room_id}/execution/session-{resource}",
+                "url": f"http://api/topics/{task_id}/execution/session-{resource}",
             }
         await db.commit()
-    return project_id, room_id, resource
+    return project_id, task_id, resource
 
 
-async def _lent(client, monkeypatch, project_id, room_id, *, online: bool):
+async def _lent(client, monkeypatch, project_id, task_id, *, online: bool):
     monkeypatch.setattr(
         reading, "device_hub", SimpleNamespace(is_online=lambda _device: online)
     )
-    seat = room_agent_seat(client, room_id)
     async with client.test_factory() as db:
+        seat = (await db.get(Task, task_id)).agent_handle
         return await machine_to_read(
-            db, project_id=project_id, room_id=room_id, seat=seat, ttl_s=600
+            db, project_id=project_id, conversation_id=task_id, seat=seat, ttl_s=600
         )
 
 
-async def test_a_room_lends_the_machine_its_agent_works_on(client, monkeypatch):
-    project_id, room_id, _ = await _room(client, lease=True)
-    lent = await _lent(client, monkeypatch, project_id, room_id, online=True)
+async def test_a_task_lends_the_machine_its_agent_works_on(client, monkeypatch):
+    project_id, task_id, _ = await _task(client, lease=True)
+    lent = await _lent(client, monkeypatch, project_id, task_id, online=True)
     assert lent is not None
-    assert lent["workspace"] == "/work/room"
+    assert lent["workspace"] == "/work/task"
 
 
 @pytest.mark.parametrize(("lease", "online"), [(False, True), (True, False)])
-async def test_a_room_without_its_machine_in_hand_lends_none(
+async def test_a_task_without_its_machine_in_hand_lends_none(
     client, monkeypatch, lease, online
 ):
-    project_id, room_id, _ = await _room(client, lease=lease)
-    assert await _lent(client, monkeypatch, project_id, room_id, online=online) is None
+    project_id, task_id, _ = await _task(client, lease=lease)
+    assert await _lent(client, monkeypatch, project_id, task_id, online=online) is None
 
 
 @pytest.mark.parametrize(
@@ -150,13 +162,13 @@ async def test_a_room_without_its_machine_in_hand_lends_none(
 async def test_the_lent_machine_is_only_read(
     client, monkeypatch, method, params, admitted
 ):
-    project_id, room_id, resource = await _room(client, lease=True)
-    lent = await _lent(client, monkeypatch, project_id, room_id, online=True)
+    project_id, task_id, resource = await _task(client, lease=True)
+    lent = await _lent(client, monkeypatch, project_id, task_id, online=True)
     assert lent is not None
     remote = AsyncMock(return_value={"done": True})
     monkeypatch.setattr(execution, "call", remote)
     response = client.post(
-        f"/topics/{room_id}/execution/session-{resource}",
+        f"/topics/{task_id}/execution/session-{resource}",
         headers={"X-Cheese-Token": lent["execution_token"]},
         json={"method": method, "params": params},
     )

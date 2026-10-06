@@ -1,5 +1,4 @@
 // 资料库里正看着的那一份文档：地址上是它的编号（`?doc=`），刷新、发给别人都回到这一份。
-// 对话自带的那一份属于那个对话，打开它就回对话里看。
 import type { ProjectDocument } from '../api/projectDocuments'
 import type { PanelDocument } from './usePanelDoc'
 
@@ -18,8 +17,10 @@ export function useOpenLibraryDocument(
   const selectedDocId = computed(() => (typeof route.query.doc === 'string' ? route.query.doc : ''))
   const openDocument = ref<PanelDocument | null>(null)
 
-  function openRoom(topicId: string) {
-    void router.push({ name: 'workspace-topic', params: { projectId: projectId(), topicId } })
+  /** 回频道，给了任务就进那个任务。 */
+  function openRoom(topicId: string, taskId?: string | null) {
+    if (taskId) void router.push({ name: 'workspace-task', params: { projectId: projectId(), topicId, taskId } })
+    else void router.push({ name: 'workspace-topic', params: { projectId: projectId(), topicId } })
   }
 
   watch(
@@ -30,10 +31,6 @@ export function useOpenLibraryDocument(
       try {
         const about = await docs.about(id)
         if (selectedDocId.value !== id) return
-        if (about.topic_id) {
-          void router.replace({ name: 'workspace-topic', params: { projectId: projectId(), topicId: about.topic_id } })
-          return
-        }
         openDocument.value = { id: about.id, projectId: about.project_id, title: about.title ?? '' }
       } catch (e) {
         if (selectedDocId.value === id) failed(e instanceof Error ? e.message : String(e))

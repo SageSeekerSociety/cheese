@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from anyio.to_thread import run_sync
-from sqlalchemy import select
+from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
@@ -34,6 +34,12 @@ from app.domain.project import artifacts, forge
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
+
+# Which documents tasks keep. A bare table: ``room_task`` depends on this
+# domain.
+_tasks = table(
+    "tasks", column("id", Uuid), column("room_id", Uuid), column("document_id", Uuid)
+)
 
 
 def _json(path: Path, value) -> None:
@@ -212,8 +218,9 @@ async def create_archive(
             .order_by(Block.created_at)
         )
     )
-    # The project's overview and the documents old rooms still keep, with their
-    # node trees: a document is `doc`, its blocks are `doc_node` under it.
+    # The project's overview and the living documents of the tasks in the
+    # channels the caller reads, with their node trees: a document is `doc`,
+    # its blocks are `doc_node` under it.
     living = Documents(db)
     project = await db.get(Project, project_id)
     overview = (
@@ -221,17 +228,21 @@ async def create_archive(
         if project is not None and project.overview_document_id is not None
         else None
     )
-    kept = [
-        *([overview] if overview else []),
-        *(await living.of_rooms(visible)).values(),
-    ]
+    kept: list[tuple] = [(overview, None, None)] if overview else []
+    for task_id, room_id, document_id in await db.execute(
+        select(_tasks.c.id, _tasks.c.room_id, _tasks.c.document_id)
+        .where(_tasks.c.room_id.in_(visible), _tasks.c.document_id.is_not(None))
+        .order_by(_tasks.c.id)
+    ):
+        if (doc := await living.get(document_id)) is not None:
+            kept.append((doc, room_id, task_id))
     docs: list[dict] = []
-    for doc in kept:
+    for doc, room_id, task_id in kept:
         docs.append(
             {
                 "id": doc.id,
-                "topic_id": doc.room_id,
-                "task_id": None,
+                "topic_id": room_id,
+                "task_id": task_id,
                 "kind": "doc",
                 "content": doc.content,
                 "doc_version": doc.version,
@@ -242,8 +253,8 @@ async def create_archive(
         docs.extend(
             {
                 "id": node.id,
-                "topic_id": doc.room_id,
-                "task_id": None,
+                "topic_id": room_id,
+                "task_id": task_id,
                 "kind": "doc_node",
                 "content": node.content,
                 "doc_version": None,

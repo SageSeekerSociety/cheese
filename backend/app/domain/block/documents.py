@@ -97,10 +97,8 @@ async def whose_document(
     session: AsyncSession, doc: Document
 ) -> tuple[uuid.UUID | None, uuid.UUID | None]:
     """``(room, task)`` whose living document this is: a task's (told in the
-    task, where its session reads it), an old room's, or ``(None, None)`` for
-    one of the project's own."""
-    if doc.room_id is not None:
-        return doc.room_id, None
+    task, where its session reads it), or ``(None, None)`` for one of the
+    project's own."""
     owner = (
         await session.execute(
             select(_tasks.c.id, _tasks.c.room_id).where(_tasks.c.document_id == doc.id)
