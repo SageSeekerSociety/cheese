@@ -88,7 +88,7 @@ while :; do
     if [ "$state" = CLOSED ]; then say "$p" "closed without merging"; ended[$p]=1; continue; fi
 
     ci=$(ci_required "$p")
-    key="$ci|$queue|$removed"
+    key="$ci|${queue% *}|$removed"   # the position alone changing is not news
     [ "${last[$p]:-}" = "$key" ] && continue
     prev=${last[$p]:-}; last[$p]=$key
     [ "${prev%%|*}" != "$ci" ] && say "$p" "CI required: $ci"

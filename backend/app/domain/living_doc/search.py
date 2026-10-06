@@ -48,7 +48,7 @@ async def homes(
 ) -> dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID | None]]:
     """Where each living document of these channels is read, by document id:
     ``(channel, task)``. A task's document is under its task; the project's
-    overview under 综合; an old room's document under that room."""
+    overview under 综合."""
     if not room_ids:
         return {}
     out: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID | None]] = {}
@@ -66,11 +66,6 @@ async def homes(
         )
     )
     for document_id, room_id in overviews:
-        out[document_id] = (room_id, None)
-    rooms = await session.execute(
-        select(Document.id, Document.room_id).where(Document.room_id.in_(room_ids))
-    )
-    for document_id, room_id in rooms:
         out[document_id] = (room_id, None)
     return out
 

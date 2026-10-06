@@ -82,7 +82,6 @@ function doc(id: string, title: string, updated: string, extra: Partial<ProjectD
   return {
     id,
     project_id: 'p1',
-    topic_id: null,
     kind: 'doc',
     title,
     doc_version: 1,
@@ -128,6 +127,7 @@ async function mount(url = '/projects/p1/library') {
     routes: [
       { path: '/projects/:projectId/library', name: 'project-library', component: ProjectLibraryView, props: true },
       { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: Blank },
+      { path: '/projects/:projectId/topics/:topicId/tasks/:taskId', name: 'workspace-task', component: Blank },
     ],
   })
   await router.push(url)
@@ -166,7 +166,9 @@ describe('资料库里的文档', () => {
       library: [],
       rooms: [
         {
-          ...doc('room-doc', '', '2026-09-21T10:00:00Z', { topic_id: 't1' }),
+          ...doc('room-doc', '', '2026-09-21T10:00:00Z'),
+          room_id: 't1',
+          task_id: 'k1',
           snippet: '团队版的定价按人数算',
           room_title: '定价页调研',
           room_title_source: 'human',
@@ -181,6 +183,28 @@ describe('资料库里的文档', () => {
 
     expect(vi.mocked(createProjectDocument)).toHaveBeenCalledWith('p1', { copy_of: 'room-doc' })
     await waitFor(() => expect(router.currentRoute.value.query.doc).toBe('copy'))
+  })
+
+  it('搜到的任务文档点开就进那个任务', async () => {
+    vi.mocked(searchProjectDocuments).mockImplementation(async (_, query) => ({
+      query,
+      library: [],
+      rooms: [
+        {
+          ...doc('task-doc', '', '2026-09-21T10:00:00Z'),
+          room_id: 't1',
+          task_id: 'k1',
+          snippet: '团队版的定价按人数算',
+          room_title: '定价页调研',
+        },
+      ],
+    }))
+    const { router } = await mount()
+
+    await fireEvent.update(screen.getByRole('searchbox'), '定价')
+    await fireEvent.click(await screen.findByText('团队版的定价按人数算'))
+
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t1/tasks/k1'))
   })
 
   it('从打开的文档里删除先问一句，答应了才删，删完回到列表', async () => {

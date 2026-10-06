@@ -72,7 +72,7 @@ def _session(thread: uuid.UUID | None = None, *, machine: dict | None = None):
     """A thread's session as the document's 芝士 starts it, with the room's
     machine lent to it when there is one."""
     return doc_session.session_for(
-        asked=Asked(project_id=PROJECT, document_id=DOCUMENT, room_id=ROOM),
+        asked=Asked(project_id=PROJECT, document_id=DOCUMENT, task_id=ROOM),
         key=thread or uuid.uuid4(),
         bound=AGENT,
         around=dataclasses.replace(AROUND, machine=machine),

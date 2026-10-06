@@ -2,8 +2,8 @@
 comment thread's own session.
 
 Comments are passive: recording one starts nothing. A comment, or a reply in a
-comment thread, that @-mentions an agent the document can ask (one seated in
-its room; the project's own, for a document in none) is a question to that
+comment thread, that @-mentions an agent the document can ask (its task's
+agent; the project's own, for a document of no task) is a question to that
 agent. It is answered in the background, after the comment is committed:
 
 1. **Its turn.** One question of a thread is answered at a time, and at most
@@ -12,8 +12,8 @@ agent. It is answered in the background, after the comment is committed:
 2. **Admission.** The agent's model and the project's credits, as a turn of the
    agent would be admitted (``question.admit``).
 3. **The question**, assembled fresh: the thread so far, the passage it is
-   anchored to and the section around it, the whole document, the room's recent
-   messages for a room's document (``thread_question``).
+   anchored to and the section around it, the whole document, the task's recent
+   messages for a task's document (``thread_question``).
 4. **The answer** becomes the agent's reply in the thread (``Replies``). Once
    asked, it is read to its end by whichever backend is up
    (``session_host.consumptions``), so a restart mid-answer still replies.
@@ -122,7 +122,7 @@ async def thread_question(
     thread_id: uuid.UUID,
 ) -> str:
     """A thread's question: the thread so far, what it points at, the document
-    and, for a room's document, the room's latest messages."""
+    and, for a task's document, the task's latest messages."""
     threads = CommentThreads(db)
     thread = await threads.describe(await threads.root(document_id, thread_id))
     comments = [thread["comment"], *(r["comment"] for r in thread["replies"])]
@@ -292,7 +292,7 @@ class Replies:
             await question.unstop(redis, thread_id)
         await reply(self._factory, asked, thread_id, bound, said)
         await self._chat.charge_turn_spend(
-            asked.project_id, asked.room_id, consumption.work
+            asked.project_id, asked.task_id, consumption.work
         )
         return []
 
