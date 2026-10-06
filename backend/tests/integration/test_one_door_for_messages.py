@@ -12,6 +12,7 @@ import uuid
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     post_message,
     post_project,
@@ -116,8 +117,10 @@ def _messages(client, topic_id: str) -> list[dict]:
 def test_a_persons_message_is_live_for_the_room_and_wakes_who_it_names(
     client, stub_hooks
 ):
-    _, topic_id = _room(client)
-    agent = room_agent_seat(client, topic_id)
+    _, room = _room(client)
+    agent = room_agent_seat(client, room)
+    # 芝士 is called in a 支线: everyone watching it sees the message there.
+    topic_id = in_thread(client, room, "alice")
     request_id = str(uuid.uuid4())
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         stored = post_message(
@@ -163,7 +166,8 @@ def test_naming_a_person_tells_them(client):
 
 
 def test_a_retried_send_lands_once_and_wakes_once(client, stub_hooks):
-    _, topic_id = _room(client)
+    _, room = _room(client)
+    topic_id = in_thread(client, room, "alice")
     started = []
     stub_hooks.on_start = lambda: started.append(1)
     request_id = str(uuid.uuid4())

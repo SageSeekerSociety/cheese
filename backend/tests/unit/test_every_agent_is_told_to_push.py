@@ -12,7 +12,7 @@
 `build_system_prompt` 的返回值里才算数，放在哪个常量里、拼在第几段都不是它。
 """
 
-from app.domain.agent.harness.prompt import UNTITLED_FIRST, build_system_prompt
+from app.domain.agent.harness.prompt import UNTITLED_TASK, build_system_prompt
 
 
 def _assembled(**kwargs) -> str:
@@ -35,4 +35,4 @@ def test_it_is_there_for_a_room_that_has_nothing_else_in_its_prompt():
 
 def test_the_naming_ask_is_not_part_of_the_system_prompt():
     """起名是这一轮的事，起完就不该再说；系统提示词在会话里一字不变，所以它不在这里。"""
-    assert UNTITLED_FIRST not in _assembled(has_doc=True, keeps_memory=True)
+    assert UNTITLED_TASK not in _assembled(has_doc=True, keeps_memory=True)

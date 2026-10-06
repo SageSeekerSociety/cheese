@@ -2,8 +2,10 @@
 
 import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
+import type { DeviceScreen } from './types/deviceSessions'
 export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
+export type { DeviceScreen } from './types/deviceSessions'
 export type { WaitingItem } from './types/waiting'
 
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
@@ -63,9 +65,8 @@ export interface Topic {
   project_id: string
   parent_id: string | null
   title: string
-  // 标题是谁定的：placeholder = 还叫「新话题」；auto = 平台起的（方向变了会再改）；
-  // human = 人定的（平台不再动它）。见 backend topic/naming.py。
-  title_source?: 'placeholder' | 'auto' | 'human'
+  // 频道是做什么的，管理者写的一句话。没写是 null。
+  description?: string | null
   kind: string
   status: string
   created_at: string
@@ -80,19 +81,18 @@ export interface Topic {
   accepted_at?: string | null
   archived_at?: string | null
   cleanup_due_at?: string | null
-  can_archive?: boolean
+  // 我管不管这个频道（创建者或项目管理员）：改名、写说明、归档、加人移人。
+  can_manage?: boolean
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
   // 状态，有的是成员在做什么（backend `agent/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
-  // 我和这个话题有没有关系：我在名册里 / 是我建的 / 我是验收人 / 我被 @ 过，
-  // 四者取一。只有 list/get 话题时才带。
-  i_participate?: boolean
+  // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
+  joined?: boolean
   // 这个话题在等我拍板：有点名给我的待办验收卡、没答的决策请求，或芝士停在
-  // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。为真时
-  // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
+  // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
   // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
@@ -100,7 +100,7 @@ export interface Topic {
   waits?: MemberWait[]
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
-  // 和上面 `activity` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
+  // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
   // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
   // 着，而屏幕上那个颜色是哪一个算出来的，谁也说不清。
@@ -186,7 +186,7 @@ export interface Block {
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
-  // 这一块被派成了哪条支线（房间里的「讨论升级」走这条）。两者只会有一个非空。
+  // 这一块转成了哪个任务（频道里的「转为任务」走这条）。两者只会有一个非空。
   upgraded_to_task_id?: string | null
   created_at: string
 }
@@ -239,6 +239,8 @@ export interface RoomTask {
   project_id: string
   room_id: string // 它挂在哪个房间里；任务不嵌套
   title: string
+  // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了
+  // 会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
@@ -400,6 +402,8 @@ export interface ProjectMemberRow {
   team_id?: number
   // source 为 team 时，带他进来的那个团队的 handle（团队页 `/teams/<handle>`）。
   team_handle?: string
+  // That team's name, which the 「来自团队」 link reads.
+  team_name?: string
   name?: string
   name_source?: 'default' | 'human'
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
@@ -440,10 +444,10 @@ export interface ProjectInvitation {
 // owner/admin/member (distinct from ProjectMemberRow's lead/member/mentor);
 // `agent` marks 芝士 (the AI member) so the UI can badge it.
 export interface TopicMemberRow {
-  id: string
   topic_id: string
   member_handle: string
-  role: 'owner' | 'admin' | 'member'
+  // `owner` 是建这个频道的人；「综合」里的人都是 `member`。
+  role: 'owner' | 'member'
   // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
@@ -452,7 +456,6 @@ export interface TopicMemberRow {
   // null，画彩色首字母。别拿它去取 /avatars/default。
   avatar_id?: number | null
   agent?: boolean
-  created_at: string
 }
 
 // GET /api/projects/{id}/inbox?target_handle=
@@ -510,7 +513,7 @@ export interface SpaceDashboard {
 // ---- 成员页 / portfolio (spec §7.2) ----
 
 // A topic the member started, shown on their member page.
-export type MemberTopic = Pick<Topic, 'id' | 'title' | 'title_source' | 'status'>
+export type MemberTopic = Pick<Topic, 'id' | 'title' | 'status'>
 
 // GET /api/projects/{id}/members/{handle}/summary
 export interface MemberSummary {
@@ -593,7 +596,6 @@ export interface UserProfile {
 export interface ProfileTopic {
   id: string
   title: string
-  title_source?: string
   status: string
   project_id: string
   project_name: string
@@ -736,9 +738,9 @@ export interface AcceptCard {
   topic_id: string
   reviewer_handle: string
   routing_reason: string
-  // 提交与 PR 规范: the Conventional Commits subject + body this topic will be
-  // squash-merged under. Null on a card filed without them (the platform then
-  // falls back to `chore: <话题标题>`).
+  // 提交与 PR 规范: the commit subject + body this topic will be squash-merged
+  // under. Null on a card filed without them (the platform then falls back to
+  // the topic title).
   change_subject: string | null
   change_body: string | null
   status: AcceptStatus
@@ -1008,16 +1010,6 @@ export interface OAuthConnectionInfo {
 
 // ---- self-hosted 设备连接器 (P3 Phase B) ----
 
-// One agent (a screen) currently running on an enrolled device — a live 现场 the
-// browser can watch read-only via `screenWsUrl(sid)`.
-export interface DeviceScreen {
-  sid: string
-  agent_handle: string
-  agent_user_id: string
-  project_id: string | null
-  topic_id: string | null
-}
-
 // A compute machine (算力节点) the signed-in human enrolled. A device is pure compute
 // — it has NO agent identity; the agents running on it are `screens` (each carries its
 // own agent). See execution-architecture v3 / fusion-design §5.
@@ -1042,7 +1034,6 @@ export interface DeviceUser {
   project_name: string
   topic_id: string
   topic_title: string
-  topic_title_source?: string
   agent_handle: string
   agent_name: string
   agent_name_source?: string

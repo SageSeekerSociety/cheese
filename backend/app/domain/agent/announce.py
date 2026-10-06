@@ -108,15 +108,11 @@ async def announce(
     if place is None:
         return None
     if task_id is not None:
+        # A task's conversation, or a 支线's: either way one inside this room.
         from app.core.errors import ValidationError
-        from app.domain.room_task.models import Task
 
-        task = await session.get(Task, task_id)
-        if (
-            task is None
-            or task.room_id != place.room_id
-            or task.project_id != place.project_id
-        ):
+        inner = await PlaceResolver(session).conversation(task_id)
+        if inner is None or inner.inner_id is None or inner.room_id != place.room_id:
             raise ValidationError("Event task does not belong to this room")
     landed = landing(
         EventAbout.task if task_id is not None else EventAbout.room,
@@ -179,7 +175,6 @@ async def notify_question(
                 "projectId": str(place.project_id),
                 "topicId": str(place.room_id),
                 "topicTitle": place.title,
-                "topicTitleSource": str(place.room.title_source),
                 "question": question,
                 "asker": asker,
                 # 那条提问消息：通知据它定位到房间里的那一行。
@@ -351,7 +346,6 @@ async def _notify(
                 "projectId": str(place.project_id),
                 "topicId": str(place.room_id),
                 "topicTitle": place.title,
-                "topicTitleSource": str(place.room.title_source),
                 "content": content,
                 **notice_message(block.meta),
                 "eventType": str(meta.get("event_type") or ""),

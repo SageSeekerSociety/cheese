@@ -159,6 +159,10 @@ def test_group_topics_never_appear_in_the_private_map(client):
     _on_the_roster(client, project_id, "user-1", "mentor-1")
     tr = client.post("/topics", json={"project_id": project_id, "title": "房间"})
     topic_id = tr.json()["data"]["id"]
+    joined = client.post(
+        f"/topics/{topic_id}/join", headers=session_auth_headers("user-1")
+    )
+    assert joined.status_code == 200, joined.text
     _seed_message(client, project_id, topic_id, "mentor-1")
 
     assert _private_unread(client, project_id, "user-1") == {}
@@ -168,4 +172,4 @@ def test_group_topics_never_appear_in_the_private_map(client):
         params={"handle": "user-1"},
         headers=session_auth_headers("user-1"),
     )
-    assert r.json()["data"].get(topic_id) == 1
+    assert r.json()["data"][topic_id]["messages"] == 1

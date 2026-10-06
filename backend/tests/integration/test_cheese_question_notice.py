@@ -1,6 +1,6 @@
 """芝士问了一个问题、这一轮就此结束 —— 看板要显示它，等回答的人要收到通知。
 
-一个待回答的问题本身在界面上没有别的痕迹 —— 芝士问完就收工，房间只是安静下来，
+一个待回答的问题本身在界面上没有别的痕迹 —— 芝士问完就收工，对话只是安静下来，
 而安静与正在运行无法区分。所以两件事一起做：房间与任务进「待处理 · 待回答」，同时
 通知发起那一轮的人。芝士是代他执行这件事的，这个问题在等的是他。
 
@@ -23,6 +23,7 @@ from app.domain.topic.services import TopicService
 from tests.ask_fixtures import active_ask, question_row, wait_turn_idle
 from tests.conftest import seed_user
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_message,
     post_project,
@@ -48,7 +49,7 @@ def _ask(
     headers: dict[str, str],
     question: str = "预算按哪个口径统计",
 ) -> dict:
-    """芝士在这一轮里问出口的一道题 —— 凭据是这轮自己的那位队友。"""
+    """芝士在这一轮里问出口的一组题 —— 凭据是这轮自己的那位队友。"""
     r = client.post(
         f"/topics/{room}/asks",
         json={
@@ -65,10 +66,12 @@ def _ask(
     return r.json()["data"]
 
 
-def _click(client, room: str, data: dict, *, by: str = "alice") -> None:
+def _click(client, conversation: str, data: dict, *, by: str = "alice") -> None:
     """点「按部门」：浏览器把选项文字作为对那道题的回复发出去，和打字是同一扇门。"""
     (question,) = data["blocks"]
-    post_message(client, room, by, {"content": "按部门", "reply_to": question["id"]})
+    post_message(
+        client, conversation, by, {"content": "按部门", "reply_to": question["id"]}
+    )
 
 
 def _agent_says(client, room: str, text: str) -> None:
@@ -111,9 +114,11 @@ def test_an_unanswered_question_puts_the_room_in_the_waiting_column(
 ):
     seed_user(client, "alice")
     pid, room = _room(client)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers)
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
 
     shown = _shown(client, pid, room)
     assert shown["column"] == "needs_you"
@@ -124,13 +129,15 @@ def test_answering_it_takes_the_room_back_out(client, stub_hooks, monkeypatch):
     """已回答的问题不应让房间长期停留在待回答 —— 判据是**最近一条**。"""
     seed_user(client, "alice")
     pid, room = _room(client)
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        data = _ask(client, room, headers)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        data = _ask(client, thread, headers)
     assert _shown(client, pid, room)["column"] == "needs_you"
 
-    _click(client, room, data)
+    _click(client, thread, data)
     # 作答会把芝士叫起来；等那一轮收尾再看板，免得量到的是「正在跑」。
-    wait_turn_idle(client, room)
+    wait_turn_idle(client, thread)
 
     assert _shown(client, pid, room)["column"] != "needs_you"
 
@@ -138,16 +145,18 @@ def test_answering_it_takes_the_room_back_out(client, stub_hooks, monkeypatch):
 def test_a_second_question_after_an_answered_one_still_counts(
     client, stub_hooks, monkeypatch
 ):
-    """一道答完不等于房间没题在等 —— 后面新问的那道还没答，仍然停在待回答。"""
+    """一组答完不等于房间没题在等 —— 后面新问的那组还没答，仍然停在待回答。"""
     seed_user(client, "alice")
     pid, room = _room(client)
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        data = _ask(client, room, headers)
-    _click(client, room, data)
-    wait_turn_idle(client, room)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        data = _ask(client, thread, headers)
+    _click(client, thread, data)
+    wait_turn_idle(client, thread)
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers, question="那按项目的口径要不要含外包")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers, question="那按项目的口径要不要含外包")
 
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
@@ -200,10 +209,12 @@ def test_the_person_who_started_the_turn_hears_the_question(
     alice = seed_user(client, "alice")
     bob = seed_user(client, "bob")
     pid, room = _room(client)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
     join_project_team(client, pid, "bob")
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="bob") as headers:
-        _ask(client, room, headers)
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="bob") as headers:
+        _ask(client, thread, headers)
 
     (row,) = _questions(client, bob)
     assert row["contextMetadata"]["question"] == "预算按哪个口径统计"
@@ -225,12 +236,14 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
     alice = seed_user(client, "alice")
     bob = seed_user(client, "bob")
     pid, room = _room(client)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
     join_project_team(client, pid, "bob")
 
     with active_ask(
-        client, stub_hooks, monkeypatch, room, actor="alice", platform_turn=True
+        client, stub_hooks, monkeypatch, thread, actor="alice", platform_turn=True
     ) as headers:
-        _ask(client, room, headers)
+        _ask(client, thread, headers)
 
     assert _questions(client, alice) == []
     assert _questions(client, bob) == []
@@ -240,7 +253,7 @@ def test_a_question_with_no_turn_at_all_is_asked_and_reaches_nobody(client):
     """没有进行中的轮次也问得出去 —— 提问不靠任何一轮，只是没有名字可通知。
 
     「这道题在等谁」从那位队友开着的那一轮读；一轮都没开着，就不猜人：题照样落进
-    房间，谁回都算，只是不通知任何人。
+    对话，回复它的人都算，只是不通知任何人。
     """
     alice = seed_user(client, "alice")
     pid, room = _room(client)
@@ -262,7 +275,6 @@ def test_a_question_with_no_turn_at_all_is_asked_and_reaches_nobody(client):
     assert question["meta"]["asked"] is None
 
     assert _questions(client, alice) == []
-    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_answering_the_question_settles_its_notification(
@@ -275,13 +287,15 @@ def test_answering_the_question_settles_its_notification(
     """
     alice = seed_user(client, "alice")
     _pid, room = _room(client)
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        data = _ask(client, room, headers)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        data = _ask(client, thread, headers)
     (before,) = _questions(client, alice)
     assert before["read"] is False
 
-    _click(client, room, data, by="alice")
-    wait_turn_idle(client, room)
+    _click(client, thread, data, by="alice")
+    wait_turn_idle(client, thread)
 
     (row,) = _questions(client, alice)
     assert row["read"] is True
@@ -331,7 +345,7 @@ def _ask_an_old_question(
     return block
 
 
-def test_typing_a_reply_settles_the_question(client):
+def test_typing_a_reply_settles_a_question_row(client):
     """没点选项、直接打字回了一句，也是回答：通知不再是未读，也不再说「待你回答」。
 
     实况：被问的人在房间里打字答了，首页「动态」里那条还是未读，还写着「已暂停，

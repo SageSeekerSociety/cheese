@@ -58,7 +58,6 @@ import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
-import { useTopicTitleUndo } from './useTopicTitleUndo'
 
 import { t } from '@/i18n'
 
@@ -144,8 +143,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
   // 往上报（working / site-turns）是这里的事。
-  const turns = useRoomTurns({ messages, agentName, agentNameOf })
-  const { awaitingReply, turnAgentName, turnAgentHandle } = turns
+  const turns = useRoomTurns({ messages })
+  const { awaitingReply, turnAgentHandle } = turns
   watch(awaitingReply, (v) => emit('working', v))
   watch(turns.turnStarts, (v) => emit('site-turns', v))
   // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
@@ -378,9 +377,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
   let disposed = false
-
-  // 撤销一次自动改名（RoomNotice 那一行的按钮）—— 见 composables/useTopicTitleUndo。
-  const { undoTitle } = useTopicTitleUndo({ topic, emit, errorMsg })
 
   async function loadTopic(room: Topic, entering = false) {
     const generation = ++historyGeneration
@@ -769,9 +765,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
     })
   )
 
-  /** 某一轮那位队友：名字和 handle。认不出是谁的轮次，就是这个房间的那位。 */
-  function turnAgent(turnId: string | null | undefined): NoticeAgent {
-    return { name: turnAgentName(turnId), handle: turnAgentHandle(turnId) ?? agentSeat.value?.handle ?? null }
+  // 某一轮那位队友。认不出是谁的轮次，房间里只坐着一位时只能是它；坐着几位时不猜：
+  // 拿排在最前的那位顶上，发给 B 的那一轮出了错，提示就署成了 A。
+  const severalAgents = computed(() => [...seatByHandle.value.values()].filter((row) => row.agent).length > 1)
+  function turnAgent(turnId: string | null | undefined): NoticeAgent | null {
+    const handle = turnAgentHandle(turnId)
+    if (handle) return { name: agentDisplayName(handle), handle }
+    return severalAgents.value ? null : { name: agentName.value, handle: agentSeat.value?.handle ?? null }
   }
 
   function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
@@ -966,7 +966,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     postChecklist,
     changeChecklist,
     onReact,
-    undoTitle,
     downloadAttachment,
     onAvatarError,
     roomTasks,

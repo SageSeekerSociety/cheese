@@ -46,7 +46,6 @@ from app.domain.room_task import binding, presentation
 from app.domain.room_task.proposals import ProposalState, TaskProposals
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
-from app.domain.topic import naming
 from app.domain.topic.schemas import ConclusionIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -312,8 +311,6 @@ async def create_task(
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
     await announce_stale(place.room_id, "topics")
-    # A task opened in a room is a sign of where the room is going.
-    naming.nudge(place.room_id, "signal")
     return ok(out)
 
 
@@ -378,11 +375,13 @@ async def update_task(
         await db.commit()
         await announce_stale(place.room_id, "topics")
         return ok(out)
+    members = TopicMemberService(db)
     if "owner_handle" in body.model_fields_set and body.owner_handle:
-        if body.owner_handle not in await TopicMemberService(db).people_handles(
-            place.room_id
-        ):
-            raise ValidationError(say("taskOwnerNotInRoom"))
+        # Work is handed to anyone in the project, and whoever takes it is in
+        # its channel from then on.
+        if body.owner_handle not in await members.project_people(place.project_id):
+            raise ValidationError(say("taskOwnerNotInProject"))
+        await members.take_in(place.room_id, body.owner_handle)
         await _move_off_former_owners_computer(
             db, actor, place, task, body.owner_handle
         )
@@ -390,10 +389,12 @@ async def update_task(
     if "agent_handle" in body.model_fields_set:
         await tasks.give_agent(task, agent_handle=body.agent_handle)
     if body.contributor_handles is not None:
-        people = await TopicMemberService(db).people_handles(place.room_id)
+        people = await members.project_people(place.project_id)
         wanted = list(dict.fromkeys(body.contributor_handles))
         if any(h not in people for h in wanted):
-            raise ValidationError(say("contributorNotInRoom"))
+            raise ValidationError(say("contributorNotInProject"))
+        for handle in wanted:
+            await members.take_in(place.room_id, handle)
         await tasks.set_contributors(
             task, [h for h in wanted if h != task.owner_handle]
         )
@@ -429,6 +430,7 @@ def _proposal_out(proposal) -> dict:
     return {
         "id": str(proposal.id),
         "room_id": str(proposal.room_id),
+        "conversation_id": str(proposal.conversation_id),
         "title": proposal.title,
         "summary": proposal.summary,
         "proposed_by": proposal.proposed_by,
@@ -474,6 +476,7 @@ async def propose_task(
     proposal = await TaskProposals(db).propose(
         project_id=place.project_id,
         room_id=place.room_id,
+        conversation_id=place.conversation_id,
         title=body.title,
         summary=body.summary,
         proposed_by=actor.handle,
@@ -482,7 +485,7 @@ async def propose_task(
     if key is not None:
         await idem.record_result(db, key, out)
     await db.commit()
-    await announce_stale(place.room_id, "task-proposals")
+    await announce_stale(place.conversation_id, "task-proposals")
     return ok(out)
 
 
@@ -492,7 +495,7 @@ async def list_task_proposals(
 ) -> dict:
     """The proposals in this room still waiting for someone."""
     place, _actor = await _room_actor(db, resolver, topic_id)
-    rows = await TaskProposals(db).open_in_room(place.room_id)
+    rows = await TaskProposals(db).open_in(place.conversation_id)
     return ok([_proposal_out(p) for p in rows])
 
 
@@ -519,7 +522,10 @@ async def accept_task_proposal(
         raise ForbiddenError(say("taskCreatedByPerson"))
     proposal = await _open_proposal(db, place.room_id, proposal_id)
     task = await TopicService(db).create_task(
-        room_id=place.room_id, created_by=actor.handle, title=proposal.title
+        room_id=place.room_id,
+        created_by=actor.handle,
+        title=proposal.title,
+        proposed_by=proposal.proposed_by,
     )
     TaskProposals.decide(
         proposal, ProposalState.accepted, by=actor.handle, task_id=task.id
@@ -535,9 +541,8 @@ async def accept_task_proposal(
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
-    await announce_stale(place.room_id, "task-proposals")
+    await announce_stale(proposal.conversation_id, "task-proposals")
     await announce_stale(place.room_id, "topics")
-    naming.nudge(place.room_id, "signal")
     await dispatch(chat)
     return ok(out)
 
@@ -557,5 +562,5 @@ async def dismiss_task_proposal(
     TaskProposals.decide(proposal, ProposalState.dismissed, by=actor.handle)
     out = _proposal_out(proposal)
     await db.commit()
-    await announce_stale(place.room_id, "task-proposals")
+    await announce_stale(proposal.conversation_id, "task-proposals")
     return ok(out)

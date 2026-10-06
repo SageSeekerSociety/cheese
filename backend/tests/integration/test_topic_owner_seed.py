@@ -3,16 +3,12 @@
 `seed()` deliberately refuses to make 芝士 the owner, and `create()` used to
 pass `created_by` straight through: a topic created BY the agent, or by a caller
 whose token didn't resolve, was born with 芝士 as its only member and NO owner —
-so nobody could manage its roster (`can_manage_roster` needs owner/admin). On
-the dogfood project this had reached 96 of 149 topics.
+and on the dogfood project this had reached 96 of 149 topics.
 
 These tests pin the fallback ladder — real creator → parent room's owner →
-project owner → the owner of the project's team — and the escape hatch that
-gets the ALREADY-broken rooms out: while a room has no manager at all, whoever
-manages the project (its owner, or a team owner/admin) may appoint one.
-Without it those rooms are a dead end with no route out of the product (only an
-owner may appoint an owner, and there is none), repairable only by hand-editing
-the database.
+project owner → the owner of the project's team. Who MANAGES a channel is a
+separate rule (its creator and whoever manages the project), pinned in
+`test_channel_membership.py`.
 """
 
 import asyncio
@@ -251,51 +247,3 @@ def test_owner_can_manage_roster_of_an_agent_created_topic(client):
     )
     assert r.status_code == 200
     assert _roster(client, topic["id"]).get("bob") == "member"
-
-
-def test_a_team_admin_can_rescue_a_room_that_lost_its_owner(client):
-    """The way out for the 96 rooms already stuck: a team admin may appoint an
-    owner while the room has none. Before this, the only fix was a DB script."""
-    p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
-    _orphan_the_roster(client, topic["id"])
-    assert "owner" not in _roster(client, topic["id"]).values()
-
-    _add_team_member(client, p["id"], "dana", admin=True)
-    r = client.post(
-        f"/topics/{topic['id']}/members",
-        json={"handle": "dana", "role": "owner", "actor": "dana"},
-        headers=session_auth_headers("dana"),
-    )
-    assert r.status_code == 200
-    assert _roster(client, topic["id"]).get("dana") == "owner"
-
-
-def test_plain_project_member_cannot_rescue_a_room(client):
-    """The hatch is for whoever answers for the project, not for everyone in it."""
-    p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
-    _orphan_the_roster(client, topic["id"])
-
-    _add_team_member(client, p["id"], "erin", admin=False)
-    r = client.post(
-        f"/topics/{topic['id']}/members",
-        json={"handle": "erin", "role": "owner", "actor": "erin"},
-        headers=session_auth_headers("erin"),
-    )
-    assert r.status_code == 403
-
-
-def test_hatch_closes_once_the_room_has_an_owner_again(client):
-    """A healthy room's owner is never overridden — the admin loses the power the
-    moment the room can manage itself, so this isn't a blanket project-wide key."""
-    p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
-    _add_team_member(client, p["id"], "dana", admin=True)
-
-    r = client.post(
-        f"/topics/{topic['id']}/members",
-        json={"handle": "mallory", "role": "member", "actor": "dana"},
-        headers=session_auth_headers("dana"),
-    )
-    assert r.status_code == 403

@@ -6,7 +6,7 @@ import type { TopicComputeProfile } from '@/types/compute'
 import { computed, ref } from 'vue'
 
 import { ApiError, getTopicComputeProfile } from '@/api'
-import { closeTask, compareDocumentVersions, getTask, startTask, updateTask } from '@/api/tasks'
+import { closeTask, compareDocumentVersions, getTask, renameTask, startTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 
@@ -15,7 +15,7 @@ export interface TaskComparison {
   after: string
 }
 
-export function useTaskPage(opts: { taskId: () => string | undefined; roomMembers: () => TopicMemberRow[] }) {
+export function useTaskPage(opts: { taskId: () => string | undefined; people: () => TopicMemberRow[] }) {
   const ME = myHandle()
   const task = ref<RoomTask | null>(null)
   const loading = ref(false)
@@ -54,7 +54,8 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
     () => isOwner.value || (!!task.value && (task.value.contributor_handles ?? []).includes(ME))
   )
   const isOpen = computed(() => task.value?.status === 'open')
-  const people = computed(() => opts.roomMembers().filter((m) => !m.agent))
+  // 能接这件事、能来协作的人：项目里的人（不含 AI 队友）。
+  const people = computed(() => opts.people().filter((m) => !m.agent))
 
   // ---- 开始 ----
   // 项目没有默认审阅人时，开始会被拒，负责人在页头下面指定一位再开始。
@@ -91,6 +92,20 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
     actionError.value = null
     try {
       task.value = { ...task.value, ...(await updateTask(task.value.id, { owner_handle: owner })) }
+      return true
+    } catch (e) {
+      actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
+      return false
+    }
+  }
+
+  // ---- 改名：负责人和协作者都能改 ----
+  async function rename(title: string): Promise<boolean> {
+    const name = title.trim()
+    if (!task.value || !name) return false
+    actionError.value = null
+    try {
+      task.value = { ...task.value, ...(await renameTask(task.value.id, name)) }
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -163,6 +178,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; roomMember
     actionError,
     close,
     handOver,
+    rename,
     machine,
     machineError,
     loadMachine,

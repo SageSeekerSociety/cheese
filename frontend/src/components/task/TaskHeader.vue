@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 任务页的页头，和房间页头是同一条线：同样的高度和底线，手机上同样填进顶栏那一格。
 // 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人和协作者（点开看谁在做、
-// 在哪台电脑上做，负责人在这里增减协作者），以及负责人自己才有的「开始」和 ⋯（转交、
-// 关闭）。
+// 在哪台电脑上做，负责人在这里增减协作者），以及「开始」和 ⋯（重命名归负责人和协作者，
+// 转交、关闭只归负责人）。
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { TopicComputeProfile } from '@/types/compute'
 
@@ -35,6 +35,7 @@ const props = defineProps<{
   start: (reviewer: string | null) => Promise<void>
   close: (conclusion: string) => Promise<boolean>
   handOver: (owner: string) => Promise<boolean>
+  rename: (title: string) => Promise<boolean>
   setCollaborators: (handles: string[]) => Promise<boolean>
   loadMachine: () => Promise<void>
 }>()
@@ -47,6 +48,7 @@ const { mdAndUp } = useDisplay()
 const ME = myHandle()
 const isOwner = computed(() => !!props.task && props.task.owner_handle === ME)
 const isOpen = computed(() => props.task?.status === 'open')
+const takesPart = computed(() => isOwner.value || (!!props.task && (props.task.contributor_handles ?? []).includes(ME)))
 const ownerName = computed(() => {
   const handle = props.task?.owner_handle ?? ''
   return props.memberNames[handle] || handle
@@ -89,6 +91,21 @@ async function confirmClose() {
     if (await props.close(conclusion.value)) closeOpen.value = false
   } finally {
     closing.value = false
+  }
+}
+
+const renameOpen = ref(false)
+const renaming = ref(false)
+const newTitle = ref('')
+watch(renameOpen, (open) => {
+  if (open) newTitle.value = props.task?.title ?? ''
+})
+async function confirmRename() {
+  renaming.value = true
+  try {
+    if (await props.rename(newTitle.value)) renameOpen.value = false
+  } finally {
+    renaming.value = false
   }
 }
 
@@ -224,7 +241,7 @@ async function confirmHandOver() {
         @click="start(reviewer || null)"
         >{{ t('work.task.start') }}</BaseButton
       >
-      <v-menu v-if="task && isOwner && isOpen" location="bottom end">
+      <v-menu v-if="task && takesPart" location="bottom end">
         <template #activator="{ props: menuProps }">
           <BaseButton
             v-bind="menuProps"
@@ -237,8 +254,11 @@ async function confirmHandOver() {
           />
         </template>
         <v-list density="compact">
-          <v-list-item v-if="otherPeople.length" :title="t('work.task.handOver')" @click="handOverOpen = true" />
-          <v-list-item :title="t('work.task.close')" @click="closeOpen = true" />
+          <v-list-item :title="t('work.task.rename')" data-testid="task-rename" @click="renameOpen = true" />
+          <template v-if="isOwner && isOpen">
+            <v-list-item v-if="otherPeople.length" :title="t('work.task.handOver')" @click="handOverOpen = true" />
+            <v-list-item :title="t('work.task.close')" @click="closeOpen = true" />
+          </template>
         </v-list>
       </v-menu>
     </div>
@@ -273,6 +293,24 @@ async function confirmHandOver() {
       class="task-dialog__input t-body"
       :aria-label="t('work.task.conclusion')"
       :placeholder="t('work.task.conclusion')"
+    />
+  </ConfirmDialog>
+  <ConfirmDialog
+    v-model="renameOpen"
+    :title="t('work.task.renameTitle')"
+    :confirm-label="t('work.task.rename')"
+    :loading="renaming"
+    :disabled="!newTitle.trim()"
+    @confirm="confirmRename"
+  >
+    <input
+      v-model="newTitle"
+      type="text"
+      maxlength="80"
+      autocomplete="off"
+      class="task-dialog__input t-body"
+      :aria-label="t('work.task.renameLabel')"
+      @keydown.enter.prevent="newTitle.trim() && confirmRename()"
     />
   </ConfirmDialog>
   <ConfirmDialog

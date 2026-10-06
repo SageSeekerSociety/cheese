@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.notification.live import wake_after_commit
 from app.domain.notification.models import Notification, NotificationType
+from app.domain.notification.preferences import in_app_allowed
+from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.push import PUSHABLE
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,17 @@ class InAppNotificationHandler:
         self._session = session
 
     async def send_batch(self, deliveries: Sequence[NotificationDelivery]) -> None:
+        if not deliveries:
+            return
+
+        # 站内也是收件人自己的选择（设计稿渠道块与矩阵的「站内」一列）：关掉的那一
+        # 类不写进收件箱，也就不点亮角标。总开关关掉则一条都不写。
+        prefs = await PreferencesRepository(self._session).for_users(
+            d.recipient_id for d in deliveries
+        )
+        deliveries = [
+            d for d in deliveries if in_app_allowed(prefs[d.recipient_id], d.type)
+        ]
         if not deliveries:
             return
 

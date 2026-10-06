@@ -23,6 +23,7 @@ from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_tok
 from app.domain.identity.handles import agent_instance_handle
 from tests.ask_fixtures import active_ask
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -133,7 +134,7 @@ def test_a_teammate_seats_only_in_the_project_that_built_it(client):
 def test_a_seat_in_the_root_room_is_not_a_seat_in_every_room(client):
     """根房间的席位只管根房间，不是全项目通行证。
 
-    总览的花名册照着整个项目（`seed_root` 把每一位成员都播进去），所以拿「根房间
+    综合里坐着项目里的每一个人，所以拿「根房间
     的花名册认不认它」当兜底，等于把判据从「这个房间认不认它」放回「这个项目认不
     认它」——一个被从房间 X 撤掉席位的队友照样发得出来，而撤席位就是撤授权正是这
     整件事存在的理由。
@@ -234,6 +235,8 @@ def test_the_question_that_credential_asks_is_not_an_input_it_must_read(
     project = _project(client, "Project credential asks")
     room = _room(client, project, title="不是根房间")
     token, _ = _project_credential(client, project)
+    # 芝士在支线里回答，题也在那里问。
+    room = {**room, "id": in_thread(client, room["id"], "alice")}
 
     # 题在一轮里问出口（那一轮的发起人就是「这道题在等谁」），用的仍是那张项目
     # 凭证。

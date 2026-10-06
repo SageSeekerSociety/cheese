@@ -108,6 +108,10 @@ jobs:
   required:
     name: CI required
     if: ${{ !cancelled() }}
+    # pull-requests: read is for the title step, which reads the PR's title.
+    permissions:
+      contents: read
+      pull-requests: read
     needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, docs, cifast]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -117,6 +121,27 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 .github/scripts/required-ci.py check
+      # This repo's own commit convention (docs/workflows.md §5); the platform
+      # leaves a hosted repo's titles to that repo. In the merge queue it reads
+      # the squash commits about to land, which is what main will say. On a PR
+      # it fetches the title live rather than from the event payload, so
+      # re-running this job after editing the title sees the new one.
+      - name: Commit titles follow the convention
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+            gh api "repos/$GITHUB_REPOSITORY/compare/$BASE_SHA...$HEAD_SHA" \
+              --jq '.commits[].commit.message | split("\n")[0]' \
+              | python3 .github/scripts/check-commit-title.py
+          else
+            title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
+            python3 .github/scripts/check-commit-title.py "$title"
+          fi
 
   remote:
     needs: scope

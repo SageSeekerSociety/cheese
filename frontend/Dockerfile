@@ -4,10 +4,6 @@ ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /app
 RUN corepack enable
-# `postinstall` runs `husky install`, which only has something to do in a git
-# checkout. The image has no .git (see .dockerignore), so say so outright rather
-# than relying on husky's own early return.
-ENV HUSKY=0
 
 # The manifests alone, so editing a component does not reinstall the world: this
 # layer is reused until the lockfile itself changes. The pnpm store lives on a

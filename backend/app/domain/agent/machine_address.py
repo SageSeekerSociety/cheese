@@ -4,6 +4,8 @@ An address belongs to the dialer: which one a machine is handed depends on how
 it reaches the backend, never on where the backend happens to listen.
 """
 
+from urllib.parse import urlsplit
+
 from app.core.config import settings
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
@@ -12,6 +14,9 @@ from app.domain.device.supply import Supply
 # `deploy/cloud-control.py` opens onto the machine's own loopback. It lands on
 # api-front, which routes the model tunnel as well as the backend.
 CLOUD_LOOPBACK_BASE = "http://127.0.0.1:18080"
+# The site itself over TLS, on the same machine's loopback: the forward
+# `deploy/cloud-control.py` opens onto api-front's listener for it.
+CLOUD_SITE_TLS_PORT = 18445
 
 
 async def device_api_base(session, device_id: str, public_base: str) -> str:
@@ -49,15 +54,23 @@ def ws_url(base: str, route: str) -> str:
 
 
 def tunnel_url(api_base: str) -> str:
-    """Where the model tunnel helper on a machine dials; empty when the
-    deployment has no tunnel.
+    """Where the model tunnel helper on a machine dials: the tunnel route on the
+    base that machine already dials, so the session host, a private-control
+    cloud machine and every other machine each reach the tunnel the way they
+    reach the backend, with no second address to keep true."""
+    return ws_url(api_base, "/llm/tunnel")
 
-    A cloud machine whose backend is the loopback forward dials the tunnel
-    through that forward, so it needs no address on the backend's private
-    network, which a MicroCloud guest is not given. Every other machine dials
-    the configured URL.
-    """
-    configured = settings.subscription_tunnel_url.strip()
-    if configured and api_base == CLOUD_LOOPBACK_BASE:
-        return ws_url(api_base, "/llm/tunnel")
-    return configured
+
+def site_forward(api_base: str) -> str:
+    """``host:port`` when a machine that dials ``api_base`` reaches the site
+    (``frontend_url``) over TLS on that loopback port; empty otherwise.
+
+    A private-control cloud machine's default route reaches the public name
+    only through the Hong Kong relay, which sends the request straight back
+    to this deployment through a tunnel. Its sessions' sandboxes resolve the
+    name to the forward instead (``bootstrap.start_sandbox``); the origin,
+    and so its certificate and cookies, stay the public one."""
+    host = urlsplit(settings.frontend_url).hostname
+    if api_base != CLOUD_LOOPBACK_BASE or not host:
+        return ""
+    return f"{host}:{CLOUD_SITE_TLS_PORT}"

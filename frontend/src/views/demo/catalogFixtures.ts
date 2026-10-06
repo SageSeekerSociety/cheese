@@ -587,7 +587,7 @@ export const RAIL_ROWS = {
     activity: [{ member: 'cheese-a1', kind: 'working', since: 1790845200 }],
   }),
   /** 有事等你拍板：琥珀点（未读的 @ 不点这颗灯，所以未读和它是两回事）。 */
-  awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, i_participate: true }),
+  awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, joined: true }),
   /** 收起来的父话题：开关自己带聚合色（里面有话题在等人），右边是聚上来的未读。 */
   collapsed: railRow(
     { id: 't-3', title: '期末复习' },
@@ -601,8 +601,6 @@ export const RAIL_ROWS = {
     title: '把成绩单导出成 CSV',
     waits: [{ member: 'cheese-a1', reason: 'failed', since: '2026-09-29T08:41:00Z' }],
   }),
-  /** 归档行：标题压暗一档，行尾是「取消归档」（`TopicRailArchivedGroup` 那一组）。 */
-  archived: { id: 't-7', title: '第 1 题：写一段自我介绍', kind: 'topic' } as Topic,
 }
 
 /** 侧栏一行右边那几位成员（`useTopicRail.memberMarks` 在真环境里给的就是这个形状）。 */

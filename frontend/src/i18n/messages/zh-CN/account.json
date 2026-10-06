@@ -390,7 +390,8 @@
       "app": "桌面端"
     },
     "closeHint": "关闭设置（Esc）",
-    "usage": "芝士额度"
+    "usage": "芝士额度",
+    "notifications": "通知"
   },
   "emailCode": {
     "title": "邮箱验证码登录",
@@ -448,6 +449,54 @@
     "openAtLoginHint": "登录电脑后在后台运行，有事时通知你",
     "saveFailed": "保存失败"
   },
+  "notifications": {
+    "title": "通知",
+    "lede": "哪一类事件走哪个渠道、什么时候安静下来、多久收一次摘要。改一项存一项。",
+    "saveFailed": "保存失败",
+    "loading": "正在读取通知设置",
+    "loadFailed": "通知设置没读出来",
+    "toggleEvent": "切换「{event}」的{channel}",
+    "channels": {
+      "title": "渠道",
+      "inApp": "站内",
+      "inAppHint": "收件箱与侧栏角标",
+      "push": "浏览器推送",
+      "pushHint": "关掉后不再弹系统通知",
+      "email": "邮件",
+      "emailHint": "发送到你的账号邮箱",
+      "emailInstant": "即时",
+      "emailDigest": "摘要",
+      "emailOff": "关闭"
+    },
+    "quiet": {
+      "title": "免打扰",
+      "window": "安静时段",
+      "windowHint": "按你所在时区（{zone}）的钟点，此时段内不发推送与即时邮件，摘要照常",
+      "windowOn": "{start} – {end}",
+      "windowOff": "不设",
+      "digest": "摘要频率",
+      "digestHint": "把你不在时发生的事合成一封",
+      "daily": "每天",
+      "weekly": "每周",
+      "off": "关闭"
+    },
+    "matrix": {
+      "title": "按类型",
+      "desc": "每一类都能单独挑渠道",
+      "event": "事件",
+      "inApp": "站内",
+      "push": "推送",
+      "email": "邮件",
+      "mention": "有人 {'@'} 我",
+      "reply": "我的消息被回复",
+      "reaction": "有人回应了我的消息",
+      "waitsOnMe": "等你处理的验收卡 / 决策请求",
+      "deviceInUse": "我的设备有人在用",
+      "invitation": "团队 / 项目邀请",
+      "announcement": "空间公告",
+      "billing": "额度与计费提醒"
+    }
+  },
   "devices": {
     "lede": "接入自己的电脑，AI 队友可在上面运行任务",
     "signInFirst": "登录后即可管理已接入的设备",
@@ -466,7 +515,7 @@
     "noTeams": "还没有提供给任何项目",
     "teamFallback": "团队 #{id}",
     "screens": "运行中的现场",
-    "watch": "查看现场 · {'@'}{handle}",
+    "watch": "查看现场 · {'@'}{name}",
     "commandsTitle": "用命令接入",
     "commandsDesc": "Mac 和 Windows 电脑可在「添加设备」里下载桌面端接入。其他机器运行对应系统的命令，再运行 cheesehost link connect 并按提示批准",
     "os": {
@@ -490,7 +539,7 @@
     "step2": "再运行 cheesehost link connect，在给出的链接里批准",
     "step3": "设备会出现在这一页，可查看现场、重命名或解绑",
     "done": "完成",
-    "liveTitle": "现场 · {'@'}{handle}",
+    "liveTitle": "现场 · {'@'}{name}",
     "unbindTitle": "解绑设备「{name}」",
     "unbindHint": "解绑后这台机器立即断开，需重新接入才能再次使用"
   },

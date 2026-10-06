@@ -47,7 +47,7 @@ exactly where it was. `.importlinter` is untouched.
 Ordering. This module sorts after `projects_artifacts.py` (`projects_a` <
 `projects_r`) and before `push.py`, so its paths mount later in the route table
 than they did inside projects.py -- no longer between `/forge-attribution` and
-`/topic-naming`, but after every path that stays plus every artifact path, up to
+`/task-naming`, but after every path that stays plus every artifact path, up to
 `PUT /projects/{project_id}/upstream`. Every moved path carries a literal
 (`default-model`, `compute-configs`, `devices`/`sessions`, `tier-policy`) where
 each route that now precedes it carries a literal of its own, and no route

@@ -16,6 +16,7 @@ from app.domain.room_task.presentation import NeedsYou
 from tests.ask_fixtures import active_ask
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -125,9 +126,11 @@ def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers)
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
         (item,) = _mine(client, "alice")
         assert item["phrase"] == NeedsYou.awaiting_answer
         assert item["reason"] == "asked"
@@ -143,8 +146,10 @@ def test_a_question_still_waits_on_its_person_after_the_turn_ends(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers)
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
 
     (item,) = _mine(client, "alice")
     assert item["reason"] == "asked"
@@ -161,14 +166,16 @@ def test_a_leftover_turn_does_not_decide_who_the_question_waits_on(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, room, "alice")
     client.portal.call(
         lambda: open_turn(
-            client.test_factory, uuid.UUID(room), author="bob", age_s=3600
+            client.test_factory, uuid.UUID(thread), author="bob", age_s=3600
         )
     )
 
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
-        _ask(client, room, headers)
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
 
     (item,) = _mine(client, "alice")
     assert item["reason"] == "asked"
@@ -199,15 +206,18 @@ def test_an_idle_room_is_not_something_to_process(client):
 
 
 def test_one_request_id_in_two_rooms_asks_in_both(client, stub_hooks, monkeypatch):
-    """A retry key is the asking room's: the same one elsewhere is a new question."""
+    """A retry key is the asking conversation's: the same one elsewhere is a new
+    question."""
+    request_id = str(uuid.uuid4())
     project = _project(client, "alice")
     rooms = [_room(client, project, "alice", title) for title in ("预算", "发布")]
-    request_id = str(uuid.uuid4())
     for room in rooms:
+        # 芝士在支线里回答，题也在那里问。
+        thread = in_thread(client, room, "alice")
         with active_ask(
-            client, stub_hooks, monkeypatch, room, actor="alice"
+            client, stub_hooks, monkeypatch, thread, actor="alice"
         ) as headers:
-            _ask(client, room, headers, request_id=request_id)
+            _ask(client, thread, headers, request_id=request_id)
 
     questions = [
         item

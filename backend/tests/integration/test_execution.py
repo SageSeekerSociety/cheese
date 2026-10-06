@@ -6,9 +6,9 @@ import time
 
 from app.domain.usage.subscription_ingest import ingest_once
 from tests.integration.conftest import (
-    chat_ws_url,
     post_message,
     post_project,
+    session_auth_headers,
 )
 
 
@@ -21,11 +21,18 @@ def _topic(client) -> tuple[str, str]:
     return p["id"], t["id"]
 
 
-def _chat(client, topic_id: str) -> None:
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
-        while ws.receive_json()["type"] not in ("done", "error"):
-            pass
+def _chat(client, room: str) -> str:
+    """Call 芝士 in the channel's main line; it answers in the message's 支线,
+    whose id this returns once the turn has left its steps there."""
+    asked = post_message(client, room, "user-1", {"content": "@芝士 hi"})
+    thread = client.post(
+        f"/blocks/{asked['id']}/thread", headers=session_auth_headers("user-1")
+    ).json()["data"]["id"]
+    deadline = time.monotonic() + 30
+    while not client.get(f"/topics/{thread}/transcript").json()["data"]["data"]:
+        assert time.monotonic() < deadline, "the turn left nothing in its 支线"
+        time.sleep(0.2)
+    return thread
 
 
 def _metered(client, pid: str, tid: str, log) -> None:
@@ -55,9 +62,10 @@ def _metered(client, pid: str, tid: str, log) -> None:
 
 
 def test_transcript_and_usage_after_chat(client, tmp_path):
-    pid, tid = _topic(client)
-    _chat(client, tid)
-    _metered(client, pid, tid, tmp_path / "usage.jsonl")
+    pid, room = _topic(client)
+    tid = _chat(client, room)
+    # The proxy logs the channel a session works in.
+    _metered(client, pid, room, tmp_path / "usage.jsonl")
 
     # 施工现场 = 工作细节 only: chat messages (human or AI) never mirror into
     # the transcript — they live in the conversation pane.

@@ -90,6 +90,49 @@ const fix = (s) => s.replace(/小队/g, '团队').replace(/(?<![\w-])Cheese(?![\
 const plain = (html) => html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
 const INFO = ic('info')
 
+// Page blocks a tutorial is built from, besides the demos (docs/manual/dev/docs-site.md#blocks):
+//   :::steps … :::   each `###` heading inside starts one numbered step
+//   :::cards … :::   a list of `- [title](/page#id)：one line` becomes link cards
+//   ```prompt        a message to send to 芝士, with a copy button
+//   > [!TIP] / > [!NOTE] / > [!WARNING]   a callout of that kind; a plain `>` is a note
+// The `:::` lines are dropped from the text version, so a model reads plain Markdown.
+const CONTAINERS = ['steps', 'cards']
+marked.use({
+  extensions: [{
+    name: 'container',
+    level: 'block',
+    start: (src) => src.match(/^:::/m)?.index,
+    tokenizer(src) {
+      const m = /^:::(\w+)[ \t]*\n([\s\S]*?)\n:::[ \t]*(?:\n|$)/.exec(src)
+      if (!m) return undefined
+      if (!CONTAINERS.includes(m[1])) throw new Error(`unknown block «:::${m[1]}» — the blocks are ${CONTAINERS.join(', ')}`)
+      const token = { type: 'container', raw: m[0], kind: m[1], tokens: [] }
+      this.lexer.blockTokens(m[2], token.tokens)
+      return token
+    },
+    renderer(token) {
+      if (token.kind === 'steps') {
+        const html = this.parser.parse(token.tokens)
+        const parts = html.split(/(?=<h3 )/)
+        const intro = parts[0].startsWith('<h3 ') ? '' : parts.shift()
+        if (!parts.length) throw new Error(':::steps needs a ### heading per step')
+        return `${intro}<ol class="steps">${parts.map((x) => `<li class="step">${x}</li>`).join('')}</ol>`
+      }
+      const list = token.tokens.find((t) => t.type === 'list')
+      if (!list || token.tokens.some((t) => t.type !== 'list' && t.type !== 'space')) throw new Error(':::cards holds one list: - [title](/page#id)：one line')
+      return `<div class="doc-cards">${list.items.map((item) => {
+        const para = item.tokens.find((t) => t.type === 'text' || t.type === 'paragraph')
+        const link = para?.tokens?.find((t) => t.type === 'link')
+        if (!link) throw new Error(`a card needs a link first: «${item.text}»`)
+        const rest = para.tokens.slice(para.tokens.indexOf(link) + 1)
+        const desc = this.parser.parseInline(rest).replace(/^\s*[：:—-]\s*/, '')
+        return `<a class="home-card" href="${docHref(link.href)}"><b>${this.parser.parseInline(link.tokens)}</b><p>${desc}</p></a>`
+      }).join('')}</div>`
+    },
+  }],
+})
+const CALLOUT = { TIP: ['tip', 'bulb', '提示'], NOTE: ['note', 'info', '说明'], WARNING: ['warn', 'warn', '注意'] }
+
 function renderMarkdown(md, { file }) {
   const toc = []
   let auto = 0
@@ -117,12 +160,19 @@ function renderMarkdown(md, { file }) {
     const src = href.startsWith('/') ? `${BASE}${href}` : href
     return `<figure><div class="shot"><img src="${esc(src)}" alt="${esc(text)}" loading="lazy"></div>${text ? `<figcaption>${esc(text)}</figcaption>` : ''}</figure>`
   }
-  renderer.blockquote = function ({ tokens }) { return `<div class="callout note">${INFO}<div>${this.parser.parse(tokens)}</div></div>` }
+  renderer.blockquote = function ({ text, tokens }) {
+    const m = /^\[!(\w+)\][ \t]*\n?/.exec(text)
+    if (!m) return `<div class="callout note">${INFO}<div>${this.parser.parse(tokens)}</div></div>`
+    if (!CALLOUT[m[1]]) throw new Error(`unknown callout «[!${m[1]}]» — the kinds are ${Object.keys(CALLOUT).join(', ')}`)
+    const [cls, icon, label] = CALLOUT[m[1]]
+    return `<div class="callout ${cls}">${ic(icon)}<div><b class="callout-label">${label}</b>${this.parser.parse(marked.lexer(text.slice(m[0].length)))}</div></div>`
+  }
   let demos = 0
   renderer.code = ({ text, lang }) => {
     // A demo fence is expanded here and nowhere else: the prerendered component
     // is what a browser gets, and the prose below is what a model gets.
     if (DEMO_FENCES.includes(lang)) return renderDemo(lang, text, `${file}: demo ${++demos}`)
+    if (lang === 'prompt') return `<div class="code say"><div class="code-bar"><span class="code-lang">${ic('chat')}发给芝士</span><button class="copy" data-copy aria-label="复制这条消息">${ic('copy')}</button></div><pre>${esc(text)}</pre></div>`
     return `<div class="code"><div class="code-bar"><span class="code-lang">${esc(lang || 'text')}</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><code>${esc(text)}</code></pre></div>`
   }
   renderer.table = function (token) { return `<div class="table-wrap">${marked.Renderer.prototype.table.call(this, token)}</div>` }
@@ -137,7 +187,7 @@ function renderMarkdown(md, { file }) {
   // The same page again, with each demo cut down to a short piece of prose: this
   // is what the search and 问芝士 indexes are built from, so a model never pays
   // for the component's markup. The headings are the same, with the same ids.
-  const text = replaceFences(md, (lang, body) => `\n${demoText(lang, body, { where: `${file}: demo` })}\n`)
+  const text = replaceFences(md, (lang, body) => `\n${demoText(lang, body, { where: `${file}: demo` })}\n`).replace(/^:::\w*[ \t]*\n/gm, '')
   collecting = false
   auto = 0
   let textHtml

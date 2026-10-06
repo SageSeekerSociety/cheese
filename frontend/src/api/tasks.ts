@@ -41,6 +41,14 @@ export function updateTask(
   })
 }
 
+/** 给任务改名。人起的名字平台之后不再改。 */
+export function renameTask(taskId: string, title: string): Promise<RoomTask> {
+  return request<RoomTask>(`${taskPath(taskId)}/title`, {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  })
+}
+
 /** 关闭任务。带结论是做完了，不带是不做了。 */
 export function closeTask(taskId: string, conclusion?: string): Promise<RoomTask> {
   return request<RoomTask>(`${taskPath(taskId)}/close`, {

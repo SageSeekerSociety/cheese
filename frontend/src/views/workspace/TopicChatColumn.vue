@@ -12,6 +12,7 @@ import { useRouter } from 'vue-router'
 import { useSkillProposals } from './useSkillProposals'
 
 import { acceptTaskProposal, dismissTaskProposal, listTaskProposals, type TaskProposal } from '@/api/tasks'
+import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
@@ -69,6 +70,8 @@ const emit = defineEmits<{
   // 的那几处；只转第一个的话这两样都会静默降级成「整篇闪一下」。
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'upgrade-message', payload: unknown): void
+  // 「在支线中回复」、点开消息下面那一行：页面换到那条支线。
+  (e: 'open-thread', block: Block): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
@@ -104,6 +107,17 @@ function openSkill(skill: { id: string }) {
 // AI 队友提议的任务：列的是这个房间里还在等人决定的那些，接在对话后面。点「创建
 // 任务」的人就是负责人，创建好就去任务页。
 const store = useWorkspaceStore()
+
+// 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。
+const joining = ref(false)
+async function join() {
+  joining.value = true
+  try {
+    await store.setJoined(props.topic.id, true)
+  } finally {
+    joining.value = false
+  }
+}
 const proposals = ref<TaskProposal[]>([])
 const deciding = ref<string | null>(null)
 async function loadProposals() {
@@ -184,6 +198,7 @@ defineExpose({
           emit('open-resource', resource, turnId, review, document)
       "
       @upgrade-message="emit('upgrade-message', $event)"
+      @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"
     >
@@ -236,6 +251,15 @@ defineExpose({
         <button v-if="taskId" type="button" class="back-to-room" @click="emit('open-room')">
           {{ t('work.task.backToRoom', { room: topicTitle(topic) }) }}
         </button>
+        <BaseButton
+          v-else-if="topic.joined === false && topic.status !== 'archived'"
+          kind="primary"
+          size="sm"
+          :loading="joining"
+          @click="join"
+        >
+          {{ t('work.channel.join') }}
+        </BaseButton>
       </template>
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">

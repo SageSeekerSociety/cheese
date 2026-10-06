@@ -5,7 +5,14 @@
 // [key, tab label, icon, groups: [group label, [slug, ...]]]
 export const SECTIONS = [
   ['start', '开始使用', 'rocket', [['入门', ['overview', 'quickstart', 'working-with-cheese']]]],
-  ['tutorials', '教程', 'bulb', [['按身份', ['student-tutorial', 'office-tutorial']]]],
+  // One tutorial teaches one task, step by step; grouped by what the task is about.
+  ['tutorials', '教程', 'bulb', [
+    ['组队协作', ['team-project', 'invite-to-project', 'join-a-team', 'split-work']],
+    ['做题目', ['solve-a-challenge', 'ask-about-a-challenge', 'team-challenge', 'resubmit']],
+    ['出题目', ['publish-a-challenge', 'guide-the-teammate']],
+    ['成果', ['review-changes', 'publish-a-site']],
+    ['工作电脑', ['use-your-computer']],
+  ]],
   ['features', '功能说明', 'layers', [
     ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],

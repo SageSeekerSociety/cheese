@@ -13,6 +13,7 @@ from app.domain.agent.chat import ChatService
 from tests.conftest import finish_turn, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     post_message,
     post_project,
@@ -180,7 +181,8 @@ def test_reaction_on_missing_block_is_404(client):
 def test_summon_gets_cheese_seen_receipt(client):
     """芝士 collega-style ack: the summoning message gets a 👀 by "cheese" the
     moment the turn starts — broadcast live and persisted on the block."""
-    topic_id = _create_topic(client)
+    # 芝士 answers in a 支线: that is where it is called and acknowledges.
+    topic_id = in_thread(client, _create_topic(client), "alice")
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         post_message(client, topic_id, "alice", {"content": "@芝士 芝士帮我看看"})
         frames = []

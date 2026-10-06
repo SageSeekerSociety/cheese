@@ -352,29 +352,6 @@ class NotificationRepository:
         await self._session.flush()
         return len(items)
 
-    async def mention_topic_ids(
-        self, topic_ids: list[uuid.UUID], recipient_handle: str
-    ) -> dict[uuid.UUID, bool]:
-        """{topic_id: 这里 @ 他的那些还有没有未读} —— 一次查完。
-
-        「被 @ 过」不用翻消息正文：一个 @ 落地的时候就在这里写了一行，房间和收件
-        人两列都有索引。
-        """
-        if not topic_ids:
-            return {}
-        stmt = (
-            select(Notification.topic_id, func.bool_or(Notification.read.is_(False)))
-            .where(
-                Notification.topic_id.in_(topic_ids),
-                Notification.type == NotificationType.MENTION.value,
-                Notification.recipient_handle == recipient_handle,
-                Notification.deleted_at.is_(None),
-            )
-            .group_by(Notification.topic_id)
-        )
-        rows = (await self._session.execute(stmt)).all()
-        return {topic_id: bool(unread) for topic_id, unread in rows if topic_id}
-
     async def decision_topic_ids(
         self, topic_ids: list[uuid.UUID], recipient_handle: str
     ) -> dict[uuid.UUID, bool]:

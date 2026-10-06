@@ -905,6 +905,7 @@ def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True
     names = resolv_conf()
     if network and names != "/etc/resolv.conf":
         command += ["--ro-bind", names, "/etc/resolv.conf"]
+    command += bool(fd := fds.get("hosts")) * ["--ro-bind-data", str(fd), "/etc/hosts"]
     runtime_dir = Path(f"/run/user/{os.getuid()}")
     if runtime_dir.is_dir():
         command += ["--tmpfs", str(runtime_dir)]
@@ -1026,6 +1027,7 @@ def start_sandbox(
     os.write(program, confinement["seccomp_filter"]())
     os.close(program)
     fds = {"info": report, "block": wait, "seccomp": seccomp}
+    site = connect and confinement["site_hosts"](env, fds)
     try:
         process = subprocess.Popen(
             sandbox_argv(
@@ -1062,6 +1064,7 @@ def start_sandbox(
                 command += ["--" + name.replace("_", "-"), str(limits[name])]
             for port in loopback_ports(env):
                 command += ["--forward", str(port)]
+            command += ["--site", str(site)] * bool(site)
             answer = json.loads(
                 sudo(command, "The sandbox's network could not be set up")
             )

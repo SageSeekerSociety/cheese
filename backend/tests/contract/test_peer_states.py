@@ -433,8 +433,8 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
 
     replayed = []
     sessions = [
-        type("S", (), {"topic_id": uuid.uuid4(), "agent_handle": "cheese"})(),
-        type("S", (), {"topic_id": uuid.uuid4(), "agent_handle": "cheese"})(),
+        type("S", (), {"conversation_id": uuid.uuid4(), "agent_handle": "cheese"})(),
+        type("S", (), {"conversation_id": uuid.uuid4(), "agent_handle": "cheese"})(),
     ]
 
     class Compute:

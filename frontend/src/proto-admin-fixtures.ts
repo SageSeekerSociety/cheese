@@ -779,7 +779,7 @@ export function adminRoutes(
       data: {
         features: [
           { id: 'docs-assistant', title: '问芝士', summary: '文档站的问答助手' },
-          { id: 'topic-naming', title: '智能命名', summary: '房间自动命名的调用与标题变更' },
+          { id: 'task-naming', title: '智能命名', summary: '任务自动命名的调用与标题变更' },
         ],
       },
     }

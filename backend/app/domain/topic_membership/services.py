@@ -1,20 +1,26 @@
-"""Topic membership business logic (fusion-design §3).
+"""Who is in a channel.
 
-The roster is a topic's group-room membership: who is in the room, their role,
-and who @all/@here reaches. Roles are owner/admin/member; the project itself
-has no roles. 芝士 is a member too, handle `cheese`.
+Everyone in a project can read every public channel; being IN one is what a
+person chooses. A member has it in their sidebar, is reached by @所有人, and may
+speak in its main line. People join and leave by themselves, and whoever is
+assigned a task there is added to it. 综合 is the exception: everyone in the
+project is in it, which the project's roster answers, so it seats no person by
+name. AI teammates are seated in every channel, 综合 included, and the seat is
+their grant to act there.
 
-No auth layer exists yet (agent-as-user is P1, fusion-design §2): the acting
-user's handle is passed in and authorized against their topic role — owner and
-admin may manage the roster, plain members may not.
+A channel is managed — renamed, described, archived, its AI teammates and its
+members changed — by the person who created it (the ``owner`` row) and by
+whoever manages the project.
 """
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
-from app.core.sentences import listing, say
+from app.core.sentences import say
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -23,14 +29,25 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import TitleSource, Topic, TopicMembership, TopicRole
+from app.domain.thread.models import Thread
+from app.domain.topic.models import (
+    Topic,
+    TopicKind,
+    TopicMembership,
+    TopicRole,
+    TopicStatus,
+)
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.topic_membership.schemas import TopicMemberOut
 
 __all__ = ["CHEESE_HANDLE", "TopicMemberService", "addressable_seat"]
 
-# Roles allowed to manage a topic's roster (add / remove / change roles).
-_MANAGER_ROLES = frozenset({TopicRole.owner, TopicRole.admin})
+
+def _public(topic: Topic) -> bool:
+    """A channel anyone in the project reads and may join, as opposed to a
+    private room of two seats."""
+    return not topic.is_private
 
 
 class TopicMemberService:
@@ -43,44 +60,24 @@ class TopicMemberService:
         if await self._topics.get(topic_id) is None:
             raise NotFoundError("Topic not found")
 
-    async def _require_manager(self, topic_id: uuid.UUID, actor: str) -> None:
-        """Only an owner/admin of THIS topic may mutate its roster — unless the
-        room has NO manager at all, in which case whoever manages the project —
-        its owner, or an owner/admin of its team — may step in.
-
-        Without that escape hatch an ownerless topic is a dead end with no way
-        out of the product: only an owner may appoint one, and there is no
-        owner. That state is not hypothetical — 96 of this project's 149 topics
-        were in it (see TopicService._resolve_owner for how they got there), and
-        repairing them meant writing the database by hand. The hatch is
-        deliberately narrow: it opens only while the room has nobody who can
-        manage it, so a healthy room's owner is never overridden.
-        """
-        member = await self._repo.get(topic_id=topic_id, member_handle=actor)
-        if member is not None and member.role in _MANAGER_ROLES:
-            return
-        if not await self._has_manager(topic_id) and await self._is_project_steward(
-            topic_id, actor
-        ):
-            return
-        raise ForbiddenError(say("topicMembersManagerOnly"))
-
-    async def _has_manager(self, topic_id: uuid.UUID) -> bool:
-        return any(
-            m.role in _MANAGER_ROLES for m in await self._repo.list_for_topic(topic_id)
-        )
-
-    async def _is_project_steward(self, topic_id: uuid.UUID, actor: str) -> bool:
-        """Who may step into a room that has lost its owner: whoever manages the
-        project — its owner, or an owner/admin of its team. A team always has an
-        owner, so a project always has someone who can.
-        """
+    async def manages(self, topic: Topic, actor: str) -> bool:
+        """Does ``actor`` manage this channel: its creator, or someone who
+        manages the project? A team always has an owner, so every channel has
+        someone who can."""
         from app.domain.membership.services import MemberService
 
+        member = await self._repo.get(topic_id=topic.id, member_handle=actor)
+        if member is not None and member.role == TopicRole.owner:
+            return True
+        return await MemberService(self._session).manages(topic.project_id, actor)
+
+    async def require_manager(self, topic_id: uuid.UUID, actor: str) -> Topic:
         topic = await self._topics.get(topic_id)
         if topic is None:
-            return False
-        return await MemberService(self._session).manages(topic.project_id, actor)
+            raise NotFoundError("Topic not found")
+        if not await self.manages(topic, actor):
+            raise ForbiddenError(say("channelManagerOnly"))
+        return topic
 
     async def seed(
         self,
@@ -102,29 +99,6 @@ class TopicMemberService:
         seat = agent_handle or await self._project_agent_seat(topic_id)
         if seat is not None:
             await self.ensure_agent_seat(topic_id, seat)
-
-    async def seed_root(
-        self,
-        topic_id: uuid.UUID,
-        *,
-        owner_handle: str | None,
-        member_handles: list[str],
-    ) -> None:
-        """Seed a project's ROOT topic (总览/项目本体) roster: EVERY project
-        member joins the room, so 总览 mirrors the whole project (fusion-design
-        §3). The project owner is the topic owner; other members join as members.
-        Idempotent — re-seeding never duplicates a row.
-
-        People only. 芝士 is seated where the project's own agent is seeded
-        (`AgentInstanceService.materialize_default`), because that is where
-        「这个项目的芝士是谁」 is decided. Seating a room-derived stand-in here
-        would give 总览 a second agent nobody created.
-        """
-        if owner_handle and not self._is_agent_handle(owner_handle):
-            await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
-        await self._ensure_people(
-            topic_id, owner_handle=owner_handle, member_handles=member_handles
-        )
 
     async def seed_private(
         self, topic_id: uuid.UUID, *, owner_handle: str, peer_handle: str
@@ -159,49 +133,11 @@ class TopicMemberService:
         peer = next(m for m in members if m.id != owner.id)
         return owner.member_handle, peer.member_handle
 
-    async def seed_split(
-        self,
-        topic_id: uuid.UUID,
-        *,
-        owner_handle: str | None,
-        member_handles: list[str],
-    ) -> None:
-        """Seed a split-off sub-topic's roster: whoever the caller resolved as the
-        person driving this work becomes owner (`TopicService.dispatch_task`
-        walks that ladder — the splitter, else the human whose turn the split came
-        out of, else inherited), and the parent topic's members (typically its
-        human roster) join as plain members — otherwise a 分身-initiated split
-        (owner_handle "cheese", skipped by seed()) leaves every human silently off
-        the new topic's roster, the bug this exists to close. The parent's own
-        owner arrives through that member list, so a room that changed hands keeps
-        the original requester on the roster instead of dropping them. Role nuance
-        (owner/admin on the parent) is deliberately NOT preserved: importing
-        everyone as a plain member is simple and correct enough — the owner can
-        promote people afterward if the child needs its own owner/admin split.
-        Idempotent, same as seed()."""
-        await self.seed(topic_id, owner_handle=owner_handle)
-        await self._ensure_people(
-            topic_id, owner_handle=owner_handle, member_handles=member_handles
-        )
-
-    async def _ensure_people(
-        self,
-        topic_id: uuid.UUID,
-        *,
-        owner_handle: str | None,
-        member_handles: list[str],
-    ) -> None:
-        for handle in member_handles:
-            if not handle or self._is_agent_handle(handle) or handle == owner_handle:
-                continue
-            await self._ensure_member(topic_id, handle, role=TopicRole.member)
-
     @staticmethod
     def _is_agent_handle(handle: str) -> bool:
-        """Seeding-time check only: a 分身 never joins a room as a *human* member
-        (it gets its own seat via :meth:`resolve_agent_handle`), and a room whose
-        "owner" is 芝士 has no human owner. Both the shared platform handle and a
-        per-topic 分身 handle count."""
+        """Seeding-time check only: a room whose "owner" is 芝士 has no human
+        owner. Both the shared platform handle and a per-topic 分身 handle
+        count."""
         return looks_like_agent_handle(handle)
 
     async def _ensure_member(
@@ -209,25 +145,6 @@ class TopicMemberService:
     ) -> None:
         if await self._repo.get(topic_id=topic_id, member_handle=handle) is None:
             await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
-
-    async def _ensure_member_at_least(
-        self, topic_id: uuid.UUID, handle: str, *, role: TopicRole
-    ) -> None:
-        """Seat ``handle`` in this room at ``role`` or higher — never lower.
-
-        Sibling of :meth:`_ensure_member` for succession: same idempotence, plus
-        the raise. Only ever moves a member UP (``TopicRole.rank``), because the
-        caller is handing over a chair: someone already sitting higher than the
-        chair being passed keeps their seat. Roles are not silently rewritten
-        elsewhere (``add`` refuses a duplicate, ``update_role`` asks a manager),
-        so this is deliberately its own method rather than a flag on either.
-        """
-        existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
-        if existing is None:
-            await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
-            return
-        if existing.role.rank < role.rank:
-            await self._repo.update_role(existing, role=role)
 
     async def list_for_topic(
         self, topic_id: uuid.UUID
@@ -238,29 +155,140 @@ class TopicMemberService:
             await self._repo.count_for_topic(topic_id),
         )
 
-    async def require_archive_manager(self, topic_id: uuid.UUID, actor: str) -> None:
-        member = await self._repo.get(topic_id=topic_id, member_handle=actor)
-        if member is None or member.role not in _MANAGER_ROLES:
-            raise ForbiddenError(say("roomArchiveManagerOnly"))
-
     async def managed_topic_ids(
-        self, topic_ids: list[uuid.UUID], actor: str
+        self, topics: list[Topic], actor: str
     ) -> set[uuid.UUID]:
+        """Which of these channels ``actor`` manages, in two reads whatever the
+        batch: whoever manages the project manages all of them."""
+        if not topics:
+            return set()
+        from app.domain.membership.services import MemberService
+
+        if await MemberService(self._session).manages(topics[0].project_id, actor):
+            return {t.id for t in topics}
         return await self._repo.topic_ids_for_member(
-            topic_ids, actor, roles=_MANAGER_ROLES
+            [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
         )
 
+    async def people_in(self, topic: Topic) -> list[str]:
+        """The people in this channel, in the order they came in. 综合's are
+        everyone in the project; any other channel's are the people seated on
+        it."""
+        if topic.kind == TopicKind.root:
+            return await self.project_people(topic.project_id)
+        return await self.people_handles(topic.id)
+
+    async def seats(self, topic: Topic) -> list[TopicMemberOut]:
+        """Everyone in this channel, the way its member list shows them: its
+        seated rows, and for 综合 everyone in the project besides."""
+        seats = [
+            TopicMemberOut.model_validate(m)
+            for m in await self._repo.list_for_topic(topic.id)
+        ]
+        if topic.kind == TopicKind.root:
+            seated = {m.member_handle for m in seats}
+            seats += [
+                TopicMemberOut(
+                    topic_id=topic.id, member_handle=h, role=TopicRole.member
+                )
+                for h in await self.people_in(topic)
+                if h not in seated
+            ]
+        return seats
+
+    async def people_of(self, topic_id: uuid.UUID) -> list[str]:
+        """:meth:`people_in` for a caller holding the channel's id."""
+        topic = await self._topics.get(topic_id)
+        return await self.people_in(topic) if topic is not None else []
+
+    async def project_people(self, project_id: uuid.UUID) -> list[str]:
+        """Everyone in the project who is a person: whom a channel's work may be
+        handed to."""
+        from app.domain.membership.roster import roster
+
+        return [
+            m.handle for m in await roster(self._session, project_id) if not m.agent
+        ]
+
+    async def joined_topic_ids(
+        self, topics: list[Topic], handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these channels ``handle`` is in, in one read: 综合 always, as
+        long as they are in its project, and every other channel they joined."""
+        roots = [t for t in topics if t.kind == TopicKind.root]
+        joined = await self._repo.topic_ids_for_member(
+            [t.id for t in topics if t.kind != TopicKind.root], handle
+        )
+        if roots and await self._on_project(roots[0].project_id, handle):
+            joined |= {t.id for t in roots}
+        return joined
+
+    async def joined_ids(
+        self, topic_ids: list[uuid.UUID], handle: str
+    ) -> set[uuid.UUID]:
+        """:meth:`joined_topic_ids` for callers holding ids rather than rows."""
+        topics = [t for t in [await self._topics.get(i) for i in topic_ids] if t]
+        return await self.joined_topic_ids(topics, handle)
+
+    async def on_project(self, project_id: uuid.UUID, handle: str) -> bool:
+        """Is ``handle`` a person or AI teammate of this project?"""
+        return await self._on_project(project_id, handle)
+
+    async def _channel(self, topic_id: uuid.UUID) -> Topic:
+        """A channel people join and leave; a private room is not one."""
+        topic = await self._topics.get(topic_id)
+        if topic is None or not _public(topic):
+            raise NotFoundError("Topic not found")
+        return topic
+
+    async def may_speak(self, room: Topic, handle: str) -> bool:
+        """May this person speak in the room's main line: a member of a
+        channel, or one of the two in a private room (who are seated)."""
+        if not _public(room):
+            return True
+        return room.id in await self.joined_topic_ids([room], handle)
+
+    async def join(self, topic_id: uuid.UUID, actor: str) -> None:
+        """``actor`` joins a public channel of a project they are in. 综合 needs
+        no joining, and an archived channel takes no one new."""
+        topic = await self._channel(topic_id)
+        if topic.kind == TopicKind.root:
+            return
+        if topic.status == TopicStatus.archived:
+            raise ValidationError(say("channelArchivedNoJoin"))
+        if not await self._on_project(topic.project_id, actor):
+            raise ForbiddenError(say("topicAddProjectMembersOnly"))
+        await self._ensure_member(topic_id, actor, role=TopicRole.member)
+
+    async def leave(self, topic_id: uuid.UUID, actor: str) -> None:
+        """``actor`` leaves a channel. Nobody leaves 综合: it is the project."""
+        topic = await self._channel(topic_id)
+        if topic.kind == TopicKind.root:
+            raise ValidationError(say("channelGeneralNoLeave"))
+        member = await self._repo.get(topic_id=topic_id, member_handle=actor)
+        if member is not None:
+            await self._repo.delete(member)
+
+    async def take_in(self, topic_id: uuid.UUID, handle: str) -> None:
+        """Put a person in a channel because work there was handed to them: the
+        owner or a contributor of a task in it. 综合 already has them, and a
+        private room's seats are its own business."""
+        topic = await self._topics.get(topic_id)
+        if topic is None or not _public(topic) or topic.kind == TopicKind.root:
+            return
+        if self._is_agent_handle(handle):
+            return
+        await self._ensure_member(topic_id, handle, role=TopicRole.member)
+
     async def owner_of(self, topic_id: uuid.UUID) -> str | None:
-        """The human this room belongs to — its ``owner`` member, or None.
+        """The human this room belongs to — its ``owner`` member, or None. 综合
+        seats nobody by name, so it has none.
 
         The roster is the ONLY place that answer is reliably recorded.
-        ``Topic.created_by`` is not: a 分身 splitting a sub-topic creates it
-        under its own ``cheese-<hex12>`` handle, so on every split topic
-        ``created_by`` names a robot. Seeding already walked the ladder that
-        finds the real human — :meth:`seed`/:meth:`seed_split` skip 芝士 as owner,
-        and ``TopicService.dispatch_task`` falls back to the person driving
-        the turn the split came out of, then the parent room's owner, then the
-        project's — so this just reads what that ladder wrote.
+        ``Topic.created_by`` is not: 芝士 opening a channel creates it under its
+        own ``cheese-<hex12>`` handle. Seeding already walked the ladder that
+        finds the real human (:meth:`seed` skips 芝士 as owner), so this just
+        reads what that ladder wrote.
 
         Cheap and unauthorized on purpose: attribution paths (who a PR and its
         commits belong to) call it on every merge, and they are read-only.
@@ -434,7 +462,9 @@ class TopicMemberService:
         the same 芝士, because an agent's name comes from the agent and not from
         where it happens to be standing.
         """
-        room = room_id or topic_id
+        # A task is a conversation of its own with no roster: its room's
+        # answers for it, whichever caller forgot to say so.
+        room = room_id or await room_of(self._session, topic_id)
         handles = await self.agent_handles(room)
         if len(handles) == 1:
             return handles[0]
@@ -457,17 +487,19 @@ class TopicMemberService:
         着有一个收件人，落到正文里的 @ 却谁也对不上，于是事件送出去了、却什么也不会
         发生。没人可点就是没人可点，如实答 None。
         """
+        if room_id is None:
+            # A 支线 seats nobody of its own: its channel's roster answers.
+            room_id = await self._session.scalar(
+                select(Thread.room_id).where(Thread.id == topic_id)
+            )
         if not await self.agent_handles(room_id or topic_id):
             return None
         return await self.resolve_agent_handle(topic_id, room_id=room_id)
 
     async def add(
-        self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
+        self, *, topic_id: uuid.UUID, handle: str, actor: str
     ) -> TopicMembership:
-        topic = await self._topics.get(topic_id)
-        if topic is None:
-            raise NotFoundError("Topic not found")
-        await self._require_manager(topic_id, actor)
+        topic = await self.require_manager(topic_id, actor)
         # Who is an agent is the binding's answer, not the handle's shape (I9):
         # a connector's bound account can be named anything.
         is_agent = handle.startswith(AGENT_HANDLE_PREFIX) or await IdentityService(
@@ -489,184 +521,46 @@ class TopicMemberService:
             # People come into the project first — from its team, or as an
             # external member — and rooms choose among them.
             raise ValidationError(say("topicAddProjectMembersOnly"))
+        elif topic.kind == TopicKind.root:
+            # Everyone in the project is already in 综合.
+            raise ValidationError(say("topicMemberAlready"))
         existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if existing is not None:
             raise ValidationError(say("topicMemberAlready"))
-        return await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
+        return await self._repo.add(
+            topic_id=topic_id, member_handle=handle, role=TopicRole.member
+        )
 
     async def _on_project(self, project_id: uuid.UUID, handle: str) -> bool:
         from app.domain.membership.roster import roster
 
         return any(m.handle == handle for m in await roster(self._session, project_id))
 
-    async def update_role(
-        self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
-    ) -> TopicMembership:
-        await self._ensure_topic(topic_id)
-        await self._require_manager(topic_id, actor)
-        member = await self._repo.get(topic_id=topic_id, member_handle=handle)
-        if member is None:
-            raise NotFoundError(say("topicMemberNotFound"))
-        # Demoting the last owner would orphan the room — block it.
-        if (
-            member.role == TopicRole.owner
-            and role != TopicRole.owner
-            and await self._repo.count_owners(topic_id) <= 1
-        ):
-            raise ValidationError(say("topicLastOwnerDemote"))
-        return await self._repo.update_role(member, role=role)
-
     async def remove(self, *, topic_id: uuid.UUID, handle: str, actor: str) -> None:
-        await self._ensure_topic(topic_id)
-        await self._require_manager(topic_id, actor)
+        await self.require_manager(topic_id, actor)
         member = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if member is None:
             raise NotFoundError(say("topicMemberNotFound"))
-        # Never remove the last owner — a topic must always have one.
-        if (
-            member.role == TopicRole.owner
-            and await self._repo.count_owners(topic_id) <= 1
-        ):
-            raise ValidationError(say("topicLastOwnerRemove"))
         await self._repo.delete(member)
-
-    async def hand_over_project_seats(
-        self, *, project_id: uuid.UUID, from_handle: str, to_handle: str
-    ) -> list[uuid.UUID]:
-        """把转让人在这个项目的每一间房里坐的椅子交给接手人，再撤掉他自己。
-
-        只有**转让一个属于转让人自己的项目**时才该走这里（``set_project_owner``
-        的第三档：项目搬进接手人的个人团队）。第二档不动：接手人本来就是团队成员，
-        转让人自己也还在项目里，他的席位不是遗留物，动它就是把人从自己的项目里踢出
-        去。
-
-        为什么非有这一步：项目成员身份是进得来这个项目全部话题的凭据，但**房间**还
-        有它自己的一本名册，而 ``authorize_topic_access`` 先认名册、后认项目成员。
-        建项目时 ``seed_root`` 把所有者种成了根话题的 owner，所以只换
-        ``owner_handle`` 的话，转让人照旧是每间房的在册成员：项目那一层的门关上了，
-        房间那一层还开着——他照样收得到「项目总览」的消息，照样发得了言，也照样管得
-        了那间房的成员。那不是转让，是把名字换了（2026-09-27，项目跟着人走这件事的
-        另一半）。
-
-        先坐后撤，次序就是这一步的全部要点。``revoke_project_seats`` 在「他是这间房
-        最后一个 owner」时会拒绝——无主房间在产品里是死路——而转让人在根话题上正是
-        最后一个 owner。先把继任者坐进那把椅子，那条例外就不再适用：不是把例外放宽，
-        是让它不再成立。反过来说，不在这里放行、不留 ``force=True``、不静默跳过：
-        继任之后还有哪间房撤不掉，那是另一处坏了，该炸就炸（``revoke_project_seats``
-        的 ``ValidationError`` 会把整笔转让一起回滚）。
-
-        「坐进那把椅子」是字面意思：继任者在这间房的角色**不低于他接的那个人的**
-        （``TopicRole.rank``）。没有席位就坐上，坐得比那把椅子低就升上去，本来就不低
-        （或更高）就不动他——这一步只往上，从不把人降级。
-
-        为什么升这一下不能省：接手人常常已经坐在这间房里了。把外部成员请进项目、
-        在「项目总览」里给他一个 member 席位，再把项目转给他——这是个人项目交给合作
-        者最自然的路——只按名册原样接手的话，他还是 member，转让人仍是最后一个
-        owner，于是转让被拒，还告诉转让人「先把话题交给别人」：可交出去正是他正在做
-        的事。升降这一步就是让那句自相矛盾的拒绝不再出现。
-
-        值得明说的另一半：接手人本来就比那把椅子高（比如他是 admin、转让人是
-        member）时保持原样，不降级。交出去的是椅子，不是名册。
-
-        私聊不碰：同 ``revoke_project_seats``，私聊不是项目发的通行证
-        （``TopicRepository.list_for_project`` 本来就不含它）。
-        """
-        topics = await self._topics.list_for_project(project_id)
-        if not topics:
-            return []
-        roles = await self._repo.roles_for_member([t.id for t in topics], from_handle)
-        if not roles:
-            return []
-        for topic_id, role in roles.items():
-            await self._ensure_member_at_least(topic_id, to_handle, role=role)
-        return await self.revoke_project_seats(
-            project_id=project_id, member_handle=from_handle
-        )
 
     async def revoke_project_seats(
         self, *, project_id: uuid.UUID, member_handle: str
     ) -> list[uuid.UUID]:
-        """把这个人从这个项目的每一间房里撤出去 —— 退项目 / 被移出项目走这里。
+        """把这个人从这个项目的每一个频道里撤出去 —— 退项目、被移出项目、把自己的
+        项目转给别人走这里。返回**真的撤掉席位的频道**（``MemberService.leave`` 靠
+        它区分「他在这份名册上只剩这些席位」和「他本来就和这个项目没关系」）。
 
-        返回**真的撤掉席位的房间**（``MemberService.leave`` 靠它区分「他在这份名
-        册上只剩这些席位」和「他本来就和这个项目没关系」）。空列表 = 一个字节都没
-        动：要么他没有席位，要么他唯一的席位在最后一个 owner 那条例外上。
+        没有授权检查：调用方是项目级的退场动作，授权已经在那里做完了。
 
-        为什么项目级的退场必须走到话题这一层：项目成员身份是**进得来这个项目的全部
-        话题**的凭据（``authorize_topic_access`` 认它），只删名册那一行、把话题席位
-        留着，人还是每个房间都进得去 —— 退项目就只退了个名单。所以两条路（自己退、
-        被项目管理者移出）共用这一份撤销。
-
-        没有授权检查，因为**它不是一条被别人调用的用户动作**：调用方是项目级的退场
-        动作，授权已经在那里做完了（``MemberService.leave`` 认本人，``remove`` 认
-        项目所有者或团队管理员）。
-
-        只管项目的话题树，不管私聊：私聊是两个人之间的一间房，不是项目发的通行证
+        只管项目的频道，不管私聊：私聊是两个人之间的一间房，不是项目发的通行证
         （``TopicRepository.list_for_project`` 本来就不含它），人离开项目不该把它
-        带走。
-
-        唯一的例外是**最后一个 owner、而房里还坐着别人**：撤掉他，那几个人就留在一间
-        没人管得了的房里（``_require_manager`` 那个逃逸口正是为修这种房间存在的）。
-        所以既不静默放行，也不替房间指定继任者：拒绝，并点名是哪间房，让人先把房间
-        交出去再走。房里除了他只有 agent 的，或另有一位 admin 的，不拦 —— 前者没
-        有人会被留下，后者房间仍有人管。
-
-        「最后一个 owner」这个判断要读得**准**：两个人同时退同一个项目，各自读到
-        「这间房有两个 owner」就各自把自己删掉，房间照样落进无主状态。所以读 owner
-        的那条查询带 ``FOR UPDATE``（见 ``owners_by_topic``），两个事务在这里排队，
-        后一个读到的是前一个提交后的结果，正确拒掉。
+        带走。频道不会因此没人管：管项目的人管它的每一个频道。
         """
         topics = await self._topics.list_for_project(project_id)
         if not topics:
             return []
-        # 没起名的房间名字是占位的「新话题」，那是中文界面的叫法，不是房间名：按
-        # 句子交出去，每块屏幕用它读者的语言说这个词。
-        titles = {
-            t.id: say("untitledTopic")
-            if t.title_source == TitleSource.placeholder
-            else t.title
-            for t in topics
-        }
-        seats = await self._repo.topic_ids_for_member(list(titles), member_handle)
-        if not seats:
-            return []
-        owners = await self._repo.owners_by_topic(sorted(seats))
-        sole = [
-            topic_id
-            for topic_id in seats
-            if member_handle in owners.get(topic_id, []) and len(owners[topic_id]) <= 1
-        ]
-        # 只有房里还坐着别的人、而他一走就没人管得了这间房时才拦。只剩他一个人（加上
-        # 芝士）的不拦：没有谁会被留下，项目成员身份照样进得来它，管项目的人也能从
-        # ``_require_manager`` 那个逃逸口接手。房里另有一位 admin 的也不拦：admin 管得
-        # 了名册，房间不会没人管。
-        seated = await self._repo.seats_by_topic(sole)
-        others = {
-            topic_id: {
-                h: role
-                for h, role in seated.get(topic_id, {}).items()
-                if h != member_handle
-            }
-            for topic_id in sole
-        }
-        agents = await IdentityService(self._session).agents_among(
-            sorted({h for chairs in others.values() for h in chairs})
-        )
-        orphaned = sorted(
-            titles[topic_id]
-            for topic_id in sole
-            if any(h not in agents for h in others[topic_id])
-            and not any(role in _MANAGER_ROLES for role in others[topic_id].values())
-        )
-        if orphaned:
-            raise ValidationError(
-                say("soleTopicOwner", topics=listing(orphaned, quoted=True))
-            )
-        # 一条 DELETE 清掉全部席位，返回值就是数据库真的删掉的那些房间。以前是一条
-        # 一条 get + delete —— 项目多少间房就多少次往返，而且「查到」被当成了「删
-        # 掉」：中途被别人删掉的那几条会让调用方以为撤了其实没撤。
         return await self._repo.delete_for_member(
-            topic_ids=sorted(seats), member_handle=member_handle
+            topic_ids=[t.id for t in topics], member_handle=member_handle
         )
 
 

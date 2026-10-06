@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.conversation.services import project_of
+from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
@@ -26,7 +26,18 @@ from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
 LEASE_SECONDS = 120
+# An attempt that was not admitted waits before the next one, twice as long each
+# time, up to the cap. A fixed short wait turned every permanent refusal into a
+# loop: each retry is a whole turn that takes the seat and starts the session,
+# so a room with a dozen refused deliveries ran a turn every two seconds and
+# the people in it queued behind those (2026-10-06, 1278 in an hour).
 RETRY_SECONDS = 30
+RETRY_CAP_SECONDS = 300
+
+
+def retry_after(attempts: int) -> float:
+    """How long a delivery waits after its ``attempts``-th unadmitted attempt."""
+    return min(RETRY_SECONDS * 2 ** max(0, attempts - 1), RETRY_CAP_SECONDS)
 
 
 class DeliveryTargetChanged(ValidationError):
@@ -174,7 +185,10 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                     row.last_error = "The task is no longer open"
                     continue
             else:
-                topic = await session.get(Topic, row.conversation_id)
+                # A room's own line, or one of its 支线: the roster is the room's.
+                topic = await session.get(
+                    Topic, await room_of(session, row.conversation_id)
+                )
                 if (
                     topic is None
                     or topic.status == TopicStatus.archived

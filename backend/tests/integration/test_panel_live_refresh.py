@@ -26,6 +26,7 @@ from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     open_task,
     post_message,
     post_project,
@@ -220,7 +221,9 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
         compute=ComputePool([channel.runtime], channel.name),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    _, topic_id = _room(client)
+    _, room = _room(client)
+    # 芝士 answers in a 支线 of the room: that is where the turn shows.
+    topic_id = in_thread(client, room, "alice")
     seen: list[dict] = []
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         post_message(client, topic_id, "alice", {"content": "@芝士 改一下文档"})
@@ -301,7 +304,8 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
         compute=ComputePool([channel.runtime], channel.name),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    _, topic_id = _room(client)
+    _, room = _room(client)
+    topic_id = in_thread(client, room, "alice")
 
     async def cards() -> int:
         async with client.test_factory() as session:
@@ -316,7 +320,7 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
         while asyncio.run(cards()) != 1:
             assert time.monotonic() < deadline, "the running turn announced nothing"
             time.sleep(0.05)
-    retire_topic(client, topic_id)
+    retire_topic(client, room)
 
 
 def test_a_turn_announces_each_kind_of_action_once(client, tmp_path):

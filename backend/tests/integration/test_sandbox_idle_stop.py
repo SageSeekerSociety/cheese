@@ -46,6 +46,7 @@ from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.services import HostPool
 from app.domain.project.models import Project
+from app.domain.room_task.models import Task
 from app.domain.team.models import Team
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.user.repositories import UserRepository
@@ -758,6 +759,35 @@ def test_a_room_mid_turn_does_not_keep_other_sandboxes_awake(cloud, monkeypatch)
 
     assert sweep(cloud)["asleep"] == 1
     assert home_of(cloud, quiet).stopped_at is not None
+
+
+def test_a_task_at_work_in_the_room_does_not_keep_another_sessions_sandbox_awake(
+    cloud,
+):
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+
+    async def task_turn_runs():
+        async with cloud.client.test_request_factory() as db:
+            task = Task(project_id=cloud.project_id, room_id=seat.room, title="Other")
+            db.add(task)
+            await db.flush()
+            db.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=task.id,
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    started_at=datetime.now(UTC),
+                )
+            )
+            await db.commit()
+
+    run(cloud, task_turn_runs)
+    time_passes(cloud, seat, timedelta(minutes=11))
+
+    assert sweep(cloud)["asleep"] == 1
+    assert home_of(cloud, seat).stopped_at is not None
 
 
 def test_a_home_on_an_offline_host_does_not_hold_up_other_archives(cloud, monkeypatch):

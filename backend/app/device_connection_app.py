@@ -40,6 +40,7 @@ _RPC_METHODS = {
     "exec",
     "list_screens",
     "open_screen",
+    "push_local_fs_grants",
     "reassert_screen",
     "update_screen",
 }

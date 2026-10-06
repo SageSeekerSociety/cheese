@@ -1,4 +1,4 @@
-/** 任务页头：只有负责人能开始、能换做它的电脑；别人看得到它在哪台电脑上做。 */
+/** 任务页头：只有负责人能开始、能换做它的电脑；别人看得到它在哪台电脑上做。做这件事的人都能改名。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { TopicComputeProfile } from '@/types/compute'
@@ -60,6 +60,7 @@ function mount(over: Partial<RoomTask> = {}) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
+  const rename = vi.fn(async () => true)
   const view = render(TaskHeader as Component, {
     props: {
       room: ROOM,
@@ -75,16 +76,17 @@ function mount(over: Partial<RoomTask> = {}) {
       start,
       close: async () => true,
       handOver: async () => true,
+      rename,
       setCollaborators,
       loadMachine,
     },
     global: { plugins: [vuetify] },
   })
-  return { ...view, start, loadMachine, setCollaborators }
+  return { ...view, start, loadMachine, setCollaborators, rename }
 }
 
-async function openDetails(container: Element) {
-  // 任务信息是一个 VMenu，而 happy-dom 没有 visualViewport 和 devicePixelRatio。
+function stubViewport() {
+  // VMenu 要 visualViewport 和 devicePixelRatio，happy-dom 没有。
   vi.stubGlobal('devicePixelRatio', 1)
   vi.stubGlobal('visualViewport', {
     width: 1024,
@@ -94,6 +96,10 @@ async function openDetails(container: Element) {
     addEventListener() {},
     removeEventListener() {},
   })
+}
+
+async function openDetails(container: Element) {
+  stubViewport()
   await fireEvent.click(container.querySelector('[data-testid="task-details"]')!)
   await waitFor(() => expect(document.body.textContent).toContain('王宁的笔记本'))
 }
@@ -117,7 +123,7 @@ describe('任务页头', () => {
     expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
   })
 
-  it('不是负责人：不能开始，也没有转交和关闭', () => {
+  it('不做这件事的人：不能开始，也没有更多操作', () => {
     me = 'bob'
     const { container } = mount()
     expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
@@ -163,5 +169,24 @@ describe('任务页头', () => {
     expect(buttons).toHaveLength(1)
     await fireEvent.click(buttons[0])
     expect(setCollaborators).toHaveBeenCalledWith(['carol'])
+  })
+
+  it('协作者能改名，不能转交和关闭', async () => {
+    me = 'bob'
+    const { container, rename } = mount({ contributor_handles: ['bob'] })
+    stubViewport()
+    await fireEvent.click(container.querySelector('[data-testid="task-more"]')!)
+    await waitFor(() => expect(document.querySelector('[data-testid="task-rename"]')).not.toBeNull())
+    expect(document.body.textContent).not.toContain('关闭任务')
+    expect(document.body.textContent).not.toContain('转交')
+    await fireEvent.click(document.querySelector('[data-testid="task-rename"]')!)
+    const input = await waitFor(() => {
+      const el = document.querySelector<HTMLInputElement>('input[aria-label="任务名称"]')
+      expect(el).not.toBeNull()
+      return el!
+    })
+    await fireEvent.update(input, '记住我')
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    expect(rename).toHaveBeenCalledWith('记住我')
   })
 })

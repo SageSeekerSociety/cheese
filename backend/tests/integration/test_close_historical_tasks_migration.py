@@ -7,6 +7,7 @@ and every task made since, keeps its status.
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 import asyncpg
 
@@ -55,7 +56,9 @@ async def _seed(conn) -> dict:
             "INSERT INTO tasks (id, project_id, room_id, title, status,"
             " owner_handle, historical_delivery, closed_at, created_at, updated_at)"
             " VALUES ($1, $2, $3, 'work', $4::text, $5, $6::json,"
-            " CASE WHEN $4::text = 'closed' THEN timestamptz '2026-09-01' END,"
+            # With its offset: a bare date is read in the server's time zone, which
+            # is UTC in CI and Asia/Shanghai in production and the local test DB.
+            " CASE WHEN $4::text = 'closed' THEN timestamptz '2026-09-01 00:00+00' END,"
             " now(), now())",
             ids[task],
             ids["project"],
@@ -77,7 +80,7 @@ async def _check(conn, ids: dict) -> None:
     assert rows[ids["taken"]]["status"] == "open"
     assert rows[ids["current"]]["status"] == "open"
     assert rows[ids["done"]]["status"] == "closed"
-    assert rows[ids["done"]]["closed_at"].date().isoformat() == "2026-09-01"
+    assert rows[ids["done"]]["closed_at"] == datetime(2026, 9, 1, tzinfo=UTC)
 
 
 def test_only_the_historical_tasks_nobody_owns_are_closed():

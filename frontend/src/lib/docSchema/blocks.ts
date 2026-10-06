@@ -566,7 +566,9 @@ export const Status = Mark.create({
     }
   },
   parseHTML: () => [{ tag: 'span[data-status]' }],
-  renderHTML: ({ HTMLAttributes }) => ['span', mergeAttributes(HTMLAttributes), 0],
+  // The class is what the stylesheet keys on: `data-status` alone is a common
+  // attribute name, and table rows elsewhere carry one of their own.
+  renderHTML: ({ HTMLAttributes }) => ['span', mergeAttributes({ class: 'doc-status' }, HTMLAttributes), 0],
   markdownTokenName: 'status',
   markdownTokenizer: {
     name: 'status',

@@ -34,6 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.quoted_context import quoted_context_prompt
+from app.domain.conversation.services import of_room
 from app.domain.delivery.agent import instance_for_seat, now, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
@@ -79,14 +80,16 @@ class Summoned:
 
 
 async def _agent_mentions_since(
-    session: AsyncSession, topic_id: uuid.UUID, since: datetime
+    session: AsyncSession, room_id: uuid.UUID, since: datetime
 ) -> int:
+    """Agent-to-agent calls in the room this past hour, in any of its
+    conversations: the fuse is the room's."""
     return (
         await session.scalar(
             select(func.count())
             .select_from(Delivery)
             .where(
-                Delivery.conversation_id == topic_id,
+                of_room(Delivery.conversation_id, room_id),
                 Delivery.recorded_at >= since,
                 Delivery.payload["eventType"].as_string() == BY_AGENT,
             )
@@ -100,6 +103,7 @@ async def record_mentions(
     *,
     project_id: uuid.UUID,
     room_id: uuid.UUID,
+    conversation_id: uuid.UUID,
     block_id: uuid.UUID,
     author: str,
     content: str,
@@ -113,6 +117,8 @@ async def record_mentions(
     只认这间房名册上的 agent 席位：点到人是站内信的事（`announce_mentions`），点到
     不在房里的队友叫不起任何东西。作者自己不算 —— 点自己的名只会让这一轮之后再跑一
     轮。``skip`` 是调用方已经用别的办法叫起的席位（人发的消息里第一位点到的那个）。
+    ``conversation_id`` 是被点到的队友回答的地方：消息所在的支线或任务，主线上的
+    消息则是它那条支线（`thread.services.answered_in`）。
     """
     handles = mentioned_handles(content)
     if not handles:
@@ -147,7 +153,7 @@ async def record_mentions(
                 },
                 occurred_at=occurred_at,
             ),
-            conversation_id=room_id,
+            conversation_id=conversation_id,
             instance_id=instance.id,
             content=mention_prompt(
                 author=author,

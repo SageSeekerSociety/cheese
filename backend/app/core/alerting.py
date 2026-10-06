@@ -126,7 +126,10 @@ def configured() -> bool:
 
 
 async def _post(text: str) -> None:
-    url = settings.feishu_alert_webhook.strip()
+    await _post_to(settings.feishu_alert_webhook.strip(), text)
+
+
+async def _post_to(url: str, text: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
             response = await client.post(
@@ -191,6 +194,26 @@ def send(
     except RuntimeError:
         # No running loop (a sync context, a test). Nothing to alert from here.
         logger.debug("alert dropped: no running event loop")
+
+
+def post(url: str, text: str) -> None:
+    """Fire-and-forget one text message to another group's custom-bot webhook.
+
+    For a channel that is not the error channel and so is not an alert: none of
+    the budget or repeat suppression above applies, because each call is one
+    distinct event the caller has already decided is worth a message (a new
+    feedback report, `feedback/announce.py`). What does apply is the rest of
+    this module's contract — it never raises, never blocks the caller, and a
+    webhook that refuses or fails is logged here and goes no further.
+    """
+    try:
+        task = asyncio.create_task(_post_to(url, text))
+    except RuntimeError:
+        logger.debug("webhook message dropped: no running event loop")
+        return
+    _running.add(task)
+    task.add_done_callback(_running.discard)
+    task.add_done_callback(_delivery_finished)
 
 
 def _delivery_finished(task: asyncio.Task) -> None:

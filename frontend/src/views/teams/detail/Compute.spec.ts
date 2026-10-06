@@ -149,3 +149,46 @@ it("lists a device attached only to a project, with the project and its owner's 
   // It was never added to the team, so there is nothing to take it out of.
   expect(view.queryByRole('button', { name: '移出团队' })).toBeNull()
 })
+
+it('names the agent behind each running screen, falling back to its handle', async () => {
+  vi.mocked(listTeamDevices).mockResolvedValueOnce({
+    devices: [
+      {
+        device_id: 'lab',
+        name: 'lab',
+        online: true,
+        project_ids: [],
+        team_ids: [1],
+        screens: [
+          {
+            sid: 's1',
+            agent_handle: 'cheese-kimi',
+            agent_user_id: 'u1',
+            project_id: 'p1',
+            topic_id: 't1',
+            agent_name: 'Kimi',
+            agent_name_source: 'human',
+          },
+          {
+            sid: 's2',
+            agent_handle: 'room-agent-1',
+            agent_user_id: 'u2',
+            project_id: null,
+            topic_id: null,
+            agent_name: null,
+            agent_name_source: null,
+          },
+        ],
+      },
+    ],
+  })
+  const view = render(Compute, {
+    global: {
+      plugins: [createVuetify({ components, directives }), i18n],
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
+    },
+  })
+  expect(await view.findByText('运行中 · @Kimi')).toBeTruthy()
+  expect(view.getByText('运行中 · @room-agent-1')).toBeTruthy()
+  expect(view.queryByText(/@cheese-kimi/)).toBeNull()
+})

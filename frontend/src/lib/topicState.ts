@@ -16,7 +16,7 @@ export interface TopicStateBadge {
 }
 
 export function topicStateBadge(status?: string | null): TopicStateBadge {
-  if (status === 'archived') return { label: t('work.topicState.accepted'), cls: 'pr-state--merged' }
+  if (status === 'archived') return { label: t('work.topicState.archived'), cls: 'pr-state--merged' }
   if (status === 'draft') return { label: t('work.topicState.draft'), cls: 'pr-state--draft' }
   // 支线只有 open / closed 两个状态，和房间那三个不是一套词。closed 是「这件活
   // 做完了」——不是归档（支线不归档），所以既不能落到 archived，也不能不管它掉进
@@ -34,21 +34,17 @@ export function topicShortId(id?: string | null): string {
 }
 
 /**
- * 一个话题在屏幕上叫什么。项目本身那个房间（kind = root）在侧栏上叫「全局」，
- * 点进去页头也得叫「全局」——它存着的标题是建项目时写下的「<项目名> · 项目总览」，
- * 照着写就是同一个房间两个名字。
- *
- * 还没人起名的话题（`title_source = placeholder`）按读者的语言叫「新话题」：库里
- * 那份占位标题是写给 agent 读的中文，认它靠的是这一位，不是那几个字。
+ * 一个频道在屏幕上叫什么。项目本身那个频道（kind = root）按读者的语言叫「综合」，
+ * 不照它存着的标题写。
  */
-export function topicTitle(topic: { kind?: string | null; title: string; title_source?: string | null }): string {
+export function topicTitle(topic: { kind?: string | null; title: string }): string {
   if (topic.kind === 'root') return t('navigation.project.general')
-  return topic.title_source === 'placeholder' ? t('work.topic.untitled') : topic.title
+  return topic.title
 }
 
 /**
- * 一条活在屏幕上叫什么。从一条消息升级出来、还没人起名的活（`title_source =
- * placeholder`）按读者的语言叫「新任务」：库里那份占位标题是给 agent 读的中文。
+ * 一条任务在屏幕上叫什么。还没起名的（`title_source = placeholder`）按读者的语言
+ * 叫「新任务」：库里那份占位标题是给 agent 读的中文。
  */
 export function taskTitle(task: { title: string; title_source?: string | null }): string {
   return task.title_source === 'placeholder' ? t('work.topic.untitledTask') : task.title

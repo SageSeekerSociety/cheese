@@ -63,6 +63,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
+      // 一条支线：频道主线上一条消息下面的回复。和频道页是同一个组件——桌面上频道
+      // 主线还在左边，支线占右边那一半；手机上支线是一整页，← 回到频道。
+      name: 'workspace-thread',
+      path: 'topics/:topicId/threads/:threadId',
+      component: () => import('@/views/workspace/TopicView.vue'),
+      props: true,
+      meta: { hideTabs: true, backTo: 'workspace-topic' },
+    },
+    {
       // 一个频道的全部任务：侧栏只挂和我有关的几条，其余在这一页。
       name: 'workspace-channel-tasks',
       path: 'topics/:topicId/tasks',

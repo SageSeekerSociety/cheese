@@ -124,22 +124,3 @@ async def can_manage_project_members(
     if await project_owner(project_id) == actor.handle:
         return True
     return await team_manager(project_id, actor.handle)
-
-
-async def can_manage_roster(
-    actor: Actor,
-    *,
-    topic_id: uuid.UUID,
-    topic_role: TopicRoleReader,
-) -> bool:
-    """Only a topic owner/admin may mutate its roster (add/remove/role). The
-    handle fallback keeps the existing owner/admin check working pre-token.
-
-    ⚠️ Currently UNWIRED — nothing calls this. That is the only reason its
-    fallback is not a live hole: the real check runs in
-    ``TopicMemberService._require_manager``, which does read the role. Wiring this
-    up without first removing the fallback below would open one."""
-    if not actor.authenticated:
-        return True  # deprecated path — the service still checks the role itself
-    role = await topic_role(topic_id, actor.handle)
-    return role in (TopicRole.owner, TopicRole.admin)

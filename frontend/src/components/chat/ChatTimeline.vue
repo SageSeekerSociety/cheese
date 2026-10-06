@@ -29,6 +29,7 @@ import DispatchedMarker from '../DispatchedMarker.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
 import RoomNotice from '../room/RoomNotice.vue'
+import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -39,6 +40,12 @@ const props = defineProps<{
   topic: Topic | null
   /** 私聊里的消息不能转为任务：不给「转为任务」。 */
   noUpgrade?: boolean
+  /** 这是频道的主线：消息可以有支线，下面挂着支线那一行。 */
+  threadable?: boolean
+  /** 这条消息的支线里谁正在回复（还没有回复时）；没有人时为 null。 */
+  replyingFor?: (m: Block) => string | null
+  /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
+  nameOf?: (handle: string) => string
   rows: NoticeRow[]
   /** 开头还没挂上的行数（首屏分批挂行，room/composables/useRowBatch）。 */
   hiddenRows?: number
@@ -98,6 +105,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'react', block: Block, emoji: string): void
   (e: 'reply', block: Block): void
+  (e: 'open-thread', block: Block): void
   (e: 'upgrade-message', messageId: string): void
   (e: 'edit', block: Block): void
   (e: 'edit-send', item: Outgoing): void
@@ -115,7 +123,6 @@ const emit = defineEmits<{
   (e: 'cancel-edit'): void
   (e: 'retry'): void
   (e: 'retry-send', clientId: string): void
-  (e: 'undo-title', blockId: string): void
   (e: 'starter', text: string): void
   (e: 'settle-arrival', event: AnimationEvent, id: string): void
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
@@ -286,9 +293,11 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :picker-open="!!barBlock && reactionPickerFor === barBlock.id"
         :editable="barEditable"
         :no-upgrade="noUpgrade"
+        :threadable="threadable"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"
+        @thread="emit('open-thread', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="emit('edit', $event)"
       />
@@ -368,7 +377,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :data-row-id="m.id"
             @animationend="settleRow"
             @open-resource="emitOpenResource"
-            @undo-title="emit('undo-title', $event)"
             @open-card="emit('open-card', $event)"
             @retry="emit('retry')"
           />
@@ -416,6 +424,18 @@ function emitOutboxLeave(el: Element, done: () => void) {
             @avatar-error="emit('avatar-error', $event)"
             @save-edit="emitSaveEdit"
             @cancel-edit="emit('cancel-edit')"
+          />
+          <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
+               带插槽的行每次重画都会跟着重画。 -->
+          <ThreadLine
+            v-if="!notice && threadable && (m.thread || replyingFor?.(m))"
+            class="tl-thread"
+            :summary="m.thread ?? null"
+            :replying="replyingFor?.(m) ?? null"
+            :refs="refs"
+            :name-of="nameOf ?? String"
+            :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
+            @open="emit('open-thread', m)"
           />
         </template>
       </template>
@@ -504,6 +524,11 @@ function emitOutboxLeave(el: Element, done: () => void) {
   min-height: 0;
 }
 /* 骨架到货时淡出。离场时它脱离文档流，下面已经排好的真行不会被它推一下。 */
+/* 支线那一行和消息正文对齐：行的左内边距 16 + 头像 28 + 间距 10。 */
+.tl-thread {
+  margin-left: 54px;
+  width: calc(100% - 70px);
+}
 .tl-content {
   position: relative;
   /* 动作按这一列的可用宽度收起，桌面分栏也能比手机视口窄。 */

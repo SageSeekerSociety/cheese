@@ -26,6 +26,7 @@ from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     post_message,
     post_project,
     session_auth_headers,
@@ -105,6 +106,8 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
         json={"project_id": project["id"], "title": "迟到"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
+    # 芝士 answers in a 支线 of the channel.
+    room = in_thread(client, room, "alice")
     topic = uuid.UUID(room)
 
     def service(channel: StubChannel) -> ChatService:

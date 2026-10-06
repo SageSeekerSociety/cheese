@@ -103,14 +103,10 @@ async def seed() -> None:
             s.add(ProjectMember(project_id=project.id, user_handle=CHEESE))
             await s.flush()
 
-            # Seed topic rosters (这些 Topic 是直接建的，绕过了 TopicService，
-            # 所以名册要在这里补种). 总览 = 项目本体 → 全体项目成员；
-            # 工作话题 → 创建者(owner) + 芝士. Idempotent via _ensure_member.
-            members = TopicMemberService(s)
-            await members.seed_root(
-                root.id, owner_handle=OWNER, member_handles=[OWNER, CHEESE]
-            )
-            await members.seed(work.id, owner_handle=OWNER)
+            # The channel was made directly, past TopicService, so its seats are
+            # seeded here: its creator and 芝士. 综合 seats nobody by name —
+            # everyone in the project is in it.
+            await TopicMemberService(s).seed(work.id, owner_handle=OWNER)
             await provision_repository(project.id, s)
             print(f"seeded project '{name}' (team {team_id})")
         await s.commit()

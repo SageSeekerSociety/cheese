@@ -10,8 +10,13 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
+
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import post_project, session_auth_headers
 
 
@@ -226,6 +231,48 @@ def test_reactions_on_the_page_still_ride_the_payload(client):
         {"emoji": "👍", "count": 1, "authors": ["owner"]}
     ]
     assert all("🎉" not in str(b.get("reactions", "")) for b in payload["data"])
+
+
+def test_the_whole_timeline_of_a_huge_room_still_carries_its_reactions(client):
+    """No `limit` asks for the reactions of every block in the room at once.
+
+    Past 32767 blocks that list no longer fits in one statement as separate
+    bound values, and asyncpg refuses it: on dev (2026-10-05) the busiest room,
+    about 37k blocks, could no longer be read whole.
+    """
+    tid = _topic(client)
+    first = _say(client, tid, "m0")
+    owner = session_auth_headers("owner")
+    r = client.post(f"/blocks/{first}/reactions", json={"emoji": "👍"}, headers=owner)
+    assert r.status_code == 200, r.text
+    asyncio.run(_append_events(tid, 33_000))
+
+    payload = _blocks(client, tid)
+
+    assert payload["total"] == 33_001
+    assert payload["data"][0]["reactions"] == [
+        {"emoji": "👍", "count": 1, "authors": ["owner"]}
+    ]
+
+
+async def _append_events(tid: str, count: int) -> None:
+    """Append ``count`` platform events after everything already in the room."""
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO blocks (project_id,conversation_id,kind,author_type,"
+                    "author,content,refs,meta,id,created_at,updated_at) "
+                    "SELECT t.project_id, t.id, 'event', 'platform', 'platform', 'x',"
+                    " '[]', '{}', gen_random_uuid(),"
+                    " now() + (g || ' seconds')::interval, now() "
+                    "FROM topics t, generate_series(1, :n) g WHERE t.id = :tid"
+                ),
+                {"n": count, "tid": uuid.UUID(tid)},
+            )
+    finally:
+        await engine.dispose()
 
 
 # --- bad input ---------------------------------------------------------------

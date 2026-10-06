@@ -39,12 +39,45 @@ class TaskStatus(enum.StrEnum):
     closed = "closed"
 
 
-class TaskTitleSource(enum.StrEnum):
-    """Whether a task has been named. A room's own flag has a third value, for
-    the platform renaming it; nothing renames a task on its own."""
+#: What an unnamed task is called until it is named. The stored text is for
+#: agents; each screen renders its reader's own word, which is why
+#: ``title_source`` and not the text says the task is unnamed.
+PLACEHOLDER_TITLE = "新任务"
 
-    placeholder = "placeholder"  # still the unnamed-room title it opened with
+
+class TaskTitleSource(enum.StrEnum):
+    """Who decided a task's current title, and so whether the platform may
+    still change it (app/domain/room_task/naming.py).
+
+    ``human`` is final: a person typed it. Nothing writes over it after that
+    but another person."""
+
+    placeholder = "placeholder"  # still 「新任务」
+    auto = "auto"  # the platform named it, or the AI teammate that proposed it
     human = "human"
+
+
+class TaskTitle(UuidPk, Base):
+    """Every title a task has had, newest last, and who gave it.
+
+    Read to see how often automatic names get overridden by people."""
+
+    __tablename__ = "task_titles"
+    __table_args__ = (Index("ix_task_titles_task_created", "task_id", "created_at"),)
+
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE")
+    )
+    title: Mapped[str] = mapped_column(String(300))
+    source: Mapped[TaskTitleSource] = mapped_column(
+        Enum(TaskTitleSource, native_enum=False, length=16)
+    )
+    # name | calibrate | follow | proposal | rename
+    reason: Mapped[str] = mapped_column(String(16))
+    by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
 
 
 class TaskSnapshot(UuidPk, Timestamps, Base):
@@ -110,15 +143,26 @@ class Task(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(300))
-    # `placeholder` while the task still carries the unnamed-room title it was
-    # opened with (a message upgraded into a task starts unnamed). The stored
-    # text is for agents; each screen renders the placeholder in its reader's
-    # language, which is why the flag and not the text says so. `human` once a
-    # title was given.
+    # Title bookkeeping for the platform's naming (app/domain/room_task/naming.py).
+    # `title_version` moves on every rename, by anyone: an automatic rename is
+    # written only if it still matches the version it was computed from, so a
+    # person who renames mid-generation always wins.
     title_source: Mapped[TaskTitleSource] = mapped_column(
         Enum(TaskTitleSource, native_enum=False, length=16),
         default=TaskTitleSource.human,
         server_default=TaskTitleSource.human.value,
+    )
+    title_version: Mapped[int] = mapped_column(default=0, server_default="0")
+    # When the platform last judged this title (named it, or decided to keep
+    # it); later messages are what a follow-up judgement reads.
+    title_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The title has been re-read against the first turn's conversation, not
+    # just the opening message; later changes are follow-ups. A title an AI
+    # teammate proposed with the task starts here.
+    title_calibrated: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
     )
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus, native_enum=False, length=16),

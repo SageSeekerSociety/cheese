@@ -38,7 +38,7 @@ the current commit tag. The Docker build runs
 the adapter and timing tests without provider requests.
 
 For the existing dev gateway, use the **Release gateway** workflow on `main`.
-Supply the full SHA of a commit on `main` whose image build succeeded and explicitly
+Supply the full SHA of a commit on `main` whose Build and Required CI succeeded and explicitly
 acknowledge stream interruption. Replacing the gateway can interrupt active model streams; it does
 not restart the application or gateway database. This workflow does not target
 production.

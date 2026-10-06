@@ -90,14 +90,19 @@ async def project_member(
 # Which room a task hangs in, read as two bare columns for the same reason as
 # everything else here.
 _tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
+_threads = table("threads", column("id", Uuid), column("room_id", Uuid))
 
 
 async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUID:
-    """The room a conversation is in: itself for a room, its room for a task."""
-    room = await session.scalar(
-        select(_tasks.c.room_id).where(_tasks.c.id == conversation_id)
-    )
-    return room or conversation_id
+    """The room a conversation is in: itself for a room, its room for a task
+    or a 支线."""
+    for inner in (_tasks, _threads):
+        room = await session.scalar(
+            select(inner.c.room_id).where(inner.c.id == conversation_id)
+        )
+        if room is not None:
+            return room
+    return conversation_id
 
 
 async def topic_member(session: AsyncSession, topic_id: uuid.UUID, handle: str) -> bool:

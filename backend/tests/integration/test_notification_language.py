@@ -11,6 +11,7 @@ the room stored it.
 import asyncio
 import json
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -21,6 +22,10 @@ from app.domain.notification.handlers import NotificationDelivery
 from app.domain.notification.models import NotificationType
 from app.domain.notification.outbox import ChannelIntentHandler, drain_channel
 from app.domain.user.repositories import UserRepository
+
+#: 记意图的那一刻：北京时间正午，不在默认的安静时段（22:00–08:00）里。这些用例试
+#: 的是渠道本身，不该因为跑在夜里就看不到推送和立即邮件。
+NOON = datetime(2026, 9, 20, 4, 0, tzinfo=UTC)
 
 
 def _headers(token: str) -> dict:
@@ -91,9 +96,9 @@ def _pushed(client, monkeypatch, deliveries: list[NotificationDelivery]) -> dict
     async def go() -> None:
         factory = client.test_request_factory
         async with factory() as session:
-            await ChannelIntentHandler(session, push_enabled=True).send_batch(
-                deliveries
-            )
+            await ChannelIntentHandler(
+                session, push_enabled=True, now=lambda: NOON
+            ).send_batch(deliveries)
             await session.commit()
         await drain_channel(
             factory, channel="push", batch_size=len(deliveries), max_attempts=1

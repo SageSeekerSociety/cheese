@@ -167,6 +167,7 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "labelUpgradedTo",
         "subagentStart",
         "subagentStopEmpty",
+        "titleAutoRenamed",
     }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()

@@ -15,17 +15,17 @@
   CHEESE_API     平台 API 基址；直连后端用 http://host.docker.internal:8099，
                  经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
-  CHEESE_TOPIC   当前对话 id：话题的，或者任务自己的会话里是任务的
-  CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用任务或话题的实况文档）
+  CHEESE_TOPIC   当前对话 id：频道主线的、支线的，或者任务自己的会话里是任务的
+  CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用任务的实况文档）
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
-  CHEESE_TOKEN   房间凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
+  CHEESE_TOKEN   会话凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
   CHEESE_TURN    当前这一轮的 id，带回去让这一轮写出的块归在一起
 
 例:
   cheese worktree <task_id>                 # 准备任务工作目录,输出路径
   cheese sync                               # 同步当前任务的提交并备份未提交文件
   cheese push-fix                           # 把新提交推到任务已有的 PR
-  cheese show report.html                   # 把这一份摆到房间里给人看(进预览窗口)
+  cheese show report.html                   # 把这一份摆出来给人看(进预览窗口)
   cheese show 评审简报.docx                  # 文档同理,用户可以打开和下载
   cheese recalc 预算表.xlsx                 # 重算表格里的公式,并报出算不出来的格
   cheese convert 旧稿.doc --to docx         # 老格式升级;--to pdf 用来自己看版面
@@ -144,7 +144,7 @@ class ToolTable:
 #: out, the session's own document, or its room's living document.
 _DOCUMENT_ARG = {
     "type": "string",
-    "description": "项目资料库里那份文档的编号；省略就是本话题的实况文档",
+    "description": "项目资料库里那份文档的编号；省略就是这里的实况文档",
 }
 
 
@@ -174,7 +174,7 @@ FEEDBACK_DESCRIPTION = (
     "写之前先看 `user_said`:它是必填的,要么引用用户原话,要么照抄那句"
     "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
     "\n"
-    "同一个话题每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
+    "同一段对话每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
     "的不会再问)。超了平台会拒绝,不要重试。\n"
     "\n"
     "每一项都是短标签加一两行,只写事实:观察到的 vs 期望的,错误原文短就照抄。"
@@ -200,9 +200,9 @@ FEEDBACK_LIST_DESCRIPTION = (
     "支持数、评论数、谁领着。和反馈中心的列表是同一份，筛选也一样："
     "`query` 搜标题和正文，`tab` 选栏（all 全部、hot 热门、active 进行中、"
     "resolved 办完了），`status` / `kind` / `author` / `since` 叠在栏上再收窄。"
-    "私密反馈不在列表里；你提过的、或者你当时在房间里看着人提的那几条，"
-    "拿编号用 `cheese_feedback_get` 读得到。只有做这个平台本身的项目里的房间读得到"
-    "反馈中心，别的房间会被拒。"
+    "私密反馈不在列表里；你提过的、或者你当时在对话里看着人提的那几条，"
+    "拿编号用 `cheese_feedback_get` 读得到。只有做这个平台本身的项目读得到"
+    "反馈中心，别的项目会被拒。"
 )
 
 FEEDBACK_GET_DESCRIPTION = (
@@ -240,7 +240,7 @@ _CONTRIBUTOR = {
     "description": "实际贡献者的 handle",
 }
 _CHAT_SCOPE = {
-    "topic": _text("话题或任务 id，默认当前对话"),
+    "topic": _text("频道、支线或任务 id，默认当前对话"),
 }
 _CHAT_PAGE = {
     "limit": {"type": "integer", "description": "每页条数 1..500，默认 50"},
@@ -259,7 +259,10 @@ _ROUTINE = _text("规则 id")
 _ROUTINE_SPEC = (
     '定时写 {"freq": "weekly", "weekdays": [0], "time": "09:00"}（0=周一）；'
     "也可以是 daily + time、monthly + day + time、hourly + minute；"
-    '事件触发写 {"scope": "room"} 或 {"scope": "project"}'
+    '事件触发写 {"scope": "room"} 或 {"scope": "project"}。'
+    '定时规则可以加 "feedback_batch": N（1–10）：每次执行时平台把最早的 N 条'
+    "没人处理的反馈连同分诊步骤附在工作说明后面，没有就不执行；"
+    "只有做平台本身的项目里的频道能用"
 )
 _ROUTINE_TIMEZONE = _text("时区，默认 Asia/Shanghai")
 
@@ -296,7 +299,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "chat_edit",
-            "改你自己在房间里发过的一条消息：整段替换成新的正文，房间里的人实时看到，"
+            "改你自己在对话里发过的一条消息：整段替换成新的正文，对话里的人实时看到，"
             "消息标上「已编辑」。只能改自己发的；message_id 是 chat_send 返回的 id。",
             {
                 "message_id": _text("要改的消息 id"),
@@ -306,13 +309,13 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "todo_write",
-            "把步骤清单整份写进房间：第一次调用发一条清单消息，之后每次调用改的是你"
+            "把步骤清单整份写进对话：第一次调用发一条清单消息，之后每次调用改的是你"
             "当前那条清单消息。还在做同一个请求就一直改这一条；有人提了新的请求，带上"
             "new=true 另发一条。做完时再调用一次，所有项标 completed，并用 result "
             "写一句落下了什么，它接在清单下面。每次传完整的清单，不是增量；"
             f"最多 {TODO_MAX_ITEMS} 项，每项 ≤{TODO_MAX_CHARS} 字；"
             "同一时刻只让一项 in_progress。在任务里时，清单记在这个任务上，"
-            "不发到房间里。",
+            "不发成消息。",
             {
                 "todos": {
                     "type": "array",
@@ -343,15 +346,24 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_chat_list",
-            "读聊天记录（含结构化消息和表情），默认当前房间最近 50 条，从早到晚。"
+            "读聊天记录（含结构化消息和表情），默认当前对话最近 50 条，从早到晚。"
             + _CHAT_READ,
             {**_CHAT_SCOPE, **_CHAT_PAGE},
         ),
         _tool(
             "cheese_chat_search",
             "按文字搜聊天记录：对正文、结构化信息和引用做不区分大小写的字面匹配，"
-            "搜范围内全部记录；查不到就缩短关键词或换说法，别断定没说过。" + _CHAT_READ,
-            {"query": _text("要匹配的文字，不是正则"), **_CHAT_SCOPE, **_CHAT_PAGE},
+            "搜范围内全部记录；查不到就缩短关键词或换说法，别断定没说过。"
+            "别处定过的事用 channel 搜整个频道。" + _CHAT_READ,
+            {
+                "query": _text("要匹配的文字，不是正则"),
+                "channel": {
+                    "type": "boolean",
+                    "description": "搜整个频道：主线、所有支线和任务，默认只搜当前对话",
+                },
+                **_CHAT_SCOPE,
+                **_CHAT_PAGE,
+            },
             ["query"],
         ),
         _tool(
@@ -375,7 +387,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_get",
-            "读一份文档，末尾列出还没人处理的修改建议。不给 document 读本话题的实况"
+            "读一份文档，末尾列出还没人处理的修改建议。不给 document 读这里的实况"
             "文档；给了读项目资料库里的那一份（编号见 cheese_doc_list）。读到的这一版"
             "就是接下来 cheese_doc_set 写回所依据的那一版；没读过就写，只有文档还是"
             "空的时才让你写。",
@@ -425,9 +437,9 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_new",
-            "在项目资料库里新建一份文档，项目成员都能看、能改，本话题里会出现这份"
+            "在项目资料库里新建一份文档，项目成员都能看、能改，当前对话里会出现这份"
             "文档，点开就在对话旁边。有人要一份独立的文档（调研、方案、清单）时用它；"
-            "本话题的实况文档用 cheese_doc_set。给 content 就把它写成第一版。"
+            "这里的实况文档用 cheese_doc_set。给 content 就把它写成第一版。"
             "返回文档编号，之后读写都带上 document。",
             {
                 "title": _text("文档标题，正文里别再用一级标题重复"),
@@ -438,11 +450,11 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_doc_list",
             "列出项目资料库里的文档（编号、标题、最近谁改的），最近改过的在前。"
-            "不含各话题的实况文档。",
+            "不含各任务的实况文档。",
         ),
         _tool(
             "cheese_task",
-            "提议一个任务：在房间里放一张提议卡，由人决定是否创建。创建的人就是负责人，"
+            "提议一个任务：在当前对话里放一张提议卡，由人决定是否创建。创建的人就是负责人，"
             "任务有自己的对话和工作目录，由那里的 AI 队友去做。你不能自己创建任务。",
             {
                 "title": _text("任务标题"),
@@ -475,10 +487,15 @@ PLATFORM_TOOLS = ToolTable(
             "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
             "不抄 subject，抄了会被打回。",
             {
-                "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
+                "subject": _text(
+                    "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
+                    "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
+                    "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例就用英文。"
+                    "末尾的 (#N) 平台会加，不要写"
+                ),
                 "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
                 "reason": _text("验收证据和要对方检查的内容"),
-                "body": _text("改动原因和验证说明，语言按这个仓库自己 PR 的惯例，还没有惯例就用英文"),
+                "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用英文"),
                 "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
                 "new_artifact": _text("清单上还没有的东西的真名"),
                 "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
@@ -491,8 +508,13 @@ PLATFORM_TOOLS = ToolTable(
             "cheese_describe",
             "修改当前任务尚未采纳的验收卡及 PR 的标题或正文；采纳以卡为准。",
             {
-                "subject": _text("英文 Conventional Commits 标题，≤72 字符"),
-                "body": _text("改动原因和验证说明，语言按这个仓库自己 PR 的惯例，还没有惯例就用英文"),
+                "subject": _text(
+                    "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
+                    "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
+                    "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例就用英文。"
+                    "末尾的 (#N) 平台会加，不要写"
+                ),
+                "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用英文"),
             },
             [],
         ),
@@ -505,17 +527,17 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_title",
-            "有人明确要你给本话题改名时才用，≤12 字；平台会自己给话题起名、"
-            "方向变了再改，这样改出的名字按人定的处理，之后不再自动改。"
-            "话题的提示里要你先起名时（平台暂时不能起名）也用它。"
-            "在任务的对话里，它给这个任务起名。",
+            "给本频道或本任务改名，≤12 字。频道的名字由人起，有人明确要你改时才用。"
+            "在任务的对话里，它给这个任务起名：平台会自己给没名字的任务起名、"
+            "方向变了再改，所以只在有人明确要你改名，或提示里要你起名"
+            "（平台暂时不能起名）时用。",
             {"text": _text("标题")},
             ["text"],
         ),
         _tool(
             "cheese_notify",
             "给人发通知，进通知面板；要人在对话里一键拍板用 cheese_ask。"
-            "to 不填是发给这个房间名册上的人（不含芝士），不是项目里所有人。"
+            "to 不填是发给这个频道名册上的人（不含芝士），不是项目里所有人。"
             "正文纯文本，@ 和 <&文件> 不渲染。",
             {
                 "title": _text("一行标题"),
@@ -561,7 +583,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_lock",
-            "为当前任务占用房间的重资源锁，装依赖、跑大型测试或起服务前用；"
+            "为当前任务占用频道的重资源锁，装依赖、跑大型测试或起服务前用；"
             "占不到时说谁占着，不等待。",
             {"kind": {"type": "string", "enum": ["heavy"]}},
             [],
@@ -574,11 +596,11 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_members",
-            "列出当前话题可点名的成员和 handle。点名前核对写法：对不上的提醒不会送出。",
+            "列出当前频道可点名的成员和 handle。点名前核对写法：对不上的提醒不会送出。",
         ),
         _tool(
             "cheese_status",
-            "平台状态快照：本轮运行状态、本话题验收卡（含闸门失败输出）、磁盘、排队和"
+            "平台状态快照：本轮运行状态、这里的验收卡（含闸门失败输出）、磁盘、排队和"
             "额度。想知道卡到哪了、闸门为什么红时先看它，别用 platform_request 轮询。",
         ),
         _tool(
@@ -637,7 +659,7 @@ PLATFORM_TOOLS = ToolTable(
                     "type": "string",
                     "enum": ["public", "private"],
                     "description": "private 只有管理员、提交者和提出它时"
-                    "房间里的人看得见",
+                    "对话里的人看得见",
                 },
                 "user_said": _text("引用用户原话；用户没说过就照抄那句规定好的"),
                 "why": {"type": "string"},
@@ -744,15 +766,15 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine_draft",
-            "为当前房间起草一条定时与触发规则（到点让这个房间的队友开工一轮）。"
-            "起草出来的是**草稿，不会执行**：只有房间里的人点「确认启用」它才开始跑。"
+            "为当前频道起草一条定时与触发规则（到点让这个频道的队友开工一轮）。"
+            "起草出来的是**草稿，不会执行**：只有频道里的人点「确认启用」它才开始跑。"
             "所以起草完要把配置用一两句话说给用户听，请他在「定时与触发」里确认，"
             "不要说得像已经设好了。",
             {
                 "title": _text("规则名字，一句话"),
                 "instructions": _text("到点要做的事，写清做什么、交出什么"),
                 "context_scope": _text("可以用哪些资料；不写就是按需要自取"),
-                "output_dir": _text("结果放房间哪个目录；不写就是房间根目录"),
+                "output_dir": _text("结果放频道文件区哪个目录；不写就是根目录"),
                 "trigger": {
                     "type": "string",
                     "enum": list(ROUTINE_TRIGGERS),
@@ -761,13 +783,13 @@ PLATFORM_TOOLS = ToolTable(
                 "spec": {"type": "object", "description": _ROUTINE_SPEC},
                 "timezone": _ROUTINE_TIMEZONE,
                 "owner_handle": _text("替谁设的；结果通知给他，不写就是你自己"),
-                "agent_handle": _text("由哪个队友执行；不写就是这个房间的队友"),
+                "agent_handle": _text("由哪个队友执行；不写就是这个频道的队友"),
             },
             ["title", "instructions"],
         ),
         _tool(
             "cheese_routine_list",
-            "列出这个房间的定时与触发规则：名字、id、状态（草稿/启用中/已暂停）、"
+            "列出这个频道的定时与触发规则：名字、id、状态（草稿/启用中/已暂停）、"
             "什么时候跑、下次什么时候跑。",
         ),
         _tool(
@@ -814,7 +836,7 @@ PLATFORM_TOOLS = ToolTable(
                 "outputs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "结果文件在房间里的路径",
+                    "description": "结果文件在文件区里的路径",
                 },
             },
             ["run", "status"],
@@ -822,7 +844,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_skill_draft",
             "提议把一套做法存成**项目技能**：确认后，这个项目以后每个会话都带着它，"
-            "用户说到这类事时照着做。房间里会出一张卡，人点「保存」才生效。\n"
+            "用户说到这类事时照着做。对话里会出一张卡，人点「保存」才生效。\n"
             "五条都满足才起草：①是一类会再来的事，一句话叫得出（周报、批改作业），不是"
             "这一次的经过；②用户为这类事教过你不止一处：记忆里已有的相关规则加上这次的"
             "纠正（用户明说「存下来」「以后都这样」时这条算满足）；③这一次做完了，用户接受"
@@ -885,9 +907,9 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "platform_request",
-            "平台 API 的其余部分：房间成员在网页上能做、其他平台工具又没有的事"
-            "（给消息加表情、拉人进房间或改角色、回答问到你的选项问题、读自己的收件箱……）"
-            "都从这里调，用的是你的房间凭据，后端按你的角色和成员身份照常检查；"
+            "平台 API 的其余部分：项目成员在网页上能做、其他平台工具又没有的事"
+            "（给消息加表情、拉人进频道或改角色、回答问到你的选项问题、读自己的收件箱……）"
+            "都从这里调，用的是你的会话凭据，后端按你的角色和成员身份照常检查；"
             "被拒时返回的就是原因，别换路径绕。"
             "不知道接口就先只传 find（几个英文词，如 reaction、members、inbox），"
             "返回匹配接口的方法、路径、说明、参数和请求体字段；什么都不传列出接口分组。"
@@ -896,7 +918,7 @@ PLATFORM_TOOLS = ToolTable(
             {
                 "find": _text("要找的接口，几个英文关键词，空格分隔"),
                 "method": {"type": "string", "enum": list(_HTTP_METHODS)},
-                "path": _text("相对 API 根的路径，如 /topics/<房间 id>/members"),
+                "path": _text("相对 API 根的路径，如 /topics/<频道 id>/members"),
                 "body": {"type": "object", "description": "JSON 请求体，原样发出"},
             },
         ),
@@ -1596,6 +1618,8 @@ def _chat_page(tool: str):
         own: dict = {}
         if tool == "cheese_chat_search":
             params["q"] = own["query"] = args["query"]
+            if args.get("channel"):
+                params["channel"] = own["channel"] = "true"
         elif tool == "cheese_chat_replies":
             params["reply_to"] = own["message_id"] = args["message_id"]
         path = (
@@ -1688,7 +1712,7 @@ def _doc_get(args: dict, host) -> str:
 
 def _document(host, args: dict | None = None) -> dict:
     """本次要读写的文档：点了名的那一份（项目资料库里的），会话本来就是对着
-    某份文档开的（CHEESE_DOCUMENT），或者是话题里的会话，用话题的实况文档。"""
+    某份文档开的（CHEESE_DOCUMENT），或者是任务里的会话，用任务的实况文档。"""
     named = str((args or {}).get("document") or "").strip()
     if named:
         return {"CHEESE_DOCUMENT": named}
@@ -1759,7 +1783,7 @@ def _doc_new(args: dict, host) -> str:
         ) from exc
     doc = answer.get("data") or {}
     host.doc_versions[doc["id"]] = doc.get("doc_version", 0)
-    shown = "本话题里已经出现这份文档。" if host.environ.get("CHEESE_TOPIC") else ""
+    shown = "当前对话里已经出现这份文档。" if host.environ.get("CHEESE_TOPIC") else ""
     return (
         f"已在资料库新建《{doc.get('title') or args['title']}》，编号 {doc['id']}"
         f"（第 {doc.get('doc_version', 0)} 版）。{shown}之后读写它都带上 document。"
@@ -1888,7 +1912,7 @@ def _platform_request(args: dict, host) -> str:
     spec = host.request({"method": "GET", "path": "/openapi.json"})
     words = (args.get("find") or "").lower().split()
     where = (
-        f"当前房间 {host.environ.get('CHEESE_TOPIC', '')}，"
+        f"当前对话 {host.environ.get('CHEESE_TOPIC', '')}，"
         f"项目 {host.environ.get('CHEESE_PROJECT', '')}。"
     )
     return where + "\n" + _api_operations(spec, words)
@@ -2228,7 +2252,7 @@ _STEPS = {
 
 def _say_task(args, data, env) -> str:
     return (
-        f"已在房间里提议任务「{args['title']}」，等人决定是否创建。"
+        f"已提议任务「{args['title']}」，等人决定是否创建。"
         "创建后它在自己的对话里由那里的 AI 队友去做。"
     )
 
@@ -2331,13 +2355,13 @@ def _say_machine(args, data, env) -> str:
         )
     if data.get("proposal"):
         return f"已提请 {data['proposal']['approver']} 点头，等他拍板。"
-    return f"这个房间的工作电脑现在是 {data.get('current')}。"
+    return f"这个频道的工作电脑现在是 {data.get('current')}。"
 
 
 def _say_members(args, data, env) -> str:
     rows = data.get("data", data) if isinstance(data, dict) else data or []
     if not rows:
-        return "这个话题还没有可点名的成员。"
+        return "这个频道还没有可点名的成员。"
     return "\n".join(
         f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{m.get('member_handle')}>"
         " 点名 ta"
@@ -2400,10 +2424,10 @@ def _say_todo(args, data, env) -> str:
 def _say_routine_draft(args, data, env) -> str:
     data = data or {}
     return (
-        f"已为这个房间起草「{data.get('title')}」(id={data.get('id')})，"
+        f"已为这个频道起草「{data.get('title')}」(id={data.get('id')})，"
         "它现在是**草稿，不会执行**。\n"
         f"什么时候跑：{data.get('trigger_text') or args.get('trigger') or 'schedule'}\n"
-        "把配置用一两句话说给用户听，请他在这个房间右侧的「定时与触发」里点"
+        "把配置用一两句话说给用户听，请他在这个频道右侧的「定时与触发」里点"
         "「确认启用」。确认之前一个字都不会跑，所以别告诉他规则已经设好了。"
     )
 
@@ -2411,7 +2435,7 @@ def _say_routine_draft(args, data, env) -> str:
 def _say_routine_list(args, data, env) -> str:
     rows = (data or {}).get("data") or []
     if not rows:
-        return "这个房间还没有定时与触发规则。"
+        return "这个频道还没有定时与触发规则。"
     state = {"draft": "草稿（等人确认）", "active": "启用中", "paused": "已暂停"}
     lines = []
     for row in rows:
@@ -2421,8 +2445,8 @@ def _say_routine_list(args, data, env) -> str:
             f"{row.get('trigger_text') or row.get('trigger')}"
         )
         if row.get("room_archived"):
-            # 规则自己没变，是房间归档了：取消归档后从下一个时刻继续。
-            line += "（已随话题归档停止，取消归档后继续）"
+            # 规则自己没变，是频道归档了：取消归档后从下一个时刻继续。
+            line += "（已随频道归档停止，取消归档后继续）"
         elif row.get("next_run_at"):
             line += f"；下次 {row['next_run_at']}"
         lines.append(line)
@@ -2520,7 +2544,7 @@ _SAY = {
     "cheese_routine_report": _say_routine_report,
     # 卡片由平台渲染：起草完只用一两句话告诉用户，别把整份再贴一遍。
     "cheese_skill_draft": lambda a, d, e: (
-        f"已起草项目技能「{(d or {}).get('title')}」，房间里出了一张卡。用一两句话"
+        f"已起草项目技能「{(d or {}).get('title')}」，对话里出了一张卡。用一两句话"
         "告诉用户它管哪类事、为什么值得存，请他在卡上点「保存」；保存之前它不生效。"
     ),
     "cheese_skill_update": lambda a, d, e: (
@@ -2841,7 +2865,7 @@ def _task_worktree(task_id: str) -> Path:
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("POST", f"/projects/{project}/git/tasks/{task_id}")["data"]
     if data["room_id"] != TOPIC:
-        raise SystemExit("[cheese] 这条任务不属于当前房间")
+        raise SystemExit("[cheese] 这条任务不属于当前频道")
     if data["closed"]:
         raise SystemExit("[cheese] 这条任务已结束，请创建新任务")
     cache = Path.home() / ".cheese" / "repositories"
@@ -3461,7 +3485,7 @@ def _recover_task(task_id):
         project = _need("CHEESE_PROJECT", PROJECT)
         task = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
         if task["room_id"] != TOPIC:
-            raise SystemExit("[cheese] 这条任务不属于当前房间")
+            raise SystemExit("[cheese] 这条任务不属于当前频道")
         cache = Path.home() / ".cheese" / "repositories"
         cache.mkdir(parents=True, exist_ok=True)
         repo = cache / f"{project}.git"
@@ -3723,7 +3747,7 @@ def _format_status(d: dict) -> str:
     against what's only ever meant to be a wedged-turn safety net."""
     lines: list[str] = []
     topic = d.get("topic") or {}
-    head = f"话题: {topic.get('title', '?')}（{topic.get('status', '?')}"
+    head = f"对话: {topic.get('title', '?')}（{topic.get('status', '?')}"
     if topic.get("branch"):
         head += f", 分支 {topic['branch']}"
     lines.append(head + "）")
@@ -3902,7 +3926,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     psync.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
     psync.add_argument(
-        "--all", action="store_true", help="同步本房间机器上已有的全部任务目录"
+        "--all", action="store_true", help="同步本频道机器上已有的全部任务目录"
     )
 
     recovery = sub.add_parser(
@@ -3952,7 +3976,7 @@ def build_parser() -> argparse.ArgumentParser:
             "     --strictPort,否则端口被占时它会静默跳到下一个\n"
             "  3. 把那个端口报给这条命令\n"
             "\n"
-            "每个话题使用独立的预览地址，应用可直接从根路径运行，\n"
+            "每个任务使用独立的预览地址，应用可直接从根路径运行，\n"
             "无需为了预览修改资源路径。例如:\n"
             "  PIDFILE=\"/tmp/preview-$(pwd | cksum | cut -d' ' -f1).pid\"\n"
             "  [ -s \"$PIDFILE\" ] && { kill \"$(cat \"$PIDFILE\")\" 2>/dev/null; rm -f \"$PIDFILE\"; sleep 1; }\n"
@@ -4001,7 +4025,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="项目资料库:把用户给这个项目的一份文件取到这台机器上",
         description=(
             "资料库放的是用户给这个项目的文件,按他给的名字。它是项目一级的——\n"
-            "另一个房间上周传的那份,你在这里也拿得到。\n\n"
+            "另一个频道上周传的那份,你在这里也拿得到。\n\n"
             "跟着某条消息发来的资料不用再取:消息里给的就是它在这台机器上的\n"
             "绝对路径,照那个路径读。\n"
             "用户提到一份你手上没有的('上周那份预算表'),先用 cheese_library_ls\n"
@@ -4047,13 +4071,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     part = sub.add_parser(
         "show",
-        help="把工作区里的一份东西摆到房间里给人看",
+        help="把工作区里的一份东西摆出来给人看",
         description=(
             "做出了值得给人看的东西就摆出来——网页、可视化、SVG,以及报告、简报、"
             "表格这类 PDF 和 Office 文件。摆出来的用户在右侧看得到,也能下载;"
             "没摆出来的文件他在界面上根本看不见。平台不会去猜该显示哪个文件——"
-            "你显式指定。最后摆的那一样同时是这个房间的当前预览。\n\n"
-            "摆出来的东西留在这个房间里。用户想把一份留下来以后再用,自己按"
+            "你显式指定。最后摆的那一样同时是这里的当前预览。\n\n"
+            "摆出来的东西留在这里。用户想把一份留下来以后再用,自己按"
             "「保存到资料库」;它不因此上产物清单——这一轮真交付了什么,走 "
             "cheese_accept_request 的 artifact / deliver。"
         ),
@@ -4064,7 +4088,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "这一次改了什么,一句话。用户在编辑器里看这份文件时会看到它;"
-            "改的是房间里已有的一份时一定要写"
+            "改的是已经摆出来的一份时一定要写"
         ),
     )
     part.add_argument(
@@ -4109,27 +4133,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     ppull = sub.add_parser(
         "pull",
-        help="把房间里一份文件的最新保存取到这台机器上(用户可能在编辑器里改过)",
+        help="把文件区里一份文件的最新保存取到这台机器上(用户可能在编辑器里改过)",
         description=(
-            "房间里的文件用户能在线编辑。你手上那份可能已经旧了:用户改完保存,"
-            "房间里的才是最新的。在房间里已有的文件上接着改之前,先 pull。\n\n"
+            "文件区里的文件用户能在线编辑。你手上那份可能已经旧了:用户改完保存,"
+            "文件区里的才是最新的。在文件区已有的文件上接着改之前,先 pull。\n\n"
             "pull 会记下取到的是哪一版;之后 cheese show 同一个路径时自动带上它。"
             "如果这期间又有人保存过,show 会被拒绝(不会盖掉别人的修改)——"
             "那就再 pull 一次,在最新那一版上重做你的改动。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ppull.add_argument("path", help="房间里的路径,如 output/报告.docx")
+    ppull.add_argument("path", help="文件区里的路径,如 output/报告.docx")
     ppull.add_argument(
         "-o", "--output", default=None, help="写到别处(默认写回同一个工作区路径)"
     )
 
     ptpl = sub.add_parser(
         "template",
-        help="平台的标准模板:列出来,或从一份模板在房间里新建一个文件",
+        help="平台的标准模板:列出来,或从一份模板在文件区新建一个文件",
         description=(
             "报告、方案、周报、项目汇报、调研汇报、数据统计分析,各有一份带样式和\n"
-            "【占位】的标准模板。new 在房间里建一份副本(用户马上就能在编辑器里打开),\n"
+            "【占位】的标准模板。new 在文件区建一份副本(用户马上就能在编辑器里打开),\n"
             "同时取到这台机器上;再用 documents 技能的 template.py fill 填占位,\n"
             "改完 cheese show。用户给了自己的文件当模板时不走这里,见 templates.md。"
         ),
@@ -4137,10 +4161,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tplsub = ptpl.add_subparsers(dest="tplcmd", required=True)
     tplsub.add_parser("list", help="列出可用的模板")
-    ptplnew = tplsub.add_parser("new", help="从模板在房间里新建一份,并取到本地")
+    ptplnew = tplsub.add_parser("new", help="从模板在文件区新建一份,并取到本地")
     ptplnew.add_argument("template", help="模板 id,如 report、weekly、analysis")
     ptplnew.add_argument(
-        "path", help="房间里的路径,扩展名要和模板一致,如 文档/周报.docx"
+        "path", help="文件区里的路径,扩展名要和模板一致,如 文档/周报.docx"
     )
 
     pcv = sub.add_parser(
@@ -4436,7 +4460,7 @@ def main() -> None:
         )
         if res.get("ok") is False:
             print(
-                f"[cheese] 没有摆出来：房间里的 {rel} 在你取到之后被人保存过"
+                f"[cheese] 没有摆出来：文件区里的 {rel} 在你取到之后被人保存过"
                 "（多半是用户在编辑器里改了）。直接写会盖掉他的修改。\n"
                 f"[cheese] 先 cheese pull {rel} 取最新一版，在那一版上重做你的改动，"
                 "再 show。",
@@ -4444,7 +4468,7 @@ def main() -> None:
             )
             sys.exit(1)
         _remember_pulled(topic, rel, hashlib.sha256(raw).hexdigest()[:16])
-        print(f"已把 {rel} 摆出来给房间里的人看（{kind}）。")
+        print(f"已把 {rel} 摆出来给对话里的人看（{kind}）。")
     elif a.cmd == "template":
         topic = _need("CHEESE_TOPIC", TOPIC)
         if a.tplcmd == "list":
@@ -4475,7 +4499,7 @@ def main() -> None:
             f.write(body)
         _remember_pulled(topic, rel, version)
         print(
-            f"已从模板 {a.template} 在房间里新建 {rel}，并取到本地 {a.path}。"
+            f"已从模板 {a.template} 在文件区新建 {rel}，并取到本地 {a.path}。"
             "填好占位后 cheese show 它。"
         )
     elif a.cmd == "check":

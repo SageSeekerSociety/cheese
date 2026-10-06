@@ -485,8 +485,11 @@ def test_topic_read_cursor_belongs_to_the_verified_caller(client):
     tid = _topic(client, pid)
     for h in ("alice", "bob"):
         _add_member(client, pid, h)
+    for h in ("alice", "bob"):
+        joined = client.post(f"/topics/{tid}/join", headers=session_auth_headers(h))
+        assert joined.status_code == 200, joined.text
     _seed_message(client, pid, tid, "cheese")
-    assert _topic_unread(client, pid, "bob").get(tid) == 1
+    assert _topic_unread(client, pid, "bob")[tid]["messages"] == 1
 
     url = f"/topics/{tid}/read"
 
@@ -503,7 +506,7 @@ def test_topic_read_cursor_belongs_to_the_verified_caller(client):
     # Authenticated as alice, naming bob → 403, cursor unmoved.
     r = client.post(url, json={"handle": "bob"}, headers=session_auth_headers("alice"))
     assert r.status_code == 403, r.text
-    assert _topic_unread(client, pid, "bob").get(tid) == 1
+    assert _topic_unread(client, pid, "bob")[tid]["messages"] == 1
 
     # bob himself (asserting his own handle) clears his badge — nobody else's.
     _seed_message(client, pid, tid, "cheese")
@@ -511,7 +514,7 @@ def test_topic_read_cursor_belongs_to_the_verified_caller(client):
     assert r.status_code == 200, r.text
     assert r.json()["data"]["handle"] == "bob"
     assert tid not in _topic_unread(client, pid, "bob")
-    assert _topic_unread(client, pid, "alice").get(tid) == 2
+    assert _topic_unread(client, pid, "alice")[tid]["messages"] == 2
 
 
 # ---- creating a notification needs a credential the route itself checks -------

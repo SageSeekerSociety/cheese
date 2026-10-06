@@ -138,6 +138,7 @@ uv run --with playwright python scripts/shots.py
 ## 5. 提交规范
 - 不擅自 commit；都走 PR、不上 main（项目规范）。
 - 提交标题（Conventional Commits 的 subject）**英文**；PR 描述与它进 main 的提交正文**中文**；代码注释**英文**；产品文档（本文件、spec、evals）**中文**。
+- 标题由本仓库自己的 Required CI 检查（`.github/scripts/check-commit-title.py`）：`type(scope): description`、结尾不加句号、描述是英文句子（句中出现芝士、支线这类中文产品名可以）。平台不替托管仓库定提交格式，这条规范只靠本仓库的 CI 守。
 - `.env`、`tmp_*`、`tmp_review/`、`.workspaces/` 不进版本库。
 
 ---

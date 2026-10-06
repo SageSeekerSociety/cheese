@@ -1,7 +1,7 @@
 // 内容里的「文档」：房间的文档正文和文档边上的评论。点开进那个房间的总览。
 import type { ContentKind } from './projectSearch'
 
-import { contentSource, searchRoomTitle, whereAndWhen } from './projectSearch'
+import { contentSource, searchAuthor, searchRoomTitle, whereAndWhen } from './projectSearch'
 
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -19,7 +19,7 @@ export const docs: ContentKind = {
           id: `doc:${hit.id}`,
           title: hit.snippet,
           subtitle: comment
-            ? whereAndWhen(searchRoomTitle(hit), `@${hit.author}`, relTime(hit.created_at))
+            ? whereAndWhen(searchRoomTitle(hit), searchAuthor(hit), relTime(hit.created_at))
             : searchRoomTitle(hit),
           icon: comment ? 'mdi-comment-text-outline' : 'mdi-file-document-outline',
           badge: comment ? { text: t('navigation.palette.comment') } : undefined,

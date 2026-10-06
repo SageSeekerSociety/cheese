@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.agent.central_provider import CentralChannel
+from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady
 from app.domain.agent.harness import PI
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
@@ -148,3 +149,35 @@ async def test_an_offline_machine_and_another_channels_pointer_say_nothing(
     assert await room.recover(None) == []
     assert room.found_conversations == set()
     assert room.terminal_conversations == set()
+
+
+@pytest.mark.anyio
+async def test_a_runner_the_online_machine_says_is_gone_ends_its_conversation(
+    db_factory,
+):
+    """The machine is online and answers that the runner's socket does not
+    exist: that conversation is over. A machine that is offline, or online but
+    not ready to serve calls, has answered nothing, and stays unknown."""
+    topic = await a_topic(db_factory)
+    await _place(db_factory, topic, "ka", _state("state-a"), "sid-a")
+    await _place(
+        db_factory, topic, "kb", _state("state-b"), "sid-b", machine="dev-offline"
+    )
+    await _place(db_factory, topic, "kc", _state("state-c"), "sid-c")
+    hub = _Hub(
+        {
+            _state("state-a"): DeviceCallError(
+                "runner not answering: dial unix "
+                "/tmp/cheese-execution-1000-0c5e4b916d2a.sock: "
+                "connect: no such file or directory"
+            ),
+            _state("state-c"): DeviceNotReady(
+                "Device connector must finish updating before execution"
+            ),
+        }
+    )
+    room = _room(hub, db_factory)
+
+    assert await room.recover(None) == []
+    assert room.terminal_conversations == {((topic, "ka"), "sid-a")}
+    assert room.found_conversations == set()

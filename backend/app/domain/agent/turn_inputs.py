@@ -31,9 +31,9 @@ The rules this module is the whole of:
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, String, select, update
+from sqlalchemy import DateTime, String, column, select, table, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -483,3 +483,64 @@ async def stamp_delivery_fact(
             await session.commit()
     except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
         logger.exception("could not stamp delivery for turn %s", turn_id)
+
+
+async def close_dead_turns(session_factory, turn_ids) -> None:
+    """Close turns the orphan sweep found dead, and end the inputs they held.
+
+    Nothing will ever report on those inputs: the session that took them is
+    gone. Left unfinished, they refuse the seat every later message for good
+    (``seat_has_unfinished_input``), and the deliveries behind them retry
+    forever. In the same transaction as the close, so a turn is never ended
+    with its inputs still owed.
+    """
+    from app.domain.agent.repositories import AgentTurnRepository
+    from app.domain.delivery.receipts import terminate_inputs_of_dead_works
+
+    async with session_factory() as session:
+        await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
+        await terminate_inputs_of_dead_works(session, turn_ids, reason="orphaned")
+        await session.commit()
+
+
+#: Read for one fact only, so the agent domain does not import the task model.
+_tasks = table("tasks", column("id", Uuid), column("status", String))
+
+
+async def open_turns(session_factory) -> dict:
+    """Every turn interval still open, keyed by turn id, for the orphan sweep —
+    after ending the ones whose task is closed.
+
+    A closed task is work that is over, whatever its session last said, and
+    nothing will close a turn left open in it: the sweep keeps a delivered turn
+    open until its session is known dead, and closing a task says nothing to
+    the session. Such a turn kept its room reading as busy, and its inputs
+    refused the seat, for good. They are ended here and never handed to the
+    sweep, which would otherwise offer the work again.
+
+    Whether reading this can fail is the sweep's business, not this function's:
+    it raises, and the callers that must survive a database blip say so where
+    they say what else they do on failure.
+    """
+    from app.domain.agent.models import AgentTurn
+    from app.domain.agent.repositories import AgentTurnRepository
+    from app.domain.delivery.receipts import terminate_inputs_of_dead_works
+
+    async with session_factory() as session:
+        turns = AgentTurnRepository(session)
+        ended = list(
+            await session.scalars(
+                select(AgentTurn.id).where(
+                    AgentTurn.stopped_at.is_(None),
+                    AgentTurn.conversation_id.in_(
+                        select(_tasks.c.id).where(_tasks.c.status == "closed")
+                    ),
+                )
+            )
+        )
+        if ended:
+            await turns.close(ended, datetime.now(UTC))
+            await terminate_inputs_of_dead_works(session, ended, reason="task_closed")
+            await session.commit()
+        rows = await turns.open_turns()
+    return {record.turn_id: record for record in rows}

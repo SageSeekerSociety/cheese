@@ -1,6 +1,7 @@
 """Every place that names the agent behind a session on a device names the
 teammate the session belongs to: the bulk switch's session list, the team
-page's 「正在用」 lines and the notice its device's owner gets. A session of a
+page's 「正在用」 lines, the screens open on a device and the notice its
+device's owner gets. A session of a
 project teammate carries that teammate's name; one that names no teammate
 carries the name of the project's default agent.
 """
@@ -17,6 +18,7 @@ from sqlalchemy import select
 from app.common.auth import create_access_token
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
+from app.domain.agent.device_hub import HubScreen, device_hub
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
@@ -229,3 +231,67 @@ async def test_the_owner_is_told_which_teammate_started(client, monkeypatch):
     assert _by_handle(p, said, "agentName", "agentHandle") == EXPECTED
     kimi = next(s for s in said if s["agentHandle"] == p.handles["kimi"])
     assert kimi["content"].startswith("Kimi 开始在「workstation」上工作")
+
+
+@pytest.fixture
+def open_screens():
+    """Screens registered on the shared hub for a test, on a machine that is
+    linked, taken off afterwards."""
+    opened: list[HubScreen] = []
+
+    def open_screen(device_id, handle, *, project_id, topic_id) -> None:
+        screen = HubScreen(
+            sid="s" + uuid.uuid4().hex[:8],
+            device_id=device_id,
+            command=["claude"],
+            token=uuid.uuid4().hex,
+            agent_user_id=uuid.uuid4(),
+            agent_handle=handle,
+            project_id=project_id,
+            topic_id=topic_id,
+        )
+        device_hub._screens[screen.sid] = screen
+        device_hub._by_screen_token[screen.token] = screen
+        linked = device_hub._device(device_id)
+        linked.transport = SimpleNamespace()
+        linked.screens[screen.sid] = screen
+        opened.append(screen)
+
+    yield open_screen
+    for screen in opened:
+        device_hub._screens.pop(screen.sid, None)
+        device_hub._by_screen_token.pop(screen.token, None)
+        device_hub._devices.pop(screen.device_id, None)
+
+
+async def test_the_device_pages_name_the_teammate_on_each_screen(client, open_screens):
+    p = await _teammates_on_bobs_device(client)
+    async with client.test_factory() as db:
+        [topic_id] = await db.scalars(
+            select(Topic.id).where(
+                Topic.project_id == p.project_id, Topic.title == "Pricing"
+            )
+        )
+    for handle in p.handles.values():
+        open_screens(p.device_id, handle, project_id=p.project_id, topic_id=topic_id)
+
+    mine = client.get("/connector/my/devices", headers=p.bob)
+    team = client.get(f"/connector/teams/{p.team_id}/devices", headers=p.alice)
+
+    for listed in (mine, team):
+        assert listed.status_code == 200, listed.text
+        [device] = [
+            d for d in listed.json()["devices"] if d["device_id"] == p.device_id
+        ]
+        assert _by_handle(p, device["screens"]) == EXPECTED
+
+
+async def test_a_screen_outside_any_room_carries_no_name(client, open_screens):
+    p = await _teammates_on_bobs_device(client)
+    open_screens(p.device_id, p.handles["kimi"], project_id=None, topic_id=None)
+
+    listed = client.get("/connector/my/devices", headers=p.bob)
+
+    [device] = [d for d in listed.json()["devices"] if d["device_id"] == p.device_id]
+    [screen] = device["screens"]
+    assert (screen["agent_handle"], screen["agent_name"]) == (p.handles["kimi"], None)

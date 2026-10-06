@@ -33,7 +33,7 @@ from app.domain.agent.device_provider import (
 )
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
-from app.domain.agent.machine_address import device_api_base, ws_url
+from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
@@ -209,6 +209,22 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
     }
 
 
+async def screen_agent_name(
+    db, project_id: uuid.UUID | None, topic_id: uuid.UUID | None, handle: str
+) -> dict:
+    """The name a screen's agent goes by, the way a room names it (see
+    ``_agent_name``). Empty when the screen names no room that still exists;
+    the page then shows the handle."""
+    from app.domain.project.models import Project
+    from app.domain.topic.models import Topic
+
+    project = await db.get(Project, project_id) if project_id else None
+    topic = await db.get(Topic, topic_id) if topic_id else None
+    if project is None or topic is None:
+        return {"agent_name": None, "agent_name_source": None}
+    return await _agent_name(db, project, topic, handle)
+
+
 async def _session_author(db, project, handle: str) -> str:
     """The seat the session keyed ``handle`` acts under: its teammate's, or the
     room-derived handle itself, which is its own seat."""
@@ -246,7 +262,6 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
                 "project_name": project.name,
                 "topic_id": str(topic.id),
                 "topic_title": topic.title,
-                "topic_title_source": str(topic.title_source),
                 "agent_handle": session.agent_handle,
                 **await _agent_name(db, project, topic, session.agent_handle),
             }
@@ -273,7 +288,7 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
         return
-    if owner.username in await TopicMemberService(db).people_handles(topic.id):
+    if owner.username in await TopicMemberService(db).people_in(topic):
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)
@@ -297,7 +312,6 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
                 "teamHandle": team.handle if team is not None else None,
                 "topicId": str(topic.id),
                 "topicTitle": topic.title,
-                "topicTitleSource": str(topic.title_source),
                 "agentHandle": row.agent_handle,
                 "agentName": agent,
                 "agentNameSource": named["agent_name_source"],
@@ -448,6 +462,7 @@ def _failed_tasks(printed: str) -> list[tuple[bool, str]]:
 def _executor_env(env, *, api, token, project_id, topic_id, author, work_resource):
     """What a session's executor runs with: the caller's ``CHEESE_*``/``GIT_*``
     values, then the platform's own for this session."""
+    site = site_forward(api)
     return {
         **{
             key: value
@@ -463,6 +478,7 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         "CHEESE_RESOURCE_ID": work_resource,
         "GIT_AUTHOR_NAME": author,
         "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",
+        **({"CHEESE_SITE_FORWARD": site} if site else {}),
     }
 
 

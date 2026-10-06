@@ -323,9 +323,9 @@
       "mute": "静音",
       "unmute": "取消静音",
       "muted": "已静音",
-      "muteFailed": "静音设置没保存",
       "markAllRead": "全部标为已读",
-      "markAllReadFailed": "全部标为已读没成功"
+      "markAllReadFailed": "全部标为已读没成功",
+      "notifyFailed": "通知设置没保存"
     },
     "archiveNotice": {
       "done": "已归档",
@@ -425,7 +425,6 @@
       "action": {
         "doc": "查看文档",
         "split": "查看任务",
-        "undo": "撤销",
         "accept": "审阅"
       },
       "filesChanged": "改动了 {n} 个文件",
@@ -455,7 +454,8 @@
       "save": "保存",
       "cancel": "取消",
       "saveFailed": "保存失败",
-      "reply": "回复",
+      "reply": "引用回复",
+      "replyInThread": "在支线中回复",
       "react": "添加表情",
       "upgrade": "转为任务",
       "downloadFile": "下载 {name}",
@@ -598,7 +598,8 @@
       "preview": "预览",
       "routines": "定时与触发",
       "scrollLeft": "向左滚动页签",
-      "scrollRight": "向右滚动页签"
+      "scrollRight": "向右滚动页签",
+      "threads": "支线"
     },
     "preview": {
       "fullscreenFailed": "无法进入全屏，请在新标签页打开",
@@ -1029,7 +1030,6 @@
       "older": "更早的消息",
       "newMessagesBelow": "以下是新消息",
       "reactionFailed": "表情更新失败",
-      "undoFailed": "撤销失败",
       "downloadFailed": "下载失败",
       "sending": "发送中…",
       "typing": "正在输入…",
@@ -1048,26 +1048,16 @@
       "loadFailed": "加载成员失败",
       "count": "{count} 位",
       "agentBadge": "AI 队友",
-      "role": {
-        "owner": "拥有者",
-        "admin": "管理员",
-        "member": "成员"
-      },
-      "roleHint": {
-        "owner": "管理频道与成员",
-        "admin": "管理成员与角色",
-        "member": "参与频道讨论"
-      },
       "failed": "操作失败",
       "title": "频道成员",
       "remove": "移出频道",
       "addPlaceholder": "添加成员…",
       "allIn": "项目成员和队友都已在频道中",
       "add": "加入",
-      "readOnly": "只有拥有者和管理员能修改成员",
+      "readOnly": "只有频道创建者和项目管理员能修改成员",
       "listSeparator": "、",
       "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
-      "setRole": "设为{role}"
+      "creator": "创建者"
     },
     "mail": {
       "noSubject": "（无主题）",
@@ -1088,11 +1078,6 @@
     },
     "mention": {
       "back": "返回上一级",
-      "notInTopic": "不在频道中",
-      "outsideNotice": "{names} 不在频道中，他们不会收到通知",
-      "addToTopic": "拉进频道",
-      "dismissOutside": "知道了",
-      "nameJoiner": "、",
       "library": "资料库",
       "noFiles": "暂无匹配的文件",
       "noMatch": "暂无匹配",
@@ -1213,6 +1198,28 @@
       "restore": "还原这处",
       "titleOwn": "{agent}改的 {n} 处",
       "allRestoredOwn": "{agent}改的几处都已还原"
+    },
+    "thread": {
+      "title": "支线",
+      "replies": "{count} 条回复",
+      "replying": "{name} 正在回复",
+      "lastReply": "{name}：{text}",
+      "toTask": "转为任务",
+      "becameTask": "已转为任务「{title}」",
+      "openTask": "打开任务",
+      "close": "关闭",
+      "placeholder": "在支线中回复",
+      "loadFailed": "加载失败，稍后重试",
+      "openFailed": "无法打开这条消息下的回复，稍后重试",
+      "notFound": "找不到这些回复",
+      "listCaption": "最近有新回复的在前",
+      "empty": "暂无支线",
+      "unread": "有新回复",
+      "people": "{replies} · {names}",
+      "taskStatus": {
+        "open": "进行中",
+        "closed": "已关闭"
+      }
     }
   },
   "board": {
@@ -1278,7 +1285,6 @@
     "notFoundHint": "它可能已被删除，或不属于这个项目",
     "resize": "拖动调整宽度，双击复位",
     "dmFailed": "打开私聊失败",
-    "untitled": "新频道",
     "untitledTask": "新任务",
     "quoted": "《{title}》"
   },
@@ -1294,10 +1300,10 @@
     "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单"
   },
   "topicState": {
-    "accepted": "已采纳",
     "draft": "草稿",
     "done": "已完成",
-    "open": "进行中"
+    "open": "进行中",
+    "archived": "已归档"
   },
   "sidebar": {
     "wait": {
@@ -1322,16 +1328,13 @@
       "topic": "频道"
     },
     "archived": "已归档",
-    "archivedUnread": "归档频道里有新消息",
     "projectMenu": "项目菜单",
-    "others": "其他频道",
     "collapse": "收起",
     "expand": "展开",
     "expandStalled": "展开：里面有成员卡住了",
     "expandAwaits": "展开：里面有待处理的事项",
     "turnFailed": "{agent}最近一轮报错了",
     "awaitsTip": "有待处理的事项",
-    "autoTitle": "标题由平台自动命名，讨论方向变了会更新",
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子频道 {count} 条新消息",
     "moreActions": "更多操作",
@@ -1339,9 +1342,6 @@
     "switchProject": "切换项目",
     "chooseProjectFirst": "先选择一个项目",
     "topics": "频道",
-    "noneMine": "暂无与你相关的频道",
-    "othersUnread": "其他频道里有新消息",
-    "empty": "暂无频道",
     "workingTip": "{name}正在这里工作",
     "expandWorking": "展开：里面有队友在工作",
     "moreMembers": "+{count}",
@@ -1361,7 +1361,7 @@
     "sectionExternal": "外部成员",
     "sectionPending": "等待接受",
     "sectionAgents": "AI 队友",
-    "fromTeam": "来自团队 {'@'}{handle}",
+    "fromTeam": "来自团队 {name}",
     "manage": "管理成员",
     "remove": "移出项目",
     "dm": "私聊",
@@ -1517,7 +1517,7 @@
     "sections": {
       "channels": "频道",
       "agents": "AI 队友",
-      "topic-naming": "频道命名",
+      "task-naming": "任务命名",
       "computer": "工作电脑",
       "environment": "运行环境",
       "merge": "合并规则",
@@ -1595,17 +1595,17 @@
       "exhausted": "额度已用完，联系团队管理员或额度发放方补充",
       "source": "包含团队共享额度和本项目的定向额度，优先使用定向额度"
     },
-    "topicNaming": {
-      "intro": "手动改过名的频道不会再被自动改名",
+    "taskNaming": {
+      "intro": "手动改过名的任务不会再被自动改名",
       "autoTitle": "智能命名",
-      "autoDetail": "第一条消息后自动起名，首次运行结束后再校准一次。之后只在讨论方向明显变化时改名，并在频道里留下可撤销的记录",
+      "autoDetail": "没起名的任务在第一条消息后自动起名，首次运行结束后再校准一次。之后只在任务方向明显变化时改名。芝士提议的任务沿用提议时的标题，同样只在方向变化时改名",
       "manualTitle": "手动命名",
-      "manualDetail": "不自动起名，新频道保持「新频道」，直到有人改名",
-      "label": "频道命名",
-      "fallback": "暂时由 AI 队友在首次运行时起名",
+      "manualDetail": "不自动起名，新任务保持「新任务」，直到有人改名",
+      "label": "任务命名",
+      "fallback": "当前部署无法自动起名，由 AI 队友在弄清任务后起名",
       "readOnly": "仅项目管理员可修改",
-      "loadFailed": "加载频道命名设置失败",
-      "saveFailed": "保存频道命名设置失败"
+      "loadFailed": "加载任务命名设置失败",
+      "saveFailed": "保存任务命名设置失败"
     },
     "defaultModelBlock": {
       "save": "保存",
@@ -1818,15 +1818,17 @@
       "accountConnected": "已连接 GitHub 账号"
     },
     "channels": {
-      "intro": "频道用来按人群或领域分开讨论。一件要做成的事建成任务，不用为它新建频道。",
+      "intro": "项目里的每个频道都在这里，项目成员都能看、能加入。侧栏只列你加入的频道。一件要做成的事建成任务，不用为它新建频道。",
       "nameLabel": "频道名称",
       "create": "新建频道",
       "activeLabel": "在用的频道",
       "archivedLabel": "已归档",
-      "rootNote": "项目自带，不能归档",
+      "rootNote": "项目里的所有人都在，不能退出或归档",
       "rename": "重命名",
       "archive": "归档",
-      "unarchive": "取消归档"
+      "unarchive": "取消归档",
+      "descriptionLabel": "频道说明（选填）",
+      "describe": "编辑说明"
     }
   },
   "computeChoice": {
@@ -2039,6 +2041,9 @@
     "handOver": "转交",
     "handOverTitle": "转交给谁？",
     "handOverTo": "选择新的负责人",
+    "rename": "重命名",
+    "renameTitle": "重命名任务",
+    "renameLabel": "任务名称",
     "actionFailed": "操作失败，稍后重试"
   },
   "channelTasks": {
@@ -2050,5 +2055,31 @@
     "closed": "已关闭",
     "empty": "暂无任务",
     "loadFailed": "无法加载任务"
+  },
+  "channel": {
+    "notify": {
+      "title": "通知",
+      "all": "所有新消息",
+      "allHint": "主线的每条新消息都计数",
+      "mentions": "{'@'}我和我参与的支线",
+      "mentionsHint": "有人 {'@'}我或 {'@'}所有人，或我参与的支线有新回复时计数",
+      "mute": "静音",
+      "muteHint": "只有直接 {'@'}我时计数和通知",
+      "mutedForever": "静音中，直到你取消",
+      "mutedUntil": "静音到 {time}",
+      "forHour": "1 小时",
+      "forEightHours": "8 小时",
+      "untilTomorrow": "到明天上午 9 点",
+      "forWeek": "1 周",
+      "untilUnmuted": "直到我取消"
+    },
+    "join": "加入频道",
+    "leave": "退出频道",
+    "joinFailed": "未能加入频道",
+    "leaveFailed": "未能退出频道",
+    "notJoined": "你还没有加入这个频道。加入后可以在主线发言，也可以直接在消息的支线里回复。",
+    "archivedNotice": "这个频道已归档，只能查看",
+    "describeFailed": "频道说明没保存",
+    "browse": "浏览频道"
   }
 }

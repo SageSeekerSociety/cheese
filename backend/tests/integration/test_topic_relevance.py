@@ -1,22 +1,18 @@
-"""与我的相关性 — GET /api/topics{,/{id}} `i_participate` / `awaits_me` (C2).
+"""What a channel is to the caller — GET /api/topics{,/{id}} `joined` /
+`awaits_me`.
 
-The sidebar lists every topic in a project in one flat stream, so a project
-with a dozen threads shows you eleven that are not yours. To fold those away
-the frontend has to be told, per row, what the topic is to the person asking —
-which is a fact about the CALLER, not about the row, and so cannot live on the
-topics table at all.
-
-Two booleans, deliberately not one enum: `i_participate` (roster / creator /
-routed reviewer / @'d) is what the fold keys off, and `awaits_me` (a pending
-card routed to me, an unanswered decision request, a question only I can
-answer) is what OVERRIDES the fold, so a topic waiting on you never ends up
-hidden inside 「其他话题」. An unread @ is NOT a way of being awaited: it lit
-almost every row of the sidebar orange, and unread has its own badge.
+The sidebar lists the channels a person is in and no others, so the list has to
+say, per row, whether the caller joined it — a fact about the CALLER, not about
+the row. `awaits_me` (a pending card routed to me, an unanswered decision
+request, a question only I can answer) says the channel is waiting on me,
+whether or not I am in it. Being @-ed is neither: it reaches me through the
+notification list.
 
 Everything below asserts on the endpoint's payload — the point is what a
-browser receives, not which query produced it. The one exception is the last
-test, which counts SQL because "correct" and "correct without a hundred round
-trips" are separate claims and only one of them is visible in the JSON.
+browser receives, not which query produced it. The one exception is the
+query-count test, which counts SQL because "correct" and "correct without a
+hundred round trips" are separate claims and only one of them is visible in
+the JSON.
 """
 
 import uuid
@@ -27,6 +23,7 @@ from tests.ask_fixtures import active_ask, question_row
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     post_message,
     post_project,
@@ -94,36 +91,35 @@ def _say(client, tid: str, speaker: str, text: str) -> None:
 # ---- the four ways a topic can (or cannot) be yours ----------------------
 
 
-def test_a_roster_member_participates(client):
-    """Being in the room is the plain case: added to the roster, nothing else."""
+def test_a_person_added_to_a_channel_is_in_it(client):
+    """Being put in the channel by its manager is the plain case."""
     pid = _project(client)
     tid = _topic(client, pid, "T", created_by="alice")
     r = client.post(
         f"/topics/{tid}/members",
-        json={"handle": "bob", "role": "member", "actor": "alice"},
+        json={"handle": "bob", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 
     row = _seen_by(client, pid, "bob")["T"]
-    assert row["i_participate"] is True
+    assert row["joined"] is True
     # Membership alone is not a summons — nothing here is waiting on bob.
     assert row["awaits_me"] is False
 
 
-def test_the_creator_participates(client):
+def test_the_creator_is_in_the_channel(client):
     pid = _project(client)
     _topic(client, pid, "T", created_by="alice")
 
     row = _seen_by(client, pid, "alice")["T"]
-    assert row["i_participate"] is True
+    assert row["joined"] is True
     assert row["awaits_me"] is False
 
 
-def test_a_routed_reviewer_participates_and_is_awaited(client):
-    """The case the roster cannot answer: carol was handed a card in a room she
-    has never been in. Both booleans flip — she is involved, and it is on her
-    desk. If only the roster were consulted this topic would fold away."""
+def test_a_routed_reviewer_is_awaited_without_being_in_the_channel(client):
+    """carol was handed a card in a channel she never joined: it is on her desk,
+    and that does not put her in the channel."""
     pid = _project(client)
     tid = _topic(client, pid, "T", created_by="alice")
     _card(client, tid, reviewer="carol")
@@ -132,39 +128,34 @@ def test_a_routed_reviewer_participates_and_is_awaited(client):
     assert "carol" not in {m["member_handle"] for m in roster}
 
     row = _seen_by(client, pid, "carol")["T"]
-    assert row["i_participate"] is True
+    assert row["joined"] is False
     assert row["awaits_me"] is True
 
 
 def test_an_uninvolved_project_member_relates_to_nothing(client):
-    """dave can read the project — he just has nothing to do with this topic.
-
-    This is the case the whole feature exists to fold away, so it is also the
-    one a too-eager implementation breaks first."""
+    """dave can read the project — he just is not in this channel."""
     pid = _project(client)
     tid = _topic(client, pid, "T", created_by="alice")
     _card(client, tid, reviewer="carol")
 
     row = _seen_by(client, pid, "dave")["T"]
-    assert row["i_participate"] is False
+    assert row["joined"] is False
     assert row["awaits_me"] is False
 
 
 # ---- @ 提及: participation and the unread override ------------------------
 
 
-def test_an_at_makes_the_topic_yours_but_does_not_await_you(client):
-    """Being @'d makes the topic yours, and stays that way after you read it.
-
-    It never lights `awaits_me`, read or not: 芝士 @s people on every report
-    and card, so counting unread @ turned the sidebar's orange dot on for
-    nearly every row — a dot that is always on says nothing."""
+def test_an_at_neither_puts_you_in_the_channel_nor_awaits_you(client):
+    """Being @-ed reaches you as a notification. It does not put you in the
+    channel, and never lights `awaits_me`, read or not: 芝士 @s people on every
+    report and card, and a dot that is always on says nothing."""
     pid = _project(client)
     tid = _topic(client, pid, "T", created_by="alice")
     _say(client, tid, "alice", "<@bob> 看一下这个")
 
     row = _seen_by(client, pid, "bob")["T"]
-    assert row["i_participate"] is True
+    assert row["joined"] is False
     assert row["awaits_me"] is False
 
     alerts = client.get(
@@ -179,7 +170,7 @@ def test_an_at_makes_the_topic_yours_but_does_not_await_you(client):
     )
 
     after = _seen_by(client, pid, "bob")["T"]
-    assert after["i_participate"] is True
+    assert after["joined"] is False
     assert after["awaits_me"] is False
 
 
@@ -204,7 +195,6 @@ def test_an_unanswered_decision_request_awaits_you_until_you_decide(client):
     decision = r.json()["data"]["data"][0]
 
     row = _seen_by(client, pid, "bob")["T"]
-    assert row["i_participate"] is True
     assert row["awaits_me"] is True
     # It waits on bob, not on everyone who can see the room.
     assert _seen_by(client, pid, "alice")["T"]["awaits_me"] is False
@@ -219,7 +209,6 @@ def test_an_unanswered_decision_request_awaits_you_until_you_decide(client):
     assert r.status_code == 200, r.text
     after = _seen_by(client, pid, "bob")["T"]
     assert after["awaits_me"] is False
-    assert after["i_participate"] is True
 
 
 def _set_card(client, card_id: str, **fields) -> None:
@@ -251,7 +240,6 @@ def test_a_card_whose_checks_failed_is_not_on_the_reviewers_desk(client):
     )
 
     row = _seen_by(client, pid, "carol")["T"]
-    assert row["i_participate"] is True
     assert row["awaits_me"] is False
 
 
@@ -285,9 +273,11 @@ def test_a_question_waits_on_whoever_summoned_the_agent(
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    with active_ask(client, stub_hooks, monkeypatch, tid, actor="bob") as headers:
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, tid, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="bob") as headers:
         r = client.post(
-            f"/topics/{tid}/asks",
+            f"/topics/{thread}/asks",
             json={
                 "questions": [
                     {
@@ -311,7 +301,11 @@ def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    question_row(client, tid, question="按哪个口径", asked="bob")
+    # A person asks it, in the channel's main line: an answer wakes no agent.
+    question_row(client, tid, author="alice", question="按哪个口径", asked="bob")
+    for who in ("bob", "carol"):
+        joined = client.post(f"/topics/{tid}/join", headers=session_auth_headers(who))
+        assert joined.status_code == 200, joined.text
 
     _say(client, tid, "carol", "我路过")
     assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
@@ -330,9 +324,11 @@ def test_a_question_awaits_only_whoever_started_the_turn(
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    with active_ask(client, stub_hooks, monkeypatch, tid, actor="bob") as headers:
+    # 芝士在支线里回答，题也在那里问。
+    thread = in_thread(client, tid, "alice")
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="bob") as headers:
         r = client.post(
-            f"/topics/{tid}/asks",
+            f"/topics/{thread}/asks",
             json={
                 "questions": [
                     {
@@ -347,7 +343,6 @@ def test_a_question_awaits_only_whoever_started_the_turn(
     # 芝士问完就收尾（`cheese_ask` 不等回答），这一轮随即关闭——题照样在等 bob。
     bob = _seen_by(client, pid, "bob")["问答"]
     assert bob["awaits_me"] is True
-    assert bob["i_participate"] is True
     assert _seen_by(client, pid, "alice")["问答"]["awaits_me"] is False
     assert _seen_by(client, pid, "carol")["问答"]["awaits_me"] is False
 
@@ -365,15 +360,15 @@ def test_two_callers_see_different_answers_for_the_same_topics(client):
     _card(client, bobs, reviewer="carol")
 
     seen_by_alice = _seen_by(client, pid, "alice")
-    assert seen_by_alice["alice 的"]["i_participate"] is True
-    assert seen_by_alice["bob 的"]["i_participate"] is False
+    assert seen_by_alice["alice 的"]["joined"] is True
+    assert seen_by_alice["bob 的"]["joined"] is False
 
     seen_by_bob = _seen_by(client, pid, "bob")
-    assert seen_by_bob["alice 的"]["i_participate"] is False
-    assert seen_by_bob["bob 的"]["i_participate"] is True
+    assert seen_by_bob["alice 的"]["joined"] is False
+    assert seen_by_bob["bob 的"]["joined"] is True
 
     seen_by_carol = _seen_by(client, pid, "carol")
-    assert seen_by_carol["alice 的"]["i_participate"] is False
+    assert seen_by_carol["alice 的"]["joined"] is False
     assert seen_by_carol["bob 的"]["awaits_me"] is True
 
 
@@ -386,7 +381,7 @@ def test_the_topic_header_carries_the_same_verdict(client):
 
     head = client.get(f"/topics/{tid}", headers=session_auth_headers("carol"))
     assert head.status_code == 200, head.text
-    assert head.json()["data"]["i_participate"] is True
+    assert head.json()["data"]["joined"] is False
     assert head.json()["data"]["awaits_me"] is True
 
 
@@ -397,7 +392,7 @@ def test_an_anonymous_caller_gets_the_default(client):
 
     rows = client.get("/topics", params={"project_id": pid}).json()["data"]["data"]
     row = next(t for t in rows if t["title"] == "T")
-    assert row["i_participate"] is False
+    assert row["joined"] is False
     assert row["awaits_me"] is False
 
 
@@ -437,11 +432,9 @@ def test_relevance_costs_constant_queries_whatever_the_project_size(client, sql_
     """The hard requirement: the extra cost is CONSTANT, not per topic.
 
     A project's whole tree comes back in one list call, so a per-topic probe
-    would be a hundred round trips to draw one sidebar. Four queries — roster,
-    accept cards, @-notifications, open decision requests — answer it for
-    every topic at once, and
-    「我建的」 is free because `created_by` already rides the rows the endpoint
-    fetched anyway.
+    would be a hundred round trips to draw one sidebar. Three queries — the
+    channels I am in, accept cards, open decision requests — answer it for
+    every topic at once.
 
     Measured at two project sizes in ONE test on purpose: a fixed expected
     number would only pin today's endpoint, while comparing 1 topic against 12
@@ -461,15 +454,15 @@ def test_relevance_costs_constant_queries_whatever_the_project_size(client, sql_
     assert len(_seen_by(client, big, "alice")) == 13
     big_log = list(sql_log)
 
-    # `notification` is read twice: unread-or-read @s (participation) and
-    # unanswered decision requests (awaiting). Constant either way.
+    # `notification` is read once: unanswered decision requests (awaiting).
     for table in ("notification",):
-        assert _reads(small_log, table) == 2, table
-        assert _reads(big_log, table) == 2, table
-    # Archive permission is a separate owner/admin-filtered roster query.
-    # Both lookups are batched; adding rooms must not add round trips.
-    assert _reads(small_log, "topic_memberships") == 2
-    assert _reads(big_log, "topic_memberships") == 2
+        assert _reads(small_log, table) == 1, table
+        assert _reads(big_log, table) == 1, table
+    # Which channels I am in, and which I manage, are two batched roster
+    # reads; adding rooms must not add round trips.
+    assert _reads(big_log, "topic_memberships") == _reads(
+        small_log, "topic_memberships"
+    )
     # `accept_cards` is read TWICE, and the two reads ask different questions
     # that no single scan answers:
     #   - relevance wants "any card here that ever named this viewer" —
@@ -498,9 +491,9 @@ def test_created_room_is_immediately_in_its_creators_sidebar_group(client):
     )
     assert response.status_code == 200
     created = response.json()["data"]
-    assert created["i_participate"] is True
-    assert created["can_archive"] is True
+    assert created["joined"] is True
+    assert created["can_manage"] is True
     fetched = client.get(
         f"/topics/{created['id']}", headers=session_auth_headers("alice")
     ).json()["data"]
-    assert fetched["i_participate"] == created["i_participate"]
+    assert fetched["joined"] == created["joined"]

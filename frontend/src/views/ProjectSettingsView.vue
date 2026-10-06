@@ -15,7 +15,7 @@ import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
 import ProjectMcpSettings from '@/components/ProjectMcpSettings.vue'
-import ProjectTopicNamingSettings from '@/components/ProjectTopicNamingSettings.vue'
+import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vue'
 import AgentTeamSettings from '@/components/settings/AgentTeamSettings.vue'
 import ArchiveProjectSection from '@/components/settings/ArchiveProjectSection.vue'
 import AttributionSettings from '@/components/settings/AttributionSettings.vue'
@@ -131,7 +131,7 @@ const router = useRouter()
 const SECTIONS = computed(() => [
   { group: 'collab', key: 'channels', icon: 'mdi-pound' },
   { group: 'ai', key: 'agents', icon: 'mdi-robot-outline' },
-  { group: 'ai', key: 'topic-naming', icon: 'mdi-format-title' },
+  { group: 'ai', key: 'task-naming', icon: 'mdi-format-title' },
   { group: 'run', key: 'computer', icon: 'mdi-server-outline' },
   { group: 'run', key: 'environment', icon: 'mdi-console' },
   { group: 'code', key: 'merge', icon: 'mdi-source-merge' },
@@ -249,8 +249,8 @@ function close() {
           :project-id="projectId"
           @open-channel="(topic) => router.push({ name: 'workspace-topic', params: { projectId, topicId: topic.id } })"
         />
-        <section v-else-if="section === 'topic-naming'" class="page-section">
-          <ProjectTopicNamingSettings :project-id="projectId" />
+        <section v-else-if="section === 'task-naming'" class="page-section">
+          <ProjectTaskNamingSettings :project-id="projectId" />
         </section>
 
         <template v-else-if="section === 'computer'">

@@ -25,6 +25,7 @@ from tests.ask_fixtures import active_ask, question_row, wait_turn_idle
 from tests.conftest import StubChannel, seed_user, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
+    in_thread,
     join_project_team,
     post_message,
     post_project,
@@ -46,10 +47,18 @@ QUESTION = {
 }
 
 
+#: The channel each test's 支线 hangs in, for what only a channel answers (its roster).
+_CHANNEL: dict[str, str] = {}
+
+
 def _room(client) -> tuple[str, str]:
+    """A project and a 支线 of its channel: where 芝士 answers once it is called,
+    and so where it asks."""
     seed_user(client, "alice")
     data = post_project(client, {"name": "Ask"}, owner="alice").json()["data"]
-    return data["id"], data["root_topic_id"]
+    thread = in_thread(client, data["root_topic_id"], "alice")
+    _CHANNEL[thread] = data["root_topic_id"]
+    return data["id"], thread
 
 
 def _ask_in_a_turn(client, stub_hooks, monkeypatch, room, *, by="alice") -> dict:
@@ -283,7 +292,7 @@ def _teammate(client, pid, room) -> str:
     assert made.status_code == 200, made.text
     seat = made.json()["data"]["seat_handle"]
     joined = client.post(
-        f"/topics/{room}/members",
+        f"/topics/{_CHANNEL.get(room, room)}/members",
         json={"handle": seat, "role": "member"},
         headers=session_auth_headers("alice"),
     )
@@ -370,7 +379,7 @@ def test_the_notice_stays_open_until_every_question_of_the_call_is_answered(
 ):
     token = seed_user(client, "alice")
     data = post_project(client, {"name": "Ask"}, owner="alice").json()["data"]
-    room = data["root_topic_id"]
+    room = in_thread(client, data["root_topic_id"], "alice")
     two = {
         "questions": [
             {"question": "口径？", "options": [{"text": "按部门"}, {"text": "按项目"}]},
