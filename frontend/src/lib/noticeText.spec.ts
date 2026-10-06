@@ -26,7 +26,7 @@ const vuetify = createVuetify({ components, directives })
 function readyLine(): Block {
   return {
     id: 'b1',
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'accept',

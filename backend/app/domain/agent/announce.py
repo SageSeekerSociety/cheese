@@ -45,6 +45,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import room_of
 from app.domain.delivery.addressing import (
     NAMES_NOBODY,
     Event,
@@ -125,8 +126,7 @@ async def announce(
     )
     block = await BlockRepository(session).add(
         project_id=landed.project_id,
-        topic_id=landed.topic_id,
-        task_id=landed.task_id,
+        conversation_id=landed.conversation_id,
         author=author,
         author_type=AuthorType.platform,
         content=content,
@@ -245,7 +245,7 @@ async def answer_questions(
     seat = questions[-1].author
     if not recipient.get("mentioned") and seat in await TopicMemberService(
         session
-    ).agent_handles(reply.topic_id):
+    ).agent_handles(await room_of(session, reply.conversation_id)):
         instance = await instance_of_seat(session, reply.project_id, seat)
         if instance is not None:
             recipient["instance_id"] = str(instance.id)
@@ -302,7 +302,7 @@ async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
         siblings = list(
             await session.scalars(
                 select(Block).where(
-                    Block.topic_id == questions[0].topic_id,
+                    Block.conversation_id == questions[0].conversation_id,
                     Block.meta["notice_id"].as_string() == notice,
                 )
             )

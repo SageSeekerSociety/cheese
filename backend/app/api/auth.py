@@ -41,6 +41,7 @@ from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
+from app.domain.conversation import services as conversations
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository
@@ -125,6 +126,30 @@ class ActorResolver:
         # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
         self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
+
+    def credential_conversation(self) -> uuid.UUID | None:
+        """The conversation the presented credential was minted in: a room, or
+        a task its session works — where what the agent does elsewhere in the
+        project is told. None for a person, a project credential, a delegated
+        one, or a token naming no conversation."""
+        claims = scoped_token_claims(self._cheese_token) if self._cheese_token else None
+        named = (claims or {}).get("t")
+        return uuid.UUID(named) if named else None
+
+    async def _confine_task_credential(self, topic_id: uuid.UUID | None) -> None:
+        """A credential minted for a task's conversation acts in no other
+        conversation — not its room, not another task — even the session-wide
+        one that otherwise reaches across its project. Routes that name no
+        conversation (the project's library, its documents) it reaches as any
+        session of the project does."""
+        if not self._cheese_token or topic_id is None:
+            return
+        claims = scoped_token_claims(self._cheese_token)
+        named = (claims or {}).get("t")
+        if not named or named == str(topic_id):
+            return
+        if await conversations.is_task(self._session, uuid.UUID(named)):
+            raise ForbiddenError("This credential works another conversation")
 
     def delegation(self) -> DelegatedClaims | None:
         """The question the presented credential acts for, when it is a valid
@@ -230,6 +255,7 @@ class ActorResolver:
         if self._cheese_token and topic_id is not None and project_id is None:
             project_id = await self.project_of_topic(topic_id)
         self._reject_out_of_scope_token(topic_id=topic_id, project_id=project_id)
+        await self._confine_task_credential(topic_id)
 
         # A project credential is bounded by a project, so the project this
         # request acts on is what it must be judged
@@ -380,7 +406,9 @@ class ActorResolver:
         """
         if handle:
             return handle
-        return await TopicMemberService(self._session).resolve_agent_handle(topic_id)
+        return await TopicMemberService(self._session).resolve_agent_handle(
+            await conversations.room_of(self._session, topic_id)
+        )
 
     async def resolve_recipient(
         self,
@@ -496,17 +524,6 @@ class ActorResolver:
             self._session, self._cheese_token, project_id=project_id
         )
 
-    def origin_room(self) -> uuid.UUID | None:
-        """The room the presenting agent's session runs in, from its scoped
-        token: where what it does elsewhere in the project is told. None for a
-        person, a project credential, a delegated one, or a token naming no
-        room. Only meaningful once the request resolved to that agent."""
-        if not self._cheese_token:
-            return None
-        claims = scoped_token_claims(self._cheese_token)
-        room = claims.get("t") if claims else None
-        return uuid.UUID(room) if room else None
-
     def speaks_for_this_rooms_turn(self, topic_id: uuid.UUID) -> bool:
         """这张凭据就是**这个房间这一轮**的那张令牌吗。
 
@@ -617,7 +634,9 @@ class ActorResolver:
         topic_id: uuid.UUID,
         enforce: bool = False,
     ) -> None:
-        """Require a verified participant with access to this room."""
+        """Require a verified participant with access to this conversation's
+        room."""
+        topic_id = await conversations.room_of(self._session, topic_id)
         await self._refuse_archived_write(project_id=project_id, topic_id=topic_id)
         if not enforce and not settings.authz_enforce_topic_access:
             return
@@ -636,6 +655,7 @@ class ActorResolver:
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> bool:
         """Check actual membership even on isolated content hosts in dev mode."""
+        topic_id = await conversations.room_of(self._session, topic_id)
         topic = await TopicRepository(self._session).get(topic_id)
         rooms = [(topic_id, _private(topic))]
         return topic_id in await self._readable(actor, project_id, rooms)
@@ -841,8 +861,8 @@ class ActorResolver:
         )
 
     async def project_of_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
-        topic = await TopicRepository(self._session).get(topic_id)
-        return topic.project_id if topic is not None else None
+        """The project of a conversation: a room's, or a task's."""
+        return await conversations.project_of(self._session, topic_id)
 
 
 def get_actor_resolver(

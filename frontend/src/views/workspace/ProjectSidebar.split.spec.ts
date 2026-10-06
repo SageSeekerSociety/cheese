@@ -83,6 +83,8 @@ const store = reactive({
   privateUnreadMap: {},
 })
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
+// 侧栏挂在房间下的任务另读一份；这里钉的不是它。
+vi.mock('@/lib/projectTasks', () => ({ readProjectTasks: async () => ({ data: [], total: 0 }) }))
 
 import { workspaceRoutes } from '@/router/workspaceRoutes'
 

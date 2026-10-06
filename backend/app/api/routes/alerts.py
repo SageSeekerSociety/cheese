@@ -247,36 +247,8 @@ async def resolve_notification(
     service = ProjectNotificationService(db)
     row = await service.get_or_404(notification_id)
     handle = await _acting_recipient(resolver, row)
-    if row.resolved_at is None and await _carry_out(row, body.chosen, db, resolver):
-        await db.commit()
-        return ok(_dump(await service.get_or_404(notification_id)))
     resolved = await service.resolve(
         notification_id, chosen=body.chosen, decided_by=handle
     )
     await db.commit()
     return ok(_dump(resolved))
-
-
-async def _carry_out(
-    row: Notification, chosen: str, db: AsyncSession, resolver: ActorResolver
-) -> bool:
-    """A card that stands for a project invitation is answered by answering it.
-
-    Recording the choice alone would clear the card while the invitation stayed
-    exactly where it was. Answering settles the card itself, so there is nothing
-    left to record here. Returns False for every other card.
-    """
-    from app.domain.membership.services import INVITATION_OPTIONS, InvitationService
-
-    invitation_id = (row.metadata_payload or {}).get("invitation_id")
-    if invitation_id is None:
-        return False
-    if chosen not in INVITATION_OPTIONS or row.project_id is None:
-        raise ValidationError(say("alertChoiceNotOffered"))
-    actor = await resolver.require_verified_caller()
-    await InvitationService(db).respond(
-        invitation_id=uuid.UUID(invitation_id),
-        accept=chosen == INVITATION_OPTIONS[0],
-        actor=actor,
-    )
-    return True

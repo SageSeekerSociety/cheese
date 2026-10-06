@@ -69,9 +69,9 @@ def parse_questions(body) -> list[Question]:
 
 
 async def post_questions(
-    session, *, project_id, room_id, seat, questions, asked, request_id=None
+    session, *, project_id, conversation_id, seat, questions, asked, request_id=None
 ) -> list[Block]:
-    """Write one message per question on the room's own line; flush, never commit.
+    """Write one message per question in the conversation; flush, never commit.
 
     ``request_id`` makes a retry safe, as it does for `chat_send`: the questions
     a call with the same id already wrote are returned instead of asked twice.
@@ -81,7 +81,7 @@ async def post_questions(
             await session.scalars(
                 select(Block)
                 .where(
-                    Block.topic_id == room_id,
+                    Block.conversation_id == conversation_id,
                     Block.author == seat,
                     Block.meta["ask_request"].as_string() == request_id,
                 )
@@ -96,7 +96,7 @@ async def post_questions(
         rows.append(
             await blocks.add(
                 project_id=project_id,
-                topic_id=room_id,
+                conversation_id=conversation_id,
                 author=seat,
                 author_type=AuthorType.participant,
                 content=question.content,

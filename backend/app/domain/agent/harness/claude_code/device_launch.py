@@ -614,12 +614,12 @@ def on_machine(
         resume_session_id=resume_session_id,
         project_id=place.project_id,
         launch_name=launch_name,
-        # Which seat this session is: the agent handle the place was opened
-        # for. It names the directory the prompt and the execution target go
-        # into, and it is in the launch identity — so a session started under
-        # the previous per-room layout is replaced on its next turn instead of
-        # being handed a room-mate's files.
-        seat=seat_name(place.agent_handle),
+        # Which seat this session is: the agent the place was opened for, in
+        # the room or in one of its tasks. It names the directory the prompt
+        # and the execution target go into, and it is in the launch identity —
+        # so a session started under the previous per-room layout is replaced
+        # on its next turn instead of being handed a room-mate's files.
+        seat=seat_name(place.seat or place.agent_handle),
     )
 
 

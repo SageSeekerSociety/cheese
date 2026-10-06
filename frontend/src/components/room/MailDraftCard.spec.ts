@@ -32,7 +32,7 @@ const vuetify = createVuetify({ components, directives })
 function drafted(id: string, subject = 'Re: 芝士测试'): Block {
   return {
     id: `b-${id}`,
-    topic_id: 't',
+    conversation_id: 't',
     kind: 'event',
     author_type: 'platform',
     author: 'system',

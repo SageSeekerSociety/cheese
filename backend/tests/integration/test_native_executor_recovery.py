@@ -131,7 +131,7 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
             async with factory() as session:
                 rows = list(
                     await session.scalars(
-                        select(NativeInput).where(NativeInput.topic_id == topic)
+                        select(NativeInput).where(NativeInput.conversation_id == topic)
                     )
                 )
                 assert len(rows) == 2
@@ -163,7 +163,9 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
                     len(
                         list(
                             await session.scalars(
-                                select(AgentTurn).where(AgentTurn.topic_id == topic)
+                                select(AgentTurn).where(
+                                    AgentTurn.conversation_id == topic
+                                )
                             )
                         )
                     )

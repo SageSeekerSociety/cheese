@@ -1,4 +1,4 @@
-"""`POST /topics/{topic_id}/asks`: an agent's question, posted into the room.
+"""`POST /topics/{topic_id}/asks`: an agent's question, posted into its conversation.
 
 There is no answer route. An answer is an ordinary message — a click on one of
 the question's options sends the option's text as a reply to it — and it goes
@@ -35,7 +35,9 @@ async def create_questions(
     the reply someone sends starts the next one.
     """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
+    actor = await resolver.resolve(
+        project_id=place.project_id, topic_id=place.conversation_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -48,6 +50,6 @@ async def create_questions(
     await db.commit()
     for block in blocks:
         await get_broker().publish(
-            str(place.room_id), {"type": "assistant_block", "block": block}
+            str(place.conversation_id), {"type": "assistant_block", "block": block}
         )
     return ok({"blocks": blocks, "request_id": body.get("request_id")})

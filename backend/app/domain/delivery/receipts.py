@@ -42,7 +42,7 @@ async def register_input(
         if (
             delivery is None
             or delivery.attempt_id != effects.attempt_id
-            or delivery.topic_id != identity.topic_id
+            or delivery.conversation_id != identity.conversation_id
             or delivery.recipient_handle != identity.recipient_handle
         ):
             raise ValidationError("Input does not own the addressed delivery attempt")
@@ -114,7 +114,7 @@ async def register_input(
         held = await held_blocks(
             session,
             project_id=identity.project_id,
-            topic_id=identity.topic_id,
+            topic_id=identity.conversation_id,
             recipient_handle=identity.recipient_handle,
             exclude_input_id=row.id,
         )
@@ -135,7 +135,8 @@ async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
         )
     )
     if len(rows) != len(ids) or any(
-        block.project_id != identity.project_id or block.topic_id != identity.topic_id
+        block.project_id != identity.project_id
+        or block.conversation_id != identity.conversation_id
         for block in rows
     ):
         raise ValidationError("Input blocks do not belong to the addressed room")
@@ -159,7 +160,7 @@ async def held_blocks(
         await session.execute(
             select(NativeInput.held_block_ids, NativeInput.released_block_ids).where(
                 NativeInput.project_id == project_id,
-                NativeInput.topic_id == topic_id,
+                NativeInput.conversation_id == topic_id,
                 NativeInput.recipient_handle == recipient_handle,
                 NativeInput.id != exclude_input_id
                 if exclude_input_id is not None
@@ -183,7 +184,7 @@ async def inputs_answered_inside(session, topic_id, work_id) -> list[uuid.UUID]:
             select(NativeInput.work_id)
             .distinct()
             .where(
-                NativeInput.topic_id == topic_id,
+                NativeInput.conversation_id == topic_id,
                 NativeInput.execution_work_id == work_id,
                 NativeInput.work_id != work_id,
                 NativeInput.echoed_at.is_not(None),
@@ -196,7 +197,7 @@ async def complete_work_inputs(
     session,
     *,
     project_id,
-    topic_id,
+    conversation_id,
     recipient_handle,
     harness,
     native_session_id,
@@ -214,7 +215,7 @@ async def complete_work_inputs(
             select(NativeInput)
             .where(
                 NativeInput.project_id == project_id,
-                NativeInput.topic_id == topic_id,
+                NativeInput.conversation_id == conversation_id,
                 NativeInput.recipient_handle == recipient_handle,
                 NativeInput.harness == harness,
                 NativeInput.native_session_id == native_session_id,
@@ -250,7 +251,7 @@ async def complete_work_inputs(
         return set()
     identity = InputIdentity(
         project_id,
-        topic_id,
+        conversation_id,
         recipient_handle,
         harness,
         native_session_id,
@@ -272,7 +273,7 @@ async def terminate_work_inputs(
     session,
     *,
     project_id,
-    topic_id,
+    conversation_id,
     recipient_handle,
     harness,
     native_session_id,
@@ -302,7 +303,7 @@ async def terminate_work_inputs(
             select(NativeInput)
             .where(
                 NativeInput.project_id == project_id,
-                NativeInput.topic_id == topic_id,
+                NativeInput.conversation_id == conversation_id,
                 NativeInput.recipient_handle == recipient_handle,
                 NativeInput.harness == harness,
                 NativeInput.native_session_id == native_session_id,
@@ -403,7 +404,7 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         delivery is None
         or delivery.event_id != row.event_id
         or delivery.attempt_id != row.attempt_id
-        or delivery.topic_id != row.topic_id
+        or delivery.conversation_id != row.conversation_id
         or delivery.recipient_handle != row.recipient_handle
         or delivery.state not in ("sending", "uncertain", "received")
     ):

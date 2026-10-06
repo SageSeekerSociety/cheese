@@ -201,28 +201,6 @@ def test_an_agent_joins_a_room_through_its_roster(client):
     assert r.status_code == 422, r.text
 
 
-def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
-    """This is the loop the split exists for: whatever the 分身 learns doing the
-    work lands in the SAME pool the room reads, so the room has it afterwards.
-
-    没有第二个 agent 要解析 —— 做这条活的分身跑在房间那一个会话里，它就是房间的
-    agent 在干活。所以「这条活归谁」不是一个问题，「它学到的东西进谁的池子」才是。
-    """
-    pid = _project(client)
-    reviewer = _add_agent(client, pid, handle="reviewer")
-    room = _topic(client, pid, "review room")
-    _seat(client, room, reviewer)
-
-    r = client.post(
-        f"/topics/{room}/split",
-        json=dict(reviewer_handle="alice", **{"title": "拆出来的活"}),
-    )
-    assert r.status_code == 200, r.text
-    # 一张卡不是地点：拆出来的活在房间那一个会话里做，记忆也从房间记。
-    _remember(client, pid, "分身查出来的事", agent=reviewer)
-    assert _pool(client, pid, agent=reviewer) == ["分身查出来的事"]
-
-
 def test_a_room_cannot_seat_another_projects_agent(client):
     """A seat that can never act is a trap on the roster: nothing addresses it,
     nothing writes as it. The roster refuses it up front."""

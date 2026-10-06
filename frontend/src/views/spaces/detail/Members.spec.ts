@@ -64,7 +64,20 @@ async function mount(currentUserId: number) {
 
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/spaces/:spaceId/members', name: 'Members', component: Members as Component }],
+    routes: [
+      { path: '/spaces/:spaceId/members', name: 'Members', component: Members as Component },
+      // 页头「邀请成员」跳的两处设置入口；名字与 `router/spaces.ts` 一致。
+      {
+        path: '/spaces/:spaceId/manage/settings/invite-codes',
+        name: 'SpacesDetailSettingsInviteCodes',
+        component: { template: '<div />' },
+      },
+      {
+        path: '/spaces/:spaceId/manage/settings/domain-groups',
+        name: 'SpacesDetailSettingsDomainGroups',
+        component: { template: '<div />' },
+      },
+    ],
   })
   await router.push(`/spaces/${SPACE_ID}/members`)
   await router.isReady()
@@ -105,6 +118,8 @@ describe('空间成员页', () => {
         },
       })
     }
+    // 菜单一开 VOverlay 会算位置，happy-dom 没给 devicePixelRatio。
+    vi.stubGlobal('devicePixelRatio', 1)
     listMembers.mockResolvedValue({
       data: {
         members: [
@@ -161,6 +176,29 @@ describe('空间成员页', () => {
 
     await fireEvent.click(button(document, '确定'))
     await waitFor(() => expect(updateAdmin).toHaveBeenCalledWith(SPACE_ID, ADMIN.id, { role: 'OWNER' }))
+  })
+
+  it('页头的「邀请成员」把人送到设置里那两处邀请入口', async () => {
+    await mount(OWNER.id)
+    await waitFor(() => expect(rows().length).toBe(4))
+
+    await fireEvent.click(button(document, 'spaces.members.invite'))
+    await waitFor(() => expect(document.body.textContent).toContain('spaces.members.inviteCodes'))
+
+    const links = Array.from(document.querySelectorAll('a'))
+    const codes = links.find((a) => a.textContent?.includes('spaces.members.inviteCodes'))
+    const domains = links.find((a) => a.textContent?.includes('spaces.members.inviteDomainGroups'))
+    expect(codes?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/manage/settings/invite-codes`)
+    expect(domains?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/manage/settings/domain-groups`)
+  })
+
+  it('每个角色旁都写着一句这个角色能做什么', async () => {
+    await mount(OWNER.id)
+    await waitFor(() => expect(rows().length).toBe(4))
+    expect(rowOf('所有者甲').textContent).toContain('spaces.members.role.ownerHint')
+    expect(rowOf('管理员乙').textContent).toContain('spaces.members.role.adminHint')
+    expect(rowOf('成员丙').textContent).toContain('spaces.members.role.memberHint')
+    expect(rowOf('成员丁').textContent).toContain('spaces.members.role.memberHint')
   })
 
   it('读失败时成员那一块换成原因和一条重试，不再假装只有管理员', async () => {

@@ -4,7 +4,7 @@
  * 册里有昵称和他自己挑的头像，卡上就该是那两样——而没挑过头像的人必须是按 handle
  * 哈希出来的彩色首字母，不是一张所有人共用的默认脸。
  *
- * 另一件：色点是**列级**的，所以「施工中」那一列里在跑的和排队的原来长得一模一
+ * 另一件：色点是**列级**的，所以「进行中」那一列里在跑的和排队的原来长得一模一
  * 样。这两件事对看的人不是一回事。
  */
 import type { Component } from 'vue'
@@ -66,7 +66,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'n1ctheboy',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'building', phrase: 'not_started' },
+    presentation: { column: 'building', phrase: 'started' },
     ...over,
   }
 }
@@ -174,7 +174,7 @@ describe('同一列里，在跑的和闲着的不再长得一样', () => {
     listProjectTasks.mockResolvedValue({
       data: [
         task({ id: 'a', title: '在跑的', presentation: { column: 'building', phrase: 'running' } }),
-        task({ id: 'b', title: '排队的', presentation: { column: 'building', phrase: 'not_started' } }),
+        task({ id: 'b', title: '排队的', presentation: { column: 'building', phrase: 'started' } }),
       ],
       total: 2,
     })

@@ -166,7 +166,7 @@ async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
 
 async def tell_origin_room(
     db: AsyncSession,
-    room_id: uuid.UUID | None,
+    conversation_id: uuid.UUID | None,
     doc: Document,
     actor: str,
     *,
@@ -175,15 +175,22 @@ async def tell_origin_room(
     suggested: list[str] | None = None,
 ) -> None:
     """芝士 made or changed ``doc``, a document of the project's own, while
-    working in ``room_id``: the room gets a line with the document on it. A
-    room's own document is told by its store (`announce`); a change made from
-    no room (a person's, or 芝士 answering on the document itself) is in the
-    document's history and nowhere else."""
-    if room_id is None or doc.room_id is not None:
+    working in ``conversation_id`` (a room, or one of its tasks): that
+    conversation gets a line with the document on it. A room's own document
+    is told by its store (`announce`); a change made from no conversation (a
+    person's, or 芝士 answering on the document itself) is in the document's
+    history and nowhere else."""
+    if conversation_id is None or doc.room_id is not None:
+        return
+    from app.domain.room_task.place import PlaceResolver
+
+    place = await PlaceResolver(db).conversation(conversation_id)
+    if place is None:
         return
     line, merged = await tell_room_of_document(
         db,
-        room_id=room_id,
+        room_id=place.room_id,
+        task_id=place.task_id,
         doc=doc,
         actor=actor,
         created=created,
@@ -192,7 +199,7 @@ async def tell_origin_room(
     )
     await db.commit()
     await get_broker().publish(
-        str(room_id),
+        str(conversation_id),
         {
             "type": "block_updated" if merged else "event_block",
             "block": BlockOut.model_validate(line).model_dump(mode="json"),

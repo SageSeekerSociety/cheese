@@ -21,7 +21,7 @@ async def add_shown_block(
     db: AsyncSession,
     *,
     project_id: uuid.UUID,
-    room_id: uuid.UUID,
+    conversation_id: uuid.UUID,
     path: str,
     author: str,
     mime: str,
@@ -29,10 +29,11 @@ async def add_shown_block(
     """把这个房间的一份文件记进「摆出来的东西」，交出那张卡。
 
     `mime` 由调用方给：它认得这次是哪种渲染类型，命名与类型的规矩在
-    `app.domain.project.room_files` 那边，这里只落一条块。"""
+    `app.domain.project.room_files` 那边，这里只落一条块。块落在 `conversation_id`
+    那段对话里：任务里摆出来的是那个任务的，不是房间的。"""
     block = await BlockRepository(db).add(
         project_id=project_id,
-        topic_id=room_id,
+        conversation_id=conversation_id,
         author=author,
         author_type=AuthorType.participant,
         content=path,

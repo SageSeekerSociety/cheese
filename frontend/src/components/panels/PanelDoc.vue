@@ -32,6 +32,8 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
+    /** 打开的是这个房间里某个任务的实况文档。 */
+    taskId?: string | null
     /** 项目资料库里的一份文档：直接打开它，标题在页上就能改。 */
     document?: PanelDocument | null
     // Bumped by the parent on AI activity (turn-done / update_doc tool) so the
@@ -51,6 +53,7 @@ const props = withDefaults(
     barTo?: string
   }>(),
   {
+    taskId: null,
     document: null,
     topicList: () => [],
     agentName: () => t('work.room.defaultAgentName'),
@@ -166,6 +169,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :mention-names="people.names.value"
     :mention-people="people.people.value"
     :bare="props.bare"
+    :untitled="!!props.taskId"
     :bar-to="props.barTo"
     :session="doc.session.value"
     :editable="doc.editable.value"

@@ -54,7 +54,7 @@ function step(id: string, author: string, turn: string, at: string, arg: string)
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author,
@@ -135,7 +135,7 @@ function optsOf(call: number): Record<string, unknown> {
 
 async function openSite() {
   const view = render(Site, {
-    props: { topic, active: true, memberNames: NAMES },
+    props: { topicId: topic.id, active: true, memberNames: NAMES },
     global: { plugins: [vuetify] },
   })
   const pane = view.container.querySelector<HTMLElement>('.panel-site')

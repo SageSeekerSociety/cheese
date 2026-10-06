@@ -75,7 +75,7 @@ def _add(client, room_id: uuid.UUID, **fields) -> None:
         s.add(
             Block(
                 project_id=room.project_id,
-                topic_id=room.id,
+                conversation_id=room.id,
                 author_type=fields.pop("author_type", AuthorType.participant),
                 **fields,
             )

@@ -142,10 +142,14 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         return False
     # Looked at with the room locked: no turn has started since.
     from app.domain.agent.models import AgentTurn
+    from app.domain.conversation.services import of_room
 
     running = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == home.topic_id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, home.topic_id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     if running is not None:

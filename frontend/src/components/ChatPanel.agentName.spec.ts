@@ -38,7 +38,7 @@ function aiMsg(id: string, content = id, author: string = SEAT): Block {
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author_type: 'participant',
     author,

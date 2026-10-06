@@ -17,6 +17,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import list_device_storage
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import UNPUSHED_ARCHIVE, HostPool
 from app.domain.repository import service as ws
@@ -109,7 +110,9 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
     entries = {}
     sessions = list(
         await session.scalars(
-            select(AgentSession).where(AgentSession.topic_id == operation.topic_id)
+            select(AgentSession).where(
+                of_room(AgentSession.conversation_id, operation.topic_id)
+            )
         )
     )
     # A cloud session's home in the bucket is on no machine; the archive goes
@@ -462,7 +465,7 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             active = await session.scalar(
                 select(AgentTurn.id)
                 .where(
-                    AgentTurn.topic_id == operation.topic_id,
+                    of_room(AgentTurn.conversation_id, operation.topic_id),
                     AgentTurn.stopped_at.is_(None),
                 )
                 .limit(1)

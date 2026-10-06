@@ -1,51 +1,23 @@
+<!--
+  Where the route guard (router/emailRequired.ts) brings an account with no
+  address of its own until it verifies one, then on to where the person was
+  headed. It reads the address, sends and checks the code, and signs out on
+  request. What it shows is AddEmailView.vue.
+-->
 <template>
-  <transition name="account-page" mode="out-in">
-    <EmailCodeStep
-      v-if="step === 'code'"
-      key="code"
-      :email="email.trim()"
-      :submit-label="t('account.addEmail.submit')"
-      :verify="verify"
-      :send="send"
-      @change="step = 'email'"
-    />
-
-    <div v-else key="email">
-      <AccountHeading :title="t('account.addEmail.title')" :lede="t('account.addEmail.lede')" />
-
-      <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-6">
-        {{ error }}
-      </v-alert>
-
-      <v-form ref="formRef" @submit.prevent="submitEmail">
-        <AccountField :label="t('account.field.email')" input-id="add-email">
-          <v-text-field
-            id="add-email"
-            v-model="email"
-            autocomplete="email"
-            autocapitalize="none"
-            autocorrect="off"
-            spellcheck="false"
-            type="email"
-            name="email"
-            :rules="emailRules"
-            :hint="t('account.rule.emailHint')"
-            persistent-hint
-          />
-        </AccountField>
-
-        <BaseButton type="submit" block kind="primary" size="lg" class="account-submit" :loading="sending">
-          {{ t('account.addEmail.send') }}
-        </BaseButton>
-
-        <p class="account-foot">
-          <button type="button" class="account-link account-link--quiet" :disabled="signingOut" @click="signOut()">
-            {{ t('account.addEmail.signOut') }}
-          </button>
-        </p>
-      </v-form>
-    </div>
-  </transition>
+  <AddEmailView
+    :step="step"
+    :email="email"
+    :error="error"
+    :sending="sending"
+    :signing-out="signingOut"
+    :verify="verify"
+    :send="send"
+    @update:email="email = $event"
+    @submit-email="submitEmail"
+    @sign-out="signOut()"
+    @change="step = 'email'"
+  />
 </template>
 
 <script setup lang="ts">
@@ -57,12 +29,9 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import AddEmailView from './AddEmailView.vue'
 import { emailCodeMessage } from './attemptWait'
-import EmailCodeStep from './EmailCodeStep.vue'
 
-import AccountField from '@/components/account/AccountField.vue'
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { postLoginTarget } from '@/router/loginRedirect'
@@ -76,9 +45,6 @@ const email = ref('')
 const error = ref('')
 const sending = ref(false)
 const signingOut = ref(false)
-const formRef = ref()
-
-const emailRules = [(v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) || t('account.rule.emailInvalid')]
 
 const goOn = () => router.replace(postLoginTarget(route.query))
 
@@ -97,8 +63,6 @@ function whenSignInIsStale(e: unknown): never {
 const send = () => UserApi.sendAddEmailCode(email.value.trim()).catch(whenSignInIsStale)
 
 async function submitEmail() {
-  const { valid } = await formRef.value.validate()
-  if (!valid) return
   error.value = ''
   sending.value = true
   try {

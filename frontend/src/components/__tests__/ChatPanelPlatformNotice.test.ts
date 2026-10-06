@@ -65,7 +65,7 @@ function event(roomId: string, content: string, meta: Record<string, unknown> | 
   blockSeq += 1
   return {
     id: `ev-${blockSeq}`,
-    topic_id: roomId,
+    conversation_id: roomId,
     kind: 'event',
     author_type: 'platform',
     author: 'system',
@@ -81,7 +81,7 @@ async function flush() {
 
 function mountRoom(blocks: Block[]) {
   const id = freshRoom()
-  listBlocks.mockResolvedValue({ data: blocks.map((b) => ({ ...b, topic_id: id })), has_more: false })
+  listBlocks.mockResolvedValue({ data: blocks.map((b) => ({ ...b, conversation_id: id })), has_more: false })
   const vuetify = createVuetify({ components, directives })
   const utils = render(ChatPanel, {
     props: { topic: room(id), topicList: [room(id)] },
@@ -517,7 +517,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
     const id = 'r'
     const said: Block = {
       id: 'msg-1',
-      topic_id: id,
+      conversation_id: id,
       kind: 'message',
       author_type: 'participant',
       author: '张衡',

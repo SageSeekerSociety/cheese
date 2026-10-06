@@ -444,8 +444,8 @@ def build_compute_pool(
             Capability.REMOTE_EXECUTION in HARNESSES[name].capabilities
         )
 
-    # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
-    # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
+    # 挂谁，由注册表说（结论 43）。一个骨架没注册就不在 `HARNESSES` 里，而「不在
+    # 注册表里」如果只是矩阵上少一列，它照样是个活调用点：
     # `recover_sessions` 进程重启后会把它的旧会话恢复回来并写进 `_owners`，
     # `report_to` 照样把房间的耳朵交给它，`steer` 在没有 owner 的时候照样按
     # `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候

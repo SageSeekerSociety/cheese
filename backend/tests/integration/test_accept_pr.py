@@ -27,6 +27,7 @@ from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
+    open_task,
     post_project,
     room_text,
     session_auth_headers,
@@ -57,7 +58,7 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card_response(client, topic_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -891,9 +892,9 @@ def test_accept_merges_the_pr_on_the_spot_when_clean(client, app_world):
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_at"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_at"
+        ]
         is not None
     )
     assert delivered["accepted_at"] is None
@@ -1255,7 +1256,7 @@ def test_a_pr_opened_at_accept_time_is_kept_but_not_merged_this_click(
     同一条约束。
 
     「人看的是同一条分支」不等于「同一个 commit」：浏览器从来没有声明过它渲染的
-    diff 是哪个 sha，而分身边干边推是常态，所以现开的 PR 的 head 照样可能是没人
+    diff 是哪个 sha，而 AI 边干边推是常态，所以现开的 PR 的 head 照样可能是没人
     看过的那个。开 PR 本身留着（有价值的副作用，下次采纳就有 head 可比），这一次
     不合。"""
     fake = app_world["fake"]
@@ -1551,9 +1552,9 @@ def test_accept_without_forge_binding_refuses_delivery(client, app_world, monkey
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_at"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_at"
+        ]
         is None
     )
     assert delivered["accepted_at"] is None
@@ -1780,7 +1781,7 @@ def _card_events(client, card_id):
             card = await session.get(AcceptCard, uuid.UUID(card_id))
             blocks = list(
                 await session.scalars(
-                    select(Block).where(Block.task_id == card.task_id)
+                    select(Block).where(Block.conversation_id == card.task_id)
                 )
             )
             return "\n".join(
@@ -1837,10 +1838,9 @@ def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub
         async with client.test_factory() as session:
             card = await session.get(AcceptCard, uuid.UUID(cid))
             row = await session.scalar(
-                select(Delivery).where(Delivery.task_id == card.task_id)
+                select(Delivery).where(Delivery.conversation_id == card.task_id)
             )
             assert row.state == "pending"
-            assert row.agent_instance_id is None  # parent has not been observed
             return row.payload["content"]
 
     prompt = asyncio.run(pending_instruction())
@@ -2015,9 +2015,9 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_at"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_at"
+        ]
         is not None
     )
     assert delivered["accepted_at"] is None
@@ -2385,9 +2385,9 @@ def test_merge_anyway_merges_and_signs_the_card(client, app_world):
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_at"]
+        client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"][
+            "accepted_at"
+        ]
         is not None
     )
     assert delivered["accepted_at"] is None
@@ -2491,7 +2491,7 @@ def test_push_fix_observes_machine_push_and_disarms_old_approval(client, app_wor
     second_head = _real_git_head(puid, tuid)
     fake.prs[number]["head_sha"] = second_head
     pushed = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        f"/topics/{delivery_task_id(client, tid)}/push-fix",
         headers=session_auth_headers("alice"),
     ).json()["data"]
     assert pushed["pushed"] is True
@@ -2501,7 +2501,7 @@ def test_push_fix_observes_machine_push_and_disarms_old_approval(client, app_wor
     assert fake.merge_calls == []
 
     again = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        f"/topics/{delivery_task_id(client, tid)}/push-fix",
         headers=session_auth_headers("alice"),
     ).json()["data"]
     assert again["pushed"] is False, "没有新东西可推时,再问一次不算错误"
@@ -2552,11 +2552,11 @@ def test_push_fix_drops_dependency_only_after_forge_confirms_target(
 
         monkeypatch.setattr(fake, "pull_request_status", stale_status)
 
-    endpoint = f"/topics/{tid}/tasks/{task_id}/push-fix?drop_dependency=true"
+    endpoint = f"/topics/{task_id}/push-fix?drop_dependency=true"
     response = client.post(endpoint, headers=session_auth_headers("alice"))
     assert response.status_code == (200 if confirmed else 422), response.text
     card = _cards(client, tid)[0]
-    task = client.get(f"/topics/{tid}/tasks/{task_id}").json()["data"]
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert len(_cards(client, tid)) == 1
     assert card["id"] == cid
     assert fake.merge_calls == []
@@ -2582,7 +2582,7 @@ def test_push_fix_reports_unreachable_forge_without_pushing(client, app_world):
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     app_world["fake"].status_error = github_pr.GitHubPrError("HTTP 502")
     pushed = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/push-fix",
+        f"/topics/{delivery_task_id(client, tid)}/push-fix",
         headers=session_auth_headers("alice"),
     ).json()["data"]
 
@@ -2631,7 +2631,7 @@ def test_remote_merge_records_acceptance(client, app_world):
 
 
 def _disk_branch(client, place_id: str) -> str:
-    """磁盘这一层说的「这个地方现在写哪条分支」——分身 commit 时用的就是它。"""
+    """磁盘这一层说的「这个地方现在写哪条分支」——AI commit 时用的就是它。"""
 
     return git_store.branch_for_task(delivery_task_id(client, place_id))
 
@@ -2675,7 +2675,7 @@ def _room_with_work(client) -> tuple[str, str]:
 
 def _ready(client, topic_id: str):
     return client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/ready",
+        f"/topics/{delivery_task_id(client, topic_id)}/ready",
         headers=delivery_headers(client, topic_id),
     )
 
@@ -2766,7 +2766,7 @@ def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
     asyncio.run(dependency())
     sweeping["fake"].prs[number]["base"] = "task/parent"
     response = client.post(
-        f"/topics/{tid}/tasks/{task_id}/push-fix?drop_dependency=true",
+        f"/topics/{task_id}/push-fix?drop_dependency=true",
         headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
@@ -2776,7 +2776,7 @@ def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
     assert len(sweeping["opened"]) == 1
     assert sweeping["fake"].draft_by_number[number] is True
     assert sweeping["fake"].merge_calls == []
-    task = client.get(f"/topics/{tid}/tasks/{task_id}").json()["data"]
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["base_task_id"] is None
     assert task["base_branch"] == "main"
 
@@ -2907,7 +2907,7 @@ def test_ready_flips_the_draft_and_changes_nothing_else(client, sweeping):
 
 
 def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sweeping):
-    """本来就 ready 就是调用方想要的状态。为它抛异常只会教会分身别用这条命令。"""
+    """本来就 ready 就是调用方想要的状态。为它抛异常只会教会 AI 别用这条命令。"""
     pid, tid = _room_with_work(client)
     _sweep(client)
     assert _ready(client, tid).status_code == 200
@@ -2968,7 +2968,7 @@ def test_ready_never_opens_a_pr(client, sweeping):
 def _describe(client, topic_id: str, **body):
     task_id = delivery_task_id(client, topic_id)
     return client.post(
-        f"/topics/{topic_id}/tasks/{task_id}/accept-card/describe",
+        f"/topics/{task_id}/accept-card/describe",
         headers=delivery_headers(client, topic_id),
         json=body,
     )
@@ -3053,14 +3053,10 @@ def test_a_correction_leaves_a_trace_in_the_room(client, sweeping):
 
 
 def test_a_correction_never_touches_the_delivery_claim(client, sweeping):
-    """署名是对**事实**的断言（哪个分身写的代码），描述是对改动的**说明**。
+    """署名是对**事实**的断言（哪件任务写的代码），描述是对改动的**说明**。
     更正入口只有后者，前者连字段都不收。"""
     pid, tid = _room_with_work(client)
-    r = client.post(
-        f"/topics/{tid}/split",
-        json=dict(reviewer_handle="alice", **{"title": "另一条活"}),
-    )
-    other = r.json()["data"]["id"]
+    other = open_task(client, tid, "另一条活")["id"]
     _make_card(client, tid)
 
     sent = _describe(

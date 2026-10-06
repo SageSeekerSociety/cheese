@@ -671,17 +671,30 @@ creating a database without naming the encoding, which is the rule above.
 
 ## Public edge: okcheese.com through Hong Kong, hand-managed
 
-`okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` resolve to the etrip
-box (8.217.1.152), and TLS for them ends there. Its Caddy owns public :443
-with a layer4 router ([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile))
-that hands those names to Caddy's own HTTPS site, which holds their
-certificate (ACME, renewed by Caddy) and redirects `www` and `hk` to the
-apex. The site proxies plain HTTP to `127.0.0.1:18453` or `127.0.0.1:18454`
-here. Each is the far end of a reverse SSH tunnel opened by the dev box, and
-both land on api-front's plain listener `127.0.0.1:18080` there (set up by
+`okcheese.com`, `www.okcheese.com`, `hk.okcheese.com` and `docs.okcheese.com`
+resolve to the etrip box (8.217.1.152), and TLS for them ends there. Their A
+records in the Cloudflare zone are DNS only, not proxied. Its Caddy owns
+public :443 with a layer4 router
+([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile)) that hands those names
+to Caddy's own HTTPS sites, which hold their certificates (ACME, renewed by
+Caddy). The okcheese.com site redirects `www` and `hk` to the apex. Both sites
+proxy plain HTTP to `127.0.0.1:18453` or `127.0.0.1:18454` here. Each is the
+far end of a reverse SSH tunnel opened by the dev box, and both land on
+api-front's plain listener `127.0.0.1:18080` there (set up by
 `deploy/llm-tunnel/configure-frontend.sh`). The SSH tunnel encrypts that leg.
 The dev box has no public inbound, so the site is up while at least one
 tunnel is up.
+
+`docs.okcheese.com` is the docs site's own host. Its site block has the same
+`reverse_proxy` settings as the okcheese.com block but is separate from it,
+because the okcheese.com block imports the snippet that answers `/assets/`
+from the SPA's files on this box (see below), and the docs host's `/assets/`
+are different files. Behind the tunnels the frontend container answers that
+Host with the docs server (`frontend/nginx/docs/host.conf`). The dev box's
+`~/ops/deploy.env` sets `DOCS_ORIGIN=https://docs.okcheese.com` and
+`FRONTEND_URL=https://okcheese.com`, so `okcheese.com/docs/…` answers with a
+301 to the same page on the docs host
+([docs site](manual/dev/docs-site.md)).
 
 Caddy keeps those upstream connections open and shares them between
 visitors, so a new visitor's connection pays only its TLS handshake with
@@ -715,6 +728,15 @@ the rollback at the end of this section sends the public names back to it.
 None of it is deployed by CI. The units below were installed by hand; change
 them by hand, keep a timestamped copy of every file you edit next to it, and
 note the rollback command before you start.
+
+Before reloading Caddy on etrip, validate the edited file with
+
+    /usr/local/lib/caddy-l4/caddy validate --config <file> --adapter caddyfile
+
+The service runs that binary (set by the drop-in
+`/etc/systemd/system/caddy.service.d/50-layer4.conf`), which has the layer4
+plugin. The bare `caddy` on that box's PATH does not, so it rejects this
+file at the `layer4` global option whatever else is in it.
 
 Each tunnel travels inside TLS on :443, not as SSH on :22:
 
@@ -819,7 +841,9 @@ TLS back on the dev box, on etrip: install the `scripts/ops/Caddyfile` from
 before the commit that moved TLS to etrip (its layer4 block routes SNI
 `okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` encrypted to
 `127.0.0.1:18443` and `:18444` with `proxy_protocol v1`), keeping a dated copy
-of the current one, then `sudo systemctl reload caddy`. The dev box's
+of the current one, then `sudo systemctl reload caddy`. That file has no site
+for `docs.okcheese.com`; carry over the current docs block and its `http://`
+redirect, or the docs host goes down with the rollback. The dev box's
 certificate is still renewed daily, so that listener is ready.
 
 The watchdog frees 18443 for the :22 tunnel as well, since it acts on whatever
@@ -858,7 +882,7 @@ stops competing with API calls inside them.
 Rollback: delete the `import` line from the okcheese.com site and
 `systemctl reload caddy`; then `systemctl disable --now cheese-edge-asset-sync`.
 
-The okcheese.com `reverse_proxy` carries `stream_close_delay 10m`. Without
+The `reverse_proxy` of both sites carries `stream_close_delay 10m`. Without
 it, a reload of this Caddy closes every WebSocket it proxies at once (room
 sockets, device connectors, preview tunnels); with it, sockets open at the
 reload stay up for up to ten minutes, and clients reconnect on their own

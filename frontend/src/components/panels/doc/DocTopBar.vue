@@ -82,10 +82,14 @@ function pickHeading(pos: number) {
   <div class="doc-top-bar">
     <div class="doc-top-bar__state">
       <span v-if="connection === 'offline'" class="doc-top-bar__note doc-top-bar__note--warn">
-        <span class="status-dot status-dot--warn" />{{ t('work.room.doc.offlineSync') }}
+        <span class="status-dot status-dot--warn" /><span class="doc-top-bar__note-text">{{
+          t('work.room.doc.offlineSync')
+        }}</span>
       </span>
       <span v-else-if="loading || connection === 'connecting'" class="doc-top-bar__note">
-        {{ loading ? t('work.room.doc.loading') : t('work.room.doc.connecting') }}
+        <span class="doc-top-bar__note-text">{{
+          loading ? t('work.room.doc.loading') : t('work.room.doc.connecting')
+        }}</span>
       </span>
       <template v-else>
         <button
@@ -105,7 +109,14 @@ function pickHeading(pos: number) {
           :title="t('work.room.doc.history')"
           @click="emit('history')"
         >
-          {{ t('work.room.doc.lastEdit', { who: lastEdit.name, when: relTime(lastEdit.at) }) }}
+          <!-- The ellipsis has to sit on THIS element. The button itself is
+               `display: inline-flex`, so its text becomes an anonymous flex item
+               and `text-overflow` on the flex container does nothing: measured at
+               390px wide the label needs 118px, the button is given 88px, and the
+               text refused to shrink. See .doc-top-bar__quiet-text. -->
+          <span class="doc-top-bar__quiet-text">{{
+            t('work.room.doc.lastEdit', { who: lastEdit.name, when: relTime(lastEdit.at) })
+          }}</span>
         </button>
       </template>
     </div>
@@ -255,10 +266,18 @@ function pickHeading(pos: number) {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
-  text-overflow: ellipsis;
   white-space: nowrap;
   align-items: center;
   gap: 6px;
+}
+
+/* 省略号挂在这一层，不挂在上面那个 flex 容器上：容器里的字是匿名 flex item，
+   `text-overflow` 在 flex 容器上不生效（同一个毛病见 `__quiet-text`）。 */
+.doc-top-bar__note-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .doc-top-bar__note--warn {
@@ -303,14 +322,23 @@ function pickHeading(pos: number) {
   outline-offset: 2px;
 }
 
-/* 最近编辑那一行：是一句状态，点得开，所以只在悬停时像按钮；字和正文的左边对齐。 */
+/* 最近编辑那一行：是一句状态，点得开，所以只在悬停时像按钮；字和正文的左边对齐。
+   它自己可以被让位（`flex: 0 1 auto` + `min-width: 0`），让出来的空间由里面那层
+   用省略号收——**不能**把 `text-overflow` 写在这里：这颗是 `display: inline-flex`
+   （见 `.doc-top-bar__btn`），字是匿名 flex item，省略号在 flex 容器上不生效。 */
 .doc-top-bar__btn--quiet {
   flex: 0 1 auto;
   min-width: 0;
   margin-left: -8px;
   overflow: hidden;
   color: var(--faint);
+}
+
+.doc-top-bar__quiet-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .doc-top-bar__btn--chip {

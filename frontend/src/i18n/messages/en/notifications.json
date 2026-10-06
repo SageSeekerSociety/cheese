@@ -48,6 +48,17 @@
     "action": {
       "accept": "Accept",
       "decline": "Decline"
+    },
+    "ended": {
+      "accepted": "You joined \"{projectName}\"",
+      "declined": "You declined to join \"{projectName}\"",
+      "revoked": "The invitation to \"{projectName}\" was withdrawn"
+    },
+    "toast": {
+      "accepted": "Invitation accepted",
+      "acceptFailed": "Couldn’t accept the invitation. Try again later",
+      "declined": "Invitation declined",
+      "declineFailed": "Couldn’t decline the invitation. Try again later"
     }
   },
   "DEADLINE_REMIND": {

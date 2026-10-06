@@ -49,7 +49,7 @@ const topic: Topic = {
 
 const block: Block = {
   id: 'm1',
-  topic_id: topic.id,
+  conversation_id: topic.id,
   kind: 'message',
   author_type: 'participant',
   author: 'cheese-keyboard',

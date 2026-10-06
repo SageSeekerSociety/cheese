@@ -149,7 +149,7 @@ function askRow(answered: { option: string; by: string } | null): RoomRow {
   }
   const block: Block = {
     id: answered ? 'ask-demo-answered' : 'ask-demo-open',
-    topic_id: 'demo',
+    conversation_id: 'demo',
     kind: 'message',
     author_type: 'participant',
     author: 'cheese',
@@ -175,8 +175,13 @@ export const ASK_ANSWERED = askRow({ option: ASK_OPTIONS[0].text, by: 'wang' })
  * （`demoBackend`），和 `DemoRoom.installPanelAnswers` 是同一件事。
  */
 export function installCatalogAnswers(): void {
-  answer('/topics/demo/accept-card', () => ({ data: ACCEPT_CARD ? [ACCEPT_CARD] : [], total: ACCEPT_CARD ? 1 : 0 }))
-  answer('/topics/demo/pr-checks', () => ACCEPT_CHECKS ?? { available: false })
+  // The card is read through its task's own conversation.
+  const conversation = ACCEPT_CARD?.task_id ?? 'demo'
+  answer(`/topics/${conversation}/accept-card`, () => ({
+    data: ACCEPT_CARD ? [ACCEPT_CARD] : [],
+    total: ACCEPT_CARD ? 1 : 0,
+  }))
+  answer(`/topics/${conversation}/pr-checks`, () => ACCEPT_CHECKS ?? { available: false })
 }
 
 // ---- 验收卡（TopicAcceptCard）拆出来的那几件 ----------------------------------
@@ -337,7 +342,7 @@ const LONG_TEXT = `我把这周的进度理了一遍，发在这里，谁有空�
 
 const LONG_BLOCK: Block = {
   id: 'catalog-long',
-  topic_id: 'demo',
+  conversation_id: 'demo',
   kind: 'message',
   author_type: 'participant',
   author: 'wang',

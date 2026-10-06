@@ -69,6 +69,6 @@
     "archive": "归档失败",
     "unarchive": "取消归档失败",
     "createTopic": "创建话题失败",
-    "convertToTopic": "转为话题失败"
+    "convertMessage": "未能转换这条消息"
   }
 }

@@ -48,6 +48,8 @@ export function useTeamKnowledge() {
   const selectedResourceContent = ref<KnowledgeContentData>({})
   const knowledges = ref<Knowledge[]>([])
   const page = ref<Page>({ pageSize: PAGE_SIZE, hasMore: false, total: 0 })
+  /** 这一次没读到的那个错。页拿它决定说「一条资料都没有」还是「没读到」。 */
+  const loadError = ref<unknown>(null)
 
   // 筛选：三个都是一改就重取，没有本地过滤那一层。
   const searchQuery = ref<string | null>('')
@@ -75,10 +77,16 @@ export function useTeamKnowledge() {
     loadKnowledges()
   })
 
-  /** 取一页。失败退成空列表，不是把上一次的结果留在页上。 */
+  /**
+   * 取一页。失败退成空列表，不是把上一次的结果留在页上。
+   *
+   * 空列表本身说明不了什么 —— 真的一条没有、和这一页没读到，长得一样。所以失败
+   * 时把那个错留在 `loadError` 上，由页决定说哪一句（见 `Knowledge.vue`）。
+   */
   const loadKnowledges = async () => {
     try {
       loading.value = true
+      loadError.value = null
 
       const params: ListKnowledgesParams = {
         teamId: teamId.value,
@@ -114,6 +122,7 @@ export function useTeamKnowledge() {
     } catch (error) {
       console.error('Failed to load knowledge resources', error)
       knowledges.value = []
+      loadError.value = error
     } finally {
       loading.value = false
     }
@@ -234,6 +243,7 @@ export function useTeamKnowledge() {
     searchQuery,
     filter,
     knowledges,
+    loadError,
     hasFilters,
     availableTags,
     ownerId,

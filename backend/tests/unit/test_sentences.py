@@ -150,7 +150,7 @@ def test_an_unknown_orphan_is_not_exempted(monkeypatch):
         test_every_sentence_in_the_catalog_is_said_somewhere()
 
 
-def test_only_retired_notices_are_historical():
+def test_only_retired_notices_stored_on_old_rooms_are_historical():
     assert HISTORICAL_NOTICE_KEYS == {
         "askAnswerUndelivered",
         "askAnswerUndeliveredDetail",
@@ -159,6 +159,11 @@ def test_only_retired_notices_are_historical():
         "docCommentMentioned",
         "actionDecision",
         "actionMilestone",
+        "taskDispatched",
+        "blockUpgradedToTask",
+        "blockUpgradedTaskId",
+        "subagentStart",
+        "subagentStopEmpty",
     }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()

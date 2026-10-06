@@ -48,8 +48,7 @@ CARD_KEYS = {
     "reactions",
     "refs",
     "reply_to",
-    "task_id",
-    "topic_id",
+    "conversation_id",
     "turn_id",
     "upgraded_to_task_id",
     "upgraded_to_topic_id",
@@ -151,8 +150,7 @@ def test_shown_registers_lists_and_broadcasts_the_same_card(client):
     assert card["content"] == "报告.html"
     assert card["mime_type"] == "text/html"
     assert card["refs"] == ["报告.html"]
-    assert card["topic_id"] == tid
-    assert card["task_id"] is None
+    assert card["conversation_id"] == tid
     assert card["meta"] is None and card["turn_id"] is None
     assert card["reactions"] == []
     assert card["created_at"]

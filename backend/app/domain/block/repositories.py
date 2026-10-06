@@ -46,8 +46,7 @@ class BlockRepository:
         self,
         *,
         project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        task_id: uuid.UUID | None = None,
+        conversation_id: uuid.UUID,
         author: str,
         author_type: AuthorType,
         content: str,
@@ -64,10 +63,6 @@ class BlockRepository:
         # ambient turn id set from the X-Cheese-Turn header (R4).
         if turn_id is None:
             turn_id = current_work_id.get()
-        # `topic_id` names a room — the only thing a place is. A block that
-        # belongs to one of the room's cards says so with `task_id`, which the
-        # attribution of a 分身's events supplies explicitly; everything else
-        # lands on the room's own line, which is where it is read.
         # Explicit null means "tracked and still pending". Without that marker,
         # legacy compatibility has to infer consumption from the last AI block;
         # a newer, receipted mid-turn message could then move that positional
@@ -107,8 +102,7 @@ class BlockRepository:
         meta = with_keys(meta, content=content)
         block = Block(
             project_id=project_id,
-            topic_id=topic_id,
-            task_id=task_id,
+            conversation_id=conversation_id,
             author=author,
             author_type=author_type,
             content=content,
@@ -136,7 +130,7 @@ class BlockRepository:
         return await self._session.get(Block, block_id)
 
     async def client_delivery(
-        self, topic_id: uuid.UUID, *, author: str, client_id: str
+        self, conversation_id: uuid.UUID, *, author: str, client_id: str
     ) -> list[Block]:
         """Return the block bundle one browser delivery wrote.
 
@@ -146,7 +140,7 @@ class BlockRepository:
         anchor = await self._session.scalar(
             select(Block)
             .where(
-                Block.topic_id == topic_id,
+                Block.conversation_id == conversation_id,
                 Block.author == author,
                 Block.meta["client_id"].as_string() == client_id,
             )
@@ -158,7 +152,7 @@ class BlockRepository:
         rows = await self._session.scalars(
             select(Block)
             .where(
-                Block.topic_id == topic_id,
+                Block.conversation_id == conversation_id,
                 Block.author == author,
                 Block.turn_id == anchor.turn_id,
             )
@@ -166,27 +160,11 @@ class BlockRepository:
         )
         return list(rows)
 
-    @staticmethod
-    def _in_place(topic_id: uuid.UUID, task_id: uuid.UUID | None):
-        """Rows belonging to one place: a room's own main line, or one thread.
-
-        Every timeline query needs this and none of them needed it before, when
-        a piece of work was a room and `topic_id` alone said everything. It is a
-        helper rather than an inlined pair of predicates because forgetting the
-        `task_id` half does not fail — it quietly answers for the room's main
-        line, which for a room read is right and for a thread read is a bug that
-        renders someone else's conversation.
-        """
-        return (
-            Block.topic_id == topic_id,
-            Block.task_id.is_(None) if task_id is None else Block.task_id == task_id,
-        )
-
-    async def has_eid(self, topic_id: uuid.UUID, eid: str) -> bool:
+    async def has_eid(self, conversation_id: uuid.UUID, eid: str) -> bool:
         """Whether this topic already materialized a hook event id."""
-        return await self.has_any_eid(topic_id, [eid])
+        return await self.has_any_eid(conversation_id, [eid])
 
-    async def has_any_eid(self, topic_id: uuid.UUID, eids: list[str]) -> bool:
+    async def has_any_eid(self, conversation_id: uuid.UUID, eids: list[str]) -> bool:
         """Whether ANY of these hook event ids is already materialized —
         matching ``meta.eid`` or a coalesced message's ``meta.eids`` list, so
         a redelivered flush of an already-landed message is recognized by
@@ -196,7 +174,7 @@ class BlockRepository:
         stmt = (
             select(Block.id)
             .where(
-                Block.topic_id == topic_id,
+                Block.conversation_id == conversation_id,
                 or_(
                     Block.meta["eid"].as_string().in_(eids),
                     # meta is JSON (not JSONB); cast the array for `?|`
@@ -209,7 +187,7 @@ class BlockRepository:
         return await self._session.scalar(stmt) is not None
 
     async def last_said_in_turn(
-        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+        self, conversation_id: uuid.UUID, turn_id: uuid.UUID
     ) -> str | None:
         """The words the agent last kept in 现场 during this turn, if any.
 
@@ -219,7 +197,7 @@ class BlockRepository:
         stmt = (
             select(Block.content, Block.meta)
             .where(
-                Block.topic_id == topic_id,
+                Block.conversation_id == conversation_id,
                 Block.turn_id == turn_id,
                 Block.kind == BlockKind.event,
             )
@@ -232,13 +210,13 @@ class BlockRepository:
         return None
 
     async def has_action(
-        self, topic_id: uuid.UUID, turn_id: uuid.UUID, action: str
+        self, conversation_id: uuid.UUID, turn_id: uuid.UUID, action: str
     ) -> bool:
         """Whether this turn already announced this kind of action here."""
         stmt = (
             select(Block.id)
             .where(
-                Block.topic_id == topic_id,
+                Block.conversation_id == conversation_id,
                 Block.turn_id == turn_id,
                 Block.meta["action"].as_string() == action,
             )
@@ -403,15 +381,19 @@ class BlockRepository:
         return block
 
     async def current_checklist(
-        self, room_id: uuid.UUID, author: str, *, message: uuid.UUID | None = None
+        self,
+        conversation_id: uuid.UUID,
+        author: str,
+        *,
+        message: uuid.UUID | None = None,
     ) -> Block | None:
-        """The newest checklist message ``author`` posted on the room's own line,
-        or, given ``message``, that checklist on the room's own line whoever
-        wrote it: whether its writer may edit it is the edit's own rule."""
+        """The newest checklist message ``author`` posted in the conversation,
+        or, given ``message``, that checklist whoever wrote it: whether its
+        writer may edit it is the edit's own rule."""
         stmt = (
             select(Block)
             .where(
-                *self._in_place(room_id, None),
+                Block.conversation_id == conversation_id,
                 Block.kind == BlockKind.message,
                 Block.author == author if message is None else Block.id == message,
                 Block.meta[CHECKLIST_META_KEY].as_string().is_not(None),
@@ -440,77 +422,52 @@ class BlockRepository:
         )
         return {row for row in (await self._session.scalars(stmt)).all() if row}
 
-    async def tasks_awaiting_an_answer(
-        self, task_ids: list[uuid.UUID]
+    async def awaiting_an_answer(
+        self, conversation_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, str | None]:
-        """这些活里，哪几条停在一个未回答的提问上，各自在等谁 —— 一次查完。
+        """这些对话里，哪几段停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
         判据是 #1084 定的那一条：**最近一条提问消息没有作答记录**。不需要新增
         存储，因为回答本来就记在提问那一块上（`meta.answer_log`，答过它的每一句
-        回话）。取「最近一条」而不是「有没有任何一条」：已回答的旧提问不该让这条
-        活长期停留在待处理。
+        回话）。取「最近一条」而不是「有没有任何一条」：已回答的旧提问不该让这段
+        对话长期停留在待处理。
 
         等谁也记在那一块上（`meta.asked`，提问那一刻写下的）。None 是「这道题指不
-        到具体的人」。只关心停没停的调用方照样拿它做 `in`。
-
-        走 `ix_blocks_task_questions`，每条活只取一行。
+        到具体的人」。只关心停没停的调用方照样拿它做 `in`。走 `ix_blocks_questions`。
         """
-        return await self._awaiting_an_answer(Block.task_id, task_ids)
+        return await self._awaiting_an_answer(conversation_ids)
 
-    async def rooms_awaiting_an_answer(
-        self, topic_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, str | None]:
-        """同一个判据，问的是房间自己那条线（`task_id IS NULL`），走
-        `ix_blocks_room_questions`。
-
-        分成两个方法而不是一个带开关的：房间和活是两种东西，而「房间自己那条线」
-        这个条件只对前者成立 —— 合成一个函数就得在里面判断主语是谁。
-        """
-        return await self._awaiting_an_answer(
-            Block.topic_id, topic_ids, Block.task_id.is_(None)
-        )
-
-    async def awaiting_answer_blocks(self, topic_ids, task_ids):
-        """Return addressed person and exact question for each waiting place."""
-        return (
-            await self._awaiting_an_answer(
-                Block.topic_id, topic_ids, Block.task_id.is_(None), with_blocks=True
-            ),
-            await self._awaiting_an_answer(Block.task_id, task_ids, with_blocks=True),
-        )
+    async def awaiting_answer_blocks(self, conversation_ids):
+        """Return addressed person and exact question for each waiting
+        conversation."""
+        return await self._awaiting_an_answer(conversation_ids, with_blocks=True)
 
     @overload
     async def _awaiting_an_answer(
         self,
-        place_column,
         place_ids: list[uuid.UUID],
-        *extra,
         with_blocks: Literal[False] = False,
     ) -> dict[uuid.UUID, str | None]: ...
 
     @overload
     async def _awaiting_an_answer(
         self,
-        place_column,
         place_ids: list[uuid.UUID],
-        *extra,
         with_blocks: Literal[True],
     ) -> dict[uuid.UUID, tuple[str | None, uuid.UUID]]: ...
 
-    async def _awaiting_an_answer(
-        self, place_column, place_ids: list[uuid.UUID], *extra, with_blocks=False
-    ):
+    async def _awaiting_an_answer(self, place_ids: list[uuid.UUID], with_blocks=False):
         if not place_ids:
             return {}
-        # 每处只取最近一题（#1084 的原语义）。
+        place_column = Block.conversation_id
+        # 每段只取最近一题（#1084 的原语义）。
         latest = (
             select(place_column, Block.meta, Block.created_at, Block.author, Block.id)
             .where(
                 place_column.in_(place_ids),
-                # 和 `ix_blocks_task_questions` / `ix_blocks_room_questions` 的
-                # 谓词是同一个对象，规划器才认得出能用那两个部分索引。
+                # 和 `ix_blocks_questions` 的谓词是同一个对象，规划器才认得出
+                # 能用那个部分索引。
                 QUESTION_ROWS,
-                *extra,
             )
             .order_by(place_column, Block.created_at.desc())
             .distinct(place_column)
@@ -541,7 +498,6 @@ class BlockRepository:
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
-                *extra,
             )
             .group_by(place_column, Block.author)
         )
@@ -561,7 +517,6 @@ class BlockRepository:
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 agent_handle_column(Block.author),
-                *extra,
             )
             .group_by(place_column, Block.author)
         )
@@ -598,28 +553,24 @@ class BlockRepository:
         sends) answers that question, whoever sends it and however many have
         answered it already. A reply to any other message answers nothing.
 
-        A message that replies to nothing answers the open questions on its line
-        that wait on its author — asked of him, or of nobody in particular — and
-        that nobody has answered yet, but only when it is his first word since
-        they were asked: what he says after that is talk, not his answer. It is
-        the same reading as `_awaiting_an_answer`'s "spoke after it was asked".
-        ``first_word_only=False`` drops that last condition, for a message the
-        caller knows is addressed to an asker. Whom it names is the caller's to
-        weigh.
+        A message that replies to nothing answers the open questions in its
+        conversation that wait on its author — asked of him, or of nobody in
+        particular — and that nobody has answered yet, but only when it is his
+        first word since they were asked: what he says after that is talk, not
+        his answer. It is the same reading as `_awaiting_an_answer`'s "spoke
+        after it was asked". ``first_word_only=False`` drops that last
+        condition, for a message the caller knows is addressed to an asker.
+        Whom it names is the caller's to weigh.
         """
+        place = (Block.conversation_id == reply.conversation_id,)
         if reply.reply_to is not None:
             parent = await self._session.scalar(
                 select(Block)
-                .where(
-                    Block.id == reply.reply_to,
-                    *self._in_place(reply.topic_id, reply.task_id),
-                    QUESTION_ROWS,
-                )
+                .where(Block.id == reply.reply_to, *place, QUESTION_ROWS)
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
             return [parent] if parent is not None else []
-        place = self._in_place(reply.topic_id, reply.task_id)
         spoke_before = (
             select(func.max(Block.created_at))
             .where(
@@ -659,9 +610,7 @@ class BlockRepository:
             if not (block.meta or {}).get("answer_log")
         ]
 
-    async def list_for_topic(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> list[Block]:
+    async def list_for_topic(self, conversation_id: uuid.UUID) -> list[Block]:
         """Timeline view: blocks of a topic, oldest first (spec §5).
 
         Excludes doc_node tree blocks and inline comments — those belong to the
@@ -674,13 +623,13 @@ class BlockRepository:
         stmt = (
             select(Block)
             .where(
-                *self._in_place(topic_id, task_id),
+                Block.conversation_id == conversation_id,
             )
             .order_by(Block.created_at, Block.id)
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def turn_history(self, topic_id: uuid.UUID) -> list[Block]:
+    async def turn_history(self, conversation_id: uuid.UUID) -> list[Block]:
         """Inputs awaiting consumption and the two turn-preparation boundaries.
 
         Inputs, not the timeline: a room's events are mostly for people to read,
@@ -689,7 +638,7 @@ class BlockRepository:
         input is selected by being one — not by their kind, which says who can
         see them rather than who they are for.
         """
-        place = self._in_place(topic_id, None)
+        place = (Block.conversation_id == conversation_id,)
         latest_ai = (
             select(Block.id)
             .where(
@@ -744,9 +693,7 @@ class BlockRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def latest_for_topic(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> Block | None:
+    async def latest_for_topic(self, conversation_id: uuid.UUID) -> Block | None:
         """The newest block in the topic's timeline, or None for an empty topic.
 
         Same total order and same exclusions as `list_for_topic`, so "the last
@@ -757,18 +704,34 @@ class BlockRepository:
         stmt = (
             select(Block)
             .where(
-                *self._in_place(topic_id, task_id),
+                Block.conversation_id == conversation_id,
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
             .limit(1)
         )
         return (await self._session.scalars(stmt)).first()
 
+    async def messages_before(
+        self, conversation_id: uuid.UUID, at: datetime, *, limit: int
+    ) -> list[Block]:
+        """The ``limit`` messages said in the conversation just before ``at``,
+        oldest first: what was being talked about then."""
+        stmt = (
+            select(Block)
+            .where(
+                Block.conversation_id == conversation_id,
+                Block.kind == BlockKind.message,
+                Block.created_at < at,
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(limit)
+        )
+        return list(reversed(list((await self._session.scalars(stmt)).all())))
+
     async def page_for_topic(
         self,
-        topic_id: uuid.UUID,
+        conversation_id: uuid.UUID,
         *,
-        task_id: uuid.UUID | None = None,
         limit: int,
         before: Block | None = None,
         kinds: Collection[BlockKind] | None = None,
@@ -792,7 +755,7 @@ class BlockRepository:
         a timestamp and single-column ordering wouldn't be a total order (the
         cursor could then skip or repeat the tied rows).
         """
-        stmt = select(Block).where(*self._in_place(topic_id, task_id))
+        stmt = select(Block).where(Block.conversation_id == conversation_id)
         # 现场 wants events and nothing else; narrowing HERE rather than in the
         # caller is the difference between paging and pretending to — filtering
         # a page after the fact returns fewer rows than asked for and reports
@@ -820,9 +783,10 @@ class BlockRepository:
         if before is not None:
             # Row-value comparison: `(created_at, id) < (:ts, :id)` in one go,
             # so the cursor test matches the ORDER BY key exactly. There is no
-            # composite index on (topic_id, created_at, id) today — the topic_id
-            # index narrows to one topic's rows and Postgres sorts those (a few
-            # thousand at worst). Paging's win is the payload, not the scan.
+            # composite index on (conversation_id, created_at, id) today — the
+            # conversation_id index narrows to one conversation's rows and
+            # Postgres sorts those (a few thousand at worst). Paging's win is the
+            # payload, not the scan.
             stmt = stmt.where(
                 tuple_(Block.created_at, Block.id) < (before.created_at, before.id)
             )
@@ -845,46 +809,49 @@ class BlockRepository:
             rows.reverse()  # callers render oldest-first, same as list_for_topic
         return BlockPage(items=rows, has_more=has_more)
 
-    async def count_for_topic(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> int:
+    async def count_for_topic(self, conversation_id: uuid.UUID) -> int:
         stmt = (
             select(func.count())
             .select_from(Block)
             .where(
-                *self._in_place(topic_id, task_id),
+                Block.conversation_id == conversation_id,
             )
         )
         return int((await self._session.scalar(stmt)) or 0)
 
     async def count_messages(
-        self, room_id: uuid.UUID, *, excluding: Collection[uuid.UUID] = ()
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        excluding: Collection[uuid.UUID] = (),
     ) -> int:
-        """Chat messages on a room's own line, leaving out ``excluding``."""
+        """Chat messages in one conversation, leaving out ``excluding``."""
         stmt = (
             select(func.count())
             .select_from(Block)
-            .where(*self._in_place(room_id, None), Block.kind == BlockKind.message)
+            .where(
+                Block.conversation_id == conversation_id,
+                Block.kind == BlockKind.message,
+            )
         )
         if excluding:
             stmt = stmt.where(Block.id.not_in(list(excluding)))
         return int((await self._session.scalar(stmt)) or 0)
 
-    async def latest_artifact(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> Block | None:
+    async def latest_artifact(self, conversation_id: uuid.UUID) -> Block | None:
         """The topic's current preview (spec §9.1): the most recent artifact block
         芝士 pointed at. Newest wins — re-running `cheese show` repoints it."""
         stmt = (
             select(Block)
-            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.artifact)
+            .where(
+                Block.conversation_id == conversation_id,
+                Block.kind == BlockKind.artifact,
+            )
             .order_by(Block.created_at.desc())
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def shown_in_room(
-        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
-    ) -> list[Block]:
+    async def shown_in_room(self, conversation_id: uuid.UUID) -> list[Block]:
         """这个房间里摆出来过的东西，每样一次，新的在前 (#1085 结论四)。
 
         一个房间常有好几样东西值得摆出来 —— 一份改好的 .docx、一张图、一个跑起来
@@ -893,7 +860,10 @@ class BlockRepository:
         """
         stmt = (
             select(Block)
-            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.artifact)
+            .where(
+                Block.conversation_id == conversation_id,
+                Block.kind == BlockKind.artifact,
+            )
             .order_by(Block.created_at.desc())
         )
         seen: set[str] = set()

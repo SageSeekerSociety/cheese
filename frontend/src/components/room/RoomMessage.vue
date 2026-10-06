@@ -89,7 +89,7 @@ const personName = computed(() =>
 )
 
 const emit = defineEmits<{
-  (e: 'open-file', path: string, taskId: string | null): void
+  (e: 'open-file', path: string): void
   (e: 'open-topic', id: string): void
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
@@ -306,7 +306,7 @@ function renderPlain(text: string): string {
         type="button"
         class="im-artifact"
         :title="t('work.room.message.openFile', { name: artifactName(block) })"
-        @click="emit('open-file', block.content, block.task_id ?? null)"
+        @click="emit('open-file', block.content)"
       >
         <span class="att-face im-artifact__face">
           <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>
@@ -387,9 +387,8 @@ function renderPlain(text: string): string {
         :names="refs.mentionNames"
         @reply="emit('ask-reply', block, $event)"
       />
-      <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
-         升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
-         一张表，同时只会有一个非空。 -->
+      <!-- 转出去的块指向它变成的东西。房间里转出来的是一个任务，私聊里转出来的
+         才是房间——两个字段各指一张表，同时只会有一个非空。 -->
       <button
         v-if="block.upgraded_to_task_id || block.upgraded_to_topic_id"
         type="button"

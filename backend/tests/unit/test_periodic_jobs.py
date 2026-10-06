@@ -186,6 +186,7 @@ def _jobs():
         ),
         machines=SimpleNamespace(sweep=_noop),
         sandboxes=SimpleNamespace(sweep=_noop),
+        compute=SimpleNamespace(sweep=_noop),
         sessions=lambda: None,
     )
 
@@ -235,6 +236,12 @@ def test_idle_cloud_sandboxes_are_put_to_sleep_on_a_clock():
     """Nothing else stops an idle sandbox or archives a home: without this
     job the pool's slots stay taken and its hosts are never released."""
     assert any(job.name == "cloud sandbox lifecycle" for job in _jobs())
+
+
+def test_cloud_compute_is_metered_and_charged_on_a_clock():
+    """Nothing else opens, closes or charges a sandbox's runs: without this
+    job cloud compute runs free."""
+    assert any(job.name == "cloud compute metering" for job in _jobs())
 
 
 def test_forge_accounts_left_by_failed_creations_are_swept():

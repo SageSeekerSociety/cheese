@@ -41,6 +41,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent.compute_configs import ComputeChoice
+from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -69,6 +70,7 @@ from app.domain.machine.repositories import CloudHostRepository, Load
 from app.domain.machine.supply import pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicStatus
+from app.domain.usage.compute import VM, admit_start, vm_spec
 
 logger = logging.getLogger("cheese.machine")
 
@@ -236,13 +238,19 @@ class HostPool:
         ``SandboxBusy`` while something else is moving the home.
         With ``whole_machine`` a session with no home is given a whole cloud
         VM of its own instead of a slot on a shared host.
+
+        Starting a sandbox, a new one, a sleeping one or an archived one, or
+        creating a whole VM, is charged as cloud compute: it raises
+        ``ComputeRefused`` when no price is set for it or the project's credits
+        are spent. A sandbox already running is not refused, so the turn using
+        it finishes.
         """
         from app.domain.agent_session.models import AgentSession
 
         agent_session = await self._session.get(AgentSession, session_id)
         if agent_session is None:
             raise NotFoundError("agent session not found")
-        topic_id = agent_session.topic_id
+        topic_id = await room_of(self._session, agent_session.conversation_id)
         topic = await self._lock_room(topic_id)
         await self.require_use_authority(topic.project_id, actor)
 
@@ -278,6 +286,11 @@ class HostPool:
                 _touch(home)
                 return host
 
+        starting = home is None or home.host_id is None or home.stopped_at is not None
+        if starting and not (whole_machine and home is None):
+            # A whole VM is admitted at its own price once its size is known
+            # (``_place_on_own_vm``).
+            await admit_start(self._session, topic.project_id)
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
         if home is not None:
@@ -375,6 +388,12 @@ class HostPool:
         await self._require_room_to_grow(whole_machine=True)
         await self._session.commit()
         body = await self._vm_body()
+        await admit_start(
+            self._session,
+            home["project_id"],
+            kind=VM,
+            spec=vm_spec(body["cores"], body["memoryMb"]),
+        )
         await self._lock_room(topic_id)
         await self._repo.lock_pool()
         existing = await self._repo.current_home(session_id)
@@ -756,8 +775,6 @@ class HostPool:
             await self._fail(host)
         for host in idle:
             logger.info("cloud pool releasing idle host %s", host.hostname)
-            if host.whole_machine:
-                _vm_released(host)
             await self._delete_at_provider(host)
         if grow:
             await self._grow()
@@ -1109,24 +1126,6 @@ def _touch(home: CloudHostHome) -> None:
     now = datetime.now(UTC)
     if home.active_at is None or now - home.active_at >= ACTIVE_STEP:
         home.active_at = now
-
-
-def _vm_released(host: CloudHost) -> None:
-    """A whole cloud VM leaves the pool: what it used is final here.
-
-    The hook for charging a VM (#2320 step 4): its spec, the project it was
-    created for, and the time from creation to now. Logged until then."""
-    held = datetime.now(UTC) - host.created_at
-    logger.info(
-        "cloud vm released host=%s project=%s cores=%s memory_mb=%s disk_gb=%s "
-        "seconds=%d",
-        host.hostname,
-        host.project_id,
-        host.cores,
-        host.memory_mb,
-        host.disk_gb,
-        held.total_seconds(),
-    )
 
 
 def _keeps(host: CloudHost) -> bool:

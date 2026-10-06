@@ -629,21 +629,32 @@ def subagents(binary, root):
                 60,
                 mark,
             )
-        files = (
-            sorted(
+
+        def workflow_files() -> list[str]:
+            if not directory:
+                return []
+            return sorted(
                 str(path.relative_to(directory))
                 for path in (directory / "subagents" / "workflows").glob("wf_*/**/*")
                 if path.is_file()
             )
-            if directory
-            else []
-        )
+
+        def has_agent_transcript(names: list[str]) -> bool:
+            return any(
+                Path(name).name.startswith("agent-") and name.endswith(".jsonl")
+                for name in names
+            )
+
+        # The notification can arrive before an agent's transcript is on disk
+        # (its .meta.json already is), so wait for the file itself, briefly.
+        files = workflow_files()
+        deadline = time.monotonic() + 10
+        while not has_agent_transcript(files) and time.monotonic() < deadline:
+            time.sleep(0.2)
+            files = workflow_files()
         yield (
             "a workflow's agents are under subagents/workflows/wf_*/",
-            any(
-                Path(name).name.startswith("agent-") and name.endswith(".jsonl")
-                for name in files
-            ),
+            has_agent_transcript(files),
             json.dumps(
                 {"task": workflow and workflow.get("task_type"), "files": files}
             )[:300],

@@ -44,7 +44,7 @@ function step(id: string, author: string, turn: string, at: string, arg: string,
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author,
@@ -84,7 +84,7 @@ beforeEach(() => {
 async function openSite(blocks: Block[], props: Record<string, unknown> = {}) {
   getTranscript.mockResolvedValue({ data: blocks, total: blocks.length })
   const view = render(Site, {
-    props: { topic, active: true, memberNames: NAMES, ...props },
+    props: { topicId: topic.id, active: true, memberNames: NAMES, ...props },
     global: { plugins: [vuetify] },
   })
   await waitFor(() => expect(view.container.querySelector('.site-act')).not.toBeNull())

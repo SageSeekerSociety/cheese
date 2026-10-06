@@ -124,7 +124,7 @@ def question_row(client, topic, *, seat=None, author=None, **extra):
         async with client.test_request_factory() as session:
             block = await BlockRepository(session).add(
                 project_id=uuid.UUID(str(project)),
-                topic_id=uuid.UUID(str(topic)),
+                conversation_id=uuid.UUID(str(topic)),
                 author=author,
                 author_type=AuthorType.participant,
                 content=question,

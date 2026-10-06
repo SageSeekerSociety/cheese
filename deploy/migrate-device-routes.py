@@ -121,12 +121,12 @@ async def main():
             await c.execute("SET LOCAL statement_timeout = '10s'")
             row = await c.fetchrow("""
                 SELECT d.cloud_control_private FROM device d
-                JOIN project_machines m ON m.device_id = d.device_id
-                WHERE m.machine_id = $1 AND d.device_id = $2 AND m.ip = $3
-                  AND m.login_user = $4 AND m.released_at IS NULL
-                  AND m.status NOT IN ('deleted', 'deleting', 'error')
+                JOIN cloud_hosts h ON h.device_id = d.device_id
+                WHERE h.machine_id = $1 AND d.device_id = $2 AND h.ip = $3
+                  AND h.login_user = $4 AND h.released_at IS NULL
+                  AND h.status NOT IN ('deleted', 'deleting', 'error')
                   AND d.supply = 'cloud'
-                FOR UPDATE OF d, m
+                FOR UPDATE OF d, h
             """, int(sys.argv[1]), *sys.argv[2:5])
             if row is None:
                 raise RuntimeError('Legacy manifest does not match a live managed machine')

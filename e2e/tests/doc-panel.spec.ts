@@ -67,12 +67,13 @@ test('文档里的宽表格在自己那格里横向滚动，不把整栏顶出�
   expect(doc.scroll).toBe(doc.client);
 });
 
-// 键盘焦点落在正文上时，编辑器画出焦点环。
+// 键盘焦点落在正文上时，编辑器画出焦点环；鼠标点进正文时不画。
 //
-// 正文自己把 outline 去掉了（DocSurface 的 `.doc-prose`），环改画在外面的编辑器盒子
-// 上，只在 `:focus-visible` 时亮。这也是一类**只有真浏览器才看得见**的不变量：jsdom
-// 不懂 `:focus-visible` / `:has()`，组件单测对它一律绿；只有量计算出来的 outline 才拦
-// 得住「键盘用户点了半天不知道焦点在哪」。
+// 正文自己把 outline 去掉了（DocSurface 的 `.doc-prose`），环画在外面的编辑器盒子上，
+// 只在焦点由键盘带进来时亮：可编辑区对 `:focus-visible` 不分鼠标键盘，靠它的话点一下
+// 也亮。这也是一类**只有真浏览器才看得见**的不变量：jsdom 不算焦点和样式，组件单测对它
+// 一律绿；只有量计算出来的 outline 才拦得住「键盘用户点了半天不知道焦点在哪」，以及
+// 反过来，用鼠标写字的人眼前常亮一圈边框。
 test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({ page }) => {
   await apiLogin(page);
   await openFirstProject(page);
@@ -94,9 +95,8 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
   // 编辑区（所有者打开，可编辑）才接得住键盘焦点；等它挂上再进。
   await expect(prose).toHaveAttribute('contenteditable', 'true', { timeout: 30_000 });
 
-  // 键盘焦点进正文：可编辑区拿到 `:focus-visible`，外面的盒子才该画环。
+  // 键盘焦点进正文（没有先按鼠标）：外面的盒子画环。
   await prose.focus();
-  expect(await prose.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
 
   const ring = await page.locator('.work-panel .doc-editor').evaluate((el) => {
     const style = getComputedStyle(el);
@@ -105,9 +105,13 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
   expect(ring.style).not.toBe('none');
   expect(ring.width).toBeGreaterThanOrEqual(2);
 
-  // 焦点离开（不是 :focus-visible 了）时环收回：它只跟着键盘焦点，不常亮。
+  // 焦点离开时环收回：它只跟着键盘焦点，不常亮。
+  const outline = () => page.locator('.work-panel .doc-editor').evaluate((el) => getComputedStyle(el).outlineStyle);
   await prose.evaluate((el) => (el as HTMLElement).blur());
-  await expect
-    .poll(() => page.locator('.work-panel .doc-editor').evaluate((el) => getComputedStyle(el).outlineStyle))
-    .toBe('none');
+  await expect.poll(outline).toBe('none');
+
+  // 用鼠标点进正文：光标就是落点，不画环。
+  await prose.click();
+  await expect(prose).toBeFocused();
+  expect(await outline()).toBe('none');
 });

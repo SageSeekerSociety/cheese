@@ -106,7 +106,7 @@ def _latest_card(client, topic_id: str) -> dict:
 
 def _file_card(client, topic_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "chore(test): file an accept card",
@@ -160,8 +160,8 @@ def _card_line_text(client, topic_id: str) -> str:
     `tests/integration/conftest.room_text`。
     """
     blocks = client.get(
-        f"/topics/{topic_id}/history",
-        params={"task_id": str(delivery_task_id(client, topic_id)), "limit": 500},
+        f"/topics/{delivery_task_id(client, topic_id)}/history",
+        params={"limit": 500},
     ).json()["data"]["data"]
     return room_text(blocks)
 
@@ -343,7 +343,7 @@ def test_void_rejects_a_card_that_is_already_settled(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",

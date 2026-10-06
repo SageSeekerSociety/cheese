@@ -154,8 +154,9 @@ defineExpose({ scrollActiveIntoView })
   display: flex;
   flex-direction: column;
   margin-bottom: 4px;
+  padding: 4px;
   border: 1px solid var(--line-2);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   /* 横向仍旧裁边（圆角靠它），纵向改自滚：规范只在某一侧是 `visible` 时才把另一
      侧算成 `auto`，所以这两条不冲突。 */
   overflow-x: hidden;
@@ -183,6 +184,7 @@ defineExpose({ scrollActiveIntoView })
   gap: 8px;
   padding: 7px 12px;
   min-height: 36px;
+  border-radius: var(--radius-md);
   text-align: left;
   font-size: 13px;
   cursor: pointer;

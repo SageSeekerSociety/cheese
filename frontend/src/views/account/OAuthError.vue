@@ -1,33 +1,24 @@
+<!--
+  Where a third-party sign-in that failed comes back to: the error code in the
+  address is turned into one sentence, and the retry button goes out to the
+  provider again. What it shows is OAuthErrorView.vue.
+-->
 <template>
-  <div>
-    <!-- The title carries the result; the buttons carry the next step. The
-         alert is only here when the error code adds a reason the title does
-         not, so the failure is not stated twice. -->
-    <AccountHeading :title="t('account.oauth.error.title')" />
-
-    <v-alert v-if="errorDescription" type="error" variant="tonal" density="comfortable" class="mb-6">
-      {{ errorDescription }}
-    </v-alert>
-
-    <div class="account-actions">
-      <BaseButton block kind="primary" size="lg" to="/account/signin" class="account-submit">
-        {{ t('account.backToSignIn') }}
-      </BaseButton>
-      <BaseButton v-if="providerId" block kind="secondary" size="lg" @click="retryOAuth">
-        {{ t('account.oauth.error.retry', { provider: providerName }) }}
-      </BaseButton>
-    </div>
-  </div>
+  <OAuthErrorView
+    :error-description="errorDescription"
+    :provider-id="providerId"
+    :provider-name="providerName"
+    @retry="retryOAuth"
+  />
 </template>
 
 <script lang="ts" setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
+import OAuthErrorView from './OAuthErrorView.vue'
 import { oauthProviderName } from './oauthProvider'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 

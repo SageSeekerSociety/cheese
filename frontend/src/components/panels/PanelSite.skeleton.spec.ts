@@ -49,7 +49,7 @@ function aiSaid(id: string, content: string): Block {
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'message',
     author_type: 'participant',
     author: 'cheese-t1',
@@ -79,7 +79,7 @@ beforeEach(() => {
 
 function open(memberNames: Record<string, string> = { 'cheese-t1': '芝士' }) {
   return render(Site, {
-    props: { topic, active: true, memberNames },
+    props: { topicId: topic.id, active: true, memberNames },
     global: { plugins: [vuetify] },
   })
 }

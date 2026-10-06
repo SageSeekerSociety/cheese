@@ -37,9 +37,9 @@ cheese = _load()
 
 
 class BackendHost:
-    """A session host whose backend is this app, and whose machine holds `files`."""
+    """A session host whose backend is this app."""
 
-    def __init__(self, client, project, topic, *, files=None):
+    def __init__(self, client, project, topic):
         self.client = client
         self.environ = {
             "CHEESE_TOPIC": topic,
@@ -49,7 +49,6 @@ class BackendHost:
         self.headers = {
             "X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=topic)
         }
-        self.files = files or {}
         self.doc_versions: dict = {}
         self.synced: list[str] = []
 
@@ -60,9 +59,6 @@ class BackendHost:
         if not 200 <= response.status_code < 300:
             raise cheese.PlatformHTTPError(response.status_code, response.text)
         return response.json()
-
-    def read_file(self, path):
-        return self.files[path].encode()
 
     def sync_task(self, task_id):
         self.synced.append(task_id)
@@ -121,32 +117,36 @@ def test_an_explicit_chat_retry_keeps_the_message_after_a_lost_response(client, 
 
 def test_a_stale_write_to_the_living_doc_is_refused_with_the_way_out(client, room):
     """两条会话都读过第 N 版；先写的赢，后写的被拒并被告知怎么办。"""
-    first = BackendHost(client, *room, files={"d.md": "# 第一版\n"})
-    second = BackendHost(client, *room, files={"d.md": "# 另一个人的版本\n"})
+    first = BackendHost(client, *room)
+    second = BackendHost(client, *room)
     assert "还是空的" in cheese.run_platform_tool("cheese_doc_get", {}, first)
     cheese.run_platform_tool("cheese_doc_get", {}, second)
 
-    cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, first)
+    cheese.run_platform_tool("cheese_doc_set", {"content": "# 第一版\n"}, first)
     with pytest.raises(cheese.PlatformToolError) as refused:
-        cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, second)
+        cheese.run_platform_tool(
+            "cheese_doc_set", {"content": "# 另一个人的版本\n"}, second
+        )
 
     assert "cheese_doc_get" in str(refused.value)
     assert "第一版" in cheese.run_platform_tool("cheese_doc_get", {}, second)
     # Having read again, the second writer gets through.
-    cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, second)
+    cheese.run_platform_tool(
+        "cheese_doc_set", {"content": "# 另一个人的版本\n"}, second
+    )
     assert "另一个人的版本" in cheese.run_platform_tool("cheese_doc_get", {}, first)
 
 
 def test_an_edit_changes_only_its_passage_and_a_suggestion_is_listed_apart(
     client, room
 ):
-    host = BackendHost(
-        client,
-        *room,
-        files={"d.md": "# 目标\n\n本周交初稿。\n\n## 范围\n\n只做前端。\n"},
-    )
+    host = BackendHost(client, *room)
     cheese.run_platform_tool("cheese_doc_get", {}, host)
-    cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, host)
+    cheese.run_platform_tool(
+        "cheese_doc_set",
+        {"content": "# 目标\n\n本周交初稿。\n\n## 范围\n\n只做前端。\n"},
+        host,
+    )
 
     said = cheese.run_platform_tool(
         "cheese_doc_edit",
@@ -172,9 +172,9 @@ def test_an_edit_changes_only_its_passage_and_a_suggestion_is_listed_apart(
 
 
 def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, room):
-    host = BackendHost(client, *room, files={"d.md": "本周交初稿。\n"})
+    host = BackendHost(client, *room)
     cheese.run_platform_tool("cheese_doc_get", {}, host)
-    cheese.run_platform_tool("cheese_doc_set", {"path": "d.md"}, host)
+    cheese.run_platform_tool("cheese_doc_set", {"content": "本周交初稿。\n"}, host)
 
     with pytest.raises(cheese.PlatformToolError) as refused:
         cheese.run_platform_tool(
@@ -186,23 +186,31 @@ def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, room)
     assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
 
 
-def test_a_task_is_opened_without_the_machine(client, room):
-    host = BackendHost(client, *room)
+def test_a_task_is_proposed_and_a_person_creates_it(client, room):
+    """芝士不能自己创建任务：`cheese_task` 在房间里放一张提议卡，点了创建的人才是
+    负责人。提议用不到机器。"""
+    project, topic = room
+    host = BackendHost(client, project, topic)
 
     said = cheese.run_platform_tool(
-        "cheese_task",
-        {"title": "数据清洗", "brief": "按新口径", "reviewer": "alice"},
-        host,
+        "cheese_task", {"title": "数据清洗", "summary": "按新口径"}, host
     )
 
-    task_id = said.split("id=", 1)[1].split("\n", 1)[0]
-    assert f"cheese worktree {task_id}" in said
-    assert "线程标识" in said
+    assert "数据清洗" in said
     assert host.synced == []
-    closed = cheese.run_platform_tool(
-        "cheese_close_task", {"task": task_id, "conclusion": "改由另一条做"}, host
+    tasks = client.get(f"/topics/{topic}/tasks").json()["data"]["data"]
+    assert tasks == []
+    [proposal] = client.get(
+        f"/topics/{topic}/task-proposals", headers=session_auth_headers("alice")
+    ).json()["data"]
+
+    created = client.post(
+        f"/topics/{topic}/task-proposals/{proposal['id']}/accept",
+        headers=session_auth_headers("alice"),
     )
-    assert "数据清洗" in closed
+    assert created.status_code == 200, created.text
+    assert created.json()["data"]["title"] == "数据清洗"
+    assert created.json()["data"]["owner_handle"] == "alice"
 
 
 @pytest.mark.parametrize(
@@ -223,7 +231,7 @@ def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room)
     """芝士在话题里建一份资料库文档、列出来、点名改它：建的和改的都是那一份，
     话题里出现的是这份文档，话题自己的实况文档一字没动。"""
     project, topic = room
-    host = BackendHost(client, project, topic, files={"/w/doc.md": "三家都有年付"})
+    host = BackendHost(client, project, topic)
     host.headers = {
         "X-Cheese-Token": mint_scoped_token(
             project_id=project,
@@ -234,7 +242,7 @@ def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room)
     }
 
     said = cheese.run_platform_tool(
-        "cheese_doc_new", {"title": "竞品定价对比", "path": "/w/doc.md"}, host
+        "cheese_doc_new", {"title": "竞品定价对比", "content": "三家都有年付"}, host
     )
     document = said.split("编号 ", 1)[1].split("（", 1)[0]
     assert "竞品定价对比" in cheese.run_platform_tool("cheese_doc_list", {}, host)

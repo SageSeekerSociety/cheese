@@ -27,7 +27,7 @@ async def ask(session, *, place, seat, body) -> list:
     rows = await post_questions(
         session,
         project_id=place.project_id,
-        room_id=place.room_id,
+        conversation_id=place.conversation_id,
         seat=seat,
         questions=questions,
         asked=asked,
@@ -55,21 +55,21 @@ async def _who_started_the_open_turn(session, place, seat) -> str | None:
     turns = AgentTurnRepository(session)
     for handle in (seat, *((instance.handle,) if instance is not None else ())):
         author = await turns.open_turn_author_for_topic(
-            place.room_id, agent_handle=handle
+            place.conversation_id, agent_handle=handle
         )
         if author is not None:
             return author if names_a_person(author) else None
     return None
 
 
-async def publish_answered(room_id, questions) -> None:
+async def publish_answered(conversation_id, questions) -> None:
     """Show the room what each question now records, once that is committed."""
     from app.domain.agent.runtime import get_broker
     from app.domain.block.schemas import BlockOut
 
     for question in questions:
         await get_broker().publish(
-            str(room_id),
+            str(conversation_id),
             {
                 "type": "block_updated",
                 "block": BlockOut.model_validate(question).model_dump(mode="json"),

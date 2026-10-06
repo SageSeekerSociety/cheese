@@ -277,8 +277,7 @@ class DocumentWriter:
         else:
             notice = await self._blocks.add(
                 project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
+                conversation_id=landed.conversation_id,
                 author=author,
                 author_type=AuthorType.platform,
                 content=line,
@@ -345,8 +344,7 @@ class DocumentWriter:
             return earlier
         return await self._blocks.add(
             project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            conversation_id=landed.conversation_id,
             author=actor,
             author_type=AuthorType.platform,
             content=line,
@@ -360,9 +358,7 @@ class DocumentWriter:
     ) -> Block | None:
         """The room's last line, if it is this document's notice of the same
         ``kind`` (see ``_notice_kind``), recent enough to extend."""
-        last = await self._blocks.latest_for_topic(
-            landed.topic_id, task_id=landed.task_id
-        )
+        last = await self._blocks.latest_for_topic(landed.conversation_id)
         if last is None or last.kind != BlockKind.event:
             return None
         meta = last.meta or {}
@@ -390,20 +386,26 @@ async def tell_room_of_document(
     room_id: uuid.UUID,
     doc: Document,
     actor: str,
+    task_id: uuid.UUID | None = None,
     created: bool = False,
     edits: list[dict] | None = None,
     suggested: list[str] | None = None,
 ) -> tuple[Block, bool]:
-    """Put in the room that ``actor`` made or changed ``doc``, a document of
-    the project's own: a line with the document on it, to open beside the
-    conversation. ``suggested`` are the ids of changes proposed instead of
-    made. A run of changes of one kind to the same document by the same actor
-    is one line, as with a room's document. Returns the line and whether it
+    """Put in the room (or its task ``task_id``) that ``actor`` made or changed
+    ``doc``, a document of the project's own: a line with the document on it, to
+    open beside the conversation. ``suggested`` are the ids of changes proposed
+    instead of made. A run of changes of one kind to the same document by the same
+    actor is one line, as with a room's document. Returns the line and whether it
     extended the last one."""
     blocks = BlockRepository(session)
-    landed = landing(EventAbout.room, project_id=doc.project_id, room_id=room_id)
+    landed = landing(
+        EventAbout.task if task_id is not None else EventAbout.room,
+        project_id=doc.project_id,
+        room_id=room_id,
+        task_id=task_id,
+    )
     changed = [{"old": e["old"], "new": e["new"]} for e in edits or []]
-    last = await blocks.latest_for_topic(landed.topic_id, task_id=landed.task_id)
+    last = await blocks.latest_for_topic(landed.conversation_id)
     meta_of_last = (last.meta or {}) if last is not None else {}
     if (
         last is not None
@@ -437,8 +439,7 @@ async def tell_room_of_document(
         line = say("docEditedInLibrary", actor=who, title=title)
     block = await blocks.add(
         project_id=landed.project_id,
-        topic_id=landed.topic_id,
-        task_id=landed.task_id,
+        conversation_id=landed.conversation_id,
         author=actor,
         author_type=AuthorType.platform,
         content=line,

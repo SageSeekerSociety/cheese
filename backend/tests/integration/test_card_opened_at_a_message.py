@@ -9,7 +9,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 
 
 def _room(client) -> tuple[str, str]:
@@ -23,11 +23,7 @@ def _room(client) -> tuple[str, str]:
 
 
 def _card(client, room: str, title: str) -> str:
-    r = client.post(
-        f"/topics/{room}/split", json={"reviewer_handle": "alice", "title": title}
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["id"]
+    return open_task(client, room, title, start=False)["id"]
 
 
 def _say(client, pid: str, room: str, card: str, text: str) -> str:
@@ -35,8 +31,7 @@ def _say(client, pid: str, room: str, card: str, text: str) -> str:
         async with client.test_request_factory() as session:
             block = await BlockRepository(session).add(
                 project_id=uuid.UUID(pid),
-                topic_id=uuid.UUID(room),
-                task_id=uuid.UUID(card),
+                conversation_id=uuid.UUID(card),
                 author="alice",
                 author_type=AuthorType.participant,
                 content=text,
@@ -48,8 +43,8 @@ def _say(client, pid: str, room: str, card: str, text: str) -> str:
     return client.portal.call(go)
 
 
-def _open(client, room: str, card: str, **params):
-    return client.get(f"/topics/{room}/tasks/{card}", params=params)
+def _open(client, card: str, **params):
+    return client.get(f"/topics/{card}/blocks", params=params)
 
 
 def test_a_card_opened_at_an_old_message_reaches_back_to_it(client):
@@ -57,27 +52,13 @@ def test_a_card_opened_at_an_old_message_reaches_back_to_it(client):
     card = _card(client, room, "一件活")
     said = [_say(client, pid, room, card, f"第 {i} 条") for i in range(30)]
 
-    newest = _open(client, room, card, limit=5).json()["data"]["blocks"]
+    newest = _open(client, card, limit=5).json()["data"]["data"]
     assert said[3] not in [b["id"] for b in newest]
 
-    r = _open(client, room, card, limit=5, through=said[3])
+    r = _open(client, card, limit=5, around=said[3])
     assert r.status_code == 200, r.text
-    ids = [b["id"] for b in r.json()["data"]["blocks"]]
+    ids = [b["id"] for b in r.json()["data"]["data"]]
     assert said[3] in ids
-    # Still the whole stretch down to the newest: the card has no gaps.
-    assert ids[ids.index(said[3]) :] == said[3:]
-
-
-def test_a_message_already_in_the_newest_window_changes_nothing(client):
-    pid, room = _room(client)
-    card = _card(client, room, "一件活")
-    said = [_say(client, pid, room, card, f"第 {i} 条") for i in range(30)]
-
-    plain = _open(client, room, card, limit=5).json()["data"]["blocks"]
-    focused = _open(client, room, card, limit=5, through=said[-2]).json()["data"][
-        "blocks"
-    ]
-    assert [b["id"] for b in focused] == [b["id"] for b in plain]
 
 
 def test_a_message_of_another_card_is_not_found(client):
@@ -87,5 +68,5 @@ def test_a_message_of_another_card_is_not_found(client):
     _say(client, pid, room, mine, "我的消息")
     elsewhere = _say(client, pid, room, theirs, "别处的消息")
 
-    r = _open(client, room, mine, limit=5, through=elsewhere)
+    r = _open(client, mine, limit=5, around=elsewhere)
     assert r.status_code == 404

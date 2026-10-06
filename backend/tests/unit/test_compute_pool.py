@@ -356,9 +356,7 @@ def test_a_room_runs_a_harness_that_hands_tools_over(monkeypatch):
 
     assert chosen() == PI
     pi = HARNESSES[PI]
-    monkeypatch.setitem(
-        harness_module.HARNESSES, PI, Harness(pi.name, pi.label, subagents=pi.subagents)
-    )
+    monkeypatch.setitem(harness_module.HARNESSES, PI, Harness(pi.name, pi.label))
     assert chosen() == CLAUDE_CODE
 
 
@@ -379,7 +377,7 @@ def test_a_harness_that_cannot_hand_tools_over_is_not_put_behind_the_central_hos
     monkeypatch.setitem(
         harness_module.HARNESSES,
         CLAUDE_CODE,
-        Harness(claude.name, claude.label, subagents=claude.subagents),
+        Harness(claude.name, claude.label),
     )
     monkeypatch.setattr(settings, "agent_harnesses", [PI])
     pool = build_compute_pool()

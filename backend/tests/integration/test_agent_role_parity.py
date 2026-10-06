@@ -446,7 +446,7 @@ def test_review_actions_check_the_credentials_project_and_room(client):
     project, origin, _ = _rooms(client)
     foreign, _, room = _rooms(client)
     card = client.post(
-        f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
+        f"/topics/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
             "change_subject": "test: scoped review",

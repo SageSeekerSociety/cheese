@@ -96,7 +96,7 @@ async def test_same_agent_resumes_each_harness_history_independently(client):
         async with client.test_request_factory() as session:
             sessions = AgentSessionService(session)
             await sessions.remember(
-                topic_id=topic_id,
+                conversation_id=topic_id,
                 agent_handle="teammate",
                 resume_token="claude-thread",
                 harness="claude-code",
@@ -106,7 +106,7 @@ async def test_same_agent_resumes_each_harness_history_independently(client):
                 is None
             )
             await sessions.remember(
-                topic_id=topic_id,
+                conversation_id=topic_id,
                 agent_handle="teammate",
                 resume_token="codex-thread",
                 harness="codex",

@@ -356,10 +356,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/redoc", auth: "public.framework.docs", owner: "api.documentation"}
   - {protocol: "http", method: "HEAD", path: "/redoc", auth: "public.framework.docs", owner: "api.documentation"}
   # app.api.routes.accept
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/accept-card", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/push-fix", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/ready", auth: "review.task", owner: "review"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/accept-card/describe", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/accept-card", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/push-fix", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/ready", auth: "review.task", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/accept-card/describe", auth: "review.task", owner: "review"}
   - {protocol: "http", method: "GET", path: "/accept-cards/{card_id}/deliverable", auth: "review.download", owner: "review.delivery"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/accept-card", auth: "review.task", owner: "review"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/pr-checks", auth: "review.task", owner: "review"}
@@ -683,6 +683,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/history", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/operations/{operation_id}", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/restore", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/compare", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/internal/collab/documents/{name}", auth: "collab.service", owner: "living_doc"}
   # app.api.routes.llm_proxy
@@ -1048,8 +1049,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/split", auth: "actor.topic", owner: "topic"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/check-result", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/check-result", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/lock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unlock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/clone-from", auth: "actor.topic", owner: "topic"}
@@ -1103,10 +1103,15 @@ routes:
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/upgrade", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_tasks
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks/{task_id}", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/messages", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/title", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks/{task_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/start", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/accept", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_title
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/title/undo", auth: "actor.topic.verified", owner: "topic"}

@@ -49,19 +49,22 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.api.routes.topics import BlockRepository, DbSession
-from app.core.errors import NotFoundError
+from app.api.task_instructions import dispatch, source_text, tell_task
+from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.platform_notices import (
     EVENT_BLOCK_UPGRADED,
     SEVERITY_INFO,
     WHO_HUMAN,
     notice,
 )
+from app.domain.conversation.services import room_of
 from app.domain.delivery.addressing import Event as Addressee
 from app.domain.room_task.schemas import TaskOut
-from app.domain.topic.schemas import TopicOut, UpgradeBlockIn
+from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 
 # Per-project unread map lives under /api/projects (a "/unread" path under
@@ -166,77 +169,73 @@ block_router = APIRouter(prefix="/blocks", tags=["topics"])
 @block_router.post("/{block_id}/upgrade")
 async def upgrade_block(
     block_id: uuid.UUID,
-    body: UpgradeBlockIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
-    """讨论升级：upgrade a block into a place of its own (eval A1).
+    """讨论升级：a message becomes a task of its own (eval A1), owned by whoever
+    upgraded it, and its agent drafts the task's document from the message and
+    what was said around it.
 
-    Same mechanics as /split: the upgraded block is preset as the new place's
-    task-brief doc, and it starts untitled.
+    A message in a private chat becomes a room instead, because private chats
+    are not in the topic tree and a task there would be one nobody else could
+    open. The response says which by carrying either a task or a topic.
 
-    A message in a room becomes a CARD of work in that room; a message in a
-    private chat becomes a room, because private chats are not in the topic tree
-    and a card there would be one nobody else could open. The response says
-    which by carrying either a task or a topic.
-
-    **升级留下的是一条事件，不是一轮被平台点起来的对话**（结论 13）。以前这里 kickoff
-    一轮：作者 `system`、提示词是平台写的一段开工说明，房间被平台叫醒去给这条活起名
-    字、起分身。按结论 31，开一条活剩下的只有分支、卡和负责人，谁来做是负责人的事 ——
-    所以平台在这里只做投递：房间时间线上落一条事件，收件人恰好是这条活的负责人。
-
-    这是一条**在房间里造东西**的写：升级的 block 住在哪个房间，就要在那个房间站得
-    住。以前两样都没有 —— block id 就是全部的门票，一个匿名调用者能往别人的房间里
-    落一张卡，`created_by` 填谁它就是谁的。凭据由 resolve/authorize_topic 认
-    （`app.api.auth`：会话说 token、agent 的 scoped token、或沙箱 token），房间由
-    block 自己带 —— block 的 `topic_id` 就是那个房间，不是它自己去请求体里说。
-
-    升级的人也一样由凭据说：请求体里没有 `created_by` 这一栏。登录的成员升级出来
-    的卡（或房间）就是他自己的；只凭沙箱 token 进来的调用没有人可认，这里传
-    None，归属走 `_resolve_owner` 那条梯子（房间主人 → 项目主人 → 团队主人）。
+    这是一条**在房间里造东西**的写：凭据由 resolve/authorize_topic 认，房间由 block
+    自己带 —— block 的对话所在的房间就是那个房间，不是它自己去请求体里说。升级的人也
+    由凭据说，而且只能是一个人：AI 队友只能提议任务。
     """
     block = await BlockRepository(db).get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
-    parent = await TopicService(db).get_or_404(block.topic_id)
+    parent = await TopicService(db).get_or_404(await room_of(db, block.conversation_id))
     actor = await resolver.resolve(topic_id=parent.id, project_id=parent.project_id)
     await resolver.authorize_topic(
         actor, project_id=parent.project_id, topic_id=parent.id
     )
-    created_by = actor.handle if actor.authenticated else None
+    # Turning a message into a task is a person's act: an AI teammate proposes.
+    if not actor.authenticated or actor.via == "cheese":
+        raise ForbiddenError(say("taskCreatedByPerson"))
+    created_by = actor.handle
     room, thread, created = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
         created_by=created_by,
-        reviewer_handle=body.reviewer_handle,
     )
     out = (
         TaskOut.model_validate(thread).model_dump(mode="json")
         if thread is not None
         else TopicOut.model_validate(room).model_dump(mode="json")
     )
+    if created and thread is not None:
+        # The task's agent drafts its document from the message and what was
+        # said around it. Recorded in this transaction, so a rolled-back upgrade
+        # leaves no instruction for a task that does not exist; **幂等**：重复升级
+        # （created=False）不再起第二次。
+        await tell_task(
+            db,
+            thread,
+            task_opening_prompt(
+                title=thread.title,
+                owner=thread.owner_handle,
+                source=await source_text(db, block),
+            ),
+        )
+        await db.commit()
+        await dispatch(chat)
+        return ok(out)
     if created:
-        # 负责人：卡是递给验收人的，没写验收人就是升级的那个人自己。事件和投递写在
-        # 同一个事务里，和这次升级一起提交 —— 回滚了就不会留下一条指向不存在的活的
-        # 通知。**幂等**：重复升级（created=False）不再落第二条事件。
-        owner = (body.reviewer_handle or created_by or "").strip()
+        # 事件和投递写在同一个事务里，和这次升级一起提交 —— 回滚了就不会留下一条
+        # 指向不存在的地方的通知。**幂等**：重复升级（created=False）不再落第二条。
+        owner = (created_by or "").strip()
         await announce(
             db,
             place_id=room.id,
-            content=(
-                say("blockUpgradedToTask")
-                if thread is not None
-                else say("blockUpgradedToRoom")
-            ),
+            content=say("blockUpgradedToRoom"),
             meta=notice(
                 EVENT_BLOCK_UPGRADED,
                 severity=SEVERITY_INFO,
                 who=WHO_HUMAN,
-                detail=(
-                    say("blockUpgradedTaskId", id=thread.id)
-                    if thread is not None
-                    else say("blockUpgradedRoomId", id=room.id)
-                ),
+                detail=say("blockUpgradedRoomId", id=room.id),
                 detail_label=say("labelUpgradedTo"),
             ),
             points_at=Addressee(reviewers=(owner,) if owner else ()),

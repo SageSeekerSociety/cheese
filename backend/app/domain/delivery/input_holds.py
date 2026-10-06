@@ -45,7 +45,7 @@ async def seat_has_unfinished_input(session, topic_id, recipient_handle):
     """
     rows = await session.scalars(
         select(NativeInput).where(
-            NativeInput.topic_id == topic_id,
+            NativeInput.conversation_id == topic_id,
             NativeInput.recipient_handle == recipient_handle,
             ~unread_input_with_over_work(),
         )

@@ -81,6 +81,8 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
     answers, which is the shape a gateway that does not want tools replies in."""
     seen: dict = {
         "mints": 0,
+        # The gateway's keys by alias; it takes each alias once.
+        "keys": {},
         "completions": [],
         "index": 0,
         "pages": [],
@@ -116,15 +118,39 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
                 )
             return httpx.Response(200, json={"data": rows})
         if path == "/key/generate":
+            body = json.loads(request.content)
+            if body["key_alias"] in seen["keys"]:
+                # As LiteLLM refuses a second key under an alias.
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": f"Key with alias '{body['key_alias']}' "
+                            "already exists. Unique key aliases across all keys "
+                            "are required."
+                        }
+                    },
+                )
             seen["mints"] += 1
-            seen["mint_body"] = json.loads(request.content)
-            return httpx.Response(200, json={"key": "sk-docs-virtual"})
+            seen["mint_body"] = body
+            key = f"sk-docs-virtual-{seen['mints']}"
+            seen["keys"][body["key_alias"]] = key
+            return httpx.Response(200, json={"key": key})
+        if path == "/key/delete":
+            aliases = json.loads(request.content).get("key_aliases") or []
+            gone = [a for a in aliases if seen["keys"].pop(a, None) is not None]
+            if not gone:
+                return httpx.Response(404, json={"error": "No keys found"})
+            return httpx.Response(200, json={"deleted_keys": gone})
         if path.endswith(".md"):
             seen["pages"].append(path)
             return httpx.Response(
                 200, text=PAGE_MD, headers={"content-type": "text/markdown"}
             )
         if path == "/v1/chat/completions":
+            held = request.headers["authorization"].removeprefix("Bearer ")
+            if held not in seen["keys"].values():
+                return httpx.Response(401, json={"error": {"message": "bad key"}})
             sent = json.loads(request.content)
             seen["completions"].append((request.headers["authorization"], sent))
             prompt, completion = seen["usage"]
@@ -511,7 +537,7 @@ def test_an_answer_is_grounded_streamed_and_recorded(
     assert events[-1] == ("done", {})
 
     auth, sent = gateway["completions"][0]
-    assert auth == "Bearer sk-docs-virtual"
+    assert auth == "Bearer sk-docs-virtual-1"
     assert (
         sent["model"] == settings.docs_assistant_model
         and sent["max_tokens"] == assistant.MAX_ANSWER_TOKENS
@@ -538,6 +564,29 @@ def test_an_answer_is_grounded_streamed_and_recorded(
             return await s.scalar(select(func.count()).select_from(ServiceCredential))
 
     assert asyncio.run(keys()) == 1
+
+
+def test_a_key_the_gateway_still_holds_without_a_stored_secret_is_replaced(
+    client, asker, gateway, monkeypatch
+):
+    # The gateway keeps 问芝士's old key, but its secret is no longer stored here
+    # (the row was dropped so the key would be re-minted without a budget), and
+    # the gateway takes each alias only once.
+    monkeypatch.setattr(settings, "docs_assistant_agentic", False)
+    gateway["keys"]["docs-assistant"] = "sk-lost"
+    body = {"question": "采纳和合并是一回事吗", "page": "accept"}
+
+    r = client.post("/docs/ask", json=body, headers=asker)
+    assert r.status_code == 200, r.text
+    assert _events(r.text)[-1] == ("done", {})
+    # The old key is gone and the new one carries today's limits.
+    assert gateway["keys"] == {"docs-assistant": "sk-docs-virtual-1"}
+    assert gateway["mint_body"]["rpm_limit"] == 120
+    assert "max_budget" not in gateway["mint_body"]
+
+    assert client.post("/docs/ask", json=body, headers=asker).status_code == 200
+    assert gateway["mints"] == 1
+    assert {auth for auth, _ in gateway["completions"]} == {"Bearer sk-docs-virtual-1"}
 
 
 def test_the_model_searches_reads_and_answers_from_the_page_it_read(

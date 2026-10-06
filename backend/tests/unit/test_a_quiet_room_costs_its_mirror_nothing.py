@@ -153,7 +153,7 @@ def _subscription(
 
     session = SessionRef(
         identity.project_id,
-        identity.topic_id,
+        identity.conversation_id,
         identity.recipient_handle,
         harness=identity.harness,
     )

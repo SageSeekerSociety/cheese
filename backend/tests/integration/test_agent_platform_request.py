@@ -201,7 +201,7 @@ def test_acceptance_stays_with_people(client, room):
     agent even when the card names it as the reviewer."""
     _, tid, seat, agent = room
     card = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
             "change_subject": "chore(test): file an accept card",

@@ -30,39 +30,28 @@
  *
  * 父组件在提交时调 `confirm()`：拿到的是这次要交给后端的同意（文档版本 + 方式），
  * 拿到 null 就不提交。版本来自后端，后端会拒绝与当前版本不符的同意，所以这里
- * 不自己写死版本号。
+ * 不自己写死版本号——取数在 `useConsentDocuments`，由页面容器做，版本经 props 传进来。
+ * 于是这一只不碰接口层，只凭 props 就画得出来。
  */
 import type { AcceptedDocuments, ConsentMethod } from '@/network/api/legal/types'
 
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
 
 import LegalLinks from './LegalLinks.vue'
 
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
-import { LegalApi } from '@/network/api/legal'
 
-defineProps<{ actionLabel: string }>()
+const props = defineProps<{
+  actionLabel: string
+  /** 后端当前的协议版本；null = 还没取到或没取到，`confirm()` 不放行。 */
+  documents: AcceptedDocuments | null
+  loadError: string
+}>()
 
 const agreed = ref(false)
 const prompting = ref(false)
-const loadError = ref('')
-let documents: AcceptedDocuments | null = null
 let resolvePrompt: ((ok: boolean) => void) | null = null
-
-async function loadVersions(): Promise<AcceptedDocuments | null> {
-  if (documents) return documents
-  try {
-    const { data } = await LegalApi.listDocuments()
-    documents = Object.fromEntries(data.documents.map((d) => [d.document, d.version]))
-    loadError.value = ''
-  } catch {
-    loadError.value = t('account.legalDocumentsUnavailable')
-  }
-  return documents
-}
-
-onMounted(loadVersions)
 
 function settle(ok: boolean) {
   prompting.value = false
@@ -71,7 +60,7 @@ function settle(ok: boolean) {
 }
 
 async function confirm(): Promise<{ documents: AcceptedDocuments; method: ConsentMethod } | null> {
-  const versions = await loadVersions()
+  const versions = props.documents
   if (!versions) return null
   if (agreed.value) return { documents: versions, method: 'checkbox' }
   prompting.value = true

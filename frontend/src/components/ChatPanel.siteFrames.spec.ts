@@ -62,7 +62,7 @@ class FakeWebSocket {
 function event(id: string, extra: Partial<Block> = {}): Block {
   return {
     id,
-    topic_id: topic.id,
+    conversation_id: topic.id,
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-session',
@@ -98,11 +98,10 @@ beforeEach(() => {
 })
 
 describe('对话栏把现场的帧转过去', () => {
-  it('房间自己的事件行转过去；分身卡上的、消息，不转', async () => {
+  it('房间自己的事件行转过去；消息，不转', async () => {
     const { view, socket } = await open()
 
     socket.emit({ type: 'event_block', block: event('step-1') })
-    socket.emit({ type: 'event_block', block: event('card-step', { task_id: 'card-1' }) })
     socket.emit({ type: 'assistant_block', block: event('msg', { kind: 'message', content: '好了' }) })
     await flush()
 

@@ -44,7 +44,7 @@ function step(id: string, arg: string, meta: Record<string, unknown> = {}): Bloc
   return {
     id,
     project_id: 'p1',
-    topic_id: 't1',
+    conversation_id: 't1',
     kind: 'event',
     author_type: 'participant',
     author: 'cheese-t1',
@@ -71,7 +71,7 @@ beforeEach(() => {
 
 async function openSite(blocks: Block[]) {
   getTranscript.mockResolvedValue({ data: blocks, total: blocks.length })
-  const view = render(Site, { props: { topic, active: true }, global: { plugins: [vuetify] } })
+  const view = render(Site, { props: { topicId: topic.id, active: true }, global: { plugins: [vuetify] } })
   await waitFor(() => expect(view.container.querySelector('.site-act')).not.toBeNull())
   return view
 }

@@ -144,6 +144,9 @@
                   >{{ t('teams.members.roleAdmin') }}</v-chip
                 >
               </v-list-item-title>
+              <!-- What this role can actually do. A bare 队长/管理员 label leaves the
+                   difference between an admin and a member unstated. -->
+              <v-list-item-subtitle>{{ memberRoleNote(member.role) }}</v-list-item-subtitle>
               <template #append>
                 <div class="d-flex align-center">
                   <v-tooltip v-if="isSelfOwner && member.role === 'MEMBER'" location="bottom">
@@ -531,9 +534,23 @@ const failedInvitations = ref(false)
 const invitationsError = ref<string | null>(null)
 
 const roleOptions = computed(() => [
-  { title: t('teams.members.roleMember'), value: 'MEMBER' },
-  { title: t('teams.members.roleAdmin'), value: 'ADMIN' },
+  { title: t('teams.members.roleMember'), value: 'MEMBER', props: { subtitle: t('teams.members.roleMemberHint') } },
+  { title: t('teams.members.roleAdmin'), value: 'ADMIN', props: { subtitle: t('teams.members.roleAdminHint') } },
 ])
+
+/** What the role can do, for the member-list rows. */
+function roleHint(role?: string): string {
+  if (role === 'OWNER') return t('teams.members.roleOwnerHint')
+  if (role === 'ADMIN') return t('teams.members.roleAdminHint')
+  return t('teams.members.roleMemberHint')
+}
+
+/** Owner and admin rows already carry a role chip; a plain member carries none, so its
+ *  note spells the role out too. */
+function memberRoleNote(role?: string): string {
+  if (role === 'OWNER' || role === 'ADMIN') return roleHint(role)
+  return `${t('teams.members.roleMember')} · ${roleHint(role)}`
+}
 
 const fetchTeamMembers = async (teamId: number) => {
   failedMembers.value = false

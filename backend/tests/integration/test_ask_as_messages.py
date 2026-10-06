@@ -96,7 +96,7 @@ def _turns(client, room) -> list[AgentTurn]:
             return list(
                 await session.scalars(
                     select(AgentTurn)
-                    .where(AgentTurn.topic_id == uuid.UUID(room))
+                    .where(AgentTurn.conversation_id == uuid.UUID(room))
                     .order_by(AgentTurn.started_at)
                 )
             )
@@ -217,7 +217,7 @@ def test_asking_needs_no_turn_this_backend_is_holding(client):
         async with client.test_factory() as session:
             await AgentTurnRepository(session).open(
                 turn_id=turn,
-                topic_id=uuid.UUID(room),
+                conversation_id=uuid.UUID(room),
                 continuation_id=turn,
                 author="alice",
                 content="核一下预算",

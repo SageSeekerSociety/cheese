@@ -42,10 +42,10 @@ async def _place(db_factory, topic, agent, state, sid, machine=DEVICE) -> None:
     async with db_factory() as session:
         service = AgentSessionService(session)
         await service.remember(
-            topic_id=topic, agent_handle=agent, resume_token=sid, harness=PI
+            conversation_id=topic, agent_handle=agent, resume_token=sid, harness=PI
         )
         await service.remember_place(
-            topic_id=topic,
+            conversation_id=topic,
             agent_handle=agent,
             harness=PI,
             work_lease=None,
@@ -126,7 +126,9 @@ async def test_an_offline_machine_and_another_channels_pointer_say_nothing(
 
         await session.execute(
             update(AgentSession)
-            .where(AgentSession.topic_id == topic, AgentSession.agent_handle == "kb")
+            .where(
+                AgentSession.conversation_id == topic, AgentSession.agent_handle == "kb"
+            )
             .values(
                 runtime_location={
                     "device_id": DEVICE,

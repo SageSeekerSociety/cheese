@@ -100,12 +100,20 @@ def main():
             await channel._await_native_connected("fixture", state)
             pid = claude_of(session)
             released = await channel._refresh_resident(
-                screen, str(home), state, {"version": release.digest(previous)}
+                screen,
+                str(home),
+                state,
+                {"version": release.digest(previous)},
+                seat=screen.agent_handle,
             )
             assert released
             count = hub.calls
             assert not await channel._refresh_resident(
-                screen, str(home), state, {"version": release.digest(current)}
+                screen,
+                str(home),
+                state,
+                {"version": release.digest(current)},
+                seat=screen.agent_handle,
             )
             assert hub.calls == count
             return pid

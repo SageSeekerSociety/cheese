@@ -84,6 +84,9 @@ class MachinePlace:
     agent_handle: str
     execution_target: dict | None = None
     ca_pem: str = ""
+    #: Which seat of the room this session takes (`place.seat_key`): empty is
+    #: the agent's own, a task's session names its task.
+    seat: str = ""
 
 
 @dataclass(frozen=True, slots=True)

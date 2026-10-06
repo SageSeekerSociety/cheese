@@ -53,50 +53,52 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div v-if="open" class="doc-find" role="search" :aria-label="t('work.room.doc.find')" @keydown="onKeydown">
-    <v-icon size="18" class="doc-find__icon">mdi-magnify</v-icon>
-    <input
-      ref="input"
-      class="doc-find__input"
-      type="text"
-      autocomplete="off"
-      spellcheck="false"
-      :value="query"
-      :placeholder="t('work.room.doc.findPlaceholder')"
-      :aria-label="t('work.room.doc.find')"
-      @input="emit('update:query', ($event.target as HTMLInputElement).value)"
-    />
-    <span class="doc-find__count" aria-live="polite">
-      <template v-if="query && total === 0">{{ t('work.room.doc.findNoResults') }}</template>
-      <template v-else-if="total > 0">{{ current }}/{{ total }}</template>
-    </span>
-    <BaseButton
-      kind="ghost"
-      size="sm"
-      icon="mdi-chevron-up"
-      :disabled="total === 0"
-      :aria-label="t('work.room.doc.findPrev')"
-      :title="t('work.room.doc.findPrev')"
-      @click="emit('prev')"
-    />
-    <BaseButton
-      kind="ghost"
-      size="sm"
-      icon="mdi-chevron-down"
-      :disabled="total === 0"
-      :aria-label="t('work.room.doc.findNext')"
-      :title="t('work.room.doc.findNext')"
-      @click="emit('next')"
-    />
-    <BaseButton
-      kind="ghost"
-      size="sm"
-      icon="mdi-close"
-      :aria-label="t('work.room.doc.findClose')"
-      :title="t('work.room.doc.findClose')"
-      @click="emit('close')"
-    />
-  </div>
+  <Transition name="doc-menu">
+    <div v-if="open" class="doc-find" role="search" :aria-label="t('work.room.doc.find')" @keydown="onKeydown">
+      <v-icon size="18" class="doc-find__icon">mdi-magnify</v-icon>
+      <input
+        ref="input"
+        class="doc-find__input"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        :value="query"
+        :placeholder="t('work.room.doc.findPlaceholder')"
+        :aria-label="t('work.room.doc.find')"
+        @input="emit('update:query', ($event.target as HTMLInputElement).value)"
+      />
+      <span class="doc-find__count" aria-live="polite">
+        <template v-if="query && total === 0">{{ t('work.room.doc.findNoResults') }}</template>
+        <template v-else-if="total > 0">{{ current }}/{{ total }}</template>
+      </span>
+      <BaseButton
+        kind="ghost"
+        size="sm"
+        icon="mdi-chevron-up"
+        :disabled="total === 0"
+        :aria-label="t('work.room.doc.findPrev')"
+        :title="t('work.room.doc.findPrev')"
+        @click="emit('prev')"
+      />
+      <BaseButton
+        kind="ghost"
+        size="sm"
+        icon="mdi-chevron-down"
+        :disabled="total === 0"
+        :aria-label="t('work.room.doc.findNext')"
+        :title="t('work.room.doc.findNext')"
+        @click="emit('next')"
+      />
+      <BaseButton
+        kind="ghost"
+        size="sm"
+        icon="mdi-close"
+        :aria-label="t('work.room.doc.findClose')"
+        :title="t('work.room.doc.findClose')"
+        @click="emit('close')"
+      />
+    </div>
+  </Transition>
 </template>
 
 <style scoped>

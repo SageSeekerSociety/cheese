@@ -24,6 +24,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import lease_claim
 from app.domain.machine import session_work as work_lease
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
@@ -248,29 +249,14 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         }
     }
     from app.domain.agent_instance.models import AgentInstance
-    from app.domain.room_task.models import Task
 
     async with client.test_factory() as db:
-        instance = AgentInstance(project_id=project_id, handle="ada", configuration={})
-        db.add(instance)
+        db.add(AgentInstance(project_id=project_id, handle="ada", configuration={}))
         db.add(AgentInstance(project_id=project_id, handle="bob", configuration={}))
         await db.flush()
         first = await AgentSessionService(db).by_id(first_id)
         second = await AgentSessionService(db).by_id(second_id)
         first.resume_token, second.resume_token = "native-ada", "native-bob"
-        child = Task(
-            project_id=project_id,
-            room_id=topic_id,
-            title="Ada's background child",
-            owner_handle="bob",
-            subagent_id="ada-child",
-            execution_agent_instance_id=instance.id,
-            execution_parent_session_id="native-ada",
-            execution_turn_id=uuid.uuid4(),
-        )
-        db.add(child)
-        await db.flush()
-        child_id = child.id
         await db.commit()
     bob_tools = client.post(
         f"/topics/{topic_id}/sessions/{second_id}/work-lease",
@@ -301,28 +287,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]
         is old_online
     )
-    from app.domain.room_task.models import Task, TaskStatus
-
-    async with client.test_factory() as db:
-        db.add(
-            Task(
-                project_id=project_id,
-                room_id=topic_id,
-                title="Finished child",
-                subagent_id="historical-child",
-                status=TaskStatus.closed,
-            )
-        )
-        db.add(
-            Task(
-                project_id=project_id,
-                room_id=topic_id,
-                title="Concluded child",
-                subagent_id="concluded-child",
-                conclusion="Handed back",
-            )
-        )
-        await db.commit()
     # An agent may change its own work destination once its work is pushed on
     # the machine it leaves. Away from a machine that cannot be reached for
     # that, only a person may switch, and says so explicitly.
@@ -332,7 +296,7 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         turn = AgentTurn(
             id=uuid.uuid4(),
             continuation_id=uuid.uuid4(),
-            topic_id=topic_id,
+            conversation_id=topic_id,
             author=actor_handle,
             started_at=datetime.now(UTC),
         )
@@ -409,8 +373,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         for call in remote.await_args_list
         if call.args[1] == "control"
     )
-    async with client.test_factory() as db:
-        assert (await db.get(Task, child_id)).conclusion is None
     async with client.test_factory() as db:
         # 整个房间一起搬：发起的这一条和房间里的另一条都把手交了出来。
         for sid in (first_id, second_id):
@@ -1464,6 +1426,11 @@ async def test_an_installation_whose_backend_is_gone_does_not_hold_the_next_star
         return response.json()["data"]
 
     assert ask(timeout=0.001).get("preparing") is True
+    # The answer comes back before the installation it set off has reached the
+    # machine; wait for it to, or there is nothing yet to be cut off.
+    reached = time.monotonic() + 5
+    while hub.exec.await_count == 0 and time.monotonic() < reached:
+        await asyncio.sleep(0.05)
     assert hub.exec.await_count == 1
     # The process goes: every installation it ran stops where it was, and
     # whatever would have ended its claim never runs.
@@ -1494,8 +1461,13 @@ async def test_an_installation_still_running_elsewhere_keeps_its_claim(
     import threading
     import time
 
-    monkeypatch.setattr(lease_claim, "CLAIM_TTL_S", 0.6)
-    monkeypatch.setattr(lease_claim, "CLAIM_RENEW_S", 0.15)
+    # A claim lapses once it goes unrenewed for CLAIM_TTL_S, and nothing renews
+    # it while the event loop is held. Shortened for the test, the TTL still
+    # has to outlast the longest stall a loaded CI runner gives this process's
+    # loop (over a second has been seen), or a start arriving behind one
+    # finds the claim lapsed and rightly installs a second time.
+    monkeypatch.setattr(lease_claim, "CLAIM_TTL_S", 3.0)
+    monkeypatch.setattr(lease_claim, "CLAIM_RENEW_S", 0.3)
     monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
     path, token, session_id = await _a_room_on_its_own_machine(client)
     release = threading.Event()
@@ -1513,8 +1485,8 @@ async def test_an_installation_still_running_elsewhere_keeps_its_claim(
         return response.json()["data"]
 
     assert ask(timeout=0.001).get("preparing") is True
-    # Several times as long as a claim stands unrenewed.
-    hold_until = time.monotonic() + 5 * lease_claim.CLAIM_TTL_S
+    # Twice as long as a claim stands unrenewed.
+    hold_until = time.monotonic() + 2 * lease_claim.CLAIM_TTL_S
     while time.monotonic() < hold_until:
         assert ask(timeout=0.001).get("preparing") is True
         async with client.test_factory() as db:
@@ -1533,3 +1505,26 @@ async def test_an_installation_still_running_elsewhere_keeps_its_claim(
             await asyncio.sleep(0.1)
     assert started is not None, answer
     assert hub.exec.await_count == 1
+
+
+async def test_a_wait_that_runs_out_on_the_rooms_lock_still_answers_preparing(
+    client, monkeypatch
+):
+    """A switch of the room's machine holds the room while it pushes each
+    session's work, which can take longer than a start of a session waits. A
+    start that runs out of time still waiting for the room answers that the
+    machine is being prepared, as it does when any other step outlasts it, and
+    the session asks again."""
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 0.5)
+    path, token, _session_id = await _a_room_on_its_own_machine(client)
+    room = uuid.UUID(path.split("/")[2])
+
+    async with client.test_factory() as switching:
+        await TopicService(switching).lock_for_execution(room)
+        response = client.post(
+            path, headers={"X-Cheese-Token": token}, json={"timeout": 0.001}
+        )
+        await switching.rollback()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"].get("preparing") is True

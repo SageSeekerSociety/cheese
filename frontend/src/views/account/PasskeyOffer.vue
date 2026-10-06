@@ -1,40 +1,18 @@
+<!--
+  The offer of a passkey after a sign-in that just finished (passkeyEnrollment.ts):
+  it starts the registration with the sign-in's own ticket, asks the person to
+  confirm it is them once that ticket is a few minutes old, and records a
+  decline. What it shows is PasskeyOfferView.vue.
+-->
 <template>
-  <div v-if="offer">
-    <AccountHeading :title="t('account.passkeyOffer.title')" :lede="t('account.passkeyOffer.lede')" />
-
-    <v-alert v-if="errorMessage" type="error" variant="tonal" density="comfortable" class="mb-6">
-      {{ errorMessage }}
-    </v-alert>
-
-    <!-- Declining is a button the same size as accepting, not a small link:
-         the person is choosing, not being steered. -->
-    <div class="account-actions">
-      <BaseButton block kind="primary" size="lg" :loading="adding" :disabled="!!declining" @click="add">
-        {{ t('account.passkeyOffer.add') }}
-      </BaseButton>
-      <BaseButton
-        block
-        kind="secondary"
-        size="lg"
-        :loading="declining === 'later'"
-        :disabled="adding || declining === 'forever'"
-        @click="decline(false)"
-      >
-        {{ t('account.passkeyOffer.later') }}
-      </BaseButton>
-    </div>
-
-    <div v-if="offer.canStopAsking" class="account-foot">
-      <button
-        type="button"
-        class="account-link account-link--quiet"
-        :disabled="adding || !!declining"
-        @click="decline(true)"
-      >
-        {{ t('account.passkeyOffer.stopAsking') }}
-      </button>
-    </div>
-  </div>
+  <PasskeyOfferView
+    :offer="offer"
+    :adding="adding"
+    :declining="declining"
+    :error-message="errorMessage"
+    @add="add"
+    @decline="decline"
+  />
 </template>
 
 <script setup lang="ts">
@@ -46,9 +24,8 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import { currentPasskeyOffer, endPasskeyOffer, Enrollment } from './passkeyEnrollment'
 import { passkeyWrongHostMessage } from './passkeyHost'
+import PasskeyOfferView from './PasskeyOfferView.vue'
 
-import AccountHeading from '@/components/account/AccountHeading.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 

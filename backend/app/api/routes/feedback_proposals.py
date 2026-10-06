@@ -69,7 +69,9 @@ async def _actor_in_topic(
     a caller who has not been resolved against this topic yet.
     """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
+    )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
@@ -82,7 +84,7 @@ async def _require_proposal_block(
     db: AsyncSession, topic_id: uuid.UUID, block_id: uuid.UUID
 ):
     block = await BlockRepository(db).get(block_id)
-    if block is None or block.topic_id != topic_id:
+    if block is None or block.conversation_id != topic_id:
         # A block in another topic, or none at all: 404. The id the client sent
         # is the problem, not a secret — but answering 400 would confirm which
         # ids are real.
@@ -125,7 +127,7 @@ async def propose_feedback(
     fingerprint = await service.check(topic_id, body)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
-        topic_id=topic_id,
+        conversation_id=topic_id,
         author=handle,
         author_type=AuthorType.participant,
         content=body.title,

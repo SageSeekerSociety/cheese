@@ -70,7 +70,7 @@ class Case:
                 user = await UserRepository(db).get_by_handle(owner)
                 rows = [
                     AgentSession(
-                        topic_id=uuid.UUID(room),
+                        conversation_id=uuid.UUID(room),
                         agent_handle=f"agent-{n}",
                         harness="claude-code",
                     )
@@ -146,7 +146,7 @@ class Case:
                 rows = await db.scalars(
                     select(Block.content)
                     .where(
-                        Block.topic_id == self.projects[owner]["room"],
+                        Block.conversation_id == self.projects[owner]["room"],
                         Block.kind == BlockKind.event,
                         Block.meta["event_type"]
                         .as_string()

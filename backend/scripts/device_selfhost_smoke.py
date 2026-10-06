@@ -136,11 +136,14 @@ async def main() -> int:
             {"project_id": str(project_id), "title": f"设备自托管冒烟 {MARKER}"},
         )["data"]["id"]
     )
+    created = api(
+        "POST", f"/topics/{topic_id}/tasks", token, {"title": f"Device smoke {MARKER}"}
+    )["data"]
     task = api(
         "POST",
-        f"/topics/{topic_id}/split",
+        f"/topics/{topic_id}/tasks/{created['id']}/start",
         token,
-        {"title": f"Device smoke {MARKER}", "reviewer_handle": USER_HANDLE},
+        {"reviewer_handle": USER_HANDLE},
     )["data"]
     branch = task["branch_name"]
 

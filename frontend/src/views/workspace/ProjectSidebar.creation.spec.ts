@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ create: vi.fn(), push: vi.fn() }))
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => state }))
+// 侧栏挂在房间下的任务另读一份；这里钉的不是它。
+vi.mock('@/lib/projectTasks', () => ({ readProjectTasks: async () => ({ data: [], total: 0 }) }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: {} }), useRouter: () => ({ push: state.push }) }))
 vi.mock('vuetify', () => ({ useDisplay: () => ({ mdAndUp: true }) }))
 vi.mock('@/lib/routePrefetch', () => ({ cancelPrefetch: vi.fn(), prefetchOnHover: vi.fn() }))

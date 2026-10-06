@@ -283,8 +283,17 @@ async def test_a_viewer_reconnecting_from_where_it_was_gets_only_the_rest(
     backends, platform
 ):
     kind, ((old, before), _) = backends
-    platform([{"text": ANSWER}])
+    release = threading.Event()
+    platform([{"text": ANSWER}], rest_held_until=release)
     work = await _begin(old, kind)
+
+    async def started() -> bool:
+        return _words(before) > 0
+
+    # The rest is written only once the first words were told, so the answer
+    # reaches viewers in more than one piece wherever a slow reader picks it up.
+    await _until(started)
+    release.set()
     await _until(lambda: _ended(before))
     consumption = await old.get(work)
     assert consumption is not None
@@ -344,6 +353,13 @@ async def test_a_question_ends_once_even_when_its_reader_died_tidying_up(
     platform([{"text": ANSWER}])
     work = await _begin(old, kind)
     await _until(lambda: _ended(before))
+
+    # Its consumer hears the end before the reader puts the question away and
+    # drops its lease: wait for the reader to be done with it.
+    async def read() -> bool:
+        return work not in old._reading
+
+    await _until(read)
     # Died after the answer was kept, before the question was put away.
     await valkey().sadd("consumptions", work)
 

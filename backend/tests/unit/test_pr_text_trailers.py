@@ -38,14 +38,14 @@ def _room_url(topic: Topic) -> str:
     return f"{base}/projects/{topic.project_id}/topics/{topic.id}"
 
 
-def _work(subagent_id: str | None, title: str) -> identity.WorkItem:
-    return identity.WorkItem(uuid.uuid4(), subagent_id, title)
+def _work(title: str) -> identity.WorkItem:
+    return identity.WorkItem(uuid.uuid4(), title)
 
 
 def _task_url(topic: Topic, item: identity.WorkItem) -> str:
     """哪条活 —— 一个真能打开的地址：房间页面上点开一条活时，地址栏里出现的正是
-    `?tab=overview&card=<task_id>`（`TopicView.vue` 的 `onOpenCard`）。"""
-    return f"{_room_url(topic)}?tab=overview&card={item.task_id}"
+    `/tasks/<task_id>`：点开一个任务时去的就是这一页。"""
+    return f"{_room_url(topic)}/tasks/{item.task_id}"
 
 
 def test_the_resolved_human_wins_over_the_agent_that_created_the_room():
@@ -172,12 +172,12 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
     """#189: the commit has to answer WHICH 芝士 wrote this and WHICH work it
     was. `Requested-by` names the human who asked, and `Co-authored-by: Claude
     Fable 5` is on every commit Claude Code writes for anybody anywhere — neither
-    can point at the instance of this platform that typed it, nor at the worker
-    inside it."""
+    can point at the instance of this platform that typed it, nor at the work
+    it did."""
     topic = _topic("cheese-a7a0268b96ff")
     card = _card()
-    one = _work("ac2c038d44616a2f2", "把 trailer 补全")
-    two = _work("9f1b7c22e0d341a80", "顺手修一个 flaky 测试")
+    one = _work("把 trailer 补全")
+    two = _work("顺手修一个 flaky 测试")
     trailers = pr_text.pr_trailers(
         topic,
         "carol",
@@ -190,28 +190,14 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
         f"Cheese-Topic: {_room_url(topic)} 做一个东西",
         f"Cheese-Card: {card.id}",
         f"Cheese-Agent: {AGENT.name}",
-        f"Cheese-Task: {_task_url(topic, one)} ac2c038d44616a2f2 把 trailer 补全",
-        f"Cheese-Task: {_task_url(topic, two)} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
+        f"Cheese-Task: {_task_url(topic, one)} 把 trailer 补全",
+        f"Cheese-Task: {_task_url(topic, two)} 顺手修一个 flaky 测试",
     ]
 
 
 def test_a_room_id_does_not_establish_an_agent_author():
     topic = _topic("bob")
     assert "Cheese-Agent:" not in pr_text.pr_trailers(topic, "carol")
-
-
-def test_work_nobody_was_bound_to_still_gets_a_line():
-    """A task row exists from the moment it is dispatched and the worker is bound
-    a moment later, so an unbound task is ordinary — and dropping its line would
-    make the batch in the commit smaller than the batch that landed."""
-    topic = _topic("bob")
-    lonely = _work(None, "人自己动手改的")
-    trailers = pr_text.pr_trailers(
-        topic,
-        "carol",
-        identity.Attribution("alice", None, (), (lonely,), requester=ALICE),
-    )
-    assert f"Cheese-Task: {_task_url(topic, lonely)} - 人自己动手改的" in trailers
 
 
 def test_a_delivery_with_no_work_rows_writes_no_task_lines():
@@ -229,7 +215,7 @@ def test_a_task_title_cannot_forge_a_trailer():
     a newline in it would cut everything after it out of the block git and GitHub
     read — and the line it inserted would be indistinguishable from a real one."""
     topic = _topic("bob")
-    nasty = _work("ac2c038d44616a2f2", "innocent\nReviewed-by: mallory\n\nmore")
+    nasty = _work("innocent\nReviewed-by: mallory\n\nmore")
     trailers = pr_text.pr_trailers(
         topic,
         "carol",
@@ -240,8 +226,7 @@ def test_a_task_title_cannot_forge_a_trailer():
     ]
     assert reviewers == ["Reviewed-by: carol <carol@zhishi.local>"]
     assert (
-        f"Cheese-Task: {_task_url(topic, nasty)} ac2c038d44616a2f2 "
-        "innocent Reviewed-by: mallory more"
+        f"Cheese-Task: {_task_url(topic, nasty)} innocent Reviewed-by: mallory more"
     ) in trailers
     assert len(trailers.splitlines()) == 5  # one line per trailer, no strays
 
@@ -260,7 +245,7 @@ def test_room_name_is_readable_without_allowing_trailer_injection():
 
 def test_a_very_long_task_title_stays_on_one_readable_line():
     topic = _topic("bob")
-    wordy = _work("ac2c038d44616a2f2", "y" * 400)
+    wordy = _work("y" * 400)
     line = pr_text.task_trailer(topic, wordy)
     assert line.endswith("y" * 119 + "…")
     assert line in pr_text.pr_trailers(
@@ -276,9 +261,7 @@ def test_the_credited_humans_still_come_last_and_stay_in_the_block():
     trailers = pr_text.pr_trailers(
         _topic("bob"),
         "carol",
-        identity.Attribution(
-            "bob", None, (ALICE,), (_work("ac2c038d4", "干活"),), requester=BOB
-        ),
+        identity.Attribution("bob", None, (ALICE,), (_work("干活"),), requester=BOB),
     )
     assert "\n\n" not in trailers
     assert trailers.splitlines()[-1] == (
@@ -292,11 +275,11 @@ def test_both_delivery_lanes_carry_the_agent_and_the_work():
     landed through."""
     topic = _topic("bob")
     card = _card()
-    item = _work("ac2c038d44616a2f2", "把 trailer 补全")
+    item = _work("把 trailer 补全")
     who = identity.Attribution("alice", AGENT, (), (item,), requester=ALICE)
     expected = [
         f"Cheese-Agent: {AGENT.name}",
-        f"Cheese-Task: {_task_url(topic, item)} ac2c038d44616a2f2 把 trailer 补全",
+        f"Cheese-Task: {_task_url(topic, item)} 把 trailer 补全",
     ]
     github = pr_text.merge_commit_message(topic, "carol", card, who)
     local = pr_text.local_merge_commit_message(topic, "carol", card, who)
@@ -332,15 +315,14 @@ def test_local_merge_commit_message_is_subject_body_then_trailers():
 def test_the_pr_body_links_to_the_task_the_card_declared():
     """声明了活的卡，正文里要有一条**打得开**的链接指向那条活。
 
-    这里不比字符串，而是把链接拆开看它指到哪：路径是这个房间的页面，`card` 查询是
-    那条活的 id —— 这正是 `?card=` 那层下钻收的东西。一个 uuid 在 PR 正文里是死胡
-    同，除非读的人已经知道这个平台的路由。
+    这里不比字符串，而是把链接拆开看它指到哪：路径是这个房间下那个任务的页面。
+    一个 uuid 在 PR 正文里是死胡同，除非读的人已经知道这个平台的路由。
     """
-    from urllib.parse import parse_qs, urlparse
+    from urllib.parse import urlparse
 
     topic = _topic("bob")
     card = _card()
-    item = _work("ac2c038d44616a2f2", "把链接补上")
+    item = _work("把链接补上")
     body = pr_text.pr_body(
         topic,
         "carol",
@@ -357,23 +339,19 @@ def test_the_pr_body_links_to_the_task_the_card_declared():
     assert len(links) == 1, body
     where = urlparse(links[0])
     assert where.scheme in ("http", "https")
-    assert where.path == f"/projects/{topic.project_id}/topics/{topic.id}"
-    # 两个查询串都要在：`card` 说打开哪条活，`tab` 说停在哪一格 —— 少了 `tab`，
-    # 链接把读的人丢在他上次待着的那一格里。
-    assert parse_qs(where.query) == {
-        "tab": ["overview"],
-        "card": [str(item.task_id)],
-    }
+    assert where.path == (
+        f"/projects/{topic.project_id}/topics/{topic.id}/tasks/{item.task_id}"
+    )
 
 
 def test_a_card_that_declared_no_work_leaves_no_empty_link():
-    """没声明活就一条链接都不写。指向空的 `?card=` 是个点开什么都没有的假链接 ——
-    比不写更糟，因为它看起来像有东西。"""
+    """没声明任务就一条链接都不写。指向空任务的链接点开什么都没有 —— 比不写更
+    糟，因为它看起来像有东西。"""
     body = pr_text.pr_body(
         _topic("bob"),
         "carol",
         _card(),
         identity.Attribution("alice", None, requester=ALICE),
     )
-    assert "?card=" not in body
+    assert "/tasks/" not in body
     assert "Cheese-Task" not in body

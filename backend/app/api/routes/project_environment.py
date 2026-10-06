@@ -29,6 +29,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import addressed_to_agent
+from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import CloudHostRepository
@@ -102,7 +103,10 @@ async def require_idle(db: AsyncSession, topic: Topic) -> None:
         raise ValidationError(say("unarchiveBeforeEnvironmentChange"))
     active = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic.id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, topic.id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     if active is not None:
@@ -189,7 +193,10 @@ async def get_room_environment(
     recovery = await reconcile_recovery(db, topic_id)
     busy = await db.scalar(
         select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
+        .where(
+            of_room(AgentTurn.conversation_id, topic_id),
+            AgentTurn.stopped_at.is_(None),
+        )
         .limit(1)
     )
     return ok(
