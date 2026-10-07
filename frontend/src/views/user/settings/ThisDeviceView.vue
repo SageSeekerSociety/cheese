@@ -61,7 +61,7 @@
             @update:model-value="(ids) => emit('teams', ids)"
           />
           <div v-else class="this-device__chips">
-            <span v-for="name in teamNames" :key="name" class="this-device__chip">{{ name }}</span>
+            <span v-for="team in teamNames" :key="team" class="this-device__chip">{{ team }}</span>
             <span v-if="!teamNames.length" class="this-device__muted">{{ t('account.thisDevice.noTeams') }}</span>
           </div>
           <div class="this-device__row">
@@ -73,7 +73,7 @@
         </div>
       </div>
 
-      <div v-if="claudeCodeHere" class="srow srow--top">
+      <div class="srow srow--top">
         <span class="srow__k">Claude Code</span>
         <ClaudeCodeLogin
           class="this-device__col"
@@ -129,7 +129,6 @@ const props = defineProps<{
   name: string
   teams: MyTeam[]
   teamIds: number[]
-  claudeCodeHere: boolean
   claudeLoggedIn: boolean
   claudePlan: string | null
   claudeState: 'idle' | 'preparing' | 'browser'

@@ -33,7 +33,7 @@ import { t } from '@/i18n'
 import { screenAgentName } from '@/lib/agentNames'
 import { relTime } from '@/lib/relTime'
 import accountService from '@/services/account'
-import { lastSeenOf } from '@/types/devices'
+import { lastSeenOf, systemOf } from '@/types/devices'
 import { claudeLoginOf } from '@/types/ownAgents'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
@@ -426,7 +426,12 @@ function claudePlan(plan: string | null | undefined): string {
               {{ t('account.devices.claudeCodeLoggedIn', { plan: claudePlan(claudeLoginOf(d)?.subscription_type) }) }}
             </template>
             <i18n-t v-else keypath="account.devices.claudeCodeLoggedOut" tag="span">
-              <template #command><code>~/.local/bin/cheesehost claude login</code></template>
+              <!-- Windows 的安装程序把 cheesehost 放进了命令搜索路径；Mac 和 Linux 上它在 ~/.local/bin，默认不在。 -->
+              <template #command
+                ><code>{{
+                  systemOf(d) === 'windows' ? 'cheesehost claude login' : '~/.local/bin/cheesehost claude login'
+                }}</code></template
+              >
             </i18n-t>
           </div>
 

@@ -30,8 +30,6 @@ export function useThisDevice() {
   const error = ref<string | null>(null)
   const claudeLogin = ref<ClaudeLoginState>('idle')
 
-  // A member's own Claude Code runs on a Mac or Linux for now (#2991); the app is on Mac and Windows.
-  const claudeCodeHere = /Mac/.test(navigator.userAgent)
   const claudeCode = computed<ClaudeCodeLogin | null>(() => (device.value ? claudeLoginOf(device.value) : null))
 
   function fail(e: unknown, fallback: string) {
@@ -140,7 +138,6 @@ export function useThisDevice() {
     teams,
     loading,
     error,
-    claudeCodeHere,
     claudeCode,
     claudeLogin,
     load,

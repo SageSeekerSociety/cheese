@@ -44,4 +44,4 @@ cheese recalc <文件>           重算一份 .xlsx 里的公式
 
 ## 用户电脑上的 cheesehost {#connector}
 
-`cli/` 是另一个东西：Go 写的连接器，编出来是一个静态二进制，命令名 `cheesehost`，只做「终端托管」——登录服务器后，服务器可以在这台机器上开「屏幕」并驱动它们，它本身不知道屏幕里跑的是什么，意义全在服务器下发的脚本里。它自带一份 tmux，优先用自带的，没有才用系统的；在 Linux 和 macOS 上还需要 POSIX pty（Windows 上不托管屏幕）。它怎么登录、怎么和机器连接服务保持长连接、服务器怎么通过终端字节流、程序自己的 socket 和一次性命令这三条路触达一个屏幕，见[设备与机器接入](/dev/machines)；命令本身（`cheesehost auth login`、`link connect`、`link auto-connect`、`status`）见 `cheesehost --help`。
+`cli/` 是另一个东西：Go 写的连接器，编出来是一个静态二进制，命令名 `cheesehost`，只做「终端托管」——登录服务器后，服务器可以在这台机器上开「屏幕」并驱动它们，它本身不知道屏幕里跑的是什么，意义全在服务器下发的脚本里。它自带一份 tmux，优先用自带的，没有才用系统的；在 Linux 和 macOS 上还需要 POSIX pty（Windows 上没有 tmux：屏幕是连接器记在文件里的后台进程，连接器重启或更新后接着认领，没有终端画面，见 `cli/internal/procscreen`）。它怎么登录、怎么和机器连接服务保持长连接、服务器怎么通过终端字节流、程序自己的 socket 和一次性命令这三条路触达一个屏幕，见[设备与机器接入](/dev/machines)；命令本身（`cheesehost auth login`、`link connect`、`link auto-connect`、`status`）见 `cheesehost --help`。

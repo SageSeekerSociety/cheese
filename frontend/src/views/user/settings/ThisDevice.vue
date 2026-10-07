@@ -33,7 +33,6 @@ const connecting = computed(() => deviceFlow.open && deviceFlow.stage === 'progr
     :name="here.device.value?.name ?? ''"
     :teams="here.teams.value"
     :team-ids="here.device.value?.team_ids ?? []"
-    :claude-code-here="here.claudeCodeHere"
     :claude-logged-in="!!here.claudeCode.value?.logged_in"
     :claude-plan="here.claudeCode.value?.subscription_type ?? null"
     :claude-state="here.claudeLogin.value"

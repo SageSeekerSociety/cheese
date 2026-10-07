@@ -98,6 +98,9 @@ GOOS=linux  GOARCH=amd64 CGO_ENABLED=0 go build -o cheese-linux-amd64 .
 GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o cheese-darwin-arm64 .
 ```
 
-Runtime needs `tmux` and a pty on Linux and macOS. On Windows it hosts no
-screens, so it needs neither: it fetches python3 and Git for Windows from the
-server at `link connect` and keeps itself running with a per-user login entry.
+Runtime needs `tmux` and a pty on Linux and macOS. Windows has neither: the
+screens it hosts there (a member's own Claude Code, #2991) are background
+processes it keeps by a small file each (`internal/procscreen`), adopted again
+after a restart or an update, with no terminal to watch. It fetches python3 and
+Git for Windows from the server at `link connect` and keeps itself running with
+a per-user login entry.
