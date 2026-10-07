@@ -15,9 +15,14 @@ than that it actually woke. Sleeping 0.25 s and waking 3 s later means the loop
 spent 2.75 s inside something that never yielded.
 
 What this does NOT say is what that something was. Nothing short of a profiler
-can: `py-spy dump --nonblocking --pid 1` inside the container (needs
-`SYS_PTRACE`) prints every thread's stack at the moment it is stuck, which is
-the next step when a stall here says there is something to look for.
+can: py-spy, which the image carries, prints every thread's stack at the moment
+it is stuck, which is the next step when a stall here says there is something to
+look for. uvicorn is not PID 1 (`init: true` puts tini there) but tini's first
+child, and reading another process's memory takes `SYS_PTRACE`, which the
+compose file grants and only root in the container holds:
+
+    docker exec -u 0 <backend container> sh -c \\
+      'py-spy dump --nonblocking --pid "$(cut -d" " -f1 /proc/1/task/1/children)"'
 """
 
 import asyncio
@@ -78,6 +83,6 @@ async def watch_loop_lag(
             worst_ms=round(_worst * 1000),
             note=(
                 "one piece of work held the loop this long; every other request "
-                "waited. py-spy dump --nonblocking --pid 1 names it."
+                "waited. py-spy dump names it; how is in app/core/loop_lag.py."
             ),
         )
