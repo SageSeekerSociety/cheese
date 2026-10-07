@@ -298,6 +298,12 @@ OVERSIZE = "\n\n".join(
 #: (id, kwargs, what the reader should read the switch as, parameter spellings)
 TOGGLES = [
     {
+        "id": "name",
+        "kwargs": {"name": "Nova"},
+        "label": "`name` 非空：这位 AI 队友在项目里的名字，排在底稿前面",
+        "params": ["name=…"],
+    },
+    {
         "id": "role",
         "kwargs": {"role": "你是一位资深的全栈工程师，负责把这个项目的界面做出来。"},
         "label": "`role` 非空：项目给了这个 AI 队友一个专家角色",

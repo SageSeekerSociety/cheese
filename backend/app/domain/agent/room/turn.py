@@ -25,7 +25,6 @@ from app.domain.agent.harness.prompt import (
     TASK_MACHINE_STARTED,
     UNTITLED_TASK,
     build_session_opening,
-    build_system_prompt,
     opening_changes,
     platform_prompt,
     prompt_line,
@@ -59,11 +58,11 @@ from app.domain.agent.queries import (
     require_pinned_seat,
 )
 from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.room.system_prompt import session_system_prompt
 from app.domain.agent.room.thread_context import thread_context as _thread_context
 from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.host import keeps_memory
-from app.domain.agent.skills import load_skills
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.agent_instance.own import owned_instance
@@ -103,8 +102,6 @@ if TYPE_CHECKING:
     from app.domain.agent.service import AgentEvent
     from app.domain.delivery.input_identity import InputRegistrar
     from app.domain.project.models import Project
-
-PRIVATE_SKILLS = ["private-chat"]
 
 logger = logging.getLogger(__name__)
 
@@ -429,35 +426,6 @@ class RoomTurns:
             for conversation in (topic_id, *threads):
                 await self._compute.dismiss(conversation, agent.handle)
 
-    def _session_system_prompt(
-        self, *, needs_place: bool, has_doc: bool, role: str | None, harness: str
-    ) -> str:
-        """The system prompt a session in this room starts with.
-
-        规矩进系统提示词，现状进开场快照：系统提示词在一个会话里一字不变，前缀缓存
-        才接得上（`build_system_prompt` 的说明）。
-
-        私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，private-chat
-        只补私聊独有的那几条。替换会让私聊成为全仓唯一一间系统提示词里没有
-        chat_send 的房间：终端里答完而没有发布，房间是空的。补的那几条说的正是
-        「这一轮没有地点，只有会话自己那块草稿区」，所以它跟着 `needs_place` 走，
-        而不是再问一遍这间房是不是私聊。
-        """
-        skills = (
-            self._skills
-            if needs_place
-            else "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
-        )
-        return build_system_prompt(
-            self._base_prompt,
-            skills,
-            has_doc=has_doc,
-            role=role,
-            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
-            # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
-            keeps_memory=keeps_memory(harness),
-        )
-
     async def _backend_for(
         self, session, agent, project, compute_id
     ) -> tuple[str, RoomSessions | None]:
@@ -508,11 +476,14 @@ class RoomTurns:
         return _Launch(
             session=SessionRef(project.id, topic_id, agent.handle, harness=harness),
             runtime=provider,
-            system_prompt=self._session_system_prompt(
+            system_prompt=session_system_prompt(
+                self._base_prompt,
+                self._skills,
                 needs_place=needs_place,
                 has_doc=doc_text is not None,
                 role=role,
                 harness=provider.harness,
+                name=agent.display_name,
             ),
             resume_token=resume_token,
             model=model_kwargs.get("model"),
@@ -1141,11 +1112,14 @@ class RoomTurns:
         # on what is producing the output, not on the machine underneath it.
         runtime = provider
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
-        system_prompt = self._session_system_prompt(
+        system_prompt = session_system_prompt(
+            self._base_prompt,
+            self._skills,
             needs_place=needs_place,
             has_doc=doc_text is not None,
             role=role,
             harness=runtime.harness,
+            name=prepared.agent.display_name,
         )
         opening = build_session_opening(
             thread=prepared.thread_context,
