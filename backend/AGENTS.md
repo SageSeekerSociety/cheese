@@ -20,6 +20,16 @@ There is no wildcard exemption: if a pair is in the freeze, it names that module
 and that target. Full reasoning, and which rules are conventions rather than
 checks: [`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
 
+Imports inside a function body may only go down: lift one to the top of the
+module, or say why it cannot be with `# deferred-import: <reason>` on the same
+line or the line above. Unexplained ones are frozen per file in
+`deferred-import-baseline.json`; a new file may have none.
+
+```bash
+uv run python scripts/check_deferred_imports.py            # what CI runs (add --self-test)
+uv run python scripts/check_deferred_imports.py --update   # lower the baseline (never raises)
+```
+
 ## Caps and conventions
 
 - `app/**/*.py` over **1500 lines** may not grow — 16 files are already there and

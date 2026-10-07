@@ -25,12 +25,12 @@ import unittest
 SCRIPT = Path(__file__).with_name("ci-fast.py")
 
 ALL_HOOKS = [
-    "ruff", "ruff-format", "boundary-check", "migration-fork",
+    "ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork",
     "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet",
     "repo-rules", "action-pins", "manual-anchors", "file-size",
     "pyright", "frontend-typecheck",
 ]
-BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "migration-fork"}
+BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
 FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet"}
 GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size"}
 
