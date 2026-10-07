@@ -34,9 +34,10 @@ measures, how to read it, and today's numbers: `docs/manual/dev/arch-metrics.md`
 ## Backend: the import graph is checked, not assumed
 
 `backend/.importlinter` declares three contracts (import-linter, AST-based, so
-an import inside a function counts too — of the 32 import statements behind the
-26 frozen layer violations, exactly one is at module level, and the rest are
-inside functions, which is how an import that "would never happen" happens):
+an import inside a function counts too — of the 33 import statements behind the
+29 frozen layer violations, two are at module level (one of them under
+`if TYPE_CHECKING:`), and the rest are inside functions, which is how an import
+that "would never happen" happens):
 
 - **api → domain → core, never backwards.** A route may not reach into a
   domain's internals, and nothing below `app.api` may import `app.api`.
@@ -57,7 +58,8 @@ the graph rather than transcribed by hand.
 Freeze policy, which is the whole ratchet:
 
 - Every current violation is frozen in the same file as an exact
-  `importer -> imported` pair — 26 + 56 + 178 = 260 today. New ones fail CI.
+  `importer -> imported` pair — 29 + 49 + 157 = 235 today (C1 + C2 + C3). New
+  ones fail CI.
 - No wildcards. `check_boundaries.py` fails (exit 1) on any `*` in the freeze,
   because an exemption that can absorb a file nobody looked at is not an
   exemption.
@@ -65,7 +67,11 @@ Freeze policy, which is the whole ratchet:
   warning, never a failure. Run
   `uv run python scripts/boundary_baseline.py --update` to drop the stale lines
   (it refuses to *add* any without `--freeze-new`, so accepting new debt is a
-  visible act).
+  visible act). C3's frozen list is a cycle-breaker set, and that set is not
+  unique: recomputed from scratch it can come out as a different set of the
+  same knot, which `--update` reports as new violations and refuses. When that
+  happens, delete exactly the lines `lint-imports` lists under "No matches for
+  ignored import" instead of freezing a reshuffled set.
 - Exit 2 means "could not judge" (a missing `app` on the path, an unparseable
   config, a contract that stopped running) and is never a pass.
 

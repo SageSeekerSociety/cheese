@@ -7,7 +7,7 @@ Read [`../CLAUDE.md`](../CLAUDE.md) first; this file only adds what applies here
 `app/` is layered **api -> domain -> core**. Imports that point backwards, a
 route reaching into another domain's models, or a cycle between sibling domains
 under `app.domain` are failures — including when the import sits inside a
-function. 260 pre-existing violations are frozen in `.importlinter` as exact
+function. 235 pre-existing violations are frozen in `.importlinter` as exact
 `importer -> imported` pairs; new ones are not.
 
 ```bash
