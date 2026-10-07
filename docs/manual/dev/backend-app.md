@@ -71,24 +71,24 @@ covers:
 
 ## 错误怎么变成响应 {#errors}
 
-`app/core/errors.py` 装了**两套**异常体系和一张处理器表，全部经 `register_exception_handlers(app)` 注册（`device_connection_app.py` 装的是同一份）。
+`app/core/errors.py` 里只有一棵异常树，根是 `BaseError`，和一张处理器表一起经 `register_exception_handlers(app)` 注册（`device_connection_app.py` 装的是同一份）。所有错误体都由 `format_error_response` 构造。
 
 | 异常 | 状态码 | 响应体 |
 |---|---|---|
-| `BaseError` 及其子类（`BadRequestError`、`NotFoundError`、`ForbiddenError`、`ConflictError`、`QuotaExceededError`、`SystemBusyError` …） | 异常自带 | `{"code", "message": "类名: 原话", "error": {"name", "message", "data", "retryable": false}}` |
-| `AppError` 及其子类（`ValidationError`、`UnauthorizedError`、`GatewayUnavailableError`） | 类属性 `code` | `{"code", "message", "data": null, "error": {"name", "message", "retryable": false}}` |
+| `BaseError` 及其子类（`BadRequestError`、`NotFoundError`、`ForbiddenError`、`ConflictError`、`UnprocessableEntityError`、`UpstreamUnavailableError` …） | 异常自带 `status_code` | `{"code", "message": 原话, "data": null, "error": {"name": 类的 code, "message", "data", "retryable": 类的 retryable}}` |
 | `StarletteHTTPException`（路由里 `raise HTTPException(...)`） | 原状态码 | 走 `format_error_response`，`name` 恒为 `"Error"`；**异常自带 headers 会带出去** |
 | `RequestValidationError`（请求体不合模型） | 400（不是 FastAPI 默认的 422） | `BadRequestError` 的形状，细节在 `error.data.details` |
 | `DeviceOffline` | 409 | 带 `X-Device-Id` 头 —— 客户端靠它区分「机器不在」和「调用出错」，见[设备与机器接入](/dev/machines#failure)。子类 `LinkInterrupted`（链路断在调用半路，结果未知）另带 `X-Device-Link: interrupted` |
 | `DeviceCallError` | 502 | 机器自己的原话，`failure_code` 挂在 `error` 下 |
 | `ClientDisconnect`（浏览器读到一半挂了） | 499 | 只记一条 info，不当故障 |
-| 其它任何异常 | 500 | `{"code": 500, "message": "服务器内部错误", "data": null}`，真正的原因只进日志 |
+| 其它任何异常 | 500 | 同一个信封，`name` 为 `InternalServerError`、`message` 为「服务器内部错误」，真正的原因只进日志 |
 
 三条读这份表时要记住的：
 
-- `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。
-- `retryable` 在今天构造出的每一个错误体里都是 `false`（`BaseError.to_response_body`、`format_error_response`、`AppError` 那三个都写死）。它现在不是一个能读的信号。
-- `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <一句话>` 的 SSE 正文而不是 JSON；这条分支在四个处理器里各写了一遍，**只有 `BaseError` 和 `HTTPException` 那两支把异常的 headers 转发出去，SSE 与 validation 两支不转**。
+- `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。它取类属性 `code`，类不声明时就是类名；改类名或把类并进别的类时，在类上写回旧的 `code`，客户端就不受影响。
+- `retryable` 取类属性，默认 `false`；只有等一会儿真会自己好的类才写 `retryable = True`（`GatewayTimeoutError`、forge 的限流和连不上）。前端对 5xx 的 GET 只在它不为 `false` 时自动重试。
+- `AppError` 和它的 `ValidationError`、`UnauthorizedError`、`GatewayUnavailableError` 已弃用：它们各自已经是替代类（`UnprocessableEntityError`、`AuthenticationRequiredError`、`UpstreamUnavailableError`）的子类，只保留「消息可省」的构造。ruff 的 TID251 禁止新代码导入它们，`backend/pyproject.toml` 里列着还在用的文件，迁完一个删一行。
+- `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <一句话>` 的 SSE 正文而不是 JSON；这条分支在 `BaseError`、`HTTPException`、请求校验三个处理器里各写了一遍，**只有 `BaseError` 和 `HTTPException` 那两支把异常的 headers 转发出去，SSE 与 validation 两支不转**。
 
 处理器一律用 `closing_the_socket` 包一层：异常发生在 WebSocket 连接上时不能返回 HTTP 响应（uvicorn 会拒绝并报「Expected ASGI message ...」），改成记一条 WARNING 后按 1011 关掉。
 
@@ -197,7 +197,6 @@ covers:
 ## 边界与坑 {#traps}
 
 - **闸门是字符串，路由是代码。** `_CHEESE_WRITE_PATHS` 不跟随路由移动，失配不报错，只是静默放行。动路由前先看那张表。
-- **`retryable` 恒为 `false`。** 三个构造错误体的地方都写死了它，没有任何一处会把它设成 `true`。字段在，语义不在。
 - **SSE 分支不转发 headers。** 带 `Accept: text/event-stream` 的请求出 validation 错误或 `HTTPException` 时走 `PlainTextResponse`，`DeviceOffline` 的 `X-Device-Id` 这类头不会跟着出去 —— 只有 JSON 那两支转发。
 - **`page()` 不套信封。** 它返回 `{"data", "total"}`，没有 `code`/`message`；读分页响应时别按 `ok()` 的形状解析。
 - **路由导入失败在生产是「降级」而不是「崩溃」。** 一整个模块会安静地 404，只有 `/healthz` 会说出 `unmounted` 列表 —— 健康检查若只看进程活着，看不出这件事。
