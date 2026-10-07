@@ -34,7 +34,6 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
 	"github.com/SageSeekerSociety/cheese/cli/internal/localfs"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
-	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
 )
 
@@ -44,7 +43,7 @@ func LoadConfig(path string) (*config.Config, error) { return config.Load(path) 
 // Host owns the connection, the tmux manager, and the live screens.
 type Host struct {
 	conn    *link.Conn
-	tm      *terminal.Manager
+	tm      screens
 	cfgPath string // for the shared screen-count state file ("" disables)
 	base    string // server origin, for self-update downloads
 
@@ -66,8 +65,8 @@ type Host struct {
 }
 
 type sess struct {
-	term     *terminal.Session
-	client   *terminal.Client // a real tmux client (pty) while a viewer is attached
+	term     screen
+	client   viewer // a terminal (a tmux client's pty) while a viewer is attached
 	lastCols int
 	lastRows int
 }
@@ -315,7 +314,7 @@ func (h *Host) createSession(m link.Msg) {
 	// program instead of spawning a new session. Otherwise spawn a fresh tmux
 	// session + program as usual. The server sets m.Adopt on the re-provision
 	// path; HasSession is the ground truth we act on.
-	var term *terminal.Session
+	var term screen
 	if h.tm.HasSession(m.Sid) {
 		identities, err := h.tm.Identities(h.base)
 		if err != nil {
@@ -380,7 +379,7 @@ func (h *Host) subscribeScreen(sid string, cols, rows int) {
 func (h *Host) unsubscribeScreen(sid string) {
 	h.mu.Lock()
 	s := h.sessions[sid]
-	var client *terminal.Client
+	var client viewer
 	if s != nil {
 		client, s.client = s.client, nil
 		s.lastCols, s.lastRows = 0, 0
@@ -446,7 +445,7 @@ func (h *Host) restoreSessions() ([]link.Msg, error) {
 // tmux sessions/tasks — used before a self-update exec so no viewer client orphans.
 func (h *Host) closeViewerClients() {
 	h.mu.Lock()
-	clients := make([]*terminal.Client, 0, len(h.sessions))
+	clients := make([]viewer, 0, len(h.sessions))
 	for _, s := range h.sessions {
 		if s.client != nil {
 			clients = append(clients, s.client)

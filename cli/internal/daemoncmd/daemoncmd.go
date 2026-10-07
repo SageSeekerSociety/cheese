@@ -33,7 +33,6 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
-	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 	"github.com/SageSeekerSociety/cheese/cli/internal/ui"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
 )
@@ -140,8 +139,9 @@ func doLogin(cfgPath, serverArg string) (*config.Config, error) {
 	return cfg, nil
 }
 
-// endHostedSessions tears down the tmux server this machine's screens live in —
-// the connector's own sessions and the `claude` each one hosts.
+// endHostedSessions ends every screen this machine hosts — the private tmux
+// server on Unix, the background processes on Windows — and the `claude` each
+// one runs.
 //
 // The connector's exit path deliberately leaves them running, because a stop is
 // usually a restart and a restart is nobody's decision to end a turn. The verbs
@@ -149,13 +149,11 @@ func doLogin(cfgPath, serverArg string) (*config.Config, error) {
 // They say so to the user and then have to be true, and uninstall in particular
 // must leave nothing of ours behind on a machine we do not own.
 //
-// It addresses the socket by the running user, so it reaches the sessions when
-// the CLI runs as the account the service does — which it does, the service
-// being installed into that account's own service manager.
+// It addresses them as the running user, so it reaches them when the CLI runs
+// as the account the service does — which it does, the service being installed
+// into that account's own service manager.
 func endHostedSessions() {
-	if tm, err := terminal.NewManager(); err == nil {
-		tm.KillServer()
-	}
+	host.EndScreens()
 }
 
 // ---------------------------------------------------------------------------

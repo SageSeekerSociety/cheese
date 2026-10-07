@@ -1,3 +1,5 @@
+//go:build !windows
+
 package host
 
 import (
@@ -41,7 +43,7 @@ func isolatedManager(t *testing.T) *terminal.Manager {
 func TestRestartRestoresIdentityAndCanCloseWithoutReopening(t *testing.T) {
 	m := isolatedManager(t)
 	newHost := func(base string) *Host {
-		return &Host{tm: m, base: base, conn: link.New("", "", "", ""),
+		return &Host{tm: tmuxScreens{m}, base: base, conn: link.New("", "", "", ""),
 			ctx: context.Background(), sessions: map[string]*sess{}}
 	}
 	h := newHost("https://backend.test")
@@ -98,8 +100,8 @@ func hostWithScreen(t *testing.T, name string) (*Host, *terminal.Manager) {
 	if err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	h := &Host{tm: m, ctx: context.Background(), sessions: map[string]*sess{
-		name: {term: term},
+	h := &Host{tm: tmuxScreens{m}, ctx: context.Background(), sessions: map[string]*sess{
+		name: {term: tmuxScreen{term}},
 	}}
 	return h, m
 }
