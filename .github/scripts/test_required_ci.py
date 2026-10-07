@@ -51,6 +51,7 @@ class RequiredCITest(unittest.TestCase):
                 ".github/workflows/build.yml",
                 ".github/scripts/plan-image-builds.sh",
                 ".github/scripts/ensure-apt.sh",
+                ".claude/scripts/pr-watch.sh",
                 ".github/scripts/test-plan-image-builds.sh",
                 "backend/scripts/gateway_supply_probe.py",
                 "backend/scripts/test_gateway_supply_probe.py",

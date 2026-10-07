@@ -49,13 +49,19 @@ ci_required() { # pass | fail | pending | none
 deploy_of() { # "<status> <conclusion> <run id>" of the newest dev deploy containing $1, or nothing
   local merge=$1 id st co sha
   while read -r id st co sha; do
+    # A run's headSha is main's tip when the build-completed event fired, not
+    # the commit it releases: a deploy of an earlier build, cancelled when a
+    # newer one took its place in the deploy-dev group, carries this merge's
+    # SHA there. The commit it releases is the one its run name carries.
+    [ -n "$sha" ] || continue
     gh api "repos/$REPO/compare/$merge...$sha" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$' || continue
     # A run whose eligibility check refused the release fails with its deploy
     # job skipped; that run shipped nothing, so it is not the deploy.
     [ "$(gh run view "$id" -R "$REPO" --json jobs -q '.jobs[]|select(.name=="deploy")|.conclusion' 2>/dev/null)" = skipped ] && continue
     echo "$st ${co:-none} $id"; return
   done < <(gh run list -R "$REPO" --workflow deploy-dev.yml --limit 8 \
-             --json databaseId,status,conclusion,headSha -q '.[]|"\(.databaseId) \(.status) \(.conclusion) \(.headSha)"')
+             --json databaseId,status,conclusion,displayTitle \
+             -q '.[]|"\(.databaseId) \(.status) \(.conclusion) \([.displayTitle|scan("[0-9a-f]{40}")][0] // "")"')
 }
 
 while :; do
