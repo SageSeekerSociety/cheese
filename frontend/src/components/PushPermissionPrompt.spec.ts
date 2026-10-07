@@ -94,6 +94,30 @@ describe('问推送权限的时机', () => {
     expect(screen.queryByText(ASK_TEXT, { exact: false })).toBeNull()
   })
 
+  it('这一轮收工了，问的那一条跟着收起 —— 它说的是「这次运行」', async () => {
+    const screen = mountPrompt()
+    await advance(61_000)
+    expect(screen.queryByText(ASK_TEXT, { exact: false })).not.toBeNull()
+
+    await screen.rerender({ working: false })
+    await advance(0)
+
+    expect(screen.queryByText(ASK_TEXT, { exact: false })).toBeNull()
+  })
+
+  it('问部署开没开推送的那一下里收工了，就不再冒出来', async () => {
+    let answer: (value: boolean) => void = () => {}
+    pushAvailable.mockImplementation(() => new Promise<boolean>((resolve) => (answer = resolve)))
+    const screen = mountPrompt()
+    await advance(60_000)
+
+    await screen.rerender({ working: false })
+    answer(true)
+    await advance(0)
+
+    expect(screen.queryByText(ASK_TEXT, { exact: false })).toBeNull()
+  })
+
   it('说过「暂不开启」就不再问 —— 追问是人关掉一个渠道的头号原因', async () => {
     const first = mountPrompt()
     await advance(61_000)

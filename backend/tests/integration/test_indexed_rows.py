@@ -41,6 +41,8 @@ INDEXES = {
     "ix_blocks_machine_events",
     "ix_blocks_failed_turns",
     "ix_blocks_queued_messages",
+    "ix_blocks_conversation_eid",
+    "ix_blocks_coalesced",
 }
 
 
@@ -319,3 +321,50 @@ async def test_the_waiting_messages_come_back_and_are_read_by_their_index(db_fac
         plan = await _generic_plan(conn, "probe_queued", sql, params)
         assert "ix_blocks_queued_messages" in plan, f"{sql}\n{plan}"
         await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_a_hook_event_id_is_looked_up_by_index(db_factory):
+    """`has_any_eid` runs for every room event and nearly always answers no;
+    it must find a yes on either half (a block's own id, or one of the ids a
+    coalesced message lists) and read neither half from the whole table."""
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        room = seeded["rooms"]["quiet"]
+        session.add_all(
+            [
+                Block(
+                    project_id=room.project_id,
+                    conversation_id=room.id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="u1",
+                    content="x",
+                    meta=meta,
+                )
+                for meta in (
+                    {"eid": "e-own"},
+                    {"eid": "e-first", "eids": ["e-a", "e-b"]},
+                )
+            ]
+        )
+        await session.flush()
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+        blocks = BlockRepository(session)
+
+        with statements(session) as seen:
+            assert await blocks.has_any_eid(room.id, ["e-nope"]) is False
+        assert await blocks.has_any_eid(room.id, ["e-nope", "e-own"]) is True
+        assert await blocks.has_any_eid(room.id, ["e-b"]) is True
+        assert await blocks.has_eid(room.id, "e-own") is True
+
+        conn = await session.connection()
+        by_eid = [(sql, p) for sql, p in seen if "'eid') = ANY" in sql]
+        coalesced = [(sql, p) for sql, p in seen if "'eids') IS NOT NULL" in sql]
+        assert len(by_eid) == 1 and len(coalesced) == 1, seen
+        plan = await _generic_plan(conn, "probe_eid", *by_eid[0])
+        assert "ix_blocks_conversation_eid" in plan, plan
+        # Which index serves the coalesced half depends on the table's
+        # statistics (on dev, the partial one); either way not the whole table.
+        plan = await _generic_plan(conn, "probe_coalesced", *coalesced[0])
+        assert "Seq Scan" not in plan, plan
