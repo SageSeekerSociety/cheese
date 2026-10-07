@@ -103,4 +103,6 @@ screens it hosts there (a member's own Claude Code, #2991) are background
 processes it keeps by a small file each (`internal/procscreen`), adopted again
 after a restart or an update, with no terminal to watch. It fetches python3 and
 Git for Windows from the server at `link connect` and keeps itself running with
-a per-user login entry.
+a per-user login entry. On Linux and macOS it fetches a Python from the
+server only when the system's python3 is older than 3.11, as on every Mac,
+whose /usr/bin/python3 is 3.9; sessions start with that Python first on PATH.
