@@ -282,6 +282,34 @@ pub async fn claude_login(
     result.map_err(|e| if cancelled { Failure::cancelled() } else { Failure::at("login", e) })
 }
 
+/// Points the platform's Claude Code here at another model service instead of
+/// a Claude account. The key reaches the connector in its environment, so it
+/// is on no command line; `on_step` hears "preparing" while the build
+/// downloads.
+pub async fn claude_model_service(
+    running: &Running,
+    base_url: &str,
+    token: &str,
+    model: &str,
+    on_step: &(dyn Fn(&'static str) + Send + Sync),
+) -> Result<(), Failure> {
+    if !running.begin() {
+        return Err(Failure::at("busy", ""));
+    }
+    let mut cmd = platform::cheesehost();
+    cmd.args(["claude", "login", "--base-url", base_url, "--model", model]);
+    cmd.env("CHEESE_MODEL_TOKEN", token);
+    let mut on_line = |line: &str| {
+        if line.contains("Downloading Claude Code") {
+            on_step("preparing");
+        }
+    };
+    let result = run(cmd, running, &|_: u8| {}, &mut on_line).await;
+    let cancelled = running.cancelled();
+    running.end();
+    result.map_err(|e| if cancelled { Failure::cancelled() } else { Failure::at("login", e) })
+}
+
 /// Logs the platform's Claude Code out on this computer.
 pub async fn claude_logout() -> Result<(), String> {
     let out = platform::cheesehost()

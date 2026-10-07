@@ -80,6 +80,14 @@ export interface DesktopBridge {
   claudeLogin: (console: boolean, onStep: (step: ClaudeLoginStep) => void) => Promise<void>
   cancelClaudeLogin: () => Promise<void>
   claudeLogout: () => Promise<void>
+  /** Points this computer's Claude Code at another model service; null in an app
+   *  that predates it. */
+  claudeModelService:
+    | ((
+        service: { baseUrl: string; token: string; model: string },
+        onStep: (step: ClaudeLoginStep) => void
+      ) => Promise<void>)
+    | null
   disconnectThisMachine: () => Promise<void>
 }
 
@@ -136,6 +144,19 @@ export function desktopBridge(): DesktopBridge | null {
     async claudeLogout() {
       await invoke('claude_logout')
     },
+    claudeModelService: desktopCan('modelService')
+      ? async ({ baseUrl, token, model }, onStep) => {
+          const progress = new Channel<Progress>()
+          progress.onmessage = (message) => {
+            if (message.kind === 'step' && message.id === 'preparing') onStep(message.id)
+          }
+          try {
+            await invoke('claude_model_service', { baseUrl, token, model, progress })
+          } catch (err) {
+            throw failure(err)
+          }
+        }
+      : null,
     async disconnectThisMachine() {
       await invoke('disconnect_this_machine')
     },

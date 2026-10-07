@@ -207,9 +207,12 @@ class DeviceClaudeLoginRow(Base):
     installed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     logged_in: Mapped[bool] = mapped_column(Boolean, nullable=False)
     # What `claude auth status` names: `claude.ai` for a subscription login, or
-    # the API key kind, and for a subscription its plan (`max`, `pro`, …).
+    # the API key kind, and for a subscription its plan (`max`, `pro`, …). A
+    # machine whose owner set another model service is `model_service`
+    # (`owner_login.MODEL_SERVICE`), with the model it calls there.
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
