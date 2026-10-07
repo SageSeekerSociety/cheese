@@ -419,7 +419,11 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 | `md`（默认） | 560px | 一般表单 |
 | `lg` | 720px | 并排两列、带预览的表单 |
 
-- 三档从全仓 63 个弹窗的宽度归出来：420/440 最多，其次是 520–600 和 640–720。查看器、编辑器这类本来就要占满大半屏的不是弹窗，不在此列。
+- 三档从全仓 63 个弹窗的宽度归出来：420/440 最多，其次是 520–600 和 640–720。
+- 这两种写法管的是**要人做点什么**的弹窗。只管看、只管等、正文自己长操作区的不进这两种，继续写 `<v-dialog>`，并在上一行加 `eslint-disable-next-line vue/no-restricted-syntax -- 原因`（和 §3.6 同一套，闸门见 §7）。三类例外各自要说清自己是哪一类：
+  - **查看器、编辑器**：本来就要占满大半屏——设备实时画面、版本历史、媒体预览、提交历史。
+  - **进度、阻断提示**：跑完之前没有可做的选择——上传进度。
+  - **自带操作区的壳**：主操作长在正文里，页脚那颗装不下——`SudoDialog` 每一条验证路子一颗整宽按钮、反馈提交表单自带提交与取消；快捷键表是只管看的一览，自钉了出场动效。
 - 确认框没有右上角 ✕，点遮罩、按 Esc 也不关：要人在两颗按钮里明确选一颗。
 - 确认键写动作本身（「移出」「删除」「替换」），不写「确定」。不可撤销时确认键是实心红（§3.6 `danger` + `solid`），否则是琥珀主操作。
 - 标题用问句说清要做什么、对谁做（「把爱丽丝移出项目？」）；正文只写后果，一两句，不重复标题。
@@ -633,6 +637,7 @@ const { saving, saved, dirty, error, run } = useSaveState({
 | stylelint 颜色规则 | 新增的写死颜色（hex / rgb / hsl / 颜色名），包括文档站的 `docs/site/src/style.css` | `frontend/stylelint.config.cjs` |
 | stylelint 圆角规则 | 不在档位里的 `border-radius` | 同上 |
 | 固定调色板闸门 | 模板和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*` | `.claude/scripts/check-repo-rules.sh` |
+| 组件闸门 | 裸 `<v-btn>`（§3.6）和裸 `<v-dialog>`（§3.7）；每一处例外都要上一行带原因的 `eslint-disable-next-line` | `frontend/eslint.config.mjs` |
 | 存量棘轮 | 以上只拦**新增**；存量冻结在基线里，只能减少 | `frontend/stylelint-baseline.json`、`frontend/palette-baseline.json` |
 
 ```bash

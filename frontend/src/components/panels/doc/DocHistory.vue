@@ -154,6 +154,7 @@ async function restoreSelected() {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- viewer: version history fills most of the screen (design-system §3.7) -->
   <v-dialog
     :model-value="open"
     max-width="960"

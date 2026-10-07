@@ -39,6 +39,7 @@ function onSubmitted(id: string) {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- the form inside owns its action bar; a footer would add a second cancel (design-system §3.7) -->
   <v-dialog
     :model-value="props.open"
     :fullscreen="xs"

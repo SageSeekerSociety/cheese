@@ -17,6 +17,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
 <template>
   <!-- Closing reuses VDialog's own Esc and click-outside; no extra button. The named transition
        gives the 0.3s panel motion (Vuetify's default is just over 0.2s). -->
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- read-only sheet with its own 0.3s motion and no primary action (design-system §3.7) -->
   <v-dialog
     :model-value="props.modelValue"
     :max-width="DIALOG_WIDTH.md"

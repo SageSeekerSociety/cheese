@@ -1,5 +1,6 @@
 <template>
   <div>
+    <!-- eslint-disable-next-line vue/no-restricted-syntax -- the frame that renders useDialog() boxes (design-system §3.7) -->
     <v-dialog
       v-for="dialog in dialogs"
       :key="dialog.id"
