@@ -417,8 +417,9 @@ async def lifespan(application: FastAPI):
                 await hub_runtime.close()
 
 
-# Route modules that failed to import this boot. Read by /healthz so a partially
-# mounted app cannot pass a health check quietly.
+# Route modules that failed to import this boot. Read by the `routes` check in
+# app/api/routes/health.py, which makes /readyz answer 503 — so a partially
+# mounted build fails the rollout gate instead of taking traffic quietly.
 FAILED_ROUTE_MODULES: list[str] = []
 
 
@@ -450,7 +451,9 @@ def _discover_routers(application: FastAPI) -> list[str]:
             # service reporting healthy while a whole group of endpoints answers
             # 404, and the only symptom reaches the CALLER — so a typo can ship.
             # Production keeps the resilience (one bad module must not take the
-            # whole app down) and surfaces the damage through /healthz instead.
+            # whole app down) and surfaces the damage through /readyz instead:
+            # a release with a dead module never takes traffic, and one already
+            # serving stays up but reads unready.
             if settings.environment != "production":
                 raise
             continue

@@ -76,6 +76,23 @@ engine = create_async_engine(
 )
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
+#: How long a readiness probe gives a dependency, to connect and to answer.
+#: Under the 3 s the rollout's curl waits, so a dead dependency is answered as
+#: a 503 rather than as a timeout.
+PROBE_TIMEOUT_S = 2.0
+
+# The readiness probe's own way in: one fresh connection per probe, never one
+# from the pool above. Readiness asks "can this process reach the database";
+# borrowing from the pool would instead ask "is the pool free right now", and
+# a pool drained by the reconnect wave after a release switch would then read
+# as an outage — the rollout would fail a backend that is serving. How full
+# the pool is stays in the report as `pool`, for a human, never as a verdict.
+probe_engine = create_async_engine(
+    _db_url,
+    poolclass=NullPool,
+    connect_args={"timeout": PROBE_TIMEOUT_S, "command_timeout": PROBE_TIMEOUT_S},
+)
+
 
 def pool_status(target: AsyncEngine | None = None) -> dict[str, int] | None:
     """How much of a process's pool is in use right now; None under NullPool."""

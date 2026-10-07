@@ -1842,14 +1842,14 @@ function platformStats(url: URL): Record<string, unknown> {
       series: dense(days, { created, human_created: humanCreated, agent_created: agentCreated }),
     },
     machines: { ...MACHINE_STOCK },
-    // **这一刻**的健康度（和上面两组的存量/窗口不是一回事）。判据与 `/health/detailed`
-    // 同源。预览里 Redis 偶尔红一次，是为了看「状态色只在这一块用」那个形态。
+    // **这一刻**的健康度（不是上面两组的存量/窗口），判据与 `/health/detailed` 同源。
     health: {
       overall: 'healthy',
       checks: {
         database: { status: 'up' },
         redis: { status: 'up' },
         event_loop: { status: 'up', detail: 3.4 },
+        routes: { status: 'up' },
       },
     },
   }

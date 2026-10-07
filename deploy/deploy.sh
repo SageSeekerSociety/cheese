@@ -38,7 +38,7 @@ echo "==> Waiting for health check..."
 sleep 5
 
 FAIL=0
-if docker compose -f docker-compose.prod.yml exec backend curl -sf http://localhost:8081/healthz > /dev/null 2>&1; then
+if docker compose -f docker-compose.prod.yml exec backend curl -sf http://localhost:8081/readyz > /dev/null 2>&1; then
     echo "  Backend: healthy"
 else
     echo "  Backend: FAILED"

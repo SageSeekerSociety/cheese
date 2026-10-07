@@ -209,15 +209,18 @@ async def test_health_and_metrics_are_never_limited(limits) -> None:
         for path in (
             "/health",
             "/healthz",
+            "/readyz",
             "/metrics",
             "/health",
             "/healthz",
+            "/readyz",
             "/metrics",
         ):
             response = await client.get(path, headers=headers)
-            # `/metrics` 是平台管理员那一面，对这个调用者 403 就是它的正常答复 ——
-            # 这里钉的是这串突发没有被限流（不是 429），不是路由自己的判断。
-            assert response.status_code in (200, 403), path
+            # `/metrics` 是平台管理员那一面，对这个调用者 403 就是它的正常答复；
+            # `/readyz` 依赖没起来时是 503。这里钉的是这串突发没有被限流（不是 429），
+            # 不是路由自己的判断。
+            assert response.status_code in (200, 403, 503), path
             assert "ratelimit" not in response.headers
         assert (await client.get("/version", headers=headers)).status_code == 200
 
