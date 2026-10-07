@@ -264,6 +264,24 @@ def test_whoever_manages_the_project_manages_every_channel(client):
     assert archived.status_code == 200, archived.text
 
 
+def test_anyone_in_a_channel_brings_others_in(client):
+    p = _project(client)
+    tid = _channel(client, p["id"], by="alice")
+
+    def add(who, by):
+        return client.post(
+            f"/topics/{tid}/members",
+            json={"handle": who},
+            headers=session_auth_headers(by),
+        )
+
+    # From outside the channel only its managers bring people in.
+    assert add("carol", "bob").status_code == 403
+    assert _join(client, tid, "bob").status_code == 200
+    assert add("carol", "bob").status_code == 200
+    assert "carol" in _people(client, tid)
+
+
 def test_a_plain_member_does_not_manage_a_channel(client):
     p = _project(client)
     tid = _channel(client, p["id"], by="alice")
@@ -279,10 +297,8 @@ def test_a_plain_member_does_not_manage_a_channel(client):
         == 403
     )
     assert (
-        client.post(
-            f"/topics/{tid}/members",
-            json={"handle": "carol"},
-            headers=session_auth_headers("bob"),
+        client.delete(
+            f"/topics/{tid}/members/alice", headers=session_auth_headers("bob")
         ).status_code
         == 403
     )

@@ -79,18 +79,23 @@ def test_a_person_outside_the_project_is_not_seated(client):
     assert "stranger" not in {m["member_handle"] for m in _roster(client, tid)}
 
 
-def test_non_manager_cannot_add_member(client):
+def test_a_plain_member_adds_but_does_not_remove(client):
     tid = _topic(client, created_by="alice")
     client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
-    # bob is a plain member → may not add anyone.
+    # bob is in the channel without managing it: they bring carol in…
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": "carol", "actor": "bob"},
         headers=session_auth_headers("bob"),
+    )
+    assert r.status_code == 200, r.text
+    # …and takes nobody out.
+    r = client.delete(
+        f"/topics/{tid}/members/carol", headers=session_auth_headers("bob")
     )
     assert r.status_code == 403
 

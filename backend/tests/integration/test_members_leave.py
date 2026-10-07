@@ -60,6 +60,22 @@ def _topic(client, pid: str, created_by: str, title: str | None = "房间") -> s
     return response.json()["data"]["id"]
 
 
+def _managed_by(client, pid: str, handle: str, title: str) -> str:
+    """A channel ``handle`` manages and the project's owner is not in. An
+    external member does not open channels, so the owner opens it and hands
+    it over."""
+    tid = _topic(client, pid, OWNER, title=title)
+    handed = client.put(
+        f"/projects/{pid}/channels/{tid}/manager",
+        json={"handle": handle},
+        headers=session_auth_headers(OWNER),
+    )
+    assert handed.status_code == 200, handed.text
+    left = client.post(f"/topics/{tid}/leave", headers=session_auth_headers(OWNER))
+    assert left.status_code == 200, left.text
+    return tid
+
+
 def _seat(client, tid: str, handle: str, *, by: str) -> None:
     """把这个人放进一个频道 —— 由管这个频道的人放。"""
     r = client.post(
@@ -117,7 +133,7 @@ def test_a_member_leaves_and_their_topic_seats_go_with_them(client, bearer):
     就成了一件没做完的事。"""
     pid = _project(client)
     _add(client, pid, "alice")
-    _add(client, pid, "bob")
+    join_project_team(client, pid, "bob")
     tid = _topic(client, pid, "bob")
     _seat(client, tid, "alice", by="bob")
     assert "alice" in _topic_handles(client, tid)
@@ -141,7 +157,7 @@ def test_removing_a_member_revokes_their_seats_too(client, bearer):
     来。这条用例钉的是那个顺带修掉的缺口。"""
     pid = _project(client)
     _add(client, pid, "alice")
-    _add(client, pid, "bob")
+    join_project_team(client, pid, "bob")
     tid = _topic(client, pid, "bob")
     _seat(client, tid, "alice", by="bob")
     roster_before = set(_project_handles(client, pid))
@@ -163,7 +179,7 @@ def test_removing_a_channels_creator_leaves_it_managed(client, bearer):
     _add(client, pid, "alice")
     _add(client, pid, "bob")
     _add(client, pid, "carol")
-    tid = _topic(client, pid, "alice", title="设计讨论")
+    tid = _managed_by(client, pid, "alice", "设计讨论")
     _seat(client, tid, "bob", by="alice")
 
     r = client.delete(
@@ -241,7 +257,7 @@ def test_a_channels_creator_leaves_and_the_others_stay(client, bearer):
     _add(client, pid, "alice")
     join_project_team(client, pid, "bob")
     join_project_team(client, pid, "carol")
-    tid = _topic(client, pid, "alice", title="设计讨论")
+    tid = _managed_by(client, pid, "alice", "设计讨论")
     _seat(client, tid, "bob", by="alice")
 
     r = _leave(client, pid, "alice")
@@ -258,7 +274,7 @@ def test_a_room_with_only_its_owner_in_it_does_not_hold_them_back(client, bearer
     房间还在，项目里的人照样进得来，管项目的人管得了它。"""
     pid = _project(client)
     _add(client, pid, "alice")
-    tid = _topic(client, pid, "alice", title="她一个人的房")
+    tid = _managed_by(client, pid, "alice", "她一个人的房")
 
     r = _leave(client, pid, "alice")
 

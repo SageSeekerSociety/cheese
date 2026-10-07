@@ -85,11 +85,11 @@ watch(
 function openAllTasks(channelId: string) {
   void router.push({ name: 'workspace-channel-tasks', params: { projectId: props.projectId, topicId: channelId } })
 }
-// 「浏览频道」就是项目设置的「频道」一栏：全部频道都在那里，加入、退出也在那里。
+// 「浏览频道」：全部频道都在那一页，加入、退出、新建也在那里。
 function browseChannels() {
-  void router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'channels' } })
+  void router.push({ name: 'project-channels', params: { projectId: props.projectId } })
 }
-const browsingChannels = computed(() => route.name === 'project-settings' && route.params.section === 'channels')
+const browsingChannels = computed(() => route.name === 'project-channels')
 function openTask(task: { roomId: string; taskId: string }) {
   void router.push({
     name: 'workspace-task',
@@ -125,14 +125,13 @@ function onPressTopic(topicId: string) {
   })
 }
 
-// 新建频道在项目设置的「频道」一栏（先起名再建），命令面板里这一条去那里。
+// 新建频道在「浏览频道」那一页（先起名再建），命令面板里这一条去那里。
 useCommands(() => [
   {
     id: 'topic.new',
     title: t('navigation.palette.newTopic'),
     icon: 'mdi-plus',
-    run: () =>
-      void router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'channels' } }),
+    run: () => void router.push({ name: 'project-channels', params: { projectId: props.projectId } }),
   },
   // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
   // 别人（比如关掉一个浮层）。

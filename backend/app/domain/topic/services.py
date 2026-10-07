@@ -377,6 +377,20 @@ class TopicService:
         )
         return topic
 
+    async def note(self, topic: Topic, *, by: str, content: str) -> None:
+        """One platform line in a channel's main line, about something ``by``
+        did there."""
+        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
+        await self._blocks.add(
+            project_id=landed.project_id,
+            conversation_id=landed.conversation_id,
+            author=by,
+            author_type=AuthorType.platform,
+            content=content,
+            kind=BlockKind.event,
+            meta={"platform": True},
+        )
+
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)
         if topic is None:

@@ -266,7 +266,7 @@
       "task2": "提交校验与错误提示",
       "task3": "手机端排版",
       "pr": "PR #42",
-      "inProgress": "施工中",
+      "inProgress": "进行中",
       "mergeRule": "采纳后合并到 main"
     }
   },

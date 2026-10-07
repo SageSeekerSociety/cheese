@@ -104,6 +104,10 @@ async def create_topic(
 ) -> dict:
     actor = await resolver.resolve(project_id=body.project_id)
     await resolver.authorize_project(actor, project_id=body.project_id)
+    if not await TopicMemberService(db).may_open_channels(
+        body.project_id, actor.handle
+    ):
+        raise ForbiddenError(say("channelCreateExternal"))
     # The creator becomes the topic's roster owner (fusion-design §3), and the
     # creator is whoever the credential names — nobody when there is none.
     topic = await TopicService(db).create(
@@ -1229,12 +1233,12 @@ async def archive_topic(
     """手动归档 (归档去向): explicit archive, independent of 采纳."""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
+    # A channel's manager, or whoever manages the project, in it or not: the
+    # settings' channels page archives a private channel its admin is outside.
+    await resolver.authorize_project(actor, project_id=topic.project_id)
     if not actor.authenticated:
         raise ForbiddenError(say("archiveSignIn"))
-    await TopicMemberService(db).require_manager(topic_id, actor.handle)
+    await TopicMemberService(db).require_administrator(topic_id, actor.handle)
     topic = await TopicService(db).archive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
@@ -1275,12 +1279,12 @@ async def unarchive_topic(
     """取消归档: bring an archived topic back to active."""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
+    # A channel's manager, or whoever manages the project, in it or not: the
+    # settings' channels page archives a private channel its admin is outside.
+    await resolver.authorize_project(actor, project_id=topic.project_id)
     if not actor.authenticated:
         raise ForbiddenError(say("unarchiveSignIn"))
-    await TopicMemberService(db).require_manager(topic_id, actor.handle)
+    await TopicMemberService(db).require_administrator(topic_id, actor.handle)
     topic = await TopicService(db).unarchive(topic_id, by=actor.handle)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
