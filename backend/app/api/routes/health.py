@@ -170,6 +170,10 @@ async def readiness_check() -> Any:
     if unready:
         return JSONResponse(
             status_code=503,
-            content={"status": "unready", "unready": unready, "checks": result["checks"]},
+            content={
+                "status": "unready",
+                "unready": unready,
+                "checks": result["checks"],
+            },
         )
     return {"status": "ready"}
