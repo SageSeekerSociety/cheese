@@ -59,7 +59,8 @@ async function save() {
       <span class="page-section-title">{{ t('work.projectSettings.address.title') }}</span>
     </div>
     <div class="page-section-body">
-      <div class="d-flex align-center" style="gap: 8px">
+      <!-- 顶对齐：输入框下面冒出错误提示时，按钮留在输入框旁边。 -->
+      <div class="d-flex align-start" style="gap: 8px">
         <v-text-field
           v-model="draft"
           :label="t('work.projectSettings.address.label')"
@@ -73,7 +74,7 @@ async function save() {
           style="flex: 1"
           @keydown.enter="save"
         />
-        <BaseButton kind="primary" size="sm" :loading="saving" :disabled="unchanged" @click="save">
+        <BaseButton class="address-save" kind="primary" size="sm" :loading="saving" :disabled="unchanged" @click="save">
           {{ t('work.projectSettings.address.save') }}
         </BaseButton>
       </div>
@@ -85,6 +86,10 @@ async function save() {
 
 <style scoped src="./settings-section.css"></style>
 <style scoped>
+/* 小号按钮比紧凑输入框矮 8px：上下各让一半，和输入框居中对齐。 */
+.address-save {
+  margin-top: 4px;
+}
 .address-link {
   overflow-wrap: anywhere;
 }
