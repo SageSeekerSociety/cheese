@@ -72,14 +72,17 @@ def test_the_session_reaches_its_runner(tmp_path):
     assert asyncio.run(run()) == {"result": {"method": "ping", "params": {}}}
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="a Unix socket is the user's own")
 def test_nobody_else_on_the_machine_reaches_the_runner(tmp_path):
     async def run():
         held = _Echo(tmp_path / "state", _Journal, "journal.db")
         held.claim()
         await held.listen(1 << 16)
         try:
-            endpoint = json.loads(Path(runner.socket_path(held.state)).read_text())
+            path = Path(runner.socket_path(held.state))
+            if sys.platform != "win32":
+                # Only the user who started the runner may connect to it.
+                return {"others may connect": path.stat().st_mode & 0o077 != 0}
+            endpoint = json.loads(path.read_text())
 
             def stranger():
                 with socket.create_connection(("127.0.0.1", endpoint["port"]), 10) as c:
@@ -95,7 +98,10 @@ def test_nobody_else_on_the_machine_reaches_the_runner(tmp_path):
             held.server.close()
 
     answer = asyncio.run(run())
-    assert "result" not in answer and "error" in answer
+    if sys.platform != "win32":
+        assert answer == {"others may connect": False}
+    else:
+        assert "result" not in answer and "error" in answer
 
 
 def test_one_runner_holds_a_state_directory(tmp_path):
