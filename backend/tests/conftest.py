@@ -1950,6 +1950,32 @@ def _slow_baseline() -> frozenset[str]:
     )
 
 
+# Intermittent failures set aside while an issue tracks each fix; the format
+# and the rules are in the file's own header.
+_QUARANTINE = Path(__file__).with_name("quarantine.txt")
+_ISSUE_LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/issues/\d+")
+
+
+def _quarantine() -> dict[str, str]:
+    """Each quarantined node id and the issue that owns its fix."""
+    entries, unowned = {}, []
+    for line in _QUARANTINE.read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        nodeid, _, note = line.partition("#")
+        issue = _ISSUE_LINK.search(note)
+        if issue is None:
+            unowned.append(f"  {line}")
+            continue
+        entries[nodeid.strip()] = issue.group()
+    if unowned:
+        raise pytest.UsageError(
+            "tests/quarantine.txt lines need `# <GitHub issue link>`:\n"
+            + "\n".join(unowned)
+        )
+    return entries
+
+
 def _layer_of(item: pytest.Item) -> str:
     """Which layer ``item`` runs in.
 
@@ -1995,6 +2021,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     misfiled = []
     slow = _slow_baseline()
+    quarantine = _quarantine()
     for item in items:
         declared = {m.name for m in item.iter_markers()} & _LAYERS
         if declared:
@@ -2006,6 +2033,14 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         layer = _layer_of(item)
         item.add_marker(layer)
+        if item.nodeid in quarantine:
+            # The prefix is how scripts/assert_suite_ran.py tells this xfail
+            # from a skip, which it refuses.
+            item.add_marker(
+                pytest.mark.xfail(
+                    strict=False, reason=f"quarantined: {quarantine[item.nodeid]}"
+                )
+            )
         if item.nodeid in slow:
             continue
         # A test may ask for less time than its layer allows, never more.

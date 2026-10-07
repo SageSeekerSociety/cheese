@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran
+from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran, not_clean
 
 
 def report(tmp_path: Path, body: str) -> Path:
@@ -200,3 +200,68 @@ def test_duplicate_junit_identity_fails(tmp_path: Path) -> None:
         assert_suite_ran(
             report(tmp_path, repeated), at_least=2, selection_dir=directory
         )
+
+
+# What pytest's JUnit writer leaves for the report xdist sends when a worker
+# dies mid-case (recorded from a real run); the retry reports the case again.
+CRASH_PLACEHOLDER = '<testcase time="0.000"/>'
+QUARANTINED = (
+    '<testcase classname="tests.unit.test_a" name="test_five">'
+    '<skipped type="pytest.xfail" '
+    'message="quarantined: https://github.com/o/r/issues/1"/></testcase>'
+)
+
+
+def reruns(tmp_path: Path, *records: dict) -> Path:
+    path = tmp_path / "reruns.jsonl"
+    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    return path
+
+
+def test_a_crash_placeholder_needs_a_recorded_crash(tmp_path: Path) -> None:
+    results = report(tmp_path, PASSED + CRASH_PLACEHOLDER)
+    with pytest.raises(SuiteDidNotRun, match="nameless"):
+        assert_suite_ran(results, at_least=1)
+    retried = reruns(
+        tmp_path, {"nodeid": "tests/unit/test_a.py::test_one", "crashed": True}
+    )
+    assert assert_suite_ran(results, at_least=1, reruns=retried) == 1
+
+
+def test_a_failed_retry_does_not_explain_a_placeholder(tmp_path: Path) -> None:
+    retried = reruns(
+        tmp_path, {"nodeid": "tests/unit/test_a.py::test_one", "crashed": False}
+    )
+    with pytest.raises(SuiteDidNotRun, match="0 recorded worker crash"):
+        assert_suite_ran(
+            report(tmp_path, PASSED + CRASH_PLACEHOLDER), at_least=1, reruns=retried
+        )
+
+
+def test_a_quarantined_case_ran_and_is_named(tmp_path: Path) -> None:
+    results = report(tmp_path, PASSED + QUARANTINED)
+    assert assert_suite_ran(results, at_least=2) == 2
+    [line] = not_clean(results, None)
+    assert "test_five is quarantined" in line
+
+
+def test_an_ordinary_xfail_is_still_a_skip(tmp_path: Path) -> None:
+    xfail = QUARANTINED.replace("quarantined: ", "")
+    with pytest.raises(SuiteDidNotRun, match="skipped"):
+        assert_suite_ran(report(tmp_path, PASSED + xfail), at_least=1)
+
+
+def test_only_a_retry_that_passed_is_named(tmp_path: Path) -> None:
+    one, two = "tests/unit/test_a.py::test_one", "tests/unit/test_a.py::test_two"
+    failed_two = (
+        '<testcase classname="tests.unit.test_a" name="test_two">'
+        f'<properties><property name="cheese_nodeid" value="{two}"/></properties>'
+        '<failure message="nope"/></testcase>'
+    )
+    retried = reruns(
+        tmp_path,
+        {"nodeid": one, "crashed": False, "reason": "flaky"},
+        {"nodeid": two, "crashed": False, "reason": "broken"},
+    )
+    lines = not_clean(report(tmp_path, passed_nodeid(one) + failed_two), retried)
+    assert lines == [f"{one} passed only on a retry; first it failed: flaky"]

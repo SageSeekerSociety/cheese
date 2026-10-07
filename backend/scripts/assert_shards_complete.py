@@ -28,7 +28,12 @@ def assert_complete(artifacts: Path, plan: str) -> int:
     seen: set[str] = set()
     for _, directory in latest.values():
         _, _, assigned = read_selection(directory)
-        assert_suite_ran(directory / "results.xml", at_least=1, selection_dir=directory)
+        assert_suite_ran(
+            directory / "results.xml",
+            at_least=1,
+            selection_dir=directory,
+            reruns=directory / "reruns.jsonl",
+        )
         duplicate = seen.intersection(assigned)
         if duplicate:
             raise SuiteDidNotRun(f"cases ran on multiple runners: {sorted(duplicate)}")

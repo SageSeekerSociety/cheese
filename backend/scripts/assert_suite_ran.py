@@ -11,11 +11,17 @@ no case may be skipped, and at least as many cases must have run as the job says
 it has. `at_least` is a floor, not the exact count — it is there to catch a
 collapse in what ran, and it is raised when a job's selection grows enough that
 the old floor stops meaning anything.
+
+Two marks are not silence and are let through, each named on the run instead:
+a case that only passed on a retry (``--reruns``, recorded by
+``scripts.ci_evidence`` in ``reruns.jsonl``), and a case listed in
+``tests/quarantine.txt``, which runs as a non-strict xfail.
 """
 
 import argparse
 import hashlib
 import json
+import os
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -23,6 +29,41 @@ from pathlib import Path
 
 class SuiteDidNotRun(Exception):
     """The report says the suite did not do what the job asked of it."""
+
+
+# The reason tests/conftest.py gives a quarantined case's xfail marker.
+QUARANTINED = "quarantined:"
+
+
+def read_reruns(path: Path | None) -> list[dict]:
+    """Every retry ``scripts.ci_evidence`` recorded, oldest first."""
+    if path is None or not path.exists():
+        return []
+    reruns = []
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        try:
+            rerun = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SuiteDidNotRun(
+                f"{path}:{number} is not a rerun record: {exc}"
+            ) from exc
+        if not isinstance(rerun, dict) or not isinstance(rerun.get("nodeid"), str):
+            raise SuiteDidNotRun(f"{path}:{number} has no nodeid")
+        reruns.append(rerun)
+    return reruns
+
+
+def _is_crash_placeholder(case: ET.Element) -> bool:
+    """The nameless, empty testcase pytest's JUnit writer leaves for the report
+    xdist sends when a worker dies mid-case; the case itself is reported again
+    by its retry."""
+    return not case.get("name") and not case.get("classname") and len(case) == 0
+
+
+def _is_quarantined(skip: ET.Element) -> bool:
+    return skip.get("type") == "pytest.xfail" and (
+        skip.get("message") or ""
+    ).startswith(QUARANTINED)
 
 
 def read_selection(selection_dir: Path) -> tuple[int, list[str], list[str]]:
@@ -89,13 +130,18 @@ def read_selection(selection_dir: Path) -> tuple[int, list[str], list[str]]:
 
 
 def assert_suite_ran(
-    junit_xml: Path, *, at_least: int, selection_dir: Path | None = None
+    junit_xml: Path,
+    *,
+    at_least: int,
+    selection_dir: Path | None = None,
+    reruns: Path | None = None,
 ) -> int:
     """Return how many cases ran, or raise ``SuiteDidNotRun`` saying what is wrong.
 
     A case counts as having run when it neither was skipped nor errored during
     setup: a case that failed ran and told us something, a case that errored in
-    its fixtures did not reach its own body.
+    its fixtures did not reach its own body. A quarantined case ran too; its
+    result is what the quarantine sets aside.
     """
     if not junit_xml.exists():
         raise SuiteDidNotRun(
@@ -112,12 +158,19 @@ def assert_suite_ran(
     selection_result = (
         read_selection(selection_dir) if selection_dir is not None else None
     )
+    crashes = sum(1 for rerun in read_reruns(reruns) if rerun.get("crashed"))
+    placeholders = 0
     cases = tree.getroot().iter("testcase")
     ran, skipped, errored, executed_nodeids = 0, [], [], []
     for case in cases:
+        if _is_crash_placeholder(case):
+            placeholders += 1
+            continue
         name = f"{case.get('classname', '')}::{case.get('name', '')}"
         skip = case.find("skipped")
-        if skip is not None:
+        if skip is not None and _is_quarantined(skip):
+            ran += 1
+        elif skip is not None:
             why = skip.get("message") or skip.text or "no reason"
             skipped.append(f"{name} — {why}")
         elif (error := case.find("error")) is not None:
@@ -137,6 +190,11 @@ def assert_suite_ran(
                 )
             executed_nodeids.append(properties[0])
 
+    if placeholders > crashes:
+        raise SuiteDidNotRun(
+            f"the JUnit report has {placeholders} nameless testcase(s) but "
+            f"{crashes} recorded worker crash(es) that a retry ran again"
+        )
     if skipped:
         listing = "\n".join(f"  {line}" for line in skipped)
         raise SuiteDidNotRun(
@@ -180,6 +238,44 @@ def assert_suite_ran(
     return ran
 
 
+def not_clean(junit_xml: Path, reruns: Path | None) -> list[str]:
+    """One line per case that kept the suite green without passing cleanly:
+    retried and passed, or quarantined. Empty when the run was clean."""
+    if not junit_xml.exists():
+        return []
+    try:
+        root = ET.parse(junit_xml).getroot()
+    except ET.ParseError:
+        return []
+    final: dict[str, str] = {}
+    lines = []
+    for case in root.iter("testcase"):
+        nodeid = next(
+            (
+                value
+                for prop in case.findall("./properties/property")
+                if prop.get("name") == "cheese_nodeid" and (value := prop.get("value"))
+            ),
+            f"{case.get('classname', '')}::{case.get('name', '')}",
+        )
+        skip = case.find("skipped")
+        if skip is not None and _is_quarantined(skip):
+            lines.append(f"{nodeid} is quarantined ({skip.get('message')})")
+        failed = case.find("failure") is not None or case.find("error") is not None
+        final[nodeid] = "failed" if failed else "passed"
+    seen = set()
+    for rerun in read_reruns(reruns):
+        nodeid = rerun["nodeid"]
+        if nodeid in seen or final.get(nodeid) != "passed":
+            continue
+        seen.add(nodeid)
+        how = "its worker died" if rerun.get("crashed") else "it failed"
+        lines.append(
+            f"{nodeid} passed only on a retry; first {how}: {rerun.get('reason', '')}"
+        )
+    return lines
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("junit_xml", type=Path, help="the suite's JUnit report")
@@ -197,12 +293,35 @@ def main() -> int:
             "also require the report to contain every case assigned to this shard"
         ),
     )
+    parser.add_argument(
+        "--reruns",
+        type=Path,
+        help="reruns.jsonl from scripts.ci_evidence: retries the report hides",
+    )
     arguments = parser.parse_args()
+    try:
+        unclean = not_clean(arguments.junit_xml, arguments.reruns)
+    except SuiteDidNotRun as exc:
+        print(f"::error::{exc}")
+        return 1
+    if unclean:
+        # A green run that needed a retry is the flake a later run will lose;
+        # say so on the run a PR author looks at, as e2e.yml does for its own.
+        listing = "\n".join(f"- {line}" for line in unclean)
+        print(
+            f"::warning title=Backend is not clean::{len(unclean)} case(s): "
+            + "; ".join(unclean)
+        )
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a") as output:
+                output.write(f"### Backend is not clean\n\n{listing}\n")
     try:
         ran = assert_suite_ran(
             arguments.junit_xml,
             at_least=arguments.at_least,
             selection_dir=arguments.selection_dir,
+            reruns=arguments.reruns,
         )
     except SuiteDidNotRun as exc:
         print(f"::error::{exc}")
