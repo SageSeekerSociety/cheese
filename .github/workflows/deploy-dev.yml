@@ -74,6 +74,18 @@ jobs:
           else
             python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
           fi
+      # A refused release skips the deploy job, and a run whose only skipped job
+      # is the deploy concludes success, which reads as "this commit is on dev".
+      - name: Fail when this commit will not be deployed
+        if: steps.check.outputs.ready != 'true'
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          live="$(curl -fsS --max-time 10 https://okcheese.com/api/version | jq -r '.data.sha // empty')" || true
+          reason="its image build or Required CI has no successful latest attempt"
+          echo "Not deployed \`$CANDIDATE_SHA\`: $reason. dev runs \`${live:-unknown}\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Not deployed $CANDIDATE_SHA: $reason."
+          exit 1
 
   # A failed build used to leave this workflow SKIPPED, which reads exactly like
   # "nothing to do" — so main could sit ahead of the box with nothing red to
@@ -120,7 +132,7 @@ jobs:
       # The candidate may predate this guard. Read policy from the workflow's
       # default-branch commit before checking out that candidate's deploy code.
       - name: Check out automatic deployment policy
-        if: github.event_name == 'workflow_run'
+        if: github.event_name == 'workflow_run' || inputs.automatic
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -396,3 +408,30 @@ jobs:
                   commit["pr_created_at"] = pulls[0]["created_at"]
           json.dump(commits, sys.stdout)
           PY
+
+      # A release that finds the same or a newer one already running skips and
+      # succeeds, so the job's status alone does not say what dev runs. Every
+      # run ends by naming the candidate's fate and the commit dev serves.
+      - name: Say which commit dev runs
+        if: always()
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SKIP: ${{ steps.release.outputs.skip }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          if [ -f "$HOME/ops/deploy.env" ]; then
+            . "$HOME/ops/deploy.env"
+          fi
+          live=unknown
+          if backend="$(bash deploy/app-container.sh backend)"; then
+            image="$(docker inspect --format '{{.Config.Image}}' "$backend")"
+            live="${image##*:}"
+          fi
+          if [ "$OUTCOME" != success ]; then
+            line="Not deployed \`$CANDIDATE_SHA\`: this job ended in $OUTCOME."
+          elif [ "$SKIP" = true ]; then
+            line="Not deployed \`$CANDIDATE_SHA\`: dev already runs the same release or a newer one."
+          else
+            line="Deployed \`$CANDIDATE_SHA\`."
+          fi
+          echo "$line dev runs \`$live\`." >> "$GITHUB_STEP_SUMMARY"
