@@ -88,7 +88,8 @@ def migrated() -> Iterator[World]:
         world = World(db)
         # The rooms seed_room made are older than anything below.
         db.execute(
-            "UPDATE topics SET created_at = '2025-01-01'::timestamptz WHERE id = ANY($1)",
+            "UPDATE topics SET created_at = '2025-01-01'::timestamptz"
+            " WHERE id = ANY($1)",
             [world.first_room, world.other_room],
         )
         world.topic("design", 5)
