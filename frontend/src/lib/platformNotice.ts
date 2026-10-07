@@ -17,7 +17,7 @@
  *     in_room: bool | None,                     # 露不露面；缺省 = 露面，见 showsInRoom
  *     event_type: str,                          # 类别码
  *     severity: 'info' | 'warn' | 'error',
- *     who: 'platform' | 'cheese' | 'human',     # 谁在管这件事（码，不是文案）
+ *     who: 'platform' | 'cheese' | 'human',     # 谁在管这件事（码，不是文案）；只有最新的一句画出来
  *     detail: str | None,                       # 原话 / 日志尾巴 / traceback
  *     detail_label: str | None,                 # 展开区标题，如 "CI 日志"
  *     ...已有字段一律保持: platform/action/code/title/retryable/stack/where/request_id/count
@@ -576,7 +576,25 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
     row.notice = platformNotice(row.block, row.run)
     if (row.notice?.mode === 'mail-draft') row.notice.outcome = mailEnds.get(row.notice.mail.draftId) ?? null
   }
+  settleOwners(rows)
   return foldRepeats(foldTurnSummary(rows))
+}
+
+/**
+ * 「谁在管这件事」只对最新的那一句成立。
+ *
+ * `who` 是写下这一行那一刻的事实：「等 andy 采纳 · 需要手动处理」「退回了 · 芝士正在
+ * 处理」。之后这段对话里又有一行说了现在归谁（芝士重新递了卡、PR 合了），前一句的
+ * 尾标就过时了 —— 留着它，一张早已采纳的卡还在说等人手动处理。所以尾标只留在最后
+ * 一句说了归谁的那一行上，更早的只剩那件事本身。
+ */
+function settleOwners(rows: NoticeRow[]): void {
+  let superseded = false
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i]
+    if (superseded && row.notice?.mode === 'fold') row.notice = { ...row.notice, who: '', whoLabel: '' }
+    if (row.run.some((block) => block.kind === 'event' && whoTag(block))) superseded = true
+  }
 }
 
 /**
