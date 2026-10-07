@@ -28,6 +28,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.core.db import release_read_session
 from app.core.sentences import say
 from app.domain.project.forge import (
     ForgeRateLimitedError,
@@ -232,6 +233,15 @@ async def sweep_draft_prs(
             counts["skipped"] += 1
             continue
         try:
+            # Most passes find a branch with nothing new on it. Asking the
+            # forge that without the row lock keeps the connection free while
+            # the request is in flight; only a branch that is ahead goes on
+            # to the locked path, which asks again before it opens anything.
+            async with session_factory() as session:
+                ahead = await _branch_ahead(session, task_id)
+            if not ahead:
+                counts["skipped"] += 1
+                continue
             async with session_factory() as session:
                 opened = await _draft_pr_for_one_task(session, task_id)
                 await session.commit()
@@ -580,6 +590,54 @@ async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> b
         task, number=int(pr["number"]), url=str(pr.get("html_url") or "")
     )
     return True
+
+
+async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
+    """Could this task need a draft PR now — read without locking its row.
+
+    The same questions `_draft_pr_for_one_task` and `_open_draft_for_task`
+    ask, in the same order, minus the lock. The session is released before
+    each forge request, so a sweep over many quiet branches does not keep a
+    database connection waiting on the forge.
+    """
+    from app.domain.project.forge import binding_for_project
+    from app.domain.review.repositories import AcceptCardRepository
+    from app.domain.room_task.models import TaskStatus
+    from app.domain.room_task.services import TaskService
+
+    task = await TaskService(session).get(task_id)
+    if (
+        task is None
+        or task.status != TaskStatus.open
+        or not task.branch_name
+        or task.pr_number is not None
+    ):
+        return False
+    if await AcceptCardRepository(session).list_for_task(task.id):
+        return False
+    project_id, branch, base = task.project_id, task.branch_name, task.base_branch
+    if base is None:
+        # No base to compare against here: the locked path decides, as before.
+        return True
+    if not await background_may_use_forge(project_id, session):
+        return False
+    client = await proposal_client(project_id, session)
+    if client is None:
+        return False
+    binding = await binding_for_project(project_id, session)
+    if binding is None:
+        return False
+    owner, repo = binding.repo.split("/", 1)
+    reader = await status_client(project_id, session)
+    head = await branch_head(project_id, session, branch, release_session=True)
+    if head is None:
+        return False
+    await release_read_session(session)
+    token, _ = await client.tokens.installation_token()
+    difference = await reader.compare_status(
+        owner=owner, repo=repo, base=base, head=head, token=token
+    )
+    return difference in ("ahead", "diverged")
 
 
 async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # noqa: ANN001

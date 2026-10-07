@@ -169,10 +169,10 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
     async def _fake_proposal_client(_project_id, _session):
         return _FakeClient("acme", "widgets", _FakeTokens())
 
-    async def _fake_branch_head(_project_id, _session, _branch):
+    async def _fake_branch_head(_project_id, _session, _branch, **_):
         return "a" * 40
 
-    async def _comparison(_project_id, _session, _path):
+    async def _comparison(_project_id, _session, _path, **_):
         return {"total_commits": 1, "files": [], "commits": []}
 
     async def _fake_user_token(_session, handle: str) -> str | None:
