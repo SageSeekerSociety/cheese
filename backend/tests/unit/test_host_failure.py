@@ -1,14 +1,14 @@
 """A machine that keeps failing is named and waited for — never swapped out.
 
 The rule these tests hold: a topic's pin is write-once and nothing moves it.
-There used to be a 换身体 path (#186) that replaced a dead cloud machine or
-re-pinned the topic onto another one; it is gone, because a swap that works
-hides the fault that caused it. What remains is accounting (a second strike
-quarantines the machine) and a room-visible verdict that names the machine.
+There used to be a 换身体 path (#186) that re-pinned the topic onto another
+machine; it is gone, because a swap that works hides the fault that caused
+it. A cloud sandbox is no pin at all: the pool replaces a broken one. What
+remains is accounting (a second strike quarantines the machine) and a
+room-visible verdict that names the machine.
 """
 
 import uuid
-from unittest.mock import AsyncMock, patch
 
 from app.domain.agent.host_failure import judge_host_failure
 from app.domain.agent.platform_failures import (
@@ -31,7 +31,7 @@ async def _device_on_project(
     project_id: uuid.UUID,
     name: str,
     *,
-    supply: Supply = Supply.cloud,
+    supply: Supply = Supply.self_hosted,
 ) -> str:
     code = await service.start(name)
     device = await service.approve(
@@ -61,38 +61,6 @@ async def test_one_strike_is_not_a_verdict():
     assert not first.quarantined
     assert first.message is None, "one failure is a hiccup, and the room shows it"
     assert await service.topic_device(topic) == machine
-
-
-async def test_a_dead_cloud_host_is_reported_as_the_sandbox_and_never_replaced():
-    service = _service()
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    sick = await _device_on_project(service, project, "老机器")
-    await _device_on_project(service, project, "另一台云机器")
-    await service.bind_topic_device(topic, sick, Visibility.host)
-
-    release = AsyncMock(wraps=service.release_topic_device)
-    bind = AsyncMock(wraps=service.bind_topic_device)
-    with (
-        patch.object(service, "release_topic_device", release),
-        patch.object(service, "bind_topic_device", bind),
-    ):
-        verdict = await _fail(service, topic, STORAGE_EXHAUSTED, times=2)
-
-    assert verdict is not None
-    assert verdict.quarantined
-    assert verdict.device_id == sick
-    assert await service.topic_device(topic) == sick
-    release.assert_not_awaited()
-    bind.assert_not_awaited()
-    # The room hears about its sandbox; the host is the platform's.
-    assert verdict.message is not None and "环境" in verdict.message
-    assert "老机器" not in verdict.message
-    assert verdict.event_meta is not None
-    assert verdict.event_meta["event_type"] == "host_failure"
-    # Nothing here may read as "a new machine is on its way": the room's
-    # provisioning branch keys on that state, and it would be a lie.
-    assert "state" not in verdict.event_meta
-    assert "不会自动换" in verdict.event_meta["detail"]
 
 
 async def test_a_dead_self_hosted_machine_keeps_its_pin_and_waits_for_it():

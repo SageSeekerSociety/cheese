@@ -369,8 +369,6 @@
   "cloudVmReady": "The cloud VM is ready",
   "cloudVmReplaced": "Preparing the cloud VM failed; preparing it again",
   "cloudVmReleasedIdle": "The cloud VM was idle for {minutes} minutes. Its changes were pushed to their branches and it was released; the next message prepares a new one.",
-  "sandboxFailing": "The cloud environment keeps failing",
-  "sandboxFailingNext": "The channel stays where it is and won't move elsewhere on its own. Someone needs to check the connector and the session in this environment; retry once it is fixed.",
   "computeCloud": "Cloud environment",
   "computeCloudVm": "Whole cloud VM",
   "taskQuiet": "No progress on the task \"{title}\" for {days} days",

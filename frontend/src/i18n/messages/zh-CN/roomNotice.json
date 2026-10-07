@@ -369,8 +369,6 @@
   "cloudVmReady": "云虚拟机已就绪",
   "cloudVmReplaced": "云虚拟机准备失败，正在重新准备",
   "cloudVmReleasedIdle": "云虚拟机 {minutes} 分钟没有活动，改动已推送到分支，虚拟机已释放。下一条消息会准备一台新的。",
-  "sandboxFailing": "云端环境连续失败",
-  "sandboxFailingNext": "频道会留在原处，不会自动换到别处。需要有人检查这个环境里的连接器和会话，修复后可以重试。",
   "computeCloud": "云端环境",
   "computeCloudVm": "整台云虚拟机",
   "taskQuiet": "任务「{title}」已经 {days} 天没有进展",
