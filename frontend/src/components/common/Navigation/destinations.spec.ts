@@ -33,7 +33,7 @@ describe('一级导航的两份清单', () => {
     }
   })
 
-  // 选中框靠格子自己说「正待着」：进了项目里的话题、看板、设置，都还是这一格。
+  // 选中框靠格子自己说「正待着」：进了项目里的话题、总览、设置，都还是这一格。
   it('项目里的每一页都算站在那个项目的格子上，别的项目不算', () => {
     const rail = items(railItems(sources(11, 'p1'), DEFAULT_SHELL))
     const p1 = rail.find((i) => i.to === '/projects/p1')!
@@ -172,7 +172,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
   // 什么就画什么」，用哪个壳说都一样。
   const mine: Shell = {
     name: 'my-shell',
-    home: 'workspace-running',
+    home: 'workspace-overview',
     nav: {
       rail: ['home', 'projects', 'add'],
       tabs: ['workspace', 'home', 'inbox'],

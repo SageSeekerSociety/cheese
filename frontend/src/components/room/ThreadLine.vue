@@ -201,7 +201,8 @@ const last = computed(() => {
 .thread-line__level {
   flex: none;
 }
-.thread-line__level[data-level='review'] {
+.thread-line__level[data-level='review'],
+.thread-line__level[data-level='waiting'] {
   color: var(--accent-ink);
 }
 .thread-line__dots {

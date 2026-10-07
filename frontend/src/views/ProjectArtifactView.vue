@@ -199,8 +199,8 @@ const parent = computed(() =>
         to: { name: 'project-artifact', params: { projectId: props.projectId, artifactId: props.artifactId } },
       }
     : {
-        label: t('navigation.project.board'),
-        to: { name: 'workspace-running', params: { projectId: props.projectId } },
+        label: t('navigation.project.overview'),
+        to: { name: 'workspace-overview', params: { projectId: props.projectId } },
       }
 )
 

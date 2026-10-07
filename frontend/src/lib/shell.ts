@@ -78,11 +78,11 @@ export function orderedNav(shell: Shell, surface: ShellSurface, known: readonly 
 }
 
 /**
- * 项目名下面那一行能摆的页：除了首页（看板），只有资料库。
+ * 项目名下面那一行能摆的页：除了首页（总览），只有资料库。
  *
  * **这一行不再加东西。** 它每加一格，频道就往下挪一行；几个版本之后这里又是一摞
  * 入口，而用户整理过不止一次（2026-10-05）。新页面一律进点项目名弹出的那个菜单。
- * 守着这条的是 shell.spec.ts 里「项目名下那一行只有看板和资料库」，规则写在
+ * 守着这条的是 shell.spec.ts 里「项目名下那一行只有总览和资料库」，规则写在
  * `.claude/rules/project-sidebar.md`。
  */
 export const PROJECT_BAR_PAGES: readonly string[] = ['project-library']

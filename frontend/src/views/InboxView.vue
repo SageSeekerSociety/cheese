@@ -5,12 +5,13 @@ import { computed, onMounted, ref } from 'vue'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
-import { listAwaitingMe } from '@/api'
+import { listAwaitingMe, resolveAlert } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
-import { phraseLabel } from '@/lib/board'
+import { relTime } from '@/lib/relTime'
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -19,9 +20,11 @@ import NotificationFeed from '@/views/home/NotificationFeed.vue'
 
 // 「待办」：首页那一格点开就是这一页（手机上是底栏的一格）。
 //
-// 上面是**等你处理**：和看板读同一份规则（后端 `room_task/presentation.py`），范围换成
-// 我能看见的全部项目，再按「这件事点的是谁」过滤。它答的是「现在还没处理完的有哪些」，
-// 处理完就消失。
+// 上面是**等你处理**：「需要我处理」只在这一处。和任务列表读同一份规则（后端
+// `room_task/presentation.py`），范围换成我能看见的全部项目，再按「这件事点的是谁」过滤。
+// 它答的是「现在还没处理完的有哪些」，处理完就消失。按项目分组；每一件先说要你做什么，
+// 再说是哪件事、等的是什么（提问的原话、改动的主题、停住的原因）。要你拍板的那几件，
+// 选项就摆在这一行上。
 //
 // 下面是**动态**：提到你、回复你、邀请你、截止提醒。它们是一条条事件，读过就算。以前
 // 它们在顶栏的铃铛里；铃铛拆了，两样东西放在同一页，人回来只看这一处。
@@ -58,31 +61,69 @@ const projectTerm = termParams(DEFAULT_SHELL)
 const { show: showNewProjectDialog } = useNewProjectDialog()
 const joinOpen = ref(false)
 
-const REASON: Record<WaitingItem['reason'], string> = {
-  reviewer: 'home.inbox.reason.reviewer',
-  reporter: 'home.inbox.reason.reporter',
-  asked: 'home.inbox.reason.asked',
+/** 这一件要你做什么。负责人那一条按停在哪一格说：文档写好了等你开始、检查没过、被退回。 */
+function askOf(item: WaitingItem): { text: string; tone: 'warn' | 'danger' } {
+  if (item.reason === 'reviewer') return { text: t('home.inbox.reason.reviewer'), tone: 'warn' }
+  if (item.reason === 'reporter') return { text: t('home.inbox.reason.reporter'), tone: 'warn' }
+  if (item.reason === 'asked') return { text: t('home.inbox.reason.asked'), tone: 'warn' }
+  if (item.reason === 'decide') return { text: t('home.inbox.reason.decide'), tone: 'warn' }
+  if (item.phrase === 'checks_failed') return { text: t('home.inbox.reason.checksFailed'), tone: 'danger' }
+  if (item.phrase === 'bounced') return { text: t('home.inbox.reason.bounced'), tone: 'warn' }
+  return { text: t('home.inbox.reason.start'), tone: 'warn' }
 }
 
-/** 活的事写活的名字，房间自己的事写房间的；还没起名的按读者的语言说。 */
+/** 任务的事写任务的名字，频道自己的事写频道的；要你拍板的写那个问题。 */
 function itemTitle(item: WaitingItem): string {
+  if (item.reason === 'decide' && item.question) return item.question
   if (item.taskTitle) return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
   return topicTitle({ title: item.topicTitle })
 }
 
 function linkTo(item: WaitingItem) {
+  const query = item.blockId ? { block: item.blockId } : undefined
+  // 任务的事打开任务页，不是它所在的频道。
+  if (item.taskId) {
+    return {
+      name: 'workspace-task',
+      params: { projectId: item.projectId, topicId: item.topicId, taskId: item.taskId },
+      query,
+    }
+  }
   // 芝士在支线里问的，打开那条支线。
   if (item.threadId) {
     return {
       name: 'workspace-thread',
       params: { projectId: item.projectId, topicId: item.topicId, threadId: item.threadId },
-      query: item.blockId ? { block: item.blockId } : undefined,
+      query,
     }
   }
-  return {
-    name: 'workspace-topic',
-    params: { projectId: item.projectId, topicId: item.topicId },
-    query: item.blockId ? { block: item.blockId } : undefined,
+  return { name: 'workspace-topic', params: { projectId: item.projectId, topicId: item.topicId }, query }
+}
+
+const byProject = computed(() => {
+  const groups: { projectId: string; projectName: string; items: WaitingItem[] }[] = []
+  for (const item of items.value) {
+    const group = groups.find((g) => g.projectId === item.projectId)
+    if (group) group.items.push(item)
+    else groups.push({ projectId: item.projectId, projectName: item.projectName, items: [item] })
+  }
+  return groups
+})
+
+// 拍板：选了就交上去，这一件随之从清单上消失。
+const deciding = ref<number | null>(null)
+const decideError = ref('')
+async function decide(item: WaitingItem, chosen: string) {
+  if (item.alertId == null) return
+  deciding.value = item.alertId
+  decideError.value = ''
+  try {
+    await resolveAlert(item.alertId, chosen)
+    items.value = items.value.filter((other) => other.alertId !== item.alertId)
+  } catch (e) {
+    decideError.value = e instanceof Error ? e.message : t('home.inbox.decideFailed')
+  } finally {
+    deciding.value = null
   }
 }
 </script>
@@ -150,24 +191,46 @@ function linkTo(item: WaitingItem) {
       @retry="load"
     />
     <p v-else-if="items.length === 0" class="inbox__quiet">{{ t('home.inbox.waitingEmpty') }}</p>
-    <v-list v-else class="inbox__list" bg-color="transparent" lines="two">
-      <v-list-item
-        v-for="item in items"
-        :key="`${item.topicId}:${item.taskId ?? ''}:${item.blockId ?? ''}`"
-        :to="linkTo(item)"
-        class="inbox-item"
-      >
-        <template #prepend>
-          <span class="inbox-item__mark" />
-        </template>
-        <v-list-item-title class="inbox-item__title">
-          {{ itemTitle(item) }}
-        </v-list-item-title>
-        <v-list-item-subtitle class="inbox-item__meta">
-          {{ t(REASON[item.reason]) }} · {{ phraseLabel(item.phrase) }} · {{ item.projectName }}
-        </v-list-item-subtitle>
-      </v-list-item>
-    </v-list>
+    <template v-else>
+      <p v-if="decideError" role="alert" class="inbox__error t-meta">{{ decideError }}</p>
+      <section v-for="group in byProject" :key="group.projectId" class="inbox__project">
+        <h3 class="inbox__project-name">
+          {{ group.projectName }} <span class="inbox__count">{{ group.items.length }}</span>
+        </h3>
+        <ul class="inbox__list">
+          <li
+            v-for="item in group.items"
+            :key="`${item.topicId}:${item.taskId ?? ''}:${item.blockId ?? ''}:${item.alertId ?? ''}`"
+            class="inbox-item"
+          >
+            <NavLink :to="linkTo(item)" class="inbox-item__link">
+              <span class="inbox-item__head">
+                <span class="inbox-item__ask t-meta" :class="`inbox-item__ask--${askOf(item).tone}`">{{
+                  askOf(item).text
+                }}</span>
+                <span class="inbox-item__title t-body">{{ itemTitle(item) }}</span>
+              </span>
+              <span v-if="item.detail" class="inbox-item__detail t-body">{{ item.detail }}</span>
+              <span class="inbox-item__where t-meta">
+                # {{ topicTitle({ title: item.topicTitle }) }} · {{ relTime(item.at) }}
+              </span>
+            </NavLink>
+            <div v-if="item.reason === 'decide' && item.options?.length" class="inbox-item__options">
+              <BaseButton
+                v-for="option in item.options"
+                :key="option"
+                size="sm"
+                kind="secondary"
+                :loading="deciding === item.alertId"
+                @click="decide(item, option)"
+              >
+                {{ option }}
+              </BaseButton>
+            </div>
+          </li>
+        </ul>
+      </section>
+    </template>
 
     <NotificationFeed />
     <JoinSpaceDialog v-model="joinOpen" />
@@ -251,36 +314,83 @@ function linkTo(item: WaitingItem) {
 .inbox__load-error {
   padding: 8px 0;
 }
+.inbox__error {
+  margin: 0 0 8px;
+  color: var(--danger-ink);
+}
+.inbox__project {
+  margin-bottom: 24px;
+}
+.inbox__project-name {
+  margin: 0;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--line-2);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  font-weight: 600;
+  color: var(--ink);
+}
+.inbox__count {
+  color: var(--faint);
+  font-weight: 400;
+}
 .inbox__list {
+  margin: 0;
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  overflow: hidden;
+  list-style: none;
 }
 .inbox-item {
   border-bottom: 1px solid var(--line);
 }
-.inbox-item :deep(.v-list-item__prepend) {
-  width: auto;
-  margin-inline-end: 12px;
+.inbox-item__link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 4px;
+  color: inherit;
+  text-decoration: none;
 }
-.inbox-item:last-child {
-  border-bottom: none;
+.inbox-item__link:hover {
+  background: var(--fill);
 }
-/* 待处理是整个产品里要人动手的那一列，和看板上同一个暖色的标记。 */
-.inbox-item__mark {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: var(--warn);
+.inbox-item__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.inbox-item__ask {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.inbox-item__ask--warn {
+  color: var(--accent-ink);
+}
+.inbox-item__ask--danger {
+  color: var(--danger-ink);
 }
 .inbox-item__title {
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink);
-  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.inbox-item__meta {
-  color: var(--muted);
-  font-size: 13px;
+.inbox-item__detail {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.inbox-item__where {
+  color: var(--faint);
+}
+.inbox-item__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 4px 14px;
 }
 </style>

@@ -647,9 +647,9 @@ export const RAIL_ROOT_TOPIC: Topic = {
   created_at: '2026-09-20T08:00:00Z',
 }
 
-/** 项目名下那两行（看板、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
+/** 项目名下那两行（总览、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
 export const RAIL_PAGES = [
-  { key: 'workspace-running', label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
+  { key: 'workspace-overview', label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
   { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
 ]
 

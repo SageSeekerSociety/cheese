@@ -7,8 +7,13 @@
     "reason": {
       "reviewer": "Waiting for your review",
       "reporter": "Your request has been delivered",
-      "asked": "Waiting for your answer"
-    }
+      "asked": "Waiting for your answer",
+      "start": "Ready for you to start",
+      "checksFailed": "Checks failed",
+      "bounced": "Returned",
+      "decide": "Awaiting your decision"
+    },
+    "decideFailed": "Unable to submit"
   },
   "nav": {
     "teamProjects": "Projects",

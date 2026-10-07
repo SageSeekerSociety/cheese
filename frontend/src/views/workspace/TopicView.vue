@@ -270,13 +270,13 @@ function threadTime(iso: string): string {
     : at.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
 }
 
-// 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：看板、资料库、
+// 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：总览、资料库、
 // 项目文档、搜索。点过去时就只剩取数据那一段等待（lib/routePrefetch.ts）。
 let cancelRouteWarm: (() => void) | null = null
 onMounted(() => {
   const params = { projectId: props.projectId }
   cancelRouteWarm = warmRoutesWhenIdle(router, [
-    { name: 'workspace-running', params },
+    { name: 'workspace-overview', params },
     { name: 'project-library', params },
     { name: 'project-docs', params: { ...params, kind: 'charter' } },
     { name: 'project-search', params },
@@ -827,7 +827,7 @@ void openPlace()
                 "
                 @jump="jumpTo"
                 @open-task="onOpenCard"
-                @open-all="router.push({ name: 'workspace-channel-tasks', params: { projectId, topicId } })"
+                @open-all="router.push({ name: 'project-tasks', params: { projectId }, query: { channel: topicId } })"
                 @mention-click="handleMentionClick"
               />
             </template>
