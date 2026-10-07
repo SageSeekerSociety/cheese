@@ -22,9 +22,20 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.executor_transport import dial_runner
-from app.domain.agent.harness.driven import runner
-from app.domain.agent.harness.driven.journal import Journal
+# As in the runner's archive (`driven/bundle.py`), where portable.py, which the
+# runner imports on Windows, sits at the root.
+if sys.platform == "win32":
+    sys.path.insert(
+        0,
+        str(
+            Path(__file__).resolve().parents[3]
+            / "app/domain/agent/harness/claude_code/remote_execution"
+        ),
+    )
+
+from app.domain.agent.executor_transport import dial_runner  # noqa: E402
+from app.domain.agent.harness.driven import runner  # noqa: E402
+from app.domain.agent.harness.driven.journal import Journal  # noqa: E402
 
 CLIENT = (
     Path(__file__).resolve().parents[3]
