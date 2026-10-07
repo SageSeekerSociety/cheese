@@ -173,3 +173,14 @@ CHECKOUT_DIR = "room"
 #: no room can write, rather than from the room. Copied by the bootstrap and the
 #: cleanup script, held to this one by `tests/unit/test_footprint_root.py`.
 SANDBOXES_DIR = "sandboxes"
+
+#: Under the footprint root, once per machine: the Claude Code login its owner
+#: gives the platform (`cheesehost claude login`), kept apart from the owner's
+#: own `~/.claude`. A session of the owner's own Claude Code keeps its own
+#: `CLAUDE_CONFIG_DIR` and reads this one as its credential store
+#: (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), so every such session on the machine
+#: shares one login and Claude Code's own refresh renews it for all of them.
+#: The connector writes it (`cli/internal/claudecode`) and the backend's probe
+#: reads it; both copies are held to this one by
+#: `tests/unit/test_footprint_root.py`.
+CLAUDE_LOGIN_DIR = "claude-login"

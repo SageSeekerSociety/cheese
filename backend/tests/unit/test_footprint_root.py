@@ -36,6 +36,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.place import (
     CHECKOUT_DIR,
+    CLAUDE_LOGIN_DIR,
     SANDBOXES_DIR,
     STAGED_DIR,
     footprint_root,
@@ -133,6 +134,16 @@ def test_the_connector_uninstalls_the_root_the_platform_writes():
     declared = re.search(r'Root\s*=\s*"([^"]+)"', source)
     assert declared, "the connector stopped declaring a footprint root"
     assert declared.group(1) == footprint_root()
+
+
+def test_the_connector_logs_claude_code_in_where_the_backend_asks_about_it():
+    """The connector writes the owner's Claude Code login for the platform and
+    the backend's probe reads it. A name that drifts reads as "not logged in"
+    on every machine, with a login sitting one directory over."""
+    source = (REPOSITORY / "cli/internal/place/place.go").read_text()
+    declared = re.search(r'ClaudeLogin\s*=\s*"([^"]+)"', source)
+    assert declared, "the connector stopped declaring the Claude Code login directory"
+    assert declared.group(1) == CLAUDE_LOGIN_DIR
 
 
 # What the sandbox CLI hangs off its own home: `Path.home() / "x"` and

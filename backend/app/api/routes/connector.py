@@ -94,6 +94,7 @@ _recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
 async def recover_business_state(device_id: str) -> None:
     from app.core.background import spawn
     from app.core.db import async_session_factory
+    from app.domain.agent.harness.claude_code import owner_login
     from app.domain.local_fs.enforcement import push_grants_on_connect
 
     # The machine enforces its own copy of its directory grants, so it is sent
@@ -104,6 +105,12 @@ async def recover_business_state(device_id: str) -> None:
     spawn(
         push_grants_on_connect(async_session_factory, device_hub, device_id),
         name="local grants device reconnect",
+    )
+    # Whether its owner's own Claude Code is logged in for the platform: only
+    # the machine knows, and a session of it is placed by the answer.
+    spawn(
+        owner_login.refresh_on_connect(async_session_factory, device_hub, device_id),
+        name="claude login device reconnect",
     )
     async with _recovering:
         await _recover_business_state(device_id)

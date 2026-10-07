@@ -24,3 +24,10 @@ package place
 // and every transcript they have. An uninstall that reached for it would delete
 // work the platform never wrote and cannot give back.
 const Root = ".cheese"
+
+// ClaudeLogin is the directory under Root that holds the Claude Code login the
+// machine's owner gives the platform (`cheesehost claude login`), apart from
+// their own `~/.claude`. The backend names it in `place.py`
+// (`CLAUDE_LOGIN_DIR`) and `backend/tests/unit/test_footprint_root.py` fails if
+// the two disagree.
+const ClaudeLogin = "claude-login"
