@@ -25,8 +25,6 @@
   "taskDocParticipantsOnly": "Only the task's owner and collaborators can change this task's document; say what you think in the channel",
   "taskCreatedByPerson": "Only a person can create a task this way",
   "teammateTaskByTeammate": "Only an AI teammate creates tasks here",
-  "taskProposalNotFound": "This channel has no such task proposal",
-  "taskProposalDecided": "This proposal has already been handled",
   "taskStartedAlready": "This task has already started",
   "taskStillOpen": "This task is still open",
   "taskNotStarted": "This task hasn't started; the project can change once its owner starts it",

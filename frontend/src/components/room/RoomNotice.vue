@@ -22,7 +22,6 @@ import { repeatsLine } from '../../lib/noticeRepeats'
 import { noticeText } from '../../lib/noticeText'
 import { confirmTarget, environmentTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
-import { progressLabel, type ProgressLevel } from '../../lib/taskProgress'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import NavLink from '../common/NavLink.vue'
 
@@ -59,8 +58,6 @@ const props = defineProps<{
   retrying?: boolean
   /** 房间所在的项目：「去确认」要带人去项目级的页面。 */
   projectId?: string | null
-  /** 这个频道里一件任务此刻到哪一档（「创建了任务」那一行写在后面）；不认得就是 null。 */
-  taskLevel?: (taskId: string) => ProgressLevel | null
   /** 合成一行的那一串里的一条：只画这一条自己的内容，外框（头像、名字）归合起来的那一行。 */
   inline?: boolean
   /** 合成一行的那一串，点开后每一条自己的时间。 */
@@ -153,9 +150,6 @@ const splitTask = computed(() => {
   return typeof id === 'string' && id ? id : null
 })
 
-// 「创建了任务」那一行后面写那件任务此刻到了哪一档：讨论中、进行中、待审阅、已完成。
-const splitLevel = computed(() => (splitTask.value ? props.taskLevel?.(splitTask.value) ?? null : null))
-
 // 「置顶了一条消息」那一行：被置顶的是哪一条，行尾一颗「查看」去它那里。
 const pinnedBlock = computed(() => {
   const id = (props.block.meta as Record<string, unknown> | null | undefined)?.pinned_block_id
@@ -195,7 +189,6 @@ function openLibraryDoc() {
 // 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么（目录里的键）。
 const ACTION_META: Record<string, { btn: string }> = {
   doc: { btn: 'work.room.notice.action.doc' },
-  topics: { btn: '' },
   split: { btn: 'work.room.notice.action.split' },
   task_created: { btn: 'work.room.notice.action.split' },
   accept: { btn: 'work.room.notice.action.accept' },
@@ -230,7 +223,6 @@ const ACTION_META: Record<string, { btn: string }> = {
         :agent-name="agentName"
         :refs="refs"
         :project-id="projectId"
-        :task-level="taskLevel"
         inline
         @open-resource="(...a) => emit('open-resource', ...a)"
         @open-card="emit('open-card', $event)"
@@ -350,10 +342,6 @@ const ACTION_META: Record<string, { btn: string }> = {
          through the shared token→chip path so the actor is clickable. -->
         <span class="sys-text">
           <span v-html="renderPlain(notice.text)" />
-          <template v-if="splitLevel">
-            <span class="sys-sep"> · </span>
-            <span class="task-level" :data-level="splitLevel">{{ progressLabel(splitLevel) }}</span>
-          </template>
           <template v-if="docRequest">
             <span class="sys-sep"> · </span>
             <span>{{ t('work.room.notice.docEditCount', { n: docRequest.edits.length }) }}</span>
@@ -484,7 +472,6 @@ const ACTION_META: Record<string, { btn: string }> = {
           :agent-name="agentName"
           :refs="refs"
           :project-id="projectId"
-          :task-level="taskLevel"
           inline
           @open-resource="(...a) => emit('open-resource', ...a)"
           @open-card="emit('open-card', $event)"
@@ -814,11 +801,6 @@ details[open]::details-content {
 }
 .room-happening__go:hover {
   text-decoration: underline;
-}
-/* 任务到了哪一档：在等人的那两档（待审阅、待处理）用琥珀色点出来，其余照这一行的颜色。 */
-.task-level[data-level='review'],
-.task-level[data-level='waiting'] {
-  color: var(--accent-ink);
 }
 /* 连着的同一种操作合成的那一行：点一下在原处列出每一条。 */
 .room-happening__repeats {

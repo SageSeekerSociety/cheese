@@ -11,6 +11,7 @@ the merge queue, the poller, a PR merged by hand — so none of them can keep
 closing a task the card said goes on.
 """
 
+import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,7 +68,6 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
     it."""
     from app.domain.agent_instance.services import AgentInstanceService
     from app.domain.block.models import AuthorType, Block, BlockKind
-    from app.domain.block.repositories import BlockRepository
     from app.domain.identity.handles import agent_instance_handle
     from app.domain.project.models import Project
     from app.domain.thread.services import open_thread
@@ -88,7 +88,8 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
     thread = await open_thread(
         session, origin.id, by=task.owner_handle or origin.author
     )
-    said = await BlockRepository(session).add(
+    said = Block(
+        id=uuid.uuid4(),
         project_id=task.project_id,
         conversation_id=thread.id,
         author=agent_instance_handle(agent.instance_id),
@@ -97,6 +98,8 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
         content=str(content),
         meta={"task_result": str(task.id)},
     )
+    session.add(said)
+    await session.flush()
     _after_commit(
         session, said.conversation_id, {"type": "user_block", "block": _out(said)}
     )
@@ -118,8 +121,6 @@ def _after_commit(session: AsyncSession, channel, frame: dict) -> None:
 
 async def _tell_next_step(session: AsyncSession, task: Task) -> None:
     """The task's AI teammate hears that a step landed and it goes on."""
-    import uuid
-
     from app.domain.agent.harness.prompt import task_next_step_prompt
     from app.domain.delivery.agent import record_task_instruction
     from app.domain.delivery.ledger import DeliveryEvent

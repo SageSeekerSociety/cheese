@@ -13,9 +13,6 @@
 //   不能 —— 「以下这几条消息 / 这一项待办不归这里了」。那需要一条从支线指回
 //           房间某个 block 的边，数据库里没有这条边。
 import type { Block, RoomTask } from '../cx_types'
-import type { ProgressLevel } from './taskProgress'
-
-import { progressLevel } from './taskProgress'
 
 // 时间线上一条派生出来的「已派出」行。
 export interface SplitMarker {
@@ -23,8 +20,6 @@ export interface SplitMarker {
   // 既能打开它，也能拿去调任何按地点寻址的接口。
   taskId: string
   title: string
-  // 派出去的活现在到哪一档：讨论中、进行中、待审阅、已完成（lib/taskProgress）。
-  level: ProgressLevel
   createdAt: string
 }
 
@@ -75,7 +70,6 @@ export function dispatchedTasks(tasks: readonly RoomTask[]): SplitMarker[] {
     .map((t) => ({
       taskId: t.id,
       title: t.title,
-      level: progressLevel(t.presentation, t.status),
       createdAt: t.created_at,
     }))
     .sort((a, b) => at(a.createdAt) - at(b.createdAt))

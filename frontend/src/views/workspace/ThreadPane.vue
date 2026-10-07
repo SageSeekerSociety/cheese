@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 一条支线：页头写「支线」和它在哪个频道、挂着哪条消息，右边是「转为任务」（已经转
-// 过的，换成打开那个任务）；下面先是它挂着的那条消息，再是支线自己的对话和输入框。
+// 一条支线：页头写「支线」和它在哪个频道、挂着哪条消息，右边是「转为任务」（一条支线
+// 可以转出几件任务）；下面先是它挂着的那条消息和从这里出来的任务，再是支线自己的对话
+// 和输入框。
 //
 // 对话就是频道那一栏，换了一段对话来读（`conversationId` 是支线的 id）：消息、连接、
 // 已读都走支线，名册和附件还是频道的。桌面上它占频道页右边那一半，手机上是一整页。
@@ -10,9 +11,11 @@
 import type { Block, ProjectMemberRow, Topic } from '@/cx_types'
 import type { Thread } from '@/types/threads'
 
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import { useRoomTasks } from '@/composables/useRoomTasks'
 
 import { ApiError } from '@/api'
 import { getThread } from '@/api/threads'
@@ -22,15 +25,17 @@ import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
-import TaskProposalCard from '@/components/room/TaskProposalCard.vue'
+import TaskCard from '@/components/room/TaskCard.vue'
 import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { t } from '@/i18n'
 import { isAgentBlock } from '@/lib/authorship'
 import { replySnippet } from '@/lib/blockDisplay'
+import { taskLine, tasksByOrigin } from '@/lib/channelTasks'
 import { renderPlain } from '@/lib/renderMessage'
 import { topicTitle } from '@/lib/topicState'
+import { myHandle } from '@/me'
+import { currentUserName } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { useTaskProposals } from '@/views/workspace/useTaskProposals'
 
 defineOptions({ name: 'ThreadPane' })
 
@@ -54,14 +59,9 @@ const emit = defineEmits<{
 }>()
 
 const store = useWorkspaceStore()
-// 芝士在支线里提的卡落在这条支线上：反馈卡和任务卡都接在支线的对话后面。
-const proposals = useTaskProposals(
-  toRef(() => props.threadId),
-  (id) => emit('open-task', id)
-)
-function proposerName(handle: string): string {
-  return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
-}
+// 从这条支线（和它挂着的那条消息）出来的任务，和频道主线上那几张卡是同一份。
+const { tasks: roomTasks, reload: reloadTasks } = useRoomTasks(() => props.room.id)
+const viewer = computed(() => currentUserName.value ?? myHandle())
 // 正在看哪一轮的过程；null 是在看支线本身。
 const processTurn = ref<string | null>(null)
 const thread = ref<Thread | null>(null)
@@ -112,7 +112,11 @@ const subtitle = computed(() => {
 const rootTime = computed(() =>
   root.value ? new Date(root.value.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
 )
-const taskId = computed(() => root.value?.upgraded_to_task_id ?? null)
+const tasks = computed(() => {
+  const id = root.value?.id
+  const made = id ? tasksByOrigin(roomTasks.value).get(id) ?? [] : []
+  return made.map((task) => taskLine(task, viewer.value, nameOf))
+})
 
 function toTask() {
   if (!root.value || busy.value) return
@@ -123,10 +127,9 @@ function toTask() {
 }
 
 // 有人在支线里回话、芝士答完：概览那一格和主线上那一行由频道自己的 `threads` 刷新，
-// 这里只需要在「转为任务」之后重读一次挂着的那条消息。
+// 这里只需要在任务变了之后重读一次从这里出来的任务。
 function onState(resource: string) {
-  if (resource === 'topics') void load()
-  if (resource === 'tasks') void proposals.load()
+  if (resource === 'topics') void reloadTasks()
 }
 </script>
 
@@ -137,23 +140,9 @@ function onState(resource: string) {
         <h2 class="thread-pane__title t-title">{{ t('work.room.thread.title') }}</h2>
         <div class="thread-pane__sub t-meta">{{ subtitle }}</div>
       </div>
-      <BaseButton
-        v-if="taskId"
-        kind="secondary"
-        size="sm"
-        data-testid="thread-open-task"
-        @click="emit('open-task', taskId)"
-        >{{ t('work.room.thread.openTask') }}</BaseButton
-      >
-      <BaseButton
-        v-else-if="root"
-        kind="secondary"
-        size="sm"
-        :loading="busy"
-        data-testid="thread-to-task"
-        @click="toTask"
-        >{{ t('work.room.thread.toTask') }}</BaseButton
-      >
+      <BaseButton v-if="root" kind="secondary" size="sm" :loading="busy" data-testid="thread-to-task" @click="toTask">{{
+        t('work.room.thread.toTask')
+      }}</BaseButton>
       <BaseButton
         v-if="!page"
         icon="mdi-close"
@@ -199,6 +188,16 @@ function onState(resource: string) {
           <div v-else class="thread-root__text thread-root__text--plain" v-html="renderPlain(root.content, refs)" />
         </div>
       </article>
+      <div v-if="tasks.length" v-show="!processTurn" class="thread-pane__tasks">
+        <TaskCard
+          v-for="task in tasks"
+          :key="task.id"
+          :task="task"
+          :owner-name="task.owner ? nameOf(task.owner) : null"
+          in-list
+          @open="emit('open-task', $event)"
+        />
+      </div>
       <div v-if="thread" v-show="!processTurn" class="thread-pane__divider t-meta">
         <span>{{ t('work.room.thread.replies', { count: thread.reply_count }) }}</span>
         <span class="thread-pane__rule" />
@@ -224,14 +223,6 @@ function onState(resource: string) {
       >
         <template #timeline-end>
           <AgentFeedbackCard :topic-id="threadId" />
-          <TaskProposalCard
-            v-for="proposal in proposals.proposals.value"
-            :key="proposal.id"
-            :proposal="proposal"
-            :proposer="proposerName(proposal.proposed_by)"
-            :busy="proposals.deciding.value === proposal.id"
-            @decide="proposals.decide(proposal, $event)"
-          />
         </template>
       </ChatPanel>
       <template v-if="processTurn">
@@ -303,6 +294,15 @@ function onState(resource: string) {
 }
 .thread-root__avatar {
   flex: none;
+}
+/* 从这里出来的任务：和消息正文对齐（左内边距 16 + 头像 28 + 间距 10），几行一块。 */
+.thread-pane__tasks {
+  display: flex;
+  flex-direction: column;
+  margin: 6px 16px 4px 54px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 .thread-root__body {
   min-width: 0;

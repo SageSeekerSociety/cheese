@@ -25,8 +25,6 @@
   "taskDocParticipantsOnly": "只有任务的负责人和协作者可以修改这个任务的文档，意见请在频道里提",
   "taskCreatedByPerson": "只有人可以这样创建任务",
   "teammateTaskByTeammate": "这里只供 AI 队友创建任务",
-  "taskProposalNotFound": "这个频道里没有这条任务提议",
-  "taskProposalDecided": "这条提议已经处理过了",
   "taskStartedAlready": "这个任务已经开始了",
   "taskStillOpen": "这个任务还没有关闭",
   "taskNotStarted": "这个任务还没开始，负责人点「开始」后才能改动项目",
