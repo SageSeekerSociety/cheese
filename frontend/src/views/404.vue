@@ -12,9 +12,9 @@
 </template>
 
 <script lang="ts" setup>
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { useNavigation } from '@/composables/useNavigation'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 
 const nav = useNavigation()

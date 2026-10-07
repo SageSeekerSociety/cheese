@@ -366,5 +366,4 @@ function close() {
   margin: 0;
   color: var(--muted);
 }
-
 </style>

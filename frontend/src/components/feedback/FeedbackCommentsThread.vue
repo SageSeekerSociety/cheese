@@ -258,10 +258,14 @@ function onRemove(commentId: string) {
   font-weight: 400;
   line-height: var(--lh-14-loose);
 }
-/* 无评论那一块：长相归 BaseEmptyState，这里只留下边距 —— 它和 `.fb-thread` 一样是
-   24，列表在不在，底下那个评论框的位置不该跟着挪。 */
-.fb-thread__empty {
+/* 无评论那一块：长相归 BaseEmptyState，内距归零 —— compact 档自带 32px 16px，而这块
+   是评论正文的同伴（见模板里的注释）：左边要和正文齐，上下也不许多出留白，否则底下
+   那个评论框会在有没有评论之间上下跳。下边距和 `.fb-thread` 一样是 24。
+   选择器写成 `div.` 是为了比基元那一档高一级特异性：两边都是一个类加一个作用域属性，
+   同特异度就得靠样式注入顺序决胜负，而那会随打包方式变。 */
+div.fb-thread__empty {
   margin: 0 0 24px;
+  padding: 0;
 }
 .fb-thread__top + .fb-thread__top {
   margin-top: 16px;

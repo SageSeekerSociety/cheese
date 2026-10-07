@@ -383,9 +383,10 @@ watch(
     display: block;
   }
 }
-/* 清单空着那一行走 BaseEmptyState 的 inline 档，观感和任务列的空行一致；这里只留
-   清单自己的横向内缩。 */
+/* 清单空着那一行走 BaseEmptyState 的 inline 档。内距补回原来那一行住在清单里时的
+   位置：`ul` 的 8px 加上行自己的 `8px 4px`，即左 12、上 16 —— 任务列的空行仍在
+   `.board-col__list` 的 8px 里，两边要落在同一个位。 */
 .made__empty {
-  padding: 8px 4px;
+  padding: 16px 12px;
 }
 </style>
