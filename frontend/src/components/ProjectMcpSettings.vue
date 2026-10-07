@@ -1,96 +1,24 @@
 <script setup lang="ts">
-import type { McpDeclaringType, McpServer, McpServerList } from '../api'
+import type { McpDeclaringType, McpServer } from '../api'
 
-import { onMounted, reactive, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
+import { onMounted, watch } from 'vue'
 
-import { useNavigation } from '@/composables/useNavigation'
+import { useProjectMcp } from '@/composables/useProjectMcp'
 import { holdRevealGate } from '@/composables/useRevealGate'
-
-import { clearMcpSecret, connectMcpServer, disconnectMcpServer, getMcpServers, setMcpSecret } from '../api'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
-import { goAuthorize } from '@/lib/desktopApp'
-import { renderNoticeMessage } from '@/lib/noticeText'
 import { relTime } from '@/lib/relTime'
 
-// 项目的远程 MCP 服务器（#1909）。清单来自仓库默认分支的 .mcp.json，连接属于项目：
-// 任何成员都能连接或断开，谁授权的写在每一行上。连接走授权服务器的网页，回来时
-// 落在这一页，结果在地址栏的 mcp_result / mcp_error 里。mcp_error 是 apiError 里
-// 那句话的 key（参数在 mcp_error_params，JSON），这里按读者的语言说出来。
+// 项目的远程 MCP 服务器（#1909）。清单、连接状态和每一行那几个变量的值都在
+// `useProjectMcp` 里，包括连接走授权服务器网页之后从地址栏带回来的那一次结果
+// （mcp_result / mcp_error）。组件只画。
 const props = defineProps<{ projectId: string }>()
 
-const nav = useNavigation()
-const list = ref<McpServerList | null>(null)
-const error = ref('')
-const busy = ref('')
-const values = reactive<Record<string, string>>({})
-
-async function load() {
-  error.value = ''
-  try {
-    list.value = await getMcpServers(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.mcp.loadFailed')
-  }
-}
-
-// 连接、断开、填密钥这些都是一次性动作：结果跟这一次点击走，用全局 toast 说一声。
-function fail(e: unknown, fallback: string) {
-  toast.error(e instanceof Error ? e.message : fallback)
-}
-
-async function connect(server: McpServer) {
-  busy.value = server.name
-  try {
-    const { authorization_url } = await connectMcpServer(props.projectId, server.name)
-    if (goAuthorize(authorization_url)) busy.value = ''
-  } catch (e) {
-    fail(e, t('work.mcp.connectFailed'))
-    busy.value = ''
-  }
-}
-
-async function disconnect(server: McpServer) {
-  busy.value = server.name
-  try {
-    await disconnectMcpServer(props.projectId, server.name)
-    await load()
-  } catch (e) {
-    fail(e, t('work.mcp.disconnectFailed'))
-  } finally {
-    busy.value = ''
-  }
-}
-
-async function save(name: string) {
-  const value = values[name]?.trim()
-  if (!value) return
-  busy.value = name
-  try {
-    await setMcpSecret(props.projectId, name, value)
-    values[name] = ''
-    await load()
-  } catch (e) {
-    fail(e, t('work.mcp.saveFailed'))
-  } finally {
-    busy.value = ''
-  }
-}
-
-async function clear(name: string) {
-  busy.value = name
-  try {
-    await clearMcpSecret(props.projectId, name)
-    await load()
-  } catch (e) {
-    fail(e, t('work.mcp.saveFailed'))
-  } finally {
-    busy.value = ''
-  }
-}
+const { list, error, busy, values, load, connect, disconnect, save, clear, takeCallbackResult } = useProjectMcp(
+  () => props.projectId
+)
 
 function missing(server: McpServer) {
   return server.variables.filter((v) => !v.set).map((v) => v.name)
@@ -125,34 +53,6 @@ const DOT: Record<McpServer['status'], string> = {
   needs_reconnect: 'status-dot--warn',
   missing_values: 'status-dot--warn',
   disconnected: 'status-dot--muted',
-}
-
-// 从授权服务器回来：把结果说一次，再从地址栏拿掉，刷新不会再说一遍。
-function callbackParams(raw: unknown): Record<string, unknown> {
-  try {
-    const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : null
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
-  } catch {
-    return {}
-  }
-}
-
-function failureText(name: string, failure: unknown, params: unknown): string {
-  // 不认识的 code（或者没有 key 的那种拒绝，服务端发 failed）只说连接失败，不把 code 念出来。
-  const reason = renderNoticeMessage({ key: String(failure), params: callbackParams(params) }, '')
-  return reason ? t('work.mcp.connectFailedWith', { name, reason }) : t('work.mcp.connectFailedNamed', { name })
-}
-
-function takeCallbackResult() {
-  const route = nav?.route
-  if (!route) return
-  const { mcp, mcp_result: result, mcp_error: failure, mcp_error_params: failureParams, ...rest } = route.query
-  if (!result && !failure) return
-  const name = String(mcp ?? '')
-  if (failure) toast.error(failureText(name, failure, failureParams))
-  else toast.success(t('work.mcp.connectedNotice', { name }))
-  // 换掉地址、不在身后留一条一样的：`hash` 原样带着，别把锚点也一起抹掉。
-  void nav?.navigate({ query: rest, hash: route.hash }, { replace: true })
 }
 
 const releaseGate = holdRevealGate()
