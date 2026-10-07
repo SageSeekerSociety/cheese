@@ -158,6 +158,8 @@ function resourceActions(resource: Knowledge): MenuAction[] {
 </template>
 
 <style scoped lang="scss">
+@use '../../../styles/breakpoints.scss' as bp;
+
 .resource-table {
   border: 1px solid var(--line);
 }
@@ -190,7 +192,7 @@ function resourceActions(resource: Knowledge): MenuAction[] {
 }
 
 // 响应式调整
-@media (max-width: 600px) {
+@include bp.below(bp.$bp-phone) {
   .resource-description-list {
     max-width: 150px;
   }

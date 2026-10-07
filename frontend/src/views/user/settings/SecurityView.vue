@@ -454,7 +454,8 @@ const sessionIcon = (userAgent: string) =>
   overflow: hidden;
 }
 
-@media (min-width: 600px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）；下面这条是 min-width。这一处原来是 600，归 767.98 会让 600–767 从单行截断改成换行。 */
+@media (min-width: 767.98px) {
   .srow__v--parts {
     display: block;
     white-space: nowrap;

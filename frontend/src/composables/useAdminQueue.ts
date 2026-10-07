@@ -38,6 +38,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
+import { WIDE_MIN_WIDTH } from '@/composables/useWorkspaceLayout'
+
 import { allStatuses, statusMeta } from '@/lib/feedbackMeta'
 import { relativeDays } from '@/lib/feedbackWindows'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -66,7 +68,10 @@ const QUERY_MIN_CHARS = 2
  *  看一行」。窄屏上把后者也当成打开，就是每按一次 `j` 弹一次抽屉。所以靠时间窗分开。 */
 const POINTER_WINDOW_MS = 400
 
-const WIDE_QUERY = '(min-width: 1280px)'
+/** 详情整页接管还是落成抽屉的那条线。数从 `useWorkspaceLayout` 拿，不在这儿再抄一
+ *  遍：`AdminQueueDetail` 的 `@media (min-width: 1280px)` 是这条线的另一半，抄出来
+ *  的那份改的时候不会有人想起它。 */
+const WIDE_QUERY = `(min-width: ${WIDE_MIN_WIDTH}px)`
 
 /** 分诊键落在梯子的第几格（§8 表里的 `1` 进行中 / `2` 已解决 / `3` 已上线）。存的是
  *  **下标**而不是状态名：梯子由服务端给（`store.statusLadder`），下标才是那三条键的

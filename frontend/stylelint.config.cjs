@@ -31,6 +31,9 @@ const RADIUS_PROPERTIES = [
   'border-end-end-radius',
 ]
 
+/** The four viewport tiers, as compiled CSS values. Source: src/styles/breakpoints.scss. */
+const BREAKPOINT_TIERS = ['767.98px', '959.98px', '1179.98px', '1279.98px']
+
 const ALLOWED_RADIUS_VALUES = [
   // The tokens are the preferred form; the raw ladder values are accepted so
   // that a file which cannot reach a CSS variable (rare, but Vuetify `style=`
@@ -95,6 +98,30 @@ module.exports = {
       Object.fromEntries(RADIUS_PROPERTIES.map((property) => [property, ALLOWED_RADIUS_VALUES])),
       {
         message: `Off-ladder radius. Use var(--radius-sm|md|lg|pill) — ${RADIUS_LADDER.join(' / ')}. See docs/design-system.md.`,
+      },
+    ],
+
+    /* ---- Design system: viewport breakpoints ---- */
+
+    // The four tiers are SCSS constants in src/styles/breakpoints.scss, because a
+    // media query cannot read a CSS variable. A file that can reach them writes
+    // `@include bp.below(bp.$bp-phone)`; a plain-CSS file has no choice but to
+    // write 767.98px. Both compile down to a value in this list, so the gate
+    // polices the VALUES and leaves the spelling to the ordinary rules.
+    //
+    // The feature name has to be spelled per form: `(max-width: 600px)`,
+    // `(min-width: 1280px)` and the range form `(width < 600px)` are three
+    // different names to stylelint, and all three are in use in this tree.
+    'media-feature-name-value-allowed-list': [
+      {
+        'min-width': BREAKPOINT_TIERS,
+        'max-width': BREAKPOINT_TIERS,
+        width: BREAKPOINT_TIERS,
+      },
+      {
+        message:
+          `Off-tier viewport breakpoint. The four tiers are ${BREAKPOINT_TIERS.join(' / ')} — ` +
+          'fold the value, use the mixin, or record it as an exception in docs/breakpoint-inventory.md.',
       },
     ],
 
@@ -187,6 +214,25 @@ module.exports = {
         'color-named': null,
         'declaration-property-value-disallowed-list': null,
         'declaration-property-value-allowed-list': null,
+      },
+    },
+    {
+      // The docs site is a separate app with its own layout ladder (1680 / 1239 /
+      // 1099 / 820 / 760 / 560 …); its one stylesheet is linted here for colours
+      // and radii, but the product's four viewport tiers do not govern it.
+      files: ['../docs/site/src/style.css'],
+      rules: {
+        'media-feature-name-value-allowed-list': null,
+      },
+    },
+    {
+      // breakpoints.scss is where the tiers are DEFINED, so it is the one file
+      // that must write `@media (max-width: $width)` — a variable, not a tier.
+      // Exempting the definition site is the same call as exempting src/style.css
+      // from the colour rules.
+      files: ['src/styles/breakpoints.scss'],
+      rules: {
+        'media-feature-name-value-allowed-list': null,
       },
     },
     {

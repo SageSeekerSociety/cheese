@@ -444,7 +444,11 @@ function submit() {
   color: var(--muted);
 }
 
-@media (max-width: 700px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。原来的 700 不在
+   四档里，而且这一行只在弹窗是整页的时候才可能窄——「手机是一整页」那条线是 960
+   （`AdaptiveDialog` 的 `mdAndUp`），所以桌面那个定宽盒子（视口多大都一样）不受这条
+   影响，窄的只可能是整页，也就是手机外壳。 */
+@media (max-width: 767.98px) {
   .apd__row {
     grid-template-columns: minmax(0, 1fr);
   }

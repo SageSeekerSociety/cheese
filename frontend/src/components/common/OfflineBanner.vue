@@ -66,7 +66,8 @@ const online = useOnline()
 
    这 64px 是「顶栏 56 + 8」——顶栏自己还让了 `safe-area-inset-top`（style.css），
    所以这里得跟着补上那一截，否则刘海机上横幅会缩回顶栏底下被压住。 */
-@media (width < 960px) {
+/* 断点收进共享 token：959.98 = $bp-mobile（styles/breakpoints.scss）。 */
+@media (max-width: 959.98px) {
   .offline-banner {
     top: calc(64px + env(safe-area-inset-top, 0px));
     right: 16px;

@@ -94,7 +94,8 @@ a.usl__name:hover {
    底色画的轨道几乎看不见，剩下的就是一小截琥珀色浮在行中间，既不像条也说不
    出比例（同 `UsagePackList` 的窄屏版式）。名字独占一行，条从左边起、和点数
    同一行。 */
-@media (max-width: 700px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .usl__row {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 6px 16px;

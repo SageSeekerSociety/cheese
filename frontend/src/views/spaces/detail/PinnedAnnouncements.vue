@@ -115,7 +115,8 @@ function when(createdAt: number, expiresAt: number | null): string {
 }
 
 /* 手机上一行放不下标题和日期：日期换到标题下面。 */
-@media (max-width: 959px) {
+/* 断点收进共享 token：959.98 = $bp-mobile（styles/breakpoints.scss）。 */
+@media (max-width: 959.98px) {
   .pinned__row:not(.pinned__more) {
     flex-wrap: wrap;
     gap: 4px 6px;

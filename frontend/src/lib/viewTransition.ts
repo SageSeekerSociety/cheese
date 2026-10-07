@@ -11,6 +11,8 @@ import type { Router } from 'vue-router'
 
 import { nextTick } from 'vue'
 
+import { MOBILE_MIN_WIDTH } from '../composables/useWorkspaceLayout'
+
 interface ViewTransitionHandle {
   ready: Promise<void>
   finished: Promise<void>
@@ -28,7 +30,9 @@ function quiet(handle: ViewTransitionHandle): void {
   handle.finished.catch(() => {})
 }
 
-const WIDE = '(min-width: 960px)'
+// 960 是手机外壳的上界（Vuetify 的 mdAndUp，样式那边这条线叫 `$bp-mobile`）。数从
+// `useWorkspaceLayout` 拿，不在这儿再抄一遍——抄出来的那份改的时候不会有人想起它。
+const WIDE = `(min-width: ${MOBILE_MIN_WIDTH}px)`
 
 /** 这一次能不能演：浏览器支持、没开减弱动效、宽屏。 */
 export function canViewTransition(): boolean {

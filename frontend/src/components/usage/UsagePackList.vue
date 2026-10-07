@@ -111,7 +111,8 @@ function meta(pack: UsagePack): string {
   line-height: var(--lh-13);
   white-space: nowrap;
 }
-@media (max-width: 700px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .upk__row {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 6px 16px;

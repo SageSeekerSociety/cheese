@@ -268,6 +268,8 @@ async function submitUpload() {
 </template>
 
 <style scoped lang="scss">
+@use '../../../styles/breakpoints.scss' as bp;
+
 .type-selector {
   margin-bottom: 24px;
 }
@@ -337,7 +339,7 @@ async function submitUpload() {
 }
 
 // 响应式调整
-@media (max-width: 600px) {
+@include bp.below(bp.$bp-phone) {
   .type-options {
     grid-template-columns: repeat(2, 1fr);
   }

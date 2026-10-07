@@ -386,7 +386,8 @@ useCommands(() => {
 /* 窄屏这一行放不下：三个 tab 加上右边的状态和动作，状态那句「没连上」被裁成
    半截、最后一个 tab 被挤出可视区。让状态栏整条换到 tab 下面去 —— 它在那一行
    上有全宽可用，tab 也不用再让位。 */
-@media (max-width: 599.98px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .docs-tabs {
     flex-wrap: wrap;
     row-gap: 4px;

@@ -538,7 +538,8 @@ useCommands(() => [
   text-align: right;
 }
 
-@media (max-width: 599px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .skills-row {
     flex-direction: column;
     align-items: stretch;

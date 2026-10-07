@@ -253,7 +253,8 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
  *
  *   第一行（身份）：头像 | 作者名 · 时间（可折行，**不截断**） | 评论数
  *   第二行（属性/状态/动作）：私密/安全/AI队友/标签（可折行） | 状态 | 支持 */
-@media (max-width: 599.98px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .fb-card__meta {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr) auto auto;

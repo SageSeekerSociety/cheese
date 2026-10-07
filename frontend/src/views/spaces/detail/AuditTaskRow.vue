@@ -254,7 +254,8 @@ const facts = computed(() => {
 }
 
 /* 手机上右边那一栏落到下面，排成一行。 */
-@media (max-width: 599px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .ar__head {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;

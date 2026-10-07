@@ -475,6 +475,10 @@ const fileRows = computed(() =>
   min-width: 0;
   min-height: 0;
   background: var(--surface);
+  /* 这一格里的「窄了就把两栏摞起来」判的是**这一格**有多宽，不是窗口有多宽：
+     工作面板的宽度由分栏和侧栏决定，和视口对不上（§10.10）。同一件事见
+     `PanelPreviewView` 的 `.panel-preview`。 */
+  container-type: inline-size;
 }
 .file-load-error {
   flex: 0 0 auto;
@@ -671,7 +675,10 @@ const fileRows = computed(() =>
   min-height: 0;
   min-width: 0;
 }
-@media (max-width: 720px) {
+/* 容器查询，不是视口：这一格窄到 720 以下就把「画的那一半」和「修订清单」摞起来。
+   原先写的是 `@media (max-width: 720px)`，判的是窗口——而这一格的宽度是分栏给的，
+   窗口 1100 的时候它可能只有 600。 */
+@container (max-width: 720px) {
   .doc-view__body {
     flex-direction: column;
   }

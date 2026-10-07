@@ -166,9 +166,12 @@ function reads(row: DocumentRevision): string {
   margin-top: 4px;
 }
 
-/* 窄屏上它落到页面下方（宿主把 .doc__body 改成竖排），所以左边那条界线要换成
-   上边那条。 */
-@media (max-width: 720px) {
+/* 窄了它落到下方（宿主把 `.doc__body` / `.doc-view__body` 改成竖排），所以左边那条
+   界线要换成上边那条。
+   判的是宿主那一格有多宽，不是窗口：`@media` 在这里问错了人——窗口 1100 的时候这一
+   格可能只有 600。宿主自己声明容器（`PanelPreviewView` 的 `.panel-preview`、
+   `PanelChangesView` 的 `.panel-changes`）。 */
+@container (max-width: 720px) {
   .revs {
     width: auto;
     max-height: 38%;

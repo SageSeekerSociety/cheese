@@ -334,7 +334,8 @@ const onUpdateNotification = (notificationId: number) => {
 }
 
 /* 窄屏上正文占满一行，时间挪到它下面一行右对齐；上面那条留出的 8px 换成行距。 */
-@media (max-width: 599.98px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .notification-item__top {
     flex-wrap: wrap;
   }

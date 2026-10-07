@@ -745,59 +745,68 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
 });
 
 // 手机外壳上的按钮，手指点得中：能点的范围至少 44×44（docs/design-system.md 的手机
-// 一节）。量的不是按钮画出来的盒子——小按钮靠 `.tap-target` 的伪元素把能点的那块撑
-// 开，`getBoundingClientRect` 看不见伪元素。量的是**浏览器认为点到了谁**：从按钮中心
-// 往上下左右各走 21px，那一点上 `elementFromPoint` 还得是这颗按钮（或它里面的东西）。
-// 撑得不够、或者被隔壁那颗盖住了一截，都会在这里红。
-test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围至少 44×44', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await apiLogin(page);
-  const rows = await openFirstProject(page);
-  const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
-  expect(projectPath).toBeTruthy();
-  await rows.first().click();
-  await page.waitForURL(/\/topics\//);
-  const topicHref = new URL(page.url()).pathname;
+// 一节）。量的不是按钮画出来的盒子——小按钮靠 `.tap-target` / `.base-btn` 的伪元素把
+// 能点的那块撑开，`getBoundingClientRect` 看不见伪元素。量的是**浏览器认为点到了谁**：
+// 从按钮中心往上下左右各走 21px，那一点上 `elementFromPoint` 还得是这颗按钮（或它里
+// 面的东西）。撑得不够、或者被隔壁那颗盖住了一截，都会在这里红。
+//
+// **触屏必须显式开**（`hasTouch`）。`pointer` 认的是主指针：不写这一条，Chromium 在
+// 390px 宽的视口上也报 `pointer: fine`，`@media (pointer: coarse)` 不命中，撑开的那块
+// 根本不存在 —— 这条用例就会在「顶栏底栏的按钮本来就够大」上变绿，而它声称守住的那件
+// 事一次都没量到。原先就是漏了这一条（`touch-targets.spec.ts` 里有一份对照）。
+test.describe('手机外壳：手指点得中', () => {
+  test.use({ hasTouch: true, isMobile: true });
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  for (const path of ['/home', '/inbox', projectPath!, `${projectPath}/members`, `${projectPath}/routines`, topicHref]) {
-    await page.goto(path);
-    await expect(page.locator('.v-app-bar')).toBeVisible();
-    await page.waitForLoadState('networkidle');
-    const { count, misses } = await page.evaluate(() => {
-      const CONTROL = ':is(a[href], button, [role="tab"])';
-      const scope = `.v-app-bar ${CONTROL}, .v-bottom-navigation ${CONTROL}`;
-      const controls = [...document.querySelectorAll<HTMLElement>(scope)]
-        .filter((el) => el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true)
-        .filter((el) => {
+  test('顶栏和底栏上每一颗按钮，能点的范围至少 44×44', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await apiLogin(page);
+    const rows = await openFirstProject(page);
+    const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+    expect(projectPath).toBeTruthy();
+    await rows.first().click();
+    await page.waitForURL(/\/topics\//);
+    const topicHref = new URL(page.url()).pathname;
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const path of ['/home', '/inbox', projectPath!, `${projectPath}/members`, `${projectPath}/routines`, topicHref]) {
+      await page.goto(path);
+      await expect(page.locator('.v-app-bar')).toBeVisible();
+      await page.waitForLoadState('networkidle');
+      const { count, misses } = await page.evaluate(() => {
+        const CONTROL = ':is(a[href], button, [role="tab"])';
+        const scope = `.v-app-bar ${CONTROL}, .v-bottom-navigation ${CONTROL}`;
+        const controls = [...document.querySelectorAll<HTMLElement>(scope)]
+          .filter((el) => el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true)
+          .filter((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          })
+          // 按钮里套按钮时只量外层那颗。
+          .filter((el) => !el.parentElement?.closest(scope));
+        const out: string[] = [];
+        for (const el of controls) {
           const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        })
-        // 按钮里套按钮时只量外层那颗。
-        .filter((el) => !el.parentElement?.closest(scope));
-      const out: string[] = [];
-      for (const el of controls) {
-        const r = el.getBoundingClientRect();
-        const cx = r.left + r.width / 2;
-        const cy = r.top + r.height / 2;
-        for (const [dx, dy] of [[-21, 0], [21, 0], [0, -21], [0, 21]]) {
-          // 贴着屏幕边的那一侧，手指按在屏幕边上也算点到。
-          const x = Math.min(Math.max(cx + dx, 0), innerWidth - 1);
-          const y = Math.min(Math.max(cy + dy, 0), innerHeight - 1);
-          const hit = document.elementFromPoint(x, y);
-          if (!hit || !(hit === el || el.contains(hit))) {
-            const name = (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 16);
-            out.push(`「${name}」${Math.round(r.width)}×${Math.round(r.height)}，(${dx}, ${dy}) 处点到的是别的`);
-            break;
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          for (const [dx, dy] of [[-21, 0], [21, 0], [0, -21], [0, 21]]) {
+            // 贴着屏幕边的那一侧，手指按在屏幕边上也算点到。
+            const x = Math.min(Math.max(cx + dx, 0), innerWidth - 1);
+            const y = Math.min(Math.max(cy + dy, 0), innerHeight - 1);
+            const hit = document.elementFromPoint(x, y);
+            if (!hit || !(hit === el || el.contains(hit))) {
+              const name = (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 16);
+              out.push(`「${name}」${Math.round(r.width)}×${Math.round(r.height)}，(${dx}, ${dy}) 处点到的是别的`);
+              break;
+            }
           }
         }
-      }
-      return { count: controls.length, misses: out };
-    });
-    // 一颗都没量到就是范围选错了，空范围永远是「没有缺陷」。
-    expect(count, `${path}：顶栏和底栏上一颗按钮都没量到`).toBeGreaterThan(0);
-    expect(misses, path).toEqual([]);
-  }
+        return { count: controls.length, misses: out };
+      });
+      // 一颗都没量到就是范围选错了，空范围永远是「没有缺陷」。
+      expect(count, `${path}：顶栏和底栏上一颗按钮都没量到`).toBeGreaterThan(0);
+      expect(misses, path).toEqual([]);
+    }
+  });
 });
 
 // 房间的输入框：输入框下面那一行按钮只会越加越多（附件、照片、清单、提问、提醒、

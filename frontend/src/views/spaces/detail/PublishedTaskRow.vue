@@ -173,7 +173,8 @@ const stats = computed(() => {
   text-underline-offset: 3px;
 }
 
-@media (max-width: 599px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .pr {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;

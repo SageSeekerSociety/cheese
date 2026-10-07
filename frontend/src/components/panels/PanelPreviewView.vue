@@ -919,7 +919,9 @@ async function onAnnotate(payload: AnnotateDraft) {
   margin-top: 4px;
 }
 
-@media (max-width: 720px) {
+/* 容器查询，不是视口：这一格窄到 720 以下就把文档和修订清单摞起来。判的是
+   `.panel-preview` 的宽度（本文件 714 行的 `container-type`），窗口多宽不算数。 */
+@container (max-width: 720px) {
   .doc__body {
     flex-direction: column;
   }

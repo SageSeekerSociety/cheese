@@ -62,14 +62,17 @@ test('entries without a source are skipped rather than crashing', () => {
   })
 })
 
-test('the gated rule set is the four design rules', () => {
+test('the gated rule set is the five design rules', () => {
   // Guards against widening the gate by accident: adding a rule here silently
-  // turns 2842 pre-existing violations into blocking ones.
+  // turns pre-existing violations into blocking ones. Each addition has to come
+  // with a hand-regenerated baseline (the ratchet can only tighten), so this
+  // list is the record of what has actually been frozen.
   assert.deepEqual([...DESIGN_RULES].sort(), [
     'color-named',
     'color-no-hex',
     'declaration-property-value-allowed-list',
     'declaration-property-value-disallowed-list',
+    'media-feature-name-value-allowed-list',
   ])
 })
 

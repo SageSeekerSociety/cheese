@@ -761,7 +761,8 @@
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
-@media (min-width: 960px) {
+/* 断点收进共享 token：959.98 = $bp-mobile（styles/breakpoints.scss）；下面这条是 min-width。 */
+@media (min-width: 959.98px) {
   .v-menu.v-menu .v-list .v-list-item.v-list-item {
     min-height: 36px;
   }
@@ -1221,7 +1222,8 @@ button:not(.v-btn) {
   border-radius: var(--radius-lg);
 }
 
-@media (max-width: 700px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .admin-form-card {
     padding: 16px;
   }

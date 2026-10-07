@@ -890,7 +890,9 @@ function onSecurity(v: unknown) {
 
 /* 宽屏：§4.4 的左 440 + 右 `minmax(0,1fr)`。断点是 1280 —— 下面这条和
    `AdminQueuePage` 里那条决策（宽屏用这一页、窄屏用抽屉）必须是同一个数，改一处
-   就要改两处。 */
+   就要改两处。是**视口**断点，不换容器查询：那条决策在 `useAdminQueue` 里用
+   `matchMedia` 匹配真窗口（窗口够不够宽才决定整页还是抽屉），样式这边得跟着。
+   JS 那份数是 `useWorkspaceLayout` 的 `WIDE_MIN_WIDTH`，就是 `$bp-wide`。 */
 @media (min-width: 1280px) {
   .qdet__panes {
     display: grid;
