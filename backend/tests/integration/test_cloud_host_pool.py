@@ -24,7 +24,7 @@ from app.domain.device.models import DeviceProjectRow, DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import host_wake, owner_reads, services
+from app.domain.machine import owner_reads, services
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
@@ -230,7 +230,6 @@ def _later(monkeypatch, by: timedelta) -> None:
             return datetime.now(tz) + by
 
     monkeypatch.setattr(services, "datetime", Later)
-    monkeypatch.setattr(host_wake, "datetime", Later)
 
 
 def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]:
@@ -875,164 +874,3 @@ def test_with_every_host_away_nothing_is_given_up_until_one_answers(pool, monkey
 
     assert pool.host(lost).released_at is not None
     assert pool.host(other).released_at is None
-
-
-def _homes_on(pool, host_id) -> int:
-    async def go():
-        async with pool.client.test_request_factory() as db:
-            return len(
-                list(
-                    await db.scalars(
-                        select(CloudHostHome.id).where(CloudHostHome.host_id == host_id)
-                    )
-                )
-            )
-
-    return pool.run(go)
-
-
-def _alerts(pool, monkeypatch) -> list[str]:
-    """What reaches the platform's alert group."""
-    from app.core import alerting
-
-    sent: list[str] = []
-
-    async def post(text):
-        sent.append(text)
-
-    monkeypatch.setattr(settings, "feishu_alert_webhook", "https://alerts.test/hook")
-    monkeypatch.setattr(alerting, "_post", post)
-    monkeypatch.setattr(alerting, "repeated", alerting._Repeats())
-    monkeypatch.setattr(alerting, "budget", alerting._Budget())
-    return sent
-
-
-@pytest.mark.parametrize(
-    ("parked", "wake"), [("suspended", "resume"), ("stopped", "start")]
-)
-def test_a_host_microcloud_parked_is_woken_with_its_sandboxes_kept(
-    pool, monkeypatch, parked, wake
-):
-    """On 2026-10-06 two suspended hosts were given up for their connectors
-    being away, and deleted with their disks. A host MicroCloud keeps parked
-    still has its sessions' unpushed work: it is woken, not replaced."""
-    alice, parked_host, other, device, _ = _two_hosts_at_work(pool)
-    machine = pool.host(parked_host).machine_id
-    pool.cloud.machines[machine]["status"] = parked
-    pool.online.discard(device)
-    pool.pool("maintain")
-    _later(monkeypatch, timedelta(minutes=11))
-
-    pool.pool("maintain")
-
-    host = pool.host(parked_host)
-    assert host.released_at is None
-    assert pool.cloud.deleted == []
-    assert pool.cloud.wakes == [(wake, machine)]
-    assert _homes_on(pool, parked_host) == 2
-    assert pool.said("alice") == []
-
-    # Woken, its connector dials back in, and the session is where it was.
-    pool.online.add(device)
-    pool.pool("maintain")
-
-    assert pool.place("alice", alice) == parked_host
-    assert pool.cloud.wakes == [(wake, machine)]
-    assert pool.said("alice") == []
-
-
-def test_a_host_that_does_not_come_back_from_waking_is_kept_and_reported(
-    pool, monkeypatch
-):
-    alerts = _alerts(pool, monkeypatch)
-    monkeypatch.setattr(settings, "cloud_pool_max_hosts", 2)
-    alice, parked_host, other, device, _ = _two_hosts_at_work(pool)
-    machine = pool.host(parked_host).machine_id
-    pool.cloud.machines[machine]["status"] = "suspended"
-    pool.online.discard(device)
-    pool.pool("maintain")
-    _later(monkeypatch, timedelta(minutes=11))
-    pool.pool("maintain")
-    # MicroCloud resumed it, and its connector never comes back.
-    pool.cloud.machines[machine]["status"] = "running"
-
-    _later(monkeypatch, timedelta(minutes=30))
-    pool.pool("maintain")
-    _later(monkeypatch, timedelta(hours=3))
-    pool.pool("maintain")
-
-    host = pool.host(parked_host)
-    assert host.released_at is None
-    assert pool.cloud.deleted == []
-    assert _homes_on(pool, parked_host) == 2
-    assert pool.cloud.wakes == [("resume", machine)]
-    [alert] = alerts
-    assert host.hostname in alert and str(machine) in alert and "running" in alert
-    assert pool.said("alice") == []
-    # It no longer counts toward the pool's cap of two: once the other host is
-    # full, a new session gets a host created for it instead of being told
-    # the pool is full.
-    [carol] = pool.room("carol", 1)
-    assert pool.place("carol", carol) == other
-    [dave] = pool.room("dave", 1)
-    assert pool.place("dave", dave) not in {parked_host, other}
-
-
-def test_a_wake_microcloud_keeps_refusing_is_stopped_and_reported(pool, monkeypatch):
-    alerts = _alerts(pool, monkeypatch)
-    alice, parked_host, other, device, _ = _two_hosts_at_work(pool)
-    machine = pool.host(parked_host).machine_id
-    pool.cloud.machines[machine]["status"] = "suspended"
-    # Every resume fails back to suspended.
-    pool.cloud.wakes_to = "suspended"
-    pool.online.discard(device)
-    pool.pool("maintain")
-    _later(monkeypatch, timedelta(minutes=11))
-
-    for _ in range(6):
-        pool.pool("maintain")
-
-    assert pool.cloud.wakes == [("resume", machine)] * host_wake.MAX_WAKE_REQUESTS
-    assert pool.host(parked_host).released_at is None
-    assert pool.cloud.deleted == []
-    [alert] = alerts
-    assert pool.host(parked_host).hostname in alert and "suspended" in alert
-
-
-def test_a_host_microcloud_no_longer_has_is_given_up_as_before(pool, monkeypatch):
-    alice, gone, other, device, _ = _two_hosts_at_work(pool)
-    pool.cloud.machines.pop(pool.host(gone).machine_id)
-    pool.online.discard(device)
-    pool.pool("maintain")
-    _later(monkeypatch, timedelta(minutes=11))
-
-    pool.pool("maintain")
-
-    assert pool.host(gone).released_at is not None
-    assert pool.cloud.wakes == []
-    assert pool.place("alice", alice) not in {gone, None}
-    assert pool.said("alice") == [LOST_LINE]
-
-
-def test_with_microcloud_unreachable_no_host_is_given_up(pool, monkeypatch):
-    """Whether a host is lost or only suspended is MicroCloud's to say; while
-    it cannot be asked, the host is kept."""
-    alice, away, other, device, _ = _two_hosts_at_work(pool)
-    pool.online.discard(device)
-    pool.pool("maintain")
-    _later(monkeypatch, timedelta(minutes=11))
-    pool.cloud.down = True
-
-    pool.pool("maintain")
-
-    assert pool.host(away).released_at is None
-    assert pool.cloud.deleted == []
-    assert pool.said("alice") == []
-
-    # MicroCloud answers again: the host is running and its connector still
-    # away, so it is given up.
-    pool.cloud.down = False
-    pool.pool("maintain")
-
-    assert pool.host(away).released_at is not None
-    assert pool.said("alice") == [LOST_LINE]

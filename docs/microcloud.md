@@ -79,30 +79,12 @@ hosts for the rest of the hour.
 Sandboxes are disposable: what counts is what was pushed. So the pool also gives up on an
 enrolled host the provider reports in `error`, and on one whose connector has been away for
 ten minutes (`services.LOST_AFTER`, counted by the sweep in `cloud_hosts.offline_since`) while
-another host of the pool is online — unless MicroCloud has it suspended or stopped, below. With none online, the sweep takes the outage for the
+another host of the pool is online. With none online, the sweep takes the outage for the
 platform's own (a restart, a cut link) and gives up on nothing. Each session that worked on
 the host is placed in a new sandbox on its next tool call; that call's result tells the agent,
 once, that its workspace came from git again and what it had not pushed is gone, and the room
-hears 「环境所在的机器不再响应，环境已换成新的……」. Only the `error` report counts toward the
+hears 「环境不再响应，已换成新的……」. Only the `error` report counts toward the
 three failures. Whole cloud VMs are not given up this way.
-
-Before giving up on a host whose connector is away, the sweep asks MicroCloud for the
-machine (`machine/host_wake.py`). A machine it no longer has (404), reports in `error`, or reports
-`running` is given up as above. One it reports suspended or stopped still has its disk, and
-with it whatever its sessions did not push, so it is woken instead: the sweep sends
-`/machine/{id}/resume` (suspended) or `/start` (stopped), deletes nothing, and once the
-connector is back the host is an ordinary one again — a draining host archives its homes and
-goes. Meanwhile its sessions' tool calls are told 「沙箱正在唤醒」 and their rooms hear
-「正在唤醒环境」. A wake is bounded: if the connector is not back within ten minutes
-(`host_wake.WAKE_WITHIN`; MicroCloud resumes in seconds, and a booted connector dials in within
-five), or MicroCloud still reports the machine parked after three requests
-(`MAX_WAKE_REQUESTS`), or reports it in `error`, the sweep stops. The host is kept with its
-data, no longer counts toward `CLOUD_POOL_MAX_HOSTS` and takes no session, and the alert group
-is told which host and what MicroCloud reported; its sessions are told the machine could not
-be woken and their files are still on it. The pool never deletes such a host: it returns on
-its own when its connector does, and deleting the machine at MicroCloud lets the sweep forget
-it. While MicroCloud does not answer, a lost host cannot be told from a parked one, and the
-sweep gives up on nothing that round.
 
 ### Whole cloud VMs
 
