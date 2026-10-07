@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { apiLogin, openFirstProject } from './helpers';
+import { apiLogin, openFirstProject, projectIdOf } from './helpers';
 
 test.describe('Topics and chat', () => {
   test.beforeEach(async ({ page }) => {
@@ -10,7 +10,7 @@ test.describe('Topics and chat', () => {
   test('creating a channel from 浏览频道 opens it in the sidebar', async ({ page }) => {
     const rows = await openFirstProject(page);
     const before = await rows.count();
-    const projectId = /\/projects\/([^/]+)/.exec(page.url())?.[1];
+    const projectId = await projectIdOf(page);
 
     await page.goto(`/projects/${projectId}/channels`);
     await page.getByRole('button', { name: '新建频道' }).first().click();
@@ -18,7 +18,7 @@ test.describe('Topics and chat', () => {
     await page.getByLabel('频道名称').fill(name);
     await page.locator('.v-overlay').getByRole('button', { name: '新建频道' }).click();
 
-    await expect(page).toHaveURL(/\/topics\/[^/]+$/);
+    await expect(page).toHaveURL(/\/channels\/\d+$/);
     await expect(rows).toHaveCount(before + 1);
     await expect(page.locator('.topic-row.is-active')).toContainText(name);
   });

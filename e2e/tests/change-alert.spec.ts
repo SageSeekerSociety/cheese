@@ -13,13 +13,8 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 
-function projectIdOf(page: Page): string {
-  const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
-  if (!id) throw new Error(`当前页不是项目工作台：${page.url()}`);
-  return id;
-}
 
 test.describe('变更提醒', () => {
   // 这几条落在「第一个项目」上 —— 所有 e2e 用例共用的那一个（alice 的种子项目），
@@ -33,7 +28,7 @@ test.describe('变更提醒', () => {
   test.beforeEach(async ({ page }) => {
     await apiLogin(page);
     await openFirstProject(page);
-    projectId = projectIdOf(page);
+    projectId = await projectIdOf(page);
   });
 
   test.afterEach(async ({ page }) => {

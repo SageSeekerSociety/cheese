@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 
 // Parallel so CI shards split this file by test rather than handing one shard
 // all of it: no test depends on another, and one CI worker still runs them one
@@ -191,7 +191,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await apiLogin(page);
     await page.locator('.app-rail-item--tile').first().click();
     await page.waitForURL(/\/projects\/[^/]+/);
-    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const projectId = await projectIdOf(page);
     const artifactId = '00000000-0000-0000-0000-000000000123';
     const versions = [1, 2].map(number => ({
       number, card_id: `version-${number}`, subject: `Report ${number}`,
@@ -248,7 +248,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await apiLogin(page);
     await page.locator('.app-rail-item--tile').first().click();
     await page.waitForURL(/\/projects\/[^/]+/);
-    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const projectId = await projectIdOf(page);
 
     await page.goto(`/projects/${projectId}/agents`);
     const edit = page.getByRole('button', { name: '编辑' }).first();
@@ -380,7 +380,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   test('技能页：新建表单、导入的两步、打开一份的详情，桌面与手机', async ({ page }) => {
     await apiLogin(page);
     await openFirstProject(page);
-    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const projectId = await projectIdOf(page);
     const skillMd = Buffer.from(
       '---\nname: layout-check\ndescription: 量一量布局时\n---\n\n# 布局检查\n\n## 步骤与规则\n\n逐个打开\n'
     );

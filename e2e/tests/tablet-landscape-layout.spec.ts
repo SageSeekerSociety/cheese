@@ -23,7 +23,7 @@ test.describe('平板横放（960–1180）', () => {
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
-    await page.waitForURL(/\/topics\//);
+    await page.waitForURL(/\/channels\//);
 
     // 宽档（1280 > 1180）：侧栏常驻，rail 上没有它的开关。
     await expect(page.locator('[data-sidebar-toggle]')).toHaveCount(0);
@@ -81,7 +81,7 @@ test.describe('平板横放（960–1180）', () => {
     await expect(page.locator('#secondary-sidebar')).toHaveClass(/v-navigation-drawer--active/);
 
     await page.locator('.topic-row').first().click();
-    await page.waitForURL(/\/topics\//);
+    await page.waitForURL(/\/channels\//);
 
     // 导航之后浮层自己收起。
     await expect(sidebarToggle).toHaveAttribute('aria-expanded', 'false');
@@ -98,7 +98,7 @@ test.describe('平板横放（960–1180）', () => {
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
-    await page.waitForURL(/\/topics\//);
+    await page.waitForURL(/\/channels\//);
     const main = await page.locator('.panes').first().boundingBox();
     expect(main!.width, '这个用例要主区窄于 840').toBeLessThan(840);
 
@@ -124,7 +124,7 @@ test.describe('平板横放（960–1180）', () => {
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
-    await page.waitForURL(/\/topics\//);
+    await page.waitForURL(/\/channels\//);
     const topicUrl = page.url().split('?')[0];
 
     // 落到平板横放：地址里没有 ?tab=，面板收着。
@@ -147,7 +147,7 @@ test.describe('平板横放（960–1180）', () => {
     await expect(page.locator('[data-sidebar-toggle]')).toHaveCount(0);
 
     await rows.first().click();
-    await page.waitForURL(/\/topics\//);
+    await page.waitForURL(/\/channels\//);
 
     // 对话和面板并排，中间那条分隔在；「概览」开着。
     await expect(page.locator('.pane-resizer')).toBeVisible();

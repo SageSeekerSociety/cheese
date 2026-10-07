@@ -37,7 +37,7 @@ async function signIn(page) {
   if (!project) throw new Error(`run fixture.py first: no project named ${PROJECT_NAME}`)
   const topics = (await (await page.request.get(`${APP}/api/topics?project_id=${project.id}`, { headers })).json()).data
   const rooms = Object.fromEntries((topics.data ?? topics).map((t) => [t.title, t.id]))
-  const listed = (await (await page.request.get(`${APP}/api/topics/${rooms['报名表单改版']}/tasks`, { headers })).json()).data
+  const listed = (await (await page.request.get(`${APP}/api/channels/${rooms['报名表单改版']}/tasks`, { headers })).json()).data
   const tasks = Object.fromEntries((listed.data ?? listed).map((t) => [t.title, t.id]))
   return { pid: project.id, rooms, tasks }
 }
@@ -50,9 +50,9 @@ async function settle(page, ms = 1200) {
 // name → [device, take(page, ctx) returning screenshot options]
 const SHOTS = {
   'work-home': [desktop, async (page) => { await page.goto(`${APP}/`); await settle(page); return { clip: { x: 64, y: 30, width: 1376, height: 320 } } }],
-  room: [desktop, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/topics/${rooms['报名表单改版']}`); await settle(page, 2000) }],
+  room: [desktop, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/channels/${rooms['报名表单改版']}`); await settle(page, 2000) }],
   'room-menu': [desktop, async (page, { pid, rooms }) => {
-    await page.goto(`${APP}/projects/${pid}/topics/${rooms['报名表单改版']}`)
+    await page.goto(`${APP}/projects/${pid}/channels/${rooms['报名表单改版']}`)
     await settle(page)
     const row = page.locator('.topic-row.is-active')
     await row.hover()
@@ -62,13 +62,13 @@ const SHOTS = {
   }],
   board: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/running`); await settle(page); return { clip: { x: 340, y: 30, width: 1100, height: 260 } } }],
   'task-page': [desktop, async (page, { pid, rooms, tasks }) => {
-    await page.goto(`${APP}/projects/${pid}/topics/${rooms['报名表单改版']}/tasks/${tasks['表单字段精简']}`)
+    await page.goto(`${APP}/projects/${pid}/tasks/${tasks['表单字段精简']}`)
     await page.locator('.accept-dock').first().waitFor()
     await settle(page, 2500)
   }],
   // The accept card above the task's input box, with a margin of the page around it.
   'task-card': [desktop, async (page, { pid, rooms, tasks }) => {
-    await page.goto(`${APP}/projects/${pid}/topics/${rooms['报名表单改版']}/tasks/${tasks['表单字段精简']}`)
+    await page.goto(`${APP}/projects/${pid}/tasks/${tasks['表单字段精简']}`)
     await page.locator('.accept-dock').first().waitFor()
     await page.locator('.accept-dock').first().getByRole('button', { expanded: false }).first().click()
     await settle(page, 1000)
@@ -94,7 +94,7 @@ const SHOTS = {
     return { clip: { x: top.x - 24, y: top.y - 16, width: right.x + right.width + 24 - (top.x - 24), height: end.y - top.y - 8 } }
   }],
   'm-work-home': [phone, async (page) => { await page.goto(`${APP}/`); await settle(page) }],
-  'm-room': [phone, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/topics/${rooms['报名表单改版']}`); await settle(page, 2000) }],
+  'm-room': [phone, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/channels/${rooms['报名表单改版']}`); await settle(page, 2000) }],
 }
 
 const wanted = process.argv.slice(2)
