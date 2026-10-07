@@ -72,9 +72,16 @@ function needsOf(needs: string[]): string {
     <template v-if="!entry">
       <p class="catalog-lede">
         每个组件一页，用真产品的形状渲染几种状态。这一页不连后端、不登录 —— <code>pnpm dev</code> 打开
-        <code>/demo/catalog</code> 就能看。加一个组件：在 <code>src/views/demo/catalog.ts</code> 里追加一条。
+        <code>/demo/catalog</code> 就能看。加一个组件：<code>node scripts/catalog-scaffold.mjs</code> 按 props
+        生成骨架，补完后放进 <code>catalog.ts</code> 或它展开的分册。
       </p>
-      <input v-model="query" class="catalog-search" type="search" placeholder="按名字、说明或路径找" />
+      <input
+        v-model="query"
+        class="catalog-search"
+        type="search"
+        autocomplete="off"
+        placeholder="按名字、说明或路径找"
+      />
       <section v-for="group in groups" :key="group.name" class="catalog-group">
         <h2 class="catalog-group-name">
           <code>{{ group.name }}</code> <span>{{ group.items.length }}</span>

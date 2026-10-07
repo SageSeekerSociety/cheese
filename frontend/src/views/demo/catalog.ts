@@ -61,6 +61,7 @@ import {
 } from './catalogFixtures'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { MODELS_ENTRIES } from './catalogModels'
+import { PANEL_ENTRIES } from './catalogPanels'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { ROOM_ENTRIES } from './catalogRoom'
@@ -955,6 +956,7 @@ export const CATALOG: CatalogEntry[] = [
   // 文档里的块、基础组件各在自己的文件里：`catalogDoc.ts`、`catalogBase.ts`。
   ...DOC_BLOCK_ENTRIES,
   ...BASE_ENTRIES,
+  ...PANEL_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */
@@ -964,7 +966,11 @@ export function stateProps(entry: CatalogEntry, state: CatalogState): Record<str
 
 /** 目录页上的分组：源码所在目录，`src/components/panels/doc/X.vue` → `components/panels/doc`。 */
 export function catalogGroup(entry: CatalogEntry): string {
-  return entry.file.replace(/^src\//, '').split('/').slice(0, -1).join('/')
+  return entry.file
+    .replace(/^src\//, '')
+    .split('/')
+    .slice(0, -1)
+    .join('/')
 }
 
 /** 按 id 找一条（地址里那一段）。 */

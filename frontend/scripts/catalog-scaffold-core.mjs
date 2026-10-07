@@ -119,8 +119,14 @@ export function guessNeeds(source) {
 
 /** `src/components/panels/PanelThreads.vue` -> `panel-threads`. */
 export function idOf(file) {
-  const base = file.split('/').pop().replace(/\.vue$/, '')
-  return base.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase()
+  const base = file
+    .split('/')
+    .pop()
+    .replace(/\.vue$/, '')
+  return base
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+    .toLowerCase()
 }
 
 /** `proto-shell` -> `ProtoShell`, `404` -> `404` (callers prefix what still starts with a digit). */
