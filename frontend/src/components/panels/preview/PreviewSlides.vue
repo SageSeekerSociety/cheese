@@ -277,7 +277,7 @@ onBeforeUnmount(() => {
       <p>{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
       <p v-if="problem" class="t-meta">{{ problem }}</p>
     </div>
-    <BaseEmptyState v-else-if="!count" size="page" :title="t('slides.empty')" />
+    <BaseEmptyState v-else-if="!count" :title="t('slides.empty')" />
     <div v-else class="slides__body">
       <SlideThumbRail
         v-if="showRail"

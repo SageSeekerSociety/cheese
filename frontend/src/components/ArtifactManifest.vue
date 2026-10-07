@@ -181,8 +181,10 @@ watch(
     <!-- 网站钉在最上面：它也是交出去的东西，但只有一个，所以不排进下面那张清单。 -->
     <PublishedSite :project-id="projectId" :api="api.site" :names="names" />
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
-    <BaseEmptyState v-if="!rows.length" size="inline" class="made__empty" :title="t('project.artifacts.empty')" />
-    <ul v-else class="made__list">
+    <ul class="made__list">
+      <li v-if="!rows.length" class="made__empty">
+        <BaseEmptyState size="inline" :title="t('project.artifacts.empty')" />
+      </li>
       <li
         v-for="(row, index) in rows"
         :key="row.id"
@@ -373,9 +375,8 @@ watch(
 .made:not(.made--expanded) .made-row--folded {
   display: none;
 }
-/* 空的时候自己说它空：这一行走 BaseEmptyState 的 inline 档，内距补回原来那一行住在
-   清单里时的位置——`.made__list` 的 8px 加上行自己的 `8px 4px`，即左 12、上 16。 */
+/* 空的时候自己说它空。 */
 .made__empty {
-  padding: 16px 12px;
+  padding: 8px 4px;
 }
 </style>

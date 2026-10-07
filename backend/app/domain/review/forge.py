@@ -143,11 +143,15 @@ class GitHubForge(Forge):
         await service._refresh_github_unseen_head(card, topic, action)
 
     async def poll(self, service, card, topic, *, chat_service, runner) -> None:
-        from app.domain.project.forge import background_may_use_forge
+        from app.domain.project.forge import background_quota, quota_serves_background
 
         # A tick is background work: it leaves the installation's last share of
         # quota to the people delivering and merging cards.
-        if not await background_may_use_forge(topic.project_id, service._session):
+        quota = await background_quota(topic.project_id, service._session)
+        if quota is not None and service._commits_before_remote:
+            # A claimed poll commits before every forge request (`poll_claim`).
+            await service._session.commit()
+        if not await quota_serves_background(quota):
             return
         await service._advance_github_card(
             card, topic, chat_service=chat_service, runner=runner

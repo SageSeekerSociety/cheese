@@ -409,7 +409,7 @@ useCommands(() => [
         </ul>
       </section>
 
-      <BaseEmptyState v-if="!skills.length && !loadError" size="page" :title="t('work.skills.empty')" />
+      <BaseEmptyState v-if="!skills.length && !loadError" :title="t('work.skills.empty')" />
     </template>
 
     <SkillDetailDrawer

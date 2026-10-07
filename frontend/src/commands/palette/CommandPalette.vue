@@ -750,7 +750,6 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
 }
 .palette__empty {
   padding: 24px 10px;
-  text-align: center;
 }
 
 /* 手机上是一整页：高度扣掉键盘，输入框钉在顶上。 */

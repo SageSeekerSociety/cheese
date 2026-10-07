@@ -314,13 +314,9 @@ function isLive(index: number): boolean {
         </button>
       </div>
       <MemberActivity :lines="workingLines" class="site-activity" />
-      <BaseEmptyState
-        v-if="transcript.length === 0"
-        :id="logId"
-        size="page"
-        :title="t('work.room.site.empty')"
-        :role="agents.length > 1 ? 'tabpanel' : 'status'"
-      />
+      <div v-if="transcript.length === 0" :id="logId" :role="agents.length > 1 ? 'tabpanel' : undefined">
+        <BaseEmptyState :title="t('work.room.site.empty')" />
+      </div>
       <div v-else :id="logId" class="site-log pa-3" :role="agents.length > 1 ? 'tabpanel' : undefined">
         <div v-if="hasOlder" class="site-older">
           {{ loadingOlder ? t('work.room.site.loadingOlder') : t('work.room.site.older') }}

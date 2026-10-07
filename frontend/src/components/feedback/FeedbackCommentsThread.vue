@@ -224,16 +224,13 @@ function onRemove(commentId: string) {
       </button>
     </li>
   </ul>
-  <!-- 无评论（§9.5）。主副两句，走 BaseEmptyState 的 compact 档：主句说「现在这样」，
-       副句说「接下来会怎样」。原来是一行 `c-faint` 的 14px 灰字 —— 那一档在浅色主题
-       下连 3:1 都到不了（见 style.css 的 .t-meta-read），而这是要人读的一句话。
-       靠左、不画图标：这句话在评论区里，左边要和上面的评论正文对齐，图标会把两句
-       推开一格。 -->
+  <!-- 无评论（§9.5）。主副两句，和别处的四态同一副骨架：主句说「现在这样」，副句说
+       「接下来会怎样」。原来是一行 `c-faint` 的 14px 灰字 —— 那一档在浅色主题下连
+       3:1 都到不了（见 style.css 的 .t-meta-read），而这是要人读的一句话。 -->
   <BaseEmptyState
     v-else
     size="compact"
     align="start"
-    icon=""
     class="fb-thread__empty"
     :title="t('feedback.detail.comments.title')"
     :desc="t('feedback.detail.comments.desc')"
@@ -258,14 +255,12 @@ function onRemove(commentId: string) {
   font-weight: 400;
   line-height: var(--lh-14-loose);
 }
-/* 无评论那一块：长相归 BaseEmptyState，内距归零 —— compact 档自带 32px 16px，而这块
-   是评论正文的同伴（见模板里的注释）：左边要和正文齐，上下也不许多出留白，否则底下
-   那个评论框会在有没有评论之间上下跳。下边距和 `.fb-thread` 一样是 24。
-   选择器写成 `div.` 是为了比基元那一档高一级特异性：两边都是一个类加一个作用域属性，
-   同特异度就得靠样式注入顺序决胜负，而那会随打包方式变。 */
-div.fb-thread__empty {
+/* 无评论那一块：整块交给 BaseEmptyState 的 compact 档（§3.12）——主副两句、字号和
+   上下 32px 的留白都由这一档定，比原来手写的那一版多出左右 16px 的内缩。这里只留
+   外边距：下边距和 `.fb-thread` 一样是 24 —— 列表在不在，底下那个评论框的位置不该
+   跟着挪。 */
+.fb-thread__empty {
   margin: 0 0 24px;
-  padding: 0;
 }
 .fb-thread__top + .fb-thread__top {
   margin-top: 16px;

@@ -132,12 +132,7 @@ function confirmDelete() {
         />
       </ul>
 
-      <BaseEmptyState
-        v-if="!routines.length && !error"
-        size="page"
-        :title="t('routines.empty')"
-        :desc="t('routines.emptyHint')"
-      />
+      <BaseEmptyState v-if="!routines.length && !error" :title="t('routines.empty')" :desc="t('routines.emptyHint')" />
     </template>
 
     <!-- Deleting a rule is not reversible (its run history goes too): ask before it happens. -->

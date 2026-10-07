@@ -219,7 +219,7 @@ function close() {
           </section>
         </template>
 
-        <BaseEmptyState v-else size="compact" :title="t('models.detail.empty')" />
+        <BaseEmptyState v-else size="inline" :title="t('models.detail.empty')" />
       </div>
     </div>
   </v-navigation-drawer>

@@ -1,14 +1,11 @@
 <template>
-  <v-container>
-    <BaseEmptyState
-      size="page"
-      title="404"
-      icon="mdi-alert-circle"
-      :desc="t('shell.notFound.text')"
-      :action="t('shell.notFound.home')"
-      @action="goHome"
-    />
-  </v-container>
+  <BaseEmptyState
+    icon="mdi-alert-circle"
+    title="404"
+    :desc="t('shell.notFound.text')"
+    :action="t('shell.notFound.home')"
+    @action="goHome"
+  />
 </template>
 
 <script lang="ts" setup>

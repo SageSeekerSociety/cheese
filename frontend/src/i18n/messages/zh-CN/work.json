@@ -1044,6 +1044,7 @@
     "roster": {
       "loadFailed": "加载成员失败",
       "count": "{count} 位",
+      "empty": "暂无成员",
       "agentBadge": "AI 队友",
       "failed": "操作失败",
       "title": "频道成员",
@@ -1054,8 +1055,7 @@
       "readOnly": "只有频道里的人能添加成员",
       "listSeparator": "、",
       "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
-      "creator": "管理者",
-      "empty": "暂无成员"
+      "creator": "管理者"
     },
     "mail": {
       "noSubject": "（无主题）",

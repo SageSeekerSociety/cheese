@@ -707,7 +707,7 @@ async function onAnnotate(payload: AnnotateDraft) {
         {{ t('work.room.preview.openInNewWindow') }}
       </BaseButton>
     </div>
-    <BaseEmptyState v-else size="page" icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
+    <BaseEmptyState v-else icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
 
     <PreviewLocator
       v-model:note="locatorNote"

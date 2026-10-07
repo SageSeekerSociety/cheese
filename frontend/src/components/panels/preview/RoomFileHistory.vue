@@ -61,12 +61,13 @@ function when(iso: string) {
     <div v-if="props.fileHistory.loading.value && !props.fileHistory.rows.value.length" class="t-meta py-4 text-center">
       {{ t('work.room.fileHistory.loading') }}
     </div>
+    <!-- 读失败时上面那条 v-alert 已经说了，这里不再补一句「还没有保存记录」：那会把
+         「没读到」说成「本来就没有」（§3.10）。 -->
     <BaseEmptyState
-      v-else-if="!props.fileHistory.rows.value.length"
+      v-else-if="!props.fileHistory.rows.value.length && !props.fileHistory.error.value"
       size="inline"
       align="center"
-      class="py-4"
-      :title="t('work.room.fileHistory.empty')"
+      :desc="t('work.room.fileHistory.empty')"
     />
     <ol v-else class="rh__list">
       <li v-for="(row, i) in props.fileHistory.rows.value" :key="row.id" class="rh__row" :data-seq="row.seq">

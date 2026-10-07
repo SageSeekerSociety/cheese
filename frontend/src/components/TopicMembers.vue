@@ -468,11 +468,9 @@ async function onRemove(handle: string) {
   color: rgb(var(--v-theme-error, 211, 47, 47));
   background: rgba(var(--v-theme-error, 211, 47, 47), 0.08);
 }
-/* 名册空着那一行走 BaseEmptyState 的 inline 档，这里只留名册自己的内距。 */
 .roster__empty {
   padding: 12px 14px;
 }
-/* 下面算力那一块的说明行，和名册不是一件事，照旧。 */
 .roster__hint {
   padding: 12px 14px;
   font-size: 13px;

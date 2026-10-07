@@ -19,7 +19,7 @@
         <v-progress-linear indeterminate color="primary" height="2" />
       </div>
 
-      <BaseEmptyState v-else-if="!available.length" size="compact" :title="t('account.sudo.noMethod')" />
+      <BaseEmptyState v-else-if="!available.length" size="inline" :title="t('account.sudo.noMethod')" />
 
       <template v-else>
         <transition name="sudo-method" mode="out-in" @after-enter="focusFirst">
