@@ -11,6 +11,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 // An app opened from Finder inherits launchd's bare PATH, not the user's shell.
+/// Where a connector installed for the whole machine lives (cheesehost's
+/// `machineWideService`).
+const MACHINE_WIDE_SERVICE: &str = "/Library/LaunchDaemons/cheese.plist";
+
 const PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin";
 
 fn home() -> PathBuf {
@@ -61,6 +65,20 @@ pub async fn install_connector(origin: &str) -> Result<(), String> {
 }
 
 pub async fn prepare(resources: &Path, step: &impl Fn(&str)) -> Result<(), String> {
+    // Until 2026-08-28 `cheesehost link connect` installed itself for the whole
+    // machine, with sudo. cheesehost will not install a second connector beside
+    // that one (they would share one device credential), and taking it out needs
+    // an administrator: ask the way macOS asks, in its own password dialog,
+    // rather than leave a command for a terminal.
+    if Path::new(MACHINE_WIDE_SERVICE).exists() {
+        step("正在移除旧版连接程序，需要输入这台设备的登录密码");
+        sh(&format!(
+            r#"osascript -e 'do shell script "launchctl bootout system/cheese 2>/dev/null; rm -f {MACHINE_WIDE_SERVICE}" with administrator privileges'"#
+        ))
+        .await
+        .map_err(|_| "旧版连接程序未能移除，无法接入这台设备".to_string())?;
+    }
+
     // Without the command line tools /usr/bin/git is a stub that only offers to
     // install them, so ask for that install and wait for it.
     if sh("xcode-select -p").await.is_err() {

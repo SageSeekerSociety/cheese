@@ -68,7 +68,7 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
 
 **macOS 没有 linger 的对应物，也不打算造一个。** LaunchAgent 活在机主的登录会话里（实测：job 落在 `gui/501` 域，`type = login`、`creator = loginwindow`；非 root `launchctl bootstrap user/501` 直接 `Bootstrap failed: 5`）。他登录时起、登出时停、下次登录再起。**一台没人登录的 Mac 不托管**——这是「不问别人要管理员密码」的诚实代价，不是漏了一个 case。真要 headless Mac，那是 LaunchDaemon、是一个新决定，不是在这里留一个开关等着被捡起来。
 
-**机器上已经有 root 装的 cheese service 时，`link connect` 拒绝安装**，并打印删掉它的命令。同一个账户下跑两个 connector 比一个都没有更糟：共用一份 device 凭据、共用同一个 tmux server，互相收养又互相拆掉对方的屏幕。
+**机器上已经有 root 装的 cheese service 时，`link connect` 拒绝安装**，并打印删掉它的命令。桌面端在 Mac 上接入前先找这个服务，有就用系统的管理员密码框把它移除，不让人去终端。同一个账户下跑两个 connector 比一个都没有更糟：共用一份 device 凭据、共用同一个 tmux server，互相收养又互相拆掉对方的屏幕。
 
 ---
 
