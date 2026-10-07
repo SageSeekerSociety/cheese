@@ -1,7 +1,7 @@
 """A notification belongs to a conversation
 
 Revision ID: 9f2b7c14a8e3
-Revises: e241eeb9ffdb
+Revises: 4b7e2d9c1f30
 Create Date: 2026-10-07
 
 The inbox row said which place it was about with ``topic_id``: a room. A
@@ -23,10 +23,11 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "9f2b7c14a8e3"
-# 接在 main 当下的链尾后面：本文件写下时那个头是 c3a8e5f1d702，之后
-# 1ed9ee06ed4a、7d3e1c4b9a20、c11a23e6ea8d、a9c88363ec79、e241eeb9ffdb
-# 各拿走一次。几条互不相干，只是不能分叉。
-down_revision: str | Sequence[str] | None = "e241eeb9ffdb"
+# 接在 main 当下的链尾后面：本文件写下时那个头是 c3a8e5f1d702，此后
+# main 每加一条迁移都要再往后挪一次（1ed9ee06ed4a、7d3e1c4b9a20、
+# c11a23e6ea8d、a9c88363ec79、e241eeb9ffdb、4b7e2d9c1f30 ……）。
+# 几条互不相干，只是不能分叉。
+down_revision: str | Sequence[str] | None = "4b7e2d9c1f30"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
