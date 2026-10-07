@@ -205,6 +205,9 @@ describe('answering a join request', () => {
   })
 })
 
+// 「邀请」这一颗在弹窗页脚（`AdaptiveDialog` 的），不在 `<form>` 里：邀请成功那两条按
+// 人真正会做的走一遍——点它。后两条验的是「没有人可邀请时不发出去」，和这颗按钮的
+// 禁用状态无关，直接提交表单，走到 `confirmInvite` 自己那道闸。
 describe('inviting someone by name', () => {
   async function openInvite() {
     mount({ role: 'OWNER' })
@@ -219,7 +222,7 @@ describe('inviting someone by name', () => {
 
     await fireEvent.update(field, 'zhangheng')
     await screen.findByText('张衡', {}, { timeout: 2000 })
-    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+    await fireEvent.click(screen.getByRole('button', { name: '邀请' }))
 
     expect(lookupUser).toHaveBeenCalledWith('zhangheng')
     await waitFor(() =>
@@ -234,7 +237,7 @@ describe('inviting someone by name', () => {
 
     await fireEvent.update(field, '2024zhang')
     await screen.findByText('张三', {}, { timeout: 2000 })
-    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+    await fireEvent.click(screen.getByRole('button', { name: '邀请' }))
 
     await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1))
     expect(vi.mocked(TeamsApi.createInvitation).mock.calls[0][1]).toMatchObject({ userId: 58 })
@@ -247,7 +250,7 @@ describe('inviting someone by name', () => {
     await fireEvent.update(field, 'zhang')
     await screen.findByTestId('found-user', {}, { timeout: 2000 })
     await fireEvent.update(field, 'zhangsan@example.com')
-    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+    await fireEvent.submit(field.closest('form')!)
 
     expect(screen.queryByTestId('found-user')).toBeNull()
     expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
@@ -259,7 +262,7 @@ describe('inviting someone by name', () => {
 
     await fireEvent.update(field, 'nobody-here')
     await screen.findByText('找不到这个用户名或邮箱', {}, { timeout: 2000 })
-    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+    await fireEvent.submit(field.closest('form')!)
 
     expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
   })

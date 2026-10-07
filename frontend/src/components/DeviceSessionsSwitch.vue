@@ -15,6 +15,7 @@ import { relTime } from '../lib/relTime'
 import { topicTitle } from '../lib/topicState'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { useDialog } from '@/plugins/dialog'
 
@@ -173,87 +174,82 @@ watch(open, (value) => {
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="560" scrollable>
-    <template #activator="{ props: activator }">
-      <button v-bind="activator" type="button" class="bs-open">{{ t('work.bulkSwitch.open') }}</button>
-    </template>
-    <v-card :title="t('work.bulkSwitch.title', { name: device.name })">
-      <v-card-text>
-        <p v-if="loadError" role="alert" class="bs-error">{{ loadError }}</p>
-        <v-progress-linear v-else-if="loading" indeterminate />
-        <template v-else>
-          <p v-if="!sessions.length" class="c-muted">{{ t('work.bulkSwitch.empty') }}</p>
-          <template v-else>
+  <button type="button" class="bs-open" @click="open = true">{{ t('work.bulkSwitch.open') }}</button>
+  <AdaptiveDialog
+    v-model="open"
+    :title="t('work.bulkSwitch.title', { name: device.name })"
+    :primary-label="t('work.sessionMachine.confirm')"
+    :primary-loading="running"
+    :primary-disabled="running || !picked || !selected.length"
+    :close-disabled="running"
+    @primary="run"
+  >
+    <p v-if="loadError" role="alert" class="bs-error">{{ loadError }}</p>
+    <v-progress-linear v-else-if="loading" indeterminate />
+    <template v-else>
+      <p v-if="!sessions.length" class="c-muted">{{ t('work.bulkSwitch.empty') }}</p>
+      <template v-else>
+        <v-checkbox
+          :model-value="allSelected"
+          :label="t('work.bulkSwitch.selectAll')"
+          :disabled="running"
+          density="compact"
+          hide-details
+          @update:model-value="toggleAll"
+        />
+        <ul class="bs-list">
+          <li v-for="session in sessions" :key="session.id" class="bs-row">
             <v-checkbox
-              :model-value="allSelected"
-              :label="t('work.bulkSwitch.selectAll')"
-              :disabled="running"
+              v-model="selected"
+              :value="session.id"
+              :disabled="running || outcomes[session.id]?.state === 'done'"
+              :aria-label="sessionRoom(session)"
               density="compact"
               hide-details
-              @update:model-value="toggleAll"
             />
-            <ul class="bs-list">
-              <li v-for="session in sessions" :key="session.id" class="bs-row">
-                <v-checkbox
-                  v-model="selected"
-                  :value="session.id"
-                  :disabled="running || outcomes[session.id]?.state === 'done'"
-                  :aria-label="sessionRoom(session)"
-                  density="compact"
-                  hide-details
-                />
-                <div class="bs-body">
-                  <div class="bs-room">{{ sessionRoom(session) }}</div>
-                  <div class="bs-meta">
-                    <i18n-t keypath="work.bulkSwitch.meta" tag="span">
-                      <template #agent
-                        ><UserRef
-                          :handle="session.agent_handle"
-                          :name="teammateName(session.agent_name, session.agent_name_source)"
-                      /></template>
-                      <template #time>{{ relTime(session.last_active) }}</template>
-                    </i18n-t>
-                    <template v-if="session.working"> · {{ t('work.bulkSwitch.working') }}</template>
-                  </div>
-                  <p
-                    v-if="outcomes[session.id]"
-                    :role="outcomes[session.id].state === 'done' ? 'status' : 'alert'"
-                    :class="outcomes[session.id].state === 'done' ? 'bs-done' : 'bs-error'"
-                  >
-                    {{ outcomes[session.id].message }}
-                  </p>
-                  <template v-if="outcomes[session.id]?.state === 'unreachable'">
-                    <p class="bs-error">{{ t('work.sessionMachine.abandonWarning') }}</p>
-                    <BaseButton kind="ghost" size="sm" :disabled="running" @click="abandon(session)">{{
-                      t('work.sessionMachine.abandon')
-                    }}</BaseButton>
-                  </template>
-                </div>
-              </li>
-            </ul>
-          </template>
-          <p v-if="hidden" class="c-muted">{{ t('work.bulkSwitch.hidden', { count: hidden }) }}</p>
-          <v-select
-            v-if="sessions.length"
-            v-model="target"
-            class="mt-4"
-            autocomplete="off"
-            :items="choices"
-            :label="t('work.sessionMachine.machine')"
-            :disabled="running"
-          />
-          <p v-if="sessions.length" role="note">{{ t('work.bulkSwitch.pushFirst') }}</p>
-        </template>
-      </v-card-text>
-      <v-card-actions>
-        <BaseButton kind="ghost" :disabled="running" @click="open = false">{{ t('global.cancel') }}</BaseButton>
-        <v-spacer />
-        <BaseButton kind="primary" :disabled="running || !picked || !selected.length" :loading="running" @click="run">{{
-          t('work.sessionMachine.confirm')
-        }}</BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+            <div class="bs-body">
+              <div class="bs-room">{{ sessionRoom(session) }}</div>
+              <div class="bs-meta">
+                <i18n-t keypath="work.bulkSwitch.meta" tag="span">
+                  <template #agent
+                    ><UserRef
+                      :handle="session.agent_handle"
+                      :name="teammateName(session.agent_name, session.agent_name_source)"
+                  /></template>
+                  <template #time>{{ relTime(session.last_active) }}</template>
+                </i18n-t>
+                <template v-if="session.working"> · {{ t('work.bulkSwitch.working') }}</template>
+              </div>
+              <p
+                v-if="outcomes[session.id]"
+                :role="outcomes[session.id].state === 'done' ? 'status' : 'alert'"
+                :class="outcomes[session.id].state === 'done' ? 'bs-done' : 'bs-error'"
+              >
+                {{ outcomes[session.id].message }}
+              </p>
+              <template v-if="outcomes[session.id]?.state === 'unreachable'">
+                <p class="bs-error">{{ t('work.sessionMachine.abandonWarning') }}</p>
+                <BaseButton kind="ghost" size="sm" :disabled="running" @click="abandon(session)">{{
+                  t('work.sessionMachine.abandon')
+                }}</BaseButton>
+              </template>
+            </div>
+          </li>
+        </ul>
+      </template>
+      <p v-if="hidden" class="c-muted">{{ t('work.bulkSwitch.hidden', { count: hidden }) }}</p>
+      <v-select
+        v-if="sessions.length"
+        v-model="target"
+        class="mt-4"
+        autocomplete="off"
+        :items="choices"
+        :label="t('work.sessionMachine.machine')"
+        :disabled="running"
+      />
+      <p v-if="sessions.length" role="note">{{ t('work.bulkSwitch.pushFirst') }}</p>
+    </template>
+  </AdaptiveDialog>
 </template>
 
 <style scoped>

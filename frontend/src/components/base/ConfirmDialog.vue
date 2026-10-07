@@ -56,6 +56,7 @@ function confirm() {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- the shared confirm primitive itself (design-system §3.7) -->
   <v-dialog v-model="open" :max-width="DIALOG_WIDTH.sm" persistent>
     <v-card rounded="lg" class="confirm-dialog" role="alertdialog" :aria-label="props.title">
       <v-card-title class="t-dialog-title confirm-dialog__title">{{ props.title }}</v-card-title>

@@ -91,6 +91,7 @@ function primary() {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- the shared form-dialog primitive itself (design-system §3.7) -->
   <v-dialog
     v-if="mdAndUp"
     v-model="open"
@@ -121,6 +122,7 @@ function primary() {
     </v-card>
   </v-dialog>
 
+  <!-- eslint-disable-next-line vue/no-restricted-syntax -- the shared form-dialog primitive itself (design-system §3.7) -->
   <v-dialog
     v-else
     v-model="open"

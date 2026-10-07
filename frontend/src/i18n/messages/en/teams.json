@@ -38,7 +38,6 @@
     "roleLabel": "Role",
     "inviteMessageLabel": "Invitation message (optional)",
     "inviteMessagePlaceholder": "Add a note to the invitation…",
-    "cancel": "Cancel",
     "inviteSubmit": "Invite",
     "tabMembers": "Members",
     "tabRequests": "Join requests",
