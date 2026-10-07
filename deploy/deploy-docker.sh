@@ -833,6 +833,16 @@ running_backend() {
     fi
   done
 }
+# The running frontend container: `frontend-b` serves every other release on a
+# box that rolls the frontend too (ACTIVE_FRONTEND_DIR).
+running_frontend() {
+  local container
+  container="$(service_container frontend)"
+  if [ -z "$container" ] && [ -n "${ACTIVE_FRONTEND_DIR:-}" ]; then
+    container="$(service_container frontend-b)"
+  fi
+  printf '%s' "$container"
+}
 service_image() {
   local container="$1"
   [ -n "$container" ] || return 0
@@ -867,15 +877,18 @@ clear_interrupted_release() {
 [ -z "$ACTIVE_BACKEND_DIR" ] || clear_interrupted_release
 
 PREV_BACKEND_CONTAINER="$(running_backend)"
-PREV_FRONTEND_CONTAINER="$(service_container frontend)"
+PREV_FRONTEND_CONTAINER="$(running_frontend)"
 PREV_BACKEND_IMAGE="$(service_image "$PREV_BACKEND_CONTAINER")"
 PREV_FRONTEND_IMAGE="$(service_image "$PREV_FRONTEND_CONTAINER")"
+# The release running now is the tag its backend was started from, in whichever
+# slot it serves. Reading only the `backend` service left every release that
+# started while `backend-b` served with no previous release, so a failed health
+# check there had nothing to roll back to.
 PREV_SHA=""
-if [ -n "$PREV_BACKEND_CONTAINER" ]; then
-  PREV_SHA="$(docker inspect \
-    --format '{{ index .Config.Labels "com.cheese.image_tag" }}' \
-    "$PREV_BACKEND_CONTAINER" 2>/dev/null || true)"
-fi
+case "${PREV_BACKEND_IMAGE##*/}" in
+  *@*) ;;
+  *:*) PREV_SHA="${PREV_BACKEND_IMAGE##*:}" ;;
+esac
 if [ -z "$PREV_SHA" ]; then
   # Fall back to reading the image tag actually in use.
   PREV_SHA="$(dc images backend 2>/dev/null | awk 'NR==2{print $3}' || true)"
