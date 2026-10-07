@@ -123,16 +123,49 @@ export function idOf(file) {
   return base.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase()
 }
 
+/** `proto-shell` -> `ProtoShell`, `404` -> `404` (callers prefix what still starts with a digit). */
+function pascal(text) {
+  return text
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join('')
+}
+
+/**
+ * A binding name per file, unique across the batch and a legal identifier.
+ *
+ * The file name is the component's own name, so it is the first choice. Two
+ * files of one name (`recover/password/StartView.vue`, `signup/StartView.vue`)
+ * take parent directories in front until they differ, and a name that is not
+ * an identifier (`404.vue`, `proto-shell.vue`) is PascalCased and, if it still
+ * starts with a digit, gets its directory in front too.
+ */
+export function bindingNames(files) {
+  const parts = files.map((file) => file.replace(/\.vue$/, '').split('/'))
+  const depth = files.map(() => 1)
+  const nameAt = (i) => {
+    const name = pascal(parts[i].slice(-depth[i]).join('-'))
+    return /^[0-9]/.test(name) ? pascal(parts[i].slice(-depth[i] - 1).join('-')) : name
+  }
+  for (;;) {
+    const names = files.map((_, i) => nameAt(i))
+    const clash = names.map((name, i) => names.indexOf(name) !== i || names.lastIndexOf(name) !== i)
+    const grow = clash.map((c, i) => c && depth[i] < parts[i].length)
+    if (!grow.some(Boolean)) return names
+    grow.forEach((g, i) => g && depth[i]++)
+  }
+}
+
 /** One entry's import line and object literal, as TypeScript source. */
-export function scaffold({ file, source, fs }) {
-  const name = file.split('/').pop().replace(/\.vue$/, '')
+export function scaffold({ file, source, fs, name = bindingNames([file])[0] }) {
   const props = propsOf(source, file, fs)
   const required = props.filter((p) => p.required)
   const optional = props.filter((p) => !p.required)
   const args = required.map((p) => `      ${p.name}: ${placeholder(p)},`)
   const lines = [
     '  {',
-    `    id: '${idOf(file)}',`,
+    `    id: '${idOf(`${name}.vue`)}',`,
     `    title: '${name}',`,
     `    about: '${TODO}: 一句话：它是什么、用在哪。',`,
     `    file: '${file}',`,

@@ -14,7 +14,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { scaffold } from './catalog-scaffold-core.mjs'
+import { bindingNames, scaffold } from './catalog-scaffold-core.mjs'
 
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BASELINE = path.join(FRONTEND, 'catalog-baseline.json')
@@ -37,11 +37,12 @@ if (!targets.length) {
   console.error('usage: catalog-scaffold.mjs <src/...vue>... | --pending <prefix>')
   process.exit(2)
 }
+const names = bindingNames(targets)
 const imports = []
 const entries = []
-for (const file of targets) {
+for (const [i, file] of targets.entries()) {
   const source = fs.readFileSync(path.join(FRONTEND, file), 'utf8')
-  const { importLine, entry } = scaffold({ file, source, fs: reader })
+  const { importLine, entry } = scaffold({ file, source, fs: reader, name: names[i] })
   imports.push(importLine)
   entries.push(entry)
 }

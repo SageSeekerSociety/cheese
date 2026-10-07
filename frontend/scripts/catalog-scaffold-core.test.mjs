@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { guessNeeds, idOf, placeholder, propsOf, scaffold, TODO } from './catalog-scaffold-core.mjs'
+import { bindingNames, guessNeeds, idOf, placeholder, propsOf, scaffold, TODO } from './catalog-scaffold-core.mjs'
 
 const noFs = { fileExists: () => false, readFile: () => undefined }
 
@@ -81,4 +81,17 @@ test('the skeleton fills required args only and marks every sentence a person ow
   assert.doesNotMatch(entry, /count: /)
   assert.match(entry, /\/\/ optional: count/)
   assert.equal(entry.split(TODO).length - 1, 3)
+})
+
+test('binding names are legal identifiers and unique across a batch', () => {
+  assert.deepEqual(
+    bindingNames([
+      'src/views/404.vue',
+      'src/proto-shell.vue',
+      'src/views/account/recover/password/StartView.vue',
+      'src/views/account/signup/StartView.vue',
+      'src/components/panels/PanelThreads.vue',
+    ]),
+    ['Views404', 'ProtoShell', 'PasswordStartView', 'SignupStartView', 'PanelThreads']
+  )
 })
