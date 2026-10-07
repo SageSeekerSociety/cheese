@@ -30,6 +30,7 @@ import DesignImage from './preview/DesignImage.vue'
 import DesignRegionNote from './preview/DesignRegionNote.vue'
 import PreviewLocator from './preview/PreviewLocator.vue'
 import PreviewMarkdown from './preview/PreviewMarkdown.vue'
+import PreviewPage from './preview/PreviewPage.vue'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewPickToggle from './preview/PreviewPickToggle.vue'
 import PreviewRegionPick from './preview/PreviewRegionPick.vue'
@@ -61,6 +62,9 @@ const props = withDefaults(defineProps<PreviewViewProps>(), {
   docIdentity: null,
   docSnapshot: null,
   slideContext: undefined,
+  docPage: false,
+  canPage: false,
+  docPageHtml: null,
 })
 const emit = defineEmits<{
   (e: 'frame-load', id: number, event: Event): void
@@ -83,6 +87,8 @@ const emit = defineEmits<{
   (e: 'close-editor'): void
   /** 文档条上按了「历史」：那一栏的开合由外面记（编辑器那一栏也归它管）。 */
   (e: 'toggle-history'): void
+  /** 文档条上换了一种读法（印出来的样子 / 网页）：取数那一层从此按那一种去取。 */
+  (e: 'toggle-doc-page'): void
   /** 点了一个人名（历史栏、编辑器上那句「谁改的」）：去他的主页由会读路由的那一层做。 */
   (e: 'mention-click', handle: string): void
 }>()
@@ -142,6 +148,11 @@ async function fullscreen() {
 // 要拿它决定历史栏读哪一份），这里只按 props 画。
 const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
 const canEdit = computed(() => EDITABLE_SUFFIXES.has(props.documentSuffix))
+
+// 下面那几句「转圈 / 缺服务 / 转不了」问的是「屏幕上现在有没有东西可看」，而东西
+// 有两种：印刷版（PDF 的字节）和网页版（渲染好的那一页）。两种视图一次只取一种，
+// 所以哪一份非空，就是哪一份在说话。
+const docShown = computed(() => (props.docPage ? props.docPageHtml : props.docBytes))
 
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 
@@ -549,6 +560,19 @@ async function onAnnotate(payload: AnnotateDraft) {
         >
           {{ t('work.room.preview.history') }}
         </BaseButton>
+        <!-- 换一种读法。只在有第二种的格式上摆：.doc/.odt/.rtf/.pdf 转得成 PDF，
+             但 OfficeCLI 读不了它们，摆一个按下去没反应的按钮不如不摆。 -->
+        <BaseButton
+          v-if="canPage"
+          kind="ghost"
+          size="sm"
+          :prepend-icon="docPage ? 'mdi-file-document-outline' : 'mdi-web'"
+          :title="t(docPage ? 'work.room.preview.printViewTitle' : 'work.room.preview.webViewTitle')"
+          data-testid="toggle-doc-page"
+          @click="emit('toggle-doc-page')"
+        >
+          {{ t(docPage ? 'work.room.preview.printView' : 'work.room.preview.webView') }}
+        </BaseButton>
         <BaseButton kind="ghost" size="sm" prepend-icon="mdi-download" @click="emit('download')">
           {{ t('work.room.preview.download') }}
         </BaseButton>
@@ -564,7 +588,7 @@ async function onAnnotate(payload: AnnotateDraft) {
         {{ downloadError }}
       </v-alert>
       <!-- 刷新失败但屏幕上还留着上一版：说清楚看到的不是最新的。 -->
-      <v-alert v-else-if="docError && docBytes" type="warning" density="compact" class="mx-3 mb-2">
+      <v-alert v-else-if="docError && docShown" type="warning" density="compact" class="mx-3 mb-2">
         {{ t('work.room.preview.staleDoc', { error: docError }) }}
       </v-alert>
 
@@ -580,19 +604,25 @@ async function onAnnotate(payload: AnnotateDraft) {
       <!-- 只在还没有东西可看时转圈。面板每 20 秒重读一次，芝士一存文件版本就变——
            这时候把查看器卸掉重挂，读者的滚动位置和选中都没了，而新的字节本来可以
            直接换进去。 -->
-      <div v-else-if="docLoading && !docBytes" class="doc__state">
+      <div v-else-if="docLoading && !docShown" class="doc__state">
         <v-progress-circular indeterminate color="primary" size="24" />
       </div>
       <!-- 两种失败说的不是一回事：一种是这个部署缺服务（换个文件也一样），一种是
            这个文件转换不了（别的文件仍然能看）。 -->
-      <div v-else-if="docRendererMissing && !docBytes" class="doc__state doc__state--text">
+      <div v-else-if="docRendererMissing && !docShown" class="doc__state doc__state--text">
         <v-icon size="28" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
         <div>{{ t('work.room.preview.docPreviewDisabled') }}</div>
       </div>
-      <div v-else-if="docError && !docBytes" class="doc__state doc__state--text">
+      <div v-else-if="docError && !docShown" class="doc__state doc__state--text">
         <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
         <div>{{ t('work.room.preview.cantDisplay') }}</div>
         <div class="t-meta mt-1">{{ docError }}</div>
+      </div>
+      <!-- 网页视图。同一份文档的另一种读法：排版按屏幕来，元素带着能寻址的编号
+           （表格的 /数据/B2、演示稿的 /slide[1]/shape[@id=2]），那些编号正是芝士
+           改这份文件时要用的。PDF 那条路没被换掉，默认也仍然是它。 -->
+      <div v-else-if="docPage" class="doc__body doc__body--page">
+        <PreviewPage :html="docPageHtml" />
       </div>
       <div v-else class="doc__body">
         <PreviewSlides

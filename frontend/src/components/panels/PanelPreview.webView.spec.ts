@@ -1,0 +1,94 @@
+import type { FileContent } from '../../cx_types'
+
+import { createVuetify } from 'vuetify'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+import * as api from '../../api'
+import * as pageReader from '../../lib/previewHtml'
+
+import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
+import { setLocale } from '@/i18n'
+
+const version = 'aaaaaaaaaaaaaaaa'
+const page = '<html><head><title>t</title></head><body>整页</body></html>'
+
+vi.mock('../../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api')>()
+  return { ...actual, readPreviewFile: vi.fn(), previewDocumentPdfSnapshot: vi.fn() }
+})
+// 网页那一份不在 `api.ts` 里：那一份已经超了长度上限，只能变短。
+vi.mock('../../lib/previewHtml', () => ({ previewDocumentPageSnapshot: vi.fn() }))
+// 三个阅读器都换掉：它们拿到字节就会去画，而这里问的是「该不该取字节、取哪一种」。
+vi.mock('./preview/PreviewSlides.vue', () => ({ default: { props: ['data'], template: '<div />' } }))
+vi.mock('./preview/PreviewPages.vue', () => ({ default: { props: ['data'], template: '<div />' } }))
+vi.mock('./preview/PreviewSheet.vue', () => ({ default: { props: ['data'], template: '<div />' } }))
+vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
+
+beforeEach(() => {
+  vi.resetAllMocks()
+  setLocale('zh-CN')
+  vi.mocked(api.readPreviewFile).mockResolvedValue(file('report.docx'))
+  vi.mocked(api.previewDocumentPdfSnapshot).mockResolvedValue({ bytes: new ArrayBuffer(8), sourceVersion: version })
+  vi.mocked(pageReader.previewDocumentPageSnapshot).mockResolvedValue({ html: page, sourceVersion: version })
+})
+afterEach(cleanup)
+
+const panelProps = { topicId: 'room', projectId: 'project', path: 'report.docx', active: true, refreshTick: 0 }
+const global = {
+  plugins: [createVuetify()],
+  stubs: {
+    VBtn: { template: '<button><slot /></button>' },
+    VIcon: true,
+    VSpacer: true,
+    VAlert: true,
+    VDialog: true,
+  },
+}
+function file(path: string): FileContent {
+  return { path, content: null, version, bytes: 8, binary: true, too_large: false, source: 'committed' }
+}
+
+it('renders nothing for the web view until the reader asks for it', async () => {
+  const ui = render(PanelPreviewHost, { props: panelProps, global })
+  await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
+  // 转一页要几秒，而默认那一档是分页视图：没按就不该为网页视图渲染一次。
+  expect(pageReader.previewDocumentPageSnapshot).not.toHaveBeenCalled()
+  expect(ui.queryByTestId('toggle-doc-page')).not.toBeNull()
+  expect(ui.container.querySelector('iframe')).toBeNull()
+})
+
+it('swaps the PDF for the page the reader asked for, in a sandbox with no same-origin', async () => {
+  const ui = render(PanelPreviewHost, { props: panelProps, global })
+  await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
+  await fireEvent.click(ui.getByTestId('toggle-doc-page'))
+  await waitFor(() =>
+    expect(pageReader.previewDocumentPageSnapshot).toHaveBeenCalledWith('room', 'report.docx', null, 'committed')
+  )
+  const frame = await ui.findByTitle('网页视图')
+  expect(frame.tagName).toBe('IFRAME')
+  // 少了 allow-scripts，表格的多工作表标签就切不动；多了 allow-same-origin，这一页
+  // 就住进应用自己的源里，它的脚本能读会话里的东西。
+  expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
+  expect(frame.getAttribute('srcdoc')).toBe(page)
+  // 换过去之后不再重复取 PDF：两种视图一次只用一种。
+  expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1)
+})
+
+it('goes back to the print view when the reader asks for it again', async () => {
+  const ui = render(PanelPreviewHost, { props: panelProps, global })
+  await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
+  await fireEvent.click(ui.getByTestId('toggle-doc-page'))
+  await ui.findByTitle('网页视图')
+  await fireEvent.click(ui.getByTestId('toggle-doc-page'))
+  await waitFor(() => expect(ui.container.querySelector('iframe')).toBeNull())
+  // 换回来要重新取一次字节：网页视图那一份不是字节，喂不了 PDF 阅读器。
+  await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))
+})
+
+it('offers no second reading for a format only the PDF route can read', async () => {
+  vi.mocked(api.readPreviewFile).mockResolvedValue(file('old.doc'))
+  const ui = render(PanelPreviewHost, { props: { ...panelProps, path: 'old.doc' }, global })
+  await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
+  expect(ui.queryByTestId('toggle-doc-page')).toBeNull()
+})
