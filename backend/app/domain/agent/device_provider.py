@@ -1456,36 +1456,6 @@ class DeviceChannel(Channel):
         return (result.get("stdout") or "").strip() == "down"
 
 
-async def list_device_storage(
-    device_id: str, *, hub: DeviceHub | None = None
-) -> list[tuple[str, str, str]]:
-    """Every ``(kind, project, place)`` under both device storage roots,
-    as the device's shell sees them — names only, nothing resolved.
-
-    Raises ``DeviceOffline`` like ``exec`` does; the caller decides what an
-    unreachable device means for its sweep. Lists with a shell loop rather than
-    `find -printf`, which is GNU-only and a device may be a Mac."""
-    hub = hub or device_hub
-    script = (
-        f'for root in "{DEVICE_HOME_ROOT}" "{DEVICE_WORK_ROOT}"; do '
-        '(cd "$root" 2>/dev/null || exit 0; '
-        # A project/place symlink may point into the device owner's other data.
-        'for p in */*; do if [ -d "$p" ] && '
-        '[ ! -L "${p%%/*}" ] && [ ! -L "$p" ]; then '
-        'printf "%s\\t%s\\n" "${root##*/}" "$p"; fi; done); done'
-    )
-    result = await hub.exec(device_id, ["sh", "-lc", script], timeout=30)
-    if result.get("exit") != 0 or result.get("truncated"):
-        raise RuntimeError("device storage listing failed or was truncated")
-    pairs: list[tuple[str, str, str]] = []
-    for line in str(result.get("stdout") or "").splitlines():
-        kind, tab, path = line.partition("\t")
-        project, sep, place = path.partition("/")
-        if kind in {"home", "work"} and tab and sep and project and place:
-            pairs.append((kind, project, place))
-    return pairs
-
-
 def topic_credential_expiry(
     topic_id: uuid.UUID, *, hub: DeviceHub | None = None
 ) -> int | None:

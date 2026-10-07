@@ -4,8 +4,10 @@ import asyncio
 import dataclasses
 import logging
 import time
+import traceback
 import uuid
 from collections.abc import Callable, Coroutine
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -25,6 +27,55 @@ logger = logging.getLogger(__name__)
 # (``device_connection_app.DRAINING_HEADER``); the owner process is not
 # imported here.
 OWNER_DRAINING_HEADER = "X-Device-Connection-Draining"
+
+
+#: One gone runner's caller is named once in this long. A runner that let its
+#: session go answers 「no such file」, and something kept asking such runners in
+#: bursts (16 an hour for one socket on 2026-10-06) with nothing on this side
+#: saying what: the name of the asker is what a fix needs, and once per burst
+#: is enough to find it.
+GONE_RUNNER_LOG_INTERVAL_S = 600.0
+_gone_runner_named: dict[str, float] = {}
+
+
+def _asked_by() -> str:
+    """The three innermost frames of our own code that led to this call."""
+    ours = [
+        frame
+        for frame in traceback.extract_stack()[:-2]
+        if frame.filename != __file__
+        and "site-packages" not in frame.filename
+        and "/lib/python" not in frame.filename
+    ]
+    return (
+        " <- ".join(
+            f"{Path(frame.filename).name}:{frame.lineno} {frame.name}"
+            for frame in reversed(ours[-3:])
+        )
+        or "unknown"
+    )
+
+
+def _name_gone_runner_asker(
+    device_id: str, state: str, method: str, error: DeviceCallError
+) -> None:
+    if "no such file" not in str(error):
+        return
+    now = time.monotonic()
+    if now - _gone_runner_named.get(state, -GONE_RUNNER_LOG_INTERVAL_S) < (
+        GONE_RUNNER_LOG_INTERVAL_S
+    ):
+        return
+    if len(_gone_runner_named) > 1000:
+        _gone_runner_named.clear()
+    _gone_runner_named[state] = now
+    logger.info(
+        "gone runner asked: device=%s state=%s method=%s asked by %s",
+        device_id,
+        state,
+        method,
+        _asked_by(),
+    )
 
 
 class OwnerDraining(Exception):
@@ -445,17 +496,21 @@ class RemoteDeviceHub:
         trace_id: str | None = None,
     ) -> dict:
         trace_id = trace_id or "execution-" + uuid.uuid4().hex
-        return await self._call(
-            "call_executor",
-            {
-                "device_id": device_id,
-                "state": state,
-                "method": method,
-                "params": params,
-                "timeout": timeout,
-                "trace_id": trace_id,
-            },
-        )
+        try:
+            return await self._call(
+                "call_executor",
+                {
+                    "device_id": device_id,
+                    "state": state,
+                    "method": method,
+                    "params": params,
+                    "timeout": timeout,
+                    "trace_id": trace_id,
+                },
+            )
+        except DeviceCallError as error:
+            _name_gone_runner_asker(device_id, state, method, error)
+            raise
 
 
 def _jsonable(value: dict[str, Any]) -> dict[str, Any]:
